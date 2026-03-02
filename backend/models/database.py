@@ -32,6 +32,14 @@ class PRStatus(str, enum.Enum):
     FAILED = "failed"
 
 
+class ReviewDecision(str, enum.Enum):
+    """审查决策"""
+
+    APPROVE = "approve"
+    REQUEST_CHANGES = "request_changes"
+    COMMENT = "comment"
+
+
 class ReviewStrategy(str, enum.Enum):
     """审查策略"""
 
@@ -87,6 +95,10 @@ class PRReview(Base):
     # 审查结果
     review_summary = Column(Text, nullable=True)
     overall_score = Column(Integer, nullable=True)  # 1-10分
+
+    # 审查决策
+    decision = Column(Enum(ReviewDecision), nullable=True)
+    decision_reason = Column(Text, nullable=True)
 
     # 时间戳
     created_at = Column(TIMESTAMP, default=datetime.utcnow, nullable=False)
