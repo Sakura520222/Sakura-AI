@@ -529,28 +529,39 @@ class GitHubAppClient:
             logger.error(f"提交Review失败: {e}", exc_info=True)
             return False
 
-    def get_bot_username(self, repo_owner: str, repo_name: str) -> str:
+    def get_bot_username(self, repo_owner: str = None, repo_name: str = None) -> str:
         """获取机器人用户名（用于幂等性检查）
 
         Args:
-            repo_owner: 仓库所有者
-            repo_name: 仓库名称
+            repo_owner: 仓库所有者（已废弃，保留参数兼容性）
+            repo_name: 仓库名称（已废弃，保留参数兼容性）
 
         Returns:
-            机器人用户名
+            机器人用户名或App slug
         """
         try:
-            client = self.get_repo_client(repo_owner, repo_name)
-            if not client:
+            # 使用App客户端而不是Installation客户端
+            # Installation Token无法访问 /user 端点，需要使用App Token
+            app_client = self.get_app_client()
+            if not app_client:
+                logger.warning("无法获取App客户端")
                 return None
 
-            # 获取当前认证用户的用户名
-            user = client.get_user()
-            return user.login
+            # 获取App信息（使用App Token可以访问）
+            app = app_client.get_app()
+            
+            # 返回App的slug作为标识符
+            # GitHub App的slug格式通常是: username-appname
+            app_slug = app.slug
+            
+            logger.debug(f"成功获取GitHub App标识: {app_slug}")
+            return app_slug
 
         except Exception as e:
             logger.error(f"获取机器人用户名失败: {e}")
-            return None
+            logger.warning("将使用配置文件中的bot_username作为备选")
+            # 备选方案：从配置文件读取
+            return getattr(settings, 'bot_username', None)
 
 
 def verify_webhook_signature(payload: bytes, signature: str) -> bool:

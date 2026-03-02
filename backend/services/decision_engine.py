@@ -92,7 +92,8 @@ class DecisionEngine:
                 return (ReviewDecision.COMMENT, "自动批准功能未启用，仅提供评论")
 
             # 提取评分和问题统计
-            score = review_result.get("overall_score", 0)
+            # 处理None值：如果AI没有返回评分，默认为0
+            score = review_result.get("overall_score") or 0
             issues = review_result.get("issues", {})
 
             critical_count = len(issues.get("critical", []))
@@ -105,6 +106,10 @@ class DecisionEngine:
                 f"critical={critical_count}, major={major_count}, "
                 f"minor={minor_count}, suggestions={suggestion_count}"
             )
+
+            # 如果没有评分，记录警告
+            if review_result.get("overall_score") is None:
+                logger.warning("AI未返回评分，使用默认值0进行决策")
 
             # 规则1: Critical问题阻断（一票否决）
             if critical_count > 0 and policy.get("block_on_critical", True):
