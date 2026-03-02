@@ -4,7 +4,6 @@
 """
 
 import json
-import asyncio
 from typing import Dict, List, Optional, Any
 from datetime import datetime, timedelta
 from loguru import logger
@@ -25,15 +24,27 @@ class LabelService:
     # 默认标签配置（当仓库没有标签时使用）
     DEFAULT_LABELS = {
         "bug": {"color": "d73a4a", "description": "Something isn't working"},
-        "documentation": {"color": "0075ca", "description": "Improvements or additions to documentation"},
-        "duplicate": {"color": "cfd3d7", "description": "This issue or pull request already exists"},
+        "documentation": {
+            "color": "0075ca",
+            "description": "Improvements or additions to documentation",
+        },
+        "duplicate": {
+            "color": "cfd3d7",
+            "description": "This issue or pull request already exists",
+        },
         "enhancement": {"color": "a2eeef", "description": "New feature or request"},
         "good first issue": {"color": "7057ff", "description": "Good for newcomers"},
         "help wanted": {"color": "008672", "description": "Extra attention is needed"},
         "invalid": {"color": "e4e669", "description": "This doesn't seem right"},
-        "question": {"color": "d876e3", "description": "Further information is requested"},
+        "question": {
+            "color": "d876e3",
+            "description": "Further information is requested",
+        },
         "wontfix": {"color": "ffffff", "description": "This will not be worked on"},
-        "refactor": {"color": "fbca04", "description": "Code refactoring (non-functional change)"},
+        "refactor": {
+            "color": "fbca04",
+            "description": "Code refactoring (non-functional change)",
+        },
         "performance": {"color": "5319e7", "description": "Performance optimization"},
         "test": {"color": "bfd4f2", "description": "Test related changes"},
         "dependencies": {"color": "0366d6", "description": "Dependency updates"},
@@ -46,6 +57,7 @@ class LabelService:
         """确保只有一个实例"""
         if cls._instance is None:
             import threading
+
             cls._lock = threading.Lock()
             with cls._lock:
                 if cls._instance is None:
@@ -102,9 +114,7 @@ class LabelService:
 
         return labels
 
-    def format_labels_for_ai(
-        self, labels: Dict[str, Dict[str, Any]]
-    ) -> str:
+    def format_labels_for_ai(self, labels: Dict[str, Dict[str, Any]]) -> str:
         """格式化标签列表供AI理解
 
         Args:
@@ -114,7 +124,7 @@ class LabelService:
             格式化的标签描述文本
         """
         lines = ["## 可用的PR标签\n"]
-        
+
         for label_name, label_info in labels.items():
             desc = label_info.get("description", "")
             color = label_info.get("color", "")
@@ -124,12 +134,10 @@ class LabelService:
             "\n请从上述标签中选择最合适的标签（可以选择多个），"
             "并根据代码变更的实际情况给出推荐。"
         )
-        
+
         return "\n".join(lines)
 
-    def parse_ai_label_recommendation(
-        self, ai_response: str
-    ) -> List[Dict[str, Any]]:
+    def parse_ai_label_recommendation(self, ai_response: str) -> List[Dict[str, Any]]:
         """解析AI的标签推荐结果
 
         Args:
@@ -148,24 +156,28 @@ class LabelService:
                 end = ai_response.find("```", start)
                 json_str = ai_response[start:end].strip()
                 data = json.loads(json_str)
-                
+
                 if isinstance(data, dict) and "labels" in data:
                     for item in data["labels"]:
-                        recommendations.append({
-                            "name": item.get("name", ""),
-                            "confidence": float(item.get("confidence", 0.5)),
-                            "reason": item.get("reason", ""),
-                        })
+                        recommendations.append(
+                            {
+                                "name": item.get("name", ""),
+                                "confidence": float(item.get("confidence", 0.5)),
+                                "reason": item.get("reason", ""),
+                            }
+                        )
             else:
                 # 尝试直接解析整个响应为JSON
                 data = json.loads(ai_response)
                 if isinstance(data, dict) and "labels" in data:
                     for item in data["labels"]:
-                        recommendations.append({
-                            "name": item.get("name", ""),
-                            "confidence": float(item.get("confidence", 0.5)),
-                            "reason": item.get("reason", ""),
-                        })
+                        recommendations.append(
+                            {
+                                "name": item.get("name", ""),
+                                "confidence": float(item.get("confidence", 0.5)),
+                                "reason": item.get("reason", ""),
+                            }
+                        )
 
             logger.info(f"成功解析AI标签推荐，共 {len(recommendations)} 个")
             return recommendations
@@ -190,7 +202,7 @@ class LabelService:
         """
         recommendations = []
         lines = text.split("\n")
-        
+
         for line in lines:
             line = line.strip()
             # 查找格式：- 标签名 (置信度%) - 理由
@@ -199,7 +211,7 @@ class LabelService:
                 parts = line[1:].strip().split("(")
                 if len(parts) > 0:
                     label_name = parts[0].strip()
-                    
+
                     # 提取置信度
                     confidence = 0.5
                     reason = ""
@@ -211,20 +223,22 @@ class LabelService:
                                 confidence = float(confidence_str) / 100
                             except ValueError:
                                 pass
-                        
+
                         # 提取理由
                         if "-" in rest:
                             reason_parts = rest.split("-", 1)
                             if len(reason_parts) > 1:
                                 reason = reason_parts[1].strip()
-                    
+
                     if label_name:
-                        recommendations.append({
-                            "name": label_name,
-                            "confidence": confidence,
-                            "reason": reason,
-                        })
-        
+                        recommendations.append(
+                            {
+                                "name": label_name,
+                                "confidence": confidence,
+                                "reason": reason,
+                            }
+                        )
+
         return recommendations
 
     async def apply_labels_to_pr(
@@ -269,8 +283,7 @@ class LabelService:
                 if auto_create:
                     # 自动创建标签
                     default_info = self.DEFAULT_LABELS.get(
-                        label_name,
-                        {"color": "0366d6", "description": ""}
+                        label_name, {"color": "0366d6", "description": ""}
                     )
                     success = self.github_app.create_label(
                         repo_owner,
@@ -296,19 +309,23 @@ class LabelService:
                     repo_owner, repo_name, pr_number, [label_name]
                 )
                 if success:
-                    result["applied"].append({
-                        "name": label_name,
-                        "confidence": confidence,
-                        "reason": rec.get("reason", ""),
-                    })
+                    result["applied"].append(
+                        {
+                            "name": label_name,
+                            "confidence": confidence,
+                            "reason": rec.get("reason", ""),
+                        }
+                    )
                 else:
                     result["failed"].append(label_name)
             else:
-                result["suggested"].append({
-                    "name": label_name,
-                    "confidence": confidence,
-                    "reason": rec.get("reason", ""),
-                })
+                result["suggested"].append(
+                    {
+                        "name": label_name,
+                        "confidence": confidence,
+                        "reason": rec.get("reason", ""),
+                    }
+                )
 
         return result
 

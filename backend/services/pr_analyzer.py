@@ -47,7 +47,7 @@ class PRAnalysis:
     strategy: str
     should_skip: bool
     skip_reason: Optional[str] = None
-    
+
     # Diff 安全区：每个文件的变更行号白名单
     # 格式：{"file_path.py": {10, 15, 20, 25}, "another.py": {5, 10}}
     changed_lines_map: Dict[str, set] = None
@@ -125,7 +125,7 @@ class PRAnalyzer:
             else:
                 strategy = strategy_config.determine_strategy(
                     len(code_files), code_changes
-            )
+                )
 
             # 提取 diff 安全区白名单
             changed_lines_map = self._extract_changed_lines(code_files)
@@ -161,105 +161,119 @@ class PRAnalyzer:
 
     def _extract_changed_lines(self, code_files: List[PRFileInfo]) -> Dict[str, set]:
         """从文件 patch 中提取变更的行号（Diff 安全区）
-        
+
         解析 unified diff 格式，提取所有变更行的行号。
         这个白名单用于验证 AI 给出的行号是否在 diff 范围内。
-        
+
         Args:
             code_files: 代码文件列表
-            
+
         Returns:
             字典，key 为文件路径，value 为变更行号的集合
         """
         import re
-        
+
         changed_lines = {}
-        
+
         for file_info in code_files:
             if not file_info.patch:
                 continue
-            
+
             logger.info(f"🔍 开始解析 {file_info.path} 的 patch")
-            
+
             # 解析 patch 提取行号
             # unified diff 格式：
             # @@ -old_start,old_count +new_start,new_count @@
             # +added_line
             # -removed_line
-            lines = file_info.patch.split('\n')
+            lines = file_info.patch.split("\n")
             file_changed_lines = set()
-            
+
             i = 0
             hunk_count = 0
-            
+
             while i < len(lines):
                 line = lines[i]
-                
+
                 # 匹配 hunk header
                 # 例如：@@ -10,5 +10,7 @@ 或 @@ -1 +1,2 @@
-                hunk_match = re.match(r'^@@\s+-(\d+)(?:,(\d+))?\s+\+(\d+)(?:,(\d+))?\s+@@', line)
+                hunk_match = re.match(
+                    r"^@@\s+-(\d+)(?:,(\d+))?\s+\+(\d+)(?:,(\d+))?\s+@@", line
+                )
                 if hunk_match:
                     hunk_count += 1
-                    
+
                     # 提取新旧文件的起始行号和行数
                     old_start = int(hunk_match.group(1))
                     old_count = int(hunk_match.group(2)) if hunk_match.group(2) else 1
                     new_start = int(hunk_match.group(3))
                     new_count = int(hunk_match.group(4)) if hunk_match.group(4) else 1
-                    
-                    logger.info(f"  📦 Hunk #{hunk_count}: 原文件第{old_start}-{old_start+old_count-1}行 → PR后第{new_start}-{new_start+new_count-1}行")
-                    
+
+                    logger.info(
+                        f"  📦 Hunk #{hunk_count}: 原文件第{old_start}-{old_start + old_count - 1}行 → PR后第{new_start}-{new_start + new_count - 1}行"
+                    )
+
                     current_line = new_start
                     lines_in_hunk = 0
                     added_lines = 0
                     removed_lines = 0
                     context_lines = 0
-                    
+
                     # 向后读取 hunk 的内容
                     i += 1
                     while i < len(lines):
                         hunk_line = lines[i]
-                        
+
                         # 遇到新的 hunk header，结束当前 hunk
-                        if hunk_line.startswith('@@'):
+                        if hunk_line.startswith("@@"):
                             break
-                        
+
                         lines_in_hunk += 1
-                        
+
                         # 提取变更的行号（包含上下文行，给 AI 更多评论空间）
-                        if hunk_line.startswith('+') and not hunk_line.startswith('+++'):
+                        if hunk_line.startswith("+") and not hunk_line.startswith(
+                            "+++"
+                        ):
                             # 新增行
                             file_changed_lines.add(current_line)
                             added_lines += 1
                             logger.debug(f"    + 第{current_line}行: {hunk_line[:50]}")
                             current_line += 1
-                        elif hunk_line.startswith('-') and not hunk_line.startswith('---'):
+                        elif hunk_line.startswith("-") and not hunk_line.startswith(
+                            "---"
+                        ):
                             # 删除行，不记录行号（因为这是旧文件的行号）
                             removed_lines += 1
                             logger.debug(f"    - 删除原文件行: {hunk_line[:50]}")
                             current_line += 0  # 删除行不增加 PR 后文件的行号
-                        elif not hunk_line.startswith('\\'):
+                        elif not hunk_line.startswith("\\"):
                             # 上下文行（不是 \ No newline at end of file）
                             # 也添加上下文行，给 AI 更多评论空间
                             file_changed_lines.add(current_line)
                             context_lines += 1
-                            logger.debug(f"      第{current_line}行 (上下文): {hunk_line[:50]}")
+                            logger.debug(
+                                f"      第{current_line}行 (上下文): {hunk_line[:50]}"
+                            )
                             current_line += 1
-                        
+
                         i += 1
-                    
-                    logger.info(f"  ✓ Hunk #{hunk_count} 解析完成: +{added_lines} -{removed_lines} 行, 包含{context_lines}行上下文, PR后行号范围: {new_start}-{current_line-1}")
+
+                    logger.info(
+                        f"  ✓ Hunk #{hunk_count} 解析完成: +{added_lines} -{removed_lines} 行, 包含{context_lines}行上下文, PR后行号范围: {new_start}-{current_line - 1}"
+                    )
                     continue
-                
+
                 i += 1
-            
+
             if file_changed_lines:
                 changed_lines[file_info.path] = file_changed_lines
                 sorted_lines = sorted(file_changed_lines)
-                logger.info(f"✅ 文件 {file_info.path} 共 {hunk_count} 个 hunk, 提取行号 {len(sorted_lines)} 个: {sorted_lines[:15]}{'...' if len(sorted_lines) > 15 else ''}")
+                logger.info(
+                    f"✅ 文件 {file_info.path} 共 {hunk_count} 个 hunk, 提取行号 {len(sorted_lines)} 个: {sorted_lines[:15]}{'...' if len(sorted_lines) > 15 else ''}"
+                )
             else:
                 logger.warning(f"⚠️  文件 {file_info.path} 未提取到任何行号")
-        
+
         logger.info(f"🎯 构建 Diff 安全区完成，覆盖 {len(changed_lines)} 个文件")
         return changed_lines
 
@@ -292,79 +306,82 @@ class PRAnalyzer:
 
     def get_project_structure(self, repo: any, max_files: int = 500) -> List[str]:
         """获取项目的目录结构
-        
+
         Args:
             repo: GitHub仓库对象
             max_files: 最大文件数限制
-            
+
         Returns:
             目录结构列表
         """
         try:
             # 获取仓库的Git树
             tree = repo.get_git_tree(repo.default_branch, recursive=True)
-            
+
             # 获取跳过路径配置
             skip_paths = strategy_config.get_file_filters().get("skip_paths", [])
-            
+
             structure = []
             file_count = 0
-            
+
             # 按路径排序并格式化
             for item in sorted(tree.tree, key=lambda x: x.path):
                 if file_count >= max_files:
-                    structure.append(f"... (还有 {len(tree.tree) - max_files} 个文件未显示)")
+                    structure.append(
+                        f"... (还有 {len(tree.tree) - max_files} 个文件未显示)"
+                    )
                     break
-                
+
                 # 检查是否应该跳过该路径
                 should_skip = False
                 for skip_path in skip_paths:
-                    if item.path.startswith(skip_path.rstrip('/')):
+                    if item.path.startswith(skip_path.rstrip("/")):
                         should_skip = True
                         break
-                
+
                 if should_skip:
                     continue
-                
-                if item.type == 'tree':
+
+                if item.type == "tree":
                     structure.append(f"📁 {item.path}/")
                 else:
                     structure.append(f"📄 {item.path}")
                     file_count += 1
-            
-            logger.info(f"获取项目结构完成，共 {min(len(tree.tree), max_files)} 个项目（已过滤skip_paths）")
+
+            logger.info(
+                f"获取项目结构完成，共 {min(len(tree.tree), max_files)} 个项目（已过滤skip_paths）"
+            )
             return structure
-            
+
         except Exception as e:
             logger.error(f"获取项目结构失败: {e}", exc_info=True)
             return []
 
     def prepare_review_context(self, analysis: PRAnalysis, pr: any) -> Dict[str, any]:
-        """准备审查上下文"""
+        """准备审查上下文
+
+        优化说明：
+        - 移除冗余字段（strategy_name, tools_available 可在需要时再获取）
+        - 统一 patch 截断逻辑
+        - 减少数据重复传递
+        """
         try:
             # 根据策略准备不同级别的上下文
             strategy_name = analysis.strategy
-            strategy_info = strategy_config.get_strategy(strategy_name)
-            
+
             # 获取仓库对象 - 使用 pr.base.repo 而不是 pr.repository
             repo = pr.base.repo
 
             # 获取项目结构
             project_structure = self.get_project_structure(repo)
 
+            # 构建 context，只包含必要信息
             context = {
                 "strategy": strategy_name,
-                "strategy_name": strategy_info.get("name", strategy_name),
                 "files": [],
-                "total_changes": analysis.code_changes,
-                "file_count": analysis.code_file_count,
                 "project_structure": project_structure,
-                "tools_available": [
-                    "read_file: 查看任意文件的完整内容",
-                    "list_directory: 列出目录中的文件"
-                ],
-                # 添加行号安全区信息
-                "changed_lines_map": analysis.changed_lines_map or {}
+                "changed_lines_map": analysis.changed_lines_map or {},
+                "analysis": analysis,  # 传递整个 analysis 对象，避免重复提取字段
             }
 
             # 对于小型PR，包含完整的patch
@@ -378,20 +395,15 @@ class PRAnalyzer:
                         "deletions": file_info.deletions,
                     }
 
-                    # 包含patch（如果可用）
+                    # 统一的 patch 截断逻辑
                     if file_info.patch:
-                        # 限制patch大小
-                        patch_lines = file_info.patch.split("\n")
-                        if len(patch_lines) > 500:
-                            file_context["patch"] = (
-                                "\n".join(patch_lines[:500]) + "\n... (truncated)"
-                            )
-                        else:
-                            file_context["patch"] = file_info.patch
+                        file_context["patch"] = self._truncate_patch(
+                            file_info.patch, max_lines=500, max_chars=3000
+                        )
 
                     context["files"].append(file_context)
 
-            # 对于大型PR，只包含文件列表和摘要
+            # 对于大型PR（deep策略），只包含主要文件
             elif strategy_name == "deep":
                 # 分批处理
                 batch_config = strategy_config.get_batch_config()
@@ -403,17 +415,19 @@ class PRAnalyzer:
                 )
 
                 for file_info in sorted_files[:max_files_per_batch]:
-                    context["files"].append(
-                        {
-                            "path": file_info.path,
-                            "status": file_info.status,
-                            "changes": file_info.changes,
-                            "patch": file_info.patch
-                            if file_info.patch
-                            and len(file_info.patch.split("\n")) < 300
-                            else None,
-                        }
-                    )
+                    file_context = {
+                        "path": file_info.path,
+                        "status": file_info.status,
+                        "changes": file_info.changes,
+                    }
+
+                    # 统一的 patch 截断逻辑（更严格的限制）
+                    if file_info.patch:
+                        file_context["patch"] = self._truncate_patch(
+                            file_info.patch, max_lines=300, max_chars=2000
+                        )
+
+                    context["files"].append(file_context)
 
                 if len(analysis.code_files) > max_files_per_batch:
                     context["remaining_files"] = (
@@ -434,3 +448,33 @@ class PRAnalyzer:
         except Exception as e:
             logger.error(f"准备审查上下文时出错: {e}", exc_info=True)
             raise
+
+    def _truncate_patch(
+        self, patch: str, max_lines: int = 500, max_chars: int = 3000
+    ) -> str:
+        """统一的 patch 截断逻辑
+
+        Args:
+            patch: 原始 patch 内容
+            max_lines: 最大行数限制
+            max_chars: 最大字符数限制
+
+        Returns:
+            截断后的 patch
+        """
+        if not patch:
+            return patch
+
+        # 先按行数截断
+        lines = patch.split("\n")
+        if len(lines) > max_lines:
+            patch = (
+                "\n".join(lines[:max_lines])
+                + f"\n... (truncated, {len(lines) - max_lines} more lines)"
+            )
+
+        # 再按字符数截断
+        elif len(patch) > max_chars:
+            patch = patch[:max_chars] + "\n... (truncated)"
+
+        return patch

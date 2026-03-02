@@ -40,7 +40,7 @@ class Settings(BaseSettings):
     max_file_count: int = 100
     max_line_count: int = 10000
     batch_size: int = 10
-    
+
     # AI工具配置
     enable_ai_tools: bool = True
 

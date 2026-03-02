@@ -85,23 +85,29 @@ class ReviewWorker:
 
             # 检查是否启用标签推荐功能
             enable_label_recommendation = (
-                settings.enable_label_recommendation 
-                if hasattr(settings, 'enable_label_recommendation') 
+                settings.enable_label_recommendation
+                if hasattr(settings, "enable_label_recommendation")
                 else True
             )
 
             # 根据配置决定是否使用AI工具
-            enable_tools = settings.enable_ai_tools if hasattr(settings, 'enable_ai_tools') else True
+            enable_tools = (
+                settings.enable_ai_tools
+                if hasattr(settings, "enable_ai_tools")
+                else True
+            )
 
             # 准备并行任务
             tasks = []
-            
+
             # 任务1: AI审查
             if enable_tools:
                 logger.info(f"[{task_id}] 使用AI工具增强模式进行审查")
-                tasks.append(self.ai_reviewer.review_pr_with_tools(
-                    context, analysis.strategy, repo, pr
-                ))
+                tasks.append(
+                    self.ai_reviewer.review_pr_with_tools(
+                        context, analysis.strategy, repo, pr
+                    )
+                )
             else:
                 logger.info(f"[{task_id}] 使用标准模式进行审查")
                 tasks.append(self.ai_reviewer.review_pr(context, analysis.strategy))
@@ -109,33 +115,32 @@ class ReviewWorker:
             # 任务2: AI标签推荐（并行）
             if enable_label_recommendation:
                 logger.info(f"[{task_id}] 并行启动AI标签推荐...")
-                
+
                 async def run_label_recommendation():
                     try:
                         # 获取仓库可用标签
                         available_labels = await label_service.get_repo_labels(
-                            pr_info["repo_owner"], 
-                            pr_info["repo_name"]
+                            pr_info["repo_owner"], pr_info["repo_name"]
                         )
-                        
+
                         # AI推荐标签
                         recommendations = await self.ai_reviewer.recommend_labels(
                             context, available_labels, pr_info
                         )
-                        
+
                         if recommendations:
                             # 应用标签到PR
                             confidence_threshold = (
-                                settings.label_confidence_threshold 
-                                if hasattr(settings, 'label_confidence_threshold') 
+                                settings.label_confidence_threshold
+                                if hasattr(settings, "label_confidence_threshold")
                                 else 0.7
                             )
                             auto_create_labels = (
-                                settings.label_auto_create 
-                                if hasattr(settings, 'label_auto_create') 
+                                settings.label_auto_create
+                                if hasattr(settings, "label_auto_create")
                                 else False
                             )
-                            
+
                             label_results = await label_service.apply_labels_to_pr(
                                 pr_info["repo_owner"],
                                 pr_info["repo_name"],
@@ -144,7 +149,7 @@ class ReviewWorker:
                                 confidence_threshold=confidence_threshold,
                                 auto_create=auto_create_labels,
                             )
-                            
+
                             logger.info(
                                 f"[{task_id}] 标签应用完成: "
                                 f"已应用 {len(label_results.get('applied', []))} 个, "
@@ -154,16 +159,18 @@ class ReviewWorker:
                         else:
                             logger.info(f"[{task_id}] AI未推荐任何标签")
                             return None
-                            
+
                     except Exception as label_error:
-                        logger.warning(f"[{task_id}] 标签推荐失败（不影响审查）: {label_error}")
+                        logger.warning(
+                            f"[{task_id}] 标签推荐失败（不影响审查）: {label_error}"
+                        )
                         return None
-                
+
                 tasks.append(run_label_recommendation())
 
             # 并行执行所有任务
             results = await asyncio.gather(*tasks, return_exceptions=True)
-            
+
             # 解析结果
             review_result = results[0]
             if not isinstance(review_result, Exception):
@@ -172,7 +179,7 @@ class ReviewWorker:
             else:
                 logger.error(f"[{task_id}] AI审查失败: {review_result}")
                 raise review_result
-            
+
             # 获取标签推荐结果
             label_results = None
             if enable_label_recommendation and len(results) > 1:
@@ -185,7 +192,12 @@ class ReviewWorker:
             if review_obj:
                 logger.info(f"[{task_id}] 更新评论为完整内容...")
                 await self.comment_service.update_review(
-                    review_obj, review_result, analysis.strategy, pr, label_results, analysis
+                    review_obj,
+                    review_result,
+                    analysis.strategy,
+                    pr,
+                    label_results,
+                    analysis,
                 )
 
             # 10. 更新状态为完成
@@ -302,7 +314,9 @@ class ReviewWorker:
                 session.add(comment)
 
             await session.commit()
-            logger.info(f"保存了 {len(comments)} 条整体评论和 {len(inline_comments)} 条行内评论")
+            logger.info(
+                f"保存了 {len(comments)} 条整体评论和 {len(inline_comments)} 条行内评论"
+            )
 
     async def _save_skip_record(self, analysis: PRAnalysis, pr_info: Dict[str, Any]):
         """保存跳过记录"""
