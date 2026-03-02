@@ -219,14 +219,17 @@ class AIReviewer:
         }
 
         try:
-            # 对于深度审查策略，尝试提取评分
-            if strategy == "deep":
-                # 查找评分模式
-                import re
+            # 对所有策略尝试提取评分（如果有）
+            import re
 
-                score_match = re.search(r"评分[：:]\s*(\d+)", review_text)
-                if score_match:
-                    result["overall_score"] = int(score_match.group(1))
+            score_match = re.search(r"评分[：:]\s*(\d+)", review_text)
+            if score_match:
+                result["overall_score"] = int(score_match.group(1))
+                logger.info(
+                    f"✅ 成功提取评分: {result['overall_score']}/10 (策略: {strategy})"
+                )
+            else:
+                logger.debug(f"⚠️ 未在审查结果中找到评分 (策略: {strategy})")
 
             # 先提取行内评论（### 文件路径:行号 格式）
             self._extract_inline_comments(result, review_text)
@@ -268,6 +271,14 @@ class AIReviewer:
         """从章节中添加评论"""
         content_text = "\n".join(content).strip()
         if not content_text:
+            return
+
+        # 跳过行内评论格式的章节（如：### 🔴 config.py:28）
+        # 这些章节由 _extract_inline_comments 单独处理，不应重复计数
+        import re
+
+        inline_comment_pattern = r"###\s*[🔴🟡💡⚠️]\s+[^\s:]+:[\d\-\s,]+"
+        if re.search(inline_comment_pattern, section):
             return
 
         # 根据章节标题确定严重程度
@@ -1067,6 +1078,12 @@ class AIReviewer:
                 }
 
                 result["inline_comments"].append(inline_comment)
+
+                # 同时更新问题统计（用于决策引擎）
+                if severity in result["issues"]:
+                    # 使用简洁的描述作为问题统计
+                    issue_summary = f"{file_path}:{primary_line}"
+                    result["issues"][severity].append(issue_summary)
 
                 # 记录日志
                 if len(line_numbers) > 1:

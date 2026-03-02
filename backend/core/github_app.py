@@ -347,6 +347,211 @@ class GitHubAppClient:
             logger.error(f"创建标签失败: {e}", exc_info=True)
             return False
 
+    def has_existing_review(
+        self,
+        repo_owner: str,
+        repo_name: str,
+        pr_number: int,
+        bot_username: str,
+        event: str,
+    ) -> bool:
+        """检查是否已存在相同类型的Review（幂等性检查）
+
+        Args:
+            repo_owner: 仓库所有者
+            repo_name: 仓库名称
+            pr_number: PR编号
+            bot_username: 机器人用户名
+            event: Review事件类型 (APPROVE, REQUEST_CHANGES, COMMENT)
+
+        Returns:
+            是否已存在相同类型的Review
+        """
+        try:
+            client = self.get_repo_client(repo_owner, repo_name)
+            if not client:
+                logger.warning(
+                    f"无法获取 {repo_owner}/{repo_name} 的客户端，跳过幂等性检查"
+                )
+                return False
+
+            repo = client.get_repo(f"{repo_owner}/{repo_name}")
+            pr = repo.get_pull(pr_number)
+
+            # 获取所有Reviews
+            reviews = pr.get_reviews()
+
+            # 检查是否有来自机器人的相同类型的Review
+            for review in reviews:
+                if (
+                    review.user.login == bot_username
+                    and review.state.upper() == event.upper()
+                ):
+                    logger.info(
+                        f"发现已存在的Review: {repo_owner}/{repo_name}#{pr_number}, "
+                        f"state={review.state}, user={review.user.login}, "
+                        f"submitted_at={review.submitted_at}"
+                    )
+                    return True
+
+            return False
+
+        except Exception as e:
+            logger.error(f"检查现有Review失败: {e}", exc_info=True)
+            # 出错时返回False，允许继续提交
+            return False
+
+    def submit_review(
+        self,
+        repo_owner: str,
+        repo_name: str,
+        pr_number: int,
+        event: str,
+        body: str,
+        bot_username: str = None,
+        enable_idempotency_check: bool = True,
+    ) -> bool:
+        """提交审查决定到GitHub
+
+        Args:
+            repo_owner: 仓库所有者
+            repo_name: 仓库名称
+            pr_number: PR编号
+            event: Review事件类型 (APPROVE, REQUEST_CHANGES, COMMENT)
+            body: Review评论内容
+            bot_username: 机器人用户名（用于幂等性检查）
+            enable_idempotency_check: 是否启用幂等性检查
+
+        Returns:
+            是否成功提交
+        """
+        try:
+            client = self.get_repo_client(repo_owner, repo_name)
+            if not client:
+                logger.error(f"无法获取 {repo_owner}/{repo_name} 的客户端")
+                return False
+
+            repo = client.get_repo(f"{repo_owner}/{repo_name}")
+            pr = repo.get_pull(pr_number)
+
+            # 幂等性检查：避免重复提交相同类型的Review
+            if enable_idempotency_check and bot_username:
+                if self.has_existing_review(
+                    repo_owner, repo_name, pr_number, bot_username, event
+                ):
+                    logger.info(
+                        f"跳过重复提交Review: {repo_owner}/{repo_name}#{pr_number}, "
+                        f"event={event}"
+                    )
+                    return True
+
+            # 提交Review
+            pr.create_review(event=event, body=body)
+
+            logger.info(
+                f"✅ 成功提交Review: {repo_owner}/{repo_name}#{pr_number}, "
+                f"event={event}, body_length={len(body)}"
+            )
+            return True
+
+        except Exception as e:
+            logger.error(f"提交Review失败: {e}", exc_info=True)
+            return False
+
+    def submit_review_with_inline_comments(
+        self,
+        repo_owner: str,
+        repo_name: str,
+        pr_number: int,
+        event: str,
+        body: str,
+        inline_comments: list = None,
+        bot_username: str = None,
+        enable_idempotency_check: bool = True,
+    ) -> bool:
+        """提交审查决定到GitHub（包含行内评论）
+
+        Args:
+            repo_owner: 仓库所有者
+            repo_name: 仓库名称
+            pr_number: PR编号
+            event: Review事件类型 (APPROVE, REQUEST_CHANGES, COMMENT)
+            body: Review评论内容
+            inline_comments: 行内评论列表，格式：[{"path": str, "line": int, "body": str}]
+            bot_username: 机器人用户名（用于幂等性检查）
+            enable_idempotency_check: 是否启用幂等性检查
+
+        Returns:
+            是否成功提交
+        """
+        try:
+            client = self.get_repo_client(repo_owner, repo_name)
+            if not client:
+                logger.error(f"无法获取 {repo_owner}/{repo_name} 的客户端")
+                return False
+
+            repo = client.get_repo(f"{repo_owner}/{repo_name}")
+            pr = repo.get_pull(pr_number)
+
+            # 幂等性检查：避免重复提交相同类型的Review
+            if enable_idempotency_check and bot_username:
+                if self.has_existing_review(
+                    repo_owner, repo_name, pr_number, bot_username, event
+                ):
+                    logger.info(
+                        f"跳过重复提交Review: {repo_owner}/{repo_name}#{pr_number}, "
+                        f"event={event}"
+                    )
+                    return True
+
+            # 构建行内评论格式
+            comments = []
+            if inline_comments:
+                for comment in inline_comments:
+                    comments.append(
+                        {
+                            "path": comment.get("file_path"),
+                            "line": comment.get("line_number"),
+                            "body": comment.get("body", ""),
+                        }
+                    )
+
+            # 提交Review（包含行内评论）
+            pr.create_review(event=event, body=body, comments=comments)
+
+            logger.info(
+                f"✅ 成功提交Review: {repo_owner}/{repo_name}#{pr_number}, "
+                f"event={event}, body_length={len(body)}, inline_comments={len(comments)}"
+            )
+            return True
+
+        except Exception as e:
+            logger.error(f"提交Review失败: {e}", exc_info=True)
+            return False
+
+    def get_bot_username(self, repo_owner: str, repo_name: str) -> str:
+        """获取机器人用户名（用于幂等性检查）
+
+        Args:
+            repo_owner: 仓库所有者
+            repo_name: 仓库名称
+
+        Returns:
+            机器人用户名
+        """
+        try:
+            client = self.get_repo_client(repo_owner, repo_name)
+            if not client:
+                return None
+
+            # 获取当前认证用户的用户名
+            user = client.get_user()
+            return user.login
+
+        except Exception as e:
+            logger.error(f"获取机器人用户名失败: {e}")
+            return None
+
 
 def verify_webhook_signature(payload: bytes, signature: str) -> bool:
     """验证Webhook签名"""

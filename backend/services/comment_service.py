@@ -56,6 +56,19 @@ class CommentService:
             logger.error(f"创建占位评论时出错: {e}", exc_info=True)
             raise
 
+    async def delete_placeholder_comment(self, comment: Any):
+        """删除占位评论
+
+        Args:
+            comment: GitHub Issue Comment 对象（占位评论）
+        """
+        try:
+            comment.delete()
+            logger.info(f"✓ 已删除占位评论 (Comment ID: {comment.id})")
+        except Exception as e:
+            logger.error(f"删除占位评论时出错: {e}", exc_info=True)
+            # 不抛出异常，因为占位评论删除失败不应影响主流程
+
     async def update_review(
         self,
         comment: Any,
