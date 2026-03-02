@@ -67,9 +67,9 @@ class AIReviewer:
             OpenAI API响应对象
 
         Raises:
-            Exception: 重试3次后仍然失败
+            Exception: 重试10次后仍然失败
         """
-        max_retries = 3
+        max_retries = 10
         retry_delay = 3  # 秒
 
         for attempt in range(max_retries):
@@ -512,11 +512,49 @@ class AIReviewer:
                         "error": "该路径在跳过列表中，无法访问",
                     }
 
-            # 获取PR基础分支的文件内容
-            content_file = repo.get_contents(file_path, pr.base.sha)
+            # 智能分支选择：优先尝试PR的HEAD分支（包含最新变更）
+            content_file = None
+            tried_branches = []
+            
+            # 1. 先尝试从PR的HEAD分支读取（包含新增和修改的文件）
+            try:
+                content_file = repo.get_contents(file_path, pr.head.sha)
+                tried_branches.append("HEAD")
+                logger.debug(f"✅ 从PR的HEAD分支读取文件成功: {file_path}")
+            except Exception as head_error:
+                logger.debug(f"⚠️  从PR的HEAD分支读取失败: {file_path}, 错误: {head_error}")
+                
+                # 2. 如果HEAD分支失败，尝试从base分支读取（可能被删除的文件）
+                try:
+                    content_file = repo.get_contents(file_path, pr.base.sha)
+                    tried_branches.append("base")
+                    logger.debug(f"✅ 从PR的base分支读取文件成功: {file_path}")
+                except Exception as base_error:
+                    logger.debug(f"⚠️  从PR的base分支读取也失败: {file_path}, 错误: {base_error}")
+                    
+                    # 3. 都失败了，返回友好的错误提示
+                    return {
+                        "file_path": file_path,
+                        "error": "文件在PR的HEAD和base分支中都不存在",
+                        "hint": "这可能是一个新增的文件，请基于PR diff中的patch进行审查",
+                        "tried_branches": tried_branches,
+                    }
+
+            if not content_file:
+                return {
+                    "file_path": file_path,
+                    "error": "无法获取文件内容",
+                    "tried_branches": tried_branches,
+                }
 
             if content_file.size > 100000:  # 限制100KB
-                return {"error": "文件过大", "size": content_file.size, "content": None}
+                return {
+                    "file_path": file_path,
+                    "error": "文件过大",
+                    "size": content_file.size, 
+                    "content": None,
+                    "tried_branches": tried_branches,
+                }
 
             # 解码文件内容
             content = content_file.decoded_content.decode("utf-8")
@@ -525,11 +563,16 @@ class AIReviewer:
                 "file_path": file_path,
                 "content": content,
                 "size": content_file.size,
+                "branch": tried_branches[0] if tried_branches else "unknown",
             }
 
         except Exception as e:
-            logger.error(f"读取文件 {file_path} 失败: {e}")
-            return {"file_path": file_path, "error": f"无法读取文件: {str(e)}"}
+            logger.error(f"读取文件 {file_path} 时发生未预期的错误: {e}", exc_info=True)
+            return {
+                "file_path": file_path, 
+                "error": f"读取文件时发生错误: {str(e)}",
+                "hint": "请检查文件路径是否正确，或基于PR diff进行审查"
+            }
 
     async def _tool_list_directory(
         self, directory: str, repo: Any, pr: Any
@@ -557,8 +600,35 @@ class AIReviewer:
                         "count": 0,
                     }
 
-            # 获取目录内容
-            contents = repo.get_contents(directory, pr.base.sha)
+            # 智能分支选择：优先尝试PR的HEAD分支
+            contents = None
+            tried_branches = []
+            
+            # 1. 先尝试从PR的HEAD分支读取（包含新增和修改的目录）
+            try:
+                contents = repo.get_contents(directory, pr.head.sha)
+                tried_branches.append("HEAD")
+                logger.debug(f"✅ 从PR的HEAD分支列出目录成功: {directory}")
+            except Exception as head_error:
+                logger.debug(f"⚠️  从PR的HEAD分支列出目录失败: {directory}, 错误: {head_error}")
+                
+                # 2. 如果HEAD分支失败，尝试从base分支读取
+                try:
+                    contents = repo.get_contents(directory, pr.base.sha)
+                    tried_branches.append("base")
+                    logger.debug(f"✅ 从PR的base分支列出目录成功: {directory}")
+                except Exception as base_error:
+                    logger.debug(f"⚠️  从PR的base分支列出目录也失败: {directory}, 错误: {base_error}")
+                    
+                    # 3. 都失败了，返回友好的错误提示
+                    return {
+                        "directory": directory,
+                        "error": "目录在PR的HEAD和base分支中都不存在",
+                        "hint": "这可能是一个新增的目录，请基于PR diff中的patch进行审查",
+                        "items": [],
+                        "count": 0,
+                        "tried_branches": tried_branches,
+                    }
 
             if isinstance(contents, list):
                 items = []
@@ -587,6 +657,7 @@ class AIReviewer:
                     "filtered": len(contents) - len(items)
                     if len(items) < len(contents)
                     else 0,
+                    "branch": tried_branches[0] if tried_branches else "unknown",
                 }
             else:
                 # 单个文件 - 也需要检查skip_paths
@@ -597,6 +668,7 @@ class AIReviewer:
                             "error": "该路径在跳过列表中",
                             "items": [],
                             "count": 0,
+                            "tried_branches": tried_branches,
                         }
 
                 # 单个文件
@@ -611,13 +683,15 @@ class AIReviewer:
                         }
                     ],
                     "count": 1,
+                    "branch": tried_branches[0] if tried_branches else "unknown",
                 }
 
         except Exception as e:
-            logger.error(f"列出目录 {directory} 失败: {e}")
+            logger.error(f"列出目录 {directory} 时发生未预期的错误: {e}", exc_info=True)
             return {
                 "directory": directory,
-                "error": f"无法列出目录: {str(e)}",
+                "error": f"列出目录时发生错误: {str(e)}",
+                "hint": "请检查目录路径是否正确，或基于PR diff进行审查",
                 "items": [],
                 "count": 0,
             }
@@ -635,10 +709,12 @@ class AIReviewer:
 1. **read_file**: 读取指定文件的完整内容
    - 使用场景：需要理解某个函数的完整实现、查看配置文件详情、了解依赖模块
    - 参数：file_path（文件路径）
+   - **注意**：对于新增文件，工具会自动从PR的HEAD分支读取；对于已存在的文件，会从base分支读取
 
 2. **list_directory**: 列出目录中的文件和子目录
    - 使用场景：了解模块结构、查找相关文件、探索项目组织
    - 参数：directory（目录路径）
+   - **注意**：对于新增目录，工具会自动从PR的HEAD分支读取；对于已存在的目录，会从base分支读取
 
 ## 使用建议
 
@@ -647,6 +723,18 @@ class AIReviewer:
 - 当需要了解模块结构时，使用 list_directory 查看目录
 - 合理使用工具，避免不必要的文件读取
 - 工具调用会消耗额外的token，请按需使用
+
+## ⚠️ 工具错误处理
+
+如果工具返回错误，例如：
+- "文件在PR的HEAD和base分支中都不存在"：这可能是文件路径错误或文件已被删除
+- "该路径在跳过列表中"：系统配置跳过了该路径（如node_modules、.git等）
+- "文件过大"：文件超过100KB限制，请基于diff进行审查
+
+**重要**：如果工具返回错误，请不要重复尝试读取该文件，而是：
+1. 基于PR diff中的patch内容进行审查
+2. 在整体评论中说明无法访问该文件
+3. 继续审查其他可访问的文件
 """
 
         # 添加行号安全区信息
