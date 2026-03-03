@@ -134,4 +134,4 @@ async def handle_pull_request_event(payload: Dict[str, Any]) -> JSONResponse:
 @router.get("/health")
 async def health_check() -> JSONResponse:
     """健康检查端点"""
-    return JSONResponse(content={"status": "healthy", "service": "PR AI Reviewer"})
+    return JSONResponse(content={"status": "healthy", "service": "Sakura AI Reviewer"})
