@@ -1,4 +1,4 @@
-"""PR AI Reviewer 主应用"""
+"""Sakura AI Reviewer 主应用"""
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -26,7 +26,7 @@ settings = get_settings()
 async def lifespan(app: FastAPI):
     """应用生命周期管理"""
     # 启动时
-    logger.info("🚀 PR AI Reviewer 启动中...")
+    logger.info("🚀 Sakura AI Reviewer 启动中...")
     logger.info(f"📊 日志级别: {settings.log_level}")
     logger.info(f"🌐 应用域名: {settings.app_domain}")
     logger.info(f"🤖 OpenAI模型: {settings.openai_model}")
@@ -41,12 +41,12 @@ async def lifespan(app: FastAPI):
     yield
 
     # 关闭时
-    logger.info("👋 PR AI Reviewer 关闭中...")
+    logger.info("👋 Sakura AI Reviewer 关闭中...")
 
 
 # 创建FastAPI应用
 app = FastAPI(
-    title="PR AI Reviewer",
+    title="Sakura AI Reviewer",
     description="GitHub PR AI代码审查机器人",
     version="1.0.0",
     lifespan=lifespan,
@@ -69,7 +69,7 @@ app.include_router(webhook.router, prefix="/api/webhook", tags=["Webhook"])
 async def root():
     """根路径"""
     return {
-        "service": "PR AI Reviewer",
+        "service": "Sakura AI Reviewer",
         "version": "1.0.0",
         "status": "running",
         "docs": "/docs",
@@ -79,7 +79,7 @@ async def root():
 @app.get("/health")
 async def health():
     """健康检查"""
-    return {"status": "healthy", "service": "PR AI Reviewer"}
+    return {"status": "healthy", "service": "Sakura AI Reviewer"}
 
 
 if __name__ == "__main__":
