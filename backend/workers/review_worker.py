@@ -211,6 +211,9 @@ class ReviewWorker:
                 decision_reason=decision_reason,
             )
 
+            # 12. 发送Telegram审查完成通知
+            await self._send_review_complete_notification(pr_info, review_result)
+
             logger.info(
                 f"[{task_id}] 审查任务完成: {pr_info['repo_full_name']}#{pr_info['pr_number']}, "
                 f"decision={decision.value if decision else 'N/A'}"
@@ -471,6 +474,46 @@ class ReviewWorker:
             logger.error(f"[{task_id}] 决策引擎执行失败: {e}", exc_info=True)
             # 出错时返回None，不影响审查完成
             return None, f"决策过程异常: {str(e)}"
+
+    async def _send_review_complete_notification(
+        self, pr_info: Dict[str, Any], review_result: Dict[str, Any]
+    ):
+        """发送审查完成通知到Telegram"""
+        try:
+            from backend.telegram.notifications import get_notification_sender
+
+            notification_sender = get_notification_sender()
+            if not notification_sender:
+                logger.debug("Telegram通知发送器未初始化，跳过通知")
+                return
+
+            # 计算严重问题数量
+            comments = review_result.get("comments", [])
+            critical_count = sum(
+                1 for c in comments if c.get("severity") == "critical"
+            )
+
+            # 获取评分
+            score = review_result.get("overall_score", 0)
+
+            # 构建PR URL
+            pr_url = f"https://github.com/{pr_info['repo_full_name']}/pull/{pr_info['pr_number']}"
+
+            # 发送通知
+            await notification_sender.send_review_complete(
+                repo_name=pr_info['repo_full_name'],
+                pr_number=pr_info['pr_number'],
+                score=score,
+                critical_count=critical_count,
+                pr_url=pr_url,
+            )
+
+            logger.info(
+                f"已发送审查完成通知: {pr_info['repo_full_name']}#{pr_info['pr_number']}"
+            )
+
+        except Exception as e:
+            logger.error(f"发送Telegram通知失败: {e}", exc_info=True)
 
 
 # 全局Worker实例

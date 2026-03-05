@@ -5,10 +5,12 @@ from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
 from loguru import logger
 import sys
+import asyncio
 
 from backend.core.config import get_settings
 from backend.models import init_db
 from backend.api import webhook
+from backend.telegram import start_telegram_bot, stop_telegram_bot
 
 # 配置日志
 logger.remove()
@@ -38,10 +40,30 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.error(f"❌ 数据库初始化失败: {e}")
 
+    # 启动 Telegram Bot（后台任务）
+    telegram_task = None
+    try:
+        telegram_task = asyncio.create_task(start_telegram_bot())
+        logger.info("✅ Telegram Bot 已启动")
+    except Exception as e:
+        logger.error(f"❌ Telegram Bot 启动失败: {e}")
+
     yield
 
     # 关闭时
     logger.info("👋 Sakura AI Reviewer 关闭中...")
+    
+    # 停止 Telegram Bot
+    try:
+        await stop_telegram_bot()
+        if telegram_task:
+            telegram_task.cancel()
+            try:
+                await telegram_task
+            except asyncio.CancelledError:
+                pass
+    except Exception as e:
+        logger.error(f"❌ 停止 Telegram Bot 时出错: {e}")
 
 
 # 创建FastAPI应用

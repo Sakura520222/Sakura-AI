@@ -33,7 +33,7 @@ class PRStatus(str, enum.Enum):
 
 
 class ReviewDecision(str, enum.Enum):
-    """审查决策"""
+    """审查决策（小写值匹配数据库）"""
 
     APPROVE = "approve"
     REQUEST_CHANGES = "request_changes"
@@ -41,7 +41,7 @@ class ReviewDecision(str, enum.Enum):
 
 
 class ReviewStrategy(str, enum.Enum):
-    """审查策略"""
+    """审查策略（小写值匹配数据库）"""
 
     QUICK = "quick"
     STANDARD = "standard"
@@ -51,7 +51,7 @@ class ReviewStrategy(str, enum.Enum):
 
 
 class CommentSeverity(str, enum.Enum):
-    """评论严重程度"""
+    """评论严重程度（小写值匹配数据库）"""
 
     CRITICAL = "critical"
     MAJOR = "major"
@@ -60,7 +60,7 @@ class CommentSeverity(str, enum.Enum):
 
 
 class CommentType(str, enum.Enum):
-    """评论类型"""
+    """评论类型（小写值匹配数据库）"""
 
     OVERALL = "overall"
     FILE = "file"
@@ -86,10 +86,10 @@ class PRReview(Base):
     code_file_count = Column(Integer)
 
     # 审查配置
-    strategy = Column(Enum(ReviewStrategy), nullable=False)
+    strategy = Column(String(50), nullable=False)
 
     # 状态
-    status = Column(Enum(PRStatus), default=PRStatus.PENDING, nullable=False)
+    status = Column(String(50), default=PRStatus.PENDING.value, nullable=False)
     error_message = Column(Text, nullable=True)
 
     # 审查结果
@@ -97,7 +97,7 @@ class PRReview(Base):
     overall_score = Column(Integer, nullable=True)  # 1-10分
 
     # 审查决策
-    decision = Column(Enum(ReviewDecision), nullable=True)
+    decision = Column(String(50), nullable=True)
     decision_reason = Column(Text, nullable=True)
 
     # 时间戳
@@ -131,12 +131,8 @@ class ReviewComment(Base):
     line_number = Column(Integer, nullable=True)
 
     # 评论内容
-    comment_type = Column(
-        Enum(CommentType), default=CommentType.OVERALL, nullable=False
-    )
-    severity = Column(
-        Enum(CommentSeverity), default=CommentSeverity.SUGGESTION, nullable=False
-    )
+    comment_type = Column(String(50), default=CommentType.OVERALL.value, nullable=False)
+    severity = Column(String(50), default=CommentSeverity.SUGGESTION.value, nullable=False)
     content = Column(Text, nullable=False)
 
     # 创建时间
