@@ -52,10 +52,26 @@ class Settings(BaseSettings):
     # Webhook配置
     webhook_path: str = "/api/webhook/github"
 
+    # Telegram Bot配置
+    telegram_bot_token: str
+    telegram_admin_user_ids: str = ""  # 逗号分隔的超级管理员ID列表
+    telegram_default_chat_id: str = ""  # 默认接收通知的聊天ID
+
     @property
     def webhook_url(self) -> str:
         """获取完整的Webhook URL"""
         return f"https://{self.app_domain}{self.webhook_path}"
+
+    @property
+    def telegram_admin_ids_list(self) -> list[int]:
+        """获取超级管理员ID列表"""
+        if not self.telegram_admin_user_ids:
+            return []
+        return [
+            int(id.strip())
+            for id in self.telegram_admin_user_ids.split(",")
+            if id.strip()
+        ]
 
 
 class StrategyConfig:

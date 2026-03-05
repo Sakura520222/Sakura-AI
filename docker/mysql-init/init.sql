@@ -1,4 +1,4 @@
--- PR AI Reviewer 数据库初始化脚本
+-- Sakura AI Reviewer 数据库初始化脚本
 
 CREATE DATABASE IF NOT EXISTS `sakura-pr` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
 

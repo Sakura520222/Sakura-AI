@@ -9,7 +9,7 @@ cryptography==41.0.7
 
 # AI集成
 openai==1.10.0
-httpx==0.26.0
+httpx==0.27.0
 
 # 数据库
 sqlalchemy==2.0.25
@@ -29,5 +29,8 @@ pydantic-settings==2.1.0
 
 # 日志
 loguru==0.7.2
+
+# Telegram Bot
+python-telegram-bot==21.0
 
 # GitHub签名验证 (hmac 和 hashlib 是 Python 内置模块，无需安装)

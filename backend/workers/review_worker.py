@@ -6,12 +6,13 @@ from datetime import datetime
 from loguru import logger
 import uuid
 
-from backend.core.config import get_settings
+from backend.core.config import get_settings, get_strategy_config
 from backend.core.github_app import GitHubAppClient
 from backend.services.pr_analyzer import PRAnalyzer, PRAnalysis
 from backend.services.ai_reviewer import AIReviewer
 from backend.services.comment_service import CommentService
 from backend.services.label_service import label_service
+from backend.services.decision_engine import get_decision_engine
 from backend.models.database import (
     PRReview,
     PRStatus,
@@ -19,9 +20,11 @@ from backend.models.database import (
     ReviewComment,
     CommentSeverity,
     CommentType,
+    ReviewDecision,
 )
 
 settings = get_settings()
+strategy_config = get_strategy_config()
 
 
 def get_async_session():
@@ -100,11 +103,11 @@ class ReviewWorker:
             # 准备并行任务
             tasks = []
 
-            # 任务1: AI审查
+            # 任务1: AI审查（使用分批审查模式）
             if enable_tools:
-                logger.info(f"[{task_id}] 使用AI工具增强模式进行审查")
+                logger.info(f"[{task_id}] 使用AI工具增强模式进行审查（支持分批处理）")
                 tasks.append(
-                    self.ai_reviewer.review_pr_with_tools(
+                    self.ai_reviewer.review_pr_with_tools_batched(
                         context, analysis.strategy, repo, pr
                     )
                 )
@@ -188,27 +191,32 @@ class ReviewWorker:
                 else:
                     label_results = results[1]
 
-            # 9. 【第二阶段】更新评论为完整内容
+            # 9. 【第二阶段】删除占位评论，准备创建最终Review
             if review_obj:
-                logger.info(f"[{task_id}] 更新评论为完整内容...")
-                await self.comment_service.update_review(
-                    review_obj,
-                    review_result,
-                    analysis.strategy,
-                    pr,
-                    label_results,
-                    analysis,
-                )
+                logger.info(f"[{task_id}] 删除占位评论...")
+                await self.comment_service.delete_placeholder_comment(review_obj)
 
-            # 10. 更新状态为完成
+            # 10. 【新增】决策引擎：做出审查决定并提交到GitHub（包含行内评论）
+            logger.info(f"[{task_id}] 执行决策引擎...")
+            decision, decision_reason = await self._make_and_submit_decision(
+                pr_info, review_result, review_id, task_id, pr, analysis, label_results
+            )
+
+            # 11. 更新状态为完成
             await self._update_review_status(
                 review_id,
                 PRStatus.COMPLETED,
                 overall_score=review_result.get("overall_score"),
+                decision=decision,
+                decision_reason=decision_reason,
             )
 
+            # 12. 发送Telegram审查完成通知
+            await self._send_review_complete_notification(pr_info, review_result)
+
             logger.info(
-                f"[{task_id}] 审查任务完成: {pr_info['repo_full_name']}#{pr_info['pr_number']}"
+                f"[{task_id}] 审查任务完成: {pr_info['repo_full_name']}#{pr_info['pr_number']}, "
+                f"decision={decision.value if decision else 'N/A'}"
             )
             return task_id
 
@@ -258,7 +266,12 @@ class ReviewWorker:
             return record.id
 
     async def _update_review_status(
-        self, review_id: int, status: PRStatus, overall_score: Optional[int] = None
+        self,
+        review_id: int,
+        status: PRStatus,
+        overall_score: Optional[int] = None,
+        decision: Optional[ReviewDecision] = None,
+        decision_reason: Optional[str] = None,
     ):
         """更新审查状态"""
         AsyncSession = get_async_session()
@@ -270,6 +283,10 @@ class ReviewWorker:
                     record.completed_at = datetime.utcnow()
                 if overall_score is not None:
                     record.overall_score = overall_score
+                if decision is not None:
+                    record.decision = decision
+                if decision_reason is not None:
+                    record.decision_reason = decision_reason
                 await session.commit()
 
     async def _save_review_results(
@@ -362,6 +379,139 @@ class ReviewWorker:
             session.add(record)
             await session.commit()
             logger.info(f"[{task_id}] 保存错误记录")
+
+    async def _make_and_submit_decision(
+        self,
+        pr_info: Dict[str, Any],
+        review_result: Dict[str, Any],
+        review_id: int,
+        task_id: str,
+        pr: Any,
+        analysis: PRAnalysis,
+        label_results: Optional[Dict[str, Any]] = None,
+    ) -> tuple[Optional[ReviewDecision], Optional[str]]:
+        """做出审查决定并提交到GitHub（包含行内评论）
+
+        Args:
+            pr_info: PR信息
+            review_result: AI审查结果
+            review_id: 审查记录ID
+            task_id: 任务ID
+            pr: GitHub PR对象
+            analysis: PR分析结果
+            label_results: 标签应用结果
+
+        Returns:
+            (决策类型, 决策理由)
+        """
+        try:
+            # 1. 获取决策引擎
+            decision_engine = get_decision_engine()
+
+            # 2. 做出决策
+            decision, decision_reason = decision_engine.make_decision(
+                review_result=review_result,
+                repo_full_name=pr_info["repo_full_name"],
+            )
+
+            logger.info(
+                f"[{task_id}] 决策引擎结果: decision={decision.value}, "
+                f"reason={decision_reason}"
+            )
+
+            # 3. 获取策略名称
+            strategy_info = strategy_config.get_strategy(analysis.strategy)
+            strategy_name = strategy_info.get("name", "代码审查")
+
+            # 4. 格式化审查评论（包含标签信息和策略名称）
+            review_body = decision_engine.format_review_body(
+                decision=decision,
+                review_result=review_result,
+                decision_reason=decision_reason,
+                label_results=label_results,
+                strategy_name=strategy_name,
+            )
+
+            # 5. 获取行内评论
+            inline_comments = review_result.get("inline_comments", [])
+
+            # 6. 提交Review到GitHub（包含行内评论）
+            # 检查是否启用幂等性检查
+            policy = decision_engine._get_repo_policy(pr_info["repo_full_name"])
+            enable_idempotency = policy.get("enable_idempotency_check", True)
+
+            # 获取机器人用户名（用于幂等性检查）
+            bot_username = self.github_app.get_bot_username(
+                pr_info["repo_owner"],
+                pr_info["repo_name"],
+            )
+
+            # 使用 submit_review_with_inline_comments 方法
+            success = self.github_app.submit_review_with_inline_comments(
+                repo_owner=pr_info["repo_owner"],
+                repo_name=pr_info["repo_name"],
+                pr_number=pr_info["pr_number"],
+                event=decision.value.upper(),  # APPROVE, REQUEST_CHANGES, COMMENT
+                body=review_body,
+                inline_comments=inline_comments,
+                bot_username=bot_username,
+                enable_idempotency_check=enable_idempotency,
+            )
+
+            if success:
+                logger.info(
+                    f"[{task_id}] ✅ 成功提交Review到GitHub: {decision.value} "
+                    f"(含{len(inline_comments)}条行内评论)"
+                )
+            else:
+                logger.warning(
+                    f"[{task_id}] ⚠️ 提交Review到GitHub失败，但已保存到数据库"
+                )
+
+            return decision, decision_reason
+
+        except Exception as e:
+            logger.error(f"[{task_id}] 决策引擎执行失败: {e}", exc_info=True)
+            # 出错时返回None，不影响审查完成
+            return None, f"决策过程异常: {str(e)}"
+
+    async def _send_review_complete_notification(
+        self, pr_info: Dict[str, Any], review_result: Dict[str, Any]
+    ):
+        """发送审查完成通知到Telegram"""
+        try:
+            from backend.telegram.notifications import get_notification_sender
+
+            notification_sender = get_notification_sender()
+            if not notification_sender:
+                logger.debug("Telegram通知发送器未初始化，跳过通知")
+                return
+
+            # 计算严重问题数量
+            comments = review_result.get("comments", [])
+            critical_count = sum(1 for c in comments if c.get("severity") == "critical")
+
+            # 获取评分
+            score = review_result.get("overall_score", 0)
+
+            # 构建PR URL
+            pr_url = f"https://github.com/{pr_info['repo_full_name']}/pull/{pr_info['pr_number']}"
+
+            # 发送通知
+            await notification_sender.send_review_complete(
+                repo_name=pr_info["repo_full_name"],
+                pr_number=pr_info["pr_number"],
+                score=score,
+                critical_count=critical_count,
+                pr_url=pr_url,
+            )
+
+            logger.info(
+                f"已发送审查完成通知: {pr_info['repo_full_name']}#{pr_info['pr_number']}"
+            )
+
+        except Exception as e:
+            logger.error(f"发送Telegram通知失败: {e}", exc_info=True)
 
 
 # 全局Worker实例

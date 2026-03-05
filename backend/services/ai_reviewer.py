@@ -5,6 +5,7 @@ from openai import AsyncOpenAI
 from loguru import logger
 import json
 import asyncio
+import random
 
 from backend.core.config import get_settings, get_strategy_config
 
@@ -59,7 +60,12 @@ class AIReviewer:
         ]
 
     async def _call_ai_with_retry(self, **kwargs) -> Any:
-        """带重试机制的AI API调用
+        """带重试机制的AI API调用（优化的指数退避策略）
+
+        重试策略：
+        - 前3次：快速重试（1s, 2s, 4s）
+        - 后续次数：慢速重试（8s, 16s, 32s...）
+        - 总超时：30秒
 
         处理空响应、异常、网络错误等情况
 
@@ -67,39 +73,93 @@ class AIReviewer:
             OpenAI API响应对象
 
         Raises:
-            Exception: 重试3次后仍然失败
+            Exception: 重试失败或超时
         """
-        max_retries = 3
-        retry_delay = 3  # 秒
+        # 1. 动态调优参数
+        # 120s 给模型足够的 Prefill 时间，16k 确保报告不会中途截断
+        kwargs.setdefault("timeout", 120.0)
+        kwargs.setdefault("max_tokens", 16000)
+
+        # 2. 优化后的重试参数
+        max_retries = 5  # 减少到5次
+        initial_delay = 1.0  # 初始延迟1秒
+        # 总超时应远大于单次超时 * 最大重试次数
+        # timeout=120s, max_retries=5, 理论需要600s
+        # 加上网络延迟和缓冲时间，设置为900s（15分钟）
+        total_timeout = 900.0  # 总超时15分钟
+
+        # 记录开始时间
+        start_time = asyncio.get_event_loop().time()
 
         for attempt in range(max_retries):
+            # 检查总超时
+            elapsed = asyncio.get_event_loop().time() - start_time
+            if elapsed > total_timeout:
+                logger.error(
+                    f"重试总超时（已耗时 {elapsed:.1f}秒 > {total_timeout}秒），放弃重试"
+                )
+                raise Exception(f"AI调用失败：重试总超时（{total_timeout}秒）")
+
             try:
                 # 调用AI API
+                # kwargs 会直接透传给 OpenAI 异步客户端
                 response = await self.client.chat.completions.create(**kwargs)
 
                 # 检查空响应
                 if not response.choices or not response.choices[0].message.content:
                     if attempt < max_retries - 1:
+                        # 混合退避策略：前3次快速，后面慢速
+                        if attempt < 3:
+                            delay = initial_delay * (2**attempt)  # 1s, 2s, 4s
+                        else:
+                            delay = 8 * (2 ** (attempt - 3))  # 8s, 16s...
+
+                        # 添加随机抖动（±20%），避免惊群效应
+                        jitter = random.uniform(0.8, 1.2)
+                        delay = delay * jitter
+
                         logger.warning(
-                            f"AI返回空响应，{retry_delay}秒后重试 ({attempt + 1}/{max_retries})"
+                            f"AI返回空响应，{delay:.1f}秒后重试 "
+                            f"({attempt + 1}/{max_retries}, 已耗时 {elapsed:.1f}s)"
                         )
-                        await asyncio.sleep(retry_delay)
+                        await asyncio.sleep(delay)
                         continue
                     else:
                         logger.error("AI返回空响应，已达最大重试次数")
                         raise Exception("AI返回空响应，已达最大重试次数")
 
                 # 成功返回
+                total_time = asyncio.get_event_loop().time() - start_time
+                logger.info(
+                    f"✅ AI调用成功（耗时 {total_time:.1f}秒，重试 {attempt} 次）"
+                )
                 return response
 
             except Exception as e:
+                # 记录具体的错误类型（是 Timeout 还是 RateLimit）
+                error_type = type(e).__name__
                 if attempt < max_retries - 1:
+                    # 混合退避策略：前3次快速，后面慢速
+                    if attempt < 3:
+                        delay = initial_delay * (2**attempt)  # 1s, 2s, 4s
+                    else:
+                        delay = 8 * (2 ** (attempt - 3))  # 8s, 16s...
+
+                    # 添加随机抖动（±20%）
+                    jitter = random.uniform(0.8, 1.2)
+                    delay = delay * jitter
+
                     logger.warning(
-                        f"AI调用失败: {e}，{retry_delay}秒后重试 ({attempt + 1}/{max_retries})"
+                        f"AI调用失败 [{error_type}]: {e}，{delay:.1f}秒后重试 "
+                        f"({attempt + 1}/{max_retries}, 已耗时 {elapsed:.1f}s)"
                     )
-                    await asyncio.sleep(retry_delay)
+                    await asyncio.sleep(delay)
                 else:
-                    logger.error(f"AI调用失败，已达最大重试次数: {e}")
+                    total_time = asyncio.get_event_loop().time() - start_time
+                    logger.error(
+                        f"AI调用失败 [{error_type}]，已达最大重试次数 "
+                        f"(总耗时 {total_time:.1f}s): {e}"
+                    )
                     raise
 
     async def review_pr(self, context: Dict[str, any], strategy: str) -> Dict[str, any]:
@@ -219,14 +279,17 @@ class AIReviewer:
         }
 
         try:
-            # 对于深度审查策略，尝试提取评分
-            if strategy == "deep":
-                # 查找评分模式
-                import re
+            # 对所有策略尝试提取评分（如果有）
+            import re
 
-                score_match = re.search(r"评分[：:]\s*(\d+)", review_text)
-                if score_match:
-                    result["overall_score"] = int(score_match.group(1))
+            score_match = re.search(r"评分[：:]\s*(\d+)", review_text)
+            if score_match:
+                result["overall_score"] = int(score_match.group(1))
+                logger.info(
+                    f"✅ 成功提取评分: {result['overall_score']}/10 (策略: {strategy})"
+                )
+            else:
+                logger.debug(f"⚠️ 未在审查结果中找到评分 (策略: {strategy})")
 
             # 先提取行内评论（### 文件路径:行号 格式）
             self._extract_inline_comments(result, review_text)
@@ -268,6 +331,14 @@ class AIReviewer:
         """从章节中添加评论"""
         content_text = "\n".join(content).strip()
         if not content_text:
+            return
+
+        # 跳过行内评论格式的章节（如：### 🔴 config.py:28）
+        # 这些章节由 _extract_inline_comments 单独处理，不应重复计数
+        import re
+
+        inline_comment_pattern = r"###\s*[🔴🟡💡⚠️]\s+[^\s:]+:[\d\-\s,]+"
+        if re.search(inline_comment_pattern, section):
             return
 
         # 根据章节标题确定严重程度
@@ -336,6 +407,602 @@ class AIReviewer:
         except Exception as e:
             logger.error(f"审查文件 {file_path} 时出错: {e}")
             return {"file_path": file_path, "review": f"审查失败: {str(e)}"}
+
+    def _split_files_into_batches(
+        self, files: List[Dict[str, Any]], max_files: int = 5, max_lines: int = 2000
+    ) -> List[List[Dict[str, Any]]]:
+        """将文件列表分割成多个批次
+
+        Args:
+            files: 文件列表
+            max_files: 每批最大文件数
+            max_lines: 每批最大行数
+
+        Returns:
+            批次列表，每个批次是一个文件列表
+        """
+        batches = []
+        current_batch = []
+        current_batch_lines = 0
+
+        for file in files:
+            file_lines = file.get("changes", 0)
+
+            # 如果当前批次为空，或者添加该文件不会超过限制
+            if not current_batch or (
+                len(current_batch) < max_files
+                and current_batch_lines + file_lines <= max_lines
+            ):
+                current_batch.append(file)
+                current_batch_lines += file_lines
+            else:
+                # 当前批次已满，保存并开始新批次
+                batches.append(current_batch)
+                current_batch = [file]
+                current_batch_lines = file_lines
+
+        # 添加最后一个批次
+        if current_batch:
+            batches.append(current_batch)
+
+        logger.info(
+            f"文件分批完成: {len(files)} 个文件 → {len(batches)} 个批次 "
+            f"(每批最多 {max_files} 文件 / {max_lines} 行)"
+        )
+
+        return batches
+
+    async def _review_batch(
+        self,
+        batch_files: List[Dict[str, Any]],
+        batch_idx: int,
+        total_batches: int,
+        context: Dict[str, any],
+        strategy: str,
+        repo: Any,
+        pr: Any,
+        use_tools: bool = False,
+    ) -> Dict[str, any]:
+        """审查单个批次
+
+        Args:
+            batch_files: 该批次的文件列表
+            batch_idx: 批次索引（从0开始）
+            total_batches: 总批次数
+            context: 审查上下文
+            strategy: 审查策略
+            repo: GitHub仓库对象
+            pr: GitHub PR对象
+            use_tools: 是否使用AI工具（分批模式默认False）
+
+        Returns:
+            该批次的审查结果
+        """
+        try:
+            logger.info(
+                f"开始审查批次 {batch_idx + 1}/{total_batches} "
+                f"({len(batch_files)} 个文件, 工具: {use_tools})"
+            )
+
+            # 构建批次上下文（只包含该批次的文件）
+            batch_context = context.copy()
+            batch_context["files"] = batch_files
+            batch_context["batch_info"] = {
+                "current": batch_idx + 1,
+                "total": total_batches,
+            }
+
+            # 根据use_tools参数选择审查方法
+            if use_tools:
+                # 使用AI工具（仅用于小PR）
+                logger.info("批次审查使用AI工具增强模式")
+                result = await self.review_pr_with_tools(
+                    batch_context, strategy, repo, pr
+                )
+            else:
+                # 不使用AI工具（分批审查的标准模式）
+                logger.info("批次审查使用标准模式（禁用AI工具，基于patch审查）")
+                result = await self.review_pr(batch_context, strategy)
+
+            logger.info(
+                f"批次 {batch_idx + 1}/{total_batches} 审查完成: "
+                f"{len(result.get('comments', []))} 条评论, "
+                f"{len(result.get('inline_comments', []))} 条行内评论"
+            )
+
+            return result
+
+        except Exception as e:
+            logger.error(f"批次 {batch_idx + 1}/{total_batches} 审查失败: {e}")
+            # 返回一个空结果，避免中断整个审查流程
+            return {
+                "summary": f"批次 {batch_idx + 1} 审查失败: {str(e)}",
+                "comments": [],
+                "inline_comments": [],
+                "overall_score": None,
+                "issues": {"critical": [], "major": [], "minor": [], "suggestions": []},
+            }
+
+    async def _ai_reduce_results(
+        self,
+        batch_results: List[Dict[str, any]],
+        strategy: str,
+        context: Dict[str, any],
+        pr: Any,
+    ) -> Dict[str, any]:
+        """AI智能总结多个批次的审查结果（MapReduce的Reduce阶段）
+
+        Args:
+            batch_results: 所有批次的审查结果列表
+            strategy: 审查策略
+            context: 审查上下文
+            pr: GitHub PR对象
+
+        Returns:
+            AI总结后的审查结果
+        """
+        try:
+            # 1. 过滤异常结果，提取有效结果
+            valid_results = []
+            for idx, result in enumerate(batch_results):
+                if isinstance(result, Exception):
+                    logger.warning(f"批次 {idx + 1} 失败: {result}")
+                    continue
+                valid_results.append(result)
+
+            if not valid_results:
+                logger.error("所有批次都失败了，回退到机械合并")
+                return self._merge_batch_results(batch_results, strategy)
+
+            # 2. 构建精简的批次摘要（不包含完整patch）
+            batch_summaries = self._format_batch_results_for_summary(valid_results)
+
+            # 3. 构建总结prompt
+            summary_prompt = f"""你是一个资深代码审查专家，需要智能汇总多个批次的审查结果，生成一份连贯的整体报告。
+
+## PR信息
+- 仓库: {context.get("repo_full_name", "N/A")}
+- PR编号: {pr.number}
+- 策略: {strategy}
+- 总批次数: {len(valid_results)}
+
+## 各批次审查摘要
+
+{batch_summaries}
+
+## 任务要求
+
+请生成一份**连贯的整体审查报告**，要求：
+
+1. **全局视角**：
+   - 识别跨批次的系统性问题（如多个文件中相同的错误模式）
+   - 去除重复或相似的问题
+   - 按优先级重新排序（critical > major > minor > suggestions）
+
+2. **连贯叙事**：
+   - 用流畅的语言总结PR的主要变更
+   - 指出核心问题和风险
+   - 提供优先修复建议（Top 3-5）
+
+3. **总体评分**：
+   - 基于1-10分给出总体评分
+   - 评分应考虑所有批次的发现
+
+4. **输出格式**：
+   - 使用JSON格式返回
+   - 包含字段：summary, overall_score, top_issues（数组）
+
+## JSON输出格式
+
+```json
+{{
+  "summary": "整体审查总结（200-500字）",
+  "overall_score": 7,
+  "top_issues": [
+    {{
+      "severity": "critical",
+      "description": "问题描述",
+      "files_affected": ["file1.py", "file2.py"]
+    }}
+  ]
+}}
+```
+
+**重要**：
+- 请仅输出JSON，不要包含任何解释文字或markdown标记
+- 确保以 '{{' 开头，以 '}}' 结尾
+- summary要简洁专业，突出核心问题
+- top_issues最多5个最严重的问题
+"""
+
+            logger.info("🧠 调用AI进行智能总结...")
+
+            # 4. 调用AI总结（使用较低温度确保稳定）
+            response = await self._call_ai_with_retry(
+                model=settings.openai_model,
+                messages=[
+                    {
+                        "role": "system",
+                        "content": "你是资深代码审查专家，擅长分析和汇总代码审查结果。",
+                    },
+                    {"role": "user", "content": summary_prompt},
+                ],
+                temperature=0.3,  # 低温度，确保输出稳定
+                timeout=60.0,  # 总结阶段60秒超时
+                max_tokens=4000,  # 限制输出长度
+            )
+
+            # 5. 解析AI总结结果
+            summary_text = response.choices[0].message.content.strip()
+            logger.info(f"✅ AI总结完成，响应长度: {len(summary_text)} 字符")
+
+            # 6. 解析JSON
+            try:
+                # 清理可能的markdown标记
+                if "```json" in summary_text:
+                    start = summary_text.find("```json") + 7
+                    end = summary_text.find("```", start)
+                    summary_text = summary_text[start:end].strip()
+                elif "```" in summary_text:
+                    start = summary_text.find("```") + 3
+                    end = summary_text.find("```", start)
+                    summary_text = summary_text[start:end].strip()
+
+                ai_summary = json.loads(summary_text)
+
+                # 7. 获取PR统计数据
+                analysis = context.get("analysis")
+                if analysis:
+                    file_count = analysis.code_file_count
+                    total_changes = analysis.code_changes
+                else:
+                    file_count = len(context.get("files", []))
+                    total_changes = sum(
+                        f.get("changes", 0) for f in context.get("files", [])
+                    )
+
+                # 8. 机械合并所有批次的详细数据（获取具体问题列表）
+                mechanical_result = self._merge_batch_results(batch_results, strategy)
+
+                # 9. 收集所有行内评论
+                all_inline_comments = []
+                for result in valid_results:
+                    inline_comments = result.get("inline_comments", [])
+                    all_inline_comments.extend(inline_comments)
+
+                # 10. 收集问题统计（用于决策引擎和统计看板）
+                issue_stats = {"critical": 0, "major": 0, "minor": 0, "suggestions": 0}
+                for result in valid_results:
+                    issues = result.get("issues", {})
+                    for severity in ["critical", "major", "minor", "suggestions"]:
+                        issue_stats[severity] += len(issues.get(severity, []))
+
+                # 11. 构建统计看板
+                stats_table = f"""
+| 文件数 | 总行数 | Critical | Major | Minor | Suggestion |
+| :---: | :---: | :---: | :---: | :---: | :---: |
+| {file_count} | {total_changes} | {issue_stats["critical"]} | {issue_stats["major"]} | {issue_stats["minor"]} | {issue_stats["suggestions"]} |
+"""
+
+                # 12. 构建最终的混合报告（AI总结 + 统计看板 + 详细问题列表）
+                combined_summary = f"""## Sakura总结
+
+{ai_summary.get("summary", "")}
+
+**总体评分**: {ai_summary.get("overall_score")}/10
+
+---
+
+## 📊 变更统计
+
+{stats_table}
+
+---
+
+## 📋 详细审查结果
+
+{mechanical_result["summary"]}
+"""
+
+                # 13. 构建最终结果
+                final_result = {
+                    "summary": combined_summary,  # 混合报告
+                    "overall_score": ai_summary.get("overall_score"),
+                    "comments": mechanical_result.get(
+                        "comments", []
+                    ),  # 保留具体问题列表
+                    "inline_comments": all_inline_comments,
+                    "issues": mechanical_result.get("issues", {}),  # 完整的问题统计
+                    "ai_summary": ai_summary,  # 保存AI的原始总结
+                }
+
+                logger.info(
+                    f"🎉 混合报告生成完成: "
+                    f"评分={final_result['overall_score']}/10, "
+                    f"整体评论={len(final_result['comments'])}条, "
+                    f"行内评论={len(all_inline_comments)}条"
+                )
+
+                return final_result
+
+            except json.JSONDecodeError as e:
+                logger.error(f"AI总结JSON解析失败: {e}, 响应: {summary_text[:500]}")
+                logger.warning("回退到机械合并模式")
+                return self._merge_batch_results(batch_results, strategy)
+
+        except Exception as e:
+            logger.error(f"AI智能总结失败: {e}", exc_info=True)
+            logger.warning("回退到机械合并模式")
+            return self._merge_batch_results(batch_results, strategy)
+
+    def _format_batch_results_for_summary(
+        self, batch_results: List[Dict[str, any]]
+    ) -> str:
+        """格式化批次结果用于AI总结
+
+        只发送关键信息，不包含完整patch
+
+        Args:
+            batch_results: 批次结果列表
+
+        Returns:
+            格式化后的摘要文本
+        """
+        summary_parts = []
+
+        for idx, result in enumerate(batch_results, 1):
+            summary_parts.append(f"\n### 批次 {idx}")
+
+            # 评分
+            score = result.get("overall_score")
+            if score:
+                summary_parts.append(f"- 评分: {score}/10")
+
+            # 评论统计
+            comments = result.get("comments", [])
+            inline_comments = result.get("inline_comments", [])
+
+            # 按严重程度统计
+            issues = result.get("issues", {})
+            critical_count = len(issues.get("critical", []))
+            major_count = len(issues.get("major", []))
+            minor_count = len(issues.get("minor", []))
+            suggestion_count = len(issues.get("suggestions", []))
+
+            summary_parts.append(
+                f"- 问题统计: {critical_count} critical, "
+                f"{major_count} major, {minor_count} minor, "
+                f"{suggestion_count} suggestions"
+            )
+            summary_parts.append(f"- 整体评论: {len(comments)} 条")
+            summary_parts.append(f"- 行内评论: {len(inline_comments)} 条")
+
+            # 提取关键问题（每个严重程度最多3个）
+            if critical_count > 0:
+                critical_issues = issues.get("critical", [])[:3]
+                summary_parts.append("\n**严重问题**:")
+                for issue in critical_issues:
+                    # 截断过长的描述
+                    issue_str = issue[:150] + "..." if len(issue) > 150 else issue
+                    summary_parts.append(f"  - {issue_str}")
+
+            if major_count > 0:
+                major_issues = issues.get("major", [])[:3]
+                summary_parts.append("\n**重要问题**:")
+                for issue in major_issues[:2]:  # 最多2个
+                    issue_str = issue[:150] + "..." if len(issue) > 150 else issue
+                    summary_parts.append(f"  - {issue_str}")
+
+            # 批次摘要（前200字）
+            batch_summary = result.get("summary", "")
+            if batch_summary:
+                # 移除markdown标记
+                batch_summary_clean = batch_summary.replace("```", "").replace("#", "")
+                if len(batch_summary_clean) > 200:
+                    batch_summary_clean = batch_summary_clean[:200] + "..."
+                summary_parts.append(f"\n**摘要**: {batch_summary_clean}")
+
+        return "\n".join(summary_parts)
+
+    def _merge_batch_results(
+        self, batch_results: List[Dict[str, any]], strategy: str
+    ) -> Dict[str, any]:
+        """合并多个批次的审查结果
+
+        Args:
+            batch_results: 所有批次的审查结果列表
+            strategy: 审查策略
+
+        Returns:
+            合并后的审查结果
+        """
+        merged_result = {
+            "summary": "",
+            "comments": [],
+            "inline_comments": [],
+            "overall_score": None,
+            "issues": {"critical": [], "major": [], "minor": [], "suggestions": []},
+        }
+
+        # 收集所有摘要
+        summaries = []
+        for idx, result in enumerate(batch_results):
+            if isinstance(result, Exception):
+                summaries.append(f"### 批次 {idx + 1}\n审查失败: {str(result)}")
+                continue
+
+            summary = result.get("summary", "")
+            if summary:
+                summaries.append(f"### 批次 {idx + 1}\n{summary}")
+
+        # 合并摘要
+        merged_result["summary"] = "\n\n".join(summaries)
+
+        # 合并整体评论
+        all_comments = []
+        for result in batch_results:
+            if isinstance(result, Exception):
+                continue
+            comments = result.get("comments", [])
+            all_comments.extend(comments)
+
+        merged_result["comments"] = all_comments
+
+        # 合并行内评论
+        all_inline_comments = []
+        for result in batch_results:
+            if isinstance(result, Exception):
+                continue
+            inline_comments = result.get("inline_comments", [])
+            all_inline_comments.extend(inline_comments)
+
+        merged_result["inline_comments"] = all_inline_comments
+
+        # 合并问题统计
+        for severity in ["critical", "major", "minor", "suggestions"]:
+            for result in batch_results:
+                if isinstance(result, Exception):
+                    continue
+                issues = result.get("issues", {}).get(severity, [])
+                merged_result["issues"][severity].extend(issues)
+
+        # 计算平均评分
+        scores = []
+        for result in batch_results:
+            if isinstance(result, Exception):
+                continue
+            score = result.get("overall_score")
+            if score is not None:
+                scores.append(score)
+
+        if scores:
+            merged_result["overall_score"] = int(sum(scores) / len(scores))
+            logger.info(
+                f"所有批次审查完成，平均评分: {merged_result['overall_score']}/10 "
+                f"({len(scores)} 个批次有评分)"
+            )
+
+        logger.info(
+            f"合并批次结果: {len(all_comments)} 条整体评论, "
+            f"{len(all_inline_comments)} 条行内评论"
+        )
+
+        return merged_result
+
+    async def review_pr_with_tools_batched(
+        self,
+        context: Dict[str, any],
+        strategy: str,
+        repo: Any,
+        pr: Any,
+        max_files_per_batch: int = 5,
+        max_lines_per_batch: int = 2000,
+    ) -> Dict[str, any]:
+        """使用函数工具审查PR，支持分批处理大型PR
+
+        对于大型PR（文件数或行数超过阈值），自动启用分批模式：
+        - 将文件分成多个批次
+        - 并行审查各批次（禁用AI工具，避免上下文爆炸）
+        - 汇总所有批次的审查结果
+
+        Args:
+            context: 审查上下文
+            strategy: 审查策略
+            repo: GitHub仓库对象
+            pr: GitHub PR对象
+            max_files_per_batch: 每批最大文件数
+            max_lines_per_batch: 每批最大行数
+
+        Returns:
+            审查结果字典
+        """
+        try:
+            files = context.get("files", [])
+
+            # 判断是否需要分批
+            if len(files) <= max_files_per_batch:
+                # 小PR，直接审查（使用AI工具）
+                logger.info(
+                    f"PR规模较小 ({len(files)} 个文件)，使用标准审查模式（启用AI工具）"
+                )
+                return await self.review_pr_with_tools(context, strategy, repo, pr)
+
+            # 大PR，启用分批模式（禁用AI工具，避免上下文爆炸）
+            logger.warning(
+                f"🚨 PR规模较大 ({len(files)} 个文件)，启用分批审查模式 "
+                f"（强制禁用AI工具，避免上下文爆炸导致的空响应）"
+            )
+
+            # 将文件分批
+            batches = self._split_files_into_batches(
+                files, max_files_per_batch, max_lines_per_batch
+            )
+
+            logger.info(
+                f"🚀 启动MapReduce模式：{len(batches)} 个批次并行审查（并发限制: 2）"
+            )
+
+            # Map阶段：使用Semaphore(2)控制并发，平衡性能和稳定性
+            import random
+
+            semaphore = asyncio.Semaphore(2)
+
+            async def review_batch_with_semaphore(batch, idx):
+                async with semaphore:
+                    # 添加微小随机抖动（0-0.3秒），避免同时触发API
+                    await asyncio.sleep(random.random() * 0.3)
+                    return await self._review_batch(
+                        batch,
+                        idx,
+                        len(batches),
+                        context,
+                        strategy,
+                        repo,
+                        pr,
+                        use_tools=False,  # 禁用工具，避免上下文爆炸
+                    )
+
+            # 并行执行所有批次（受信号量限制）
+            batch_results = await asyncio.gather(
+                *[
+                    review_batch_with_semaphore(batch, idx)
+                    for idx, batch in enumerate(batches)
+                ],
+                return_exceptions=True,
+            )
+
+            logger.info(f"✅ Map阶段完成：{len(batches)} 个批次审查结果已收集")
+
+            # Reduce阶段：AI智能总结
+            if len(batches) > 1:
+                logger.info("🧠 启动Reduce阶段：AI智能总结中...")
+                merged_result = await self._ai_reduce_results(
+                    batch_results, strategy, context, pr
+                )
+            else:
+                # 单批次直接使用结果
+                merged_result = (
+                    batch_results[0]
+                    if not isinstance(batch_results[0], Exception)
+                    else {
+                        "summary": "审查失败",
+                        "comments": [],
+                        "inline_comments": [],
+                        "overall_score": None,
+                    }
+                )
+
+            logger.info(
+                f"分批审查完成: {len(batches)} 个批次, "
+                f"{len(merged_result.get('comments', []))} 条整体评论, "
+                f"{len(merged_result.get('inline_comments', []))} 条行内评论"
+            )
+
+            return merged_result
+
+        except Exception as e:
+            logger.error(f"分批审查失败: {str(e)}", exc_info=True)
+            raise
 
     async def review_pr_with_tools(
         self, context: Dict[str, any], strategy: str, repo: Any, pr: Any
@@ -501,11 +1168,74 @@ class AIReviewer:
                         "error": "该路径在跳过列表中，无法访问",
                     }
 
-            # 获取PR基础分支的文件内容
-            content_file = repo.get_contents(file_path, pr.base.sha)
+            # 智能分支选择：优先尝试PR的HEAD分支（包含最新变更）
+            content_file = None
+            tried_branches = []
+
+            # 1. 先尝试从PR的HEAD分支读取（包含新增和修改的文件）
+            try:
+                content_file = repo.get_contents(file_path, pr.head.sha)
+                tried_branches.append("HEAD")
+                logger.debug(f"✅ 从PR的HEAD分支读取文件成功: {file_path}")
+            except Exception as head_error:
+                logger.debug(
+                    f"⚠️  从PR的HEAD分支读取失败: {file_path}, 错误: {head_error}"
+                )
+
+                # 2. 如果HEAD分支失败，尝试从base分支读取（可能被删除的文件）
+                try:
+                    content_file = repo.get_contents(file_path, pr.base.sha)
+                    tried_branches.append("base")
+                    logger.debug(f"✅ 从PR的base分支读取文件成功: {file_path}")
+                except Exception as base_error:
+                    logger.debug(
+                        f"⚠️  从PR的base分支读取也失败: {file_path}, 错误: {base_error}"
+                    )
+
+                    # 3. 都失败了，返回友好的错误提示
+                    return {
+                        "file_path": file_path,
+                        "error": "文件在PR的HEAD和base分支中都不存在",
+                        "hint": "这可能是一个新增的文件，请基于PR diff中的patch进行审查",
+                        "tried_branches": tried_branches,
+                    }
+
+            if not content_file:
+                return {
+                    "file_path": file_path,
+                    "error": "无法获取文件内容",
+                    "tried_branches": tried_branches,
+                }
 
             if content_file.size > 100000:  # 限制100KB
-                return {"error": "文件过大", "size": content_file.size, "content": None}
+                return {
+                    "file_path": file_path,
+                    "error": "文件过大",
+                    "size": content_file.size,
+                    "content": None,
+                    "tried_branches": tried_branches,
+                    "hint": "请基于PR diff中的patch进行审查，避免读取完整文件",
+                }
+
+            # 解码文件内容
+            content = content_file.decoded_content.decode("utf-8")
+
+            # 新增：检查行数，超大文件只返回前500行
+            lines = content.split("\n")
+            if len(lines) > 500:
+                truncated_content = "\n".join(lines[:500])
+                logger.warning(
+                    f"文件 {file_path} 过大 ({len(lines)} 行)，已截断为前 500 行"
+                )
+                return {
+                    "file_path": file_path,
+                    "content": truncated_content,
+                    "size": content_file.size,
+                    "original_lines": len(lines),
+                    "truncated_lines": 500,
+                    "warning": f"文件过大，仅显示前 500 行（共 {len(lines)} 行）",
+                    "branch": tried_branches[0] if tried_branches else "unknown",
+                }
 
             # 解码文件内容
             content = content_file.decoded_content.decode("utf-8")
@@ -514,11 +1244,16 @@ class AIReviewer:
                 "file_path": file_path,
                 "content": content,
                 "size": content_file.size,
+                "branch": tried_branches[0] if tried_branches else "unknown",
             }
 
         except Exception as e:
-            logger.error(f"读取文件 {file_path} 失败: {e}")
-            return {"file_path": file_path, "error": f"无法读取文件: {str(e)}"}
+            logger.error(f"读取文件 {file_path} 时发生未预期的错误: {e}", exc_info=True)
+            return {
+                "file_path": file_path,
+                "error": f"读取文件时发生错误: {str(e)}",
+                "hint": "请检查文件路径是否正确，或基于PR diff进行审查",
+            }
 
     async def _tool_list_directory(
         self, directory: str, repo: Any, pr: Any
@@ -546,8 +1281,39 @@ class AIReviewer:
                         "count": 0,
                     }
 
-            # 获取目录内容
-            contents = repo.get_contents(directory, pr.base.sha)
+            # 智能分支选择：优先尝试PR的HEAD分支
+            contents = None
+            tried_branches = []
+
+            # 1. 先尝试从PR的HEAD分支读取（包含新增和修改的目录）
+            try:
+                contents = repo.get_contents(directory, pr.head.sha)
+                tried_branches.append("HEAD")
+                logger.debug(f"✅ 从PR的HEAD分支列出目录成功: {directory}")
+            except Exception as head_error:
+                logger.debug(
+                    f"⚠️  从PR的HEAD分支列出目录失败: {directory}, 错误: {head_error}"
+                )
+
+                # 2. 如果HEAD分支失败，尝试从base分支读取
+                try:
+                    contents = repo.get_contents(directory, pr.base.sha)
+                    tried_branches.append("base")
+                    logger.debug(f"✅ 从PR的base分支列出目录成功: {directory}")
+                except Exception as base_error:
+                    logger.debug(
+                        f"⚠️  从PR的base分支列出目录也失败: {directory}, 错误: {base_error}"
+                    )
+
+                    # 3. 都失败了，返回友好的错误提示
+                    return {
+                        "directory": directory,
+                        "error": "目录在PR的HEAD和base分支中都不存在",
+                        "hint": "这可能是一个新增的目录，请基于PR diff中的patch进行审查",
+                        "items": [],
+                        "count": 0,
+                        "tried_branches": tried_branches,
+                    }
 
             if isinstance(contents, list):
                 items = []
@@ -576,6 +1342,7 @@ class AIReviewer:
                     "filtered": len(contents) - len(items)
                     if len(items) < len(contents)
                     else 0,
+                    "branch": tried_branches[0] if tried_branches else "unknown",
                 }
             else:
                 # 单个文件 - 也需要检查skip_paths
@@ -586,6 +1353,7 @@ class AIReviewer:
                             "error": "该路径在跳过列表中",
                             "items": [],
                             "count": 0,
+                            "tried_branches": tried_branches,
                         }
 
                 # 单个文件
@@ -600,13 +1368,15 @@ class AIReviewer:
                         }
                     ],
                     "count": 1,
+                    "branch": tried_branches[0] if tried_branches else "unknown",
                 }
 
         except Exception as e:
-            logger.error(f"列出目录 {directory} 失败: {e}")
+            logger.error(f"列出目录 {directory} 时发生未预期的错误: {e}", exc_info=True)
             return {
                 "directory": directory,
-                "error": f"无法列出目录: {str(e)}",
+                "error": f"列出目录时发生错误: {str(e)}",
+                "hint": "请检查目录路径是否正确，或基于PR diff进行审查",
                 "items": [],
                 "count": 0,
             }
@@ -624,10 +1394,12 @@ class AIReviewer:
 1. **read_file**: 读取指定文件的完整内容
    - 使用场景：需要理解某个函数的完整实现、查看配置文件详情、了解依赖模块
    - 参数：file_path（文件路径）
+   - **注意**：对于新增文件，工具会自动从PR的HEAD分支读取；对于已存在的文件，会从base分支读取
 
 2. **list_directory**: 列出目录中的文件和子目录
    - 使用场景：了解模块结构、查找相关文件、探索项目组织
    - 参数：directory（目录路径）
+   - **注意**：对于新增目录，工具会自动从PR的HEAD分支读取；对于已存在的目录，会从base分支读取
 
 ## 使用建议
 
@@ -636,6 +1408,18 @@ class AIReviewer:
 - 当需要了解模块结构时，使用 list_directory 查看目录
 - 合理使用工具，避免不必要的文件读取
 - 工具调用会消耗额外的token，请按需使用
+
+## ⚠️ 工具错误处理
+
+如果工具返回错误，例如：
+- "文件在PR的HEAD和base分支中都不存在"：这可能是文件路径错误或文件已被删除
+- "该路径在跳过列表中"：系统配置跳过了该路径（如node_modules、.git等）
+- "文件过大"：文件超过100KB限制，请基于diff进行审查
+
+**重要**：如果工具返回错误，请不要重复尝试读取该文件，而是：
+1. 基于PR diff中的patch内容进行审查
+2. 在整体评论中说明无法访问该文件
+3. 继续审查其他可访问的文件
 """
 
         # 添加行号安全区信息
@@ -1067,6 +1851,12 @@ class AIReviewer:
                 }
 
                 result["inline_comments"].append(inline_comment)
+
+                # 同时更新问题统计（用于决策引擎）
+                if severity in result["issues"]:
+                    # 使用简洁的描述作为问题统计
+                    issue_summary = f"{file_path}:{primary_line}"
+                    result["issues"][severity].append(issue_summary)
 
                 # 记录日志
                 if len(line_numbers) > 1:

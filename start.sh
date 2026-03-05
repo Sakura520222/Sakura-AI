@@ -1,10 +1,10 @@
 #!/bin/bash
 
-# PR AI Reviewer 快速启动脚本
+# Sakura AI Reviewer 快速启动脚本
 
 set -e
 
-echo "🚀 PR AI Reviewer 启动脚本"
+echo "🚀 Sakura AI Reviewer 启动脚本"
 echo "=========================="
 
 # 检查 Docker

@@ -1,4 +1,4 @@
-# PR AI Reviewer Dockerfile
+# Sakura AI Reviewer Dockerfile
 FROM python:3.11-slim
 
 # 设置工作目录
