@@ -4,7 +4,7 @@
 
 [![Python](https://img.shields.io/badge/Python-3.11+-blue.svg)](https://www.python.org/)
 [![FastAPI](https://img.shields.io/badge/FastAPI-Latest-green.svg)](https://fastapi.tiangolo.com/)
-[![License](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![License](https://img.shields.io/badge/License-AGPLv3-yellow.svg)](LICENSE)
 
 ---
 
@@ -27,6 +27,20 @@
 - **read_file**：查看任意文件的完整内容
 - **list_directory**：列出目录结构，了解项目组织
 - **智能决策**：AI 根据需要主动调用工具
+
+### 🤖 Telegram Bot 集成
+- **实时通知**：PR 开始审查、审查完成通知
+- **配额管理**：每日/每周/每月配额系统
+- **权限控制**：三级权限体系（超级管理员/管理员/普通用户）
+- **命令管理**：丰富的管理命令支持
+- **白名单机制**：仓库和用户白名单控制
+
+### 🎯 智能审查批准
+- **多维度决策**：基于AI评分和问题严重程度自动决策
+- **三种审查状态**：APPROVE（批准）、REQUEST_CHANGES（请求变更）、COMMENT（评论）
+- **智能阈值**：可配置的批准/阻断阈值
+- **幂等性保护**：自动检查避免重复提交Review
+- **灵活配置**：支持仓库级别的策略覆盖
 
 ### 📊 自适应审查策略
 - **⚡️ 快速审查**：小改动（≤5 文件，≤200 行）
@@ -388,6 +402,383 @@ MAX_TOOL_ITERATIONS=10
 
 ---
 
+## 🤖 Telegram Bot 集成
+
+Sakura AI Reviewer 集成了完整的 Telegram Bot 功能，提供实时通知、配额管理和权限控制。
+
+### 核心功能
+
+#### 1. 实时通知系统
+- 🔔 **PR 开始审查通知**：当 AI 开始审查时立即通知
+- 🌸 **PR 审查完成通知**：包含评分、问题统计和审查摘要
+- ⚠️ **配额不足提醒**：当用户配额即将用尽时自动提醒
+- 🚫 **未授权提醒**：仓库或用户未授权时通知管理员
+
+#### 2. 配额管理系统
+- **每日配额**：每天 00:00 重置（默认：10次）
+- **每周配额**：每周一 00:00 重置（默认：50次）
+- **每月配额**：每月 1 日 00:00 重置（默认：200次）
+- 管理员和超级管理员不受配额限制
+
+#### 3. 三级权限体系
+```
+👑 超级管理员 (SUPER_ADMIN)
+   ↓ 由环境变量 TELEGRAM_ADMIN_USER_IDS 定义
+   
+👤 管理员 (ADMIN)  
+   ↓ 由超级管理员通过 /admin_add 添加
+   
+👥 普通用户 (USER)
+   ↓ 由管理员通过 /user_add 添加
+```
+
+#### 4. 丰富的管理命令
+
+**普通用户命令**：
+- `/start` - 初始化 Bot
+- `/help` - 查看帮助信息
+- `/status` - 查看系统状态
+- `/recent` - 查看最近审查记录
+- `/myquota` - 查看我的配额使用情况
+
+**管理员命令**：
+- `/user_add <telegram_id> <github_username>` - 添加用户
+- `/user_remove <github_username>` - 移除用户
+- `/repo_add <owner/repo>` - 添加仓库到白名单
+- `/repo_remove <owner/repo>` - 移除仓库
+- `/quota_set <github_username> <daily|weekly|monthly> <limit>` - 设置配额
+- `/users` - 列出所有用户
+- `/repos` - 列出所有仓库
+
+**超级管理员命令**：
+- `/admin_add <telegram_id> <github_username>` - 添加管理员
+- `/admin_remove <telegram_id>` - 移除管理员
+- `/review <pr_url>` - 手动触发审查
+
+### 快速配置
+
+#### 步骤 1：创建 Telegram Bot
+
+1. 在 Telegram 中找到 [@BotFather](https://t.me/BotFather)
+2. 发送 `/newbot` 创建新机器人
+3. 按提示设置机器人名称和用户名
+4. 保存获得的 **Bot Token**
+
+#### 步骤 2：获取你的 Telegram ID
+
+1. 在 Telegram 中找到 [@userinfobot](https://t.me/userinfobot)
+2. 发送任意消息获取你的 **Telegram ID**
+3. 记录这个 ID（你将作为超级管理员）
+
+#### 步骤 3：配置环境变量
+
+在 `.env` 文件中添加或修改：
+
+```env
+# Telegram Bot配置
+TELEGRAM_BOT_TOKEN=你的_Bot_Token
+TELEGRAM_ADMIN_USER_IDS=你的_Telegram_ID
+TELEGRAM_DEFAULT_CHAT_ID=你的_Telegram_ID
+```
+
+#### 步骤 4：重启服务
+
+```bash
+cd docker
+docker-compose restart
+```
+
+#### 步骤 5：初始化系统
+
+1. 在 Telegram 中找到你的 Bot
+2. 发送 `/start` 命令
+3. 你应该看到 "👑 超级管理员" 标识
+
+#### 步骤 6：添加第一个管理员（可选）
+
+```bash
+/admin_add <管理员_Telegram_ID> <管理员_GitHub用户名>
+```
+
+#### 步骤 7：添加仓库到白名单
+
+```bash
+/repo_add owner/repo
+```
+
+#### 步骤 8：添加用户
+
+```bash
+/user_add <用户_Telegram_ID> <用户_GitHub用户名>
+```
+
+#### 步骤 9：设置用户配额（可选）
+
+```bash
+/quota_set <GitHub用户名> daily 20
+```
+
+### 使用流程
+
+```
+GitHub PR 创建
+    ↓
+Webhook 接收
+    ↓
+✅ 检查仓库是否在白名单
+    ↓
+✅ 检查 PR 作者是否已注册
+    ↓
+✅ 检查配额是否充足
+    ↓
+🔔 发送"开始审查"通知到 Telegram
+    ↓
+🤖 AI 审查进行中...
+    ↓
+🌸 发送"审查完成"通知到 Telegram
+    ↓
+✅ 审查完成
+```
+
+### 权限和配额规则
+
+- **超级管理员**：所有权限 + 添加/删除管理员，无限配额
+- **管理员**：添加/删除用户、管理仓库、设置配额，无限配额
+- **普通用户**：使用配额进行审查、查看自己的配额
+
+每次审查消耗 1 次所有配额（每日、每周、每月）。
+
+### 拒绝场景
+
+- ❌ 仓库未在白名单 → 静默跳过
+- ❌ 用户未注册 → 静默跳过  
+- ❌ 配额不足 → 发送拒绝通知到 Telegram
+
+### 管理命令示例
+
+```bash
+# 添加管理员
+/admin_add 123456789 john_doe
+
+# 添加普通用户
+/user_add 987654321 jane_smith
+
+# 添加仓库
+/repo_add facebook/react
+/repo_add vuejs/vue
+
+# 设置配额
+/quota_set john_doe daily 20
+/quota_set john_doe weekly 100
+/quota_set john_doe monthly 500
+
+# 查看所有用户
+/users
+
+# 查看所有仓库
+/repos
+
+# 手动触发审查
+/review https://github.com/owner/repo/pull/123
+```
+
+### 数据库表结构
+
+系统使用以下表管理 Telegram 功能：
+
+- **telegram_users**：用户信息、角色、配额设置
+- **repo_subscriptions**：仓库白名单
+- **quota_usage_logs**：配额使用记录
+
+### 常见问题
+
+**Q: 如何获取 Telegram ID？**  
+A: 使用 [@userinfobot](https://t.me/userinfobot) 机器人获取
+
+**Q: 配额如何重置？**  
+A: 系统自动重置
+- 每日：每天 00:00
+- 每周：每周一 00:00
+- 每月：每月 1 日 00:00
+
+**Q: 管理员受配额限制吗？**  
+A: 不受。超级管理员和管理员都有无限配额
+
+**Q: Bot 没有响应怎么办？**  
+A: 检查以下几点：
+1. Bot Token 是否正确
+2. 环境变量是否配置
+3. 应用是否正常运行
+4. 查看日志：`docker-compose logs -f`
+
+### 详细文档
+
+完整的 Telegram Bot 设置和配置指南请参考：[Telegram Bot 集成指南](docs/TELEGRAM_SETUP.md)
+
+---
+
+## 🎯 智能审查批准
+
+Sakura AI Reviewer 支持基于 AI 评分和问题严重程度的自动审查批准功能，可以显著提升团队研发效率。
+
+### 决策逻辑
+
+系统会根据 AI 评分和问题分类自动做出审查决策：
+
+```
+┌─────────────────────────────────────────┐
+│         AI审查完成，获得评分和问题         │
+└──────────────┬──────────────────────────┘
+               │
+               ▼
+    ┌──────────────────────┐
+    │  Critical > 0 ?      │──Yes──► REQUEST_CHANGES (一票否决)
+    └──────────┬───────────┘
+               │ No
+               ▼
+    ┌──────────────────────┐
+    │  Score < 4 ?         │──Yes──► REQUEST_CHANGES (低分阻断)
+    └──────────┬───────────┘
+               │ No
+               ▼
+    ┌──────────────────────┐
+    │  Score >= 8 &&       │
+    │  Major <= 1 ?        │──Yes──► APPROVE (批准合并)
+    └──────────┬───────────┘
+               │ No
+               ▼
+          COMMENT (中立评论)
+```
+
+### 三种审查状态
+
+#### 1. **APPROVE** ✅
+- **条件**：评分 ≥ 8 分 且 无 Critical 问题 且 Major 问题 ≤ 1 个
+- **含义**：代码质量优秀，可以合并
+- **操作**：自动批准 PR，开发者可以直接合并
+
+#### 2. **REQUEST_CHANGES** ❌
+- **条件**：评分 < 4 分 或 存在 Critical 问题
+- **含义**：发现严重问题或评分过低，必须修复
+- **操作**：请求变更，开发者需要修复后重新提交
+
+#### 3. **COMMENT** 💬
+- **条件**：评分 4-7 分（中间状态）
+- **含义**：需要人工复审
+- **操作**：仅评论，不做批准或拒绝决策
+
+### 配置选项
+
+在 `config/strategies.yaml` 中配置：
+
+```yaml
+review_policy:
+  # 是否启用自动批准功能（建议先设为false观察效果）
+  enabled: false
+  
+  # 批准阈值：分数 >= 此值才考虑批准
+  approve_threshold: 8
+  
+  # 阻断阈值：分数 < 此值自动请求变更
+  block_threshold: 4
+  
+  # 是否在存在Critical问题时自动请求变更
+  block_on_critical: true
+  
+  # 允许的Major问题数量上限
+  max_major_issues: 1
+  
+  # 幂等性检查：是否检查已有Review避免重复提交
+  enable_idempotency_check: true
+```
+
+### 仓库级别覆盖
+
+支持为不同仓库设置不同的策略：
+
+```yaml
+review_policy:
+  repo_overrides:
+    "owner/core-project":
+      approve_threshold: 9  # 核心项目更严格
+      block_threshold: 5    # 更宽松
+    "owner/experimental":
+      approve_threshold: 7  # 实验项目更宽松
+```
+
+### 部署建议
+
+#### 阶段1：观察期（推荐）
+```yaml
+review_policy:
+  enabled: false  # 仅评论，不自动批准
+```
+观察 1-2 周，检查 AI 评分的准确性。
+
+#### 阶段2：逐步启用
+```yaml
+review_policy:
+  enabled: true
+  approve_threshold: 9  # 先设置高阈值
+  block_on_critical: true
+```
+
+#### 阶段3：正式运行
+根据观察结果调整阈值。
+
+### 幂等性保护
+
+系统会自动检查是否已存在相同类型的 Review，避免重复提交：
+
+```python
+def has_existing_review(
+    repo_owner, repo_name, pr_number, 
+    bot_username, event
+) -> bool
+```
+
+### 数据库记录
+
+每个审查记录包含决策信息：
+
+```sql
+SELECT 
+    id,
+    overall_score,     -- AI评分 1-10
+    decision,          -- approve/request_changes/comment
+    decision_reason    -- 决策理由
+FROM pr_reviews;
+```
+
+### 使用场景
+
+#### 自动批准场景
+- 评分 >= 8 分
+- 无 Critical 问题
+- Major 问题 <= 1 个
+
+#### 自动阻断场景
+- 评分 < 4 分
+- 存在 Critical 问题
+
+#### 人工复审场景
+- 评分 4-7 分（中间状态）
+- Major 问题过多
+
+### 重要提示
+
+1. **首次部署**：建议 `enabled: false`，先观察效果
+2. **Critical 问题**：建议保持 `block_on_critical: true`
+3. **测试环境**：先在测试仓库验证，再应用到生产
+4. **监控日志**：密切关注决策引擎的日志输出
+5. **人工复审**：COMMENT 状态的 PR 需要人工审查
+
+### 详细文档
+
+完整的审查批准功能实现细节请参考：[审查批准功能总结](APPROVAL_FEATURE_SUMMARY.md)
+
+---
+
 ## 📊 监控和日志
 
 ### 查看应用日志
@@ -515,14 +906,17 @@ Sakura-AI-Reviewer/
 - [x] 自适应审查策略
 - [x] 结构化审查报告
 - [x] 优雅的错误处理和降级机制
+- [x] 智能标签推荐系统
+- [x] Telegram Bot 集成（通知、配额、权限管理）
+- [x] 智能审查批准（多维度决策引擎）
 
 ### 计划中 🚧
 - [ ] 行内评论（针对特定代码行）
-- [ ] 审查评分系统（0-10 分）
 - [ ] 审查历史记录和趋势分析
 - [ ] 支持更多 AI 模型（Gemini、Claude）
 - [ ] 审查结果导出（PDF/Markdown）
 - [ ] Web UI 管理界面
+- [ ] 审批链（支持多个批准）
 
 ### 未来构想 💡
 - [ ] 代码相似度检测
@@ -530,6 +924,7 @@ Sakura-AI-Reviewer/
 - [ ] 性能分析建议
 - [ ] 多语言支持
 - [ ] 自定义审查规则
+- [ ] 智能调优（基于历史数据自动调整阈值）
 
 ---
 
@@ -549,7 +944,15 @@ Sakura-AI-Reviewer/
 
 ## 📄 许可证
 
-MIT License
+GNU Affero General Public License v3.0 (AGPLv3)
+
+本项目采用 AGPLv3 许可证，这是一个自由软件许可证，特别适用于网络服务器软件。使用本软件时，请注意：
+
+- 你可以自由使用、修改和分发本软件
+- 如果你修改了软件并通过网络提供服务，必须向用户提供源代码
+- 任何派生作品也必须使用相同的许可证
+
+详见 [LICENSE](LICENSE) 文件。
 
 ---
 
