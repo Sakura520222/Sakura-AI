@@ -52,7 +52,7 @@ async def lifespan(app: FastAPI):
 
     # 关闭时
     logger.info("👋 Sakura AI Reviewer 关闭中...")
-    
+
     # 停止 Telegram Bot
     try:
         await stop_telegram_bot()

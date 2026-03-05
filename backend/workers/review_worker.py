@@ -489,9 +489,7 @@ class ReviewWorker:
 
             # 计算严重问题数量
             comments = review_result.get("comments", [])
-            critical_count = sum(
-                1 for c in comments if c.get("severity") == "critical"
-            )
+            critical_count = sum(1 for c in comments if c.get("severity") == "critical")
 
             # 获取评分
             score = review_result.get("overall_score", 0)
@@ -501,8 +499,8 @@ class ReviewWorker:
 
             # 发送通知
             await notification_sender.send_review_complete(
-                repo_name=pr_info['repo_full_name'],
-                pr_number=pr_info['pr_number'],
+                repo_name=pr_info["repo_full_name"],
+                pr_number=pr_info["pr_number"],
                 score=score,
                 critical_count=critical_count,
                 pr_url=pr_url,

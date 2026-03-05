@@ -67,7 +67,11 @@ class Settings(BaseSettings):
         """获取超级管理员ID列表"""
         if not self.telegram_admin_user_ids:
             return []
-        return [int(id.strip()) for id in self.telegram_admin_user_ids.split(",") if id.strip()]
+        return [
+            int(id.strip())
+            for id in self.telegram_admin_user_ids.split(",")
+            if id.strip()
+        ]
 
 
 class StrategyConfig:

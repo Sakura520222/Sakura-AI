@@ -7,7 +7,6 @@ from sqlalchemy import (
     BigInteger,
     String,
     Text,
-    Enum,
     TIMESTAMP,
     ForeignKey,
 )
@@ -132,7 +131,9 @@ class ReviewComment(Base):
 
     # 评论内容
     comment_type = Column(String(50), default=CommentType.OVERALL.value, nullable=False)
-    severity = Column(String(50), default=CommentSeverity.SUGGESTION.value, nullable=False)
+    severity = Column(
+        String(50), default=CommentSeverity.SUGGESTION.value, nullable=False
+    )
     content = Column(Text, nullable=False)
 
     # 创建时间

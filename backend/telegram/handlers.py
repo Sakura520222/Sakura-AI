@@ -15,7 +15,7 @@ settings = get_settings()
 def get_async_session():
     """获取异步会话"""
     from backend.models.database import async_session
-    
+
     if async_session is None:
         # 如果会话未初始化，尝试初始化
         try:
@@ -23,11 +23,13 @@ def get_async_session():
         except Exception as e:
             logger.error(f"无法初始化数据库会话: {e}")
             raise RuntimeError("数据库未初始化")
-    
+
     return async_session()
 
 
-async def check_permission(telegram_id: int, required_role: UserRole = UserRole.USER) -> bool:
+async def check_permission(
+    telegram_id: int, required_role: UserRole = UserRole.USER
+) -> bool:
     """检查用户权限"""
     # 超级管理员拥有所有权限
     if telegram_id in settings.telegram_admin_ids_list:
@@ -42,15 +44,19 @@ async def check_permission(telegram_id: int, required_role: UserRole = UserRole.
 
         # 检查角色权限（字符串类型）
         role_hierarchy = {
-            'user': 0,
-            'admin': 1,
-            'super_admin': 2,
+            "user": 0,
+            "admin": 1,
+            "super_admin": 2,
         }
 
         # 将枚举转换为字符串进行比较
-        required_role_str = required_role.value if hasattr(required_role, 'value') else required_role
-        
-        return role_hierarchy.get(user.role, 0) >= role_hierarchy.get(required_role_str, 0)
+        required_role_str = (
+            required_role.value if hasattr(required_role, "value") else required_role
+        )
+
+        return role_hierarchy.get(user.role, 0) >= role_hierarchy.get(
+            required_role_str, 0
+        )
 
 
 async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -69,13 +75,13 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
             user = await service.get_user_by_telegram_id(telegram_id)
             if user:
                 # 将角色字符串转换为小写，支持大小写不敏感的匹配
-                role_lower = user.role.lower() if user.role else 'user'
-                
+                role_lower = user.role.lower() if user.role else "user"
+
                 # 将角色字符串转换为更友好的显示
                 role_display = {
-                    'user': '普通用户',
-                    'admin': '管理员',
-                    'super_admin': '超级管理员'
+                    "user": "普通用户",
+                    "admin": "管理员",
+                    "super_admin": "超级管理员",
                 }.get(role_lower, user.role)
                 role_text = f"👤 {role_display}"
             else:
@@ -103,56 +109,43 @@ async def cmd_help(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "/status - 查看系统状态\n"
         "/recent - 查看最近 10 条审查记录\n"
         "/myquota - 查看我的配额使用情况\n\n"
-        
         "━━━━━━━━━━━━━━━━━━━━━━\n"
         "*👨‍💼 管理员命令（ADMIN 及以上）*\n"
         "━━━━━━━━━━━━━━━━━━━━━━\n"
-        
         "*用户管理：*\n"
         "➤ /user_add <telegram_id> <github_username>\n"
         "   示例: /user_add 123456789 Sakura520222\n"
         "   说明: 添加新用户（需要 Telegram ID 和 GitHub 用户名）\n\n"
-        
         "➤ /user_remove <github_username>\n"
         "   示例: /user_remove Sakura520222\n"
         "   说明: 移除指定用户\n\n"
-        
         "➤ /users\n"
         "   说明: 列出所有注册用户\n\n"
-        
         "*仓库管理：*\n"
         "➤ /repo_add <owner/repo>\n"
         "   示例: /repo_add Sakura520222/my-project\n"
         "   说明: 添加仓库到授权列表\n\n"
-        
         "➤ /repo_remove <owner/repo>\n"
         "   示例: /repo_remove Sakura520222/my-project\n"
         "   说明: 从授权列表移除仓库\n\n"
-        
         "➤ /repos\n"
         "   说明: 列出所有授权仓库\n\n"
-        
         "*配额管理：*\n"
         "➤ /quota_set <github_username> <daily|weekly|monthly> <limit>\n"
         "   示例: /quota_set Sakura520222 daily 20\n"
         "   说明: 设置指定用户的配额限制\n\n"
-        
         "━━━━━━━━━━━━━━━━━━━━━━\n"
         "*👑 超级管理员命令（SUPER_ADMIN）*\n"
         "━━━━━━━━━━━━━━━━━━━━━━\n"
-        
         "➤ /admin_add <telegram_id> <github_username>\n"
         "   示例: /admin_add 123456789 Sakura520222\n"
         "   说明: 添加管理员用户\n\n"
-        
         "➤ /admin_remove <telegram_id>\n"
         "   示例: /admin_remove 123456789\n"
         "   说明: 移除管理员\n\n"
-        
         "➤ /review <pr_url>\n"
         "   示例: /review https://github.com/owner/repo/pull/123\n"
         "   说明: 手动触发 PR 审查（开发中）\n\n"
-        
         "━━━━━━━━━━━━━━━━━━━━━━\n"
         "*💡 提示：*\n"
         "━━━━━━━━━━━━━━━━━━━━━━\n"
@@ -252,7 +245,9 @@ async def cmd_admin_add(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     if len(context.args) < 2:
-        await update.message.reply_text("用法: /admin_add <telegram_id> <github_username>")
+        await update.message.reply_text(
+            "用法: /admin_add <telegram_id> <github_username>"
+        )
         return
 
     try:
@@ -312,7 +307,9 @@ async def cmd_user_add(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     if len(context.args) < 2:
-        await update.message.reply_text("用法: /user_add <telegram_id> <github_username>")
+        await update.message.reply_text(
+            "用法: /user_add <telegram_id> <github_username>"
+        )
         return
 
     try:
@@ -405,7 +402,9 @@ async def cmd_quota_set(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     if len(context.args) < 3:
-        await update.message.reply_text("用法: /quota_set <github_username> <daily|weekly|monthly> <limit>")
+        await update.message.reply_text(
+            "用法: /quota_set <github_username> <daily|weekly|monthly> <limit>"
+        )
         return
 
     github_username = context.args[0]
@@ -420,7 +419,9 @@ async def cmd_quota_set(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     async with get_async_session() as session:
         service = TelegramService(session)
-        success, message = await service.set_user_quota(github_username, quota_type, limit)
+        success, message = await service.set_user_quota(
+            github_username, quota_type, limit
+        )
 
         await update.message.reply_text(f"✅ {message}" if success else f"❌ {message}")
 
@@ -444,23 +445,29 @@ async def cmd_users(update: Update, context: ContextTypes.DEFAULT_TYPE):
         text = "👥 *注册用户*\n\n"
         for user in users:
             # 将角色字符串转换为小写，支持大小写不敏感的匹配
-            role_lower = user.role.lower() if user.role else 'user'
-            
+            role_lower = user.role.lower() if user.role else "user"
+
             # 将角色字符串转换为更友好的显示
             role_display = {
-                'user': '普通用户',
-                'admin': '管理员',
-                'super_admin': '超级管理员'
+                "user": "普通用户",
+                "admin": "管理员",
+                "super_admin": "超级管理员",
             }.get(role_lower, user.role)
-            
-            role_icon = "👑" if role_lower == 'super_admin' else "👤" if role_lower == 'admin' else "👤"
-            
+
+            role_icon = (
+                "👑"
+                if role_lower == "super_admin"
+                else "👤"
+                if role_lower == "admin"
+                else "👤"
+            )
+
             # 管理员和超级管理员不受配额限制
-            if role_lower in ['admin', 'super_admin']:
+            if role_lower in ["admin", "super_admin"]:
                 quota_text = "✅ 不受配额限制"
             else:
                 quota_text = f"{user.daily_used}/{user.daily_quota}"
-            
+
             text += (
                 f"{role_icon} *{user.github_username}*\n"
                 f"   Telegram: `{user.telegram_id}`\n"

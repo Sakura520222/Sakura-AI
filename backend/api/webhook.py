@@ -20,7 +20,7 @@ settings = get_settings()
 def get_async_session():
     """获取异步会话"""
     from backend.models.database import async_session, init_async_db
-    
+
     if async_session is None:
         # 如果会话未初始化，尝试初始化
         try:
@@ -28,8 +28,9 @@ def get_async_session():
         except Exception as e:
             logger.error(f"无法初始化数据库会话: {e}")
             raise RuntimeError("数据库未初始化")
-    
+
     return async_session()
+
 
 router = APIRouter()
 
@@ -130,11 +131,13 @@ async def handle_pull_request_event(payload: Dict[str, Any]) -> JSONResponse:
         notification_sender = get_notification_sender()
         async with get_async_session() as session:
             service = TelegramService(session)
-            
+
             # 1. 先检查用户是否已注册
-            github_username = pr_info.get('author', '')
+            github_username = pr_info.get("author", "")
             if not github_username:
-                logger.warning(f"无法获取PR作者: {pr_info['repo_full_name']}#{pr_info['pr_number']}")
+                logger.warning(
+                    f"无法获取PR作者: {pr_info['repo_full_name']}#{pr_info['pr_number']}"
+                )
                 return JSONResponse(
                     content={"status": "skipped", "reason": "unknown author"}
                 )
@@ -144,9 +147,9 @@ async def handle_pull_request_event(payload: Dict[str, Any]) -> JSONResponse:
                 logger.warning(f"未注册的用户: {github_username}")
                 if notification_sender:
                     await notification_sender.send_unauthorized_user(
-                        repo_name=pr_info['repo_full_name'],
-                        pr_number=pr_info['pr_number'],
-                        github_username=github_username
+                        repo_name=pr_info["repo_full_name"],
+                        pr_number=pr_info["pr_number"],
+                        github_username=github_username,
                     )
                 return JSONResponse(
                     content={"status": "skipped", "reason": "unregistered user"}
@@ -155,49 +158,60 @@ async def handle_pull_request_event(payload: Dict[str, Any]) -> JSONResponse:
             # 2. 检查仓库是否已授权（管理员和超级管理员可以跳过此检查）
             # 管理员和超级管理员可以审查任何仓库
             # 转换为小写进行比较，支持大小写不敏感
-            role_lower = user.role.lower().strip() if user.role else ''
-            if role_lower in ['admin', 'super_admin']:
-                logger.info(f"管理员/超级管理员跳过仓库白名单检查: {github_username} (role: {user.role})")
+            role_lower = user.role.lower().strip() if user.role else ""
+            if role_lower in ["admin", "super_admin"]:
+                logger.info(
+                    f"管理员/超级管理员跳过仓库白名单检查: {github_username} (role: {user.role})"
+                )
             else:
                 # 普通用户需要仓库在白名单中
-                is_authorized = await service.is_authorized_repo(pr_info['repo_full_name'])
+                is_authorized = await service.is_authorized_repo(
+                    pr_info["repo_full_name"]
+                )
                 if not is_authorized:
                     logger.warning(f"未授权的仓库: {pr_info['repo_full_name']}")
                     if notification_sender:
                         await notification_sender.send_unauthorized_repo(
-                            repo_name=pr_info['repo_full_name'],
-                            pr_number=pr_info['pr_number']
+                            repo_name=pr_info["repo_full_name"],
+                            pr_number=pr_info["pr_number"],
                         )
                     return JSONResponse(
-                        content={"status": "skipped", "reason": "unauthorized repository"}
+                        content={
+                            "status": "skipped",
+                            "reason": "unauthorized repository",
+                        }
                     )
 
             # 3. 检查并消耗配额
             allowed, reason = await service.check_and_consume_quota(
                 github_username=github_username,
-                repo_name=pr_info['repo_full_name'],
-                pr_number=pr_info['pr_number']
+                repo_name=pr_info["repo_full_name"],
+                pr_number=pr_info["pr_number"],
             )
 
             if not allowed:
                 logger.warning(f"配额不足: {github_username} - {reason}")
                 if notification_sender:
                     await notification_sender.send_quota_exceeded(
-                        repo_name=pr_info['repo_full_name'],
-                        pr_number=pr_info['pr_number'],
-                        reason=reason
+                        repo_name=pr_info["repo_full_name"],
+                        pr_number=pr_info["pr_number"],
+                        reason=reason,
                     )
                 return JSONResponse(
-                    content={"status": "skipped", "reason": "quota exceeded", "detail": reason}
+                    content={
+                        "status": "skipped",
+                        "reason": "quota exceeded",
+                        "detail": reason,
+                    }
                 )
 
             # 4. 发送审查开始通知
             if notification_sender:
                 await notification_sender.send_review_start(
-                    repo_name=pr_info['repo_full_name'],
-                    pr_number=pr_info['pr_number'],
-                    pr_title=pr_info.get('title', ''),
-                    author=github_username
+                    repo_name=pr_info["repo_full_name"],
+                    pr_number=pr_info["pr_number"],
+                    pr_title=pr_info.get("title", ""),
+                    author=github_username,
                 )
 
         # 提交审查任务到队列
