@@ -59,26 +59,43 @@ class AIReviewer:
         ]
 
     async def _call_ai_with_retry(self, **kwargs) -> Any:
-        """带重试机制的AI API调用（指数退避策略）
+        """带重试机制的AI API调用（优化的指数退避策略）
+
+        重试策略：
+        - 前3次：快速重试（1s, 2s, 4s）
+        - 后续次数：慢速重试（8s, 16s, 32s...）
+        - 总超时：30秒
 
         处理空响应、异常、网络错误等情况
-        使用指数退避重试：5s, 10s, 20s, 40s, 80s...
 
         Returns:
             OpenAI API响应对象
 
         Raises:
-            Exception: 重试10次后仍然失败
+            Exception: 重试失败或超时
         """
         # 1. 动态调优参数
         # 120s 给模型足够的 Prefill 时间，16k 确保报告不会中途截断
         kwargs.setdefault('timeout', 120.0) 
         kwargs.setdefault('max_tokens', 16000)
         
-        max_retries = 10
-        base_delay = 5  # 初始延迟5秒
+        # 2. 优化后的重试参数
+        max_retries = 5  # 减少到5次
+        initial_delay = 1.0  # 初始延迟1秒
+        total_timeout = 30.0  # 总超时30秒
+        
+        # 记录开始时间
+        start_time = asyncio.get_event_loop().time()
 
         for attempt in range(max_retries):
+            # 检查总超时
+            elapsed = asyncio.get_event_loop().time() - start_time
+            if elapsed > total_timeout:
+                logger.error(
+                    f"重试总超时（已耗时 {elapsed:.1f}秒 > {total_timeout}秒），放弃重试"
+                )
+                raise Exception(f"AI调用失败：重试总超时（{total_timeout}秒）")
+            
             try:
                 # 调用AI API
                 # kwargs 会直接透传给 OpenAI 异步客户端
@@ -87,10 +104,20 @@ class AIReviewer:
                 # 检查空响应
                 if not response.choices or not response.choices[0].message.content:
                     if attempt < max_retries - 1:
-                        # 指数退避：5s, 10s, 20s, 40s, 80s, 160s...
-                        delay = base_delay * (2 ** attempt)
+                        # 混合退避策略：前3次快速，后面慢速
+                        if attempt < 3:
+                            delay = initial_delay * (2 ** attempt)  # 1s, 2s, 4s
+                        else:
+                            delay = 8 * (2 ** (attempt - 3))  # 8s, 16s...
+                        
+                        # 添加随机抖动（±20%），避免惊群效应
+                        import random
+                        jitter = random.uniform(0.8, 1.2)
+                        delay = delay * jitter
+                        
                         logger.warning(
-                            f"AI返回空响应，{delay}秒后重试 ({attempt + 1}/{max_retries})"
+                            f"AI返回空响应，{delay:.1f}秒后重试 "
+                            f"({attempt + 1}/{max_retries}, 已耗时 {elapsed:.1f}s)"
                         )
                         await asyncio.sleep(delay)
                         continue
@@ -99,20 +126,36 @@ class AIReviewer:
                         raise Exception("AI返回空响应，已达最大重试次数")
 
                 # 成功返回
+                total_time = asyncio.get_event_loop().time() - start_time
+                logger.info(f"✅ AI调用成功（耗时 {total_time:.1f}秒，重试 {attempt} 次）")
                 return response
 
             except Exception as e:
                 # 记录具体的错误类型（是 Timeout 还是 RateLimit）
                 error_type = type(e).__name__
                 if attempt < max_retries - 1:
-                    # 指数退避：5s, 10s, 20s, 40s, 80s, 160s...
-                    delay = base_delay * (2 ** attempt)
+                    # 混合退避策略：前3次快速，后面慢速
+                    if attempt < 3:
+                        delay = initial_delay * (2 ** attempt)  # 1s, 2s, 4s
+                    else:
+                        delay = 8 * (2 ** (attempt - 3))  # 8s, 16s...
+                    
+                    # 添加随机抖动（±20%）
+                    import random
+                    jitter = random.uniform(0.8, 1.2)
+                    delay = delay * jitter
+                    
                     logger.warning(
-                        f"AI调用失败 [{error_type}]: {e}，{delay}秒后重试 ({attempt + 1}/{max_retries})"
+                        f"AI调用失败 [{error_type}]: {e}，{delay:.1f}秒后重试 "
+                        f"({attempt + 1}/{max_retries}, 已耗时 {elapsed:.1f}s)"
                     )
                     await asyncio.sleep(delay)
                 else:
-                    logger.error(f"AI调用失败 [{error_type}]，已达最大重试次数: {e}")
+                    total_time = asyncio.get_event_loop().time() - start_time
+                    logger.error(
+                        f"AI调用失败 [{error_type}]，已达最大重试次数 "
+                        f"(总耗时 {total_time:.1f}s): {e}"
+                    )
                     raise
 
     async def review_pr(self, context: Dict[str, any], strategy: str) -> Dict[str, any]:
