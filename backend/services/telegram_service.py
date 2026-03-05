@@ -2,7 +2,7 @@
 
 from datetime import datetime, timedelta
 from typing import Optional, List, Tuple
-from sqlalchemy import select, and_, or_
+from sqlalchemy import select, and_
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.models.telegram_models import (
@@ -10,7 +10,6 @@ from backend.models.telegram_models import (
     RepoSubscription,
     QuotaUsageLog,
     UserRole,
-    QuotaType,
 )
 from backend.core.config import get_settings
 
@@ -34,23 +33,25 @@ class TelegramService:
         )
         return result.scalar_one_or_none()
 
-    async def get_user_by_github_username(self, github_username: str) -> Optional[TelegramUser]:
+    async def get_user_by_github_username(
+        self, github_username: str
+    ) -> Optional[TelegramUser]:
         """通过 GitHub 用户名获取用户"""
         # 先从数据库中查找
         result = await self.session.execute(
             select(TelegramUser).where(
                 and_(
                     TelegramUser.github_username == github_username,
-                    TelegramUser.is_active == True
+                    TelegramUser.is_active,
                 )
             )
         )
         user = result.scalar_one_or_none()
-        
+
         # 如果找到用户，直接返回
         if user:
             return user
-        
+
         # 如果没有找到，返回 None
         return None
 
@@ -59,8 +60,7 @@ class TelegramService:
         result = await self.session.execute(
             select(RepoSubscription).where(
                 and_(
-                    RepoSubscription.repo_name == repo_name,
-                    RepoSubscription.is_active == True
+                    RepoSubscription.repo_name == repo_name, RepoSubscription.is_active
                 )
             )
         )
@@ -69,36 +69,70 @@ class TelegramService:
     async def check_and_consume_quota(
         self, github_username: str, repo_name: str, pr_number: int
     ) -> Tuple[bool, str]:
-        """检查并消耗配额
+        """检查并消耗配额（原子操作，避免并发竞态条件）
+
+        使用数据库原子UPDATE操作，一次性完成检查和递增，
+        完全避免"Check-Then-Act"竞态条件。
 
         Returns:
             (是否允许, 拒绝原因)
         """
+        from sqlalchemy import update
+
         user = await self.get_user_by_github_username(github_username)
         if not user:
             return False, "用户未注册"
 
         # 管理员和超级管理员不受配额限制
-        if user.role in ['admin', 'super_admin']:
+        if user.role in ["admin", "super_admin"]:
             return True, ""
 
         # 重置过期配额
         await self._reset_expired_quotas(user)
 
-        # 检查配额
-        if user.daily_used >= user.daily_quota:
-            return False, f"每日配额已用完 ({user.daily_used}/{user.daily_quota})"
+        # 使用原子UPDATE操作检查并消耗配额
+        # 这个操作是原子的：只有当所有配额都未超限时才会执行递增
+        stmt = (
+            update(TelegramUser)
+            .where(
+                and_(
+                    TelegramUser.id == user.id,
+                    TelegramUser.daily_used < TelegramUser.daily_quota,
+                    TelegramUser.weekly_used < TelegramUser.weekly_quota,
+                    TelegramUser.monthly_used < TelegramUser.monthly_quota,
+                )
+            )
+            .values(
+                daily_used=TelegramUser.daily_used + 1,
+                weekly_used=TelegramUser.weekly_used + 1,
+                monthly_used=TelegramUser.monthly_used + 1,
+            )
+            .returning(
+                TelegramUser.daily_used,
+                TelegramUser.weekly_used,
+                TelegramUser.monthly_used,
+            )
+        )
 
-        if user.weekly_used >= user.weekly_quota:
-            return False, f"每周配额已用完 ({user.weekly_used}/{user.weekly_quota})"
+        result = await self.session.execute(stmt)
+        row = result.fetchone()
 
-        if user.monthly_used >= user.monthly_quota:
-            return False, f"每月配额已用完 ({user.monthly_used}/{user.monthly_quota})"
+        # 如果返回None，说明至少有一个配额已用完
+        if row is None:
+            # 重新读取用户信息以确定具体哪个配额已用完
+            await self.session.refresh(user)
 
-        # 消耗配额
-        user.daily_used += 1
-        user.weekly_used += 1
-        user.monthly_used += 1
+            if user.daily_used >= user.daily_quota:
+                return False, f"每日配额已用完 ({user.daily_used}/{user.daily_quota})"
+            elif user.weekly_used >= user.weekly_quota:
+                return False, f"每周配额已用完 ({user.weekly_used}/{user.weekly_quota})"
+            elif user.monthly_used >= user.monthly_quota:
+                return (
+                    False,
+                    f"每月配额已用完 ({user.monthly_used}/{user.monthly_quota})",
+                )
+            else:
+                return False, "配额已用完"
 
         # 记录日志
         log = QuotaUsageLog(
@@ -130,7 +164,9 @@ class TelegramService:
             if user.last_reset_weekly.date() < now.date():
                 # 获取本周一
                 week_start = now - timedelta(days=now.weekday())
-                week_start = week_start.replace(hour=0, minute=0, second=0, microsecond=0)
+                week_start = week_start.replace(
+                    hour=0, minute=0, second=0, microsecond=0
+                )
                 if user.last_reset_weekly < week_start:
                     user.weekly_used = 0
                     user.last_reset_weekly = now
@@ -141,7 +177,10 @@ class TelegramService:
             user.last_reset_monthly = now
         else:
             # 检查是否跨月
-            if user.last_reset_monthly.month != now.month or user.last_reset_monthly.year != now.year:
+            if (
+                user.last_reset_monthly.month != now.month
+                or user.last_reset_monthly.year != now.year
+            ):
                 user.monthly_used = 0
                 user.last_reset_monthly = now
 
@@ -167,7 +206,7 @@ class TelegramService:
             role = UserRole.SUPER_ADMIN
 
         # 将枚举转换为字符串值
-        role_value = role.value if hasattr(role, 'value') else role
+        role_value = role.value if hasattr(role, "value") else role
 
         user = TelegramUser(
             telegram_id=telegram_id,
@@ -265,14 +304,14 @@ class TelegramService:
     async def list_all_users(self) -> List[TelegramUser]:
         """列出所有用户"""
         result = await self.session.execute(
-            select(TelegramUser).where(TelegramUser.is_active == True)
+            select(TelegramUser).where(TelegramUser.is_active)
         )
         return result.scalars().all()
 
     async def list_all_repos(self) -> List[RepoSubscription]:
         """列出所有仓库"""
         result = await self.session.execute(
-            select(RepoSubscription).where(RepoSubscription.is_active == True)
+            select(RepoSubscription).where(RepoSubscription.is_active)
         )
         return result.scalars().all()
 
@@ -281,9 +320,7 @@ class TelegramService:
         from backend.models.database import PRReview
 
         result = await self.session.execute(
-            select(PRReview)
-            .order_by(PRReview.created_at.desc())
-            .limit(limit)
+            select(PRReview).order_by(PRReview.created_at.desc()).limit(limit)
         )
         reviews = result.scalars().all()
 

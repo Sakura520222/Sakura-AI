@@ -549,11 +549,11 @@ class GitHubAppClient:
 
             # 获取App信息（使用App Token可以访问）
             app = app_client.get_app()
-            
+
             # 返回App的slug作为标识符
             # GitHub App的slug格式通常是: username-appname
             app_slug = app.slug
-            
+
             logger.debug(f"成功获取GitHub App标识: {app_slug}")
             return app_slug
 
@@ -561,7 +561,7 @@ class GitHubAppClient:
             logger.error(f"获取机器人用户名失败: {e}")
             logger.warning("将使用配置文件中的bot_username作为备选")
             # 备选方案：从配置文件读取
-            return getattr(settings, 'bot_username', None)
+            return getattr(settings, "bot_username", None)
 
 
 def verify_webhook_signature(payload: bytes, signature: str) -> bool:

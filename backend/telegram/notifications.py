@@ -5,7 +5,6 @@ from telegram import Bot
 from loguru import logger
 
 from backend.core.config import get_settings
-from backend.services.telegram_service import TelegramService
 
 settings = get_settings()
 
@@ -155,7 +154,9 @@ class NotificationSender:
                 text=text,
                 parse_mode="Markdown",
             )
-            logger.warning(f"⚠️ 未注册用户审查请求: {github_username} in {repo_name}#{pr_number}")
+            logger.warning(
+                f"⚠️ 未注册用户审查请求: {github_username} in {repo_name}#{pr_number}"
+            )
 
         except Exception as e:
             logger.error(f"❌ 发送未注册用户通知失败: {e}")
