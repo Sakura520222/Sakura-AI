@@ -633,3 +633,100 @@ def extract_pr_info_from_webhook(payload: Dict[str, Any]) -> Optional[Dict[str, 
     except Exception as e:
         logger.error(f"提取PR信息时出错: {e}")
         return None
+
+
+async def get_pr_info_from_url(pr_url: str) -> Optional[Dict[str, Any]]:
+    """从PR URL获取完整信息（模拟webhook payload格式）
+
+    Args:
+        pr_url: PR URL，格式如 https://github.com/owner/repo/pull/123
+
+    Returns:
+        与webhook payload格式一致的pr_info字典
+
+    Raises:
+        ValueError: URL格式无效
+        Exception: 获取PR信息失败
+    """
+    import re
+
+    try:
+        # 1. 解析 URL
+        # 支持多种格式：
+        # - https://github.com/owner/repo/pull/123
+        # - https://github.com/owner/repo/pull/123/files
+        # - github.com/owner/repo/pull/123
+        pattern = r"github\.com/([^/]+)/([^/]+)/pull/(\d+)"
+        match = re.search(pattern, pr_url)
+
+        if not match:
+            raise ValueError(
+                f"无效的PR URL格式: {pr_url}\n"
+                f"正确格式: https://github.com/owner/repo/pull/123"
+            )
+
+        repo_owner = match.group(1)
+        repo_name = match.group(2)
+        pr_number = int(match.group(3))
+
+        logger.info(f"解析PR URL成功: {repo_owner}/{repo_name}#{pr_number}")
+
+        # 2. 获取 GitHub 客户端
+        client_instance = GitHubAppClient()
+        client = client_instance.get_repo_client(repo_owner, repo_name)
+
+        if not client:
+            raise Exception(
+                f"无法获取仓库 {repo_owner}/{repo_name} 的访问权限\n"
+                f"请确保 GitHub App 已安装到此仓库"
+            )
+
+        # 3. 获取 installation_id
+        try:
+            installation = client_instance.integration.get_installation(
+                owner=repo_owner, repo=repo_name
+            )
+            installation_id = installation.id
+        except Exception as e:
+            raise Exception(
+                f"无法获取 installation_id: {e}\n请确保 GitHub App 已安装到此仓库"
+            )
+
+        # 4. 获取 PR 详细信息
+        repo_full_name = f"{repo_owner}/{repo_name}"
+        repo = client.get_repo(repo_full_name)
+        pr = repo.get_pull(pr_number)
+
+        # 5. 构造与 webhook 完全一致的 pr_info 字典
+        pr_info = {
+            "action": "manual",  # 手动触发
+            "pr_id": pr.id,
+            "pr_number": pr.number,
+            "repo_owner": repo_owner,
+            "repo_name": repo_name,
+            "repo_full_name": repo_full_name,
+            "installation_id": installation_id,
+            "author": pr.user.login,
+            "title": pr.title,
+            "branch": pr.head.ref,
+            "base_branch": pr.base.ref,
+            "diff_url": pr.diff_url,
+            "patch_url": pr.patch_url,
+            "html_url": pr.html_url,
+            "state": pr.state,
+            "draft": pr.draft,
+            "merged": pr.merged,
+        }
+
+        logger.info(
+            f"成功获取PR信息: {repo_full_name}#{pr_number}, "
+            f"author={pr_info['author']}, state={pr.state}"
+        )
+
+        return pr_info
+
+    except ValueError:
+        raise
+    except Exception as e:
+        logger.error(f"从URL获取PR信息失败: {e}", exc_info=True)
+        raise
