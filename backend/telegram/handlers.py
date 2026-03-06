@@ -113,39 +113,39 @@ async def cmd_help(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "*👨‍💼 管理员命令（ADMIN 及以上）*\n"
         "━━━━━━━━━━━━━━━━━━━━━━\n"
         "*用户管理：*\n"
-        "➤ /user_add <telegram_id> <github_username>\n"
-        "   示例: /user_add 123456789 Sakura520222\n"
+        "➤ /user\\_add <telegram\\_id> <github\\_username>\n"
+        "   示例: /user\\_add 123456789 Sakura520222\n"
         "   说明: 添加新用户（需要 Telegram ID 和 GitHub 用户名）\n\n"
-        "➤ /user_remove <github_username>\n"
-        "   示例: /user_remove Sakura520222\n"
+        "➤ /user\\_remove <github\\_username>\n"
+        "   示例: /user\\_remove Sakura520222\n"
         "   说明: 移除指定用户\n\n"
         "➤ /users\n"
         "   说明: 列出所有注册用户\n\n"
         "*仓库管理：*\n"
-        "➤ /repo_add <owner/repo>\n"
-        "   示例: /repo_add Sakura520222/my-project\n"
+        "➤ /repo\\_add <owner/repo>\n"
+        "   示例: /repo\\_add Sakura520222/my-project\n"
         "   说明: 添加仓库到授权列表\n\n"
-        "➤ /repo_remove <owner/repo>\n"
-        "   示例: /repo_remove Sakura520222/my-project\n"
+        "➤ /repo\\_remove <owner/repo>\n"
+        "   示例: /repo\\_remove Sakura520222/my-project\n"
         "   说明: 从授权列表移除仓库\n\n"
         "➤ /repos\n"
         "   说明: 列出所有授权仓库\n\n"
         "*配额管理：*\n"
-        "➤ /quota_set <github_username> <daily|weekly|monthly> <limit>\n"
-        "   示例: /quota_set Sakura520222 daily 20\n"
+        "➤ /quota\\_set <github\\_username> <daily|weekly|monthly> <limit>\n"
+        "   示例: /quota\\_set Sakura520222 daily 20\n"
         "   说明: 设置指定用户的配额限制\n\n"
         "━━━━━━━━━━━━━━━━━━━━━━\n"
-        "*👑 超级管理员命令（SUPER_ADMIN）*\n"
+        "*👑 超级管理员命令（SUPER\\_ADMIN）*\n"
         "━━━━━━━━━━━━━━━━━━━━━━\n"
-        "➤ /admin_add <telegram_id> <github_username>\n"
-        "   示例: /admin_add 123456789 Sakura520222\n"
+        "➤ /admin\\_add <telegram\\_id> <github\\_username>\n"
+        "   示例: /admin\\_add 123456789 Sakura520222\n"
         "   说明: 添加管理员用户\n\n"
-        "➤ /admin_remove <telegram_id>\n"
-        "   示例: /admin_remove 123456789\n"
+        "➤ /admin\\_remove <telegram\\_id>\n"
+        "   示例: /admin\\_remove 123456789\n"
         "   说明: 移除管理员\n\n"
-        "➤ /review <pr_url>\n"
+        "➤ /review <pr\\_url>\n"
         "   示例: /review https://github.com/owner/repo/pull/123\n"
-        "   说明: 手动触发 PR 审查（开发中）\n\n"
+        "   说明: 手动触发 PR 审查\n\n"
         "━━━━━━━━━━━━━━━━━━━━━━\n"
         "*💡 提示：*\n"
         "━━━━━━━━━━━━━━━━━━━━━━\n"
@@ -505,16 +505,155 @@ async def cmd_review(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """手动触发审查（仅超级管理员）"""
     telegram_id = update.effective_user.id
 
+    # 1. 权限检查
     if not await check_permission(telegram_id, UserRole.SUPER_ADMIN):
         await update.message.reply_text("❌ 此命令仅超级管理员可用")
         return
 
+    # 2. 参数检查
     if len(context.args) < 1:
-        await update.message.reply_text("用法: /review <pr_url>")
+        await update.message.reply_text(
+            "用法: /review <pr_url>\n\n"
+            "示例: /review https://github.com/owner/repo/pull/123"
+        )
         return
 
     pr_url = context.args[0]
 
-    # TODO: 实现 PR 解析和触发逻辑
-    # 这需要与现有的 webhook 集成
-    await update.message.reply_text(f"🔧 手动触发功能开发中\n\nPR URL: {pr_url}")
+    try:
+        # 3. 发送处理中消息
+        status_msg = await update.message.reply_text("⏳ 正在获取PR信息...")
+
+        # 4. 从URL获取PR信息
+        from backend.core.github_app import get_pr_info_from_url
+
+        pr_info = await get_pr_info_from_url(pr_url)
+
+        # 4.5 检查并删除旧的审查记录
+        old_review_deleted = False
+        try:
+            async with get_async_session() as session:
+                from backend.models.database import PRReview
+                from sqlalchemy import select, and_
+
+                # 查询旧记录
+                result = await session.execute(
+                    select(PRReview).where(
+                        and_(
+                            PRReview.repo_name == pr_info["repo_name"],
+                            PRReview.pr_id == pr_info["pr_number"],
+                        )
+                    )
+                )
+                old_review = result.scalar_one_or_none()
+
+                if old_review:
+                    # 删除旧记录（级联删除关联评论）
+                    await session.delete(old_review)
+                    await session.commit()
+                    old_review_deleted = True
+                    logger.info(
+                        f"已删除旧审查记录: {pr_info['repo_full_name']}#{pr_info['pr_number']}, "
+                        f"review_id={old_review.id}"
+                    )
+
+        except Exception as delete_error:
+            # 删除失败不影响后续审查流程
+            logger.warning(f"删除旧审查记录失败（将继续审查）: {delete_error}")
+
+        # 5. 检查PR状态
+        if pr_info.get("state") != "open":
+            await status_msg.edit_text(
+                f"❌ PR未打开\n\n"
+                f"📋 PR: {pr_info['repo_full_name']}#{pr_info['pr_number']}\n"
+                f"状态: {pr_info.get('state', 'unknown')}"
+            )
+            return
+
+        if pr_info.get("draft"):
+            await status_msg.edit_text(
+                f"❌ 这是草稿PR，跳过审查\n\n"
+                f"📋 PR: {pr_info['repo_full_name']}#{pr_info['pr_number']}"
+            )
+            return
+
+        if pr_info.get("merged"):
+            await status_msg.edit_text(
+                f"❌ PR已合并，跳过审查\n\n"
+                f"📋 PR: {pr_info['repo_full_name']}#{pr_info['pr_number']}"
+            )
+            return
+
+        # 6. 可选：检查仓库授权（超级管理员可以跳过）
+        async with get_async_session() as session:
+            service = TelegramService(session)
+
+            # 超级管理员可以审查任何仓库，但仍然会记录到数据库
+            logger.info(
+                f"超级管理员手动触发审查: {telegram_id} -> "
+                f"{pr_info['repo_full_name']}#{pr_info['pr_number']}"
+            )
+
+        # 7. 发送审查开始通知
+        from backend.telegram.notifications import get_notification_sender
+
+        notification_sender = get_notification_sender()
+        if notification_sender:
+            await notification_sender.send_review_start(
+                repo_name=pr_info["repo_full_name"],
+                pr_number=pr_info["pr_number"],
+                pr_title=pr_info.get("title", ""),
+                author=pr_info["author"],
+            )
+
+        # 8. 提交审查任务（异步执行）
+        from backend.workers.review_worker import submit_review_task
+
+        task_id = await submit_review_task(pr_info)
+
+        # 9. 发送确认消息
+        if old_review_deleted:
+            delete_notice = "\n🧹 检测到旧记录，已为您清理并重新分析..."
+        else:
+            delete_notice = ""
+
+        await status_msg.edit_text(
+            f"✅ 审查任务已提交{delete_notice}\n\n"
+            f"📋 PR: {pr_info['repo_full_name']}#{pr_info['pr_number']}\n"
+            f"👤 作者: {pr_info['author']}\n"
+            f"📝 标题: {pr_info['title'][:50]}{'...' if len(pr_info['title']) > 50 else ''}\n"
+            f"🆔 任务ID: `{task_id}`\n\n"
+            f"⏳ 审查完成后将通过Telegram通知您",
+            parse_mode="Markdown",
+        )
+
+        logger.info(
+            f"手动审查任务已提交: {pr_info['repo_full_name']}#{pr_info['pr_number']}, "
+            f"task_id={task_id}, triggered_by={telegram_id}"
+        )
+
+    except ValueError as e:
+        # URL格式错误
+        await update.message.reply_text(f"❌ {str(e)}")
+        logger.warning(f"PR URL格式错误: {pr_url}, error={e}")
+
+    except Exception as e:
+        # 其他错误
+        error_msg = str(e)
+
+        # 构建友好的错误消息
+        if "访问权限" in error_msg or "installation" in error_msg.lower():
+            friendly_msg = (
+                f"❌ 无法访问仓库\n\n"
+                f"可能原因：\n"
+                f"• GitHub App 未安装到目标仓库\n"
+                f"• 仓库不存在或无权限访问\n\n"
+                f"错误详情: {error_msg}"
+            )
+        elif "Not Found" in error_msg or "不存在" in error_msg:
+            friendly_msg = f"❌ PR不存在\n\n请检查PR URL是否正确\n错误详情: {error_msg}"
+        else:
+            friendly_msg = f"❌ 获取PR信息失败\n\n错误详情: {error_msg}"
+
+        await update.message.reply_text(friendly_msg)
+        logger.error(f"手动触发审查失败: {e}", exc_info=True)
