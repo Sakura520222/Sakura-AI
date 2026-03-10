@@ -24,6 +24,11 @@ class Settings(BaseSettings):
     openai_model: str = "gpt-4"
     openai_temperature: float = 0.3
     openai_max_tokens: int = 4000
+    
+    # 模型上下文配置
+    model_context_window: int = 0  # 自定义上下文窗口大小（K tokens），0 表示自动检测
+    auto_fetch_model_context: bool = True  # 是否自动从 API 获取模型上下文
+    context_safety_threshold: float = 0.8  # 上下文安全阈值（0-1），默认使用 80%
 
     # 数据库配置
     database_url: str
