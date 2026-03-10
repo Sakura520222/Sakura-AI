@@ -10,8 +10,11 @@ class Settings(BaseSettings):
     """应用配置"""
 
     model_config = SettingsConfigDict(
-        env_file=".env", env_file_encoding="utf-8", case_sensitive=False, extra="ignore",
-        protected_namespaces=('settings_',)
+        env_file=".env",
+        env_file_encoding="utf-8",
+        case_sensitive=False,
+        extra="ignore",
+        protected_namespaces=("settings_",),
     )
 
     # GitHub App配置
@@ -25,12 +28,12 @@ class Settings(BaseSettings):
     openai_model: str = "gpt-4"
     openai_temperature: float = 0.3
     openai_max_tokens: int = 4000
-    
+
     # 模型上下文配置
     model_context_window: int = 0  # 自定义上下文窗口大小（K tokens），0 表示自动检测
     auto_fetch_model_context: bool = True  # 是否自动从 API 获取模型上下文
     context_safety_threshold: float = 0.8  # 上下文安全阈值（0-1），默认使用 80%
-    
+
     # 上下文压缩配置
     enable_context_compression: bool = True  # 是否启用上下文自动压缩
     context_compression_threshold: float = 0.85  # 压缩触发阈值（0-1），默认 85%

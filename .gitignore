@@ -65,3 +65,5 @@ htmlcov/
 *.tmp
 *.bak
 *.swp
+deploy_key
+deploy.py

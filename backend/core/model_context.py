@@ -6,7 +6,6 @@
 from typing import Optional, Dict
 from loguru import logger
 import httpx
-from functools import lru_cache
 
 from backend.core.config import get_settings
 
@@ -26,13 +25,11 @@ class ModelContextManager:
         "gpt-3.5-turbo": 16,
         "gpt-3.5-turbo-16k": 16,
         "gpt-35-turbo": 16,
-        
         # DeepSeek Models
         "deepseek-chat": 128,
         "deepseek-coder": 128,
         "deepseek-r1": 64,
         "deepseek-v3": 64,
-        
         # Claude Models (Anthropic)
         "claude-3-5-sonnet-20241022": 200,
         "claude-3-5-sonnet-20240620": 200,
@@ -40,12 +37,10 @@ class ModelContextManager:
         "claude-3-opus-20240229": 200,
         "claude-3-sonnet-20240229": 200,
         "claude-3-haiku-20240307": 200,
-        
         # Google Models (Gemini)
         "gemini-2.0-flash-exp": 1000,
         "gemini-1.5-pro": 1000,
         "gemini-1.5-flash": 1000,
-        
         # 其他常见模型
         "llama-3.1-405b": 128,
         "llama-3.1-70b": 128,
@@ -78,7 +73,10 @@ class ModelContextManager:
             model_name = self.settings.openai_model
 
         # 1. 检查用户自定义配置
-        if hasattr(self.settings, 'model_context_window') and self.settings.model_context_window:
+        if (
+            hasattr(self.settings, "model_context_window")
+            and self.settings.model_context_window
+        ):
             custom_context = self.settings.model_context_window
             logger.info(f"使用自定义上下文窗口: {custom_context}K tokens")
             return custom_context
@@ -91,16 +89,20 @@ class ModelContextManager:
         context_size = self._get_from_predefined(model_name)
         if context_size:
             self._context_cache[model_name] = context_size
-            logger.info(f"从预定义表获取模型上下文: {model_name} = {context_size}K tokens")
+            logger.info(
+                f"从预定义表获取模型上下文: {model_name} = {context_size}K tokens"
+            )
             return context_size
 
         # 4. 尝试通过 API 获取（如果启用）
-        if getattr(self.settings, 'auto_fetch_model_context', True):
+        if getattr(self.settings, "auto_fetch_model_context", True):
             try:
                 context_size = self._fetch_from_api(model_name)
                 if context_size:
                     self._context_cache[model_name] = context_size
-                    logger.info(f"从 API 获取模型上下文: {model_name} = {context_size}K tokens")
+                    logger.info(
+                        f"从 API 获取模型上下文: {model_name} = {context_size}K tokens"
+                    )
                     return context_size
             except Exception as e:
                 logger.warning(f"从 API 获取模型上下文失败: {e}")
@@ -131,8 +133,13 @@ class ModelContextManager:
         # 模糊匹配（处理模型名称变体）
         for predefined_model, context_size in self.PREDEFINED_MODELS.items():
             # 检查是否包含关键词
-            if predefined_model in model_name_normalized or model_name_normalized in predefined_model:
-                logger.debug(f"模糊匹配: {model_name} -> {predefined_model} ({context_size}K)")
+            if (
+                predefined_model in model_name_normalized
+                or model_name_normalized in predefined_model
+            ):
+                logger.debug(
+                    f"模糊匹配: {model_name} -> {predefined_model} ({context_size}K)"
+                )
                 return context_size
 
         return None
@@ -152,18 +159,18 @@ class ModelContextManager:
             async with httpx.AsyncClient(timeout=10.0) as client:
                 # 调用 OpenAI 兼容的 /models/{model} 接口
                 url = f"{self.settings.openai_api_base.rstrip('/')}/models"
-                
+
                 response = await client.get(
                     url,
                     headers={
                         "Authorization": f"Bearer {self.settings.openai_api_key}",
-                        "Content-Type": "application/json"
-                    }
+                        "Content-Type": "application/json",
+                    },
                 )
-                
+
                 if response.status_code == 200:
                     models_data = response.json()
-                    
+
                     # 查找匹配的模型
                     for model in models_data.get("data", []):
                         if model.get("id", "").lower() == model_name.lower():
@@ -173,7 +180,7 @@ class ModelContextManager:
                             if context_size:
                                 # 转换为 K tokens
                                 return context_size // 1000
-                    
+
                     logger.debug(f"API 返回的模型列表中未找到: {model_name}")
                 else:
                     logger.warning(f"获取模型列表失败: {response.status_code}")
@@ -185,8 +192,9 @@ class ModelContextManager:
 
         return None
 
-    def calculate_safe_context(self, model_name: Optional[str] = None, 
-                              safety_ratio: float = 0.8) -> int:
+    def calculate_safe_context(
+        self, model_name: Optional[str] = None, safety_ratio: float = 0.8
+    ) -> int:
         """计算安全的上下文窗口大小
 
         考虑到：
@@ -203,11 +211,11 @@ class ModelContextManager:
         """
         total_context = self.get_context_window(model_name)
         safe_context = int(total_context * safety_ratio)
-        
+
         logger.debug(
             f"计算安全上下文: {total_context}K * {safety_ratio} = {safe_context}K tokens"
         )
-        
+
         return safe_context
 
     def estimate_tokens(self, text: str) -> int:
@@ -227,7 +235,7 @@ class ModelContextManager:
 
         # 简单估算：按字符数计算
         # 中文字符通常占用更多 token
-        chinese_chars = sum(1 for c in text if '\u4e00' <= c <= '\u9fff')
+        chinese_chars = sum(1 for c in text if "\u4e00" <= c <= "\u9fff")
         other_chars = len(text) - chinese_chars
 
         # 估算：中文 1.5 字符/token，英文 4 字符/token
