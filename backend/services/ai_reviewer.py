@@ -1139,16 +1139,10 @@ class AIReviewer:
                             f"(阈值 {self.compression_threshold * 100}%), 启动压缩..."
                         )
 
-                        # 使用独立会话压缩历史
-                        compressed_summary = await self._compress_conversation_history(
+                        # 使用智能压缩，保留工具调用的完整性
+                        messages = await self._compress_conversation_history(
                             messages, system_prompt, threshold_tokens
                         )
-
-                        # 替换历史消息
-                        messages = [
-                            {"role": "system", "content": system_prompt},
-                            {"role": "user", "content": compressed_summary},
-                        ]
 
                         logger.info("✅ 压缩完成，继续审查...")
 
@@ -1681,8 +1675,13 @@ class AIReviewer:
 
     async def _compress_conversation_history(
         self, messages: List[Dict[str, any]], system_prompt: str, max_tokens: int
-    ) -> str:
-        """使用独立会话压缩对话历史
+    ) -> List[Dict[str, any]]:
+        """智能压缩对话历史，保留工具调用的完整性
+
+        压缩策略：
+        1. 识别并保留最近 N 轮完整的工具调用链路
+        2. 压缩更早的对话历史为摘要
+        3. 确保消息结构完整，兼容所有模型（包括智谱AI）
 
         Args:
             messages: 当前的消息列表
@@ -1690,23 +1689,79 @@ class AIReviewer:
             max_tokens: 压缩后的最大 token 数
 
         Returns:
-            压缩后的摘要文本
+            压缩后的消息列表
         """
         try:
             logger.info(
                 f"🗜️  开始压缩对话历史，当前大小: {self._estimate_messages_tokens(messages)} tokens"
             )
 
-            # 构建待压缩的文本
-            conversation_text = ""
-            for msg in messages[1:]:  # 跳过 system 消息
-                role = msg.get("role", "")
-                content = msg.get("content", "")
-                if content:
-                    conversation_text += f"\n## {role.upper()}\n{content}\n"
-
-            # 构建压缩 prompt
-            compress_prompt = f"""请将以下代码审查对话历史压缩为 {max_tokens} tokens 以内的精简摘要。
+            # 1. 分离消息：保留最近几轮工具调用，压缩更早的历史
+            keep_rounds = self.keep_rounds  # 默认保留最近2轮工具调用
+            compressed_messages = []
+            
+            # 保留 system 消息
+            system_msg = messages[0] if messages and messages[0].get("role") == "system" else None
+            if system_msg:
+                compressed_messages.append(system_msg)
+            
+            # 2. 从后向前扫描，保留最近 N 轮完整的工具调用
+            tool_call_rounds = []
+            current_round = []
+            
+            for msg in reversed(messages[1:]):  # 跳过 system，倒序扫描
+                current_round.insert(0, msg)  # 保持原始顺序
+                
+                # 如果是 assistant 消息且有 tool_calls，说明一轮结束
+                if msg.get("role") == "assistant" and msg.get("tool_calls"):
+                    tool_call_rounds.insert(0, current_round)
+                    current_round = []
+                    
+                    # 如果已收集足够的轮次，停止
+                    if len(tool_call_rounds) >= keep_rounds:
+                        break
+            
+            # 处理剩余的未闭合消息
+            if current_round:
+                if tool_call_rounds:
+                    tool_call_rounds[0] = current_round + tool_call_rounds[0]
+                else:
+                    tool_call_rounds.append(current_round)
+            
+            # 3. 提取需要压缩的早期历史
+            early_history = []
+            total_kept = sum(len(round) for round in tool_call_rounds)
+            
+            if total_kept < len(messages) - (1 if system_msg else 0):
+                # 有需要压缩的早期历史
+                early_end_idx = len(messages) - total_kept - (1 if system_msg else 0)
+                if early_end_idx > 0:
+                    early_history = messages[1 if system_msg else 0:early_end_idx + 1]
+            
+            # 4. 如果有早期历史，进行压缩
+            if early_history:
+                # 构建待压缩的文本
+                conversation_text = ""
+                for msg in early_history:
+                    role = msg.get("role", "")
+                    content = msg.get("content", "")
+                    tool_calls = msg.get("tool_calls")
+                    
+                    if tool_calls:
+                        conversation_text += f"\n## {role.upper()} (工具调用)\n"
+                        for tc in tool_calls:
+                            func = tc.function
+                            conversation_text += f"- 调用工具: {func.name}\n"
+                            conversation_text += f"- 参数: {func.arguments}\n"
+                            # 查找对应的工具结果
+                            tool_result = self._find_tool_result(messages, tc.id)
+                            if tool_result:
+                                conversation_text += f"- 结果: {str(tool_result)[:200]}...\n"
+                    elif content:
+                        conversation_text += f"\n## {role.upper()}\n{content}\n"
+                
+                # 构建压缩 prompt
+                compress_prompt = f"""请将以下代码审查对话历史压缩为 {max_tokens} tokens 以内的精简摘要。
 
 ## 压缩要求
 
@@ -1733,41 +1788,125 @@ class AIReviewer:
 请输出压缩后的摘要（保持与原始 PR 审查上下文相同的格式）。
 """
 
-            # 创建独立的压缩会话（会话 2）
-            compression_client = AsyncOpenAI(
-                base_url=settings.openai_api_base, api_key=settings.openai_api_key
-            )
+                # 创建独立的压缩会话
+                compression_client = AsyncOpenAI(
+                    base_url=settings.openai_api_base, api_key=settings.openai_api_key
+                )
 
-            # 调用 AI 压缩
-            response = await compression_client.chat.completions.create(
-                model=settings.openai_model,
-                messages=[
-                    {
-                        "role": "system",
-                        "content": "你是代码审查助手，擅长精简和总结对话历史。",
-                    },
-                    {"role": "user", "content": compress_prompt},
-                ],
-                temperature=0.3,  # 低温度确保稳定
-                timeout=60.0,
-                max_tokens=max_tokens,
-            )
+                # 调用 AI 压缩
+                response = await compression_client.chat.completions.create(
+                    model=settings.openai_model,
+                    messages=[
+                        {
+                            "role": "system",
+                            "content": "你是代码审查助手，擅长精简和总结对话历史。",
+                        },
+                        {"role": "user", "content": compress_prompt},
+                    ],
+                    temperature=0.3,
+                    timeout=60.0,
+                    max_tokens=max_tokens,
+                )
 
-            compressed_summary = response.choices[0].message.content.strip()
+                compressed_summary = response.choices[0].message.content.strip()
+                
+                # 5. 构建最终的消息列表：system + 压缩摘要 + 保留的工具调用轮次
+                compressed_messages.append({
+                    "role": "user",
+                    "content": compressed_summary
+                })
+                
+                # 添加保留的工具调用轮次
+                for round_msgs in tool_call_rounds:
+                    compressed_messages.extend(round_msgs)
+                
+                logger.info(
+                    f"✅ 压缩完成: "
+                    f"{self._estimate_messages_tokens(messages)} → "
+                    f"{self._estimate_messages_tokens(compressed_messages)} tokens "
+                    f"(保留了 {len(tool_call_rounds)} 轮工具调用)"
+                )
+            else:
+                # 没有早期历史需要压缩，直接返回保留的消息
+                for round_msgs in tool_call_rounds:
+                    compressed_messages.extend(round_msgs)
+                
+                logger.info(
+                    f"ℹ️  无需压缩，仅保留最近 {len(tool_call_rounds)} 轮工具调用"
+                )
 
-            logger.info(
-                f"✅ 压缩完成: "
-                f"{self._estimate_messages_tokens(messages)} → "
-                f"{model_context_mgr.estimate_tokens(compressed_summary)} tokens"
-            )
-
-            return compressed_summary
+            return compressed_messages
 
         except Exception as e:
             logger.error(f"压缩对话历史失败: {e}", exc_info=True)
             # 压缩失败，返回简化的原始消息
             logger.warning("压缩失败，回退到简化模式")
-            return self._fallback_simplify_messages(messages, system_prompt)
+            return self._fallback_simplify_messages_full(messages, system_prompt)
+    
+    def _find_tool_result(self, messages: List[Dict[str, any]], tool_call_id: str) -> Any:
+        """查找工具调用的结果
+        
+        Args:
+            messages: 消息列表
+            tool_call_id: 工具调用ID
+            
+        Returns:
+            工具结果内容
+        """
+        for msg in messages:
+            if msg.get("role") == "tool" and msg.get("tool_call_id") == tool_call_id:
+                try:
+                    return json.loads(msg.get("content", "{}"))
+                except:
+                    return msg.get("content", "")
+        return None
+    
+    def _fallback_simplify_messages_full(
+        self, messages: List[Dict[str, any]], system_prompt: str
+    ) -> List[Dict[str, any]]:
+        """压缩失败时的完整简化后备方案
+        
+        Args:
+            messages: 消息列表
+            system_prompt: 系统提示词
+            
+        Returns:
+            简化后的消息列表
+        """
+        logger.warning("使用完整简化模式，仅保留最近2轮工具调用")
+        
+        # 保留 system 消息
+        result = []
+        system_msg = messages[0] if messages and messages[0].get("role") == "system" else None
+        if system_msg:
+            result.append(system_msg)
+        
+        # 从后向前保留最近2轮工具调用
+        keep_rounds = 2
+        tool_call_rounds = []
+        current_round = []
+        
+        for msg in reversed(messages[1:]):
+            current_round.insert(0, msg)
+            
+            if msg.get("role") == "assistant" and msg.get("tool_calls"):
+                tool_call_rounds.insert(0, current_round)
+                current_round = []
+                
+                if len(tool_call_rounds) >= keep_rounds:
+                    break
+        
+        if current_round:
+            if tool_call_rounds:
+                tool_call_rounds[0] = current_round + tool_call_rounds[0]
+            else:
+                tool_call_rounds.append(current_round)
+        
+        # 添加保留的工具调用轮次
+        for round_msgs in tool_call_rounds:
+            result.extend(round_msgs)
+        
+        return result
 
     def _fallback_simplify_messages(
         self, messages: List[Dict[str, any]], system_prompt: str
