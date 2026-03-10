@@ -1138,8 +1138,11 @@ class AIReviewer:
                     threshold_tokens = int(safe_context * self.compression_threshold)
 
                     if current_tokens > threshold_tokens:
+                        # 转换为 K tokens 用于显示
+                        current_k = current_tokens / 1000
+                        threshold_k = threshold_tokens / 1000
                         logger.warning(
-                            f"🚨 上下文超限: {current_tokens} tokens > {threshold_tokens} "
+                            f"🚨 上下文超限: {current_k:.1f}K tokens > {threshold_k:.1f}K tokens "
                             f"(阈值 {self.compression_threshold * 100}%), 启动压缩..."
                         )
 
