@@ -29,6 +29,10 @@ class ModelContextManager:
         "deepseek-coder": 128,
         "deepseek-r1": 64,
         "deepseek-v3": 64,
+        # Zhipu AI Models (GLM)
+        "glm-4": 128,
+        "glm-4.7": 200,
+        "glm-4-plus": 128,
         # Claude Models (Anthropic)
         "claude-3-5-sonnet-20241022": 200,
         "claude-3-5-sonnet-20240620": 200,
