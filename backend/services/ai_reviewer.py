@@ -22,7 +22,7 @@ class AIReviewer:
         self.client = AsyncOpenAI(
             base_url=settings.openai_api_base, api_key=settings.openai_api_key
         )
-        
+
         # 上下文压缩配置
         self.enable_compression = settings.enable_context_compression
         self.compression_threshold = settings.context_compression_threshold
@@ -1113,7 +1113,7 @@ class AIReviewer:
                                 "content": json.dumps({"error": str(e)}),
                             }
                         )
-                
+
                 # 🔑 检查上下文是否超限，触发压缩
                 if self.enable_compression:
                     current_tokens = self._estimate_messages_tokens(messages)
@@ -1121,27 +1121,25 @@ class AIReviewer:
                         settings.openai_model, settings.context_safety_threshold
                     )
                     threshold_tokens = int(safe_context * self.compression_threshold)
-                    
+
                     if current_tokens > threshold_tokens:
                         logger.warning(
                             f"🚨 上下文超限: {current_tokens} tokens > {threshold_tokens} "
                             f"(阈值 {self.compression_threshold * 100}%), 启动压缩..."
                         )
-                        
+
                         # 使用独立会话压缩历史
                         compressed_summary = await self._compress_conversation_history(
-                            messages,
-                            system_prompt,
-                            threshold_tokens
+                            messages, system_prompt, threshold_tokens
                         )
-                        
+
                         # 替换历史消息
                         messages = [
                             {"role": "system", "content": system_prompt},
                             {"role": "user", "content": compressed_summary},
                         ]
-                        
-                        logger.info(f"✅ 压缩完成，继续审查...")
+
+                        logger.info("✅ 压缩完成，继续审查...")
 
             # 超过最大迭代次数，强制返回
             logger.warning(f"超过最大迭代次数 {max_iterations}，强制结束")
@@ -1643,21 +1641,21 @@ class AIReviewer:
 
     def _estimate_messages_tokens(self, messages: List[Dict[str, any]]) -> int:
         """估算消息列表的 token 数量
-        
+
         Args:
             messages: 消息列表
-            
+
         Returns:
             估算的 token 数量
         """
         total_tokens = 0
-        
+
         for message in messages:
             content = message.get("content", "")
             if content:
                 # 使用 model_context_mgr 的估算方法
                 total_tokens += model_context_mgr.estimate_tokens(content)
-            
+
             # 估算 tool_calls 的 token
             tool_calls = message.get("tool_calls")
             if tool_calls:
@@ -1667,28 +1665,27 @@ class AIReviewer:
                     total_tokens += model_context_mgr.estimate_tokens(
                         function.name + str(function.arguments)
                     )
-        
+
         return total_tokens
 
     async def _compress_conversation_history(
-        self, 
-        messages: List[Dict[str, any]], 
-        system_prompt: str,
-        max_tokens: int
+        self, messages: List[Dict[str, any]], system_prompt: str, max_tokens: int
     ) -> str:
         """使用独立会话压缩对话历史
-        
+
         Args:
             messages: 当前的消息列表
             system_prompt: 系统提示词
             max_tokens: 压缩后的最大 token 数
-            
+
         Returns:
             压缩后的摘要文本
         """
         try:
-            logger.info(f"🗜️  开始压缩对话历史，当前大小: {self._estimate_messages_tokens(messages)} tokens")
-            
+            logger.info(
+                f"🗜️  开始压缩对话历史，当前大小: {self._estimate_messages_tokens(messages)} tokens"
+            )
+
             # 构建待压缩的文本
             conversation_text = ""
             for msg in messages[1:]:  # 跳过 system 消息
@@ -1696,7 +1693,7 @@ class AIReviewer:
                 content = msg.get("content", "")
                 if content:
                     conversation_text += f"\n## {role.upper()}\n{content}\n"
-            
+
             # 构建压缩 prompt
             compress_prompt = f"""请将以下代码审查对话历史压缩为 {max_tokens} tokens 以内的精简摘要。
 
@@ -1724,38 +1721,37 @@ class AIReviewer:
 
 请输出压缩后的摘要（保持与原始 PR 审查上下文相同的格式）。
 """
-            
+
             # 创建独立的压缩会话（会话 2）
             compression_client = AsyncOpenAI(
-                base_url=settings.openai_api_base,
-                api_key=settings.openai_api_key
+                base_url=settings.openai_api_base, api_key=settings.openai_api_key
             )
-            
+
             # 调用 AI 压缩
             response = await compression_client.chat.completions.create(
                 model=settings.openai_model,
                 messages=[
                     {
                         "role": "system",
-                        "content": "你是代码审查助手，擅长精简和总结对话历史。"
+                        "content": "你是代码审查助手，擅长精简和总结对话历史。",
                     },
-                    {"role": "user", "content": compress_prompt}
+                    {"role": "user", "content": compress_prompt},
                 ],
                 temperature=0.3,  # 低温度确保稳定
                 timeout=60.0,
-                max_tokens=max_tokens
+                max_tokens=max_tokens,
             )
-            
+
             compressed_summary = response.choices[0].message.content.strip()
-            
+
             logger.info(
                 f"✅ 压缩完成: "
                 f"{self._estimate_messages_tokens(messages)} → "
                 f"{model_context_mgr.estimate_tokens(compressed_summary)} tokens"
             )
-            
+
             return compressed_summary
-            
+
         except Exception as e:
             logger.error(f"压缩对话历史失败: {e}", exc_info=True)
             # 压缩失败，返回简化的原始消息
@@ -1763,16 +1759,14 @@ class AIReviewer:
             return self._fallback_simplify_messages(messages, system_prompt)
 
     def _fallback_simplify_messages(
-        self, 
-        messages: List[Dict[str, any]], 
-        system_prompt: str
+        self, messages: List[Dict[str, any]], system_prompt: str
     ) -> str:
         """压缩失败时的简化后备方案
-        
+
         Args:
             messages: 消息列表
             system_prompt: 系统提示词
-            
+
         Returns:
             简化后的用户消息
         """
@@ -1780,7 +1774,7 @@ class AIReviewer:
         for msg in messages:
             if msg.get("role") == "user" and msg.get("content"):
                 return msg["content"]
-        
+
         # 如果找不到用户消息，返回空字符串
         logger.warning("无法找到原始用户消息")
         return ""
