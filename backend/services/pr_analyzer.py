@@ -452,29 +452,16 @@ class PRAnalyzer:
     def _truncate_patch(
         self, patch: str, max_lines: int = 500, max_chars: int = 3000
     ) -> str:
-        """统一的 patch 截断逻辑
+        """返回完整的 patch（已去除截断限制）
 
         Args:
             patch: 原始 patch 内容
-            max_lines: 最大行数限制
-            max_chars: 最大字符数限制
+            max_lines: 参数保留（已废弃），用于兼容性
+            max_chars: 参数保留（已废弃），用于兼容性
 
         Returns:
-            截断后的 patch
+            完整的 patch
         """
-        if not patch:
-            return patch
-
-        # 先按行数截断
-        lines = patch.split("\n")
-        if len(lines) > max_lines:
-            patch = (
-                "\n".join(lines[:max_lines])
-                + f"\n... (truncated, {len(lines) - max_lines} more lines)"
-            )
-
-        # 再按字符数截断
-        elif len(patch) > max_chars:
-            patch = patch[:max_chars] + "\n... (truncated)"
-
+        # 直接返回完整 patch，不做任何截断
+        # 分批处理机制会处理超大 PR 的上下文管理
         return patch

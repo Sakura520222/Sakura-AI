@@ -10,7 +10,11 @@ class Settings(BaseSettings):
     """应用配置"""
 
     model_config = SettingsConfigDict(
-        env_file=".env", env_file_encoding="utf-8", case_sensitive=False, extra="ignore"
+        env_file=".env",
+        env_file_encoding="utf-8",
+        case_sensitive=False,
+        extra="ignore",
+        protected_namespaces=("settings_",),
     )
 
     # GitHub App配置
@@ -24,6 +28,16 @@ class Settings(BaseSettings):
     openai_model: str = "gpt-4"
     openai_temperature: float = 0.3
     openai_max_tokens: int = 4000
+
+    # 模型上下文配置
+    model_context_window: int = 0  # 自定义上下文窗口大小（K tokens），0 表示自动检测
+    auto_fetch_model_context: bool = True  # 是否自动从 API 获取模型上下文
+    context_safety_threshold: float = 0.8  # 上下文安全阈值（0-1），默认使用 80%
+
+    # 上下文压缩配置
+    enable_context_compression: bool = True  # 是否启用上下文自动压缩
+    context_compression_threshold: float = 0.85  # 压缩触发阈值（0-1），默认 85%
+    context_compression_keep_rounds: int = 2  # 保留最近几轮对话不压缩
 
     # 数据库配置
     database_url: str
@@ -149,6 +163,30 @@ class StrategyConfig:
                 return True
 
         return False
+
+    def get_context_enhancement_config(self) -> dict:
+        """获取上下文增强配置"""
+        return self.config.get("context_enhancement", {})
+
+    def is_model_supports_reasoning_content(self, model_name: str) -> bool:
+        """检查模型是否支持 reasoning_content 字段
+        
+        Args:
+            model_name: 模型名称（如 'deepseek-r1', 'glm-4.7'）
+            
+        Returns:
+            True 如果模型支持 reasoning_content
+        """
+        # DeepSeek-R1 系列模型支持 reasoning_content
+        deepseek_models = [
+            "deepseek-r1",
+            "deepseek-reasoner",
+            "deepseek-r1-lite",
+            "deepseek-r1-zero",
+        ]
+        
+        model_lower = model_name.lower()
+        return any(model_lower.startswith(ds_model) for ds_model in deepseek_models)
 
 
 @lru_cache()
