@@ -29,6 +29,11 @@ class Settings(BaseSettings):
     model_context_window: int = 0  # 自定义上下文窗口大小（K tokens），0 表示自动检测
     auto_fetch_model_context: bool = True  # 是否自动从 API 获取模型上下文
     context_safety_threshold: float = 0.8  # 上下文安全阈值（0-1），默认使用 80%
+    
+    # 上下文压缩配置
+    enable_context_compression: bool = True  # 是否启用上下文自动压缩
+    context_compression_threshold: float = 0.85  # 压缩触发阈值（0-1），默认 85%
+    context_compression_keep_rounds: int = 2  # 保留最近几轮对话不压缩
 
     # 数据库配置
     database_url: str
