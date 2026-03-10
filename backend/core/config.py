@@ -164,6 +164,10 @@ class StrategyConfig:
 
         return False
 
+    def get_context_enhancement_config(self) -> dict:
+        """获取上下文增强配置"""
+        return self.config.get("context_enhancement", {})
+
 
 @lru_cache()
 def get_settings() -> Settings:
