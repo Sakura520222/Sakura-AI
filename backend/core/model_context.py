@@ -1,11 +1,10 @@
 """AI模型上下文管理模块
 
-用于管理不同AI模型的上下文窗口大小，支持预定义、API获取和自定义配置。
+用于管理不同AI模型的上下文窗口大小，支持预定义和手动配置。
 """
 
 from typing import Optional, Dict
 from loguru import logger
-import httpx
 
 from backend.core.config import get_settings
 
@@ -58,9 +57,8 @@ class ModelContextManager:
 
         优先级：
         1. 用户自定义配置（环境变量 MODEL_CONTEXT_WINDOW）
-        2. API 动态获取（如果启用）
-        3. 预定义模型映射表
-        4. 默认值（128K）
+        2. 预定义模型映射表
+        3. 默认值（128K）
 
         Args:
             model_name: 模型名称，如果为 None 则使用配置中的默认模型
@@ -94,19 +92,11 @@ class ModelContextManager:
             )
             return context_size
 
-        # 4. 注意：由于 get_context_window 是同步方法，无法调用异步的 _fetch_from_api
-        # 如果需要自动获取模型上下文，请在配置中设置 model_context_window
-        # 或确保模型在预定义列表中
-        if getattr(self.settings, "auto_fetch_model_context", False):
-            logger.warning(
-                f"auto_fetch_model_context 已启用，但在同步上下文中无法调用 API。"
-                f"请使用预定义模型列表或在 .env 中设置 MODEL_CONTEXT_WINDOW"
-            )
-
-        # 5. 使用默认值
+        # 4. 使用默认值
         default_context = 128  # 默认 128K
         logger.warning(
-            f"未找到模型 {model_name} 的上下文信息，使用默认值: {default_context}K tokens"
+            f"未找到模型 {model_name} 的上下文信息，使用默认值: {default_context}K tokens。"
+            f"请在 .env 中设置 MODEL_CONTEXT_WINDOW 或确保模型在预定义列表中"
         )
         return default_context
 
@@ -137,54 +127,6 @@ class ModelContextManager:
                     f"模糊匹配: {model_name} -> {predefined_model} ({context_size}K)"
                 )
                 return context_size
-
-        return None
-
-    async def _fetch_from_api(self, model_name: str) -> Optional[int]:
-        """通过 API 获取模型上下文信息
-
-        支持 OpenAI 兼容的 API（如 OpenAI、DeepSeek 等）
-
-        Args:
-            model_name: 模型名称
-
-        Returns:
-            上下文大小（K tokens），如果获取失败则返回 None
-        """
-        try:
-            async with httpx.AsyncClient(timeout=10.0) as client:
-                # 调用 OpenAI 兼容的 /models/{model} 接口
-                url = f"{self.settings.openai_api_base.rstrip('/')}/models"
-
-                response = await client.get(
-                    url,
-                    headers={
-                        "Authorization": f"Bearer {self.settings.openai_api_key}",
-                        "Content-Type": "application/json",
-                    },
-                )
-
-                if response.status_code == 200:
-                    models_data = response.json()
-
-                    # 查找匹配的模型
-                    for model in models_data.get("data", []):
-                        if model.get("id", "").lower() == model_name.lower():
-                            # 尝试从模型信息中提取上下文大小
-                            # 注意：不是所有 API 都会返回这个信息
-                            context_size = model.get("context_window")
-                            if context_size:
-                                # 转换为 K tokens
-                                return context_size // 1000
-
-                    logger.debug(f"API 返回的模型列表中未找到: {model_name}")
-                else:
-                    logger.warning(f"获取模型列表失败: {response.status_code}")
-
-        except httpx.TimeoutException:
-            logger.warning("获取模型信息超时")
-        except Exception as e:
-            logger.warning(f"获取模型信息时出错: {e}")
 
         return None
 
