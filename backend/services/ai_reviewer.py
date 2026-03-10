@@ -934,11 +934,22 @@ class AIReviewer:
                 )
                 return await self.review_pr_with_tools(context, strategy, repo, pr)
 
-            # 大PR，启用分批模式（禁用AI工具，避免上下文爆炸）
-            logger.warning(
-                f"🚨 PR规模较大 ({len(files)} 个文件)，启用分批审查模式 "
-                f"（强制禁用AI工具，避免上下文爆炸导致的空响应）"
+            # 大PR，启用分批模式
+            # 根据配置决定是否启用AI工具（依赖上下文压缩）
+            enable_tools_in_batch = strategy_config.get_context_enhancement_config().get(
+                "enable_ai_tools_in_batch", True
             )
+            
+            if enable_tools_in_batch:
+                logger.info(
+                    f"🚨 PR规模较大 ({len(files)} 个文件)，启用分批审查模式 "
+                    f"（启用AI工具，依赖自动上下文压缩）"
+                )
+            else:
+                logger.warning(
+                    f"🚨 PR规模较大 ({len(files)} 个文件)，启用分批审查模式 "
+                    f"（禁用AI工具，仅基于patch审查）"
+                )
 
             # 将文件分批
             batches = self._split_files_into_batches(
@@ -966,7 +977,7 @@ class AIReviewer:
                         strategy,
                         repo,
                         pr,
-                        use_tools=False,  # 禁用工具，避免上下文爆炸
+                        use_tools=enable_tools_in_batch,  # 根据配置决定是否启用工具
                     )
 
             # 并行执行所有批次（受信号量限制）

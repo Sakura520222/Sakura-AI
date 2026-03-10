@@ -334,12 +334,17 @@ context_enhancement:
   max_tool_iterations: 10
   
   # 单个文件最大读取大小（字节）
-  max_file_size: 100000  # 100KB
+  max_file_size: 500000  # 100KB
+  
+  # 分批模式下是否启用AI工具（依赖上下文压缩）
+  # true: 分批时也启用工具，AI可查看完整文件，依赖自动压缩防止超限
+  # false: 分批时禁用工具，仅基于patch审查（更快但深度较浅）
+  enable_ai_tools_in_batch: true
 
 # 审查批准策略配置
 review_policy:
   # 是否启用自动批准功能（建议先设为false观察效果）
-  enabled: false
+  enabled: true
   
   # 批准阈值：分数 >= 此值才考虑批准
   approve_threshold: 8
