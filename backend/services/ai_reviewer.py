@@ -8,9 +8,11 @@ import asyncio
 import random
 
 from backend.core.config import get_settings, get_strategy_config
+from backend.core.model_context import get_model_context_manager
 
 settings = get_settings()
 strategy_config = get_strategy_config()
+model_context_mgr = get_model_context_manager()
 
 
 class AIReviewer:
