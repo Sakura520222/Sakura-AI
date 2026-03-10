@@ -92,6 +92,7 @@ class TelegramService:
 
         # 使用原子UPDATE操作检查并消耗配额
         # 这个操作是原子的：只有当所有配额都未超限时才会执行递增
+        # 注意：MySQL 不支持 RETURNING 子句，所以分两步执行
         stmt = (
             update(TelegramUser)
             .where(
@@ -107,18 +108,12 @@ class TelegramService:
                 weekly_used=TelegramUser.weekly_used + 1,
                 monthly_used=TelegramUser.monthly_used + 1,
             )
-            .returning(
-                TelegramUser.daily_used,
-                TelegramUser.weekly_used,
-                TelegramUser.monthly_used,
-            )
         )
 
         result = await self.session.execute(stmt)
-        row = result.fetchone()
-
-        # 如果返回None，说明至少有一个配额已用完
-        if row is None:
+        
+        # 检查是否影响了行数（如果 rowcount == 0 说明配额已用完）
+        if result.rowcount == 0:
             # 重新读取用户信息以确定具体哪个配额已用完
             await self.session.refresh(user)
 
