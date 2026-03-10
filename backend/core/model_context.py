@@ -94,18 +94,14 @@ class ModelContextManager:
             )
             return context_size
 
-        # 4. 尝试通过 API 获取（如果启用）
-        if getattr(self.settings, "auto_fetch_model_context", True):
-            try:
-                context_size = self._fetch_from_api(model_name)
-                if context_size:
-                    self._context_cache[model_name] = context_size
-                    logger.info(
-                        f"从 API 获取模型上下文: {model_name} = {context_size}K tokens"
-                    )
-                    return context_size
-            except Exception as e:
-                logger.warning(f"从 API 获取模型上下文失败: {e}")
+        # 4. 注意：由于 get_context_window 是同步方法，无法调用异步的 _fetch_from_api
+        # 如果需要自动获取模型上下文，请在配置中设置 model_context_window
+        # 或确保模型在预定义列表中
+        if getattr(self.settings, "auto_fetch_model_context", False):
+            logger.warning(
+                f"auto_fetch_model_context 已启用，但在同步上下文中无法调用 API。"
+                f"请使用预定义模型列表或在 .env 中设置 MODEL_CONTEXT_WINDOW"
+            )
 
         # 5. 使用默认值
         default_context = 128  # 默认 128K
