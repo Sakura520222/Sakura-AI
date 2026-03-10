@@ -168,6 +168,26 @@ class StrategyConfig:
         """获取上下文增强配置"""
         return self.config.get("context_enhancement", {})
 
+    def is_model_supports_reasoning_content(self, model_name: str) -> bool:
+        """检查模型是否支持 reasoning_content 字段
+        
+        Args:
+            model_name: 模型名称（如 'deepseek-r1', 'glm-4.7'）
+            
+        Returns:
+            True 如果模型支持 reasoning_content
+        """
+        # DeepSeek-R1 系列模型支持 reasoning_content
+        deepseek_models = [
+            "deepseek-r1",
+            "deepseek-reasoner",
+            "deepseek-r1-lite",
+            "deepseek-r1-zero",
+        ]
+        
+        model_lower = model_name.lower()
+        return any(model_lower.startswith(ds_model) for ds_model in deepseek_models)
+
 
 @lru_cache()
 def get_settings() -> Settings:

@@ -1091,9 +1091,13 @@ class AIReviewer:
                 }
 
                 # DeepSeek-R1 特有：必须包含 reasoning_content
+                # 仅当模型支持 reasoning_content 时才添加该字段
                 if (
                     hasattr(assistant_message, "reasoning_content")
                     and assistant_message.reasoning_content
+                    and strategy_config.is_model_supports_reasoning_content(
+                        settings.openai_model
+                    )
                 ):
                     assistant_msg_dict["reasoning_content"] = (
                         assistant_message.reasoning_content
@@ -1861,6 +1865,30 @@ class AIReviewer:
                     return msg.get("content", "")
         return None
     
+    def _clean_message_for_model(self, message: Dict[str, any]) -> Dict[str, any]:
+        """清理消息中当前模型不支持的字段
+        
+        Args:
+            message: 原始消息
+            
+        Returns:
+            清理后的消息
+        """
+        # 创建消息副本
+        cleaned_msg = message.copy()
+        
+        # 检查当前模型是否支持 reasoning_content
+        supports_reasoning = strategy_config.is_model_supports_reasoning_content(
+            settings.openai_model
+        )
+        
+        # 如果模型不支持 reasoning_content，移除该字段
+        if not supports_reasoning and "reasoning_content" in cleaned_msg:
+            del cleaned_msg["reasoning_content"]
+            logger.debug("移除不兼容的 reasoning_content 字段")
+        
+        return cleaned_msg
+    
     def _fallback_simplify_messages_full(
         self, messages: List[Dict[str, any]], system_prompt: str
     ) -> List[Dict[str, any]]:
@@ -1879,7 +1907,7 @@ class AIReviewer:
         result = []
         system_msg = messages[0] if messages and messages[0].get("role") == "system" else None
         if system_msg:
-            result.append(system_msg)
+            result.append(self._clean_message_for_model(system_msg))
         
         # 从后向前保留最近2轮工具调用
         keep_rounds = 2
@@ -1902,9 +1930,10 @@ class AIReviewer:
             else:
                 tool_call_rounds.append(current_round)
         
-        # 添加保留的工具调用轮次
+        # 添加保留的工具调用轮次（清理每个消息）
         for round_msgs in tool_call_rounds:
-            result.extend(round_msgs)
+            for msg in round_msgs:
+                result.append(self._clean_message_for_model(msg))
         
         return result
 
