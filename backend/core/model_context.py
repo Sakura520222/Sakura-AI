@@ -149,16 +149,19 @@ class ModelContextManager:
             safety_ratio: 安全比例（0-1），默认 0.8 表示使用 80% 的上下文
 
         Returns:
-            安全的上下文大小（K tokens）
+            安全的上下文大小（tokens，不是 K tokens）
         """
-        total_context = self.get_context_window(model_name)
-        safe_context = int(total_context * safety_ratio)
+        total_context_k = self.get_context_window(model_name)
+        safe_context_k = int(total_context_k * safety_ratio)
+        
+        # 转换为 tokens（乘以 1000）
+        safe_context_tokens = safe_context_k * 1000
 
         logger.debug(
-            f"计算安全上下文: {total_context}K * {safety_ratio} = {safe_context}K tokens"
+            f"计算安全上下文: {total_context_k}K * {safety_ratio} = {safe_context_k}K = {safe_context_tokens} tokens"
         )
 
-        return safe_context
+        return safe_context_tokens
 
     def estimate_tokens(self, text: str) -> int:
         """估算文本的 token 数量
