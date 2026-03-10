@@ -22,6 +22,11 @@ class AIReviewer:
         self.client = AsyncOpenAI(
             base_url=settings.openai_api_base, api_key=settings.openai_api_key
         )
+        
+        # 上下文压缩配置
+        self.enable_compression = settings.enable_context_compression
+        self.compression_threshold = settings.context_compression_threshold
+        self.keep_rounds = settings.context_compression_keep_rounds
 
         # 定义可用工具
         self.tools = [
@@ -1108,6 +1113,35 @@ class AIReviewer:
                                 "content": json.dumps({"error": str(e)}),
                             }
                         )
+                
+                # 🔑 检查上下文是否超限，触发压缩
+                if self.enable_compression:
+                    current_tokens = self._estimate_messages_tokens(messages)
+                    safe_context = model_context_mgr.calculate_safe_context(
+                        settings.openai_model, settings.context_safety_threshold
+                    )
+                    threshold_tokens = int(safe_context * self.compression_threshold)
+                    
+                    if current_tokens > threshold_tokens:
+                        logger.warning(
+                            f"🚨 上下文超限: {current_tokens} tokens > {threshold_tokens} "
+                            f"(阈值 {self.compression_threshold * 100}%), 启动压缩..."
+                        )
+                        
+                        # 使用独立会话压缩历史
+                        compressed_summary = await self._compress_conversation_history(
+                            messages,
+                            system_prompt,
+                            threshold_tokens
+                        )
+                        
+                        # 替换历史消息
+                        messages = [
+                            {"role": "system", "content": system_prompt},
+                            {"role": "user", "content": compressed_summary},
+                        ]
+                        
+                        logger.info(f"✅ 压缩完成，继续审查...")
 
             # 超过最大迭代次数，强制返回
             logger.warning(f"超过最大迭代次数 {max_iterations}，强制结束")
@@ -1606,6 +1640,150 @@ class AIReviewer:
         except Exception as e:
             logger.error(f"AI标签推荐失败: {e}", exc_info=True)
             return []
+
+    def _estimate_messages_tokens(self, messages: List[Dict[str, any]]) -> int:
+        """估算消息列表的 token 数量
+        
+        Args:
+            messages: 消息列表
+            
+        Returns:
+            估算的 token 数量
+        """
+        total_tokens = 0
+        
+        for message in messages:
+            content = message.get("content", "")
+            if content:
+                # 使用 model_context_mgr 的估算方法
+                total_tokens += model_context_mgr.estimate_tokens(content)
+            
+            # 估算 tool_calls 的 token
+            tool_calls = message.get("tool_calls")
+            if tool_calls:
+                for tool_call in tool_calls:
+                    # 工具调用名称和参数
+                    function = tool_call.function
+                    total_tokens += model_context_mgr.estimate_tokens(
+                        function.name + str(function.arguments)
+                    )
+        
+        return total_tokens
+
+    async def _compress_conversation_history(
+        self, 
+        messages: List[Dict[str, any]], 
+        system_prompt: str,
+        max_tokens: int
+    ) -> str:
+        """使用独立会话压缩对话历史
+        
+        Args:
+            messages: 当前的消息列表
+            system_prompt: 系统提示词
+            max_tokens: 压缩后的最大 token 数
+            
+        Returns:
+            压缩后的摘要文本
+        """
+        try:
+            logger.info(f"🗜️  开始压缩对话历史，当前大小: {self._estimate_messages_tokens(messages)} tokens")
+            
+            # 构建待压缩的文本
+            conversation_text = ""
+            for msg in messages[1:]:  # 跳过 system 消息
+                role = msg.get("role", "")
+                content = msg.get("content", "")
+                if content:
+                    conversation_text += f"\n## {role.upper()}\n{content}\n"
+            
+            # 构建压缩 prompt
+            compress_prompt = f"""请将以下代码审查对话历史压缩为 {max_tokens} tokens 以内的精简摘要。
+
+## 压缩要求
+
+1. **保留关键信息**：
+   - 所有已发现的代码问题（按严重程度：critical/major/minor/suggestions）
+   - 所有行内评论的位置（文件路径:行号）和内容
+   - 重要工具调用的结果（文件内容、目录结构）
+   - 当前审查的进度
+
+2. **移除冗余**：
+   - 重复的对话轮次
+   - 冗余的工具调用详情
+   - 已处理完成的问题
+
+3. **保持结构**：
+   - 保持与原始 user_message 相同的格式
+   - 确保 PR 信息、文件信息等结构完整
+   - 行内评论格式：`### 🔴 文件路径:行号`
+
+## 对话历史
+
+{conversation_text}
+
+请输出压缩后的摘要（保持与原始 PR 审查上下文相同的格式）。
+"""
+            
+            # 创建独立的压缩会话（会话 2）
+            compression_client = AsyncOpenAI(
+                base_url=settings.openai_api_base,
+                api_key=settings.openai_api_key
+            )
+            
+            # 调用 AI 压缩
+            response = await compression_client.chat.completions.create(
+                model=settings.openai_model,
+                messages=[
+                    {
+                        "role": "system",
+                        "content": "你是代码审查助手，擅长精简和总结对话历史。"
+                    },
+                    {"role": "user", "content": compress_prompt}
+                ],
+                temperature=0.3,  # 低温度确保稳定
+                timeout=60.0,
+                max_tokens=max_tokens
+            )
+            
+            compressed_summary = response.choices[0].message.content.strip()
+            
+            logger.info(
+                f"✅ 压缩完成: "
+                f"{self._estimate_messages_tokens(messages)} → "
+                f"{model_context_mgr.estimate_tokens(compressed_summary)} tokens"
+            )
+            
+            return compressed_summary
+            
+        except Exception as e:
+            logger.error(f"压缩对话历史失败: {e}", exc_info=True)
+            # 压缩失败，返回简化的原始消息
+            logger.warning("压缩失败，回退到简化模式")
+            return self._fallback_simplify_messages(messages, system_prompt)
+
+    def _fallback_simplify_messages(
+        self, 
+        messages: List[Dict[str, any]], 
+        system_prompt: str
+    ) -> str:
+        """压缩失败时的简化后备方案
+        
+        Args:
+            messages: 消息列表
+            system_prompt: 系统提示词
+            
+        Returns:
+            简化后的用户消息
+        """
+        # 只保留原始用户消息，移除所有对话历史
+        for msg in messages:
+            if msg.get("role") == "user" and msg.get("content"):
+                return msg["content"]
+        
+        # 如果找不到用户消息，返回空字符串
+        logger.warning("无法找到原始用户消息")
+        return ""
 
     def _build_label_recommendation_message(
         self,
