@@ -4,6 +4,7 @@ from datetime import datetime, timedelta
 from typing import Optional, List, Tuple
 from sqlalchemy import select, and_
 from sqlalchemy.ext.asyncio import AsyncSession
+from loguru import logger
 
 from backend.models.telegram_models import (
     TelegramUser,
@@ -84,7 +85,12 @@ class TelegramService:
             return False, "用户未注册"
 
         # 管理员和超级管理员不受配额限制
-        if user.role in ["admin", "super_admin"]:
+        # 转换为小写进行比较，支持大小写不敏感（与 webhook.py 保持一致）
+        role_lower = user.role.lower().strip() if user.role else ""
+        if role_lower in ["admin", "super_admin"]:
+            logger.info(
+                f"管理员/超级管理员跳过配额检查: {github_username} (role: {user.role})"
+            )
             return True, ""
 
         # 重置过期配额

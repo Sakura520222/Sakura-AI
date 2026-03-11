@@ -918,7 +918,11 @@ class AIReviewer:
                 for issue in issues:
                     # 过滤无效内容（空字符串、纯空白、过短内容）
                     # 阈值设为3，过滤掉无意义的1-2字符内容
-                    if not issue or not isinstance(issue, str) or len(issue.strip()) < 3:
+                    if (
+                        not issue
+                        or not isinstance(issue, str)
+                        or len(issue.strip()) < 3
+                    ):
                         continue
                     # 去重：使用标准化后的内容作为key
                     issue_normalized = issue.strip().lower()
