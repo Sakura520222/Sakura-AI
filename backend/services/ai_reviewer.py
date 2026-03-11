@@ -374,9 +374,14 @@ class AIReviewer:
                 initial_emoji = emoji
                 break
 
-        severity = self._classify_severity_intelligent(
-            section, content_text, initial_emoji
-        )
+        # 直接使用 AI 返回的 emoji，不做后处理
+        emoji_to_severity = {
+            "🔴": "critical",
+            "🟡": "major",
+            "💡": "suggestions",
+            "⚠️": "minor",
+        }
+        severity = emoji_to_severity.get(initial_emoji, "suggestions")
 
         # 提取列表项
         import re
@@ -2262,7 +2267,7 @@ class AIReviewer:
                     body = lines[0].strip()
 
                 # 初步识别emoji
-                severity = "suggestion"
+                severity = "suggestions"  # 默认值（注意是复数）
                 full_match_text = match.group(0)
                 initial_emoji = "💡"  # 默认
                 for emoji in ["🔴", "🟡", "💡", "⚠️"]:
@@ -2270,28 +2275,19 @@ class AIReviewer:
                         initial_emoji = emoji
                         break
 
-                # 智能分类严重程度（基于内容分析，避免仅依赖emoji误判）
-                severity = self._classify_severity_intelligent(
-                    full_match_text, body, initial_emoji
-                )
+                # 直接使用 AI 返回的 emoji，不做后处理
+                emoji_to_severity = {
+                    "🔴": "critical",
+                    "🟡": "major",
+                    "💡": "suggestions",
+                    "⚠️": "minor",
+                }
+                severity = emoji_to_severity.get(initial_emoji, "suggestions")
 
                 # 使用范围评论：start_line 表示起始行，line_number 表示结束行
                 # GitHub API 支持跨多行评论，通过同时提供 start_line 和 line 实现
                 start_line = line_numbers[0]
                 end_line = line_numbers[-1]
-
-                # 记录降级日志便于调优（在 start_line 和 end_line 定义之后）
-                if initial_emoji == "🔴" and severity != "critical":
-                    if len(line_numbers) > 1:
-                        logger.info(
-                            f"🔴 emoji评论降级: {file_path}:{start_line}-{end_line} "
-                            f"从critical降级为{severity} | 内容预览: {body[:100]}"
-                        )
-                    else:
-                        logger.info(
-                            f"🔴 emoji评论降级: {file_path}:{start_line} "
-                            f"从critical降级为{severity} | 内容预览: {body[:100]}"
-                        )
 
                 inline_comment = {
                     "file_path": file_path,
@@ -2329,190 +2325,6 @@ class AIReviewer:
                 continue
 
         logger.info(f"共提取 {len(result['inline_comments'])} 条行内评论")
-
-    def _classify_severity_intelligent(
-        self, full_match_text: str, content_body: str, initial_emoji: str
-    ) -> str:
-        """智能分类严重程度
-
-        综合考虑emoji、内容关键词，避免单一因素误判
-
-        Args:
-            full_match_text: 完整匹配文本（包含标题）
-            content_body: 评论内容主体
-            initial_emoji: 初步识别的emoji（🔴/🟡/💡/⚠️）
-
-        Returns:
-            最终严重程度: critical/major/suggestion
-        """
-        # 定义严重程度关键词库
-        CRITICAL_KEYWORDS = [
-            # Bug类型
-            "空指针",
-            "null pointer",
-            "除零",
-            "division by zero",
-            "内存泄漏",
-            "memory leak",
-            "死循环",
-            "无限递归",
-            "infinite loop",
-            "数组越界",
-            "index out of bounds",
-            "类型错误",
-            "type error",
-            "语法错误",
-            "syntax error",
-            # 安全问题
-            "sql注入",
-            "MySQL注入",
-            "MySQL injection",
-            "sql injection",
-            "xss",
-            "csrf",
-            "权限绕过",
-            "permission bypass",
-            "权限漏洞",
-            "敏感信息",
-            "sensitive data",
-            "明文密码",
-            "plaintext password",
-            "硬编码",
-            "hardcoded",
-            "密钥",
-            "私钥",
-            # 崩溃相关
-            "崩溃",
-            "crash",
-            "会导致",
-            "将导致",
-            "会失败",
-            "抛出异常",
-            "throw exception",
-            "未处理异常",
-            # 数据问题
-            "数据丢失",
-            "data loss",
-            "无法恢复",
-            "unrecoverable",
-            "数据损坏",
-            "数据不一致",
-            "race condition",
-        ]
-
-        MAJOR_KEYWORDS = [
-            # 代码质量
-            "代码冗余",
-            "重复代码",
-            "duplicate",
-            "逻辑复杂",
-            "complex logic",
-            "命名不当",
-            "命名不清晰",
-            "可读性差",
-            "可维护性",
-            "代码坏味道",
-            # 移除过于宽泛的关键词："简单"、"逻辑"
-            # 改为更精确的关键词
-            "逻辑过于简化",
-            "实现过于简单",
-            "逻辑混乱",
-            "逻辑不清晰",
-            "逻辑复杂",
-            # 错误处理
-            "缺少错误处理",
-            "边界条件",
-            "未考虑",
-            "not handled",
-            "异常处理",
-            "应该检查",
-            "需要验证",
-            # 性能问题
-            "性能问题",
-            "性能差",
-            "低效",
-            "inefficient",
-            "优化性能",
-            "可以优化",
-            "性能改进",
-            # 改进建议
-            "改进",
-            "重构",
-            "建议修改",
-            # 移除过于宽泛的关键词："应该"
-            # 改为更精确的关键词
-            "建议改为",
-            "建议使用",
-            "最好改为",
-            "更好的方式",
-            "更清晰",
-            "更简洁",
-        ]
-
-        SUGGESTION_KEYWORDS = [
-            "建议",
-            "推荐",
-            "可以考虑",
-            "可以添加",
-            "可以",
-            "最佳实践",
-            "类型提示",
-            "文档注释",
-            "代码风格",
-            "命名建议",
-            "可以改为",
-        ]
-
-        # 分析内容关键词
-        content_lower = content_body.lower()
-
-        critical_score = sum(
-            1 for kw in CRITICAL_KEYWORDS if kw.lower() in content_lower
-        )
-        major_score = sum(1 for kw in MAJOR_KEYWORDS if kw.lower() in content_lower)
-        suggestion_score = sum(
-            1 for kw in SUGGESTION_KEYWORDS if kw.lower() in content_lower
-        )
-
-        # emoji权重
-        emoji_weight = {
-            "🔴": {"critical": 3, "major": 0, "suggestion": 0},
-            "🟡": {"critical": 0, "major": 3, "suggestion": 0},
-            "💡": {"critical": 0, "major": 1, "suggestion": 3},
-            "⚠️": {"critical": 1, "major": 2, "suggestion": 0},
-        }
-
-        weights = emoji_weight.get(
-            initial_emoji, {"critical": 0, "major": 1, "suggestion": 1}
-        )
-
-        # 综合评分
-        final_scores = {
-            "critical": critical_score * 2 + weights["critical"],
-            "major": major_score + weights["major"],
-            "suggestion": suggestion_score + weights["suggestion"],
-        }
-
-        # 决策逻辑
-        # Critical判定：需要明确的critical关键词，emoji权重只能辅助不能单独决定
-        # 提高判定阈值，减少误判：需要至少2个critical关键词或1个critical关键词+emoji权重
-        # 这样可以避免🔴 emoji被误用于标记改进建议
-        if critical_score >= 2:
-            return "critical"
-
-        # 🔴 emoji但没有critical关键词，降级为major或suggestion
-        if initial_emoji == "🔴":
-            # 有major或suggestion关键词时，根据关键词数量决定
-            if final_scores["major"] >= 1 or final_scores["suggestion"] >= 1:
-                # 有major或suggestion关键词，降级为major
-                return "major"
-
-        # Major判定
-        if final_scores["major"] >= 2:
-            return "major"
-
-        # 默认为suggestion
-        return "suggestion"
 
     def _parse_line_numbers(self, line_numbers_str: str) -> List[int]:
         """解析行号字符串，返回行号列表
