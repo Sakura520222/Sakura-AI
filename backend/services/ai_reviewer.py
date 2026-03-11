@@ -2194,14 +2194,15 @@ class AIReviewer:
                 elif "💡" in full_match_text or "优化" in full_match_text:
                     severity = "suggestion"
 
-                # 为每个行号创建评论（或只使用第一个）
-                # 如果有多个行号，我们使用第一个创建评论
-                # GitHub 的行内评论 API 一次只能评论一行
-                primary_line = line_numbers[0]
+                # 使用范围评论：start_line 表示起始行，line_number 表示结束行
+                # GitHub API 支持跨多行评论，通过同时提供 start_line 和 line 实现
+                start_line = line_numbers[0]
+                end_line = line_numbers[-1]
 
                 inline_comment = {
                     "file_path": file_path,
-                    "line_number": primary_line,
+                    "line_number": end_line,      # 结束行（最后一个行号）
+                    "start_line": start_line,      # 起始行（第一个行号）
                     "body": body,
                     "severity": severity,
                 }
@@ -2211,17 +2212,20 @@ class AIReviewer:
                 # 同时更新问题统计（用于决策引擎）
                 if severity in result["issues"]:
                     # 使用简洁的描述作为问题统计
-                    issue_summary = f"{file_path}:{primary_line}"
+                    if len(line_numbers) > 1:
+                        issue_summary = f"{file_path}:{start_line}-{end_line}"
+                    else:
+                        issue_summary = f"{file_path}:{start_line}"
                     result["issues"][severity].append(issue_summary)
 
                 # 记录日志
                 if len(line_numbers) > 1:
                     logger.info(
-                        f"提取行内评论: {file_path}:{primary_line} - {severity} (共{len(line_numbers)}行，内容长度: {len(body)} 字符)"
+                        f"提取行内评论: {file_path}:{start_line}-{end_line} - {severity} (共{len(line_numbers)}行，内容长度: {len(body)} 字符)"
                     )
                 else:
                     logger.info(
-                        f"提取行内评论: {file_path}:{primary_line} - {severity} (内容长度: {len(body)} 字符)"
+                        f"提取行内评论: {file_path}:{start_line} - {severity} (内容长度: {len(body)} 字符)"
                     )
 
             except Exception as e:
