@@ -381,14 +381,16 @@ class AIReviewer:
             "💡": "suggestion",  # 注意：单数，匹配 CommentSeverity 枚举
             "⚠️": "minor",
         }
-        severity = emoji_to_severity.get(initial_emoji, "suggestion")  # 默认使用 suggestion
+        severity = emoji_to_severity.get(
+            initial_emoji, "suggestion"
+        )  # 默认使用 suggestion
 
         # 将 severity（单数）映射到 issues 字典的键（复数）
         severity_to_issues_key = {
             "critical": "critical",
             "major": "major",
             "minor": "minor",
-            "suggestion": "suggestions"  # 单数转复数
+            "suggestion": "suggestions",  # 单数转复数
         }
         issues_key = severity_to_issues_key.get(severity, "suggestions")
 
@@ -2276,7 +2278,9 @@ class AIReviewer:
                     body = lines[0].strip()
 
                 # 初步识别emoji
-                severity = "suggestion"  # 默认值（注意是单数，匹配 CommentSeverity 枚举）
+                severity = (
+                    "suggestion"  # 默认值（注意是单数，匹配 CommentSeverity 枚举）
+                )
                 full_match_text = match.group(0)
                 initial_emoji = "💡"  # 默认
                 for emoji in ["🔴", "🟡", "💡", "⚠️"]:
@@ -2291,14 +2295,16 @@ class AIReviewer:
                     "💡": "suggestion",  # 注意：单数，匹配 CommentSeverity 枚举
                     "⚠️": "minor",
                 }
-                severity = emoji_to_severity.get(initial_emoji, "suggestion")  # 默认使用 suggestion
+                severity = emoji_to_severity.get(
+                    initial_emoji, "suggestion"
+                )  # 默认使用 suggestion
 
                 # 将 severity（单数）映射到 issues 字典的键（复数）
                 severity_to_issues_key = {
                     "critical": "critical",
                     "major": "major",
                     "minor": "minor",
-                    "suggestion": "suggestions"  # 单数转复数
+                    "suggestion": "suggestions",  # 单数转复数
                 }
                 issues_key = severity_to_issues_key.get(severity, "suggestions")
 
