@@ -352,13 +352,18 @@ class CommentService:
 
                     formatted_body = f"{severity_emoji} {body}"
 
-                    comments.append(
-                        {
-                            "path": comment_data["file_path"],
-                            "line": comment_data["line_number"],
-                            "body": formatted_body,
-                        }
-                    )
+                    # 构建评论字典
+                    comment_dict = {
+                        "path": comment_data["file_path"],
+                        "line": comment_data["line_number"],
+                        "body": formatted_body,
+                    }
+
+                    # 如果有起始行号，添加范围支持（跨多行评论）
+                    if "start_line" in comment_data:
+                        comment_dict["start_line"] = comment_data["start_line"]
+
+                    comments.append(comment_dict)
 
                 except Exception as e:
                     logger.warning(f"跳过无效的行内评论数据: {comment_data}, 错误: {e}")
