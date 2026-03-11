@@ -351,16 +351,46 @@ class AIReviewer:
         # 根据章节标题确定严重程度
         section_lower = section.lower()
 
-        severity = "suggestion"
+        # 初步判断
+        initial_severity = "suggestion"
         if "严重" in section or "critical" in section_lower or "🔴" in section:
-            severity = "critical"
+            initial_severity = "critical"
         elif "重要" in section or "major" in section_lower or "🟡" in section:
-            severity = "major"
+            initial_severity = "major"
         elif "优化" in section or "suggestion" in section_lower or "💡" in section:
-            severity = "suggestion"
+            initial_severity = "suggestion"
         elif "做得好" in section or "✅" in section:
             # 正面反馈，不作为问题
             return
+
+        # 智能修正：基于内容关键词二次判断
+        # 构造临时参数调用智能分类
+        emoji_map = {"critical": "🔴", "major": "🟡", "suggestion": "💡"}
+        initial_emoji = emoji_map.get(initial_severity, "💡")
+
+        # 提取章节中的emoji（优先使用章节标题中的emoji）
+        for emoji in ["🔴", "🟡", "💡", "⚠️"]:
+            if emoji in section:
+                initial_emoji = emoji
+                break
+
+        # 直接使用 AI 返回的 emoji，不做后处理
+        emoji_to_severity = {
+            "🔴": "critical",
+            "🟡": "major",
+            "💡": "suggestion",  # 注意：单数，匹配 CommentSeverity 枚举
+            "⚠️": "minor",
+        }
+        severity = emoji_to_severity.get(initial_emoji, "suggestion")  # 默认使用 suggestion
+
+        # 将 severity（单数）映射到 issues 字典的键（复数）
+        severity_to_issues_key = {
+            "critical": "critical",
+            "major": "major",
+            "minor": "minor",
+            "suggestion": "suggestions"  # 单数转复数
+        }
+        issues_key = severity_to_issues_key.get(severity, "suggestions")
 
         # 提取列表项
         import re
@@ -373,9 +403,9 @@ class AIReviewer:
                 result["comments"].append(
                     {"content": item, "severity": severity, "type": "overall"}
                 )
-                # 修复：直接使用 severity，不要加 "s"
-                if severity in result["issues"]:
-                    result["issues"][severity].append(item)
+                # 使用 issues_key（复数）作为字典的键
+                if issues_key in result["issues"]:
+                    result["issues"][issues_key].append(item)
 
     async def review_file(
         self, file_path: str, patch: str, strategy: str
@@ -892,13 +922,27 @@ class AIReviewer:
 
         merged_result["inline_comments"] = all_inline_comments
 
-        # 合并问题统计
+        # 合并问题统计（过滤空字符串、无效内容和去重）
         for severity in ["critical", "major", "minor", "suggestions"]:
+            seen_issues = set()  # 用于去重
             for result in batch_results:
                 if isinstance(result, Exception):
                     continue
                 issues = result.get("issues", {}).get(severity, [])
-                merged_result["issues"][severity].extend(issues)
+                for issue in issues:
+                    # 过滤无效内容（空字符串、纯空白、过短内容）
+                    # 阈值设为3，过滤掉无意义的1-2字符内容
+                    if (
+                        not issue
+                        or not isinstance(issue, str)
+                        or len(issue.strip()) < 3
+                    ):
+                        continue
+                    # 去重：使用标准化后的内容作为key
+                    issue_normalized = issue.strip().lower()
+                    if issue_normalized not in seen_issues:
+                        seen_issues.add(issue_normalized)
+                        merged_result["issues"][severity].append(issue)
 
         # 计算平均评分（使用ScoreExtractor处理None评分）
         from backend.services.score_extractor import score_extractor
@@ -1913,7 +1957,7 @@ class AIReviewer:
             if msg.get("role") == "tool" and msg.get("tool_call_id") == tool_call_id:
                 try:
                     return json.loads(msg.get("content", "{}"))
-                except:
+                except json.JSONDecodeError:
                     return msg.get("content", "")
         return None
 
@@ -2231,19 +2275,32 @@ class AIReviewer:
                     # 只有一行，直接使用
                     body = lines[0].strip()
 
-                # 确定严重程度
-                severity = "suggestion"
+                # 初步识别emoji
+                severity = "suggestion"  # 默认值（注意是单数，匹配 CommentSeverity 枚举）
                 full_match_text = match.group(0)
-                if "🔴" in full_match_text or "严重" in full_match_text:
-                    severity = "critical"
-                elif (
-                    "🟡" in full_match_text
-                    or "重要" in full_match_text
-                    or "改进" in full_match_text
-                ):
-                    severity = "major"
-                elif "💡" in full_match_text or "优化" in full_match_text:
-                    severity = "suggestion"
+                initial_emoji = "💡"  # 默认
+                for emoji in ["🔴", "🟡", "💡", "⚠️"]:
+                    if emoji in full_match_text:
+                        initial_emoji = emoji
+                        break
+
+                # 直接使用 AI 返回的 emoji，不做后处理
+                emoji_to_severity = {
+                    "🔴": "critical",
+                    "🟡": "major",
+                    "💡": "suggestion",  # 注意：单数，匹配 CommentSeverity 枚举
+                    "⚠️": "minor",
+                }
+                severity = emoji_to_severity.get(initial_emoji, "suggestion")  # 默认使用 suggestion
+
+                # 将 severity（单数）映射到 issues 字典的键（复数）
+                severity_to_issues_key = {
+                    "critical": "critical",
+                    "major": "major",
+                    "minor": "minor",
+                    "suggestion": "suggestions"  # 单数转复数
+                }
+                issues_key = severity_to_issues_key.get(severity, "suggestions")
 
                 # 使用范围评论：start_line 表示起始行，line_number 表示结束行
                 # GitHub API 支持跨多行评论，通过同时提供 start_line 和 line 实现
@@ -2261,13 +2318,13 @@ class AIReviewer:
                 result["inline_comments"].append(inline_comment)
 
                 # 同时更新问题统计（用于决策引擎）
-                if severity in result["issues"]:
+                if issues_key in result["issues"]:
                     # 使用简洁的描述作为问题统计
                     if len(line_numbers) > 1:
                         issue_summary = f"{file_path}:{start_line}-{end_line}"
                     else:
                         issue_summary = f"{file_path}:{start_line}"
-                    result["issues"][severity].append(issue_summary)
+                    result["issues"][issues_key].append(issue_summary)
 
                 # 记录日志
                 if len(line_numbers) > 1:

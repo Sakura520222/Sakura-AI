@@ -2,6 +2,7 @@
 
 from typing import Optional
 from telegram import Bot
+from telegram.helpers import escape_markdown
 from loguru import logger
 
 from backend.core.config import get_settings
@@ -25,12 +26,17 @@ class NotificationSender:
     ):
         """发送审查开始通知"""
         try:
+            # 转义用户输入的特殊字符，避免 Markdown 解析错误
+            safe_repo_name = escape_markdown(repo_name, version=1)
+            safe_pr_title = escape_markdown(pr_title, version=1)
+            safe_author = escape_markdown(author, version=1)
+
             text = (
                 f"🔔 *Sakura AI 开始审查*\n\n"
-                f"📦 仓库: {repo_name}\n"
+                f"📦 仓库: {safe_repo_name}\n"
                 f"🔢 PR: #{pr_number}\n"
-                f"👤 作者: {author}\n"
-                f"📝 标题: {pr_title}\n\n"
+                f"👤 作者: {safe_author}\n"
+                f"📝 标题: {safe_pr_title}\n\n"
                 f"⏳ 审查中，请稍候..."
             )
 
@@ -56,9 +62,12 @@ class NotificationSender:
     ):
         """发送审查完成通知"""
         try:
+            # 转义仓库名称
+            safe_repo_name = escape_markdown(repo_name, version=1)
+
             text = (
                 f"🌸 *Sakura AI 审查完成*\n\n"
-                f"📦 仓库: {repo_name}\n"
+                f"📦 仓库: {safe_repo_name}\n"
                 f"🔢 PR: #{pr_number}\n"
                 f"🔴 严重问题: {critical_count}\n"
                 f"⭐ 评分: {score}/10\n\n"
@@ -86,11 +95,15 @@ class NotificationSender:
     ):
         """发送配额不足通知"""
         try:
+            # 转义用户输入的特殊字符
+            safe_repo_name = escape_markdown(repo_name, version=1)
+            safe_reason = escape_markdown(reason, version=1)
+
             text = (
                 f"⚠️ *审查被拒绝*\n\n"
-                f"📦 仓库: {repo_name}\n"
+                f"📦 仓库: {safe_repo_name}\n"
                 f"🔢 PR: #{pr_number}\n\n"
-                f"❌ 原因: {reason}\n"
+                f"❌ 原因: {safe_reason}\n"
                 f"💡 请联系管理员增加配额"
             )
 
@@ -113,9 +126,12 @@ class NotificationSender:
     ):
         """发送未授权仓库通知（仅管理员可见）"""
         try:
+            # 转义仓库名称
+            safe_repo_name = escape_markdown(repo_name, version=1)
+
             text = (
                 f"🚫 *未授权的仓库*\n\n"
-                f"📦 仓库: {repo_name}\n"
+                f"📦 仓库: {safe_repo_name}\n"
                 f"🔢 PR: #{pr_number}\n\n"
                 f"⚠️ 该仓库未在白名单中，审查已跳过"
             )
@@ -140,11 +156,15 @@ class NotificationSender:
     ):
         """发送未注册用户通知（仅管理员可见）"""
         try:
+            # 转义用户输入的特殊字符
+            safe_repo_name = escape_markdown(repo_name, version=1)
+            safe_github_username = escape_markdown(github_username, version=1)
+
             text = (
                 f"👤 *未注册的用户*\n\n"
-                f"📦 仓库: {repo_name}\n"
+                f"📦 仓库: {safe_repo_name}\n"
                 f"🔢 PR: #{pr_number}\n"
-                f"👤 GitHub: {github_username}\n\n"
+                f"👤 GitHub: {safe_github_username}\n\n"
                 f"⚠️ 该用户未注册，审查已跳过"
             )
 
