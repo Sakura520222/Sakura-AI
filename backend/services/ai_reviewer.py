@@ -286,12 +286,12 @@ class AIReviewer:
         }
 
         try:
-            # 对所有策略尝试提取评分（如果有）
-            import re
+            # 使用ScoreExtractor提取评分（支持多种格式和fallback机制）
+            from backend.services.score_extractor import score_extractor
 
-            score_match = re.search(r"评分[：:]\s*(\d+)", review_text)
-            if score_match:
-                result["overall_score"] = int(score_match.group(1))
+            extracted_score = score_extractor.extract_from_text(review_text)
+            if extracted_score is not None:
+                result["overall_score"] = extracted_score
                 logger.info(
                     f"✅ 成功提取评分: {result['overall_score']}/10 (策略: {strategy})"
                 )
@@ -599,12 +599,18 @@ class AIReviewer:
    - 使用JSON格式返回
    - 包含字段：summary, overall_score, top_issues（数组）
 
-## JSON输出格式
+## JSON输出格式（必须严格遵守）
+
+⚠️ **关键要求**：
+- `overall_score`字段**必须**包含在JSON中
+- 评分必须是1-10之间的整数
+- 不要仅在summary文本中写评分，必须在JSON字段中返回
+- 如果JSON中没有overall_score字段，系统将无法做出准确的审查决策
 
 ```json
 {{
   "summary": "整体审查总结（200-500字）",
-  "overall_score": 7,
+  "overall_score": 7,  ⬅️ 必须包含此字段，值为1-10的整数
   "top_issues": [
     {{
       "severity": "critical",
@@ -619,6 +625,7 @@ class AIReviewer:
 - 请仅输出JSON，不要包含任何解释文字或markdown标记
 - 确保以 '{{' 开头，以 '}}' 结尾
 - summary要简洁专业，突出核心问题
+- **overall_score必须存在且有效**
 - top_issues最多5个最严重的问题
 """
 
@@ -712,9 +719,29 @@ class AIReviewer:
 """
 
                 # 13. 构建最终结果
+                # 使用ScoreExtractor提取AI总结的评分（支持fallback）
+                from backend.services.score_extractor import score_extractor
+
+                # 收集各批次的评分（用于fallback）
+                batch_scores = [
+                    r.get("overall_score")
+                    for r in valid_results
+                    if r.get("overall_score") is not None
+                ]
+
+                # 提取评分：优先使用AI总结的评分，否则从summary提取或使用批次平均
+                extracted_score = score_extractor.extract_score(
+                    {
+                        "overall_score": ai_summary.get("overall_score"),
+                        "summary": ai_summary.get("summary", ""),
+                        "issues": mechanical_result.get("issues", {}),
+                        "batch_scores": batch_scores,
+                    }
+                )
+
                 final_result = {
                     "summary": combined_summary,  # 混合报告
-                    "overall_score": ai_summary.get("overall_score"),
+                    "overall_score": extracted_score,
                     "comments": mechanical_result.get(
                         "comments", []
                     ),  # 保留具体问题列表
@@ -873,12 +900,25 @@ class AIReviewer:
                 issues = result.get("issues", {}).get(severity, [])
                 merged_result["issues"][severity].extend(issues)
 
-        # 计算平均评分
+        # 计算平均评分（使用ScoreExtractor处理None评分）
+        from backend.services.score_extractor import score_extractor
+
         scores = []
-        for result in batch_results:
+        for idx, result in enumerate(batch_results):
             if isinstance(result, Exception):
                 continue
+
             score = result.get("overall_score")
+            if score is None:
+                # Fallback: 从批次的summary文本中提取评分
+                summary = result.get("summary", "")
+                if summary:
+                    score = score_extractor.extract_from_text(summary)
+                    if score is not None:
+                        logger.info(
+                            f"✅ 从批次 {idx + 1} 的summary提取评分: {score}/10"
+                        )
+
             if score is not None:
                 scores.append(score)
 

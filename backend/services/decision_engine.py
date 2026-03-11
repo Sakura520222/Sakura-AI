@@ -91,9 +91,18 @@ class DecisionEngine:
             if not policy.get("enabled", False):
                 return (ReviewDecision.COMMENT, "自动批准功能未启用，仅提供评论")
 
-            # 提取评分和问题统计
-            # 处理None值：如果AI没有返回评分，默认为0
-            score = review_result.get("overall_score") or 0
+            # 提取评分和问题统计（使用ScoreExtractor支持fallback）
+            from backend.services.score_extractor import score_extractor
+
+            score = review_result.get("overall_score")
+            if score is None:
+                logger.warning("overall_score为None，尝试从summary提取评分")
+                score = score_extractor.extract_score(review_result)
+
+            if score is None:
+                logger.warning("无法提取评分，使用默认值0")
+                score = 0
+
             issues = review_result.get("issues", {})
 
             critical_count = len(issues.get("critical", []))
@@ -187,8 +196,15 @@ class DecisionEngine:
                 template_key, "{summary}\n\n评分: {score}/10\n\n决策: {decision_reason}"
             )
 
-            # 准备变量
-            score = review_result.get("overall_score", "N/A")
+            # 准备变量（改进评分显示逻辑）
+            score = review_result.get("overall_score")
+            if score is None or score == "N/A":
+                # 尝试提取评分（最后一道防线）
+                from backend.services.score_extractor import score_extractor
+
+                extracted = score_extractor.extract_score(review_result)
+                score = extracted if extracted is not None else "N/A"
+
             summary = review_result.get("summary", "暂无摘要")
 
             # 构建问题摘要
@@ -234,11 +250,18 @@ class DecisionEngine:
 
         except Exception as e:
             logger.error(f"格式化审查评论失败: {e}")
-            # 返回简单格式
+            # 返回简单格式（尝试提取评分）
+            from backend.services.score_extractor import score_extractor
+
+            score = review_result.get("overall_score")
+            if score is None:
+                score = score_extractor.extract_score(review_result)
+            score_display = f"{score}/10" if score is not None else "N/A"
+
             return (
                 f"**AI审查决策**: {decision.value}\n\n"
                 f"**理由**: {decision_reason}\n\n"
-                f"**评分**: {review_result.get('overall_score', 'N/A')}/10\n\n"
+                f"**评分**: {score_display}\n\n"
                 f"{review_result.get('summary', '')}"
             )
 
