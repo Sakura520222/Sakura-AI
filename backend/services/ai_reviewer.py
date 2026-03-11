@@ -908,13 +908,23 @@ class AIReviewer:
 
         merged_result["inline_comments"] = all_inline_comments
 
-        # 合并问题统计
+        # 合并问题统计（过滤空字符串、无效内容和去重）
         for severity in ["critical", "major", "minor", "suggestions"]:
+            seen_issues = set()  # 用于去重
             for result in batch_results:
                 if isinstance(result, Exception):
                     continue
                 issues = result.get("issues", {}).get(severity, [])
-                merged_result["issues"][severity].extend(issues)
+                for issue in issues:
+                    # 过滤无效内容（空字符串、纯空白、过短内容）
+                    # 阈值设为3，过滤掉无意义的1-2字符内容
+                    if not issue or not isinstance(issue, str) or len(issue.strip()) < 3:
+                        continue
+                    # 去重：使用标准化后的内容作为key
+                    issue_normalized = issue.strip().lower()
+                    if issue_normalized not in seen_issues:
+                        seen_issues.add(issue_normalized)
+                        merged_result["issues"][severity].append(issue)
 
         # 计算平均评分（使用ScoreExtractor处理None评分）
         from backend.services.score_extractor import score_extractor

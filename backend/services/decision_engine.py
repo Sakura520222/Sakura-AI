@@ -211,17 +211,38 @@ class DecisionEngine:
             issues = review_result.get("issues", {})
             comment_parts = []
 
+            # 严重问题：显示标题和具体内容（最多3个）
             if issues.get("critical"):
+                critical_issues = issues["critical"][:3]  # 最多显示3个
                 comment_parts.append(
                     f"\n### 🔴 严重问题 ({len(issues['critical'])}个)\n"
                 )
+                for issue in critical_issues:
+                    # 截断过长的描述
+                    issue_str = issue[:150] + "..." if len(issue) > 150 else issue
+                    comment_parts.append(f"- {issue_str}\n")
+                if len(issues["critical"]) > 3:
+                    comment_parts.append(
+                        f"- ...还有 {len(issues['critical']) - 3} 个严重问题\n"
+                    )
 
+            # 重要问题：显示标题和具体内容（最多3个）
             if issues.get("major"):
+                major_issues = issues["major"][:3]  # 最多显示3个
                 comment_parts.append(f"\n### 🟡 重要问题 ({len(issues['major'])}个)\n")
+                for issue in major_issues:
+                    issue_str = issue[:150] + "..." if len(issue) > 150 else issue
+                    comment_parts.append(f"- {issue_str}\n")
+                if len(issues["major"]) > 3:
+                    comment_parts.append(
+                        f"- ...还有 {len(issues['major']) - 3} 个重要问题\n"
+                    )
 
+            # 次要问题：只显示标题
             if issues.get("minor"):
                 comment_parts.append(f"\n### 🔵 次要问题 ({len(issues['minor'])}个)\n")
 
+            # 优化建议：只显示标题
             if issues.get("suggestions"):
                 comment_parts.append(
                     f"\n### 💡 优化建议 ({len(issues['suggestions'])}条)\n"
