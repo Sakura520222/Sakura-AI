@@ -170,10 +170,10 @@ class StrategyConfig:
 
     def is_model_supports_reasoning_content(self, model_name: str) -> bool:
         """检查模型是否支持 reasoning_content 字段
-        
+
         Args:
             model_name: 模型名称（如 'deepseek-r1', 'glm-4.7'）
-            
+
         Returns:
             True 如果模型支持 reasoning_content
         """
@@ -184,7 +184,7 @@ class StrategyConfig:
             "deepseek-r1-lite",
             "deepseek-r1-zero",
         ]
-        
+
         model_lower = model_name.lower()
         return any(model_lower.startswith(ds_model) for ds_model in deepseek_models)
 

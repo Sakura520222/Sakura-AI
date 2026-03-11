@@ -111,7 +111,7 @@ class TelegramService:
         )
 
         result = await self.session.execute(stmt)
-        
+
         # 检查是否影响了行数（如果 rowcount == 0 说明配额已用完）
         if result.rowcount == 0:
             # 重新读取用户信息以确定具体哪个配额已用完

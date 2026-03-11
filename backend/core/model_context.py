@@ -153,7 +153,7 @@ class ModelContextManager:
         """
         total_context_k = self.get_context_window(model_name)
         safe_context_k = int(total_context_k * safety_ratio)
-        
+
         # 转换为 tokens（乘以 1000）
         safe_context_tokens = safe_context_k * 1000
 
