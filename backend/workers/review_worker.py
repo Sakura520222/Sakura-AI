@@ -487,9 +487,9 @@ class ReviewWorker:
                 logger.debug("Telegram通知发送器未初始化，跳过通知")
                 return
 
-            # 计算严重问题数量
-            comments = review_result.get("comments", [])
-            critical_count = sum(1 for c in comments if c.get("severity") == "critical")
+            # 计算严重问题数量（使用 issues 字典，与 decision_engine 保持一致）
+            issues = review_result.get("issues", {})
+            critical_count = len(issues.get("critical", []))
 
             # 获取评分
             score = review_result.get("overall_score", 0)
