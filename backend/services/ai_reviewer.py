@@ -936,10 +936,12 @@ class AIReviewer:
 
             # 大PR，启用分批模式
             # 根据配置决定是否启用AI工具（依赖上下文压缩）
-            enable_tools_in_batch = strategy_config.get_context_enhancement_config().get(
-                "enable_ai_tools_in_batch", True
+            enable_tools_in_batch = (
+                strategy_config.get_context_enhancement_config().get(
+                    "enable_ai_tools_in_batch", True
+                )
             )
-            
+
             if enable_tools_in_batch:
                 logger.info(
                     f"🚨 PR规模较大 ({len(files)} 个文件)，启用分批审查模式 "
@@ -1706,45 +1708,49 @@ class AIReviewer:
             # 1. 分离消息：保留最近几轮工具调用，压缩更早的历史
             keep_rounds = self.keep_rounds  # 默认保留最近2轮工具调用
             compressed_messages = []
-            
+
             # 保留 system 消息
-            system_msg = messages[0] if messages and messages[0].get("role") == "system" else None
+            system_msg = (
+                messages[0]
+                if messages and messages[0].get("role") == "system"
+                else None
+            )
             if system_msg:
                 compressed_messages.append(system_msg)
-            
+
             # 2. 从后向前扫描，保留最近 N 轮完整的工具调用
             tool_call_rounds = []
             current_round = []
-            
+
             for msg in reversed(messages[1:]):  # 跳过 system，倒序扫描
                 current_round.insert(0, msg)  # 保持原始顺序
-                
+
                 # 如果是 assistant 消息且有 tool_calls，说明一轮结束
                 if msg.get("role") == "assistant" and msg.get("tool_calls"):
                     tool_call_rounds.insert(0, current_round)
                     current_round = []
-                    
+
                     # 如果已收集足够的轮次，停止
                     if len(tool_call_rounds) >= keep_rounds:
                         break
-            
+
             # 处理剩余的未闭合消息
             if current_round:
                 if tool_call_rounds:
                     tool_call_rounds[0] = current_round + tool_call_rounds[0]
                 else:
                     tool_call_rounds.append(current_round)
-            
+
             # 3. 提取需要压缩的早期历史
             early_history = []
             total_kept = sum(len(round) for round in tool_call_rounds)
-            
+
             if total_kept < len(messages) - (1 if system_msg else 0):
                 # 有需要压缩的早期历史
                 early_end_idx = len(messages) - total_kept - (1 if system_msg else 0)
                 if early_end_idx > 0:
-                    early_history = messages[1 if system_msg else 0:early_end_idx + 1]
-            
+                    early_history = messages[1 if system_msg else 0 : early_end_idx + 1]
+
             # 4. 如果有早期历史，进行压缩
             if early_history:
                 # 构建待压缩的文本
@@ -1753,7 +1759,7 @@ class AIReviewer:
                     role = msg.get("role", "")
                     content = msg.get("content", "")
                     tool_calls = msg.get("tool_calls")
-                    
+
                     if tool_calls:
                         conversation_text += f"\n## {role.upper()} (工具调用)\n"
                         for tc in tool_calls:
@@ -1763,10 +1769,12 @@ class AIReviewer:
                             # 查找对应的工具结果
                             tool_result = self._find_tool_result(messages, tc.id)
                             if tool_result:
-                                conversation_text += f"- 结果: {str(tool_result)[:200]}...\n"
+                                conversation_text += (
+                                    f"- 结果: {str(tool_result)[:200]}...\n"
+                                )
                     elif content:
                         conversation_text += f"\n## {role.upper()}\n{content}\n"
-                
+
                 # 构建压缩 prompt
                 compress_prompt = f"""请将以下代码审查对话历史压缩为 {max_tokens} tokens 以内的精简摘要。
 
@@ -1816,17 +1824,16 @@ class AIReviewer:
                 )
 
                 compressed_summary = response.choices[0].message.content.strip()
-                
+
                 # 5. 构建最终的消息列表：system + 压缩摘要 + 保留的工具调用轮次
-                compressed_messages.append({
-                    "role": "user",
-                    "content": compressed_summary
-                })
-                
+                compressed_messages.append(
+                    {"role": "user", "content": compressed_summary}
+                )
+
                 # 添加保留的工具调用轮次
                 for round_msgs in tool_call_rounds:
                     compressed_messages.extend(round_msgs)
-                
+
                 logger.info(
                     f"✅ 压缩完成: "
                     f"{self._estimate_messages_tokens(messages)} → "
@@ -1837,7 +1844,7 @@ class AIReviewer:
                 # 没有早期历史需要压缩，直接返回保留的消息
                 for round_msgs in tool_call_rounds:
                     compressed_messages.extend(round_msgs)
-                
+
                 logger.info(
                     f"ℹ️  无需压缩，仅保留最近 {len(tool_call_rounds)} 轮工具调用"
                 )
@@ -1849,14 +1856,16 @@ class AIReviewer:
             # 压缩失败，返回简化的原始消息
             logger.warning("压缩失败，回退到简化模式")
             return self._fallback_simplify_messages_full(messages, system_prompt)
-    
-    def _find_tool_result(self, messages: List[Dict[str, any]], tool_call_id: str) -> Any:
+
+    def _find_tool_result(
+        self, messages: List[Dict[str, any]], tool_call_id: str
+    ) -> Any:
         """查找工具调用的结果
-        
+
         Args:
             messages: 消息列表
             tool_call_id: 工具调用ID
-            
+
         Returns:
             工具结果内容
         """
@@ -1867,77 +1876,79 @@ class AIReviewer:
                 except:
                     return msg.get("content", "")
         return None
-    
+
     def _clean_message_for_model(self, message: Dict[str, any]) -> Dict[str, any]:
         """清理消息中当前模型不支持的字段
-        
+
         Args:
             message: 原始消息
-            
+
         Returns:
             清理后的消息
         """
         # 创建消息副本
         cleaned_msg = message.copy()
-        
+
         # 检查当前模型是否支持 reasoning_content
         supports_reasoning = strategy_config.is_model_supports_reasoning_content(
             settings.openai_model
         )
-        
+
         # 如果模型不支持 reasoning_content，移除该字段
         if not supports_reasoning and "reasoning_content" in cleaned_msg:
             del cleaned_msg["reasoning_content"]
             logger.debug("移除不兼容的 reasoning_content 字段")
-        
+
         return cleaned_msg
-    
+
     def _fallback_simplify_messages_full(
         self, messages: List[Dict[str, any]], system_prompt: str
     ) -> List[Dict[str, any]]:
         """压缩失败时的完整简化后备方案
-        
+
         Args:
             messages: 消息列表
             system_prompt: 系统提示词
-            
+
         Returns:
             简化后的消息列表
         """
         logger.warning("使用完整简化模式，仅保留最近2轮工具调用")
-        
+
         # 保留 system 消息
         result = []
-        system_msg = messages[0] if messages and messages[0].get("role") == "system" else None
+        system_msg = (
+            messages[0] if messages and messages[0].get("role") == "system" else None
+        )
         if system_msg:
             result.append(self._clean_message_for_model(system_msg))
-        
+
         # 从后向前保留最近2轮工具调用
         keep_rounds = 2
         tool_call_rounds = []
         current_round = []
-        
+
         for msg in reversed(messages[1:]):
             current_round.insert(0, msg)
-            
+
             if msg.get("role") == "assistant" and msg.get("tool_calls"):
                 tool_call_rounds.insert(0, current_round)
                 current_round = []
-                
+
                 if len(tool_call_rounds) >= keep_rounds:
                     break
-        
+
         if current_round:
             if tool_call_rounds:
                 tool_call_rounds[0] = current_round + tool_call_rounds[0]
             else:
                 tool_call_rounds.append(current_round)
-        
+
         # 添加保留的工具调用轮次（清理每个消息）
         for round_msgs in tool_call_rounds:
             for msg in round_msgs:
                 result.append(self._clean_message_for_model(msg))
-        
+
         return result
 
     def _fallback_simplify_messages(
@@ -2201,8 +2212,8 @@ class AIReviewer:
 
                 inline_comment = {
                     "file_path": file_path,
-                    "line_number": end_line,      # 结束行（最后一个行号）
-                    "start_line": start_line,      # 起始行（第一个行号）
+                    "line_number": end_line,  # 结束行（最后一个行号）
+                    "start_line": start_line,  # 起始行（第一个行号）
                     "body": body,
                     "severity": severity,
                 }
