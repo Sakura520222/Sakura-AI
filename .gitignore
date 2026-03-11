@@ -67,3 +67,4 @@ htmlcov/
 *.swp
 deploy_key
 deploy.py
+.claude/
