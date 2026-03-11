@@ -378,10 +378,19 @@ class AIReviewer:
         emoji_to_severity = {
             "🔴": "critical",
             "🟡": "major",
-            "💡": "suggestions",
+            "💡": "suggestion",  # 注意：单数，匹配 CommentSeverity 枚举
             "⚠️": "minor",
         }
-        severity = emoji_to_severity.get(initial_emoji, "suggestions")
+        severity = emoji_to_severity.get(initial_emoji, "suggestion")  # 默认使用 suggestion
+
+        # 将 severity（单数）映射到 issues 字典的键（复数）
+        severity_to_issues_key = {
+            "critical": "critical",
+            "major": "major",
+            "minor": "minor",
+            "suggestion": "suggestions"  # 单数转复数
+        }
+        issues_key = severity_to_issues_key.get(severity, "suggestions")
 
         # 提取列表项
         import re
@@ -394,9 +403,9 @@ class AIReviewer:
                 result["comments"].append(
                     {"content": item, "severity": severity, "type": "overall"}
                 )
-                # 修复：直接使用 severity，不要加 "s"
-                if severity in result["issues"]:
-                    result["issues"][severity].append(item)
+                # 使用 issues_key（复数）作为字典的键
+                if issues_key in result["issues"]:
+                    result["issues"][issues_key].append(item)
 
     async def review_file(
         self, file_path: str, patch: str, strategy: str
@@ -2267,7 +2276,7 @@ class AIReviewer:
                     body = lines[0].strip()
 
                 # 初步识别emoji
-                severity = "suggestions"  # 默认值（注意是复数）
+                severity = "suggestion"  # 默认值（注意是单数，匹配 CommentSeverity 枚举）
                 full_match_text = match.group(0)
                 initial_emoji = "💡"  # 默认
                 for emoji in ["🔴", "🟡", "💡", "⚠️"]:
@@ -2279,10 +2288,19 @@ class AIReviewer:
                 emoji_to_severity = {
                     "🔴": "critical",
                     "🟡": "major",
-                    "💡": "suggestions",
+                    "💡": "suggestion",  # 注意：单数，匹配 CommentSeverity 枚举
                     "⚠️": "minor",
                 }
-                severity = emoji_to_severity.get(initial_emoji, "suggestions")
+                severity = emoji_to_severity.get(initial_emoji, "suggestion")  # 默认使用 suggestion
+
+                # 将 severity（单数）映射到 issues 字典的键（复数）
+                severity_to_issues_key = {
+                    "critical": "critical",
+                    "major": "major",
+                    "minor": "minor",
+                    "suggestion": "suggestions"  # 单数转复数
+                }
+                issues_key = severity_to_issues_key.get(severity, "suggestions")
 
                 # 使用范围评论：start_line 表示起始行，line_number 表示结束行
                 # GitHub API 支持跨多行评论，通过同时提供 start_line 和 line 实现
@@ -2300,13 +2318,13 @@ class AIReviewer:
                 result["inline_comments"].append(inline_comment)
 
                 # 同时更新问题统计（用于决策引擎）
-                if severity in result["issues"]:
+                if issues_key in result["issues"]:
                     # 使用简洁的描述作为问题统计
                     if len(line_numbers) > 1:
                         issue_summary = f"{file_path}:{start_line}-{end_line}"
                     else:
                         issue_summary = f"{file_path}:{start_line}"
-                    result["issues"][severity].append(issue_summary)
+                    result["issues"][issues_key].append(issue_summary)
 
                 # 记录日志
                 if len(line_numbers) > 1:
