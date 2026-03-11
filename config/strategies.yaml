@@ -6,7 +6,7 @@ strategies:
     name: "⚡️ 快速审查"
     conditions:
       max_files: 5
-      max_lines: 200
+      max_lines: 2000
     prompt: |
       作为代码审查助手，请快速审查以下代码变更，重点关注：
       1. 语法错误和明显的bug
@@ -87,7 +87,7 @@ strategies:
     name: "🔍 标准审查"
     conditions:
       max_files: 20
-      max_lines: 1000
+      max_lines: 5000
     prompt: |
       作为代码审查专家，请全面审查以下代码变更：
       
@@ -172,7 +172,7 @@ strategies:
     name: "🔬 深度审查"
     conditions:
       max_files: 100
-      max_lines: 10000
+      max_lines: 20000
     prompt: |
       作为资深架构师，请深度审查这个大型PR：
       
