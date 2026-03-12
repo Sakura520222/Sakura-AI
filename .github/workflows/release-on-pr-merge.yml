@@ -308,45 +308,7 @@ jobs:
           fi
         env:
           GITHUB_TOKEN: ${{ secrets.MY_RELEASE_PAT || secrets.GITHUB_TOKEN }}
-      
-      - name: 更新 CHANGELOG.md 为引流页面
-        run: |
-          # 检查 CHANGELOG.md 是否已包含引流提示
-          if ! grep -q "查看最新的变更日志，请访问" CHANGELOG.md; then
-            echo "📝 正在更新 CHANGELOG.md 为引流页面..."
-            
-            # 创建临时文件
-            {
-              echo "# 📋 变更日志"
-              echo ""
-              echo "> **查看最新的变更日志，请访问 [GitHub Releases](https://github.com/${{ github.repository }}/releases)**"
-              echo ""
-              echo "本文件仅保留用于历史记录参考。完整的版本发布说明和功能变更记录请查看 GitHub Releases 页面。"
-              echo ""
-              echo "---"
-              echo ""
-              echo "## 历史变更记录"
-              echo ""
-              # 保留原有内容
-              cat CHANGELOG.md
-            } > CHANGELOG.md.new
-            
-            mv CHANGELOG.md.new CHANGELOG.md
-            
-            # 提交更改
-            git config user.name "github-actions[bot]"
-            git config user.email "github-actions[bot]@users.noreply.github.com"
-            git add CHANGELOG.md
-            git commit -m "docs: 更新 CHANGELOG.md 为引流页面"
-            git push
-            
-            echo "✅ CHANGELOG.md 已更新为引流页面"
-          else
-            echo "ℹ️ CHANGELOG.md 已是引流页面，跳过更新"
-          fi
-        env:
-          GITHUB_TOKEN: ${{ secrets.MY_RELEASE_PAT || secrets.GITHUB_TOKEN }}
-      
+
       - name: 发送评论到 PR
         if: github.event_name == 'pull_request'
         uses: actions/github-script@v7
