@@ -127,7 +127,6 @@ class LabelService:
 
         for label_name, label_info in labels.items():
             desc = label_info.get("description", "")
-            color = label_info.get("color", "")
             lines.append(f"- **{label_name}**: {desc}")
 
         lines.append(
