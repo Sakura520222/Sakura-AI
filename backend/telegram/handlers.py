@@ -586,8 +586,6 @@ async def cmd_review(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         # 6. 可选：检查仓库授权（超级管理员可以跳过）
         async with get_async_session() as session:
-            service = TelegramService(session)
-
             # 超级管理员可以审查任何仓库，但仍然会记录到数据库
             logger.info(
                 f"超级管理员手动触发审查: {telegram_id} -> "

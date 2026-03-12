@@ -332,7 +332,7 @@ class GitHubAppClient:
 
             # 检查标签是否已存在
             try:
-                existing_label = repo.get_label(label_name)
+                repo.get_label(label_name)
                 logger.info(f"标签 {label_name} 已存在，跳过创建")
                 return True
             except Exception:
