@@ -66,6 +66,15 @@ class CommentType(str, enum.Enum):
     LINE = "line"
 
 
+class IndexingStatus(str, enum.Enum):
+    """文档索引状态"""
+
+    PENDING = "pending"
+    INDEXING = "indexing"
+    COMPLETED = "completed"
+    FAILED = "failed"
+
+
 class PRReview(Base):
     """PR审查记录表"""
 
@@ -194,6 +203,55 @@ class ReviewQueue(Base):
 
     def __repr__(self):
         return f"<ReviewQueue(id={self.id}, pr_id={self.pr_id}, status={self.status})>"
+
+
+class DocumentIndex(Base):
+    """文档索引表"""
+
+    __tablename__ = "document_indices"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    repo_full_name = Column(String(255), unique=True, nullable=False, index=True)
+    last_commit_hash = Column(String(64), nullable=True)
+    last_indexed_at = Column(TIMESTAMP, default=datetime.utcnow, nullable=False)
+    document_count = Column(Integer, default=0, nullable=False)
+    total_chunks = Column(Integer, default=0, nullable=False)
+    indexing_status = Column(
+        String(50), default=IndexingStatus.PENDING.value, nullable=False, index=True
+    )
+    error_message = Column(Text, nullable=True)
+    created_at = Column(TIMESTAMP, default=datetime.utcnow, nullable=False)
+    updated_at = Column(
+        TIMESTAMP, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False
+    )
+
+    def __repr__(self):
+        return f"<DocumentIndex(id={self.id}, repo={self.repo_full_name}, status={self.indexing_status})>"
+
+
+class DocumentFile(Base):
+    """文档文件表（文件级别的索引追踪）"""
+
+    __tablename__ = "document_files"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    repo_full_name = Column(String(255), nullable=False, index=True)
+    file_path = Column(String(512), nullable=False)
+    file_hash = Column(String(64), nullable=False, index=True)
+    file_size = Column(Integer, default=0, nullable=False)
+    chunk_count = Column(Integer, default=0, nullable=False)
+    last_indexed_at = Column(TIMESTAMP, default=datetime.utcnow, nullable=False)
+    last_indexed_commit_hash = Column(String(64), nullable=True, index=True)
+    indexed = Column(
+        Integer, default=0, nullable=False
+    )  # 0=False, 1=True for MySQL compatibility
+    created_at = Column(TIMESTAMP, default=datetime.utcnow, nullable=False)
+    updated_at = Column(
+        TIMESTAMP, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False
+    )
+
+    def __repr__(self):
+        return f"<DocumentFile(id={self.id}, path={self.file_path}, indexed={self.indexed})>"
 
 
 async def create_tables_async():
