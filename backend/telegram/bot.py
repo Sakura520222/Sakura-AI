@@ -21,6 +21,8 @@ from backend.telegram.handlers import (
     cmd_users,
     cmd_repos,
     cmd_review,
+    cmd_docs_status,
+    cmd_update_docs,
 )
 from backend.telegram.notifications import NotificationSender, set_notification_sender
 
@@ -50,6 +52,7 @@ async def start_telegram_bot():
         _telegram_app.add_handler(CommandHandler("status", cmd_status))
         _telegram_app.add_handler(CommandHandler("recent", cmd_recent))
         _telegram_app.add_handler(CommandHandler("myquota", cmd_myquota))
+        _telegram_app.add_handler(CommandHandler("docs_status", cmd_docs_status))
         _telegram_app.add_handler(CommandHandler("admin_add", cmd_admin_add))
         _telegram_app.add_handler(CommandHandler("admin_remove", cmd_admin_remove))
         _telegram_app.add_handler(CommandHandler("user_add", cmd_user_add))
@@ -59,6 +62,7 @@ async def start_telegram_bot():
         _telegram_app.add_handler(CommandHandler("quota_set", cmd_quota_set))
         _telegram_app.add_handler(CommandHandler("users", cmd_users))
         _telegram_app.add_handler(CommandHandler("repos", cmd_repos))
+        _telegram_app.add_handler(CommandHandler("update_docs", cmd_update_docs))
         _telegram_app.add_handler(CommandHandler("review", cmd_review))
 
         # 设置通知发送器

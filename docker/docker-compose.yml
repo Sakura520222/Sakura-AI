@@ -13,6 +13,7 @@ services:
       - ../logs:/app/logs
       - ../config:/app/config
       - ../backend:/app/backend  # 开发模式：挂载 backend 代码目录
+      - chroma_data:/app/data/chroma  # ChromaDB 向量数据库持久化
     healthcheck:
       test: ["CMD", "python", "-c", "import requests; requests.get('http://localhost:8000/health')"]
       interval: 30s
@@ -34,5 +35,11 @@ services:
     volumes:
       - ../logs:/app/logs
       - ../config:/app/config
+      - chroma_data:/app/data/chroma  # ChromaDB 向量数据库持久化
     profiles:
       - with-worker
+
+# ChromaDB 向量数据库持久化卷
+volumes:
+  chroma_data:
+    driver: local

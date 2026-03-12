@@ -87,6 +87,39 @@ class Settings(BaseSettings):
             if id.strip()
         ]
 
+    # ========== RAG 配置 ==========
+    enable_rag: bool = True
+    chroma_persist_dir: str = "./data/chroma"
+
+    # 嵌入模型配置
+    embedding_model: str = "BAAI/bge-m3"
+    embedding_provider: str = "siliconflow"  # openai|ollama|hf|siliconflow
+    embedding_base_url: str = "https://api.siliconflow.cn/v1"
+    embedding_api_key: str = ""
+    embedding_dimension: int = 1024
+    embedding_batch_size: int = 64  # 每批处理的文本数量（SiliconFlow 限制为 64）
+
+    # 重排序模型配置
+    rerank_model: str = "BAAI/bge-reranker-v2-m3"
+    rerank_provider: str = "siliconflow"  # huggingface|ollama|siliconflow|none
+    rerank_base_url: str = "https://api.siliconflow.cn/v1/rerank"
+    rerank_api_key: str = ""
+    rerank_top_k: int = 5
+    rerank_score_threshold: float = 0.3
+
+    # 文档分块配置
+    chunk_size: int = 1000
+    chunk_overlap: int = 200
+    max_chunks_per_doc: int = 500
+
+    # 文件监控配置
+    enable_file_monitor: bool = True
+    file_monitor_debounce_sec: int = 5
+
+    # 定时更新配置
+    enable_scheduler: bool = True
+    schedule_update_interval_minutes: int = 60
+
 
 class StrategyConfig:
     """审查策略配置"""
