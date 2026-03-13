@@ -526,7 +526,19 @@ class GitHubAppClient:
             return True
 
         except Exception as e:
-            logger.error(f"提交Review失败: {e}", exc_info=True)
+            # 安全提取错误信息，避免PyGithub内部的KeyError导致信息丢失
+            error_type = type(e).__name__
+
+            if hasattr(e, "status") and hasattr(e, "data"):
+                logger.error(f"提交Review失败: GitHub API返回错误 (status={e.status})")
+                logger.error(f"响应数据: {e.data}")
+                if isinstance(e.data, dict):
+                    msg = e.data.get("message") or e.data.get("error", "未知错误")
+                    logger.error(f"错误信息: {msg}")
+            else:
+                logger.error(f"提交Review失败: {error_type}: {str(e)}")
+
+            logger.debug("完整异常信息:", exc_info=True)
             return False
 
     def get_bot_username(self, repo_owner: str = None, repo_name: str = None) -> str:
