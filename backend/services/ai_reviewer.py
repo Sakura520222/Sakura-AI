@@ -64,6 +64,36 @@ class AIReviewer:
                     },
                 },
             },
+            {
+                "type": "function",
+                "function": {
+                    "name": "search_project_docs",
+                    "description": """检索项目的指导文档（编码规范、架构准则、业务逻辑等），用于了解项目特定的规则和知识。
+
+使用场景：
+- 当你在审查代码发现不符合常理的架构设计时
+- 需要确认项目特定的命名规范、代码风格时
+- 遇到业务逻辑不确定其实现是否符合要求时
+- 需要了解项目的技术栈选型和设计原则时
+
+注意：如果未找到相关文档，说明项目文档库中可能不包含该主题的规范，此时应基于通用最佳实践进行审查。""",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "query": {
+                                "type": "string",
+                                "description": "检索关键词或问题，例如：'错误处理规范'、'API设计原则'、'用户认证流程'",
+                            },
+                            "top_k": {
+                                "type": "integer",
+                                "description": "返回最相关的文档数量，默认 5",
+                                "default": 5,
+                            },
+                        },
+                        "required": ["query"],
+                    },
+                },
+            },
         ]
 
     async def _call_ai_with_retry(self, **kwargs) -> Any:
@@ -1275,6 +1305,13 @@ class AIReviewer:
             return await self._tool_read_file(arguments["file_path"], repo, pr)
         elif function_name == "list_directory":
             return await self._tool_list_directory(arguments["directory"], repo, pr)
+        elif function_name == "search_project_docs":
+            return await self._tool_search_project_docs(
+                arguments.get("query", ""),
+                arguments.get("top_k", 5),
+                repo,
+                pr,
+            )
         else:
             return {"error": f"未知工具: {function_name}"}
 
@@ -1535,20 +1572,25 @@ class AIReviewer:
    - 参数：directory（目录路径）
    - **注意**：对于新增目录，工具会自动从PR的HEAD分支读取；对于已存在的目录，会从base分支读取
 
+3. **search_project_docs**: 检索项目的指导文档（编码规范、架构准则、业务逻辑等）
+   - 使用场景：需要了解项目特定的规则和知识、确认编码规范、理解业务逻辑要求
+   - 参数：query（检索关键词或问题）
+   - **注意**：如果未找到相关文档，将基于通用最佳实践进行审查
+
 ## 使用建议
 
 - 优先审查PR中变更的文件
+- 审查前建议先使用 search_project_docs 检索项目相关的编码规范和架构准则
 - 当需要理解依赖关系时，使用 read_file 查看相关文件
 - 当需要了解模块结构时，使用 list_directory 查看目录
 - 合理使用工具，避免不必要的文件读取
-- 工具调用会消耗额外的token，请按需使用
 
 ## ⚠️ 工具错误处理
 
 如果工具返回错误，例如：
 - "文件在PR的HEAD和base分支中都不存在"：这可能是文件路径错误或文件已被删除
 - "该路径在跳过列表中"：系统配置跳过了该路径（如node_modules、.git等）
-- "文件过大"：文件超过100KB限制，请基于diff进行审查
+- "文件过大"：文件超过大小限制，请基于diff进行审查
 
 **重要**：如果工具返回错误，请不要重复尝试读取该文件，而是：
 1. 基于PR diff中的patch内容进行审查
@@ -2492,4 +2534,77 @@ class AIReviewer:
                             }
                         )
 
-        return recommendations
+    async def _tool_search_project_docs(
+        self, query: str, top_k: int, repo: Any, pr: Any
+    ) -> Dict[str, any]:
+        """检索项目文档的工具实现
+
+        Args:
+            query: 检索查询
+            top_k: 返回结果数量
+            repo: GitHub仓库对象
+            pr: GitHub PR对象
+
+        Returns:
+            检索结果
+        """
+        try:
+            # 检查 RAG 功能是否启用
+            if not settings.enable_rag:
+                return {
+                    "query": query,
+                    "error": "文档检索功能未启用",
+                    "hint": "请联系管理员启用 RAG 功能",
+                }
+
+            # 导入 RAG 服务（延迟导入避免循环依赖）
+            from backend.services.rag_service import get_rag_service
+
+            rag_service = get_rag_service()
+
+            # 构造仓库名称
+            repo_full_name = f"{repo.owner.login}/{repo.name}"
+
+            # 执行检索
+            logger.info(f"🔍 检索项目文档: {repo_full_name}, query: {query[:50]}...")
+            docs = await rag_service.search_relevant_docs(
+                repo_full_name=repo_full_name,
+                query=query,
+                top_k=top_k,
+                use_rerank=True,
+            )
+
+            if not docs:
+                return {
+                    "query": query,
+                    "results": [],
+                    "message": "未找到相关文档",
+                    "hint": "项目文档库中可能不包含该主题的规范，建议基于通用最佳实践进行审查",
+                }
+
+            # 格式化返回结果
+            formatted_results = []
+            for doc in docs:
+                formatted_results.append(
+                    {
+                        "content": doc["content"],
+                        "metadata": doc["metadata"],
+                        "source": doc["metadata"].get("file_path", "unknown"),
+                    }
+                )
+
+            logger.info(f"✅ 检索到 {len(formatted_results)} 个相关文档")
+
+            return {
+                "query": query,
+                "results": formatted_results,
+                "count": len(formatted_results),
+            }
+
+        except Exception as e:
+            logger.error(f"文档检索失败: {e}", exc_info=True)
+            return {
+                "query": query,
+                "error": f"检索失败: {str(e)}",
+                "hint": "可能是向量数据库未初始化或配置错误，请检查系统状态",
+            }

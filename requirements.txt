@@ -33,4 +33,9 @@ loguru==0.7.2
 # Telegram Bot
 python-telegram-bot==21.0
 
+# RAG 功能
+chromadb>=0.4.0
+watchfiles>=0.20.0  # 文件监控
+python-slugify>=8.0.0  # Collection 名称 slugify
+
 # GitHub签名验证 (hmac 和 hashlib 是 Python 内置模块，无需安装)

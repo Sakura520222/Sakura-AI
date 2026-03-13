@@ -8,8 +8,64 @@ from backend.models.database import init_async_db
 from backend.services.telegram_service import TelegramService
 from backend.models.telegram_models import UserRole
 from backend.core.config import get_settings
+import re
 
 settings = get_settings()
+
+
+def validate_github_repo_name(repo_name: str) -> tuple[bool, str]:
+    """验证 GitHub 仓库名称格式
+
+    Args:
+        repo_name: 仓库名称，格式应为 "owner/repo"
+
+    Returns:
+        (is_valid, error_message): 验证结果和错误信息
+    """
+    if not repo_name:
+        return False, "仓库名不能为空"
+
+    # 检查基本格式
+    if "/" not in repo_name:
+        return False, "仓库名格式错误，应为 owner/repo"
+
+    parts = repo_name.split("/")
+    if len(parts) != 2:
+        return False, "仓库名格式错误，只能包含一个 / 分隔符"
+
+    owner, repo = parts
+
+    # 检查 owner 和 repo 是否为空
+    if not owner or not repo:
+        return False, "owner 和 repo 名不能为空"
+
+    # GitHub 仓库名称规则：
+    # - 只能包含字母、数字、下划线、横线、点
+    # - 不允许连续的点
+    # - 不允许以点或横线开头/结尾
+    # - owner 最大 39 字符，repo 最大 100 字符
+    pattern = r"^(?!.*\.\.)[a-zA-Z0-9][a-zA-Z0-9._-]{0,38}[a-zA-Z0-9]/[a-zA-Z0-9][a-zA-Z0-9._-]{0,99}[a-zA-Z0-9]$"
+
+    # 简化版：允许单字符仓库名
+    simple_pattern = r"^(?!.*\.\.)[a-zA-Z0-9]([a-zA-Z0-9._-]{0,38}[a-zA-Z0-9])?/[a-zA-Z0-9]([a-zA-Z0-9._-]{0,99}[a-zA-Z0-9])?$"
+
+    if not re.match(simple_pattern, repo_name):
+        return False, (
+            "仓库名只能包含字母、数字、下划线、横线和点，"
+            "不能以点或横线开头/结尾，不能有连续的点"
+        )
+
+    # 防止路径遍历攻击
+    if ".." in repo_name:
+        return False, "仓库名不能包含连续的点"
+
+    # 检查长度限制
+    if len(owner) > 39:
+        return False, "owner 名最长 39 个字符"
+    if len(repo) > 100:
+        return False, "repo 名最长 100 个字符"
+
+    return True, ""
 
 
 def get_async_session():
@@ -108,7 +164,8 @@ async def cmd_help(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "/help - 显示此帮助信息\n"
         "/status - 查看系统状态\n"
         "/recent - 查看最近 10 条审查记录\n"
-        "/myquota - 查看我的配额使用情况\n\n"
+        "/myquota - 查看我的配额使用情况\n"
+        "/docs_status <owner/repo> - 查看仓库文档索引状态\n\n"
         "━━━━━━━━━━━━━━━━━━━━━━\n"
         "*👨‍💼 管理员命令（ADMIN 及以上）*\n"
         "━━━━━━━━━━━━━━━━━━━━━━\n"
@@ -134,6 +191,10 @@ async def cmd_help(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "➤ /quota\\_set <github\\_username> <daily|weekly|monthly> <limit>\n"
         "   示例: /quota\\_set Sakura520222 daily 20\n"
         "   说明: 设置指定用户的配额限制\n\n"
+        "*文档管理：*\n"
+        "➤ /update\\_docs <owner/repo>\n"
+        "   示例: /update\\_docs Sakura520222/my-project\n"
+        "   说明: 手动触发仓库文档索引更新\n\n"
         "━━━━━━━━━━━━━━━━━━━━━━\n"
         "*👑 超级管理员命令（SUPER\\_ADMIN）*\n"
         "━━━━━━━━━━━━━━━━━━━━━━\n"
@@ -655,3 +716,158 @@ async def cmd_review(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         await update.message.reply_text(friendly_msg)
         logger.error(f"手动触发审查失败: {e}", exc_info=True)
+
+
+async def cmd_update_docs(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """更新仓库文档索引（仅管理员）"""
+    telegram_id = update.effective_user.id
+
+    # 权限检查
+    if not await check_permission(telegram_id, UserRole.ADMIN):
+        await update.message.reply_text("❌ 此命令仅管理员可用")
+        return
+
+    # 参数检查
+    if len(context.args) < 1:
+        await update.message.reply_text(
+            "用法: /update_docs <owner/repo>\n\n"
+            "示例: /update_docs Sakura520222/my-project\n\n"
+            "说明: 手动触发指定仓库的文档索引更新"
+        )
+        return
+
+    repo_name = context.args[0]
+
+    try:
+        # 发送处理中消息
+        status_msg = await update.message.reply_text(
+            f"⏳ 正在更新文档索引: {repo_name}..."
+        )
+
+        # 导入 RAG 服务
+        from backend.services.rag_service import get_rag_service
+        from backend.core.github_app import GitHubAppClient
+        from backend.core.config import get_settings
+
+        settings = get_settings()
+
+        # 检查 RAG 功能是否启用
+        if not settings.enable_rag:
+            await status_msg.edit_text("❌ RAG 功能未启用")
+            return
+
+        # 验证仓库名称格式
+        is_valid, error_msg = validate_github_repo_name(repo_name)
+        if not is_valid:
+            await status_msg.edit_text(f"❌ {error_msg}")
+            return
+
+        repo_owner, repo_name_only = repo_name.split("/", 1)
+
+        # 获取仓库对象
+        github_app_client = GitHubAppClient()
+        client = github_app_client.get_repo_client(repo_owner, repo_name_only)
+        if not client:
+            await status_msg.edit_text(f"❌ 无法访问仓库: {repo_name}")
+            return
+
+        repo = client.get_repo(repo_name)
+
+        # 克隆仓库到临时目录
+        import tempfile
+        import shutil
+
+        temp_dir = tempfile.mkdtemp()
+        try:
+            # 使用 git clone
+            import subprocess
+
+            clone_url = repo.clone_url.replace(
+                "https://", f"https://x-access-token:{settings.github_app_id}@"
+            )
+
+            subprocess.run(
+                ["git", "clone", "--depth", "1", clone_url, temp_dir],
+                check=True,
+                capture_output=True,
+                timeout=60,
+            )
+
+            # 执行索引
+            rag_service = get_rag_service()
+            result = await rag_service.index_repository_docs(repo_name, temp_dir)
+
+            # 构建结果消息
+            result_text = (
+                f"✅ 文档索引更新完成\n\n"
+                f"📦 仓库: {repo_name}\n"
+                f"📄 总文件数: {result['total_files']}\n"
+                f"🆕 新增文件: {result['new_files']}\n"
+                f"🔄 更新文件: {result['updated_files']}\n"
+                f"🗑️  删除文件: {result['deleted_files']}\n"
+                f"📦 总块数: {result['total_chunks']}\n"
+            )
+
+            await status_msg.edit_text(result_text)
+
+        finally:
+            # 清理临时目录
+            shutil.rmtree(temp_dir, ignore_errors=True)
+
+    except Exception as e:
+        logger.error(f"更新文档索引失败: {str(e)}", exc_info=True)
+        await status_msg.edit_text(f"❌ 更新失败: {str(e)}")
+
+
+async def cmd_docs_status(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """查看仓库文档索引状态（所有人可用）"""
+    # 参数检查
+    if len(context.args) < 1:
+        await update.message.reply_text(
+            "用法: /docs_status <owner/repo>\n\n"
+            "示例: /docs_status Sakura520222/my-project\n\n"
+            "说明: 查看仓库的文档索引状态"
+        )
+        return
+
+    repo_name = context.args[0]
+
+    try:
+        # 导入 RAG 服务
+        from backend.services.rag_service import get_rag_service
+        from backend.core.config import get_settings
+
+        settings = get_settings()
+
+        # 检查 RAG 功能是否启用
+        if not settings.enable_rag:
+            await update.message.reply_text("❌ RAG 功能未启用")
+            return
+
+        # 获取索引状态
+        rag_service = get_rag_service()
+        status = await rag_service.get_index_status(repo_name)
+
+        # 构建状态消息
+        if status.get("error"):
+            text = f"❌ 获取状态失败: {status['error']}"
+        elif not status.get("indexed"):
+            text = (
+                f"📋 文档索引状态\n\n"
+                f"📦 仓库: {repo_name}\n"
+                f"❓ 状态: 未索引\n"
+                f"💡 提示: 请使用 /update_docs {repo_name} 创建索引"
+            )
+        else:
+            text = (
+                f"📋 文档索引状态\n\n"
+                f"📦 仓库: {repo_name}\n"
+                f"✅ 状态: 已索引\n"
+                f"📄 文档数量: {status['document_count']} 个块\n"
+            )
+
+        await update.message.reply_text(text)
+
+    except Exception as e:
+        logger.error(f"获取文档状态失败: {e}", exc_info=True)
+        await update.message.reply_text(f"❌ 获取状态失败: {str(e)}")

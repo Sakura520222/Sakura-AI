@@ -446,17 +446,32 @@ class ReviewWorker:
                 pr_info["repo_name"],
             )
 
-            # 使用 submit_review_with_inline_comments 方法
-            success = self.github_app.submit_review_with_inline_comments(
-                repo_owner=pr_info["repo_owner"],
-                repo_name=pr_info["repo_name"],
-                pr_number=pr_info["pr_number"],
-                event=decision.value.upper(),  # APPROVE, REQUEST_CHANGES, COMMENT
-                body=review_body,
-                inline_comments=inline_comments,
-                bot_username=bot_username,
-                enable_idempotency_check=enable_idempotency,
-            )
+            # 使用 submit_review_with_inline_comments 方法（带重试机制）
+            max_retries = 1  # 失败后重试1次
+            success = False
+
+            for attempt in range(max_retries + 1):
+                success = self.github_app.submit_review_with_inline_comments(
+                    repo_owner=pr_info["repo_owner"],
+                    repo_name=pr_info["repo_name"],
+                    pr_number=pr_info["pr_number"],
+                    event=decision.value.upper(),  # APPROVE, REQUEST_CHANGES, COMMENT
+                    body=review_body,
+                    inline_comments=inline_comments,
+                    bot_username=bot_username,
+                    enable_idempotency_check=enable_idempotency,
+                )
+
+                if success:
+                    break  # 成功，退出重试循环
+
+                if attempt < max_retries:
+                    logger.warning(
+                        f"[{task_id}] 第 {attempt + 1} 次提交Review失败，1秒后重试..."
+                    )
+                    await asyncio.sleep(1)
+                else:
+                    logger.error(f"[{task_id}] 重试 {max_retries} 次后仍然失败")
 
             if success:
                 logger.info(
