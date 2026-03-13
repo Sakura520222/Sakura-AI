@@ -11,6 +11,7 @@ from typing import List, Optional, Dict
 from loguru import logger
 from openai import AsyncOpenAI
 import httpx
+import threading
 
 from backend.core.config import get_settings
 
@@ -176,6 +177,12 @@ class EmbeddingService:
         embeddings = await self.embed_texts([query])
         return embeddings[0] if embeddings else []
 
+    async def close(self):
+        """关闭客户端连接，释放资源"""
+        if self.client and hasattr(self.client, "close"):
+            await self.client.close()
+            logger.debug("嵌入服务客户端已关闭")
+
 
 class RerankerService:
     """重排序服务
@@ -328,18 +335,44 @@ class RerankerService:
 _embedding_service_instance: Optional[EmbeddingService] = None
 _reranker_service_instance: Optional[RerankerService] = None
 
+# 线程锁，确保单例初始化的线程安全
+_embedding_service_lock = threading.Lock()
+_reranker_service_lock = threading.Lock()
+
 
 def get_embedding_service() -> EmbeddingService:
-    """获取嵌入服务单例"""
+    """获取嵌入服务单例（线程安全）"""
     global _embedding_service_instance
     if _embedding_service_instance is None:
-        _embedding_service_instance = EmbeddingService()
+        with _embedding_service_lock:
+            # 双重检查锁定
+            if _embedding_service_instance is None:
+                _embedding_service_instance = EmbeddingService()
     return _embedding_service_instance
 
 
 def get_reranker_service() -> RerankerService:
-    """获取重排序服务单例"""
+    """获取重排序服务单例（线程安全）"""
     global _reranker_service_instance
     if _reranker_service_instance is None:
-        _reranker_service_instance = RerankerService()
+        with _reranker_service_lock:
+            # 双重检查锁定
+            if _reranker_service_instance is None:
+                _reranker_service_instance = RerankerService()
     return _reranker_service_instance
+
+
+async def close_embedding_service():
+    """关闭嵌入服务实例，释放资源"""
+    global _embedding_service_instance
+    if _embedding_service_instance is not None:
+        await _embedding_service_instance.close()
+        _embedding_service_instance = None
+
+
+async def close_reranker_service():
+    """关闭重排序服务实例，释放资源"""
+    global _reranker_service_instance
+    if _reranker_service_instance is not None:
+        await _reranker_service_instance.close()
+        _reranker_service_instance = None
