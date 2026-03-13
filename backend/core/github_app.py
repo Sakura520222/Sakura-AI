@@ -94,8 +94,8 @@ class GitHubAppClient:
     def get_app_client(self) -> Github:
         """获取App级别的GitHub客户端"""
         if self._app_client is None:
-            # 获取App的访问令牌
-            token = self.integration.get_access_token(settings.github_app_id)
+            # 使用 JWT token 访问 App 级别 API
+            token = self.integration.create_jwt()
             self._app_client = Github(login_or_token=token)
         return self._app_client
 
