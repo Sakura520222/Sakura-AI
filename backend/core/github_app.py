@@ -552,18 +552,9 @@ class GitHubAppClient:
             机器人用户名或App slug
         """
         try:
-            # 使用App客户端而不是Installation客户端
-            # Installation Token无法访问 /user 端点，需要使用App Token
-            app_client = self.get_app_client()
-            if not app_client:
-                logger.warning("无法获取App客户端")
-                return None
-
-            # 获取App信息（使用App Token可以访问）
-            app = app_client.get_app()
-
-            # 返回App的slug作为标识符
-            # GitHub App的slug格式通常是: username-appname
+            # 直接使用 integration 对象获取 App 信息
+            # 不需要创建 app_client，避免认证类型不匹配的问题
+            app = self.integration.get_app()
             app_slug = app.slug
 
             logger.debug(f"成功获取GitHub App标识: {app_slug}")
