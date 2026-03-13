@@ -53,6 +53,19 @@ async def lifespan(app: FastAPI):
     # 关闭时
     logger.info("👋 Sakura AI Reviewer 关闭中...")
 
+    # 关闭服务客户端（嵌入服务和重排序服务）
+    from backend.services.embedding_service import (
+        close_embedding_service,
+        close_reranker_service,
+    )
+
+    try:
+        await close_embedding_service()
+        await close_reranker_service()
+        logger.info("✅ 服务客户端已关闭")
+    except Exception as e:
+        logger.error(f"❌ 关闭服务客户端时出错: {e}")
+
     # 停止 Telegram Bot
     try:
         await stop_telegram_bot()

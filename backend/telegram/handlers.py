@@ -8,8 +8,64 @@ from backend.models.database import init_async_db
 from backend.services.telegram_service import TelegramService
 from backend.models.telegram_models import UserRole
 from backend.core.config import get_settings
+import re
 
 settings = get_settings()
+
+
+def validate_github_repo_name(repo_name: str) -> tuple[bool, str]:
+    """验证 GitHub 仓库名称格式
+
+    Args:
+        repo_name: 仓库名称，格式应为 "owner/repo"
+
+    Returns:
+        (is_valid, error_message): 验证结果和错误信息
+    """
+    if not repo_name:
+        return False, "仓库名不能为空"
+
+    # 检查基本格式
+    if "/" not in repo_name:
+        return False, "仓库名格式错误，应为 owner/repo"
+
+    parts = repo_name.split("/")
+    if len(parts) != 2:
+        return False, "仓库名格式错误，只能包含一个 / 分隔符"
+
+    owner, repo = parts
+
+    # 检查 owner 和 repo 是否为空
+    if not owner or not repo:
+        return False, "owner 和 repo 名不能为空"
+
+    # GitHub 仓库名称规则：
+    # - 只能包含字母、数字、下划线、横线、点
+    # - 不允许连续的点
+    # - 不允许以点或横线开头/结尾
+    # - owner 最大 39 字符，repo 最大 100 字符
+    pattern = r"^(?!.*\.\.)[a-zA-Z0-9][a-zA-Z0-9._-]{0,38}[a-zA-Z0-9]/[a-zA-Z0-9][a-zA-Z0-9._-]{0,99}[a-zA-Z0-9]$"
+
+    # 简化版：允许单字符仓库名
+    simple_pattern = r"^(?!.*\.\.)[a-zA-Z0-9]([a-zA-Z0-9._-]{0,38}[a-zA-Z0-9])?/[a-zA-Z0-9]([a-zA-Z0-9._-]{0,99}[a-zA-Z0-9])?$"
+
+    if not re.match(simple_pattern, repo_name):
+        return False, (
+            "仓库名只能包含字母、数字、下划线、横线和点，"
+            "不能以点或横线开头/结尾，不能有连续的点"
+        )
+
+    # 防止路径遍历攻击
+    if ".." in repo_name:
+        return False, "仓库名不能包含连续的点"
+
+    # 检查长度限制
+    if len(owner) > 39:
+        return False, "owner 名最长 39 个字符"
+    if len(repo) > 100:
+        return False, "repo 名最长 100 个字符"
+
+    return True, ""
 
 
 def get_async_session():
@@ -700,9 +756,10 @@ async def cmd_update_docs(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await status_msg.edit_text("❌ RAG 功能未启用")
             return
 
-        # 解析仓库名称
-        if "/" not in repo_name:
-            await status_msg.edit_text("❌ 仓库名格式错误，应为 owner/repo")
+        # 验证仓库名称格式
+        is_valid, error_msg = validate_github_repo_name(repo_name)
+        if not is_valid:
+            await status_msg.edit_text(f"❌ {error_msg}")
             return
 
         repo_owner, repo_name_only = repo_name.split("/", 1)
