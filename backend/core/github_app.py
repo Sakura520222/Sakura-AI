@@ -508,13 +508,15 @@ class GitHubAppClient:
             comments = []
             if inline_comments:
                 for comment in inline_comments:
-                    comments.append(
-                        {
-                            "path": comment.get("file_path"),
-                            "line": comment.get("line_number"),
-                            "body": comment.get("body", ""),
-                        }
-                    )
+                    comment_dict = {
+                        "path": comment.get("file_path"),
+                        "line": comment.get("line_number"),
+                        "body": comment.get("body", ""),
+                    }
+                    # 添加 start_line 支持（跨多行评论）
+                    if comment.get("start_line"):
+                        comment_dict["start_line"] = comment["start_line"]
+                    comments.append(comment_dict)
 
             # 提交Review（包含行内评论）
             pr.create_review(event=event, body=body, comments=comments)
