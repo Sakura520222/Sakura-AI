@@ -435,6 +435,26 @@ class ReviewWorker:
             # 5. 获取行内评论
             inline_comments = review_result.get("inline_comments", [])
 
+            # 5.1 验证和过滤行内评论（使用 Diff 安全区）
+            # 这一步确保文件路径正确匹配 PR 中的实际路径，避免 "Path could not be resolved" 错误
+            if inline_comments and analysis and analysis.changed_lines_map:
+                logger.info(f"[{task_id}] 开始验证 {len(inline_comments)} 条行内评论...")
+                validated_comments = self.comment_service._validate_inline_comments(
+                    inline_comments, analysis
+                )
+
+                if len(validated_comments) < len(inline_comments):
+                    filtered_count = len(inline_comments) - len(validated_comments)
+                    logger.info(
+                        f"[{task_id}] 过滤掉 {filtered_count} 条无效的行内评论（路径不匹配或行号不在 Diff 安全区）"
+                    )
+
+                # 只使用验证通过的评论
+                inline_comments = validated_comments
+
+                if not inline_comments:
+                    logger.warning(f"[{task_id}] 所有行内评论都被过滤，将只提交整体评论")
+
             # 6. 提交Review到GitHub（包含行内评论）
             # 检查是否启用幂等性检查
             policy = decision_engine._get_repo_policy(pr_info["repo_full_name"])
