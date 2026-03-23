@@ -123,6 +123,44 @@ class Settings(BaseSettings):
     enable_scheduler: bool = True
     schedule_update_interval_minutes: int = 60
 
+    # ========== 代码索引配置 ==========
+    enable_code_index: bool = True  # 是否启用代码索引功能
+    auto_index_pr_changes: bool = True  # PR审查时自动索引变更文件
+
+    # 代码分块配置
+    code_chunk_size: int = 500  # 代码块大小（字符数）
+    code_chunk_overlap: int = 50  # 代码块重叠大小
+
+    # 支持的编程语言
+    code_index_languages: list[str] = [
+        "python",
+        "javascript",
+        "typescript",
+        "go",
+        "java",
+        "rust",
+        "cpp",
+        "c",
+        "csharp",
+        "php",
+        "ruby",
+        "swift",
+        "kotlin",
+    ]
+
+    # 核心代码目录（用于定期索引）
+    code_index_core_paths: list[str] = [
+        "src/",
+        "lib/",
+        "backend/",
+        "frontend/",
+        "app/",
+        "core/",
+    ]
+
+    # 依赖配置文件索引
+    code_index_dependency_files: bool = True
+
 
 class StrategyConfig:
     """审查策略配置"""

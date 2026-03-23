@@ -1,6 +1,6 @@
 """AI审查引擎"""
 
-from typing import Dict, List, Any
+from typing import Dict, List, Any, Optional
 from openai import AsyncOpenAI
 from loguru import logger
 import json
@@ -94,6 +94,44 @@ class AIReviewer:
                     },
                 },
             },
+            {
+                "type": "function",
+                "function": {
+                    "name": "search_code_context",
+                    "description": """检索代码仓库中的相关代码片段，用于理解代码上下文、查找相似实现、了解项目结构。
+
+使用场景：
+- 需要了解某个功能的实现方式时
+- 查找类似代码模式或用法示例时
+- 理解代码的依赖关系和调用链时
+- 需要查看某个类或函数的完整实现时
+
+注意：该工具检索已索引的代码片段，如果未找到相关代码，可能需要使用 read_file 查看具体文件。""",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "query": {
+                                "type": "string",
+                                "description": "检索关键词或问题，例如：'用户认证实现'、'数据库连接配置'、'错误处理逻辑'",
+                            },
+                            "language": {
+                                "type": "string",
+                                "description": "可选：限定编程语言，例如：'python'、'javascript'、'go'等",
+                            },
+                            "file_path": {
+                                "type": "string",
+                                "description": "可选：限定在特定文件中检索",
+                            },
+                            "top_k": {
+                                "type": "integer",
+                                "description": "返回最相关的代码片段数量，默认 5",
+                                "default": 5,
+                            },
+                        },
+                        "required": ["query"],
+                    },
+                },
+            },
         ]
 
     async def _call_ai_with_retry(self, **kwargs) -> Any:
@@ -143,7 +181,16 @@ class AIReviewer:
                 response = await self.client.chat.completions.create(**kwargs)
 
                 # 检查空响应
-                if not response.choices or not response.choices[0].message.content:
+                # 注意：在工具调用模式下，content 可能为空，但 tool_calls 有值是有效响应
+                msg = response.choices[0].message
+                has_content = bool(msg.content)
+                has_tool_calls = bool(getattr(msg, "tool_calls", None))
+
+                logger.debug(
+                    f"AI响应状态: content={has_content}, tool_calls={has_tool_calls}"
+                )
+
+                if not response.choices or (not has_content and not has_tool_calls):
                     if attempt < max_retries - 1:
                         # 混合退避策略：前3次快速，后面慢速
                         if attempt < 3:
@@ -1174,7 +1221,12 @@ class AIReviewer:
 
             # 动态获取启用的工具列表（根据仓库知识库状态）
             # 添加空值检查，防止 AttributeError
-            if not repo or not hasattr(repo, "owner") or not repo.owner or not repo.name:
+            if (
+                not repo
+                or not hasattr(repo, "owner")
+                or not repo.owner
+                or not repo.name
+            ):
                 logger.warning("无效的 repo 对象，使用默认工具")
                 enabled_tools = await self._get_enabled_tools(None)
             else:
@@ -1321,6 +1373,15 @@ class AIReviewer:
                 repo,
                 pr,
             )
+        elif function_name == "search_code_context":
+            return await self._tool_search_code_context(
+                arguments.get("query", ""),
+                arguments.get("language"),
+                arguments.get("file_path"),
+                arguments.get("top_k", 5),
+                repo,
+                pr,
+            )
         else:
             return {"error": f"未知工具: {function_name}"}
 
@@ -1331,6 +1392,7 @@ class AIReviewer:
         - read_file: 始终可用
         - list_directory: 始终可用
         - search_project_docs: 仅当 RAG 全局启用且仓库有知识库索引时可用
+        - search_code_context: 仅当仓库有代码索引时可用
 
         Args:
             repo_full_name: 仓库名称 (如 "owner/repo")
@@ -1341,52 +1403,75 @@ class AIReviewer:
         # 基础工具（始终可用）- 复用 self.tools 中的基础工具定义
         base_tool_names = {"read_file", "list_directory"}
         base_tools = [
-            tool for tool in self.tools
-            if tool["function"]["name"] in base_tool_names
+            tool for tool in self.tools if tool["function"]["name"] in base_tool_names
         ]
 
-        # 检查是否应该启用 search_project_docs 工具
-        if not settings.enable_rag:
-            logger.debug(f"RAG 功能全局禁用，仓库 {repo_full_name or 'unknown'} 将仅使用基础工具")
-            return base_tools
+        enabled_tools = base_tools.copy()
 
         # 处理 repo_full_name 为 None 的情况
         if not repo_full_name:
-            logger.debug("仓库名称为空，不启用 search_project_docs 工具")
+            logger.debug("仓库名称为空，仅使用基础工具")
             return base_tools
 
         try:
-            # 延迟导入避免循环依赖
-            from backend.services.rag_service import get_rag_service
+            # 检查 search_project_docs 工具
+            if settings.enable_rag:
+                from backend.services.rag_service import get_rag_service
 
-            rag_service = get_rag_service()
-            index_status = await rag_service.get_index_status(repo_full_name)
+                rag_service = get_rag_service()
+                index_status = await rag_service.get_index_status(repo_full_name)
 
-            if index_status.get("indexed", False) and index_status.get("document_count", 0) > 0:
-                logger.debug(
-                    f"仓库 {repo_full_name} 有知识库索引 ({index_status['document_count']} 个文档)，"
-                    "启用 search_project_docs 工具"
+                if (
+                    index_status.get("indexed", False)
+                    and index_status.get("document_count", 0) > 0
+                ):
+                    logger.debug(
+                        f"仓库 {repo_full_name} 有知识库索引 ({index_status['document_count']} 个文档)，"
+                        "启用 search_project_docs 工具"
+                    )
+                    rag_tool = next(
+                        (
+                            tool
+                            for tool in self.tools
+                            if tool["function"]["name"] == "search_project_docs"
+                        ),
+                        None,
+                    )
+                    if rag_tool:
+                        enabled_tools.append(rag_tool)
+
+            # 检查 search_code_context 工具
+            if settings.enable_code_index:
+                from backend.services.code_index_service import get_code_index_service
+
+                code_index_service = get_code_index_service()
+                code_count = await code_index_service.vector_store.get_collection_count(
+                    repo_full_name
                 )
-                # 复用 self.tools 中的 search_project_docs 工具定义
-                rag_tool = next(
-                    (tool for tool in self.tools if tool["function"]["name"] == "search_project_docs"),
-                    None
-                )
-                if rag_tool:
-                    return base_tools + [rag_tool]
-                return base_tools
-            else:
-                logger.debug(
-                    f"仓库 {repo_full_name} 没有知识库索引或文档数为0，不启用 search_project_docs 工具"
-                )
-                return base_tools
+
+                if code_count > 0:
+                    logger.debug(
+                        f"仓库 {repo_full_name} 有代码索引 ({code_count} 个代码块)，"
+                        "启用 search_code_context 工具"
+                    )
+                    code_tool = next(
+                        (
+                            tool
+                            for tool in self.tools
+                            if tool["function"]["name"] == "search_code_context"
+                        ),
+                        None,
+                    )
+                    if code_tool:
+                        enabled_tools.append(code_tool)
 
         except Exception as e:
-            # 索引状态检查失败时，保守策略：不启用该工具
+            # 索引状态检查失败时，保守策略：仅使用基础工具
             logger.warning(
-                f"检查仓库 {repo_full_name} 索引状态失败: {e}，不启用 search_project_docs 工具"
+                f"检查仓库 {repo_full_name} 索引状态失败: {e}，仅使用基础工具"
             )
-            return base_tools
+
+        return enabled_tools
 
     async def _tool_read_file(
         self, file_path: str, repo: Any, pr: Any
@@ -2680,4 +2765,91 @@ class AIReviewer:
                 "query": query,
                 "error": f"检索失败: {str(e)}",
                 "hint": "可能是向量数据库未初始化或配置错误，请检查系统状态",
+            }
+
+    async def _tool_search_code_context(
+        self,
+        query: str,
+        language: Optional[str],
+        file_path: Optional[str],
+        top_k: int,
+        repo: Any,
+        pr: Any,
+    ) -> Dict[str, any]:
+        """检索代码上下文的工具实现
+
+        Args:
+            query: 检索查询
+            language: 编程语言过滤（可选）
+            file_path: 文件路径过滤（可选）
+            top_k: 返回结果数量
+            repo: GitHub仓库对象
+            pr: GitHub PR对象
+
+        Returns:
+            检索结果
+        """
+        try:
+            # 导入代码索引服务（延迟导入避免循环依赖）
+            from backend.services.code_index_service import get_code_index_service
+
+            code_index_service = get_code_index_service()
+
+            # 构造仓库名称
+            repo_full_name = f"{repo.owner.login}/{repo.name}"
+
+            # 执行检索
+            logger.info(
+                f"🔍 检索代码上下文: {repo_full_name}, query: {query[:50]}..., "
+                f"language: {language or 'all'}, file: {file_path or 'all'}"
+            )
+
+            results = await code_index_service.search_code_context(
+                repo_full_name=repo_full_name,
+                query=query,
+                top_k=top_k,
+                language=language,
+                file_path=file_path,
+                pr_number=pr.number,
+            )
+
+            if not results:
+                return {
+                    "query": query,
+                    "results": [],
+                    "message": "未找到相关代码片段",
+                    "hint": "代码库中可能不包含相关实现，或该文件尚未被索引。可以尝试使用 read_file 查看具体文件。",
+                }
+
+            # 格式化返回结果
+            formatted_results = []
+            for result in results:
+                metadata = result.get("metadata", {})
+                formatted_results.append(
+                    {
+                        "content": result["content"],
+                        "file_path": metadata.get("file_path", "unknown"),
+                        "language": metadata.get("language", "unknown"),
+                        "start_line": metadata.get("start_line"),
+                        "end_line": metadata.get("end_line"),
+                        "function_name": metadata.get("function_name"),
+                        "class_name": metadata.get("class_name"),
+                        "distance": result.get("distance"),
+                    }
+                )
+
+            logger.info(f"✅ 检索到 {len(formatted_results)} 个相关代码片段")
+
+            return {
+                "query": query,
+                "results": formatted_results,
+                "count": len(formatted_results),
+            }
+
+        except Exception as e:
+            logger.error(f"代码上下文检索失败: {e}", exc_info=True)
+            return {
+                "query": query,
+                "error": f"检索失败: {str(e)}",
+                "hint": "可能是代码索引未初始化或配置错误，请检查系统状态",
             }

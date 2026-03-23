@@ -23,6 +23,8 @@ from backend.telegram.handlers import (
     cmd_review,
     cmd_docs_status,
     cmd_update_docs,
+    cmd_code_index,
+    cmd_code_status,
 )
 from backend.telegram.notifications import NotificationSender, set_notification_sender
 
@@ -64,6 +66,8 @@ async def start_telegram_bot():
         _telegram_app.add_handler(CommandHandler("repos", cmd_repos))
         _telegram_app.add_handler(CommandHandler("update_docs", cmd_update_docs))
         _telegram_app.add_handler(CommandHandler("review", cmd_review))
+        _telegram_app.add_handler(CommandHandler("code_index", cmd_code_index))
+        _telegram_app.add_handler(CommandHandler("code_status", cmd_code_status))
 
         # 设置通知发送器
         notification_sender = NotificationSender(_telegram_bot)
