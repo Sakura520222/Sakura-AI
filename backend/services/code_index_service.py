@@ -119,7 +119,7 @@ class CodeIndexService:
 
                     # 生成嵌入向量
                     chunk_texts = [chunk.content for chunk in chunks]
-                    embeddings = await self.embedding_service.get_embeddings(
+                    embeddings = await self.embedding_service.embed_texts(
                         chunk_texts
                     )
 
@@ -256,7 +256,7 @@ class CodeIndexService:
 
                     # 生成嵌入向量
                     chunk_texts = [chunk.content for chunk in chunks]
-                    embeddings = await self.embedding_service.get_embeddings(
+                    embeddings = await self.embedding_service.embed_texts(
                         chunk_texts
                     )
 
@@ -343,7 +343,7 @@ class CodeIndexService:
             检索结果列表
         """
         # 生成查询向量
-        query_embedding = await self.embedding_service.get_embeddings([query])
+        query_embedding = await self.embedding_service.embed_texts([query])
         if not query_embedding:
             return []
 
