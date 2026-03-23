@@ -1173,8 +1173,13 @@ class AIReviewer:
             ]
 
             # 动态获取启用的工具列表（根据仓库知识库状态）
-            repo_full_name = f"{repo.owner.login}/{repo.name}"
-            enabled_tools = await self._get_enabled_tools(repo_full_name)
+            # 添加空值检查，防止 AttributeError
+            if not repo or not hasattr(repo, "owner") or not repo.owner or not repo.name:
+                logger.warning("无效的 repo 对象，使用默认工具")
+                enabled_tools = await self._get_enabled_tools(None)
+            else:
+                repo_full_name = f"{repo.owner.login}/{repo.name}"
+                enabled_tools = await self._get_enabled_tools(repo_full_name)
 
             # 多轮对话循环
             max_iterations = 10  # 防止无限循环
@@ -1333,47 +1338,21 @@ class AIReviewer:
         Returns:
             启用的工具列表
         """
-        # 基础工具（始终可用）
+        # 基础工具（始终可用）- 复用 self.tools 中的基础工具定义
+        base_tool_names = {"read_file", "list_directory"}
         base_tools = [
-            {
-                "type": "function",
-                "function": {
-                    "name": "read_file",
-                    "description": "读取指定文件的完整内容，用于理解代码实现细节",
-                    "parameters": {
-                        "type": "object",
-                        "properties": {
-                            "file_path": {
-                                "type": "string",
-                                "description": "要读取的文件路径（相对于项目根目录）",
-                            }
-                        },
-                        "required": ["file_path"],
-                    },
-                },
-            },
-            {
-                "type": "function",
-                "function": {
-                    "name": "list_directory",
-                    "description": "列出指定目录下的文件和子目录",
-                    "parameters": {
-                        "type": "object",
-                        "properties": {
-                            "directory": {
-                                "type": "string",
-                                "description": "要列出的目录路径（相对于项目根目录）",
-                            }
-                        },
-                        "required": ["directory"],
-                    },
-                },
-            },
+            tool for tool in self.tools
+            if tool["function"]["name"] in base_tool_names
         ]
 
         # 检查是否应该启用 search_project_docs 工具
         if not settings.enable_rag:
-            logger.debug("RAG 功能全局禁用，不启用 search_project_docs 工具")
+            logger.debug(f"RAG 功能全局禁用，仓库 {repo_full_name or 'unknown'} 将仅使用基础工具")
+            return base_tools
+
+        # 处理 repo_full_name 为 None 的情况
+        if not repo_full_name:
+            logger.debug("仓库名称为空，不启用 search_project_docs 工具")
             return base_tools
 
         try:
@@ -1388,38 +1367,14 @@ class AIReviewer:
                     f"仓库 {repo_full_name} 有知识库索引 ({index_status['document_count']} 个文档)，"
                     "启用 search_project_docs 工具"
                 )
-                return base_tools + [
-                    {
-                        "type": "function",
-                        "function": {
-                            "name": "search_project_docs",
-                            "description": """检索项目的指导文档（编码规范、架构准则、业务逻辑等），用于了解项目特定的规则和知识。
-
-使用场景：
-- 当你在审查代码发现不符合常理的架构设计时
-- 需要确认项目特定的命名规范、代码风格时
-- 遇到业务逻辑不确定其实现是否符合要求时
-- 需要了解项目的技术栈选型和设计原则时
-
-注意：如果未找到相关文档，说明项目文档库中可能不包含该主题的规范，此时应基于通用最佳实践进行审查。""",
-                            "parameters": {
-                                "type": "object",
-                                "properties": {
-                                    "query": {
-                                        "type": "string",
-                                        "description": "检索关键词或问题，例如：'错误处理规范'、'API设计原则'、'用户认证流程'",
-                                    },
-                                    "top_k": {
-                                        "type": "integer",
-                                        "description": "返回最相关的文档数量，默认 5",
-                                        "default": 5,
-                                    },
-                                },
-                                "required": ["query"],
-                            },
-                        },
-                    },
-                ]
+                # 复用 self.tools 中的 search_project_docs 工具定义
+                rag_tool = next(
+                    (tool for tool in self.tools if tool["function"]["name"] == "search_project_docs"),
+                    None
+                )
+                if rag_tool:
+                    return base_tools + [rag_tool]
+                return base_tools
             else:
                 logger.debug(
                     f"仓库 {repo_full_name} 没有知识库索引或文档数为0，不启用 search_project_docs 工具"
