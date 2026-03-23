@@ -1172,6 +1172,10 @@ class AIReviewer:
                 {"role": "user", "content": user_message},
             ]
 
+            # 动态获取启用的工具列表（根据仓库知识库状态）
+            repo_full_name = f"{repo.owner.login}/{repo.name}"
+            enabled_tools = await self._get_enabled_tools(repo_full_name)
+
             # 多轮对话循环
             max_iterations = 10  # 防止无限循环
             iteration = 0
@@ -1183,7 +1187,7 @@ class AIReviewer:
                 response = await self._call_ai_with_retry(
                     model=settings.openai_model,
                     messages=messages,
-                    tools=self.tools,
+                    tools=enabled_tools,
                     tool_choice="auto",
                     temperature=settings.openai_temperature,
                 )
@@ -1314,6 +1318,120 @@ class AIReviewer:
             )
         else:
             return {"error": f"未知工具: {function_name}"}
+
+    async def _get_enabled_tools(self, repo_full_name: str) -> List[Dict[str, Any]]:
+        """获取启用的工具列表
+
+        根据全局配置和仓库状态动态决定可用工具：
+        - read_file: 始终可用
+        - list_directory: 始终可用
+        - search_project_docs: 仅当 RAG 全局启用且仓库有知识库索引时可用
+
+        Args:
+            repo_full_name: 仓库名称 (如 "owner/repo")
+
+        Returns:
+            启用的工具列表
+        """
+        # 基础工具（始终可用）
+        base_tools = [
+            {
+                "type": "function",
+                "function": {
+                    "name": "read_file",
+                    "description": "读取指定文件的完整内容，用于理解代码实现细节",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "file_path": {
+                                "type": "string",
+                                "description": "要读取的文件路径（相对于项目根目录）",
+                            }
+                        },
+                        "required": ["file_path"],
+                    },
+                },
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "list_directory",
+                    "description": "列出指定目录下的文件和子目录",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "directory": {
+                                "type": "string",
+                                "description": "要列出的目录路径（相对于项目根目录）",
+                            }
+                        },
+                        "required": ["directory"],
+                    },
+                },
+            },
+        ]
+
+        # 检查是否应该启用 search_project_docs 工具
+        if not settings.enable_rag:
+            logger.debug("RAG 功能全局禁用，不启用 search_project_docs 工具")
+            return base_tools
+
+        try:
+            # 延迟导入避免循环依赖
+            from backend.services.rag_service import get_rag_service
+
+            rag_service = get_rag_service()
+            index_status = await rag_service.get_index_status(repo_full_name)
+
+            if index_status.get("indexed", False) and index_status.get("document_count", 0) > 0:
+                logger.debug(
+                    f"仓库 {repo_full_name} 有知识库索引 ({index_status['document_count']} 个文档)，"
+                    "启用 search_project_docs 工具"
+                )
+                return base_tools + [
+                    {
+                        "type": "function",
+                        "function": {
+                            "name": "search_project_docs",
+                            "description": """检索项目的指导文档（编码规范、架构准则、业务逻辑等），用于了解项目特定的规则和知识。
+
+使用场景：
+- 当你在审查代码发现不符合常理的架构设计时
+- 需要确认项目特定的命名规范、代码风格时
+- 遇到业务逻辑不确定其实现是否符合要求时
+- 需要了解项目的技术栈选型和设计原则时
+
+注意：如果未找到相关文档，说明项目文档库中可能不包含该主题的规范，此时应基于通用最佳实践进行审查。""",
+                            "parameters": {
+                                "type": "object",
+                                "properties": {
+                                    "query": {
+                                        "type": "string",
+                                        "description": "检索关键词或问题，例如：'错误处理规范'、'API设计原则'、'用户认证流程'",
+                                    },
+                                    "top_k": {
+                                        "type": "integer",
+                                        "description": "返回最相关的文档数量，默认 5",
+                                        "default": 5,
+                                    },
+                                },
+                                "required": ["query"],
+                            },
+                        },
+                    },
+                ]
+            else:
+                logger.debug(
+                    f"仓库 {repo_full_name} 没有知识库索引或文档数为0，不启用 search_project_docs 工具"
+                )
+                return base_tools
+
+        except Exception as e:
+            # 索引状态检查失败时，保守策略：不启用该工具
+            logger.warning(
+                f"检查仓库 {repo_full_name} 索引状态失败: {e}，不启用 search_project_docs 工具"
+            )
+            return base_tools
 
     async def _tool_read_file(
         self, file_path: str, repo: Any, pr: Any
