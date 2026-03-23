@@ -929,11 +929,18 @@ async def cmd_code_index(update: Update, context: ContextTypes.DEFAULT_TYPE):
             from backend.models.database import CodeIndex
 
             service = TelegramService(session)
-            is_authorized = await service.is_authorized_repo(repo_name)
 
-            if not is_authorized:
-                await status_msg.edit_text(f"❌ 仓库 {repo_name} 未在系统中注册")
-                return
+            # 检查仓库授权（管理员和超级管理员可以跳过此检查）
+            telegram_user = await service.get_user_by_telegram_id(
+                update.effective_user.id
+            )
+            role_lower = telegram_user.role.lower().strip() if telegram_user and telegram_user.role else ""
+            if role_lower not in ["admin", "super_admin"]:
+                # 普通用户需要仓库在白名单中
+                is_authorized = await service.is_authorized_repo(repo_name)
+                if not is_authorized:
+                    await status_msg.edit_text(f"❌ 仓库 {repo_name} 未在系统中注册")
+                    return
 
             # 查询代码索引记录
             from sqlalchemy import select
