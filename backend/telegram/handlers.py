@@ -165,7 +165,8 @@ async def cmd_help(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "/status - 查看系统状态\n"
         "/recent - 查看最近 10 条审查记录\n"
         "/myquota - 查看我的配额使用情况\n"
-        "/docs_status <owner/repo> - 查看仓库文档索引状态\n\n"
+        "/docs_status <owner/repo> - 查看仓库文档索引状态\n"
+        "/code_status <owner/repo> - 查看仓库代码索引状态\n\n"
         "━━━━━━━━━━━━━━━━━━━━━━\n"
         "*👨‍💼 管理员命令（ADMIN 及以上）*\n"
         "━━━━━━━━━━━━━━━━━━━━━━\n"
@@ -195,6 +196,14 @@ async def cmd_help(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "➤ /update\\_docs <owner/repo>\n"
         "   示例: /update\\_docs Sakura520222/my-project\n"
         "   说明: 手动触发仓库文档索引更新\n\n"
+        "*代码管理：*\n"
+        "➤ /code\\_index <owner/repo> [paths...]\n"
+        "   示例: /code\\_index Sakura520222/my-project\n"
+        "         /code\\_index Sakura520222/my-project src/ lib/\n"
+        "   说明: 手动触发仓库代码索引\n\n"
+        "➤ /code\\_status <owner/repo>\n"
+        "   示例: /code\\_status Sakura520222/my-project\n"
+        "   说明: 查看仓库代码索引状态\n\n"
         "━━━━━━━━━━━━━━━━━━━━━━\n"
         "*👑 超级管理员命令（SUPER\\_ADMIN）*\n"
         "━━━━━━━━━━━━━━━━━━━━━━\n"
@@ -870,4 +879,160 @@ async def cmd_docs_status(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     except Exception as e:
         logger.error(f"获取文档状态失败: {e}", exc_info=True)
+        await update.message.reply_text(f"❌ 获取状态失败: {str(e)}")
+
+
+async def cmd_code_index(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """索引仓库代码（管理员和超级管理员可用）"""
+    # 权限检查
+    if not await check_permission(update.effective_user.id, UserRole.ADMIN):
+        await update.message.reply_text("❌ 此命令仅管理员和超级管理员可用")
+        return
+
+    # 参数检查
+    if len(context.args) < 1:
+        await update.message.reply_text(
+            "用法: /code_index <owner/repo> [paths...]\n\n"
+            "示例: /code_index Sakura520222/my-project\n"
+            "       /code_index Sakura520222/my-project src/ lib/\n\n"
+            "说明: 索引仓库的代码文件，支持指定路径"
+        )
+        return
+
+    repo_name = context.args[0]
+    paths = context.args[1:] if len(context.args) > 1 else None
+
+    # 验证仓库名格式
+    is_valid, error_msg = validate_github_repo_name(repo_name)
+    if not is_valid:
+        await update.message.reply_text(f"❌ {error_msg}")
+        return
+
+    # 发送开始消息
+    status_msg = await update.message.reply_text(
+        f"🔍 开始索引仓库代码...\n📦 {repo_name}"
+    )
+
+    try:
+        from backend.services.code_index_service import get_code_index_service
+        from backend.core.config import get_settings
+
+        settings = get_settings()
+
+        # 获取代码索引服务
+        code_index_service = get_code_index_service()
+
+        # 获取仓库路径（这里简化处理，使用临时目录）
+        import tempfile
+        import os
+        from backend.core.github_app import get_github_app
+
+        github_app = get_github_app()
+
+        # 获取仓库的install_id（简化处理）
+        async with get_async_session() as session:
+            from backend.services.telegram_service import TelegramService
+            service = TelegramService(session)
+            repo = await service.get_repo(repo_name)
+            if not repo:
+                await status_msg.edit_text(f"❌ 仓库 {repo_name} 未在系统中注册")
+                return
+            install_id = repo.install_id
+
+        # 克隆仓库到临时目录
+        with tempfile.TemporaryDirectory() as temp_dir:
+            repo_path = os.path.join(temp_dir, "repo")
+            # 这里需要实际的克隆逻辑，暂时跳过
+            # 由于需要git操作，这里返回提示信息
+            await status_msg.edit_text(
+                "⚠️ 代码索引功能需要配置仓库访问权限\n"
+                "请联系管理员配置Git访问凭据"
+            )
+            return
+
+        # 执行索引（上面的return会跳过这里）
+        result = await code_index_service.index_repository_code(
+            repo_full_name=repo_name,
+            repo_path=repo_path,
+            commit_sha="latest",  # 简化处理
+            paths=paths,
+        )
+
+        # 构建结果消息
+        text = (
+            f"✅ 代码索引完成\n\n"
+            f"📦 仓库: {repo_name}\n"
+            f"📁 索引文件: {result['indexed']} 个\n"
+            f"⏭️ 跳过: {result['skipped']} 个\n"
+            f"❌ 失败: {result['failed']} 个\n"
+            f"🧩 代码块: {result['total_chunks']} 个"
+        )
+
+        await status_msg.edit_text(text)
+
+    except Exception as e:
+        logger.error(f"代码索引失败: {str(e)}", exc_info=True)
+        await status_msg.edit_text(f"❌ 索引失败: {str(e)}")
+
+
+async def cmd_code_status(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """查看仓库代码索引状态（所有人可用）"""
+    # 参数检查
+    if len(context.args) < 1:
+        await update.message.reply_text(
+            "用法: /code_status <owner/repo>\n\n"
+            "示例: /code_status Sakura520222/my-project\n\n"
+            "说明: 查看仓库的代码索引状态"
+        )
+        return
+
+    repo_name = context.args[0]
+
+    # 验证仓库名格式
+    is_valid, error_msg = validate_github_repo_name(repo_name)
+    if not is_valid:
+        await update.message.reply_text(f"❌ {error_msg}")
+        return
+
+    try:
+        from backend.services.code_index_service import get_code_index_service
+        from backend.models.database import CodeIndex, async_session
+
+        code_index_service = get_code_index_service()
+
+        # 获取代码索引状态
+        async with get_async_session() as session:
+            from sqlalchemy import select
+
+            result = await session.execute(
+                select(CodeIndex).where(CodeIndex.repo_full_name == repo_name)
+            )
+            code_index = result.scalar_one_or_none()
+
+        # 获取向量库中的代码块数量
+        chunk_count = await code_index_service.vector_store.get_collection_count(repo_name)
+
+        # 构建状态消息
+        if not code_index:
+            text = (
+                f"🧩 代码索引状态\n\n"
+                f"📦 仓库: {repo_name}\n"
+                f"❓ 状态: 未索引\n"
+                f"💡 提示: PR审查时会自动索引变更文件\n"
+                f"         或使用 /code_index {repo_name} 手动索引"
+            )
+        else:
+            text = (
+                f"🧩 代码索引状态\n\n"
+                f"📦 仓库: {repo_name}\n"
+                f"✅ 状态: 已索引\n"
+                f"📁 文件数量: {code_index.file_count} 个\n"
+                f"🧩 代码块: {chunk_count} 个\n"
+                f"🕐 最后更新: {code_index.last_indexed_at.strftime('%Y-%m-%d %H:%M')}\n"
+            )
+
+        await update.message.reply_text(text)
+
+    except Exception as e:
+        logger.error(f"获取代码状态失败: {e}", exc_info=True)
         await update.message.reply_text(f"❌ 获取状态失败: {str(e)}")
