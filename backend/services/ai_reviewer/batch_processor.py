@@ -21,6 +21,7 @@ from backend.services.ai_reviewer.constants import (
     BATCH_JITTER_SECONDS,
     MAX_FILES_PER_BATCH,
     MAX_LINES_PER_BATCH,
+    MAX_TOOL_ITERATIONS,
     SUMMARY_MAX_TOKENS,
     SUMMARY_TIMEOUT,
 )
@@ -264,7 +265,7 @@ class BatchProcessor:
         enabled_tools = await tool_manager.get_enabled_tools(repo_full_name)
 
         # 多轮对话循环
-        max_iterations = 10
+        max_iterations = MAX_TOOL_ITERATIONS
         iteration = 0
 
         while iteration < max_iterations:
