@@ -215,6 +215,7 @@ class AIReviewer:
                 }
 
                 # DeepSeek-R1 特有：必须包含 reasoning_content
+                strategy_config = get_strategy_config()
                 if (
                     hasattr(assistant_message, "reasoning_content")
                     and assistant_message.reasoning_content
