@@ -558,7 +558,9 @@ class GitHubAppClient:
                             logger.error("⚠️ 文件路径无法解析错误详情:")
                             # 记录所有评论的路径，帮助定位问题
                             if inline_comments:
-                                logger.error(f"  尝试提交的 {len(inline_comments)} 条评论的路径:")
+                                logger.error(
+                                    f"  尝试提交的 {len(inline_comments)} 条评论的路径:"
+                                )
                                 for i, comment in enumerate(inline_comments, 1):
                                     file_path = comment.get("file_path")
                                     line_number = comment.get("line_number")
@@ -568,7 +570,9 @@ class GitHubAppClient:
                                             f"    [{i}] {file_path}:{start_line}-{line_number}"
                                         )
                                     else:
-                                        logger.error(f"    [{i}] {file_path}:{line_number}")
+                                        logger.error(
+                                            f"    [{i}] {file_path}:{line_number}"
+                                        )
             else:
                 logger.error(f"提交Review失败: {error_type}: {str(e)}")
 

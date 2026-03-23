@@ -900,7 +900,6 @@ async def cmd_code_index(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     repo_name = context.args[0]
-    paths = context.args[1:] if len(context.args) > 1 else None
 
     # 验证仓库名格式
     is_valid, error_msg = validate_github_repo_name(repo_name)
@@ -915,58 +914,54 @@ async def cmd_code_index(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     try:
         from backend.services.code_index_service import get_code_index_service
-        from backend.core.config import get_settings
-
-        settings = get_settings()
 
         # 获取代码索引服务
         code_index_service = get_code_index_service()
 
-        # 获取仓库路径（这里简化处理，使用临时目录）
-        import tempfile
-        import os
-        from backend.core.github_app import get_github_app
+        # 获取仓库的代码索引状态
+        code_count = await code_index_service.vector_store.get_collection_count(
+            repo_name
+        )
 
-        github_app = get_github_app()
-
-        # 获取仓库的install_id（简化处理）
+        # 检查代码索引状态
         async with get_async_session() as session:
             from backend.services.telegram_service import TelegramService
+            from backend.models.database import CodeIndex
+
             service = TelegramService(session)
             repo = await service.get_repo(repo_name)
+
             if not repo:
                 await status_msg.edit_text(f"❌ 仓库 {repo_name} 未在系统中注册")
                 return
-            install_id = repo.install_id
 
-        # 克隆仓库到临时目录
-        with tempfile.TemporaryDirectory() as temp_dir:
-            repo_path = os.path.join(temp_dir, "repo")
-            # 这里需要实际的克隆逻辑，暂时跳过
-            # 由于需要git操作，这里返回提示信息
-            await status_msg.edit_text(
-                "⚠️ 代码索引功能需要配置仓库访问权限\n"
-                "请联系管理员配置Git访问凭据"
+            # 查询代码索引记录
+            from sqlalchemy import select
+
+            stmt = select(CodeIndex).where(CodeIndex.repo_full_name == repo_name)
+            result = await session.execute(stmt)
+            code_index_record = result.scalar_one_or_none()
+
+        # 构建状态消息
+        if code_index_record:
+            text = (
+                f"📊 代码索引状态\n\n"
+                f"📦 仓库: {repo_name}\n"
+                f"🧩 代码块: {code_count} 个\n"
+                f"📁 文件数: {code_index_record.file_count}\n"
+                f"🔄 状态: {code_index_record.indexing_status}\n"
+                f"📅 最后索引: {code_index_record.last_indexed_at}\n"
+                f"🔖 类型: {code_index_record.index_type}\n\n"
+                f"💡 提示: PR审查时会自动索引变更文件"
             )
-            return
-
-        # 执行索引（上面的return会跳过这里）
-        result = await code_index_service.index_repository_code(
-            repo_full_name=repo_name,
-            repo_path=repo_path,
-            commit_sha="latest",  # 简化处理
-            paths=paths,
-        )
-
-        # 构建结果消息
-        text = (
-            f"✅ 代码索引完成\n\n"
-            f"📦 仓库: {repo_name}\n"
-            f"📁 索引文件: {result['indexed']} 个\n"
-            f"⏭️ 跳过: {result['skipped']} 个\n"
-            f"❌ 失败: {result['failed']} 个\n"
-            f"🧩 代码块: {result['total_chunks']} 个"
-        )
+        else:
+            text = (
+                f"📊 代码索引状态\n\n"
+                f"📦 仓库: {repo_name}\n"
+                f"🧩 代码块: {code_count} 个\n"
+                f"📝 状态: 尚无索引记录\n\n"
+                f"💡 提示: 创建或更新PR时会自动索引变更文件"
+            )
 
         await status_msg.edit_text(text)
 
@@ -996,7 +991,7 @@ async def cmd_code_status(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     try:
         from backend.services.code_index_service import get_code_index_service
-        from backend.models.database import CodeIndex, async_session
+        from backend.models.database import CodeIndex
 
         code_index_service = get_code_index_service()
 
@@ -1010,7 +1005,9 @@ async def cmd_code_status(update: Update, context: ContextTypes.DEFAULT_TYPE):
             code_index = result.scalar_one_or_none()
 
         # 获取向量库中的代码块数量
-        chunk_count = await code_index_service.vector_store.get_collection_count(repo_name)
+        chunk_count = await code_index_service.vector_store.get_collection_count(
+            repo_name
+        )
 
         # 构建状态消息
         if not code_index:
