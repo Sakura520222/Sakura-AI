@@ -9,6 +9,7 @@
 
 from typing import List, Dict, Any, Optional
 from loguru import logger
+from datetime import datetime, timedelta
 
 from backend.services.vector_store import get_vector_store
 from backend.services.embedding_service import (
@@ -33,6 +34,10 @@ class RAGService:
         self.embedding_service = get_embedding_service()
         self.reranker_service = get_reranker_service()
         self.document_service = get_document_service()
+
+        # 索引状态缓存
+        self._index_status_cache = {}  # 格式: {repo_full_name: (data, expire_time)}
+        self._cache_duration = timedelta(minutes=5)  # 缓存5分钟
 
     async def index_repository_docs(
         self,
@@ -129,6 +134,9 @@ class RAGService:
                 f"✅ 索引完成: {repo_full_name} - "
                 f"{result['total_files']} 个文件, {result['total_chunks']} 个块"
             )
+
+            # 清除索引状态缓存
+            self._invalidate_index_cache(repo_full_name)
 
             return result
 
@@ -266,7 +274,7 @@ class RAGService:
             return []
 
     async def get_index_status(self, repo_full_name: str) -> Dict[str, Any]:
-        """获取索引状态
+        """获取索引状态（带缓存）
 
         Args:
             repo_full_name: 仓库名称
@@ -274,16 +282,28 @@ class RAGService:
         Returns:
             索引状态信息
         """
+        # 检查缓存
+        if repo_full_name in self._index_status_cache:
+            cached_data, expire_time = self._index_status_cache[repo_full_name]
+            if datetime.now() < expire_time:
+                logger.debug(f"使用缓存的索引状态: {repo_full_name}")
+                return cached_data
+
         try:
             # 获取文档数量
             doc_count = await self.vector_store.get_collection_count(repo_full_name)
-
-            return {
+            result = {
                 "repo_full_name": repo_full_name,
                 "indexed": doc_count > 0,
                 "document_count": doc_count,
                 "last_indexed_at": None,  # TODO: 从数据库读取
             }
+
+            # 更新缓存
+            expire_time = datetime.now() + self._cache_duration
+            self._index_status_cache[repo_full_name] = (result, expire_time)
+
+            return result
 
         except Exception as e:
             logger.error(f"❌ 获取索引状态失败 ({repo_full_name}): {e}")
@@ -293,6 +313,16 @@ class RAGService:
                 "document_count": 0,
                 "error": str(e),
             }
+
+    def _invalidate_index_cache(self, repo_full_name: str) -> None:
+        """清除指定仓库的索引状态缓存
+
+        Args:
+            repo_full_name: 仓库名称
+        """
+        if repo_full_name in self._index_status_cache:
+            del self._index_status_cache[repo_full_name]
+            logger.debug(f"已清除索引状态缓存: {repo_full_name}")
 
     async def delete_index(self, repo_full_name: str) -> bool:
         """删除仓库索引
@@ -308,6 +338,8 @@ class RAGService:
 
             if success:
                 logger.info(f"✅ 已删除仓库索引: {repo_full_name}")
+                # 清除索引状态缓存
+                self._invalidate_index_cache(repo_full_name)
 
             return success
 
