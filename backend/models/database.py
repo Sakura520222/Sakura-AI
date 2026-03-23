@@ -71,6 +71,16 @@ class IndexingStatus(str, enum.Enum):
 
     PENDING = "pending"
     INDEXING = "indexing"
+    PROCESSING = "processing"
+    COMPLETED = "completed"
+    FAILED = "failed"
+
+
+class CodeIndexingStatus(str, enum.Enum):
+    """代码索引状态"""
+
+    PENDING = "pending"
+    PROCESSING = "processing"
     COMPLETED = "completed"
     FAILED = "failed"
 
@@ -252,6 +262,62 @@ class DocumentFile(Base):
 
     def __repr__(self):
         return f"<DocumentFile(id={self.id}, path={self.file_path}, indexed={self.indexed})>"
+
+
+class CodeIndex(Base):
+    """代码索引表 - 追踪仓库级别的代码索引状态"""
+
+    __tablename__ = "code_indices"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    repo_full_name = Column(String(255), unique=True, nullable=False, index=True)
+    last_commit_hash = Column(String(64), nullable=True)
+    last_indexed_at = Column(TIMESTAMP, default=datetime.utcnow, nullable=False)
+    file_count = Column(Integer, default=0, nullable=False)
+    total_chunks = Column(Integer, default=0, nullable=False)
+    indexing_status = Column(
+        String(50),
+        default=CodeIndexingStatus.PENDING.value,
+        nullable=False,
+        index=True,
+    )
+    index_type = Column(String(50), default="full", nullable=False)  # full, pr, incremental
+    error_message = Column(Text, nullable=True)
+    created_at = Column(TIMESTAMP, default=datetime.utcnow, nullable=False)
+    updated_at = Column(
+        TIMESTAMP, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False
+    )
+
+    def __repr__(self):
+        return f"<CodeIndex(id={self.id}, repo={self.repo_full_name}, status={self.indexing_status})>"
+
+
+class CodeFile(Base):
+    """代码文件索引表 - 文件级别的索引追踪"""
+
+    __tablename__ = "code_files"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    repo_full_name = Column(String(255), nullable=False, index=True)
+    file_path = Column(String(512), nullable=False)
+    file_hash = Column(String(64), nullable=False, index=True)  # SHA-256 Content Hash
+    language = Column(String(50), nullable=True)  # python, javascript, etc.
+    chunk_count = Column(Integer, default=0, nullable=False)
+    last_indexed_at = Column(TIMESTAMP, default=datetime.utcnow, nullable=False)
+    last_indexed_commit_hash = Column(String(64), nullable=True, index=True)
+    commit_sha = Column(String(64), nullable=True)  # 精准指向Git版本
+    indexed = Column(Integer, default=0, nullable=False)
+    # PR关联（可选）
+    pr_number = Column(Integer, nullable=True)
+    # 状态管理
+    is_deleted = Column(Integer, default=0, nullable=False)  # 0=False, 1=True
+    created_at = Column(TIMESTAMP, default=datetime.utcnow, nullable=False)
+    updated_at = Column(
+        TIMESTAMP, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False
+    )
+
+    def __repr__(self):
+        return f"<CodeFile(id={self.id}, path={self.file_path}, indexed={self.indexed})>"
 
 
 async def create_tables_async():
