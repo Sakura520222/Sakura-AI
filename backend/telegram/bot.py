@@ -1,6 +1,6 @@
 """Telegram Bot 主逻辑"""
 
-from telegram import Bot
+from telegram import Bot, BotCommand
 from telegram.ext import Application, CommandHandler
 from loguru import logger
 
@@ -33,6 +33,37 @@ settings = get_settings()
 # 全局 Bot 实例
 _telegram_bot: Bot = None
 _telegram_app: Application = None
+
+
+async def register_bot_commands(bot: Bot):
+    """注册 Telegram Bot 命令菜单"""
+    commands = [
+        # 基础命令（所有人可用）
+        BotCommand("start", "🚀 启动 Bot"),
+        BotCommand("help", "📖 使用帮助"),
+        BotCommand("status", "📊 系统状态"),
+        BotCommand("recent", "🕐 最近记录"),
+        BotCommand("myquota", "💎 我的配额"),
+        BotCommand("docs_status", "📄 文档索引状态"),
+        BotCommand("code_status", "💻 代码索引状态"),
+        # 管理员命令
+        BotCommand("user_add", "➕ 添加用户"),
+        BotCommand("user_remove", "➖ 移除用户"),
+        BotCommand("users", "👥 用户列表"),
+        BotCommand("repo_add", "➕ 添加仓库"),
+        BotCommand("repo_remove", "➖ 移除仓库"),
+        BotCommand("repos", "📁 仓库列表"),
+        BotCommand("quota_set", "⚙️ 设置配额"),
+        BotCommand("update_docs", "🔄 更新文档"),
+        BotCommand("code_index", "🔍 索引代码"),
+        # 超级管理员命令
+        BotCommand("admin_add", "👑 添加管理员"),
+        BotCommand("admin_remove", "🚫 移除管理员"),
+        BotCommand("review", "🔧 手动审查"),
+    ]
+
+    await bot.set_my_commands(commands)
+    logger.info("✅ Bot 命令菜单已注册")
 
 
 async def start_telegram_bot():
@@ -77,6 +108,9 @@ async def start_telegram_bot():
         await _telegram_app.initialize()
         await _telegram_app.start()
         await _telegram_app.updater.start_polling()
+
+        # 注册命令菜单
+        await register_bot_commands(_telegram_bot)
 
         logger.info("✅ Telegram Bot 启动成功")
 
