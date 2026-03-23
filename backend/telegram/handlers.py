@@ -929,9 +929,9 @@ async def cmd_code_index(update: Update, context: ContextTypes.DEFAULT_TYPE):
             from backend.models.database import CodeIndex
 
             service = TelegramService(session)
-            repo = await service.get_repo(repo_name)
+            is_authorized = await service.is_authorized_repo(repo_name)
 
-            if not repo:
+            if not is_authorized:
                 await status_msg.edit_text(f"❌ 仓库 {repo_name} 未在系统中注册")
                 return
 
