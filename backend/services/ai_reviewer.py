@@ -1212,7 +1212,12 @@ class AIReviewer:
 
             # 动态获取启用的工具列表（根据仓库知识库状态）
             # 添加空值检查，防止 AttributeError
-            if not repo or not hasattr(repo, "owner") or not repo.owner or not repo.name:
+            if (
+                not repo
+                or not hasattr(repo, "owner")
+                or not repo.owner
+                or not repo.name
+            ):
                 logger.warning("无效的 repo 对象，使用默认工具")
                 enabled_tools = await self._get_enabled_tools(None)
             else:
@@ -1389,8 +1394,7 @@ class AIReviewer:
         # 基础工具（始终可用）- 复用 self.tools 中的基础工具定义
         base_tool_names = {"read_file", "list_directory"}
         base_tools = [
-            tool for tool in self.tools
-            if tool["function"]["name"] in base_tool_names
+            tool for tool in self.tools if tool["function"]["name"] in base_tool_names
         ]
 
         enabled_tools = base_tools.copy()
@@ -1404,17 +1408,25 @@ class AIReviewer:
             # 检查 search_project_docs 工具
             if settings.enable_rag:
                 from backend.services.rag_service import get_rag_service
+
                 rag_service = get_rag_service()
                 index_status = await rag_service.get_index_status(repo_full_name)
 
-                if index_status.get("indexed", False) and index_status.get("document_count", 0) > 0:
+                if (
+                    index_status.get("indexed", False)
+                    and index_status.get("document_count", 0) > 0
+                ):
                     logger.debug(
                         f"仓库 {repo_full_name} 有知识库索引 ({index_status['document_count']} 个文档)，"
                         "启用 search_project_docs 工具"
                     )
                     rag_tool = next(
-                        (tool for tool in self.tools if tool["function"]["name"] == "search_project_docs"),
-                        None
+                        (
+                            tool
+                            for tool in self.tools
+                            if tool["function"]["name"] == "search_project_docs"
+                        ),
+                        None,
                     )
                     if rag_tool:
                         enabled_tools.append(rag_tool)
@@ -1422,8 +1434,11 @@ class AIReviewer:
             # 检查 search_code_context 工具
             if settings.enable_code_index:
                 from backend.services.code_index_service import get_code_index_service
+
                 code_index_service = get_code_index_service()
-                code_count = await code_index_service.vector_store.get_collection_count(repo_full_name)
+                code_count = await code_index_service.vector_store.get_collection_count(
+                    repo_full_name
+                )
 
                 if code_count > 0:
                     logger.debug(
@@ -1431,8 +1446,12 @@ class AIReviewer:
                         "启用 search_code_context 工具"
                     )
                     code_tool = next(
-                        (tool for tool in self.tools if tool["function"]["name"] == "search_code_context"),
-                        None
+                        (
+                            tool
+                            for tool in self.tools
+                            if tool["function"]["name"] == "search_code_context"
+                        ),
+                        None,
                     )
                     if code_tool:
                         enabled_tools.append(code_tool)

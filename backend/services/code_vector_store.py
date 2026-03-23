@@ -120,7 +120,9 @@ class CodeVectorStore:
                 },
             )
 
-            logger.debug(f"代码Collection {collection_name} (repo: {repo_full_name}) 已就绪")
+            logger.debug(
+                f"代码Collection {collection_name} (repo: {repo_full_name}) 已就绪"
+            )
             return collection
 
         except Exception as e:
@@ -257,7 +259,9 @@ class CodeVectorStore:
             return 0
 
         except Exception as e:
-            logger.error(f"❌ 删除文件代码块失败 (repo: {repo_full_name}, file: {file_path}): {e}")
+            logger.error(
+                f"❌ 删除文件代码块失败 (repo: {repo_full_name}, file: {file_path}): {e}"
+            )
             return 0
 
     async def delete_by_pr(self, repo_full_name: str, pr_number: int) -> int:
@@ -290,7 +294,9 @@ class CodeVectorStore:
             return 0
 
         except Exception as e:
-            logger.error(f"❌ 删除PR代码块失败 (repo: {repo_full_name}, pr: {pr_number}): {e}")
+            logger.error(
+                f"❌ 删除PR代码块失败 (repo: {repo_full_name}, pr: {pr_number}): {e}"
+            )
             return 0
 
     async def clear_collection(self, repo_full_name: str) -> bool:

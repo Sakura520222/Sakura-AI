@@ -133,12 +133,30 @@ class Settings(BaseSettings):
 
     # 支持的编程语言
     code_index_languages: list[str] = [
-        "python", "javascript", "typescript", "go", "java",
-        "rust", "cpp", "c", "csharp", "php", "ruby", "swift", "kotlin"
+        "python",
+        "javascript",
+        "typescript",
+        "go",
+        "java",
+        "rust",
+        "cpp",
+        "c",
+        "csharp",
+        "php",
+        "ruby",
+        "swift",
+        "kotlin",
     ]
 
     # 核心代码目录（用于定期索引）
-    code_index_core_paths: list[str] = ["src/", "lib/", "backend/", "frontend/", "app/", "core/"]
+    code_index_core_paths: list[str] = [
+        "src/",
+        "lib/",
+        "backend/",
+        "frontend/",
+        "app/",
+        "core/",
+    ]
 
     # 依赖配置文件索引
     code_index_dependency_files: bool = True

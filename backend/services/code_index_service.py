@@ -13,7 +13,7 @@ import hashlib
 from pathlib import Path
 from datetime import datetime
 
-from backend.services.code_parser_service import CodeParserService, get_code_parser, CodeChunk
+from backend.services.code_parser_service import CodeParserService, get_code_parser
 from backend.services.code_vector_store import CodeVectorStore, get_code_vector_store
 from backend.services.embedding_service import EmbeddingService, get_embedding_service
 from backend.models.database import (
@@ -91,8 +91,14 @@ class CodeIndexService:
                     file_hash = hashlib.sha256(content.encode()).hexdigest()
 
                     # 检查是否需要索引（幂等性）
-                    existing = await self._get_code_file(session, repo_full_name, file_path)
-                    if existing and existing.file_hash == file_hash and not existing.is_deleted:
+                    existing = await self._get_code_file(
+                        session, repo_full_name, file_path
+                    )
+                    if (
+                        existing
+                        and existing.file_hash == file_hash
+                        and not existing.is_deleted
+                    ):
                         logger.debug(f"文件 {file_path} 未变化，跳过索引")
                         skipped_count += 1
                         continue
@@ -113,20 +119,26 @@ class CodeIndexService:
 
                     # 生成嵌入向量
                     chunk_texts = [chunk.content for chunk in chunks]
-                    embeddings = await self.embedding_service.get_embeddings(chunk_texts)
+                    embeddings = await self.embedding_service.get_embeddings(
+                        chunk_texts
+                    )
 
                     # 准备向量存储数据
                     vector_chunks = []
                     for chunk, embedding in zip(chunks, embeddings):
-                        vector_chunks.append({
-                            "id": chunk.id,
-                            "content": chunk.content,
-                            "embedding": embedding,
-                            "metadata": chunk.metadata,
-                        })
+                        vector_chunks.append(
+                            {
+                                "id": chunk.id,
+                                "content": chunk.content,
+                                "embedding": embedding,
+                                "metadata": chunk.metadata,
+                            }
+                        )
 
                     # 存储到向量库
-                    await self.vector_store.upsert_code_chunks(repo_full_name, vector_chunks)
+                    await self.vector_store.upsert_code_chunks(
+                        repo_full_name, vector_chunks
+                    )
                     total_chunks += len(chunks)
 
                     # 更新数据库记录
@@ -142,7 +154,9 @@ class CodeIndexService:
                     )
 
                     indexed_count += 1
-                    logger.debug(f"✅ 已索引文件 {file_path}，生成 {len(chunks)} 个代码块")
+                    logger.debug(
+                        f"✅ 已索引文件 {file_path}，生成 {len(chunks)} 个代码块"
+                    )
 
                 except Exception as e:
                     logger.error(f"❌ 索引文件 {file_path} 失败: {e}")
@@ -220,7 +234,11 @@ class CodeIndexService:
                     existing = await self._get_code_file(
                         session, repo_full_name, str(file_path)
                     )
-                    if existing and existing.file_hash == file_hash and not existing.is_deleted:
+                    if (
+                        existing
+                        and existing.file_hash == file_hash
+                        and not existing.is_deleted
+                    ):
                         skipped_count += 1
                         continue
 
@@ -238,20 +256,26 @@ class CodeIndexService:
 
                     # 生成嵌入向量
                     chunk_texts = [chunk.content for chunk in chunks]
-                    embeddings = await self.embedding_service.get_embeddings(chunk_texts)
+                    embeddings = await self.embedding_service.get_embeddings(
+                        chunk_texts
+                    )
 
                     # 准备向量存储数据
                     vector_chunks = []
                     for chunk, embedding in zip(chunks, embeddings):
-                        vector_chunks.append({
-                            "id": chunk.id,
-                            "content": chunk.content,
-                            "embedding": embedding,
-                            "metadata": chunk.metadata,
-                        })
+                        vector_chunks.append(
+                            {
+                                "id": chunk.id,
+                                "content": chunk.content,
+                                "embedding": embedding,
+                                "metadata": chunk.metadata,
+                            }
+                        )
 
                     # 存储到向量库
-                    await self.vector_store.upsert_code_chunks(repo_full_name, vector_chunks)
+                    await self.vector_store.upsert_code_chunks(
+                        repo_full_name, vector_chunks
+                    )
                     total_chunks += len(chunks)
 
                     # 更新数据库记录
@@ -395,7 +419,9 @@ class CodeIndexService:
         """
         try:
             # 从向量库删除
-            deleted_count = await self.vector_store.delete_by_file(repo_full_name, file_path)
+            deleted_count = await self.vector_store.delete_by_file(
+                repo_full_name, file_path
+            )
 
             # 标记数据库记录为已删除
             async with async_session() as session:

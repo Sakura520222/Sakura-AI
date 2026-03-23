@@ -3,7 +3,7 @@
 负责在PR审查时自动索引变更的代码文件
 """
 
-from typing import List, Dict, Any, Optional
+from typing import Dict, Any, Optional
 from loguru import logger
 
 from backend.services.code_index_service import get_code_index_service
@@ -46,7 +46,13 @@ class PRCodeIndexer:
             client = self.github_app.get_repo_client(owner, repo_name)
             if not client:
                 logger.error(f"无法获取仓库 {repo_full_name} 的GitHub客户端")
-                return {"indexed": 0, "skipped": 0, "failed": 0, "total_chunks": 0, "error": "无法获取GitHub客户端"}
+                return {
+                    "indexed": 0,
+                    "skipped": 0,
+                    "failed": 0,
+                    "total_chunks": 0,
+                    "error": "无法获取GitHub客户端",
+                }
 
             # 获取仓库和PR
             repo_api = client.get_repo(repo_full_name)
@@ -75,7 +81,10 @@ class PRCodeIndexer:
                             if content_file:
                                 # 解码base64内容
                                 import base64
-                                content = base64.b64decode(content_file.content).decode("utf-8", errors="ignore")
+
+                                content = base64.b64decode(content_file.content).decode(
+                                    "utf-8", errors="ignore"
+                                )
                                 file_info["content"] = content
                         except Exception as e:
                             logger.warning(f"无法获取文件 {file.filename} 的内容: {e}")
@@ -104,7 +113,13 @@ class PRCodeIndexer:
 
         except Exception as e:
             logger.error(f"索引PR #{pr_number} 代码失败: {e}", exc_info=True)
-            return {"indexed": 0, "skipped": 0, "failed": 0, "total_chunks": 0, "error": str(e)}
+            return {
+                "indexed": 0,
+                "skipped": 0,
+                "failed": 0,
+                "total_chunks": 0,
+                "error": str(e),
+            }
 
     def _is_code_file(self, file_path: str) -> bool:
         """判断是否为代码文件
@@ -119,6 +134,7 @@ class PRCodeIndexer:
 
         # 获取文件扩展名
         from pathlib import Path
+
         ext = Path(file_path).suffix.lower()
 
         # 检查是否在支持的语言列表中

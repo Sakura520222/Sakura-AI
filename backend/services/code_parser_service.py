@@ -7,7 +7,7 @@
 - Context Padding: 为每个代码块添加语义上下文
 """
 
-from typing import List, Dict, Any, Optional, Tuple
+from typing import List, Dict, Any, Optional
 from loguru import logger
 import re
 from pathlib import Path
@@ -17,6 +17,7 @@ from dataclasses import dataclass
 @dataclass
 class CodeChunk:
     """代码块数据结构"""
+
     id: str
     content: str
     metadata: Dict[str, Any]
@@ -140,17 +141,21 @@ class CodeParserService:
                 metadata["class_name"] = chunk.metadata["class_name"]
 
             # 上下文填充
-            enriched_content = self._add_context_padding(
-                chunk.content, metadata
-            ) if self.enable_context_padding else chunk.content
+            enriched_content = (
+                self._add_context_padding(chunk.content, metadata)
+                if self.enable_context_padding
+                else chunk.content
+            )
 
-            enriched_chunks.append(CodeChunk(
-                id=chunk.id,
-                content=enriched_content,
-                metadata=metadata,
-                start_line=chunk.start_line,
-                end_line=chunk.end_line,
-            ))
+            enriched_chunks.append(
+                CodeChunk(
+                    id=chunk.id,
+                    content=enriched_content,
+                    metadata=metadata,
+                    start_line=chunk.start_line,
+                    end_line=chunk.end_line,
+                )
+            )
 
         logger.debug(
             f"解析文件 {file_path} ({language}): 生成 {len(enriched_chunks)} 个代码块"
@@ -222,10 +227,16 @@ class CodeParserService:
                 indent = len(decorator_match.group(1))
                 # 保存当前块
                 if current_chunk:
-                    chunks.append(self._create_chunk(
-                        current_chunk, file_path, start_line, i - 1,
-                        current_class, current_function
-                    ))
+                    chunks.append(
+                        self._create_chunk(
+                            current_chunk,
+                            file_path,
+                            start_line,
+                            i - 1,
+                            current_class,
+                            current_function,
+                        )
+                    )
                     current_chunk = []
                     start_line = i
                 current_chunk.append(line)
@@ -238,10 +249,16 @@ class CodeParserService:
                 indent = len(class_match.group(1))
                 # 保存当前块
                 if current_chunk:
-                    chunks.append(self._create_chunk(
-                        current_chunk, file_path, start_line, i - 1,
-                        current_class, current_function
-                    ))
+                    chunks.append(
+                        self._create_chunk(
+                            current_chunk,
+                            file_path,
+                            start_line,
+                            i - 1,
+                            current_class,
+                            current_function,
+                        )
+                    )
                     current_chunk = []
 
                 current_chunk.append(line)
@@ -258,10 +275,16 @@ class CodeParserService:
                 # 顶层函数或方法
                 if indent <= current_indent or current_chunk:
                     if current_chunk:
-                        chunks.append(self._create_chunk(
-                            current_chunk, file_path, start_line, i - 1,
-                            current_class, current_function
-                        ))
+                        chunks.append(
+                            self._create_chunk(
+                                current_chunk,
+                                file_path,
+                                start_line,
+                                i - 1,
+                                current_class,
+                                current_function,
+                            )
+                        )
                         current_chunk = []
 
                 current_chunk.append(line)
@@ -275,19 +298,31 @@ class CodeParserService:
             # 检查块大小
             chunk_text = "\n".join(current_chunk)
             if len(chunk_text) >= self.chunk_size + self.chunk_overlap:
-                chunks.append(self._create_chunk(
-                    current_chunk, file_path, start_line, i,
-                    current_class, current_function
-                ))
+                chunks.append(
+                    self._create_chunk(
+                        current_chunk,
+                        file_path,
+                        start_line,
+                        i,
+                        current_class,
+                        current_function,
+                    )
+                )
                 current_chunk = []
                 start_line = i + 1
 
         # 保存最后的块
         if current_chunk:
-            chunks.append(self._create_chunk(
-                current_chunk, file_path, start_line, len(lines),
-                current_class, current_function
-            ))
+            chunks.append(
+                self._create_chunk(
+                    current_chunk,
+                    file_path,
+                    start_line,
+                    len(lines),
+                    current_class,
+                    current_function,
+                )
+            )
 
         return chunks
 
@@ -330,10 +365,16 @@ class CodeParserService:
             class_match = class_pattern.match(line)
             if class_match:
                 if current_chunk and brace_count == 0:
-                    chunks.append(self._create_chunk(
-                        current_chunk[:-1], file_path, start_line, i - 1,
-                        current_class, current_function
-                    ))
+                    chunks.append(
+                        self._create_chunk(
+                            current_chunk[:-1],
+                            file_path,
+                            start_line,
+                            i - 1,
+                            current_class,
+                            current_function,
+                        )
+                    )
                     current_chunk = [line]
                     start_line = i
                 current_class = class_match.group(2)
@@ -343,10 +384,16 @@ class CodeParserService:
             function_match = function_pattern.match(line)
             if function_match:
                 if current_chunk and brace_count == 0:
-                    chunks.append(self._create_chunk(
-                        current_chunk[:-1], file_path, start_line, i - 1,
-                        current_class, current_function
-                    ))
+                    chunks.append(
+                        self._create_chunk(
+                            current_chunk[:-1],
+                            file_path,
+                            start_line,
+                            i - 1,
+                            current_class,
+                            current_function,
+                        )
+                    )
                     current_chunk = [line]
                     start_line = i
                 func_name = function_match.group(2) or function_match.group(3)
@@ -356,20 +403,35 @@ class CodeParserService:
 
             # 检查块大小
             chunk_text = "\n".join(current_chunk)
-            if len(chunk_text) >= self.chunk_size + self.chunk_overlap and brace_count == 0:
-                chunks.append(self._create_chunk(
-                    current_chunk, file_path, start_line, i,
-                    current_class, current_function
-                ))
+            if (
+                len(chunk_text) >= self.chunk_size + self.chunk_overlap
+                and brace_count == 0
+            ):
+                chunks.append(
+                    self._create_chunk(
+                        current_chunk,
+                        file_path,
+                        start_line,
+                        i,
+                        current_class,
+                        current_function,
+                    )
+                )
                 current_chunk = []
                 start_line = i + 1
 
         # 保存最后的块
         if current_chunk:
-            chunks.append(self._create_chunk(
-                current_chunk, file_path, start_line, len(lines),
-                current_class, current_function
-            ))
+            chunks.append(
+                self._create_chunk(
+                    current_chunk,
+                    file_path,
+                    start_line,
+                    len(lines),
+                    current_class,
+                    current_function,
+                )
+            )
 
         return chunks
 
@@ -404,10 +466,16 @@ class CodeParserService:
             if func_match:
                 # 保存之前的块
                 if len(current_chunk) > 1:
-                    chunks.append(self._create_chunk(
-                        current_chunk[:-1], file_path, start_line, i - 1,
-                        None, current_function
-                    ))
+                    chunks.append(
+                        self._create_chunk(
+                            current_chunk[:-1],
+                            file_path,
+                            start_line,
+                            i - 1,
+                            None,
+                            current_function,
+                        )
+                    )
                     current_chunk = [line]
                     start_line = i
                 current_function = func_match.group(1)
@@ -416,19 +484,26 @@ class CodeParserService:
             # 检查块大小
             chunk_text = "\n".join(current_chunk)
             if len(chunk_text) >= self.chunk_size + self.chunk_overlap:
-                chunks.append(self._create_chunk(
-                    current_chunk, file_path, start_line, i,
-                    None, current_function
-                ))
+                chunks.append(
+                    self._create_chunk(
+                        current_chunk, file_path, start_line, i, None, current_function
+                    )
+                )
                 current_chunk = []
                 start_line = i + 1
 
         # 保存最后的块
         if current_chunk:
-            chunks.append(self._create_chunk(
-                current_chunk, file_path, start_line, len(lines),
-                None, current_function
-            ))
+            chunks.append(
+                self._create_chunk(
+                    current_chunk,
+                    file_path,
+                    start_line,
+                    len(lines),
+                    None,
+                    current_function,
+                )
+            )
 
         return chunks
 
@@ -480,10 +555,11 @@ class CodeParserService:
             if current_chunk and indent < current_indent:
                 chunk_text = "\n".join(current_chunk)
                 if len(chunk_text) > 100:  # 最小块大小
-                    chunks.append(self._create_chunk(
-                        current_chunk, file_path, start_line, i - 1,
-                        None, None
-                    ))
+                    chunks.append(
+                        self._create_chunk(
+                            current_chunk, file_path, start_line, i - 1, None, None
+                        )
+                    )
                     current_chunk = []
                     start_line = i
 
@@ -493,19 +569,21 @@ class CodeParserService:
             # 检查块大小
             chunk_text = "\n".join(current_chunk)
             if len(chunk_text) >= self.chunk_size + self.chunk_overlap:
-                chunks.append(self._create_chunk(
-                    current_chunk, file_path, start_line, i,
-                    None, None
-                ))
+                chunks.append(
+                    self._create_chunk(
+                        current_chunk, file_path, start_line, i, None, None
+                    )
+                )
                 current_chunk = []
                 start_line = i + 1
 
         # 保存最后的块
         if current_chunk:
-            chunks.append(self._create_chunk(
-                current_chunk, file_path, start_line, len(lines),
-                None, None
-            ))
+            chunks.append(
+                self._create_chunk(
+                    current_chunk, file_path, start_line, len(lines), None, None
+                )
+            )
 
         return chunks
 
@@ -535,6 +613,7 @@ class CodeParserService:
 
         # 生成唯一ID
         import hashlib
+
         content_hash = hashlib.md5(
             f"{file_path}:{start_line}:{end_line}".encode()
         ).hexdigest()[:12]

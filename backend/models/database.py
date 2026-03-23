@@ -281,7 +281,9 @@ class CodeIndex(Base):
         nullable=False,
         index=True,
     )
-    index_type = Column(String(50), default="full", nullable=False)  # full, pr, incremental
+    index_type = Column(
+        String(50), default="full", nullable=False
+    )  # full, pr, incremental
     error_message = Column(Text, nullable=True)
     created_at = Column(TIMESTAMP, default=datetime.utcnow, nullable=False)
     updated_at = Column(
@@ -317,7 +319,9 @@ class CodeFile(Base):
     )
 
     def __repr__(self):
-        return f"<CodeFile(id={self.id}, path={self.file_path}, indexed={self.indexed})>"
+        return (
+            f"<CodeFile(id={self.id}, path={self.file_path}, indexed={self.indexed})>"
+        )
 
 
 async def create_tables_async():
