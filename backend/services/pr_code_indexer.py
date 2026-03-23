@@ -7,7 +7,7 @@ from typing import List, Dict, Any, Optional
 from loguru import logger
 
 from backend.services.code_index_service import get_code_index_service
-from backend.core.github_app import get_github_app
+from backend.core.github_app import GitHubAppClient
 
 
 class PRCodeIndexer:
@@ -18,6 +18,7 @@ class PRCodeIndexer:
 
     def __init__(self):
         self.code_index_service = get_code_index_service()
+        self.github_app = GitHubAppClient()
 
     async def index_pr_changes(
         self,
@@ -38,11 +39,17 @@ class PRCodeIndexer:
         try:
             logger.info(f"开始索引PR #{pr_number}的代码变更，仓库: {repo_full_name}")
 
-            # 获取GitHub App客户端
-            github_app = get_github_app()
-            repo_api = github_app.get_repo(install_id, repo_full_name)
+            # 解析仓库所有者名称
+            owner, repo_name = repo_full_name.split("/")
 
-            # 获取PR信息
+            # 获取GitHub客户端
+            client = self.github_app.get_repo_client(owner, repo_name)
+            if not client:
+                logger.error(f"无法获取仓库 {repo_full_name} 的GitHub客户端")
+                return {"indexed": 0, "skipped": 0, "failed": 0, "total_chunks": 0, "error": "无法获取GitHub客户端"}
+
+            # 获取仓库和PR
+            repo_api = client.get_repo(repo_full_name)
             pr = repo_api.get_pull(pr_number)
             commit_sha = pr.head.sha
 
