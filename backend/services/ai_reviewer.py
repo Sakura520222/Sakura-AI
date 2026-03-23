@@ -181,7 +181,16 @@ class AIReviewer:
                 response = await self.client.chat.completions.create(**kwargs)
 
                 # 检查空响应
-                if not response.choices or not response.choices[0].message.content:
+                # 注意：在工具调用模式下，content 可能为空，但 tool_calls 有值是有效响应
+                msg = response.choices[0].message
+                has_content = bool(msg.content)
+                has_tool_calls = bool(getattr(msg, "tool_calls", None))
+
+                logger.debug(
+                    f"AI响应状态: content={has_content}, tool_calls={has_tool_calls}"
+                )
+
+                if not response.choices or (not has_content and not has_tool_calls):
                     if attempt < max_retries - 1:
                         # 混合退避策略：前3次快速，后面慢速
                         if attempt < 3:
