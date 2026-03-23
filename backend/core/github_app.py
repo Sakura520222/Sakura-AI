@@ -507,15 +507,28 @@ class GitHubAppClient:
             # 构建行内评论格式
             comments = []
             if inline_comments:
-                for comment in inline_comments:
+                logger.info(f"准备提交 {len(inline_comments)} 条行内评论:")
+                for i, comment in enumerate(inline_comments, 1):
+                    file_path = comment.get("file_path")
+                    line_number = comment.get("line_number")
+                    start_line = comment.get("start_line")
+                    body_preview = comment.get("body", "")[:50]
+
                     comment_dict = {
-                        "path": comment.get("file_path"),
-                        "line": comment.get("line_number"),
+                        "path": file_path,
+                        "line": line_number,
                         "body": comment.get("body", ""),
                     }
                     # 添加 start_line 支持（跨多行评论）
-                    if comment.get("start_line"):
-                        comment_dict["start_line"] = comment["start_line"]
+                    if start_line:
+                        comment_dict["start_line"] = start_line
+                        logger.info(
+                            f"  [{i}/{len(inline_comments)}] {file_path}:{start_line}-{line_number} ({body_preview}...)"
+                        )
+                    else:
+                        logger.info(
+                            f"  [{i}/{len(inline_comments)}] {file_path}:{line_number} ({body_preview}...)"
+                        )
                     comments.append(comment_dict)
 
             # 提交Review（包含行内评论）
@@ -537,6 +550,25 @@ class GitHubAppClient:
                 if isinstance(e.data, dict):
                     msg = e.data.get("message") or e.data.get("error", "未知错误")
                     logger.error(f"错误信息: {msg}")
+
+                    # 特别处理 422 错误（Path could not be resolved）
+                    if e.status == 422:
+                        errors = e.data.get("errors", [])
+                        if errors and "Path could not be resolved" in str(errors):
+                            logger.error("⚠️ 文件路径无法解析错误详情:")
+                            # 记录所有评论的路径，帮助定位问题
+                            if inline_comments:
+                                logger.error(f"  尝试提交的 {len(inline_comments)} 条评论的路径:")
+                                for i, comment in enumerate(inline_comments, 1):
+                                    file_path = comment.get("file_path")
+                                    line_number = comment.get("line_number")
+                                    start_line = comment.get("start_line")
+                                    if start_line:
+                                        logger.error(
+                                            f"    [{i}] {file_path}:{start_line}-{line_number}"
+                                        )
+                                    else:
+                                        logger.error(f"    [{i}] {file_path}:{line_number}")
             else:
                 logger.error(f"提交Review失败: {error_type}: {str(e)}")
 
