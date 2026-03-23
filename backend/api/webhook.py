@@ -224,13 +224,14 @@ async def handle_pull_request_event(payload: Dict[str, Any]) -> JSONResponse:
         )
 
         # 异步索引PR代码变更（不阻塞响应）
-        asyncio.create_task(
-            _index_pr_code_async(
-                pr_info["repo_full_name"],
-                pr_info["pr_number"],
-                pr_info.get("install_id", 0),
+        if settings.auto_index_pr_changes:
+            asyncio.create_task(
+                _index_pr_code_async(
+                    pr_info["repo_full_name"],
+                    pr_info["pr_number"],
+                    pr_info.get("install_id", 0),
+                )
             )
-        )
 
         return JSONResponse(
             content={
@@ -268,6 +269,10 @@ async def _index_pr_code_async(
         install_id: GitHub App安装ID
     """
     try:
+        # 检查是否启用代码索引
+        if not settings.enable_code_index:
+            logger.debug(f"代码索引功能未启用，跳过 PR #{pr_number} 代码索引")
+            return
         from backend.services.pr_code_indexer import get_pr_code_indexer
 
         indexer = get_pr_code_indexer()

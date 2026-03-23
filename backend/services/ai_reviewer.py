@@ -1420,21 +1420,22 @@ class AIReviewer:
                         enabled_tools.append(rag_tool)
 
             # 检查 search_code_context 工具
-            from backend.services.code_index_service import get_code_index_service
-            code_index_service = get_code_index_service()
-            code_count = await code_index_service.vector_store.get_collection_count(repo_full_name)
+            if settings.enable_code_index:
+                from backend.services.code_index_service import get_code_index_service
+                code_index_service = get_code_index_service()
+                code_count = await code_index_service.vector_store.get_collection_count(repo_full_name)
 
-            if code_count > 0:
-                logger.debug(
-                    f"仓库 {repo_full_name} 有代码索引 ({code_count} 个代码块)，"
-                    "启用 search_code_context 工具"
-                )
-                code_tool = next(
-                    (tool for tool in self.tools if tool["function"]["name"] == "search_code_context"),
-                    None
-                )
-                if code_tool:
-                    enabled_tools.append(code_tool)
+                if code_count > 0:
+                    logger.debug(
+                        f"仓库 {repo_full_name} 有代码索引 ({code_count} 个代码块)，"
+                        "启用 search_code_context 工具"
+                    )
+                    code_tool = next(
+                        (tool for tool in self.tools if tool["function"]["name"] == "search_code_context"),
+                        None
+                    )
+                    if code_tool:
+                        enabled_tools.append(code_tool)
 
         except Exception as e:
             # 索引状态检查失败时，保守策略：仅使用基础工具
