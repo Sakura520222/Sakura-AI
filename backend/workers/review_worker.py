@@ -44,13 +44,25 @@ async def _db_retry(func, max_retries=3, delay=1):
         try:
             return await func()
         except (OperationalError, InterfaceError) as e:
-            if "Lost connection" in str(e) or "server has gone away" in str(e):
-                if attempt < max_retries - 1:
-                    logger.warning(
-                        f"数据库连接断开，第{attempt + 1}次重试（共{max_retries}次）..."
-                    )
-                    await asyncio.sleep(delay * (attempt + 1))
-                    continue
+            error_str = str(e).lower()
+            is_connection_error = any(
+                keyword in error_str
+                for keyword in [
+                    "lost connection",
+                    "server has gone away",
+                    "connection was killed",
+                    "timeout",
+                    "pool exhausted",
+                    "can't connect",
+                ]
+            )
+
+            if is_connection_error and attempt < max_retries - 1:
+                logger.warning(
+                    f"数据库连接异常，第{attempt + 1}次重试（共{max_retries}次）: {e}"
+                )
+                await asyncio.sleep(delay * (attempt + 1))
+                continue
             raise
 
 
