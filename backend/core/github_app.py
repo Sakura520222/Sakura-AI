@@ -401,6 +401,60 @@ class GitHubAppClient:
             # 出错时返回False，允许继续提交
             return False
 
+    def dismiss_bot_reviews(
+        self,
+        repo_owner: str,
+        repo_name: str,
+        pr_number: int,
+        bot_username: str,
+    ) -> int:
+        """撤回指定PR上所有来自bot的Review
+
+        Args:
+            repo_owner: 仓库所有者
+            repo_name: 仓库名称
+            pr_number: PR编号
+            bot_username: 机器人用户名
+
+        Returns:
+            撤回的Review数量
+        """
+        try:
+            client = self.get_repo_client(repo_owner, repo_name)
+            if not client:
+                logger.warning(
+                    f"无法获取 {repo_owner}/{repo_name} 的客户端，跳过撤回Review"
+                )
+                return 0
+
+            repo = client.get_repo(f"{repo_owner}/{repo_name}")
+            pr = repo.get_pull(pr_number)
+
+            reviews = pr.get_reviews()
+            dismissed_count = 0
+
+            for review in reviews:
+                if review.user.login == bot_username:
+                    try:
+                        review.dismiss(message="PR 已更新，重新进行审查")
+                        dismissed_count += 1
+                        logger.info(
+                            f"已撤回Review: {repo_owner}/{repo_name}#{pr_number}, "
+                            f"review_id={review.id}"
+                        )
+                    except Exception as e:
+                        logger.warning(f"撤回Review失败 (id={review.id}): {e}")
+
+            logger.info(
+                f"撤回Review完成: {repo_owner}/{repo_name}#{pr_number}, "
+                f"共撤回 {dismissed_count} 条"
+            )
+            return dismissed_count
+
+        except Exception as e:
+            logger.error(f"撤回Review失败: {e}", exc_info=True)
+            return 0
+
     def submit_review(
         self,
         repo_owner: str,
@@ -664,6 +718,8 @@ def extract_pr_info_from_webhook(payload: Dict[str, Any]) -> Optional[Dict[str, 
             "state": pull_request["state"],
             "draft": pull_request.get("draft", False),
             "merged": pull_request.get("merged", False),
+            "before": payload.get("before"),
+            "after": payload.get("after"),
         }
 
         logger.info(
