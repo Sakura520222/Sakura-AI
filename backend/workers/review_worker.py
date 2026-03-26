@@ -13,6 +13,8 @@ from backend.services.ai_reviewer import AIReviewer
 from backend.services.comment_service import CommentService
 from backend.services.label_service import label_service
 from backend.services.decision_engine import get_decision_engine
+from sqlalchemy.exc import OperationalError, InterfaceError
+
 from backend.models.database import (
     PRReview,
     PRStatus,
@@ -34,6 +36,22 @@ def get_async_session():
     if async_session is None:
         raise RuntimeError("数据库未初始化，请确保 init_db() 已被调用")
     return async_session
+
+
+async def _db_retry(func, max_retries=3, delay=1):
+    """数据库操作重试，处理连接断开的情况"""
+    for attempt in range(max_retries):
+        try:
+            return await func()
+        except (OperationalError, InterfaceError) as e:
+            if "Lost connection" in str(e) or "server has gone away" in str(e):
+                if attempt < max_retries - 1:
+                    logger.warning(
+                        f"数据库连接断开，第{attempt + 1}次重试（共{max_retries}次）..."
+                    )
+                    await asyncio.sleep(delay * (attempt + 1))
+                    continue
+            raise
 
 
 class ReviewWorker:
@@ -244,26 +262,30 @@ class ReviewWorker:
         self, analysis: PRAnalysis, pr_info: Dict[str, Any], task_id: str
     ) -> int:
         """创建审查记录"""
-        AsyncSession = get_async_session()
-        async with AsyncSession() as session:
-            record = PRReview(
-                pr_id=analysis.pr_id,
-                repo_name=pr_info["repo_name"],
-                repo_owner=pr_info["repo_owner"],
-                author=pr_info["author"],
-                title=pr_info["title"],
-                branch=pr_info["branch"],
-                file_count=analysis.total_files,
-                line_count=analysis.total_changes,
-                code_file_count=analysis.code_file_count,
-                strategy=ReviewStrategy(analysis.strategy),
-                status=PRStatus.PENDING,
-            )
-            session.add(record)
-            await session.commit()
-            await session.refresh(record)
-            logger.info(f"[{task_id}] 创建审查记录: {record.id}")
-            return record.id
+
+        async def _do():
+            AsyncSession = get_async_session()
+            async with AsyncSession() as session:
+                record = PRReview(
+                    pr_id=analysis.pr_id,
+                    repo_name=pr_info["repo_name"],
+                    repo_owner=pr_info["repo_owner"],
+                    author=pr_info["author"],
+                    title=pr_info["title"],
+                    branch=pr_info["branch"],
+                    file_count=analysis.total_files,
+                    line_count=analysis.total_changes,
+                    code_file_count=analysis.code_file_count,
+                    strategy=ReviewStrategy(analysis.strategy),
+                    status=PRStatus.PENDING,
+                )
+                session.add(record)
+                await session.commit()
+                await session.refresh(record)
+                logger.info(f"[{task_id}] 创建审查记录: {record.id}")
+                return record.id
+
+        return await _db_retry(_do)
 
     async def _update_review_status(
         self,
@@ -274,111 +296,127 @@ class ReviewWorker:
         decision_reason: Optional[str] = None,
     ):
         """更新审查状态"""
-        AsyncSession = get_async_session()
-        async with AsyncSession() as session:
-            record = await session.get(PRReview, review_id)
-            if record:
-                record.status = status
-                if status == PRStatus.COMPLETED:
-                    record.completed_at = datetime.utcnow()
-                if overall_score is not None:
-                    record.overall_score = overall_score
-                if decision is not None:
-                    record.decision = decision
-                if decision_reason is not None:
-                    record.decision_reason = decision_reason
-                await session.commit()
+
+        async def _do():
+            AsyncSession = get_async_session()
+            async with AsyncSession() as session:
+                record = await session.get(PRReview, review_id)
+                if record:
+                    record.status = status
+                    if status == PRStatus.COMPLETED:
+                        record.completed_at = datetime.utcnow()
+                    if overall_score is not None:
+                        record.overall_score = overall_score
+                    if decision is not None:
+                        record.decision = decision
+                    if decision_reason is not None:
+                        record.decision_reason = decision_reason
+                    await session.commit()
+
+        await _db_retry(_do)
 
     async def _save_review_results(
         self, review_id: int, review_result: Dict[str, Any], analysis: PRAnalysis
     ):
         """保存审查结果"""
-        AsyncSession = get_async_session()
-        async with AsyncSession() as session:
-            # 更新摘要
-            record = await session.get(PRReview, review_id)
-            if record:
-                record.review_summary = review_result.get("summary", "")
 
-            # 保存整体评论
-            comments = review_result.get("comments", [])
-            for comment_data in comments:
-                comment = ReviewComment(
-                    review_id=review_id,
-                    file_path=None,  # 整体评论没有文件路径
-                    line_number=None,
-                    comment_type=CommentType.OVERALL,
-                    severity=CommentSeverity(
-                        comment_data.get("severity", "suggestion")
-                    ),
-                    content=comment_data["content"],
+        async def _do():
+            AsyncSession = get_async_session()
+            async with AsyncSession() as session:
+                # 更新摘要
+                record = await session.get(PRReview, review_id)
+                if record:
+                    record.review_summary = review_result.get("summary", "")
+
+                # 保存整体评论
+                comments = review_result.get("comments", [])
+                for comment_data in comments:
+                    comment = ReviewComment(
+                        review_id=review_id,
+                        file_path=None,  # 整体评论没有文件路径
+                        line_number=None,
+                        comment_type=CommentType.OVERALL,
+                        severity=CommentSeverity(
+                            comment_data.get("severity", "suggestion")
+                        ),
+                        content=comment_data["content"],
+                    )
+                    session.add(comment)
+
+                # 保存行内评论
+                inline_comments = review_result.get("inline_comments", [])
+                for comment_data in inline_comments:
+                    comment = ReviewComment(
+                        review_id=review_id,
+                        file_path=comment_data.get("file_path"),
+                        line_number=comment_data.get("line_number"),
+                        comment_type=CommentType.LINE,
+                        severity=CommentSeverity(
+                            comment_data.get("severity", "suggestion")
+                        ),
+                        content=comment_data.get("body", ""),
+                    )
+                    session.add(comment)
+
+                await session.commit()
+                logger.info(
+                    f"保存了 {len(comments)} 条整体评论和 {len(inline_comments)} 条行内评论"
                 )
-                session.add(comment)
 
-            # 保存行内评论
-            inline_comments = review_result.get("inline_comments", [])
-            for comment_data in inline_comments:
-                comment = ReviewComment(
-                    review_id=review_id,
-                    file_path=comment_data.get("file_path"),
-                    line_number=comment_data.get("line_number"),
-                    comment_type=CommentType.LINE,
-                    severity=CommentSeverity(
-                        comment_data.get("severity", "suggestion")
-                    ),
-                    content=comment_data.get("body", ""),
-                )
-                session.add(comment)
-
-            await session.commit()
-            logger.info(
-                f"保存了 {len(comments)} 条整体评论和 {len(inline_comments)} 条行内评论"
-            )
+        await _db_retry(_do)
 
     async def _save_skip_record(self, analysis: PRAnalysis, pr_info: Dict[str, Any]):
         """保存跳过记录"""
-        AsyncSession = get_async_session()
-        async with AsyncSession() as session:
-            record = PRReview(
-                pr_id=analysis.pr_id,
-                repo_name=pr_info["repo_name"],
-                repo_owner=pr_info["repo_owner"],
-                author=pr_info["author"],
-                title=pr_info["title"],
-                branch=pr_info["branch"],
-                file_count=analysis.total_files,
-                line_count=analysis.total_changes,
-                code_file_count=analysis.code_file_count,
-                strategy=ReviewStrategy.SKIP,
-                status=PRStatus.COMPLETED,
-                review_summary=f"跳过审查: {analysis.skip_reason}",
-            )
-            session.add(record)
-            await session.commit()
+
+        async def _do():
+            AsyncSession = get_async_session()
+            async with AsyncSession() as session:
+                record = PRReview(
+                    pr_id=analysis.pr_id,
+                    repo_name=pr_info["repo_name"],
+                    repo_owner=pr_info["repo_owner"],
+                    author=pr_info["author"],
+                    title=pr_info["title"],
+                    branch=pr_info["branch"],
+                    file_count=analysis.total_files,
+                    line_count=analysis.total_changes,
+                    code_file_count=analysis.code_file_count,
+                    strategy=ReviewStrategy.SKIP,
+                    status=PRStatus.COMPLETED,
+                    review_summary=f"跳过审查: {analysis.skip_reason}",
+                )
+                session.add(record)
+                await session.commit()
+
+        await _db_retry(_do)
 
     async def _save_error_record(
         self, pr_info: Dict[str, Any], error_message: str, task_id: str
     ):
         """保存错误记录"""
-        AsyncSession = get_async_session()
-        async with AsyncSession() as session:
-            record = PRReview(
-                pr_id=pr_info["pr_id"],
-                repo_name=pr_info["repo_name"],
-                repo_owner=pr_info["repo_owner"],
-                author=pr_info["author"],
-                title=pr_info["title"],
-                branch=pr_info["branch"],
-                file_count=0,
-                line_count=0,
-                code_file_count=0,
-                strategy=ReviewStrategy.STANDARD,
-                status=PRStatus.FAILED,
-                error_message=error_message,
-            )
-            session.add(record)
-            await session.commit()
-            logger.info(f"[{task_id}] 保存错误记录")
+
+        async def _do():
+            AsyncSession = get_async_session()
+            async with AsyncSession() as session:
+                record = PRReview(
+                    pr_id=pr_info["pr_id"],
+                    repo_name=pr_info["repo_name"],
+                    repo_owner=pr_info["repo_owner"],
+                    author=pr_info["author"],
+                    title=pr_info["title"],
+                    branch=pr_info["branch"],
+                    file_count=0,
+                    line_count=0,
+                    code_file_count=0,
+                    strategy=ReviewStrategy.STANDARD,
+                    status=PRStatus.FAILED,
+                    error_message=error_message,
+                )
+                session.add(record)
+                await session.commit()
+                logger.info(f"[{task_id}] 保存错误记录")
+
+        await _db_retry(_do)
 
     async def _make_and_submit_decision(
         self,
