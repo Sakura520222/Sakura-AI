@@ -52,6 +52,9 @@ class PRAnalysis:
     # 格式：{"file_path.py": {10, 15, 20, 25}, "another.py": {5, 10}}
     changed_lines_map: Dict[str, set] = None
 
+    # 增量审查标记
+    is_incremental: bool = False
+
 
 class PRAnalyzer:
     """PR分析器"""
@@ -77,9 +80,30 @@ class PRAnalyzer:
                 f"开始分析PR: {pr_info['repo_full_name']}#{pr_info['pr_number']}"
             )
 
-            # 获取所有文件变更
-            files = pr.get_files()
-            file_list = list(files)
+            # 判断是否为增量审查（synchronize 事件且 before SHA 有效）
+            action = pr_info.get("action")
+            before_sha = pr_info.get("before")
+            after_sha = pr_info.get("after")
+            is_incremental = (
+                action == "synchronize"
+                and before_sha
+                and after_sha
+                and before_sha != "0" * 40
+            )
+
+            # 获取文件变更
+            if is_incremental:
+                # 增量审查：只获取两次提交之间的变更
+                comparison = repo.compare(before_sha, after_sha)
+                file_list = list(comparison.files)
+                logger.info(
+                    f"增量审查模式: 对比 {before_sha[:8]}... → {after_sha[:8]}..., "
+                    f"变更文件数: {len(file_list)}"
+                )
+            else:
+                # 全量审查
+                files = pr.get_files()
+                file_list = list(files)
 
             # 分析文件
             code_files = []
@@ -145,6 +169,7 @@ class PRAnalyzer:
                 should_skip=should_skip,
                 skip_reason=skip_reason,
                 changed_lines_map=changed_lines_map,
+                is_incremental=is_incremental,
             )
 
             logger.info(
