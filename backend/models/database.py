@@ -501,7 +501,13 @@ def init_async_db(database_url: str):
 
         # 创建异步引擎
         async_engine = create_async_engine(
-            database_url, echo=False, pool_pre_ping=True, pool_size=5, max_overflow=10
+            database_url,
+            echo=False,
+            pool_pre_ping=True,
+            pool_size=10,
+            max_overflow=20,
+            pool_recycle=1800,
+            pool_timeout=30,
         )
 
         # 创建异步会话工厂
