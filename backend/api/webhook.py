@@ -102,7 +102,7 @@ async def handle_pull_request_event(payload: Dict[str, Any]) -> JSONResponse:
         action = pr_info["action"]
 
         # 只处理以下动作
-        supported_actions = ["opened", "synchronized", "reopened"]
+        supported_actions = ["opened", "synchronize", "reopened"]
         if action not in supported_actions:
             logger.info(f"忽略PR动作: {action}")
             return JSONResponse(content={"status": "ignored", "action": action})
