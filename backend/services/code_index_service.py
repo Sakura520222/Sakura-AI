@@ -347,14 +347,21 @@ class CodeIndexService:
         if not query_embedding:
             return []
 
-        # 构建过滤条件
-        where_filters = {}
+        # 构建过滤条件（ChromaDB 多条件需使用 $and 运算符）
+        filters = []
         if language:
-            where_filters["language"] = language
+            filters.append({"language": language})
         if file_path:
-            where_filters["file_path"] = file_path
+            filters.append({"file_path": file_path})
         if pr_number is not None:
-            where_filters["pr_number"] = str(pr_number)
+            filters.append({"pr_number": str(pr_number)})
+
+        if len(filters) == 0:
+            where_filters = None
+        elif len(filters) == 1:
+            where_filters = filters[0]
+        else:
+            where_filters = {"$and": filters}
 
         # 执行检索
         results = await self.vector_store.search_code(
