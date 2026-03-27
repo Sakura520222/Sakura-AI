@@ -258,11 +258,13 @@ class PromptBuilder:
         if analysis and getattr(analysis, "is_incremental", False) and getattr(analysis, "new_commits", None):
             lines.append("## 本次新增提交")
             for commit in analysis.new_commits:
-                lines.append(f"- **{commit['sha']}** {commit['title']}（by {commit['author']}）")
-                if commit.get("body"):
-                    body = commit["body"][:200]
-                    if len(commit["body"]) > 200:
-                        body += "..."
+                title = commit.get('title', '无标题')
+                author = commit.get('author', 'Unknown')
+                lines.append(f"- **{commit.get('sha', '')}** {title}（by {author}）")
+                body = commit.get("body")
+                if body:
+                    if len(body) > 200:
+                        body = body[:200] + "..."
                     lines.append(f"  > {body}")
             lines.append("")
 

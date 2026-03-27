@@ -1,11 +1,19 @@
 """PR分析服务"""
 
-from typing import Dict, List, Tuple, Optional
+from typing import Dict, List, Optional, Tuple, TypedDict
 from dataclasses import dataclass
 from loguru import logger
 
 from backend.core.config import get_settings, get_strategy_config
 from backend.core.github_app import GitHubAppClient
+
+
+class CommitInfo(TypedDict):
+    sha: str
+    message: str
+    title: str
+    body: str
+    author: str
 
 settings = get_settings()
 strategy_config = get_strategy_config()
@@ -55,8 +63,8 @@ class PRAnalysis:
     # 增量审查标记
     is_incremental: bool = False
 
-    # 增量审查时的新提交信息 [{"sha": str, "message": str, "author": str}]
-    new_commits: List[Dict] = None
+    # 增量审查时的新提交信息
+    new_commits: Optional[List[CommitInfo]] = None
 
 
 class PRAnalyzer:
@@ -114,7 +122,7 @@ class PRAnalyzer:
                         "message": commit_msg,
                         "title": title,
                         "body": body,
-                        "author": commit.commit.author.name,
+                        "author": commit.commit.author.name or "Unknown",
                     })
 
                 logger.info(
