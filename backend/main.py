@@ -83,7 +83,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title="Sakura AI Reviewer",
     description="GitHub PR AI代码审查机器人",
-    version="2.3.2",
+    version="2.4.0",
     lifespan=lifespan,
 )
 
