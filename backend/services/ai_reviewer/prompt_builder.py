@@ -253,6 +253,19 @@ class PromptBuilder:
             "",
         ]
 
+        # 增量审查时，添加新提交的标题和内容
+        analysis = context.get("analysis")
+        if analysis and getattr(analysis, "is_incremental", False) and getattr(analysis, "new_commits", None):
+            lines.append("## 本次新增提交")
+            for commit in analysis.new_commits:
+                lines.append(f"- **{commit['sha']}** {commit['title']}（by {commit['author']}）")
+                if commit.get("body"):
+                    body = commit["body"][:200]
+                    if len(commit["body"]) > 200:
+                        body += "..."
+                    lines.append(f"  > {body}")
+            lines.append("")
+
         # 添加可用标签
         lines.append("## 可用的标签")
         for label_name, label_info in available_labels.items():
@@ -260,7 +273,6 @@ class PromptBuilder:
             lines.append(f"- **{label_name}**: {desc}")
 
         # 从 analysis 对象获取统计信息
-        analysis = context.get("analysis")
         if analysis:
             file_count = analysis.code_file_count
             total_changes = analysis.code_changes
