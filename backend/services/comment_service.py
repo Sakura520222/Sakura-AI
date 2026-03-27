@@ -6,8 +6,6 @@ from loguru import logger
 from backend.core.config import get_strategy_config
 from backend.services.label_service import label_service
 
-strategy_config = get_strategy_config()
-
 
 class CommentService:
     """评论服务"""
@@ -29,7 +27,7 @@ class CommentService:
         """
         try:
             # 获取策略名称
-            strategy_info = strategy_config.get_strategy(strategy)
+            strategy_info = get_strategy_config().get_strategy(strategy)
             strategy_name = strategy_info.get("name", "代码审查")
 
             # 构建占位消息
@@ -252,7 +250,7 @@ class CommentService:
         lines = []
 
         # 添加标题
-        strategy_info = strategy_config.get_strategy(strategy)
+        strategy_info = get_strategy_config().get_strategy(strategy)
         strategy_name = strategy_info.get("name", "代码审查")
         lines.append(f"# 🌸 Sakura AI 审查报告 - {strategy_name}\n")
 

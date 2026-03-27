@@ -74,6 +74,31 @@ class LabelService:
             self.__class__._initialized = True
             logger.info("LabelService单例初始化完成")
 
+    def _get_default_labels(self) -> dict:
+        """获取默认标签（优先从 labels.yaml 加载）"""
+        try:
+            from backend.core.config import get_label_config
+            yaml_labels = get_label_config().get_labels()
+            if yaml_labels:
+                return yaml_labels
+        except Exception:
+            pass
+        return self.DEFAULT_LABELS
+
+    def reload_labels(self):
+        """重新加载标签配置"""
+        try:
+            from backend.core.config import reload_label_config
+            reload_label_config()
+            self.clear_cache()
+            logger.info("标签配置已重新加载")
+        except Exception as e:
+            logger.error(f"重新加载标签配置失败: {e}")
+
+    def clear_cache(self):
+        """清除标签缓存"""
+        self._label_cache.clear()
+
     async def get_repo_labels(
         self, repo_owner: str, repo_name: str, use_cache: bool = True
     ) -> Dict[str, Dict[str, Any]]:
@@ -104,7 +129,7 @@ class LabelService:
         # 如果仓库没有任何标签，使用默认标签
         if not labels:
             logger.warning(f"仓库 {repo_full_name} 没有标签，使用默认标签列表")
-            labels = self.DEFAULT_LABELS
+            labels = self._get_default_labels()
 
         # 更新缓存
         self._label_cache[repo_full_name] = {

@@ -297,3 +297,45 @@ def get_settings() -> Settings:
 def get_strategy_config() -> StrategyConfig:
     """获取策略配置单例"""
     return StrategyConfig()
+
+
+def reload_strategy_config() -> StrategyConfig:
+    """清除 lru_cache 并重新加载策略配置"""
+    get_strategy_config.cache_clear()
+    return get_strategy_config()
+
+
+class LabelConfig:
+    """标签配置"""
+
+    def __init__(self, config_path: str = "config/labels.yaml"):
+        self.config_path = Path(config_path)
+        self._load_config()
+
+    def _load_config(self):
+        """加载标签配置文件"""
+        if not self.config_path.exists():
+            self.config = {"labels": {}, "recommendation": {}}
+            return
+        with open(self.config_path, "r", encoding="utf-8") as f:
+            self.config = yaml.safe_load(f) or {}
+
+    def get_labels(self) -> dict:
+        """获取所有标签定义"""
+        return self.config.get("labels", {})
+
+    def get_recommendation_settings(self) -> dict:
+        """获取标签推荐设置"""
+        return self.config.get("recommendation", {})
+
+
+@lru_cache()
+def get_label_config() -> LabelConfig:
+    """获取标签配置单例"""
+    return LabelConfig()
+
+
+def reload_label_config() -> LabelConfig:
+    """清除 lru_cache 并重新加载标签配置"""
+    get_label_config.cache_clear()
+    return get_label_config()
