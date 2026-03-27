@@ -800,20 +800,20 @@ AI 审查时会自动：
 
 ### 支持的嵌入模型
 
-| 模型 | 维度 | 提供商 |
-|------|------|--------|
-| BAAI/bge-m3 | 1024 | SiliconFlow |
+| 模型                   | 维度 | 提供商      |
+| ---------------------- | ---- | ----------- |
+| BAAI/bge-m3            | 1024 | SiliconFlow |
 | BAAI/bge-large-zh-v1.5 | 1024 | SiliconFlow |
-| text-embedding-3-small | 1536 | OpenAI |
-| text-embedding-3-large | 3072 | OpenAI |
-| nomic-embed-text | 768 | Ollama |
+| text-embedding-3-small | 1536 | OpenAI      |
+| text-embedding-3-large | 3072 | OpenAI      |
+| nomic-embed-text       | 768  | Ollama      |
 
 ### 支持的重排序模型
 
-| 模型 | 提供商 |
-|------|--------|
-| BAAI/bge-reranker-v2-m3 | SiliconFlow |
-| BAAI/bge-reranker-v2-m3 | HuggingFace |
+| 模型                               | 提供商      |
+| ---------------------------------- | ----------- |
+| BAAI/bge-reranker-v2-m3            | SiliconFlow |
+| BAAI/bge-reranker-v2-m3            | HuggingFace |
 | jina-reranker-v2-base-multilingual | SiliconFlow |
 
 ---
@@ -855,20 +855,20 @@ CODE_INDEX_DEPENDENCY_FILES=true
 
 ### 支持的编程语言
 
-| 语言 | 扩展名 | 分块策略 |
-|------|--------|----------|
-| Python | `.py` | 按类、函数、方法分块 |
-| JavaScript | `.js`, `.jsx`, `.mjs` | 按函数、类、模块分块 |
-| TypeScript | `.ts`, `.tsx` | 按函数、类、接口分块 |
-| Go | `.go` | 按函数、方法、结构体分块 |
-| Java | `.java` | 按类、方法分块 |
-| Rust | `.rs` | 按函数、结构体、impl 块分块 |
-| C/C++ | `.c`, `.h`, `.cpp`, `.hpp` | 按函数分块 |
-| C# | `.cs` | 按类、方法分块 |
-| PHP | `.php` | 按类、函数分块 |
-| Ruby | `.rb` | 按类、模块、方法分块 |
-| Swift | `.swift` | 按类、结构体、函数分块 |
-| Kotlin | `.kt`, `.kts` | 按类、函数分块 |
+| 语言       | 扩展名                     | 分块策略                    |
+| ---------- | -------------------------- | --------------------------- |
+| Python     | `.py`                      | 按类、函数、方法分块        |
+| JavaScript | `.js`, `.jsx`, `.mjs`      | 按函数、类、模块分块        |
+| TypeScript | `.ts`, `.tsx`              | 按函数、类、接口分块        |
+| Go         | `.go`                      | 按函数、方法、结构体分块    |
+| Java       | `.java`                    | 按类、方法分块              |
+| Rust       | `.rs`                      | 按函数、结构体、impl 块分块 |
+| C/C++      | `.c`, `.h`, `.cpp`, `.hpp` | 按函数分块                  |
+| C#         | `.cs`                      | 按类、方法分块              |
+| PHP        | `.php`                     | 按类、函数分块              |
+| Ruby       | `.rb`                      | 按类、模块、方法分块        |
+| Swift      | `.swift`                   | 按类、结构体、函数分块      |
+| Kotlin     | `.kt`, `.kts`              | 按类、函数分块              |
 
 ### 工作流程
 
