@@ -1,0 +1,47 @@
+<!-- 侧边栏 -->
+<aside id="sidebar"
+       class="fixed top-16 left-0 bottom-0 w-64 bg-white dark:bg-gray-800 border-r border-gray-200 dark:border-gray-700 z-40 transform -translate-x-full lg:translate-x-0 transition-transform duration-200">
+    <nav class="p-4 space-y-1">
+        <a href="/webui/"
+           class="sidebar-link flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors
+                  {% if active_page == 'dashboard' %}bg-pink-50 dark:bg-pink-900/20 text-pink-700 dark:text-pink-400{% else %}text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700{% endif %}">
+            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6"/>
+            </svg>
+            仪表盘
+        </a>
+
+        <a href="/webui/pr/"
+           class="sidebar-link flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-colors
+                  {% if active_page == 'pr' %}bg-pink-50 dark:bg-pink-900/20 text-pink-700 dark:text-pink-400{% else %}text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700{% endif %}">
+            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 7h.01M7 3h5c.512 0 1.024.195 1.414.586l7 7a2 2 0 010 2.828l-7 7a2 2 0 01-2.828 0l-7-7A1.994 1.994 0 013 12V7a4 4 0 014-4z"/>
+            </svg>
+            PR 审查
+        </a>
+
+        <!-- 分隔线 -->
+        <div class="border-t border-gray-200 dark:border-gray-700 my-3"></div>
+
+        <!-- 状态指示 -->
+        <div class="px-3 py-2">
+            <div class="flex items-center gap-2 text-xs text-gray-500 dark:text-gray-400">
+                <span class="w-2 h-2 bg-green-500 rounded-full animate-pulse"></span>
+                服务运行中
+            </div>
+        </div>
+    </nav>
+</aside>
+
+<!-- 移动端遮罩 -->
+<div id="sidebar-overlay" class="fixed inset-0 bg-black/50 z-30 hidden lg:hidden" onclick="document.getElementById('sidebar').classList.toggle('-translate-x-full'); this.classList.add('hidden');"></div>
+
+<script>
+// 移动端侧边栏切换
+document.getElementById('sidebar-toggle')?.addEventListener('click', () => {
+    const sidebar = document.getElementById('sidebar');
+    const overlay = document.getElementById('sidebar-overlay');
+    sidebar.classList.toggle('-translate-x-full');
+    overlay.classList.toggle('hidden');
+});
+</script>

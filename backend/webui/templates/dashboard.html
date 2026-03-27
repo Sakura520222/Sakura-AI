@@ -1,0 +1,48 @@
+{% extends "base.html" %}
+
+{% block title %}仪表盘 - Sakura AI Reviewer{% endblock %}
+
+{% block content %}
+<div class="space-y-6" x-data="dashboardInit()">
+
+    <!-- 页面标题 -->
+    <div>
+        <h1 class="text-2xl font-bold">仪表盘</h1>
+        <p class="mt-1 text-sm text-gray-500 dark:text-gray-400">PR 审查概览</p>
+    </div>
+
+    <!-- 统计卡片 -->
+    {% include "components/stats_cards.html" %}
+
+    <!-- 最近审查 -->
+    <div>
+        <h2 class="text-lg font-semibold mb-3">最近审查</h2>
+        <div id="recent-reviews-container" hx-get="/webui/api/webui/recent-reviews-html" hx-trigger="load" hx-swap="innerHTML">
+            <div class="text-center py-8 text-gray-400">
+                <svg class="w-8 h-8 mx-auto animate-spin" fill="none" viewBox="0 0 24 24">
+                    <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/>
+                    <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/>
+                </svg>
+                <p class="mt-2">加载中...</p>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_scripts %}
+<script>
+function dashboardInit() {
+    // 加载统计数据
+    fetch('/webui/api/webui/stats')
+        .then(r => r.json())
+        .then(data => {
+            document.getElementById('stat-total').textContent = data.total;
+            document.getElementById('stat-approved').textContent = data.approved;
+            document.getElementById('stat-changes').textContent = data.changes_requested;
+            document.getElementById('stat-score').textContent = data.avg_score;
+        })
+        .catch(err => console.error('加载统计数据失败:', err));
+}
+</script>
+{% endblock %}

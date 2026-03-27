@@ -66,6 +66,13 @@ class Settings(BaseSettings):
     # Webhook配置
     webhook_path: str = "/api/webhook/github"
 
+    # WebUI配置
+    webui_secret_key: str = "change-me-in-production"  # JWT 签名密钥
+    webui_admin_username: str = "admin"  # WebUI 管理员用户名
+    webui_admin_password: str = "admin123"  # WebUI 管理员初始密码（生产环境必须修改）
+    webui_cookie_secure: bool = False  # Cookie Secure 属性，HTTPS 环境设为 True
+    cors_allowed_origins: list[str] = []  # CORS 允许的源，为空时自动使用 app_domain
+
     # Telegram Bot配置
     telegram_bot_token: str
     telegram_admin_user_ids: str = ""  # 逗号分隔的超级管理员ID列表
