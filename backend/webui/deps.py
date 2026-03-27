@@ -59,7 +59,7 @@ async def get_current_user(request: Request) -> dict:
     """从 Cookie 获取当前登录用户信息
 
     Returns:
-        dict: {"sub": "admin", "role": "super_admin"}
+        dict: {"sub": github_username, "role": role, "user_id": id}
     Raises:
         HTTPException: 401 未登录
     """
@@ -72,8 +72,11 @@ async def get_current_user(request: Request) -> dict:
         raise HTTPException(status_code=401, detail="登录已过期")
 
     return {
-        "sub": payload.get("sub"),
+        "sub": payload.get("sub"),          # github_username
         "role": payload.get("role", "user"),
+        "user_id": payload.get("user_id"),  # telegram_users.id
+        "github_id": payload.get("github_id"),  # GitHub numeric ID
+        "avatar_url": payload.get("avatar_url"),  # GitHub 头像
     }
 
 

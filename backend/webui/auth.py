@@ -1,29 +1,12 @@
-"""WebUI 认证工具"""
+"""WebUI 认证工具（JWT 令牌管理）"""
 
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 from jose import jwt, JWTError
 from loguru import logger
-import bcrypt
 
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_HOURS = 24
-
-
-def verify_password(plain_password: str, hashed_password: str) -> bool:
-    """验证密码"""
-    return bcrypt.checkpw(
-        plain_password.encode("utf-8"),
-        hashed_password.encode("utf-8"),
-    )
-
-
-def get_password_hash(password: str) -> str:
-    """生成密码哈希"""
-    return bcrypt.hashpw(
-        password.encode("utf-8"),
-        bcrypt.gensalt(),
-    ).decode("utf-8")
 
 
 def create_access_token(data: dict, expires_delta: Optional[timedelta] = None) -> str:

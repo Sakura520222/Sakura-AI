@@ -68,10 +68,12 @@ class Settings(BaseSettings):
 
     # WebUI配置
     webui_secret_key: str = "change-me-in-production"  # JWT 签名密钥
-    webui_admin_username: str = "admin"  # WebUI 管理员用户名
-    webui_admin_password: str = "admin123"  # WebUI 管理员初始密码（生产环境必须修改）
     webui_cookie_secure: bool = False  # Cookie Secure 属性，HTTPS 环境设为 True
-    cors_allowed_origins: list[str] = []  # CORS 允许的源，为空时自动使用 app_domain
+
+    # GitHub OAuth 配置
+    github_oauth_client_id: str = ""  # GitHub OAuth App Client ID
+    github_oauth_client_secret: str = ""  # GitHub OAuth App Client Secret
+    github_oauth_redirect_uri: str = ""  # OAuth 回调地址，如 https://example.com/webui/auth/callback
 
     # Telegram Bot配置
     telegram_bot_token: str
@@ -85,6 +87,21 @@ class Settings(BaseSettings):
     def webhook_url(self) -> str:
         """获取完整的Webhook URL"""
         return f"https://{self.app_domain}{self.webhook_path}"
+
+    @property
+    def github_oauth_auth_url(self) -> str:
+        """GitHub OAuth 授权 URL"""
+        return "https://github.com/login/oauth/authorize"
+
+    @property
+    def github_oauth_token_url(self) -> str:
+        """GitHub OAuth Token URL"""
+        return "https://github.com/login/oauth/access_token"
+
+    @property
+    def github_oauth_user_url(self) -> str:
+        """GitHub OAuth 用户信息 API"""
+        return "https://api.github.com/user"
 
     @property
     def telegram_admin_ids_list(self) -> list[int]:
