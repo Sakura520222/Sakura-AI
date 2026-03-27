@@ -54,29 +54,34 @@ def has_existing_review(
 ## 🗂️ 文件变更清单
 
 ### 1. 配置文件
+
 - **config/strategies.yaml**
   - 添加 `review_policy` 配置段
   - 支持仓库级别的覆盖配置
   - 可配置的审查模板
 
 ### 2. 数据库模型
+
 - **backend/models/database.py**
   - 新增 `ReviewDecision` 枚举
   - `PRReview` 表添加 `decision` 和 `decision_reason` 字段
 
 ### 3. 决策引擎
+
 - **backend/services/decision_engine.py** (新建)
   - `DecisionEngine` 类
   - `make_decision()` 方法：根据评分和问题做出决策
   - `format_review_body()` 方法：格式化审查评论
 
 ### 4. GitHub API 集成
+
 - **backend/core/github_app.py**
   - `has_existing_review()`: 幂等性检查
   - `submit_review()`: 提交审查决定到 GitHub
   - `get_bot_username()`: 获取机器人用户名
 
 ### 5. 审查流程
+
 - **backend/workers/review_worker.py**
   - 导入决策引擎
   - 添加 `_make_and_submit_decision()` 方法
@@ -184,31 +189,37 @@ FROM pr_reviews;
 ## 🎯 使用场景
 
 ### 自动批准
+
 - 评分 >= 8 分
 - 无 Critical 问题
 - Major 问题 <= 1 个
 
 ### 自动阻断
+
 - 评分 < 4 分
 - 存在 Critical 问题
 
 ### 人工复审
+
 - 评分 4-7 分（中间状态）
 - Major 问题过多
 
 ## 🔧 故障排查
 
 ### Review 未提交
+
 - 检查 GitHub App 权限
 - 查看日志中的错误信息
 - 确认 `review_policy.enabled` 是否为 true
 
 ### 决策不符合预期
+
 - 检查 AI 评分是否准确
 - 查看 `overall_score` 和问题分类
 - 调整 `approve_threshold` 或 `block_threshold`
 
 ### 重复提交 Review
+
 - 确认 `enable_idempotency_check: true`
 - 检查机器人用户名是否正确获取
 
