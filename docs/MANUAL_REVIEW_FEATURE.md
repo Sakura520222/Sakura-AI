@@ -35,31 +35,38 @@
 ## 执行流程
 
 ### 1. URL 解析
+
 - 从 PR URL 中提取 `owner`、`repo` 和 `pr_number`
 - 支持多种 URL 格式
 
 ### 2. PR 信息获取
+
 - 通过 GitHub API 获取 PR 详细信息
 - 自动获取 `installation_id`（用于 GitHub App 认证）
 - 验证 PR 是否存在
 
 ### 3. 状态检查
+
 检查以下条件，任一不满足则拒绝审查：
+
 - ❌ PR 必须是 `open` 状态
 - ❌ PR 不能是草稿 (draft)
 - ❌ PR 不能已合并 (merged)
 
 ### 4. 审查启动
+
 - 发送 Telegram 通知（审查开始）
 - 提交审查任务到异步队列
 - 返回任务 ID 给用户
 
 ### 5. 异步执行
+
 - 审查在后台异步执行（使用 `asyncio.create_task`）
 - 不阻塞 Telegram Bot
 - 执行时间: 通常 30s - 2min
 
 ### 6. 完成通知
+
 - 审查完成后自动发送 Telegram 通知
 - 包含评分、决策等信息
 
@@ -81,12 +88,14 @@
 ### 错误提示
 
 #### URL 格式错误
+
 ```
 ❌ 无效的PR URL格式: https://example.com/bad-url
 正确格式: https://github.com/owner/repo/pull/123
 ```
 
 #### PR 未打开
+
 ```
 ❌ PR未打开
 
@@ -95,6 +104,7 @@
 ```
 
 #### 草稿 PR
+
 ```
 ❌ 这是草稿PR，跳过审查
 
@@ -102,6 +112,7 @@
 ```
 
 #### PR 已合并
+
 ```
 ❌ PR已合并，跳过审查
 
@@ -109,6 +120,7 @@
 ```
 
 #### 无权限访问
+
 ```
 ❌ 无法访问仓库
 
@@ -120,6 +132,7 @@
 ```
 
 #### PR 不存在
+
 ```
 ❌ PR不存在
 
@@ -132,18 +145,22 @@
 ### 核心函数
 
 #### `get_pr_info_from_url(pr_url: str)`
+
 位置: `backend/core/github_app.py`
 
 功能：
+
 - 解析 PR URL
 - 通过 GitHub API 获取 PR 信息
 - 获取 `installation_id`
 - 构造与 webhook 一致的 `pr_info` 字典
 
 #### `cmd_review(update, context)`
+
 位置: `backend/telegram/handlers.py`
 
 功能：
+
 - 权限检查
 - 参数验证
 - 调用 `get_pr_info_from_url()`
@@ -174,7 +191,9 @@ Telegram Notification
 ### 关键特性
 
 #### 1. 等效性构造
+
 手动触发的 `pr_info` 字典与 webhook payload 格式完全一致：
+
 ```python
 {
     "action": "manual",  # 标记为手动触发
@@ -198,14 +217,18 @@ Telegram Notification
 ```
 
 #### 2. 异步处理
+
 使用 `asyncio.create_task()` 实现非阻塞：
+
 ```python
 task_id = await submit_review_task(pr_info)
 # 立即返回，不等待审查完成
 ```
 
 #### 3. 完整的审查流程
+
 手动触发与 webhook 触发使用相同的审查逻辑：
+
 - PR 分析
 - AI 审查
 - 标签推荐
@@ -221,6 +244,7 @@ task_id = await submit_review_task(pr_info)
    - 如果未安装，会提示"无法访问仓库"
 
 2. **超级管理员配置**
+
    ```env
    TELEGRAM_ADMIN_USER_IDS=123456789,987654321
    ```
@@ -265,25 +289,31 @@ task_id = await submit_review_task(pr_info)
 ### 常见问题
 
 #### 1. "无法访问仓库"
+
 **原因**: GitHub App 未安装到目标仓库
 
 **解决**:
+
 1. 访问 GitHub App 设置页面
 2. 安装 App 到目标仓库
 3. 确保有正确的权限
 
 #### 2. "PR不存在"
+
 **原因**: URL 错误或 PR 编码错误
 
 **解决**:
+
 1. 检查 URL 是否正确
 2. 确认 PR 编号正确
 3. 确认仓库存在
 
 #### 3. 审查超时
+
 **原因**: PR 太大或 API 响应慢
 
 **解决**:
+
 1. 检查 PR 规模是否超过限制
 2. 查看 Bot 日志
 3. 耐心等待（可能需要 2-5 分钟）
