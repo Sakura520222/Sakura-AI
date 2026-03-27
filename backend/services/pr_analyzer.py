@@ -55,6 +55,9 @@ class PRAnalysis:
     # 增量审查标记
     is_incremental: bool = False
 
+    # 增量审查时的新提交信息 [{"sha": str, "message": str, "author": str}]
+    new_commits: List[Dict] = None
+
 
 class PRAnalyzer:
     """PR分析器"""
@@ -92,13 +95,31 @@ class PRAnalyzer:
             )
 
             # 获取文件变更
+            new_commits = None
             if is_incremental:
                 # 增量审查：只获取两次提交之间的变更
                 comparison = repo.compare(before_sha, after_sha)
                 file_list = list(comparison.files)
+
+                # 提取新提交的标题和消息
+                new_commits = []
+                for commit in comparison.commits:
+                    commit_msg = commit.commit.message.strip()
+                    # 取第一行作为标题，其余作为正文
+                    first_newline = commit_msg.find("\n")
+                    title = commit_msg[:first_newline] if first_newline != -1 else commit_msg
+                    body = commit_msg[first_newline + 1:].strip() if first_newline != -1 else ""
+                    new_commits.append({
+                        "sha": commit.sha[:8],
+                        "message": commit_msg,
+                        "title": title,
+                        "body": body,
+                        "author": commit.commit.author.name,
+                    })
+
                 logger.info(
                     f"增量审查模式: 对比 {before_sha[:8]}... → {after_sha[:8]}..., "
-                    f"变更文件数: {len(file_list)}"
+                    f"变更文件数: {len(file_list)}, 新提交数: {len(new_commits)}"
                 )
             else:
                 # 全量审查
@@ -170,6 +191,7 @@ class PRAnalyzer:
                 skip_reason=skip_reason,
                 changed_lines_map=changed_lines_map,
                 is_incremental=is_incremental,
+                new_commits=new_commits,
             )
 
             logger.info(
