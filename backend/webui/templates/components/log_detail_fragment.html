@@ -1,0 +1,75 @@
+<!-- 审查详情展开片段 -->
+<div class="bg-gray-50 dark:bg-gray-900/50 rounded-lg p-4 space-y-3">
+    {% if review.review_summary %}
+    <div>
+        <h4 class="text-sm font-medium text-gray-700 dark:text-gray-300">审查摘要</h4>
+        <p class="mt-1 text-sm text-gray-600 dark:text-gray-400 whitespace-pre-wrap">{{ review.review_summary }}</p>
+    </div>
+    {% endif %}
+
+    <!-- 决策和统计 -->
+    <div class="flex flex-wrap gap-4 text-sm">
+        {% if review.decision %}
+        <span class="px-2.5 py-1 rounded-lg bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700">
+            决策:
+            {% if review.decision == 'approve' %}<span class="text-green-600 dark:text-green-400 font-medium">通过</span>
+            {% elif review.decision == 'request_changes' %}<span class="text-yellow-600 dark:text-yellow-400 font-medium">需修改</span>
+            {% else %}<span class="text-blue-600 dark:text-blue-400 font-medium">评论</span>{% endif %}
+        </span>
+        {% endif %}
+        {% if review.overall_score %}
+        <span class="px-2.5 py-1 rounded-lg bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700">
+            评分: <span class="font-medium">{{ review.overall_score }}/10</span>
+        </span>
+        {% endif %}
+        <span class="px-2.5 py-1 rounded-lg bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700">
+            策略: {{ review.strategy }}
+        </span>
+        <span class="px-2.5 py-1 rounded-lg bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700">
+            文件: {{ review.file_count or 0 }} 个 · {{ review.line_count or 0 }} 行
+        </span>
+        {% if review.completed_at and review.created_at %}
+        <span class="px-2.5 py-1 rounded-lg bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700">
+            耗时: {{ ((review.completed_at - review.created_at).total_seconds() / 60)|round(1) }} 分钟
+        </span>
+        {% endif %}
+    </div>
+
+    <!-- 评论列表 -->
+    {% if comments %}
+    <div class="border-t border-gray-200 dark:border-gray-700 pt-3">
+        <h4 class="text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+            评论 ({{ comments | length }})
+        </h4>
+        <div class="space-y-2">
+            {% for c in comments[:5] %}
+            <div class="text-sm bg-white dark:bg-gray-800 rounded-lg p-3 border border-gray-200 dark:border-gray-700">
+                <div class="flex items-center gap-2 mb-1">
+                    {% if c.severity == 'critical' %}
+                    <span class="px-1.5 py-0.5 rounded text-xs bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-400 font-medium">严重</span>
+                    {% elif c.severity == 'major' %}
+                    <span class="px-1.5 py-0.5 rounded text-xs bg-orange-100 dark:bg-orange-900/30 text-orange-700 dark:text-orange-400 font-medium">主要</span>
+                    {% elif c.severity == 'minor' %}
+                    <span class="px-1.5 py-0.5 rounded text-xs bg-yellow-100 dark:bg-yellow-900/30 text-yellow-700 dark:text-yellow-400">次要</span>
+                    {% else %}
+                    <span class="px-1.5 py-0.5 rounded text-xs bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-400">建议</span>
+                    {% endif %}
+                    {% if c.file_path %}
+                    <code class="text-xs bg-gray-100 dark:bg-gray-700 px-1.5 py-0.5 rounded">{{ c.file_path }}{% if c.line_number %}:{{ c.line_number }}{% endif %}</code>
+                    {% endif %}
+                </div>
+                <p class="text-gray-600 dark:text-gray-400">{{ c.content[:200] }}{% if c.content|length > 200 %}...{% endif %}</p>
+            </div>
+            {% endfor %}
+            {% if comments|length > 5 %}
+            <a href="/webui/pr/{{ review.id }}" class="text-sm text-pink-600 dark:text-pink-400 hover:underline">查看全部 {{ comments|length }} 条评论</a>
+            {% endif %}
+        </div>
+    </div>
+    {% endif %}
+
+    <!-- 无内容提示 -->
+    {% if not review.review_summary and not comments %}
+    <p class="text-sm text-gray-400">暂无审查详情</p>
+    {% endif %}
+</div>

@@ -7,7 +7,7 @@ from sqlalchemy import select, func, desc
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.models.database import PRReview, ReviewComment
-from backend.webui.deps import require_auth, get_db, get_templates, get_csrf_serializer
+from backend.webui.deps import require_auth, get_db, get_templates, get_csrf_serializer, get_user_preferences
 
 router = APIRouter(tags=["WebUI Dashboard"])
 templates = get_templates()
@@ -17,6 +17,7 @@ templates = get_templates()
 async def dashboard_page(
     request: Request,
     user: dict = Depends(require_auth),
+    user_prefs: dict = Depends(get_user_preferences),
 ):
     """渲染仪表盘页面"""
     return templates.TemplateResponse("dashboard.html", {
@@ -24,6 +25,7 @@ async def dashboard_page(
         "current_user": user,
         "csrf_token": get_csrf_serializer().dumps({}),
         "active_page": "dashboard",
+        "user_prefs": user_prefs,
     })
 
 

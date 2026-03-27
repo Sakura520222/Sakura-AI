@@ -6,7 +6,7 @@ from sqlalchemy import select, func, desc, or_, case
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.models.database import PRReview, ReviewComment
-from backend.webui.deps import require_auth, get_db, get_templates, get_csrf_serializer
+from backend.webui.deps import require_auth, get_db, get_templates, get_csrf_serializer, get_user_preferences
 
 router = APIRouter(prefix="/pr", tags=["WebUI PR"])
 templates = get_templates()
@@ -16,6 +16,7 @@ templates = get_templates()
 async def pr_list_page(
     request: Request,
     user: dict = Depends(require_auth),
+    user_prefs: dict = Depends(get_user_preferences),
 ):
     """渲染 PR 列表页面"""
     return templates.TemplateResponse("pr_list.html", {
@@ -23,6 +24,7 @@ async def pr_list_page(
         "current_user": user,
         "csrf_token": get_csrf_serializer().dumps({}),
         "active_page": "pr",
+        "user_prefs": user_prefs,
     })
 
 
@@ -31,14 +33,16 @@ async def pr_list_fragment(
     request: Request,
     db: AsyncSession = Depends(get_db),
     user: dict = Depends(require_auth),
+    user_prefs: dict = Depends(get_user_preferences),
     search: str = Query("", description="搜索关键词（PR标题/仓库名/作者）"),
     status: str = Query("", description="按状态过滤"),
     decision: str = Query("", description="按决策过滤"),
     page: int = Query(1, ge=1),
-    per_page: int = Query(20, ge=1, le=100),
+    per_page: int = Query(None, ge=1, le=100),
 ):
     """PR 列表 HTMX 片段（支持搜索、过滤、分页）"""
-    # 构建查询
+    if per_page is None:
+        per_page = user_prefs["items_per_page"]
     query = select(PRReview)
     count_query = select(func.count(PRReview.id))
 
@@ -71,6 +75,7 @@ async def pr_list_fragment(
     total_result = await db.execute(count_query)
     total = total_result.scalar() or 0
     total_pages = max(1, (total + per_page - 1) // per_page)
+    page = min(page, total_pages)
 
     # 分页
     offset = (page - 1) * per_page
@@ -99,6 +104,7 @@ async def pr_detail_page(
     review_id: int,
     db: AsyncSession = Depends(get_db),
     user: dict = Depends(require_auth),
+    user_prefs: dict = Depends(get_user_preferences),
 ):
     """PR 详情页面"""
     # 查询 PR 审查记录
@@ -130,6 +136,7 @@ async def pr_detail_page(
         "current_user": user,
         "csrf_token": get_csrf_serializer().dumps({}),
         "active_page": "pr",
+        "user_prefs": user_prefs,
         "review": review,
         "comments": comments,
     })
