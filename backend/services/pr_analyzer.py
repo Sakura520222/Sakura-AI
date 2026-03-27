@@ -1,6 +1,6 @@
 """PR分析服务"""
 
-from typing import Dict, List, Optional, Tuple, TypedDict
+from typing import Dict, List, Optional, Tuple, TypedDict, NotRequired
 from dataclasses import dataclass
 from loguru import logger
 
@@ -10,9 +10,9 @@ from backend.core.github_app import GitHubAppClient
 
 class CommitInfo(TypedDict):
     sha: str
-    message: str
     title: str
-    body: str
+    message: str
+    body: NotRequired[str]
     author: str
 
 settings = get_settings()
@@ -122,7 +122,7 @@ class PRAnalyzer:
                         "message": commit_msg,
                         "title": title,
                         "body": body,
-                        "author": commit.commit.author.name or "Unknown",
+                        "author": (commit.commit.author.name if commit.commit.author else None) or "Unknown",
                     })
 
                 logger.info(
