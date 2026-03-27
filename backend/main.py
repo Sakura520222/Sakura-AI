@@ -94,7 +94,7 @@ app = FastAPI(
 )
 
 # 配置CORS
-_allowed_origins = settings.cors_allowed_origins if settings.cors_allowed_origins else [f"https://{settings.app_domain}"]
+_allowed_origins = [f"https://{settings.app_domain}"]
 app.add_middleware(
     CORSMiddleware,
     allow_origins=_allowed_origins,

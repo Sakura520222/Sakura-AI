@@ -32,10 +32,20 @@
 
         <!-- 用户信息 -->
         <div class="flex items-center gap-2 ml-2">
-            <div class="w-8 h-8 bg-gradient-to-br from-pink-400 to-purple-500 rounded-full flex items-center justify-center text-white text-sm font-medium">
-                {{ (current_user.sub or 'U')[0]|upper }}
+            {% if current_user.get('avatar_url') %}
+            <img src="{{ current_user.avatar_url }}"
+                 alt="{{ current_user.sub }}"
+                 class="w-8 h-8 rounded-full border-2 border-gray-200 dark:border-gray-600"
+                 onerror="this.style.display='none'; this.nextElementSibling.style.display='flex';">
+            <div class="w-8 h-8 bg-gradient-to-br from-pink-400 to-purple-500 rounded-full items-center justify-center text-white text-sm font-medium" style="display:none;">
+                {{ current_user.sub[0]|upper }}
             </div>
-            <span class="hidden sm:inline text-sm">{{ current_user.sub or '未知用户' }}</span>
+            {% else %}
+            <div class="w-8 h-8 bg-gradient-to-br from-pink-400 to-purple-500 rounded-full flex items-center justify-center text-white text-sm font-medium">
+                {{ current_user.sub[0]|upper }}
+            </div>
+            {% endif %}
+            <span class="hidden sm:inline text-sm">{{ current_user.sub }}</span>
         </div>
 
         <!-- 登出 -->
