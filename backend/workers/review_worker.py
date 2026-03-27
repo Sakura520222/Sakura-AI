@@ -514,11 +514,31 @@ class ReviewWorker:
             policy = decision_engine._get_repo_policy(pr_info["repo_full_name"])
             enable_idempotency = policy.get("enable_idempotency_check", True)
 
-            # 获取机器人用户名（用于幂等性检查）
+            # synchronize 事件的处理逻辑
+            is_incremental = analysis.is_incremental if analysis else False
+            is_synchronize = pr_info.get("action") == "synchronize"
+
+            # 获取机器人用户名（用于幂等性检查和撤回Review）
             bot_username = self.github_app.get_bot_username(
                 pr_info["repo_owner"],
                 pr_info["repo_name"],
             )
+
+            if is_synchronize and bot_username:
+                if is_incremental:
+                    # 增量审查：跳过幂等检查，保留旧 review
+                    enable_idempotency = False
+                    logger.info("增量审查模式，跳过幂等性检查")
+                else:
+                    # 全量审查回退（force push 等）：撤回旧 review
+                    dismissed = self.github_app.dismiss_bot_reviews(
+                        pr_info["repo_owner"],
+                        pr_info["repo_name"],
+                        pr_info["pr_number"],
+                        bot_username,
+                    )
+                    if dismissed > 0:
+                        logger.info(f"已撤回 {dismissed} 条旧Review，将提交全量审查")
 
             # 使用 submit_review_with_inline_comments 方法（带重试机制）
             max_retries = 1  # 失败后重试1次

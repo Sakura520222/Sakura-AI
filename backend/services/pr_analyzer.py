@@ -1,11 +1,24 @@
 """PR分析服务"""
 
-from typing import Dict, List, Tuple, Optional
+from typing import Dict, List, Optional, Tuple, TypedDict
+try:
+    from typing import NotRequired
+except ImportError:
+    from typing_extensions import NotRequired
 from dataclasses import dataclass
 from loguru import logger
 
 from backend.core.config import get_settings, get_strategy_config
 from backend.core.github_app import GitHubAppClient
+
+
+class CommitInfo(TypedDict):
+    """提交信息"""
+    sha: str
+    title: str
+    message: str
+    body: NotRequired[str]  # commit 正文，可能为空
+    author: str
 
 settings = get_settings()
 strategy_config = get_strategy_config()
@@ -52,6 +65,12 @@ class PRAnalysis:
     # 格式：{"file_path.py": {10, 15, 20, 25}, "another.py": {5, 10}}
     changed_lines_map: Dict[str, set] = None
 
+    # 增量审查标记
+    is_incremental: bool = False
+
+    # 增量审查时的新提交信息
+    new_commits: Optional[List[CommitInfo]] = None
+
 
 class PRAnalyzer:
     """PR分析器"""
@@ -77,9 +96,48 @@ class PRAnalyzer:
                 f"开始分析PR: {pr_info['repo_full_name']}#{pr_info['pr_number']}"
             )
 
-            # 获取所有文件变更
-            files = pr.get_files()
-            file_list = list(files)
+            # 判断是否为增量审查（synchronize 事件且 before SHA 有效）
+            action = pr_info.get("action")
+            before_sha = pr_info.get("before")
+            after_sha = pr_info.get("after")
+            is_incremental = (
+                action == "synchronize"
+                and before_sha
+                and after_sha
+                and before_sha != "0" * 40
+            )
+
+            # 获取文件变更
+            new_commits = None
+            if is_incremental:
+                # 增量审查：只获取两次提交之间的变更
+                comparison = repo.compare(before_sha, after_sha)
+                file_list = list(comparison.files)
+
+                # 提取新提交的标题和消息
+                new_commits = []
+                for commit in comparison.commits:
+                    commit_msg = commit.commit.message.strip()
+                    # 取第一行作为标题，其余作为正文
+                    first_newline = commit_msg.find("\n")
+                    title = commit_msg[:first_newline] if first_newline != -1 else commit_msg
+                    body = commit_msg[first_newline + 1:].strip() if first_newline != -1 else ""
+                    new_commits.append({
+                        "sha": commit.sha[:8],
+                        "message": commit_msg,
+                        "title": title,
+                        "body": body,
+                        "author": commit.commit.author.name if commit.commit.author else "Unknown",
+                    })
+
+                logger.info(
+                    f"增量审查模式: 对比 {before_sha[:8]}... → {after_sha[:8]}..., "
+                    f"变更文件数: {len(file_list)}, 新提交数: {len(new_commits)}"
+                )
+            else:
+                # 全量审查
+                files = pr.get_files()
+                file_list = list(files)
 
             # 分析文件
             code_files = []
@@ -145,6 +203,8 @@ class PRAnalyzer:
                 should_skip=should_skip,
                 skip_reason=skip_reason,
                 changed_lines_map=changed_lines_map,
+                is_incremental=is_incremental,
+                new_commits=new_commits,
             )
 
             logger.info(
