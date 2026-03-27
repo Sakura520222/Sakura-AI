@@ -1,0 +1,38 @@
+<!-- PR 搜索和过滤 -->
+<div class="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 shadow-sm p-4 mb-4">
+    <form id="pr-filter-form" class="flex flex-col sm:flex-row gap-3">
+        <!-- 搜索框 -->
+        <div class="flex-1 relative">
+            <svg class="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/>
+            </svg>
+            <input type="text" name="search" value="{{ search }}" placeholder="搜索 PR 标题、仓库或作者..."
+                   class="w-full pl-10 pr-4 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-sm focus:ring-2 focus:ring-pink-500 focus:border-transparent outline-none">
+        </div>
+
+        <!-- 状态过滤 -->
+        <select name="status"
+                class="px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-sm focus:ring-2 focus:ring-pink-500 focus:border-transparent outline-none">
+            <option value="" {% if not status %}selected{% endif %}>全部状态</option>
+            <option value="pending" {% if status == 'pending' %}selected{% endif %}>待处理</option>
+            <option value="reviewing" {% if status == 'reviewing' %}selected{% endif %}>审查中</option>
+            <option value="completed" {% if status == 'completed' %}selected{% endif %}>已完成</option>
+            <option value="failed" {% if status == 'failed' %}selected{% endif %}>失败</option>
+        </select>
+
+        <!-- 决策过滤 -->
+        <select name="decision"
+                class="px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-sm focus:ring-2 focus:ring-pink-500 focus:border-transparent outline-none">
+            <option value="" {% if not decision %}selected{% endif %}>全部决策</option>
+            <option value="approve" {% if decision == 'approve' %}selected{% endif %}>通过</option>
+            <option value="request_changes" {% if decision == 'request_changes' %}selected{% endif %}>需修改</option>
+            <option value="comment" {% if decision == 'comment' %}selected{% endif %}>评论</option>
+        </select>
+
+        <!-- 搜索按钮 -->
+        <button type="submit"
+                class="px-4 py-2 bg-pink-500 text-white rounded-lg text-sm font-medium hover:bg-pink-600 transition-colors">
+            搜索
+        </button>
+    </form>
+</div>

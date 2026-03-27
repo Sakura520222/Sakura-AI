@@ -1,0 +1,220 @@
+{% extends "base.html" %}
+
+{% block title %}PR #{{ review.pr_id }} - Sakura AI Reviewer{% endblock %}
+
+{% block content %}
+<div class="space-y-6">
+    <!-- 面包屑导航 -->
+    <nav class="flex items-center gap-2 text-sm text-gray-500 dark:text-gray-400">
+        <a href="/webui/" class="hover:text-pink-600 dark:hover:text-pink-400">仪表盘</a>
+        <span>/</span>
+        <a href="/webui/pr/" class="hover:text-pink-600 dark:hover:text-pink-400">PR 审查</a>
+        <span>/</span>
+        <span class="text-gray-900 dark:text-white">{{ review.repo_owner }}/{{ review.repo_name }} #{{ review.pr_id }}</span>
+    </nav>
+
+    <!-- PR 信息卡片 -->
+    <div class="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 shadow-sm p-6">
+        <div class="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-4">
+            <div class="flex-1">
+                <h1 class="text-xl font-bold">
+                    {{ review.repo_owner }}/{{ review.repo_name }}
+                    <span class="text-gray-400 font-normal">#{{ review.pr_id }}</span>
+                </h1>
+                <p class="mt-2 text-gray-700 dark:text-gray-300">{{ review.title or '无标题' }}</p>
+                <div class="mt-3 flex flex-wrap gap-2 text-sm text-gray-500 dark:text-gray-400">
+                    {% if review.author %}
+                    <span class="flex items-center gap-1">
+                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z"/></svg>
+                        {{ review.author }}
+                    </span>
+                    {% endif %}
+                    <span class="flex items-center gap-1">
+                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"/></svg>
+                        {{ review.strategy }} 策略
+                    </span>
+                    {% if review.file_count %}
+                    <span>{{ review.file_count }} 文件</span>
+                    {% endif %}
+                    {% if review.line_count %}
+                    <span>{{ review.line_count }} 行</span>
+                    {% endif %}
+                </div>
+            </div>
+
+            <!-- 状态和评分 -->
+            <div class="flex items-center gap-3">
+                <!-- 状态 -->
+                {% if review.status == "completed" and review.decision == "approve" %}
+                <span class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-sm font-medium bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-400">
+                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/></svg>
+                    通过
+                </span>
+                {% elif review.status == "completed" and review.decision == "request_changes" %}
+                <span class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-sm font-medium bg-yellow-100 dark:bg-yellow-900/30 text-yellow-700 dark:text-yellow-400">
+                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01"/></svg>
+                    需修改
+                </span>
+                {% elif review.status == "completed" and review.decision == "comment" %}
+                <span class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-sm font-medium bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-400">
+                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 12h.01M12 12h.01M16 12h.01"/></svg>
+                    评论
+                </span>
+                {% elif review.status == "reviewing" %}
+                <span class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-sm font-medium bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-400">
+                    <svg class="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg>
+                    审查中
+                </span>
+                {% elif review.status == "failed" %}
+                <span class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-sm font-medium bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-400">
+                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
+                    失败
+                </span>
+                {% else %}
+                <span class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-sm font-medium bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-400">
+                    待处理
+                </span>
+                {% endif %}
+
+                <!-- 评分 -->
+                {% if review.overall_score %}
+                <div class="text-center px-4">
+                    <div class="text-3xl font-bold {% if review.overall_score >= 8 %}text-green-600 dark:text-green-400{% elif review.overall_score >= 6 %}text-yellow-600 dark:text-yellow-400{% else %}text-red-600 dark:text-red-400{% endif %}">
+                        {{ review.overall_score }}
+                    </div>
+                    <div class="text-xs text-gray-400">/ 10</div>
+                </div>
+                {% endif %}
+            </div>
+        </div>
+
+        <!-- 时间信息 -->
+        <div class="mt-4 pt-4 border-t border-gray-200 dark:border-gray-700 flex flex-wrap gap-4 text-xs text-gray-500 dark:text-gray-400">
+            <span>创建时间: {{ review.created_at.strftime('%Y-%m-%d %H:%M:%S') if review.created_at else '-' }}</span>
+            {% if review.completed_at %}
+            <span>完成时间: {{ review.completed_at.strftime('%Y-%m-%d %H:%M:%S') }}</span>
+            {% endif %}
+            {% if review.branch %}
+            <span>分支: {{ review.branch }}</span>
+            {% endif %}
+        </div>
+    </div>
+
+    <!-- 审查摘要 -->
+    {% if review.review_summary %}
+    <div class="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 shadow-sm p-6">
+        <h2 class="text-lg font-semibold mb-3 flex items-center gap-2">
+            <svg class="w-5 h-5 text-pink-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/>
+            </svg>
+            审查摘要
+        </h2>
+        <div class="prose dark:prose-invert max-w-none text-sm text-gray-700 dark:text-gray-300 whitespace-pre-wrap leading-relaxed">
+            {{ review.review_summary }}
+        </div>
+    </div>
+    {% endif %}
+
+    <!-- 决策理由 -->
+    {% if review.decision_reason %}
+    <div class="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 shadow-sm p-6">
+        <h2 class="text-lg font-semibold mb-3 flex items-center gap-2">
+            <svg class="w-5 h-5 text-blue-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/>
+            </svg>
+            决策理由
+        </h2>
+        <div class="text-sm text-gray-700 dark:text-gray-300 whitespace-pre-wrap leading-relaxed">
+            {{ review.decision_reason }}
+        </div>
+    </div>
+    {% endif %}
+
+    <!-- 错误信息 -->
+    {% if review.error_message %}
+    <div class="bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-xl p-6">
+        <h2 class="text-lg font-semibold mb-2 text-red-700 dark:text-red-400">错误信息</h2>
+        <pre class="text-sm text-red-600 dark:text-red-300 whitespace-pre-wrap">{{ review.error_message }}</pre>
+    </div>
+    {% endif %}
+
+    <!-- 审查评论 -->
+    <div class="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 shadow-sm overflow-hidden">
+        <div class="px-6 py-4 border-b border-gray-200 dark:border-gray-700">
+            <h2 class="text-lg font-semibold flex items-center gap-2">
+                <svg class="w-5 h-5 text-pink-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 8h10M7 12h4m1 8l-4-4H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-3l-4 4z"/>
+                </svg>
+                审查评论
+                <span class="text-sm font-normal text-gray-400">({{ comments | length }})</span>
+            </h2>
+        </div>
+
+        {% if comments %}
+        <div class="divide-y divide-gray-200 dark:divide-gray-700">
+            {% for c in comments %}
+            <div class="px-6 py-4">
+                <div class="flex items-start gap-3">
+                    <!-- 严重程度图标 -->
+                    <div class="flex-shrink-0 mt-0.5">
+                        {% if c.severity == "critical" %}
+                        <span class="inline-block w-6 h-6 rounded-full bg-red-100 dark:bg-red-900/30 text-red-600 dark:text-red-400 text-center leading-6 text-xs font-bold">!</span>
+                        {% elif c.severity == "major" %}
+                        <span class="inline-block w-6 h-6 rounded-full bg-orange-100 dark:bg-orange-900/30 text-orange-600 dark:text-orange-400 text-center leading-6 text-xs font-bold">W</span>
+                        {% elif c.severity == "minor" %}
+                        <span class="inline-block w-6 h-6 rounded-full bg-yellow-100 dark:bg-yellow-900/30 text-yellow-600 dark:text-yellow-400 text-center leading-6 text-xs font-bold">I</span>
+                        {% else %}
+                        <span class="inline-block w-6 h-6 rounded-full bg-blue-100 dark:bg-blue-900/30 text-blue-600 dark:text-blue-400 text-center leading-6 text-xs font-bold">S</span>
+                        {% endif %}
+                    </div>
+
+                    <div class="flex-1 min-w-0">
+                        <!-- 文件和行号 -->
+                        {% if c.file_path %}
+                        <div class="flex items-center gap-2 text-xs text-gray-500 dark:text-gray-400 mb-1">
+                            <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/></svg>
+                            <code class="bg-gray-100 dark:bg-gray-700 px-1.5 py-0.5 rounded text-xs">{{ c.file_path }}</code>
+                            {% if c.line_number %}
+                            <span>:L{{ c.line_number }}</span>
+                            {% endif %}
+                            <!-- 评论类型标签 -->
+                            {% if c.comment_type == "overall" %}
+                            <span class="px-1.5 py-0.5 rounded bg-purple-100 dark:bg-purple-900/30 text-purple-700 dark:text-purple-400 text-xs">总评</span>
+                            {% elif c.comment_type == "file" %}
+                            <span class="px-1.5 py-0.5 rounded bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-400 text-xs">文件级</span>
+                            {% elif c.comment_type == "line" %}
+                            <span class="px-1.5 py-0.5 rounded bg-cyan-100 dark:bg-cyan-900/30 text-cyan-700 dark:text-cyan-400 text-xs">行级</span>
+                            {% endif %}
+                        </div>
+                        {% endif %}
+
+                        <!-- 评论内容 -->
+                        <div class="text-sm text-gray-700 dark:text-gray-300 whitespace-pre-wrap leading-relaxed">
+                            {{ c.content }}
+                        </div>
+                    </div>
+                </div>
+            </div>
+            {% endfor %}
+        </div>
+        {% else %}
+        <div class="p-12 text-center text-gray-400 dark:text-gray-500">
+            <svg class="w-12 h-12 mx-auto" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M7 8h10M7 12h4m1 8l-4-4H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-3l-4 4z"/>
+            </svg>
+            <p class="mt-4">暂无评论</p>
+        </div>
+        {% endif %}
+    </div>
+
+    <!-- 返回按钮 -->
+    <div>
+        <a href="/webui/pr/" class="inline-flex items-center gap-1 text-sm text-gray-500 dark:text-gray-400 hover:text-pink-600 dark:hover:text-pink-400">
+            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7"/>
+            </svg>
+            返回 PR 列表
+        </a>
+    </div>
+</div>
+{% endblock %}

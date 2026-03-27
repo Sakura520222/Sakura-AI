@@ -1,0 +1,60 @@
+<!DOCTYPE html>
+<html lang="zh-CN" class="light">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>登录 - Sakura AI Reviewer</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>tailwind.config = { darkMode: 'class' }</script>
+    <script>
+        if (localStorage.getItem('theme') === 'dark') document.documentElement.classList.add('dark');
+    </script>
+</head>
+<body class="bg-gray-50 dark:bg-gray-900 flex items-center justify-center min-h-screen">
+    <div class="w-full max-w-md px-4">
+        <!-- Logo -->
+        <div class="text-center mb-8">
+            <span class="text-5xl">🌸</span>
+            <h1 class="mt-4 text-2xl font-bold text-gray-900 dark:text-white">Sakura AI Reviewer</h1>
+            <p class="mt-2 text-gray-500 dark:text-gray-400">GitHub PR 智能审查平台</p>
+        </div>
+
+        <!-- 登录表单 -->
+        <div class="bg-white dark:bg-gray-800 rounded-2xl shadow-lg p-8 border border-gray-200 dark:border-gray-700">
+            {% if error %}
+            <div class="mb-4 p-3 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg text-red-700 dark:text-red-400 text-sm">
+                {{ error }}
+            </div>
+            {% endif %}
+
+            <form method="POST" action="/webui/auth/login">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+
+                <div class="mb-5">
+                    <label for="username" class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1.5">用户名</label>
+                    <input type="text" id="username" name="username" required
+                           class="w-full px-4 py-2.5 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-white focus:ring-2 focus:ring-pink-500 focus:border-transparent outline-none transition-all"
+                           placeholder="请输入用户名"
+                           value="{{ username | default('') }}">
+                </div>
+
+                <div class="mb-6">
+                    <label for="password" class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1.5">密码</label>
+                    <input type="password" id="password" name="password" required
+                           class="w-full px-4 py-2.5 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-white focus:ring-2 focus:ring-pink-500 focus:border-transparent outline-none transition-all"
+                           placeholder="请输入密码">
+                </div>
+
+                <button type="submit"
+                        class="w-full py-2.5 bg-gradient-to-r from-pink-500 to-purple-500 text-white font-medium rounded-lg hover:from-pink-600 hover:to-purple-600 focus:ring-4 focus:ring-pink-200 dark:focus:ring-pink-800 transition-all">
+                    登 录
+                </button>
+            </form>
+        </div>
+
+        <p class="mt-6 text-center text-xs text-gray-400 dark:text-gray-500">
+            Sakura AI Reviewer v{{ app_version }}
+        </p>
+    </div>
+</body>
+</html>

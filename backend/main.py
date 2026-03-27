@@ -1,7 +1,8 @@
 """Sakura AI Reviewer 主应用"""
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import RedirectResponse, JSONResponse
 from contextlib import asynccontextmanager
 from loguru import logger
 import sys
@@ -10,6 +11,7 @@ import asyncio
 from backend.core.config import get_settings
 from backend.models import init_db
 from backend.api import webhook
+from backend.webui.routes import webui_router
 from backend.telegram import start_telegram_bot, stop_telegram_bot
 
 # 配置日志
@@ -32,6 +34,10 @@ async def lifespan(app: FastAPI):
     logger.info(f"📊 日志级别: {settings.log_level}")
     logger.info(f"🌐 应用域名: {settings.app_domain}")
     logger.info(f"🤖 OpenAI模型: {settings.openai_model}")
+
+    # 检测默认 JWT 密钥
+    if settings.webui_secret_key == "change-me-in-production":
+        logger.warning("⚠️  WebUI JWT 密钥使用默认值！请设置 WEBUI_SECRET_KEY 环境变量，否则令牌可被伪造。")
 
     # 初始化数据库
     try:
@@ -88,9 +94,10 @@ app = FastAPI(
 )
 
 # 配置CORS
+_allowed_origins = settings.cors_allowed_origins if settings.cors_allowed_origins else [f"https://{settings.app_domain}"]
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # 生产环境应该限制具体域名
+    allow_origins=_allowed_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -98,6 +105,15 @@ app.add_middleware(
 
 # 注册路由
 app.include_router(webhook.router, prefix="/api/webhook", tags=["Webhook"])
+app.include_router(webui_router)
+
+
+# WebUI 认证异常处理：页面路由 401 时重定向到登录页
+@app.exception_handler(HTTPException)
+async def auth_exception_handler(request: Request, exc: HTTPException):
+    if exc.status_code == 401 and request.url.path.startswith("/webui"):
+        return RedirectResponse(url="/webui/auth/login", status_code=302)
+    return JSONResponse(status_code=exc.status_code, content={"detail": exc.detail})
 
 
 @app.get("/")
@@ -105,7 +121,7 @@ async def root():
     """根路径"""
     return {
         "service": "Sakura AI Reviewer",
-        "version": "1.0.0",
+        "version": "2.4.0",
         "status": "running",
         "docs": "/docs",
     }

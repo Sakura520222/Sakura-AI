@@ -532,3 +532,23 @@ async def close_async_db():
     if async_engine:
         await async_engine.dispose()
         logger.info("异步数据库连接已关闭")
+
+
+class WebUIConfig(Base):
+    """用户 WebUI 偏好设置"""
+
+    __tablename__ = "webui_configs"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    user_id = Column(Integer, unique=True, nullable=False)
+    theme = Column(String(10), default="light")  # light / dark
+    language = Column(String(10), default="zh-CN")
+    items_per_page = Column(Integer, default=20)
+
+    created_at = Column(TIMESTAMP, default=datetime.utcnow, nullable=False)
+    updated_at = Column(
+        TIMESTAMP, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False
+    )
+
+    def __repr__(self):
+        return f"<WebUIConfig(user_id={self.user_id}, theme={self.theme})>"
