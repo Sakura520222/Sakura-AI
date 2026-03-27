@@ -56,6 +56,7 @@ CONTEXT_SAFETY_THRESHOLD=0.8  # 上下文安全阈值（0-1），默认使用 80
   - `MODEL_CONTEXT_WINDOW=200` 表示 200K tokens
 
 **使用场景**：
+
 - 当自动检测失败时手动指定
 - 使用自定义模型或私有部署的模型
 - 需要限制上下文使用量以节省成本
@@ -67,6 +68,7 @@ CONTEXT_SAFETY_THRESHOLD=0.8  # 上下文安全阈值（0-1），默认使用 80
 - **可选值**：true / false
 
 **使用场景**：
+
 - 启用：自动获取最新的模型信息（推荐）
 - 禁用：仅使用预定义映射表，减少 API 调用
 
@@ -78,6 +80,7 @@ CONTEXT_SAFETY_THRESHOLD=0.8  # 上下文安全阈值（0-1），默认使用 80
 - **建议**：0.7 - 0.9
 
 **使用场景**：
+
 - 预留空间给输出 tokens
 - 避免达到模型硬限制
 - 提高稳定性
@@ -231,6 +234,7 @@ CONTEXT_SAFETY_THRESHOLD=0.6  # 使用更少的上下文
 **症状**：日志显示"使用默认值: 128K tokens"
 
 **解决方案**：
+
 1. 检查模型名称是否正确
 2. 手动设置 `MODEL_CONTEXT_WINDOW`
 3. 向预定义列表添加新模型
@@ -240,6 +244,7 @@ CONTEXT_SAFETY_THRESHOLD=0.6  # 使用更少的上下文
 **症状**：日志显示"从 API 获取模型上下文失败"
 
 **解决方案**：
+
 1. 检查网络连接
 2. 检查 API 密钥是否有效
 3. 设置 `AUTO_FETCH_MODEL_CONTEXT=false`
@@ -249,6 +254,7 @@ CONTEXT_SAFETY_THRESHOLD=0.6  # 使用更少的上下文
 **症状**：AI 返回不完整的审查结果
 
 **解决方案**：
+
 1. 检查 `CONTEXT_SAFETY_THRESHOLD` 是否过低
 2. 考虑使用上下文更大的模型
 3. 确保已去除 diff 截断限制
@@ -289,6 +295,7 @@ CONTEXT_SAFETY_THRESHOLD=0.6  # 使用更少的上下文
 #### 压缩触发条件
 
 每次执行工具调用后，系统会检查：
+
 ```python
 当前对话历史 tokens > 安全上下文窗口 × 压缩阈值
 ```
@@ -381,6 +388,7 @@ INFO: AI审查完成（使用了5轮对话），策略: standard
 **症状**：日志显示"压缩失败，回退到简化模式"
 
 **解决方案**：
+
 - 这是正常的容错机制
 - 系统会自动使用简化模式继续审查
 - 检查网络连接和 API 密钥
@@ -390,11 +398,13 @@ INFO: AI审查完成（使用了5轮对话），策略: standard
 **症状**：每次审查都触发多次压缩
 
 **可能原因**：
+
 - PR 规模很大
 - AI 频繁调用工具
 - 压缩阈值设置过低
 
 **解决方案**：
+
 - 提高压缩阈值：`CONTEXT_COMPRESSION_THRESHOLD=0.9`
 - 检查是否可以优化工具调用逻辑
 
@@ -403,10 +413,12 @@ INFO: AI审查完成（使用了5轮对话），策略: standard
 **症状**：压缩后的审查结果不如之前
 
 **可能原因**：
+
 - 压缩过于激进
 - 丢失了关键信息
 
 **解决方案**：
+
 - 降低压缩阈值：`CONTEXT_COMPRESSION_THRESHOLD=0.8`
 - 检查压缩 prompt 是否合理
 - 调整 `CONTEXT_SAFETY_THRESHOLD`
@@ -414,10 +426,12 @@ INFO: AI审查完成（使用了5轮对话），策略: standard
 ### 最佳实践
 
 1. **保持默认配置**：
+
    ```env
    ENABLE_CONTEXT_COMPRESSION=true
    CONTEXT_COMPRESSION_THRESHOLD=0.85
    ```
+
    默认配置适用于大多数场景。
 
 2. **监控日志**：

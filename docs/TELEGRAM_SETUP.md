@@ -258,6 +258,7 @@ A: 使用 [@userinfobot](https://t.me/userinfobot) 机器人获取
 ### Q: 配额如何重置？
 
 A: 系统自动重置
+
 - 每日：每天 00:00
 - 每周：每周一 00:00
 - 每月：每月 1 日 00:00
@@ -273,6 +274,7 @@ A: 使用 `/user_remove <github_username>` 命令
 ### Q: Bot 没有响应怎么办？
 
 A: 检查以下几点：
+
 1. Bot Token 是否正确
 2. 环境变量是否配置
 3. 应用是否正常运行
