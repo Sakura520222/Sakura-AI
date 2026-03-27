@@ -1,0 +1,81 @@
+{% extends "base.html" %}
+
+{% block title %}用户管理 - Sakura AI Reviewer{% endblock %}
+
+{% block content %}
+<div class="space-y-4">
+    <!-- 页面标题 -->
+    <div>
+        <h1 class="text-2xl font-bold">用户管理</h1>
+        <p class="mt-1 text-sm text-gray-500 dark:text-gray-400">管理系统中的所有用户和权限</p>
+    </div>
+
+    <!-- 提示消息 -->
+    {% if request.query_params.get('saved') %}
+    <div class="bg-green-50 dark:bg-green-900/20 border border-green-200 dark:border-green-800 rounded-lg p-3 text-sm text-green-700 dark:text-green-400">
+        操作成功
+    </div>
+    {% endif %}
+
+    <!-- 用户列表（通过 HTMX 加载） -->
+    <div id="user-list-container" hx-get="/webui/users/list-fragment" hx-trigger="load" hx-swap="innerHTML">
+        <div class="text-center py-8 text-gray-400">
+            <svg class="w-8 h-8 mx-auto animate-spin" fill="none" viewBox="0 0 24 24">
+                <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/>
+                <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/>
+            </svg>
+            <p class="mt-2">加载中...</p>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_scripts %}
+<script>
+function loadUserPage(pageNum) {
+    const container = document.getElementById('user-list-container');
+    const params = new URLSearchParams();
+    const urlParams = new URLSearchParams(window.location.search);
+    if (urlParams.get('search')) params.set('search', urlParams.get('search'));
+    if (urlParams.get('role')) params.set('role', urlParams.get('role'));
+    params.set('page', pageNum);
+
+    container.innerHTML = '<div class="text-center py-8 text-gray-400"><svg class="w-8 h-8 mx-auto animate-spin" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg><p class="mt-2">加载中...</p></div>';
+
+    fetch('/webui/users/list-fragment?' + params.toString(), {
+        headers: { 'HX-Request': 'true' }
+    })
+    .then(r => r.text())
+    .then(html => {
+        container.innerHTML = html;
+        history.replaceState(null, '', '?' + params.toString());
+    })
+    .catch(err => console.error('加载失败:', err));
+}
+
+document.addEventListener('submit', function(e) {
+    if (e.target.id === 'user-filter-form') {
+        e.preventDefault();
+        const formData = new FormData(e.target);
+        const params = new URLSearchParams();
+        for (const [key, value] of formData.entries()) {
+            if (value) params.set(key, value);
+        }
+        params.set('page', '1');
+
+        const container = document.getElementById('user-list-container');
+        container.innerHTML = '<div class="text-center py-8 text-gray-400"><svg class="w-8 h-8 mx-auto animate-spin" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg><p class="mt-2">加载中...</p></div>';
+
+        fetch('/webui/users/list-fragment?' + params.toString(), {
+            headers: { 'HX-Request': 'true' }
+        })
+        .then(r => r.text())
+        .then(html => {
+            container.innerHTML = html;
+            history.replaceState(null, '', '?' + params.toString());
+        })
+        .catch(err => console.error('加载失败:', err));
+    }
+});
+</script>
+{% endblock %}

@@ -8,7 +8,10 @@ from fastapi.templating import Jinja2Templates
 from sqlalchemy.ext.asyncio import AsyncSession
 from itsdangerous import URLSafeTimedSerializer, BadSignature
 
+from sqlalchemy import select
+
 from backend.models import database as db_module
+from backend.models.database import WebUIConfig
 from backend.webui.auth import decode_access_token
 
 
@@ -71,12 +74,17 @@ async def get_current_user(request: Request) -> dict:
     if not payload:
         raise HTTPException(status_code=401, detail="登录已过期")
 
+    # 校验必要字段
+    user_id = payload.get("user_id")
+    if not user_id:
+        raise HTTPException(status_code=401, detail="无效的登录凭证")
+
     return {
-        "sub": payload.get("sub"),          # github_username
+        "sub": payload.get("sub") or "",     # github_username
         "role": payload.get("role", "user"),
-        "user_id": payload.get("user_id"),  # telegram_users.id
-        "github_id": payload.get("github_id"),  # GitHub numeric ID
-        "avatar_url": payload.get("avatar_url"),  # GitHub 头像
+        "user_id": user_id,
+        "github_id": payload.get("github_id"),
+        "avatar_url": payload.get("avatar_url"),
     }
 
 
@@ -99,3 +107,27 @@ async def require_super_admin(request: Request) -> dict:
     if user["role"] != "super_admin":
         raise HTTPException(status_code=403, detail="权限不足")
     return user
+
+
+# ========== 用户偏好 ==========
+async def get_user_preferences(request: Request, db: AsyncSession = Depends(get_db)):
+    """获取当前用户的 WebUI 偏好设置，未配置时返回默认值"""
+    token = request.cookies.get("webui_token")
+    if not token:
+        return {"language": "zh-CN", "items_per_page": 20}
+
+    payload = decode_access_token(token)
+    user_id = payload.get("user_id") if payload else None
+    if not user_id:
+        return {"language": "zh-CN", "items_per_page": 20}
+
+    result = await db.execute(
+        select(WebUIConfig).where(WebUIConfig.user_id == user_id)
+    )
+    config = result.scalar_one_or_none()
+    if config:
+        return {
+            "language": config.language or "zh-CN",
+            "items_per_page": config.items_per_page or 20,
+        }
+    return {"language": "zh-CN", "items_per_page": 20}
