@@ -22,6 +22,7 @@ celery==5.3.6
 redis==5.0.1
 
 # 工具库
+typing-extensions>=4.5.0
 python-dotenv==1.0.0
 pyyaml==6.0.1
 pydantic==2.5.3
