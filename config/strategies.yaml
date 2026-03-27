@@ -918,7 +918,7 @@ context_enhancement:
   enable_ai_tools: true
   
   # AI工具的最大调用次数（防止无限循环）
-  max_tool_iterations: 20
+  max_tool_iterations: 30
   
   # 单个文件最大读取大小（字节）
   max_file_size: 200000  # 200KB

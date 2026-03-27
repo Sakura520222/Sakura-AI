@@ -1,0 +1,58 @@
+# PR 标签配置
+# 标签定义：当仓库没有标签时使用的默认标签
+# 推荐设置：AI 标签推荐行为控制
+
+labels:
+  bug:
+    color: "d73a4a"
+    description: "Something isn't working"
+  documentation:
+    color: "0075ca"
+    description: "Improvements or additions to documentation"
+  duplicate:
+    color: "cfd3d7"
+    description: "This issue or pull request already exists"
+  enhancement:
+    color: "a2eeef"
+    description: "New feature or request"
+  "good first issue":
+    color: "7057ff"
+    description: "Good for newcomers"
+  "help wanted":
+    color: "008672"
+    description: "Extra attention is needed"
+  invalid:
+    color: "e4e669"
+    description: "This doesn't seem right"
+  question:
+    color: "d876e3"
+    description: "Further information is requested"
+  wontfix:
+    color: "ffffff"
+    description: "This will not be worked on"
+  refactor:
+    color: "fbca04"
+    description: "Code refactoring (non-functional change)"
+  performance:
+    color: "5319e7"
+    description: "Performance optimization"
+  test:
+    color: "bfd4f2"
+    description: "Test related changes"
+  dependencies:
+    color: "0366d6"
+    description: "Dependency updates"
+  ci:
+    color: "ffefdb"
+    description: "CI/CD configuration changes"
+  style:
+    color: "c5def5"
+    description: "Code style adjustments"
+  build:
+    color: "ededed"
+    description: "Build system changes"
+
+recommendation:
+  enabled: true
+  confidence_threshold: 0.7
+  auto_create: false

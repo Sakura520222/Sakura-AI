@@ -6,8 +6,6 @@ from loguru import logger
 from backend.models.database import ReviewDecision
 from backend.core.config import get_strategy_config
 
-strategy_config = get_strategy_config()
-
 
 class DecisionEngine:
     """审查决策引擎 - 根据AI评分和问题严重程度做出审查决策"""
@@ -19,7 +17,7 @@ class DecisionEngine:
     def _load_policy(self) -> Dict[str, Any]:
         """从配置加载审查策略"""
         try:
-            policy = strategy_config.config.get("review_policy", {})
+            policy = get_strategy_config().config.get("review_policy", {})
 
             # 设置默认值
             defaults = {

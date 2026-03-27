@@ -21,7 +21,6 @@ class CommitInfo(TypedDict):
     author: str
 
 settings = get_settings()
-strategy_config = get_strategy_config()
 
 
 @dataclass
@@ -153,11 +152,11 @@ class PRAnalyzer:
                     deletions=file.deletions,
                     changes=file.changes,
                     patch=file.patch if hasattr(file, "patch") else None,
-                    is_code_file=strategy_config.is_code_file(file.filename),
+                    is_code_file=get_strategy_config().is_code_file(file.filename),
                 )
 
                 # 检查是否应该跳过
-                if strategy_config.should_skip_file(file.filename):
+                if get_strategy_config().should_skip_file(file.filename):
                     logger.debug(f"跳过文件: {file.filename}")
                     continue
 
@@ -181,7 +180,7 @@ class PRAnalyzer:
             if should_skip:
                 strategy = "skip"
             else:
-                strategy = strategy_config.determine_strategy(
+                strategy = get_strategy_config().determine_strategy(
                     len(code_files), code_changes
                 )
 
@@ -379,7 +378,7 @@ class PRAnalyzer:
             tree = repo.get_git_tree(repo.default_branch, recursive=True)
 
             # 获取跳过路径配置
-            skip_paths = strategy_config.get_file_filters().get("skip_paths", [])
+            skip_paths = get_strategy_config().get_file_filters().get("skip_paths", [])
 
             structure = []
             file_count = 0
@@ -466,7 +465,7 @@ class PRAnalyzer:
             # 对于大型PR（deep策略），只包含主要文件
             elif strategy_name == "deep":
                 # 分批处理
-                batch_config = strategy_config.get_batch_config()
+                batch_config = get_strategy_config().get_batch_config()
                 max_files_per_batch = batch_config.get("max_files_per_batch", 10)
 
                 # 对文件按重要性排序（变更量大的优先）
