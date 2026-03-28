@@ -57,7 +57,7 @@ def _validate_label(name: str, color: str):
 def _get_config_lock(path: str) -> asyncio.Lock:
     """获取指定配置文件的异步锁（单例，防止并发 TOCTOU）"""
     lock = _config_locks.setdefault(path, asyncio.Lock())
-    if len(_config_locks) > 100 and not lock.locked():
+    if len(_config_locks) > 100:
         _config_locks.clear()
         lock = _config_locks.setdefault(path, asyncio.Lock())
     return lock

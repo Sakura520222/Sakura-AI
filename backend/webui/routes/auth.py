@@ -58,6 +58,9 @@ def _save_oauth_state(state: str, redirect: str):
         logger.warning(f"Redis 存储失败，使用内存回退: {e}")
         if len(_oauth_states_fallback) > _MAX_FALLBACK_STATES:
             _cleanup_expired_states()
+        if len(_oauth_states_fallback) >= _MAX_FALLBACK_STATES:
+            logger.warning("OAuth fallback cache 已满，清理后仍无空间，清空所有状态")
+            _oauth_states_fallback.clear()
         _oauth_states_fallback[state] = {"redirect": redirect, "expires": time.time() + _OAUTH_STATE_TTL}
 
 
