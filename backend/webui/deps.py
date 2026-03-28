@@ -1,16 +1,20 @@
 """WebUI FastAPI 依赖注入"""
 
+import time
 from typing import Optional
 from functools import lru_cache
 
-from fastapi import Request, HTTPException, Depends
+from fastapi import Request, HTTPException, Depends, Form
+from fastapi.responses import HTMLResponse
 from fastapi.templating import Jinja2Templates
+from sqlalchemy import Select
 from sqlalchemy.ext.asyncio import AsyncSession
 from itsdangerous import URLSafeTimedSerializer, BadSignature
 
-from sqlalchemy import select
+from sqlalchemy import select, or_
 
 from backend.models import database as db_module
+from backend.models.database import PRReview
 from backend.models.database import WebUIConfig
 from backend.webui.auth import decode_access_token
 
@@ -19,7 +23,47 @@ from backend.webui.auth import decode_access_token
 @lru_cache()
 def get_templates() -> Jinja2Templates:
     """获取 Jinja2 模板引擎单例"""
-    return Jinja2Templates(directory="backend/webui/templates")
+    templates = Jinja2Templates(directory="backend/webui/templates", autoescape=True)
+    templates.env.globals["percentage"] = _percentage_filter
+    return templates
+
+
+def _percentage_filter(used, quota) -> int:
+    """计算配额使用百分比（0-100）"""
+    if quota and quota > 0:
+        return min(int((used / quota) * 100), 100)
+    return 0
+
+
+def build_review_search_filter(search: str):
+    """构建 PRReview 多字段搜索过滤条件（title/repo_name/repo_owner/author）
+
+    Args:
+        search: 搜索关键词，为空时返回 None
+    Returns:
+        or_() 过滤表达式或 None
+    """
+    if not search:
+        return None
+    escaped = search.replace("%", r"\%").replace("_", r"\_")
+    return or_(
+        PRReview.title.ilike(f"%{escaped}%", escape="\\"),
+        PRReview.repo_name.ilike(f"%{escaped}%", escape="\\"),
+        PRReview.repo_owner.ilike(f"%{escaped}%", escape="\\"),
+        PRReview.author.ilike(f"%{escaped}%", escape="\\"),
+    )
+
+
+async def paginate(
+    db: AsyncSession, query: Select, count_query: Select, page: int, per_page: int,
+) -> tuple[list, int, int, int]:
+    """执行分页查询，返回 (items, total, total_pages, page)"""
+    total_result = await db.execute(count_query)
+    total = total_result.scalar() or 0
+    total_pages = max(1, (total + per_page - 1) // per_page)
+    page = min(page, total_pages)
+    result = await db.execute(query.offset((page - 1) * per_page).limit(per_page))
+    return result.scalars().all(), total, total_pages, page
 
 
 # ========== 数据库会话 ==========
@@ -55,6 +99,34 @@ def validate_csrf_token(token: str) -> bool:
         return True
     except BadSignature:
         return False
+
+
+async def require_csrf(csrf_token: str = Form(...)) -> str:
+    """FastAPI 依赖：验证 CSRF Token，失败时抛出 403"""
+    if not validate_csrf_token(csrf_token):
+        raise HTTPException(status_code=403, detail="CSRF 验证失败")
+    return csrf_token
+
+
+def error_page(
+    request: Request,
+    status_code: int = 404,
+    title: str = "页面未找到",
+    message: str = "请求的资源不存在",
+    user: dict | None = None,
+    user_prefs: dict | None = None,
+) -> HTMLResponse:
+    """渲染统一的错误页面"""
+    templates = get_templates()
+    return templates.TemplateResponse("error.html", {
+        "request": request,
+        "status_code": status_code,
+        "title": title,
+        "message": message,
+        "current_user": user,
+        "csrf_token": get_csrf_serializer().dumps({}),
+        "user_prefs": user_prefs or {"language": "zh-CN", "items_per_page": 20},
+    }, status_code=status_code)
 
 
 # ========== 认证 ==========
@@ -110,8 +182,12 @@ async def require_super_admin(request: Request) -> dict:
 
 
 # ========== 用户偏好 ==========
+_USER_PREFS_CACHE: dict[int, tuple[dict, float]] = {}
+_USER_PREFS_TTL = 300  # 缓存 5 分钟
+
+
 async def get_user_preferences(request: Request, db: AsyncSession = Depends(get_db)):
-    """获取当前用户的 WebUI 偏好设置，未配置时返回默认值"""
+    """获取当前用户的 WebUI 偏好设置，未配置时返回默认值（带内存缓存）"""
     token = request.cookies.get("webui_token")
     if not token:
         return {"language": "zh-CN", "items_per_page": 20}
@@ -121,13 +197,45 @@ async def get_user_preferences(request: Request, db: AsyncSession = Depends(get_
     if not user_id:
         return {"language": "zh-CN", "items_per_page": 20}
 
+    # 检查缓存
+    cached = _USER_PREFS_CACHE.get(user_id)
+    if cached:
+        prefs, ts = cached
+        if time.time() - ts < _USER_PREFS_TTL:
+            return prefs
+
     result = await db.execute(
         select(WebUIConfig).where(WebUIConfig.user_id == user_id)
     )
     config = result.scalar_one_or_none()
-    if config:
-        return {
-            "language": config.language or "zh-CN",
-            "items_per_page": config.items_per_page or 20,
-        }
-    return {"language": "zh-CN", "items_per_page": 20}
+    prefs = {
+        "language": config.language or "zh-CN",
+        "items_per_page": config.items_per_page or 20,
+    } if config else {"language": "zh-CN", "items_per_page": 20}
+
+    _USER_PREFS_CACHE[user_id] = (prefs, time.time())
+    return prefs
+
+
+# ========== 活跃仓库缓存 ==========
+_ACTIVE_REPOS_CACHE: tuple[list[str], float] | None = None
+_ACTIVE_REPOS_TTL = 300  # 缓存 5 分钟
+
+
+async def get_active_repos(db: AsyncSession) -> list[str]:
+    """获取活跃仓库名称列表（带内存缓存）"""
+    global _ACTIVE_REPOS_CACHE
+    if _ACTIVE_REPOS_CACHE:
+        repos, ts = _ACTIVE_REPOS_CACHE
+        if time.time() - ts < _ACTIVE_REPOS_TTL:
+            return repos
+
+    from backend.models.telegram_models import RepoSubscription
+    result = await db.execute(
+        select(RepoSubscription.repo_name)
+        .where(RepoSubscription.is_active == True)
+        .order_by(RepoSubscription.repo_name)
+    )
+    repos = [r[0] for r in result.all()]
+    _ACTIVE_REPOS_CACHE = (repos, time.time())
+    return repos

@@ -9,7 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from backend.models.database import WebUIConfig
 from backend.webui.deps import (
     require_auth, get_db, get_templates, get_csrf_serializer,
-    validate_csrf_token, get_user_preferences,
+    require_csrf, get_user_preferences,
 )
 
 router = APIRouter(prefix="/settings", tags=["WebUI Settings"])
@@ -40,15 +40,11 @@ async def save_settings(
     request: Request,
     db: AsyncSession = Depends(get_db),
     user: dict = Depends(require_auth),
-    csrf_token: str = Form(...),
+    csrf_token: str = Depends(require_csrf),
     language: str = Form(...),
     items_per_page: int = Form(...),
-):
+) -> RedirectResponse:
     """保存个人设置"""
-    if not validate_csrf_token(csrf_token):
-        from fastapi import HTTPException
-        raise HTTPException(status_code=403, detail="CSRF 验证失败")
-
     # 验证参数范围
     if language not in ("zh-CN", "en") or items_per_page not in (10, 20, 50, 100):
         return RedirectResponse(url="/webui/settings/?error=1", status_code=302)

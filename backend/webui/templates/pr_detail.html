@@ -90,9 +90,9 @@
 
         <!-- 时间信息 -->
         <div class="mt-4 pt-4 border-t border-gray-200 dark:border-gray-700 flex flex-wrap gap-4 text-xs text-gray-500 dark:text-gray-400">
-            <span>创建时间: {{ review.created_at.strftime('%Y-%m-%d %H:%M:%S') if review.created_at else '-' }}</span>
-            {% if review.completed_at %}
-            <span>完成时间: {{ review.completed_at.strftime('%Y-%m-%d %H:%M:%S') }}</span>
+            <span>创建时间: {{ created_at_str }}</span>
+            {% if completed_at_str %}
+            <span>完成时间: {{ completed_at_str }}</span>
             {% endif %}
             {% if review.branch %}
             <span>分支: {{ review.branch }}</span>
