@@ -204,6 +204,7 @@ async def get_user_preferences(request: Request, db: AsyncSession = Depends(get_
     if cached:
         prefs, ts = cached
         if time.time() - ts < _USER_PREFS_TTL:
+            _USER_PREFS_CACHE.move_to_end(user_id)
             return prefs
 
     result = await db.execute(

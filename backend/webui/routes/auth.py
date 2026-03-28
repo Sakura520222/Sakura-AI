@@ -26,6 +26,15 @@ APP_VERSION = "2.4.0"
 _OAUTH_STATE_TTL = 600  # state 有效期 10 分钟
 _OAUTH_STATE_KEY_PREFIX = "oauth:state:"
 _oauth_states_fallback: dict[str, dict] = {}  # Redis 故障时的内存回退
+_MAX_FALLBACK_STATES = 1000
+
+
+def _cleanup_expired_states():
+    """清理过期的 OAuth state"""
+    now = time.time()
+    expired = [s for s, d in _oauth_states_fallback.items() if d.get("expires", 0) <= now]
+    for s in expired:
+        _oauth_states_fallback.pop(s, None)
 
 
 def _oauth_error(request: Request, error_msg: str, has_oauth: bool = True, status_code: int = 400):
@@ -47,6 +56,8 @@ def _save_oauth_state(state: str, redirect: str):
         r.setex(key, _OAUTH_STATE_TTL, json.dumps({"redirect": redirect}))
     except Exception as e:
         logger.warning(f"Redis 存储失败，使用内存回退: {e}")
+        if len(_oauth_states_fallback) > _MAX_FALLBACK_STATES:
+            _cleanup_expired_states()
         _oauth_states_fallback[state] = {"redirect": redirect, "expires": time.time() + _OAUTH_STATE_TTL}
 
 
