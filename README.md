@@ -61,6 +61,17 @@
 - **详细摘要**：变更概述和主要发现
 - **可操作建议**：提供具体的改进方案
 
+### 🖥️ WebUI 管理界面
+
+- **📊 仪表盘**：统计概览、最近审查记录，一目了然
+- **📋 PR 审查管理**：列表、详情、文件级评论查看，支持搜索和筛选
+- **👥 用户与权限管理**：角色管理（超级管理员/管理员/普通用户）、配额设置
+- **📂 仓库白名单管理**：可视化管理授权仓库
+- **⚙️ 配置管理**：在线编辑审查策略和标签配置，无需修改 YAML
+- **🔄 审查队列监控**：实时查看审查队列状态和统计
+- **🔐 GitHub OAuth 登录**：安全登录，与 Telegram 用户体系打通
+- **🌓 明暗主题切换**：支持 Light/Dark 主题，跟随系统偏好
+
 ### 📚 仓库级知识库（RAG）
 
 - **文档语义检索**：基于向量相似度检索项目文档
@@ -103,15 +114,19 @@
 ```
 ┌─────────────────────────────────────────────────────────────┐
 │                        GitHub PR                             │
-└──────────────────────┬──────────────────────────────────────┘
-                       │ Webhook
-                       ▼
+└──────────┬───────────────────────────────┬──────────────────┘
+           │ Webhook                       │ OAuth / API
+           ▼                               ▼
 ┌─────────────────────────────────────────────────────────────┐
 │                    FastAPI Web Server                        │
 │  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐      │
 │  │   Webhook    │  │   PR 分析器   │  │  评论服务    │      │
 │  │   Handler    │  │  (策略选择)   │  │  (发布结果)  │      │
 │  └──────────────┘  └──────────────┘  └──────────────┘      │
+│  ┌──────────────────────────────────────────────────────┐   │
+│  │              WebUI 管理界面 (Jinja2 + HTMX)          │   │
+│  │  仪表盘 · PR管理 · 用户管理 · 仓库管理 · 配置管理   │   │
+│  └──────────────────────────────────────────────────────┘   │
 └──────────────────────┬──────────────────────────────────────┘
                        │
                        ▼
@@ -124,24 +139,25 @@
 │  │  │   工具     │  │   工具      │  │   推理     │    │   │
 │  │  └────────────┘  └────────────┘  └────────────┘    │   │
 │  └──────────────────────────────────────────────────────┘   │
-└─────────────────────────────────────────────────────────────┘
+└──────────────────────┬──────────────────────────────────────┘
                        │
                        ▼
 ┌─────────────────────────────────────────────────────────────┐
 │                    数据存储层                                │
-│  ┌──────────────┐  ┌──────────────┐                        │
-│  │    MySQL     │  │    Redis     │                        │
-│  │  (审查记录)   │  │   (队列)     │                        │
-│  └──────────────┘  └──────────────┘                        │
+│  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐      │
+│  │    MySQL     │  │    Redis     │  │  ChromaDB    │      │
+│  │  (审查记录)   │  │   (队列)     │  │  (向量检索)  │      │
+│  └──────────────┘  └──────────────┘  └──────────────┘      │
 └─────────────────────────────────────────────────────────────┘
 ```
 
 **技术栈**：
 
 - **后端框架**：FastAPI (Python 3.11+)
-- **AI 模型**：DeepSeek-R1 (推理模式)
-- **数据库**：MySQL 8.0 + Redis
-- **GitHub 集成**：GitHub App (PyGithub)
+- **前端界面**：Jinja2 + Tailwind CSS + HTMX
+- **AI 模型**：DeepSeek-R1 / OpenAI 兼容 API（推理模式）
+- **数据库**：MySQL 8.0 + Redis + ChromaDB（向量存储）
+- **GitHub 集成**：GitHub App (PyGithub) + OAuth
 - **部署**：Docker + Docker Compose
 
 ---
@@ -198,6 +214,15 @@ REDIS_URL=redis://host.docker.internal:6379/0
 # 应用配置
 APP_DOMAIN=your-domain.com
 APP_PORT=8000
+
+# WebUI 配置
+WEBUI_SECRET_KEY=your-random-secret-key-change-in-production
+
+# GitHub OAuth 配置（用于 WebUI 登录）
+# 需要在 GitHub Settings > Developer settings > OAuth Apps 中创建
+GITHUB_OAUTH_CLIENT_ID=your-github-oauth-client-id
+GITHUB_OAUTH_CLIENT_SECRET=your-github-oauth-client-secret
+GITHUB_OAUTH_REDIRECT_URI=https://your-domain.com/webui/auth/callback
 ```
 
 ### 4. 创建 GitHub App
@@ -268,7 +293,22 @@ MIIEpAIBAAKCAQEA...
 3. 选择要启用审查的仓库（可以选择"所有仓库"或特定仓库）
 4. 点击 **"Install"** 完成安装
 
-#### 4.5 验证配置
+#### 4.5 创建 GitHub OAuth App（WebUI 登录）
+
+WebUI 使用 GitHub OAuth 进行登录认证，需要额外创建一个 OAuth App：
+
+1. 访问 [GitHub Developer Settings](https://github.com/settings/developers)
+2. 点击 **"New OAuth App"** 按钮
+3. 填写信息：
+   - **Application name**: `Sakura AI Reviewer WebUI`
+   - **Homepage URL**: `https://your-domain.com`
+   - **Authorization callback URL**: `https://your-domain.com/webui/auth/callback`
+4. 点击 **"Register application"**
+5. 生成 **Client Secret**，将 `Client ID` 和 `Client Secret` 填入 `.env` 的对应配置项
+
+> **注意**：WebUI 登录需要用户已在 Telegram Bot 中注册（通过 `/user_add` 命令添加）。
+
+#### 4.6 验证配置
 
 创建一个测试 Pull Request，检查是否收到 AI 审查评论：
 
@@ -305,7 +345,7 @@ cd docker
 docker-compose up -d
 ```
 
-### 7. 验证部署
+### 8. 验证部署
 
 ```bash
 curl http://your-domain.com:8000/health
@@ -319,6 +359,8 @@ curl http://your-domain.com:8000/health
   "service": "Sakura AI Reviewer"
 }
 ```
+
+访问 WebUI：`https://your-domain.com/webui/`，使用 GitHub 账号登录。
 
 ---
 
@@ -347,6 +389,20 @@ curl http://your-domain.com:8000/health
 - **🔴 严重问题**：必须修复的问题
 - **🟡 重要建议**：推荐改进
 - **💡 优化建议**：代码优化建议
+
+### 通过 WebUI 管理
+
+除了通过 Telegram Bot 管理外，还可以使用 WebUI 管理界面：
+
+1. 访问 `https://your-domain.com/webui/`
+2. 使用 GitHub 账号登录（需先在 Telegram Bot 中注册）
+3. 根据角色权限，可以使用以下功能：
+   - **仪表盘**：查看审查统计和最近活动
+   - **PR 管理**：浏览审查记录，查看文件级评论
+   - **用户管理**（管理员）：添加/编辑用户、设置配额
+   - **仓库管理**（管理员）：管理仓库白名单
+   - **配置管理**（超级管理员）：在线编辑审查策略和标签
+   - **审查队列**（管理员）：实时监控审查队列状态
 
 ### 标签推荐说明
 
@@ -1244,10 +1300,15 @@ Sakura-AI-Reviewer/
 │   │   ├── ai_reviewer.py      # AI 审查引擎
 │   │   ├── pr_analyzer.py      # PR 分析器
 │   │   └── comment_service.py  # 评论服务
-│   └── workers/       # 后台任务
+│   ├── webui/         # WebUI 管理界面
+│   │   ├── routes/    # 页面路由（仪表盘、PR、用户、配置等）
+│   │   ├── templates/ # Jinja2 HTML 模板
+│   │   └── static/    # 静态资源
+│   ├── workers/       # 后台任务
+│   └── telegram/      # Telegram Bot
 ├── config/            # 配置文件
 ├── docker/            # Docker 配置
-└── logs/              # 日志文件
+└── docs/              # 项目文档
 ```
 
 ---
@@ -1265,14 +1326,14 @@ Sakura-AI-Reviewer/
 - [x] 智能标签推荐系统
 - [x] Telegram Bot 集成（通知、配额、权限管理）
 - [x] 智能审查批准（多维度决策引擎）
+- [x] 行内评论（文件级代码审查）
+- [x] 审查历史记录和趋势分析
+- [x] WebUI 管理界面（仪表盘、PR管理、用户管理、配置管理、队列监控）
 
 ### 计划中 🚧
 
-- [ ] 行内评论（针对特定代码行）
-- [ ] 审查历史记录和趋势分析
 - [ ] 支持更多 AI 模型（Gemini、Claude）
 - [ ] 审查结果导出（PDF/Markdown）
-- [ ] Web UI 管理界面
 - [ ] 审批链（支持多个批准）
 
 ### 未来构想 💡
@@ -1292,6 +1353,7 @@ Sakura-AI-Reviewer/
 - [审查批准功能总结](docs/APPROVAL_FEATURE_SUMMARY.md) - 智能审查批准系统说明
 - [手动审查功能](docs/MANUAL_REVIEW_FEATURE.md) - 超级管理员手动触发审查功能
 - [模型上下文管理功能](docs/MODEL_CONTEXT_FEATURE.md) - AI 模型上下文和压缩功能说明
+- [WebUI 设计文档](docs/plans/2024-03-27-webui-design.md) - WebUI 管理界面设计规范
 
 ---
 
