@@ -638,7 +638,7 @@ async def cmd_review(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
 
             if bot_username:
-                deleted_comments = github_app.delete_all_bot_comments(
+                deleted_result = github_app.delete_all_bot_comments(
                     pr_info["repo_owner"],
                     pr_info["repo_name"],
                     pr_info["pr_number"],
@@ -650,10 +650,16 @@ async def cmd_review(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     pr_info["pr_number"],
                     bot_username,
                 )
-                if deleted_comments > 0 or dismissed_reviews > 0:
+                total_deleted = (
+                    deleted_result["issue_comments"]
+                    + deleted_result["review_comments"]
+                )
+                if total_deleted > 0 or dismissed_reviews > 0:
                     logger.info(
-                        f"已清理GitHub旧内容: 删除 {deleted_comments} 条评论, "
-                        f"撤回 {dismissed_reviews} 条Review"
+                        f"已清理GitHub旧内容: "
+                        f"Issue评论={deleted_result['issue_comments']}, "
+                        f"Review评论={deleted_result['review_comments']}, "
+                        f"撤回Review={dismissed_reviews}"
                     )
 
         except Exception as delete_error:
@@ -711,8 +717,10 @@ async def cmd_review(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # 9. 发送确认消息
         if old_review_deleted:
             cleanup_parts = []
-            if deleted_comments > 0:
-                cleanup_parts.append(f"删除 {deleted_comments} 条旧评论")
+            if deleted_result["review_comments"] > 0:
+                cleanup_parts.append(f"删除 {deleted_result['review_comments']} 条行内评论")
+            if deleted_result["issue_comments"] > 0:
+                cleanup_parts.append(f"删除 {deleted_result['issue_comments']} 条评论")
             if dismissed_reviews > 0:
                 cleanup_parts.append(f"撤回 {dismissed_reviews} 条旧Review")
             cleanup_text = "、".join(cleanup_parts) if cleanup_parts else "清理旧记录"
