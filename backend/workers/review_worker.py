@@ -26,7 +26,16 @@ from backend.models.database import (
 )
 
 settings = get_settings()
-strategy_config = get_strategy_config()
+
+
+def _get_label_rec_setting(key: str, default=None):
+    """获取标签推荐配置，读取失败时降级到默认值"""
+    try:
+        from backend.core.config import get_label_config
+        return get_label_config().get_recommendation_settings().get(key, default)
+    except (OSError, AttributeError) as e:
+        logger.debug(f"读取标签推荐配置 [{key}] 失败，使用降级值: {e}")
+        return default
 
 
 def get_async_session():
@@ -117,11 +126,7 @@ class ReviewWorker:
             await self._update_review_status(review_id, PRStatus.REVIEWING)
 
             # 检查是否启用标签推荐功能
-            enable_label_recommendation = (
-                settings.enable_label_recommendation
-                if hasattr(settings, "enable_label_recommendation")
-                else True
-            )
+            enable_label_recommendation = _get_label_rec_setting("enabled", True)
 
             # 根据配置决定是否使用AI工具
             enable_tools = (
@@ -163,16 +168,8 @@ class ReviewWorker:
 
                         if recommendations:
                             # 应用标签到PR
-                            confidence_threshold = (
-                                settings.label_confidence_threshold
-                                if hasattr(settings, "label_confidence_threshold")
-                                else 0.7
-                            )
-                            auto_create_labels = (
-                                settings.label_auto_create
-                                if hasattr(settings, "label_auto_create")
-                                else False
-                            )
+                            confidence_threshold = _get_label_rec_setting("confidence_threshold", 0.7)
+                            auto_create_labels = _get_label_rec_setting("auto_create", False)
 
                             label_results = await label_service.apply_labels_to_pr(
                                 pr_info["repo_owner"],
@@ -470,7 +467,7 @@ class ReviewWorker:
             )
 
             # 3. 获取策略名称
-            strategy_info = strategy_config.get_strategy(analysis.strategy)
+            strategy_info = get_strategy_config().get_strategy(analysis.strategy)
             strategy_name = strategy_info.get("name", "代码审查")
 
             # 4. 格式化审查评论（包含标签信息和策略名称）

@@ -1,0 +1,138 @@
+<!-- 用户搜索和过滤 -->
+<div class="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 shadow-sm p-4 mb-4">
+    <form id="user-filter-form" class="flex flex-col sm:flex-row gap-3">
+        <!-- 搜索框 -->
+        <div class="flex-1 relative">
+            <svg class="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/>
+            </svg>
+            <input type="text" name="search" value="{{ search }}" placeholder="搜索用户名或 Telegram ID..."
+                   class="w-full pl-10 pr-4 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-sm focus:ring-2 focus:ring-pink-500 focus:border-transparent outline-none">
+        </div>
+
+        <!-- 角色过滤 -->
+        <select name="role"
+                class="px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-sm focus:ring-2 focus:ring-pink-500 focus:border-transparent outline-none">
+            <option value="" {% if not role %}selected{% endif %}>全部角色</option>
+            <option value="user" {% if role == 'user' %}selected{% endif %}>普通用户</option>
+            <option value="admin" {% if role == 'admin' %}selected{% endif %}>管理员</option>
+            <option value="super_admin" {% if role == 'super_admin' %}selected{% endif %}>超级管理员</option>
+        </select>
+
+        <!-- 搜索按钮 -->
+        <button type="submit"
+                class="px-4 py-2 bg-pink-500 text-white rounded-lg text-sm font-medium hover:bg-pink-600 transition-colors">
+            搜索
+        </button>
+    </form>
+</div>
+
+<!-- 用户列表 -->
+<div class="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 shadow-sm overflow-hidden">
+    {% if users %}
+    <div class="overflow-x-auto">
+        <table class="w-full text-sm">
+            <thead>
+                <tr class="border-b border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800/50">
+                    <th class="text-left py-3 px-5 text-gray-500 dark:text-gray-400 font-medium">用户</th>
+                    <th class="text-left py-3 px-5 text-gray-500 dark:text-gray-400 font-medium">角色</th>
+                    <th class="text-left py-3 px-5 text-gray-500 dark:text-gray-400 font-medium hidden md:table-cell">配额使用</th>
+                    <th class="text-left py-3 px-5 text-gray-500 dark:text-gray-400 font-medium">状态</th>
+                    <th class="text-left py-3 px-5 text-gray-500 dark:text-gray-400 font-medium hidden sm:table-cell">注册时间</th>
+                </tr>
+            </thead>
+            <tbody class="divide-y divide-gray-200 dark:divide-gray-700">
+                {% for u in users %}
+                <tr class="hover:bg-gray-50 dark:hover:bg-gray-700/50 transition-colors">
+                    <td class="py-3 px-5">
+                        <a href="/webui/users/{{ u.id }}" class="flex items-center gap-3 hover:text-pink-600 dark:hover:text-pink-400 transition-colors">
+                            <div class="w-8 h-8 rounded-full bg-pink-100 dark:bg-pink-900/30 flex items-center justify-center flex-shrink-0">
+                                <span class="text-sm font-medium text-pink-600 dark:text-pink-400">{{ (u.github_username or '?')[0]|upper }}</span>
+                            </div>
+                            <div>
+                                <p class="font-medium">{{ u.github_username or '未设置' }}</p>
+                                <p class="text-xs text-gray-400">{{ u.telegram_id }}</p>
+                            </div>
+                        </a>
+                    </td>
+                    <td class="py-3 px-5">
+                        {% if u.role == 'super_admin' %}
+                        <span class="inline-flex items-center px-2.5 py-1 rounded-full text-xs font-medium bg-purple-100 dark:bg-purple-900/30 text-purple-700 dark:text-purple-400">超级管理员</span>
+                        {% elif u.role == 'admin' %}
+                        <span class="inline-flex items-center px-2.5 py-1 rounded-full text-xs font-medium bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-400">管理员</span>
+                        {% else %}
+                        <span class="inline-flex items-center px-2.5 py-1 rounded-full text-xs font-medium bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-400">普通用户</span>
+                        {% endif %}
+                    </td>
+                    <td class="py-3 px-5 hidden md:table-cell">
+                        <div class="text-xs text-gray-500 dark:text-gray-400 space-y-0.5">
+                            <p>日 {{ u.daily_used }}/{{ u.daily_quota }}</p>
+                            <p>周 {{ u.weekly_used }}/{{ u.weekly_quota }}</p>
+                        </div>
+                    </td>
+                    <td class="py-3 px-5">
+                        {% if u.is_active %}
+                        <span class="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-medium bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-400">
+                            <span class="w-1.5 h-1.5 bg-green-500 rounded-full"></span>活跃
+                        </span>
+                        {% else %}
+                        <span class="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-medium bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-400">
+                            <span class="w-1.5 h-1.5 bg-red-500 rounded-full"></span>已禁用
+                        </span>
+                        {% endif %}
+                    </td>
+                    <td class="py-3 px-5 text-gray-400 text-xs hidden sm:table-cell">
+                        {{ u.created_at.strftime('%Y-%m-%d %H:%M') if u.created_at else '-' }}
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+
+    <!-- 分页 -->
+    {% if total_pages > 1 %}
+    <div class="px-5 py-3 border-t border-gray-200 dark:border-gray-700 flex items-center justify-between">
+        <p class="text-sm text-gray-500 dark:text-gray-400">
+            共 {{ total }} 条，第 {{ page }}/{{ total_pages }} 页
+        </p>
+        <div class="flex gap-1">
+            {% if page > 1 %}
+            <a href="#" onclick="loadUserPage({{ page - 1 }}); return false;"
+               class="px-3 py-1.5 rounded-lg text-sm border border-gray-300 dark:border-gray-600 hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors">
+                上一页
+            </a>
+            {% endif %}
+
+            {% for p in range(1, total_pages + 1) %}
+                {% if p == page %}
+                <span class="px-3 py-1.5 rounded-lg text-sm bg-pink-500 text-white">{{ p }}</span>
+                {% elif p <= 3 or p >= total_pages - 2 or (p >= page - 1 and p <= page + 1) %}
+                <a href="#" onclick="loadUserPage({{ p }}); return false;"
+                   class="px-3 py-1.5 rounded-lg text-sm border border-gray-300 dark:border-gray-600 hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors">
+                    {{ p }}
+                </a>
+                {% elif p == 4 or p == total_pages - 3 %}
+                <span class="px-2 py-1.5 text-gray-400">...</span>
+                {% endif %}
+            {% endfor %}
+
+            {% if page < total_pages %}
+            <a href="#" onclick="loadUserPage({{ page + 1 }}); return false;"
+               class="px-3 py-1.5 rounded-lg text-sm border border-gray-300 dark:border-gray-600 hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors">
+                下一页
+            </a>
+            {% endif %}
+        </div>
+    </div>
+    {% endif %}
+
+    {% else %}
+    <div class="p-12 text-center">
+        <svg class="w-12 h-12 mx-auto text-gray-300 dark:text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0z"/>
+        </svg>
+        <p class="mt-4 text-gray-500 dark:text-gray-400">没有找到匹配的用户</p>
+    </div>
+    {% endif %}
+</div>

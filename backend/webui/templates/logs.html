@@ -1,0 +1,77 @@
+{% extends "base.html" %}
+
+{% block title %}审查日志 - Sakura AI Reviewer{% endblock %}
+
+{% block content %}
+<div class="space-y-4">
+    <!-- 页面标题 -->
+    <div>
+        <h1 class="text-2xl font-bold">审查日志</h1>
+        <p class="mt-1 text-sm text-gray-500 dark:text-gray-400">查看所有 PR 审查活动记录</p>
+    </div>
+
+    <!-- 日志列表（通过 HTMX 加载） -->
+    <div id="log-list-container" hx-get="/webui/logs/list-fragment" hx-trigger="load" hx-swap="innerHTML">
+        <div class="text-center py-8 text-gray-400">
+            <svg class="w-8 h-8 mx-auto animate-spin" fill="none" viewBox="0 0 24 24">
+                <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/>
+                <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/>
+            </svg>
+            <p class="mt-2">加载中...</p>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_scripts %}
+<script>
+function loadLogPage(pageNum) {
+    const container = document.getElementById('log-list-container');
+    const params = new URLSearchParams();
+    const urlParams = new URLSearchParams(window.location.search);
+    if (urlParams.get('search')) params.set('search', urlParams.get('search'));
+    if (urlParams.get('repo')) params.set('repo', urlParams.get('repo'));
+    if (urlParams.get('status')) params.set('status', urlParams.get('status'));
+    if (urlParams.get('date_from')) params.set('date_from', urlParams.get('date_from'));
+    if (urlParams.get('date_to')) params.set('date_to', urlParams.get('date_to'));
+    params.set('page', pageNum);
+
+    container.innerHTML = '<div class="text-center py-8 text-gray-400"><svg class="w-8 h-8 mx-auto animate-spin" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg><p class="mt-2">加载中...</p></div>';
+
+    fetch('/webui/logs/list-fragment?' + params.toString(), {
+        headers: { 'HX-Request': 'true' }
+    })
+    .then(r => r.text())
+    .then(html => {
+        container.innerHTML = html;
+        history.replaceState(null, '', '?' + params.toString());
+    })
+    .catch(err => console.error('加载失败:', err));
+}
+
+document.addEventListener('submit', function(e) {
+    if (e.target.id === 'log-filter-form') {
+        e.preventDefault();
+        const formData = new FormData(e.target);
+        const params = new URLSearchParams();
+        for (const [key, value] of formData.entries()) {
+            if (value) params.set(key, value);
+        }
+        params.set('page', '1');
+
+        const container = document.getElementById('log-list-container');
+        container.innerHTML = '<div class="text-center py-8 text-gray-400"><svg class="w-8 h-8 mx-auto animate-spin" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg><p class="mt-2">加载中...</p></div>';
+
+        fetch('/webui/logs/list-fragment?' + params.toString(), {
+            headers: { 'HX-Request': 'true' }
+        })
+        .then(r => r.text())
+        .then(html => {
+            container.innerHTML = html;
+            history.replaceState(null, '', '?' + params.toString());
+        })
+        .catch(err => console.error('加载失败:', err));
+    }
+});
+</script>
+{% endblock %}

@@ -1,5 +1,6 @@
 """配置管理模块"""
 
+from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from functools import lru_cache
 import yaml
@@ -66,6 +67,31 @@ class Settings(BaseSettings):
     # Webhook配置
     webhook_path: str = "/api/webhook/github"
 
+    # WebUI配置
+    webui_secret_key: str = Field(
+        "change-me-in-production",
+        description="JWT 和 CSRF Token 签名密钥，生产环境必须改为强随机字符串（如 openssl rand -hex 32）",
+    )
+    webui_cookie_secure: bool = Field(
+        False,
+        description="Cookie Secure 属性，HTTPS 环境必须设为 True",
+    )
+
+    # GitHub OAuth 配置
+    # 获取步骤：GitHub → Settings → Developer settings → OAuth Apps → New OAuth App
+    github_oauth_client_id: str = Field(
+        "",
+        description="GitHub OAuth App 的 Client ID",
+    )
+    github_oauth_client_secret: str = Field(
+        "",
+        description="GitHub OAuth App 的 Client Secret",
+    )
+    github_oauth_redirect_uri: str = Field(
+        "",
+        description="OAuth 回调地址，必须与 GitHub OAuth App 中配置的 Authorization callback URL 一致",
+    )
+
     # Telegram Bot配置
     telegram_bot_token: str
     telegram_admin_user_ids: str = ""  # 逗号分隔的超级管理员ID列表
@@ -78,6 +104,21 @@ class Settings(BaseSettings):
     def webhook_url(self) -> str:
         """获取完整的Webhook URL"""
         return f"https://{self.app_domain}{self.webhook_path}"
+
+    @property
+    def github_oauth_auth_url(self) -> str:
+        """GitHub OAuth 授权 URL"""
+        return "https://github.com/login/oauth/authorize"
+
+    @property
+    def github_oauth_token_url(self) -> str:
+        """GitHub OAuth Token URL"""
+        return "https://github.com/login/oauth/access_token"
+
+    @property
+    def github_oauth_user_url(self) -> str:
+        """GitHub OAuth 用户信息 API"""
+        return "https://api.github.com/user"
 
     @property
     def telegram_admin_ids_list(self) -> list[int]:
@@ -273,3 +314,50 @@ def get_settings() -> Settings:
 def get_strategy_config() -> StrategyConfig:
     """获取策略配置单例"""
     return StrategyConfig()
+
+
+def reload_strategy_config() -> StrategyConfig:
+    """清除 lru_cache 并重新加载策略配置
+
+    注意：已持有旧 StrategyConfig 引用的请求会继续使用旧配置，
+    这是预期行为（保证单次请求内的配置一致性）。
+    后续新请求将获取刷新后的配置。
+    """
+    get_strategy_config.cache_clear()
+    return get_strategy_config()
+
+
+class LabelConfig:
+    """标签配置"""
+
+    def __init__(self, config_path: str = "config/labels.yaml"):
+        self.config_path = Path(config_path)
+        self._load_config()
+
+    def _load_config(self):
+        """加载标签配置文件"""
+        if not self.config_path.exists():
+            self.config = {"labels": {}, "recommendation": {}}
+            return
+        with open(self.config_path, "r", encoding="utf-8") as f:
+            self.config = yaml.safe_load(f) or {}
+
+    def get_labels(self) -> dict:
+        """获取所有标签定义"""
+        return self.config.get("labels", {})
+
+    def get_recommendation_settings(self) -> dict:
+        """获取标签推荐设置"""
+        return self.config.get("recommendation", {})
+
+
+@lru_cache()
+def get_label_config() -> LabelConfig:
+    """获取标签配置单例"""
+    return LabelConfig()
+
+
+def reload_label_config() -> LabelConfig:
+    """清除 lru_cache 并重新加载标签配置"""
+    get_label_config.cache_clear()
+    return get_label_config()

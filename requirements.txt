@@ -39,4 +39,9 @@ chromadb>=0.4.0
 watchfiles>=0.20.0  # 文件监控
 python-slugify>=8.0.0  # Collection 名称 slugify
 
+# WebUI
+jinja2>=3.1.2
+python-jose[cryptography]>=3.3.0
+itsdangerous>=2.1.0
+
 # GitHub签名验证 (hmac 和 hashlib 是 Python 内置模块，无需安装)

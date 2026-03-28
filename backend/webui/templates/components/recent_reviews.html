@@ -1,0 +1,73 @@
+<!-- 最近审查列表（HTMX 片段） -->
+<div id="recent-reviews">
+    {% if reviews %}
+    <div class="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 shadow-sm overflow-hidden">
+        <div class="px-5 py-4 border-b border-gray-200 dark:border-gray-700 flex items-center justify-between">
+            <h2 class="text-lg font-semibold">最近审查</h2>
+            <a href="/webui/pr/" class="text-sm text-pink-600 dark:text-pink-400 hover:underline">查看全部</a>
+        </div>
+        <div class="divide-y divide-gray-200 dark:divide-gray-700">
+            {% for r in reviews %}
+            <a href="/webui/pr/{{ r.id }}" class="flex items-center gap-4 px-5 py-3.5 hover:bg-gray-50 dark:hover:bg-gray-700/50 transition-colors">
+                <!-- 状态图标 -->
+                <div class="flex-shrink-0">
+                    {% if r.status == "completed" and r.decision == "approve" %}
+                    <span class="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-medium bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-400">
+                        <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/></svg>
+                        通过
+                    </span>
+                    {% elif r.status == "completed" and r.decision == "request_changes" %}
+                    <span class="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-medium bg-yellow-100 dark:bg-yellow-900/30 text-yellow-700 dark:text-yellow-400">
+                        <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01"/></svg>
+                        需修改
+                    </span>
+                    {% elif r.status == "reviewing" %}
+                    <span class="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-medium bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-400">
+                        <svg class="w-3.5 h-3.5 animate-spin" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg>
+                        审查中
+                    </span>
+                    {% elif r.status == "failed" %}
+                    <span class="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-medium bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-400">
+                        <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
+                        失败
+                    </span>
+                    {% else %}
+                    <span class="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-medium bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-400">
+                        待处理
+                    </span>
+                    {% endif %}
+                </div>
+
+                <!-- PR 信息 -->
+                <div class="flex-1 min-w-0">
+                    <p class="text-sm font-medium truncate">{{ r.repo_owner }}/{{ r.repo_name }} <span class="text-gray-400">#{{ r.pr_id }}</span></p>
+                    <p class="text-xs text-gray-500 dark:text-gray-400 truncate mt-0.5">{{ r.title or '无标题' }}</p>
+                </div>
+
+                <!-- 评分 -->
+                {% if r.overall_score %}
+                <div class="flex-shrink-0 text-right">
+                    <span class="text-lg font-bold {% if r.overall_score >= 8 %}text-green-600 dark:text-green-400{% elif r.overall_score >= 6 %}text-yellow-600 dark:text-yellow-400{% else %}text-red-600 dark:text-red-400{% endif %}">
+                        {{ r.overall_score }}
+                    </span>
+                    <span class="text-xs text-gray-400">/10</span>
+                </div>
+                {% endif %}
+
+                <!-- 时间 -->
+                <div class="flex-shrink-0 text-xs text-gray-400 dark:text-gray-500 hidden sm:block">
+                    {{ r.created_at[:16] if r.created_at else '-' }}
+                </div>
+            </a>
+            {% endfor %}
+        </div>
+    </div>
+    {% else %}
+    <div class="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 shadow-sm p-12 text-center">
+        <svg class="w-12 h-12 mx-auto text-gray-300 dark:text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/>
+        </svg>
+        <p class="mt-4 text-gray-500 dark:text-gray-400">暂无审查记录</p>
+    </div>
+    {% endif %}
+</div>
