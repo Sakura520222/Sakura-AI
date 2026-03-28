@@ -92,7 +92,7 @@
                 <h3 class="text-base font-medium mb-4">配额使用情况</h3>
                 <div class="space-y-4">
                     <!-- 每日配额 -->
-                    {% set daily_pct = (target_user.daily_used / target_user.daily_quota * 100)|int if target_user.daily_quota > 0 else 0 %}
+                    {% set daily_pct = percentage(target_user.daily_used, target_user.daily_quota) %}
                     {% set daily_bar_color = 'bg-red-500' if daily_pct >= 90 else ('bg-yellow-500' if daily_pct >= 70 else 'bg-pink-500') %}
                     <div>
                         <div class="flex justify-between text-sm mb-1">
@@ -104,7 +104,7 @@
                         </div>
                     </div>
                     <!-- 每周配额 -->
-                    {% set weekly_pct = (target_user.weekly_used / target_user.weekly_quota * 100)|int if target_user.weekly_quota > 0 else 0 %}
+                    {% set weekly_pct = percentage(target_user.weekly_used, target_user.weekly_quota) %}
                     {% set weekly_bar_color = 'bg-red-500' if weekly_pct >= 90 else ('bg-yellow-500' if weekly_pct >= 70 else 'bg-pink-500') %}
                     <div>
                         <div class="flex justify-between text-sm mb-1">
@@ -116,7 +116,7 @@
                         </div>
                     </div>
                     <!-- 每月配额 -->
-                    {% set monthly_pct = (target_user.monthly_used / target_user.monthly_quota * 100)|int if target_user.monthly_quota > 0 else 0 %}
+                    {% set monthly_pct = percentage(target_user.monthly_used, target_user.monthly_quota) %}
                     {% set monthly_bar_color = 'bg-red-500' if monthly_pct >= 90 else ('bg-yellow-500' if monthly_pct >= 70 else 'bg-pink-500') %}
                     <div>
                         <div class="flex justify-between text-sm mb-1">

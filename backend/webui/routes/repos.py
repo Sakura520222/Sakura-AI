@@ -1,14 +1,13 @@
 """WebUI 仓库管理路由"""
 
 from fastapi import APIRouter, Request, Depends, Form, Query
-from fastapi.responses import RedirectResponse, HTMLResponse
+from fastapi.responses import RedirectResponse
 from loguru import logger
-import re
 from sqlalchemy import select, func, desc
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.models.telegram_models import RepoSubscription
-from backend.webui.deps import require_admin, get_db, get_templates, get_csrf_serializer, validate_csrf_token, get_user_preferences
+from backend.webui.deps import require_admin, get_db, get_templates, get_csrf_serializer, require_csrf, get_user_preferences, paginate, error_page
 
 router = APIRouter(prefix="/repos", tags=["WebUI Repos"])
 templates = get_templates()
@@ -62,18 +61,8 @@ async def repo_list_fragment(
     # 排序
     query = query.order_by(desc(RepoSubscription.created_at))
 
-    # 总数
-    total_result = await db.execute(count_query)
-    total = total_result.scalar() or 0
-    total_pages = max(1, (total + per_page - 1) // per_page)
-    page = min(page, total_pages)
-
     # 分页
-    offset = (page - 1) * per_page
-    query = query.offset(offset).limit(per_page)
-
-    result = await db.execute(query)
-    repos = result.scalars().all()
+    repos, total, total_pages, page = await paginate(db, query, count_query, page, per_page)
 
     return templates.TemplateResponse("components/repo_list_fragment.html", {
         "request": request,
@@ -93,18 +82,14 @@ async def add_repo(
     request: Request,
     db: AsyncSession = Depends(get_db),
     user: dict = Depends(require_admin),
-    csrf_token: str = Form(...),
+    csrf_token: str = Depends(require_csrf),
     repo_name: str = Form(...),
-):
+) -> RedirectResponse:
     """添加仓库到白名单"""
-    if not validate_csrf_token(csrf_token):
-        from fastapi import HTTPException
-        raise HTTPException(status_code=403, detail="CSRF 验证失败")
-
     repo_name = repo_name.strip()
 
-    # 验证格式 (owner/repo)
-    if not repo_name or not re.match(r"^[a-zA-Z0-9_.\-]+/[a-zA-Z0-9_.\-]+$", repo_name):
+    # 验证格式: 必须包含 owner/repo，具体合法性由 GitHub API 保证
+    if not repo_name or repo_name.count("/") != 1 or not repo_name.replace("/", "").strip():
         return RedirectResponse(url="/webui/repos/?error=invalid_format", status_code=302)
 
     # 检查是否已存在
@@ -132,19 +117,15 @@ async def toggle_repo_status(
     repo_id: int,
     db: AsyncSession = Depends(get_db),
     user: dict = Depends(require_admin),
-    csrf_token: str = Form(...),
-):
+    csrf_token: str = Depends(require_csrf),
+) -> RedirectResponse:
     """启用/禁用仓库"""
-    if not validate_csrf_token(csrf_token):
-        from fastapi import HTTPException
-        raise HTTPException(status_code=403, detail="CSRF 验证失败")
-
     result = await db.execute(
         select(RepoSubscription).where(RepoSubscription.id == repo_id)
     )
     repo = result.scalar_one_or_none()
     if not repo:
-        return HTMLResponse("<h1>仓库不存在</h1>", status_code=404)
+        return error_page(request, message="仓库不存在", user=user)
 
     repo.is_active = not repo.is_active
     await db.commit()
@@ -160,19 +141,15 @@ async def remove_repo(
     repo_id: int,
     db: AsyncSession = Depends(get_db),
     user: dict = Depends(require_admin),
-    csrf_token: str = Form(...),
-):
+    csrf_token: str = Depends(require_csrf),
+) -> RedirectResponse:
     """移除仓库"""
-    if not validate_csrf_token(csrf_token):
-        from fastapi import HTTPException
-        raise HTTPException(status_code=403, detail="CSRF 验证失败")
-
     result = await db.execute(
         select(RepoSubscription).where(RepoSubscription.id == repo_id)
     )
     repo = result.scalar_one_or_none()
     if not repo:
-        return HTMLResponse("<h1>仓库不存在</h1>", status_code=404)
+        return error_page(request, message="仓库不存在", user=user)
 
     repo_name = repo.repo_name
     await db.delete(repo)

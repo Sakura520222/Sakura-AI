@@ -1,5 +1,6 @@
 """配置管理模块"""
 
+from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from functools import lru_cache
 import yaml
@@ -67,13 +68,29 @@ class Settings(BaseSettings):
     webhook_path: str = "/api/webhook/github"
 
     # WebUI配置
-    webui_secret_key: str = "change-me-in-production"  # JWT 签名密钥
-    webui_cookie_secure: bool = False  # Cookie Secure 属性，HTTPS 环境设为 True
+    webui_secret_key: str = Field(
+        "change-me-in-production",
+        description="JWT 和 CSRF Token 签名密钥，生产环境必须改为强随机字符串（如 openssl rand -hex 32）",
+    )
+    webui_cookie_secure: bool = Field(
+        False,
+        description="Cookie Secure 属性，HTTPS 环境必须设为 True",
+    )
 
     # GitHub OAuth 配置
-    github_oauth_client_id: str = ""  # GitHub OAuth App Client ID
-    github_oauth_client_secret: str = ""  # GitHub OAuth App Client Secret
-    github_oauth_redirect_uri: str = ""  # OAuth 回调地址，如 https://example.com/webui/auth/callback
+    # 获取步骤：GitHub → Settings → Developer settings → OAuth Apps → New OAuth App
+    github_oauth_client_id: str = Field(
+        "",
+        description="GitHub OAuth App 的 Client ID",
+    )
+    github_oauth_client_secret: str = Field(
+        "",
+        description="GitHub OAuth App 的 Client Secret",
+    )
+    github_oauth_redirect_uri: str = Field(
+        "",
+        description="OAuth 回调地址，必须与 GitHub OAuth App 中配置的 Authorization callback URL 一致",
+    )
 
     # Telegram Bot配置
     telegram_bot_token: str
@@ -300,7 +317,12 @@ def get_strategy_config() -> StrategyConfig:
 
 
 def reload_strategy_config() -> StrategyConfig:
-    """清除 lru_cache 并重新加载策略配置"""
+    """清除 lru_cache 并重新加载策略配置
+
+    注意：已持有旧 StrategyConfig 引用的请求会继续使用旧配置，
+    这是预期行为（保证单次请求内的配置一致性）。
+    后续新请求将获取刷新后的配置。
+    """
     get_strategy_config.cache_clear()
     return get_strategy_config()
 
