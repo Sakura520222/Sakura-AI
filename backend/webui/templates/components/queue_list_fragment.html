@@ -1,0 +1,147 @@
+<!-- 审查队列列表 HTMX 片段 -->
+<!-- 过滤栏 -->
+<form id="queue-filter-form" class="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 shadow-sm p-4">
+    <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3">
+        <input type="text" name="search" value="{{ search }}" placeholder="搜索 PR 标题..."
+               class="col-span-1 sm:col-span-2 lg:col-span-1 px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-white text-sm placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-pink-500 focus:border-transparent">
+
+        <select name="repo" class="px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-white text-sm focus:outline-none focus:ring-2 focus:ring-pink-500 focus:border-transparent">
+            <option value="">全部仓库</option>
+            {% for r in active_repos %}
+            <option value="{{ r }}" {% if r == repo %}selected{% endif %}>{{ r }}</option>
+            {% endfor %}
+        </select>
+
+        <select name="status" class="px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-white text-sm focus:outline-none focus:ring-2 focus:ring-pink-500 focus:border-transparent">
+            <option value="">全部状态</option>
+            <option value="pending" {% if status == 'pending' %}selected{% endif %}>待处理</option>
+            <option value="processing" {% if status == 'processing' %}selected{% endif %}>处理中</option>
+            <option value="completed" {% if status == 'completed' %}selected{% endif %}>已完成</option>
+            <option value="failed" {% if status == 'failed' %}selected{% endif %}>失败</option>
+        </select>
+
+        <input type="date" name="start_date" value="{{ start_date }}" placeholder="开始日期"
+               class="px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-white text-sm focus:outline-none focus:ring-2 focus:ring-pink-500 focus:border-transparent">
+
+        <div class="flex gap-2 col-span-1 sm:col-span-2 lg:col-span-1">
+            <input type="date" name="end_date" value="{{ end_date }}" placeholder="结束日期"
+                   class="flex-1 px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-white text-sm focus:outline-none focus:ring-2 focus:ring-pink-500 focus:border-transparent">
+            <button type="submit" class="px-4 py-2 bg-pink-500 hover:bg-pink-600 text-white rounded-lg text-sm font-medium transition-colors whitespace-nowrap">
+                筛选
+            </button>
+        </div>
+    </div>
+</form>
+
+<!-- 数据表格 -->
+<div class="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 shadow-sm overflow-hidden mt-4">
+    {% if reviews %}
+    <div class="overflow-x-auto">
+        <table class="w-full text-sm">
+            <thead>
+                <tr class="border-b border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800/50">
+                    <th class="text-left px-4 py-3 font-medium text-gray-500 dark:text-gray-400">PR</th>
+                    <th class="text-left px-4 py-3 font-medium text-gray-500 dark:text-gray-400 hidden md:table-cell">仓库</th>
+                    <th class="text-left px-4 py-3 font-medium text-gray-500 dark:text-gray-400">状态</th>
+                    <th class="text-left px-4 py-3 font-medium text-gray-500 dark:text-gray-400 hidden lg:table-cell">创建时间</th>
+                    <th class="text-left px-4 py-3 font-medium text-gray-500 dark:text-gray-400 hidden lg:table-cell">完成时间</th>
+                    <th class="text-left px-4 py-3 font-medium text-gray-500 dark:text-gray-400 hidden xl:table-cell">耗时</th>
+                    <th class="text-left px-4 py-3 font-medium text-gray-500 dark:text-gray-400 hidden xl:table-cell">错误信息</th>
+                </tr>
+            </thead>
+            <tbody class="divide-y divide-gray-200 dark:divide-gray-700">
+                {% for r in reviews %}
+                <tr class="hover:bg-gray-50 dark:hover:bg-gray-700/50 transition-colors">
+                    <td class="px-4 py-3">
+                        <a href="/webui/pr/{{ r.id }}" class="text-pink-600 dark:text-pink-400 hover:underline">
+                            #{{ r.pr_id }} {{ (r.title or '') | truncate(30) }}
+                        </a>
+                    </td>
+                    <td class="px-4 py-3 hidden md:table-cell">
+                        <span class="text-gray-600 dark:text-gray-400">{{ r.repo_owner }}/{{ r.repo_name }}</span>
+                    </td>
+                    <td class="px-4 py-3">
+                        {% if r.status == "completed" %}
+                        <span class="px-2 py-1 rounded-full text-xs font-medium bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-400">已完成</span>
+                        {% elif r.status == "processing" %}
+                        <span class="px-2 py-1 rounded-full text-xs font-medium bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-400">处理中</span>
+                        {% elif r.status == "pending" %}
+                        <span class="px-2 py-1 rounded-full text-xs font-medium bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-400">待处理</span>
+                        {% elif r.status == "failed" %}
+                        <span class="px-2 py-1 rounded-full text-xs font-medium bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-400">失败</span>
+                        {% else %}
+                        <span class="px-2 py-1 rounded-full text-xs font-medium bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-400">{{ r.status }}</span>
+                        {% endif %}
+                    </td>
+                    <td class="px-4 py-3 text-gray-500 dark:text-gray-400 text-xs hidden lg:table-cell">
+                        {{ r.created_at.strftime('%Y-%m-%d %H:%M') if r.created_at else '-' }}
+                    </td>
+                    <td class="px-4 py-3 text-gray-500 dark:text-gray-400 text-xs hidden lg:table-cell">
+                        {{ r.completed_at.strftime('%Y-%m-%d %H:%M') if r.completed_at else '-' }}
+                    </td>
+                    <td class="px-4 py-3 text-gray-500 dark:text-gray-400 text-xs hidden xl:table-cell">
+                        {% if r.completed_at and r.created_at %}
+                        {{ (r.completed_at - r.created_at).total_seconds() | format_duration }}
+                        {% else %}-{% endif %}
+                    </td>
+                    <td class="px-4 py-3 hidden xl:table-cell">
+                        {% if r.error_message %}
+                        <span class="text-xs text-red-600 dark:text-red-400 truncate block max-w-[200px]" title="{{ r.error_message }}">
+                            {{ r.error_message | truncate(40) }}
+                        </span>
+                        {% else %}
+                        <span class="text-gray-300 dark:text-gray-600">-</span>
+                        {% endif %}
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+
+    <!-- 分页 -->
+    {% if total_pages > 1 %}
+    <div class="px-5 py-3 border-t border-gray-200 dark:border-gray-700 flex items-center justify-between">
+        <p class="text-sm text-gray-500 dark:text-gray-400">
+            共 {{ total }} 条，第 {{ page }}/{{ total_pages }} 页
+        </p>
+        <div class="flex gap-1">
+            {% if page > 1 %}
+            <a href="#" onclick="loadQueuePage({{ page - 1 }}); return false;"
+               class="px-3 py-1.5 rounded-lg text-sm border border-gray-300 dark:border-gray-600 hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors">
+                上一页
+            </a>
+            {% endif %}
+
+            {% for p in range(1, total_pages + 1) %}
+                {% if p == page %}
+                <span class="px-3 py-1.5 rounded-lg text-sm bg-pink-500 text-white">{{ p }}</span>
+                {% elif p <= 3 or p >= total_pages - 2 or (p >= page - 1 and p <= page + 1) %}
+                <a href="#" onclick="loadQueuePage({{ p }}); return false;"
+                   class="px-3 py-1.5 rounded-lg text-sm border border-gray-300 dark:border-gray-600 hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors">
+                    {{ p }}
+                </a>
+                {% elif p == 4 or p == total_pages - 3 %}
+                <span class="px-2 py-1.5 text-gray-400">...</span>
+                {% endif %}
+            {% endfor %}
+
+            {% if page < total_pages %}
+            <a href="#" onclick="loadQueuePage({{ page + 1 }}); return false;"
+               class="px-3 py-1.5 rounded-lg text-sm border border-gray-300 dark:border-gray-600 hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors">
+                下一页
+            </a>
+            {% endif %}
+        </div>
+    </div>
+    {% endif %}
+
+    {% else %}
+    <div class="p-12 text-center">
+        <svg class="w-12 h-12 mx-auto text-gray-300 dark:text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/>
+        </svg>
+        <p class="mt-4 text-gray-500 dark:text-gray-400">没有找到匹配的审查记录</p>
+    </div>
+    {% endif %}
+</div>

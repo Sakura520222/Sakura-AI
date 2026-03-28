@@ -1,0 +1,43 @@
+<!-- 文件列表 HTMX 片段 -->
+{% if file_stats %}
+<div class="divide-y divide-gray-200 dark:divide-gray-700">
+    {% for f in file_stats %}
+    <button data-path="{{ f.file_path if f.file_path else '__overall__' }}"
+            class="file-item w-full flex items-center gap-3 px-4 py-3 text-left hover:bg-gray-50 dark:hover:bg-gray-700/50 transition-colors">
+        <!-- severity 圆点 -->
+        <div class="flex-shrink-0 flex gap-1">
+            {% if f.critical > 0 %}
+            <span class="w-2.5 h-2.5 rounded-full bg-red-500" title="Critical: {{ f.critical }}"></span>
+            {% endif %}
+            {% if f.major > 0 %}
+            <span class="w-2.5 h-2.5 rounded-full bg-orange-500" title="Major: {{ f.major }}"></span>
+            {% endif %}
+            {% if f.minor > 0 %}
+            <span class="w-2.5 h-2.5 rounded-full bg-yellow-500" title="Minor: {{ f.minor }}"></span>
+            {% endif %}
+            {% if f.suggestion > 0 %}
+            <span class="w-2.5 h-2.5 rounded-full bg-green-500" title="Suggestion: {{ f.suggestion }}"></span>
+            {% endif %}
+        </div>
+
+        <!-- 文件路径 -->
+        <div class="flex-1 min-w-0">
+            {% if f.file_path %}
+            <code class="text-sm text-gray-700 dark:text-gray-300 truncate block">{{ f.file_path }}</code>
+            {% else %}
+            <span class="text-sm text-purple-600 dark:text-purple-400 font-medium">总体评论</span>
+            {% endif %}
+        </div>
+
+        <!-- 评论数 -->
+        <span class="flex-shrink-0 text-xs text-gray-400 bg-gray-100 dark:bg-gray-700 px-2 py-0.5 rounded-full">
+            {{ f.total }}
+        </span>
+    </button>
+    {% endfor %}
+</div>
+{% else %}
+<div class="p-6 text-center text-gray-400 dark:text-gray-500 text-sm">
+    该 PR 暂无审查评论
+</div>
+{% endif %}

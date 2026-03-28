@@ -1,0 +1,114 @@
+{% extends "base.html" %}
+
+{% block title %}文件审查 #{{ review.pr_id }} - Sakura AI Reviewer{% endblock %}
+
+{% block content %}
+<div class="space-y-4">
+    <!-- 面包屑导航 -->
+    <nav class="flex items-center gap-2 text-sm text-gray-500 dark:text-gray-400">
+        <a href="/webui/" class="hover:text-pink-600 dark:hover:text-pink-400">仪表盘</a>
+        <span>/</span>
+        <a href="/webui/pr/" class="hover:text-pink-600 dark:hover:text-pink-400">PR 审查</a>
+        <span>/</span>
+        <a href="/webui/pr/{{ review.id }}" class="hover:text-pink-600 dark:hover:text-pink-400">{{ review.repo_owner }}/{{ review.repo_name }} #{{ review.pr_id }}</a>
+        <span>/</span>
+        <span class="text-gray-900 dark:text-white">文件审查</span>
+    </nav>
+
+    <!-- PR 基本信息 -->
+    <div class="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 shadow-sm p-4">
+        <div class="flex items-center gap-3">
+            <h1 class="text-lg font-bold truncate">{{ review.title or '无标题' }}</h1>
+            <span class="text-sm text-gray-400 flex-shrink-0">{{ review.file_count or 0 }} 文件 · {{ review.line_count or 0 }} 行</span>
+        </div>
+    </div>
+
+    <!-- 左右分栏 -->
+    <div class="grid grid-cols-1 lg:grid-cols-12 gap-4">
+        <!-- 左栏：文件列表 -->
+        <div class="lg:col-span-4">
+            <div class="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 shadow-sm overflow-hidden">
+                <div class="px-4 py-3 border-b border-gray-200 dark:border-gray-700">
+                    <h2 class="text-sm font-semibold text-gray-700 dark:text-gray-300">文件列表</h2>
+                </div>
+                <div id="file-list-container" class="max-h-[calc(100vh-280px)] overflow-y-auto"
+                     hx-get="/webui/pr/{{ review.id }}/files/file-fragment" hx-trigger="load" hx-swap="innerHTML">
+                    <div class="text-center py-8 text-gray-400">
+                        <svg class="w-8 h-8 mx-auto animate-spin" fill="none" viewBox="0 0 24 24">
+                            <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/>
+                            <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/>
+                        </svg>
+                        <p class="mt-2">加载中...</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 右栏：评论面板 -->
+        <div class="lg:col-span-8">
+            <div id="file-comments-panel" class="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 shadow-sm overflow-hidden">
+                <div class="p-12 text-center text-gray-400 dark:text-gray-500">
+                    <svg class="w-12 h-12 mx-auto" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/>
+                    </svg>
+                    <p class="mt-4">点击左侧文件查看审查评论</p>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 返回按钮 -->
+    <div>
+        <a href="/webui/pr/{{ review.id }}" class="inline-flex items-center gap-1 text-sm text-gray-500 dark:text-gray-400 hover:text-pink-600 dark:hover:text-pink-400">
+            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7"/>
+            </svg>
+            返回 PR 详情
+        </a>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_scripts %}
+<script>
+const REVIEW_ID = {{ review.id }};
+
+function loadFileComments(filePath, btn) {
+    // 高亮选中项
+    document.querySelectorAll('.file-item').forEach(el => {
+        el.classList.remove('bg-pink-50', 'dark:bg-pink-900/20');
+    });
+    if (btn) btn.classList.add('bg-pink-50', 'dark:bg-pink-900/20');
+
+    // 加载评论
+    const panel = document.getElementById('file-comments-panel');
+    panel.innerHTML = '<div class="text-center py-8 text-gray-400"><svg class="w-8 h-8 mx-auto animate-spin" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg><p class="mt-2">加载中...</p></div>';
+
+    const params = new URLSearchParams({ file_path: filePath });
+    fetch('/webui/pr/' + REVIEW_ID + '/files/comment-fragment?' + params.toString(), {
+        headers: { 'HX-Request': 'true' }
+    })
+    .then(r => r.text())
+    .then(html => { panel.innerHTML = html; })
+    .catch(err => {
+        console.error('加载失败:', err);
+        panel.innerHTML = `
+            <div class="p-12 text-center text-red-600 dark:text-red-400">
+                <svg class="w-12 h-12 mx-auto" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/>
+                </svg>
+                <p class="mt-4">加载评论失败，请稍后重试</p>
+            </div>
+        `;
+    });
+}
+
+// 事件委托：从 data-path 属性读取文件路径
+document.getElementById('file-list-container').addEventListener('click', function(e) {
+    const btn = e.target.closest('.file-item');
+    if (btn) {
+        loadFileComments(btn.dataset.path, btn);
+    }
+});
+</script>
+{% endblock %}

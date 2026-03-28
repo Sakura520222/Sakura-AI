@@ -1,0 +1,42 @@
+{% extends "base.html" %}
+
+{% block title %}审查队列 - Sakura AI Reviewer{% endblock %}
+
+{% block content %}
+<div class="space-y-4">
+    <!-- 页面标题 -->
+    <div>
+        <h1 class="text-2xl font-bold">审查队列</h1>
+        <p class="mt-1 text-sm text-gray-500 dark:text-gray-400">监控 PR 审查处理状态</p>
+    </div>
+
+    <!-- 统计卡片 -->
+    <div id="queue-stats-container" hx-get="/webui/queue/stats-fragment" hx-trigger="load" hx-swap="innerHTML">
+        <div class="grid grid-cols-2 md:grid-cols-5 gap-4">
+            {% for i in range(5) %}
+            <div class="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 shadow-sm p-4 animate-pulse">
+                <div class="h-10 bg-gray-200 dark:bg-gray-700 rounded-lg"></div>
+            </div>
+            {% endfor %}
+        </div>
+    </div>
+
+    <!-- 队列列表 -->
+    <div id="queue-list-container" hx-get="/webui/queue/list-fragment" hx-trigger="load" hx-swap="innerHTML">
+        <div class="text-center py-8 text-gray-400">
+            <svg class="w-8 h-8 mx-auto animate-spin" fill="none" viewBox="0 0 24 24">
+                <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/>
+                <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/>
+            </svg>
+            <p class="mt-2">加载中...</p>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_scripts %}
+<script>
+var loadQueuePage = function(n) { loadListPage('queue-list-container', '/webui/queue/list-fragment', n); };
+initFilterForm('queue-filter-form', 'queue-list-container', '/webui/queue/list-fragment');
+</script>
+{% endblock %}

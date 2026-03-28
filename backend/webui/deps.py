@@ -26,6 +26,7 @@ def get_templates() -> Jinja2Templates:
     """获取 Jinja2 模板引擎单例"""
     templates = Jinja2Templates(directory="backend/webui/templates", autoescape=True)
     templates.env.globals["percentage"] = _percentage_filter
+    templates.env.filters["format_duration"] = _format_duration_filter
     return templates
 
 
@@ -34,6 +35,20 @@ def _percentage_filter(used, quota) -> int:
     if quota and quota > 0:
         return min(int((used / quota) * 100), 100)
     return 0
+
+
+def _format_duration_filter(seconds) -> str:
+    """将秒数格式化为可读字符串（Jinja2 过滤器）"""
+    if not seconds:
+        return "-"
+    total_seconds = int(seconds)
+    if total_seconds < 60:
+        return f"{total_seconds}s"
+    minutes, remaining_seconds = divmod(total_seconds, 60)
+    if minutes < 60:
+        return f"{minutes}m {remaining_seconds}s"
+    hours, remaining_minutes = divmod(minutes, 60)
+    return f"{hours}h {remaining_minutes}m"
 
 
 def build_review_search_filter(search: str):
