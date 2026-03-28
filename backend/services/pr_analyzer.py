@@ -64,6 +64,10 @@ class PRAnalysis:
     # 格式：{"file_path.py": {10, 15, 20, 25}, "another.py": {5, 10}}
     changed_lines_map: Dict[str, set] = None
 
+    # Hunk 边界：每个文件的 hunk 行范围列表，用于检测跨 hunk 多行评论
+    # 格式：{"file.py": [(10, 20), (50, 65)], ...}
+    hunk_boundaries: Dict[str, List[Tuple[int, int]]] = None
+
     # 增量审查标记
     is_incremental: bool = False
 
@@ -184,8 +188,8 @@ class PRAnalyzer:
                     len(code_files), code_changes
                 )
 
-            # 提取 diff 安全区白名单
-            changed_lines_map = self._extract_changed_lines(code_files)
+            # 提取 diff 安全区白名单和 hunk 边界
+            changed_lines_map, hunk_boundaries = self._extract_changed_lines(code_files)
 
             analysis = PRAnalysis(
                 pr_id=pr_info["pr_id"],
@@ -202,6 +206,7 @@ class PRAnalyzer:
                 should_skip=should_skip,
                 skip_reason=skip_reason,
                 changed_lines_map=changed_lines_map,
+                hunk_boundaries=hunk_boundaries,
                 is_incremental=is_incremental,
                 new_commits=new_commits,
             )
@@ -218,21 +223,27 @@ class PRAnalyzer:
             logger.error(f"分析PR时出错: {e}", exc_info=True)
             raise
 
-    def _extract_changed_lines(self, code_files: List[PRFileInfo]) -> Dict[str, set]:
-        """从文件 patch 中提取变更的行号（Diff 安全区）
+    def _extract_changed_lines(
+        self, code_files: List[PRFileInfo]
+    ) -> Tuple[Dict[str, set], Dict[str, List[Tuple[int, int]]]]:
+        """从文件 patch 中提取变更的行号（Diff 安全区）和 hunk 边界
 
-        解析 unified diff 格式，提取所有变更行的行号。
-        这个白名单用于验证 AI 给出的行号是否在 diff 范围内。
+        解析 unified diff 格式，提取所有变更行的行号和每个 hunk 的行范围。
+        安全区白名单用于验证 AI 给出的行号是否在 diff 范围内，
+        hunk 边界用于检测跨 hunk 的多行评论（GitHub API 不允许）。
 
         Args:
             code_files: 代码文件列表
 
         Returns:
-            字典，key 为文件路径，value 为变更行号的集合
+            元组：(changed_lines, hunk_boundaries)
+            - changed_lines: 字典，key 为文件路径，value 为变更行号的集合
+            - hunk_boundaries: 字典，key 为文件路径，value 为 hunk (起始行, 结束行) 列表
         """
         import re
 
         changed_lines = {}
+        hunk_boundaries = {}
 
         for file_info in code_files:
             if not file_info.patch:
@@ -273,6 +284,7 @@ class PRAnalyzer:
                     )
 
                     current_line = new_start
+                    hunk_start = new_start
                     lines_in_hunk = 0
                     added_lines = 0
                     removed_lines = 0
@@ -320,6 +332,13 @@ class PRAnalyzer:
                     logger.info(
                         f"  ✓ Hunk #{hunk_count} 解析完成: +{added_lines} -{removed_lines} 行, 包含{context_lines}行上下文, PR后行号范围: {new_start}-{current_line - 1}"
                     )
+
+                    # 记录 hunk 边界
+                    hunk_end = current_line - 1
+                    if file_info.path not in hunk_boundaries:
+                        hunk_boundaries[file_info.path] = []
+                    hunk_boundaries[file_info.path].append((hunk_start, hunk_end))
+
                     continue
 
                 i += 1
@@ -334,7 +353,7 @@ class PRAnalyzer:
                 logger.warning(f"⚠️  文件 {file_info.path} 未提取到任何行号")
 
         logger.info(f"🎯 构建 Diff 安全区完成，覆盖 {len(changed_lines)} 个文件")
-        return changed_lines
+        return changed_lines, hunk_boundaries
 
     def _should_skip_review(
         self, code_file_count: int, code_changes: int, total_files: int
