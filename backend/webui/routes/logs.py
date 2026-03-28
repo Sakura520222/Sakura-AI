@@ -1,14 +1,14 @@
 """WebUI 审查日志路由"""
 
-from datetime import datetime
+from datetime import datetime, timedelta
 from fastapi import APIRouter, Request, Depends, Query
 from fastapi.responses import HTMLResponse
-from sqlalchemy import select, func, desc, or_
+from sqlalchemy import select, func, desc
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.models.database import PRReview, ReviewComment
 from backend.models.telegram_models import RepoSubscription
-from backend.webui.deps import require_auth, get_db, get_templates, get_csrf_serializer, get_user_preferences
+from backend.webui.deps import require_auth, get_db, get_templates, get_csrf_serializer, get_user_preferences, paginate, error_page, get_active_repos, build_review_search_filter
 
 router = APIRouter(prefix="/logs", tags=["WebUI Logs"])
 templates = get_templates()
@@ -59,22 +59,16 @@ async def logs_list_fragment(
         count_query = count_query.where(PRReview.repo_name.in_(enabled_repos))
 
     # 搜索过滤
-    if search:
-        escaped = search.replace("%", r"\%").replace("_", r"\_")
-        search_filter = or_(
-            PRReview.title.ilike(f"%{escaped}%", escape="\\"),
-            PRReview.repo_name.ilike(f"%{escaped}%", escape="\\"),
-            PRReview.repo_owner.ilike(f"%{escaped}%", escape="\\"),
-            PRReview.author.ilike(f"%{escaped}%", escape="\\"),
-        )
+    search_filter = build_review_search_filter(search)
+    if search_filter:
         query = query.where(search_filter)
         count_query = count_query.where(search_filter)
 
-    # 仓库过滤
-    if repo:
-        repo_filter = PRReview.repo_name == repo
-        query = query.where(repo_filter)
-        count_query = count_query.where(repo_filter)
+    # 仓库过滤：验证 repo 在活跃仓库列表中
+    available_repos = await get_active_repos(db)
+    if repo and repo in available_repos:
+        query = query.where(PRReview.repo_name == repo)
+        count_query = count_query.where(PRReview.repo_name == repo)
 
     # 状态过滤
     if status:
@@ -92,10 +86,7 @@ async def logs_list_fragment(
 
     if date_to:
         try:
-            dt_to = datetime.strptime(date_to, "%Y-%m-%d")
-            # 包含当天结束时间
-            from datetime import timedelta
-            dt_to = dt_to + timedelta(days=1)
+            dt_to = datetime.strptime(date_to, "%Y-%m-%d") + timedelta(days=1)
             query = query.where(PRReview.created_at < dt_to)
             count_query = count_query.where(PRReview.created_at < dt_to)
         except ValueError:
@@ -104,26 +95,8 @@ async def logs_list_fragment(
     # 排序
     query = query.order_by(desc(PRReview.created_at))
 
-    # 总数
-    total_result = await db.execute(count_query)
-    total = total_result.scalar() or 0
-    total_pages = max(1, (total + per_page - 1) // per_page)
-    page = min(page, total_pages)
-
     # 分页
-    offset = (page - 1) * per_page
-    query = query.offset(offset).limit(per_page)
-
-    result = await db.execute(query)
-    reviews = result.scalars().all()
-
-    # 获取所有活跃仓库列表用于下拉框
-    repos_result = await db.execute(
-        select(RepoSubscription.repo_name)
-        .where(RepoSubscription.is_active == True)
-        .order_by(RepoSubscription.repo_name)
-    )
-    available_repos = [r[0] for r in repos_result.all()]
+    reviews, total, total_pages, page = await paginate(db, query, count_query, page, per_page)
 
     return templates.TemplateResponse("components/log_list_fragment.html", {
         "request": request,
@@ -147,14 +120,14 @@ async def log_detail_fragment(
     review_id: int,
     db: AsyncSession = Depends(get_db),
     user: dict = Depends(require_auth),
-):
+) -> HTMLResponse:
     """单条审查详情展开片段"""
     review_result = await db.execute(
         select(PRReview).where(PRReview.id == review_id)
     )
     review = review_result.scalar_one_or_none()
     if not review:
-        return HTMLResponse("<p class='text-gray-500'>记录不存在</p>", status_code=404)
+        return error_page(request, message="记录不存在", user=user)
 
     # 查询关联评论
     comments_result = await db.execute(

@@ -3,11 +3,11 @@
 from fastapi import APIRouter, Request, Depends, Form, Query
 from fastapi.responses import RedirectResponse, HTMLResponse
 from loguru import logger
-from sqlalchemy import select, func, desc, or_, String
+from sqlalchemy import select, func, desc, or_, String, type_coerce
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.models.telegram_models import TelegramUser, QuotaUsageLog
-from backend.webui.deps import require_admin, get_db, get_templates, get_csrf_serializer, validate_csrf_token, get_user_preferences
+from backend.webui.deps import require_admin, get_db, get_templates, get_csrf_serializer, require_csrf, get_user_preferences, paginate, error_page
 
 router = APIRouter(prefix="/users", tags=["WebUI Users"])
 templates = get_templates()
@@ -39,7 +39,7 @@ async def user_list_fragment(
     role: str = Query("", description="按角色过滤"),
     page: int = Query(1, ge=1),
     per_page: int = Query(None, ge=1, le=100),
-):
+) -> HTMLResponse:
     """用户列表 HTMX 片段（支持搜索、过滤、分页）"""
     if per_page is None:
         per_page = user_prefs["items_per_page"]
@@ -51,7 +51,7 @@ async def user_list_fragment(
         escaped = search.replace("%", r"\%").replace("_", r"\_")
         search_filter = or_(
             TelegramUser.github_username.ilike(f"%{escaped}%", escape="\\"),
-            TelegramUser.telegram_id.cast(String).ilike(f"%{escaped}%", escape="\\"),
+            type_coerce(TelegramUser.telegram_id, String).ilike(f"%{escaped}%", escape="\\"),
         )
         query = query.where(search_filter)
         count_query = count_query.where(search_filter)
@@ -64,18 +64,8 @@ async def user_list_fragment(
     # 排序
     query = query.order_by(desc(TelegramUser.created_at))
 
-    # 总数
-    total_result = await db.execute(count_query)
-    total = total_result.scalar() or 0
-    total_pages = max(1, (total + per_page - 1) // per_page)
-    page = min(page, total_pages)
-
     # 分页
-    offset = (page - 1) * per_page
-    query = query.offset(offset).limit(per_page)
-
-    result = await db.execute(query)
-    users = result.scalars().all()
+    users, total, total_pages, page = await paginate(db, query, count_query, page, per_page)
 
     return templates.TemplateResponse("components/user_list_fragment.html", {
         "request": request,
@@ -96,14 +86,14 @@ async def user_detail_page(
     db: AsyncSession = Depends(get_db),
     user: dict = Depends(require_admin),
     user_prefs: dict = Depends(get_user_preferences),
-):
+) -> HTMLResponse:
     """用户详情页面"""
     result = await db.execute(
         select(TelegramUser).where(TelegramUser.id == user_id)
     )
     target_user = result.scalar_one_or_none()
     if not target_user:
-        return HTMLResponse("<h1>用户不存在</h1>", status_code=404)
+        return error_page(request, message="用户不存在", user=user)
 
     # 查询配额使用历史（最近 20 条）
     logs_result = await db.execute(
@@ -131,14 +121,10 @@ async def update_user_role(
     user_id: int,
     db: AsyncSession = Depends(get_db),
     user: dict = Depends(require_admin),
-    csrf_token: str = Form(...),
+    csrf_token: str = Depends(require_csrf),  # 依赖注入，非表单字段
     role: str = Form(...),
-):
+) -> RedirectResponse:
     """修改用户角色"""
-    if not validate_csrf_token(csrf_token):
-        from fastapi import HTTPException
-        raise HTTPException(status_code=403, detail="CSRF 验证失败")
-
     if role not in ("user", "admin", "super_admin"):
         return RedirectResponse(url=f"/webui/users/{user_id}?error=1", status_code=302)
 
@@ -147,7 +133,7 @@ async def update_user_role(
     )
     target_user = result.scalar_one_or_none()
     if not target_user:
-        return HTMLResponse("<h1>用户不存在</h1>", status_code=404)
+        return error_page(request, message="用户不存在", user=user)
 
     # 权限保护：不允许修改同级别或更高级别的用户
     if target_user.role in ("admin", "super_admin") and user["role"] != "super_admin":
@@ -170,16 +156,12 @@ async def update_user_quota(
     user_id: int,
     db: AsyncSession = Depends(get_db),
     user: dict = Depends(require_admin),
-    csrf_token: str = Form(...),
+    csrf_token: str = Depends(require_csrf),  # 依赖注入，非表单字段
     daily_quota: int = Form(...),
     weekly_quota: int = Form(...),
     monthly_quota: int = Form(...),
-):
+) -> RedirectResponse:
     """修改用户配额"""
-    if not validate_csrf_token(csrf_token):
-        from fastapi import HTTPException
-        raise HTTPException(status_code=403, detail="CSRF 验证失败")
-
     if daily_quota < 0 or weekly_quota < 0 or monthly_quota < 0:
         return RedirectResponse(url=f"/webui/users/{user_id}?error=1", status_code=302)
 
@@ -188,7 +170,7 @@ async def update_user_quota(
     )
     target_user = result.scalar_one_or_none()
     if not target_user:
-        return HTMLResponse("<h1>用户不存在</h1>", status_code=404)
+        return error_page(request, message="用户不存在", user=user)
 
     target_user.daily_quota = daily_quota
     target_user.weekly_quota = weekly_quota
@@ -205,19 +187,15 @@ async def toggle_user_status(
     user_id: int,
     db: AsyncSession = Depends(get_db),
     user: dict = Depends(require_admin),
-    csrf_token: str = Form(...),
-):
+    csrf_token: str = Depends(require_csrf),  # 依赖注入，非表单字段
+) -> RedirectResponse:
     """启用/禁用用户"""
-    if not validate_csrf_token(csrf_token):
-        from fastapi import HTTPException
-        raise HTTPException(status_code=403, detail="CSRF 验证失败")
-
     result = await db.execute(
         select(TelegramUser).where(TelegramUser.id == user_id)
     )
     target_user = result.scalar_one_or_none()
     if not target_user:
-        return HTMLResponse("<h1>用户不存在</h1>", status_code=404)
+        return error_page(request, message="用户不存在", user=user)
 
     # 权限保护：不允许修改同级别或更高级别的用户，不允许禁用自己
     if user_id == user["user_id"]:

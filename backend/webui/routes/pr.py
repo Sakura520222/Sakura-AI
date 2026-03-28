@@ -2,11 +2,11 @@
 
 from fastapi import APIRouter, Request, Depends, Query
 from fastapi.responses import HTMLResponse
-from sqlalchemy import select, func, desc, or_, case
+from sqlalchemy import select, func, desc, case
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.models.database import PRReview, ReviewComment
-from backend.webui.deps import require_auth, get_db, get_templates, get_csrf_serializer, get_user_preferences
+from backend.webui.deps import require_auth, get_db, get_templates, get_csrf_serializer, get_user_preferences, paginate, error_page, build_review_search_filter
 
 router = APIRouter(prefix="/pr", tags=["WebUI PR"])
 templates = get_templates()
@@ -46,15 +46,9 @@ async def pr_list_fragment(
     query = select(PRReview)
     count_query = select(func.count(PRReview.id))
 
-    # 搜索（转义 LIKE 通配符防止注入）
-    if search:
-        escaped = search.replace("%", r"\%").replace("_", r"\_")
-        search_filter = or_(
-            PRReview.title.ilike(f"%{escaped}%", escape="\\"),
-            PRReview.repo_name.ilike(f"%{escaped}%", escape="\\"),
-            PRReview.repo_owner.ilike(f"%{escaped}%", escape="\\"),
-            PRReview.author.ilike(f"%{escaped}%", escape="\\"),
-        )
+    # 搜索过滤
+    search_filter = build_review_search_filter(search)
+    if search_filter:
         query = query.where(search_filter)
         count_query = count_query.where(search_filter)
 
@@ -71,18 +65,8 @@ async def pr_list_fragment(
     # 排序
     query = query.order_by(desc(PRReview.created_at))
 
-    # 总数
-    total_result = await db.execute(count_query)
-    total = total_result.scalar() or 0
-    total_pages = max(1, (total + per_page - 1) // per_page)
-    page = min(page, total_pages)
-
     # 分页
-    offset = (page - 1) * per_page
-    query = query.offset(offset).limit(per_page)
-
-    result = await db.execute(query)
-    reviews = result.scalars().all()
+    reviews, total, total_pages, page = await paginate(db, query, count_query, page, per_page)
 
     # 渲染 HTMX 片段
     return templates.TemplateResponse("components/pr_list_fragment.html", {
@@ -105,7 +89,7 @@ async def pr_detail_page(
     db: AsyncSession = Depends(get_db),
     user: dict = Depends(require_auth),
     user_prefs: dict = Depends(get_user_preferences),
-):
+) -> HTMLResponse:
     """PR 详情页面"""
     # 查询 PR 审查记录
     review = await db.execute(
@@ -113,23 +97,25 @@ async def pr_detail_page(
     )
     review = review.scalar_one_or_none()
     if not review:
-        from fastapi.responses import HTMLResponse
-        return HTMLResponse("<h1>审查记录不存在</h1>", status_code=404)
+        return error_page(request, message="审查记录不存在", user=user)
 
     # 查询关联评论
-    def null_last(col):
-        return case((col.is_(None), 1), else_=0), col
-
     comments_result = await db.execute(
         select(ReviewComment)
         .where(ReviewComment.review_id == review_id)
         .order_by(
-            *null_last(ReviewComment.file_path),
-            *null_last(ReviewComment.line_number),
+            case((ReviewComment.file_path.is_(None), 1), else_=0),
+            ReviewComment.file_path,
+            case((ReviewComment.line_number.is_(None), 1), else_=0),
+            ReviewComment.line_number,
             ReviewComment.created_at.asc(),
         )
     )
     comments = comments_result.scalars().all()
+
+    # 预处理时间格式
+    created_at_str = review.created_at.strftime('%Y-%m-%d %H:%M:%S') if review.created_at else '-'
+    completed_at_str = review.completed_at.strftime('%Y-%m-%d %H:%M:%S') if review.completed_at else None
 
     return templates.TemplateResponse("pr_detail.html", {
         "request": request,
@@ -139,4 +125,6 @@ async def pr_detail_page(
         "user_prefs": user_prefs,
         "review": review,
         "comments": comments,
+        "created_at_str": created_at_str,
+        "completed_at_str": completed_at_str,
     })
