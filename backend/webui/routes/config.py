@@ -56,9 +56,13 @@ def _validate_label(name: str, color: str):
 
 def _get_config_lock(path: str) -> asyncio.Lock:
     """获取指定配置文件的异步锁（单例，防止并发 TOCTOU）"""
-    if path not in _config_locks:
-        _config_locks[path] = asyncio.Lock()
-    return _config_locks[path]
+    lock = _config_locks.get(path)
+    if lock is None or lock.locked():
+        if len(_config_locks) > 100:
+            _config_locks.clear()
+        lock = asyncio.Lock()
+        _config_locks[path] = lock
+    return lock
 
 
 def _atomic_yaml_write(path: Path, full_config: dict):
@@ -138,8 +142,11 @@ async def save_strategies_section(
                 strategies = {}
                 for key in STRATEGY_KEYS:
                     name = form.get(f"strategy_{key}_name", key)
-                    max_files = int(form.get(f"strategy_{key}_max_files", 999999))
-                    max_lines = int(form.get(f"strategy_{key}_max_lines", 99999999))
+                    try:
+                        max_files = int(form.get(f"strategy_{key}_max_files", 999999))
+                        max_lines = int(form.get(f"strategy_{key}_max_lines", 99999999))
+                    except (ValueError, TypeError) as e:
+                        raise ValueError(f"[{key}] 数值格式错误: {e}")
                     if not 1 <= max_files <= 100000:
                         raise ValueError(f"[{key}] max_files 须在 1-100000 之间: {max_files}")
                     if not 1 <= max_lines <= 10000000:
@@ -272,6 +279,8 @@ async def save_labels_definitions(
                     name = str(form[key]).strip()
                     if name:
                         color = str(form.get(f"label_color_{idx}", "0366d6")).strip().lstrip("#")
+                        if not color:
+                            raise ValueError(f"标签颜色不能为空: {name}")
                         desc = str(form.get(f"label_desc_{idx}", "")).strip()
                         _validate_label(name, color)
                         labels[name] = {"color": color, "description": desc}

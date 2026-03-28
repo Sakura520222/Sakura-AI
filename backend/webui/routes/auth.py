@@ -2,6 +2,7 @@
 
 import json
 import secrets
+import time
 from urllib.parse import urlencode
 
 import httpx
@@ -24,6 +25,7 @@ APP_VERSION = "2.4.0"
 
 _OAUTH_STATE_TTL = 600  # state 有效期 10 分钟
 _OAUTH_STATE_KEY_PREFIX = "oauth:state:"
+_oauth_states_fallback: dict[str, dict] = {}  # Redis 故障时的内存回退
 
 
 def _oauth_error(request: Request, error_msg: str, has_oauth: bool = True, status_code: int = 400):
@@ -38,27 +40,42 @@ def _oauth_error(request: Request, error_msg: str, has_oauth: bool = True, statu
 
 
 def _save_oauth_state(state: str, redirect: str):
-    """将 OAuth state 存储到 Redis"""
-    r = get_redis()
-    key = f"{_OAUTH_STATE_KEY_PREFIX}{state}"
-    r.setex(key, _OAUTH_STATE_TTL, json.dumps({"redirect": redirect}))
+    """将 OAuth state 存储到 Redis，失败时回退到内存"""
+    try:
+        r = get_redis()
+        key = f"{_OAUTH_STATE_KEY_PREFIX}{state}"
+        r.setex(key, _OAUTH_STATE_TTL, json.dumps({"redirect": redirect}))
+    except Exception as e:
+        logger.warning(f"Redis 存储失败，使用内存回退: {e}")
+        _oauth_states_fallback[state] = {"redirect": redirect, "expires": time.time() + _OAUTH_STATE_TTL}
 
 
 def _get_oauth_state(state: str):
     """读取 OAuth state（不删除，用于验证阶段）"""
-    r = get_redis()
-    key = f"{_OAUTH_STATE_KEY_PREFIX}{state}"
-    value = r.get(key)
-    if value:
-        return json.loads(value)
+    try:
+        r = get_redis()
+        key = f"{_OAUTH_STATE_KEY_PREFIX}{state}"
+        value = r.get(key)
+        if value:
+            return json.loads(value)
+    except Exception as e:
+        logger.warning(f"Redis 读取失败，尝试内存回退: {e}")
+    # Redis 失败或未命中，尝试内存回退
+    fallback = _oauth_states_fallback.get(state)
+    if fallback and fallback["expires"] > time.time():
+        return {"redirect": fallback["redirect"]}
     return None
 
 
 def _delete_oauth_state(state: str):
     """删除 OAuth state（登录成功后调用）"""
-    r = get_redis()
-    key = f"{_OAUTH_STATE_KEY_PREFIX}{state}"
-    r.delete(key)
+    try:
+        r = get_redis()
+        key = f"{_OAUTH_STATE_KEY_PREFIX}{state}"
+        r.delete(key)
+    except Exception as e:
+        logger.warning(f"Redis 删除失败: {e}")
+    _oauth_states_fallback.pop(state, None)
 
 
 @router.get("/login")
