@@ -1,0 +1,69 @@
+<!-- 选中文件的评论 HTMX 片段 -->
+<div>
+    <!-- 文件路径标题 -->
+    <div class="px-6 py-4 border-b border-gray-200 dark:border-gray-700">
+        <div class="flex items-center gap-2">
+            <svg class="w-5 h-5 text-pink-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/>
+            </svg>
+            {% if file_path %}
+            <code class="text-sm font-medium text-gray-800 dark:text-gray-200">{{ file_path }}</code>
+            {% else %}
+            <span class="text-sm font-medium text-purple-600 dark:text-purple-400">总体评论</span>
+            {% endif %}
+            <span class="text-xs text-gray-400">({{ comments | length }} 条评论)</span>
+        </div>
+    </div>
+
+    <!-- 评论列表 -->
+    {% if comments %}
+    <div class="divide-y divide-gray-200 dark:divide-gray-700">
+        {% for c in comments %}
+        <div class="px-6 py-4">
+            <div class="flex items-start gap-3">
+                <!-- severity 图标 -->
+                <div class="flex-shrink-0 mt-0.5">
+                    {% if c.severity == "critical" %}
+                    <span class="inline-block w-6 h-6 rounded-full bg-red-100 dark:bg-red-900/30 text-red-600 dark:text-red-400 text-center leading-6 text-xs font-bold">!</span>
+                    {% elif c.severity == "major" %}
+                    <span class="inline-block w-6 h-6 rounded-full bg-orange-100 dark:bg-orange-900/30 text-orange-600 dark:text-orange-400 text-center leading-6 text-xs font-bold">W</span>
+                    {% elif c.severity == "minor" %}
+                    <span class="inline-block w-6 h-6 rounded-full bg-yellow-100 dark:bg-yellow-900/30 text-yellow-600 dark:text-yellow-400 text-center leading-6 text-xs font-bold">I</span>
+                    {% else %}
+                    <span class="inline-block w-6 h-6 rounded-full bg-blue-100 dark:bg-blue-900/30 text-blue-600 dark:text-blue-400 text-center leading-6 text-xs font-bold">S</span>
+                    {% endif %}
+                </div>
+
+                <div class="flex-1 min-w-0">
+                    <!-- 行号 + 类型 -->
+                    <div class="flex items-center gap-2 text-xs text-gray-500 dark:text-gray-400 mb-1">
+                        {% if c.line_number %}
+                        <span class="bg-gray-100 dark:bg-gray-700 px-1.5 py-0.5 rounded font-mono">L{{ c.line_number }}</span>
+                        {% endif %}
+                        {% if c.comment_type == "overall" %}
+                        <span class="px-1.5 py-0.5 rounded bg-purple-100 dark:bg-purple-900/30 text-purple-700 dark:text-purple-400 text-xs">总评</span>
+                        {% elif c.comment_type == "file" %}
+                        <span class="px-1.5 py-0.5 rounded bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-400 text-xs">文件级</span>
+                        {% elif c.comment_type == "line" %}
+                        <span class="px-1.5 py-0.5 rounded bg-cyan-100 dark:bg-cyan-900/30 text-cyan-700 dark:text-cyan-400 text-xs">行级</span>
+                        {% endif %}
+                    </div>
+
+                    <!-- 评论内容 -->
+                    <div class="text-sm text-gray-700 dark:text-gray-300 whitespace-pre-wrap leading-relaxed">
+                        {{ c.content }}
+                    </div>
+                </div>
+            </div>
+        </div>
+        {% endfor %}
+    </div>
+    {% else %}
+    <div class="p-12 text-center text-gray-400 dark:text-gray-500">
+        <svg class="w-12 h-12 mx-auto" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M7 8h10M7 12h4m1 8l-4-4H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-3l-4 4z"/>
+        </svg>
+        <p class="mt-4">该文件无审查评论</p>
+    </div>
+    {% endif %}
+</div>
