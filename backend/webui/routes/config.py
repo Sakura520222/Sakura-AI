@@ -59,8 +59,10 @@ def _get_config_lock(path: str) -> asyncio.Lock:
     lock = _config_locks.setdefault(path, asyncio.Lock())
     if len(_config_locks) > 100:
         # 只清理未被占用的锁，保留活跃锁
-        _config_locks = {k: v for k, v in _config_locks.items() if v.locked()}
-        lock = _config_locks.setdefault(path, asyncio.Lock())
+        cleaned = {k: v for k, v in _config_locks.items() if v.locked()}
+        if path not in cleaned:
+            cleaned[path] = lock
+        _config_locks = cleaned
     return lock
 
 
