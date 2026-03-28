@@ -455,6 +455,95 @@ class GitHubAppClient:
             logger.error(f"撤回Review失败: {e}", exc_info=True)
             return 0
 
+    def delete_all_bot_comments(
+        self,
+        repo_owner: str,
+        repo_name: str,
+        pr_number: int,
+        bot_username: str,
+    ) -> int:
+        """删除指定PR上所有来自bot的Issue Comments
+
+        Args:
+            repo_owner: 仓库所有者
+            repo_name: 仓库名称
+            pr_number: PR编号
+            bot_username: 机器人用户名
+
+        Returns:
+            删除的评论数量
+        """
+        try:
+            client = self.get_repo_client(repo_owner, repo_name)
+            if not client:
+                logger.warning(
+                    f"无法获取 {repo_owner}/{repo_name} 的客户端，跳过删除评论"
+                )
+                return 0
+
+            repo = client.get_repo(f"{repo_owner}/{repo_name}")
+            pr = repo.get_pull(pr_number)
+
+            comments = pr.get_issue_comments()
+            deleted_count = 0
+
+            for comment in comments:
+                if comment.user.login == bot_username:
+                    try:
+                        comment.delete()
+                        deleted_count += 1
+                        logger.info(
+                            f"已删除评论: {repo_owner}/{repo_name}#{pr_number}, "
+                            f"comment_id={comment.id}"
+                        )
+                    except Exception as e:
+                        logger.warning(f"删除评论失败 (id={comment.id}): {e}")
+
+            logger.info(
+                f"删除评论完成: {repo_owner}/{repo_name}#{pr_number}, "
+                f"共删除 {deleted_count} 条"
+            )
+            return deleted_count
+
+        except Exception as e:
+            logger.error(f"删除bot评论失败: {e}", exc_info=True)
+            return 0
+
+    def check_collaborator_permission(
+        self,
+        repo_owner: str,
+        repo_name: str,
+        username: str,
+    ) -> str:
+        """检查用户在仓库中的权限级别
+
+        Args:
+            repo_owner: 仓库所有者
+            repo_name: 仓库名称
+            username: GitHub用户名
+
+        Returns:
+            权限级别字符串 (admin, write, read, none)，出错返回 "none"
+        """
+        try:
+            client = self.get_repo_client(repo_owner, repo_name)
+            if not client:
+                logger.warning(
+                    f"无法获取 {repo_owner}/{repo_name} 的客户端，跳过权限检查"
+                )
+                return "none"
+
+            repo = client.get_repo(f"{repo_owner}/{repo_name}")
+            permission = repo.get_collaborator_permission(username)
+            logger.info(
+                f"用户 {username} 在 {repo_owner}/{repo_name} 的权限: {permission}"
+            )
+            return permission
+
+        except Exception as e:
+            logger.warning(f"检查用户权限失败 (user={username}): {e}")
+            return "none"
+
     def submit_review(
         self,
         repo_owner: str,
