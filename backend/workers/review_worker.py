@@ -141,9 +141,12 @@ class ReviewWorker:
             # 任务1: AI审查（使用分批审查模式）
             if enable_tools:
                 logger.info(f"[{task_id}] 使用AI工具增强模式进行审查（支持分批处理）")
+                batch_config = get_strategy_config().get_batch_config()
                 tasks.append(
                     self.ai_reviewer.review_pr_with_tools_batched(
-                        context, analysis.strategy, repo, pr
+                        context, analysis.strategy, repo, pr,
+                        max_files_per_batch=batch_config.get("max_files_per_batch", 5),
+                        max_lines_per_batch=batch_config.get("max_lines_per_batch", 2000),
                     )
                 )
             else:
