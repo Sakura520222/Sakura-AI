@@ -25,56 +25,7 @@
 
 {% block extra_scripts %}
 <script>
-function loadPage(pageNum) {
-    // 收集当前过滤条件
-    const container = document.getElementById('pr-list-container');
-    const params = new URLSearchParams();
-
-    // 从当前 URL 获取查询参数
-    const urlParams = new URLSearchParams(window.location.search);
-    if (urlParams.get('search')) params.set('search', urlParams.get('search'));
-    if (urlParams.get('status')) params.set('status', urlParams.get('status'));
-    if (urlParams.get('decision')) params.set('decision', urlParams.get('decision'));
-    params.set('page', pageNum);
-
-    container.innerHTML = '<div class="text-center py-8 text-gray-400"><svg class="w-8 h-8 mx-auto animate-spin" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg><p class="mt-2">加载中...</p></div>';
-
-    fetch('/webui/pr/list-fragment?' + params.toString(), {
-        headers: { 'HX-Request': 'true' }
-    })
-    .then(r => r.text())
-    .then(html => {
-        container.innerHTML = html;
-        history.replaceState(null, '', '?' + params.toString());
-    })
-    .catch(err => console.error('加载失败:', err));
-}
-
-// 拦截过滤表单提交
-document.addEventListener('submit', function(e) {
-    if (e.target.id === 'pr-filter-form') {
-        e.preventDefault();
-        const formData = new FormData(e.target);
-        const params = new URLSearchParams();
-        for (const [key, value] of formData.entries()) {
-            if (value) params.set(key, value);
-        }
-        params.set('page', '1');
-
-        const container = document.getElementById('pr-list-container');
-        container.innerHTML = '<div class="text-center py-8 text-gray-400"><svg class="w-8 h-8 mx-auto animate-spin" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg><p class="mt-2">加载中...</p></div>';
-
-        fetch('/webui/pr/list-fragment?' + params.toString(), {
-            headers: { 'HX-Request': 'true' }
-        })
-        .then(r => r.text())
-        .then(html => {
-            container.innerHTML = html;
-            // 同步 URL 查询参数，使翻页能获取到当前过滤条件
-            history.replaceState(null, '', '?' + params.toString());
-        })
-        .catch(err => console.error('加载失败:', err));
-    }
-});
+var loadPage = function(n) { loadListPage('pr-list-container', '/webui/pr/list-fragment', n); };
+initFilterForm('pr-filter-form', 'pr-list-container', '/webui/pr/list-fragment');
 </script>
 {% endblock %}
