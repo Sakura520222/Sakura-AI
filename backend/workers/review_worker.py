@@ -564,14 +564,39 @@ class ReviewWorker:
                         f"[{task_id}] 第 {attempt + 1} 次提交Review失败，1秒后重试..."
                     )
                     await asyncio.sleep(1)
+
+            # 最终兜底：带行内评论的 Review 提交失败时，尝试仅提交 Review Body
+            if not success and inline_comments:
+                logger.warning(
+                    f"[{task_id}] 带行内评论的Review提交失败，尝试仅提交Review Body..."
+                )
+                success = self.github_app.submit_review(
+                    repo_owner=pr_info["repo_owner"],
+                    repo_name=pr_info["repo_name"],
+                    pr_number=pr_info["pr_number"],
+                    event=decision.value.upper(),
+                    body=review_body,
+                    bot_username=bot_username,
+                    enable_idempotency_check=enable_idempotency,
+                )
+                if success:
+                    logger.info(
+                        f"[{task_id}] ✅ 降级成功: 已提交无行内评论的Review"
+                    )
                 else:
                     logger.error(f"[{task_id}] 重试 {max_retries} 次后仍然失败")
 
             if success:
-                logger.info(
-                    f"[{task_id}] ✅ 成功提交Review到GitHub: {decision.value} "
-                    f"(含{len(inline_comments)}条行内评论)"
-                )
+                if inline_comments:
+                    logger.info(
+                        f"[{task_id}] ✅ 成功提交Review到GitHub: {decision.value} "
+                        f"(含{len(inline_comments)}条行内评论)"
+                    )
+                else:
+                    logger.info(
+                        f"[{task_id}] ✅ 成功提交Review到GitHub: {decision.value} "
+                        f"(无行内评论)"
+                    )
             else:
                 logger.warning(
                     f"[{task_id}] ⚠️ 提交Review到GitHub失败，但已保存到数据库"
