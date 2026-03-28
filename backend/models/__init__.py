@@ -12,6 +12,7 @@ from backend.models.database import (
     insert_default_configs_async,
     Base,
 )
+from backend.models.admin_action_log import AdminActionLog
 from backend.core.config import get_settings
 import logging
 
@@ -22,6 +23,7 @@ __all__ = [
     "ReviewComment",
     "AppConfig",
     "ReviewQueue",
+    "AdminActionLog",
     "init_database",
     "init_async_db",
     "close_async_db",

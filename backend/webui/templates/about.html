@@ -1,0 +1,109 @@
+{% extends "base.html" %}
+
+{% block title %}关于 - Sakura AI Reviewer{% endblock %}
+
+{% block content %}
+<div class="space-y-6 max-w-2xl">
+    <!-- 页面标题 -->
+    <div>
+        <h1 class="text-2xl font-bold">关于</h1>
+        <p class="mt-1 text-sm text-gray-500 dark:text-gray-400">Sakura AI Reviewer 应用信息</p>
+    </div>
+
+    <!-- 应用信息卡片 -->
+    <div class="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 shadow-sm p-6">
+        <div class="flex items-center gap-4">
+            <div class="w-14 h-14 bg-gradient-to-br from-pink-500 to-purple-600 rounded-xl flex items-center justify-center">
+                <svg class="w-8 h-8 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z"/>
+                </svg>
+            </div>
+            <div>
+                <h2 class="text-xl font-bold">Sakura AI Reviewer</h2>
+                <div class="flex items-center gap-3 mt-1 text-sm text-gray-500 dark:text-gray-400">
+                    <span class="font-mono">v{{ app_version }}</span>
+                    <span>|</span>
+                    <span>{{ build_date }}</span>
+                </div>
+            </div>
+        </div>
+        <p class="mt-4 text-sm text-gray-600 dark:text-gray-400 leading-relaxed">
+            基于 AI 的 GitHub Pull Request 自动审查系统，为团队代码质量提供智能保障。
+            支持多策略审查、自动标签推荐、审查策略配置等功能。
+        </p>
+    </div>
+
+    <!-- 技术栈 -->
+    <div class="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 shadow-sm p-6">
+        <h3 class="text-sm font-medium text-gray-700 dark:text-gray-300 mb-4">技术栈</h3>
+        <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <div class="flex items-center gap-3 p-3 rounded-lg bg-gray-50 dark:bg-gray-700/50">
+                <div class="w-8 h-8 bg-blue-100 dark:bg-blue-900/30 rounded-lg flex items-center justify-center">
+                    <svg class="w-4 h-4 text-blue-600 dark:text-blue-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 20l4-16m4 4l4 4-4 4M6 16l-4-4 4-4"/>
+                    </svg>
+                </div>
+                <div>
+                    <p class="text-sm font-medium">Python</p>
+                    <p class="text-xs text-gray-500 dark:text-gray-400">后端运行时</p>
+                </div>
+            </div>
+            <div class="flex items-center gap-3 p-3 rounded-lg bg-gray-50 dark:bg-gray-700/50">
+                <div class="w-8 h-8 bg-green-100 dark:bg-green-900/30 rounded-lg flex items-center justify-center">
+                    <svg class="w-4 h-4 text-green-600 dark:text-green-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"/>
+                    </svg>
+                </div>
+                <div>
+                    <p class="text-sm font-medium">FastAPI</p>
+                    <p class="text-xs text-gray-500 dark:text-gray-400">Web 框架</p>
+                </div>
+            </div>
+            <div class="flex items-center gap-3 p-3 rounded-lg bg-gray-50 dark:bg-gray-700/50">
+                <div class="w-8 h-8 bg-orange-100 dark:bg-orange-900/30 rounded-lg flex items-center justify-center">
+                    <svg class="w-4 h-4 text-orange-600 dark:text-orange-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 7v10c0 2.21 3.582 4 8 4s8-1.79 8-4V7M4 7c0 2.21 3.582 4 8 4s8-1.79 8-4M4 7c0-2.21 3.582-4 8-4s8 1.79 8 4"/>
+                    </svg>
+                </div>
+                <div>
+                    <p class="text-sm font-medium">MySQL</p>
+                    <p class="text-xs text-gray-500 dark:text-gray-400">数据库 (SQLAlchemy)</p>
+                </div>
+            </div>
+            <div class="flex items-center gap-3 p-3 rounded-lg bg-gray-50 dark:bg-gray-700/50">
+                <div class="w-8 h-8 bg-red-100 dark:bg-red-900/30 rounded-lg flex items-center justify-center">
+                    <svg class="w-4 h-4 text-red-600 dark:text-red-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4.318 6.318a4.5 4.5 0 000 6.364L12 20.364l7.682-7.682a4.5 4.5 0 00-6.364-6.364L12 7.636l-1.318-1.318a4.5 4.5 0 00-6.364 0z"/>
+                    </svg>
+                </div>
+                <div>
+                    <p class="text-sm font-medium">Redis</p>
+                    <p class="text-xs text-gray-500 dark:text-gray-400">缓存与队列</p>
+                </div>
+            </div>
+            <div class="flex items-center gap-3 p-3 rounded-lg bg-gray-50 dark:bg-gray-700/50">
+                <div class="w-8 h-8 bg-gray-200 dark:bg-gray-600 rounded-lg flex items-center justify-center">
+                    <svg class="w-4 h-4 text-gray-700 dark:text-gray-300" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.747 0 3.332.477 4.5 1.253v13C19.832 18.477 18.247 18 16.5 18c-1.746 0-3.332.477-4.5 1.253"/>
+                    </svg>
+                </div>
+                <div>
+                    <p class="text-sm font-medium">GitHub App</p>
+                    <p class="text-xs text-gray-500 dark:text-gray-400">Webhook 集成</p>
+                </div>
+            </div>
+            <div class="flex items-center gap-3 p-3 rounded-lg bg-gray-50 dark:bg-gray-700/50">
+                <div class="w-8 h-8 bg-purple-100 dark:bg-purple-900/30 rounded-lg flex items-center justify-center">
+                    <svg class="w-4 h-4 text-purple-600 dark:text-purple-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z"/>
+                    </svg>
+                </div>
+                <div>
+                    <p class="text-sm font-medium">AI Review</p>
+                    <p class="text-xs text-gray-500 dark:text-gray-400">智能代码审查</p>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

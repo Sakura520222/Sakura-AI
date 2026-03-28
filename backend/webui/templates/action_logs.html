@@ -1,0 +1,31 @@
+{% extends "base.html" %}
+
+{% block title %}操作日志 - Sakura AI Reviewer{% endblock %}
+
+{% block content %}
+<div class="space-y-4">
+    <!-- 页面标题 -->
+    <div>
+        <h1 class="text-2xl font-bold">操作日志</h1>
+        <p class="mt-1 text-sm text-gray-500 dark:text-gray-400">查看管理员操作审计记录</p>
+    </div>
+
+    <!-- 日志列表（通过 HTMX 加载） -->
+    <div id="action-log-list-container" hx-get="/webui/logs/actions/list-fragment" hx-trigger="load" hx-swap="innerHTML">
+        <div class="text-center py-8 text-gray-400">
+            <svg class="w-8 h-8 mx-auto animate-spin" fill="none" viewBox="0 0 24 24">
+                <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/>
+                <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/>
+            </svg>
+            <p class="mt-2">加载中...</p>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_scripts %}
+<script>
+var loadActionLogPage = function(n) { loadListPage('action-log-list-container', '/webui/logs/actions/list-fragment', n); };
+initFilterForm('action-log-filter-form', 'action-log-list-container', '/webui/logs/actions/list-fragment');
+</script>
+{% endblock %}

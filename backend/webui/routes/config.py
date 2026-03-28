@@ -9,6 +9,10 @@ from typing import Optional
 
 import yaml
 from fastapi import APIRouter, Request, Depends, Form, Query, HTTPException
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from backend.models.database import AppConfig
 from fastapi.responses import RedirectResponse
 from loguru import logger
 
@@ -21,11 +25,13 @@ from backend.core.config import (
 from backend.services.label_service import label_service
 from backend.webui.deps import (
     require_super_admin,
+    get_db,
     get_templates,
     get_csrf_serializer,
     require_csrf,
     get_user_preferences,
 )
+from backend.webui.helpers.admin_log import log_admin_action
 
 router = APIRouter(prefix="/config", tags=["WebUI Config"])
 templates = get_templates()
@@ -112,7 +118,7 @@ async def strategies_page(
         "request": request,
         "current_user": user,
         "csrf_token": get_csrf_serializer().dumps({}),
-        "active_page": "config",
+        "active_page": "config_strategies",
         "user_prefs": user_prefs,
         "strategies": config_data.get("strategies", {}),
         "file_filters": config_data.get("file_filters", {}),
@@ -128,6 +134,7 @@ async def strategies_page(
 @router.post("/strategies/save")
 async def save_strategies_section(
     request: Request,
+    db: AsyncSession = Depends(get_db),
     user: dict = Depends(require_super_admin),
     csrf_token: str = Depends(require_csrf),
     section: str = Form(...),
@@ -211,6 +218,7 @@ async def save_strategies_section(
             _atomic_yaml_write(STRATEGIES_PATH, config)
             reload_strategy_config()
             logger.info(f"策略配置 [{section}] 已更新, by={user['sub']}")
+            await log_admin_action(db, user['user_id'], "config_save", "strategy", section)
 
     except (ValueError, yaml.YAMLError) as e:
         logger.error(f"配置验证失败: {e}")
@@ -251,7 +259,7 @@ async def labels_page(
         "request": request,
         "current_user": user,
         "csrf_token": get_csrf_serializer().dumps({}),
-        "active_page": "config",
+        "active_page": "config_labels",
         "user_prefs": user_prefs,
         "labels": label_config.get_labels(),
         "recommendation": label_config.get_recommendation_settings(),
@@ -263,6 +271,7 @@ async def labels_page(
 @router.post("/labels/save-labels")
 async def save_labels_definitions(
     request: Request,
+    db: AsyncSession = Depends(get_db),
     user: dict = Depends(require_super_admin),
     csrf_token: str = Depends(require_csrf),
 ):
@@ -292,6 +301,7 @@ async def save_labels_definitions(
             reload_label_config()
             label_service.reload_labels()
             logger.info(f"标签定义已更新 ({len(labels)} 个), by={user['sub']}")
+            await log_admin_action(db, user['user_id'], "config_save", "label", None, {"label_count": len(labels)})
 
     except ValueError as e:
         logger.warning(f"标签验证失败: {e}")
@@ -308,6 +318,7 @@ async def save_labels_definitions(
 @router.post("/labels/save-settings")
 async def save_recommendation_settings(
     request: Request,
+    db: AsyncSession = Depends(get_db),
     user: dict = Depends(require_super_admin),
     csrf_token: str = Depends(require_csrf),
 ):
@@ -331,6 +342,7 @@ async def save_recommendation_settings(
             _atomic_yaml_write(LABELS_PATH, config)
             reload_label_config()
             logger.info(f"标签推荐设置已更新, by={user['sub']}")
+            await log_admin_action(db, user['user_id'], "config_save", "recommendation")
 
     except (ValueError, yaml.YAMLError) as e:
         logger.error(f"推荐设置验证失败: {e}")
@@ -340,3 +352,91 @@ async def save_recommendation_settings(
         return RedirectResponse(url="/webui/config/labels?error=save_failed", status_code=302)
 
     return RedirectResponse(url="/webui/config/labels?saved=1", status_code=302)
+
+
+# ========== GET: 全局配置页 ==========
+
+@router.get("/general")
+async def general_config_page(
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    user: dict = Depends(require_super_admin),
+    user_prefs: dict = Depends(get_user_preferences),
+):
+    """全局配置页面"""
+    result = await db.execute(select(AppConfig).order_by(AppConfig.id))
+    configs = result.scalars().all()
+
+    from backend.webui.routes.auth import APP_VERSION
+
+    return templates.TemplateResponse("config_general.html", {
+        "request": request,
+        "current_user": user,
+        "csrf_token": get_csrf_serializer().dumps({}),
+        "active_page": "config_general",
+        "user_prefs": user_prefs,
+        "configs": configs,
+        "app_version": APP_VERSION,
+    })
+
+
+# ========== POST: 保存全局配置 ==========
+
+@router.post("/general/save")
+async def save_general_config(
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    user: dict = Depends(require_super_admin),
+    csrf_token: str = Depends(require_csrf),
+):
+    """保存全局配置"""
+    try:
+        form = await request.form()
+        changed = {}
+
+        # max_concurrent_reviews
+        raw = form.get("max_concurrent_reviews")
+        if raw is not None:
+            val = int(raw)
+            if not 1 <= val <= 100:
+                return RedirectResponse(url="/webui/config/general?error=validation", status_code=302)
+            result = await db.execute(select(AppConfig).where(AppConfig.key_name == "max_concurrent_reviews"))
+            cfg = result.scalar_one_or_none()
+            if cfg and cfg.key_value != str(val):
+                changed["max_concurrent_reviews"] = {"old": cfg.key_value, "new": str(val)}
+                cfg.key_value = str(val)
+
+        # review_timeout_seconds
+        raw = form.get("review_timeout_seconds")
+        if raw is not None:
+            val = int(raw)
+            if not 10 <= val <= 3600:
+                return RedirectResponse(url="/webui/config/general?error=validation", status_code=302)
+            result = await db.execute(select(AppConfig).where(AppConfig.key_name == "review_timeout_seconds"))
+            cfg = result.scalar_one_or_none()
+            if cfg and cfg.key_value != str(val):
+                changed["review_timeout_seconds"] = {"old": cfg.key_value, "new": str(val)}
+                cfg.key_value = str(val)
+
+        # enable_auto_review (checkbox: "true" if checked, absent if unchecked)
+        raw = form.get("enable_auto_review")
+        val = "true" if raw == "true" else "false"
+        result = await db.execute(select(AppConfig).where(AppConfig.key_name == "enable_auto_review"))
+        cfg = result.scalar_one_or_none()
+        if cfg and cfg.key_value != val:
+            changed["enable_auto_review"] = {"old": cfg.key_value, "new": val}
+            cfg.key_value = val
+
+        if not changed:
+            return RedirectResponse(url="/webui/config/general?saved=1", status_code=302)
+
+        await db.commit()
+        logger.info(f"全局配置已更新, by={user['sub']}, changed={list(changed.keys())}")
+        await log_admin_action(db, user['user_id'], "config_save", "global", None, changed)
+        return RedirectResponse(url="/webui/config/general?saved=1", status_code=302)
+
+    except ValueError:
+        return RedirectResponse(url="/webui/config/general?error=validation", status_code=302)
+    except Exception as e:
+        logger.error(f"全局配置保存失败: {e}", exc_info=True)
+        return RedirectResponse(url="/webui/config/general?error=save_failed", status_code=302)
