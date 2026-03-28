@@ -450,11 +450,35 @@ class GitHubAppClient:
                         )
                     except Exception as e:
                         error_msg = str(e)
-                        # COMMENTED 状态的 review 无法 dismiss，这是正常情况
-                        if "Can not dismiss a commented" in error_msg:
+                        # 已 dismiss 过的 review 忽略
+                        if "Can not dismiss a dismissed" in error_msg:
                             logger.debug(
-                                f"跳过COMMENTED状态Review (id={review.id})"
+                                f"跳过已dismiss的Review (id={review.id})"
                             )
+                        # COMMENTED 状态的 review 无法 dismiss，改为折叠旧内容
+                        elif "Can not dismiss a commented" in error_msg:
+                            try:
+                                old_body = review.body or ""
+                                if old_body:
+                                    collapsed_body = (
+                                        f"<details><summary>旧审查（已被新审查替代，点击展开）</summary>\n\n"
+                                        f"{old_body}\n\n"
+                                        f"</details>"
+                                    )
+                                    # PyGithub PullRequestReview 没有 url 属性，手动构造 API URL
+                                    headers, _ = review._requester.requestJsonAndCheck(
+                                        "PATCH",
+                                        f"/repos/{repo_owner}/{repo_name}/pulls/{pr_number}/reviews/{review.id}",
+                                        input={"body": collapsed_body},
+                                    )
+                                    logger.info(
+                                        f"已折叠Review: {repo_owner}/{repo_name}#{pr_number}, "
+                                        f"review_id={review.id}"
+                                    )
+                            except Exception as edit_err:
+                                logger.warning(
+                                    f"折叠Review失败 (id={review.id}): {edit_err}"
+                                )
                         else:
                             logger.warning(f"撤回Review失败 (id={review.id}): {e}")
 
