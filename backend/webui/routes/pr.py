@@ -2,7 +2,7 @@
 
 from fastapi import APIRouter, Request, Depends, Query
 from fastapi.responses import HTMLResponse
-from sqlalchemy import select, func, desc
+from sqlalchemy import select, func, desc, case
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.models.database import PRReview, ReviewComment
@@ -104,8 +104,10 @@ async def pr_detail_page(
         select(ReviewComment)
         .where(ReviewComment.review_id == review_id)
         .order_by(
-            ReviewComment.file_path.nullslast(),
-            ReviewComment.line_number.nullslast(),
+            case((ReviewComment.file_path.is_(None), 1), else_=0),
+            ReviewComment.file_path,
+            case((ReviewComment.line_number.is_(None), 1), else_=0),
+            ReviewComment.line_number,
             ReviewComment.created_at.asc(),
         )
     )
