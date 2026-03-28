@@ -183,6 +183,25 @@ async def pr_file_list_fragment(
     })
 
 
+def _build_comments_query(review_id: int, file_path: str):
+    """构建评论查询，根据文件路径返回不同的查询对象"""
+    if file_path == "__overall__":
+        return (
+            select(ReviewComment)
+            .where(ReviewComment.review_id == review_id, ReviewComment.file_path.is_(None))
+            .order_by(ReviewComment.created_at.asc())
+        )
+    return (
+        select(ReviewComment)
+        .where(ReviewComment.review_id == review_id, ReviewComment.file_path == file_path)
+        .order_by(
+            case((ReviewComment.line_number.is_(None), 1), else_=0),
+            ReviewComment.line_number.asc(),
+            ReviewComment.created_at.asc(),
+        )
+    )
+
+
 @router.get("/{review_id}/files/comment-fragment")
 async def pr_file_comments_fragment(
     request: Request,
@@ -192,26 +211,7 @@ async def pr_file_comments_fragment(
     file_path: str = Query("", description="文件路径，__overall__ 表示总体评论"),
 ) -> HTMLResponse:
     """选中文件的评论 HTMX 片段"""
-    if file_path == "__overall__":
-        query = (
-            select(ReviewComment)
-            .where(ReviewComment.review_id == review_id, ReviewComment.file_path.is_(None))
-            .order_by(ReviewComment.created_at.asc())
-        )
-    else:
-        query = (
-            select(ReviewComment)
-            .where(ReviewComment.review_id == review_id, ReviewComment.file_path == file_path)
-            .order_by(
-                case(
-                    (ReviewComment.line_number.is_(None), 1),
-                    else_=0,
-                ),
-                ReviewComment.line_number.asc(),
-                ReviewComment.created_at.asc(),
-            )
-        )
-
+    query = _build_comments_query(review_id, file_path)
     comments = (await db.execute(query)).scalars().all()
     display_path = None if file_path == "__overall__" else file_path
 
