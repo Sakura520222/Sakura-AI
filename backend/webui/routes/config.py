@@ -62,7 +62,8 @@ def _get_config_lock(path: str) -> asyncio.Lock:
         cleaned = {k: v for k, v in _config_locks.items() if v.locked()}
         if path not in cleaned:
             cleaned[path] = lock
-        _config_locks = cleaned
+        _config_locks.clear()
+        _config_locks.update(cleaned)
     return lock
 
 
