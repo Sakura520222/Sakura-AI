@@ -601,6 +601,8 @@ async def cmd_review(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         # 4.5 检查并删除旧的审查记录
         old_review_deleted = False
+        deleted_comments = 0
+        dismissed_reviews = 0
         try:
             async with get_async_session() as session:
                 from backend.models.database import PRReview
@@ -625,6 +627,33 @@ async def cmd_review(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     logger.info(
                         f"已删除旧审查记录: {pr_info['repo_full_name']}#{pr_info['pr_number']}, "
                         f"review_id={old_review.id}"
+                    )
+
+            # 清理 GitHub 上的旧评论和 Review
+            from backend.core.github_app import GitHubAppClient
+
+            github_app = GitHubAppClient()
+            bot_username = github_app.get_bot_username(
+                pr_info["repo_owner"], pr_info["repo_name"]
+            )
+
+            if bot_username:
+                deleted_comments = github_app.delete_all_bot_comments(
+                    pr_info["repo_owner"],
+                    pr_info["repo_name"],
+                    pr_info["pr_number"],
+                    bot_username,
+                )
+                dismissed_reviews = github_app.dismiss_bot_reviews(
+                    pr_info["repo_owner"],
+                    pr_info["repo_name"],
+                    pr_info["pr_number"],
+                    bot_username,
+                )
+                if deleted_comments > 0 or dismissed_reviews > 0:
+                    logger.info(
+                        f"已清理GitHub旧内容: 删除 {deleted_comments} 条评论, "
+                        f"撤回 {dismissed_reviews} 条Review"
                     )
 
         except Exception as delete_error:
@@ -681,7 +710,13 @@ async def cmd_review(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         # 9. 发送确认消息
         if old_review_deleted:
-            delete_notice = "\n🧹 检测到旧记录，已为您清理并重新分析..."
+            cleanup_parts = []
+            if deleted_comments > 0:
+                cleanup_parts.append(f"删除 {deleted_comments} 条旧评论")
+            if dismissed_reviews > 0:
+                cleanup_parts.append(f"撤回 {dismissed_reviews} 条旧Review")
+            cleanup_text = "、".join(cleanup_parts) if cleanup_parts else "清理旧记录"
+            delete_notice = f"\n🧹 已{cleanup_text}，正在重新分析..."
         else:
             delete_notice = ""
 
