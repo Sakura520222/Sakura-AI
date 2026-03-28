@@ -1,0 +1,89 @@
+{% extends "base.html" %}
+
+{% block title %}审查队列 - Sakura AI Reviewer{% endblock %}
+
+{% block content %}
+<div class="space-y-4">
+    <!-- 页面标题 -->
+    <div>
+        <h1 class="text-2xl font-bold">审查队列</h1>
+        <p class="mt-1 text-sm text-gray-500 dark:text-gray-400">监控 PR 审查处理状态</p>
+    </div>
+
+    <!-- 统计卡片 -->
+    <div id="queue-stats-container" hx-get="/webui/queue/stats-fragment" hx-trigger="load" hx-swap="innerHTML">
+        <div class="grid grid-cols-2 md:grid-cols-5 gap-4">
+            {% for i in range(5) %}
+            <div class="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 shadow-sm p-4 animate-pulse">
+                <div class="h-10 bg-gray-200 dark:bg-gray-700 rounded-lg"></div>
+            </div>
+            {% endfor %}
+        </div>
+    </div>
+
+    <!-- 队列列表 -->
+    <div id="queue-list-container" hx-get="/webui/queue/list-fragment" hx-trigger="load" hx-swap="innerHTML">
+        <div class="text-center py-8 text-gray-400">
+            <svg class="w-8 h-8 mx-auto animate-spin" fill="none" viewBox="0 0 24 24">
+                <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/>
+                <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/>
+            </svg>
+            <p class="mt-2">加载中...</p>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_scripts %}
+<script>
+function loadQueuePage(pageNum) {
+    const container = document.getElementById('queue-list-container');
+    const params = new URLSearchParams();
+    const urlParams = new URLSearchParams(window.location.search);
+
+    if (urlParams.get('search')) params.set('search', urlParams.get('search'));
+    if (urlParams.get('repo')) params.set('repo', urlParams.get('repo'));
+    if (urlParams.get('status')) params.set('status', urlParams.get('status'));
+    if (urlParams.get('start_date')) params.set('start_date', urlParams.get('start_date'));
+    if (urlParams.get('end_date')) params.set('end_date', urlParams.get('end_date'));
+    params.set('page', pageNum);
+
+    container.innerHTML = '<div class="text-center py-8 text-gray-400"><svg class="w-8 h-8 mx-auto animate-spin" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg><p class="mt-2">加载中...</p></div>';
+
+    fetch('/webui/queue/list-fragment?' + params.toString(), {
+        headers: { 'HX-Request': 'true' }
+    })
+    .then(r => r.text())
+    .then(html => {
+        container.innerHTML = html;
+        history.replaceState(null, '', '?' + params.toString());
+    })
+    .catch(err => console.error('加载失败:', err));
+}
+
+document.addEventListener('submit', function(e) {
+    if (e.target.id === 'queue-filter-form') {
+        e.preventDefault();
+        const formData = new FormData(e.target);
+        const params = new URLSearchParams();
+        for (const [key, value] of formData.entries()) {
+            if (value) params.set(key, value);
+        }
+        params.set('page', '1');
+
+        const container = document.getElementById('queue-list-container');
+        container.innerHTML = '<div class="text-center py-8 text-gray-400"><svg class="w-8 h-8 mx-auto animate-spin" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg><p class="mt-2">加载中...</p></div>';
+
+        fetch('/webui/queue/list-fragment?' + params.toString(), {
+            headers: { 'HX-Request': 'true' }
+        })
+        .then(r => r.text())
+        .then(html => {
+            container.innerHTML = html;
+            history.replaceState(null, '', '?' + params.toString());
+        })
+        .catch(err => console.error('加载失败:', err));
+    }
+});
+</script>
+{% endblock %}

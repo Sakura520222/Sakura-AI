@@ -128,3 +128,95 @@ async def pr_detail_page(
         "created_at_str": created_at_str,
         "completed_at_str": completed_at_str,
     })
+
+
+@router.get("/{review_id}/files")
+async def pr_files_page(
+    request: Request,
+    review_id: int,
+    db: AsyncSession = Depends(get_db),
+    user: dict = Depends(require_auth),
+    user_prefs: dict = Depends(get_user_preferences),
+) -> HTMLResponse:
+    """PR 文件级审查页面"""
+    review = (await db.execute(
+        select(PRReview).where(PRReview.id == review_id)
+    )).scalar_one_or_none()
+    if not review:
+        return error_page(request, message="审查记录不存在", user=user)
+
+    return templates.TemplateResponse("pr_files.html", {
+        "request": request,
+        "current_user": user,
+        "csrf_token": get_csrf_serializer().dumps({}),
+        "active_page": "pr",
+        "user_prefs": user_prefs,
+        "review": review,
+    })
+
+
+@router.get("/{review_id}/files/file-fragment")
+async def pr_file_list_fragment(
+    request: Request,
+    review_id: int,
+    db: AsyncSession = Depends(get_db),
+    user: dict = Depends(require_auth),
+) -> HTMLResponse:
+    """文件列表 HTMX 片段（按 file_path 分组，含 severity 统计）"""
+    file_stats = (await db.execute(
+        select(
+            ReviewComment.file_path,
+            func.count(ReviewComment.id).label("total"),
+            func.count(case((ReviewComment.severity == "critical", 1))).label("critical"),
+            func.count(case((ReviewComment.severity == "major", 1))).label("major"),
+            func.count(case((ReviewComment.severity == "minor", 1))).label("minor"),
+            func.count(case((ReviewComment.severity == "suggestion", 1))).label("suggestion"),
+        )
+        .where(ReviewComment.review_id == review_id)
+        .group_by(ReviewComment.file_path)
+        .order_by(func.count(ReviewComment.id).desc())
+    )).all()
+
+    return templates.TemplateResponse("components/pr_file_list_fragment.html", {
+        "request": request,
+        "file_stats": file_stats,
+    })
+
+
+@router.get("/{review_id}/files/comment-fragment")
+async def pr_file_comments_fragment(
+    request: Request,
+    review_id: int,
+    db: AsyncSession = Depends(get_db),
+    user: dict = Depends(require_auth),
+    file_path: str = Query("", description="文件路径，__overall__ 表示总体评论"),
+) -> HTMLResponse:
+    """选中文件的评论 HTMX 片段"""
+    if file_path == "__overall__":
+        query = (
+            select(ReviewComment)
+            .where(ReviewComment.review_id == review_id, ReviewComment.file_path.is_(None))
+            .order_by(ReviewComment.created_at.asc())
+        )
+    else:
+        query = (
+            select(ReviewComment)
+            .where(ReviewComment.review_id == review_id, ReviewComment.file_path == file_path)
+            .order_by(
+                case(
+                    (ReviewComment.line_number.is_(None), 1),
+                    else_=0,
+                ),
+                ReviewComment.line_number.asc(),
+                ReviewComment.created_at.asc(),
+            )
+        )
+
+    comments = (await db.execute(query)).scalars().all()
+    display_path = None if file_path == "__overall__" else file_path
+
+    return templates.TemplateResponse("components/pr_file_comments_fragment.html", {
+        "request": request,
+        "comments": comments,
+        "file_path": display_path,
+    })
