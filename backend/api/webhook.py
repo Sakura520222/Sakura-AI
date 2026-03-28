@@ -3,6 +3,7 @@
 from fastapi import APIRouter, Request, HTTPException, Header
 from fastapi.responses import JSONResponse
 from typing import Dict, Any
+import re
 from loguru import logger
 
 from backend.core.github_app import (
@@ -266,8 +267,8 @@ async def handle_issue_comment_event(payload: Dict[str, Any]) -> JSONResponse:
         # 提取评论内容
         comment_body = payload.get("comment", {}).get("body", "").strip()
 
-        # 检查是否为 /full-review 指令
-        if not comment_body.startswith("/full-review"):
+        # 检查是否为 /full-review 指令（精确匹配，避免误匹配 /full-review-extra 等）
+        if not re.match(r"^/full-review(\s|$)", comment_body):
             return JSONResponse(content={"status": "ignored", "reason": "not a review command"})
 
         # 检查是否为PR评论（排除普通Issue）
@@ -287,10 +288,17 @@ async def handle_issue_comment_event(payload: Dict[str, Any]) -> JSONResponse:
                 content={"status": "error", "message": "无法提取PR信息"},
             )
 
-        repo_owner = repo_info["owner"]["login"]
-        repo_name = repo_info["name"]
-        repo_full_name = repo_info["full_name"]
-        installation_id = installation["id"]
+        repo_owner = repo_info.get("owner", {}).get("login")
+        repo_name = repo_info.get("name")
+        repo_full_name = repo_info.get("full_name")
+        installation_id = installation.get("id") if installation else None
+
+        if not all([repo_owner, repo_name, repo_full_name, installation_id]):
+            logger.warning("Issue comment payload中缺少必要字段")
+            return JSONResponse(
+                status_code=400,
+                content={"status": "error", "message": "无法提取PR信息"},
+            )
 
         # 获取评论者信息
         commenter_login = payload.get("comment", {}).get("user", {}).get("login", "")
