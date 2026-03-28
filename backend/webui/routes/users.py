@@ -8,6 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.models.telegram_models import TelegramUser, QuotaUsageLog
 from backend.webui.deps import require_admin, get_db, get_templates, get_csrf_serializer, require_csrf, get_user_preferences, paginate, error_page
+from backend.webui.helpers.admin_log import log_admin_action
 
 router = APIRouter(prefix="/users", tags=["WebUI Users"])
 templates = get_templates()
@@ -147,6 +148,7 @@ async def update_user_role(
     await db.commit()
 
     logger.info(f"用户角色已变更: user={target_user.github_username}, {old_role} -> {role}, by={user['sub']}")
+    await log_admin_action(db, user['user_id'], "user_role", "user", str(user_id), {"old_role": old_role, "new_role": role})
     return RedirectResponse(url=f"/webui/users/{user_id}?saved=1", status_code=302)
 
 
@@ -172,12 +174,14 @@ async def update_user_quota(
     if not target_user:
         return error_page(request, message="用户不存在", user=user)
 
+    old_daily, old_weekly, old_monthly = target_user.daily_quota, target_user.weekly_quota, target_user.monthly_quota
     target_user.daily_quota = daily_quota
     target_user.weekly_quota = weekly_quota
     target_user.monthly_quota = monthly_quota
     await db.commit()
 
     logger.info(f"用户配额已变更: user={target_user.github_username}, daily={daily_quota}, weekly={weekly_quota}, monthly={monthly_quota}, by={user['sub']}")
+    await log_admin_action(db, user['user_id'], "user_quota", "user", str(user_id), {"old_daily": old_daily, "old_weekly": old_weekly, "old_monthly": old_monthly, "new_daily": daily_quota, "new_weekly": weekly_quota, "new_monthly": monthly_quota})
     return RedirectResponse(url=f"/webui/users/{user_id}?saved=1", status_code=302)
 
 
@@ -208,4 +212,5 @@ async def toggle_user_status(
 
     status = "启用" if target_user.is_active else "禁用"
     logger.info(f"用户状态已变更: user={target_user.github_username}, status={status}, by={user['sub']}")
+    await log_admin_action(db, user['user_id'], "user_toggle", "user", str(user_id), {"is_active": target_user.is_active})
     return RedirectResponse(url="/webui/users/?saved=1", status_code=302)

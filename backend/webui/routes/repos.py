@@ -8,6 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.models.telegram_models import RepoSubscription
 from backend.webui.deps import require_admin, get_db, get_templates, get_csrf_serializer, require_csrf, get_user_preferences, paginate, error_page
+from backend.webui.helpers.admin_log import log_admin_action
 
 router = APIRouter(prefix="/repos", tags=["WebUI Repos"])
 templates = get_templates()
@@ -108,6 +109,7 @@ async def add_repo(
     await db.commit()
 
     logger.info(f"仓库已添加到白名单: {repo_name}, by={user['sub']}")
+    await log_admin_action(db, user['user_id'], "repo_add", "repo", repo_name)
     return RedirectResponse(url="/webui/repos/?saved=1", status_code=302)
 
 
@@ -132,6 +134,7 @@ async def toggle_repo_status(
 
     status = "启用" if repo.is_active else "禁用"
     logger.info(f"仓库状态已变更: repo={repo.repo_name}, status={status}, by={user['sub']}")
+    await log_admin_action(db, user['user_id'], "repo_toggle", "repo", repo.repo_name, {"is_active": repo.is_active})
     return RedirectResponse(url="/webui/repos/?saved=1", status_code=302)
 
 
@@ -156,4 +159,5 @@ async def remove_repo(
     await db.commit()
 
     logger.info(f"仓库已从白名单移除: {repo_name}, by={user['sub']}")
+    await log_admin_action(db, user['user_id'], "repo_remove", "repo", repo_name)
     return RedirectResponse(url="/webui/repos/?saved=1", status_code=302)

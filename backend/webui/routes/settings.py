@@ -68,3 +68,24 @@ async def save_settings(
 
     logger.info(f"WebUI 设置已更新: user={user['sub']}, language={language}, items_per_page={items_per_page}")
     return RedirectResponse(url="/webui/settings/?saved=1", status_code=302)
+
+
+@router.get("/about")
+async def about_page(
+    request: Request,
+    user: dict = Depends(require_auth),
+    user_prefs: dict = Depends(get_user_preferences),
+):
+    """关于页面"""
+    from datetime import datetime
+    from backend.webui.routes.auth import APP_VERSION
+
+    return templates.TemplateResponse("about.html", {
+        "request": request,
+        "current_user": user,
+        "csrf_token": get_csrf_serializer().dumps({}),
+        "active_page": "about",
+        "user_prefs": user_prefs,
+        "app_version": APP_VERSION,
+        "build_date": datetime.utcnow().strftime('%Y-%m-%d'),
+    })
