@@ -381,10 +381,13 @@ class GitHubAppClient:
             # 获取所有Reviews
             reviews = pr.get_reviews()
 
+            # GitHub bot 用户名在 Review 中显示为 "app-slug[bot]"
+            bot_names = {bot_username, f"{bot_username}[bot]"}
+
             # 检查是否有来自机器人的相同类型的Review
             for review in reviews:
                 if (
-                    review.user.login == bot_username
+                    review.user.login in bot_names
                     and review.state.upper() == event.upper()
                 ):
                     logger.info(
@@ -433,8 +436,11 @@ class GitHubAppClient:
             reviews = pr.get_reviews()
             dismissed_count = 0
 
+            # GitHub bot 用户名在 Review 中显示为 "app-slug[bot]"
+            bot_names = {bot_username, f"{bot_username}[bot]"}
+
             for review in reviews:
-                if review.user.login == bot_username:
+                if review.user.login in bot_names:
                     try:
                         review.dismiss(message="PR 已更新，重新进行审查")
                         dismissed_count += 1
@@ -443,7 +449,38 @@ class GitHubAppClient:
                             f"review_id={review.id}"
                         )
                     except Exception as e:
-                        logger.warning(f"撤回Review失败 (id={review.id}): {e}")
+                        error_msg = str(e)
+                        # 已 dismiss 过的 review 忽略
+                        if "Can not dismiss a dismissed" in error_msg:
+                            logger.debug(
+                                f"跳过已dismiss的Review (id={review.id})"
+                            )
+                        # COMMENTED 状态的 review 无法 dismiss，改为折叠旧内容
+                        elif "Can not dismiss a commented" in error_msg:
+                            try:
+                                old_body = review.body or ""
+                                if old_body:
+                                    collapsed_body = (
+                                        f"<details><summary>旧审查（已被新审查替代，点击展开）</summary>\n\n"
+                                        f"{old_body}\n\n"
+                                        f"</details>"
+                                    )
+                                    # PyGithub PullRequestReview 没有 url 属性，手动构造 API URL
+                                    headers, _ = review._requester.requestJsonAndCheck(
+                                        "PATCH",
+                                        f"/repos/{repo_owner}/{repo_name}/pulls/{pr_number}/reviews/{review.id}",
+                                        input={"body": collapsed_body},
+                                    )
+                                    logger.info(
+                                        f"已折叠Review: {repo_owner}/{repo_name}#{pr_number}, "
+                                        f"review_id={review.id}"
+                                    )
+                            except Exception as edit_err:
+                                logger.warning(
+                                    f"折叠Review失败 (id={review.id}): {edit_err}"
+                                )
+                        else:
+                            logger.warning(f"撤回Review失败 (id={review.id}): {e}")
 
             logger.info(
                 f"撤回Review完成: {repo_owner}/{repo_name}#{pr_number}, "
@@ -454,6 +491,118 @@ class GitHubAppClient:
         except Exception as e:
             logger.error(f"撤回Review失败: {e}", exc_info=True)
             return 0
+
+    def delete_all_bot_comments(
+        self,
+        repo_owner: str,
+        repo_name: str,
+        pr_number: int,
+        bot_username: str,
+    ) -> dict:
+        """删除指定PR上所有来自bot的评论（Issue Comments + Review Comments）
+
+        Args:
+            repo_owner: 仓库所有者
+            repo_name: 仓库名称
+            pr_number: PR编号
+            bot_username: 机器人用户名
+
+        Returns:
+            {"issue_comments": 删除数量, "review_comments": 删除数量}
+        """
+        # GitHub bot 用户名在评论中显示为 "app-slug[bot]"
+        bot_names = {bot_username, f"{bot_username}[bot]"}
+
+        issue_deleted = 0
+        review_deleted = 0
+
+        try:
+            client = self.get_repo_client(repo_owner, repo_name)
+            if not client:
+                logger.warning(
+                    f"无法获取 {repo_owner}/{repo_name} 的客户端，跳过删除评论"
+                )
+                return {"issue_comments": 0, "review_comments": 0}
+
+            repo = client.get_repo(f"{repo_owner}/{repo_name}")
+            pr = repo.get_pull(pr_number)
+
+            # 1. 删除 bot 的 Issue Comments（占位评论、错误评论等）
+            try:
+                for comment in pr.get_issue_comments():
+                    if comment.user.login in bot_names:
+                        try:
+                            comment.delete()
+                            issue_deleted += 1
+                            logger.info(
+                                f"已删除Issue评论: {repo_owner}/{repo_name}#{pr_number}, "
+                                f"comment_id={comment.id}"
+                            )
+                        except Exception as e:
+                            logger.warning(f"删除Issue评论失败 (id={comment.id}): {e}")
+            except Exception as e:
+                logger.warning(f"获取Issue评论失败: {e}")
+
+            # 2. 删除 bot 的 Review Comments（行内评论）
+            try:
+                for comment in pr.get_review_comments():
+                    if comment.user.login in bot_names:
+                        try:
+                            comment.delete()
+                            review_deleted += 1
+                            logger.info(
+                                f"已删除Review评论: {repo_owner}/{repo_name}#{pr_number}, "
+                                f"comment_id={comment.id}"
+                            )
+                        except Exception as e:
+                            logger.warning(f"删除Review评论失败 (id={comment.id}): {e}")
+            except Exception as e:
+                logger.warning(f"获取Review评论失败: {e}")
+
+            logger.info(
+                f"删除评论完成: {repo_owner}/{repo_name}#{pr_number}, "
+                f"Issue评论={issue_deleted}, Review评论={review_deleted}"
+            )
+            return {"issue_comments": issue_deleted, "review_comments": review_deleted}
+
+        except Exception as e:
+            logger.error(f"删除bot评论失败: {e}", exc_info=True)
+            return {"issue_comments": issue_deleted, "review_comments": review_deleted}
+
+    def check_collaborator_permission(
+        self,
+        repo_owner: str,
+        repo_name: str,
+        username: str,
+    ) -> str:
+        """检查用户在仓库中的权限级别
+
+        Args:
+            repo_owner: 仓库所有者
+            repo_name: 仓库名称
+            username: GitHub用户名
+
+        Returns:
+            权限级别字符串 (admin, write, read, none)，出错返回 "none"
+        """
+        try:
+            client = self.get_repo_client(repo_owner, repo_name)
+            if not client:
+                logger.warning(
+                    f"无法获取 {repo_owner}/{repo_name} 的客户端，跳过权限检查"
+                )
+                return "none"
+
+            repo = client.get_repo(f"{repo_owner}/{repo_name}")
+            permission = repo.get_collaborator_permission(username)
+            logger.info(
+                f"用户 {username} 在 {repo_owner}/{repo_name} 的权限: {permission}"
+            )
+            return permission
+
+        except Exception as e:
+            logger.warning(f"检查用户权限失败 (user={username}): {e}")
+            return "none"
 
     def submit_review(
         self,

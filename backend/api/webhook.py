@@ -3,11 +3,13 @@
 from fastapi import APIRouter, Request, HTTPException, Header
 from fastapi.responses import JSONResponse
 from typing import Dict, Any
+import re
 from loguru import logger
 
 from backend.core.github_app import (
     verify_webhook_signature,
     extract_pr_info_from_webhook,
+    GitHubAppClient,
 )
 from backend.workers.review_worker import submit_review_task
 from backend.services.telegram_service import TelegramService
@@ -47,6 +49,7 @@ async def handle_github_webhook(
 
     支持的事件：
     - pull_request: PR被打开、更新或重新打开
+    - issue_comment: PR评论指令（如 /full-review）
     """
     try:
         # 读取原始payload
@@ -74,6 +77,8 @@ async def handle_github_webhook(
         # 处理PR事件
         if x_github_event == "pull_request":
             return await handle_pull_request_event(payload_data)
+        elif x_github_event == "issue_comment":
+            return await handle_issue_comment_event(payload_data)
         else:
             logger.info(f"忽略事件类型: {x_github_event}")
             return JSONResponse(content={"status": "ignored", "event": x_github_event})
@@ -245,6 +250,251 @@ async def handle_pull_request_event(payload: Dict[str, Any]) -> JSONResponse:
 
     except Exception as e:
         logger.error(f"处理PR事件时出错: {e}", exc_info=True)
+        return JSONResponse(
+            status_code=500, content={"status": "error", "message": str(e)}
+        )
+
+
+async def handle_issue_comment_event(payload: Dict[str, Any]) -> JSONResponse:
+    """处理Issue Comment事件（PR评论指令）"""
+    try:
+        action = payload.get("action")
+
+        # 只处理新建评论
+        if action != "created":
+            return JSONResponse(content={"status": "ignored", "action": action})
+
+        # 提取评论内容
+        comment_body = payload.get("comment", {}).get("body", "").strip()
+
+        # 检查是否为 /full-review 指令（精确匹配，避免误匹配 /full-review-extra 等）
+        if not re.match(r"^/full-review(\s|$)", comment_body):
+            return JSONResponse(content={"status": "ignored", "reason": "not a review command"})
+
+        # 检查是否为PR评论（排除普通Issue）
+        issue = payload.get("issue", {})
+        if not issue.get("pull_request"):
+            return JSONResponse(content={"status": "ignored", "reason": "not a PR comment"})
+
+        # 提取PR信息
+        repo_info = payload.get("repository", {})
+        installation = payload.get("installation")
+        pr_number = issue.get("number")
+
+        if not repo_info or not installation or not pr_number:
+            logger.warning("Issue comment payload中缺少必要字段")
+            return JSONResponse(
+                status_code=400,
+                content={"status": "error", "message": "无法提取PR信息"},
+            )
+
+        repo_owner = repo_info.get("owner", {}).get("login")
+        repo_name = repo_info.get("name")
+        repo_full_name = repo_info.get("full_name")
+        installation_id = installation.get("id") if installation else None
+
+        if not all([repo_owner, repo_name, repo_full_name, installation_id]):
+            logger.warning("Issue comment payload中缺少必要字段")
+            return JSONResponse(
+                status_code=400,
+                content={"status": "error", "message": "无法提取PR信息"},
+            )
+
+        # 获取评论者信息
+        commenter_login = payload.get("comment", {}).get("user", {}).get("login", "")
+        pr_author_login = issue.get("user", {}).get("login", "")
+
+        if not commenter_login:
+            return JSONResponse(
+                status_code=400,
+                content={"status": "error", "message": "无法获取评论者信息"},
+            )
+
+        logger.info(
+            f"收到 /full-review 指令: {repo_full_name}#{pr_number}, "
+            f"评论者: {commenter_login}"
+        )
+
+        # 权限检查：PR作者 或 仓库管理员/协作者
+        github_app = GitHubAppClient()
+
+        is_pr_author = commenter_login == pr_author_login
+        is_collaborator = False
+
+        if not is_pr_author:
+            permission = github_app.check_collaborator_permission(
+                repo_owner, repo_name, commenter_login
+            )
+            is_collaborator = permission in ("admin", "write")
+
+        if not is_pr_author and not is_collaborator:
+            logger.info(
+                f"用户 {commenter_login} 无权触发重新审查 "
+                f"(非PR作者且非仓库协作者)"
+            )
+            # 回复评论提示无权限
+            try:
+                client = github_app.get_repo_client(repo_owner, repo_name)
+                if client:
+                    repo = client.get_repo(repo_full_name)
+                    pr = repo.get_pull(pr_number)
+                    pr.create_issue_comment(
+                        f"❌ @{commenter_login}，只有 PR 作者或仓库管理员/协作者才能触发重新审查。"
+                    )
+            except Exception as e:
+                logger.warning(f"回复无权限提示失败: {e}")
+            return JSONResponse(content={"status": "denied", "reason": "insufficient permission"})
+
+        # 通过 GitHub API 获取完整 PR 信息
+        try:
+            client = github_app.get_repo_client(repo_owner, repo_name)
+            if not client:
+                return JSONResponse(
+                    status_code=403,
+                    content={"status": "error", "message": "无法获取仓库访问权限"},
+                )
+
+            repo = client.get_repo(repo_full_name)
+            pr = repo.get_pull(pr_number)
+
+            # 检查PR状态
+            if pr.state != "open":
+                return JSONResponse(
+                    content={"status": "skipped", "reason": "PR not open"}
+                )
+            if pr.draft:
+                return JSONResponse(
+                    content={"status": "skipped", "reason": "draft PR"}
+                )
+            if pr.merged:
+                return JSONResponse(
+                    content={"status": "skipped", "reason": "already merged"}
+                )
+
+            # 构造 pr_info 字典
+            pr_info = {
+                "action": "full_review",
+                "pr_id": pr.id,
+                "pr_number": pr.number,
+                "repo_owner": repo_owner,
+                "repo_name": repo_name,
+                "repo_full_name": repo_full_name,
+                "installation_id": installation_id,
+                "author": pr.user.login,
+                "title": pr.title,
+                "branch": pr.head.ref,
+                "base_branch": pr.base.ref,
+                "diff_url": pr.diff_url,
+                "patch_url": pr.patch_url,
+                "html_url": pr.html_url,
+                "state": pr.state,
+                "draft": pr.draft,
+                "merged": pr.merged,
+            }
+        except Exception as e:
+            logger.error(f"获取PR信息失败: {e}", exc_info=True)
+            return JSONResponse(
+                status_code=500,
+                content={"status": "error", "message": str(e)},
+            )
+
+        # 获取 bot 用户名
+        bot_username = github_app.get_bot_username(repo_owner, repo_name)
+
+        # 清理 GitHub 上的旧评论和 Review
+        deleted_result = {"issue_comments": 0, "review_comments": 0}
+        dismissed_reviews = 0
+
+        if bot_username:
+            deleted_result = github_app.delete_all_bot_comments(
+                repo_owner, repo_name, pr_number, bot_username
+            )
+            dismissed_reviews = github_app.dismiss_bot_reviews(
+                repo_owner, repo_name, pr_number, bot_username
+            )
+
+        total_deleted = deleted_result["issue_comments"] + deleted_result["review_comments"]
+        logger.info(
+            f"清理完成: Issue评论={deleted_result['issue_comments']}, "
+            f"Review评论={deleted_result['review_comments']}, 撤回Review={dismissed_reviews}"
+        )
+
+        # 清理数据库中的旧审查记录
+        try:
+            async with get_async_session() as session:
+                from backend.models.database import PRReview
+                from sqlalchemy import select, and_
+
+                result = await session.execute(
+                    select(PRReview).where(
+                        and_(
+                            PRReview.repo_name == repo_name,
+                            PRReview.pr_id == pr_number,
+                        )
+                    )
+                )
+                old_reviews = result.scalars().all()
+
+                if old_reviews:
+                    for old_review in old_reviews:
+                        await session.delete(old_review)
+                    await session.commit()
+                    logger.info(
+                        f"已删除 {len(old_reviews)} 条旧审查记录: "
+                        f"{repo_full_name}#{pr_number}"
+                    )
+        except Exception as e:
+            logger.warning(f"删除旧审查记录失败（将继续审查）: {e}")
+
+        # 发送审查开始通知
+        notification_sender = get_notification_sender()
+        if notification_sender:
+            await notification_sender.send_review_start(
+                repo_name=repo_full_name,
+                pr_number=pr_number,
+                pr_title=pr_info.get("title", ""),
+                author=pr_info["author"],
+            )
+
+        # 提交全量审查任务
+        task_id = await submit_review_task(pr_info)
+
+        # 回复确认评论
+        try:
+            cleanup_info = []
+            if deleted_result["review_comments"] > 0:
+                cleanup_info.append(f"删除 {deleted_result['review_comments']} 条行内评论")
+            if deleted_result["issue_comments"] > 0:
+                cleanup_info.append(f"删除 {deleted_result['issue_comments']} 条评论")
+            if dismissed_reviews > 0:
+                cleanup_info.append(f"撤回 {dismissed_reviews} 条旧Review")
+            cleanup_text = "、".join(cleanup_info) if cleanup_info else "无需清理"
+
+            pr.create_issue_comment(
+                f"已{cleanup_text}，正在重新全量审查...\n\n"
+                f"由 @{commenter_login} 触发"
+            )
+        except Exception as e:
+            logger.warning(f"发送确认评论失败: {e}")
+
+        logger.info(
+            f"/full-review 已触发: {repo_full_name}#{pr_number}, "
+            f"task_id={task_id}, triggered_by={commenter_login}"
+        )
+
+        return JSONResponse(
+            content={
+                "status": "accepted",
+                "message": "全量审查任务已提交",
+                "pr": f"{repo_full_name}#{pr_number}",
+                "deleted_comments": deleted_result,
+                "dismissed_reviews": dismissed_reviews,
+                "task_id": task_id,
+            }
+        )
+
+    except Exception as e:
+        logger.error(f"处理Issue Comment事件时出错: {e}", exc_info=True)
         return JSONResponse(
             status_code=500, content={"status": "error", "message": str(e)}
         )
