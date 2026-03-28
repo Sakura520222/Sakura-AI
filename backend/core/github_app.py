@@ -381,10 +381,13 @@ class GitHubAppClient:
             # 获取所有Reviews
             reviews = pr.get_reviews()
 
+            # GitHub bot 用户名在 Review 中显示为 "app-slug[bot]"
+            bot_names = {bot_username, f"{bot_username}[bot]"}
+
             # 检查是否有来自机器人的相同类型的Review
             for review in reviews:
                 if (
-                    review.user.login == bot_username
+                    review.user.login in bot_names
                     and review.state.upper() == event.upper()
                 ):
                     logger.info(
@@ -433,8 +436,11 @@ class GitHubAppClient:
             reviews = pr.get_reviews()
             dismissed_count = 0
 
+            # GitHub bot 用户名在 Review 中显示为 "app-slug[bot]"
+            bot_names = {bot_username, f"{bot_username}[bot]"}
+
             for review in reviews:
-                if review.user.login == bot_username:
+                if review.user.login in bot_names:
                     try:
                         review.dismiss(message="PR 已更新，重新进行审查")
                         dismissed_count += 1
@@ -487,8 +493,11 @@ class GitHubAppClient:
             comments = pr.get_issue_comments()
             deleted_count = 0
 
+            # GitHub bot 用户名在评论中显示为 "app-slug[bot]"
+            bot_names = {bot_username, f"{bot_username}[bot]"}
+
             for comment in comments:
-                if comment.user.login == bot_username:
+                if comment.user.login in bot_names:
                     try:
                         comment.delete()
                         deleted_count += 1
