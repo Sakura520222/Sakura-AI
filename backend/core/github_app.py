@@ -449,7 +449,14 @@ class GitHubAppClient:
                             f"review_id={review.id}"
                         )
                     except Exception as e:
-                        logger.warning(f"撤回Review失败 (id={review.id}): {e}")
+                        error_msg = str(e)
+                        # COMMENTED 状态的 review 无法 dismiss，这是正常情况
+                        if "Can not dismiss a commented" in error_msg:
+                            logger.debug(
+                                f"跳过COMMENTED状态Review (id={review.id})"
+                            )
+                        else:
+                            logger.warning(f"撤回Review失败 (id={review.id}): {e}")
 
             logger.info(
                 f"撤回Review完成: {repo_owner}/{repo_name}#{pr_number}, "
@@ -467,8 +474,8 @@ class GitHubAppClient:
         repo_name: str,
         pr_number: int,
         bot_username: str,
-    ) -> int:
-        """删除指定PR上所有来自bot的Issue Comments
+    ) -> dict:
+        """删除指定PR上所有来自bot的评论（Issue Comments + Review Comments）
 
         Args:
             repo_owner: 仓库所有者
@@ -477,46 +484,66 @@ class GitHubAppClient:
             bot_username: 机器人用户名
 
         Returns:
-            删除的评论数量
+            {"issue_comments": 删除数量, "review_comments": 删除数量}
         """
+        # GitHub bot 用户名在评论中显示为 "app-slug[bot]"
+        bot_names = {bot_username, f"{bot_username}[bot]"}
+
+        issue_deleted = 0
+        review_deleted = 0
+
         try:
             client = self.get_repo_client(repo_owner, repo_name)
             if not client:
                 logger.warning(
                     f"无法获取 {repo_owner}/{repo_name} 的客户端，跳过删除评论"
                 )
-                return 0
+                return {"issue_comments": 0, "review_comments": 0}
 
             repo = client.get_repo(f"{repo_owner}/{repo_name}")
             pr = repo.get_pull(pr_number)
 
-            comments = pr.get_issue_comments()
-            deleted_count = 0
+            # 1. 删除 bot 的 Issue Comments（占位评论、错误评论等）
+            try:
+                for comment in pr.get_issue_comments():
+                    if comment.user.login in bot_names:
+                        try:
+                            comment.delete()
+                            issue_deleted += 1
+                            logger.info(
+                                f"已删除Issue评论: {repo_owner}/{repo_name}#{pr_number}, "
+                                f"comment_id={comment.id}"
+                            )
+                        except Exception as e:
+                            logger.warning(f"删除Issue评论失败 (id={comment.id}): {e}")
+            except Exception as e:
+                logger.warning(f"获取Issue评论失败: {e}")
 
-            # GitHub bot 用户名在评论中显示为 "app-slug[bot]"
-            bot_names = {bot_username, f"{bot_username}[bot]"}
-
-            for comment in comments:
-                if comment.user.login in bot_names:
-                    try:
-                        comment.delete()
-                        deleted_count += 1
-                        logger.info(
-                            f"已删除评论: {repo_owner}/{repo_name}#{pr_number}, "
-                            f"comment_id={comment.id}"
-                        )
-                    except Exception as e:
-                        logger.warning(f"删除评论失败 (id={comment.id}): {e}")
+            # 2. 删除 bot 的 Review Comments（行内评论）
+            try:
+                for comment in pr.get_review_comments():
+                    if comment.user.login in bot_names:
+                        try:
+                            comment.delete()
+                            review_deleted += 1
+                            logger.info(
+                                f"已删除Review评论: {repo_owner}/{repo_name}#{pr_number}, "
+                                f"comment_id={comment.id}"
+                            )
+                        except Exception as e:
+                            logger.warning(f"删除Review评论失败 (id={comment.id}): {e}")
+            except Exception as e:
+                logger.warning(f"获取Review评论失败: {e}")
 
             logger.info(
                 f"删除评论完成: {repo_owner}/{repo_name}#{pr_number}, "
-                f"共删除 {deleted_count} 条"
+                f"Issue评论={issue_deleted}, Review评论={review_deleted}"
             )
-            return deleted_count
+            return {"issue_comments": issue_deleted, "review_comments": review_deleted}
 
         except Exception as e:
             logger.error(f"删除bot评论失败: {e}", exc_info=True)
-            return 0
+            return {"issue_comments": issue_deleted, "review_comments": review_deleted}
 
     def check_collaborator_permission(
         self,

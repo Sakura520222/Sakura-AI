@@ -394,19 +394,21 @@ async def handle_issue_comment_event(payload: Dict[str, Any]) -> JSONResponse:
         bot_username = github_app.get_bot_username(repo_owner, repo_name)
 
         # 清理 GitHub 上的旧评论和 Review
-        deleted_comments = 0
+        deleted_result = {"issue_comments": 0, "review_comments": 0}
         dismissed_reviews = 0
 
         if bot_username:
-            deleted_comments = github_app.delete_all_bot_comments(
+            deleted_result = github_app.delete_all_bot_comments(
                 repo_owner, repo_name, pr_number, bot_username
             )
             dismissed_reviews = github_app.dismiss_bot_reviews(
                 repo_owner, repo_name, pr_number, bot_username
             )
 
+        total_deleted = deleted_result["issue_comments"] + deleted_result["review_comments"]
         logger.info(
-            f"清理完成: 删除 {deleted_comments} 条评论, 撤回 {dismissed_reviews} 条Review"
+            f"清理完成: Issue评论={deleted_result['issue_comments']}, "
+            f"Review评论={deleted_result['review_comments']}, 撤回Review={dismissed_reviews}"
         )
 
         # 清理数据库中的旧审查记录
@@ -452,14 +454,16 @@ async def handle_issue_comment_event(payload: Dict[str, Any]) -> JSONResponse:
         # 回复确认评论
         try:
             cleanup_info = []
-            if deleted_comments > 0:
-                cleanup_info.append(f"删除 {deleted_comments} 条旧评论")
+            if deleted_result["review_comments"] > 0:
+                cleanup_info.append(f"删除 {deleted_result['review_comments']} 条行内评论")
+            if deleted_result["issue_comments"] > 0:
+                cleanup_info.append(f"删除 {deleted_result['issue_comments']} 条评论")
             if dismissed_reviews > 0:
                 cleanup_info.append(f"撤回 {dismissed_reviews} 条旧Review")
             cleanup_text = "、".join(cleanup_info) if cleanup_info else "无需清理"
 
             pr.create_issue_comment(
-                f"🧹 已{cleanup_text}，正在重新全量审查...\n\n"
+                f"已{cleanup_text}，正在重新全量审查...\n\n"
                 f"由 @{commenter_login} 触发"
             )
         except Exception as e:
@@ -475,7 +479,7 @@ async def handle_issue_comment_event(payload: Dict[str, Any]) -> JSONResponse:
                 "status": "accepted",
                 "message": "全量审查任务已提交",
                 "pr": f"{repo_full_name}#{pr_number}",
-                "deleted_comments": deleted_comments,
+                "deleted_comments": deleted_result,
                 "dismissed_reviews": dismissed_reviews,
                 "task_id": task_id,
             }
