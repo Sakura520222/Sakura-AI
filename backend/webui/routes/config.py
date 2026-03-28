@@ -58,7 +58,8 @@ def _get_config_lock(path: str) -> asyncio.Lock:
     """获取指定配置文件的异步锁（单例，防止并发 TOCTOU）"""
     lock = _config_locks.setdefault(path, asyncio.Lock())
     if len(_config_locks) > 100:
-        _config_locks.clear()
+        # 只清理未被占用的锁，保留活跃锁
+        _config_locks = {k: v for k, v in _config_locks.items() if v.locked()}
         lock = _config_locks.setdefault(path, asyncio.Lock())
     return lock
 
