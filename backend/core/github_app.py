@@ -601,32 +601,57 @@ class GitHubAppClient:
             if hasattr(e, "status") and hasattr(e, "data"):
                 logger.error(f"提交Review失败: GitHub API返回错误 (status={e.status})")
                 logger.error(f"响应数据: {e.data}")
+
+                is_resolvable_error = False
+
                 if isinstance(e.data, dict):
                     msg = e.data.get("message") or e.data.get("error", "未知错误")
                     logger.error(f"错误信息: {msg}")
 
-                    # 特别处理 422 错误（Path could not be resolved）
                     if e.status == 422:
                         errors = e.data.get("errors", [])
-                        if errors and "Path could not be resolved" in str(errors):
-                            logger.error("⚠️ 文件路径无法解析错误详情:")
-                            # 记录所有评论的路径，帮助定位问题
-                            if inline_comments:
-                                logger.error(
-                                    f"  尝试提交的 {len(inline_comments)} 条评论的路径:"
-                                )
-                                for i, comment in enumerate(inline_comments, 1):
-                                    file_path = comment.get("file_path")
-                                    line_number = comment.get("line_number")
-                                    start_line = comment.get("start_line")
-                                    if start_line:
-                                        logger.error(
-                                            f"    [{i}] {file_path}:{start_line}-{line_number}"
-                                        )
-                                    else:
-                                        logger.error(
-                                            f"    [{i}] {file_path}:{line_number}"
-                                        )
+                        errors_str = str(errors) if errors else ""
+
+                        if "Line could not be resolved" in errors_str or (
+                            "line" in errors_str.lower()
+                            and "could not" in errors_str.lower()
+                        ):
+                            is_resolvable_error = True
+                        if "Path could not be resolved" in errors_str:
+                            is_resolvable_error = True
+
+                        # 记录所有评论的路径，帮助定位问题
+                        if inline_comments:
+                            logger.error(
+                                f"  尝试提交的 {len(inline_comments)} 条评论的详情:"
+                            )
+                            for i, comment in enumerate(inline_comments, 1):
+                                file_path = comment.get("file_path")
+                                line_number = comment.get("line_number")
+                                start_line = comment.get("start_line")
+                                if start_line:
+                                    logger.error(
+                                        f"    [{i}] {file_path}:{start_line}-{line_number}"
+                                    )
+                                else:
+                                    logger.error(
+                                        f"    [{i}] {file_path}:{line_number}"
+                                    )
+
+                # 422 行号/路径无法解析时，降级为无行内评论的 Review
+                if is_resolvable_error and body and inline_comments:
+                    logger.warning(
+                        "422 行号/路径无法解析，尝试降级为无行内评论的 Review..."
+                    )
+                    try:
+                        pr.create_review(event=event, body=body, comments=[])
+                        logger.info(
+                            f"✅ 降级成功: 已提交无行内评论的 Review "
+                            f"({repo_owner}/{repo_name}#{pr_number})"
+                        )
+                        return True
+                    except Exception as fallback_error:
+                        logger.error(f"降级提交也失败: {fallback_error}")
             else:
                 logger.error(f"提交Review失败: {error_type}: {str(e)}")
 

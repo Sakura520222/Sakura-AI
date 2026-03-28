@@ -452,9 +452,50 @@ class CommentService:
                 )
                 continue
 
-            # 3. 更新文件路径为匹配后的路径
-            comment["file_path"] = matched_path
-            validated.append(comment)
+            # 3. 验证 start_line（多行评论的起始行）
+            start_line = comment.get("start_line")
+            if start_line is not None:
+                if start_line == line_number:
+                    # 单行评论不需要 start_line，移除避免 API 问题
+                    start_line = None
+                elif start_line not in allowed_lines:
+                    logger.warning(
+                        f"start_line {start_line} 不在 Diff 安全区内 "
+                        f"(文件: {matched_path})，降级为单行评论 (行号 {line_number})"
+                    )
+                    start_line = None
+                # start_line 和 line_number 必须在同一 hunk 内
+                elif (
+                    analysis.hunk_boundaries
+                    and matched_path in analysis.hunk_boundaries
+                ):
+                    same_hunk = False
+                    for hunk_start, hunk_end in analysis.hunk_boundaries[
+                        matched_path
+                    ]:
+                        if (
+                            hunk_start <= start_line <= hunk_end
+                            and hunk_start <= line_number <= hunk_end
+                        ):
+                            same_hunk = True
+                            break
+                    if not same_hunk:
+                        logger.warning(
+                            f"跨 hunk 多行评论: {matched_path}:{start_line}-{line_number}，"
+                            f"降级为单行评论 (行号 {line_number})"
+                        )
+                        start_line = None
+
+            # 4. 构建验证通过的评论副本（不修改原始数据）
+            validated_comment = {
+                "file_path": matched_path,
+                "line_number": line_number,
+                "body": comment.get("body", ""),
+                "severity": comment.get("severity", "suggestion"),
+            }
+            if start_line:
+                validated_comment["start_line"] = start_line
+            validated.append(validated_comment)
             logger.debug(f"✓ 验证通过: {matched_path}:{line_number}")
 
         return validated
