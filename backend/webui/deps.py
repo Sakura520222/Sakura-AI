@@ -1,6 +1,7 @@
 """WebUI FastAPI 依赖注入"""
 
 import time
+from collections import OrderedDict
 from typing import Optional
 from functools import lru_cache
 
@@ -182,8 +183,9 @@ async def require_super_admin(request: Request) -> dict:
 
 
 # ========== 用户偏好 ==========
-_USER_PREFS_CACHE: dict[int, tuple[dict, float]] = {}
+_USER_PREFS_CACHE: OrderedDict[int, tuple[dict, float]] = OrderedDict()
 _USER_PREFS_TTL = 300  # 缓存 5 分钟
+_MAX_USER_PREFS_CACHE = 1000
 
 
 async def get_user_preferences(request: Request, db: AsyncSession = Depends(get_db)):
@@ -212,6 +214,10 @@ async def get_user_preferences(request: Request, db: AsyncSession = Depends(get_
         "language": config.language or "zh-CN",
         "items_per_page": config.items_per_page or 20,
     } if config else {"language": "zh-CN", "items_per_page": 20}
+
+    # LRU 淘汰
+    if len(_USER_PREFS_CACHE) >= _MAX_USER_PREFS_CACHE:
+        _USER_PREFS_CACHE.popitem(last=False)
 
     _USER_PREFS_CACHE[user_id] = (prefs, time.time())
     return prefs

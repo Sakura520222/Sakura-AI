@@ -39,7 +39,7 @@ async def user_list_fragment(
     role: str = Query("", description="按角色过滤"),
     page: int = Query(1, ge=1),
     per_page: int = Query(None, ge=1, le=100),
-):
+) -> HTMLResponse:
     """用户列表 HTMX 片段（支持搜索、过滤、分页）"""
     if per_page is None:
         per_page = user_prefs["items_per_page"]
@@ -121,7 +121,7 @@ async def update_user_role(
     user_id: int,
     db: AsyncSession = Depends(get_db),
     user: dict = Depends(require_admin),
-    csrf_token: str = Depends(require_csrf),
+    csrf_token: str = Depends(require_csrf),  # 依赖注入，非表单字段
     role: str = Form(...),
 ) -> RedirectResponse:
     """修改用户角色"""
@@ -156,7 +156,7 @@ async def update_user_quota(
     user_id: int,
     db: AsyncSession = Depends(get_db),
     user: dict = Depends(require_admin),
-    csrf_token: str = Depends(require_csrf),
+    csrf_token: str = Depends(require_csrf),  # 依赖注入，非表单字段
     daily_quota: int = Form(...),
     weekly_quota: int = Form(...),
     monthly_quota: int = Form(...),
@@ -187,7 +187,7 @@ async def toggle_user_status(
     user_id: int,
     db: AsyncSession = Depends(get_db),
     user: dict = Depends(require_admin),
-    csrf_token: str = Depends(require_csrf),
+    csrf_token: str = Depends(require_csrf),  # 依赖注入，非表单字段
 ) -> RedirectResponse:
     """启用/禁用用户"""
     result = await db.execute(
