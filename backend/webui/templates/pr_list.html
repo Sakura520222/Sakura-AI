@@ -25,6 +25,14 @@
 
 {% block extra_scripts %}
 <script>
+function exportCSV() {
+    var form = document.getElementById('pr-filter-form');
+    var params = new URLSearchParams();
+    for (var pair of new FormData(form).entries()) {
+        if (pair[1]) params.set(pair[0], pair[1]);
+    }
+    window.location.href = '/webui/pr/export-csv?' + params.toString();
+}
 var loadPage = function(n) { loadListPage('pr-list-container', '/webui/pr/list-fragment', n); };
 initFilterForm('pr-filter-form', 'pr-list-container', '/webui/pr/list-fragment');
 </script>

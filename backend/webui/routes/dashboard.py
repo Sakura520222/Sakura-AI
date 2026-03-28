@@ -1,5 +1,7 @@
 """WebUI 仪表盘路由"""
 
+from datetime import datetime, timedelta
+
 from fastapi import APIRouter, Request, Depends
 from fastapi.responses import HTMLResponse
 from sqlalchemy import select, func, desc
@@ -139,3 +141,93 @@ async def get_recent_reviews_html(
         "request": request,
         "reviews": [_serialize_review(r) for r in reviews],
     })
+
+
+@router.get("/api/webui/chart-data")
+async def get_chart_data(
+    db: AsyncSession = Depends(get_db),
+    user: dict = Depends(require_auth),
+):
+    """获取仪表盘图表数据"""
+    now = datetime.utcnow()
+    thirty_days_ago = now - timedelta(days=30)
+
+    # 1. 审查趋势（最近 30 天）
+    trend_rows = (await db.execute(
+        select(
+            func.date(PRReview.created_at).label("day"),
+            PRReview.status,
+            func.count(PRReview.id).label("cnt"),
+        )
+        .where(PRReview.created_at >= thirty_days_ago)
+        .group_by(func.date(PRReview.created_at), PRReview.status)
+        .order_by(func.date(PRReview.created_at))
+    )).all()
+
+    # 构建连续日期标签
+    labels = []
+    completed_data = []
+    failed_data = []
+    current = thirty_days_ago
+    while current <= now:
+        day_str = current.strftime("%m-%d")
+        labels.append(day_str)
+        completed_data.append(0)
+        failed_data.append(0)
+        current += timedelta(days=1)
+
+    for row in trend_rows:
+        if row.day:
+            idx = (row.day - thirty_days_ago.date()).days
+            if 0 <= idx < len(labels):
+                if row.status == "completed":
+                    completed_data[idx] = row.cnt
+                elif row.status == "failed":
+                    failed_data[idx] = row.cnt
+
+    # 2. 决策分布
+    decision_rows = (await db.execute(
+        select(PRReview.decision, func.count(PRReview.id).label("cnt"))
+        .where(PRReview.status == "completed", PRReview.decision.isnot(None))
+        .group_by(PRReview.decision)
+    )).all()
+
+    decision_labels = []
+    decision_counts = []
+    decision_map = {
+        "approve": "通过",
+        "request_changes": "需修改",
+        "comment": "评论",
+        "skip": "跳过",
+    }
+    for row in decision_rows:
+        label = decision_map.get(row.decision, row.decision or "其他")
+        decision_labels.append(label)
+        decision_counts.append(row.cnt)
+
+    # 3. 仓库排行 Top 10
+    repo_rows = (await db.execute(
+        select(PRReview.repo_name, func.count(PRReview.id).label("cnt"))
+        .group_by(PRReview.repo_name)
+        .order_by(desc(func.count(PRReview.id)))
+        .limit(10)
+    )).all()
+
+    repo_labels = [r.repo_name for r in repo_rows]
+    repo_counts = [r.cnt for r in repo_rows]
+
+    return {
+        "trend": {
+            "labels": labels,
+            "completed": completed_data,
+            "failed": failed_data,
+        },
+        "decisions": {
+            "labels": decision_labels,
+            "counts": decision_counts,
+        },
+        "top_repos": {
+            "labels": repo_labels,
+            "counts": repo_counts,
+        },
+    }

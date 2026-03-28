@@ -1,0 +1,27 @@
+<!-- 仪表盘图表区域 -->
+<div class="space-y-4">
+    <!-- 上排：趋势 + 决策 -->
+    <div class="grid grid-cols-1 lg:grid-cols-3 gap-4">
+        <!-- 审查趋势 -->
+        <div class="lg:col-span-2 bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 shadow-sm p-5">
+            <h3 class="text-sm font-semibold text-gray-700 dark:text-gray-300 mb-4">审查趋势（近 30 天）</h3>
+            <div class="relative h-64">
+                <canvas id="trendChart"></canvas>
+            </div>
+        </div>
+        <!-- 决策分布 -->
+        <div class="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 shadow-sm p-5">
+            <h3 class="text-sm font-semibold text-gray-700 dark:text-gray-300 mb-4">审查决策分布</h3>
+            <div class="relative h-64 flex items-center justify-center">
+                <canvas id="decisionChart"></canvas>
+            </div>
+        </div>
+    </div>
+    <!-- 下排：仓库排行 -->
+    <div class="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 shadow-sm p-5">
+        <h3 class="text-sm font-semibold text-gray-700 dark:text-gray-300 mb-4">仓库审查量 Top 10</h3>
+        <div class="relative h-64">
+            <canvas id="repoChart"></canvas>
+        </div>
+    </div>
+</div>
