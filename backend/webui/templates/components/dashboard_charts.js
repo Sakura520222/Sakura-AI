@@ -1,0 +1,143 @@
+<script>
+var _dashboardCharts = null;
+
+function _getThemeColors() {
+    var isDark = document.documentElement.classList.contains('dark');
+    return {
+        gridColor: isDark ? 'rgba(148,163,184,0.15)' : 'rgba(148,163,184,0.2)',
+        textColor: isDark ? '#9CA3AF' : '#6B7280',
+    };
+}
+
+function initDashboardCharts() {
+    fetch('/webui/api/webui/chart-data')
+        .then(function(r) { return r.json(); })
+        .then(function(data) {
+            var colors = _getThemeColors();
+
+            Chart.defaults.color = colors.textColor;
+            Chart.defaults.font.family = 'system-ui, -apple-system, sans-serif';
+
+            // 环形图中心文字插件
+            var centerTextPlugin = {
+                id: 'centerText',
+                afterDraw: function(chart) {
+                    var total = chart.data.datasets[0].data.reduce(function(a, b) { return a + b; }, 0);
+                    if (total === 0) return;
+                    var ctx = chart.ctx;
+                    var width = chart.width;
+                    var height = chart.height;
+                    ctx.save();
+                    ctx.font = 'bold 20px system-ui, -apple-system, sans-serif';
+                    ctx.textAlign = 'center';
+                    ctx.textBaseline = 'middle';
+                    ctx.fillStyle = colors.textColor;
+                    ctx.fillText(total, width / 2, height / 2);
+                    ctx.restore();
+                }
+            };
+
+            // 1. 审查趋势折线图
+            var trendChart = new Chart(document.getElementById('trendChart'), {
+                type: 'line',
+                data: {
+                    labels: data.trend.labels,
+                    datasets: [
+                        {
+                            label: '已完成',
+                            data: data.trend.completed,
+                            borderColor: '#22C55E',
+                            backgroundColor: 'rgba(34,197,94,0.1)',
+                            fill: true,
+                            tension: 0.3,
+                            pointRadius: 2,
+                        },
+                        {
+                            label: '失败',
+                            data: data.trend.failed,
+                            borderColor: '#EF4444',
+                            backgroundColor: 'rgba(239,68,68,0.1)',
+                            fill: true,
+                            tension: 0.3,
+                            pointRadius: 2,
+                        },
+                    ],
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: { legend: { position: 'top' } },
+                    scales: {
+                        x: { grid: { color: colors.gridColor } },
+                        y: { beginAtZero: true, grid: { color: colors.gridColor }, ticks: { stepSize: 1 } },
+                    },
+                },
+            });
+
+            // 2. 决策分布环形图
+            var decisionChart = new Chart(document.getElementById('decisionChart'), {
+                type: 'doughnut',
+                data: {
+                    labels: data.decisions.labels,
+                    datasets: [{
+                        data: data.decisions.counts,
+                        backgroundColor: ['#22C55E', '#F59E0B', '#3B82F6', '#9CA3AF'],
+                        borderWidth: 0,
+                    }],
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    cutout: '65%',
+                    plugins: {
+                        legend: { position: 'bottom', labels: { boxWidth: 12, padding: 12 } },
+                    },
+                },
+                plugins: [centerTextPlugin],
+            });
+
+            // 3. 仓库排行横向柱状图
+            var repoChart = new Chart(document.getElementById('repoChart'), {
+                type: 'bar',
+                data: {
+                    labels: data.top_repos.labels,
+                    datasets: [{
+                        label: '审查数量',
+                        data: data.top_repos.counts,
+                        backgroundColor: '#EC4899',
+                        borderRadius: 4,
+                        barPercentage: 0.6,
+                    }],
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    indexAxis: 'y',
+                    plugins: { legend: { display: false } },
+                    scales: {
+                        x: { beginAtZero: true, grid: { color: colors.gridColor }, ticks: { stepSize: 1 } },
+                        y: { grid: { display: false } },
+                    },
+                },
+            });
+
+            // 保存引用，用于暗色模式切换时重绘
+            _dashboardCharts = { trendChart: trendChart, decisionChart: decisionChart, repoChart: repoChart };
+
+            // 监听暗色模式切换
+            var observer = new MutationObserver(function() {
+                var c = _getThemeColors();
+                Chart.defaults.color = c.textColor;
+                trendChart.options.scales.x.grid.color = c.gridColor;
+                trendChart.options.scales.y.grid.color = c.gridColor;
+                trendChart.update();
+                repoChart.options.scales.x.grid.color = c.gridColor;
+                repoChart.update();
+                // 环形图依赖 centerTextPlugin 中的 textColor，需要重绘
+                decisionChart.update();
+            });
+            observer.observe(document.documentElement, { attributes: true, attributeFilter: ['class'] });
+        })
+        .catch(function(err) { console.error('加载图表数据失败:', err); });
+}
+</script>

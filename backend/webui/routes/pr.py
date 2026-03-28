@@ -1,7 +1,11 @@
 """WebUI PR 审查管理路由"""
 
+import csv
+import io
+from datetime import datetime
+
 from fastapi import APIRouter, Request, Depends, Query
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, StreamingResponse
 from sqlalchemy import select, func, desc, case
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -26,6 +30,65 @@ async def pr_list_page(
         "active_page": "pr",
         "user_prefs": user_prefs,
     })
+
+
+@router.get("/export-csv")
+async def export_pr_csv(
+    db: AsyncSession = Depends(get_db),
+    user: dict = Depends(require_auth),
+    search: str = Query("", description="搜索关键词"),
+    status: str = Query("", description="按状态过滤"),
+    decision: str = Query("", description="按决策过滤"),
+):
+    """导出 PR 审查列表为 CSV"""
+    query = select(PRReview)
+
+    # 搜索过滤
+    search_filter = build_review_search_filter(search)
+    if search_filter:
+        query = query.where(search_filter)
+
+    # 状态过滤
+    if status:
+        query = query.where(PRReview.status == status)
+
+    # 决策过滤
+    if decision:
+        query = query.where(PRReview.decision == decision)
+
+    # 排序 + 限制
+    query = query.order_by(desc(PRReview.created_at)).limit(1000)
+
+    result = await db.execute(query)
+    reviews = result.scalars().all()
+
+    # 生成 CSV
+    output = io.StringIO()
+    output.write('\ufeff')  # UTF-8 BOM for Excel
+    writer = csv.writer(output)
+    writer.writerow(["PR ID", "仓库名", "PR 标题", "作者", "状态", "决策", "评分", "创建时间", "完成时间"])
+
+    for r in reviews:
+        writer.writerow([
+            r.pr_id,
+            r.repo_name,
+            r.title or "",
+            r.author or "",
+            r.status,
+            r.decision or "",
+            r.overall_score or "",
+            r.created_at.strftime('%Y-%m-%d %H:%M') if r.created_at else "",
+            r.completed_at.strftime('%Y-%m-%d %H:%M') if r.completed_at else "",
+        ])
+
+    output.seek(0)
+    filename = f"pr_reviews_{datetime.now().strftime('%Y%m%d')}.csv"
+
+    return StreamingResponse(
+        iter([output.getvalue()]),
+        media_type="text/csv; charset=utf-8-sig",
+        headers={"Content-Disposition": f"attachment; filename={filename}"},
+    )
 
 
 @router.get("/list-fragment")
