@@ -51,6 +51,68 @@
         </main>
     </div>
 
-    {% block extra_scripts %}{% endblock %}
+    {% block extra_scripts %}
+    <script>
+    /* === 通用列表分页 & 过滤 === */
+
+    function getLoadingHTML() {
+        return '<div class="text-center py-8 text-gray-400"><svg class="w-8 h-8 mx-auto animate-spin" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg><p class="mt-2">加载中...</p></div>';
+    }
+
+    function getErrorHTML(msg) {
+        return '<div class="p-12 text-center text-red-600 dark:text-red-400"><svg class="w-12 h-12 mx-auto" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/></svg><p class="mt-4">' + (msg || '加载失败，请稍后重试') + '</p></div>';
+    }
+
+    function loadListPage(containerId, endpoint, pageNum) {
+        var container = document.getElementById(containerId);
+        var params = new URLSearchParams(window.location.search);
+        params.set('page', pageNum);
+        container.innerHTML = getLoadingHTML();
+
+        fetch(endpoint + '?' + params.toString(), {
+            headers: { 'HX-Request': 'true' }
+        })
+        .then(function(r) { return r.text(); })
+        .then(function(html) {
+            container.innerHTML = html;
+            history.replaceState(null, '', '?' + params.toString());
+        })
+        .catch(function(err) {
+            console.error('加载失败:', err);
+            container.innerHTML = getErrorHTML();
+        });
+    }
+
+    function initFilterForm(formId, containerId, endpoint) {
+        document.addEventListener('submit', function(e) {
+            if (e.target.id === formId) {
+                e.preventDefault();
+                var formData = new FormData(e.target);
+                var params = new URLSearchParams();
+                for (var pair of formData.entries()) {
+                    if (pair[1]) params.set(pair[0], pair[1]);
+                }
+                params.set('page', '1');
+
+                var container = document.getElementById(containerId);
+                container.innerHTML = getLoadingHTML();
+
+                fetch(endpoint + '?' + params.toString(), {
+                    headers: { 'HX-Request': 'true' }
+                })
+                .then(function(r) { return r.text(); })
+                .then(function(html) {
+                    container.innerHTML = html;
+                    history.replaceState(null, '', '?' + params.toString());
+                })
+                .catch(function(err) {
+                    console.error('加载失败:', err);
+                    container.innerHTML = getErrorHTML();
+                });
+            }
+        });
+    }
+    </script>
+    {% endblock %}
 </body>
 </html>

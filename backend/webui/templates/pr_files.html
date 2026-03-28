@@ -90,7 +90,17 @@ function loadFileComments(filePath, btn) {
     })
     .then(r => r.text())
     .then(html => { panel.innerHTML = html; })
-    .catch(err => console.error('加载失败:', err));
+    .catch(err => {
+        console.error('加载失败:', err);
+        panel.innerHTML = `
+            <div class="p-12 text-center text-red-600 dark:text-red-400">
+                <svg class="w-12 h-12 mx-auto" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/>
+                </svg>
+                <p class="mt-4">加载评论失败，请稍后重试</p>
+            </div>
+        `;
+    });
 }
 
 // 事件委托：从 data-path 属性读取文件路径

@@ -81,12 +81,7 @@
                     </td>
                     <td class="px-4 py-3 text-gray-500 dark:text-gray-400 text-xs hidden xl:table-cell">
                         {% if r.completed_at and r.created_at %}
-                        {% set delta = r.completed_at - r.created_at %}
-                        {% set total_secs = delta.total_seconds() | int %}
-                        {% if total_secs < 60 %}{{ total_secs }}s
-                        {% elif total_secs < 3600 %}{{ (total_secs // 60) }}m {{ (total_secs % 60) }}s
-                        {% else %}{{ (total_secs // 3600) }}h {{ ((total_secs % 3600) // 60) }}m
-                        {% endif %}
+                        {{ (r.completed_at - r.created_at).total_seconds() | format_duration }}
                         {% else %}-{% endif %}
                     </td>
                     <td class="px-4 py-3 hidden xl:table-cell">

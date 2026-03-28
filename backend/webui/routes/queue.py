@@ -1,10 +1,11 @@
 """WebUI 审查队列监控路由"""
 
+import logging
 from datetime import datetime, timedelta
 
 from fastapi import APIRouter, Request, Depends, Query
 from fastapi.responses import HTMLResponse
-from sqlalchemy import select, func, desc
+from sqlalchemy import select, func, desc, case
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.models.database import PRReview
@@ -13,6 +14,8 @@ from backend.webui.deps import (
     get_user_preferences, paginate, error_page, build_review_search_filter,
     get_active_repos,
 )
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/queue", tags=["WebUI Queue"])
 templates = get_templates()
@@ -41,33 +44,32 @@ async def queue_stats_fragment(
     user: dict = Depends(require_admin),
 ):
     """统计卡片 HTMX 片段"""
-    # 各状态计数
-    pending = (await db.execute(
-        select(func.count(PRReview.id)).where(PRReview.status == "pending")
-    )).scalar() or 0
+    # 各状态计数（单次条件聚合查询）
+    stats = (await db.execute(
+        select(
+            func.sum(case((PRReview.status == "pending", 1), else_=0)).label("pending"),
+            func.sum(case((PRReview.status == "processing", 1), else_=0)).label("processing"),
+            func.sum(case((PRReview.status == "completed", 1), else_=0)).label("completed"),
+            func.sum(case((PRReview.status == "failed", 1), else_=0)).label("failed"),
+        )
+    )).one()
+    pending = int(stats.pending or 0)
+    processing = int(stats.processing or 0)
+    completed = int(stats.completed or 0)
+    failed = int(stats.failed or 0)
 
-    processing = (await db.execute(
-        select(func.count(PRReview.id)).where(PRReview.status == "processing")
-    )).scalar() or 0
-
-    completed = (await db.execute(
-        select(func.count(PRReview.id)).where(PRReview.status == "completed")
-    )).scalar() or 0
-
-    failed = (await db.execute(
-        select(func.count(PRReview.id)).where(PRReview.status == "failed")
-    )).scalar() or 0
-
-    # 平均处理耗时（秒）
-    avg_seconds = (await db.execute(
-        select(func.avg(
-            func.unix_timestamp(PRReview.completed_at) - func.unix_timestamp(PRReview.created_at)
-        )).where(
+    # 平均处理耗时（Python 计算，避免数据库兼容性问题）
+    result = await db.execute(
+        select(PRReview.completed_at, PRReview.created_at).where(
             PRReview.status == "completed",
             PRReview.completed_at.isnot(None),
         )
-    )).scalar()
-
+    )
+    durations = []
+    for completed_at, created_at in result.all():
+        delta = completed_at - created_at
+        durations.append(delta.total_seconds())
+    avg_seconds = sum(durations) / len(durations) if durations else None
     avg_duration = _format_duration(avg_seconds) if avg_seconds else "-"
 
     return templates.TemplateResponse("components/queue_stats_cards.html", {
@@ -125,14 +127,14 @@ async def queue_list_fragment(
             query = query.where(PRReview.created_at >= sd)
             count_query = count_query.where(PRReview.created_at >= sd)
         except ValueError:
-            pass
+            logger.warning("Invalid start_date format: %s", start_date)
     if end_date:
         try:
             ed = datetime.strptime(end_date, "%Y-%m-%d") + timedelta(days=1)
             query = query.where(PRReview.created_at < ed)
             count_query = count_query.where(PRReview.created_at < ed)
         except ValueError:
-            pass
+            logger.warning("Invalid end_date format: %s", end_date)
 
     # 排序
     query = query.order_by(desc(PRReview.created_at))
