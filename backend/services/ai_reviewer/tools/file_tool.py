@@ -25,14 +25,16 @@ class FileToolHandler:
     """
 
     def _get_tool_limits(self) -> dict:
-        """从策略配置读取工具限制参数"""
+        """从策略配置读取工具限制参数，确保返回整数类型"""
         ce = get_strategy_config().get_context_enhancement_config()
         return {
-            "max_file_lines": ce.get("max_file_lines", MAX_FILE_LINES),
-            "default_context_lines": ce.get(
-                "default_context_lines", DEFAULT_CONTEXT_LINES
+            "max_file_lines": int(ce.get("max_file_lines", MAX_FILE_LINES)),
+            "default_context_lines": int(
+                ce.get("default_context_lines", DEFAULT_CONTEXT_LINES)
             ),
-            "max_context_lines": ce.get("max_context_lines", MAX_CONTEXT_LINES),
+            "max_context_lines": int(
+                ce.get("max_context_lines", MAX_CONTEXT_LINES)
+            ),
         }
 
     async def read_file(
