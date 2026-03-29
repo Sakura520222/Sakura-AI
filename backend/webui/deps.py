@@ -258,6 +258,11 @@ async def get_user_preferences(request: Request, db: AsyncSession = Depends(get_
     return prefs
 
 
+def invalidate_user_prefs_cache(user_id: int):
+    """失效指定用户的偏好设置缓存"""
+    _USER_PREFS_CACHE.pop(user_id, None)
+
+
 # ========== 活跃仓库缓存 ==========
 _ACTIVE_REPOS_CACHE: tuple[list[str], float] | None = None
 _ACTIVE_REPOS_TTL = 300  # 缓存 5 分钟
