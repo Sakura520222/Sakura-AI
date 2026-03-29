@@ -474,9 +474,33 @@ alembic upgrade head
 
 **关联 commit**：`a4203ec`（2026-03-29）
 
+### P6 — 体验增强（Toast 通知 + 确认弹窗 + Loading 状态）✅ 已完成
+
+**目标**：零新功能，全面提升交互体验
+
+**已完成功能**：
+
+1. ✅ Toast 通知系统：Alpine.js 组件，4 种类型（success/error/warning/info），自动消失，暗色模式适配，滑入滑出动画
+2. ✅ 确认弹窗组件：自定义 modal 替代浏览器 `confirm()`，支持警告文字、ESC/遮罩关闭、加载状态
+3. ✅ data-confirm 机制：8 处敏感操作已添加（仓库删除/切换、用户禁用/角色/配额、配置保存、登出）
+4. ✅ 按钮 Loading 状态：所有 POST 表单提交时按钮禁用 + spinner + "处理中..."，防重复提交，bfcache 回退恢复
+5. ✅ HTMX 错误处理：全局拦截 `htmx:responseError`，401/403/422/500 各有专属错误 toast
+6. ✅ toast_redirect 辅助函数：5 个路由文件 32 处 `RedirectResponse` 迁移为带具体消息的 toast 通知
+7. ✅ 旧 Flash 消息清理：7 个模板 17 处 `{% if request.query_params.get('saved') %}` 块已删除
+
+**已实现文件**：
+
+| 文件 | 说明 |
+| ---- | ---- |
+| `backend/webui/deps.py` | 新增 `toast_redirect()` 辅助函数 |
+
+**修改文件**：`base.html`（Toast 容器 + 确认弹窗 + Alpine 组件 + 事件监听 + CSS）、`deps.py`、`routes/repos.py`、`routes/users.py`、`routes/config.py`、`routes/settings.py`、`routes/auth.py`、`repo_list_fragment.html`、`user_detail.html`、`navbar.html`、`repos.html`、`users.html`、`config_strategies.html`、`config_labels.html`、`config_general.html`、`settings.html`
+
+**关联 commit**：`df2ba5a`（2026-03-29）
+
 ---
 
 文档创建时间：2024-03-27
-最后更新：2026-03-29（P0 + P1 + P2 + P3 + P4 + P5 全部完成）
-版本：7.0
+最后更新：2026-03-29（P0 + P1 + P2 + P3 + P4 + P5 + P6 全部完成）
+版本：8.0
 作者：Sakura AI Reviewer Team
