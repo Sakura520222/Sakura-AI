@@ -49,7 +49,8 @@
         </div>
 
         <!-- 登出 -->
-        <form method="POST" action="/webui/auth/logout" class="ml-1">
+        <form method="POST" action="/webui/auth/logout" class="ml-1"
+              data-confirm="确定要退出登录吗？">
             <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
             <button type="submit" class="p-2 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors" title="退出登录">
                 <svg class="w-5 h-5 text-gray-500 dark:text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">

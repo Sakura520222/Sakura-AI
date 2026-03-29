@@ -10,23 +10,6 @@
         <p class="mt-1 text-sm text-gray-500 dark:text-gray-400">管理应用运行参数（部分配置需重启后生效）</p>
     </div>
 
-    <!-- 提示消息 -->
-    {% if request.query_params.get('saved') %}
-    <div class="bg-green-50 dark:bg-green-900/20 border border-green-200 dark:border-green-800 rounded-lg p-3 text-sm text-green-700 dark:text-green-400">
-        配置已保存，部分配置需重启服务后生效
-    </div>
-    {% endif %}
-    {% if request.query_params.get('error') == 'validation' %}
-    <div class="bg-yellow-50 dark:bg-yellow-900/20 border border-yellow-200 dark:border-yellow-800 rounded-lg p-3 text-sm text-yellow-700 dark:text-yellow-400">
-        参数验证失败，请检查输入值
-    </div>
-    {% endif %}
-    {% if request.query_params.get('error') == 'save_failed' %}
-    <div class="bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg p-3 text-sm text-red-700 dark:text-red-400">
-        保存失败，请稍后重试
-    </div>
-    {% endif %}
-
     <!-- 版本信息（只读） -->
     <div class="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 shadow-sm p-5">
         <div class="flex items-center justify-between">

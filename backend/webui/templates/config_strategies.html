@@ -12,18 +12,6 @@
         </div>
     </div>
 
-    <!-- 提示消息 -->
-    {% if request.query_params.get('saved') %}
-    <div class="bg-green-50 dark:bg-green-900/20 border border-green-200 dark:border-green-800 rounded-lg p-3 text-sm text-green-700 dark:text-green-400">
-        配置已保存并即时生效
-    </div>
-    {% endif %}
-    {% if request.query_params.get('error') %}
-    <div class="bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg p-3 text-sm text-red-700 dark:text-red-400">
-        保存失败，请检查输入内容后重试
-    </div>
-    {% endif %}
-
     <!-- Tab 导航 -->
     <div class="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 shadow-sm">
         <div class="border-b border-gray-200 dark:border-gray-700">

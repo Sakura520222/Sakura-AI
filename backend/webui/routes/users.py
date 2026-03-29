@@ -7,7 +7,7 @@ from sqlalchemy import select, func, desc, or_, String, type_coerce
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.models.telegram_models import TelegramUser, QuotaUsageLog
-from backend.webui.deps import require_admin, get_db, get_templates, get_csrf_serializer, require_csrf, get_user_preferences, paginate, error_page
+from backend.webui.deps import require_admin, get_db, get_templates, get_csrf_serializer, require_csrf, get_user_preferences, paginate, error_page, toast_redirect
 from backend.webui.helpers.admin_log import log_admin_action
 
 router = APIRouter(prefix="/users", tags=["WebUI Users"])
@@ -127,7 +127,7 @@ async def update_user_role(
 ) -> RedirectResponse:
     """修改用户角色"""
     if role not in ("user", "admin", "super_admin"):
-        return RedirectResponse(url=f"/webui/users/{user_id}?error=1", status_code=302)
+        return toast_redirect(f"/webui/users/{user_id}", "无效的角色值", "error")
 
     result = await db.execute(
         select(TelegramUser).where(TelegramUser.id == user_id)
@@ -138,10 +138,10 @@ async def update_user_role(
 
     # 权限保护：不允许修改同级别或更高级别的用户
     if target_user.role in ("admin", "super_admin") and user["role"] != "super_admin":
-        return RedirectResponse(url=f"/webui/users/{user_id}?error=1", status_code=302)
+        return toast_redirect(f"/webui/users/{user_id}", "权限不足，无法修改此用户的角色", "error")
     # 不允许设置比自己当前角色更高的权限
     if role == "super_admin" and user["role"] != "super_admin":
-        return RedirectResponse(url=f"/webui/users/{user_id}?error=1", status_code=302)
+        return toast_redirect(f"/webui/users/{user_id}", "权限不足，无法设置为超级管理员", "error")
 
     old_role = target_user.role
     target_user.role = role
@@ -149,7 +149,7 @@ async def update_user_role(
 
     logger.info(f"用户角色已变更: user={target_user.github_username}, {old_role} -> {role}, by={user['sub']}")
     await log_admin_action(db, user['user_id'], "user_role", "user", str(user_id), {"old_role": old_role, "new_role": role})
-    return RedirectResponse(url=f"/webui/users/{user_id}?saved=1", status_code=302)
+    return toast_redirect(f"/webui/users/{user_id}", f"用户角色已更改为 {role}")
 
 
 @router.post("/{user_id}/quota")
@@ -165,7 +165,7 @@ async def update_user_quota(
 ) -> RedirectResponse:
     """修改用户配额"""
     if daily_quota < 0 or weekly_quota < 0 or monthly_quota < 0:
-        return RedirectResponse(url=f"/webui/users/{user_id}?error=1", status_code=302)
+        return toast_redirect(f"/webui/users/{user_id}", "配额值不能为负数", "error")
 
     result = await db.execute(
         select(TelegramUser).where(TelegramUser.id == user_id)
@@ -182,7 +182,7 @@ async def update_user_quota(
 
     logger.info(f"用户配额已变更: user={target_user.github_username}, daily={daily_quota}, weekly={weekly_quota}, monthly={monthly_quota}, by={user['sub']}")
     await log_admin_action(db, user['user_id'], "user_quota", "user", str(user_id), {"old_daily": old_daily, "old_weekly": old_weekly, "old_monthly": old_monthly, "new_daily": daily_quota, "new_weekly": weekly_quota, "new_monthly": monthly_quota})
-    return RedirectResponse(url=f"/webui/users/{user_id}?saved=1", status_code=302)
+    return toast_redirect(f"/webui/users/{user_id}", "用户配额已更新")
 
 
 @router.post("/{user_id}/toggle")
@@ -203,9 +203,9 @@ async def toggle_user_status(
 
     # 权限保护：不允许修改同级别或更高级别的用户，不允许禁用自己
     if user_id == user["user_id"]:
-        return RedirectResponse(url="/webui/users/?error=1", status_code=302)
+        return toast_redirect("/webui/users/", "不能禁用自己", "error")
     if target_user.role in ("admin", "super_admin") and user["role"] != "super_admin":
-        return RedirectResponse(url="/webui/users/?error=1", status_code=302)
+        return toast_redirect("/webui/users/", "权限不足，无法修改此用户状态", "error")
 
     target_user.is_active = not target_user.is_active
     await db.commit()
@@ -213,4 +213,4 @@ async def toggle_user_status(
     status = "启用" if target_user.is_active else "禁用"
     logger.info(f"用户状态已变更: user={target_user.github_username}, status={status}, by={user['sub']}")
     await log_admin_action(db, user['user_id'], "user_toggle", "user", str(user_id), {"is_active": target_user.is_active})
-    return RedirectResponse(url="/webui/users/?saved=1", status_code=302)
+    return toast_redirect("/webui/users/", f"用户 {target_user.github_username} 已{status}")

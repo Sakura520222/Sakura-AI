@@ -6,7 +6,7 @@ from typing import Optional
 from functools import lru_cache
 
 from fastapi import Request, HTTPException, Depends, Form
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 from sqlalchemy import Select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -143,6 +143,25 @@ def error_page(
         "csrf_token": get_csrf_serializer().dumps({}),
         "user_prefs": user_prefs or {"language": "zh-CN", "items_per_page": 20},
     }, status_code=status_code)
+
+
+def toast_redirect(
+    url: str,
+    message: str = "操作成功",
+    toast_type: str = "success",
+    status_code: int = 302,
+) -> RedirectResponse:
+    """创建带 toast 通知的 redirect 响应
+
+    通过 query params 传递 toast 信息，供前端 JS 拾取并显示。
+    """
+    from urllib.parse import urlencode, quote
+    params = {"_toast": quote(message), "_toast_type": toast_type}
+    separator = "&" if "?" in url else "?"
+    return RedirectResponse(
+        url=f"{url}{separator}{urlencode(params)}",
+        status_code=status_code,
+    )
 
 
 # ========== 认证 ==========
