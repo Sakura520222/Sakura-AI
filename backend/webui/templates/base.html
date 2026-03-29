@@ -6,6 +6,7 @@
     <title>{% block title %}Sakura AI Reviewer{% endblock %}</title>
     <!-- Tailwind CSS CDN -->
     <script src="https://cdn.tailwindcss.com"></script>
+    <script>if(localStorage.getItem('theme')==='dark'){document.documentElement.classList.replace('light','dark')}</script>
     <script>
         tailwind.config = {
             darkMode: 'class',
