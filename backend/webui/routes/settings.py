@@ -9,6 +9,7 @@ from backend.models.database import WebUIConfig
 from backend.webui.deps import (
     require_auth, get_db, get_templates, get_csrf_serializer,
     require_csrf, get_user_preferences, toast_redirect,
+    invalidate_user_prefs_cache,
 )
 
 router = APIRouter(prefix="/settings", tags=["WebUI Settings"])
@@ -29,7 +30,6 @@ async def settings_page(
         "csrf_token": get_csrf_serializer().dumps({}),
         "active_page": "settings",
         "user_prefs": user_prefs,
-        "current_language": user_prefs["language"],
         "items_per_page": user_prefs["items_per_page"],
     })
 
@@ -40,12 +40,11 @@ async def save_settings(
     db: AsyncSession = Depends(get_db),
     user: dict = Depends(require_auth),
     csrf_token: str = Depends(require_csrf),
-    language: str = Form(...),
     items_per_page: int = Form(...),
 ):
     """保存个人设置"""
     # 验证参数范围
-    if language not in ("zh-CN", "en") or items_per_page not in (10, 20, 50, 100):
+    if items_per_page not in (10, 20, 50, 100):
         return toast_redirect("/webui/settings/", "参数值无效", "error")
 
     # Upsert 配置
@@ -54,18 +53,18 @@ async def save_settings(
     )
     config = result.scalar_one_or_none()
     if config:
-        config.language = language
         config.items_per_page = items_per_page
     else:
         config = WebUIConfig(
             user_id=user["user_id"],
-            language=language,
             items_per_page=items_per_page,
         )
         db.add(config)
     await db.commit()
 
-    logger.info(f"WebUI 设置已更新: user={user['sub']}, language={language}, items_per_page={items_per_page}")
+    invalidate_user_prefs_cache(user["user_id"])
+
+    logger.info(f"WebUI 设置已更新: user={user['sub']}, items_per_page={items_per_page}")
     return toast_redirect("/webui/settings/", "设置已保存")
 
 
