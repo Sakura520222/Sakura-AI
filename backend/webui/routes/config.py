@@ -192,9 +192,9 @@ async def save_strategies_section(
                     "max_tool_iterations": int(form.get("max_tool_iterations", 20)),
                     "max_file_size": int(form.get("max_file_size", 200000)),
                     "enable_ai_tools_in_batch": form.get("enable_ai_tools_in_batch") is not None,
-                    "max_file_lines": int(form.get("max_file_lines", 500)),
-                    "default_context_lines": int(form.get("default_context_lines", 20)),
-                    "max_context_lines": int(form.get("max_context_lines", 200)),
+                    "max_file_lines": int(float(form.get("max_file_lines", 500))),
+                    "default_context_lines": int(float(form.get("default_context_lines", 20))),
+                    "max_context_lines": int(float(form.get("max_context_lines", 200))),
                 }
 
             elif section == "review_policy":
