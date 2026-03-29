@@ -19,7 +19,13 @@
             <!-- 用户信息卡片 -->
             <div class="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 shadow-sm p-6">
                 <div class="text-center">
-                    <div class="w-16 h-16 mx-auto rounded-full bg-pink-100 dark:bg-pink-900/30 flex items-center justify-center">
+                    {% if target_user.github_username %}
+                    <img src="https://github.com/{{ target_user.github_username }}.png"
+                         alt="{{ target_user.github_username }}"
+                         class="w-16 h-16 mx-auto rounded-full border border-gray-200 dark:border-gray-600"
+                         onerror="this.style.display='none'; this.nextElementSibling.style.display='flex';">
+                    {% endif %}
+                    <div class="w-16 h-16 mx-auto rounded-full bg-pink-100 dark:bg-pink-900/30 flex items-center justify-center {% if target_user.github_username %}hidden{% endif %}">
                         <span class="text-2xl font-bold text-pink-600 dark:text-pink-400">
                             {{ (target_user.github_username or '?')[0]|upper }}
                         </span>

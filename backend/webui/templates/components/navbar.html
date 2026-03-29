@@ -35,13 +35,13 @@
             {% if current_user.get('avatar_url') %}
             <img src="{{ current_user.avatar_url }}"
                  alt="{{ current_user.sub }}"
-                 class="w-8 h-8 rounded-full border-2 border-gray-200 dark:border-gray-600"
+                 class="w-8 h-8 rounded-full border border-gray-200 dark:border-gray-600"
                  onerror="this.style.display='none'; this.nextElementSibling.style.display='flex';">
-            <div class="w-8 h-8 bg-gradient-to-br from-pink-400 to-purple-500 rounded-full items-center justify-center text-white text-sm font-medium" style="display:none;">
+            <div class="w-8 h-8 rounded-full bg-pink-100 dark:bg-pink-900/30 items-center justify-center text-sm font-medium text-pink-600 dark:text-pink-400" style="display:none;">
                 {{ current_user.sub[0]|upper }}
             </div>
             {% else %}
-            <div class="w-8 h-8 bg-gradient-to-br from-pink-400 to-purple-500 rounded-full flex items-center justify-center text-white text-sm font-medium">
+            <div class="w-8 h-8 rounded-full bg-pink-100 dark:bg-pink-900/30 flex items-center justify-center text-sm font-medium text-pink-600 dark:text-pink-400">
                 {{ current_user.sub[0]|upper }}
             </div>
             {% endif %}
