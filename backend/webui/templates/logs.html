@@ -24,6 +24,7 @@
 {% endblock %}
 
 {% block extra_scripts %}
+{{ super() }}
 <script>
 var loadLogPage = function(n) { loadListPage('log-list-container', '/webui/logs/list-fragment', n); };
 initFilterForm('log-filter-form', 'log-list-container', '/webui/logs/list-fragment');

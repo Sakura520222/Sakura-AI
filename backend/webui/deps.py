@@ -6,7 +6,7 @@ from typing import Optional
 from functools import lru_cache
 
 from fastapi import Request, HTTPException, Depends, Form
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 from sqlalchemy import Select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -145,6 +145,25 @@ def error_page(
     }, status_code=status_code)
 
 
+def toast_redirect(
+    url: str,
+    message: str = "操作成功",
+    toast_type: str = "success",
+    status_code: int = 302,
+) -> RedirectResponse:
+    """创建带 toast 通知的 redirect 响应
+
+    通过 query params 传递 toast 信息，供前端 JS 拾取并显示。
+    """
+    from urllib.parse import urlencode, quote
+    params = {"_toast": quote(message), "_toast_type": toast_type}
+    separator = "&" if "?" in url else "?"
+    return RedirectResponse(
+        url=f"{url}{separator}{urlencode(params)}",
+        status_code=status_code,
+    )
+
+
 # ========== 认证 ==========
 async def get_current_user(request: Request) -> dict:
     """从 Cookie 获取当前登录用户信息
@@ -237,6 +256,11 @@ async def get_user_preferences(request: Request, db: AsyncSession = Depends(get_
 
     _USER_PREFS_CACHE[user_id] = (prefs, time.time())
     return prefs
+
+
+def invalidate_user_prefs_cache(user_id: int):
+    """失效指定用户的偏好设置缓存"""
+    _USER_PREFS_CACHE.pop(user_id, None)
 
 
 # ========== 活跃仓库缓存 ==========

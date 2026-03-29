@@ -928,6 +928,15 @@ context_enhancement:
   # false: 分批时禁用工具，仅基于patch审查（更快但深度较浅）
   enable_ai_tools_in_batch: true
 
+  # 单文件最大读取行数（超过则截断并提示AI使用行范围读取）
+  max_file_lines: 500
+
+  # 搜索匹配时的默认上下文行数（匹配行前后各显示多少行）
+  default_context_lines: 20
+
+  # 搜索匹配时的最大上下文行数
+  max_context_lines: 200
+
 # 审查批准策略配置
 review_policy:
   # 是否启用自动批准功能（建议先设为false观察效果）

@@ -14,6 +14,9 @@
     <!-- 统计卡片 -->
     {% include "components/stats_cards.html" %}
 
+    <!-- 图表区域 -->
+    {% include "components/dashboard_charts.html" %}
+
     <!-- 最近审查 -->
     <div>
         <h2 class="text-lg font-semibold mb-3">最近审查</h2>
@@ -21,8 +24,7 @@
             <div class="text-center py-8 text-gray-400">
                 <svg class="w-8 h-8 mx-auto animate-spin" fill="none" viewBox="0 0 24 24">
                     <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/>
-                    <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/>
-                </svg>
+                    <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg>
                 <p class="mt-2">加载中...</p>
             </div>
         </div>
@@ -31,6 +33,7 @@
 {% endblock %}
 
 {% block extra_scripts %}
+{% include "components/dashboard_charts.js" %}
 <script>
 function dashboardInit() {
     // 加载统计数据
@@ -43,6 +46,9 @@ function dashboardInit() {
             document.getElementById('stat-score').textContent = data.avg_score;
         })
         .catch(err => console.error('加载统计数据失败:', err));
+
+    // 加载图表
+    initDashboardCharts();
 }
 </script>
 {% endblock %}

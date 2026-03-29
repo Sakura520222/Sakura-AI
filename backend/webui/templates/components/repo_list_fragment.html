@@ -77,13 +77,15 @@
 
             <!-- 操作 -->
             <div class="flex gap-2 flex-shrink-0">
-                <form method="POST" action="/webui/repos/{{ r.id }}/toggle" class="inline">
+                <form method="POST" action="/webui/repos/{{ r.id }}/toggle" class="inline"
+                      data-confirm="确定要{{ '禁用' if r.is_active else '启用' }}此仓库吗？">
                     <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
                     <button type="submit" class="px-3 py-1.5 rounded-lg text-sm border border-gray-300 dark:border-gray-600 hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors">
                         {% if r.is_active %}禁用{% else %}启用{% endif %}
                     </button>
                 </form>
-                <form method="POST" action="/webui/repos/{{ r.id }}/remove" class="inline" onsubmit="return confirm('确定要删除此仓库吗？此操作不可撤销。');">
+                <form method="POST" action="/webui/repos/{{ r.id }}/remove" class="inline"
+                      data-confirm="确定要删除此仓库吗？" data-confirm-warning="此操作不可撤销" data-confirm-text="删除">
                     <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
                     <button type="submit" class="px-3 py-1.5 rounded-lg text-sm text-red-600 dark:text-red-400 border border-red-300 dark:border-red-800 hover:bg-red-50 dark:hover:bg-red-900/20 transition-colors">
                         删除

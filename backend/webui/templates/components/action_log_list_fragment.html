@@ -1,0 +1,144 @@
+<!-- 操作日志过滤 -->
+<div class="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 shadow-sm p-4 mb-4">
+    <form id="action-log-filter-form" class="flex flex-col sm:flex-row gap-3 flex-wrap">
+        <!-- 操作类型 -->
+        <select name="action"
+                class="px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-sm focus:ring-2 focus:ring-pink-500 focus:border-transparent outline-none">
+            <option value="">全部操作</option>
+            <optgroup label="用户管理">
+                <option value="user_role" {% if action == 'user_role' %}selected{% endif %}>修改角色</option>
+                <option value="user_quota" {% if action == 'user_quota' %}selected{% endif %}>修改配额</option>
+                <option value="user_toggle" {% if action == 'user_toggle' %}selected{% endif %}>启用/禁用用户</option>
+            </optgroup>
+            <optgroup label="仓库管理">
+                <option value="repo_add" {% if action == 'repo_add' %}selected{% endif %}>添加仓库</option>
+                <option value="repo_toggle" {% if action == 'repo_toggle' %}selected{% endif %}>启用/禁用仓库</option>
+                <option value="repo_remove" {% if action == 'repo_remove' %}selected{% endif %}>删除仓库</option>
+            </optgroup>
+            <optgroup label="配置管理">
+                <option value="config_save" {% if action == 'config_save' %}selected{% endif %}>保存配置</option>
+            </optgroup>
+        </select>
+
+        <!-- 日期范围 -->
+        <input type="date" name="start_date" value="{{ start_date }}"
+               class="px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-sm focus:ring-2 focus:ring-pink-500 focus:border-transparent outline-none"
+               placeholder="开始日期">
+        <input type="date" name="end_date" value="{{ end_date }}"
+               class="px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-sm focus:ring-2 focus:ring-pink-500 focus:border-transparent outline-none"
+               placeholder="结束日期">
+
+        <!-- 搜索按钮 -->
+        <button type="submit"
+                class="px-4 py-2 bg-pink-500 text-white rounded-lg text-sm font-medium hover:bg-pink-600 transition-colors">
+            搜索
+        </button>
+    </form>
+</div>
+
+<!-- 日志列表 -->
+<div class="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 shadow-sm overflow-hidden">
+    {% if logs %}
+    <div class="overflow-x-auto">
+        <table class="w-full">
+            <thead class="bg-gray-50 dark:bg-gray-700/50">
+                <tr>
+                    <th class="px-5 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">时间</th>
+                    <th class="px-5 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">操作人</th>
+                    <th class="px-5 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">操作类型</th>
+                    <th class="px-5 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">目标</th>
+                    <th class="px-5 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">详情</th>
+                </tr>
+            </thead>
+            <tbody class="divide-y divide-gray-200 dark:divide-gray-700">
+                {% for log, admin_name in logs %}
+                <tr class="hover:bg-gray-50 dark:hover:bg-gray-700/50 transition-colors">
+                    <td class="px-5 py-3 text-sm text-gray-500 dark:text-gray-400 whitespace-nowrap">
+                        {{ log.created_at.strftime('%Y-%m-%d %H:%M:%S') if log.created_at else '-' }}
+                    </td>
+                    <td class="px-5 py-3 text-sm">
+                        {{ admin_name or ('ID:' + str(log.admin_id)) }}
+                    </td>
+                    <td class="px-5 py-3">
+                        <span class="inline-flex items-center px-2.5 py-1 rounded-full text-xs font-medium
+                            {% if log.action.startswith('user_') %}bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-400
+                            {% elif log.action.startswith('repo_') %}bg-purple-100 dark:bg-purple-900/30 text-purple-700 dark:text-purple-400
+                            {% else %}bg-yellow-100 dark:bg-yellow-900/30 text-yellow-700 dark:text-yellow-400{% endif %}">
+                            {{ action_labels.get(log.action, log.action) }}
+                        </span>
+                    </td>
+                    <td class="px-5 py-3 text-sm">
+                        {% if log.target_type %}
+                        <span class="text-gray-500 dark:text-gray-400">{{ target_type_labels.get(log.target_type, log.target_type) }}</span>
+                        {% if log.target_id %}
+                        <span class="ml-1 font-mono text-xs bg-gray-100 dark:bg-gray-700 px-1.5 py-0.5 rounded">{{ log.target_id }}</span>
+                        {% endif %}
+                        {% else %}
+                        <span class="text-gray-400">-</span>
+                        {% endif %}
+                    </td>
+                    <td class="px-5 py-3 text-sm text-gray-500 dark:text-gray-400 max-w-xs truncate">
+                        {{ log.detail or '-' }}
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+
+    <!-- 分页 -->
+    {% if total_pages > 1 %}
+    <div class="px-5 py-3 border-t border-gray-200 dark:border-gray-700 flex items-center justify-between">
+        <p class="text-sm text-gray-500 dark:text-gray-400">
+            共 {{ total }} 条，第 {{ page }}/{{ total_pages }} 页
+        </p>
+        <div class="flex gap-1">
+            {% if page > 1 %}
+            <a href="#" onclick="loadActionLogPage({{ page - 1 }}); return false;"
+               class="px-3 py-1.5 rounded-lg text-sm border border-gray-300 dark:border-gray-600 hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors">
+                上一页
+            </a>
+            {% endif %}
+
+            {% set start = [1, page - 2]|max %}
+            {% set end = [total_pages, page + 2]|min %}
+            {% if start > 1 %}
+            <a href="#" onclick="loadActionLogPage(1); return false;"
+               class="px-3 py-1.5 rounded-lg text-sm border border-gray-300 dark:border-gray-600 hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors">1</a>
+            {% if start > 2 %}<span class="px-2 py-1.5 text-gray-400">...</span>{% endif %}
+            {% endif %}
+            {% for p in range(start, end + 1) %}
+                {% if p == page %}
+                <span class="px-3 py-1.5 rounded-lg text-sm bg-pink-500 text-white">{{ p }}</span>
+                {% else %}
+                <a href="#" onclick="loadActionLogPage({{ p }}); return false;"
+                   class="px-3 py-1.5 rounded-lg text-sm border border-gray-300 dark:border-gray-600 hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors">
+                    {{ p }}
+                </a>
+                {% endif %}
+            {% endfor %}
+            {% if end < total_pages %}
+            {% if end < total_pages - 1 %}<span class="px-2 py-1.5 text-gray-400">...</span>{% endif %}
+            <a href="#" onclick="loadActionLogPage({{ total_pages }}); return false;"
+               class="px-3 py-1.5 rounded-lg text-sm border border-gray-300 dark:border-gray-600 hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors">{{ total_pages }}</a>
+            {% endif %}
+
+            {% if page < total_pages %}
+            <a href="#" onclick="loadActionLogPage({{ page + 1 }}); return false;"
+               class="px-3 py-1.5 rounded-lg text-sm border border-gray-300 dark:border-gray-600 hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors">
+                下一页
+            </a>
+            {% endif %}
+        </div>
+    </div>
+    {% endif %}
+
+    {% else %}
+    <div class="p-12 text-center">
+        <svg class="w-12 h-12 mx-auto text-gray-300 dark:text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2"/>
+        </svg>
+        <p class="mt-4 text-gray-500 dark:text-gray-400">没有找到匹配的操作记录</p>
+    </div>
+    {% endif %}
+</div>

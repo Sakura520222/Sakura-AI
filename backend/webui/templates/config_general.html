@@ -1,0 +1,72 @@
+{% extends "base.html" %}
+
+{% block title %}全局配置 - Sakura AI Reviewer{% endblock %}
+
+{% block content %}
+<div class="space-y-4">
+    <!-- 页面标题 -->
+    <div>
+        <h1 class="text-2xl font-bold">全局配置</h1>
+        <p class="mt-1 text-sm text-gray-500 dark:text-gray-400">管理应用运行参数（部分配置需重启后生效）</p>
+    </div>
+
+    <!-- 版本信息（只读） -->
+    <div class="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 shadow-sm p-5">
+        <div class="flex items-center justify-between">
+            <div>
+                <h3 class="text-sm font-medium text-gray-700 dark:text-gray-300">应用版本</h3>
+                <p class="text-xs text-gray-500 dark:text-gray-400 mt-1">当前运行的版本号，从代码读取</p>
+            </div>
+            <span class="px-3 py-1.5 bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-300 rounded-lg text-sm font-mono">{{ app_version }}</span>
+        </div>
+    </div>
+
+    <!-- 配置表单 -->
+    <form method="POST" action="/webui/config/general/save">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+
+        {% for config in configs %}
+        {% if config.key_name in ('max_concurrent_reviews', 'review_timeout_seconds', 'enable_auto_review') %}
+        <div class="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 shadow-sm p-5">
+            <div class="flex items-center justify-between">
+                <div>
+                    <h3 class="text-sm font-medium text-gray-700 dark:text-gray-300">{{ config.description or config.key_name }}</h3>
+                    <p class="text-xs text-gray-500 dark:text-gray-400 mt-1">
+                        {% if config.key_name == 'max_concurrent_reviews' %}
+                        同时进行的最大 PR 审查任务数
+                        {% elif config.key_name == 'review_timeout_seconds' %}
+                        单次审查任务的超时时间（秒）
+                        {% elif config.key_name == 'enable_auto_review' %}
+                        是否自动审查新提交的 PR
+                        {% endif %}
+                    </p>
+                </div>
+
+                {% if config.key_name == 'enable_auto_review' %}
+                <label class="relative inline-flex items-center cursor-pointer">
+                    <input type="checkbox" name="enable_auto_review" value="true" class="sr-only peer"
+                           {% if config.key_value == 'true' %}checked{% endif %}>
+                    <div class="w-11 h-6 bg-gray-200 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-pink-300 dark:peer-focus:ring-pink-800 rounded-full peer dark:bg-gray-600 peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:start-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all dark:after:border-gray-500 peer-checked:bg-pink-500"></div>
+                </label>
+                {% else %}
+                <input type="number"
+                       name="{{ config.key_name }}"
+                       value="{{ config.key_value }}"
+                       min="1"
+                       class="w-32 px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-sm text-right focus:ring-2 focus:ring-pink-500 focus:border-transparent outline-none">
+                {% endif %}
+            </div>
+        </div>
+        {% endif %}
+        {% endfor %}
+
+        <!-- 保存按钮 -->
+        <div class="flex justify-end">
+            <button type="submit"
+                    class="px-6 py-2.5 bg-pink-500 text-white rounded-lg text-sm font-medium hover:bg-pink-600 transition-colors">
+                保存配置
+            </button>
+        </div>
+    </form>
+</div>
+{% endblock %}

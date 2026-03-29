@@ -7,7 +7,8 @@ from sqlalchemy import select, func, desc
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.models.telegram_models import RepoSubscription
-from backend.webui.deps import require_admin, get_db, get_templates, get_csrf_serializer, require_csrf, get_user_preferences, paginate, error_page
+from backend.webui.deps import require_admin, get_db, get_templates, get_csrf_serializer, require_csrf, get_user_preferences, paginate, error_page, toast_redirect
+from backend.webui.helpers.admin_log import log_admin_action
 
 router = APIRouter(prefix="/repos", tags=["WebUI Repos"])
 templates = get_templates()
@@ -90,14 +91,14 @@ async def add_repo(
 
     # 验证格式: 必须包含 owner/repo，具体合法性由 GitHub API 保证
     if not repo_name or repo_name.count("/") != 1 or not repo_name.replace("/", "").strip():
-        return RedirectResponse(url="/webui/repos/?error=invalid_format", status_code=302)
+        return toast_redirect("/webui/repos/", "仓库名称格式不正确，请使用 owner/repo 格式", "error")
 
     # 检查是否已存在
     existing = await db.execute(
         select(RepoSubscription).where(RepoSubscription.repo_name == repo_name)
     )
     if existing.scalar_one_or_none():
-        return RedirectResponse(url="/webui/repos/?error=already_exists", status_code=302)
+        return toast_redirect("/webui/repos/", "仓库已存在于白名单中", "warning")
 
     repo = RepoSubscription(
         repo_name=repo_name,
@@ -108,7 +109,8 @@ async def add_repo(
     await db.commit()
 
     logger.info(f"仓库已添加到白名单: {repo_name}, by={user['sub']}")
-    return RedirectResponse(url="/webui/repos/?saved=1", status_code=302)
+    await log_admin_action(db, user['user_id'], "repo_add", "repo", repo_name)
+    return toast_redirect("/webui/repos/", f"仓库 {repo_name} 已添加到白名单")
 
 
 @router.post("/{repo_id}/toggle")
@@ -132,7 +134,8 @@ async def toggle_repo_status(
 
     status = "启用" if repo.is_active else "禁用"
     logger.info(f"仓库状态已变更: repo={repo.repo_name}, status={status}, by={user['sub']}")
-    return RedirectResponse(url="/webui/repos/?saved=1", status_code=302)
+    await log_admin_action(db, user['user_id'], "repo_toggle", "repo", repo.repo_name, {"is_active": repo.is_active})
+    return toast_redirect("/webui/repos/", f"仓库 {repo.repo_name} 已{status}")
 
 
 @router.post("/{repo_id}/remove")
@@ -156,4 +159,5 @@ async def remove_repo(
     await db.commit()
 
     logger.info(f"仓库已从白名单移除: {repo_name}, by={user['sub']}")
-    return RedirectResponse(url="/webui/repos/?saved=1", status_code=302)
+    await log_admin_action(db, user['user_id'], "repo_remove", "repo", repo_name)
+    return toast_redirect("/webui/repos/", f"仓库 {repo_name} 已从白名单移除")

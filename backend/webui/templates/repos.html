@@ -10,26 +10,6 @@
         <p class="mt-1 text-sm text-gray-500 dark:text-gray-400">管理仓库白名单</p>
     </div>
 
-    <!-- 提示消息 -->
-    {% if request.query_params.get('saved') %}
-    <div class="bg-green-50 dark:bg-green-900/20 border border-green-200 dark:border-green-800 rounded-lg p-3 text-sm text-green-700 dark:text-green-400">
-        操作成功
-    </div>
-    {% endif %}
-    {% if request.query_params.get('error') == 'already_exists' %}
-    <div class="bg-yellow-50 dark:bg-yellow-900/20 border border-yellow-200 dark:border-yellow-800 rounded-lg p-3 text-sm text-yellow-700 dark:text-yellow-400">
-        仓库已存在于白名单中
-    </div>
-    {% elif request.query_params.get('error') == 'invalid_format' %}
-    <div class="bg-yellow-50 dark:bg-yellow-900/20 border border-yellow-200 dark:border-yellow-800 rounded-lg p-3 text-sm text-yellow-700 dark:text-yellow-400">
-        仓库名称格式不正确，请使用 owner/repo 格式
-    </div>
-    {% elif request.query_params.get('error') %}
-    <div class="bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg p-3 text-sm text-red-700 dark:text-red-400">
-        操作失败，请重试
-    </div>
-    {% endif %}
-
     <!-- 仓库列表（通过 HTMX 加载） -->
     <div id="repo-list-container" hx-get="/webui/repos/list-fragment" hx-trigger="load" hx-swap="innerHTML">
         <div class="text-center py-8 text-gray-400">
@@ -44,6 +24,7 @@
 {% endblock %}
 
 {% block extra_scripts %}
+{{ super() }}
 <script>
 var loadRepoPage = function(n) { loadListPage('repo-list-container', '/webui/repos/list-fragment', n); };
 initFilterForm('repo-filter-form', 'repo-list-container', '/webui/repos/list-fragment');

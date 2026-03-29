@@ -12,18 +12,6 @@
         </div>
     </div>
 
-    <!-- 提示消息 -->
-    {% if request.query_params.get('saved') %}
-    <div class="bg-green-50 dark:bg-green-900/20 border border-green-200 dark:border-green-800 rounded-lg p-3 text-sm text-green-700 dark:text-green-400">
-        配置已保存并即时生效
-    </div>
-    {% endif %}
-    {% if request.query_params.get('error') %}
-    <div class="bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg p-3 text-sm text-red-700 dark:text-red-400">
-        保存失败，请检查输入内容后重试
-    </div>
-    {% endif %}
-
     <!-- Tab 导航 -->
     <div class="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 shadow-sm">
         <div class="border-b border-gray-200 dark:border-gray-700">
@@ -241,6 +229,31 @@
                                 <input type="number" name="max_file_size" min="1000"
                                        value="{{ ce.get('max_file_size', 200000) }}"
                                        class="w-full px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-sm focus:ring-2 focus:ring-pink-500 focus:border-transparent outline-none">
+                            </div>
+                        </div>
+
+                        <!-- File tool limits -->
+                        <div class="mt-4">
+                            <h3 class="text-sm font-medium text-gray-700 dark:text-gray-300 mb-3">文件读取工具限制</h3>
+                            <div class="grid grid-cols-1 sm:grid-cols-3 gap-6">
+                                <div>
+                                    <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">单文件最大读取行数</label>
+                                    <input type="number" name="max_file_lines" min="50"
+                                           value="{{ ce.get('max_file_lines', 500) }}"
+                                           class="w-full px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-sm focus:ring-2 focus:ring-pink-500 focus:border-transparent outline-none">
+                                </div>
+                                <div>
+                                    <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">搜索默认上下文行数</label>
+                                    <input type="number" name="default_context_lines" min="0" max="500"
+                                           value="{{ ce.get('default_context_lines', 20) }}"
+                                           class="w-full px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-sm focus:ring-2 focus:ring-pink-500 focus:border-transparent outline-none">
+                                </div>
+                                <div>
+                                    <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">搜索最大上下文行数</label>
+                                    <input type="number" name="max_context_lines" min="1" max="500"
+                                           value="{{ ce.get('max_context_lines', 200) }}"
+                                           class="w-full px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-sm focus:ring-2 focus:ring-pink-500 focus:border-transparent outline-none">
+                                </div>
                             </div>
                         </div>
                     </div>
