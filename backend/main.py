@@ -89,7 +89,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title="Sakura AI Reviewer",
     description="GitHub PR AI代码审查机器人",
-    version="2.4.4",
+    version="2.5.0",
     lifespan=lifespan,
 )
 
@@ -121,7 +121,7 @@ async def root():
     """根路径"""
     return {
         "service": "Sakura AI Reviewer",
-        "version": "2.4.4",
+        "version": "2.5.0",
         "status": "running",
         "docs": "/docs",
     }
