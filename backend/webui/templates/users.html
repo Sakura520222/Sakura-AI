@@ -31,6 +31,7 @@
 {% endblock %}
 
 {% block extra_scripts %}
+{{ super() }}
 <script>
 var loadUserPage = function(n) { loadListPage('user-list-container', '/webui/users/list-fragment', n); };
 initFilterForm('user-filter-form', 'user-list-container', '/webui/users/list-fragment');
