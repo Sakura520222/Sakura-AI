@@ -13,7 +13,6 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.models.database import AppConfig
-from fastapi.responses import RedirectResponse
 from loguru import logger
 
 from backend.core.config import (
@@ -30,6 +29,7 @@ from backend.webui.deps import (
     get_csrf_serializer,
     require_csrf,
     get_user_preferences,
+    toast_redirect,
 )
 from backend.webui.helpers.admin_log import log_admin_action
 
@@ -222,27 +222,15 @@ async def save_strategies_section(
 
     except (ValueError, yaml.YAMLError) as e:
         logger.error(f"配置验证失败: {e}")
-        return RedirectResponse(
-            url=f"/webui/config/strategies?tab={section}&error=invalid_config",
-            status_code=302,
-        )
+        return toast_redirect(f"/webui/config/strategies?tab={section}", f"配置验证失败: {e}", "error")
     except PermissionError as e:
         logger.error(f"文件权限不足: {e}")
-        return RedirectResponse(
-            url=f"/webui/config/strategies?tab={section}&error=permission_denied",
-            status_code=302,
-        )
+        return toast_redirect(f"/webui/config/strategies?tab={section}", "文件权限不足", "error")
     except Exception as e:
         logger.error(f"策略配置保存异常: {e}", exc_info=True)
-        return RedirectResponse(
-            url=f"/webui/config/strategies?tab={section}&error=save_failed",
-            status_code=302,
-        )
+        return toast_redirect(f"/webui/config/strategies?tab={section}", "保存失败，请稍后重试", "error")
 
-    return RedirectResponse(
-        url=f"/webui/config/strategies?tab={section}&saved=1",
-        status_code=302,
-    )
+    return toast_redirect(f"/webui/config/strategies?tab={section}", f"策略配置 [{section}] 已保存并即时生效")
 
 
 # ========== GET: 标签配置页 ==========
@@ -305,12 +293,12 @@ async def save_labels_definitions(
 
     except ValueError as e:
         logger.warning(f"标签验证失败: {e}")
-        return RedirectResponse(url="/webui/config/labels?error=validation", status_code=302)
+        return toast_redirect("/webui/config/labels", f"标签验证失败: {e}", "error")
     except Exception as e:
         logger.error(f"标签定义保存失败: {e}")
-        return RedirectResponse(url="/webui/config/labels?error=save_failed", status_code=302)
+        return toast_redirect("/webui/config/labels", "保存失败，请稍后重试", "error")
 
-    return RedirectResponse(url="/webui/config/labels?saved=1", status_code=302)
+    return toast_redirect("/webui/config/labels", f"标签定义已更新（{len(labels)} 个）")
 
 
 # ========== POST: 保存推荐设置 ==========
@@ -346,12 +334,12 @@ async def save_recommendation_settings(
 
     except (ValueError, yaml.YAMLError) as e:
         logger.error(f"推荐设置验证失败: {e}")
-        return RedirectResponse(url="/webui/config/labels?error=invalid_config", status_code=302)
+        return toast_redirect("/webui/config/labels", f"推荐设置验证失败: {e}", "error")
     except Exception as e:
         logger.error(f"标签推荐设置保存失败: {e}", exc_info=True)
-        return RedirectResponse(url="/webui/config/labels?error=save_failed", status_code=302)
+        return toast_redirect("/webui/config/labels", "保存失败，请稍后重试", "error")
 
-    return RedirectResponse(url="/webui/config/labels?saved=1", status_code=302)
+    return toast_redirect("/webui/config/labels", "标签推荐设置已更新")
 
 
 # ========== GET: 全局配置页 ==========
@@ -399,7 +387,7 @@ async def save_general_config(
         if raw is not None:
             val = int(raw)
             if not 1 <= val <= 100:
-                return RedirectResponse(url="/webui/config/general?error=validation", status_code=302)
+                return toast_redirect("/webui/config/general", "参数验证失败，请检查输入值", "error")
             result = await db.execute(select(AppConfig).where(AppConfig.key_name == "max_concurrent_reviews"))
             cfg = result.scalar_one_or_none()
             if cfg and cfg.key_value != str(val):
@@ -411,7 +399,7 @@ async def save_general_config(
         if raw is not None:
             val = int(raw)
             if not 10 <= val <= 3600:
-                return RedirectResponse(url="/webui/config/general?error=validation", status_code=302)
+                return toast_redirect("/webui/config/general", "参数验证失败，请检查输入值", "error")
             result = await db.execute(select(AppConfig).where(AppConfig.key_name == "review_timeout_seconds"))
             cfg = result.scalar_one_or_none()
             if cfg and cfg.key_value != str(val):
@@ -428,15 +416,15 @@ async def save_general_config(
             cfg.key_value = val
 
         if not changed:
-            return RedirectResponse(url="/webui/config/general?saved=1", status_code=302)
+            return toast_redirect("/webui/config/general", "全局配置已保存（部分配置需重启后生效）")
 
         await db.commit()
         logger.info(f"全局配置已更新, by={user['sub']}, changed={list(changed.keys())}")
         await log_admin_action(db, user['user_id'], "config_save", "global", None, changed)
-        return RedirectResponse(url="/webui/config/general?saved=1", status_code=302)
+        return toast_redirect("/webui/config/general", "全局配置已保存（部分配置需重启后生效）")
 
     except ValueError:
-        return RedirectResponse(url="/webui/config/general?error=validation", status_code=302)
+        return toast_redirect("/webui/config/general", "参数验证失败，请检查输入值", "error")
     except Exception as e:
         logger.error(f"全局配置保存失败: {e}", exc_info=True)
-        return RedirectResponse(url="/webui/config/general?error=save_failed", status_code=302)
+        return toast_redirect("/webui/config/general", "保存失败，请稍后重试", "error")

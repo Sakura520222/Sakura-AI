@@ -14,7 +14,7 @@ from sqlalchemy import select
 from backend.models.telegram_models import TelegramUser
 from backend.models import database as db_module
 from backend.webui.auth import create_access_token, decode_access_token
-from backend.webui.deps import get_templates, validate_csrf_token, get_csrf_serializer
+from backend.webui.deps import get_templates, validate_csrf_token, get_csrf_serializer, toast_redirect
 from backend.core.config import get_settings
 from backend.core.redis import get_redis
 
@@ -98,7 +98,7 @@ async def login_page(request: Request):
     # 已登录则跳转仪表盘
     token = request.cookies.get("webui_token")
     if token and decode_access_token(token):
-        return RedirectResponse(url="/webui/", status_code=302)
+        return toast_redirect("/webui/", "已自动登录")
 
     settings = get_settings()
     has_oauth = bool(settings.github_oauth_client_id)
@@ -275,7 +275,7 @@ async def logout(request: Request, csrf_token: str = Form(...)):
         raise HTTPException(status_code=403, detail="CSRF 验证失败")
 
     logger.info("WebUI 用户登出")
-    response = RedirectResponse(url="/webui/auth/login", status_code=302)
+    response = toast_redirect("/webui/auth/login", "已退出登录")
     response.delete_cookie("webui_token")
     return response
 

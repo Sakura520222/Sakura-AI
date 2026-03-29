@@ -10,13 +10,6 @@
         <p class="mt-1 text-sm text-gray-500 dark:text-gray-400">管理系统中的所有用户和权限</p>
     </div>
 
-    <!-- 提示消息 -->
-    {% if request.query_params.get('saved') %}
-    <div class="bg-green-50 dark:bg-green-900/20 border border-green-200 dark:border-green-800 rounded-lg p-3 text-sm text-green-700 dark:text-green-400">
-        操作成功
-    </div>
-    {% endif %}
-
     <!-- 用户列表（通过 HTMX 加载） -->
     <div id="user-list-container" hx-get="/webui/users/list-fragment" hx-trigger="load" hx-swap="innerHTML">
         <div class="text-center py-8 text-gray-400">
