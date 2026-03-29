@@ -107,7 +107,7 @@ class PromptBuilder:
 ## 可用工具
 
 你可以使用以下工具来更好地理解代码：
-- `read_file`: 读取任意文件的完整内容
+- `read_file`: 读取任意文件的内容（支持完整读取、行范围读取、内容搜索）
 - `list_directory`: 列出目录中的文件
 
 请根据需要使用工具查看相关文件。
@@ -141,9 +141,13 @@ class PromptBuilder:
 
 你可以使用以下工具来更好地理解代码：
 
-1. **read_file**: 读取指定文件的完整内容
+1. **read_file**: 读取指定文件的内容，支持三种模式
    - 使用场景：需要理解某个函数的完整实现、查看配置文件详情、了解依赖模块
-   - 参数：file_path（文件路径）
+   - **模式1 - 完整读取**：仅指定 file_path，返回完整文件内容（超过最大行数会截断并提示）
+   - **模式2 - 行范围读取**：指定 start_line 和 end_line（从1开始），读取文件的指定范围
+   - **模式3 - 内容搜索**：指定 search_pattern，搜索包含该文本的行，返回匹配行及周围上下文（默认前后各20行，可通过 context_lines 调整）
+   - 参数：file_path（必填），start_line/end_line（行范围），search_pattern（搜索文本），context_lines（搜索上下文行数）
+   - 返回内容包含行号，搜索匹配行以 `>>>` 标记
    - **注意**：对于新增文件，工具会自动从PR的HEAD分支读取；对于已存在的文件，会从base分支读取
 
 2. **list_directory**: 列出目录中的文件和子目录
@@ -162,6 +166,8 @@ class PromptBuilder:
 - 审查前建议先使用 search_project_docs 检索项目相关的编码规范和架构准则
 - 当需要理解依赖关系时，使用 read_file 查看相关文件
 - 当需要了解模块结构时，使用 list_directory 查看目录
+- 大文件被截断时，使用 start_line/end_line 分段读取后续内容
+- 需要查找特定函数或变量定义时，使用 search_pattern 快速定位
 - 合理使用工具，避免不必要的文件读取
 
 ## ⚠️ 工具错误处理
