@@ -45,7 +45,13 @@ class ToolHandler:
         try:
             if function_name == "read_file":
                 return await self.file_tool.read_file(
-                    arguments["file_path"], repo, pr
+                    file_path=arguments["file_path"],
+                    repo=repo,
+                    pr=pr,
+                    start_line=arguments.get("start_line"),
+                    end_line=arguments.get("end_line"),
+                    search_pattern=arguments.get("search_pattern"),
+                    context_lines=arguments.get("context_lines"),
                 )
             elif function_name == "list_directory":
                 return await self.file_tool.list_directory(

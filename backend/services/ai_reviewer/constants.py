@@ -23,7 +23,9 @@ LABEL_RECOMMENDATION_TIMEOUT = 60.0  # 标签推荐超时
 # 文件限制
 # =============================================================================
 MAX_FILE_SIZE_BYTES = 200000  # 最大文件大小（200KB）
-MAX_FILE_LINES = 500  # 最大文件行数
+MAX_FILE_LINES = 500  # 最大文件行数（fallback 默认值，实际值从策略配置读取）
+DEFAULT_CONTEXT_LINES = 20  # 搜索匹配时的默认上下文行数
+MAX_CONTEXT_LINES = 200  # 搜索匹配时的最大上下文行数
 
 # =============================================================================
 # 批处理配置
@@ -106,14 +108,48 @@ READ_FILE_TOOL = {
     "type": "function",
     "function": {
         "name": "read_file",
-        "description": "读取指定文件的完整内容，用于理解代码实现细节",
+        "description": (
+            "读取指定文件的内容，用于理解代码实现细节。"
+            "支持三种模式：\n"
+            "1. 完整读取（仅指定file_path）\n"
+            "2. 行范围读取（指定start_line和end_line）\n"
+            "3. 内容搜索（指定search_pattern，返回匹配行及上下文）\n"
+            "返回内容始终包含行号，方便定位。"
+        ),
         "parameters": {
             "type": "object",
             "properties": {
                 "file_path": {
                     "type": "string",
                     "description": "要读取的文件路径（相对于项目根目录）",
-                }
+                },
+                "start_line": {
+                    "type": "integer",
+                    "description": (
+                        "起始行号（从1开始）。仅当需要读取文件特定范围时指定。"
+                    ),
+                },
+                "end_line": {
+                    "type": "integer",
+                    "description": (
+                        "结束行号（从1开始，包含该行）。仅当需要读取文件特定范围时指定。"
+                    ),
+                },
+                "search_pattern": {
+                    "type": "string",
+                    "description": (
+                        "在文件中搜索包含此文本的行（简单文本匹配，非正则），"
+                        "返回所有匹配行及其周围的上下文行，带行号。"
+                        "与start_line/end_line互斥。"
+                    ),
+                },
+                "context_lines": {
+                    "type": "integer",
+                    "description": (
+                        "搜索模式下的上下文行数（在匹配行前后各显示多少行），默认20，最大200"
+                    ),
+                    "default": 20,
+                },
             },
             "required": ["file_path"],
         },

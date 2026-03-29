@@ -231,6 +231,31 @@
                                        class="w-full px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-sm focus:ring-2 focus:ring-pink-500 focus:border-transparent outline-none">
                             </div>
                         </div>
+
+                        <!-- File tool limits -->
+                        <div class="mt-4">
+                            <h3 class="text-sm font-medium text-gray-700 dark:text-gray-300 mb-3">文件读取工具限制</h3>
+                            <div class="grid grid-cols-1 sm:grid-cols-3 gap-6">
+                                <div>
+                                    <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">单文件最大读取行数</label>
+                                    <input type="number" name="max_file_lines" min="50"
+                                           value="{{ ce.get('max_file_lines', 500) }}"
+                                           class="w-full px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-sm focus:ring-2 focus:ring-pink-500 focus:border-transparent outline-none">
+                                </div>
+                                <div>
+                                    <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">搜索默认上下文行数</label>
+                                    <input type="number" name="default_context_lines" min="0" max="500"
+                                           value="{{ ce.get('default_context_lines', 20) }}"
+                                           class="w-full px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-sm focus:ring-2 focus:ring-pink-500 focus:border-transparent outline-none">
+                                </div>
+                                <div>
+                                    <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">搜索最大上下文行数</label>
+                                    <input type="number" name="max_context_lines" min="1" max="500"
+                                           value="{{ ce.get('max_context_lines', 200) }}"
+                                           class="w-full px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-sm focus:ring-2 focus:ring-pink-500 focus:border-transparent outline-none">
+                                </div>
+                            </div>
+                        </div>
                     </div>
 
                     <div class="mt-6 pt-4 border-t border-gray-200 dark:border-gray-700">
