@@ -35,6 +35,7 @@
 {% endblock %}
 
 {% block extra_scripts %}
+{{ super() }}
 <script>
 var loadQueuePage = function(n) { loadListPage('queue-list-container', '/webui/queue/list-fragment', n); };
 initFilterForm('queue-filter-form', 'queue-list-container', '/webui/queue/list-fragment');

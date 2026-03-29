@@ -24,6 +24,7 @@
 {% endblock %}
 
 {% block extra_scripts %}
+{{ super() }}
 <script>
 function exportCSV() {
     var form = document.getElementById('pr-filter-form');
