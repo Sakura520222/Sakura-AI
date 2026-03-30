@@ -4,6 +4,7 @@ from fastapi import APIRouter, Request, Depends, Form, Query
 from fastapi.responses import RedirectResponse, HTMLResponse
 from loguru import logger
 from sqlalchemy import select, func, desc, or_, String, type_coerce
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.models.telegram_models import TelegramUser, QuotaUsageLog
@@ -153,9 +154,14 @@ async def add_user(
     try:
         db.add(new_user)
         await db.commit()
-    except Exception:
+    except IntegrityError as e:
+        logger.error(f"用户创建失败（数据库冲突）: {e}")
         await db.rollback()
-        return toast_redirect("/webui/users/", f"用户创建失败（可能已存在重复）", "error")
+        return toast_redirect("/webui/users/", "用户创建失败（可能已存在重复）", "error")
+    except Exception as e:
+        logger.error(f"用户创建失败（未知错误）: {e}")
+        await db.rollback()
+        return toast_redirect("/webui/users/", "用户创建失败", "error")
 
     logger.info(f"用户已通过 WebUI 添加: telegram_id={telegram_id}, github={github_username}, role={role}, by={user['sub']}")
     await log_admin_action(db, user["user_id"], "user_add", "user", str(new_user.id), {
@@ -170,7 +176,10 @@ async def add_user(
         "issue_monthly_quota": issue_monthly_quota,
         "auto_super_admin": auto_super_admin,
     })
-    return toast_redirect("/webui/users/", f"用户 {github_username} 已成功添加")
+    msg = f"用户 {github_username} 已成功添加"
+    if auto_super_admin:
+        msg += "（已自动提升为超级管理员）"
+    return toast_redirect("/webui/users/", msg)
 
 
 @router.get("/{user_id}")
