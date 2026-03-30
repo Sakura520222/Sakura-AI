@@ -188,6 +188,23 @@ class IssueAnalyzer:
                     "estimated_cost": 0,
                 }
 
+            # 验证响应有效性
+            if not response.choices:
+                logger.error("AI API 返回空响应")
+                return {
+                    "category": "other",
+                    "priority": "medium",
+                    "summary": "AI 分析失败：API 返回空响应",
+                    "feasibility": "无法评估",
+                    "suggested_labels": [],
+                    "suggested_assignees": [],
+                    "suggested_milestone": None,
+                    "duplicate_of": None,
+                    "prompt_tokens": total_prompt_tokens,
+                    "completion_tokens": total_completion_tokens,
+                    "estimated_cost": 0,
+                }
+
             # 累积 token 使用
             if hasattr(response, 'usage') and response.usage:
                 total_prompt_tokens += getattr(response.usage, 'prompt_tokens', 0) or 0

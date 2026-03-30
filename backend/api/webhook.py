@@ -254,7 +254,7 @@ async def handle_pull_request_event(payload: Dict[str, Any]) -> JSONResponse:
     except Exception as e:
         logger.error(f"处理PR事件时出错: {e}", exc_info=True)
         return JSONResponse(
-            status_code=500, content={"status": "error", "message": str(e)}
+            status_code=500, content={"status": "error", "message": "内部服务错误"}
         )
 
 
@@ -402,7 +402,7 @@ async def handle_issue_comment_event(payload: Dict[str, Any]) -> JSONResponse:
             logger.error(f"获取PR信息失败: {e}", exc_info=True)
             return JSONResponse(
                 status_code=500,
-                content={"status": "error", "message": str(e)},
+                content={"status": "error", "message": "获取PR信息失败"},
             )
 
         # 获取 bot 用户名
@@ -503,7 +503,7 @@ async def handle_issue_comment_event(payload: Dict[str, Any]) -> JSONResponse:
     except Exception as e:
         logger.error(f"处理Issue Comment事件时出错: {e}", exc_info=True)
         return JSONResponse(
-            status_code=500, content={"status": "error", "message": str(e)}
+            status_code=500, content={"status": "error", "message": "内部服务错误"}
         )
 
 
@@ -660,7 +660,7 @@ async def handle_issue_analyze_command(payload: Dict[str, Any]) -> JSONResponse:
     except Exception as e:
         logger.error(f"处理 /analyze 命令时出错: {e}", exc_info=True)
         return JSONResponse(
-            status_code=500, content={"status": "error", "message": str(e)}
+            status_code=500, content={"status": "error", "message": "内部服务错误"}
         )
 
 
