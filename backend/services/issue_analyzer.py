@@ -2,12 +2,17 @@
 
 import json
 import re
+from datetime import datetime, timedelta
 from typing import Dict, Any, List, Optional
 from loguru import logger
 
 from backend.core.config import get_settings, get_strategy_config
 from backend.services.ai_reviewer.api_client import AIApiClient
 from backend.services.ai_reviewer.tools import FileToolHandler, SearchToolHandler, ToolHandler, ToolManager
+
+# 协作者缓存：{repo_full_name: {"collaborators": list, "updated_at": datetime}}
+_collaborator_cache: Dict[str, Dict[str, Any]] = {}
+_COLLABORATOR_CACHE_TTL = timedelta(hours=1)
 
 
 class IssueAnalyzer:
@@ -135,12 +140,24 @@ class IssueAnalyzer:
 
         repo_full_name = f"{repo_owner}/{repo_name}"
 
-        # 获取仓库标签和协作者
+        # 获取仓库标签（使用 LabelService 缓存）
+        from backend.services.label_service import get_label_service
+        label_service = get_label_service()
+        labels_dict = await label_service.get_repo_labels(repo_owner, repo_name)
+        available_labels = list(labels_dict.keys())
+
+        # 获取仓库协作者（带缓存）
         from backend.core.github_app import GitHubAppClient
         github_app = GitHubAppClient()
-
-        available_labels = list(github_app.get_repo_labels(repo_owner, repo_name).keys())
-        collaborators = github_app.get_repo_collaborators(repo_owner, repo_name)
+        cache_key = repo_full_name
+        now = datetime.now()
+        if cache_key in _collaborator_cache and now - _collaborator_cache[cache_key]["updated_at"] < _COLLABORATOR_CACHE_TTL:
+            collaborators = _collaborator_cache[cache_key]["collaborators"]
+            logger.debug(f"使用缓存的协作者列表: {cache_key}")
+        else:
+            collaborators = github_app.get_repo_collaborators(repo_owner, repo_name)
+            _collaborator_cache[cache_key] = {"collaborators": collaborators, "updated_at": now}
+            logger.debug(f"从 GitHub 获取协作者列表: {cache_key}")
 
         # 构建提示词
         system_prompt = self._build_system_prompt(repo_full_name, available_labels, issue_info.get("issue_number"))

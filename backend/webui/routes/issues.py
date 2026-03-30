@@ -202,6 +202,17 @@ async def reanalyze_issue(
         "body": analysis.body,
     }
 
+    # 计算分析版本号
+    from backend.models.database import IssueAnalysis as IssueAnalysisModel
+    max_version_result = await db.execute(
+        select(func.max(IssueAnalysisModel.analysis_version)).where(
+            IssueAnalysisModel.issue_number == analysis.issue_number,
+            IssueAnalysisModel.repo_name == analysis.repo_name,
+        )
+    )
+    max_version = max_version_result.scalar() or 0
+    issue_info["analysis_version"] = max_version + 1
+
     try:
         from backend.workers.issue_worker import submit_issue_analysis_task
         task_id = await submit_issue_analysis_task(issue_info)

@@ -11,7 +11,7 @@ from backend.core.github_app import GitHubAppClient
 from backend.models.database import (
     async_session, IssueAnalysis, IssueAnalysisStatus,
 )
-from sqlalchemy import select
+from sqlalchemy import select, and_
 from backend.services.issue_analyzer import IssueAnalyzer
 from backend.services.issue_service import issue_service
 
@@ -33,7 +33,7 @@ class IssueWorker:
         Returns:
             任务ID
         """
-        task_id = str(uuid.uuid4())
+        task_id = issue_info.get("task_id", str(uuid.uuid4()))
         settings = get_settings()
 
         repo_owner = issue_info.get("repo_owner", "")
@@ -57,6 +57,7 @@ class IssueWorker:
                     title=issue_info.get("title", ""),
                     body=issue_info.get("body", ""),
                     status=IssueAnalysisStatus.PENDING.value,
+                    analysis_version=issue_info.get("analysis_version", 1),
                 )
                 db.add(record)
                 await db.commit()
@@ -184,12 +185,18 @@ class IssueWorker:
             except Exception as e:
                 logger.error(f"[{task_id}] Issue 分析失败: {e}", exc_info=True)
 
-                # 更新状态为 FAILED
+                # 更新状态为 FAILED（仅更新本次任务的 PENDING/ANALYZING 记录）
                 try:
                     result = await db.execute(
                         select(IssueAnalysis).where(
-                            IssueAnalysis.issue_number == issue_number,
-                            IssueAnalysis.repo_name == repo_name,
+                            and_(
+                                IssueAnalysis.issue_number == issue_number,
+                                IssueAnalysis.repo_name == repo_name,
+                                IssueAnalysis.status.in_([
+                                    IssueAnalysisStatus.PENDING.value,
+                                    IssueAnalysisStatus.ANALYZING.value,
+                                ]),
+                            )
                         ).order_by(IssueAnalysis.created_at.desc()).limit(1)
                     )
                     record = result.scalar_one_or_none()
@@ -216,6 +223,8 @@ def get_issue_worker() -> IssueWorker:
 
 async def submit_issue_analysis_task(issue_info: Dict[str, Any]) -> str:
     """提交 Issue 分析任务"""
+    task_id = str(uuid.uuid4())
+    issue_info["task_id"] = task_id
     worker = get_issue_worker()
     asyncio.create_task(worker.process_issue_analysis(issue_info))
-    return str(uuid.uuid4())
+    return task_id
