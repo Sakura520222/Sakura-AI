@@ -1,0 +1,140 @@
+{% macro render(csrf_token) %}
+<div x-data="{ open: false }" x-cloak>
+    <!-- 触发按钮 -->
+    <button @click="open = true"
+            class="px-4 py-2 bg-pink-500 text-white rounded-lg text-sm font-medium hover:bg-pink-600 transition-colors inline-flex items-center gap-2">
+        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M18 9v3m0 0v3m0-3h3m-3 0h-3m-2-5a4 4 0 11-8 0 4 4 0 018 0zM3 20a6 6 0 0112 0v1H3v-1z"/>
+        </svg>
+        添加用户
+    </button>
+
+    <!-- Modal -->
+    <div x-show="open"
+         x-transition:enter="transition ease-out duration-200"
+         x-transition:enter-start="opacity-0"
+         x-transition:enter-end="opacity-100"
+         x-transition:leave="transition ease-in duration-150"
+         x-transition:leave-start="opacity-100"
+         x-transition:leave-end="opacity-0"
+         class="fixed inset-0 z-[120] flex items-center justify-center"
+         @keydown.escape.window="open = false">
+        <!-- 遮罩 -->
+        <div x-show="open" class="absolute inset-0 bg-black/50" @click="open = false"
+             x-transition:enter="transition ease-out duration-200"
+             x-transition:enter-start="opacity-0"
+             x-transition:enter-end="opacity-100"></div>
+
+        <!-- 内容 -->
+        <div x-show="open"
+             x-transition:enter="transition ease-out duration-200"
+             x-transition:enter-start="opacity-0 scale-95"
+             x-transition:enter-end="opacity-100 scale-100"
+             x-transition:leave="transition ease-in duration-150"
+             x-transition:leave-start="opacity-100 scale-100"
+             x-transition:leave-end="opacity-0 scale-95"
+             class="relative bg-white dark:bg-gray-800 rounded-xl shadow-xl border border-gray-200 dark:border-gray-700 max-w-lg w-full mx-4 p-6 max-h-[90vh] overflow-y-auto">
+            <!-- 标题 -->
+            <div class="flex items-center justify-between mb-6">
+                <h2 class="text-lg font-semibold text-gray-900 dark:text-gray-100">添加新用户</h2>
+                <button @click="open = false"
+                        class="p-1 rounded-lg text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors">
+                    <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/>
+                    </svg>
+                </button>
+            </div>
+
+            <!-- 表单 -->
+            <form method="POST" action="/webui/users/add">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+
+                <!-- 基本信息 -->
+                <div class="space-y-4">
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+                            Telegram ID <span class="text-red-500">*</span>
+                        </label>
+                        <input type="number" name="telegram_id" required min="1"
+                               class="w-full px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-sm focus:ring-2 focus:ring-pink-500 focus:border-transparent outline-none"
+                               placeholder="请输入 Telegram ID">
+                    </div>
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+                            GitHub 用户名 <span class="text-red-500">*</span>
+                        </label>
+                        <input type="text" name="github_username" required
+                               class="w-full px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-sm focus:ring-2 focus:ring-pink-500 focus:border-transparent outline-none"
+                               placeholder="请输入 GitHub 用户名">
+                    </div>
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">角色</label>
+                        <select name="role"
+                                class="w-full px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-sm focus:ring-2 focus:ring-pink-500 focus:border-transparent outline-none">
+                            <option value="user">普通用户</option>
+                            <option value="admin">管理员</option>
+                            <option value="super_admin">超级管理员</option>
+                        </select>
+                    </div>
+                </div>
+
+                <!-- PR 审查配额 -->
+                <div class="mt-6 pt-4 border-t border-gray-200 dark:border-gray-700">
+                    <h3 class="text-sm font-medium text-gray-700 dark:text-gray-300 mb-3">PR 审查配额</h3>
+                    <div class="grid grid-cols-3 gap-4">
+                        <div>
+                            <label class="block text-xs text-gray-500 dark:text-gray-400 mb-1">每日配额</label>
+                            <input type="number" name="daily_quota" value="10" min="0"
+                                   class="w-full px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-sm focus:ring-2 focus:ring-pink-500 focus:border-transparent outline-none">
+                        </div>
+                        <div>
+                            <label class="block text-xs text-gray-500 dark:text-gray-400 mb-1">每周配额</label>
+                            <input type="number" name="weekly_quota" value="50" min="0"
+                                   class="w-full px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-sm focus:ring-2 focus:ring-pink-500 focus:border-transparent outline-none">
+                        </div>
+                        <div>
+                            <label class="block text-xs text-gray-500 dark:text-gray-400 mb-1">每月配额</label>
+                            <input type="number" name="monthly_quota" value="200" min="0"
+                                   class="w-full px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-sm focus:ring-2 focus:ring-pink-500 focus:border-transparent outline-none">
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Issue 分析配额 -->
+                <div class="mt-4 pt-4 border-t border-gray-200 dark:border-gray-700">
+                    <h3 class="text-sm font-medium text-gray-700 dark:text-gray-300 mb-3">Issue 分析配额</h3>
+                    <div class="grid grid-cols-3 gap-4">
+                        <div>
+                            <label class="block text-xs text-gray-500 dark:text-gray-400 mb-1">每日配额</label>
+                            <input type="number" name="issue_daily_quota" value="20" min="0"
+                                   class="w-full px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-sm focus:ring-2 focus:ring-pink-500 focus:border-transparent outline-none">
+                        </div>
+                        <div>
+                            <label class="block text-xs text-gray-500 dark:text-gray-400 mb-1">每周配额</label>
+                            <input type="number" name="issue_weekly_quota" value="80" min="0"
+                                   class="w-full px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-sm focus:ring-2 focus:ring-pink-500 focus:border-transparent outline-none">
+                        </div>
+                        <div>
+                            <label class="block text-xs text-gray-500 dark:text-gray-400 mb-1">每月配额</label>
+                            <input type="number" name="issue_monthly_quota" value="300" min="0"
+                                   class="w-full px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-sm focus:ring-2 focus:ring-pink-500 focus:border-transparent outline-none">
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 操作按钮 -->
+                <div class="mt-6 flex justify-end gap-3">
+                    <button type="button" @click="open = false"
+                            class="px-4 py-2 rounded-lg text-sm font-medium border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-600 transition-colors">
+                        取消
+                    </button>
+                    <button type="submit"
+                            class="px-4 py-2 bg-pink-500 hover:bg-pink-600 text-white rounded-lg text-sm font-medium transition-colors">
+                        添加用户
+                    </button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+{% endmacro %}
