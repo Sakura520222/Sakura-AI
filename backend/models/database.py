@@ -374,9 +374,12 @@ class IssueAnalysis(Base):
     suggested_assignees = Column(Text, nullable=True)
     suggested_labels = Column(Text, nullable=True)
     suggested_milestone = Column(String(255), nullable=True)
-    duplicate_of = Column(BigInteger, nullable=True)
+    duplicate_of = Column(BigInteger, nullable=True, index=True)
     related_prs = Column(Text, nullable=True)
     analysis_detail = Column(Text, nullable=True)
+
+    # 版本
+    analysis_version = Column(Integer, default=1, nullable=False)
 
     # Token 消耗与成本
     prompt_tokens = Column(Integer, default=0, nullable=True)

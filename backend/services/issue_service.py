@@ -1,6 +1,7 @@
 """Issue 管理服务"""
 
 import json
+import math
 import threading
 from typing import Dict, Any, List, Optional, Tuple
 from datetime import datetime
@@ -21,9 +22,10 @@ class IssueService:
     _initialized = False
 
     def __new__(cls):
-        with cls._lock:
-            if cls._instance is None:
-                cls._instance = super().__new__(cls)
+        if cls._instance is None:
+            with cls._lock:
+                if cls._instance is None:
+                    cls._instance = super().__new__(cls)
         return cls._instance
 
     def __init__(self):
@@ -38,16 +40,21 @@ class IssueService:
         from datetime import datetime
 
         # 查找已有的 PENDING/ANALYZING 记录
+        conditions = [
+            IssueAnalysis.repo_name == issue_info["repo_name"],
+            IssueAnalysis.issue_number == issue_info["issue_number"],
+            IssueAnalysis.status.in_([
+                IssueAnalysisStatus.PENDING.value,
+                IssueAnalysisStatus.ANALYZING.value,
+            ]),
+        ]
+        if "analysis_version" in issue_info:
+            conditions.append(
+                IssueAnalysis.analysis_version == issue_info["analysis_version"]
+            )
         result = await db.execute(
             select(IssueAnalysis).where(
-                and_(
-                    IssueAnalysis.repo_name == issue_info["repo_name"],
-                    IssueAnalysis.issue_number == issue_info["issue_number"],
-                    IssueAnalysis.status.in_([
-                        IssueAnalysisStatus.PENDING.value,
-                        IssueAnalysisStatus.ANALYZING.value,
-                    ]),
-                )
+                and_(*conditions)
             ).order_by(IssueAnalysis.created_at.desc()).limit(1)
         )
         record = result.scalar_one_or_none()
@@ -217,21 +224,63 @@ class IssueService:
         self, repo_owner: str, repo_name: str, title: str, body: str,
         current_issue_number: int = None,
     ) -> List[Dict[str, Any]]:
-        """检测重复 Issue（GitHub Search API + AI 二次筛选）"""
+        """检测重复 Issue（GitHub Search API + AI 相似度二次筛选）"""
         keywords = title.split()[:5]
         query = " ".join(keywords)
-        issues = self.github_app.search_issues(repo_owner, repo_name, query, "open", 5)
+        issues = self.github_app.search_issues(repo_owner, repo_name, query, "open", 10)
 
-        results = []
-        for issue in issues[:5]:
+        # 过滤当前 Issue
+        candidates = []
+        for issue in issues:
             if current_issue_number and issue.number == current_issue_number:
                 continue
-            results.append({
-                "issue_number": issue.number,
-                "title": issue.title,
-                "state": issue.state,
-            })
-        return results
+            candidates.append(issue)
+
+        if not candidates:
+            return []
+
+        # AI 相似度二次筛选
+        try:
+            from backend.services.embedding_service import get_embedding_service
+            embedding_service = get_embedding_service()
+
+            current_text = f"{title}\n{body or ''}"
+            candidate_texts = [f"{c.title}\n{c.body or ''}" for c in candidates]
+
+            all_texts = [current_text] + candidate_texts
+            embeddings = await embedding_service.embed_texts(all_texts)
+            current_emb = embeddings[0]
+
+            results = []
+            for i, candidate in enumerate(candidates):
+                sim = self._cosine_similarity(current_emb, embeddings[i + 1])
+                if sim >= 0.75:
+                    results.append({
+                        "issue_number": candidate.number,
+                        "title": candidate.title,
+                        "state": candidate.state,
+                        "similarity": round(sim, 3),
+                    })
+
+            results.sort(key=lambda x: x["similarity"], reverse=True)
+            return results[:5]
+
+        except Exception as e:
+            logger.warning(f"AI 重复检测失败，回退到关键词匹配: {e}")
+            return [
+                {"issue_number": c.number, "title": c.title, "state": c.state}
+                for c in candidates[:5]
+            ]
+
+    @staticmethod
+    def _cosine_similarity(a: List[float], b: List[float]) -> float:
+        """计算两个向量的余弦相似度"""
+        dot = sum(x * y for x, y in zip(a, b))
+        norm_a = math.sqrt(sum(x * x for x in a))
+        norm_b = math.sqrt(sum(x * x for x in b))
+        if norm_a == 0 or norm_b == 0:
+            return 0.0
+        return dot / (norm_a * norm_b)
 
     async def find_related_prs(
         self, repo_owner: str, repo_name: str, issue_number: int,
