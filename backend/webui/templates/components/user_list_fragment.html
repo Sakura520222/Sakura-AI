@@ -36,7 +36,8 @@
                 <tr class="border-b border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800/50">
                     <th class="text-left py-3 px-5 text-gray-500 dark:text-gray-400 font-medium">用户</th>
                     <th class="text-left py-3 px-5 text-gray-500 dark:text-gray-400 font-medium">角色</th>
-                    <th class="text-left py-3 px-5 text-gray-500 dark:text-gray-400 font-medium hidden md:table-cell">配额使用</th>
+                    <th class="text-left py-3 px-5 text-gray-500 dark:text-gray-400 font-medium hidden md:table-cell">PR 配额</th>
+                    <th class="text-left py-3 px-5 text-gray-500 dark:text-gray-400 font-medium hidden lg:table-cell">Issue 配额</th>
                     <th class="text-left py-3 px-5 text-gray-500 dark:text-gray-400 font-medium">状态</th>
                     <th class="text-left py-3 px-5 text-gray-500 dark:text-gray-400 font-medium hidden sm:table-cell">注册时间</th>
                 </tr>
@@ -74,6 +75,12 @@
                         <div class="text-xs text-gray-500 dark:text-gray-400 space-y-0.5">
                             <p>日 {{ u.daily_used }}/{{ u.daily_quota }}</p>
                             <p>周 {{ u.weekly_used }}/{{ u.weekly_quota }}</p>
+                        </div>
+                    </td>
+                    <td class="py-3 px-5 hidden lg:table-cell">
+                        <div class="text-xs text-gray-500 dark:text-gray-400 space-y-0.5">
+                            <p>日 {{ u.issue_daily_used }}/{{ u.issue_daily_quota }}</p>
+                            <p>周 {{ u.issue_weekly_used }}/{{ u.issue_weekly_quota }}</p>
                         </div>
                     </td>
                     <td class="py-3 px-5">

@@ -1005,12 +1005,112 @@ review_policy:
     
     comment: |
       # 🌸 Sakura AI 审查报告 - {strategy_name}
-      
+
       💬 **审查评论**
-      
+
       {summary}
-      
+
       代码质量评分：{score}/10
       AI审查决策：请人工复审
-      
+
       {comment_summary}
+
+# ========== Issue 分析配置 ==========
+issue_analysis:
+  # Issue 分类定义
+  categories:
+    - name: bug
+      description: "软件缺陷、功能异常、崩溃"
+      keywords: ["bug", "error", "crash", "broken", "fail", "issue", "wrong", "fix"]
+    - name: feature
+      description: "新功能请求、功能增强"
+      keywords: ["feature", "request", "add", "support", "implement", "new"]
+    - name: question
+      description: "使用问题、疑问"
+      keywords: ["question", "how", "help", "why", "what", "?"]
+    - name: documentation
+      description: "文档改进"
+      keywords: ["doc", "readme", "documentation", "guide", "tutorial"]
+    - name: enhancement
+      description: "功能增强、改进"
+      keywords: ["enhancement", "improve", "optimize", "upgrade", "refactor"]
+    - name: performance
+      description: "性能问题"
+      keywords: ["slow", "performance", "speed", "latency", "memory", "leak"]
+    - name: security
+      description: "安全问题"
+      keywords: ["security", "vulnerability", "xss", "injection", "auth", "permission", "cve"]
+
+  # Issue 优先级判定规则
+  priority_rules:
+    critical:
+      keywords: ["urgent", "critical", "blocker", "production", "down", "data loss", "security"]
+    high:
+      keywords: ["important", "should", "need", "affect", "impact", "breaking"]
+    medium:
+      keywords: ["moderate", "should", "affect some"]
+    low:
+      keywords: ["minor", "nice to have", "low priority", "suggestion", "cosmetic"]
+
+  # PR-Issue 关联关键词
+  issue_reference_keywords:
+    - "fixes"
+    - "fix"
+    - "closes"
+    - "close"
+    - "resolves"
+    - "resolve"
+    - "addresses"
+    - "related to"
+    - "refs"
+    - "ref"
+
+  # 关联 Issue 数量上限
+  max_linked_issues_in_prompt: 3
+
+  # Issue 分析系统提示词
+  system_prompt: |
+    你是一个专业的 GitHub Issue 分析助手。请分析以下 Issue，结合代码库理解，提供全面的分析报告。
+
+    ## 分析维度
+    1. **分类**: bug/feature/question/documentation/enhancement/performance/security/refactor/other
+    2. **优先级**: critical/high/medium/low
+    3. **可行性**: 基于代码库理解评估修复难度和工作量（可使用工具查看代码）
+    4. **建议标签**: 从仓库可用标签中选择合适的标签
+    5. **建议指派人**: 基于代码修改区域判断可能的负责人
+
+    ## 输出格式
+    严格返回 JSON 格式（不要包含 ```json 标记）：
+    {
+      "category": "bug",
+      "priority": "high",
+      "summary": "简要摘要...",
+      "feasibility": "可行性分析...",
+      "suggested_labels": [{"name": "bug", "confidence": 0.9, "reason": "..."}],
+      "suggested_assignees": [{"username": "developer1", "reason": "..."}],
+      "suggested_milestone": null,
+      "duplicate_of": null
+    }
+
+  # 自动评论模板
+  comment_template: |
+    ## 🌸 Sakura AI Issue 分析报告
+
+    ### 📋 分析结果
+    - **分类**: {category}
+    - **优先级**: {priority}
+    - **可行性**: {feasibility}
+
+    ### 📝 摘要
+    {summary}
+
+    ### 🏷️ 建议标签
+    {labels}
+
+    ### 👥 建议指派人
+    {assignees}
+
+    {related_info}
+
+    ---
+    *此评论由 Sakura AI Reviewer 自动生成*

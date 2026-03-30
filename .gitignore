@@ -67,4 +67,5 @@ htmlcov/
 *.swp
 deploy_key
 deploy.py
+.deploy_state.json
 .claude/

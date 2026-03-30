@@ -1,0 +1,35 @@
+<!-- Issue 过滤器 -->
+<form id="issue-filter-form" class="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 p-4" onsubmit="return false;">
+    <div class="flex flex-wrap items-center gap-3">
+        <input type="text" name="search" value="{{ search }}" placeholder="搜索 Issue 标题/仓库/作者..."
+               class="flex-1 min-w-[200px] px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-sm focus:ring-2 focus:ring-pink-500 focus:border-transparent">
+        <select name="category" class="px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-sm">
+            <option value="">全部分类</option>
+            <option value="bug" {% if category == 'bug' %}selected{% endif %}>Bug</option>
+            <option value="feature" {% if category == 'feature' %}selected{% endif %}>Feature</option>
+            <option value="question" {% if category == 'question' %}selected{% endif %}>Question</option>
+            <option value="documentation" {% if category == 'documentation' %}selected{% endif %}>Documentation</option>
+            <option value="enhancement" {% if category == 'enhancement' %}selected{% endif %}>Enhancement</option>
+            <option value="performance" {% if category == 'performance' %}selected{% endif %}>Performance</option>
+            <option value="security" {% if category == 'security' %}selected{% endif %}>Security</option>
+        </select>
+        <select name="priority" class="px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-sm">
+            <option value="">全部优先级</option>
+            <option value="critical" {% if priority == 'critical' %}selected{% endif %}>Critical</option>
+            <option value="high" {% if priority == 'high' %}selected{% endif %}>High</option>
+            <option value="medium" {% if priority == 'medium' %}selected{% endif %}>Medium</option>
+            <option value="low" {% if priority == 'low' %}selected{% endif %}>Low</option>
+        </select>
+        <select name="status" class="px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-sm">
+            <option value="">全部状态</option>
+            <option value="completed" {% if status == 'completed' %}selected{% endif %}>已完成</option>
+            <option value="failed" {% if status == 'failed' %}selected{% endif %}>失败</option>
+            <option value="analyzing" {% if status == 'analyzing' %}selected{% endif %}>分析中</option>
+            <option value="pending" {% if status == 'pending' %}selected{% endif %}>待处理</option>
+        </select>
+        <button type="button" onclick="loadPage(1)"
+                class="px-4 py-2 rounded-lg text-sm font-medium bg-pink-500 text-white hover:bg-pink-600 transition-colors">
+            搜索
+        </button>
+    </div>
+</form>
