@@ -1,0 +1,22 @@
+<!-- Issue 详情 HTMX 片段 -->
+<div class="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 p-6">
+    <div class="flex items-center justify-between mb-4">
+        <h3 class="text-base font-medium">分析结果</h3>
+        <span class="px-2.5 py-1 rounded-full text-xs font-medium
+            {% if analysis.status == 'completed' %}bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-400
+            {% elif analysis.status == 'failed' %}bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-400
+            {% else %}bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-400{% endif %}">
+            {{ analysis.status }}
+        </span>
+    </div>
+
+    {% if analysis.summary %}
+    <p class="text-sm text-gray-700 dark:text-gray-300 whitespace-pre-wrap">{{ analysis.summary }}</p>
+    {% else %}
+    <p class="text-sm text-gray-400">暂无分析结果</p>
+    {% endif %}
+
+    {% if analysis.error_message %}
+    <p class="mt-3 text-sm text-red-600 dark:text-red-400">错误: {{ analysis.error_message }}</p>
+    {% endif %}
+</div>

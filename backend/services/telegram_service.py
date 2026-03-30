@@ -187,6 +187,98 @@ class TelegramService:
 
         await self.session.commit()
 
+    async def check_and_consume_issue_quota(
+        self, github_username: str, repo_name: str, issue_number: int
+    ):
+        """检查并消费 Issue 分析配额（独立于 PR 审查配额）"""
+        from sqlalchemy import update
+        from sqlalchemy.sql import and_
+
+        user = await self.get_user_by_github_username(github_username)
+        if not user:
+            return False, "用户未注册"
+
+        role_lower = user.role.lower().strip() if user.role else ""
+        if role_lower in ["admin", "super_admin"]:
+            return True, ""
+
+        await self._reset_expired_issue_quotas(user)
+
+        stmt = (
+            update(TelegramUser)
+            .where(
+                and_(
+                    TelegramUser.id == user.id,
+                    TelegramUser.issue_daily_used < TelegramUser.issue_daily_quota,
+                    TelegramUser.issue_weekly_used < TelegramUser.issue_weekly_quota,
+                    TelegramUser.issue_monthly_used < TelegramUser.issue_monthly_quota,
+                )
+            )
+            .values(
+                issue_daily_used=TelegramUser.issue_daily_used + 1,
+                issue_weekly_used=TelegramUser.issue_weekly_used + 1,
+                issue_monthly_used=TelegramUser.issue_monthly_used + 1,
+            )
+        )
+
+        result = await self.session.execute(stmt)
+
+        if result.rowcount == 0:
+            await self.session.refresh(user)
+
+            if user.issue_daily_used >= user.issue_daily_quota:
+                return False, f"Issue 每日配额已用完 ({user.issue_daily_used}/{user.issue_daily_quota})"
+            elif user.issue_weekly_used >= user.issue_weekly_quota:
+                return False, f"Issue 每周配额已用完 ({user.issue_weekly_used}/{user.issue_weekly_quota})"
+            elif user.issue_monthly_used >= user.issue_monthly_quota:
+                return False, f"Issue 每月配额已用完 ({user.issue_monthly_used}/{user.issue_monthly_quota})"
+            else:
+                return False, "Issue 配额已用完"
+
+        log = QuotaUsageLog(
+            telegram_user_id=user.id,
+            repo_name=repo_name,
+            pr_number=issue_number,
+            usage_type="daily",
+            usage_category="issue_analysis",
+        )
+        self.session.add(log)
+
+        await self.session.commit()
+        return True, ""
+
+    async def _reset_expired_issue_quotas(self, user: TelegramUser):
+        """重置过期的 Issue 配额"""
+        now = datetime.utcnow()
+
+        if user.last_reset_issue_daily is None or user.last_reset_issue_daily.date() < now.date():
+            user.issue_daily_used = 0
+            user.last_reset_issue_daily = now
+
+        if user.last_reset_issue_weekly is None:
+            user.issue_weekly_used = 0
+            user.last_reset_issue_weekly = now
+        else:
+            if user.last_reset_issue_weekly.date() < now.date():
+                week_start = now - timedelta(days=now.weekday())
+                week_start = week_start.replace(hour=0, minute=0, second=0, microsecond=0)
+                if user.last_reset_issue_weekly < week_start:
+                    user.issue_weekly_used = 0
+                    user.last_reset_issue_weekly = now
+
+        if user.last_reset_issue_monthly is None:
+            user.issue_monthly_used = 0
+            user.last_reset_issue_monthly = now
+        else:
+            if (
+                user.last_reset_issue_monthly.month != now.month
+                or user.last_reset_issue_monthly.year != now.year
+            ):
+                user.issue_monthly_used = 0
+                user.last_reset_issue_monthly = now
+
+        await self.session.commit()
+
     async def add_user(
         self,
         telegram_id: int,

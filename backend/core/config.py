@@ -164,6 +164,21 @@ class Settings(BaseSettings):
     enable_scheduler: bool = True
     schedule_update_interval_minutes: int = 60
 
+    # ========== Issue 分析配置 ==========
+    enable_issue_analysis: bool = True
+    enable_pr_issue_linking: bool = True
+    issue_auto_comment: bool = True
+    issue_confidence_threshold: float = 0.7
+    issue_auto_create_labels: bool = False
+    issue_detect_duplicates: bool = True
+    issue_suggest_assignees: bool = True
+    issue_suggest_milestones: bool = False
+    issue_max_tool_iterations: int = 15
+    issue_max_files_per_analysis: int = 10
+    issue_max_directory_depth: int = 3
+    issue_price_per_1k_prompt: float = 0.0
+    issue_price_per_1k_completion: float = 0.0
+
     # ========== 代码索引配置 ==========
     enable_code_index: bool = True  # 是否启用代码索引功能
     auto_index_pr_changes: bool = True  # PR审查时自动索引变更文件
@@ -278,6 +293,10 @@ class StrategyConfig:
                 return True
 
         return False
+
+    def get_issue_analysis_config(self) -> dict:
+        """获取 Issue 分析配置"""
+        return self.config.get("issue_analysis", {})
 
     def get_context_enhancement_config(self) -> dict:
         """获取上下文增强配置"""

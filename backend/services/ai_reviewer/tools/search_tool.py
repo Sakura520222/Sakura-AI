@@ -140,7 +140,7 @@ class SearchToolHandler:
                 top_k=top_k,
                 language=language,
                 file_path=file_path,
-                pr_number=pr.number,
+                pr_number=pr.number if pr else None,
             )
 
             if not results:

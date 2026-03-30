@@ -85,6 +85,35 @@ class CodeIndexingStatus(str, enum.Enum):
     FAILED = "failed"
 
 
+class IssueAnalysisStatus(str, enum.Enum):
+    """Issue分析状态"""
+    PENDING = "pending"
+    ANALYZING = "analyzing"
+    COMPLETED = "completed"
+    FAILED = "failed"
+
+
+class IssueCategory(str, enum.Enum):
+    """Issue分类"""
+    BUG = "bug"
+    FEATURE = "feature"
+    QUESTION = "question"
+    DOCUMENTATION = "documentation"
+    ENHANCEMENT = "enhancement"
+    PERFORMANCE = "performance"
+    SECURITY = "security"
+    REFACTOR = "refactor"
+    OTHER = "other"
+
+
+class IssuePriority(str, enum.Enum):
+    """Issue优先级"""
+    CRITICAL = "critical"
+    HIGH = "high"
+    MEDIUM = "medium"
+    LOW = "low"
+
+
 class PRReview(Base):
     """PR审查记录表"""
 
@@ -322,6 +351,95 @@ class CodeFile(Base):
         return (
             f"<CodeFile(id={self.id}, path={self.file_path}, indexed={self.indexed})>"
         )
+
+
+class IssueAnalysis(Base):
+    """Issue 分析记录表"""
+
+    __tablename__ = "issue_analyses"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    issue_number = Column(BigInteger, nullable=False, index=True)
+    repo_name = Column(String(255), nullable=False, index=True)
+    repo_owner = Column(String(100), nullable=False)
+    author = Column(String(100))
+    title = Column(String(500))
+    body = Column(Text, nullable=True)
+
+    # AI 分析结果
+    category = Column(String(50), nullable=True)
+    priority = Column(String(50), nullable=True)
+    summary = Column(Text, nullable=True)
+    feasibility = Column(Text, nullable=True)
+    suggested_assignees = Column(Text, nullable=True)
+    suggested_labels = Column(Text, nullable=True)
+    suggested_milestone = Column(String(255), nullable=True)
+    duplicate_of = Column(BigInteger, nullable=True)
+    related_prs = Column(Text, nullable=True)
+    analysis_detail = Column(Text, nullable=True)
+
+    # Token 消耗与成本
+    prompt_tokens = Column(Integer, default=0, nullable=True)
+    completion_tokens = Column(Integer, default=0, nullable=True)
+    estimated_cost = Column(Integer, default=0, nullable=True)
+
+    # 状态
+    status = Column(String(50), default=IssueAnalysisStatus.PENDING.value, nullable=False)
+    error_message = Column(Text, nullable=True)
+
+    # 评论与标签
+    comment_posted = Column(Integer, default=0)
+    comment_url = Column(String(500), nullable=True)
+    labels_applied = Column(Integer, default=0)
+    applied_label_names = Column(Text, nullable=True)
+
+    # 时间戳
+    created_at = Column(TIMESTAMP, default=datetime.utcnow, nullable=False)
+    updated_at = Column(TIMESTAMP, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+    completed_at = Column(TIMESTAMP, nullable=True)
+
+    def __repr__(self):
+        return f"<IssueAnalysis(id={self.id}, issue={self.issue_number}, repo={self.repo_name})>"
+
+
+class PRIssueLink(Base):
+    """PR-Issue 关联表"""
+
+    __tablename__ = "pr_issue_links"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    pr_id = Column(BigInteger, nullable=False, index=True)
+    repo_name = Column(String(255), nullable=False, index=True)
+    issue_number = Column(BigInteger, nullable=False, index=True)
+    link_type = Column(String(50), nullable=False)
+    reference_text = Column(String(255), nullable=True)
+    inference_reason = Column(Text, nullable=True)
+    created_at = Column(TIMESTAMP, default=datetime.utcnow, nullable=False)
+
+    def __repr__(self):
+        return f"<PRIssueLink(pr={self.pr_id}, issue={self.issue_number}, type={self.link_type})>"
+
+
+class IssueAnalysisQueue(Base):
+    """Issue 分析队列表"""
+
+    __tablename__ = "issue_analysis_queue"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    issue_number = Column(BigInteger, nullable=False, index=True)
+    repo_name = Column(String(255), nullable=False, index=True)
+    action = Column(String(50), nullable=False)
+    priority = Column(Integer, default=10, nullable=False)
+    status = Column(String(50), default="pending", nullable=False)
+    retry_count = Column(Integer, default=0, nullable=False)
+    max_retries = Column(Integer, default=3, nullable=False)
+    error_message = Column(Text, nullable=True)
+    created_at = Column(TIMESTAMP, default=datetime.utcnow, nullable=False, index=True)
+    updated_at = Column(TIMESTAMP, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+    processed_at = Column(TIMESTAMP, nullable=True)
+
+    def __repr__(self):
+        return f"<IssueAnalysisQueue(id={self.id}, issue={self.issue_number}, status={self.status})>"
 
 
 async def create_tables_async():

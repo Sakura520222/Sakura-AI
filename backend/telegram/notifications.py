@@ -179,6 +179,110 @@ class NotificationSender:
             )
 
         except Exception as e:
+            logger.error(f"发送未注册用户通知失败: {e}")
+
+    async def send_issue_analysis_complete(
+        self,
+        repo_name: str,
+        issue_number: int,
+        category: str,
+        priority: str,
+        issue_url: str,
+        summary: str = None,
+        chat_id: Optional[int] = None,
+    ):
+        """Issue 分析完成通知"""
+        try:
+            safe_repo_name = escape_markdown(repo_name, version=1)
+            safe_category = escape_markdown(category, version=1)
+            safe_priority = escape_markdown(priority, version=1)
+
+            text = (
+                f"📋 *Issue 分析完成*\n\n"
+                f"📦 仓库: {safe_repo_name}\n"
+                f"🔢 Issue: #{issue_number}\n"
+                f"🏷️ 分类: {safe_category}\n"
+                f"📊 优先级: {safe_priority}\n"
+            )
+
+            if summary:
+                safe_summary = escape_markdown(summary[:200], version=1)
+                text += f"\n📝 {safe_summary}\n"
+
+            text += f"\n[查看详情]({issue_url})"
+
+            target_chat_id = chat_id or int(settings.telegram_default_chat_id)
+            await self.bot.send_message(
+                chat_id=target_chat_id,
+                text=text,
+                parse_mode="Markdown",
+            )
+            logger.info(f"Issue 分析完成通知已发送: {repo_name}#{issue_number}")
+
+        except Exception as e:
+            logger.error(f"发送 Issue 分析完成通知失败: {e}")
+
+    async def send_critical_issue_alert(
+        self,
+        repo_name: str,
+        issue_number: int,
+        title: str,
+        category: str,
+        summary: str,
+        feasibility: str,
+        issue_url: str,
+        suggested_labels: list = None,
+        chat_id: Optional[int] = None,
+    ):
+        """Critical Issue 即时告警（附带 AI 摘要 + 可行性结论）"""
+        try:
+            safe_repo_name = escape_markdown(repo_name, version=1)
+            safe_title = escape_markdown(title, version=1)
+            safe_category = escape_markdown(category, version=1)
+            safe_summary = escape_markdown(summary[:300], version=1)
+            safe_feasibility = escape_markdown(feasibility[:300], version=1)
+
+            text = (
+                f"🚨 *Critical Issue 告警*\n\n"
+                f"📦 仓库: {safe_repo_name}\n"
+                f"🔢 Issue: #{issue_number}\n"
+                f"🏷️ 分类: {safe_category}\n"
+                f"📊 优先级: critical\n"
+                f"📝 标题: {safe_title}\n"
+            )
+
+            text += (
+                f"\n📋 *AI 摘要*\n"
+                f"{safe_summary}\n"
+            )
+
+            text += (
+                f"\n🔍 *可行性评估*\n"
+                f"{safe_feasibility}\n"
+            )
+
+            if suggested_labels:
+                labels_str = ", ".join(
+                    l.get("name", "") for l in suggested_labels[:5] if isinstance(l, dict)
+                )
+                if labels_str:
+                    safe_labels = escape_markdown(labels_str, version=1)
+                    text += f"\n🏷️ 建议标签: {safe_labels}\n"
+
+            text += f"\n[查看详情]({issue_url})"
+
+            target_chat_id = chat_id or int(settings.telegram_default_chat_id)
+            await self.bot.send_message(
+                chat_id=target_chat_id,
+                text=text,
+                parse_mode="Markdown",
+            )
+            logger.info(f"Critical Issue 告警已发送: {repo_name}#{issue_number}")
+
+        except Exception as e:
+            logger.error(f"发送 Critical Issue 告警失败: {e}")
+
+        except Exception as e:
             logger.error(f"❌ 发送未注册用户通知失败: {e}")
 
 

@@ -58,6 +58,21 @@ class TelegramUser(Base):
     last_reset_weekly = Column(TIMESTAMP, nullable=True)
     last_reset_monthly = Column(TIMESTAMP, nullable=True)
 
+    # Issue 分析配额设置
+    issue_daily_quota = Column(Integer, default=20, nullable=False)
+    issue_weekly_quota = Column(Integer, default=80, nullable=False)
+    issue_monthly_quota = Column(Integer, default=300, nullable=False)
+
+    # Issue 分析已使用配额
+    issue_daily_used = Column(Integer, default=0, nullable=False)
+    issue_weekly_used = Column(Integer, default=0, nullable=False)
+    issue_monthly_used = Column(Integer, default=0, nullable=False)
+
+    # Issue 配额重置时间
+    last_reset_issue_daily = Column(TIMESTAMP, nullable=True)
+    last_reset_issue_weekly = Column(TIMESTAMP, nullable=True)
+    last_reset_issue_monthly = Column(TIMESTAMP, nullable=True)
+
     # 状态
     is_active = Column(Boolean, default=True, nullable=False)
 
@@ -107,6 +122,7 @@ class QuotaUsageLog(Base):
     repo_name = Column(String(255), nullable=False)
     pr_number = Column(Integer, nullable=False)
     usage_type = Column(String(50), nullable=False)  # 改为 String 类型
+    usage_category = Column(String(50), nullable=True)  # "pr_review" 或 "issue_analysis"
 
     # 时间戳
     created_at = Column(TIMESTAMP, default=datetime.utcnow, nullable=False, index=True)
