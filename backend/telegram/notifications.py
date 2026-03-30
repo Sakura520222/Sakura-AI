@@ -89,11 +89,26 @@ class NotificationSender:
     async def send_quota_exceeded(
         self,
         repo_name: str,
-        pr_number: int,
-        reason: str,
+        item_type: str = "PR",
+        item_number: int = 0,
+        reason: str = "",
         chat_id: Optional[int] = None,
+        pr_number: Optional[int] = None,
     ):
-        """发送配额不足通知"""
+        """发送配额不足通知
+
+        Args:
+            repo_name: 仓库全名
+            item_type: 项目类型 ("PR" 或 "Issue")
+            item_number: 项目编号
+            reason: 配额不足原因
+            chat_id: 目标聊天 ID
+            pr_number: 向后兼容，传入时使用 "PR" 类型
+        """
+        # 向后兼容旧调用方式
+        if pr_number is not None and item_number == 0:
+            item_number = pr_number
+
         try:
             # 转义用户输入的特殊字符
             safe_repo_name = escape_markdown(repo_name, version=1)
@@ -102,7 +117,7 @@ class NotificationSender:
             text = (
                 f"⚠️ *审查被拒绝*\n\n"
                 f"📦 仓库: {safe_repo_name}\n"
-                f"🔢 PR: #{pr_number}\n\n"
+                f"🔢 {item_type}: #{item_number}\n\n"
                 f"❌ 原因: {safe_reason}\n"
                 f"💡 请联系管理员增加配额"
             )
@@ -113,7 +128,7 @@ class NotificationSender:
                 text=text,
                 parse_mode="Markdown",
             )
-            logger.info(f"✅ 发送配额不足通知: {repo_name}#{pr_number}")
+            logger.info(f"✅ 发送配额不足通知: {repo_name}#{item_type}-{item_number}")
 
         except Exception as e:
             logger.error(f"❌ 发送配额不足通知失败: {e}")

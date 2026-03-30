@@ -203,7 +203,8 @@ async def handle_pull_request_event(payload: Dict[str, Any]) -> JSONResponse:
                 if notification_sender:
                     await notification_sender.send_quota_exceeded(
                         repo_name=pr_info["repo_full_name"],
-                        pr_number=pr_info["pr_number"],
+                        item_type="PR",
+                        item_number=pr_info["pr_number"],
                         reason=reason,
                     )
                 return JSONResponse(
@@ -556,7 +557,7 @@ async def handle_issue_event(payload: Dict[str, Any]) -> JSONResponse:
             if role_lower not in ["admin", "super_admin"]:
                 is_authorized = await service.is_authorized_repo(issue_info["repo_full_name"])
                 if not is_authorized:
-                    logger.warning(f"未授权的仓库: {issue_info['repo_full_name']}")
+                    logger.warning(f"未授权的仓库: {issue_info['repo_full_name']}, user: {github_username}, role: {user.role}")
                     return JSONResponse(content={"status": "skipped", "reason": "unauthorized repository"})
 
             # Issue 配额检查
@@ -570,7 +571,8 @@ async def handle_issue_event(payload: Dict[str, Any]) -> JSONResponse:
                 if notification_sender:
                     await notification_sender.send_quota_exceeded(
                         repo_name=issue_info["repo_full_name"],
-                        pr_number=issue_info["issue_number"],
+                        item_type="Issue",
+                        item_number=issue_info["issue_number"],
                         reason=reason,
                     )
                 return JSONResponse(
@@ -635,7 +637,7 @@ async def handle_issue_analyze_command(payload: Dict[str, Any]) -> JSONResponse:
             if role_lower not in ["admin", "super_admin"]:
                 is_authorized = await service.is_authorized_repo(issue_info["repo_full_name"])
                 if not is_authorized:
-                    logger.warning(f"未授权的仓库: {issue_info['repo_full_name']}")
+                    logger.warning(f"未授权的仓库: {issue_info['repo_full_name']}, user: {commenter}, role: {user.role}")
                     return JSONResponse(content={"status": "skipped", "reason": "unauthorized repository"})
 
             allowed, reason = await service.check_and_consume_issue_quota(
@@ -648,7 +650,8 @@ async def handle_issue_analyze_command(payload: Dict[str, Any]) -> JSONResponse:
                 if notification_sender:
                     await notification_sender.send_quota_exceeded(
                         repo_name=issue_info["repo_full_name"],
-                        pr_number=issue_info["issue_number"],
+                        item_type="Issue",
+                        item_number=issue_info["issue_number"],
                         reason=reason,
                     )
                 return JSONResponse(
