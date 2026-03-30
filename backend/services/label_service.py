@@ -4,6 +4,7 @@
 """
 
 import json
+import threading
 from typing import Dict, List, Optional, Any
 from datetime import datetime, timedelta
 from loguru import logger
@@ -18,7 +19,7 @@ class LabelService:
     """标签服务（单例模式）"""
 
     _instance = None
-    _lock = None
+    _lock = threading.Lock()
     _initialized = False
 
     # 默认标签配置（当仓库没有标签时使用）
@@ -55,13 +56,9 @@ class LabelService:
 
     def __new__(cls):
         """确保只有一个实例"""
-        if cls._instance is None:
-            import threading
-
-            cls._lock = threading.Lock()
-            with cls._lock:
-                if cls._instance is None:
-                    cls._instance = super().__new__(cls)
+        with cls._lock:
+            if cls._instance is None:
+                cls._instance = super().__new__(cls)
         return cls._instance
 
     def __init__(self):

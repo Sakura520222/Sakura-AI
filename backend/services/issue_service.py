@@ -1,6 +1,7 @@
 """Issue 管理服务"""
 
 import json
+import threading
 from typing import Dict, Any, List, Optional, Tuple
 from datetime import datetime
 from sqlalchemy import select, func, desc, and_, or_
@@ -16,16 +17,13 @@ class IssueService:
     """Issue 管理服务（单例模式）"""
 
     _instance = None
-    _lock = None
+    _lock = threading.Lock()
     _initialized = False
 
     def __new__(cls):
-        if cls._instance is None:
-            import threading
-            cls._lock = threading.Lock()
-            with cls._lock:
-                if cls._instance is None:
-                    cls._instance = super().__new__(cls)
+        with cls._lock:
+            if cls._instance is None:
+                cls._instance = super().__new__(cls)
         return cls._instance
 
     def __init__(self):
