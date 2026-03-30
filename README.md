@@ -1,6 +1,6 @@
 # 🌸 Sakura AI Reviewer
 
-> 基于 AI 的智能 GitHub Pull Request 代码审查机器人，具备主动探索代码库的能力
+> 基于 AI 的智能 GitHub Pull Request 代码审查与 Issue 分析机器人，具备主动探索代码库的能力
 
 [![Python](https://img.shields.io/badge/Python-3.11+-blue.svg)](https://www.python.org/)
 [![FastAPI](https://img.shields.io/badge/FastAPI-Latest-green.svg)](https://fastapi.tiangolo.com/)
@@ -60,6 +60,23 @@
 - **分类问题**：严重问题 🔴、重要建议 🟡、优化建议 💡
 - **详细摘要**：变更概述和主要发现
 - **可操作建议**：提供具体的改进方案
+
+### 🐛 Issue 智能分析
+
+- **自动触发**：Issue opened/edited/reopened 时自动 AI 分析
+- **智能分类**：自动识别 bug、feature、question、enhancement 等类型
+- **优先级判定**：基于关键词和 AI 推理判定 critical/high/medium/low
+- **标签推荐**：高置信度标签自动应用，低置信度标签提供建议
+- **重复检测**：基于 GitHub Search API 检测重复 Issue
+- **关联 PR 发现**：自动查找与 Issue 相关的 PR
+- **手动触发**：在 Issue 中评论 `/analyze` 即可手动触发分析
+- **独立配额**：Issue 分析拥有独立的日/周/月配额体系
+
+### 🔗 PR-Issue 智能关联
+
+- **自动识别**：从 PR 描述中解析 Issue 引用（fixes #123、closes #456 等）
+- **上下文注入**：关联 Issue 内容自动注入到 AI 审查 prompt
+- **审查增强**：AI 结合 Issue 上下文提供更精准的审查意见
 
 ### 🖥️ WebUI 管理界面
 
@@ -122,7 +139,11 @@
 │  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐      │
 │  │   Webhook    │  │   PR 分析器   │  │  评论服务    │      │
 │  │   Handler    │  │  (策略选择)   │  │  (发布结果)  │      │
+│  │ (PR+Issue)   │  │             │  │             │      │
 │  └──────────────┘  └──────────────┘  └──────────────┘      │
+│  ┌──────────────┐                                           │
+│  │ Issue 分析器  │  (分类·优先级·标签·重复检测)               │
+│  └──────────────┘                                           │
 │  ┌──────────────────────────────────────────────────────┐   │
 │  │              WebUI 管理界面 (Jinja2 + HTMX)          │   │
 │  │  仪表盘 · PR管理 · 用户管理 · 仓库管理 · 配置管理   │   │
@@ -250,6 +271,8 @@ GITHUB_OAUTH_REDIRECT_URI=https://your-domain.com/webui/auth/callback
 6. 选择 Webhook 事件：
    - ✅ **Pull requests**
    - ✅ **Pull request reviews**
+   - ✅ **Issues**（可选，用于 Issue 智能分析）
+   - ✅ **Issue comments**（可选，用于 `/analyze` 命令）
 
 7. 点击 **"Create GitHub App"**
 
@@ -389,6 +412,31 @@ curl http://your-domain.com:8000/health
 - **🔴 严重问题**：必须修复的问题
 - **🟡 重要建议**：推荐改进
 - **💡 优化建议**：代码优化建议
+
+### Issue 智能分析
+
+Sakura AI 会自动分析仓库中的 Issue，提供分类、优先级、标签建议等。
+
+#### 自动分析
+
+1. 在已安装 App 的仓库中创建或编辑 Issue
+2. Sakura AI 会自动分析并发布评论报告
+3. 如果启用了自动标签，高置信度标签会被自动应用
+
+#### 手动触发
+
+在任意 Issue 中评论 `/analyze` 即可手动触发分析。
+
+#### 分析报告内容
+
+- **📋 分类**: bug/feature/question/enhancement 等
+- **⚡ 优先级**: critical/high/medium/low
+- **📝 摘要**: AI 生成的 Issue 摘要
+- **📐 可行性**: 基于代码库的修复难度评估
+- **🏷️ 建议标签**: 含置信度和理由
+- **👥 建议指派人**: 基于代码修改区域判断
+- **⚠️ 重复检测**: 可能重复的 Issue
+- **🔗 关联 PR**: 与该 Issue 相关的 PR
 
 ### 通过 WebUI 管理
 
@@ -715,6 +763,9 @@ Webhook 接收
 - **telegram_users**：用户信息、角色、配额设置
 - **repo_subscriptions**：仓库白名单
 - **quota_usage_logs**：配额使用记录
+- **issue_analyses**：Issue 分析记录（分类、优先级、AI 结果、Token 消耗）
+- **pr_issue_links**：PR-Issue 关联关系
+- **issue_analysis_queue**：Issue 分析任务队列
 
 ### 常见问题
 
@@ -1299,12 +1350,17 @@ Sakura-AI-Reviewer/
 │   ├── services/      # 业务逻辑
 │   │   ├── ai_reviewer.py      # AI 审查引擎
 │   │   ├── pr_analyzer.py      # PR 分析器
+│   │   ├── issue_analyzer.py   # Issue AI 分析引擎
+│   │   ├── issue_service.py    # Issue 管理服务
+│   │   ├── pr_issue_linker.py  # PR-Issue 关联器
 │   │   └── comment_service.py  # 评论服务
 │   ├── webui/         # WebUI 管理界面
 │   │   ├── routes/    # 页面路由（仪表盘、PR、用户、配置等）
 │   │   ├── templates/ # Jinja2 HTML 模板
 │   │   └── static/    # 静态资源
 │   ├── workers/       # 后台任务
+│   │   ├── review_worker.py    # PR 审查任务
+│   │   └── issue_worker.py     # Issue 分析任务
 │   └── telegram/      # Telegram Bot
 ├── config/            # 配置文件
 ├── docker/            # Docker 配置
@@ -1329,6 +1385,8 @@ Sakura-AI-Reviewer/
 - [x] 行内评论（文件级代码审查）
 - [x] 审查历史记录和趋势分析
 - [x] WebUI 管理界面（仪表盘、PR管理、用户管理、配置管理、队列监控）
+- [x] Issue 智能分析（自动分类、优先级判定、标签推荐、重复检测）
+- [x] PR-Issue 智能关联（自动解析引用、上下文注入）
 
 ### 计划中 🚧
 
