@@ -624,11 +624,19 @@ async def handle_issue_analyze_command(payload: Dict[str, Any]) -> JSONResponse:
             return JSONResponse(content={"status": "skipped", "reason": "feature disabled"})
 
         # 权限和配额检查
+        notification_sender = get_notification_sender()
         async with get_async_session() as session:
             service = TelegramService(session)
             user = await service.get_user_by_github_username(commenter)
             if not user:
                 return JSONResponse(content={"status": "skipped", "reason": "unregistered user"})
+
+            role_lower = user.role.lower().strip() if user.role else ""
+            if role_lower not in ["admin", "super_admin"]:
+                is_authorized = await service.is_authorized_repo(issue_info["repo_full_name"])
+                if not is_authorized:
+                    logger.warning(f"未授权的仓库: {issue_info['repo_full_name']}")
+                    return JSONResponse(content={"status": "skipped", "reason": "unauthorized repository"})
 
             allowed, reason = await service.check_and_consume_issue_quota(
                 github_username=commenter,
@@ -636,6 +644,13 @@ async def handle_issue_analyze_command(payload: Dict[str, Any]) -> JSONResponse:
                 issue_number=issue_info["issue_number"],
             )
             if not allowed:
+                logger.warning(f"Issue 配额不足: {commenter} - {reason}")
+                if notification_sender:
+                    await notification_sender.send_quota_exceeded(
+                        repo_name=issue_info["repo_full_name"],
+                        pr_number=issue_info["issue_number"],
+                        reason=reason,
+                    )
                 return JSONResponse(
                     content={"status": "skipped", "reason": "quota exceeded", "detail": reason}
                 )
