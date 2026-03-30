@@ -833,6 +833,101 @@ class GitHubAppClient:
             return getattr(settings, "bot_username", None)
 
 
+    def get_issue(self, repo_owner: str, repo_name: str, issue_number: int):
+        """获取 Issue 详情"""
+        client = self.get_repo_client(repo_owner, repo_name)
+        repo = client.get_repo(f"{repo_owner}/{repo_name}")
+        try:
+            return repo.get_issue(issue_number)
+        except Exception as e:
+            logger.error(f"获取 Issue 失败: {repo_owner}/{repo_name}#{issue_number}: {e}")
+            return None
+
+    def get_repo_issues(
+        self, repo_owner: str, repo_name: str,
+        state: str = "open", labels: list = None, per_page: int = 30,
+    ) -> list:
+        """获取仓库的 Issues 列表"""
+        client = self.get_repo_client(repo_owner, repo_name)
+        repo = client.get_repo(f"{repo_owner}/{repo_name}")
+        try:
+            return list(repo.get_issues(state=state, labels=labels, per_page=per_page))
+        except Exception as e:
+            logger.error(f"获取 Issues 列表失败: {repo_owner}/{repo_name}: {e}")
+            return []
+
+    def search_issues(
+        self, repo_owner: str, repo_name: str, query: str,
+        state: str = "open", per_page: int = 10,
+        search_type: str = "issue",
+    ) -> list:
+        """搜索仓库的 Issues 或 PRs
+
+        Args:
+            search_type: "issue" 搜索 Issue, "pr" 搜索 Pull Request
+        """
+        client = self.get_repo_client(repo_owner, repo_name)
+        try:
+            type_qual = f"is:{search_type}" if search_type in ("issue", "pr") else "is:issue"
+            qual = f"repo:{repo_owner}/{repo_name} {query} {type_qual} is:{state}"
+            return list(client.search_issues(qual)[:per_page])
+        except IndexError:
+            return []
+        except Exception as e:
+            logger.error(f"搜索 Issues 失败: {qual}: {e}")
+            return []
+
+    def create_issue_comment(
+        self, repo_owner: str, repo_name: str, issue_number: int, body: str
+    ) -> bool:
+        """在 Issue 上创建评论"""
+        client = self.get_repo_client(repo_owner, repo_name)
+        repo = client.get_repo(f"{repo_owner}/{repo_name}")
+        try:
+            repo.get_issue(issue_number).create_comment(body)
+            return True
+        except Exception as e:
+            logger.error(f"创建 Issue 评论失败: {repo_owner}/{repo_name}#{issue_number}: {e}")
+            return False
+
+    def add_labels_to_issue(
+        self, repo_owner: str, repo_name: str, issue_number: int, label_names: list
+    ) -> bool:
+        """给 Issue 添加标签"""
+        client = self.get_repo_client(repo_owner, repo_name)
+        repo = client.get_repo(f"{repo_owner}/{repo_name}")
+        try:
+            issue = repo.get_issue(issue_number)
+            issue.add_to_labels(*label_names)
+            return True
+        except Exception as e:
+            logger.error(f"添加 Issue 标签失败: {repo_owner}/{repo_name}#{issue_number}: {e}")
+            return False
+
+    def get_repo_collaborators(self, repo_owner: str, repo_name: str) -> list:
+        """获取仓库协作者列表"""
+        try:
+            client = self.get_repo_client(repo_owner, repo_name)
+            repo = client.get_repo(f"{repo_owner}/{repo_name}")
+            return [c.login for c in repo.get_collaborators()]
+        except Exception as e:
+            logger.warning(f"获取协作者列表失败（权限不足或API限制）: {e}")
+            return []
+
+    def get_repo_milestones(self, repo_owner: str, repo_name: str, state: str = "open") -> list:
+        """获取仓库的里程碑列表"""
+        try:
+            client = self.get_repo_client(repo_owner, repo_name)
+            repo = client.get_repo(f"{repo_owner}/{repo_name}")
+            return [
+                {"number": m.number, "title": m.title, "description": m.description or ""}
+                for m in repo.get_milestones(state=state)
+            ]
+        except Exception as e:
+            logger.warning(f"获取里程碑列表失败: {e}")
+            return []
+
+
 def verify_webhook_signature(payload: bytes, signature: str) -> bool:
     """验证Webhook签名"""
     try:
@@ -904,6 +999,34 @@ def extract_pr_info_from_webhook(payload: Dict[str, Any]) -> Optional[Dict[str, 
     except Exception as e:
         logger.error(f"提取PR信息时出错: {e}")
         return None
+
+
+def extract_issue_info_from_webhook(payload: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    """从 Webhook payload 中提取 Issue 信息"""
+    action = payload.get("action", "")
+    if not action:
+        return None
+
+    issue = payload.get("issue", {})
+    if not issue:
+        return None
+
+    repository = payload.get("repository", {})
+
+    return {
+        "action": action,
+        "issue_number": issue.get("number"),
+        "repo_owner": repository.get("owner", {}).get("login", ""),
+        "repo_name": repository.get("name", ""),
+        "repo_full_name": repository.get("full_name", ""),
+        "installation_id": payload.get("installation", {}).get("id"),
+        "author": issue.get("user", {}).get("login", ""),
+        "title": issue.get("title", ""),
+        "body": issue.get("body", ""),
+        "state": issue.get("state", ""),
+        "labels": [l.get("name", "") for l in issue.get("labels", [])],
+        "html_url": issue.get("html_url", ""),
+    }
 
 
 async def get_pr_info_from_url(pr_url: str) -> Optional[Dict[str, Any]]:

@@ -1,0 +1,105 @@
+<!-- Issue 列表 HTMX 片段 -->
+{% include "components/issue_filters.html" %}
+
+<!-- 列表 -->
+<div class="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 shadow-sm overflow-hidden">
+    {% if analyses %}
+    <div class="divide-y divide-gray-200 dark:divide-gray-700">
+        {% for a in analyses %}
+        <a href="/webui/issues/{{ a.id }}" class="flex items-center gap-4 px-5 py-3.5 hover:bg-gray-50 dark:hover:bg-gray-700/50 transition-colors">
+            <!-- 状态 -->
+            <div class="flex-shrink-0">
+                {% if a.status == 'completed' %}
+                <span class="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-medium bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-400">已完成</span>
+                {% elif a.status == 'failed' %}
+                <span class="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-medium bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-400">失败</span>
+                {% elif a.status == 'analyzing' %}
+                <span class="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-medium bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-400">分析中</span>
+                {% else %}
+                <span class="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-medium bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-400">待处理</span>
+                {% endif %}
+            </div>
+
+            <!-- Issue 信息 -->
+            <div class="flex-1 min-w-0">
+                <p class="text-sm font-medium truncate">
+                    <span class="text-gray-500 dark:text-gray-400">{{ a.repo_owner }}/{{ a.repo_name }}</span>
+                    <span class="text-gray-400 mx-1">#{{ a.issue_number }}</span>
+                    {{ a.title or '无标题' }}
+                </p>
+                <p class="text-xs text-gray-500 dark:text-gray-400 mt-0.5">
+                    {% if a.author %}{{ a.author }} · {% endif %}
+                    {% if a.category %}{{ a.category }}{% endif %}
+                    {% if a.priority %} · {{ a.priority }}{% endif %}
+                </p>
+            </div>
+
+            <!-- 标签 -->
+            {% if a.priority %}
+            <div class="flex-shrink-0">
+                {% if a.priority == 'critical' %}
+                <span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-400">critical</span>
+                {% elif a.priority == 'high' %}
+                <span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-orange-100 dark:bg-orange-900/30 text-orange-700 dark:text-orange-400">high</span>
+                {% elif a.priority == 'medium' %}
+                <span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-yellow-100 dark:bg-yellow-900/30 text-yellow-700 dark:text-yellow-400">medium</span>
+                {% else %}
+                <span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-400">low</span>
+                {% endif %}
+            </div>
+            {% endif %}
+
+            <!-- 时间 -->
+            <div class="flex-shrink-0 text-xs text-gray-400 dark:text-gray-500 hidden md:block">
+                {{ a.created_at.strftime('%Y-%m-%d %H:%M') if a.created_at else '-' }}
+            </div>
+        </a>
+        {% endfor %}
+    </div>
+
+    <!-- 分页 -->
+    {% if total_pages > 1 %}
+    <div class="px-5 py-3 border-t border-gray-200 dark:border-gray-700 flex items-center justify-between">
+        <p class="text-sm text-gray-500 dark:text-gray-400">
+            共 {{ total }} 条，第 {{ page }}/{{ total_pages }} 页
+        </p>
+        <div class="flex gap-1">
+            {% if page > 1 %}
+            <a href="#" onclick="loadPage({{ page - 1 }}); return false;"
+               class="px-3 py-1.5 rounded-lg text-sm border border-gray-300 dark:border-gray-600 hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors">
+                上一页
+            </a>
+            {% endif %}
+
+            {% for p in range(1, total_pages + 1) %}
+                {% if p == page %}
+                <span class="px-3 py-1.5 rounded-lg text-sm bg-pink-500 text-white">{{ p }}</span>
+                {% elif p <= 3 or p >= total_pages - 2 or (p >= page - 1 and p <= page + 1) %}
+                <a href="#" onclick="loadPage({{ p }}); return false;"
+                   class="px-3 py-1.5 rounded-lg text-sm border border-gray-300 dark:border-gray-600 hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors">
+                    {{ p }}
+                </a>
+                {% elif p == 4 or p == total_pages - 3 %}
+                <span class="px-2 py-1.5 text-gray-400">...</span>
+                {% endif %}
+            {% endfor %}
+
+            {% if page < total_pages %}
+            <a href="#" onclick="loadPage({{ page + 1 }}); return false;"
+               class="px-3 py-1.5 rounded-lg text-sm border border-gray-300 dark:border-gray-600 hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors">
+                下一页
+            </a>
+            {% endif %}
+        </div>
+    </div>
+    {% endif %}
+
+    {% else %}
+    <div class="text-center py-12 text-gray-400">
+        <svg class="w-12 h-12 mx-auto mb-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/>
+        </svg>
+        <p>暂无 Issue 分析记录</p>
+    </div>
+    {% endif %}
+</div>

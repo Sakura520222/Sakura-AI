@@ -99,6 +99,24 @@ class PromptBuilder:
                     f"- {file['path']}: {file['status']} ({file['changes']} 行)"
                 )
 
+        # 添加关联 Issue 信息
+        linked_issues = context.get("linked_issues", [])
+        if linked_issues:
+            message_parts.append("\n## 关联 Issue")
+            message_parts.append("此 PR 关联了以下 Issue，请参考 Issue 的上下文进行审查：\n")
+            for issue in linked_issues:
+                message_parts.append(f"### #{issue['number']}: {issue['title']}")
+                message_parts.append(f"- 状态: {issue.get('state', 'unknown')}")
+                labels = issue.get("labels", [])
+                if labels:
+                    message_parts.append(f"- 标签: {', '.join(labels)}")
+                body = issue.get("body", "")
+                if body:
+                    if len(body) > 500:
+                        body = body[:500] + "...（已截断）"
+                    message_parts.append(f"\n> {body}")
+                message_parts.append("")
+
         # 添加工具说明（如果需要）
         if include_tools:
             message_parts.append(

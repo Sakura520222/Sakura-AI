@@ -9,6 +9,7 @@ from loguru import logger
 from backend.core.github_app import (
     verify_webhook_signature,
     extract_pr_info_from_webhook,
+    extract_issue_info_from_webhook,
     GitHubAppClient,
 )
 from backend.workers.review_worker import submit_review_task
@@ -77,6 +78,8 @@ async def handle_github_webhook(
         # 处理PR事件
         if x_github_event == "pull_request":
             return await handle_pull_request_event(payload_data)
+        elif x_github_event == "issues":
+            return await handle_issue_event(payload_data)
         elif x_github_event == "issue_comment":
             return await handle_issue_comment_event(payload_data)
         else:
@@ -88,7 +91,7 @@ async def handle_github_webhook(
     except Exception as e:
         logger.error(f"处理Webhook时出错: {e}", exc_info=True)
         return JSONResponse(
-            status_code=500, content={"status": "error", "message": str(e)}
+            status_code=500, content={"status": "error", "message": "内部服务错误"}
         )
 
 
@@ -274,7 +277,11 @@ async def handle_issue_comment_event(payload: Dict[str, Any]) -> JSONResponse:
         # 检查是否为PR评论（排除普通Issue）
         issue = payload.get("issue", {})
         if not issue.get("pull_request"):
-            return JSONResponse(content={"status": "ignored", "reason": "not a PR comment"})
+            # 非 PR 评论：检测 /analyze 命令
+            comment_body_check = payload.get("comment", {}).get("body", "").strip()
+            if re.match(r"^/analyze(\s|$)", comment_body_check):
+                return await handle_issue_analyze_command(payload)
+            return JSONResponse(content={"status": "ignored", "reason": "not a recognized command"})
 
         # 提取PR信息
         repo_info = payload.get("repository", {})
@@ -495,6 +502,163 @@ async def handle_issue_comment_event(payload: Dict[str, Any]) -> JSONResponse:
 
     except Exception as e:
         logger.error(f"处理Issue Comment事件时出错: {e}", exc_info=True)
+        return JSONResponse(
+            status_code=500, content={"status": "error", "message": str(e)}
+        )
+
+
+async def handle_issue_event(payload: Dict[str, Any]) -> JSONResponse:
+    """处理 Issue 事件"""
+    try:
+        issue_info = extract_issue_info_from_webhook(payload)
+        if not issue_info:
+            logger.warning("无法提取 Issue 信息")
+            return JSONResponse(
+                status_code=400,
+                content={"status": "error", "message": "无法提取 Issue 信息"},
+            )
+
+        action = issue_info["action"]
+
+        # 只处理以下动作
+        supported_actions = ["opened", "edited", "reopened"]
+        if action not in supported_actions:
+            logger.info(f"忽略 Issue 动作: {action}")
+            return JSONResponse(content={"status": "ignored", "action": action})
+
+        # 过滤 Bot 自身事件
+        bot_username = settings.bot_username
+        if bot_username and issue_info.get("author") == bot_username:
+            logger.info(f"跳过 Bot 自身创建的 Issue 事件")
+            return JSONResponse(content={"status": "ignored", "reason": "bot self-event"})
+
+        # 检查功能是否启用
+        if not settings.enable_issue_analysis:
+            logger.info("Issue 分析功能未启用")
+            return JSONResponse(content={"status": "skipped", "reason": "feature disabled"})
+
+        # Telegram 权限检查
+        notification_sender = get_notification_sender()
+        async with get_async_session() as session:
+            service = TelegramService(session)
+
+            github_username = issue_info.get("author", "")
+            if not github_username:
+                logger.warning("无法获取 Issue 作者")
+                return JSONResponse(content={"status": "skipped", "reason": "unknown author"})
+
+            user = await service.get_user_by_github_username(github_username)
+            if not user:
+                logger.info(f"Issue 作者未注册: {github_username}，跳过分析")
+                return JSONResponse(content={"status": "skipped", "reason": "unregistered user"})
+
+            role_lower = user.role.lower().strip() if user.role else ""
+            if role_lower not in ["admin", "super_admin"]:
+                is_authorized = await service.is_authorized_repo(issue_info["repo_full_name"])
+                if not is_authorized:
+                    logger.warning(f"未授权的仓库: {issue_info['repo_full_name']}")
+                    return JSONResponse(content={"status": "skipped", "reason": "unauthorized repository"})
+
+            # Issue 配额检查
+            allowed, reason = await service.check_and_consume_issue_quota(
+                github_username=github_username,
+                repo_name=issue_info["repo_full_name"],
+                issue_number=issue_info["issue_number"],
+            )
+            if not allowed:
+                logger.warning(f"Issue 配额不足: {github_username} - {reason}")
+                if notification_sender:
+                    await notification_sender.send_quota_exceeded(
+                        repo_name=issue_info["repo_full_name"],
+                        pr_number=issue_info["issue_number"],
+                        reason=reason,
+                    )
+                return JSONResponse(
+                    content={"status": "skipped", "reason": "quota exceeded", "detail": reason}
+                )
+
+        # 提交分析任务
+        from backend.workers.issue_worker import submit_issue_analysis_task
+        task_id = await submit_issue_analysis_task(issue_info)
+
+        logger.info(
+            f"已提交 Issue 分析任务: {issue_info['repo_full_name']}#{issue_info['issue_number']}, "
+            f"任务ID: {task_id}"
+        )
+
+        return JSONResponse(
+            content={
+                "status": "accepted",
+                "message": "Issue 分析任务已提交",
+                "issue": f"{issue_info['repo_full_name']}#{issue_info['issue_number']}",
+                "action": action,
+                "task_id": task_id,
+            }
+        )
+
+    except Exception as e:
+        logger.error(f"处理 Issue 事件时出错: {e}", exc_info=True)
+        return JSONResponse(
+            status_code=500, content={"status": "error", "message": "内部服务错误"}
+        )
+
+
+async def handle_issue_analyze_command(payload: Dict[str, Any]) -> JSONResponse:
+    """处理 /analyze 命令（手动触发 Issue 分析）"""
+    try:
+        issue_info = extract_issue_info_from_webhook(payload)
+        if not issue_info:
+            return JSONResponse(
+                status_code=400,
+                content={"status": "error", "message": "无法提取 Issue 信息"},
+            )
+
+        # 过滤 Bot 自身评论
+        bot_username = settings.bot_username
+        commenter = payload.get("comment", {}).get("user", {}).get("login", "")
+        if bot_username and commenter == bot_username:
+            return JSONResponse(content={"status": "ignored", "reason": "bot self-comment"})
+
+        # 检查功能是否启用
+        if not settings.enable_issue_analysis:
+            return JSONResponse(content={"status": "skipped", "reason": "feature disabled"})
+
+        # 权限和配额检查
+        async with get_async_session() as session:
+            service = TelegramService(session)
+            user = await service.get_user_by_github_username(commenter)
+            if not user:
+                return JSONResponse(content={"status": "skipped", "reason": "unregistered user"})
+
+            allowed, reason = await service.check_and_consume_issue_quota(
+                github_username=commenter,
+                repo_name=issue_info["repo_full_name"],
+                issue_number=issue_info["issue_number"],
+            )
+            if not allowed:
+                return JSONResponse(
+                    content={"status": "skipped", "reason": "quota exceeded", "detail": reason}
+                )
+
+        # 提交分析任务
+        from backend.workers.issue_worker import submit_issue_analysis_task
+        task_id = await submit_issue_analysis_task(issue_info)
+
+        logger.info(
+            f"/analyze 命令触发: {issue_info['repo_full_name']}#{issue_info['issue_number']}, "
+            f"triggered_by={commenter}"
+        )
+
+        return JSONResponse(
+            content={
+                "status": "accepted",
+                "message": "Issue 分析任务已提交",
+                "task_id": task_id,
+            }
+        )
+
+    except Exception as e:
+        logger.error(f"处理 /analyze 命令时出错: {e}", exc_info=True)
         return JSONResponse(
             status_code=500, content={"status": "error", "message": str(e)}
         )

@@ -84,9 +84,9 @@
 
         <!-- 右侧：配额和管理 -->
         <div class="lg:col-span-2 space-y-6">
-            <!-- 配额使用情况 -->
+            <!-- PR 审查配额使用情况 -->
             <div class="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 shadow-sm p-6">
-                <h3 class="text-base font-medium mb-4">配额使用情况</h3>
+                <h3 class="text-base font-medium mb-4">PR 审查配额</h3>
                 <div class="space-y-4">
                     <!-- 每日配额 -->
                     {% set daily_pct = percentage(target_user.daily_used, target_user.daily_quota) %}
@@ -129,7 +129,7 @@
 
             <!-- 修改配额 -->
             <div class="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 shadow-sm p-6">
-                <h3 class="text-base font-medium mb-4">修改配额</h3>
+                <h3 class="text-base font-medium mb-4">修改 PR 配额</h3>
                 <form method="POST" action="/webui/users/{{ target_user.id }}/quota"
                       data-confirm="确定要修改此用户的配额吗？">
                     <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
@@ -152,6 +152,75 @@
                     </div>
                     <button type="submit" class="mt-4 px-4 py-2 bg-pink-500 text-white rounded-lg text-sm font-medium hover:bg-pink-600 transition-colors">
                         保存配额
+                    </button>
+                </form>
+            </div>
+
+            <!-- Issue 分析配额使用情况 -->
+            <div class="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 shadow-sm p-6">
+                <h3 class="text-base font-medium mb-4">Issue 分析配额</h3>
+                <div class="space-y-4">
+                    {% set i_daily_pct = percentage(target_user.issue_daily_used, target_user.issue_daily_quota) %}
+                    {% set i_daily_bar_color = 'bg-red-500' if i_daily_pct >= 90 else ('bg-yellow-500' if i_daily_pct >= 70 else 'bg-blue-500') %}
+                    <div>
+                        <div class="flex justify-between text-sm mb-1">
+                            <span class="text-gray-600 dark:text-gray-300">每日配额</span>
+                            <span class="font-medium">{{ target_user.issue_daily_used }} / {{ target_user.issue_daily_quota }}</span>
+                        </div>
+                        <div class="w-full bg-gray-200 dark:bg-gray-700 rounded-full h-2">
+                            <div class="h-2 rounded-full transition-all {{ i_daily_bar_color }}" style="width:{{ i_daily_pct }}%"></div>
+                        </div>
+                    </div>
+                    {% set i_weekly_pct = percentage(target_user.issue_weekly_used, target_user.issue_weekly_quota) %}
+                    {% set i_weekly_bar_color = 'bg-red-500' if i_weekly_pct >= 90 else ('bg-yellow-500' if i_weekly_pct >= 70 else 'bg-blue-500') %}
+                    <div>
+                        <div class="flex justify-between text-sm mb-1">
+                            <span class="text-gray-600 dark:text-gray-300">每周配额</span>
+                            <span class="font-medium">{{ target_user.issue_weekly_used }} / {{ target_user.issue_weekly_quota }}</span>
+                        </div>
+                        <div class="w-full bg-gray-200 dark:bg-gray-700 rounded-full h-2">
+                            <div class="h-2 rounded-full transition-all {{ i_weekly_bar_color }}" style="width:{{ i_weekly_pct }}%"></div>
+                        </div>
+                    </div>
+                    {% set i_monthly_pct = percentage(target_user.issue_monthly_used, target_user.issue_monthly_quota) %}
+                    {% set i_monthly_bar_color = 'bg-red-500' if i_monthly_pct >= 90 else ('bg-yellow-500' if i_monthly_pct >= 70 else 'bg-blue-500') %}
+                    <div>
+                        <div class="flex justify-between text-sm mb-1">
+                            <span class="text-gray-600 dark:text-gray-300">每月配额</span>
+                            <span class="font-medium">{{ target_user.issue_monthly_used }} / {{ target_user.issue_monthly_quota }}</span>
+                        </div>
+                        <div class="w-full bg-gray-200 dark:bg-gray-700 rounded-full h-2">
+                            <div class="h-2 rounded-full transition-all {{ i_monthly_bar_color }}" style="width:{{ i_monthly_pct }}%"></div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 修改 Issue 配额 -->
+            <div class="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 shadow-sm p-6">
+                <h3 class="text-base font-medium mb-4">修改 Issue 分析配额</h3>
+                <form method="POST" action="/webui/users/{{ target_user.id }}/issue-quota"
+                      data-confirm="确定要修改此用户的 Issue 配额吗？">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                    <div class="grid grid-cols-3 gap-4">
+                        <div>
+                            <label class="block text-sm font-medium text-gray-600 dark:text-gray-300 mb-1">每日配额</label>
+                            <input type="number" name="issue_daily_quota" value="{{ target_user.issue_daily_quota }}" min="0"
+                                   class="w-full px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-sm focus:ring-2 focus:ring-pink-500 focus:border-transparent outline-none">
+                        </div>
+                        <div>
+                            <label class="block text-sm font-medium text-gray-600 dark:text-gray-300 mb-1">每周配额</label>
+                            <input type="number" name="issue_weekly_quota" value="{{ target_user.issue_weekly_quota }}" min="0"
+                                   class="w-full px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-sm focus:ring-2 focus:ring-pink-500 focus:border-transparent outline-none">
+                        </div>
+                        <div>
+                            <label class="block text-sm font-medium text-gray-600 dark:text-gray-300 mb-1">每月配额</label>
+                            <input type="number" name="issue_monthly_quota" value="{{ target_user.issue_monthly_quota }}" min="0"
+                                   class="w-full px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-sm focus:ring-2 focus:ring-pink-500 focus:border-transparent outline-none">
+                        </div>
+                    </div>
+                    <button type="submit" class="mt-4 px-4 py-2 bg-pink-500 text-white rounded-lg text-sm font-medium hover:bg-pink-600 transition-colors">
+                        保存 Issue 配额
                     </button>
                 </form>
             </div>

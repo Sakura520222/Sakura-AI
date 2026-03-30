@@ -122,6 +122,24 @@ class ReviewWorker:
             # 6. 准备审查上下文
             context = self.analyzer.prepare_review_context(analysis, pr)
 
+            # 6.5 解析并注入 Issue 上下文（如果启用）
+            if hasattr(settings, 'enable_pr_issue_linking') and settings.enable_pr_issue_linking:
+                try:
+                    from backend.services.pr_issue_linker import PRIssueLinker
+                    issue_linker = PRIssueLinker()
+
+                    pr_body = pr_info.get("body", "") or ""
+                    issue_numbers = await issue_linker.parse_issue_references(pr_body)
+
+                    if issue_numbers:
+                        issue_contents = await issue_linker.fetch_issue_content(
+                            pr_info["repo_owner"], pr_info["repo_name"], issue_numbers
+                        )
+                        context = await issue_linker.inject_issue_context(context, issue_contents)
+                        logger.info(f"[{task_id}] 关联了 {len(issue_contents)} 个 Issue 到审查上下文")
+                except Exception as e:
+                    logger.warning(f"[{task_id}] Issue 关联失败（不影响审查）: {e}")
+
             # 7. 并行执行AI审查和标签推荐
             await self._update_review_status(review_id, PRStatus.REVIEWING)
 

@@ -1,0 +1,19 @@
+<!-- Issue 统计卡片 -->
+<div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+    <div class="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 p-4">
+        <p class="text-xs text-gray-500 dark:text-gray-400">总分析数</p>
+        <p class="text-2xl font-bold text-gray-900 dark:text-gray-100">{{ stats.total }}</p>
+    </div>
+    <div class="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 p-4">
+        <p class="text-xs text-gray-500 dark:text-gray-400">Critical 数量</p>
+        <p class="text-2xl font-bold text-red-600 dark:text-red-400">{{ stats.by_priority.get('critical', 0) }}</p>
+    </div>
+    <div class="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 p-4">
+        <p class="text-xs text-gray-500 dark:text-gray-400">Bug 数量</p>
+        <p class="text-2xl font-bold text-orange-600 dark:text-orange-400">{{ stats.by_category.get('bug', 0) }}</p>
+    </div>
+    <div class="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 p-4">
+        <p class="text-xs text-gray-500 dark:text-gray-400">总 Token 消耗</p>
+        <p class="text-2xl font-bold text-gray-900 dark:text-gray-100">{{ "{:,}".format(stats.total_prompt_tokens + stats.total_completion_tokens) }}</p>
+    </div>
+</div>

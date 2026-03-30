@@ -1,7 +1,7 @@
 """WebUI 路由"""
 
 from fastapi import APIRouter
-from backend.webui.routes import auth, dashboard, pr, users, repos, logs, settings, config, queue, action_logs
+from backend.webui.routes import auth, dashboard, pr, users, repos, logs, settings, config, queue, action_logs, issues
 
 webui_router = APIRouter(prefix="/webui")
 
@@ -15,3 +15,4 @@ webui_router.include_router(settings.router)
 webui_router.include_router(config.router)
 webui_router.include_router(queue.router)
 webui_router.include_router(action_logs.router)
+webui_router.include_router(issues.router)
