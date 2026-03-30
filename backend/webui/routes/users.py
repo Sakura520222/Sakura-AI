@@ -4,10 +4,12 @@ from fastapi import APIRouter, Request, Depends, Form, Query
 from fastapi.responses import RedirectResponse, HTMLResponse
 from loguru import logger
 from sqlalchemy import select, func, desc, or_, String, type_coerce
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.models.telegram_models import TelegramUser, QuotaUsageLog
-from backend.webui.deps import require_admin, get_db, get_templates, get_csrf_serializer, require_csrf, get_user_preferences, paginate, error_page, toast_redirect
+from backend.webui.deps import require_admin, require_super_admin, get_db, get_templates, get_csrf_serializer, require_csrf, get_user_preferences, paginate, error_page, toast_redirect
+from backend.core.config import get_settings
 from backend.webui.helpers.admin_log import log_admin_action
 
 router = APIRouter(prefix="/users", tags=["WebUI Users"])
@@ -78,6 +80,106 @@ async def user_list_fragment(
         "total": total,
         "per_page": per_page,
     })
+
+
+@router.post("/add")
+async def add_user(
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    user: dict = Depends(require_super_admin),
+    csrf_token: str = Depends(require_csrf),
+    telegram_id: int = Form(...),
+    github_username: str = Form(...),
+    role: str = Form("user"),
+    daily_quota: int = Form(10),
+    weekly_quota: int = Form(50),
+    monthly_quota: int = Form(200),
+    issue_daily_quota: int = Form(20),
+    issue_weekly_quota: int = Form(80),
+    issue_monthly_quota: int = Form(300),
+) -> RedirectResponse:
+    """添加新用户（仅超级管理员）"""
+    # 角色验证
+    if role not in ("user", "admin", "super_admin"):
+        return toast_redirect("/webui/users/", "无效的角色值", "error")
+
+    # Telegram ID 验证
+    if telegram_id <= 0:
+        return toast_redirect("/webui/users/", "Telegram ID 必须为正整数", "error")
+
+    # GitHub 用户名验证
+    github_username = github_username.strip()
+    if not github_username:
+        return toast_redirect("/webui/users/", "GitHub 用户名不能为空", "error")
+
+    # 配额验证
+    for q in (daily_quota, weekly_quota, monthly_quota, issue_daily_quota, issue_weekly_quota, issue_monthly_quota):
+        if q < 0:
+            return toast_redirect("/webui/users/", "配额值不能为负数", "error")
+
+    # 检查 Telegram ID 唯一性
+    existing = await db.execute(
+        select(TelegramUser).where(TelegramUser.telegram_id == telegram_id)
+    )
+    if existing.scalar_one_or_none():
+        return toast_redirect("/webui/users/", f"Telegram ID {telegram_id} 已存在", "error")
+
+    # 检查 GitHub 用户名唯一性
+    existing_gh = await db.execute(
+        select(TelegramUser).where(TelegramUser.github_username == github_username)
+    )
+    if existing_gh.scalar_one_or_none():
+        return toast_redirect("/webui/users/", f"GitHub 用户名 {github_username} 已被使用", "error")
+
+    # 超级管理员自动检测
+    auto_super_admin = False
+    settings = get_settings()
+    if telegram_id in settings.telegram_admin_ids_list:
+        role = "super_admin"
+        auto_super_admin = True
+
+    # 创建用户
+    new_user = TelegramUser(
+        telegram_id=telegram_id,
+        github_username=github_username,
+        role=role,
+        daily_quota=daily_quota,
+        weekly_quota=weekly_quota,
+        monthly_quota=monthly_quota,
+        issue_daily_quota=issue_daily_quota,
+        issue_weekly_quota=issue_weekly_quota,
+        issue_monthly_quota=issue_monthly_quota,
+        is_active=True,
+    )
+    try:
+        db.add(new_user)
+        await db.commit()
+    except IntegrityError as e:
+        logger.error(f"用户创建失败（数据库冲突）: {e}")
+        await db.rollback()
+        return toast_redirect("/webui/users/", "用户创建失败（可能已存在重复）", "error")
+    except Exception as e:
+        logger.error(f"用户创建失败（未知错误）: {e}")
+        await db.rollback()
+        return toast_redirect("/webui/users/", "用户创建失败", "error")
+
+    logger.info(f"用户已通过 WebUI 添加: telegram_id={telegram_id}, github={github_username}, role={role}, by={user['sub']}")
+    await log_admin_action(db, user["user_id"], "user_add", "user", str(new_user.id), {
+        "telegram_id": telegram_id,
+        "github_username": github_username,
+        "role": role,
+        "daily_quota": daily_quota,
+        "weekly_quota": weekly_quota,
+        "monthly_quota": monthly_quota,
+        "issue_daily_quota": issue_daily_quota,
+        "issue_weekly_quota": issue_weekly_quota,
+        "issue_monthly_quota": issue_monthly_quota,
+        "auto_super_admin": auto_super_admin,
+    })
+    msg = f"用户 {github_username} 已成功添加"
+    if auto_super_admin:
+        msg += "（已自动提升为超级管理员）"
+    return toast_redirect("/webui/users/", msg)
 
 
 @router.get("/{user_id}")
