@@ -9,7 +9,9 @@ from loguru import logger
 from backend.core.config import get_settings
 from backend.core.github_app import GitHubAppClient
 from backend.models.database import (
-    async_session, IssueAnalysis, IssueAnalysisStatus,
+    async_session,
+    IssueAnalysis,
+    IssueAnalysisStatus,
 )
 from sqlalchemy import select, and_
 from backend.services.issue_analyzer import IssueAnalyzer
@@ -22,7 +24,6 @@ class IssueWorker:
     def __init__(self):
         self.analyzer = IssueAnalyzer()
         self.github_app = GitHubAppClient()
-        settings = get_settings()
 
     async def process_issue_analysis(self, issue_info: Dict[str, Any]) -> str:
         """处理 Issue 分析任务
@@ -41,10 +42,7 @@ class IssueWorker:
         issue_number = issue_info.get("issue_number", 0)
         repo_full_name = issue_info.get("repo_full_name", f"{repo_owner}/{repo_name}")
 
-        logger.info(
-            f"[{task_id}] 开始处理 Issue 分析: "
-            f"{repo_full_name}#{issue_number}"
-        )
+        logger.info(f"[{task_id}] 开始处理 Issue 分析: {repo_full_name}#{issue_number}")
 
         async with async_session() as db:
             try:
@@ -82,7 +80,9 @@ class IssueWorker:
                 )
 
                 # 5. 保存分析结果（更新已有的 PENDING 记录）
-                analysis_record = await issue_service.save_analysis_result(analysis_result, issue_info, db)
+                analysis_record = await issue_service.save_analysis_result(
+                    analysis_result, issue_info, db
+                )
 
                 if not analysis_record:
                     logger.error(f"[{task_id}] 未找到待更新的分析记录")
@@ -92,13 +92,16 @@ class IssueWorker:
                 if settings.issue_detect_duplicates:
                     try:
                         duplicates = await issue_service.detect_duplicates(
-                            repo_owner, repo_name,
+                            repo_owner,
+                            repo_name,
                             issue_info.get("title", ""),
                             issue_info.get("body", ""),
                             current_issue_number=issue_number,
                         )
                         if duplicates:
-                            analysis_record.duplicate_of = duplicates[0].get("issue_number")
+                            analysis_record.duplicate_of = duplicates[0].get(
+                                "issue_number"
+                            )
                     except Exception as e:
                         logger.warning(f"[{task_id}] 重复检测失败: {e}")
 
@@ -108,7 +111,9 @@ class IssueWorker:
                         repo_owner, repo_name, issue_number
                     )
                     if related_prs:
-                        analysis_record.related_prs = json.dumps(related_prs, ensure_ascii=False)
+                        analysis_record.related_prs = json.dumps(
+                            related_prs, ensure_ascii=False
+                        )
                 except Exception as e:
                     logger.warning(f"[{task_id}] 查找关联 PR 失败: {e}")
 
@@ -118,8 +123,11 @@ class IssueWorker:
                 if settings.issue_auto_comment:
                     try:
                         success = await issue_service.post_analysis_comment(
-                            repo_owner, repo_name, issue_number,
-                            analysis_record, db,
+                            repo_owner,
+                            repo_name,
+                            issue_number,
+                            analysis_record,
+                            db,
                         )
                         if success:
                             logger.info(f"[{task_id}] 已发布分析评论")
@@ -129,11 +137,16 @@ class IssueWorker:
                 # 10. 应用建议标签
                 if settings.issue_auto_create_labels:
                     try:
-                        labels_data = json.loads(analysis_record.suggested_labels or "[]")
+                        labels_data = json.loads(
+                            analysis_record.suggested_labels or "[]"
+                        )
                         if labels_data:
                             result = await issue_service.apply_suggested_labels(
-                                repo_owner, repo_name, issue_number,
-                                labels_data, db,
+                                repo_owner,
+                                repo_name,
+                                issue_number,
+                                labels_data,
+                                db,
                             )
                             if result.get("applied"):
                                 logger.info(
@@ -150,6 +163,7 @@ class IssueWorker:
                 notification_chat_ids = []
                 try:
                     from backend.services.telegram_service import TelegramService
+
                     ts = TelegramService(db)
                     notification_chat_ids = await ts.get_notification_targets(
                         repo_full_name, issue_info.get("author", "")
@@ -159,7 +173,10 @@ class IssueWorker:
 
                 if priority == "critical":
                     try:
-                        from backend.telegram.notifications import get_notification_sender
+                        from backend.telegram.notifications import (
+                            get_notification_sender,
+                        )
+
                         sender = get_notification_sender()
                         if sender and notification_chat_ids:
                             await sender.send_critical_issue_alert(
@@ -170,7 +187,9 @@ class IssueWorker:
                                 summary=analysis_result.get("summary", ""),
                                 feasibility=analysis_result.get("feasibility", ""),
                                 issue_url=issue_info.get("html_url", ""),
-                                suggested_labels=analysis_result.get("suggested_labels", []),
+                                suggested_labels=analysis_result.get(
+                                    "suggested_labels", []
+                                ),
                                 chat_ids=notification_chat_ids,
                             )
                             logger.info(f"[{task_id}] 已发送 Critical Issue 告警")
@@ -180,6 +199,7 @@ class IssueWorker:
                 # 12. 发送完成通知
                 try:
                     from backend.telegram.notifications import get_notification_sender
+
                     sender = get_notification_sender()
                     if sender and notification_chat_ids:
                         await sender.send_issue_analysis_complete(
@@ -194,7 +214,9 @@ class IssueWorker:
                 except Exception as e:
                     logger.warning(f"[{task_id}] 发送完成通知失败: {e}")
 
-                logger.info(f"[{task_id}] Issue 分析完成: {repo_full_name}#{issue_number}")
+                logger.info(
+                    f"[{task_id}] Issue 分析完成: {repo_full_name}#{issue_number}"
+                )
 
             except Exception as e:
                 logger.error(f"[{task_id}] Issue 分析失败: {e}", exc_info=True)
@@ -202,16 +224,21 @@ class IssueWorker:
                 # 更新状态为 FAILED（仅更新本次任务的 PENDING/ANALYZING 记录）
                 try:
                     result = await db.execute(
-                        select(IssueAnalysis).where(
+                        select(IssueAnalysis)
+                        .where(
                             and_(
                                 IssueAnalysis.issue_number == issue_number,
                                 IssueAnalysis.repo_name == repo_name,
-                                IssueAnalysis.status.in_([
-                                    IssueAnalysisStatus.PENDING.value,
-                                    IssueAnalysisStatus.ANALYZING.value,
-                                ]),
+                                IssueAnalysis.status.in_(
+                                    [
+                                        IssueAnalysisStatus.PENDING.value,
+                                        IssueAnalysisStatus.ANALYZING.value,
+                                    ]
+                                ),
                             )
-                        ).order_by(IssueAnalysis.created_at.desc()).limit(1)
+                        )
+                        .order_by(IssueAnalysis.created_at.desc())
+                        .limit(1)
                     )
                     record = result.scalar_one_or_none()
                     if record:

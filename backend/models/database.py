@@ -87,6 +87,7 @@ class CodeIndexingStatus(str, enum.Enum):
 
 class IssueAnalysisStatus(str, enum.Enum):
     """Issue分析状态"""
+
     PENDING = "pending"
     ANALYZING = "analyzing"
     COMPLETED = "completed"
@@ -95,6 +96,7 @@ class IssueAnalysisStatus(str, enum.Enum):
 
 class IssueCategory(str, enum.Enum):
     """Issue分类"""
+
     BUG = "bug"
     FEATURE = "feature"
     QUESTION = "question"
@@ -108,6 +110,7 @@ class IssueCategory(str, enum.Enum):
 
 class IssuePriority(str, enum.Enum):
     """Issue优先级"""
+
     CRITICAL = "critical"
     HIGH = "high"
     MEDIUM = "medium"
@@ -387,7 +390,9 @@ class IssueAnalysis(Base):
     estimated_cost = Column(Integer, default=0, nullable=True)
 
     # 状态
-    status = Column(String(50), default=IssueAnalysisStatus.PENDING.value, nullable=False)
+    status = Column(
+        String(50), default=IssueAnalysisStatus.PENDING.value, nullable=False
+    )
     error_message = Column(Text, nullable=True)
 
     # 评论与标签
@@ -398,7 +403,9 @@ class IssueAnalysis(Base):
 
     # 时间戳
     created_at = Column(TIMESTAMP, default=datetime.utcnow, nullable=False)
-    updated_at = Column(TIMESTAMP, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+    updated_at = Column(
+        TIMESTAMP, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False
+    )
     completed_at = Column(TIMESTAMP, nullable=True)
 
     def __repr__(self):
@@ -438,7 +445,9 @@ class IssueAnalysisQueue(Base):
     max_retries = Column(Integer, default=3, nullable=False)
     error_message = Column(Text, nullable=True)
     created_at = Column(TIMESTAMP, default=datetime.utcnow, nullable=False, index=True)
-    updated_at = Column(TIMESTAMP, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
+    updated_at = Column(
+        TIMESTAMP, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False
+    )
     processed_at = Column(TIMESTAMP, nullable=True)
 
     def __repr__(self):

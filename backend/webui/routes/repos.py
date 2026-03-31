@@ -7,7 +7,17 @@ from sqlalchemy import select, func, desc
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.models.telegram_models import RepoSubscription
-from backend.webui.deps import require_admin, get_db, get_templates, get_csrf_serializer, require_csrf, get_user_preferences, paginate, error_page, toast_redirect
+from backend.webui.deps import (
+    require_admin,
+    get_db,
+    get_templates,
+    get_csrf_serializer,
+    require_csrf,
+    get_user_preferences,
+    paginate,
+    error_page,
+    toast_redirect,
+)
 from backend.webui.helpers.admin_log import log_admin_action
 
 router = APIRouter(prefix="/repos", tags=["WebUI Repos"])
@@ -21,13 +31,16 @@ async def repo_list_page(
     user_prefs: dict = Depends(get_user_preferences),
 ):
     """渲染仓库列表页面"""
-    return templates.TemplateResponse("repos.html", {
-        "request": request,
-        "current_user": user,
-        "csrf_token": get_csrf_serializer().dumps({}),
-        "active_page": "repos",
-        "user_prefs": user_prefs,
-    })
+    return templates.TemplateResponse(
+        "repos.html",
+        {
+            "request": request,
+            "current_user": user,
+            "csrf_token": get_csrf_serializer().dumps({}),
+            "active_page": "repos",
+            "user_prefs": user_prefs,
+        },
+    )
 
 
 @router.get("/list-fragment")
@@ -56,26 +69,31 @@ async def repo_list_fragment(
 
     # 状态过滤
     if status == "active":
-        query = query.where(RepoSubscription.is_active == True)
-        count_query = count_query.where(RepoSubscription.is_active == True)
+        query = query.where(RepoSubscription.is_active)
+        count_query = count_query.where(RepoSubscription.is_active)
 
     # 排序
     query = query.order_by(desc(RepoSubscription.created_at))
 
     # 分页
-    repos, total, total_pages, page = await paginate(db, query, count_query, page, per_page)
+    repos, total, total_pages, page = await paginate(
+        db, query, count_query, page, per_page
+    )
 
-    return templates.TemplateResponse("components/repo_list_fragment.html", {
-        "request": request,
-        "repos": repos,
-        "search": search,
-        "status": status,
-        "page": page,
-        "total_pages": total_pages,
-        "total": total,
-        "per_page": per_page,
-        "csrf_token": get_csrf_serializer().dumps({}),
-    })
+    return templates.TemplateResponse(
+        "components/repo_list_fragment.html",
+        {
+            "request": request,
+            "repos": repos,
+            "search": search,
+            "status": status,
+            "page": page,
+            "total_pages": total_pages,
+            "total": total,
+            "per_page": per_page,
+            "csrf_token": get_csrf_serializer().dumps({}),
+        },
+    )
 
 
 @router.post("/add")
@@ -90,8 +108,14 @@ async def add_repo(
     repo_name = repo_name.strip()
 
     # 验证格式: 必须包含 owner/repo，具体合法性由 GitHub API 保证
-    if not repo_name or repo_name.count("/") != 1 or not repo_name.replace("/", "").strip():
-        return toast_redirect("/webui/repos/", "仓库名称格式不正确，请使用 owner/repo 格式", "error")
+    if (
+        not repo_name
+        or repo_name.count("/") != 1
+        or not repo_name.replace("/", "").strip()
+    ):
+        return toast_redirect(
+            "/webui/repos/", "仓库名称格式不正确，请使用 owner/repo 格式", "error"
+        )
 
     # 检查是否已存在
     existing = await db.execute(
@@ -109,7 +133,7 @@ async def add_repo(
     await db.commit()
 
     logger.info(f"仓库已添加到白名单: {repo_name}, by={user['sub']}")
-    await log_admin_action(db, user['user_id'], "repo_add", "repo", repo_name)
+    await log_admin_action(db, user["user_id"], "repo_add", "repo", repo_name)
     return toast_redirect("/webui/repos/", f"仓库 {repo_name} 已添加到白名单")
 
 
@@ -133,8 +157,17 @@ async def toggle_repo_status(
     await db.commit()
 
     status = "启用" if repo.is_active else "禁用"
-    logger.info(f"仓库状态已变更: repo={repo.repo_name}, status={status}, by={user['sub']}")
-    await log_admin_action(db, user['user_id'], "repo_toggle", "repo", repo.repo_name, {"is_active": repo.is_active})
+    logger.info(
+        f"仓库状态已变更: repo={repo.repo_name}, status={status}, by={user['sub']}"
+    )
+    await log_admin_action(
+        db,
+        user["user_id"],
+        "repo_toggle",
+        "repo",
+        repo.repo_name,
+        {"is_active": repo.is_active},
+    )
     return toast_redirect("/webui/repos/", f"仓库 {repo.repo_name} 已{status}")
 
 
@@ -159,5 +192,5 @@ async def remove_repo(
     await db.commit()
 
     logger.info(f"仓库已从白名单移除: {repo_name}, by={user['sub']}")
-    await log_admin_action(db, user['user_id'], "repo_remove", "repo", repo_name)
+    await log_admin_action(db, user["user_id"], "repo_remove", "repo", repo_name)
     return toast_redirect("/webui/repos/", f"仓库 {repo_name} 已从白名单移除")

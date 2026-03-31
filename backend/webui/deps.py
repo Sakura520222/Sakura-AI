@@ -71,7 +71,11 @@ def build_review_search_filter(search: str):
 
 
 async def paginate(
-    db: AsyncSession, query: Select, count_query: Select, page: int, per_page: int,
+    db: AsyncSession,
+    query: Select,
+    count_query: Select,
+    page: int,
+    per_page: int,
 ) -> tuple[list, int, int, int]:
     """执行分页查询，返回 (items, total, total_pages, page)"""
     total_result = await db.execute(count_query)
@@ -98,8 +102,11 @@ def get_csrf_serializer() -> URLSafeTimedSerializer:
     global _csrf_serializer
     if _csrf_serializer is None:
         from backend.core.config import get_settings
+
         _settings = get_settings()
-        _csrf_serializer = URLSafeTimedSerializer(_settings.webui_secret_key, salt="webui-csrf")
+        _csrf_serializer = URLSafeTimedSerializer(
+            _settings.webui_secret_key, salt="webui-csrf"
+        )
     return _csrf_serializer
 
 
@@ -134,15 +141,19 @@ def error_page(
 ) -> HTMLResponse:
     """渲染统一的错误页面"""
     templates = get_templates()
-    return templates.TemplateResponse("error.html", {
-        "request": request,
-        "status_code": status_code,
-        "title": title,
-        "message": message,
-        "current_user": user,
-        "csrf_token": get_csrf_serializer().dumps({}),
-        "user_prefs": user_prefs or {"language": "zh-CN", "items_per_page": 20},
-    }, status_code=status_code)
+    return templates.TemplateResponse(
+        "error.html",
+        {
+            "request": request,
+            "status_code": status_code,
+            "title": title,
+            "message": message,
+            "current_user": user,
+            "csrf_token": get_csrf_serializer().dumps({}),
+            "user_prefs": user_prefs or {"language": "zh-CN", "items_per_page": 20},
+        },
+        status_code=status_code,
+    )
 
 
 def toast_redirect(
@@ -156,6 +167,7 @@ def toast_redirect(
     通过 query params 传递 toast 信息，供前端 JS 拾取并显示。
     """
     from urllib.parse import urlencode
+
     params = {"_toast": message, "_toast_type": toast_type}
     separator = "&" if "?" in url else "?"
     return RedirectResponse(
@@ -187,7 +199,7 @@ async def get_current_user(request: Request) -> dict:
         raise HTTPException(status_code=401, detail="无效的登录凭证")
 
     return {
-        "sub": payload.get("sub") or "",     # github_username
+        "sub": payload.get("sub") or "",  # github_username
         "role": payload.get("role", "user"),
         "user_id": user_id,
         "github_id": payload.get("github_id"),
@@ -241,14 +253,16 @@ async def get_user_preferences(request: Request, db: AsyncSession = Depends(get_
             _USER_PREFS_CACHE.move_to_end(user_id)
             return prefs
 
-    result = await db.execute(
-        select(WebUIConfig).where(WebUIConfig.user_id == user_id)
-    )
+    result = await db.execute(select(WebUIConfig).where(WebUIConfig.user_id == user_id))
     config = result.scalar_one_or_none()
-    prefs = {
-        "language": config.language or "zh-CN",
-        "items_per_page": config.items_per_page or 20,
-    } if config else {"language": "zh-CN", "items_per_page": 20}
+    prefs = (
+        {
+            "language": config.language or "zh-CN",
+            "items_per_page": config.items_per_page or 20,
+        }
+        if config
+        else {"language": "zh-CN", "items_per_page": 20}
+    )
 
     # LRU 淘汰
     if len(_USER_PREFS_CACHE) >= _MAX_USER_PREFS_CACHE:
@@ -277,9 +291,10 @@ async def get_active_repos(db: AsyncSession) -> list[str]:
             return repos
 
     from backend.models.telegram_models import RepoSubscription
+
     result = await db.execute(
         select(RepoSubscription.repo_name)
-        .where(RepoSubscription.is_active == True)
+        .where(RepoSubscription.is_active)
         .order_by(RepoSubscription.repo_name)
     )
     repos = [r[0] for r in result.all()]

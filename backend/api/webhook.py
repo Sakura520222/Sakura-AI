@@ -284,7 +284,9 @@ async def handle_issue_comment_event(payload: Dict[str, Any]) -> JSONResponse:
 
         # 检查是否为 /full-review 指令（精确匹配，避免误匹配 /full-review-extra 等）
         if not re.match(r"^/full-review(\s|$)", comment_body):
-            return JSONResponse(content={"status": "ignored", "reason": "not a review command"})
+            return JSONResponse(
+                content={"status": "ignored", "reason": "not a review command"}
+            )
 
         # 检查是否为PR评论（排除普通Issue）
         issue = payload.get("issue", {})
@@ -293,7 +295,9 @@ async def handle_issue_comment_event(payload: Dict[str, Any]) -> JSONResponse:
             comment_body_check = payload.get("comment", {}).get("body", "").strip()
             if re.match(r"^/analyze(\s|$)", comment_body_check):
                 return await handle_issue_analyze_command(payload)
-            return JSONResponse(content={"status": "ignored", "reason": "not a recognized command"})
+            return JSONResponse(
+                content={"status": "ignored", "reason": "not a recognized command"}
+            )
 
         # 提取PR信息
         repo_info = payload.get("repository", {})
@@ -348,8 +352,7 @@ async def handle_issue_comment_event(payload: Dict[str, Any]) -> JSONResponse:
 
         if not is_pr_author and not is_collaborator:
             logger.info(
-                f"用户 {commenter_login} 无权触发重新审查 "
-                f"(非PR作者且非仓库协作者)"
+                f"用户 {commenter_login} 无权触发重新审查 (非PR作者且非仓库协作者)"
             )
             # 回复评论提示无权限
             try:
@@ -362,7 +365,9 @@ async def handle_issue_comment_event(payload: Dict[str, Any]) -> JSONResponse:
                     )
             except Exception as e:
                 logger.warning(f"回复无权限提示失败: {e}")
-            return JSONResponse(content={"status": "denied", "reason": "insufficient permission"})
+            return JSONResponse(
+                content={"status": "denied", "reason": "insufficient permission"}
+            )
 
         # 通过 GitHub API 获取完整 PR 信息
         try:
@@ -382,9 +387,7 @@ async def handle_issue_comment_event(payload: Dict[str, Any]) -> JSONResponse:
                     content={"status": "skipped", "reason": "PR not open"}
                 )
             if pr.draft:
-                return JSONResponse(
-                    content={"status": "skipped", "reason": "draft PR"}
-                )
+                return JSONResponse(content={"status": "skipped", "reason": "draft PR"})
             if pr.merged:
                 return JSONResponse(
                     content={"status": "skipped", "reason": "already merged"}
@@ -432,7 +435,6 @@ async def handle_issue_comment_event(payload: Dict[str, Any]) -> JSONResponse:
                 repo_owner, repo_name, pr_number, bot_username
             )
 
-        total_deleted = deleted_result["issue_comments"] + deleted_result["review_comments"]
         logger.info(
             f"清理完成: Issue评论={deleted_result['issue_comments']}, "
             f"Review评论={deleted_result['review_comments']}, 撤回Review={dismissed_reviews}"
@@ -499,7 +501,9 @@ async def handle_issue_comment_event(payload: Dict[str, Any]) -> JSONResponse:
         try:
             cleanup_info = []
             if deleted_result["review_comments"] > 0:
-                cleanup_info.append(f"删除 {deleted_result['review_comments']} 条行内评论")
+                cleanup_info.append(
+                    f"删除 {deleted_result['review_comments']} 条行内评论"
+                )
             if deleted_result["issue_comments"] > 0:
                 cleanup_info.append(f"删除 {deleted_result['issue_comments']} 条评论")
             if dismissed_reviews > 0:
@@ -507,8 +511,7 @@ async def handle_issue_comment_event(payload: Dict[str, Any]) -> JSONResponse:
             cleanup_text = "、".join(cleanup_info) if cleanup_info else "无需清理"
 
             pr.create_issue_comment(
-                f"已{cleanup_text}，正在重新全量审查...\n\n"
-                f"由 @{commenter_login} 触发"
+                f"已{cleanup_text}，正在重新全量审查...\n\n由 @{commenter_login} 触发"
             )
         except Exception as e:
             logger.warning(f"发送确认评论失败: {e}")
@@ -558,13 +561,17 @@ async def handle_issue_event(payload: Dict[str, Any]) -> JSONResponse:
         # 过滤 Bot 自身事件
         bot_username = settings.bot_username
         if bot_username and issue_info.get("author") == bot_username:
-            logger.info(f"跳过 Bot 自身创建的 Issue 事件")
-            return JSONResponse(content={"status": "ignored", "reason": "bot self-event"})
+            logger.info("跳过 Bot 自身创建的 Issue 事件")
+            return JSONResponse(
+                content={"status": "ignored", "reason": "bot self-event"}
+            )
 
         # 检查功能是否启用
         if not settings.enable_issue_analysis:
             logger.info("Issue 分析功能未启用")
-            return JSONResponse(content={"status": "skipped", "reason": "feature disabled"})
+            return JSONResponse(
+                content={"status": "skipped", "reason": "feature disabled"}
+            )
 
         # Telegram 权限检查
         notification_sender = get_notification_sender()
@@ -574,19 +581,32 @@ async def handle_issue_event(payload: Dict[str, Any]) -> JSONResponse:
             github_username = issue_info.get("author", "")
             if not github_username:
                 logger.warning("无法获取 Issue 作者")
-                return JSONResponse(content={"status": "skipped", "reason": "unknown author"})
+                return JSONResponse(
+                    content={"status": "skipped", "reason": "unknown author"}
+                )
 
             user = await service.get_user_by_github_username(github_username)
             if not user:
                 logger.info(f"Issue 作者未注册: {github_username}，跳过分析")
-                return JSONResponse(content={"status": "skipped", "reason": "unregistered user"})
+                return JSONResponse(
+                    content={"status": "skipped", "reason": "unregistered user"}
+                )
 
             role_lower = user.role.lower().strip() if user.role else ""
             if role_lower not in ["admin", "super_admin"]:
-                is_authorized = await service.is_authorized_repo(issue_info["repo_full_name"])
+                is_authorized = await service.is_authorized_repo(
+                    issue_info["repo_full_name"]
+                )
                 if not is_authorized:
-                    logger.warning(f"未授权的仓库: {issue_info['repo_full_name']}, user: {github_username}, role: {user.role}")
-                    return JSONResponse(content={"status": "skipped", "reason": "unauthorized repository"})
+                    logger.warning(
+                        f"未授权的仓库: {issue_info['repo_full_name']}, user: {github_username}, role: {user.role}"
+                    )
+                    return JSONResponse(
+                        content={
+                            "status": "skipped",
+                            "reason": "unauthorized repository",
+                        }
+                    )
 
             # Issue 配额检查
             allowed, reason = await service.check_and_consume_issue_quota(
@@ -604,11 +624,16 @@ async def handle_issue_event(payload: Dict[str, Any]) -> JSONResponse:
                         reason=reason,
                     )
                 return JSONResponse(
-                    content={"status": "skipped", "reason": "quota exceeded", "detail": reason}
+                    content={
+                        "status": "skipped",
+                        "reason": "quota exceeded",
+                        "detail": reason,
+                    }
                 )
 
         # 提交分析任务
         from backend.workers.issue_worker import submit_issue_analysis_task
+
         task_id = await submit_issue_analysis_task(issue_info)
 
         logger.info(
@@ -647,11 +672,15 @@ async def handle_issue_analyze_command(payload: Dict[str, Any]) -> JSONResponse:
         bot_username = settings.bot_username
         commenter = payload.get("comment", {}).get("user", {}).get("login", "")
         if bot_username and commenter == bot_username:
-            return JSONResponse(content={"status": "ignored", "reason": "bot self-comment"})
+            return JSONResponse(
+                content={"status": "ignored", "reason": "bot self-comment"}
+            )
 
         # 检查功能是否启用
         if not settings.enable_issue_analysis:
-            return JSONResponse(content={"status": "skipped", "reason": "feature disabled"})
+            return JSONResponse(
+                content={"status": "skipped", "reason": "feature disabled"}
+            )
 
         # 权限和配额检查
         notification_sender = get_notification_sender()
@@ -659,14 +688,25 @@ async def handle_issue_analyze_command(payload: Dict[str, Any]) -> JSONResponse:
             service = TelegramService(session)
             user = await service.get_user_by_github_username(commenter)
             if not user:
-                return JSONResponse(content={"status": "skipped", "reason": "unregistered user"})
+                return JSONResponse(
+                    content={"status": "skipped", "reason": "unregistered user"}
+                )
 
             role_lower = user.role.lower().strip() if user.role else ""
             if role_lower not in ["admin", "super_admin"]:
-                is_authorized = await service.is_authorized_repo(issue_info["repo_full_name"])
+                is_authorized = await service.is_authorized_repo(
+                    issue_info["repo_full_name"]
+                )
                 if not is_authorized:
-                    logger.warning(f"未授权的仓库: {issue_info['repo_full_name']}, user: {commenter}, role: {user.role}")
-                    return JSONResponse(content={"status": "skipped", "reason": "unauthorized repository"})
+                    logger.warning(
+                        f"未授权的仓库: {issue_info['repo_full_name']}, user: {commenter}, role: {user.role}"
+                    )
+                    return JSONResponse(
+                        content={
+                            "status": "skipped",
+                            "reason": "unauthorized repository",
+                        }
+                    )
 
             allowed, reason = await service.check_and_consume_issue_quota(
                 github_username=commenter,
@@ -683,11 +723,16 @@ async def handle_issue_analyze_command(payload: Dict[str, Any]) -> JSONResponse:
                         reason=reason,
                     )
                 return JSONResponse(
-                    content={"status": "skipped", "reason": "quota exceeded", "detail": reason}
+                    content={
+                        "status": "skipped",
+                        "reason": "quota exceeded",
+                        "detail": reason,
+                    }
                 )
 
         # 提交分析任务
         from backend.workers.issue_worker import submit_issue_analysis_task
+
         task_id = await submit_issue_analysis_task(issue_info)
 
         logger.info(

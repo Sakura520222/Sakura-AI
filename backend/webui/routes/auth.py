@@ -14,7 +14,12 @@ from sqlalchemy import select
 from backend.models.telegram_models import TelegramUser
 from backend.models import database as db_module
 from backend.webui.auth import create_access_token, decode_access_token
-from backend.webui.deps import get_templates, validate_csrf_token, get_csrf_serializer, toast_redirect
+from backend.webui.deps import (
+    get_templates,
+    validate_csrf_token,
+    get_csrf_serializer,
+    toast_redirect,
+)
 from backend.core.config import get_settings
 from backend.core.redis import get_redis
 
@@ -32,20 +37,28 @@ _MAX_FALLBACK_STATES = 1000
 def _cleanup_expired_states():
     """清理过期的 OAuth state"""
     now = time.time()
-    expired = [s for s, d in _oauth_states_fallback.items() if d.get("expires", 0) <= now]
+    expired = [
+        s for s, d in _oauth_states_fallback.items() if d.get("expires", 0) <= now
+    ]
     for s in expired:
         _oauth_states_fallback.pop(s, None)
 
 
-def _oauth_error(request: Request, error_msg: str, has_oauth: bool = True, status_code: int = 400):
+def _oauth_error(
+    request: Request, error_msg: str, has_oauth: bool = True, status_code: int = 400
+):
     """统一的 OAuth 错误页面响应"""
-    return templates.TemplateResponse("login.html", {
-        "request": request,
-        "csrf_token": get_csrf_serializer().dumps({}),
-        "error": error_msg,
-        "app_version": APP_VERSION,
-        "has_oauth": has_oauth,
-    }, status_code=status_code)
+    return templates.TemplateResponse(
+        "login.html",
+        {
+            "request": request,
+            "csrf_token": get_csrf_serializer().dumps({}),
+            "error": error_msg,
+            "app_version": APP_VERSION,
+            "has_oauth": has_oauth,
+        },
+        status_code=status_code,
+    )
 
 
 def _save_oauth_state(state: str, redirect: str):
@@ -61,7 +74,10 @@ def _save_oauth_state(state: str, redirect: str):
         if len(_oauth_states_fallback) >= _MAX_FALLBACK_STATES:
             logger.warning("OAuth fallback cache 已满，拒绝新请求")
             raise HTTPException(status_code=503, detail="服务暂时不可用，请稍后重试")
-        _oauth_states_fallback[state] = {"redirect": redirect, "expires": time.time() + _OAUTH_STATE_TTL}
+        _oauth_states_fallback[state] = {
+            "redirect": redirect,
+            "expires": time.time() + _OAUTH_STATE_TTL,
+        }
 
 
 def _get_oauth_state(state: str):
@@ -103,13 +119,16 @@ async def login_page(request: Request):
     settings = get_settings()
     has_oauth = bool(settings.github_oauth_client_id)
 
-    return templates.TemplateResponse("login.html", {
-        "request": request,
-        "csrf_token": get_csrf_serializer().dumps({}),
-        "error": None,
-        "app_version": APP_VERSION,
-        "has_oauth": has_oauth,
-    })
+    return templates.TemplateResponse(
+        "login.html",
+        {
+            "request": request,
+            "csrf_token": get_csrf_serializer().dumps({}),
+            "error": None,
+            "app_version": APP_VERSION,
+            "has_oauth": has_oauth,
+        },
+    )
 
 
 @router.get("/github")
@@ -119,11 +138,21 @@ async def github_login(request: Request):
 
     if not settings.github_oauth_client_id:
         logger.error("GitHub OAuth 未配置：缺少 GITHUB_OAUTH_CLIENT_ID")
-        return _oauth_error(request, "GitHub OAuth 未配置，请联系管理员设置 Client ID", has_oauth=False, status_code=500)
+        return _oauth_error(
+            request,
+            "GitHub OAuth 未配置，请联系管理员设置 Client ID",
+            has_oauth=False,
+            status_code=500,
+        )
 
     if not settings.github_oauth_redirect_uri:
         logger.error("GitHub OAuth 未配置：缺少 GITHUB_OAUTH_REDIRECT_URI")
-        return _oauth_error(request, "GitHub OAuth 未配置，请联系管理员设置回调地址", has_oauth=False, status_code=500)
+        return _oauth_error(
+            request,
+            "GitHub OAuth 未配置，请联系管理员设置回调地址",
+            has_oauth=False,
+            status_code=500,
+        )
 
     # 生成 state 防止 CSRF
     state = secrets.token_urlsafe(32)
@@ -184,7 +213,9 @@ async def github_callback(
             )
 
         if token_response.status_code != 200:
-            logger.error(f"GitHub OAuth token 交换失败: status={token_response.status_code}, body={token_response.text}")
+            logger.error(
+                f"GitHub OAuth token 交换失败: status={token_response.status_code}, body={token_response.text}"
+            )
             return _oauth_error(request, "获取访问令牌失败，请重试")
 
         token_data = token_response.json()
@@ -205,7 +236,9 @@ async def github_callback(
             )
 
         if user_response.status_code != 200:
-            logger.error(f"GitHub OAuth 用户信息获取失败: status={user_response.status_code}")
+            logger.error(
+                f"GitHub OAuth 用户信息获取失败: status={user_response.status_code}"
+            )
             return _oauth_error(request, "获取用户信息失败，请重试", status_code=502)
 
         gh_user = user_response.json()
@@ -233,14 +266,18 @@ async def github_callback(
         result = await session.execute(
             select(TelegramUser).where(
                 TelegramUser.github_username == github_username,
-                TelegramUser.is_active == True,
+                TelegramUser.is_active,
             )
         )
         user = result.scalar_one_or_none()
 
     if not user:
         logger.info(f"GitHub OAuth: 用户 {github_username} 未在系统中注册")
-        return _oauth_error(request, f"用户 @{github_username} 未注册。请先通过 Telegram Bot 注册后再登录。", status_code=403)
+        return _oauth_error(
+            request,
+            f"用户 @{github_username} 未注册。请先通过 Telegram Bot 注册后再登录。",
+            status_code=403,
+        )
 
     # 创建 JWT
     token_data = {
@@ -259,7 +296,8 @@ async def github_callback(
 
     response = RedirectResponse(url=redirect_target, status_code=302)
     response.set_cookie(
-        "webui_token", jwt_token,
+        "webui_token",
+        jwt_token,
         httponly=True,
         secure=settings.webui_cookie_secure,
         max_age=86400,  # 24小时

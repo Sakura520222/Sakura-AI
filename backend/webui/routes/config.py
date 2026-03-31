@@ -5,10 +5,9 @@ import re
 import shutil
 import tempfile
 from pathlib import Path
-from typing import Optional
 
 import yaml
-from fastapi import APIRouter, Request, Depends, Form, Query, HTTPException
+from fastapi import APIRouter, Request, Depends, Form, HTTPException
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -42,8 +41,8 @@ LABELS_PATH = Path("config/labels.yaml")
 STRATEGY_KEYS = ["quick", "standard", "deep", "large"]
 
 # 标签验证规则（匹配 GitHub 标签命名规范）
-_LABEL_NAME_RE = re.compile(r'^[a-zA-Z0-9.\-_/ ]+$')
-_LABEL_COLOR_RE = re.compile(r'^[0-9a-fA-F]{6}$')
+_LABEL_NAME_RE = re.compile(r"^[a-zA-Z0-9.\-_/ ]+$")
+_LABEL_COLOR_RE = re.compile(r"^[0-9a-fA-F]{6}$")
 _MAX_LABEL_NAME_LEN = 100
 
 # 按配置文件路径 keyed 的异步锁，防止并发读-改-写竞态
@@ -53,7 +52,9 @@ _config_locks: dict[str, asyncio.Lock] = {}
 def _validate_label(name: str, color: str):
     """验证标签名称和颜色格式，不合法时抛出 ValueError"""
     if len(name) > _MAX_LABEL_NAME_LEN:
-        raise ValueError(f"标签名称过长（最多 {_MAX_LABEL_NAME_LEN} 字符）: {name[:20]}...")
+        raise ValueError(
+            f"标签名称过长（最多 {_MAX_LABEL_NAME_LEN} 字符）: {name[:20]}..."
+        )
     if not _LABEL_NAME_RE.match(name):
         raise ValueError(f"标签名称包含非法字符: {name}")
     if not _LABEL_COLOR_RE.match(color):
@@ -78,13 +79,17 @@ def _atomic_yaml_write(path: Path, full_config: dict):
 
     先写临时文件，再 rename，确保不会因写入中途出错而损坏配置。
     """
-    yaml_str = yaml.dump(full_config, allow_unicode=True, default_flow_style=False, sort_keys=False)
+    yaml_str = yaml.dump(
+        full_config, allow_unicode=True, default_flow_style=False, sort_keys=False
+    )
     # round-trip 验证
     parsed = yaml.safe_load(yaml_str)
     if parsed is None:
         raise ValueError("YAML 序列化验证失败")
 
-    fd, tmp_path = tempfile.mkstemp(dir=str(path.parent), suffix=".tmp", prefix=f"{path.stem}_")
+    fd, tmp_path = tempfile.mkstemp(
+        dir=str(path.parent), suffix=".tmp", prefix=f"{path.stem}_"
+    )
     try:
         with open(fd, "w", encoding="utf-8") as f:
             f.write(yaml_str)
@@ -104,6 +109,7 @@ def _load_yaml(path: Path) -> dict:
 
 # ========== GET: 策略配置页 ==========
 
+
 @router.get("/strategies")
 async def strategies_page(
     request: Request,
@@ -114,22 +120,26 @@ async def strategies_page(
     config_data = get_strategy_config().config
     tab = request.query_params.get("tab", "strategies")
 
-    return templates.TemplateResponse("config_strategies.html", {
-        "request": request,
-        "current_user": user,
-        "csrf_token": get_csrf_serializer().dumps({}),
-        "active_page": "config_strategies",
-        "user_prefs": user_prefs,
-        "strategies": config_data.get("strategies", {}),
-        "file_filters": config_data.get("file_filters", {}),
-        "batch": config_data.get("batch", {}),
-        "context_enhancement": config_data.get("context_enhancement", {}),
-        "review_policy": config_data.get("review_policy", {}),
-        "active_tab": tab,
-    })
+    return templates.TemplateResponse(
+        "config_strategies.html",
+        {
+            "request": request,
+            "current_user": user,
+            "csrf_token": get_csrf_serializer().dumps({}),
+            "active_page": "config_strategies",
+            "user_prefs": user_prefs,
+            "strategies": config_data.get("strategies", {}),
+            "file_filters": config_data.get("file_filters", {}),
+            "batch": config_data.get("batch", {}),
+            "context_enhancement": config_data.get("context_enhancement", {}),
+            "review_policy": config_data.get("review_policy", {}),
+            "active_tab": tab,
+        },
+    )
 
 
 # ========== POST: 保存策略配置 ==========
+
 
 @router.post("/strategies/save")
 async def save_strategies_section(
@@ -157,9 +167,13 @@ async def save_strategies_section(
                     except (ValueError, TypeError) as e:
                         raise ValueError(f"[{key}] 数值格式错误: {e}")
                     if not 1 <= max_files <= 100000:
-                        raise ValueError(f"[{key}] max_files 须在 1-100000 之间: {max_files}")
+                        raise ValueError(
+                            f"[{key}] max_files 须在 1-100000 之间: {max_files}"
+                        )
                     if not 1 <= max_lines <= 10000000:
-                        raise ValueError(f"[{key}] max_lines 须在 1-10000000 之间: {max_lines}")
+                        raise ValueError(
+                            f"[{key}] max_lines 须在 1-10000000 之间: {max_lines}"
+                        )
                     prompt = form.get(f"strategy_{key}_prompt", "")
                     strategies[key] = {
                         "name": name,
@@ -173,9 +187,15 @@ async def save_strategies_section(
                 skip_paths_raw = form.get("skip_paths", "")
                 code_ext_raw = form.get("code_extensions", "")
                 config["file_filters"] = {
-                    "skip_extensions": [x.strip() for x in skip_ext_raw.splitlines() if x.strip()],
-                    "skip_paths": [x.strip() for x in skip_paths_raw.splitlines() if x.strip()],
-                    "code_extensions": [x.strip() for x in code_ext_raw.splitlines() if x.strip()],
+                    "skip_extensions": [
+                        x.strip() for x in skip_ext_raw.splitlines() if x.strip()
+                    ],
+                    "skip_paths": [
+                        x.strip() for x in skip_paths_raw.splitlines() if x.strip()
+                    ],
+                    "code_extensions": [
+                        x.strip() for x in code_ext_raw.splitlines() if x.strip()
+                    ],
                 }
 
             elif section == "batch":
@@ -186,14 +206,18 @@ async def save_strategies_section(
 
             elif section == "context_enhancement":
                 config["context_enhancement"] = {
-                    "enable_project_structure": form.get("enable_project_structure") is not None,
+                    "enable_project_structure": form.get("enable_project_structure")
+                    is not None,
                     "max_structure_files": int(form.get("max_structure_files", 500)),
                     "enable_ai_tools": form.get("enable_ai_tools") is not None,
                     "max_tool_iterations": int(form.get("max_tool_iterations", 20)),
                     "max_file_size": int(form.get("max_file_size", 200000)),
-                    "enable_ai_tools_in_batch": form.get("enable_ai_tools_in_batch") is not None,
+                    "enable_ai_tools_in_batch": form.get("enable_ai_tools_in_batch")
+                    is not None,
                     "max_file_lines": int(float(form.get("max_file_lines", 500))),
-                    "default_context_lines": int(float(form.get("default_context_lines", 20))),
+                    "default_context_lines": int(
+                        float(form.get("default_context_lines", 20))
+                    ),
                     "max_context_lines": int(float(form.get("max_context_lines", 200))),
                 }
 
@@ -205,10 +229,15 @@ async def save_strategies_section(
                     "block_on_critical": form.get("block_on_critical") is not None,
                     "max_major_issues": int(form.get("max_major_issues", 1)),
                     "ignored_patterns": [
-                        x.strip() for x in form.get("ignored_patterns", "").splitlines() if x.strip()
+                        x.strip()
+                        for x in form.get("ignored_patterns", "").splitlines()
+                        if x.strip()
                     ],
-                    "repo_overrides": config.get("review_policy", {}).get("repo_overrides", {}),
-                    "enable_idempotency_check": form.get("enable_idempotency_check") is not None,
+                    "repo_overrides": config.get("review_policy", {}).get(
+                        "repo_overrides", {}
+                    ),
+                    "enable_idempotency_check": form.get("enable_idempotency_check")
+                    is not None,
                     "review_templates": {
                         "approve": form.get("template_approve", ""),
                         "request_changes": form.get("template_request_changes", ""),
@@ -221,22 +250,34 @@ async def save_strategies_section(
             _atomic_yaml_write(STRATEGIES_PATH, config)
             reload_strategy_config()
             logger.info(f"策略配置 [{section}] 已更新, by={user['sub']}")
-            await log_admin_action(db, user['user_id'], "config_save", "strategy", section)
+            await log_admin_action(
+                db, user["user_id"], "config_save", "strategy", section
+            )
 
     except (ValueError, yaml.YAMLError) as e:
         logger.error(f"配置验证失败: {e}")
-        return toast_redirect(f"/webui/config/strategies?tab={section}", f"配置验证失败: {e}", "error")
+        return toast_redirect(
+            f"/webui/config/strategies?tab={section}", f"配置验证失败: {e}", "error"
+        )
     except PermissionError as e:
         logger.error(f"文件权限不足: {e}")
-        return toast_redirect(f"/webui/config/strategies?tab={section}", "文件权限不足", "error")
+        return toast_redirect(
+            f"/webui/config/strategies?tab={section}", "文件权限不足", "error"
+        )
     except Exception as e:
         logger.error(f"策略配置保存异常: {e}", exc_info=True)
-        return toast_redirect(f"/webui/config/strategies?tab={section}", "保存失败，请稍后重试", "error")
+        return toast_redirect(
+            f"/webui/config/strategies?tab={section}", "保存失败，请稍后重试", "error"
+        )
 
-    return toast_redirect(f"/webui/config/strategies?tab={section}", f"策略配置 [{section}] 已保存并即时生效")
+    return toast_redirect(
+        f"/webui/config/strategies?tab={section}",
+        f"策略配置 [{section}] 已保存并即时生效",
+    )
 
 
 # ========== GET: 标签配置页 ==========
+
 
 @router.get("/labels")
 async def labels_page(
@@ -246,18 +287,22 @@ async def labels_page(
 ):
     """渲染标签配置页"""
     label_config = get_label_config()
-    return templates.TemplateResponse("config_labels.html", {
-        "request": request,
-        "current_user": user,
-        "csrf_token": get_csrf_serializer().dumps({}),
-        "active_page": "config_labels",
-        "user_prefs": user_prefs,
-        "labels": label_config.get_labels(),
-        "recommendation": label_config.get_recommendation_settings(),
-    })
+    return templates.TemplateResponse(
+        "config_labels.html",
+        {
+            "request": request,
+            "current_user": user,
+            "csrf_token": get_csrf_serializer().dumps({}),
+            "active_page": "config_labels",
+            "user_prefs": user_prefs,
+            "labels": label_config.get_labels(),
+            "recommendation": label_config.get_recommendation_settings(),
+        },
+    )
 
 
 # ========== POST: 保存标签定义 ==========
+
 
 @router.post("/labels/save-labels")
 async def save_labels_definitions(
@@ -277,10 +322,14 @@ async def save_labels_definitions(
             labels = {}
             for key in form:
                 if key.startswith("label_name_"):
-                    idx = key[len("label_name_"):]
+                    idx = key[len("label_name_") :]
                     name = str(form[key]).strip()
                     if name:
-                        color = str(form.get(f"label_color_{idx}", "0366d6")).strip().lstrip("#")
+                        color = (
+                            str(form.get(f"label_color_{idx}", "0366d6"))
+                            .strip()
+                            .lstrip("#")
+                        )
                         if not color:
                             raise ValueError(f"标签颜色不能为空: {name}")
                         desc = str(form.get(f"label_desc_{idx}", "")).strip()
@@ -292,7 +341,14 @@ async def save_labels_definitions(
             reload_label_config()
             label_service.reload_labels()
             logger.info(f"标签定义已更新 ({len(labels)} 个), by={user['sub']}")
-            await log_admin_action(db, user['user_id'], "config_save", "label", None, {"label_count": len(labels)})
+            await log_admin_action(
+                db,
+                user["user_id"],
+                "config_save",
+                "label",
+                None,
+                {"label_count": len(labels)},
+            )
 
     except ValueError as e:
         logger.warning(f"标签验证失败: {e}")
@@ -305,6 +361,7 @@ async def save_labels_definitions(
 
 
 # ========== POST: 保存推荐设置 ==========
+
 
 @router.post("/labels/save-settings")
 async def save_recommendation_settings(
@@ -322,7 +379,9 @@ async def save_recommendation_settings(
 
             confidence_threshold = float(form.get("confidence_threshold", 0.7))
             if not 0.0 <= confidence_threshold <= 1.0:
-                raise ValueError(f"置信度阈值必须在 0.0-1.0 之间: {confidence_threshold}")
+                raise ValueError(
+                    f"置信度阈值必须在 0.0-1.0 之间: {confidence_threshold}"
+                )
 
             config["recommendation"] = {
                 "enabled": form.get("rec_enabled") is not None,
@@ -333,7 +392,7 @@ async def save_recommendation_settings(
             _atomic_yaml_write(LABELS_PATH, config)
             reload_label_config()
             logger.info(f"标签推荐设置已更新, by={user['sub']}")
-            await log_admin_action(db, user['user_id'], "config_save", "recommendation")
+            await log_admin_action(db, user["user_id"], "config_save", "recommendation")
 
     except (ValueError, yaml.YAMLError) as e:
         logger.error(f"推荐设置验证失败: {e}")
@@ -346,6 +405,7 @@ async def save_recommendation_settings(
 
 
 # ========== GET: 全局配置页 ==========
+
 
 @router.get("/general")
 async def general_config_page(
@@ -360,18 +420,22 @@ async def general_config_page(
 
     from backend.webui.routes.auth import APP_VERSION
 
-    return templates.TemplateResponse("config_general.html", {
-        "request": request,
-        "current_user": user,
-        "csrf_token": get_csrf_serializer().dumps({}),
-        "active_page": "config_general",
-        "user_prefs": user_prefs,
-        "configs": configs,
-        "app_version": APP_VERSION,
-    })
+    return templates.TemplateResponse(
+        "config_general.html",
+        {
+            "request": request,
+            "current_user": user,
+            "csrf_token": get_csrf_serializer().dumps({}),
+            "active_page": "config_general",
+            "user_prefs": user_prefs,
+            "configs": configs,
+            "app_version": APP_VERSION,
+        },
+    )
 
 
 # ========== POST: 保存全局配置 ==========
+
 
 @router.post("/general/save")
 async def save_general_config(
@@ -390,11 +454,18 @@ async def save_general_config(
         if raw is not None:
             val = int(raw)
             if not 1 <= val <= 100:
-                return toast_redirect("/webui/config/general", "参数验证失败，请检查输入值", "error")
-            result = await db.execute(select(AppConfig).where(AppConfig.key_name == "max_concurrent_reviews"))
+                return toast_redirect(
+                    "/webui/config/general", "参数验证失败，请检查输入值", "error"
+                )
+            result = await db.execute(
+                select(AppConfig).where(AppConfig.key_name == "max_concurrent_reviews")
+            )
             cfg = result.scalar_one_or_none()
             if cfg and cfg.key_value != str(val):
-                changed["max_concurrent_reviews"] = {"old": cfg.key_value, "new": str(val)}
+                changed["max_concurrent_reviews"] = {
+                    "old": cfg.key_value,
+                    "new": str(val),
+                }
                 cfg.key_value = str(val)
 
         # review_timeout_seconds
@@ -402,32 +473,49 @@ async def save_general_config(
         if raw is not None:
             val = int(raw)
             if not 10 <= val <= 3600:
-                return toast_redirect("/webui/config/general", "参数验证失败，请检查输入值", "error")
-            result = await db.execute(select(AppConfig).where(AppConfig.key_name == "review_timeout_seconds"))
+                return toast_redirect(
+                    "/webui/config/general", "参数验证失败，请检查输入值", "error"
+                )
+            result = await db.execute(
+                select(AppConfig).where(AppConfig.key_name == "review_timeout_seconds")
+            )
             cfg = result.scalar_one_or_none()
             if cfg and cfg.key_value != str(val):
-                changed["review_timeout_seconds"] = {"old": cfg.key_value, "new": str(val)}
+                changed["review_timeout_seconds"] = {
+                    "old": cfg.key_value,
+                    "new": str(val),
+                }
                 cfg.key_value = str(val)
 
         # enable_auto_review (checkbox: "true" if checked, absent if unchecked)
         raw = form.get("enable_auto_review")
         val = "true" if raw == "true" else "false"
-        result = await db.execute(select(AppConfig).where(AppConfig.key_name == "enable_auto_review"))
+        result = await db.execute(
+            select(AppConfig).where(AppConfig.key_name == "enable_auto_review")
+        )
         cfg = result.scalar_one_or_none()
         if cfg and cfg.key_value != val:
             changed["enable_auto_review"] = {"old": cfg.key_value, "new": val}
             cfg.key_value = val
 
         if not changed:
-            return toast_redirect("/webui/config/general", "全局配置已保存（部分配置需重启后生效）")
+            return toast_redirect(
+                "/webui/config/general", "全局配置已保存（部分配置需重启后生效）"
+            )
 
         await db.commit()
         logger.info(f"全局配置已更新, by={user['sub']}, changed={list(changed.keys())}")
-        await log_admin_action(db, user['user_id'], "config_save", "global", None, changed)
-        return toast_redirect("/webui/config/general", "全局配置已保存（部分配置需重启后生效）")
+        await log_admin_action(
+            db, user["user_id"], "config_save", "global", None, changed
+        )
+        return toast_redirect(
+            "/webui/config/general", "全局配置已保存（部分配置需重启后生效）"
+        )
 
     except ValueError:
-        return toast_redirect("/webui/config/general", "参数验证失败，请检查输入值", "error")
+        return toast_redirect(
+            "/webui/config/general", "参数验证失败，请检查输入值", "error"
+        )
     except Exception as e:
         logger.error(f"全局配置保存失败: {e}", exc_info=True)
         return toast_redirect("/webui/config/general", "保存失败，请稍后重试", "error")

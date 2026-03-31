@@ -5,11 +5,11 @@ import math
 import threading
 from typing import Dict, Any, List, Optional, Tuple
 from datetime import datetime
-from sqlalchemy import select, func, desc, and_, or_
+from sqlalchemy import select, func, desc, and_
 from sqlalchemy.ext.asyncio import AsyncSession
 from loguru import logger
 
-from backend.models.database import Base, IssueAnalysis, IssueAnalysisStatus
+from backend.models.database import IssueAnalysis, IssueAnalysisStatus
 from backend.core.github_app import GitHubAppClient
 from backend.core.config import get_settings, get_strategy_config
 
@@ -34,28 +34,33 @@ class IssueService:
             self.__class__._initialized = True
 
     async def save_analysis_result(
-        self, analysis_data: Dict[str, Any], issue_info: Dict[str, Any], db: AsyncSession
+        self,
+        analysis_data: Dict[str, Any],
+        issue_info: Dict[str, Any],
+        db: AsyncSession,
     ) -> Optional[IssueAnalysis]:
         """保存分析结果到数据库（更新已有的 PENDING 记录，而非创建新记录）"""
-        from datetime import datetime
 
         # 查找已有的 PENDING/ANALYZING 记录
         conditions = [
             IssueAnalysis.repo_name == issue_info["repo_name"],
             IssueAnalysis.issue_number == issue_info["issue_number"],
-            IssueAnalysis.status.in_([
-                IssueAnalysisStatus.PENDING.value,
-                IssueAnalysisStatus.ANALYZING.value,
-            ]),
+            IssueAnalysis.status.in_(
+                [
+                    IssueAnalysisStatus.PENDING.value,
+                    IssueAnalysisStatus.ANALYZING.value,
+                ]
+            ),
         ]
         if "analysis_version" in issue_info:
             conditions.append(
                 IssueAnalysis.analysis_version == issue_info["analysis_version"]
             )
         result = await db.execute(
-            select(IssueAnalysis).where(
-                and_(*conditions)
-            ).order_by(IssueAnalysis.created_at.desc()).limit(1)
+            select(IssueAnalysis)
+            .where(and_(*conditions))
+            .order_by(IssueAnalysis.created_at.desc())
+            .limit(1)
         )
         record = result.scalar_one_or_none()
 
@@ -67,11 +72,17 @@ class IssueService:
         record.priority = analysis_data.get("priority")
         record.summary = analysis_data.get("summary")
         record.feasibility = analysis_data.get("feasibility")
-        record.suggested_assignees = json.dumps(analysis_data.get("suggested_assignees", []), ensure_ascii=False)
-        record.suggested_labels = json.dumps(analysis_data.get("suggested_labels", []), ensure_ascii=False)
+        record.suggested_assignees = json.dumps(
+            analysis_data.get("suggested_assignees", []), ensure_ascii=False
+        )
+        record.suggested_labels = json.dumps(
+            analysis_data.get("suggested_labels", []), ensure_ascii=False
+        )
         record.suggested_milestone = analysis_data.get("suggested_milestone")
         record.duplicate_of = analysis_data.get("duplicate_of")
-        record.related_prs = json.dumps(analysis_data.get("related_prs", []), ensure_ascii=False)
+        record.related_prs = json.dumps(
+            analysis_data.get("related_prs", []), ensure_ascii=False
+        )
         record.analysis_detail = json.dumps(analysis_data, ensure_ascii=False)
         record.status = IssueAnalysisStatus.COMPLETED.value
         record.prompt_tokens = analysis_data.get("prompt_tokens", 0)
@@ -88,12 +99,15 @@ class IssueService:
     ) -> Optional[IssueAnalysis]:
         """获取 Issue 的分析记录"""
         result = await db.execute(
-            select(IssueAnalysis).where(
+            select(IssueAnalysis)
+            .where(
                 and_(
                     IssueAnalysis.repo_name == repo_name,
                     IssueAnalysis.issue_number == issue_number,
                 )
-            ).order_by(desc(IssueAnalysis.created_at)).limit(1)
+            )
+            .order_by(desc(IssueAnalysis.created_at))
+            .limit(1)
         )
         return result.scalar_one_or_none()
 
@@ -136,8 +150,11 @@ class IssueService:
 
     async def post_analysis_comment(
         self,
-        repo_owner: str, repo_name: str, issue_number: int,
-        analysis: IssueAnalysis, db: AsyncSession,
+        repo_owner: str,
+        repo_name: str,
+        issue_number: int,
+        analysis: IssueAnalysis,
+        db: AsyncSession,
     ) -> bool:
         """发布分析评论到 Issue"""
         config = get_strategy_config().get_issue_analysis_config()
@@ -148,14 +165,22 @@ class IssueService:
 
         labels = []
         try:
-            labels_data = json.loads(analysis.suggested_labels) if analysis.suggested_labels else []
-            labels = [f"`{l['name']}`" for l in labels_data[:5]]
+            labels_data = (
+                json.loads(analysis.suggested_labels)
+                if analysis.suggested_labels
+                else []
+            )
+            labels = [f"`{label['name']}`" for label in labels_data[:5]]
         except (json.JSONDecodeError, TypeError):
             pass
 
         assignees = []
         try:
-            assignees_data = json.loads(analysis.suggested_assignees) if analysis.suggested_assignees else []
+            assignees_data = (
+                json.loads(analysis.suggested_assignees)
+                if analysis.suggested_assignees
+                else []
+            )
             assignees = [f"@{a['username']}" for a in assignees_data[:3]]
         except (json.JSONDecodeError, TypeError):
             pass
@@ -192,15 +217,15 @@ class IssueService:
 
     async def apply_suggested_labels(
         self,
-        repo_owner: str, repo_name: str, issue_number: int,
-        suggested_labels: list, db: AsyncSession,
+        repo_owner: str,
+        repo_name: str,
+        issue_number: int,
+        suggested_labels: list,
+        db: AsyncSession,
     ) -> Dict[str, Any]:
         """应用建议标签"""
         settings = get_settings()
         threshold = settings.issue_confidence_threshold
-        auto_create = settings.issue_auto_create_labels
-
-        high_confidence = [l for l in suggested_labels if l.get("confidence", 0) >= threshold]
         applied = []
         suggested = []
 
@@ -221,7 +246,11 @@ class IssueService:
         return {"applied": [], "suggested": suggested}
 
     async def detect_duplicates(
-        self, repo_owner: str, repo_name: str, title: str, body: str,
+        self,
+        repo_owner: str,
+        repo_name: str,
+        title: str,
+        body: str,
         current_issue_number: int = None,
     ) -> List[Dict[str, Any]]:
         """检测重复 Issue（GitHub Search API + AI 相似度二次筛选）"""
@@ -242,6 +271,7 @@ class IssueService:
         # AI 相似度二次筛选
         try:
             from backend.services.embedding_service import get_embedding_service
+
             embedding_service = get_embedding_service()
 
             current_text = f"{title}\n{body or ''}"
@@ -255,12 +285,14 @@ class IssueService:
             for i, candidate in enumerate(candidates):
                 sim = self._cosine_similarity(current_emb, embeddings[i + 1])
                 if sim >= 0.75:
-                    results.append({
-                        "issue_number": candidate.number,
-                        "title": candidate.title,
-                        "state": candidate.state,
-                        "similarity": round(sim, 3),
-                    })
+                    results.append(
+                        {
+                            "issue_number": candidate.number,
+                            "title": candidate.title,
+                            "state": candidate.state,
+                            "similarity": round(sim, 3),
+                        }
+                    )
 
             results.sort(key=lambda x: x["similarity"], reverse=True)
             return results[:5]
@@ -283,21 +315,30 @@ class IssueService:
         return dot / (norm_a * norm_b)
 
     async def find_related_prs(
-        self, repo_owner: str, repo_name: str, issue_number: int,
+        self,
+        repo_owner: str,
+        repo_name: str,
+        issue_number: int,
     ) -> List[Dict[str, Any]]:
         """查找与 Issue 相关的 PRs"""
         query = f"fixes #{issue_number}"
         results = self.github_app.search_issues(
-            repo_owner, repo_name, query, "open", 10,
+            repo_owner,
+            repo_name,
+            query,
+            "open",
+            10,
             search_type="pr",
         )
         prs = []
         for item in results:
-            prs.append({
-                "number": item.number,
-                "title": item.title,
-                "state": item.state,
-            })
+            prs.append(
+                {
+                    "number": item.number,
+                    "title": item.title,
+                    "state": item.state,
+                }
+            )
         return prs
 
     async def get_issue_stats(self, db: AsyncSession) -> Dict[str, Any]:
@@ -321,16 +362,30 @@ class IssueService:
         total_completion_tokens = total_completion_result.scalar() or 0
 
         category_stats = {}
-        for cat in ["bug", "feature", "question", "documentation", "enhancement", "performance", "security", "refactor", "other"]:
+        for cat in [
+            "bug",
+            "feature",
+            "question",
+            "documentation",
+            "enhancement",
+            "performance",
+            "security",
+            "refactor",
+            "other",
+        ]:
             result = await db.execute(
-                select(func.count(IssueAnalysis.id)).where(IssueAnalysis.category == cat)
+                select(func.count(IssueAnalysis.id)).where(
+                    IssueAnalysis.category == cat
+                )
             )
             category_stats[cat] = result.scalar() or 0
 
         priority_stats = {}
         for pri in ["critical", "high", "medium", "low"]:
             result = await db.execute(
-                select(func.count(IssueAnalysis.id)).where(IssueAnalysis.priority == pri)
+                select(func.count(IssueAnalysis.id)).where(
+                    IssueAnalysis.priority == pri
+                )
             )
             priority_stats[pri] = result.scalar() or 0
 

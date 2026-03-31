@@ -12,6 +12,7 @@ ACCESS_TOKEN_EXPIRE_HOURS = 24
 def create_access_token(data: dict, expires_delta: Optional[timedelta] = None) -> str:
     """创建 JWT 访问令牌"""
     from backend.core.config import get_settings
+
     _settings = get_settings()
 
     to_encode = data.copy()
@@ -25,6 +26,7 @@ def create_access_token(data: dict, expires_delta: Optional[timedelta] = None) -
 def decode_access_token(token: str) -> Optional[dict]:
     """解码 JWT 令牌，失败返回 None"""
     from backend.core.config import get_settings
+
     _settings = get_settings()
 
     try:

@@ -7,7 +7,7 @@ import redis
 from loguru import logger
 from backend.core.config import get_settings
 
-_client_context = contextvars.ContextVar('redis_client', default=None)
+_client_context = contextvars.ContextVar("redis_client", default=None)
 
 
 def _cleanup_client(client):

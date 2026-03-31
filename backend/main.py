@@ -37,7 +37,9 @@ async def lifespan(app: FastAPI):
 
     # 检测默认 JWT 密钥
     if settings.webui_secret_key == "change-me-in-production":
-        logger.warning("⚠️  WebUI JWT 密钥使用默认值！请设置 WEBUI_SECRET_KEY 环境变量，否则令牌可被伪造。")
+        logger.warning(
+            "⚠️  WebUI JWT 密钥使用默认值！请设置 WEBUI_SECRET_KEY 环境变量，否则令牌可被伪造。"
+        )
 
     # 初始化数据库
     try:

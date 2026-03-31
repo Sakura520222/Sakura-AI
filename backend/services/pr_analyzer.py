@@ -1,6 +1,7 @@
 """PR分析服务"""
 
 from typing import Dict, List, Optional, Tuple, TypedDict
+
 try:
     from typing import NotRequired
 except ImportError:
@@ -14,11 +15,13 @@ from backend.core.github_app import GitHubAppClient
 
 class CommitInfo(TypedDict):
     """提交信息"""
+
     sha: str
     title: str
     message: str
     body: NotRequired[str]  # commit 正文，可能为空
     author: str
+
 
 settings = get_settings()
 
@@ -123,15 +126,27 @@ class PRAnalyzer:
                     commit_msg = commit.commit.message.strip()
                     # 取第一行作为标题，其余作为正文
                     first_newline = commit_msg.find("\n")
-                    title = commit_msg[:first_newline] if first_newline != -1 else commit_msg
-                    body = commit_msg[first_newline + 1:].strip() if first_newline != -1 else ""
-                    new_commits.append({
-                        "sha": commit.sha[:8],
-                        "message": commit_msg,
-                        "title": title,
-                        "body": body,
-                        "author": commit.commit.author.name if commit.commit.author else "Unknown",
-                    })
+                    title = (
+                        commit_msg[:first_newline]
+                        if first_newline != -1
+                        else commit_msg
+                    )
+                    body = (
+                        commit_msg[first_newline + 1 :].strip()
+                        if first_newline != -1
+                        else ""
+                    )
+                    new_commits.append(
+                        {
+                            "sha": commit.sha[:8],
+                            "message": commit_msg,
+                            "title": title,
+                            "body": body,
+                            "author": commit.commit.author.name
+                            if commit.commit.author
+                            else "Unknown",
+                        }
+                    )
 
                 logger.info(
                     f"增量审查模式: 对比 {before_sha[:8]}... → {after_sha[:8]}..., "

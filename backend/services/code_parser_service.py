@@ -348,14 +348,11 @@ class CodeParserService:
         function_pattern = re.compile(
             r"^(\s*)(?:function\s+(\w+)|(?:const|let|var)\s+(\w+)\s*=\s*(?:async\s+)?\(|\(\w+\)\s*=>)"
         )
-        method_pattern = re.compile(r"^(\s*)(\w+)\s*\(")
-
         current_chunk = []
         current_class = None
         current_function = None
         start_line = 1
         brace_count = 0
-        in_function = False
 
         for i, line in enumerate(lines, 1):
             current_chunk.append(line)
@@ -398,7 +395,6 @@ class CodeParserService:
                     start_line = i
                 func_name = function_match.group(2) or function_match.group(3)
                 current_function = func_name
-                in_function = True
                 continue
 
             # 检查块大小
@@ -452,7 +448,6 @@ class CodeParserService:
 
         # Go语法模式
         func_pattern = re.compile(r"^func\s+(?:\(\s*\w+\s+\*?\w+\s*\)\s+)?(\w+)")
-        type_pattern = re.compile(r"^type\s+(\w+)\s+struct")
 
         current_chunk = []
         current_function = None

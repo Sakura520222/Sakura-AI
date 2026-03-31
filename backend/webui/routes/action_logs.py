@@ -1,13 +1,18 @@
 """WebUI 操作日志路由"""
 
 from fastapi import APIRouter, Request, Depends, Query
-from fastapi.responses import HTMLResponse
 from sqlalchemy import select, func, desc
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.models.admin_action_log import AdminActionLog
 from backend.models.telegram_models import TelegramUser
-from backend.webui.deps import require_admin, get_db, get_templates, get_csrf_serializer, get_user_preferences
+from backend.webui.deps import (
+    require_admin,
+    get_db,
+    get_templates,
+    get_csrf_serializer,
+    get_user_preferences,
+)
 
 router = APIRouter(prefix="/logs/actions", tags=["WebUI Action Logs"])
 templates = get_templates()
@@ -36,13 +41,16 @@ async def action_logs_page(
     user_prefs: dict = Depends(get_user_preferences),
 ):
     """操作日志页面（管理员专用）"""
-    return templates.TemplateResponse("action_logs.html", {
-        "request": request,
-        "current_user": user,
-        "csrf_token": get_csrf_serializer().dumps({}),
-        "active_page": "action_logs",
-        "user_prefs": user_prefs,
-    })
+    return templates.TemplateResponse(
+        "action_logs.html",
+        {
+            "request": request,
+            "current_user": user,
+            "csrf_token": get_csrf_serializer().dumps({}),
+            "active_page": "action_logs",
+            "user_prefs": user_prefs,
+        },
+    )
 
 
 @router.get("/list-fragment")
@@ -63,9 +71,8 @@ async def action_log_list_fragment(
     if per_page is None:
         per_page = user_prefs["items_per_page"]
 
-    query = (
-        select(AdminActionLog, TelegramUser.github_username)
-        .outerjoin(TelegramUser, AdminActionLog.admin_id == TelegramUser.id)
+    query = select(AdminActionLog, TelegramUser.github_username).outerjoin(
+        TelegramUser, AdminActionLog.admin_id == TelegramUser.id
     )
     count_query = select(func.count(AdminActionLog.id))
 
@@ -81,7 +88,9 @@ async def action_log_list_fragment(
             pass
     if end_date:
         try:
-            ed = datetime.strptime(end_date, "%Y-%m-%d").replace(hour=23, minute=59, second=59)
+            ed = datetime.strptime(end_date, "%Y-%m-%d").replace(
+                hour=23, minute=59, second=59
+            )
             query = query.where(AdminActionLog.created_at <= ed)
             count_query = count_query.where(AdminActionLog.created_at <= ed)
         except ValueError:
@@ -98,16 +107,19 @@ async def action_log_list_fragment(
     result = await db.execute(query.offset((page - 1) * per_page).limit(per_page))
     logs = result.all()
 
-    return templates.TemplateResponse("components/action_log_list_fragment.html", {
-        "request": request,
-        "logs": logs,
-        "action": action,
-        "start_date": start_date,
-        "end_date": end_date,
-        "page": page,
-        "total_pages": total_pages,
-        "total": total,
-        "per_page": per_page,
-        "action_labels": ACTION_LABELS,
-        "target_type_labels": TARGET_TYPE_LABELS,
-    })
+    return templates.TemplateResponse(
+        "components/action_log_list_fragment.html",
+        {
+            "request": request,
+            "logs": logs,
+            "action": action,
+            "start_date": start_date,
+            "end_date": end_date,
+            "page": page,
+            "total_pages": total_pages,
+            "total": total,
+            "per_page": per_page,
+            "action_labels": ACTION_LABELS,
+            "target_type_labels": TARGET_TYPE_LABELS,
+        },
+    )
