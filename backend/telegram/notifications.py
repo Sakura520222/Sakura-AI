@@ -24,13 +24,15 @@ class NotificationSender:
 
         async def send_single(chat_id: int):
             try:
-                async with asyncio.timeout(5):
-                    await self.bot.send_message(
+                await asyncio.wait_for(
+                    self.bot.send_message(
                         chat_id=chat_id,
                         text=text,
                         parse_mode=parse_mode,
                         **kwargs,
-                    )
+                    ),
+                    timeout=5,
+                )
             except asyncio.TimeoutError:
                 logger.warning(f"发送通知到 {chat_id} 超时")
             except Exception as e:

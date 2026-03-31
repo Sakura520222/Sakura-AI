@@ -453,7 +453,6 @@ class TelegramService:
             role = UserRole.USER
             multiplier = settings.register_quota_multiplier
 
-        multiplier = max(0.1, min(1.0, multiplier))
         user = TelegramUser(
             telegram_id=telegram_id,
             github_username=github_username,
