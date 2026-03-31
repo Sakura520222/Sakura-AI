@@ -1,5 +1,6 @@
 """Telegram 通知发送器"""
 
+import asyncio
 from typing import Optional, List
 from telegram import Bot
 from telegram.helpers import escape_markdown
@@ -20,16 +21,22 @@ class NotificationSender:
         self, text: str, chat_ids: List[int], parse_mode: str = "Markdown", **kwargs
     ):
         """向多个目标发送消息，单个失败不影响其他"""
-        for chat_id in chat_ids:
+
+        async def send_single(chat_id: int):
             try:
-                await self.bot.send_message(
-                    chat_id=chat_id,
-                    text=text,
-                    parse_mode=parse_mode,
-                    **kwargs,
-                )
+                async with asyncio.timeout(5):
+                    await self.bot.send_message(
+                        chat_id=chat_id,
+                        text=text,
+                        parse_mode=parse_mode,
+                        **kwargs,
+                    )
+            except asyncio.TimeoutError:
+                logger.warning(f"发送通知到 {chat_id} 超时")
             except Exception as e:
                 logger.warning(f"发送通知到 {chat_id} 失败: {e}")
+
+        await asyncio.gather(*(send_single(cid) for cid in chat_ids))
 
     async def send_review_start(
         self,

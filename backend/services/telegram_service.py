@@ -453,6 +453,7 @@ class TelegramService:
             role = UserRole.USER
             multiplier = settings.register_quota_multiplier
 
+        multiplier = max(0.1, min(1.0, multiplier))
         user = TelegramUser(
             telegram_id=telegram_id,
             github_username=github_username,
@@ -464,8 +465,13 @@ class TelegramService:
             issue_weekly_quota=max(1, int(80 * multiplier)),
             issue_monthly_quota=max(1, int(300 * multiplier)),
         )
-        self.session.add(user)
-        await self.session.commit()
+        try:
+            self.session.add(user)
+            await self.session.commit()
+        except Exception as e:
+            await self.session.rollback()
+            logger.error(f"用户注册失败: {e}", exc_info=True)
+            return False, f"注册失败: {str(e)}"
 
         quota_info = (
             f"\n📊 配额（×{multiplier}）:\n"
@@ -500,9 +506,14 @@ class TelegramService:
         if result.scalar_one_or_none():
             return False, f"已订阅 {repo_name}"
 
-        sub = UserRepoSubscription(telegram_id=telegram_id, repo_name=repo_name)
-        self.session.add(sub)
-        await self.session.commit()
+        try:
+            sub = UserRepoSubscription(telegram_id=telegram_id, repo_name=repo_name)
+            self.session.add(sub)
+            await self.session.commit()
+        except Exception as e:
+            await self.session.rollback()
+            logger.error(f"订阅仓库失败: {e}", exc_info=True)
+            return False, f"订阅失败: {str(e)}"
         return True, f"已订阅 {repo_name}"
 
     async def unsubscribe_repo(
@@ -521,8 +532,13 @@ class TelegramService:
         if not sub:
             return False, f"未订阅 {repo_name}"
 
-        await self.session.delete(sub)
-        await self.session.commit()
+        try:
+            await self.session.delete(sub)
+            await self.session.commit()
+        except Exception as e:
+            await self.session.rollback()
+            logger.error(f"取消订阅仓库失败: {e}", exc_info=True)
+            return False, f"取消订阅失败: {str(e)}"
         return True, f"已取消订阅 {repo_name}"
 
     async def get_repo_subscribers(self, repo_name: str) -> List[int]:
