@@ -452,9 +452,7 @@ class GitHubAppClient:
                         error_msg = str(e)
                         # 已 dismiss 过的 review 忽略
                         if "Can not dismiss a dismissed" in error_msg:
-                            logger.debug(
-                                f"跳过已dismiss的Review (id={review.id})"
-                            )
+                            logger.debug(f"跳过已dismiss的Review (id={review.id})")
                         # COMMENTED 状态的 review 无法 dismiss，改为折叠旧内容
                         elif "Can not dismiss a commented" in error_msg:
                             try:
@@ -783,9 +781,7 @@ class GitHubAppClient:
                                         f"    [{i}] {file_path}:{start_line}-{line_number}"
                                     )
                                 else:
-                                    logger.error(
-                                        f"    [{i}] {file_path}:{line_number}"
-                                    )
+                                    logger.error(f"    [{i}] {file_path}:{line_number}")
 
                 # 422 行号/路径无法解析时，降级为无行内评论的 Review
                 if is_resolvable_error and body and inline_comments:
@@ -832,7 +828,6 @@ class GitHubAppClient:
             # 备选方案：从配置文件读取
             return getattr(settings, "bot_username", None)
 
-
     def get_issue(self, repo_owner: str, repo_name: str, issue_number: int):
         """获取 Issue 详情"""
         client = self.get_repo_client(repo_owner, repo_name)
@@ -840,12 +835,18 @@ class GitHubAppClient:
         try:
             return repo.get_issue(issue_number)
         except Exception as e:
-            logger.error(f"获取 Issue 失败: {repo_owner}/{repo_name}#{issue_number}: {e}")
+            logger.error(
+                f"获取 Issue 失败: {repo_owner}/{repo_name}#{issue_number}: {e}"
+            )
             return None
 
     def get_repo_issues(
-        self, repo_owner: str, repo_name: str,
-        state: str = "open", labels: list = None, per_page: int = 30,
+        self,
+        repo_owner: str,
+        repo_name: str,
+        state: str = "open",
+        labels: list = None,
+        per_page: int = 30,
     ) -> list:
         """获取仓库的 Issues 列表"""
         client = self.get_repo_client(repo_owner, repo_name)
@@ -857,8 +858,12 @@ class GitHubAppClient:
             return []
 
     def search_issues(
-        self, repo_owner: str, repo_name: str, query: str,
-        state: str = "open", per_page: int = 10,
+        self,
+        repo_owner: str,
+        repo_name: str,
+        query: str,
+        state: str = "open",
+        per_page: int = 10,
         search_type: str = "issue",
     ) -> list:
         """搜索仓库的 Issues 或 PRs
@@ -868,7 +873,9 @@ class GitHubAppClient:
         """
         client = self.get_repo_client(repo_owner, repo_name)
         try:
-            type_qual = f"is:{search_type}" if search_type in ("issue", "pr") else "is:issue"
+            type_qual = (
+                f"is:{search_type}" if search_type in ("issue", "pr") else "is:issue"
+            )
             qual = f"repo:{repo_owner}/{repo_name} {query} {type_qual} is:{state}"
             return list(client.search_issues(qual)[:per_page])
         except IndexError:
@@ -887,7 +894,9 @@ class GitHubAppClient:
             repo.get_issue(issue_number).create_comment(body)
             return True
         except Exception as e:
-            logger.error(f"创建 Issue 评论失败: {repo_owner}/{repo_name}#{issue_number}: {e}")
+            logger.error(
+                f"创建 Issue 评论失败: {repo_owner}/{repo_name}#{issue_number}: {e}"
+            )
             return False
 
     def add_labels_to_issue(
@@ -901,7 +910,9 @@ class GitHubAppClient:
             issue.add_to_labels(*label_names)
             return True
         except Exception as e:
-            logger.error(f"添加 Issue 标签失败: {repo_owner}/{repo_name}#{issue_number}: {e}")
+            logger.error(
+                f"添加 Issue 标签失败: {repo_owner}/{repo_name}#{issue_number}: {e}"
+            )
             return False
 
     def get_repo_collaborators(self, repo_owner: str, repo_name: str) -> list:
@@ -914,13 +925,19 @@ class GitHubAppClient:
             logger.warning(f"获取协作者列表失败（权限不足或API限制）: {e}")
             return []
 
-    def get_repo_milestones(self, repo_owner: str, repo_name: str, state: str = "open") -> list:
+    def get_repo_milestones(
+        self, repo_owner: str, repo_name: str, state: str = "open"
+    ) -> list:
         """获取仓库的里程碑列表"""
         try:
             client = self.get_repo_client(repo_owner, repo_name)
             repo = client.get_repo(f"{repo_owner}/{repo_name}")
             return [
-                {"number": m.number, "title": m.title, "description": m.description or ""}
+                {
+                    "number": m.number,
+                    "title": m.title,
+                    "description": m.description or "",
+                }
                 for m in repo.get_milestones(state=state)
             ]
         except Exception as e:
@@ -1001,7 +1018,9 @@ def extract_pr_info_from_webhook(payload: Dict[str, Any]) -> Optional[Dict[str, 
         return None
 
 
-def extract_issue_info_from_webhook(payload: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+def extract_issue_info_from_webhook(
+    payload: Dict[str, Any],
+) -> Optional[Dict[str, Any]]:
     """从 Webhook payload 中提取 Issue 信息"""
     action = payload.get("action", "")
     if not action:

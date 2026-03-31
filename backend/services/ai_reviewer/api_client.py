@@ -136,7 +136,9 @@ class AIApiClient:
 
                 # 成功返回
                 total_time = asyncio.get_event_loop().time() - start_time
-                logger.info(f"✅ AI调用成功（耗时 {total_time:.1f}秒，重试 {attempt} 次）")
+                logger.info(
+                    f"✅ AI调用成功（耗时 {total_time:.1f}秒，重试 {attempt} 次）"
+                )
                 return response
 
             except Exception as e:

@@ -9,7 +9,7 @@
 """
 
 import re
-from typing import Any, Dict, List
+from typing import Any, Dict
 
 from backend.core.config import get_strategy_config
 
@@ -46,9 +46,7 @@ class PromptBuilder:
             total_changes = analysis.code_changes
         else:
             file_count = len(context.get("files", []))
-            total_changes = sum(
-                f.get("changes", 0) for f in context.get("files", [])
-            )
+            total_changes = sum(f.get("changes", 0) for f in context.get("files", []))
 
         # 获取策略名称
         strategy_config_data = get_strategy_config().get_strategy(strategy)
@@ -103,7 +101,9 @@ class PromptBuilder:
         linked_issues = context.get("linked_issues", [])
         if linked_issues:
             message_parts.append("\n## 关联 Issue")
-            message_parts.append("此 PR 关联了以下 Issue，请参考 Issue 的上下文进行审查：\n")
+            message_parts.append(
+                "此 PR 关联了以下 Issue，请参考 Issue 的上下文进行审查：\n"
+            )
             for issue in linked_issues:
                 message_parts.append(f"### #{issue['number']}: {issue['title']}")
                 message_parts.append(f"- 状态: {issue.get('state', 'unknown')}")
@@ -279,11 +279,15 @@ class PromptBuilder:
 
         # 增量审查时，添加新提交的标题和内容
         analysis = context.get("analysis")
-        if analysis and getattr(analysis, "is_incremental", False) and getattr(analysis, "new_commits", None):
+        if (
+            analysis
+            and getattr(analysis, "is_incremental", False)
+            and getattr(analysis, "new_commits", None)
+        ):
             lines.append("## 本次新增提交")
             for commit in analysis.new_commits:
-                title = commit.get('title', '无标题')
-                author = commit.get('author', 'Unknown')
+                title = commit.get("title", "无标题")
+                author = commit.get("author", "Unknown")
                 lines.append(f"- **{commit.get('sha', '')}** {title}（by {author}）")
                 body = commit.get("body")
                 if body:
@@ -304,9 +308,7 @@ class PromptBuilder:
             total_changes = analysis.code_changes
         else:
             file_count = len(context.get("files", []))
-            total_changes = sum(
-                f.get("changes", 0) for f in context.get("files", [])
-            )
+            total_changes = sum(f.get("changes", 0) for f in context.get("files", []))
 
         # 添加代码变更信息
         files = context.get("files", [])

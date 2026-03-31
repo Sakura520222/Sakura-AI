@@ -10,6 +10,7 @@ from backend.models.database import Base
 
 class AdminActionLog(Base):
     """管理员操作日志"""
+
     __tablename__ = "admin_action_logs"
 
     id = Column(Integer, primary_key=True, autoincrement=True)

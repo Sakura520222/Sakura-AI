@@ -228,11 +228,20 @@ class TelegramService:
             await self.session.refresh(user)
 
             if user.issue_daily_used >= user.issue_daily_quota:
-                return False, f"Issue 每日配额已用完 ({user.issue_daily_used}/{user.issue_daily_quota})"
+                return (
+                    False,
+                    f"Issue 每日配额已用完 ({user.issue_daily_used}/{user.issue_daily_quota})",
+                )
             elif user.issue_weekly_used >= user.issue_weekly_quota:
-                return False, f"Issue 每周配额已用完 ({user.issue_weekly_used}/{user.issue_weekly_quota})"
+                return (
+                    False,
+                    f"Issue 每周配额已用完 ({user.issue_weekly_used}/{user.issue_weekly_quota})",
+                )
             elif user.issue_monthly_used >= user.issue_monthly_quota:
-                return False, f"Issue 每月配额已用完 ({user.issue_monthly_used}/{user.issue_monthly_quota})"
+                return (
+                    False,
+                    f"Issue 每月配额已用完 ({user.issue_monthly_used}/{user.issue_monthly_quota})",
+                )
             else:
                 return False, "Issue 配额已用完"
 
@@ -252,7 +261,10 @@ class TelegramService:
         """重置过期的 Issue 配额"""
         now = datetime.utcnow()
 
-        if user.last_reset_issue_daily is None or user.last_reset_issue_daily.date() < now.date():
+        if (
+            user.last_reset_issue_daily is None
+            or user.last_reset_issue_daily.date() < now.date()
+        ):
             user.issue_daily_used = 0
             user.last_reset_issue_daily = now
 
@@ -262,7 +274,9 @@ class TelegramService:
         else:
             if user.last_reset_issue_weekly.date() < now.date():
                 week_start = now - timedelta(days=now.weekday())
-                week_start = week_start.replace(hour=0, minute=0, second=0, microsecond=0)
+                week_start = week_start.replace(
+                    hour=0, minute=0, second=0, microsecond=0
+                )
                 if user.last_reset_issue_weekly < week_start:
                     user.issue_weekly_used = 0
                     user.last_reset_issue_weekly = now
@@ -438,7 +452,10 @@ class TelegramService:
         # 检查 telegram_id 是否已存在
         existing_by_id = await self.get_user_by_telegram_id(telegram_id)
         if existing_by_id:
-            return False, f"该 Telegram 账号已注册（GitHub: {existing_by_id.github_username}）"
+            return (
+                False,
+                f"该 Telegram 账号已注册（GitHub: {existing_by_id.github_username}）",
+            )
 
         # 检查 github_username 是否已被占用
         existing_by_github = await self.get_user_by_github_username(github_username)
@@ -562,9 +579,7 @@ class TelegramService:
         )
         return list(result.scalars().all())
 
-    async def get_user_subscriptions(
-        self, telegram_id: int
-    ) -> List[str]:
+    async def get_user_subscriptions(self, telegram_id: int) -> List[str]:
         """获取用户订阅的所有仓库名称"""
         result = await self.session.execute(
             select(UserRepoSubscription.repo_name).where(

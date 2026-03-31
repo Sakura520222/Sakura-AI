@@ -76,6 +76,7 @@ class LabelService:
         """获取默认标签（优先从 labels.yaml 加载）"""
         try:
             from backend.core.config import get_label_config
+
             yaml_labels = get_label_config().get_labels()
             if yaml_labels:
                 return yaml_labels
@@ -87,6 +88,7 @@ class LabelService:
         """重新加载标签配置"""
         try:
             from backend.core.config import reload_label_config
+
             reload_label_config()
             self.clear_cache()
             logger.info("标签配置已重新加载")

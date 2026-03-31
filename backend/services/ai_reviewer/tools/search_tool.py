@@ -5,7 +5,7 @@
 - _tool_search_code_context (2770-2855行)
 """
 
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, Optional
 
 from loguru import logger
 
@@ -52,9 +52,7 @@ class SearchToolHandler:
             repo_full_name = f"{repo.owner.login}/{repo.name}"
 
             # 执行检索
-            logger.info(
-                f"🔍 检索项目文档: {repo_full_name}, query: {query[:50]}..."
-            )
+            logger.info(f"🔍 检索项目文档: {repo_full_name}, query: {query[:50]}...")
             docs = await rag_service.search_relevant_docs(
                 repo_full_name=repo_full_name,
                 query=query,

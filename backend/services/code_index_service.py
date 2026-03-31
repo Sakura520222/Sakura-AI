@@ -119,9 +119,7 @@ class CodeIndexService:
 
                     # 生成嵌入向量
                     chunk_texts = [chunk.content for chunk in chunks]
-                    embeddings = await self.embedding_service.embed_texts(
-                        chunk_texts
-                    )
+                    embeddings = await self.embedding_service.embed_texts(chunk_texts)
 
                     # 准备向量存储数据
                     vector_chunks = []
@@ -256,9 +254,7 @@ class CodeIndexService:
 
                     # 生成嵌入向量
                     chunk_texts = [chunk.content for chunk in chunks]
-                    embeddings = await self.embedding_service.embed_texts(
-                        chunk_texts
-                    )
+                    embeddings = await self.embedding_service.embed_texts(chunk_texts)
 
                     # 准备向量存储数据
                     vector_chunks = []

@@ -7,8 +7,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.models.database import WebUIConfig
 from backend.webui.deps import (
-    require_auth, get_db, get_templates, get_csrf_serializer,
-    require_csrf, get_user_preferences, toast_redirect,
+    require_auth,
+    get_db,
+    get_templates,
+    get_csrf_serializer,
+    require_csrf,
+    get_user_preferences,
+    toast_redirect,
     invalidate_user_prefs_cache,
 )
 
@@ -24,14 +29,17 @@ async def settings_page(
     user_prefs: dict = Depends(get_user_preferences),
 ):
     """渲染个人设置页面"""
-    return templates.TemplateResponse("settings.html", {
-        "request": request,
-        "current_user": user,
-        "csrf_token": get_csrf_serializer().dumps({}),
-        "active_page": "settings",
-        "user_prefs": user_prefs,
-        "items_per_page": user_prefs["items_per_page"],
-    })
+    return templates.TemplateResponse(
+        "settings.html",
+        {
+            "request": request,
+            "current_user": user,
+            "csrf_token": get_csrf_serializer().dumps({}),
+            "active_page": "settings",
+            "user_prefs": user_prefs,
+            "items_per_page": user_prefs["items_per_page"],
+        },
+    )
 
 
 @router.post("/")
@@ -64,7 +72,9 @@ async def save_settings(
 
     invalidate_user_prefs_cache(user["user_id"])
 
-    logger.info(f"WebUI 设置已更新: user={user['sub']}, items_per_page={items_per_page}")
+    logger.info(
+        f"WebUI 设置已更新: user={user['sub']}, items_per_page={items_per_page}"
+    )
     return toast_redirect("/webui/settings/", "设置已保存")
 
 
@@ -78,12 +88,15 @@ async def about_page(
     from datetime import datetime
     from backend.webui.routes.auth import APP_VERSION
 
-    return templates.TemplateResponse("about.html", {
-        "request": request,
-        "current_user": user,
-        "csrf_token": get_csrf_serializer().dumps({}),
-        "active_page": "about",
-        "user_prefs": user_prefs,
-        "app_version": APP_VERSION,
-        "build_date": datetime.utcnow().strftime('%Y-%m-%d'),
-    })
+    return templates.TemplateResponse(
+        "about.html",
+        {
+            "request": request,
+            "current_user": user,
+            "csrf_token": get_csrf_serializer().dumps({}),
+            "active_page": "about",
+            "user_prefs": user_prefs,
+            "app_version": APP_VERSION,
+            "build_date": datetime.utcnow().strftime("%Y-%m-%d"),
+        },
+    )

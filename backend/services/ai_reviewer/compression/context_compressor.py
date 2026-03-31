@@ -13,7 +13,7 @@ from typing import Any, Dict, List
 
 from loguru import logger
 
-from backend.core.config import get_settings, get_strategy_config
+from backend.core.config import get_strategy_config
 from backend.core.model_context import get_model_context_manager
 from backend.services.ai_reviewer.constants import DEFAULT_COMPRESSION_KEEP_ROUNDS
 
@@ -65,7 +65,9 @@ class ContextCompressor:
 
             # 保留 system 消息
             system_msg = (
-                messages[0] if messages and messages[0].get("role") == "system" else None
+                messages[0]
+                if messages and messages[0].get("role") == "system"
+                else None
             )
             if system_msg:
                 compressed_messages.append(system_msg)
@@ -99,13 +101,9 @@ class ContextCompressor:
 
             if total_kept < len(messages) - (1 if system_msg else 0):
                 # 有需要压缩的早期历史
-                early_end_idx = (
-                    len(messages) - total_kept - (1 if system_msg else 0)
-                )
+                early_end_idx = len(messages) - total_kept - (1 if system_msg else 0)
                 if early_end_idx > 0:
-                    early_history = messages[
-                        1 if system_msg else 0 : early_end_idx + 1
-                    ]
+                    early_history = messages[1 if system_msg else 0 : early_end_idx + 1]
 
             # 4. 如果有早期历史，进行压缩
             if early_history:
@@ -113,7 +111,9 @@ class ContextCompressor:
                     early_history, max_tokens
                 )
 
-                compressed_messages.append({"role": "user", "content": compressed_summary})
+                compressed_messages.append(
+                    {"role": "user", "content": compressed_summary}
+                )
 
                 # 添加保留的工具调用轮次
                 for round_msgs in tool_call_rounds:
@@ -171,9 +171,7 @@ class ContextCompressor:
                         early_history, tc.id
                     )
                     if tool_result:
-                        conversation_text += (
-                            f"- 结果: {str(tool_result)[:200]}...\n"
-                        )
+                        conversation_text += f"- 结果: {str(tool_result)[:200]}...\n"
             elif content:
                 conversation_text += f"\n## {role.upper()}\n{content}\n"
 
@@ -318,9 +316,7 @@ class ContextCompressor:
 
         return result
 
-    def _clean_message_for_model(
-        self, message: Dict[str, Any]
-    ) -> Dict[str, Any]:
+    def _clean_message_for_model(self, message: Dict[str, Any]) -> Dict[str, Any]:
         """清理消息中当前模型不支持的字段
 
         Args:

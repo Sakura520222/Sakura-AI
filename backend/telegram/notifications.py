@@ -68,7 +68,9 @@ class NotificationSender:
                 return
 
             await self._send_to_targets(text, chat_ids)
-            logger.info(f"✅ 发送审查开始通知: {repo_name}#{pr_number} → {len(chat_ids)} 人")
+            logger.info(
+                f"✅ 发送审查开始通知: {repo_name}#{pr_number} → {len(chat_ids)} 人"
+            )
 
         except Exception as e:
             logger.error(f"❌ 发送审查开始通知失败: {e}")
@@ -99,10 +101,10 @@ class NotificationSender:
                 logger.debug(f"无通知目标，跳过审查完成通知: {repo_name}#{pr_number}")
                 return
 
-            await self._send_to_targets(
-                text, chat_ids, disable_web_page_preview=True
+            await self._send_to_targets(text, chat_ids, disable_web_page_preview=True)
+            logger.info(
+                f"✅ 发送审查完成通知: {repo_name}#{pr_number} → {len(chat_ids)} 人"
             )
-            logger.info(f"✅ 发送审查完成通知: {repo_name}#{pr_number} → {len(chat_ids)} 人")
 
         except Exception as e:
             logger.error(f"❌ 发送审查完成通知失败: {e}")
@@ -245,11 +247,15 @@ class NotificationSender:
             text += f"\n[查看详情]({issue_url})"
 
             if not chat_ids:
-                logger.debug(f"无通知目标，跳过Issue分析完成通知: {repo_name}#{issue_number}")
+                logger.debug(
+                    f"无通知目标，跳过Issue分析完成通知: {repo_name}#{issue_number}"
+                )
                 return
 
             await self._send_to_targets(text, chat_ids)
-            logger.info(f"Issue 分析完成通知已发送: {repo_name}#{issue_number} → {len(chat_ids)} 人")
+            logger.info(
+                f"Issue 分析完成通知已发送: {repo_name}#{issue_number} → {len(chat_ids)} 人"
+            )
 
         except Exception as e:
             logger.error(f"发送 Issue 分析完成通知失败: {e}")
@@ -283,19 +289,15 @@ class NotificationSender:
                 f"📝 标题: {safe_title}\n"
             )
 
-            text += (
-                f"\n📋 *AI 摘要*\n"
-                f"{safe_summary}\n"
-            )
+            text += f"\n📋 *AI 摘要*\n{safe_summary}\n"
 
-            text += (
-                f"\n🔍 *可行性评估*\n"
-                f"{safe_feasibility}\n"
-            )
+            text += f"\n🔍 *可行性评估*\n{safe_feasibility}\n"
 
             if suggested_labels:
                 labels_str = ", ".join(
-                    l.get("name", "") for l in suggested_labels[:5] if isinstance(l, dict)
+                    l.get("name", "")
+                    for l in suggested_labels[:5]
+                    if isinstance(l, dict)
                 )
                 if labels_str:
                     safe_labels = escape_markdown(labels_str, version=1)
@@ -304,11 +306,15 @@ class NotificationSender:
             text += f"\n[查看详情]({issue_url})"
 
             if not chat_ids:
-                logger.debug(f"无通知目标，跳过Critical告警: {repo_name}#{issue_number}")
+                logger.debug(
+                    f"无通知目标，跳过Critical告警: {repo_name}#{issue_number}"
+                )
                 return
 
             await self._send_to_targets(text, chat_ids)
-            logger.info(f"Critical Issue 告警已发送: {repo_name}#{issue_number} → {len(chat_ids)} 人")
+            logger.info(
+                f"Critical Issue 告警已发送: {repo_name}#{issue_number} → {len(chat_ids)} 人"
+            )
 
         except Exception as e:
             logger.error(f"发送 Critical Issue 告警失败: {e}")

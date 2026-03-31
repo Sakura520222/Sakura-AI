@@ -32,9 +32,7 @@ class FileToolHandler:
             "default_context_lines": int(
                 ce.get("default_context_lines", DEFAULT_CONTEXT_LINES)
             ),
-            "max_context_lines": int(
-                ce.get("max_context_lines", MAX_CONTEXT_LINES)
-            ),
+            "max_context_lines": int(ce.get("max_context_lines", MAX_CONTEXT_LINES)),
         }
 
     async def read_file(
@@ -68,9 +66,7 @@ class FileToolHandler:
         """
         try:
             # 检查是否应该跳过该路径
-            skip_paths = get_strategy_config().get_file_filters().get(
-                "skip_paths", []
-            )
+            skip_paths = get_strategy_config().get_file_filters().get("skip_paths", [])
             for skip_path in skip_paths:
                 if file_path.startswith(skip_path.rstrip("/")):
                     logger.info(f"跳过读取文件（在skip_paths中）: {file_path}")
@@ -266,8 +262,7 @@ class FileToolHandler:
             if total_lines > max_file_lines:
                 truncated_lines = lines[:max_file_lines]
                 numbered_content = "\n".join(
-                    f"{i + 1:>6}\t{line}"
-                    for i, line in enumerate(truncated_lines)
+                    f"{i + 1:>6}\t{line}" for i, line in enumerate(truncated_lines)
                 )
                 logger.warning(
                     f"文件 {file_path} 过大 ({total_lines} 行)，已截断为前 {max_file_lines} 行"
@@ -325,9 +320,7 @@ class FileToolHandler:
         """
         try:
             # 检查是否应该跳过该路径
-            skip_paths = get_strategy_config().get_file_filters().get(
-                "skip_paths", []
-            )
+            skip_paths = get_strategy_config().get_file_filters().get("skip_paths", [])
             for skip_path in skip_paths:
                 if directory.startswith(skip_path.rstrip("/")):
                     logger.info(f"跳过列出目录（在skip_paths中）: {directory}")

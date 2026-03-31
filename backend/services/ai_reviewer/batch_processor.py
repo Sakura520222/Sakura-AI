@@ -600,9 +600,7 @@ class BatchProcessor:
             total_changes = analysis.code_changes
         else:
             file_count = len(context.get("files", []))
-            total_changes = sum(
-                f.get("changes", 0) for f in context.get("files", [])
-            )
+            total_changes = sum(f.get("changes", 0) for f in context.get("files", []))
 
         # 机械合并所有批次的详细数据
         mechanical_result = self.merge_batch_results(batch_results, strategy)
@@ -731,18 +729,14 @@ class BatchProcessor:
                 critical_issues = issues.get("critical", [])[:3]
                 summary_parts.append("\n**严重问题**:")
                 for issue in critical_issues:
-                    issue_str = (
-                        issue[:150] + "..." if len(issue) > 150 else issue
-                    )
+                    issue_str = issue[:150] + "..." if len(issue) > 150 else issue
                     summary_parts.append(f"  - {issue_str}")
 
             if major_count > 0:
                 major_issues = issues.get("major", [])[:3]
                 summary_parts.append("\n**重要问题**:")
                 for issue in major_issues[:2]:
-                    issue_str = (
-                        issue[:150] + "..." if len(issue) > 150 else issue
-                    )
+                    issue_str = issue[:150] + "..." if len(issue) > 150 else issue
                     summary_parts.append(f"  - {issue_str}")
 
             # 批次摘要
