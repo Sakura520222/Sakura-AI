@@ -33,6 +33,7 @@
 {% endblock %}
 
 {% block extra_scripts %}
+{{ super() }}
 {% include "components/dashboard_charts.js" %}
 <script>
 function dashboardInit() {
