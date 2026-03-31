@@ -73,6 +73,8 @@
 - **手动触发**：在 Issue 中评论 `/analyze` 即可手动触发分析
 - **独立配额**：Issue 分析拥有独立的日/周/月配额体系
 
+![Issues智能分析](res/Issues分析.png)
+
 ### 🔗 PR-Issue 智能关联
 
 - **自动识别**：从 PR 描述中解析 Issue 引用（fixes #123、closes #456 等）
