@@ -351,3 +351,139 @@ async def toggle_user_status(
     logger.info(f"用户状态已变更: user={target_user.github_username}, status={status}, by={user['sub']}")
     await log_admin_action(db, user['user_id'], "user_toggle", "user", str(user_id), {"is_active": target_user.is_active})
     return toast_redirect("/webui/users/", f"用户 {target_user.github_username} 已{status}")
+
+
+@router.post("/{user_id}/delete")
+async def delete_user(
+    request: Request,
+    user_id: int,
+    db: AsyncSession = Depends(get_db),
+    user: dict = Depends(require_super_admin),
+    csrf_token: str = Depends(require_csrf),
+) -> RedirectResponse:
+    """删除用户（仅超级管理员）"""
+    if user_id == user["user_id"]:
+        return toast_redirect("/webui/users/", "不能删除自己", "error")
+
+    result = await db.execute(
+        select(TelegramUser).where(TelegramUser.id == user_id)
+    )
+    target_user = result.scalar_one_or_none()
+    if not target_user:
+        return error_page(request, message="用户不存在", user=user)
+
+    github = target_user.github_username
+    tg_id = target_user.telegram_id
+    role = target_user.role
+
+    try:
+        await db.delete(target_user)
+        await db.commit()
+    except Exception as e:
+        logger.error(f"用户删除失败: {e}")
+        await db.rollback()
+        return toast_redirect(f"/webui/users/{user_id}", "用户删除失败", "error")
+
+    logger.info(f"用户已通过 WebUI 删除: id={user_id}, github={github}, telegram_id={tg_id}, by={user['sub']}")
+    await log_admin_action(db, user['user_id'], "user_delete", "user", str(user_id), {
+        "github_username": github,
+        "telegram_id": tg_id,
+        "role": role,
+    })
+    return toast_redirect("/webui/users/", f"用户 {github or tg_id} 已删除")
+
+
+@router.post("/{user_id}/info")
+async def update_user_info(
+    request: Request,
+    user_id: int,
+    db: AsyncSession = Depends(get_db),
+    user: dict = Depends(require_super_admin),
+    csrf_token: str = Depends(require_csrf),
+    telegram_id: int = Form(...),
+    github_username: str = Form(...),
+) -> RedirectResponse:
+    """修改用户基本信息（Telegram ID、GitHub 用户名）"""
+    if telegram_id <= 0:
+        return toast_redirect(f"/webui/users/{user_id}", "Telegram ID 必须为正整数", "error")
+
+    github_username = github_username.strip()
+    if not github_username:
+        return toast_redirect(f"/webui/users/{user_id}", "GitHub 用户名不能为空", "error")
+
+    result = await db.execute(
+        select(TelegramUser).where(TelegramUser.id == user_id)
+    )
+    target_user = result.scalar_one_or_none()
+    if not target_user:
+        return error_page(request, message="用户不存在", user=user)
+
+    # 检查 Telegram ID 唯一性（排除自身）
+    existing = await db.execute(
+        select(TelegramUser).where(TelegramUser.telegram_id == telegram_id, TelegramUser.id != user_id)
+    )
+    if existing.scalar_one_or_none():
+        return toast_redirect(f"/webui/users/{user_id}", f"Telegram ID {telegram_id} 已被其他用户使用", "error")
+
+    # 检查 GitHub 用户名唯一性（排除自身）
+    existing_gh = await db.execute(
+        select(TelegramUser).where(TelegramUser.github_username == github_username, TelegramUser.id != user_id)
+    )
+    if existing_gh.scalar_one_or_none():
+        return toast_redirect(f"/webui/users/{user_id}", f"GitHub 用户名 {github_username} 已被其他用户使用", "error")
+
+    old_tg_id = target_user.telegram_id
+    old_github = target_user.github_username
+    target_user.telegram_id = telegram_id
+    target_user.github_username = github_username
+    await db.commit()
+
+    logger.info(f"用户信息已变更: id={user_id}, {old_github}->{github_username}, {old_tg_id}->{telegram_id}, by={user['sub']}")
+    await log_admin_action(db, user['user_id'], "user_info", "user", str(user_id), {
+        "old_telegram_id": old_tg_id, "new_telegram_id": telegram_id,
+        "old_github_username": old_github, "new_github_username": github_username,
+    })
+    return toast_redirect(f"/webui/users/{user_id}", "用户基本信息已更新")
+
+
+@router.post("/{user_id}/reset-quota")
+async def reset_user_quota(
+    request: Request,
+    user_id: int,
+    db: AsyncSession = Depends(get_db),
+    user: dict = Depends(require_super_admin),
+    csrf_token: str = Depends(require_csrf),
+) -> RedirectResponse:
+    """重置用户配额使用量"""
+    result = await db.execute(
+        select(TelegramUser).where(TelegramUser.id == user_id)
+    )
+    target_user = result.scalar_one_or_none()
+    if not target_user:
+        return error_page(request, message="用户不存在", user=user)
+
+    from datetime import datetime, timezone
+    now = datetime.now(timezone.utc)
+
+    old_used = {
+        "daily": target_user.daily_used, "weekly": target_user.weekly_used, "monthly": target_user.monthly_used,
+        "issue_daily": target_user.issue_daily_used, "issue_weekly": target_user.issue_weekly_used, "issue_monthly": target_user.issue_monthly_used,
+    }
+
+    target_user.daily_used = 0
+    target_user.weekly_used = 0
+    target_user.monthly_used = 0
+    target_user.issue_daily_used = 0
+    target_user.issue_weekly_used = 0
+    target_user.issue_monthly_used = 0
+    target_user.last_reset_daily = now
+    target_user.last_reset_weekly = now
+    target_user.last_reset_monthly = now
+    target_user.last_reset_issue_daily = now
+    target_user.last_reset_issue_weekly = now
+    target_user.last_reset_issue_monthly = now
+    await db.commit()
+
+    logger.info(f"用户配额已重置: user={target_user.github_username}, by={user['sub']}")
+    await log_admin_action(db, user['user_id'], "user_reset_quota", "user", str(user_id), {"old_used": old_used})
+    return toast_redirect(f"/webui/users/{user_id}", f"用户 {target_user.github_username} 的配额使用量已重置")

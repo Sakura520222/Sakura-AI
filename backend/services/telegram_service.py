@@ -9,6 +9,7 @@ from loguru import logger
 from backend.models.telegram_models import (
     TelegramUser,
     RepoSubscription,
+    UserRepoSubscription,
     QuotaUsageLog,
     UserRole,
 )
@@ -429,3 +430,145 @@ class TelegramService:
             }
             for r in reviews
         ]
+
+    async def register_user(
+        self, telegram_id: int, github_username: str
+    ) -> Tuple[bool, str]:
+        """用户自注册（配额为默认值的 register_quota_multiplier 倍）"""
+        # 检查 telegram_id 是否已存在
+        existing_by_id = await self.get_user_by_telegram_id(telegram_id)
+        if existing_by_id:
+            return False, f"该 Telegram 账号已注册（GitHub: {existing_by_id.github_username}）"
+
+        # 检查 github_username 是否已被占用
+        existing_by_github = await self.get_user_by_github_username(github_username)
+        if existing_by_github:
+            return False, f"GitHub 用户名 {github_username} 已被其他账号绑定"
+
+        # 如果是超级管理员，自动设置角色为 super_admin，使用完整配额
+        if await self.is_super_admin(telegram_id):
+            role = UserRole.SUPER_ADMIN
+            multiplier = 1.0
+        else:
+            role = UserRole.USER
+            multiplier = settings.register_quota_multiplier
+
+        user = TelegramUser(
+            telegram_id=telegram_id,
+            github_username=github_username,
+            role=role.value,
+            daily_quota=max(1, int(10 * multiplier)),
+            weekly_quota=max(1, int(50 * multiplier)),
+            monthly_quota=max(1, int(200 * multiplier)),
+            issue_daily_quota=max(1, int(20 * multiplier)),
+            issue_weekly_quota=max(1, int(80 * multiplier)),
+            issue_monthly_quota=max(1, int(300 * multiplier)),
+        )
+        try:
+            self.session.add(user)
+            await self.session.commit()
+        except Exception as e:
+            await self.session.rollback()
+            logger.error(f"用户注册失败: {e}", exc_info=True)
+            return False, f"注册失败: {str(e)}"
+
+        quota_info = (
+            f"\n📊 配额（×{multiplier}）:\n"
+            f"  PR: {user.daily_quota}/{user.weekly_quota}/{user.monthly_quota}（日/周/月）\n"
+            f"  Issue: {user.issue_daily_quota}/{user.issue_weekly_quota}/{user.issue_monthly_quota}（日/周/月）"
+        )
+        return True, f"注册成功{quota_info}"
+
+    async def subscribe_repo(
+        self, telegram_id: int, repo_name: str
+    ) -> Tuple[bool, str]:
+        """用户订阅仓库"""
+        # 检查用户是否存在
+        user = await self.get_user_by_telegram_id(telegram_id)
+        if not user:
+            return False, "用户未注册，请先使用 /sign 命令注册"
+
+        # 检查仓库是否在白名单中
+        is_authorized = await self.is_authorized_repo(repo_name)
+        if not is_authorized:
+            return False, f"仓库 {repo_name} 未在白名单中，无法订阅"
+
+        # 检查是否已订阅
+        result = await self.session.execute(
+            select(UserRepoSubscription).where(
+                and_(
+                    UserRepoSubscription.telegram_id == telegram_id,
+                    UserRepoSubscription.repo_name == repo_name,
+                )
+            )
+        )
+        if result.scalar_one_or_none():
+            return False, f"已订阅 {repo_name}"
+
+        try:
+            sub = UserRepoSubscription(telegram_id=telegram_id, repo_name=repo_name)
+            self.session.add(sub)
+            await self.session.commit()
+        except Exception as e:
+            await self.session.rollback()
+            logger.error(f"订阅仓库失败: {e}", exc_info=True)
+            return False, f"订阅失败: {str(e)}"
+        return True, f"已订阅 {repo_name}"
+
+    async def unsubscribe_repo(
+        self, telegram_id: int, repo_name: str
+    ) -> Tuple[bool, str]:
+        """用户取消订阅仓库"""
+        result = await self.session.execute(
+            select(UserRepoSubscription).where(
+                and_(
+                    UserRepoSubscription.telegram_id == telegram_id,
+                    UserRepoSubscription.repo_name == repo_name,
+                )
+            )
+        )
+        sub = result.scalar_one_or_none()
+        if not sub:
+            return False, f"未订阅 {repo_name}"
+
+        try:
+            await self.session.delete(sub)
+            await self.session.commit()
+        except Exception as e:
+            await self.session.rollback()
+            logger.error(f"取消订阅仓库失败: {e}", exc_info=True)
+            return False, f"取消订阅失败: {str(e)}"
+        return True, f"已取消订阅 {repo_name}"
+
+    async def get_notification_targets(
+        self, repo_name: str, author: str = ""
+    ) -> List[int]:
+        """获取通知目标：作者 + 仓库订阅者（去重）"""
+        chat_ids = []
+        if author:
+            user = await self.get_user_by_github_username(author)
+            if user:
+                chat_ids.append(user.telegram_id)
+        subscribers = await self.get_repo_subscribers(repo_name)
+        chat_ids = list(dict.fromkeys(chat_ids + subscribers))
+        return chat_ids
+
+    async def get_repo_subscribers(self, repo_name: str) -> List[int]:
+        """获取仓库所有订阅者的 telegram_id 列表"""
+        result = await self.session.execute(
+            select(UserRepoSubscription.telegram_id).where(
+                UserRepoSubscription.repo_name == repo_name
+            )
+        )
+        return list(result.scalars().all())
+
+    async def get_user_subscriptions(
+        self, telegram_id: int
+    ) -> List[str]:
+        """获取用户订阅的所有仓库名称"""
+        result = await self.session.execute(
+            select(UserRepoSubscription.repo_name).where(
+                UserRepoSubscription.telegram_id == telegram_id
+            )
+        )
+        return list(result.scalars().all())

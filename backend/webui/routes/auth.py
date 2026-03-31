@@ -21,7 +21,7 @@ from backend.core.redis import get_redis
 router = APIRouter(prefix="/auth", tags=["WebUI Auth"])
 templates = get_templates()
 
-APP_VERSION = "2.5.0"
+APP_VERSION = "2.5.1"
 
 _OAUTH_STATE_TTL = 600  # state 有效期 10 分钟
 _OAUTH_STATE_KEY_PREFIX = "oauth:state:"

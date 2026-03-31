@@ -4,7 +4,7 @@
 
 {% block content %}
 <div class="space-y-6">
-    <!-- 面包屑 + 提示消息 -->
+    <!-- 面包屑 -->
     <div>
         <nav class="flex items-center gap-2 text-sm text-gray-500 dark:text-gray-400">
             <a href="/webui/users/" class="hover:text-pink-600 dark:hover:text-pink-400">用户管理</a>
@@ -13,60 +13,96 @@
         </nav>
     </div>
 
-    <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        <!-- 左侧：基本信息 -->
-        <div class="lg:col-span-1 space-y-6">
-            <!-- 用户信息卡片 -->
-            <div class="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 shadow-sm p-6">
-                <div class="text-center">
-                    {% if target_user.github_username %}
-                    <img src="https://github.com/{{ target_user.github_username }}.png"
-                         alt="{{ target_user.github_username }}"
-                         class="w-16 h-16 mx-auto rounded-full border border-gray-200 dark:border-gray-600"
-                         onerror="this.style.display='none'; this.nextElementSibling.style.display='flex';">
-                    {% endif %}
-                    <div class="w-16 h-16 mx-auto rounded-full bg-pink-100 dark:bg-pink-900/30 flex items-center justify-center {% if target_user.github_username %}hidden{% endif %}">
-                        <span class="text-2xl font-bold text-pink-600 dark:text-pink-400">
-                            {{ (target_user.github_username or '?')[0]|upper }}
-                        </span>
-                    </div>
-                    <h2 class="mt-3 text-lg font-bold">{{ target_user.github_username or '未设置' }}</h2>
-                    <p class="text-sm text-gray-500 dark:text-gray-400">Telegram ID: {{ target_user.telegram_id }}</p>
-                    <div class="mt-2">
-                        {% if target_user.role == 'super_admin' %}
-                        <span class="inline-flex items-center px-2.5 py-1 rounded-full text-xs font-medium bg-purple-100 dark:bg-purple-900/30 text-purple-700 dark:text-purple-400">超级管理员</span>
-                        {% elif target_user.role == 'admin' %}
-                        <span class="inline-flex items-center px-2.5 py-1 rounded-full text-xs font-medium bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-400">管理员</span>
-                        {% else %}
-                        <span class="inline-flex items-center px-2.5 py-1 rounded-full text-xs font-medium bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-400">普通用户</span>
-                        {% endif %}
-                        {% if target_user.is_active %}
-                        <span class="inline-flex items-center gap-1 ml-2 px-2.5 py-1 rounded-full text-xs font-medium bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-400">
-                            <span class="w-1.5 h-1.5 bg-green-500 rounded-full"></span>活跃
-                        </span>
-                        {% else %}
-                        <span class="inline-flex items-center gap-1 ml-2 px-2.5 py-1 rounded-full text-xs font-medium bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-400">
-                            <span class="w-1.5 h-1.5 bg-red-500 rounded-full"></span>已禁用
-                        </span>
-                        {% endif %}
-                    </div>
+    <!-- 第一行：用户信息 + 基本信息编辑 + 账户状态 + 角色管理 -->
+    <div class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-6">
+        <!-- 用户头像卡片 -->
+        <div class="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 shadow-sm p-6">
+            <div class="text-center">
+                {% if target_user.github_username %}
+                <img src="https://github.com/{{ target_user.github_username }}.png"
+                     alt="{{ target_user.github_username }}"
+                     class="w-16 h-16 mx-auto rounded-full border border-gray-200 dark:border-gray-600"
+                     onerror="this.style.display='none'; this.nextElementSibling.style.display='flex';">
+                {% endif %}
+                <div class="w-16 h-16 mx-auto rounded-full bg-pink-100 dark:bg-pink-900/30 flex items-center justify-center {% if target_user.github_username %}hidden{% endif %}">
+                    <span class="text-2xl font-bold text-pink-600 dark:text-pink-400">
+                        {{ (target_user.github_username or '?')[0]|upper }}
+                    </span>
                 </div>
-
-                <div class="mt-4 pt-4 border-t border-gray-200 dark:border-gray-700 space-y-2 text-sm">
-                    <div class="flex justify-between">
-                        <span class="text-gray-500 dark:text-gray-400">注册时间</span>
-                        <span>{{ target_user.created_at.strftime('%Y-%m-%d %H:%M') if target_user.created_at else '-' }}</span>
-                    </div>
-                    <div class="flex justify-between">
-                        <span class="text-gray-500 dark:text-gray-400">最后更新</span>
-                        <span>{{ target_user.updated_at.strftime('%Y-%m-%d %H:%M') if target_user.updated_at else '-' }}</span>
-                    </div>
+                <h2 class="mt-3 text-lg font-bold">{{ target_user.github_username or '未设置' }}</h2>
+                <p class="text-sm text-gray-500 dark:text-gray-400">Telegram ID: {{ target_user.telegram_id }}</p>
+                <div class="mt-2 flex flex-wrap items-center justify-center gap-1">
+                    {% if target_user.role == 'super_admin' %}
+                    <span class="inline-flex items-center px-2.5 py-1 rounded-full text-xs font-medium bg-purple-100 dark:bg-purple-900/30 text-purple-700 dark:text-purple-400">超级管理员</span>
+                    {% elif target_user.role == 'admin' %}
+                    <span class="inline-flex items-center px-2.5 py-1 rounded-full text-xs font-medium bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-400">管理员</span>
+                    {% else %}
+                    <span class="inline-flex items-center px-2.5 py-1 rounded-full text-xs font-medium bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-400">普通用户</span>
+                    {% endif %}
+                    {% if target_user.is_active %}
+                    <span class="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-medium bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-400">
+                        <span class="w-1.5 h-1.5 bg-green-500 rounded-full"></span>活跃
+                    </span>
+                    {% else %}
+                    <span class="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-medium bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-400">
+                        <span class="w-1.5 h-1.5 bg-red-500 rounded-full"></span>已禁用
+                    </span>
+                    {% endif %}
                 </div>
             </div>
+            <div class="mt-4 pt-4 border-t border-gray-200 dark:border-gray-700 space-y-2 text-sm">
+                <div class="flex justify-between">
+                    <span class="text-gray-500 dark:text-gray-400">注册时间</span>
+                    <span>{{ target_user.created_at.strftime('%Y-%m-%d %H:%M') if target_user.created_at else '-' }}</span>
+                </div>
+                <div class="flex justify-between">
+                    <span class="text-gray-500 dark:text-gray-400">最后更新</span>
+                    <span>{{ target_user.updated_at.strftime('%Y-%m-%d %H:%M') if target_user.updated_at else '-' }}</span>
+                </div>
+            </div>
+        </div>
 
-            <!-- 启用/禁用 -->
-            <div class="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 shadow-sm p-6">
-                <h3 class="text-base font-medium mb-4">账户状态</h3>
+        <!-- 基本信息编辑 -->
+        <div class="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 shadow-sm p-6">
+            <div class="flex items-center justify-between mb-4">
+                <h3 class="text-base font-medium">基本信息</h3>
+                <button type="button" onclick="toggleEditInfo()" id="edit-info-toggle"
+                        class="text-xs text-pink-500 hover:text-pink-600 transition-colors">编辑</button>
+            </div>
+            <div id="info-display" class="space-y-2 text-sm">
+                <div class="flex justify-between">
+                    <span class="text-gray-500 dark:text-gray-400">Telegram ID</span>
+                    <span>{{ target_user.telegram_id }}</span>
+                </div>
+                <div class="flex justify-between">
+                    <span class="text-gray-500 dark:text-gray-400">GitHub 用户名</span>
+                    <span>{{ target_user.github_username or '未设置' }}</span>
+                </div>
+            </div>
+            <form id="info-edit-form" method="POST" action="/webui/users/{{ target_user.id }}/info" class="hidden space-y-3"
+                  data-confirm="确定要修改此用户的基本信息吗？">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                <div>
+                    <label class="block text-xs font-medium text-gray-500 dark:text-gray-400 mb-1">Telegram ID</label>
+                    <input type="number" name="telegram_id" value="{{ target_user.telegram_id }}" min="1" required
+                           class="w-full px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-sm focus:ring-2 focus:ring-pink-500 focus:border-transparent outline-none">
+                </div>
+                <div>
+                    <label class="block text-xs font-medium text-gray-500 dark:text-gray-400 mb-1">GitHub 用户名</label>
+                    <input type="text" name="github_username" value="{{ target_user.github_username or '' }}" required
+                           class="w-full px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-sm focus:ring-2 focus:ring-pink-500 focus:border-transparent outline-none">
+                </div>
+                <div class="flex gap-2">
+                    <button type="submit" class="flex-1 px-4 py-2 bg-pink-500 text-white rounded-lg text-sm font-medium hover:bg-pink-600 transition-colors">保存</button>
+                    <button type="button" onclick="toggleEditInfo()" class="flex-1 px-4 py-2 bg-gray-200 dark:bg-gray-700 text-gray-700 dark:text-gray-300 rounded-lg text-sm font-medium hover:bg-gray-300 dark:hover:bg-gray-600 transition-colors">取消</button>
+                </div>
+            </form>
+        </div>
+
+        <!-- 账户状态 + 角色管理 -->
+        <div class="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 shadow-sm p-6 space-y-5">
+            <div>
+                <h3 class="text-base font-medium mb-3">账户状态</h3>
                 <form method="POST" action="/webui/users/{{ target_user.id }}/toggle"
                       data-confirm="确定要{{ '禁用' if target_user.is_active else '启用' }}此用户吗？">
                     <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
@@ -80,205 +116,236 @@
                     </button>
                 </form>
             </div>
-        </div>
-
-        <!-- 右侧：配额和管理 -->
-        <div class="lg:col-span-2 space-y-6">
-            <!-- PR 审查配额使用情况 -->
-            <div class="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 shadow-sm p-6">
-                <h3 class="text-base font-medium mb-4">PR 审查配额</h3>
-                <div class="space-y-4">
-                    <!-- 每日配额 -->
-                    {% set daily_pct = percentage(target_user.daily_used, target_user.daily_quota) %}
-                    {% set daily_bar_color = 'bg-red-500' if daily_pct >= 90 else ('bg-yellow-500' if daily_pct >= 70 else 'bg-pink-500') %}
-                    <div>
-                        <div class="flex justify-between text-sm mb-1">
-                            <span class="text-gray-600 dark:text-gray-300">每日配额</span>
-                            <span class="font-medium">{{ target_user.daily_used }} / {{ target_user.daily_quota }}</span>
-                        </div>
-                        <div class="w-full bg-gray-200 dark:bg-gray-700 rounded-full h-2">
-                            <div class="h-2 rounded-full transition-all {{ daily_bar_color }}" style="width:{{ daily_pct }}%"></div>
-                        </div>
-                    </div>
-                    <!-- 每周配额 -->
-                    {% set weekly_pct = percentage(target_user.weekly_used, target_user.weekly_quota) %}
-                    {% set weekly_bar_color = 'bg-red-500' if weekly_pct >= 90 else ('bg-yellow-500' if weekly_pct >= 70 else 'bg-pink-500') %}
-                    <div>
-                        <div class="flex justify-between text-sm mb-1">
-                            <span class="text-gray-600 dark:text-gray-300">每周配额</span>
-                            <span class="font-medium">{{ target_user.weekly_used }} / {{ target_user.weekly_quota }}</span>
-                        </div>
-                        <div class="w-full bg-gray-200 dark:bg-gray-700 rounded-full h-2">
-                            <div class="h-2 rounded-full transition-all {{ weekly_bar_color }}" style="width:{{ weekly_pct }}%"></div>
-                        </div>
-                    </div>
-                    <!-- 每月配额 -->
-                    {% set monthly_pct = percentage(target_user.monthly_used, target_user.monthly_quota) %}
-                    {% set monthly_bar_color = 'bg-red-500' if monthly_pct >= 90 else ('bg-yellow-500' if monthly_pct >= 70 else 'bg-pink-500') %}
-                    <div>
-                        <div class="flex justify-between text-sm mb-1">
-                            <span class="text-gray-600 dark:text-gray-300">每月配额</span>
-                            <span class="font-medium">{{ target_user.monthly_used }} / {{ target_user.monthly_quota }}</span>
-                        </div>
-                        <div class="w-full bg-gray-200 dark:bg-gray-700 rounded-full h-2">
-                            <div class="h-2 rounded-full transition-all {{ monthly_bar_color }}" style="width:{{ monthly_pct }}%"></div>
-                        </div>
-                    </div>
-                </div>
-            </div>
-
-            <!-- 修改配额 -->
-            <div class="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 shadow-sm p-6">
-                <h3 class="text-base font-medium mb-4">修改 PR 配额</h3>
-                <form method="POST" action="/webui/users/{{ target_user.id }}/quota"
-                      data-confirm="确定要修改此用户的配额吗？">
+            <div class="border-t border-gray-200 dark:border-gray-700 pt-5">
+                <h3 class="text-base font-medium mb-3">角色管理</h3>
+                <form method="POST" action="/webui/users/{{ target_user.id }}/role"
+                      data-confirm="确定要修改此用户的角色吗？">
                     <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-                    <div class="grid grid-cols-3 gap-4">
-                        <div>
-                            <label class="block text-sm font-medium text-gray-600 dark:text-gray-300 mb-1">每日配额</label>
-                            <input type="number" name="daily_quota" value="{{ target_user.daily_quota }}" min="0"
-                                   class="w-full px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-sm focus:ring-2 focus:ring-pink-500 focus:border-transparent outline-none">
-                        </div>
-                        <div>
-                            <label class="block text-sm font-medium text-gray-600 dark:text-gray-300 mb-1">每周配额</label>
-                            <input type="number" name="weekly_quota" value="{{ target_user.weekly_quota }}" min="0"
-                                   class="w-full px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-sm focus:ring-2 focus:ring-pink-500 focus:border-transparent outline-none">
-                        </div>
-                        <div>
-                            <label class="block text-sm font-medium text-gray-600 dark:text-gray-300 mb-1">每月配额</label>
-                            <input type="number" name="monthly_quota" value="{{ target_user.monthly_quota }}" min="0"
-                                   class="w-full px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-sm focus:ring-2 focus:ring-pink-500 focus:border-transparent outline-none">
-                        </div>
-                    </div>
-                    <button type="submit" class="mt-4 px-4 py-2 bg-pink-500 text-white rounded-lg text-sm font-medium hover:bg-pink-600 transition-colors">
-                        保存配额
-                    </button>
-                </form>
-            </div>
-
-            <!-- Issue 分析配额使用情况 -->
-            <div class="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 shadow-sm p-6">
-                <h3 class="text-base font-medium mb-4">Issue 分析配额</h3>
-                <div class="space-y-4">
-                    {% set i_daily_pct = percentage(target_user.issue_daily_used, target_user.issue_daily_quota) %}
-                    {% set i_daily_bar_color = 'bg-red-500' if i_daily_pct >= 90 else ('bg-yellow-500' if i_daily_pct >= 70 else 'bg-blue-500') %}
-                    <div>
-                        <div class="flex justify-between text-sm mb-1">
-                            <span class="text-gray-600 dark:text-gray-300">每日配额</span>
-                            <span class="font-medium">{{ target_user.issue_daily_used }} / {{ target_user.issue_daily_quota }}</span>
-                        </div>
-                        <div class="w-full bg-gray-200 dark:bg-gray-700 rounded-full h-2">
-                            <div class="h-2 rounded-full transition-all {{ i_daily_bar_color }}" style="width:{{ i_daily_pct }}%"></div>
-                        </div>
-                    </div>
-                    {% set i_weekly_pct = percentage(target_user.issue_weekly_used, target_user.issue_weekly_quota) %}
-                    {% set i_weekly_bar_color = 'bg-red-500' if i_weekly_pct >= 90 else ('bg-yellow-500' if i_weekly_pct >= 70 else 'bg-blue-500') %}
-                    <div>
-                        <div class="flex justify-between text-sm mb-1">
-                            <span class="text-gray-600 dark:text-gray-300">每周配额</span>
-                            <span class="font-medium">{{ target_user.issue_weekly_used }} / {{ target_user.issue_weekly_quota }}</span>
-                        </div>
-                        <div class="w-full bg-gray-200 dark:bg-gray-700 rounded-full h-2">
-                            <div class="h-2 rounded-full transition-all {{ i_weekly_bar_color }}" style="width:{{ i_weekly_pct }}%"></div>
-                        </div>
-                    </div>
-                    {% set i_monthly_pct = percentage(target_user.issue_monthly_used, target_user.issue_monthly_quota) %}
-                    {% set i_monthly_bar_color = 'bg-red-500' if i_monthly_pct >= 90 else ('bg-yellow-500' if i_monthly_pct >= 70 else 'bg-blue-500') %}
-                    <div>
-                        <div class="flex justify-between text-sm mb-1">
-                            <span class="text-gray-600 dark:text-gray-300">每月配额</span>
-                            <span class="font-medium">{{ target_user.issue_monthly_used }} / {{ target_user.issue_monthly_quota }}</span>
-                        </div>
-                        <div class="w-full bg-gray-200 dark:bg-gray-700 rounded-full h-2">
-                            <div class="h-2 rounded-full transition-all {{ i_monthly_bar_color }}" style="width:{{ i_monthly_pct }}%"></div>
-                        </div>
-                    </div>
-                </div>
-            </div>
-
-            <!-- 修改 Issue 配额 -->
-            <div class="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 shadow-sm p-6">
-                <h3 class="text-base font-medium mb-4">修改 Issue 分析配额</h3>
-                <form method="POST" action="/webui/users/{{ target_user.id }}/issue-quota"
-                      data-confirm="确定要修改此用户的 Issue 配额吗？">
-                    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-                    <div class="grid grid-cols-3 gap-4">
-                        <div>
-                            <label class="block text-sm font-medium text-gray-600 dark:text-gray-300 mb-1">每日配额</label>
-                            <input type="number" name="issue_daily_quota" value="{{ target_user.issue_daily_quota }}" min="0"
-                                   class="w-full px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-sm focus:ring-2 focus:ring-pink-500 focus:border-transparent outline-none">
-                        </div>
-                        <div>
-                            <label class="block text-sm font-medium text-gray-600 dark:text-gray-300 mb-1">每周配额</label>
-                            <input type="number" name="issue_weekly_quota" value="{{ target_user.issue_weekly_quota }}" min="0"
-                                   class="w-full px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-sm focus:ring-2 focus:ring-pink-500 focus:border-transparent outline-none">
-                        </div>
-                        <div>
-                            <label class="block text-sm font-medium text-gray-600 dark:text-gray-300 mb-1">每月配额</label>
-                            <input type="number" name="issue_monthly_quota" value="{{ target_user.issue_monthly_quota }}" min="0"
-                                   class="w-full px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-sm focus:ring-2 focus:ring-pink-500 focus:border-transparent outline-none">
-                        </div>
-                    </div>
-                    <button type="submit" class="mt-4 px-4 py-2 bg-pink-500 text-white rounded-lg text-sm font-medium hover:bg-pink-600 transition-colors">
-                        保存 Issue 配额
-                    </button>
-                </form>
-            </div>
-
-            <!-- 修改角色 -->
-            <div class="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 shadow-sm p-6">
-                <h3 class="text-base font-medium mb-4">修改角色</h3>
-                <form method="POST" action="/webui/users/{{ target_user.id }}/role" class="flex items-center gap-4"
-                      data-confirm="确定要修改此用户的角色吗？" data-confirm-warning="角色变更将影响用户权限">
-                    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-                    <select name="role" class="flex-1 px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-sm focus:ring-2 focus:ring-pink-500 focus:border-transparent outline-none">
+                    <select name="role" class="w-full px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-sm mb-3 focus:ring-2 focus:ring-pink-500 focus:border-transparent outline-none">
                         <option value="user" {% if target_user.role == 'user' %}selected{% endif %}>普通用户</option>
                         <option value="admin" {% if target_user.role == 'admin' %}selected{% endif %}>管理员</option>
                         <option value="super_admin" {% if target_user.role == 'super_admin' %}selected{% endif %}>超级管理员</option>
                     </select>
-                    <button type="submit" class="px-4 py-2 bg-pink-500 text-white rounded-lg text-sm font-medium hover:bg-pink-600 transition-colors">
+                    <button type="submit" class="w-full px-4 py-2 bg-pink-500 text-white rounded-lg text-sm font-medium hover:bg-pink-600 transition-colors">
                         保存角色
                     </button>
                 </form>
             </div>
+        </div>
 
-            <!-- 配额使用历史 -->
-            {% if usage_logs %}
-            <div class="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 shadow-sm p-6">
-                <h3 class="text-base font-medium mb-4">配额使用历史 <span class="text-gray-400 font-normal">（最近 20 条）</span></h3>
-                <div class="overflow-x-auto">
-                    <table class="w-full text-sm">
-                        <thead>
-                            <tr class="border-b border-gray-200 dark:border-gray-700">
-                                <th class="text-left py-2 px-3 text-gray-500 dark:text-gray-400 font-medium">仓库</th>
-                                <th class="text-left py-2 px-3 text-gray-500 dark:text-gray-400 font-medium">PR</th>
-                                <th class="text-left py-2 px-3 text-gray-500 dark:text-gray-400 font-medium">类型</th>
-                                <th class="text-left py-2 px-3 text-gray-500 dark:text-gray-400 font-medium">时间</th>
-                            </tr>
-                        </thead>
-                        <tbody class="divide-y divide-gray-100 dark:divide-gray-700">
-                            {% for log in usage_logs %}
-                            <tr>
-                                <td class="py-2 px-3 text-gray-700 dark:text-gray-300">{{ log.repo_name }}</td>
-                                <td class="py-2 px-3 text-gray-700 dark:text-gray-300">#{{ log.pr_number }}</td>
-                                <td class="py-2 px-3">
-                                    {% if log.usage_type == 'daily' %}
-                                    <span class="px-2 py-0.5 rounded-full text-xs bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-400">每日</span>
-                                    {% elif log.usage_type == 'weekly' %}
-                                    <span class="px-2 py-0.5 rounded-full text-xs bg-yellow-100 dark:bg-yellow-900/30 text-yellow-700 dark:text-yellow-400">每周</span>
-                                    {% else %}
-                                    <span class="px-2 py-0.5 rounded-full text-xs bg-purple-100 dark:bg-purple-900/30 text-purple-700 dark:text-purple-400">每月</span>
-                                    {% endif %}
-                                </td>
-                                <td class="py-2 px-3 text-gray-400 text-xs">{{ log.created_at.strftime('%Y-%m-%d %H:%M') if log.created_at else '-' }}</td>
-                            </tr>
-                            {% endfor %}
-                        </tbody>
-                    </table>
+        <!-- 危险操作 -->
+        {% if current_user.role == 'super_admin' and target_user.id != current_user.user_id %}
+        <div class="bg-white dark:bg-gray-800 rounded-xl border border-red-200 dark:border-red-900/50 shadow-sm p-6">
+            <h3 class="text-base font-medium mb-2 text-red-600 dark:text-red-400">危险操作</h3>
+            <p class="text-xs text-gray-500 dark:text-gray-400 mb-4">删除后无法恢复，关联的订阅和使用记录将一并清除。</p>
+            <form method="POST" action="/webui/users/{{ target_user.id }}/delete"
+                  data-confirm="确定要永久删除用户 {{ target_user.github_username or target_user.telegram_id }} 吗？此操作不可撤销。">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                <button type="submit" class="w-full px-4 py-2 bg-red-500 hover:bg-red-600 text-white rounded-lg text-sm font-medium transition-colors">
+                    删除用户
+                </button>
+            </form>
+        </div>
+        {% else %}
+        <div></div>
+        {% endif %}
+    </div>
+
+    <!-- 第二行：PR 配额 | Issue 配额 -->
+    <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        <!-- PR 审查配额 -->
+        <div class="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 shadow-sm p-6">
+            <div class="flex items-center justify-between mb-4">
+                <h3 class="text-base font-medium">PR 审查配额</h3>
+                <form method="POST" action="/webui/users/{{ target_user.id }}/reset-quota" class="inline"
+                      data-confirm="确定要重置 {{ target_user.github_username or target_user.telegram_id }} 的所有配额使用量吗？">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                    <button type="submit" class="text-xs px-3 py-1 rounded-lg border border-gray-300 dark:border-gray-600 text-gray-600 dark:text-gray-400 hover:text-pink-600 dark:hover:text-pink-400 hover:border-pink-300 dark:hover:border-pink-700 transition-colors">
+                        重置全部配额
+                    </button>
+                </form>
+            </div>
+            <!-- 配额进度 -->
+            <div class="space-y-4">
+                {% set daily_pct = percentage(target_user.daily_used, target_user.daily_quota) %}
+                {% set daily_bar_color = 'bg-red-500' if daily_pct >= 90 else ('bg-yellow-500' if daily_pct >= 70 else 'bg-pink-500') %}
+                <div>
+                    <div class="flex justify-between text-sm mb-1">
+                        <span class="text-gray-600 dark:text-gray-300">每日</span>
+                        <span class="font-medium">{{ target_user.daily_used }} / {{ target_user.daily_quota }}</span>
+                    </div>
+                    <div class="w-full bg-gray-200 dark:bg-gray-700 rounded-full h-2">
+                        <div class="h-2 rounded-full transition-all {{ daily_bar_color }}" style="width:{{ daily_pct }}%"></div>
+                    </div>
+                </div>
+                {% set weekly_pct = percentage(target_user.weekly_used, target_user.weekly_quota) %}
+                {% set weekly_bar_color = 'bg-red-500' if weekly_pct >= 90 else ('bg-yellow-500' if weekly_pct >= 70 else 'bg-pink-500') %}
+                <div>
+                    <div class="flex justify-between text-sm mb-1">
+                        <span class="text-gray-600 dark:text-gray-300">每周</span>
+                        <span class="font-medium">{{ target_user.weekly_used }} / {{ target_user.weekly_quota }}</span>
+                    </div>
+                    <div class="w-full bg-gray-200 dark:bg-gray-700 rounded-full h-2">
+                        <div class="h-2 rounded-full transition-all {{ weekly_bar_color }}" style="width:{{ weekly_pct }}%"></div>
+                    </div>
+                </div>
+                {% set monthly_pct = percentage(target_user.monthly_used, target_user.monthly_quota) %}
+                {% set monthly_bar_color = 'bg-red-500' if monthly_pct >= 90 else ('bg-yellow-500' if monthly_pct >= 70 else 'bg-pink-500') %}
+                <div>
+                    <div class="flex justify-between text-sm mb-1">
+                        <span class="text-gray-600 dark:text-gray-300">每月</span>
+                        <span class="font-medium">{{ target_user.monthly_used }} / {{ target_user.monthly_quota }}</span>
+                    </div>
+                    <div class="w-full bg-gray-200 dark:bg-gray-700 rounded-full h-2">
+                        <div class="h-2 rounded-full transition-all {{ monthly_bar_color }}" style="width:{{ monthly_pct }}%"></div>
+                    </div>
                 </div>
             </div>
-            {% endif %}
+            <!-- 修改配额 -->
+            <div class="mt-5 pt-5 border-t border-gray-200 dark:border-gray-700">
+                <h4 class="text-sm font-medium text-gray-500 dark:text-gray-400 mb-3">修改配额上限</h4>
+                <form method="POST" action="/webui/users/{{ target_user.id }}/quota"
+                      data-confirm="确定要修改此用户的配额吗？">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                    <div class="grid grid-cols-3 gap-3">
+                        <div>
+                            <label class="block text-xs text-gray-500 dark:text-gray-400 mb-1">每日</label>
+                            <input type="number" name="daily_quota" value="{{ target_user.daily_quota }}" min="0"
+                                   class="w-full px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-sm focus:ring-2 focus:ring-pink-500 focus:border-transparent outline-none">
+                        </div>
+                        <div>
+                            <label class="block text-xs text-gray-500 dark:text-gray-400 mb-1">每周</label>
+                            <input type="number" name="weekly_quota" value="{{ target_user.weekly_quota }}" min="0"
+                                   class="w-full px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-sm focus:ring-2 focus:ring-pink-500 focus:border-transparent outline-none">
+                        </div>
+                        <div>
+                            <label class="block text-xs text-gray-500 dark:text-gray-400 mb-1">每月</label>
+                            <input type="number" name="monthly_quota" value="{{ target_user.monthly_quota }}" min="0"
+                                   class="w-full px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-sm focus:ring-2 focus:ring-pink-500 focus:border-transparent outline-none">
+                        </div>
+                    </div>
+                    <button type="submit" class="mt-3 w-full px-4 py-2 bg-pink-500 text-white rounded-lg text-sm font-medium hover:bg-pink-600 transition-colors">
+                        保存配额
+                    </button>
+                </form>
+            </div>
+        </div>
+
+        <!-- Issue 分析配额 -->
+        <div class="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 shadow-sm p-6">
+            <h3 class="text-base font-medium mb-4">Issue 分析配额</h3>
+            <!-- 配额进度 -->
+            <div class="space-y-4">
+                {% set i_daily_pct = percentage(target_user.issue_daily_used, target_user.issue_daily_quota) %}
+                {% set i_daily_bar_color = 'bg-red-500' if i_daily_pct >= 90 else ('bg-yellow-500' if i_daily_pct >= 70 else 'bg-blue-500') %}
+                <div>
+                    <div class="flex justify-between text-sm mb-1">
+                        <span class="text-gray-600 dark:text-gray-300">每日</span>
+                        <span class="font-medium">{{ target_user.issue_daily_used }} / {{ target_user.issue_daily_quota }}</span>
+                    </div>
+                    <div class="w-full bg-gray-200 dark:bg-gray-700 rounded-full h-2">
+                        <div class="h-2 rounded-full transition-all {{ i_daily_bar_color }}" style="width:{{ i_daily_pct }}%"></div>
+                    </div>
+                </div>
+                {% set i_weekly_pct = percentage(target_user.issue_weekly_used, target_user.issue_weekly_quota) %}
+                {% set i_weekly_bar_color = 'bg-red-500' if i_weekly_pct >= 90 else ('bg-yellow-500' if i_weekly_pct >= 70 else 'bg-blue-500') %}
+                <div>
+                    <div class="flex justify-between text-sm mb-1">
+                        <span class="text-gray-600 dark:text-gray-300">每周</span>
+                        <span class="font-medium">{{ target_user.issue_weekly_used }} / {{ target_user.issue_weekly_quota }}</span>
+                    </div>
+                    <div class="w-full bg-gray-200 dark:bg-gray-700 rounded-full h-2">
+                        <div class="h-2 rounded-full transition-all {{ i_weekly_bar_color }}" style="width:{{ i_weekly_pct }}%"></div>
+                    </div>
+                </div>
+                {% set i_monthly_pct = percentage(target_user.issue_monthly_used, target_user.issue_monthly_quota) %}
+                {% set i_monthly_bar_color = 'bg-red-500' if i_monthly_pct >= 90 else ('bg-yellow-500' if i_monthly_pct >= 70 else 'bg-blue-500') %}
+                <div>
+                    <div class="flex justify-between text-sm mb-1">
+                        <span class="text-gray-600 dark:text-gray-300">每月</span>
+                        <span class="font-medium">{{ target_user.issue_monthly_used }} / {{ target_user.issue_monthly_quota }}</span>
+                    </div>
+                    <div class="w-full bg-gray-200 dark:bg-gray-700 rounded-full h-2">
+                        <div class="h-2 rounded-full transition-all {{ i_monthly_bar_color }}" style="width:{{ i_monthly_pct }}%"></div>
+                    </div>
+                </div>
+            </div>
+            <!-- 修改配额 -->
+            <div class="mt-5 pt-5 border-t border-gray-200 dark:border-gray-700">
+                <h4 class="text-sm font-medium text-gray-500 dark:text-gray-400 mb-3">修改配额上限</h4>
+                <form method="POST" action="/webui/users/{{ target_user.id }}/issue-quota"
+                      data-confirm="确定要修改此用户的 Issue 配额吗？">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                    <div class="grid grid-cols-3 gap-3">
+                        <div>
+                            <label class="block text-xs text-gray-500 dark:text-gray-400 mb-1">每日</label>
+                            <input type="number" name="issue_daily_quota" value="{{ target_user.issue_daily_quota }}" min="0"
+                                   class="w-full px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-sm focus:ring-2 focus:ring-pink-500 focus:border-transparent outline-none">
+                        </div>
+                        <div>
+                            <label class="block text-xs text-gray-500 dark:text-gray-400 mb-1">每周</label>
+                            <input type="number" name="issue_weekly_quota" value="{{ target_user.issue_weekly_quota }}" min="0"
+                                   class="w-full px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-sm focus:ring-2 focus:ring-pink-500 focus:border-transparent outline-none">
+                        </div>
+                        <div>
+                            <label class="block text-xs text-gray-500 dark:text-gray-400 mb-1">每月</label>
+                            <input type="number" name="issue_monthly_quota" value="{{ target_user.issue_monthly_quota }}" min="0"
+                                   class="w-full px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-sm focus:ring-2 focus:ring-pink-500 focus:border-transparent outline-none">
+                        </div>
+                    </div>
+                    <button type="submit" class="mt-3 w-full px-4 py-2 bg-pink-500 text-white rounded-lg text-sm font-medium hover:bg-pink-600 transition-colors">
+                        保存配额
+                    </button>
+                </form>
+            </div>
         </div>
     </div>
+
+    <!-- 配额使用历史 -->
+    {% if usage_logs %}
+    <div class="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 shadow-sm p-6">
+        <h3 class="text-base font-medium mb-4">配额使用历史 <span class="text-gray-400 font-normal">（最近 20 条）</span></h3>
+        <div class="overflow-x-auto">
+            <table class="w-full text-sm">
+                <thead>
+                    <tr class="border-b border-gray-200 dark:border-gray-700">
+                        <th class="text-left py-2 px-3 text-gray-500 dark:text-gray-400 font-medium">仓库</th>
+                        <th class="text-left py-2 px-3 text-gray-500 dark:text-gray-400 font-medium">PR</th>
+                        <th class="text-left py-2 px-3 text-gray-500 dark:text-gray-400 font-medium">类型</th>
+                        <th class="text-left py-2 px-3 text-gray-500 dark:text-gray-400 font-medium">时间</th>
+                    </tr>
+                </thead>
+                <tbody class="divide-y divide-gray-100 dark:divide-gray-700">
+                    {% for log in usage_logs %}
+                    <tr>
+                        <td class="py-2 px-3 text-gray-700 dark:text-gray-300">{{ log.repo_name }}</td>
+                        <td class="py-2 px-3 text-gray-700 dark:text-gray-300">#{{ log.pr_number }}</td>
+                        <td class="py-2 px-3">
+                            {% if log.usage_type == 'daily' %}
+                            <span class="px-2 py-0.5 rounded-full text-xs bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-400">每日</span>
+                            {% elif log.usage_type == 'weekly' %}
+                            <span class="px-2 py-0.5 rounded-full text-xs bg-yellow-100 dark:bg-yellow-900/30 text-yellow-700 dark:text-yellow-400">每周</span>
+                            {% else %}
+                            <span class="px-2 py-0.5 rounded-full text-xs bg-purple-100 dark:bg-purple-900/30 text-purple-700 dark:text-purple-400">每月</span>
+                            {% endif %}
+                        </td>
+                        <td class="py-2 px-3 text-gray-400 text-xs">{{ log.created_at.strftime('%Y-%m-%d %H:%M') if log.created_at else '-' }}</td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+    {% endif %}
 </div>
+{% endblock %}
+
+{% block extra_scripts %}
+{{ super() }}
+<script>
+function toggleEditInfo() {
+    document.getElementById('info-display').classList.toggle('hidden');
+    document.getElementById('info-edit-form').classList.toggle('hidden');
+}
+</script>
 {% endblock %}

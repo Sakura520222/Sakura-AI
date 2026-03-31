@@ -633,6 +633,8 @@ class ReviewWorker:
         """发送审查完成通知到Telegram"""
         try:
             from backend.telegram.notifications import get_notification_sender
+            from backend.models.database import async_session
+            from backend.services.telegram_service import TelegramService
 
             notification_sender = get_notification_sender()
             if not notification_sender:
@@ -649,6 +651,20 @@ class ReviewWorker:
             # 构建PR URL
             pr_url = f"https://github.com/{pr_info['repo_full_name']}/pull/{pr_info['pr_number']}"
 
+            # 收集通知目标：作者 + 订阅者
+            chat_ids = []
+            async with async_session() as session:
+                service = TelegramService(session)
+                chat_ids = await service.get_notification_targets(
+                    pr_info["repo_full_name"], pr_info.get("author", "")
+                )
+
+            if not chat_ids:
+                logger.debug(
+                    f"无通知目标: {pr_info['repo_full_name']}#{pr_info['pr_number']}"
+                )
+                return
+
             # 发送通知
             await notification_sender.send_review_complete(
                 repo_name=pr_info["repo_full_name"],
@@ -656,10 +672,11 @@ class ReviewWorker:
                 score=score,
                 critical_count=critical_count,
                 pr_url=pr_url,
+                chat_ids=chat_ids,
             )
 
             logger.info(
-                f"已发送审查完成通知: {pr_info['repo_full_name']}#{pr_info['pr_number']}"
+                f"已发送审查完成通知: {pr_info['repo_full_name']}#{pr_info['pr_number']} → {len(chat_ids)} 人"
             )
 
         except Exception as e:

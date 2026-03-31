@@ -217,12 +217,23 @@ async def handle_pull_request_event(payload: Dict[str, Any]) -> JSONResponse:
 
             # 4. 发送审查开始通知
             if notification_sender:
-                await notification_sender.send_review_start(
-                    repo_name=pr_info["repo_full_name"],
-                    pr_number=pr_info["pr_number"],
-                    pr_title=pr_info.get("title", ""),
-                    author=github_username,
+                # 收集通知目标：作者 + 订阅者
+                start_chat_ids = []
+                if user:
+                    start_chat_ids.append(user.telegram_id)
+                repo_subscribers = await service.get_repo_subscribers(
+                    pr_info["repo_full_name"]
                 )
+                start_chat_ids = list(dict.fromkeys(start_chat_ids + repo_subscribers))
+
+                if start_chat_ids:
+                    await notification_sender.send_review_start(
+                        repo_name=pr_info["repo_full_name"],
+                        pr_number=pr_info["pr_number"],
+                        pr_title=pr_info.get("title", ""),
+                        author=github_username,
+                        chat_ids=start_chat_ids,
+                    )
 
         # 提交审查任务到队列
         task_id = await submit_review_task(pr_info)
@@ -457,12 +468,29 @@ async def handle_issue_comment_event(payload: Dict[str, Any]) -> JSONResponse:
         # 发送审查开始通知
         notification_sender = get_notification_sender()
         if notification_sender:
-            await notification_sender.send_review_start(
-                repo_name=repo_full_name,
-                pr_number=pr_number,
-                pr_title=pr_info.get("title", ""),
-                author=pr_info["author"],
-            )
+            # 收集通知目标：作者 + 订阅者
+            manual_chat_ids = []
+            try:
+                async with get_async_session() as session:
+                    svc = TelegramService(session)
+                    author_name = pr_info.get("author", "")
+                    if author_name:
+                        author_user = await svc.get_user_by_github_username(author_name)
+                        if author_user:
+                            manual_chat_ids.append(author_user.telegram_id)
+                    subscribers = await svc.get_repo_subscribers(repo_full_name)
+                    manual_chat_ids = list(dict.fromkeys(manual_chat_ids + subscribers))
+            except Exception as e:
+                logger.warning(f"获取通知目标失败: {e}", exc_info=True)
+
+            if manual_chat_ids:
+                await notification_sender.send_review_start(
+                    repo_name=repo_full_name,
+                    pr_number=pr_number,
+                    pr_title=pr_info.get("title", ""),
+                    author=pr_info["author"],
+                    chat_ids=manual_chat_ids,
+                )
 
         # 提交全量审查任务
         task_id = await submit_review_task(pr_info)
