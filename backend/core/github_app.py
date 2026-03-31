@@ -1,5 +1,6 @@
 """GitHub App集成模块"""
 
+import asyncio
 import hmac
 import hashlib
 from typing import Optional, Dict, Any
@@ -161,6 +162,14 @@ class GitHubAppClient:
                     f"获取仓库客户端失败 [尝试 {attempt + 1}/{max_retries}]: {e}",
                     exc_info=True,
                 )
+
+                # 如果不是最后一次，等待后重试
+                if attempt < max_retries - 1:
+                    wait = 2
+                    logger.info(f"等待 {wait} 秒后重试...")
+                    import time
+
+                    time.sleep(wait)
 
                 # 如果是最后一次尝试失败，重新创建integration
                 if attempt == 0:
