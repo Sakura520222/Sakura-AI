@@ -147,9 +147,7 @@ class IssueAnalyzer:
         repo_full_name = f"{repo_owner}/{repo_name}"
 
         # 获取仓库标签（使用 LabelService 缓存）
-        from backend.services.label_service import get_label_service
-
-        label_service = get_label_service()
+        from backend.services.label_service import label_service
         labels_dict = await label_service.get_repo_labels(repo_owner, repo_name)
         available_labels = list(labels_dict.keys())
 
