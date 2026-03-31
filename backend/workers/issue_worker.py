@@ -151,15 +151,9 @@ class IssueWorker:
                 try:
                     from backend.services.telegram_service import TelegramService
                     ts = TelegramService(db)
-                    author = issue_info.get("author", "")
-                    if author:
-                        issue_user = await ts.get_user_by_github_username(author)
-                        if issue_user:
-                            notification_chat_ids.append(issue_user.telegram_id)
-                    subscribers = await ts.get_repo_subscribers(repo_full_name)
-                    for sub_id in subscribers:
-                        if sub_id not in notification_chat_ids:
-                            notification_chat_ids.append(sub_id)
+                    notification_chat_ids = await ts.get_notification_targets(
+                        repo_full_name, issue_info.get("author", "")
+                    )
                 except Exception as e:
                     logger.warning(f"[{task_id}] 获取通知目标失败: {e}")
 

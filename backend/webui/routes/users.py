@@ -374,6 +374,7 @@ async def delete_user(
 
     github = target_user.github_username
     tg_id = target_user.telegram_id
+    role = target_user.role
 
     try:
         await db.delete(target_user)
@@ -387,7 +388,7 @@ async def delete_user(
     await log_admin_action(db, user['user_id'], "user_delete", "user", str(user_id), {
         "github_username": github,
         "telegram_id": tg_id,
-        "role": target_user.role,
+        "role": role,
     })
     return toast_redirect("/webui/users/", f"用户 {github or tg_id} 已删除")
 
@@ -450,7 +451,7 @@ async def reset_user_quota(
     request: Request,
     user_id: int,
     db: AsyncSession = Depends(get_db),
-    user: dict = Depends(require_admin),
+    user: dict = Depends(require_super_admin),
     csrf_token: str = Depends(require_csrf),
 ) -> RedirectResponse:
     """重置用户配额使用量"""
@@ -461,8 +462,8 @@ async def reset_user_quota(
     if not target_user:
         return error_page(request, message="用户不存在", user=user)
 
-    from datetime import datetime
-    now = datetime.utcnow()
+    from datetime import datetime, timezone
+    now = datetime.now(timezone.utc)
 
     old_used = {
         "daily": target_user.daily_used, "weekly": target_user.weekly_used, "monthly": target_user.monthly_used,
