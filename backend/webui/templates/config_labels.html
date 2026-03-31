@@ -140,6 +140,7 @@
 {% endblock %}
 
 {% block extra_scripts %}
+{{ super() }}
 <script>
 /* jshint ignore:start */
 let labelIndex = {{ labels | length }};
