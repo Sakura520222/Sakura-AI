@@ -8,11 +8,9 @@ from typing import Any, Dict, List, Optional
 
 from loguru import logger
 
-from backend.core.config import get_settings, get_strategy_config
+from backend.core.config import get_settings
 from backend.services.ai_reviewer.constants import (
     BASE_TOOLS,
-    CODE_INDEX_TOOLS,
-    RAG_TOOLS,
     TOOL_NAME_TO_DEFINITION,
 )
 
@@ -54,7 +52,8 @@ class ToolManager:
         """
         # 基础工具（始终可用）
         base_tools = [
-            TOOL_NAME_TO_DEFINITION[name] for name in BASE_TOOLS
+            TOOL_NAME_TO_DEFINITION[name]
+            for name in BASE_TOOLS
             if name in TOOL_NAME_TO_DEFINITION
         ]
 
@@ -94,10 +93,8 @@ class ToolManager:
                 )
 
                 code_index_service = get_code_index_service()
-                code_count = (
-                    await code_index_service.vector_store.get_collection_count(
-                        repo_full_name
-                    )
+                code_count = await code_index_service.vector_store.get_collection_count(
+                    repo_full_name
                 )
 
                 if code_count > 0:

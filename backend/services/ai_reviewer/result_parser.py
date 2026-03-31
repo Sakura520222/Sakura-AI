@@ -32,9 +32,7 @@ class ReviewResultParser:
     - 标签推荐
     """
 
-    def parse_review_result(
-        self, review_text: str, strategy: str
-    ) -> Dict[str, Any]:
+    def parse_review_result(self, review_text: str, strategy: str) -> Dict[str, Any]:
         """解析审查结果
 
         Args:
@@ -180,9 +178,7 @@ class ReviewResultParser:
 
         return "suggestion"  # 默认
 
-    def extract_inline_comments(
-        self, result: Dict[str, Any], review_text: str
-    ) -> None:
+    def extract_inline_comments(self, result: Dict[str, Any], review_text: str) -> None:
         """从审查文本中提取行内评论
 
         解析格式：

@@ -470,9 +470,7 @@ class CommentService:
                     and matched_path in analysis.hunk_boundaries
                 ):
                     same_hunk = False
-                    for hunk_start, hunk_end in analysis.hunk_boundaries[
-                        matched_path
-                    ]:
+                    for hunk_start, hunk_end in analysis.hunk_boundaries[matched_path]:
                         if (
                             hunk_start <= start_line <= hunk_end
                             and hunk_start <= line_number <= hunk_end

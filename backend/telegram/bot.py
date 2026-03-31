@@ -109,8 +109,12 @@ async def start_telegram_bot():
         _telegram_app.add_handler(CommandHandler("code_status", cmd_code_status))
         _telegram_app.add_handler(CommandHandler("sign", cmd_sign))
         _telegram_app.add_handler(CommandHandler("repo_subscribe", cmd_repo_subscribe))
-        _telegram_app.add_handler(CommandHandler("repo_unsubscribe", cmd_repo_unsubscribe))
-        _telegram_app.add_handler(CommandHandler("my_subscriptions", cmd_my_subscriptions))
+        _telegram_app.add_handler(
+            CommandHandler("repo_unsubscribe", cmd_repo_unsubscribe)
+        )
+        _telegram_app.add_handler(
+            CommandHandler("my_subscriptions", cmd_my_subscriptions)
+        )
 
         # 设置通知发送器
         notification_sender = NotificationSender(_telegram_bot)

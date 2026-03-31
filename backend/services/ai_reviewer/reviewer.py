@@ -15,7 +15,6 @@ from .api_client import AIApiClient
 from .batch_processor import BatchProcessor
 from .compression import ContextCompressor
 from .constants import (
-    DEFAULT_COMPRESSION_KEEP_ROUNDS,
     MAX_FILES_PER_BATCH,
     MAX_LINES_PER_BATCH,
     MAX_TOOL_ITERATIONS,
@@ -84,9 +83,7 @@ class AIReviewer:
         # 存储工具定义（用于向后兼容）
         self.tools = self.tool_manager.get_all_tools_definitions()
 
-    async def review_pr(
-        self, context: Dict[str, Any], strategy: str
-    ) -> Dict[str, Any]:
+    async def review_pr(self, context: Dict[str, Any], strategy: str) -> Dict[str, Any]:
         """审查PR（标准模式，不使用工具）
 
         Args:
@@ -174,7 +171,9 @@ class AIReviewer:
                 enabled_tools = await self.tool_manager.get_enabled_tools(None)
             else:
                 repo_full_name = f"{repo.owner.login}/{repo.name}"
-                enabled_tools = await self.tool_manager.get_enabled_tools(repo_full_name)
+                enabled_tools = await self.tool_manager.get_enabled_tools(
+                    repo_full_name
+                )
 
             # 多轮对话循环
             max_iterations = MAX_TOOL_ITERATIONS
@@ -248,9 +247,7 @@ class AIReviewer:
                             f"执行工具 {tool_call.function.name}: {tool_call.function.arguments}"
                         )
                     except Exception as e:
-                        logger.error(
-                            f"执行工具 {tool_call.function.name} 失败: {e}"
-                        )
+                        logger.error(f"执行工具 {tool_call.function.name} 失败: {e}")
                         messages.append(
                             {
                                 "role": "tool",
@@ -261,8 +258,8 @@ class AIReviewer:
 
                 # 检查上下文是否超限，触发压缩
                 if self.enable_compression:
-                    current_tokens = (
-                        self.context_compressor.estimate_messages_tokens(messages)
+                    current_tokens = self.context_compressor.estimate_messages_tokens(
+                        messages
                     )
                     safe_context = self.model_context_mgr.calculate_safe_context(
                         settings.openai_model, settings.context_safety_threshold
@@ -277,8 +274,10 @@ class AIReviewer:
                             f"(阈值 {self.compression_threshold * 100}%)，启动压缩..."
                         )
 
-                        messages = await self.context_compressor.compress_conversation_history(
-                            messages, system_prompt, threshold_tokens
+                        messages = (
+                            await self.context_compressor.compress_conversation_history(
+                                messages, system_prompt, threshold_tokens
+                            )
                         )
 
                         logger.info("✅ 压缩完成，继续审查...")

@@ -147,7 +147,9 @@ class QuotaUsageLog(Base):
     repo_name = Column(String(255), nullable=False)
     pr_number = Column(Integer, nullable=False)
     usage_type = Column(String(50), nullable=False)  # 改为 String 类型
-    usage_category = Column(String(50), nullable=True)  # "pr_review" 或 "issue_analysis"
+    usage_category = Column(
+        String(50), nullable=True
+    )  # "pr_review" 或 "issue_analysis"
 
     # 时间戳
     created_at = Column(TIMESTAMP, default=datetime.utcnow, nullable=False, index=True)

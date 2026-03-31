@@ -8,7 +8,17 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.models.database import PRReview, ReviewComment
 from backend.models.telegram_models import RepoSubscription
-from backend.webui.deps import require_auth, get_db, get_templates, get_csrf_serializer, get_user_preferences, paginate, error_page, get_active_repos, build_review_search_filter
+from backend.webui.deps import (
+    require_auth,
+    get_db,
+    get_templates,
+    get_csrf_serializer,
+    get_user_preferences,
+    paginate,
+    error_page,
+    get_active_repos,
+    build_review_search_filter,
+)
 
 router = APIRouter(prefix="/logs", tags=["WebUI Logs"])
 templates = get_templates()
@@ -21,13 +31,16 @@ async def logs_page(
     user_prefs: dict = Depends(get_user_preferences),
 ):
     """渲染审查日志页面"""
-    return templates.TemplateResponse("logs.html", {
-        "request": request,
-        "current_user": user,
-        "csrf_token": get_csrf_serializer().dumps({}),
-        "active_page": "logs",
-        "user_prefs": user_prefs,
-    })
+    return templates.TemplateResponse(
+        "logs.html",
+        {
+            "request": request,
+            "current_user": user,
+            "csrf_token": get_csrf_serializer().dumps({}),
+            "active_page": "logs",
+            "user_prefs": user_prefs,
+        },
+    )
 
 
 @router.get("/list-fragment")
@@ -96,22 +109,27 @@ async def logs_list_fragment(
     query = query.order_by(desc(PRReview.created_at))
 
     # 分页
-    reviews, total, total_pages, page = await paginate(db, query, count_query, page, per_page)
+    reviews, total, total_pages, page = await paginate(
+        db, query, count_query, page, per_page
+    )
 
-    return templates.TemplateResponse("components/log_list_fragment.html", {
-        "request": request,
-        "reviews": reviews,
-        "search": search,
-        "repo": repo,
-        "status": status,
-        "date_from": date_from,
-        "date_to": date_to,
-        "available_repos": available_repos,
-        "page": page,
-        "total_pages": total_pages,
-        "total": total,
-        "per_page": per_page,
-    })
+    return templates.TemplateResponse(
+        "components/log_list_fragment.html",
+        {
+            "request": request,
+            "reviews": reviews,
+            "search": search,
+            "repo": repo,
+            "status": status,
+            "date_from": date_from,
+            "date_to": date_to,
+            "available_repos": available_repos,
+            "page": page,
+            "total_pages": total_pages,
+            "total": total,
+            "per_page": per_page,
+        },
+    )
 
 
 @router.get("/{review_id}/detail-fragment")
@@ -122,9 +140,7 @@ async def log_detail_fragment(
     user: dict = Depends(require_auth),
 ) -> HTMLResponse:
     """单条审查详情展开片段"""
-    review_result = await db.execute(
-        select(PRReview).where(PRReview.id == review_id)
-    )
+    review_result = await db.execute(select(PRReview).where(PRReview.id == review_id))
     review = review_result.scalar_one_or_none()
     if not review:
         return error_page(request, message="记录不存在", user=user)
@@ -138,8 +154,11 @@ async def log_detail_fragment(
     )
     comments = comments_result.scalars().all()
 
-    return templates.TemplateResponse("components/log_detail_fragment.html", {
-        "request": request,
-        "review": review,
-        "comments": comments,
-    })
+    return templates.TemplateResponse(
+        "components/log_detail_fragment.html",
+        {
+            "request": request,
+            "review": review,
+            "comments": comments,
+        },
+    )

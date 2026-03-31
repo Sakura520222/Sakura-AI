@@ -4,14 +4,18 @@ import logging
 from datetime import datetime, timedelta
 
 from fastapi import APIRouter, Request, Depends, Query
-from fastapi.responses import HTMLResponse
 from sqlalchemy import select, func, desc, case
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.models.database import PRReview
 from backend.webui.deps import (
-    require_admin, get_db, get_templates, get_csrf_serializer,
-    get_user_preferences, paginate, error_page, build_review_search_filter,
+    require_admin,
+    get_db,
+    get_templates,
+    get_csrf_serializer,
+    get_user_preferences,
+    paginate,
+    build_review_search_filter,
     get_active_repos,
 )
 
@@ -28,13 +32,16 @@ async def queue_page(
     user_prefs: dict = Depends(get_user_preferences),
 ):
     """审查队列监控页面（管理员专用）"""
-    return templates.TemplateResponse("queue.html", {
-        "request": request,
-        "current_user": user,
-        "csrf_token": get_csrf_serializer().dumps({}),
-        "active_page": "queue",
-        "user_prefs": user_prefs,
-    })
+    return templates.TemplateResponse(
+        "queue.html",
+        {
+            "request": request,
+            "current_user": user,
+            "csrf_token": get_csrf_serializer().dumps({}),
+            "active_page": "queue",
+            "user_prefs": user_prefs,
+        },
+    )
 
 
 @router.get("/stats-fragment")
@@ -45,14 +52,24 @@ async def queue_stats_fragment(
 ):
     """统计卡片 HTMX 片段"""
     # 各状态计数（单次条件聚合查询）
-    stats = (await db.execute(
-        select(
-            func.sum(case((PRReview.status == "pending", 1), else_=0)).label("pending"),
-            func.sum(case((PRReview.status == "processing", 1), else_=0)).label("processing"),
-            func.sum(case((PRReview.status == "completed", 1), else_=0)).label("completed"),
-            func.sum(case((PRReview.status == "failed", 1), else_=0)).label("failed"),
+    stats = (
+        await db.execute(
+            select(
+                func.sum(case((PRReview.status == "pending", 1), else_=0)).label(
+                    "pending"
+                ),
+                func.sum(case((PRReview.status == "processing", 1), else_=0)).label(
+                    "processing"
+                ),
+                func.sum(case((PRReview.status == "completed", 1), else_=0)).label(
+                    "completed"
+                ),
+                func.sum(case((PRReview.status == "failed", 1), else_=0)).label(
+                    "failed"
+                ),
+            )
         )
-    )).one()
+    ).one()
     pending = int(stats.pending or 0)
     processing = int(stats.processing or 0)
     completed = int(stats.completed or 0)
@@ -72,14 +89,17 @@ async def queue_stats_fragment(
     avg_seconds = sum(durations) / len(durations) if durations else None
     avg_duration = _format_duration(avg_seconds) if avg_seconds else "-"
 
-    return templates.TemplateResponse("components/queue_stats_cards.html", {
-        "request": request,
-        "pending": pending,
-        "processing": processing,
-        "completed": completed,
-        "failed": failed,
-        "avg_duration": avg_duration,
-    })
+    return templates.TemplateResponse(
+        "components/queue_stats_cards.html",
+        {
+            "request": request,
+            "pending": pending,
+            "processing": processing,
+            "completed": completed,
+            "failed": failed,
+            "avg_duration": avg_duration,
+        },
+    )
 
 
 @router.get("/list-fragment")
@@ -140,22 +160,27 @@ async def queue_list_fragment(
     query = query.order_by(desc(PRReview.created_at))
 
     # 分页
-    reviews, total, total_pages, page = await paginate(db, query, count_query, page, per_page)
+    reviews, total, total_pages, page = await paginate(
+        db, query, count_query, page, per_page
+    )
 
-    return templates.TemplateResponse("components/queue_list_fragment.html", {
-        "request": request,
-        "reviews": reviews,
-        "active_repos": active_repos,
-        "search": search,
-        "repo": repo,
-        "status": status,
-        "start_date": start_date,
-        "end_date": end_date,
-        "page": page,
-        "total_pages": total_pages,
-        "total": total,
-        "per_page": per_page,
-    })
+    return templates.TemplateResponse(
+        "components/queue_list_fragment.html",
+        {
+            "request": request,
+            "reviews": reviews,
+            "active_repos": active_repos,
+            "search": search,
+            "repo": repo,
+            "status": status,
+            "start_date": start_date,
+            "end_date": end_date,
+            "page": page,
+            "total_pages": total_pages,
+            "total": total,
+            "per_page": per_page,
+        },
+    )
 
 
 def _format_duration(seconds: float) -> str:

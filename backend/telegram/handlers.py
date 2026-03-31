@@ -657,8 +657,7 @@ async def cmd_review(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     bot_username,
                 )
                 total_deleted = (
-                    deleted_result["issue_comments"]
-                    + deleted_result["review_comments"]
+                    deleted_result["issue_comments"] + deleted_result["review_comments"]
                 )
                 if total_deleted > 0 or dismissed_reviews > 0:
                     logger.info(
@@ -724,7 +723,9 @@ async def cmd_review(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if old_review_deleted:
             cleanup_parts = []
             if deleted_result["review_comments"] > 0:
-                cleanup_parts.append(f"删除 {deleted_result['review_comments']} 条行内评论")
+                cleanup_parts.append(
+                    f"删除 {deleted_result['review_comments']} 条行内评论"
+                )
             if deleted_result["issue_comments"] > 0:
                 cleanup_parts.append(f"删除 {deleted_result['issue_comments']} 条评论")
             if dismissed_reviews > 0:
@@ -983,7 +984,11 @@ async def cmd_code_index(update: Update, context: ContextTypes.DEFAULT_TYPE):
             telegram_user = await service.get_user_by_telegram_id(
                 update.effective_user.id
             )
-            role_lower = telegram_user.role.lower().strip() if telegram_user and telegram_user.role else ""
+            role_lower = (
+                telegram_user.role.lower().strip()
+                if telegram_user and telegram_user.role
+                else ""
+            )
             if role_lower not in ["admin", "super_admin"]:
                 # 普通用户需要仓库在白名单中
                 is_authorized = await service.is_authorized_repo(repo_name)
@@ -1106,7 +1111,9 @@ async def cmd_sign(update: Update, context: ContextTypes.DEFAULT_TYPE):
     github_username = context.args[0].strip()
 
     # 简单校验 GitHub 用户名格式
-    if not re.match(r"^[a-zA-Z0-9](?:[a-zA-Z0-9]|-(?=[a-zA-Z0-9])){0,38}$", github_username):
+    if not re.match(
+        r"^[a-zA-Z0-9](?:[a-zA-Z0-9]|-(?=[a-zA-Z0-9])){0,38}$", github_username
+    ):
         await update.message.reply_text("❌ GitHub 用户名格式无效")
         return
 
@@ -1177,8 +1184,7 @@ async def cmd_my_subscriptions(update: Update, context: ContextTypes.DEFAULT_TYP
 
         if not repos:
             await update.message.reply_text(
-                "📋 你还没有订阅任何仓库\n\n"
-                "使用 /repo_subscribe <owner/repo> 订阅仓库"
+                "📋 你还没有订阅任何仓库\n\n使用 /repo_subscribe <owner/repo> 订阅仓库"
             )
             return
 

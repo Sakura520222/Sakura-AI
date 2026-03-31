@@ -32,6 +32,7 @@ def _get_label_rec_setting(key: str, default=None):
     """获取标签推荐配置，读取失败时降级到默认值"""
     try:
         from backend.core.config import get_label_config
+
         return get_label_config().get_recommendation_settings().get(key, default)
     except (OSError, AttributeError) as e:
         logger.debug(f"读取标签推荐配置 [{key}] 失败，使用降级值: {e}")
@@ -123,9 +124,13 @@ class ReviewWorker:
             context = self.analyzer.prepare_review_context(analysis, pr)
 
             # 6.5 解析并注入 Issue 上下文（如果启用）
-            if hasattr(settings, 'enable_pr_issue_linking') and settings.enable_pr_issue_linking:
+            if (
+                hasattr(settings, "enable_pr_issue_linking")
+                and settings.enable_pr_issue_linking
+            ):
                 try:
                     from backend.services.pr_issue_linker import PRIssueLinker
+
                     issue_linker = PRIssueLinker()
 
                     pr_body = pr_info.get("body", "") or ""
@@ -135,8 +140,12 @@ class ReviewWorker:
                         issue_contents = await issue_linker.fetch_issue_content(
                             pr_info["repo_owner"], pr_info["repo_name"], issue_numbers
                         )
-                        context = await issue_linker.inject_issue_context(context, issue_contents)
-                        logger.info(f"[{task_id}] 关联了 {len(issue_contents)} 个 Issue 到审查上下文")
+                        context = await issue_linker.inject_issue_context(
+                            context, issue_contents
+                        )
+                        logger.info(
+                            f"[{task_id}] 关联了 {len(issue_contents)} 个 Issue 到审查上下文"
+                        )
                 except Exception as e:
                     logger.warning(f"[{task_id}] Issue 关联失败（不影响审查）: {e}")
 
@@ -162,9 +171,14 @@ class ReviewWorker:
                 batch_config = get_strategy_config().get_batch_config()
                 tasks.append(
                     self.ai_reviewer.review_pr_with_tools_batched(
-                        context, analysis.strategy, repo, pr,
+                        context,
+                        analysis.strategy,
+                        repo,
+                        pr,
                         max_files_per_batch=batch_config.get("max_files_per_batch", 5),
-                        max_lines_per_batch=batch_config.get("max_lines_per_batch", 2000),
+                        max_lines_per_batch=batch_config.get(
+                            "max_lines_per_batch", 2000
+                        ),
                     )
                 )
             else:
@@ -189,8 +203,12 @@ class ReviewWorker:
 
                         if recommendations:
                             # 应用标签到PR
-                            confidence_threshold = _get_label_rec_setting("confidence_threshold", 0.7)
-                            auto_create_labels = _get_label_rec_setting("auto_create", False)
+                            confidence_threshold = _get_label_rec_setting(
+                                "confidence_threshold", 0.7
+                            )
+                            auto_create_labels = _get_label_rec_setting(
+                                "auto_create", False
+                            )
 
                             label_results = await label_service.apply_labels_to_pr(
                                 pr_info["repo_owner"],
@@ -598,9 +616,7 @@ class ReviewWorker:
                     enable_idempotency_check=enable_idempotency,
                 )
                 if success:
-                    logger.info(
-                        f"[{task_id}] ✅ 降级成功: 已提交无行内评论的Review"
-                    )
+                    logger.info(f"[{task_id}] ✅ 降级成功: 已提交无行内评论的Review")
                 else:
                     logger.error(f"[{task_id}] 重试 {max_retries} 次后仍然失败")
 
