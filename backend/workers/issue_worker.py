@@ -145,11 +145,29 @@ class IssueWorker:
                 # 11. Critical 告警
                 category = analysis_result.get("category", "")
                 priority = analysis_result.get("priority", "")
+
+                # 收集通知目标：作者 + 订阅者
+                notification_chat_ids = []
+                try:
+                    from backend.services.telegram_service import TelegramService
+                    ts = TelegramService(db)
+                    author = issue_info.get("author", "")
+                    if author:
+                        issue_user = await ts.get_user_by_github_username(author)
+                        if issue_user:
+                            notification_chat_ids.append(issue_user.telegram_id)
+                    subscribers = await ts.get_repo_subscribers(repo_full_name)
+                    for sub_id in subscribers:
+                        if sub_id not in notification_chat_ids:
+                            notification_chat_ids.append(sub_id)
+                except Exception as e:
+                    logger.warning(f"[{task_id}] 获取通知目标失败: {e}")
+
                 if priority == "critical":
                     try:
                         from backend.telegram.notifications import get_notification_sender
                         sender = get_notification_sender()
-                        if sender:
+                        if sender and notification_chat_ids:
                             await sender.send_critical_issue_alert(
                                 repo_name=repo_full_name,
                                 issue_number=issue_number,
@@ -159,6 +177,7 @@ class IssueWorker:
                                 feasibility=analysis_result.get("feasibility", ""),
                                 issue_url=issue_info.get("html_url", ""),
                                 suggested_labels=analysis_result.get("suggested_labels", []),
+                                chat_ids=notification_chat_ids,
                             )
                             logger.info(f"[{task_id}] 已发送 Critical Issue 告警")
                     except Exception as e:
@@ -168,7 +187,7 @@ class IssueWorker:
                 try:
                     from backend.telegram.notifications import get_notification_sender
                     sender = get_notification_sender()
-                    if sender:
+                    if sender and notification_chat_ids:
                         await sender.send_issue_analysis_complete(
                             repo_name=repo_full_name,
                             issue_number=issue_number,
@@ -176,6 +195,7 @@ class IssueWorker:
                             priority=priority,
                             issue_url=issue_info.get("html_url", ""),
                             summary=analysis_result.get("summary"),
+                            chat_ids=notification_chat_ids,
                         )
                 except Exception as e:
                     logger.warning(f"[{task_id}] 发送完成通知失败: {e}")
