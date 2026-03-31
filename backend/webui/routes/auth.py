@@ -266,7 +266,7 @@ async def github_callback(
         result = await session.execute(
             select(TelegramUser).where(
                 TelegramUser.github_username == github_username,
-                TelegramUser.is_active == True,
+                TelegramUser.is_active,
             )
         )
         user = result.scalar_one_or_none()

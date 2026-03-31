@@ -1043,7 +1043,7 @@ def extract_issue_info_from_webhook(
         "title": issue.get("title", ""),
         "body": issue.get("body", ""),
         "state": issue.get("state", ""),
-        "labels": [l.get("name", "") for l in issue.get("labels", [])],
+        "labels": [label.get("name", "") for label in issue.get("labels", [])],
         "html_url": issue.get("html_url", ""),
     }
 

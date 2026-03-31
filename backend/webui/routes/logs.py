@@ -66,7 +66,7 @@ async def logs_list_fragment(
     # 权限过滤：普通用户只能看到已启用仓库的审查记录
     if user["role"] not in ("admin", "super_admin"):
         enabled_repos = select(RepoSubscription.repo_name).where(
-            RepoSubscription.is_active == True
+            RepoSubscription.is_active
         )
         query = query.where(PRReview.repo_name.in_(enabled_repos))
         count_query = count_query.where(PRReview.repo_name.in_(enabled_repos))

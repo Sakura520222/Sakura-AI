@@ -22,7 +22,20 @@ from .reviewer import AIReviewer
 from .api_client import AIApiClient
 from .batch_processor import BatchProcessor
 from .compression import ContextCompressor
-from .constants import *
+from .constants import (
+    DEFAULT_API_TIMEOUT,
+    DEFAULT_MAX_TOKENS,
+    MAX_RETRIES,
+    MAX_FILE_SIZE_BYTES,
+    MAX_FILE_LINES,
+    DEFAULT_CONTEXT_LINES,
+    MAX_CONTEXT_LINES,
+    MAX_FILES_PER_BATCH,
+    MAX_LINES_PER_BATCH,
+    SEVERITY_EMOJI,
+    EMOJI_TO_SEVERITY,
+    SEVERITY_TO_ISSUES_KEY,
+)
 from .label_recommender import LabelRecommender
 from .prompt_builder import PromptBuilder
 from .result_parser import ReviewResultParser

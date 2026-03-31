@@ -295,9 +295,9 @@ class NotificationSender:
 
             if suggested_labels:
                 labels_str = ", ".join(
-                    l.get("name", "")
-                    for l in suggested_labels[:5]
-                    if isinstance(l, dict)
+                    label.get("name", "")
+                    for label in suggested_labels[:5]
+                    if isinstance(label, dict)
                 )
                 if labels_str:
                     safe_labels = escape_markdown(labels_str, version=1)

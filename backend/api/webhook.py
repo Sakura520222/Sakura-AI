@@ -435,9 +435,6 @@ async def handle_issue_comment_event(payload: Dict[str, Any]) -> JSONResponse:
                 repo_owner, repo_name, pr_number, bot_username
             )
 
-        total_deleted = (
-            deleted_result["issue_comments"] + deleted_result["review_comments"]
-        )
         logger.info(
             f"清理完成: Issue评论={deleted_result['issue_comments']}, "
             f"Review评论={deleted_result['review_comments']}, 撤回Review={dismissed_reviews}"

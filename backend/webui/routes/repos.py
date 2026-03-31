@@ -69,8 +69,8 @@ async def repo_list_fragment(
 
     # 状态过滤
     if status == "active":
-        query = query.where(RepoSubscription.is_active == True)
-        count_query = count_query.where(RepoSubscription.is_active == True)
+        query = query.where(RepoSubscription.is_active)
+        count_query = count_query.where(RepoSubscription.is_active)
 
     # 排序
     query = query.order_by(desc(RepoSubscription.created_at))

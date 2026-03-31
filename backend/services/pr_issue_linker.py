@@ -5,7 +5,7 @@ from typing import Dict, Any, List
 from loguru import logger
 
 from backend.core.github_app import GitHubAppClient
-from backend.core.config import get_settings, get_strategy_config
+from backend.core.config import get_strategy_config
 
 
 class PRIssueLinker:
@@ -13,7 +13,6 @@ class PRIssueLinker:
 
     def __init__(self):
         self.github_app = GitHubAppClient()
-        settings = get_settings()
         config = get_strategy_config().get_issue_analysis_config()
         keywords = config.get("issue_reference_keywords", [])
         self._reference_pattern = re.compile(
@@ -45,7 +44,7 @@ class PRIssueLinker:
                             "title": issue.title,
                             "body": issue.body or "",
                             "state": issue.state,
-                            "labels": [l.name for l in issue.labels],
+                            "labels": [label.name for label in issue.labels],
                         }
                     )
             except Exception as e:

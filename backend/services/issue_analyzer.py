@@ -143,7 +143,6 @@ class IssueAnalyzer:
             分析结果字典，包含 token 和 cost 信息
         """
         settings = get_settings()
-        config = get_strategy_config().get_issue_analysis_config()
 
         repo_full_name = f"{repo_owner}/{repo_name}"
 

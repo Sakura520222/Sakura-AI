@@ -170,7 +170,7 @@ class IssueService:
                 if analysis.suggested_labels
                 else []
             )
-            labels = [f"`{l['name']}`" for l in labels_data[:5]]
+            labels = [f"`{label['name']}`" for label in labels_data[:5]]
         except (json.JSONDecodeError, TypeError):
             pass
 
@@ -226,11 +226,6 @@ class IssueService:
         """应用建议标签"""
         settings = get_settings()
         threshold = settings.issue_confidence_threshold
-        auto_create = settings.issue_auto_create_labels
-
-        high_confidence = [
-            l for l in suggested_labels if l.get("confidence", 0) >= threshold
-        ]
         applied = []
         suggested = []
 
