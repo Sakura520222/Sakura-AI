@@ -1,6 +1,6 @@
 """Telegram 通知发送器"""
 
-from typing import Optional
+from typing import Optional, List
 from telegram import Bot
 from telegram.helpers import escape_markdown
 from loguru import logger
@@ -16,17 +16,31 @@ class NotificationSender:
     def __init__(self, bot: Bot):
         self.bot = bot
 
+    async def _send_to_targets(
+        self, text: str, chat_ids: List[int], parse_mode: str = "Markdown", **kwargs
+    ):
+        """向多个目标发送消息，单个失败不影响其他"""
+        for chat_id in chat_ids:
+            try:
+                await self.bot.send_message(
+                    chat_id=chat_id,
+                    text=text,
+                    parse_mode=parse_mode,
+                    **kwargs,
+                )
+            except Exception as e:
+                logger.warning(f"发送通知到 {chat_id} 失败: {e}")
+
     async def send_review_start(
         self,
         repo_name: str,
         pr_number: int,
         pr_title: str,
         author: str,
-        chat_id: Optional[int] = None,
+        chat_ids: Optional[List[int]] = None,
     ):
         """发送审查开始通知"""
         try:
-            # 转义用户输入的特殊字符，避免 Markdown 解析错误
             safe_repo_name = escape_markdown(repo_name, version=1)
             safe_pr_title = escape_markdown(pr_title, version=1)
             safe_author = escape_markdown(author, version=1)
@@ -40,13 +54,12 @@ class NotificationSender:
                 f"⏳ 审查中，请稍候..."
             )
 
-            target_chat_id = chat_id or int(settings.telegram_default_chat_id)
-            await self.bot.send_message(
-                chat_id=target_chat_id,
-                text=text,
-                parse_mode="Markdown",
-            )
-            logger.info(f"✅ 发送审查开始通知: {repo_name}#{pr_number}")
+            if not chat_ids:
+                logger.debug(f"无通知目标，跳过审查开始通知: {repo_name}#{pr_number}")
+                return
+
+            await self._send_to_targets(text, chat_ids)
+            logger.info(f"✅ 发送审查开始通知: {repo_name}#{pr_number} → {len(chat_ids)} 人")
 
         except Exception as e:
             logger.error(f"❌ 发送审查开始通知失败: {e}")
@@ -58,11 +71,10 @@ class NotificationSender:
         score: int,
         critical_count: int,
         pr_url: str,
-        chat_id: Optional[int] = None,
+        chat_ids: Optional[List[int]] = None,
     ):
         """发送审查完成通知"""
         try:
-            # 转义仓库名称
             safe_repo_name = escape_markdown(repo_name, version=1)
 
             text = (
@@ -74,14 +86,14 @@ class NotificationSender:
                 f"[查看完整报告]({pr_url})"
             )
 
-            target_chat_id = chat_id or int(settings.telegram_default_chat_id)
-            await self.bot.send_message(
-                chat_id=target_chat_id,
-                text=text,
-                parse_mode="Markdown",
-                disable_web_page_preview=True,
+            if not chat_ids:
+                logger.debug(f"无通知目标，跳过审查完成通知: {repo_name}#{pr_number}")
+                return
+
+            await self._send_to_targets(
+                text, chat_ids, disable_web_page_preview=True
             )
-            logger.info(f"✅ 发送审查完成通知: {repo_name}#{pr_number}")
+            logger.info(f"✅ 发送审查完成通知: {repo_name}#{pr_number} → {len(chat_ids)} 人")
 
         except Exception as e:
             logger.error(f"❌ 发送审查完成通知失败: {e}")
@@ -95,7 +107,7 @@ class NotificationSender:
         chat_id: Optional[int] = None,
         pr_number: Optional[int] = None,
     ):
-        """发送配额不足通知
+        """发送配额不足通知（系统告警，仅发管理员）
 
         Args:
             repo_name: 仓库全名
@@ -110,7 +122,6 @@ class NotificationSender:
             item_number = pr_number
 
         try:
-            # 转义用户输入的特殊字符
             safe_repo_name = escape_markdown(repo_name, version=1)
             safe_reason = escape_markdown(reason, version=1)
 
@@ -139,9 +150,8 @@ class NotificationSender:
         pr_number: int,
         chat_id: Optional[int] = None,
     ):
-        """发送未授权仓库通知（仅管理员可见）"""
+        """发送未授权仓库通知（系统告警，仅发管理员）"""
         try:
-            # 转义仓库名称
             safe_repo_name = escape_markdown(repo_name, version=1)
 
             text = (
@@ -169,9 +179,8 @@ class NotificationSender:
         github_username: str,
         chat_id: Optional[int] = None,
     ):
-        """发送未注册用户通知（仅管理员可见）"""
+        """发送未注册用户通知（系统告警，仅发管理员）"""
         try:
-            # 转义用户输入的特殊字符
             safe_repo_name = escape_markdown(repo_name, version=1)
             safe_github_username = escape_markdown(github_username, version=1)
 
@@ -204,7 +213,7 @@ class NotificationSender:
         priority: str,
         issue_url: str,
         summary: str = None,
-        chat_id: Optional[int] = None,
+        chat_ids: Optional[List[int]] = None,
     ):
         """Issue 分析完成通知"""
         try:
@@ -226,13 +235,12 @@ class NotificationSender:
 
             text += f"\n[查看详情]({issue_url})"
 
-            target_chat_id = chat_id or int(settings.telegram_default_chat_id)
-            await self.bot.send_message(
-                chat_id=target_chat_id,
-                text=text,
-                parse_mode="Markdown",
-            )
-            logger.info(f"Issue 分析完成通知已发送: {repo_name}#{issue_number}")
+            if not chat_ids:
+                logger.debug(f"无通知目标，跳过Issue分析完成通知: {repo_name}#{issue_number}")
+                return
+
+            await self._send_to_targets(text, chat_ids)
+            logger.info(f"Issue 分析完成通知已发送: {repo_name}#{issue_number} → {len(chat_ids)} 人")
 
         except Exception as e:
             logger.error(f"发送 Issue 分析完成通知失败: {e}")
@@ -247,7 +255,7 @@ class NotificationSender:
         feasibility: str,
         issue_url: str,
         suggested_labels: list = None,
-        chat_id: Optional[int] = None,
+        chat_ids: Optional[List[int]] = None,
     ):
         """Critical Issue 即时告警（附带 AI 摘要 + 可行性结论）"""
         try:
@@ -286,19 +294,15 @@ class NotificationSender:
 
             text += f"\n[查看详情]({issue_url})"
 
-            target_chat_id = chat_id or int(settings.telegram_default_chat_id)
-            await self.bot.send_message(
-                chat_id=target_chat_id,
-                text=text,
-                parse_mode="Markdown",
-            )
-            logger.info(f"Critical Issue 告警已发送: {repo_name}#{issue_number}")
+            if not chat_ids:
+                logger.debug(f"无通知目标，跳过Critical告警: {repo_name}#{issue_number}")
+                return
+
+            await self._send_to_targets(text, chat_ids)
+            logger.info(f"Critical Issue 告警已发送: {repo_name}#{issue_number} → {len(chat_ids)} 人")
 
         except Exception as e:
             logger.error(f"发送 Critical Issue 告警失败: {e}")
-
-        except Exception as e:
-            logger.error(f"❌ 发送未注册用户通知失败: {e}")
 
 
 # 全局通知发送器实例

@@ -2,6 +2,7 @@
 
 from telegram import Update
 from telegram.ext import ContextTypes
+from telegram.helpers import escape_markdown
 from loguru import logger
 
 from backend.models.database import init_async_db
@@ -242,7 +243,7 @@ async def cmd_status(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"👥 注册用户: {len(users)} 人\n"
             f"📦 授权仓库: {len(repos)} 个\n"
             f"🤖 AI模型: {settings.openai_model}\n"
-            f"🌐 应用域名: {settings.app_domain}\n"
+            f"🌐 应用域名: {settings.app_domain}/webui\n"
         )
 
         await update.message.reply_text(text, parse_mode="Markdown")
@@ -571,7 +572,7 @@ async def cmd_repos(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         text = "📦 *授权仓库*\n\n"
         for repo in repos:
-            text += f"• {repo.repo_name}\n"
+            text += f"• {escape_markdown(repo.repo_name, version=1)}\n"
 
         await update.message.reply_text(text, parse_mode="Markdown")
 
@@ -1088,3 +1089,95 @@ async def cmd_code_status(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except Exception as e:
         logger.error(f"获取代码状态失败: {e}", exc_info=True)
         await update.message.reply_text(f"❌ 获取状态失败: {str(e)}")
+
+
+async def cmd_sign(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """用户自注册命令"""
+    telegram_id = update.effective_user.id
+
+    if not context.args or len(context.args) < 1:
+        await update.message.reply_text(
+            "用法: /sign <github_username>\n\n"
+            "示例: /sign mygithub\n\n"
+            "⚠️ 注册后将绑定此 Telegram 账号与 GitHub 用户名"
+        )
+        return
+
+    github_username = context.args[0].strip()
+
+    # 简单校验 GitHub 用户名格式
+    if not re.match(r"^[a-zA-Z0-9](?:[a-zA-Z0-9]|-(?=[a-zA-Z0-9])){0,38}$", github_username):
+        await update.message.reply_text("❌ GitHub 用户名格式无效")
+        return
+
+    async with get_async_session() as session:
+        service = TelegramService(session)
+        success, message = await service.register_user(telegram_id, github_username)
+
+        await update.message.reply_text(f"✅ {message}" if success else f"❌ {message}")
+
+
+async def cmd_repo_subscribe(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """订阅仓库"""
+    telegram_id = update.effective_user.id
+
+    if not context.args or len(context.args) < 1:
+        await update.message.reply_text(
+            "用法: /repo_subscribe <owner/repo>\n\n"
+            "示例: /repo_subscribe Sakura520222/Sakura-AI-Reviewer"
+        )
+        return
+
+    repo_name = context.args[0].strip()
+
+    is_valid, error_msg = validate_github_repo_name(repo_name)
+    if not is_valid:
+        await update.message.reply_text(f"❌ {error_msg}")
+        return
+
+    async with get_async_session() as session:
+        service = TelegramService(session)
+        success, message = await service.subscribe_repo(telegram_id, repo_name)
+
+        await update.message.reply_text(f"✅ {message}" if success else f"❌ {message}")
+
+
+async def cmd_repo_unsubscribe(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """取消订阅仓库"""
+    telegram_id = update.effective_user.id
+
+    if not context.args or len(context.args) < 1:
+        await update.message.reply_text(
+            "用法: /repo_unsubscribe <owner/repo>\n\n"
+            "示例: /repo_unsubscribe Sakura520222/Sakura-AI-Reviewer"
+        )
+        return
+
+    repo_name = context.args[0].strip()
+
+    async with get_async_session() as session:
+        service = TelegramService(session)
+        success, message = await service.unsubscribe_repo(telegram_id, repo_name)
+
+        await update.message.reply_text(f"✅ {message}" if success else f"❌ {message}")
+
+
+async def cmd_my_subscriptions(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """查看当前订阅列表"""
+    telegram_id = update.effective_user.id
+
+    async with get_async_session() as session:
+        service = TelegramService(session)
+        repos = await service.get_user_subscriptions(telegram_id)
+
+        if not repos:
+            await update.message.reply_text(
+                "📋 你还没有订阅任何仓库\n\n"
+                "使用 /repo_subscribe <owner/repo> 订阅仓库"
+            )
+            return
+
+        repo_list = "\n".join(f"  • {repo}" for repo in repos)
+        await update.message.reply_text(
+            f"📋 已订阅 {len(repos)} 个仓库:\n\n{repo_list}"
+        )

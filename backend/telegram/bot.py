@@ -25,6 +25,10 @@ from backend.telegram.handlers import (
     cmd_update_docs,
     cmd_code_index,
     cmd_code_status,
+    cmd_sign,
+    cmd_repo_subscribe,
+    cmd_repo_unsubscribe,
+    cmd_my_subscriptions,
 )
 from backend.telegram.notifications import NotificationSender, set_notification_sender
 
@@ -41,11 +45,15 @@ async def register_bot_commands(bot: Bot):
         # 基础命令（所有人可用）
         BotCommand("start", "🚀 启动 Bot"),
         BotCommand("help", "📖 使用帮助"),
+        BotCommand("sign", "📝 注册账号"),
         BotCommand("status", "📊 系统状态"),
         BotCommand("recent", "🕐 最近记录"),
         BotCommand("myquota", "💎 我的配额"),
         BotCommand("docs_status", "📄 文档索引状态"),
         BotCommand("code_status", "💻 代码索引状态"),
+        BotCommand("repo_subscribe", "📌 订阅仓库"),
+        BotCommand("repo_unsubscribe", "❌ 取消订阅"),
+        BotCommand("my_subscriptions", "📋 我的订阅"),
         # 管理员命令
         BotCommand("user_add", "➕ 添加用户"),
         BotCommand("user_remove", "➖ 移除用户"),
@@ -99,6 +107,10 @@ async def start_telegram_bot():
         _telegram_app.add_handler(CommandHandler("review", cmd_review))
         _telegram_app.add_handler(CommandHandler("code_index", cmd_code_index))
         _telegram_app.add_handler(CommandHandler("code_status", cmd_code_status))
+        _telegram_app.add_handler(CommandHandler("sign", cmd_sign))
+        _telegram_app.add_handler(CommandHandler("repo_subscribe", cmd_repo_subscribe))
+        _telegram_app.add_handler(CommandHandler("repo_unsubscribe", cmd_repo_unsubscribe))
+        _telegram_app.add_handler(CommandHandler("my_subscriptions", cmd_my_subscriptions))
 
         # 设置通知发送器
         notification_sender = NotificationSender(_telegram_bot)

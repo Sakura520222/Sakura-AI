@@ -96,6 +96,7 @@ class Settings(BaseSettings):
     telegram_bot_token: str
     telegram_admin_user_ids: str = ""  # 逗号分隔的超级管理员ID列表
     telegram_default_chat_id: str = ""  # 默认接收通知的聊天ID
+    register_quota_multiplier: float = 0.2  # 自注册用户配额倍率
 
     # GitHub App机器人用户名（可选，用于幂等性检查）
     bot_username: str = None  # 备用方案，当无法从GitHub API获取时使用

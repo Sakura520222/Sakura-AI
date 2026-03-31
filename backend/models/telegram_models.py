@@ -9,6 +9,7 @@ from sqlalchemy import (
     TIMESTAMP,
     ForeignKey,
     Boolean,
+    UniqueConstraint,
 )
 import enum
 
@@ -108,6 +109,30 @@ class RepoSubscription(Base):
 
     def __repr__(self):
         return f"<RepoSubscription(repo_name={self.repo_name}, is_active={self.is_active})>"
+
+
+class UserRepoSubscription(Base):
+    """用户仓库订阅表"""
+
+    __tablename__ = "user_repo_subscriptions"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    telegram_id = Column(
+        BigInteger,
+        ForeignKey("telegram_users.telegram_id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    repo_name = Column(String(255), nullable=False, index=True)
+
+    created_at = Column(TIMESTAMP, default=datetime.utcnow, nullable=False)
+
+    __table_args__ = (
+        UniqueConstraint("telegram_id", "repo_name", name="uq_user_repo"),
+    )
+
+    def __repr__(self):
+        return f"<UserRepoSubscription(telegram_id={self.telegram_id}, repo_name={self.repo_name})>"
 
 
 class QuotaUsageLog(Base):
