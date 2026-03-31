@@ -1155,6 +1155,11 @@ async def cmd_repo_unsubscribe(update: Update, context: ContextTypes.DEFAULT_TYP
 
     repo_name = context.args[0].strip()
 
+    is_valid, error_msg = validate_github_repo_name(repo_name)
+    if not is_valid:
+        await update.message.reply_text(f"❌ {error_msg}")
+        return
+
     async with get_async_session() as session:
         service = TelegramService(session)
         success, message = await service.unsubscribe_repo(telegram_id, repo_name)

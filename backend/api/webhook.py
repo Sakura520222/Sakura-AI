@@ -224,9 +224,7 @@ async def handle_pull_request_event(payload: Dict[str, Any]) -> JSONResponse:
                 repo_subscribers = await service.get_repo_subscribers(
                     pr_info["repo_full_name"]
                 )
-                for sub_id in repo_subscribers:
-                    if sub_id not in start_chat_ids:
-                        start_chat_ids.append(sub_id)
+                start_chat_ids = list(set(start_chat_ids) | set(repo_subscribers))
 
                 if start_chat_ids:
                     await notification_sender.send_review_start(
@@ -481,9 +479,7 @@ async def handle_issue_comment_event(payload: Dict[str, Any]) -> JSONResponse:
                         if author_user:
                             manual_chat_ids.append(author_user.telegram_id)
                     subscribers = await svc.get_repo_subscribers(repo_full_name)
-                    for sub_id in subscribers:
-                        if sub_id not in manual_chat_ids:
-                            manual_chat_ids.append(sub_id)
+                    manual_chat_ids = list(set(manual_chat_ids) | set(subscribers))
             except Exception as e:
                 logger.warning(f"获取通知目标失败: {e}")
 
