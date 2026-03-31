@@ -95,10 +95,6 @@ class LabelService:
         except Exception as e:
             logger.error(f"重新加载标签配置失败: {e}")
 
-    def clear_cache(self):
-        """清除标签缓存"""
-        self._label_cache.clear()
-
     async def get_repo_labels(
         self, repo_owner: str, repo_name: str, use_cache: bool = True
     ) -> Dict[str, Dict[str, Any]]:

@@ -24,7 +24,6 @@ class IssueWorker:
     def __init__(self):
         self.analyzer = IssueAnalyzer()
         self.github_app = GitHubAppClient()
-        settings = get_settings()
 
     async def process_issue_analysis(self, issue_info: Dict[str, Any]) -> str:
         """处理 Issue 分析任务

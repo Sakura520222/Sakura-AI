@@ -13,12 +13,6 @@ from backend.models.database import (
     Base,
 )
 from backend.models.admin_action_log import AdminActionLog
-from backend.models.telegram_models import (
-    TelegramUser,
-    RepoSubscription,
-    UserRepoSubscription,
-    QuotaUsageLog,
-)
 from backend.core.config import get_settings
 import logging
 

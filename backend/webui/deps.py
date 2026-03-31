@@ -294,7 +294,7 @@ async def get_active_repos(db: AsyncSession) -> list[str]:
 
     result = await db.execute(
         select(RepoSubscription.repo_name)
-        .where(RepoSubscription.is_active == True)
+        .where(RepoSubscription.is_active)
         .order_by(RepoSubscription.repo_name)
     )
     repos = [r[0] for r in result.all()]

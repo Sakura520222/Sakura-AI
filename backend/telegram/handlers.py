@@ -45,8 +45,6 @@ def validate_github_repo_name(repo_name: str) -> tuple[bool, str]:
     # - 不允许连续的点
     # - 不允许以点或横线开头/结尾
     # - owner 最大 39 字符，repo 最大 100 字符
-    pattern = r"^(?!.*\.\.)[a-zA-Z0-9][a-zA-Z0-9._-]{0,38}[a-zA-Z0-9]/[a-zA-Z0-9][a-zA-Z0-9._-]{0,99}[a-zA-Z0-9]$"
-
     # 简化版：允许单字符仓库名
     simple_pattern = r"^(?!.*\.\.)[a-zA-Z0-9]([a-zA-Z0-9._-]{0,38}[a-zA-Z0-9])?/[a-zA-Z0-9]([a-zA-Z0-9._-]{0,99}[a-zA-Z0-9])?$"
 
@@ -607,7 +605,6 @@ async def cmd_review(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         # 4.5 检查并删除旧的审查记录
         old_review_deleted = False
-        deleted_comments = 0
         dismissed_reviews = 0
         try:
             async with get_async_session() as session:

@@ -389,24 +389,15 @@ class CodeIndexService:
         """
         logger.info(f"开始增量更新索引，仓库: {repo_full_name}")
 
-        async with async_session() as session:
-            # 获取上次索引的Commit
-            code_index = await session.execute(
-                select(CodeIndex).where(CodeIndex.repo_full_name == repo_full_name)
-            )
-            code_index_obj = code_index.scalar_one_or_none()
+        # TODO: 使用git diff获取变更文件列表
+        # 这里简化处理，直接调用完整索引
+        result = await self.index_repository_code(
+            repo_full_name=repo_full_name,
+            repo_path=repo_path,
+            commit_sha=commit_sha,
+        )
 
-            last_commit = code_index_obj.last_commit_hash if code_index_obj else None
-
-            # TODO: 使用git diff获取变更文件列表
-            # 这里简化处理，直接调用完整索引
-            result = await self.index_repository_code(
-                repo_full_name=repo_full_name,
-                repo_path=repo_path,
-                commit_sha=commit_sha,
-            )
-
-            return result
+        return result
 
     async def delete_file_index(self, repo_full_name: str, file_path: str) -> bool:
         """删除文件的索引
