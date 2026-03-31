@@ -155,8 +155,8 @@ def toast_redirect(
 
     通过 query params 传递 toast 信息，供前端 JS 拾取并显示。
     """
-    from urllib.parse import urlencode, quote
-    params = {"_toast": quote(message), "_toast_type": toast_type}
+    from urllib.parse import urlencode
+    params = {"_toast": message, "_toast_type": toast_type}
     separator = "&" if "?" in url else "?"
     return RedirectResponse(
         url=f"{url}{separator}{urlencode(params)}",
