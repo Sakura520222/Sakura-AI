@@ -655,15 +655,9 @@ class ReviewWorker:
             chat_ids = []
             async with async_session() as session:
                 service = TelegramService(session)
-                author = pr_info.get("author", "")
-                if author:
-                    user = await service.get_user_by_github_username(author)
-                    if user:
-                        chat_ids.append(user.telegram_id)
-                subscribers = await service.get_repo_subscribers(pr_info["repo_full_name"])
-                for sub_id in subscribers:
-                    if sub_id not in chat_ids:
-                        chat_ids.append(sub_id)
+                chat_ids = await service.get_notification_targets(
+                    pr_info["repo_full_name"], pr_info.get("author", "")
+                )
 
             if not chat_ids:
                 logger.debug(

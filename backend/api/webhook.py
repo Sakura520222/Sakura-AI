@@ -481,7 +481,7 @@ async def handle_issue_comment_event(payload: Dict[str, Any]) -> JSONResponse:
                     subscribers = await svc.get_repo_subscribers(repo_full_name)
                     manual_chat_ids = list(dict.fromkeys(manual_chat_ids + subscribers))
             except Exception as e:
-                logger.warning(f"获取通知目标失败: {e}")
+                logger.warning(f"获取通知目标失败: {e}", exc_info=True)
 
             if manual_chat_ids:
                 await notification_sender.send_review_start(

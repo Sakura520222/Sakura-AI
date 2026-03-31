@@ -540,6 +540,19 @@ class TelegramService:
             return False, f"取消订阅失败: {str(e)}"
         return True, f"已取消订阅 {repo_name}"
 
+    async def get_notification_targets(
+        self, repo_name: str, author: str = ""
+    ) -> List[int]:
+        """获取通知目标：作者 + 仓库订阅者（去重）"""
+        chat_ids = []
+        if author:
+            user = await self.get_user_by_github_username(author)
+            if user:
+                chat_ids.append(user.telegram_id)
+        subscribers = await self.get_repo_subscribers(repo_name)
+        chat_ids = list(dict.fromkeys(chat_ids + subscribers))
+        return chat_ids
+
     async def get_repo_subscribers(self, repo_name: str) -> List[int]:
         """获取仓库所有订阅者的 telegram_id 列表"""
         result = await self.session.execute(
