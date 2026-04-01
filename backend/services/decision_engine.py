@@ -204,6 +204,12 @@ class DecisionEngine:
                 score = extracted if extracted is not None else "N/A"
 
             summary = review_result.get("summary", "暂无摘要")
+            if summary.strip():
+                summary = (
+                    f"<details><summary>📋 查看详细审查报告</summary>\n\n"
+                    f"{summary}\n\n"
+                    f"</details>"
+                )
 
             # 构建问题摘要
             issues = review_result.get("issues", {})
@@ -247,12 +253,6 @@ class DecisionEngine:
                 )
 
             comment_summary = "\n".join(comment_parts)
-            if comment_summary.strip():
-                comment_summary = (
-                    f"<details><summary>📋 问题详情</summary>\n\n"
-                    f"{comment_summary}\n\n"
-                    f"</details>"
-                )
 
             # 填充模板
             body = template.format(
