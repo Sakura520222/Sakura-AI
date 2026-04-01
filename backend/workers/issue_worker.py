@@ -150,7 +150,16 @@ class IssueWorker:
                             )
                             if result.get("applied"):
                                 logger.info(
-                                    f"[{task_id}] 已应用标签: {result['applied']}"
+                                    f"[{task_id}] 已应用标签: "
+                                    f"{[l['name'] for l in result['applied']]}"
+                                )
+                            if result.get("created"):
+                                logger.info(
+                                    f"[{task_id}] 已创建标签: {result['created']}"
+                                )
+                            if result.get("failed"):
+                                logger.warning(
+                                    f"[{task_id}] 标签应用失败: {result['failed']}"
                                 )
                     except Exception as e:
                         logger.warning(f"[{task_id}] 应用标签失败: {e}")

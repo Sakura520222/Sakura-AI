@@ -517,6 +517,36 @@ async def insert_default_configs_async():
                         key_value="true",
                         description="是否启用自动审查",
                     ),
+                    AppConfig(
+                        key_name="web_search_enabled",
+                        key_value="false",
+                        description="启用 Web 搜索工具",
+                    ),
+                    AppConfig(
+                        key_name="web_search_provider",
+                        key_value="duckduckgo",
+                        description="Web 搜索提供商",
+                    ),
+                    AppConfig(
+                        key_name="web_search_api_key",
+                        key_value="",
+                        description="Web 搜索 API Key",
+                    ),
+                    AppConfig(
+                        key_name="web_search_max_results",
+                        key_value="3",
+                        description="Web 搜索最大返回结果数",
+                    ),
+                    AppConfig(
+                        key_name="web_search_max_content_length",
+                        key_value="500",
+                        description="Web 搜索结果截断长度",
+                    ),
+                    AppConfig(
+                        key_name="web_search_timeout",
+                        key_value="15",
+                        description="Web 搜索超时时间（秒）",
+                    ),
                 ]
 
                 session.add_all(default_configs)
@@ -581,6 +611,36 @@ def init_database(database_url: str):
                         key_name="enable_auto_review",
                         key_value="true",
                         description="是否启用自动审查",
+                    ),
+                    AppConfig(
+                        key_name="web_search_enabled",
+                        key_value="false",
+                        description="启用 Web 搜索工具",
+                    ),
+                    AppConfig(
+                        key_name="web_search_provider",
+                        key_value="duckduckgo",
+                        description="Web 搜索提供商",
+                    ),
+                    AppConfig(
+                        key_name="web_search_api_key",
+                        key_value="",
+                        description="Web 搜索 API Key",
+                    ),
+                    AppConfig(
+                        key_name="web_search_max_results",
+                        key_value="3",
+                        description="Web 搜索最大返回结果数",
+                    ),
+                    AppConfig(
+                        key_name="web_search_max_content_length",
+                        key_value="500",
+                        description="Web 搜索结果截断长度",
+                    ),
+                    AppConfig(
+                        key_name="web_search_timeout",
+                        key_value="15",
+                        description="Web 搜索超时时间（秒）",
                     ),
                 ]
 

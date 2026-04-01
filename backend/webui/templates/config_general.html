@@ -25,6 +25,7 @@
     <form method="POST" action="/webui/config/general/save">
         <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
 
+        <!-- 基础配置 -->
         {% for config in configs %}
         {% if config.key_name in ('max_concurrent_reviews', 'review_timeout_seconds', 'enable_auto_review') %}
         <div class="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 shadow-sm p-5">
@@ -59,6 +60,89 @@
         </div>
         {% endif %}
         {% endfor %}
+
+        <!-- Web 搜索配置 -->
+        <div class="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 shadow-sm p-5">
+            <h3 class="text-sm font-semibold text-gray-700 dark:text-gray-300 mb-4">🌐 Web 搜索工具</h3>
+            <p class="text-xs text-gray-500 dark:text-gray-400 mb-4">为 AI 审查员提供互联网搜索能力，用于查找最新文档和最佳实践</p>
+
+            <div class="space-y-4">
+                {% for config in configs %}
+                {% if config.key_name == 'web_search_enabled' %}
+                <div class="flex items-center justify-between">
+                    <div>
+                        <h3 class="text-sm font-medium text-gray-700 dark:text-gray-300">启用 Web 搜索</h3>
+                        <p class="text-xs text-gray-500 dark:text-gray-400 mt-1">允许 AI 在审查时使用互联网搜索</p>
+                    </div>
+                    <label class="relative inline-flex items-center cursor-pointer">
+                        <input type="checkbox" name="web_search_enabled" value="true" class="sr-only peer"
+                               {% if config.key_value == 'true' %}checked{% endif %}>
+                        <div class="w-11 h-6 bg-gray-200 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-pink-300 dark:peer-focus:ring-pink-800 rounded-full peer dark:bg-gray-600 peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:start-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all dark:after:border-gray-500 peer-checked:bg-pink-500"></div>
+                    </label>
+                </div>
+                {% elif config.key_name == 'web_search_provider' %}
+                <div class="flex items-center justify-between">
+                    <div>
+                        <h3 class="text-sm font-medium text-gray-700 dark:text-gray-300">搜索提供商</h3>
+                        <p class="text-xs text-gray-500 dark:text-gray-400 mt-1">duckduckgo 免费，tavily 需要 API Key</p>
+                    </div>
+                    <select name="web_search_provider" class="px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-sm focus:ring-2 focus:ring-pink-500 focus:border-transparent outline-none">
+                        <option value="duckduckgo" {% if config.key_value == 'duckduckgo' %}selected{% endif %}>DuckDuckGo（免费）</option>
+                        <option value="tavily" {% if config.key_value == 'tavily' %}selected{% endif %}>Tavily</option>
+                    </select>
+                </div>
+                {% elif config.key_name == 'web_search_api_key' %}
+                <div class="flex items-center justify-between">
+                    <div>
+                        <h3 class="text-sm font-medium text-gray-700 dark:text-gray-300">API Key</h3>
+                        <p class="text-xs text-gray-500 dark:text-gray-400 mt-1">Tavily 需要，DuckDuckGo 留空</p>
+                    </div>
+                    <input type="password"
+                           name="web_search_api_key"
+                           value="{{ config.key_value }}"
+                           placeholder="留空则使用 DuckDuckGo"
+                           class="w-64 px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-sm focus:ring-2 focus:ring-pink-500 focus:border-transparent outline-none">
+                </div>
+                {% elif config.key_name == 'web_search_max_results' %}
+                <div class="flex items-center justify-between">
+                    <div>
+                        <h3 class="text-sm font-medium text-gray-700 dark:text-gray-300">最大返回结果数</h3>
+                        <p class="text-xs text-gray-500 dark:text-gray-400 mt-1">每次搜索返回的最大结果数量</p>
+                    </div>
+                    <input type="number"
+                           name="web_search_max_results"
+                           value="{{ config.key_value }}"
+                           min="1" max="10"
+                           class="w-32 px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-sm text-right focus:ring-2 focus:ring-pink-500 focus:border-transparent outline-none">
+                </div>
+                {% elif config.key_name == 'web_search_max_content_length' %}
+                <div class="flex items-center justify-between">
+                    <div>
+                        <h3 class="text-sm font-medium text-gray-700 dark:text-gray-300">结果截断长度</h3>
+                        <p class="text-xs text-gray-500 dark:text-gray-400 mt-1">每个搜索结果的最大字符数</p>
+                    </div>
+                    <input type="number"
+                           name="web_search_max_content_length"
+                           value="{{ config.key_value }}"
+                           min="100" max="5000"
+                           class="w-32 px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-sm text-right focus:ring-2 focus:ring-pink-500 focus:border-transparent outline-none">
+                </div>
+                {% elif config.key_name == 'web_search_timeout' %}
+                <div class="flex items-center justify-between">
+                    <div>
+                        <h3 class="text-sm font-medium text-gray-700 dark:text-gray-300">搜索超时（秒）</h3>
+                        <p class="text-xs text-gray-500 dark:text-gray-400 mt-1">搜索请求的最大等待时间</p>
+                    </div>
+                    <input type="number"
+                           name="web_search_timeout"
+                           value="{{ config.key_value }}"
+                           min="5" max="60"
+                           class="w-32 px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-sm text-right focus:ring-2 focus:ring-pink-500 focus:border-transparent outline-none">
+                </div>
+                {% endif %}
+                {% endfor %}
+            </div>
+        </div>
 
         <!-- 保存按钮 -->
         <div class="flex justify-end">
