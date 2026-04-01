@@ -247,6 +247,12 @@ class DecisionEngine:
                 )
 
             comment_summary = "\n".join(comment_parts)
+            if comment_summary.strip():
+                comment_summary = (
+                    f"<details><summary>📋 问题详情</summary>\n\n"
+                    f"{comment_summary}\n\n"
+                    f"</details>"
+                )
 
             # 填充模板
             body = template.format(
