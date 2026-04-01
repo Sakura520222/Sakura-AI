@@ -175,7 +175,7 @@ class Settings(BaseSettings):
     enable_pr_issue_linking: bool = True
     issue_auto_comment: bool = True
     issue_confidence_threshold: float = 0.7
-    issue_auto_create_labels: bool = False
+    issue_auto_create_labels: bool = True
     issue_detect_duplicates: bool = True
     issue_suggest_assignees: bool = True
     issue_suggest_milestones: bool = False

@@ -7,6 +7,7 @@ from typing import Dict, Any, List
 from loguru import logger
 
 from backend.core.config import get_settings, get_strategy_config
+from backend.models.database import AppConfig, async_session
 from backend.services.ai_reviewer.api_client import AIApiClient
 from backend.services.ai_reviewer.tools import (
     FileToolHandler,
@@ -197,6 +198,26 @@ class IssueAnalyzer:
 
         # 多轮对话循环（带工具调用）
         max_iterations = settings.issue_max_tool_iterations
+        try:
+            if async_session is not None:
+                async with async_session() as session:
+                    from sqlalchemy import select
+
+                    result = await session.execute(
+                        select(AppConfig).where(
+                            AppConfig.key_name == "issue_max_tool_iterations"
+                        )
+                    )
+                    cfg = result.scalar_one_or_none()
+                    if cfg:
+                        try:
+                            max_iterations = int(cfg.key_value)
+                        except (ValueError, TypeError):
+                            logger.warning(
+                                f"Invalid issue_max_tool_iterations config: {cfg.key_value}"
+                            )
+        except Exception:
+            pass
         iteration = 0
         total_prompt_tokens = 0
         total_completion_tokens = 0
@@ -330,13 +351,29 @@ class IssueAnalyzer:
                         }
                     )
 
-        # 达到最大迭代次数
-        logger.warning(f"Issue 分析达到最大迭代次数 ({max_iterations})")
-        last_content = response.choices[0].message.content if response.choices else ""
-        result = (
-            self._parse_analysis_result(last_content)
-            if last_content
-            else {
+        # 达到最大迭代次数，做最后一次 API 调用强制 AI 返回结果
+        logger.warning(f"Issue 分析达到最大迭代次数 ({max_iterations})，强制生成最终结果")
+        messages.append(
+            {
+                "role": "user",
+                "content": "已达到最大工具调用次数，请基于已有信息立即返回最终分析结果（JSON 格式）。",
+            }
+        )
+        try:
+            final_response = await self.api_client.call_with_retry(
+                model=settings.issue_analysis_model,
+                messages=messages,
+                temperature=0.3,
+            )
+            last_content = final_response.choices[0].message.content or ""
+        except Exception as e:
+            logger.error(f"最终 API 调用失败: {e}")
+            last_content = ""
+
+        if last_content:
+            result = self._parse_analysis_result(last_content)
+        else:
+            result = {
                 "category": "other",
                 "priority": "medium",
                 "summary": "分析未完成（达到最大工具调用次数）",
@@ -346,7 +383,6 @@ class IssueAnalyzer:
                 "suggested_milestone": None,
                 "duplicate_of": None,
             }
-        )
 
         price_prompt = settings.issue_price_per_1k_prompt
         price_completion = settings.issue_price_per_1k_completion

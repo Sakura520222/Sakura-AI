@@ -12,6 +12,7 @@ from backend.models.database import (
     async_session,
     IssueAnalysis,
     IssueAnalysisStatus,
+    AppConfig,
 )
 from sqlalchemy import select, and_
 from backend.services.issue_analyzer import IssueAnalyzer
@@ -134,8 +135,26 @@ class IssueWorker:
                     except Exception as e:
                         logger.warning(f"[{task_id}] 发布评论失败: {e}")
 
-                # 10. 应用建议标签
-                if settings.issue_auto_create_labels:
+                # 10. 应用建议标签（优先从 DB 读取配置）
+                issue_auto_create_labels = settings.issue_auto_create_labels
+                try:
+                    if async_session is not None:
+                        async with async_session() as session:
+                            result = await session.execute(
+                                select(AppConfig).where(
+                                    AppConfig.key_name
+                                    == "issue_auto_create_labels"
+                                )
+                            )
+                            cfg = result.scalar_one_or_none()
+                            if cfg:
+                                issue_auto_create_labels = (
+                                    cfg.key_value == "true"
+                                )
+                except Exception:
+                    pass
+
+                if issue_auto_create_labels:
                     try:
                         labels_data = json.loads(
                             analysis_record.suggested_labels or "[]"
