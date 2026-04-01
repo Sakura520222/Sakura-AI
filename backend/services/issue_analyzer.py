@@ -197,6 +197,23 @@ class IssueAnalyzer:
 
         # 多轮对话循环（带工具调用）
         max_iterations = settings.issue_max_tool_iterations
+        try:
+            from backend.models.database import AppConfig, async_session
+
+            if async_session is not None:
+                async with async_session() as session:
+                    from sqlalchemy import select
+
+                    result = await session.execute(
+                        select(AppConfig).where(
+                            AppConfig.key_name == "issue_max_tool_iterations"
+                        )
+                    )
+                    cfg = result.scalar_one_or_none()
+                    if cfg:
+                        max_iterations = int(cfg.key_value)
+        except Exception:
+            pass
         iteration = 0
         total_prompt_tokens = 0
         total_completion_tokens = 0
