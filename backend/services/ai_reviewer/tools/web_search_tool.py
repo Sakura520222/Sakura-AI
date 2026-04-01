@@ -5,6 +5,8 @@
 
 from typing import Any, Dict, List, Optional
 
+import time
+
 import httpx
 from loguru import logger
 
@@ -28,43 +30,39 @@ class WebSearchToolHandler:
         "web_search_timeout": "web_search_timeout",
     }
 
-    def __init__(self):
+    _CONFIG_CACHE_TTL = 60  # 配置缓存有效期（秒）
+
+    def __init__(self) -> None:
         """初始化 Web 搜索工具"""
         settings = get_settings()
         # 从环境变量加载默认值
-        self._provider = settings.web_search_provider
-        self._api_key = settings.web_search_api_key
-        self._max_results = settings.web_search_max_results
-        self._max_content_length = settings.web_search_max_content_length
-        self._timeout = settings.web_search_timeout
+        self._provider: str = settings.web_search_provider
+        self._api_key: str = settings.web_search_api_key
+        self._max_results: int = settings.web_search_max_results
+        self._max_content_length: int = settings.web_search_max_content_length
+        self._timeout: int = settings.web_search_timeout
+        self._last_config_load: float = 0.0
 
-    def _load_config(self) -> None:
-        """从数据库加载配置（覆盖环境变量默认值）"""
+    async def _load_config(self) -> None:
+        """从数据库加载配置（覆盖环境变量默认值），带 TTL 缓存"""
+        if time.time() - self._last_config_load < self._CONFIG_CACHE_TTL:
+            return
+
         try:
             from backend.models.database import AppConfig, async_session
+            from sqlalchemy import select
 
             if async_session is None:
                 return
 
-            import asyncio
+            async with async_session() as session:
+                keys = list(self._CONFIG_MAP.keys())
+                result = await session.execute(
+                    select(AppConfig).where(AppConfig.key_name.in_(keys))
+                )
+                configs = result.scalars().all()
+                config_values = {c.key_name: c.key_value for c in configs}
 
-            loop = asyncio.get_event_loop()
-            if loop.is_running():
-                # 在异步上下文中无法同步查询，使用环境变量默认值
-                return
-
-            async def _query():
-                async with async_session() as session:
-                    from sqlalchemy import select
-
-                    keys = list(self._CONFIG_MAP.keys())
-                    result = await session.execute(
-                        select(AppConfig).where(AppConfig.key_name.in_(keys))
-                    )
-                    configs = result.scalars().all()
-                    return {c.key_name: c.key_value for c in configs}
-
-            config_values = loop.run_until_complete(_query())
             if not config_values:
                 return
 
@@ -81,6 +79,10 @@ class WebSearchToolHandler:
             if config_values.get("web_search_timeout"):
                 self._timeout = int(config_values["web_search_timeout"])
 
+            self._last_config_load = time.time()
+
+        except (ValueError, TypeError) as e:
+            logger.warning(f"Web 搜索配置值格式无效，使用环境变量默认值: {e}")
         except Exception as e:
             logger.debug(f"从数据库加载 Web 搜索配置失败，使用环境变量默认值: {e}")
 
@@ -118,6 +120,7 @@ class WebSearchToolHandler:
         Returns:
             搜索结果字典
         """
+        await self._load_config()
         max_results = top_k or self.max_results
 
         try:
