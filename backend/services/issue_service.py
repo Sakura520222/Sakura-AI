@@ -223,27 +223,95 @@ class IssueService:
         suggested_labels: list,
         db: AsyncSession,
     ) -> Dict[str, Any]:
-        """应用建议标签"""
+        """应用建议标签到 Issue（集成 LabelService，支持自动创建和置信度过滤）
+
+        Args:
+            repo_owner: 仓库所有者
+            repo_name: 仓库名称
+            issue_number: Issue 编号
+            suggested_labels: AI 建议的标签列表 [{"name": str, "confidence": float, "reason": str}]
+            db: 数据库会话
+
+        Returns:
+            应用结果字典
+        """
         settings = get_settings()
         threshold = settings.issue_confidence_threshold
-        applied = []
-        suggested = []
+        result = {"applied": [], "suggested": [], "created": [], "failed": []}
+
+        if not suggested_labels:
+            return result
+
+        # 使用 LabelService 获取仓库现有标签（带缓存）
+        from backend.services.label_service import label_service
+
+        existing_labels = await label_service.get_repo_labels(repo_owner, repo_name)
+        existing_labels_lower = {k.lower(): k for k in existing_labels}
 
         for label in suggested_labels:
-            if label.get("confidence", 0) >= threshold:
-                applied.append(label["name"])
+            label_name = label.get("name", "")
+            confidence = label.get("confidence", 0)
+
+            if not label_name:
+                continue
+
+            # 大小写不敏感匹配
+            matched_name = existing_labels_lower.get(label_name.lower())
+
+            if not matched_name:
+                # 标签不存在：使用 LabelService 默认标签信息自动创建
+                default_info = label_service.DEFAULT_LABELS.get(
+                    label_name, {"color": "0366d6", "description": ""}
+                )
+                success = self.github_app.create_label(
+                    repo_owner,
+                    repo_name,
+                    label_name,
+                    default_info["color"],
+                    default_info["description"],
+                )
+                if success:
+                    result["created"].append(label_name)
+                    logger.info(
+                        f"Issue #{issue_number} 自动创建标签: {label_name}"
+                    )
+                else:
+                    result["failed"].append(label_name)
+                    logger.warning(
+                        f"Issue #{issue_number} 创建标签失败: {label_name}"
+                    )
+                    continue
             else:
-                suggested.append(label["name"])
+                label_name = matched_name
 
-        if applied:
-            success = self.github_app.add_labels_to_issue(
-                repo_owner, repo_name, issue_number, applied
-            )
-            if success:
-                return {"applied": applied, "suggested": suggested}
-            logger.warning(f"应用标签失败: {applied}")
+            # 根据置信度决定是否自动应用
+            if confidence >= threshold:
+                success = self.github_app.add_labels_to_issue(
+                    repo_owner, repo_name, issue_number, [label_name]
+                )
+                if success:
+                    result["applied"].append(
+                        {
+                            "name": label_name,
+                            "confidence": confidence,
+                            "reason": label.get("reason", ""),
+                        }
+                    )
+                else:
+                    result["failed"].append(label_name)
+                    logger.warning(
+                        f"Issue #{issue_number} 应用标签失败: {label_name}"
+                    )
+            else:
+                result["suggested"].append(
+                    {
+                        "name": label_name,
+                        "confidence": confidence,
+                        "reason": label.get("reason", ""),
+                    }
+                )
 
-        return {"applied": [], "suggested": suggested}
+        return result
 
     async def detect_duplicates(
         self,

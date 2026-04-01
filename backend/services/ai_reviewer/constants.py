@@ -64,8 +64,9 @@ ISSUE_CATEGORIES = ["critical", "major", "minor", "suggestions"]
 BASE_TOOLS = ["read_file", "list_directory"]
 RAG_TOOLS = ["search_project_docs"]
 CODE_INDEX_TOOLS = ["search_code_context"]
+WEB_SEARCH_TOOLS = ["search_web"]
 
-ALL_TOOLS = BASE_TOOLS + RAG_TOOLS + CODE_INDEX_TOOLS
+ALL_TOOLS = BASE_TOOLS + RAG_TOOLS + CODE_INDEX_TOOLS + WEB_SEARCH_TOOLS
 
 # =============================================================================
 # 上下文压缩配置
@@ -246,11 +247,42 @@ SEARCH_CODE_CONTEXT_TOOL = {
     },
 }
 
+SEARCH_WEB_TOOL = {
+    "type": "function",
+    "function": {
+        "name": "search_web",
+        "description": """搜索互联网获取最新文档、API 参考、最佳实践等信息。
+
+重要：仅在以下情况使用此工具：
+- 本地文档搜索（search_project_docs）和代码搜索（search_code_context）均未找到答案时
+- 需要查询最新的 API 文档或版本变更时
+- 需要了解特定技术/框架的最新最佳实践时
+
+不要用于可以通过本地工具解决的问题。""",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "query": {
+                    "type": "string",
+                    "description": "搜索查询，例如：'FastAPI dependency injection 最佳实践'、'Python 3.12 新特性'",
+                },
+                "top_k": {
+                    "type": "integer",
+                    "description": "返回搜索结果数量，默认 3",
+                    "default": 3,
+                },
+            },
+            "required": ["query"],
+        },
+    },
+}
+
 ALL_TOOL_DEFINITIONS = [
     READ_FILE_TOOL,
     LIST_DIRECTORY_TOOL,
     SEARCH_PROJECT_DOCS_TOOL,
     SEARCH_CODE_CONTEXT_TOOL,
+    SEARCH_WEB_TOOL,
 ]
 
 # 工具名称到定义的映射
@@ -259,4 +291,5 @@ TOOL_NAME_TO_DEFINITION = {
     "list_directory": LIST_DIRECTORY_TOOL,
     "search_project_docs": SEARCH_PROJECT_DOCS_TOOL,
     "search_code_context": SEARCH_CODE_CONTEXT_TOOL,
+    "search_web": SEARCH_WEB_TOOL,
 }

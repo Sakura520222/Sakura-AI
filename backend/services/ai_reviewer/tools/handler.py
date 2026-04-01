@@ -5,7 +5,7 @@
 """
 
 import json
-from typing import Any, Dict
+from typing import Any, Dict, Optional
 
 from loguru import logger
 
@@ -16,15 +16,22 @@ class ToolHandler:
     负责路由和执行AI请求的工具调用。
     """
 
-    def __init__(self, file_tool, search_tool):
+    def __init__(
+        self,
+        file_tool,
+        search_tool,
+        web_search_tool=None,
+    ):
         """初始化工具处理器
 
         Args:
             file_tool: 文件工具处理器
             search_tool: 搜索工具处理器
+            web_search_tool: Web 搜索工具处理器（可选）
         """
         self.file_tool = file_tool
         self.search_tool = search_tool
+        self.web_search_tool = web_search_tool
 
     async def handle_tool_call(
         self, tool_call: Any, repo: Any, pr: Any
@@ -72,6 +79,13 @@ class ToolHandler:
                     arguments.get("top_k", 5),
                     repo,
                     pr,
+                )
+            elif function_name == "search_web":
+                if not self.web_search_tool:
+                    return {"error": "Web 搜索工具未启用"}
+                return await self.web_search_tool.search_web(
+                    query=arguments.get("query", ""),
+                    top_k=arguments.get("top_k"),
                 )
             else:
                 return {"error": f"未知工具: {function_name}"}

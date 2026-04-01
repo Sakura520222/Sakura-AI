@@ -30,7 +30,13 @@ class IssueAnalyzer:
         )
         file_tool = FileToolHandler()
         search_tool = SearchToolHandler()
-        self.tool_handler = ToolHandler(file_tool, search_tool)
+        web_search_tool = None
+        if settings.web_search_enabled:
+            from backend.services.ai_reviewer.tools.web_search_tool import (
+                WebSearchToolHandler,
+            )
+            web_search_tool = WebSearchToolHandler()
+        self.tool_handler = ToolHandler(file_tool, search_tool, web_search_tool)
         self.tool_manager = ToolManager()
         self.tools = self.tool_manager.get_all_tools_definitions()
 

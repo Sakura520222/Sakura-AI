@@ -59,7 +59,13 @@ class AIReviewer:
         # 初始化工具相关
         file_tool = FileToolHandler()
         search_tool = SearchToolHandler()
-        self.tool_handler = ToolHandler(file_tool, search_tool)
+        web_search_tool = None
+        if settings.web_search_enabled:
+            from backend.services.ai_reviewer.tools.web_search_tool import (
+                WebSearchToolHandler,
+            )
+            web_search_tool = WebSearchToolHandler()
+        self.tool_handler = ToolHandler(file_tool, search_tool, web_search_tool)
         self.tool_manager = ToolManager()
 
         # 初始化上下文压缩

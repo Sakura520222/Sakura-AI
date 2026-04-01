@@ -106,6 +106,32 @@ class ToolManager:
                     if code_tool:
                         enabled_tools.append(code_tool)
 
+            # 检查 search_web 工具（优先从 DB 读取配置）
+            web_search_enabled = settings.web_search_enabled
+            try:
+                from backend.models.database import AppConfig, async_session
+
+                if async_session is not None:
+                    async with async_session() as session:
+                        from sqlalchemy import select
+
+                        result = await session.execute(
+                            select(AppConfig).where(
+                                AppConfig.key_name == "web_search_enabled"
+                            )
+                        )
+                        cfg = result.scalar_one_or_none()
+                        if cfg:
+                            web_search_enabled = cfg.key_value == "true"
+            except Exception:
+                pass
+
+            if web_search_enabled:
+                web_tool = TOOL_NAME_TO_DEFINITION.get("search_web")
+                if web_tool:
+                    enabled_tools.append(web_tool)
+                    logger.debug("已启用 search_web 工具")
+
         except Exception as e:
             # 索引状态检查失败时，保守策略：仅使用基础工具
             logger.warning(
