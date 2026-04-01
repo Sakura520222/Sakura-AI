@@ -5,6 +5,8 @@
 
 from typing import Any, Dict, List, Optional
 
+import time
+
 import httpx
 from loguru import logger
 
@@ -43,8 +45,6 @@ class WebSearchToolHandler:
 
     async def _load_config(self) -> None:
         """从数据库加载配置（覆盖环境变量默认值），带 TTL 缓存"""
-        import time
-
         if time.time() - self._last_config_load < self._CONFIG_CACHE_TTL:
             return
 
@@ -63,8 +63,6 @@ class WebSearchToolHandler:
                 configs = result.scalars().all()
                 config_values = {c.key_name: c.key_value for c in configs}
 
-            self._last_config_load = time.time()
-
             if not config_values:
                 return
 
@@ -81,6 +79,10 @@ class WebSearchToolHandler:
             if config_values.get("web_search_timeout"):
                 self._timeout = int(config_values["web_search_timeout"])
 
+            self._last_config_load = time.time()
+
+        except (ValueError, TypeError) as e:
+            logger.warning(f"Web 搜索配置值格式无效，使用环境变量默认值: {e}")
         except Exception as e:
             logger.debug(f"从数据库加载 Web 搜索配置失败，使用环境变量默认值: {e}")
 
