@@ -514,7 +514,14 @@ async def save_general_config(
         # issue_max_tool_iterations
         raw = form.get("issue_max_tool_iterations")
         if raw is not None:
-            val = int(raw)
+            try:
+                val = int(raw)
+            except ValueError:
+                return toast_redirect(
+                    "/webui/config/general",
+                    "AI 工具调用迭代次数必须是有效整数",
+                    "error",
+                )
             if not 1 <= val <= 50:
                 return toast_redirect(
                     "/webui/config/general",
