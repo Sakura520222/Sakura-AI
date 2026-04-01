@@ -547,6 +547,16 @@ async def insert_default_configs_async():
                         key_value="15",
                         description="Web 搜索超时时间（秒）",
                     ),
+                    AppConfig(
+                        key_name="issue_auto_create_labels",
+                        key_value="true",
+                        description="自动为 Issue 应用 AI 推荐的标签",
+                    ),
+                    AppConfig(
+                        key_name="issue_max_tool_iterations",
+                        key_value="15",
+                        description="Issues 分析中 AI 工具调用最大迭代次数",
+                    ),
                 ]
 
                 session.add_all(default_configs)
@@ -641,6 +651,16 @@ def init_database(database_url: str):
                         key_name="web_search_timeout",
                         key_value="15",
                         description="Web 搜索超时时间（秒）",
+                    ),
+                    AppConfig(
+                        key_name="issue_auto_create_labels",
+                        key_value="true",
+                        description="自动为 Issue 应用 AI 推荐的标签",
+                    ),
+                    AppConfig(
+                        key_name="issue_max_tool_iterations",
+                        key_value="15",
+                        description="Issues 分析中 AI 工具调用最大迭代次数",
                     ),
                 ]
 

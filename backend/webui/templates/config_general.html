@@ -27,7 +27,7 @@
 
         <!-- 基础配置 -->
         {% for config in configs %}
-        {% if config.key_name in ('max_concurrent_reviews', 'review_timeout_seconds', 'enable_auto_review') %}
+        {% if config.key_name in ('max_concurrent_reviews', 'review_timeout_seconds', 'enable_auto_review', 'issue_auto_create_labels', 'issue_max_tool_iterations') %}
         <div class="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 shadow-sm p-5">
             <div class="flex items-center justify-between">
                 <div>
@@ -39,13 +39,17 @@
                         单次审查任务的超时时间（秒）
                         {% elif config.key_name == 'enable_auto_review' %}
                         是否自动审查新提交的 PR
+                        {% elif config.key_name == 'issue_auto_create_labels' %}
+                        是否自动为 Issue 应用 AI 推荐的标签
+                        {% elif config.key_name == 'issue_max_tool_iterations' %}
+                        Issues 分析中 AI 工具调用的最大轮数
                         {% endif %}
                     </p>
                 </div>
 
-                {% if config.key_name == 'enable_auto_review' %}
+                {% if config.key_name in ('enable_auto_review', 'issue_auto_create_labels') %}
                 <label class="relative inline-flex items-center cursor-pointer">
-                    <input type="checkbox" name="enable_auto_review" value="true" class="sr-only peer"
+                    <input type="checkbox" name="{{ config.key_name }}" value="true" class="sr-only peer"
                            {% if config.key_value == 'true' %}checked{% endif %}>
                     <div class="w-11 h-6 bg-gray-200 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-pink-300 dark:peer-focus:ring-pink-800 rounded-full peer dark:bg-gray-600 peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:start-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all dark:after:border-gray-500 peer-checked:bg-pink-500"></div>
                 </label>
