@@ -28,18 +28,26 @@ class WebSearchToolHandler:
         "web_search_timeout": "web_search_timeout",
     }
 
-    def __init__(self):
+    _CONFIG_CACHE_TTL = 60  # 配置缓存有效期（秒）
+
+    def __init__(self) -> None:
         """初始化 Web 搜索工具"""
         settings = get_settings()
         # 从环境变量加载默认值
-        self._provider = settings.web_search_provider
-        self._api_key = settings.web_search_api_key
-        self._max_results = settings.web_search_max_results
-        self._max_content_length = settings.web_search_max_content_length
-        self._timeout = settings.web_search_timeout
+        self._provider: str = settings.web_search_provider
+        self._api_key: str = settings.web_search_api_key
+        self._max_results: int = settings.web_search_max_results
+        self._max_content_length: int = settings.web_search_max_content_length
+        self._timeout: int = settings.web_search_timeout
+        self._last_config_load: float = 0.0
 
     async def _load_config(self) -> None:
-        """从数据库加载配置（覆盖环境变量默认值）"""
+        """从数据库加载配置（覆盖环境变量默认值），带 TTL 缓存"""
+        import time
+
+        if time.time() - self._last_config_load < self._CONFIG_CACHE_TTL:
+            return
+
         try:
             from backend.models.database import AppConfig, async_session
             from sqlalchemy import select
@@ -54,6 +62,8 @@ class WebSearchToolHandler:
                 )
                 configs = result.scalars().all()
                 config_values = {c.key_name: c.key_value for c in configs}
+
+            self._last_config_load = time.time()
 
             if not config_values:
                 return
