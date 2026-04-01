@@ -38,33 +38,23 @@ class WebSearchToolHandler:
         self._max_content_length = settings.web_search_max_content_length
         self._timeout = settings.web_search_timeout
 
-    def _load_config(self) -> None:
+    async def _load_config(self) -> None:
         """从数据库加载配置（覆盖环境变量默认值）"""
         try:
             from backend.models.database import AppConfig, async_session
+            from sqlalchemy import select
 
             if async_session is None:
                 return
 
-            import asyncio
+            async with async_session() as session:
+                keys = list(self._CONFIG_MAP.keys())
+                result = await session.execute(
+                    select(AppConfig).where(AppConfig.key_name.in_(keys))
+                )
+                configs = result.scalars().all()
+                config_values = {c.key_name: c.key_value for c in configs}
 
-            loop = asyncio.get_event_loop()
-            if loop.is_running():
-                # 在异步上下文中无法同步查询，使用环境变量默认值
-                return
-
-            async def _query():
-                async with async_session() as session:
-                    from sqlalchemy import select
-
-                    keys = list(self._CONFIG_MAP.keys())
-                    result = await session.execute(
-                        select(AppConfig).where(AppConfig.key_name.in_(keys))
-                    )
-                    configs = result.scalars().all()
-                    return {c.key_name: c.key_value for c in configs}
-
-            config_values = loop.run_until_complete(_query())
             if not config_values:
                 return
 
@@ -118,6 +108,7 @@ class WebSearchToolHandler:
         Returns:
             搜索结果字典
         """
+        await self._load_config()
         max_results = top_k or self.max_results
 
         try:
