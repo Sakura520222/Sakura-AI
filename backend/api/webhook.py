@@ -284,6 +284,9 @@ async def handle_issue_comment_event(payload: Dict[str, Any]) -> JSONResponse:
 
         # 检查是否为 /full-review 指令（精确匹配，避免误匹配 /full-review-extra 等）
         if not re.match(r"^/full-review(\s|$)", comment_body):
+            # 检查 /revoke 命令
+            if re.match(r"^/revoke(\s|$)", comment_body):
+                return await handle_revoke_command(payload)
             return JSONResponse(
                 content={"status": "ignored", "reason": "not a review command"}
             )
@@ -534,6 +537,143 @@ async def handle_issue_comment_event(payload: Dict[str, Any]) -> JSONResponse:
 
     except Exception as e:
         logger.error(f"处理Issue Comment事件时出错: {e}", exc_info=True)
+        return JSONResponse(
+            status_code=500, content={"status": "error", "message": "内部服务错误"}
+        )
+
+
+async def handle_revoke_command(payload: Dict[str, Any]) -> JSONResponse:
+    """处理 /revoke 命令（一键撤回 AI 评论和 Review）"""
+    try:
+        # 提取 PR 信息
+        issue = payload.get("issue", {})
+
+        # 必须是 PR 评论
+        if not issue.get("pull_request"):
+            return JSONResponse(
+                content={"status": "ignored", "reason": "not a PR comment"}
+            )
+
+        repo_info = payload.get("repository", {})
+        installation = payload.get("installation")
+        pr_number = issue.get("number")
+
+        if not repo_info or not installation or not pr_number:
+            return JSONResponse(
+                status_code=400,
+                content={"status": "error", "message": "无法提取PR信息"},
+            )
+
+        repo_owner = repo_info.get("owner", {}).get("login")
+        repo_name = repo_info.get("name")
+        repo_full_name = repo_info.get("full_name")
+        installation_id = installation.get("id") if installation else None
+
+        if not all([repo_owner, repo_name, repo_full_name, installation_id]):
+            return JSONResponse(
+                status_code=400,
+                content={"status": "error", "message": "无法提取PR信息"},
+            )
+
+        # 获取评论者信息
+        commenter_login = payload.get("comment", {}).get("user", {}).get("login", "")
+
+        if not commenter_login:
+            return JSONResponse(
+                status_code=400,
+                content={"status": "error", "message": "无法获取评论者信息"},
+            )
+
+        logger.info(
+            f"收到 /revoke 指令: {repo_full_name}#{pr_number}, "
+            f"评论者: {commenter_login}"
+        )
+
+        # 权限检查：仅限仓库 admin
+        github_app = GitHubAppClient()
+
+        permission = github_app.check_collaborator_permission(
+            repo_owner, repo_name, commenter_login
+        )
+
+        if permission != "admin":
+            logger.info(
+                f"用户 {commenter_login} 无权撤回评论 (权限: {permission}, 需要 admin)"
+            )
+            try:
+                client = github_app.get_repo_client(repo_owner, repo_name)
+                if client:
+                    repo = client.get_repo(repo_full_name)
+                    pr = repo.get_pull(pr_number)
+                    pr.create_issue_comment(
+                        f"❌ @{commenter_login}，只有仓库管理员才能撤回 AI 评论。"
+                    )
+            except Exception as e:
+                logger.warning(f"回复无权限提示失败: {e}")
+            return JSONResponse(
+                content={"status": "denied", "reason": "insufficient permission"}
+            )
+
+        # 删除 bot 评论和撤回 Review
+        bot_username = github_app.get_bot_username(repo_owner, repo_name)
+
+        deleted_result = {"issue_comments": 0, "review_comments": 0}
+        dismissed_reviews = 0
+
+        if bot_username:
+            deleted_result = github_app.delete_all_bot_comments(
+                repo_owner, repo_name, pr_number, bot_username
+            )
+            dismissed_reviews = github_app.dismiss_bot_reviews(
+                repo_owner, repo_name, pr_number, bot_username
+            )
+
+        logger.info(
+            f"撤回完成: Issue评论={deleted_result['issue_comments']}, "
+            f"Review评论={deleted_result['review_comments']}, 撤回Review={dismissed_reviews}"
+        )
+
+        # 回复确认评论
+        try:
+            client = github_app.get_repo_client(repo_owner, repo_name)
+            if client:
+                repo = client.get_repo(repo_full_name)
+                pr = repo.get_pull(pr_number)
+
+                cleanup_info = []
+                if deleted_result["review_comments"] > 0:
+                    cleanup_info.append(
+                        f"删除 {deleted_result['review_comments']} 条行内评论"
+                    )
+                if deleted_result["issue_comments"] > 0:
+                    cleanup_info.append(f"删除 {deleted_result['issue_comments']} 条评论")
+                if dismissed_reviews > 0:
+                    cleanup_info.append(f"撤回 {dismissed_reviews} 条 Review")
+                cleanup_text = "、".join(cleanup_info) if cleanup_info else "没有需要清理的内容"
+
+                pr.create_issue_comment(
+                    f"✅ 已{cleanup_text}。\n\n由 @{commenter_login} 触发"
+                )
+        except Exception as e:
+            logger.warning(f"发送确认评论失败: {e}")
+
+        logger.info(
+            f"/revoke 已执行: {repo_full_name}#{pr_number}, "
+            f"triggered_by={commenter_login}"
+        )
+
+        return JSONResponse(
+            content={
+                "status": "success",
+                "message": "AI 评论已撤回",
+                "pr": f"{repo_full_name}#{pr_number}",
+                "deleted_comments": deleted_result,
+                "dismissed_reviews": dismissed_reviews,
+            }
+        )
+
+    except Exception as e:
+        logger.error(f"处理 /revoke 命令时出错: {e}", exc_info=True)
         return JSONResponse(
             status_code=500, content={"status": "error", "message": "内部服务错误"}
         )

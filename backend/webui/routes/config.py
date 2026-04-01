@@ -498,6 +498,109 @@ async def save_general_config(
             changed["enable_auto_review"] = {"old": cfg.key_value, "new": val}
             cfg.key_value = val
 
+        # issue_auto_create_labels (checkbox)
+        raw = form.get("issue_auto_create_labels")
+        val = "true" if raw == "true" else "false"
+        result = await db.execute(
+            select(AppConfig).where(
+                AppConfig.key_name == "issue_auto_create_labels"
+            )
+        )
+        cfg = result.scalar_one_or_none()
+        if cfg and cfg.key_value != val:
+            changed["issue_auto_create_labels"] = {"old": cfg.key_value, "new": val}
+            cfg.key_value = val
+
+        # issue_max_tool_iterations
+        raw = form.get("issue_max_tool_iterations")
+        if raw is not None:
+            try:
+                val = int(raw)
+            except ValueError:
+                return toast_redirect(
+                    "/webui/config/general",
+                    "AI 工具调用迭代次数必须是有效整数",
+                    "error",
+                )
+            if not 1 <= val <= 50:
+                return toast_redirect(
+                    "/webui/config/general",
+                    "AI 工具调用迭代次数须在 1-50 之间",
+                    "error",
+                )
+            result = await db.execute(
+                select(AppConfig).where(
+                    AppConfig.key_name == "issue_max_tool_iterations"
+                )
+            )
+            cfg = result.scalar_one_or_none()
+            if cfg and cfg.key_value != str(val):
+                changed["issue_max_tool_iterations"] = {
+                    "old": cfg.key_value,
+                    "new": str(val),
+                }
+                cfg.key_value = str(val)
+
+        # ========== Web 搜索配置 ==========
+        web_search_keys = [
+            "web_search_enabled",
+            "web_search_provider",
+            "web_search_api_key",
+            "web_search_max_results",
+            "web_search_max_content_length",
+            "web_search_timeout",
+        ]
+        for key in web_search_keys:
+            raw = form.get(key)
+            if raw is None:
+                continue
+            val = raw.strip()
+            # 验证
+            if key == "web_search_enabled":
+                val = "true" if val == "true" else "false"
+            elif key == "web_search_max_results":
+                val_i = int(val)
+                if not 1 <= val_i <= 10:
+                    return toast_redirect(
+                        "/webui/config/general", "Web 搜索最大结果数须在 1-10 之间", "error"
+                    )
+                val = str(val_i)
+            elif key == "web_search_max_content_length":
+                val_i = int(val)
+                if not 100 <= val_i <= 5000:
+                    return toast_redirect(
+                        "/webui/config/general", "结果截断长度须在 100-5000 之间", "error"
+                    )
+                val = str(val_i)
+            elif key == "web_search_timeout":
+                val_i = int(val)
+                if not 5 <= val_i <= 60:
+                    return toast_redirect(
+                        "/webui/config/general", "搜索超时须在 5-60 秒之间", "error"
+                    )
+                val = str(val_i)
+            elif key == "web_search_provider":
+                if val not in ("duckduckgo", "tavily"):
+                    return toast_redirect(
+                        "/webui/config/general", "不支持的搜索提供商", "error"
+                    )
+            # API key 无需特殊验证
+
+            result = await db.execute(
+                select(AppConfig).where(AppConfig.key_name == key)
+            )
+            cfg = result.scalar_one_or_none()
+            if cfg and cfg.key_value != val:
+                # API key 脱敏记录
+                if key == "web_search_api_key" and val:
+                    old_val = cfg.key_value
+                    log_old = f"***{old_val[-4:]}" if len(old_val) > 4 else "***"
+                    log_new = f"***{val[-4:]}" if len(val) > 4 else "***"
+                    changed[key] = {"old": log_old, "new": log_new}
+                else:
+                    changed[key] = {"old": cfg.key_value, "new": val}
+                cfg.key_value = val
+
         if not changed:
             return toast_redirect(
                 "/webui/config/general", "全局配置已保存（部分配置需重启后生效）"

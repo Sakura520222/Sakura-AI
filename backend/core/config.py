@@ -175,7 +175,7 @@ class Settings(BaseSettings):
     enable_pr_issue_linking: bool = True
     issue_auto_comment: bool = True
     issue_confidence_threshold: float = 0.7
-    issue_auto_create_labels: bool = False
+    issue_auto_create_labels: bool = True
     issue_detect_duplicates: bool = True
     issue_suggest_assignees: bool = True
     issue_suggest_milestones: bool = False
@@ -184,6 +184,14 @@ class Settings(BaseSettings):
     issue_max_directory_depth: int = 3
     issue_price_per_1k_prompt: float = 0.0
     issue_price_per_1k_completion: float = 0.0
+
+    # ========== Web 搜索配置 ==========
+    web_search_enabled: bool = False  # 是否启用 Web 搜索工具
+    web_search_provider: str = "duckduckgo"  # 搜索提供商：duckduckgo(免费) | tavily
+    web_search_api_key: str = ""  # API Key（tavily 需要，duckduckgo 不需要）
+    web_search_max_results: int = 3  # 最大返回结果数
+    web_search_max_content_length: int = 500  # 每个结果截断长度（字符）
+    web_search_timeout: int = 15  # 搜索超时（秒）
 
     # ========== 代码索引配置 ==========
     enable_code_index: bool = True  # 是否启用代码索引功能

@@ -262,7 +262,9 @@ class CommentService:
         # 添加 AI 生成的完整审查内容（已包含所有格式化的问题分类）
         summary = review_result.get("summary", "")
         if summary:
+            lines.append("<details><summary>📋 查看详细审查报告</summary>\n\n")
             lines.append(summary)
+            lines.append("\n\n</details>")
             lines.append("")
 
         # 添加标签建议（如果有）

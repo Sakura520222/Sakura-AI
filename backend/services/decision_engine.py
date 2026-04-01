@@ -204,6 +204,12 @@ class DecisionEngine:
                 score = extracted if extracted is not None else "N/A"
 
             summary = review_result.get("summary", "暂无摘要")
+            if summary.strip():
+                summary = (
+                    f"<details><summary>📋 查看详细审查报告</summary>\n\n"
+                    f"{summary}\n\n"
+                    f"</details>"
+                )
 
             # 构建问题摘要
             issues = review_result.get("issues", {})
