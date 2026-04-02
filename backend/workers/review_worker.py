@@ -160,7 +160,7 @@ class ReviewWorker:
             )
 
             # 6. 准备审查上下文
-            context = self.analyzer.prepare_review_context(analysis, pr)
+            context = await self.analyzer.prepare_review_context(analysis, pr)
 
             # 6.5 解析并注入 Issue 上下文（如果启用）
             if (
