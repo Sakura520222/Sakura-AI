@@ -21,6 +21,8 @@ from backend.services.issue_service import issue_service
 # Issue 分析并发控制信号量
 _issue_semaphore: asyncio.Semaphore | None = None
 
+DEFAULT_MAX_CONCURRENT_ISSUES = 3
+
 
 async def _get_issue_semaphore() -> asyncio.Semaphore:
     """获取 Issue 分析并发信号量（懒初始化，支持动态更新）"""
@@ -49,9 +51,9 @@ async def _load_max_concurrent_from_db() -> int:
                 select(AppConfig).where(AppConfig.key_name == "max_concurrent_issues")
             )
             cfg = result.scalar_one_or_none()
-            return int(cfg.key_value) if cfg else 3
+            return int(cfg.key_value) if cfg else DEFAULT_MAX_CONCURRENT_ISSUES
     except Exception:
-        return 3  # 降级默认值
+        return DEFAULT_MAX_CONCURRENT_ISSUES
 
 
 class IssueWorker:
@@ -82,8 +84,7 @@ class IssueWorker:
 
         # 获取并发信号量，限制同时运行的 Issue 分析任务数
         semaphore = await _get_issue_semaphore()
-        await semaphore.acquire()
-        try:
+        async with semaphore:
             async with async_session() as db:
                 try:
                     # 1. 创建分析记录（PENDING）
@@ -358,9 +359,6 @@ class IssueWorker:
                                 pass
                     except Exception:
                         pass
-
-        finally:
-            semaphore.release()
 
         return task_id
 

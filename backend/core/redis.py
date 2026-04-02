@@ -47,13 +47,23 @@ def _cleanup_async_client(client):
     try:
         import asyncio
 
-        loop = asyncio.get_event_loop()
-        if loop.is_running():
-            loop.create_task(client.aclose())
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            loop = None
+
+        if loop is not None and loop.is_running():
+            # 事件循环正在运行，创建关闭任务并保存引用防止 GC
+            task = loop.create_task(client.aclose())
+            _cleanup_async_client._pending_tasks = getattr(
+                _cleanup_async_client, "_pending_tasks", []
+            )
+            _cleanup_async_client._pending_tasks.append(task)
         else:
-            loop.run_until_complete(client.aclose())
-    except Exception:
-        pass
+            # 没有运行中的事件循环
+            asyncio.run(client.aclose())
+    except Exception as e:
+        logger.debug(f"清理异步 Redis 客户端时出错（通常可忽略）: {e}")
 
 
 async def get_async_redis() -> aioredis.Redis:

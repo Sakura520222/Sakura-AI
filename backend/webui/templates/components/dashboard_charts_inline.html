@@ -162,13 +162,26 @@ async function initDashboardCharts() {
             });
             _themeObserver.observe(document.documentElement, { attributes: true, attributeFilter: ['class'] });
 
-            // 页面卸载时清理 observer
-            window.addEventListener('beforeunload', function() {
+            // 统一清理函数：断开 observer + 销毁图表实例
+            function _cleanupDashboardCharts() {
                 if (_themeObserver) {
                     _themeObserver.disconnect();
                     _themeObserver = null;
                 }
-            });
+                if (_dashboardCharts) {
+                    Object.keys(_dashboardCharts).forEach(function(key) {
+                        if (_dashboardCharts[key]) {
+                            _dashboardCharts[key].destroy();
+                        }
+                    });
+                    _dashboardCharts = null;
+                }
+            }
+
+            // 页面卸载时清理
+            window.addEventListener('beforeunload', _cleanupDashboardCharts, { once: true });
+            // 暴露供外部调用（如 SPA 路由切换时）
+            window._cleanupDashboardCharts = _cleanupDashboardCharts;
         })
         .catch(function(err) { console.error('加载图表数据失败:', err); });
 }

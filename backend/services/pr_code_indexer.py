@@ -10,6 +10,32 @@ from loguru import logger
 from backend.services.code_index_service import get_code_index_service
 from backend.core.github_app import GitHubAppClient
 
+# 无扩展名的特殊代码/配置文件
+_SPECIAL_CODE_FILES = frozenset(
+    {
+        "Makefile",
+        "Dockerfile",
+        "CMakeLists.txt",
+        "Jenkinsfile",
+        "Vagrantfile",
+        "Rakefile",
+        "Gemfile",
+        ".gitignore",
+        ".gitlab-ci.yml",
+        ".env",
+        ".env.example",
+        "docker-compose.yml",
+        "docker-compose.yaml",
+        "nginx.conf",
+        "tsconfig.json",
+        "package.json",
+        "Cargo.toml",
+        "go.mod",
+        "build.gradle",
+        "pom.xml",
+    }
+)
+
 
 class PRCodeIndexer:
     """PR代码索引器
@@ -146,13 +172,14 @@ class PRCodeIndexer:
             是否为代码文件
         """
         from backend.services.code_parser_service import CodeParserService
-
-        # 获取文件扩展名
         from pathlib import Path
 
-        ext = Path(file_path).suffix.lower()
+        # 检查特殊文件名（无扩展名或固定名称的配置/构建文件）
+        if Path(file_path).name in _SPECIAL_CODE_FILES:
+            return True
 
-        # 检查是否在支持的语言列表中
+        # 检查扩展名
+        ext = Path(file_path).suffix.lower()
         for extensions in CodeParserService.LANGUAGE_MAP.values():
             if ext in extensions:
                 return True

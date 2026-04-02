@@ -24,11 +24,11 @@ _RECENT_REVIEW_LIMIT = 10
 
 # stats 接口缓存（避免频繁聚合查询）
 _stats_cache: tuple[dict, float] | None = None
-_STATS_CACHE_TTL = 30  # 秒
+_STATS_CACHE_TTL = 10  # 秒
 
 # chart-data 接口缓存
 _chart_cache: tuple[dict, float] | None = None
-_CHART_CACHE_TTL = 60  # 秒
+_CHART_CACHE_TTL = 20  # 秒
 
 
 def _serialize_review(r: PRReview) -> dict:
@@ -294,3 +294,12 @@ async def get_chart_data(
 
     _chart_cache = (result, time.time())
     return result
+
+
+@router.post("/api/webui/cache/refresh")
+async def refresh_cache(user: dict = Depends(require_auth)):
+    """手动刷新仪表盘缓存"""
+    global _stats_cache, _chart_cache
+    _stats_cache = None
+    _chart_cache = None
+    return {"status": "ok"}
