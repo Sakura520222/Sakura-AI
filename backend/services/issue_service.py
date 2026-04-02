@@ -272,14 +272,10 @@ class IssueService:
                 )
                 if success:
                     result["created"].append(label_name)
-                    logger.info(
-                        f"Issue #{issue_number} 自动创建标签: {label_name}"
-                    )
+                    logger.info(f"Issue #{issue_number} 自动创建标签: {label_name}")
                 else:
                     result["failed"].append(label_name)
-                    logger.warning(
-                        f"Issue #{issue_number} 创建标签失败: {label_name}"
-                    )
+                    logger.warning(f"Issue #{issue_number} 创建标签失败: {label_name}")
                     continue
             else:
                 label_name = matched_name
@@ -299,9 +295,7 @@ class IssueService:
                     )
                 else:
                     result["failed"].append(label_name)
-                    logger.warning(
-                        f"Issue #{issue_number} 应用标签失败: {label_name}"
-                    )
+                    logger.warning(f"Issue #{issue_number} 应用标签失败: {label_name}")
             else:
                 result["suggested"].append(
                     {

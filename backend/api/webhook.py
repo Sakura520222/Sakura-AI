@@ -646,10 +646,14 @@ async def handle_revoke_command(payload: Dict[str, Any]) -> JSONResponse:
                         f"删除 {deleted_result['review_comments']} 条行内评论"
                     )
                 if deleted_result["issue_comments"] > 0:
-                    cleanup_info.append(f"删除 {deleted_result['issue_comments']} 条评论")
+                    cleanup_info.append(
+                        f"删除 {deleted_result['issue_comments']} 条评论"
+                    )
                 if dismissed_reviews > 0:
                     cleanup_info.append(f"撤回 {dismissed_reviews} 条 Review")
-                cleanup_text = "、".join(cleanup_info) if cleanup_info else "没有需要清理的内容"
+                cleanup_text = (
+                    "、".join(cleanup_info) if cleanup_info else "没有需要清理的内容"
+                )
 
                 pr.create_issue_comment(
                     f"✅ 已{cleanup_text}。\n\n由 @{commenter_login} 触发"

@@ -488,17 +488,59 @@ async def insert_default_configs_async():
 
     default_configs = [
         AppConfig(key_name="app_version", key_value="1.0.0", description="应用版本号"),
-        AppConfig(key_name="max_concurrent_reviews", key_value="5", description="最大并发审查数量"),
-        AppConfig(key_name="review_timeout_seconds", key_value="300", description="审查超时时间（秒）"),
-        AppConfig(key_name="enable_auto_review", key_value="true", description="是否启用自动审查"),
-        AppConfig(key_name="web_search_enabled", key_value="false", description="启用 Web 搜索工具"),
-        AppConfig(key_name="web_search_provider", key_value="duckduckgo", description="Web 搜索提供商"),
-        AppConfig(key_name="web_search_api_key", key_value="", description="Web 搜索 API Key"),
-        AppConfig(key_name="web_search_max_results", key_value="3", description="Web 搜索最大返回结果数"),
-        AppConfig(key_name="web_search_max_content_length", key_value="500", description="Web 搜索结果截断长度"),
-        AppConfig(key_name="web_search_timeout", key_value="15", description="Web 搜索超时时间（秒）"),
-        AppConfig(key_name="issue_auto_create_labels", key_value="true", description="自动为 Issue 应用 AI 推荐的标签"),
-        AppConfig(key_name="issue_max_tool_iterations", key_value="15", description="Issues 分析中 AI 工具调用最大迭代次数"),
+        AppConfig(
+            key_name="max_concurrent_reviews",
+            key_value="5",
+            description="最大并发审查数量",
+        ),
+        AppConfig(
+            key_name="review_timeout_seconds",
+            key_value="300",
+            description="审查超时时间（秒）",
+        ),
+        AppConfig(
+            key_name="enable_auto_review",
+            key_value="true",
+            description="是否启用自动审查",
+        ),
+        AppConfig(
+            key_name="web_search_enabled",
+            key_value="false",
+            description="启用 Web 搜索工具",
+        ),
+        AppConfig(
+            key_name="web_search_provider",
+            key_value="duckduckgo",
+            description="Web 搜索提供商",
+        ),
+        AppConfig(
+            key_name="web_search_api_key", key_value="", description="Web 搜索 API Key"
+        ),
+        AppConfig(
+            key_name="web_search_max_results",
+            key_value="3",
+            description="Web 搜索最大返回结果数",
+        ),
+        AppConfig(
+            key_name="web_search_max_content_length",
+            key_value="500",
+            description="Web 搜索结果截断长度",
+        ),
+        AppConfig(
+            key_name="web_search_timeout",
+            key_value="15",
+            description="Web 搜索超时时间（秒）",
+        ),
+        AppConfig(
+            key_name="issue_auto_create_labels",
+            key_value="true",
+            description="自动为 Issue 应用 AI 推荐的标签",
+        ),
+        AppConfig(
+            key_name="issue_max_tool_iterations",
+            key_value="15",
+            description="Issues 分析中 AI 工具调用最大迭代次数",
+        ),
     ]
 
     try:
@@ -519,7 +561,9 @@ async def insert_default_configs_async():
                     added += 1
             if added > 0:
                 await session.commit()
-                logger.info(f"✅ {'已插入默认配置' if existing_configs == 0 else f'补插 {added} 条缺失配置'}")
+                logger.info(
+                    f"✅ {'已插入默认配置' if existing_configs == 0 else f'补插 {added} 条缺失配置'}"
+                )
             else:
                 logger.info("配置已是最新，无需补插")
 
@@ -558,18 +602,64 @@ def init_database(database_url: str):
             existing_configs = session.query(AppConfig).count()
 
             default_configs = [
-                AppConfig(key_name="app_version", key_value="1.0.0", description="应用版本号"),
-                AppConfig(key_name="max_concurrent_reviews", key_value="5", description="最大并发审查数量"),
-                AppConfig(key_name="review_timeout_seconds", key_value="300", description="审查超时时间（秒）"),
-                AppConfig(key_name="enable_auto_review", key_value="true", description="是否启用自动审查"),
-                AppConfig(key_name="web_search_enabled", key_value="false", description="启用 Web 搜索工具"),
-                AppConfig(key_name="web_search_provider", key_value="duckduckgo", description="Web 搜索提供商"),
-                AppConfig(key_name="web_search_api_key", key_value="", description="Web 搜索 API Key"),
-                AppConfig(key_name="web_search_max_results", key_value="3", description="Web 搜索最大返回结果数"),
-                AppConfig(key_name="web_search_max_content_length", key_value="500", description="Web 搜索结果截断长度"),
-                AppConfig(key_name="web_search_timeout", key_value="15", description="Web 搜索超时时间（秒）"),
-                AppConfig(key_name="issue_auto_create_labels", key_value="true", description="自动为 Issue 应用 AI 推荐的标签"),
-                AppConfig(key_name="issue_max_tool_iterations", key_value="15", description="Issues 分析中 AI 工具调用最大迭代次数"),
+                AppConfig(
+                    key_name="app_version", key_value="1.0.0", description="应用版本号"
+                ),
+                AppConfig(
+                    key_name="max_concurrent_reviews",
+                    key_value="5",
+                    description="最大并发审查数量",
+                ),
+                AppConfig(
+                    key_name="review_timeout_seconds",
+                    key_value="300",
+                    description="审查超时时间（秒）",
+                ),
+                AppConfig(
+                    key_name="enable_auto_review",
+                    key_value="true",
+                    description="是否启用自动审查",
+                ),
+                AppConfig(
+                    key_name="web_search_enabled",
+                    key_value="false",
+                    description="启用 Web 搜索工具",
+                ),
+                AppConfig(
+                    key_name="web_search_provider",
+                    key_value="duckduckgo",
+                    description="Web 搜索提供商",
+                ),
+                AppConfig(
+                    key_name="web_search_api_key",
+                    key_value="",
+                    description="Web 搜索 API Key",
+                ),
+                AppConfig(
+                    key_name="web_search_max_results",
+                    key_value="3",
+                    description="Web 搜索最大返回结果数",
+                ),
+                AppConfig(
+                    key_name="web_search_max_content_length",
+                    key_value="500",
+                    description="Web 搜索结果截断长度",
+                ),
+                AppConfig(
+                    key_name="web_search_timeout",
+                    key_value="15",
+                    description="Web 搜索超时时间（秒）",
+                ),
+                AppConfig(
+                    key_name="issue_auto_create_labels",
+                    key_value="true",
+                    description="自动为 Issue 应用 AI 推荐的标签",
+                ),
+                AppConfig(
+                    key_name="issue_max_tool_iterations",
+                    key_value="15",
+                    description="Issues 分析中 AI 工具调用最大迭代次数",
+                ),
             ]
 
             added = 0
@@ -584,7 +674,9 @@ def init_database(database_url: str):
                     added += 1
             if added > 0:
                 session.commit()
-                logger.info(f"{'已插入默认配置' if existing_configs == 0 else f'补插 {added} 条缺失配置'}")
+                logger.info(
+                    f"{'已插入默认配置' if existing_configs == 0 else f'补插 {added} 条缺失配置'}"
+                )
             else:
                 logger.info("配置已是最新，无需补插")
 
