@@ -69,3 +69,4 @@ deploy_key
 deploy.py
 .deploy_state.json
 .claude/
+CLAUDE.md
