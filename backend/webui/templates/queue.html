@@ -39,5 +39,24 @@
 <script>
 var loadQueuePage = function(n) { loadListPage('queue-list-container', '/webui/queue/list-fragment', n); };
 initFilterForm('queue-filter-form', 'queue-list-container', '/webui/queue/list-fragment');
+
+// SSE: 审查状态变更时自动刷新
+document.addEventListener('sse:review-status', function() {
+    var statsContainer = document.getElementById('queue-stats-container');
+    if (statsContainer) {
+        fetch('/webui/queue/stats-fragment', { headers: { 'HX-Request': 'true' } })
+            .then(function(r) { return r.text(); })
+            .then(function(html) { statsContainer.innerHTML = html; })
+            .catch(function() {});
+    }
+    var listContainer = document.getElementById('queue-list-container');
+    if (listContainer) {
+        listContainer.innerHTML = getLoadingHTML();
+        fetch('/webui/queue/list-fragment', { headers: { 'HX-Request': 'true' } })
+            .then(function(r) { return r.text(); })
+            .then(function(html) { listContainer.innerHTML = html; })
+            .catch(function() { listContainer.innerHTML = getErrorHTML(); });
+    }
+});
 </script>
 {% endblock %}

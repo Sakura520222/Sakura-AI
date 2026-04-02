@@ -1,5 +1,6 @@
 """Issue 管理服务"""
 
+import asyncio
 import json
 import math
 import threading
@@ -205,8 +206,12 @@ class IssueService:
             related_info=related_info,
         )
 
-        success = self.github_app.create_issue_comment(
-            repo_owner, repo_name, issue_number, body
+        success = await asyncio.to_thread(
+            self.github_app.create_issue_comment,
+            repo_owner,
+            repo_name,
+            issue_number,
+            body,
         )
 
         if success:
@@ -263,7 +268,8 @@ class IssueService:
                 default_info = label_service.DEFAULT_LABELS.get(
                     label_name, {"color": "0366d6", "description": ""}
                 )
-                success = self.github_app.create_label(
+                success = await asyncio.to_thread(
+                    self.github_app.create_label,
                     repo_owner,
                     repo_name,
                     label_name,
@@ -282,8 +288,12 @@ class IssueService:
 
             # 根据置信度决定是否自动应用
             if confidence >= threshold:
-                success = self.github_app.add_labels_to_issue(
-                    repo_owner, repo_name, issue_number, [label_name]
+                success = await asyncio.to_thread(
+                    self.github_app.add_labels_to_issue,
+                    repo_owner,
+                    repo_name,
+                    issue_number,
+                    [label_name],
                 )
                 if success:
                     result["applied"].append(
@@ -318,7 +328,9 @@ class IssueService:
         """检测重复 Issue（GitHub Search API + AI 相似度二次筛选）"""
         keywords = title.split()[:5]
         query = " ".join(keywords)
-        issues = self.github_app.search_issues(repo_owner, repo_name, query, "open", 10)
+        issues = await asyncio.to_thread(
+            self.github_app.search_issues, repo_owner, repo_name, query, "open", 10
+        )
 
         # 过滤当前 Issue
         candidates = []
@@ -384,7 +396,8 @@ class IssueService:
     ) -> List[Dict[str, Any]]:
         """查找与 Issue 相关的 PRs"""
         query = f"fixes #{issue_number}"
-        results = self.github_app.search_issues(
+        results = await asyncio.to_thread(
+            self.github_app.search_issues,
             repo_owner,
             repo_name,
             query,

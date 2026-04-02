@@ -1,5 +1,6 @@
 """PR分析服务"""
 
+import asyncio
 from typing import Dict, List, Optional, Tuple, TypedDict
 
 try:
@@ -85,7 +86,11 @@ class PRAnalyzer:
         self.github_app = GitHubAppClient()
 
     async def analyze_pr(self, pr_info: Dict[str, any]) -> PRAnalysis:
-        """分析PR并返回分析结果"""
+        """分析PR并返回分析结果（将 PyGithub 同步调用移到线程池避免阻塞事件循环）"""
+        return await asyncio.to_thread(self._analyze_pr_sync, pr_info)
+
+    def _analyze_pr_sync(self, pr_info: Dict[str, any]) -> PRAnalysis:
+        """同步执行 PR 分析（在线程池中运行）"""
         try:
             # 获取GitHub客户端
             client = self.github_app.get_repo_client(
@@ -397,7 +402,13 @@ class PRAnalyzer:
 
         return False, None
 
-    def get_project_structure(self, repo: any, max_files: int = 500) -> List[str]:
+    async def get_project_structure(self, repo: any, max_files: int = 500) -> List[str]:
+        """获取项目的目录结构（将 PyGithub 同步调用移到线程池）"""
+        return await asyncio.to_thread(
+            self._get_project_structure_sync, repo, max_files
+        )
+
+    def _get_project_structure_sync(self, repo: any, max_files: int = 500) -> List[str]:
         """获取项目的目录结构
 
         Args:
@@ -450,7 +461,15 @@ class PRAnalyzer:
             logger.error(f"获取项目结构失败: {e}", exc_info=True)
             return []
 
-    def prepare_review_context(self, analysis: PRAnalysis, pr: any) -> Dict[str, any]:
+    async def prepare_review_context(
+        self, analysis: PRAnalysis, pr: any
+    ) -> Dict[str, any]:
+        """准备审查上下文（将 PyGithub 同步调用移到线程池）"""
+        return await asyncio.to_thread(self._prepare_review_context_sync, analysis, pr)
+
+    def _prepare_review_context_sync(
+        self, analysis: PRAnalysis, pr: any
+    ) -> Dict[str, any]:
         """准备审查上下文
 
         优化说明：
@@ -466,7 +485,7 @@ class PRAnalyzer:
             repo = pr.base.repo
 
             # 获取项目结构
-            project_structure = self.get_project_structure(repo)
+            project_structure = self._get_project_structure_sync(repo)
 
             # 构建 context，只包含必要信息
             context = {

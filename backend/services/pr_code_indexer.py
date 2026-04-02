@@ -3,7 +3,8 @@
 负责在PR审查时自动索引变更的代码文件
 """
 
-from typing import Dict, Any, Optional
+import asyncio
+from typing import Dict, Any, Optional, Tuple
 from loguru import logger
 
 from backend.services.code_index_service import get_code_index_service
@@ -19,6 +20,58 @@ class PRCodeIndexer:
     def __init__(self):
         self.code_index_service = get_code_index_service()
         self.github_app = GitHubAppClient()
+
+    def _fetch_pr_files_sync(
+        self, repo_full_name: str, pr_number: int
+    ) -> Tuple[Optional[list], Optional[str], Optional[str]]:
+        """同步获取PR的文件列表（在线程池中运行）
+
+        Args:
+            repo_full_name: 仓库名称
+            pr_number: PR编号
+
+        Returns:
+            (file_list, commit_sha, error) 三元组，
+            成功时 error 为 None，失败时 file_list 和 commit_sha 为 None
+        """
+        import base64
+
+        owner, repo_name = repo_full_name.split("/")
+
+        client = self.github_app.get_repo_client(owner, repo_name)
+        if not client:
+            return None, None, "无法获取GitHub客户端"
+
+        repo_api = client.get_repo(repo_full_name)
+        pr = repo_api.get_pull(pr_number)
+        commit_sha = pr.head.sha
+
+        files = pr.get_files()
+        file_list = []
+
+        for file in files:
+            if self._is_code_file(file.filename):
+                file_info = {
+                    "path": file.filename,
+                    "status": file.status,
+                }
+
+                if file.status in ("added", "modified"):
+                    try:
+                        content_file = repo_api.get_contents(
+                            file.filename, ref=pr.head.sha
+                        )
+                        if content_file:
+                            content = base64.b64decode(content_file.content).decode(
+                                "utf-8", errors="ignore"
+                            )
+                            file_info["content"] = content
+                    except Exception as e:
+                        logger.warning(f"无法获取文件 {file.filename} 的内容: {e}")
+
+                file_list.append(file_info)
+
+        return file_list, commit_sha, None
 
     async def index_pr_changes(
         self,
@@ -39,57 +92,19 @@ class PRCodeIndexer:
         try:
             logger.info(f"开始索引PR #{pr_number}的代码变更，仓库: {repo_full_name}")
 
-            # 解析仓库所有者名称
-            owner, repo_name = repo_full_name.split("/")
+            file_list, commit_sha, error = await asyncio.to_thread(
+                self._fetch_pr_files_sync, repo_full_name, pr_number
+            )
 
-            # 获取GitHub客户端
-            client = self.github_app.get_repo_client(owner, repo_name)
-            if not client:
+            if error:
                 logger.error(f"无法获取仓库 {repo_full_name} 的GitHub客户端")
                 return {
                     "indexed": 0,
                     "skipped": 0,
                     "failed": 0,
                     "total_chunks": 0,
-                    "error": "无法获取GitHub客户端",
+                    "error": error,
                 }
-
-            # 获取仓库和PR
-            repo_api = client.get_repo(repo_full_name)
-            pr = repo_api.get_pull(pr_number)
-            commit_sha = pr.head.sha
-
-            # 获取PR的文件列表
-            files = pr.get_files()
-            file_list = []
-
-            for file in files:
-                # 只索引代码文件
-                if self._is_code_file(file.filename):
-                    file_info = {
-                        "path": file.filename,
-                        "status": file.status,
-                    }
-
-                    # 对于新增和修改的文件，获取内容
-                    if file.status in ("added", "modified"):
-                        try:
-                            # 尝试从PR的HEAD分支获取文件内容
-                            content_file = repo_api.get_contents(
-                                file.filename, ref=pr.head.sha
-                            )
-                            if content_file:
-                                # 解码base64内容
-                                import base64
-
-                                content = base64.b64decode(content_file.content).decode(
-                                    "utf-8", errors="ignore"
-                                )
-                                file_info["content"] = content
-                        except Exception as e:
-                            logger.warning(f"无法获取文件 {file.filename} 的内容: {e}")
-
-                    file_list.append(file_info)
 
             if not file_list:
                 logger.info(f"PR #{pr_number} 没有需要索引的代码文件")

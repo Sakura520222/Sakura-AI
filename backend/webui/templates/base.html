@@ -125,8 +125,7 @@
         }));
     });
     </script>
-    <!-- Chart.js -->
-    <script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
+    <!-- Chart.js 按需加载（仅仪表盘页面动态引入） -->
     <style>
         [x-cloak] { display: none !important; }
         /* 自定义滚动条 */
@@ -309,14 +308,24 @@
         return '<div class="p-12 text-center text-red-600 dark:text-red-400"><svg class="w-12 h-12 mx-auto" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/></svg><p class="mt-4">' + (msg || '加载失败，请稍后重试') + '</p></div>';
     }
 
+    var _currentListRequest = null;
+
     function loadListPage(containerId, endpoint, pageNum) {
+        // 取消上一次未完成的请求
+        if (_currentListRequest) {
+            _currentListRequest.abort();
+        }
+        _currentListRequest = new AbortController();
+        var signal = _currentListRequest.signal;
+
         var container = document.getElementById(containerId);
         var params = new URLSearchParams(window.location.search);
         params.set('page', pageNum);
         container.innerHTML = getLoadingHTML();
 
         fetch(endpoint + '?' + params.toString(), {
-            headers: { 'HX-Request': 'true' }
+            headers: { 'HX-Request': 'true' },
+            signal: signal,
         })
         .then(function(r) { return r.text(); })
         .then(function(html) {
@@ -324,8 +333,10 @@
             history.replaceState(null, '', '?' + params.toString());
         })
         .catch(function(err) {
-            console.error('加载失败:', err);
-            container.innerHTML = getErrorHTML();
+            if (err.name !== 'AbortError') {
+                console.error('加载失败:', err);
+                container.innerHTML = getErrorHTML();
+            }
         });
     }
 
@@ -359,6 +370,9 @@
         });
     }
     </script>
+
+    <!-- SSE 实时推送客户端 -->
+    {% include "components/sse_client.html" %}
     {% endblock %}
 </body>
 </html>

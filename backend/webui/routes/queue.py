@@ -4,7 +4,7 @@ import logging
 from datetime import datetime, timedelta
 
 from fastapi import APIRouter, Request, Depends, Query
-from sqlalchemy import select, func, desc, case
+from sqlalchemy import select, func, desc, case, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.models.database import PRReview
@@ -75,18 +75,22 @@ async def queue_stats_fragment(
     completed = int(stats.completed or 0)
     failed = int(stats.failed or 0)
 
-    # 平均处理耗时（Python 计算，避免数据库兼容性问题）
-    result = await db.execute(
-        select(PRReview.completed_at, PRReview.created_at).where(
-            PRReview.status == "completed",
-            PRReview.completed_at.isnot(None),
+    # 平均处理耗时（SQL 聚合计算）
+    avg_result = (
+        await db.execute(
+            select(
+                func.avg(
+                    func.timestampdiff(
+                        text("SECOND"), PRReview.created_at, PRReview.completed_at
+                    )
+                )
+            ).where(
+                PRReview.status == "completed",
+                PRReview.completed_at.isnot(None),
+            )
         )
-    )
-    durations = []
-    for completed_at, created_at in result.all():
-        delta = completed_at - created_at
-        durations.append(delta.total_seconds())
-    avg_seconds = sum(durations) / len(durations) if durations else None
+    ).scalar()
+    avg_seconds = avg_result if avg_result else None
     avg_duration = _format_duration(avg_seconds) if avg_seconds else "-"
 
     return templates.TemplateResponse(
