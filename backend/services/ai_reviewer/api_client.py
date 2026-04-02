@@ -5,6 +5,7 @@
 
 import asyncio
 import random
+import time
 from typing import Any, Dict, List, Optional
 
 from openai import AsyncOpenAI
@@ -105,11 +106,11 @@ class AIApiClient:
         Raises:
             Exception: 重试失败或超时
         """
-        start_time = asyncio.get_event_loop().time()
+        start_time = time.monotonic()
 
         for attempt in range(MAX_RETRIES):
             # 检查总超时
-            elapsed = asyncio.get_event_loop().time() - start_time
+            elapsed = time.monotonic() - start_time
             if elapsed > TOTAL_TIMEOUT:
                 logger.error(
                     f"重试总超时（已耗时 {elapsed:.1f}秒 > {TOTAL_TIMEOUT}秒），放弃重试"
@@ -135,7 +136,7 @@ class AIApiClient:
                         raise Exception("AI返回空响应，已达最大重试次数")
 
                 # 成功返回
-                total_time = asyncio.get_event_loop().time() - start_time
+                total_time = time.monotonic() - start_time
                 logger.info(
                     f"✅ AI调用成功（耗时 {total_time:.1f}秒，重试 {attempt} 次）"
                 )
@@ -151,7 +152,7 @@ class AIApiClient:
                     )
                     await asyncio.sleep(delay)
                 else:
-                    total_time = asyncio.get_event_loop().time() - start_time
+                    total_time = time.monotonic() - start_time
                     logger.error(
                         f"AI调用失败 [{error_type}]，已达最大重试次数 "
                         f"(总耗时 {total_time:.1f}s): {e}"

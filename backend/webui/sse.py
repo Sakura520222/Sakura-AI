@@ -71,8 +71,23 @@ async def publish_event(
         logger.warning(f"Redis Pub/Sub 发布失败（仅影响多进程部署）: {e}")
 
 
-async def start_redis_listener():
-    """启动 Redis Pub/Sub 监听任务"""
+# 重连配置
+_RECONNECT_INITIAL_DELAY = 1.0  # 初始延迟（秒）
+_RECONNECT_MAX_DELAY = 60.0  # 最大延迟（秒）
+_RECONNECT_BACKOFF_FACTOR = 2.0  # 退避因子
+_RECONNECT_MAX_ATTEMPTS = 20  # 最大重试次数
+
+# 重连任务引用（防止 GC 回收）
+_reconnect_task: asyncio.Task | None = None
+
+
+async def start_redis_listener(_attempt: int = 1):
+    """启动 Redis Pub/Sub 监听任务（带指数退避重连）
+
+    Args:
+        _attempt: 当前重试次数（内部递归使用）
+    """
+    global _reconnect_task
     try:
         from backend.core.redis import get_async_redis
 
@@ -82,6 +97,9 @@ async def start_redis_listener():
         # 订阅所有频道前缀
         await pubsub.psubscribe("sse:*")
         logger.info("Redis Pub/Sub 监听已启动")
+
+        # 成功连接后重置重试计数
+        _attempt = 1
 
         async for message in pubsub.listen():
             if message["type"] == "pmessage":
@@ -94,8 +112,24 @@ async def start_redis_listener():
                     logger.warning(f"解析 SSE 事件失败: {e}")
     except asyncio.CancelledError:
         logger.info("Redis Pub/Sub 监听已停止")
+        raise
     except Exception as e:
-        logger.error(f"Redis Pub/Sub 监听异常: {e}")
-        # 5秒后自动重连
-        await asyncio.sleep(5)
-        asyncio.create_task(start_redis_listener())
+        # 检查是否超过最大重试次数
+        if _RECONNECT_MAX_ATTEMPTS > 0 and _attempt >= _RECONNECT_MAX_ATTEMPTS:
+            logger.error(
+                f"Redis Pub/Sub 监听已达最大重试次数 ({_RECONNECT_MAX_ATTEMPTS})，停止重连。"
+                f"最后错误: {e}"
+            )
+            return
+
+        # 计算指数退避延迟
+        delay = min(
+            _RECONNECT_INITIAL_DELAY * (_RECONNECT_BACKOFF_FACTOR ** (_attempt - 1)),
+            _RECONNECT_MAX_DELAY,
+        )
+        logger.warning(
+            f"Redis Pub/Sub 监听异常: {e}，"
+            f"{delay:.1f}秒后重连 (第 {_attempt}/{_RECONNECT_MAX_ATTEMPTS} 次)"
+        )
+        await asyncio.sleep(delay)
+        _reconnect_task = asyncio.create_task(start_redis_listener(_attempt + 1))
