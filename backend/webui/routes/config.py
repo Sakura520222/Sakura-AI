@@ -502,9 +502,7 @@ async def save_general_config(
         raw = form.get("issue_auto_create_labels")
         val = "true" if raw == "true" else "false"
         result = await db.execute(
-            select(AppConfig).where(
-                AppConfig.key_name == "issue_auto_create_labels"
-            )
+            select(AppConfig).where(AppConfig.key_name == "issue_auto_create_labels")
         )
         cfg = result.scalar_one_or_none()
         if cfg and cfg.key_value != val:
@@ -562,14 +560,18 @@ async def save_general_config(
                 val_i = int(val)
                 if not 1 <= val_i <= 10:
                     return toast_redirect(
-                        "/webui/config/general", "Web 搜索最大结果数须在 1-10 之间", "error"
+                        "/webui/config/general",
+                        "Web 搜索最大结果数须在 1-10 之间",
+                        "error",
                     )
                 val = str(val_i)
             elif key == "web_search_max_content_length":
                 val_i = int(val)
                 if not 100 <= val_i <= 5000:
                     return toast_redirect(
-                        "/webui/config/general", "结果截断长度须在 100-5000 之间", "error"
+                        "/webui/config/general",
+                        "结果截断长度须在 100-5000 之间",
+                        "error",
                     )
                 val = str(val_i)
             elif key == "web_search_timeout":

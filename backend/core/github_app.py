@@ -1,6 +1,5 @@
 """GitHub App集成模块"""
 
-import asyncio
 import hmac
 import hashlib
 from typing import Optional, Dict, Any

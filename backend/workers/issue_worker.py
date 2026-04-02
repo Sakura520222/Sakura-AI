@@ -142,15 +142,12 @@ class IssueWorker:
                         async with async_session() as session:
                             result = await session.execute(
                                 select(AppConfig).where(
-                                    AppConfig.key_name
-                                    == "issue_auto_create_labels"
+                                    AppConfig.key_name == "issue_auto_create_labels"
                                 )
                             )
                             cfg = result.scalar_one_or_none()
                             if cfg:
-                                issue_auto_create_labels = (
-                                    cfg.key_value == "true"
-                                )
+                                issue_auto_create_labels = cfg.key_value == "true"
                 except Exception:
                     pass
 
@@ -170,7 +167,7 @@ class IssueWorker:
                             if result.get("applied"):
                                 logger.info(
                                     f"[{task_id}] 已应用标签: "
-                                    f"{[l['name'] for l in result['applied']]}"
+                                    f"{[label['name'] for label in result['applied']]}"
                                 )
                             if result.get("created"):
                                 logger.info(

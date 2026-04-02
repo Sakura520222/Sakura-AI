@@ -36,6 +36,7 @@ class IssueAnalyzer:
             from backend.services.ai_reviewer.tools.web_search_tool import (
                 WebSearchToolHandler,
             )
+
             web_search_tool = WebSearchToolHandler()
         self.tool_handler = ToolHandler(file_tool, search_tool, web_search_tool)
         self.tool_manager = ToolManager()
@@ -155,6 +156,7 @@ class IssueAnalyzer:
 
         # 获取仓库标签（使用 LabelService 缓存）
         from backend.services.label_service import label_service
+
         labels_dict = await label_service.get_repo_labels(repo_owner, repo_name)
         available_labels = list(labels_dict.keys())
 
@@ -352,7 +354,9 @@ class IssueAnalyzer:
                     )
 
         # 达到最大迭代次数，做最后一次 API 调用强制 AI 返回结果
-        logger.warning(f"Issue 分析达到最大迭代次数 ({max_iterations})，强制生成最终结果")
+        logger.warning(
+            f"Issue 分析达到最大迭代次数 ({max_iterations})，强制生成最终结果"
+        )
         messages.append(
             {
                 "role": "user",

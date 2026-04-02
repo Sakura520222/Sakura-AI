@@ -64,6 +64,7 @@ class AIReviewer:
             from backend.services.ai_reviewer.tools.web_search_tool import (
                 WebSearchToolHandler,
             )
+
             web_search_tool = WebSearchToolHandler()
         self.tool_handler = ToolHandler(file_tool, search_tool, web_search_tool)
         self.tool_manager = ToolManager()
