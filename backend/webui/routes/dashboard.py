@@ -1,10 +1,11 @@
 """WebUI 仪表盘路由"""
 
+import time
 from datetime import datetime, timedelta
 
 from fastapi import APIRouter, Request, Depends
 from fastapi.responses import HTMLResponse
-from sqlalchemy import select, func, desc
+from sqlalchemy import select, func, desc, case, and_
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.models.database import PRReview, ReviewComment
@@ -20,6 +21,14 @@ router = APIRouter(tags=["WebUI Dashboard"])
 templates = get_templates()
 
 _RECENT_REVIEW_LIMIT = 10
+
+# stats 接口缓存（避免频繁聚合查询）
+_stats_cache: tuple[dict, float] | None = None
+_STATS_CACHE_TTL = 10  # 秒
+
+# chart-data 接口缓存
+_chart_cache: tuple[dict, float] | None = None
+_CHART_CACHE_TTL = 20  # 秒
 
 
 def _serialize_review(r: PRReview) -> dict:
@@ -75,75 +84,84 @@ async def get_stats(
     user: dict = Depends(require_auth),
 ):
     """获取仪表盘统计数据"""
-    # 总审查数
-    total_count = (await db.execute(select(func.count(PRReview.id)))).scalar() or 0
+    global _stats_cache
 
-    # 已完成数
-    completed_count = (
-        await db.execute(
-            select(func.count(PRReview.id)).where(PRReview.status == "completed")
-        )
-    ).scalar() or 0
+    # 检查缓存
+    if _stats_cache and time.time() - _stats_cache[1] < _STATS_CACHE_TTL:
+        return _stats_cache[0]
 
-    # 审查中
-    reviewing_count = (
+    # 单次条件聚合查询（PRReview 表）
+    stats_row = (
         await db.execute(
-            select(func.count(PRReview.id)).where(PRReview.status == "reviewing")
-        )
-    ).scalar() or 0
-
-    # 失败
-    failed_count = (
-        await db.execute(
-            select(func.count(PRReview.id)).where(PRReview.status == "failed")
-        )
-    ).scalar() or 0
-
-    # 通过（decision = approve）
-    approved_count = (
-        await db.execute(
-            select(func.count(PRReview.id)).where(
-                PRReview.status == "completed",
-                PRReview.decision == "approve",
+            select(
+                func.count(PRReview.id).label("total"),
+                func.sum(case((PRReview.status == "completed", 1), else_=0)).label(
+                    "completed"
+                ),
+                func.sum(case((PRReview.status == "reviewing", 1), else_=0)).label(
+                    "reviewing"
+                ),
+                func.sum(case((PRReview.status == "pending", 1), else_=0)).label(
+                    "pending"
+                ),
+                func.sum(case((PRReview.status == "failed", 1), else_=0)).label(
+                    "failed"
+                ),
+                func.sum(
+                    case(
+                        (
+                            and_(
+                                PRReview.status == "completed",
+                                PRReview.decision == "approve",
+                            ),
+                            1,
+                        ),
+                        else_=0,
+                    )
+                ).label("approved"),
+                func.sum(
+                    case(
+                        (
+                            and_(
+                                PRReview.status == "completed",
+                                PRReview.decision == "request_changes",
+                            ),
+                            1,
+                        ),
+                        else_=0,
+                    )
+                ).label("changes_requested"),
+                func.avg(
+                    case(
+                        (PRReview.status == "completed", PRReview.overall_score),
+                        else_=None,
+                    )
+                ).label("avg_score"),
             )
         )
-    ).scalar() or 0
+    ).one()
 
-    # 需修改（decision = request_changes）
-    changes_count = (
-        await db.execute(
-            select(func.count(PRReview.id)).where(
-                PRReview.status == "completed",
-                PRReview.decision == "request_changes",
-            )
-        )
-    ).scalar() or 0
-
-    # 平均评分
-    avg_score = (
-        await db.execute(
-            select(func.avg(PRReview.overall_score)).where(
-                PRReview.status == "completed"
-            )
-        )
-    ).scalar()
-    avg_score = round(avg_score, 1) if avg_score else 0
-
-    # 评论总数
+    # 评论总数查询
     comment_count = (
         await db.execute(select(func.count(ReviewComment.id)))
     ).scalar() or 0
 
-    return {
-        "total": total_count,
-        "completed": completed_count,
-        "reviewing": reviewing_count,
-        "failed": failed_count,
-        "approved": approved_count,
-        "changes_requested": changes_count,
+    avg_score = round(stats_row.avg_score, 1) if stats_row.avg_score else 0
+
+    result = {
+        "total": int(stats_row.total or 0),
+        "completed": int(stats_row.completed or 0),
+        "reviewing": int(stats_row.reviewing or 0),
+        "pending": int(stats_row.pending or 0),
+        "failed": int(stats_row.failed or 0),
+        "approved": int(stats_row.approved or 0),
+        "changes_requested": int(stats_row.changes_requested or 0),
         "avg_score": avg_score,
         "comment_count": comment_count,
     }
+
+    _stats_cache = (result, time.time())
+    return result
 
 
 @router.get("/api/webui/recent-reviews")
@@ -179,6 +197,12 @@ async def get_chart_data(
     user: dict = Depends(require_auth),
 ):
     """获取仪表盘图表数据"""
+    global _chart_cache
+
+    # 检查缓存
+    if _chart_cache and time.time() - _chart_cache[1] < _CHART_CACHE_TTL:
+        return _chart_cache[0]
+
     now = datetime.utcnow()
     thirty_days_ago = now - timedelta(days=30)
 
@@ -252,7 +276,7 @@ async def get_chart_data(
     repo_labels = [r.repo_name for r in repo_rows]
     repo_counts = [r.cnt for r in repo_rows]
 
-    return {
+    result = {
         "trend": {
             "labels": labels,
             "completed": completed_data,
@@ -267,3 +291,15 @@ async def get_chart_data(
             "counts": repo_counts,
         },
     }
+
+    _chart_cache = (result, time.time())
+    return result
+
+
+@router.post("/api/webui/cache/refresh")
+async def refresh_cache(user: dict = Depends(require_auth)):
+    """手动刷新仪表盘缓存"""
+    global _stats_cache, _chart_cache
+    _stats_cache = None
+    _chart_cache = None
+    return {"status": "ok"}

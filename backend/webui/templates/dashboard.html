@@ -34,7 +34,7 @@
 
 {% block extra_scripts %}
 {{ super() }}
-{% include "components/dashboard_charts.js" %}
+{% include "components/dashboard_charts_inline.html" %}
 <script>
 function dashboardInit() {
     // 加载统计数据
@@ -51,5 +51,18 @@ function dashboardInit() {
     // 加载图表
     initDashboardCharts();
 }
+
+// SSE: 审查状态变更时自动刷新
+document.addEventListener('sse:review-status', function() {
+    dashboardInit();
+    var container = document.getElementById('recent-reviews-container');
+    if (container) {
+        container.innerHTML = getLoadingHTML();
+        fetch('/webui/api/webui/recent-reviews-html', { headers: { 'HX-Request': 'true' } })
+            .then(function(r) { return r.text(); })
+            .then(function(html) { container.innerHTML = html; })
+            .catch(function() { container.innerHTML = getErrorHTML(); });
+    }
+});
 </script>
 {% endblock %}

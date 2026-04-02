@@ -1,0 +1,85 @@
+<script>
+/**
+ * SSE 实时推送客户端
+ * 监听审查任务状态变更事件，通过 CustomEvent 分发给各页面
+ */
+(function() {
+    var eventSource = null;
+    var reconnectDelay = 1000;
+    var MAX_DELAY = 30000;
+    var reconnectTimer = null;
+
+    function connect() {
+        if (eventSource && eventSource.readyState !== EventSource.CLOSED) {
+            return;
+        }
+
+        eventSource = new EventSource('/webui/sse/events');
+
+        // 审查状态变更
+        eventSource.addEventListener('review:status_changed', function(e) {
+            try {
+                var data = JSON.parse(e.data);
+                window.dispatchEvent(new CustomEvent('sse:review-status', { detail: data }));
+            } catch(err) {
+                console.error('[SSE] 解析 review 事件失败:', err);
+            }
+        });
+
+        // Issue 分析状态变更
+        eventSource.addEventListener('issue:status_changed', function(e) {
+            try {
+                var data = JSON.parse(e.data);
+                window.dispatchEvent(new CustomEvent('sse:issue-status', { detail: data }));
+            } catch(err) {
+                console.error('[SSE] 解析 issue 事件失败:', err);
+            }
+        });
+
+        eventSource.onopen = function() {
+            reconnectDelay = 1000;
+            console.log('[SSE] 连接已建立');
+        };
+
+        eventSource.onerror = function() {
+            console.warn('[SSE] 连接断开，' + reconnectDelay + 'ms 后重连...');
+            if (eventSource) {
+                eventSource.close();
+                eventSource = null;
+            }
+            reconnectTimer = setTimeout(connect, reconnectDelay);
+            reconnectDelay = Math.min(reconnectDelay * 2, MAX_DELAY);
+        };
+    }
+
+    // 页面可见时连接，隐藏时断开节省资源
+    document.addEventListener('visibilitychange', function() {
+        if (document.hidden) {
+            if (eventSource) {
+                eventSource.close();
+                eventSource = null;
+            }
+            if (reconnectTimer) {
+                clearTimeout(reconnectTimer);
+                reconnectTimer = null;
+            }
+        } else {
+            connect();
+        }
+    });
+
+    // 页面卸载时清理
+    window.addEventListener('beforeunload', function() {
+        if (eventSource) {
+            eventSource.close();
+            eventSource = null;
+        }
+        if (reconnectTimer) {
+            clearTimeout(reconnectTimer);
+        }
+    });
+
+    // 初始连接
+    connect();
+})();
+</script>

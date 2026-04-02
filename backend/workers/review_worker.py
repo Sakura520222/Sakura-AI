@@ -27,6 +27,44 @@ from backend.models.database import (
 
 settings = get_settings()
 
+# 审查并发控制信号量
+_review_semaphore: asyncio.Semaphore | None = None
+
+DEFAULT_MAX_CONCURRENT_REVIEWS = 5
+
+
+async def _get_review_semaphore() -> asyncio.Semaphore:
+    """获取审查并发信号量（懒初始化，支持动态更新）"""
+    global _review_semaphore
+    if _review_semaphore is None:
+        max_concurrent = await _load_max_concurrent_from_db()
+        _review_semaphore = asyncio.Semaphore(max_concurrent)
+        logger.info(f"审查并发信号量初始化: 最大 {max_concurrent} 个并发任务")
+    return _review_semaphore
+
+
+def reset_review_semaphore():
+    """重置审查信号量（配置更新时调用）"""
+    global _review_semaphore
+    _review_semaphore = None
+    logger.info("审查并发信号量已重置，下次任务将重新初始化")
+
+
+async def _load_max_concurrent_from_db() -> int:
+    """从数据库读取最大并发审查数"""
+    from backend.models.database import async_session, AppConfig
+    from sqlalchemy import select
+
+    try:
+        async with async_session() as session:
+            result = await session.execute(
+                select(AppConfig).where(AppConfig.key_name == "max_concurrent_reviews")
+            )
+            cfg = result.scalar_one_or_none()
+            return int(cfg.key_value) if cfg else DEFAULT_MAX_CONCURRENT_REVIEWS
+    except Exception:
+        return DEFAULT_MAX_CONCURRENT_REVIEWS
+
 
 def _get_label_rec_setting(key: str, default=None):
     """获取标签推荐配置，读取失败时降级到默认值"""
@@ -90,221 +128,240 @@ class ReviewWorker:
         task_id = str(uuid.uuid4())
         review_obj = None  # 用于保存 GitHub Review 对象
 
-        try:
-            logger.info(
-                f"[{task_id}] 开始处理审查任务: {pr_info['repo_full_name']}#{pr_info['pr_number']}"
-            )
-
-            # 1. 分析PR
-            analysis = await self.analyzer.analyze_pr(pr_info)
-
-            # 2. 检查是否应该跳过
-            if analysis.should_skip:
-                logger.info(f"[{task_id}] 跳过审查: {analysis.skip_reason}")
-                await self._save_skip_record(analysis, pr_info)
-                return task_id
-
-            # 3. 创建数据库记录
-            review_id = await self._create_review_record(analysis, pr_info, task_id)
-
-            # 4. 获取PR对象用于后续操作
-            client = self.github_app.get_repo_client(
-                pr_info["repo_owner"], pr_info["repo_name"]
-            )
-            repo = client.get_repo(pr_info["repo_full_name"])
-            pr = repo.get_pull(pr_info["pr_number"])
-
-            # 5. 【第一阶段】创建占位评论
-            logger.info(f"[{task_id}] 创建占位评论...")
-            review_obj = await self.comment_service.create_placeholder_comment(
-                pr, analysis.strategy
-            )
-
-            # 6. 准备审查上下文
-            context = self.analyzer.prepare_review_context(analysis, pr)
-
-            # 6.5 解析并注入 Issue 上下文（如果启用）
-            if (
-                hasattr(settings, "enable_pr_issue_linking")
-                and settings.enable_pr_issue_linking
-            ):
-                try:
-                    from backend.services.pr_issue_linker import PRIssueLinker
-
-                    issue_linker = PRIssueLinker()
-
-                    pr_body = pr_info.get("body", "") or ""
-                    issue_numbers = await issue_linker.parse_issue_references(pr_body)
-
-                    if issue_numbers:
-                        issue_contents = await issue_linker.fetch_issue_content(
-                            pr_info["repo_owner"], pr_info["repo_name"], issue_numbers
-                        )
-                        context = await issue_linker.inject_issue_context(
-                            context, issue_contents
-                        )
-                        logger.info(
-                            f"[{task_id}] 关联了 {len(issue_contents)} 个 Issue 到审查上下文"
-                        )
-                except Exception as e:
-                    logger.warning(f"[{task_id}] Issue 关联失败（不影响审查）: {e}")
-
-            # 7. 并行执行AI审查和标签推荐
-            await self._update_review_status(review_id, PRStatus.REVIEWING)
-
-            # 检查是否启用标签推荐功能
-            enable_label_recommendation = _get_label_rec_setting("enabled", True)
-
-            # 根据配置决定是否使用AI工具
-            enable_tools = (
-                settings.enable_ai_tools
-                if hasattr(settings, "enable_ai_tools")
-                else True
-            )
-
-            # 准备并行任务
-            tasks = []
-
-            # 任务1: AI审查（使用分批审查模式）
-            if enable_tools:
-                logger.info(f"[{task_id}] 使用AI工具增强模式进行审查（支持分批处理）")
-                batch_config = get_strategy_config().get_batch_config()
-                tasks.append(
-                    self.ai_reviewer.review_pr_with_tools_batched(
-                        context,
-                        analysis.strategy,
-                        repo,
-                        pr,
-                        max_files_per_batch=batch_config.get("max_files_per_batch", 5),
-                        max_lines_per_batch=batch_config.get(
-                            "max_lines_per_batch", 2000
-                        ),
-                    )
+        # 获取并发信号量，限制同时运行的审查任务数
+        semaphore = await _get_review_semaphore()
+        async with semaphore:
+            try:
+                logger.info(
+                    f"[{task_id}] 开始处理审查任务: {pr_info['repo_full_name']}#{pr_info['pr_number']}"
                 )
-            else:
-                logger.info(f"[{task_id}] 使用标准模式进行审查")
-                tasks.append(self.ai_reviewer.review_pr(context, analysis.strategy))
 
-            # 任务2: AI标签推荐（并行）
-            if enable_label_recommendation:
-                logger.info(f"[{task_id}] 并行启动AI标签推荐...")
+                # 1. 分析PR
+                analysis = await self.analyzer.analyze_pr(pr_info)
 
-                async def run_label_recommendation():
+                # 2. 检查是否应该跳过
+                if analysis.should_skip:
+                    logger.info(f"[{task_id}] 跳过审查: {analysis.skip_reason}")
+                    await self._save_skip_record(analysis, pr_info)
+                    return task_id
+
+                # 3. 创建数据库记录
+                review_id = await self._create_review_record(analysis, pr_info, task_id)
+
+                # 4. 获取PR对象用于后续操作
+                client = self.github_app.get_repo_client(
+                    pr_info["repo_owner"], pr_info["repo_name"]
+                )
+                repo = await asyncio.to_thread(
+                    client.get_repo, pr_info["repo_full_name"]
+                )
+                pr = await asyncio.to_thread(repo.get_pull, pr_info["pr_number"])
+
+                # 5. 【第一阶段】创建占位评论
+                logger.info(f"[{task_id}] 创建占位评论...")
+                review_obj = await self.comment_service.create_placeholder_comment(
+                    pr, analysis.strategy
+                )
+
+                # 6. 准备审查上下文
+                context = await self.analyzer.prepare_review_context(analysis, pr)
+
+                # 6.5 解析并注入 Issue 上下文（如果启用）
+                if (
+                    hasattr(settings, "enable_pr_issue_linking")
+                    and settings.enable_pr_issue_linking
+                ):
                     try:
-                        # 获取仓库可用标签
-                        available_labels = await label_service.get_repo_labels(
-                            pr_info["repo_owner"], pr_info["repo_name"]
+                        from backend.services.pr_issue_linker import PRIssueLinker
+
+                        issue_linker = PRIssueLinker()
+
+                        pr_body = pr_info.get("body", "") or ""
+                        issue_numbers = await issue_linker.parse_issue_references(
+                            pr_body
                         )
 
-                        # AI推荐标签
-                        recommendations = await self.ai_reviewer.recommend_labels(
-                            context, available_labels, pr_info
-                        )
-
-                        if recommendations:
-                            # 应用标签到PR
-                            confidence_threshold = _get_label_rec_setting(
-                                "confidence_threshold", 0.7
-                            )
-                            auto_create_labels = _get_label_rec_setting(
-                                "auto_create", False
-                            )
-
-                            label_results = await label_service.apply_labels_to_pr(
+                        if issue_numbers:
+                            issue_contents = await issue_linker.fetch_issue_content(
                                 pr_info["repo_owner"],
                                 pr_info["repo_name"],
-                                pr_info["pr_number"],
-                                recommendations,
-                                confidence_threshold=confidence_threshold,
-                                auto_create=auto_create_labels,
+                                issue_numbers,
+                            )
+                            context = await issue_linker.inject_issue_context(
+                                context, issue_contents
+                            )
+                            logger.info(
+                                f"[{task_id}] 关联了 {len(issue_contents)} 个 Issue 到审查上下文"
+                            )
+                    except Exception as e:
+                        logger.warning(f"[{task_id}] Issue 关联失败（不影响审查）: {e}")
+
+                # 7. 并行执行AI审查和标签推荐
+                await self._update_review_status(review_id, PRStatus.REVIEWING)
+
+                # 检查是否启用标签推荐功能
+                enable_label_recommendation = _get_label_rec_setting("enabled", True)
+
+                # 根据配置决定是否使用AI工具
+                enable_tools = (
+                    settings.enable_ai_tools
+                    if hasattr(settings, "enable_ai_tools")
+                    else True
+                )
+
+                # 准备并行任务
+                tasks = []
+
+                # 任务1: AI审查（使用分批审查模式）
+                if enable_tools:
+                    logger.info(
+                        f"[{task_id}] 使用AI工具增强模式进行审查（支持分批处理）"
+                    )
+                    batch_config = get_strategy_config().get_batch_config()
+                    tasks.append(
+                        self.ai_reviewer.review_pr_with_tools_batched(
+                            context,
+                            analysis.strategy,
+                            repo,
+                            pr,
+                            max_files_per_batch=batch_config.get(
+                                "max_files_per_batch", 5
+                            ),
+                            max_lines_per_batch=batch_config.get(
+                                "max_lines_per_batch", 2000
+                            ),
+                        )
+                    )
+                else:
+                    logger.info(f"[{task_id}] 使用标准模式进行审查")
+                    tasks.append(self.ai_reviewer.review_pr(context, analysis.strategy))
+
+                # 任务2: AI标签推荐（并行）
+                if enable_label_recommendation:
+                    logger.info(f"[{task_id}] 并行启动AI标签推荐...")
+
+                    async def run_label_recommendation():
+                        try:
+                            # 获取仓库可用标签
+                            available_labels = await label_service.get_repo_labels(
+                                pr_info["repo_owner"], pr_info["repo_name"]
                             )
 
-                            logger.info(
-                                f"[{task_id}] 标签应用完成: "
-                                f"已应用 {len(label_results.get('applied', []))} 个, "
-                                f"建议 {len(label_results.get('suggested', []))} 个"
+                            # AI推荐标签
+                            recommendations = await self.ai_reviewer.recommend_labels(
+                                context, available_labels, pr_info
                             )
-                            return label_results
-                        else:
-                            logger.info(f"[{task_id}] AI未推荐任何标签")
+
+                            if recommendations:
+                                # 应用标签到PR
+                                confidence_threshold = _get_label_rec_setting(
+                                    "confidence_threshold", 0.7
+                                )
+                                auto_create_labels = _get_label_rec_setting(
+                                    "auto_create", False
+                                )
+
+                                label_results = await label_service.apply_labels_to_pr(
+                                    pr_info["repo_owner"],
+                                    pr_info["repo_name"],
+                                    pr_info["pr_number"],
+                                    recommendations,
+                                    confidence_threshold=confidence_threshold,
+                                    auto_create=auto_create_labels,
+                                )
+
+                                logger.info(
+                                    f"[{task_id}] 标签应用完成: "
+                                    f"已应用 {len(label_results.get('applied', []))} 个, "
+                                    f"建议 {len(label_results.get('suggested', []))} 个"
+                                )
+                                return label_results
+                            else:
+                                logger.info(f"[{task_id}] AI未推荐任何标签")
+                                return None
+
+                        except Exception as label_error:
+                            logger.warning(
+                                f"[{task_id}] 标签推荐失败（不影响审查）: {label_error}"
+                            )
                             return None
 
-                    except Exception as label_error:
-                        logger.warning(
-                            f"[{task_id}] 标签推荐失败（不影响审查）: {label_error}"
-                        )
-                        return None
+                    tasks.append(run_label_recommendation())
 
-                tasks.append(run_label_recommendation())
+                # 并行执行所有任务
+                results = await asyncio.gather(*tasks, return_exceptions=True)
 
-            # 并行执行所有任务
-            results = await asyncio.gather(*tasks, return_exceptions=True)
-
-            # 解析结果
-            review_result = results[0]
-            if not isinstance(review_result, Exception):
-                # 8. 保存审查结果
-                await self._save_review_results(review_id, review_result, analysis)
-            else:
-                logger.error(f"[{task_id}] AI审查失败: {review_result}")
-                raise review_result
-
-            # 获取标签推荐结果
-            label_results = None
-            if enable_label_recommendation and len(results) > 1:
-                if isinstance(results[1], Exception):
-                    logger.warning(f"[{task_id}] 标签推荐任务异常: {results[1]}")
+                # 解析结果
+                review_result = results[0]
+                if not isinstance(review_result, Exception):
+                    # 8. 保存审查结果
+                    await self._save_review_results(review_id, review_result, analysis)
                 else:
-                    label_results = results[1]
+                    logger.error(f"[{task_id}] AI审查失败: {review_result}")
+                    raise review_result
 
-            # 9. 【第二阶段】删除占位评论，准备创建最终Review
-            if review_obj:
-                logger.info(f"[{task_id}] 删除占位评论...")
-                await self.comment_service.delete_placeholder_comment(review_obj)
+                # 获取标签推荐结果
+                label_results = None
+                if enable_label_recommendation and len(results) > 1:
+                    if isinstance(results[1], Exception):
+                        logger.warning(f"[{task_id}] 标签推荐任务异常: {results[1]}")
+                    else:
+                        label_results = results[1]
 
-            # 10. 【新增】决策引擎：做出审查决定并提交到GitHub（包含行内评论）
-            logger.info(f"[{task_id}] 执行决策引擎...")
-            decision, decision_reason = await self._make_and_submit_decision(
-                pr_info, review_result, review_id, task_id, pr, analysis, label_results
-            )
+                # 9. 【第二阶段】删除占位评论，准备创建最终Review
+                if review_obj:
+                    logger.info(f"[{task_id}] 删除占位评论...")
+                    await self.comment_service.delete_placeholder_comment(review_obj)
 
-            # 11. 更新状态为完成
-            await self._update_review_status(
-                review_id,
-                PRStatus.COMPLETED,
-                overall_score=review_result.get("overall_score"),
-                decision=decision,
-                decision_reason=decision_reason,
-            )
+                # 10. 【新增】决策引擎：做出审查决定并提交到GitHub（包含行内评论）
+                logger.info(f"[{task_id}] 执行决策引擎...")
+                decision, decision_reason = await self._make_and_submit_decision(
+                    pr_info,
+                    review_result,
+                    review_id,
+                    task_id,
+                    pr,
+                    analysis,
+                    label_results,
+                )
 
-            # 12. 发送Telegram审查完成通知
-            await self._send_review_complete_notification(pr_info, review_result)
+                # 11. 更新状态为完成
+                await self._update_review_status(
+                    review_id,
+                    PRStatus.COMPLETED,
+                    overall_score=review_result.get("overall_score"),
+                    decision=decision,
+                    decision_reason=decision_reason,
+                )
 
-            logger.info(
-                f"[{task_id}] 审查任务完成: {pr_info['repo_full_name']}#{pr_info['pr_number']}, "
-                f"decision={decision.value if decision else 'N/A'}"
-            )
-            return task_id
+                # 12. 发送Telegram审查完成通知
+                await self._send_review_complete_notification(pr_info, review_result)
 
-        except Exception as e:
-            logger.error(f"[{task_id}] 处理审查任务时出错: {e}", exc_info=True)
+                logger.info(
+                    f"[{task_id}] 审查任务完成: {pr_info['repo_full_name']}#{pr_info['pr_number']}, "
+                    f"decision={decision.value if decision else 'N/A'}"
+                )
+                return task_id
 
-            # 【错误处理】更新占位评论为错误消息
-            if review_obj:
+            except Exception as e:
+                logger.error(f"[{task_id}] 处理审查任务时出错: {e}", exc_info=True)
+
+                # 【错误处理】更新占位评论为错误消息
+                if review_obj:
+                    try:
+                        await self.comment_service.update_review_with_error(
+                            review_obj, str(e), pr
+                        )
+                        logger.info(f"[{task_id}] 已更新占位评论为错误状态")
+                    except Exception as update_error:
+                        logger.error(f"[{task_id}] 更新错误消息失败: {update_error}")
+
+                # 保存错误信息到数据库
                 try:
-                    await self.comment_service.update_review_with_error(
-                        review_obj, str(e), pr
-                    )
-                    logger.info(f"[{task_id}] 已更新占位评论为错误状态")
-                except Exception as update_error:
-                    logger.error(f"[{task_id}] 更新错误消息失败: {update_error}")
-
-            # 保存错误信息到数据库
-            try:
-                await self._save_error_record(pr_info, str(e), task_id)
-            except Exception as save_error:
-                logger.error(f"保存错误记录失败: {save_error}")
-            raise
+                    await self._save_error_record(pr_info, str(e), task_id)
+                except Exception as save_error:
+                    logger.error(f"保存错误记录失败: {save_error}")
+                raise
 
     async def _create_review_record(
         self, analysis: PRAnalysis, pr_info: Dict[str, Any], task_id: str
@@ -362,6 +419,20 @@ class ReviewWorker:
                     await session.commit()
 
         await _db_retry(_do)
+
+        # 发布 SSE 事件通知前端
+        try:
+            from backend.webui.sse import publish_event
+
+            await publish_event(
+                "review:status_changed",
+                {
+                    "review_id": review_id,
+                    "status": status.value if hasattr(status, "value") else str(status),
+                },
+            )
+        except Exception as e:
+            logger.warning(f"发布 SSE 事件失败（不影响主流程）: {e}")
 
     async def _save_review_results(
         self, review_id: int, review_result: Dict[str, Any], analysis: PRAnalysis
@@ -555,7 +626,8 @@ class ReviewWorker:
             is_synchronize = pr_info.get("action") == "synchronize"
 
             # 获取机器人用户名（用于幂等性检查和撤回Review）
-            bot_username = self.github_app.get_bot_username(
+            bot_username = await asyncio.to_thread(
+                self.github_app.get_bot_username,
                 pr_info["repo_owner"],
                 pr_info["repo_name"],
             )
@@ -567,7 +639,8 @@ class ReviewWorker:
                     logger.info("增量审查模式，跳过幂等性检查")
                 else:
                     # 全量审查回退（force push 等）：撤回旧 review
-                    dismissed = self.github_app.dismiss_bot_reviews(
+                    dismissed = await asyncio.to_thread(
+                        self.github_app.dismiss_bot_reviews,
                         pr_info["repo_owner"],
                         pr_info["repo_name"],
                         pr_info["pr_number"],
@@ -581,7 +654,8 @@ class ReviewWorker:
             success = False
 
             for attempt in range(max_retries + 1):
-                success = self.github_app.submit_review_with_inline_comments(
+                success = await asyncio.to_thread(
+                    self.github_app.submit_review_with_inline_comments,
                     repo_owner=pr_info["repo_owner"],
                     repo_name=pr_info["repo_name"],
                     pr_number=pr_info["pr_number"],

@@ -1,6 +1,20 @@
 <script>
 var _dashboardCharts = null;
 
+function _loadScript(src) {
+    return new Promise(function(resolve, reject) {
+        if (document.querySelector('script[src="' + src + '"]')) {
+            resolve();
+            return;
+        }
+        var s = document.createElement('script');
+        s.src = src;
+        s.onload = resolve;
+        s.onerror = reject;
+        document.head.appendChild(s);
+    });
+}
+
 function _getThemeColors() {
     var isDark = document.documentElement.classList.contains('dark');
     return {
@@ -9,7 +23,17 @@ function _getThemeColors() {
     };
 }
 
-function initDashboardCharts() {
+async function initDashboardCharts() {
+    // 动态加载 Chart.js（如果尚未加载）
+    if (typeof Chart === 'undefined') {
+        try {
+            await _loadScript('https://cdn.jsdelivr.net/npm/chart.js@4');
+        } catch (e) {
+            console.error('Chart.js 加载失败:', e);
+            return;
+        }
+    }
+
     fetch('/webui/api/webui/chart-data')
         .then(function(r) { return r.json(); })
         .then(function(data) {
@@ -125,7 +149,7 @@ function initDashboardCharts() {
             _dashboardCharts = { trendChart: trendChart, decisionChart: decisionChart, repoChart: repoChart };
 
             // 监听暗色模式切换
-            var observer = new MutationObserver(function() {
+            var _themeObserver = new MutationObserver(function() {
                 var c = _getThemeColors();
                 Chart.defaults.color = c.textColor;
                 trendChart.options.scales.x.grid.color = c.gridColor;
@@ -136,7 +160,28 @@ function initDashboardCharts() {
                 // 环形图依赖 centerTextPlugin 中的 textColor，需要重绘
                 decisionChart.update();
             });
-            observer.observe(document.documentElement, { attributes: true, attributeFilter: ['class'] });
+            _themeObserver.observe(document.documentElement, { attributes: true, attributeFilter: ['class'] });
+
+            // 统一清理函数：断开 observer + 销毁图表实例
+            function _cleanupDashboardCharts() {
+                if (_themeObserver) {
+                    _themeObserver.disconnect();
+                    _themeObserver = null;
+                }
+                if (_dashboardCharts) {
+                    Object.keys(_dashboardCharts).forEach(function(key) {
+                        if (_dashboardCharts[key]) {
+                            _dashboardCharts[key].destroy();
+                        }
+                    });
+                    _dashboardCharts = null;
+                }
+            }
+
+            // 页面卸载时清理
+            window.addEventListener('beforeunload', _cleanupDashboardCharts, { once: true });
+            // 暴露供外部调用（如 SPA 路由切换时）
+            window._cleanupDashboardCharts = _cleanupDashboardCharts;
         })
         .catch(function(err) { console.error('加载图表数据失败:', err); });
 }
