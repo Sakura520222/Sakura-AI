@@ -27,6 +27,42 @@ from backend.models.database import (
 
 settings = get_settings()
 
+# 审查并发控制信号量
+_review_semaphore: asyncio.Semaphore | None = None
+
+
+async def _get_review_semaphore() -> asyncio.Semaphore:
+    """获取审查并发信号量（懒初始化，支持动态更新）"""
+    global _review_semaphore
+    if _review_semaphore is None:
+        max_concurrent = await _load_max_concurrent_from_db()
+        _review_semaphore = asyncio.Semaphore(max_concurrent)
+        logger.info(f"审查并发信号量初始化: 最大 {max_concurrent} 个并发任务")
+    return _review_semaphore
+
+
+def reset_review_semaphore():
+    """重置审查信号量（配置更新时调用）"""
+    global _review_semaphore
+    _review_semaphore = None
+    logger.info("审查并发信号量已重置，下次任务将重新初始化")
+
+
+async def _load_max_concurrent_from_db() -> int:
+    """从数据库读取最大并发审查数"""
+    from backend.models.database import async_session, AppConfig
+    from sqlalchemy import select
+
+    try:
+        async with async_session() as session:
+            result = await session.execute(
+                select(AppConfig).where(AppConfig.key_name == "max_concurrent_reviews")
+            )
+            cfg = result.scalar_one_or_none()
+            return int(cfg.key_value) if cfg else 5
+    except Exception:
+        return 5  # 降级默认值
+
 
 def _get_label_rec_setting(key: str, default=None):
     """获取标签推荐配置，读取失败时降级到默认值"""
@@ -90,6 +126,9 @@ class ReviewWorker:
         task_id = str(uuid.uuid4())
         review_obj = None  # 用于保存 GitHub Review 对象
 
+        # 获取并发信号量，限制同时运行的审查任务数
+        semaphore = await _get_review_semaphore()
+        await semaphore.acquire()
         try:
             logger.info(
                 f"[{task_id}] 开始处理审查任务: {pr_info['repo_full_name']}#{pr_info['pr_number']}"
@@ -111,8 +150,8 @@ class ReviewWorker:
             client = self.github_app.get_repo_client(
                 pr_info["repo_owner"], pr_info["repo_name"]
             )
-            repo = client.get_repo(pr_info["repo_full_name"])
-            pr = repo.get_pull(pr_info["pr_number"])
+            repo = await asyncio.to_thread(client.get_repo, pr_info["repo_full_name"])
+            pr = await asyncio.to_thread(repo.get_pull, pr_info["pr_number"])
 
             # 5. 【第一阶段】创建占位评论
             logger.info(f"[{task_id}] 创建占位评论...")
@@ -305,6 +344,8 @@ class ReviewWorker:
             except Exception as save_error:
                 logger.error(f"保存错误记录失败: {save_error}")
             raise
+        finally:
+            semaphore.release()
 
     async def _create_review_record(
         self, analysis: PRAnalysis, pr_info: Dict[str, Any], task_id: str
@@ -362,6 +403,20 @@ class ReviewWorker:
                     await session.commit()
 
         await _db_retry(_do)
+
+        # 发布 SSE 事件通知前端
+        try:
+            from backend.webui.sse import publish_event
+
+            await publish_event(
+                "review:status_changed",
+                {
+                    "review_id": review_id,
+                    "status": status.value if hasattr(status, "value") else str(status),
+                },
+            )
+        except Exception as e:
+            logger.warning(f"发布 SSE 事件失败（不影响主流程）: {e}")
 
     async def _save_review_results(
         self, review_id: int, review_result: Dict[str, Any], analysis: PRAnalysis
@@ -555,7 +610,8 @@ class ReviewWorker:
             is_synchronize = pr_info.get("action") == "synchronize"
 
             # 获取机器人用户名（用于幂等性检查和撤回Review）
-            bot_username = self.github_app.get_bot_username(
+            bot_username = await asyncio.to_thread(
+                self.github_app.get_bot_username,
                 pr_info["repo_owner"],
                 pr_info["repo_name"],
             )
@@ -567,7 +623,8 @@ class ReviewWorker:
                     logger.info("增量审查模式，跳过幂等性检查")
                 else:
                     # 全量审查回退（force push 等）：撤回旧 review
-                    dismissed = self.github_app.dismiss_bot_reviews(
+                    dismissed = await asyncio.to_thread(
+                        self.github_app.dismiss_bot_reviews,
                         pr_info["repo_owner"],
                         pr_info["repo_name"],
                         pr_info["pr_number"],
@@ -581,7 +638,8 @@ class ReviewWorker:
             success = False
 
             for attempt in range(max_retries + 1):
-                success = self.github_app.submit_review_with_inline_comments(
+                success = await asyncio.to_thread(
+                    self.github_app.submit_review_with_inline_comments,
                     repo_owner=pr_info["repo_owner"],
                     repo_name=pr_info["repo_name"],
                     pr_number=pr_info["pr_number"],

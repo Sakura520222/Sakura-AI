@@ -56,6 +56,16 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.error(f"❌ Telegram Bot 启动失败: {e}")
 
+    # 启动 Redis Pub/Sub 监听（SSE 多进程支持）
+    redis_listener_task = None
+    try:
+        from backend.webui.sse import start_redis_listener
+
+        redis_listener_task = asyncio.create_task(start_redis_listener())
+        logger.info("✅ SSE Redis Pub/Sub 监听已启动")
+    except Exception as e:
+        logger.error(f"❌ SSE Redis Pub/Sub 监听启动失败: {e}")
+
     yield
 
     # 关闭时
@@ -86,12 +96,20 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.error(f"❌ 停止 Telegram Bot 时出错: {e}")
 
+    # 停止 SSE Redis Pub/Sub 监听
+    if redis_listener_task:
+        redis_listener_task.cancel()
+        try:
+            await redis_listener_task
+        except asyncio.CancelledError:
+            pass
+
 
 # 创建FastAPI应用
 app = FastAPI(
     title="Sakura AI Reviewer",
     description="GitHub PR AI代码审查机器人",
-    version="2.5.2",
+    version="2.5.3",
     lifespan=lifespan,
 )
 
@@ -123,7 +141,7 @@ async def root():
     """根路径"""
     return {
         "service": "Sakura AI Reviewer",
-        "version": "2.5.2",
+        "version": "2.5.3",
         "status": "running",
         "docs": "/docs",
     }

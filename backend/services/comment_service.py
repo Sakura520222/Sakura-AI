@@ -1,5 +1,6 @@
 """评论服务 - 负责将审查结果发布到GitHub PR"""
 
+import asyncio
 from typing import Dict, Any, Optional
 from loguru import logger
 
@@ -41,7 +42,7 @@ class CommentService:
 """
 
             # 使用 Issue Comment（可编辑、可删除）
-            comment = pr.create_issue_comment(placeholder_body)
+            comment = await asyncio.to_thread(pr.create_issue_comment, placeholder_body)
 
             logger.info(
                 f"✓ 已创建占位评论到PR: {pr.base.repo.full_name}#{pr.number} "
@@ -61,7 +62,7 @@ class CommentService:
             comment: GitHub Issue Comment 对象（占位评论）
         """
         try:
-            comment.delete()
+            await asyncio.to_thread(comment.delete)
             logger.info(f"✓ 已删除占位评论 (Comment ID: {comment.id})")
         except Exception as e:
             logger.error(f"删除占位评论时出错: {e}", exc_info=True)
@@ -96,7 +97,7 @@ class CommentService:
             if pr:
                 try:
                     # 1. 删除占位 comment
-                    comment.delete()
+                    await asyncio.to_thread(comment.delete)
                     logger.info(f"✓ 已删除占位评论 (Comment ID: {comment.id})")
 
                     # 2. 构建整体评论内容
@@ -133,14 +134,20 @@ class CommentService:
                         else:
                             # 所有评论都被过滤，降级为普通 review
                             logger.info("所有行内评论都被过滤，创建普通 review")
-                            review = pr.create_review(
-                                body=review_body, event="COMMENT", comments=[]
+                            review = await asyncio.to_thread(
+                                pr.create_review,
+                                body=review_body,
+                                event="COMMENT",
+                                comments=[],
                             )
                             logger.info(f"✓ 已创建普通审查 (Review ID: {review.id})")
                     else:
                         # 没有行内评论，创建普通 review
-                        review = pr.create_review(
-                            body=review_body, event="COMMENT", comments=[]
+                        review = await asyncio.to_thread(
+                            pr.create_review,
+                            body=review_body,
+                            event="COMMENT",
+                            comments=[],
                         )
                         logger.info(f"✓ 已创建正式审查评论 (Review ID: {review.id})")
 
@@ -152,8 +159,9 @@ class CommentService:
                     review_body = self._format_comment(
                         review_result, strategy, label_results
                     )
-                    pr.create_issue_comment(
-                        "⚠️ 审查评论更新失败，已降级为普通评论\n\n" + review_body
+                    await asyncio.to_thread(
+                        pr.create_issue_comment,
+                        "⚠️ 审查评论更新失败，已降级为普通评论\n\n" + review_body,
                     )
                     logger.info("✓ 已降级为普通评论")
             else:
@@ -194,11 +202,11 @@ class CommentService:
             if pr:
                 try:
                     # 1. 删除占位 comment
-                    comment.delete()
+                    await asyncio.to_thread(comment.delete)
                     logger.info(f"✓ 已删除占位评论 (Comment ID: {comment.id})")
 
                     # 2. 创建错误评论
-                    pr.create_issue_comment(error_body)
+                    await asyncio.to_thread(pr.create_issue_comment, error_body)
                     logger.info("✓ 已创建错误评论")
 
                 except Exception as e:
@@ -206,7 +214,7 @@ class CommentService:
                         "删除评论并创建错误评论失败: {}", str(e), exc_info=True
                     )
                     # 降级方案：直接创建新的错误评论
-                    pr.create_issue_comment(error_body)
+                    await asyncio.to_thread(pr.create_issue_comment, error_body)
                     logger.info("✓ 已降级为直接创建错误评论")
             else:
                 logger.warning("无法更新错误评论：没有 PR 对象")
@@ -228,7 +236,8 @@ class CommentService:
 
             # 使用 create_review 一次性发布所有评论
             # 这样可以避免触发 GitHub API 频率限制
-            pr.create_review(
+            await asyncio.to_thread(
+                pr.create_review,
                 body=comment_body,
                 event="COMMENT",  # COMMENT, APPROVE, REQUEST_CHANGES
                 comments=[],  # 整体评论，不需要行内评论
@@ -281,7 +290,9 @@ class CommentService:
     async def create_review_comment(self, pr: Any, body: str, event: str = "COMMENT"):
         """创建PR审查评论"""
         try:
-            review = pr.create_review(body=body, event=event, comments=[])
+            review = await asyncio.to_thread(
+                pr.create_review, body=body, event=event, comments=[]
+            )
             return review
         except Exception as e:
             logger.error(f"创建审查评论时出错: {e}")
@@ -293,11 +304,15 @@ class CommentService:
         """创建行内评论（单个）"""
         try:
             # 获取commit
-            commit = pr.head.repo.get_commit(pr.head.sha)
+            commit = await asyncio.to_thread(pr.head.repo.get_commit, pr.head.sha)
 
             # 创建行内评论
-            comment = pr.create_review_comment(
-                body=body, path=file_path, line=line_number, commit_id=commit.sha
+            comment = await asyncio.to_thread(
+                pr.create_review_comment,
+                body=body,
+                path=file_path,
+                line=line_number,
+                commit_id=commit.sha,
             )
             return comment
         except Exception as e:
@@ -374,7 +389,8 @@ class CommentService:
                 return None
 
             # 使用 create_review 一次性创建所有评论
-            review = pr.create_review(
+            review = await asyncio.to_thread(
+                pr.create_review,
                 body=overall_body or "🌸 Sakura AI 代码审查",
                 event="COMMENT",
                 comments=comments,

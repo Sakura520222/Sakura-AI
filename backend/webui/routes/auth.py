@@ -21,12 +21,12 @@ from backend.webui.deps import (
     toast_redirect,
 )
 from backend.core.config import get_settings
-from backend.core.redis import get_redis
+from backend.core.redis import get_async_redis
 
 router = APIRouter(prefix="/auth", tags=["WebUI Auth"])
 templates = get_templates()
 
-APP_VERSION = "2.5.2"
+APP_VERSION = "2.5.3"
 
 _OAUTH_STATE_TTL = 600  # state 有效期 10 分钟
 _OAUTH_STATE_KEY_PREFIX = "oauth:state:"
@@ -61,12 +61,12 @@ def _oauth_error(
     )
 
 
-def _save_oauth_state(state: str, redirect: str):
+async def _save_oauth_state(state: str, redirect: str):
     """将 OAuth state 存储到 Redis，失败时回退到内存"""
     try:
-        r = get_redis()
+        r = await get_async_redis()
         key = f"{_OAUTH_STATE_KEY_PREFIX}{state}"
-        r.setex(key, _OAUTH_STATE_TTL, json.dumps({"redirect": redirect}))
+        await r.setex(key, _OAUTH_STATE_TTL, json.dumps({"redirect": redirect}))
     except Exception as e:
         logger.warning(f"Redis 存储失败，使用内存回退: {e}")
         if len(_oauth_states_fallback) > _MAX_FALLBACK_STATES:
@@ -80,12 +80,12 @@ def _save_oauth_state(state: str, redirect: str):
         }
 
 
-def _get_oauth_state(state: str):
+async def _get_oauth_state(state: str):
     """读取 OAuth state（不删除，用于验证阶段）"""
     try:
-        r = get_redis()
+        r = await get_async_redis()
         key = f"{_OAUTH_STATE_KEY_PREFIX}{state}"
-        value = r.get(key)
+        value = await r.get(key)
         if value:
             return json.loads(value)
     except Exception as e:
@@ -97,12 +97,12 @@ def _get_oauth_state(state: str):
     return None
 
 
-def _delete_oauth_state(state: str):
+async def _delete_oauth_state(state: str):
     """删除 OAuth state（登录成功后调用）"""
     try:
-        r = get_redis()
+        r = await get_async_redis()
         key = f"{_OAUTH_STATE_KEY_PREFIX}{state}"
-        r.delete(key)
+        await r.delete(key)
     except Exception as e:
         logger.warning(f"Redis 删除失败: {e}")
     _oauth_states_fallback.pop(state, None)
@@ -156,7 +156,7 @@ async def github_login(request: Request):
 
     # 生成 state 防止 CSRF
     state = secrets.token_urlsafe(32)
-    _save_oauth_state(state, "/webui/")
+    await _save_oauth_state(state, "/webui/")
 
     params = {
         "client_id": settings.github_oauth_client_id,
@@ -186,7 +186,7 @@ async def github_callback(
         return _oauth_error(request, f"授权被拒绝: {error_description or error}")
 
     # 验证 state（惰性读取，不立即删除 — 登录成功后再删除）
-    state_data = _get_oauth_state(state) if state else None
+    state_data = await _get_oauth_state(state) if state else None
     if not state_data:
         logger.warning(f"GitHub OAuth state 验证失败: state={state}")
         return _oauth_error(request, "无效的授权请求，请重新登录")
@@ -290,7 +290,7 @@ async def github_callback(
     jwt_token = create_access_token(token_data)
 
     # 登录成功，删除已使用的 state
-    _delete_oauth_state(state)
+    await _delete_oauth_state(state)
 
     logger.info(f"GitHub OAuth 登录成功: {github_username} (role={user.role})")
 

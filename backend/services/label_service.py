@@ -3,6 +3,7 @@
 负责AI驱动的PR标签推荐和自动应用
 """
 
+import asyncio
 import json
 import threading
 from typing import Dict, List, Optional, Any
@@ -120,7 +121,9 @@ class LabelService:
 
         # 从GitHub获取
         logger.info(f"从GitHub获取标签列表: {repo_full_name}")
-        labels = self.github_app.get_repo_labels(repo_owner, repo_name)
+        labels = await asyncio.to_thread(
+            self.github_app.get_repo_labels, repo_owner, repo_name
+        )
 
         # 如果仓库没有任何标签，使用默认标签
         if not labels:
@@ -325,8 +328,12 @@ class LabelService:
 
             # 根据置信度决定是否自动应用
             if confidence >= confidence_threshold:
-                success = self.github_app.add_labels_to_pr(
-                    repo_owner, repo_name, pr_number, [label_name]
+                success = await asyncio.to_thread(
+                    self.github_app.add_labels_to_pr,
+                    repo_owner,
+                    repo_name,
+                    pr_number,
+                    [label_name],
                 )
                 if success:
                     result["applied"].append(
