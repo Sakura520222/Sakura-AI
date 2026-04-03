@@ -701,3 +701,35 @@ def _evict_config_cache():
     """LRU 缓存淘汰"""
     while len(_dynamic_config_cache) > _MAX_CACHE_SIZE:
         _dynamic_config_cache.popitem(last=False)
+
+
+async def load_dynamic_configs_to_settings():
+    """从数据库加载动态配置到 Settings 单例
+
+    启动时调用一次，让所有使用 settings.xxx 的服务直接拿到 DB 中的值。
+    这样现有服务代码无需改动。
+    """
+    settings = get_settings()
+    loaded = 0
+    for key in get_all_dynamic_config_keys():
+        db_value = await _read_config_from_db(key)
+        if db_value is not None:
+            field_type = _get_field_type(key)
+            typed_value = _cast_config_type(db_value, field_type)
+            try:
+                setattr(settings, key, typed_value)
+                loaded += 1
+            except Exception:
+                pass
+    logger.info(f"已从数据库加载 {loaded} 项动态配置到 Settings")
+
+
+def update_settings_field(key: str, value: str):
+    """WebUI 保存配置时同步更新 Settings 单例（即时生效）"""
+    settings = get_settings()
+    field_type = _get_field_type(key)
+    typed_value = _cast_config_type(value, field_type)
+    try:
+        setattr(settings, key, typed_value)
+    except Exception as e:
+        logger.warning(f"更新 Settings 字段 [{key}] 失败: {e}")

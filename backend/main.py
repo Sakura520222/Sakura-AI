@@ -48,6 +48,14 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.error(f"❌ 数据库初始化失败: {e}")
 
+    # 从数据库加载动态配置到 Settings 单例
+    try:
+        from backend.core.config import load_dynamic_configs_to_settings
+
+        await load_dynamic_configs_to_settings()
+    except Exception as e:
+        logger.warning(f"⚠️ 加载动态配置失败: {e}")
+
     # 启动 Telegram Bot（后台任务）
     telegram_task = None
     try:
