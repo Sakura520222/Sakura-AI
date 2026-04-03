@@ -1,10 +1,15 @@
 """配置管理模块"""
 
+from collections import OrderedDict
+from typing import Any, Optional
+
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from functools import lru_cache
+import time
 import yaml
 from pathlib import Path
+from loguru import logger
 
 
 class Settings(BaseSettings):
@@ -394,3 +399,305 @@ def reload_label_config() -> LabelConfig:
     """清除 lru_cache 并重新加载标签配置"""
     get_label_config.cache_clear()
     return get_label_config()
+
+
+# ========== 动态配置（从数据库读取） ==========
+
+# 可通过 WebUI 动态管理的配置键及其分组信息
+DYNAMIC_CONFIG_GROUPS: OrderedDict[str, dict] = OrderedDict(
+    [
+        (
+            "ai_model",
+            {
+                "label": "AI 模型配置",
+                "icon": "cpu",
+                "keys": [
+                    "openai_api_base",
+                    "openai_api_key",
+                    "openai_model",
+                ],
+            },
+        ),
+        (
+            "rag",
+            {
+                "label": "RAG 配置",
+                "icon": "database",
+                "keys": [
+                    "enable_rag",
+                    "chroma_persist_dir",
+                ],
+            },
+        ),
+        (
+            "embedding",
+            {
+                "label": "嵌入模型配置",
+                "icon": "layers",
+                "keys": [
+                    "embedding_model",
+                    "embedding_provider",
+                    "embedding_base_url",
+                    "embedding_api_key",
+                    "embedding_dimension",
+                ],
+            },
+        ),
+        (
+            "rerank",
+            {
+                "label": "重排序配置",
+                "icon": "shuffle",
+                "keys": [
+                    "rerank_model",
+                    "rerank_provider",
+                    "rerank_base_url",
+                    "rerank_api_key",
+                    "rerank_score_threshold",
+                ],
+            },
+        ),
+        (
+            "code_index",
+            {
+                "label": "代码索引配置",
+                "icon": "file-code",
+                "keys": [
+                    "enable_code_index",
+                    "auto_index_pr_changes",
+                    "code_chunk_size",
+                    "code_chunk_overlap",
+                ],
+            },
+        ),
+        (
+            "context",
+            {
+                "label": "上下文管理配置",
+                "icon": "compress",
+                "keys": [
+                    "model_context_window",
+                    "context_safety_threshold",
+                    "enable_context_compression",
+                    "context_compression_threshold",
+                    "context_compression_keep_rounds",
+                ],
+            },
+        ),
+        (
+            "review_strategy",
+            {
+                "label": "审查策略配置",
+                "icon": "shield",
+                "keys": [
+                    "max_file_count",
+                    "max_line_count",
+                ],
+            },
+        ),
+        (
+            "label",
+            {
+                "label": "标签推荐配置",
+                "icon": "tag",
+                "keys": [
+                    "enable_label_recommendation",
+                    "label_confidence_threshold",
+                    "label_auto_create",
+                ],
+            },
+        ),
+    ]
+)
+
+# 敏感字段（API Key 等）
+DYNAMIC_CONFIG_SENSITIVE_KEYS = frozenset(
+    {"openai_api_key", "embedding_api_key", "rerank_api_key"}
+)
+
+# 选择类字段的选项
+DYNAMIC_CONFIG_SELECT_OPTIONS: dict[str, list[dict]] = {
+    "embedding_provider": [
+        {"value": "siliconflow", "label": "SiliconFlow"},
+        {"value": "openai", "label": "OpenAI"},
+        {"value": "ollama", "label": "Ollama"},
+        {"value": "hf", "label": "HuggingFace"},
+    ],
+    "rerank_provider": [
+        {"value": "siliconflow", "label": "SiliconFlow"},
+        {"value": "none", "label": "禁用"},
+    ],
+}
+
+# 数值范围限制
+DYNAMIC_CONFIG_RANGES: dict[str, tuple[float, float]] = {
+    "embedding_dimension": (128, 4096),
+    "rerank_score_threshold": (0.0, 1.0),
+    "code_chunk_size": (100, 5000),
+    "code_chunk_overlap": (0, 1000),
+    "model_context_window": (0, 2000),
+    "context_safety_threshold": (0.1, 1.0),
+    "context_compression_threshold": (0.1, 1.0),
+    "context_compression_keep_rounds": (1, 20),
+    "max_file_count": (1, 100000),
+    "max_line_count": (100, 100000000),
+    "label_confidence_threshold": (0.0, 1.0),
+}
+
+# 字段中文标签
+DYNAMIC_CONFIG_LABELS: dict[str, str] = {
+    "openai_api_base": "API Base URL",
+    "openai_api_key": "API Key",
+    "openai_model": "模型名称",
+    "enable_rag": "启用 RAG",
+    "chroma_persist_dir": "ChromaDB 存储路径",
+    "embedding_model": "嵌入模型",
+    "embedding_provider": "嵌入提供商",
+    "embedding_base_url": "嵌入 API 地址",
+    "embedding_api_key": "嵌入 API Key",
+    "embedding_dimension": "嵌入维度",
+    "rerank_model": "重排序模型",
+    "rerank_provider": "重排序提供商",
+    "rerank_base_url": "重排序 API 地址",
+    "rerank_api_key": "重排序 API Key",
+    "rerank_score_threshold": "重排序分数阈值",
+    "enable_code_index": "启用代码索引",
+    "auto_index_pr_changes": "自动索引 PR 变更",
+    "code_chunk_size": "代码块大小",
+    "code_chunk_overlap": "代码块重叠",
+    "model_context_window": "上下文窗口大小",
+    "context_safety_threshold": "上下文安全阈值",
+    "enable_context_compression": "启用上下文压缩",
+    "context_compression_threshold": "压缩触发阈值",
+    "context_compression_keep_rounds": "保留对话轮数",
+    "max_file_count": "最大文件数",
+    "max_line_count": "最大行数",
+    "enable_label_recommendation": "启用标签推荐",
+    "label_confidence_threshold": "标签置信度阈值",
+    "label_auto_create": "自动创建标签",
+}
+
+# 内存 TTL 缓存
+_dynamic_config_cache: OrderedDict[str, tuple[str, float]] = OrderedDict()
+_CACHE_TTL = 60  # 秒
+_MAX_CACHE_SIZE = 200
+
+
+def _get_field_type(key: str) -> type:
+    """从 Settings 字段定义获取类型"""
+    field_info = Settings.model_fields.get(key)
+    if field_info is None:
+        return str
+    ann = field_info.annotation
+    # 处理 Optional[X] 等
+    if hasattr(ann, "__origin__"):
+        return ann.__args__[0] if ann.__args__ else str
+    return ann if isinstance(ann, type) else str
+
+
+def get_dynamic_config_input_type(key: str) -> str:
+    """根据 Settings 字段类型推断 WebUI 输入类型"""
+    if key in DYNAMIC_CONFIG_SELECT_OPTIONS:
+        return "select"
+    if key in DYNAMIC_CONFIG_SENSITIVE_KEYS:
+        return "password"
+    field_type = _get_field_type(key)
+    if field_type is bool:
+        return "boolean"
+    if field_type in (int, float):
+        return "number"
+    return "text"
+
+
+async def get_dynamic_config(key: str) -> Any:
+    """从数据库读取配置值，回退到 Settings 默认值
+
+    Args:
+        key: 配置键名（对应 Settings 字段名）
+
+    Returns:
+        配置值（已转换类型）
+    """
+    expected_type = _get_field_type(key)
+
+    # 1. 检查内存缓存
+    cached = _dynamic_config_cache.get(key)
+    if cached is not None:
+        value, expire_time = cached
+        if time.time() < expire_time:
+            return _cast_config_type(value, expected_type)
+        _dynamic_config_cache.pop(key, None)
+
+    # 2. 从数据库读取
+    db_value = await _read_config_from_db(key)
+    if db_value is not None:
+        _dynamic_config_cache[key] = (db_value, time.time() + _CACHE_TTL)
+        _evict_config_cache()
+        return _cast_config_type(db_value, expected_type)
+
+    # 3. 回退到 Settings 默认值
+    settings = get_settings()
+    return getattr(settings, key, None)
+
+
+async def _read_config_from_db(key: str) -> Optional[str]:
+    """从 AppConfig 表读取配置值"""
+    try:
+        from backend.models.database import async_session, AppConfig
+        from sqlalchemy import select
+
+        async with async_session() as session:
+            result = await session.execute(
+                select(AppConfig.key_value).where(AppConfig.key_name == key)
+            )
+            row = result.scalar_one_or_none()
+            if row is not None:
+                return str(row)
+            return None
+    except Exception as e:
+        logger.debug(f"从数据库读取配置 [{key}] 失败: {e}")
+        return None
+
+
+def invalidate_dynamic_config_cache(keys: list[str] | None = None):
+    """清除动态配置缓存"""
+    if keys is None:
+        _dynamic_config_cache.clear()
+    else:
+        for k in keys:
+            _dynamic_config_cache.pop(k, None)
+
+
+def get_all_dynamic_config_keys() -> list[str]:
+    """获取所有动态配置键名"""
+    keys = []
+    for group in DYNAMIC_CONFIG_GROUPS.values():
+        keys.extend(group["keys"])
+    return keys
+
+
+def mask_sensitive_value(value: str) -> str:
+    """脱敏敏感值"""
+    if not value or len(value) <= 8:
+        return "****"
+    return f"{value[:4]}{'*' * (len(value) - 8)}{value[-4:]}"
+
+
+def _cast_config_type(value: Any, expected_type: type) -> Any:
+    """类型转换"""
+    if value is None:
+        return None
+    if expected_type is bool:
+        if isinstance(value, str):
+            return value.lower() in ("true", "1", "yes")
+        return bool(value)
+    try:
+        return expected_type(value)
+    except (ValueError, TypeError):
+        return value
+
+
+def _evict_config_cache():
+    """LRU 缓存淘汰"""
+    while len(_dynamic_config_cache) > _MAX_CACHE_SIZE:
+        _dynamic_config_cache.popitem(last=False)

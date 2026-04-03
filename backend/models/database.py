@@ -543,6 +543,24 @@ async def insert_default_configs_async():
         ),
     ]
 
+    # 从 config 模块追加动态配置默认值
+    try:
+        from backend.core.config import DYNAMIC_CONFIG_GROUPS, DYNAMIC_CONFIG_LABELS, get_settings
+
+        settings = get_settings()
+        for group_data in DYNAMIC_CONFIG_GROUPS.values():
+            for key in group_data["keys"]:
+                default_val = str(getattr(settings, key, ""))
+                default_configs.append(
+                    AppConfig(
+                        key_name=key,
+                        key_value=default_val,
+                        description=DYNAMIC_CONFIG_LABELS.get(key, key),
+                    )
+                )
+    except Exception:
+        pass
+
     try:
         async with async_session() as session:
             # 检查是否已有配置
@@ -661,6 +679,24 @@ def init_database(database_url: str):
                     description="Issues 分析中 AI 工具调用最大迭代次数",
                 ),
             ]
+
+            # 从 config 模块追加动态配置默认值
+            try:
+                from backend.core.config import DYNAMIC_CONFIG_GROUPS, DYNAMIC_CONFIG_LABELS, get_settings
+
+                settings = get_settings()
+                for group_data in DYNAMIC_CONFIG_GROUPS.values():
+                    for key in group_data["keys"]:
+                        default_val = str(getattr(settings, key, ""))
+                        default_configs.append(
+                            AppConfig(
+                                key_name=key,
+                                key_value=default_val,
+                                description=DYNAMIC_CONFIG_LABELS.get(key, key),
+                            )
+                        )
+            except Exception:
+                pass
 
             added = 0
             for cfg in default_configs:

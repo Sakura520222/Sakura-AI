@@ -3,11 +3,11 @@
 {% block title %}全局配置 - Sakura AI Reviewer{% endblock %}
 
 {% block content %}
-<div class="space-y-4">
+<div x-data="{ activeTab: 'basic' }" class="space-y-4">
     <!-- 页面标题 -->
     <div>
         <h1 class="text-2xl font-bold">全局配置</h1>
-        <p class="mt-1 text-sm text-gray-500 dark:text-gray-400">管理应用运行参数（部分配置需重启后生效）</p>
+        <p class="mt-1 text-sm text-gray-500 dark:text-gray-400">管理应用运行参数，修改后即时生效</p>
     </div>
 
     <!-- 版本信息（只读） -->
@@ -15,141 +15,228 @@
         <div class="flex items-center justify-between">
             <div>
                 <h3 class="text-sm font-medium text-gray-700 dark:text-gray-300">应用版本</h3>
-                <p class="text-xs text-gray-500 dark:text-gray-400 mt-1">当前运行的版本号，从代码读取</p>
+                <p class="text-xs text-gray-500 dark:text-gray-400 mt-1">当前运行的版本号</p>
             </div>
             <span class="px-3 py-1.5 bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-300 rounded-lg text-sm font-mono">{{ app_version }}</span>
         </div>
     </div>
 
+    <!-- Tab 导航 -->
+    <div class="border-b border-gray-200 dark:border-gray-700">
+        <nav class="flex flex-wrap -mb-px gap-1" role="tablist">
+            <button @click="activeTab = 'basic'"
+                    :class="activeTab === 'basic' ? 'border-pink-500 text-pink-600 dark:text-pink-400' : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300 dark:text-gray-400 dark:hover:text-gray-300'"
+                    class="whitespace-nowrap py-3 px-3 border-b-2 font-medium text-sm transition-colors">
+                基础配置
+            </button>
+            {% for group in dynamic_groups %}
+            <button @click="activeTab = '{{ group.id }}'"
+                    :class="activeTab === '{{ group.id }}' ? 'border-pink-500 text-pink-600 dark:text-pink-400' : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300 dark:text-gray-400 dark:hover:text-gray-300'"
+                    class="whitespace-nowrap py-3 px-3 border-b-2 font-medium text-sm transition-colors">
+                {{ group.label }}
+            </button>
+            {% endfor %}
+        </nav>
+    </div>
+
     <!-- 配置表单 -->
-    <form method="POST" action="/webui/config/general/save">
+    <form method="POST" action="/webui/config/general/save" id="configForm">
         <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
 
-        <!-- 基础配置 -->
-        {% for config in configs %}
-        {% if config.key_name in ('max_concurrent_reviews', 'review_timeout_seconds', 'enable_auto_review', 'issue_auto_create_labels', 'issue_max_tool_iterations') %}
-        <div class="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 shadow-sm p-5">
-            <div class="flex items-center justify-between">
-                <div>
-                    <h3 class="text-sm font-medium text-gray-700 dark:text-gray-300">{{ config.description or config.key_name }}</h3>
-                    <p class="text-xs text-gray-500 dark:text-gray-400 mt-1">
-                        {% if config.key_name == 'max_concurrent_reviews' %}
-                        同时进行的最大 PR 审查任务数
-                        {% elif config.key_name == 'review_timeout_seconds' %}
-                        单次审查任务的超时时间（秒）
-                        {% elif config.key_name == 'enable_auto_review' %}
-                        是否自动审查新提交的 PR
-                        {% elif config.key_name == 'issue_auto_create_labels' %}
-                        是否自动为 Issue 应用 AI 推荐的标签
-                        {% elif config.key_name == 'issue_max_tool_iterations' %}
-                        Issues 分析中 AI 工具调用的最大轮数
+        <!-- ===== 基础配置 Tab ===== -->
+        <div x-show="activeTab === 'basic'" x-cloak class="space-y-4">
+            <!-- 基础审查配置 -->
+            <div class="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 shadow-sm p-5">
+                <h3 class="text-sm font-semibold text-gray-700 dark:text-gray-300 mb-4">审查任务配置</h3>
+                <div class="space-y-4">
+                    {% for config in configs %}
+                    {% if config.key_name in ('max_concurrent_reviews', 'review_timeout_seconds', 'enable_auto_review', 'issue_auto_create_labels', 'issue_max_tool_iterations') %}
+                    <div class="flex items-center justify-between">
+                        <div>
+                            <h4 class="text-sm font-medium text-gray-700 dark:text-gray-300">{{ config.description or config.key_name }}</h4>
+                            <p class="text-xs text-gray-500 dark:text-gray-400 mt-1">
+                                {% if config.key_name == 'max_concurrent_reviews' %}同时进行的最大 PR 审查任务数
+                                {% elif config.key_name == 'review_timeout_seconds' %}单次审查任务的超时时间（秒）
+                                {% elif config.key_name == 'enable_auto_review' %}是否自动审查新提交的 PR
+                                {% elif config.key_name == 'issue_auto_create_labels' %}是否自动为 Issue 应用 AI 推荐的标签
+                                {% elif config.key_name == 'issue_max_tool_iterations' %}Issues 分析中 AI 工具调用的最大轮数
+                                {% endif %}
+                            </p>
+                        </div>
+                        {% if config.key_name in ('enable_auto_review', 'issue_auto_create_labels') %}
+                        <label class="relative inline-flex items-center cursor-pointer">
+                            <input type="checkbox" name="{{ config.key_name }}" value="true" class="sr-only peer"
+                                   {% if config.key_value == 'true' %}checked{% endif %}>
+                            <div class="w-11 h-6 bg-gray-200 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-pink-300 dark:peer-focus:ring-pink-800 rounded-full peer dark:bg-gray-600 peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:start-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all dark:after:border-gray-500 peer-checked:bg-pink-500"></div>
+                        </label>
+                        {% else %}
+                        <input type="number"
+                               name="{{ config.key_name }}"
+                               value="{{ config.key_value }}"
+                               min="1"
+                               class="w-32 px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-sm text-right focus:ring-2 focus:ring-pink-500 focus:border-transparent outline-none">
                         {% endif %}
-                    </p>
+                    </div>
+                    {% endif %}
+                    {% endfor %}
                 </div>
+            </div>
 
-                {% if config.key_name in ('enable_auto_review', 'issue_auto_create_labels') %}
-                <label class="relative inline-flex items-center cursor-pointer">
-                    <input type="checkbox" name="{{ config.key_name }}" value="true" class="sr-only peer"
-                           {% if config.key_value == 'true' %}checked{% endif %}>
-                    <div class="w-11 h-6 bg-gray-200 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-pink-300 dark:peer-focus:ring-pink-800 rounded-full peer dark:bg-gray-600 peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:start-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all dark:after:border-gray-500 peer-checked:bg-pink-500"></div>
-                </label>
-                {% else %}
-                <input type="number"
-                       name="{{ config.key_name }}"
-                       value="{{ config.key_value }}"
-                       min="1"
-                       class="w-32 px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-sm text-right focus:ring-2 focus:ring-pink-500 focus:border-transparent outline-none">
-                {% endif %}
+            <!-- Web 搜索配置 -->
+            <div class="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 shadow-sm p-5">
+                <h3 class="text-sm font-semibold text-gray-700 dark:text-gray-300 mb-1">Web 搜索工具</h3>
+                <p class="text-xs text-gray-500 dark:text-gray-400 mb-4">为 AI 审查员提供互联网搜索能力</p>
+                <div class="space-y-4">
+                    {% for config in configs %}
+                    {% if config.key_name == 'web_search_enabled' %}
+                    <div class="flex items-center justify-between">
+                        <div>
+                            <h4 class="text-sm font-medium text-gray-700 dark:text-gray-300">启用 Web 搜索</h4>
+                            <p class="text-xs text-gray-500 dark:text-gray-400 mt-1">允许 AI 在审查时使用互联网搜索</p>
+                        </div>
+                        <label class="relative inline-flex items-center cursor-pointer">
+                            <input type="checkbox" name="web_search_enabled" value="true" class="sr-only peer"
+                                   {% if config.key_value == 'true' %}checked{% endif %}>
+                            <div class="w-11 h-6 bg-gray-200 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-pink-300 dark:peer-focus:ring-pink-800 rounded-full peer dark:bg-gray-600 peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:start-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all dark:after:border-gray-500 peer-checked:bg-pink-500"></div>
+                        </label>
+                    </div>
+                    {% elif config.key_name == 'web_search_provider' %}
+                    <div class="flex items-center justify-between">
+                        <div>
+                            <h4 class="text-sm font-medium text-gray-700 dark:text-gray-300">搜索提供商</h4>
+                            <p class="text-xs text-gray-500 dark:text-gray-400 mt-1">duckduckgo 免费，tavily 需要 API Key</p>
+                        </div>
+                        <select name="web_search_provider" class="px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-sm focus:ring-2 focus:ring-pink-500 focus:border-transparent outline-none">
+                            <option value="duckduckgo" {% if config.key_value == 'duckduckgo' %}selected{% endif %}>DuckDuckGo（免费）</option>
+                            <option value="tavily" {% if config.key_value == 'tavily' %}selected{% endif %}>Tavily</option>
+                        </select>
+                    </div>
+                    {% elif config.key_name == 'web_search_api_key' %}
+                    <div class="flex items-center justify-between">
+                        <div>
+                            <h4 class="text-sm font-medium text-gray-700 dark:text-gray-300">API Key</h4>
+                            <p class="text-xs text-gray-500 dark:text-gray-400 mt-1">Tavily 需要，DuckDuckGo 留空</p>
+                        </div>
+                        <input type="password"
+                               name="web_search_api_key"
+                               value="{{ config.key_value }}"
+                               placeholder="留空则使用 DuckDuckGo"
+                               class="w-64 px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-sm focus:ring-2 focus:ring-pink-500 focus:border-transparent outline-none">
+                    </div>
+                    {% elif config.key_name == 'web_search_max_results' %}
+                    <div class="flex items-center justify-between">
+                        <div>
+                            <h4 class="text-sm font-medium text-gray-700 dark:text-gray-300">最大返回结果数</h4>
+                            <p class="text-xs text-gray-500 dark:text-gray-400 mt-1">每次搜索返回的最大结果数量</p>
+                        </div>
+                        <input type="number" name="web_search_max_results" value="{{ config.key_value }}" min="1" max="10"
+                               class="w-32 px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-sm text-right focus:ring-2 focus:ring-pink-500 focus:border-transparent outline-none">
+                    </div>
+                    {% elif config.key_name == 'web_search_max_content_length' %}
+                    <div class="flex items-center justify-between">
+                        <div>
+                            <h4 class="text-sm font-medium text-gray-700 dark:text-gray-300">结果截断长度</h4>
+                            <p class="text-xs text-gray-500 dark:text-gray-400 mt-1">每个搜索结果的最大字符数</p>
+                        </div>
+                        <input type="number" name="web_search_max_content_length" value="{{ config.key_value }}" min="100" max="5000"
+                               class="w-32 px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-sm text-right focus:ring-2 focus:ring-pink-500 focus:border-transparent outline-none">
+                    </div>
+                    {% elif config.key_name == 'web_search_timeout' %}
+                    <div class="flex items-center justify-between">
+                        <div>
+                            <h4 class="text-sm font-medium text-gray-700 dark:text-gray-300">搜索超时（秒）</h4>
+                            <p class="text-xs text-gray-500 dark:text-gray-400 mt-1">搜索请求的最大等待时间</p>
+                        </div>
+                        <input type="number" name="web_search_timeout" value="{{ config.key_value }}" min="5" max="60"
+                               class="w-32 px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-sm text-right focus:ring-2 focus:ring-pink-500 focus:border-transparent outline-none">
+                    </div>
+                    {% endif %}
+                    {% endfor %}
+                </div>
             </div>
         </div>
-        {% endif %}
+
+        <!-- ===== 动态配置 Tabs ===== -->
+        {% for group in dynamic_groups %}
+        <div x-show="activeTab === '{{ group.id }}'" x-cloak class="space-y-4">
+            <div class="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 shadow-sm p-5">
+                <h3 class="text-sm font-semibold text-gray-700 dark:text-gray-300 mb-1">{{ group.label }}</h3>
+                <div class="space-y-5 mt-4">
+                    {% for item in group.fields %}
+                    <div class="flex items-start justify-between gap-4">
+                        <div class="flex-1 min-w-0">
+                            <div class="flex items-center gap-2">
+                                <h4 class="text-sm font-medium text-gray-700 dark:text-gray-300">{{ item.label }}</h4>
+                                {% if item.sensitive %}
+                                <span class="inline-flex items-center px-1.5 py-0.5 rounded text-xs font-medium bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400">敏感</span>
+                                {% endif %}
+                            </div>
+                            {% if item.description %}
+                            <p class="text-xs text-gray-500 dark:text-gray-400 mt-0.5">{{ item.description }}</p>
+                            {% endif %}
+                            {% if item.default %}
+                            <p class="text-xs text-gray-400 dark:text-gray-500 mt-0.5">默认值: {{ item.default }}</p>
+                            {% endif %}
+                        </div>
+                        <div class="flex-shrink-0">
+                            {% if item.input_type == 'boolean' %}
+                            <label class="relative inline-flex items-center cursor-pointer">
+                                <input type="checkbox" name="{{ item.key }}" value="true" class="sr-only peer"
+                                       {% if item.value == 'true' %}checked{% endif %}>
+                                <div class="w-11 h-6 bg-gray-200 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-pink-300 dark:peer-focus:ring-pink-800 rounded-full peer dark:bg-gray-600 peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:start-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all dark:after:border-gray-500 peer-checked:bg-pink-500"></div>
+                            </label>
+
+                            {% elif item.input_type == 'select' %}
+                            <select name="{{ item.key }}"
+                                    class="w-48 px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-sm focus:ring-2 focus:ring-pink-500 focus:border-transparent outline-none">
+                                {% for opt in item.select_options %}
+                                <option value="{{ opt.value }}" {% if item.value == opt.value %}selected{% endif %}>{{ opt.label }}</option>
+                                {% endfor %}
+                            </select>
+
+                            {% elif item.input_type == 'password' %}
+                            <div class="flex items-center gap-2">
+                                <input type="password"
+                                       name="{{ item.key }}"
+                                       value="{{ item.value }}"
+                                       placeholder="输入新值以修改"
+                                       x-ref="{{ item.key }}_input"
+                                       x-on:input="$refs.{{ item.key }}_changed.value = 'true'"
+                                       class="w-56 px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-sm focus:ring-2 focus:ring-pink-500 focus:border-transparent outline-none">
+                                <input type="hidden" name="{{ item.key }}_changed" value="false" x-ref="{{ item.key }}_changed">
+                            </div>
+
+                            {% elif item.input_type == 'number' %}
+                            <input type="number"
+                                   name="{{ item.key }}"
+                                   value="{{ item.value }}"
+                                   {% if item.min_val is not none %}min="{{ item.min_val }}"{% endif %}
+                                   {% if item.max_val is not none %}max="{{ item.max_val }}"{% endif %}
+                                   {% if item.input_type == 'number' %}
+                                   step="{% if '.' in item.value|string %}0.01{% else %}1{% endif %}"
+                                   {% endif %}
+                                   class="w-32 px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-sm text-right focus:ring-2 focus:ring-pink-500 focus:border-transparent outline-none">
+
+                            {% else %}
+                            <input type="text"
+                                   name="{{ item.key }}"
+                                   value="{{ item.value }}"
+                                   {% if item.placeholder %}placeholder="{{ item.placeholder }}"{% endif %}
+                                   class="w-64 px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-sm focus:ring-2 focus:ring-pink-500 focus:border-transparent outline-none">
+                            {% endif %}
+                        </div>
+                    </div>
+                    {% if not loop.last %}
+                    <div class="border-t border-gray-100 dark:border-gray-700"></div>
+                    {% endif %}
+                    {% endfor %}
+                </div>
+            </div>
+        </div>
         {% endfor %}
 
-        <!-- Web 搜索配置 -->
-        <div class="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 shadow-sm p-5">
-            <h3 class="text-sm font-semibold text-gray-700 dark:text-gray-300 mb-4">🌐 Web 搜索工具</h3>
-            <p class="text-xs text-gray-500 dark:text-gray-400 mb-4">为 AI 审查员提供互联网搜索能力，用于查找最新文档和最佳实践</p>
-
-            <div class="space-y-4">
-                {% for config in configs %}
-                {% if config.key_name == 'web_search_enabled' %}
-                <div class="flex items-center justify-between">
-                    <div>
-                        <h3 class="text-sm font-medium text-gray-700 dark:text-gray-300">启用 Web 搜索</h3>
-                        <p class="text-xs text-gray-500 dark:text-gray-400 mt-1">允许 AI 在审查时使用互联网搜索</p>
-                    </div>
-                    <label class="relative inline-flex items-center cursor-pointer">
-                        <input type="checkbox" name="web_search_enabled" value="true" class="sr-only peer"
-                               {% if config.key_value == 'true' %}checked{% endif %}>
-                        <div class="w-11 h-6 bg-gray-200 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-pink-300 dark:peer-focus:ring-pink-800 rounded-full peer dark:bg-gray-600 peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:start-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all dark:after:border-gray-500 peer-checked:bg-pink-500"></div>
-                    </label>
-                </div>
-                {% elif config.key_name == 'web_search_provider' %}
-                <div class="flex items-center justify-between">
-                    <div>
-                        <h3 class="text-sm font-medium text-gray-700 dark:text-gray-300">搜索提供商</h3>
-                        <p class="text-xs text-gray-500 dark:text-gray-400 mt-1">duckduckgo 免费，tavily 需要 API Key</p>
-                    </div>
-                    <select name="web_search_provider" class="px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-sm focus:ring-2 focus:ring-pink-500 focus:border-transparent outline-none">
-                        <option value="duckduckgo" {% if config.key_value == 'duckduckgo' %}selected{% endif %}>DuckDuckGo（免费）</option>
-                        <option value="tavily" {% if config.key_value == 'tavily' %}selected{% endif %}>Tavily</option>
-                    </select>
-                </div>
-                {% elif config.key_name == 'web_search_api_key' %}
-                <div class="flex items-center justify-between">
-                    <div>
-                        <h3 class="text-sm font-medium text-gray-700 dark:text-gray-300">API Key</h3>
-                        <p class="text-xs text-gray-500 dark:text-gray-400 mt-1">Tavily 需要，DuckDuckGo 留空</p>
-                    </div>
-                    <input type="password"
-                           name="web_search_api_key"
-                           value="{{ config.key_value }}"
-                           placeholder="留空则使用 DuckDuckGo"
-                           class="w-64 px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-sm focus:ring-2 focus:ring-pink-500 focus:border-transparent outline-none">
-                </div>
-                {% elif config.key_name == 'web_search_max_results' %}
-                <div class="flex items-center justify-between">
-                    <div>
-                        <h3 class="text-sm font-medium text-gray-700 dark:text-gray-300">最大返回结果数</h3>
-                        <p class="text-xs text-gray-500 dark:text-gray-400 mt-1">每次搜索返回的最大结果数量</p>
-                    </div>
-                    <input type="number"
-                           name="web_search_max_results"
-                           value="{{ config.key_value }}"
-                           min="1" max="10"
-                           class="w-32 px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-sm text-right focus:ring-2 focus:ring-pink-500 focus:border-transparent outline-none">
-                </div>
-                {% elif config.key_name == 'web_search_max_content_length' %}
-                <div class="flex items-center justify-between">
-                    <div>
-                        <h3 class="text-sm font-medium text-gray-700 dark:text-gray-300">结果截断长度</h3>
-                        <p class="text-xs text-gray-500 dark:text-gray-400 mt-1">每个搜索结果的最大字符数</p>
-                    </div>
-                    <input type="number"
-                           name="web_search_max_content_length"
-                           value="{{ config.key_value }}"
-                           min="100" max="5000"
-                           class="w-32 px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-sm text-right focus:ring-2 focus:ring-pink-500 focus:border-transparent outline-none">
-                </div>
-                {% elif config.key_name == 'web_search_timeout' %}
-                <div class="flex items-center justify-between">
-                    <div>
-                        <h3 class="text-sm font-medium text-gray-700 dark:text-gray-300">搜索超时（秒）</h3>
-                        <p class="text-xs text-gray-500 dark:text-gray-400 mt-1">搜索请求的最大等待时间</p>
-                    </div>
-                    <input type="number"
-                           name="web_search_timeout"
-                           value="{{ config.key_value }}"
-                           min="5" max="60"
-                           class="w-32 px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-sm text-right focus:ring-2 focus:ring-pink-500 focus:border-transparent outline-none">
-                </div>
-                {% endif %}
-                {% endfor %}
-            </div>
-        </div>
-
         <!-- 保存按钮 -->
-        <div class="flex justify-end">
+        <div class="flex justify-end mt-4">
             <button type="submit"
                     class="px-6 py-2.5 bg-pink-500 text-white rounded-lg text-sm font-medium hover:bg-pink-600 transition-colors">
                 保存配置
@@ -157,4 +244,8 @@
         </div>
     </form>
 </div>
+
+<style>
+    [x-cloak] { display: none !important; }
+</style>
 {% endblock %}
