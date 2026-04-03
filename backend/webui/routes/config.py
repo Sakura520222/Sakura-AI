@@ -758,13 +758,34 @@ async def save_general_config(
 
         await db.commit()
 
-        # 清除动态配置缓存
-        from backend.core.config import invalidate_dynamic_config_cache, DYNAMIC_CONFIG_GROUPS
+        # 清除动态配置缓存 + 同步 Settings 单例
+        from backend.core.config import (
+            invalidate_dynamic_config_cache,
+            DYNAMIC_CONFIG_GROUPS,
+            update_settings_field,
+        )
 
         all_dynamic_keys = []
         for g in DYNAMIC_CONFIG_GROUPS.values():
             all_dynamic_keys.extend(g["keys"])
         invalidate_dynamic_config_cache(all_dynamic_keys)
+
+        # 即时更新 Settings 单例，无需重启
+        for key, change in changed.items():
+            if key in all_dynamic_keys or key in {
+                "max_concurrent_reviews",
+                "review_timeout_seconds",
+                "enable_auto_review",
+                "issue_auto_create_labels",
+                "issue_max_tool_iterations",
+                "web_search_enabled",
+                "web_search_provider",
+                "web_search_api_key",
+                "web_search_max_results",
+                "web_search_max_content_length",
+                "web_search_timeout",
+            }:
+                update_settings_field(key, change["new"])
 
         logger.info(f"全局配置已更新, by={user['sub']}, changed={list(changed.keys())}")
         await log_admin_action(
