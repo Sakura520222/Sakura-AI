@@ -365,7 +365,7 @@ class IssueAnalyzer:
         )
         try:
             final_response = await self.api_client.call_with_retry(
-                model=settings.issue_analysis_model,
+                model=settings.openai_model,
                 messages=messages,
                 temperature=0.3,
             )
