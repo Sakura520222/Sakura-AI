@@ -206,6 +206,11 @@ class Settings(BaseSettings):
     code_chunk_size: int = 500  # 代码块大小（字符数）
     code_chunk_overlap: int = 50  # 代码块重叠大小
 
+    # ========== 增量审查历史上下文配置 ==========
+    enable_incremental_history_context: bool = True  # 是否启用增量审查历史上下文
+    incremental_history_max_reviews: int = 5  # 最多查询的历史审查轮数
+    incremental_history_summary_max_tokens: int = 1500  # 摘要生成最大 token
+
     # 支持的编程语言
     code_index_languages: list[str] = [
         "python",
@@ -496,6 +501,18 @@ DYNAMIC_CONFIG_GROUPS: OrderedDict[str, dict] = OrderedDict(
             },
         ),
         (
+            "incremental_review",
+            {
+                "label": "增量审查配置",
+                "icon": "history",
+                "keys": [
+                    "enable_incremental_history_context",
+                    "incremental_history_max_reviews",
+                    "incremental_history_summary_max_tokens",
+                ],
+            },
+        ),
+        (
             "label",
             {
                 "label": "标签推荐配置",
@@ -541,6 +558,8 @@ DYNAMIC_CONFIG_RANGES: dict[str, tuple[float, float]] = {
     "context_compression_keep_rounds": (1, 20),
     "max_file_count": (1, 100000),
     "max_line_count": (100, 100000000),
+    "incremental_history_max_reviews": (1, 20),
+    "incremental_history_summary_max_tokens": (500, 4096),
     "label_confidence_threshold": (0.0, 1.0),
 }
 
@@ -572,6 +591,9 @@ DYNAMIC_CONFIG_LABELS: dict[str, str] = {
     "context_compression_keep_rounds": "保留对话轮数",
     "max_file_count": "最大文件数",
     "max_line_count": "最大行数",
+    "enable_incremental_history_context": "启用增量审查历史上下文",
+    "incremental_history_max_reviews": "历史审查轮数上限",
+    "incremental_history_summary_max_tokens": "摘要生成最大 Token",
     "enable_label_recommendation": "启用标签推荐",
     "label_confidence_threshold": "标签置信度阈值",
     "label_auto_create": "自动创建标签",
