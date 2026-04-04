@@ -16,7 +16,6 @@ services:
       - ../backend:/app/backend  # 开发模式：挂载 backend 代码目录
       - chroma_data:/app/data/chroma  # ChromaDB 向量数据库持久化
       - ../.env:/app/.env  # 配置文件持久化（Setup Wizard 写入的配置需要保留）
-      - ../.setup_complete:/app/.setup_complete  # Setup 完成标记持久化
     healthcheck:
       test: ["CMD", "python", "-c", "import requests; requests.get('http://localhost:8000/health')"]
       interval: 30s
