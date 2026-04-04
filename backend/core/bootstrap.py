@@ -74,7 +74,7 @@ def mark_setup_completed() -> None:
     """写入 .setup_complete 标记文件"""
     marker_data = {
         "completed_at": datetime.now(timezone.utc).isoformat(),
-        "version": "2.6.0",
+        "version": "2.6.1",
     }
     SETUP_MARKER.write_text(json.dumps(marker_data, indent=2), encoding="utf-8")
     clear_bootstrap_cache()
