@@ -196,7 +196,7 @@ class HistoryContextService:
         if not response or not response.choices:
             logger.warning("AI 摘要生成返回空响应")
             return None
-        content = response.choices[0].message.content
+        content = response.choices[0].message.content if response.choices[0].message else None
         return content.strip() if content else None
 
     @staticmethod
