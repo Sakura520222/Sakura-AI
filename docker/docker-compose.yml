@@ -4,6 +4,7 @@ services:
     build:
       context: ..
       dockerfile: docker/Dockerfile
+    image: sakura-ai-reviewer
     container_name: sakura-ai-reviewer
     restart: unless-stopped
     network_mode: host  # 使用宿主机网络,可直接访问 localhost
@@ -28,6 +29,7 @@ services:
     build:
       context: ..
       dockerfile: docker/Dockerfile
+    image: sakura-ai-reviewer
     container_name: pr-reviewer-worker
     restart: unless-stopped
     network_mode: host  # 使用宿主机网络,可直接访问 localhost
