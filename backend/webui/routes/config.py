@@ -32,6 +32,21 @@ from backend.webui.deps import (
 )
 from backend.webui.helpers.admin_log import log_admin_action
 
+# 基础配置项（非动态配置），用于 WebUI 配置页面分组展示及 Settings 即时更新
+_BASIC_CONFIG_KEYS = frozenset({
+    "max_concurrent_reviews",
+    "review_timeout_seconds",
+    "enable_auto_review",
+    "issue_auto_create_labels",
+    "issue_max_tool_iterations",
+    "web_search_enabled",
+    "web_search_provider",
+    "web_search_api_key",
+    "web_search_max_results",
+    "web_search_max_content_length",
+    "web_search_timeout",
+})
+
 router = APIRouter(prefix="/config", tags=["WebUI Config"])
 templates = get_templates()
 
@@ -451,8 +466,8 @@ async def general_config_page(
                     "description": group_data.get("descriptions", {}).get(key, ""),
                     "input_type": input_type,
                     "value": display_value,
-                    "raw_value": value,
-                    "default": default_val,
+                    "raw_value": mask_sensitive_value(value) if (is_sensitive and value) else value,
+                    "default": mask_sensitive_value(default_val) if (is_sensitive and default_val) else default_val,
                     "sensitive": is_sensitive,
                     "select_options": DYNAMIC_CONFIG_SELECT_OPTIONS.get(key, []),
                     "min_val": DYNAMIC_CONFIG_RANGES.get(key, (None, None))[0],
@@ -469,20 +484,7 @@ async def general_config_page(
         )
 
     # 基础配置项（非动态配置）
-    basic_keys = {
-        "max_concurrent_reviews",
-        "review_timeout_seconds",
-        "enable_auto_review",
-        "issue_auto_create_labels",
-        "issue_max_tool_iterations",
-        "web_search_enabled",
-        "web_search_provider",
-        "web_search_api_key",
-        "web_search_max_results",
-        "web_search_max_content_length",
-        "web_search_timeout",
-    }
-    basic_configs = [c for c in configs if c.key_name in basic_keys]
+    basic_configs = [c for c in configs if c.key_name in _BASIC_CONFIG_KEYS]
 
     from backend.webui.routes.auth import APP_VERSION
 
@@ -665,9 +667,9 @@ async def save_general_config(
                     old_val = cfg.key_value
                     log_old = f"***{old_val[-4:]}" if len(old_val) > 4 else "***"
                     log_new = f"***{val[-4:]}" if len(val) > 4 else "***"
-                    changed[key] = {"old": log_old, "new": log_new}
+                    changed[key] = {"old": log_old, "new": log_new, "raw_new": val}
                 else:
-                    changed[key] = {"old": cfg.key_value, "new": val}
+                    changed[key] = {"old": cfg.key_value, "new": val, "raw_new": val}
                 cfg.key_value = val
 
         # ========== 动态配置保存 ==========
@@ -740,15 +742,20 @@ async def save_general_config(
                     # 首次创建
                     cfg = AppConfig(key_name=key, key_value=val, description=key)
                     db.add(cfg)
-                    changed[key] = {"old": "(无)", "new": _mask(val) if is_sensitive else val}
+                    changed[key] = {
+                        "old": "(无)",
+                        "new": _mask(val) if is_sensitive else val,
+                        "raw_new": val,
+                    }
                 elif cfg.key_value != val:
                     if is_sensitive:
                         changed[key] = {
                             "old": _mask(cfg.key_value),
                             "new": _mask(val),
+                            "raw_new": val,
                         }
                     else:
-                        changed[key] = {"old": cfg.key_value, "new": val}
+                        changed[key] = {"old": cfg.key_value, "new": val, "raw_new": val}
                     cfg.key_value = val
 
         if not changed:
@@ -772,20 +779,8 @@ async def save_general_config(
 
         # 即时更新 Settings 单例，无需重启
         for key, change in changed.items():
-            if key in all_dynamic_keys or key in {
-                "max_concurrent_reviews",
-                "review_timeout_seconds",
-                "enable_auto_review",
-                "issue_auto_create_labels",
-                "issue_max_tool_iterations",
-                "web_search_enabled",
-                "web_search_provider",
-                "web_search_api_key",
-                "web_search_max_results",
-                "web_search_max_content_length",
-                "web_search_timeout",
-            }:
-                update_settings_field(key, change["new"])
+            if key in all_dynamic_keys or key in _BASIC_CONFIG_KEYS:
+                update_settings_field(key, change.get("raw_new", change["new"]))
 
         logger.info(f"全局配置已更新, by={user['sub']}, changed={list(changed.keys())}")
         await log_admin_action(

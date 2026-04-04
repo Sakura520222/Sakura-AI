@@ -155,6 +155,7 @@ class FileToolHandler:
                     return {
                         "file_path": file_path,
                         "error": f"文件不存在或无法访问: {str(e)}",
+                        "hint": "请确认文件路径是否正确，或检查仓库访问权限",
                         "tried_branches": tried_branches,
                     }
 
@@ -389,6 +390,7 @@ class FileToolHandler:
                     return {
                         "directory": directory,
                         "error": f"目录不存在或无法访问: {str(e)}",
+                        "hint": "请确认目录路径是否正确，或检查仓库访问权限",
                         "items": [],
                         "count": 0,
                         "tried_branches": tried_branches,
