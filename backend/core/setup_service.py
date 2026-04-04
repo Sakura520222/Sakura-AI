@@ -33,6 +33,21 @@ ENV_FIELD_GROUPS = {
 }
 
 
+def _format_env_value(value: str) -> str:
+    """格式化 .env 文件中的值
+
+    多行值（如 PEM 私钥）将实际换行替换为 \\n 并用双引号包裹，
+    确保 python-dotenv 能正确解析。
+    """
+    if "\n" in value:
+        escaped = value.replace("\n", "\\n")
+        return f'"{escaped}"'
+    # 包含 # 或空格的值也用引号包裹
+    if "#" in value or (value and value[0] == " "):
+        return f'"{value}"'
+    return value
+
+
 class SetupService:
     """Setup Wizard 服务"""
 
@@ -61,6 +76,26 @@ class SetupService:
             # 脱敏：不暴露完整连接字符串
             if database_url in error_msg:
                 error_msg = error_msg.replace(database_url, "***")
+            return {"success": False, "message": f"连接失败: {error_msg}"}
+
+    async def test_redis_connection(self, redis_url: str) -> dict[str, Any]:
+        """测试 Redis 连接"""
+        if not redis_url:
+            return {"success": False, "message": "Redis 连接地址不能为空"}
+
+        try:
+            import redis.asyncio as aioredis
+
+            client = aioredis.from_url(redis_url, socket_connect_timeout=5)
+            await client.ping()
+            await client.aclose()
+            return {"success": True, "message": "Redis 连接成功"}
+        except ImportError:
+            return {"success": False, "message": "缺少 redis 依赖，无法测试"}
+        except Exception as e:
+            error_msg = str(e)
+            if redis_url in error_msg:
+                error_msg = error_msg.replace(redis_url, "***")
             return {"success": False, "message": f"连接失败: {error_msg}"}
 
     async def test_github_app(
@@ -95,9 +130,12 @@ class SetupService:
                 if resp.status_code == 200:
                     app_data = resp.json()
                     app_name = app_data.get("name", "Unknown")
+                    app_slug = app_data.get("slug", "")
+                    bot_username = f"{app_slug}[bot]" if app_slug else ""
                     return {
                         "success": True,
                         "message": f"GitHub App 验证成功: {app_name}",
+                        "bot_username": bot_username,
                     }
                 elif resp.status_code == 401:
                     return {"success": False, "message": "凭证无效，请检查 App ID 和 Private Key"}
@@ -134,10 +172,16 @@ class SetupService:
                 )
                 if resp.status_code == 200:
                     data = resp.json()
-                    model_count = len(data.get("data", []))
+                    raw_models = data.get("data", [])
+                    model_count = len(raw_models)
+                    # 提取模型 ID 列表（用于前端选择）
+                    model_ids = sorted(
+                        [m.get("id", "") for m in raw_models if m.get("id")]
+                    )
                     return {
                         "success": True,
                         "message": f"API Key 有效，可用模型: {model_count} 个",
+                        "models": model_ids,
                     }
                 elif resp.status_code == 401:
                     return {"success": False, "message": "API Key 无效"}
@@ -189,7 +233,13 @@ class SetupService:
                 line = line.strip()
                 if line and not line.startswith("#") and "=" in line:
                     key, _, value = line.partition("=")
-                    existing[key.strip()] = value.strip()
+                    value = value.strip()
+                    # 去除双引号包裹
+                    if value.startswith('"') and value.endswith('"'):
+                        value = value[1:-1]
+                    # 还原 \n 转义为真实换行
+                    value = value.replace("\\n", "\n")
+                    existing[key.strip()] = value
 
         # 2. 合并新值
         existing.update(values)
@@ -228,7 +278,7 @@ class SetupService:
                     if section_items:
                         f.write(f"# {section_title}\n")
                         for k, v in section_items.items():
-                            f.write(f"{k}={v}\n")
+                            f.write(f"{k}={_format_env_value(v)}\n")
                             written_keys.add(k)
                         f.write("\n")
 
@@ -239,7 +289,7 @@ class SetupService:
                 if remaining:
                     f.write("# 其他配置\n")
                     for k, v in remaining.items():
-                        f.write(f"{k}={v}\n")
+                        f.write(f"{k}={_format_env_value(v)}\n")
 
             shutil.move(str(tmp_path), str(ENV_PATH))
             logger.info(f".env 配置已写入 ({len(values)} 项)")
@@ -247,11 +297,14 @@ class SetupService:
             tmp_path.unlink(missing_ok=True)
             raise
 
-    async def create_admin_user(self, github_username: str, database_url: str) -> None:
+    async def create_admin_user(
+        self, github_username: str, telegram_id: int, database_url: str
+    ) -> None:
         """创建初始超级管理员
 
         Args:
             github_username: 管理员的 GitHub 用户名
+            telegram_id: 管理员的 Telegram 用户 ID
             database_url: 数据库连接字符串
         """
         from backend.models.database import init_async_db, create_tables_async, insert_default_configs_async
@@ -269,20 +322,24 @@ class SetupService:
         from backend.models.database import async_session
 
         async with async_session() as session:
-            # 检查是否已存在
+            # 检查是否已存在（按 github_username、telegram_id 或 telegram_id=0 的占位记录）
             result = await session.execute(
                 select(TelegramUser).where(
-                    TelegramUser.github_username == github_username
+                    (TelegramUser.github_username == github_username)
+                    | (TelegramUser.telegram_id == telegram_id)
+                    | (TelegramUser.telegram_id == 0)
                 )
             )
             existing = result.scalar_one_or_none()
             if existing:
                 existing.role = "super_admin"
+                existing.github_username = github_username
+                existing.telegram_id = telegram_id
                 existing.is_active = True
                 logger.info(f"已将用户 {github_username} 提升为超级管理员")
             else:
                 admin = TelegramUser(
-                    telegram_id=0,
+                    telegram_id=telegram_id,
                     github_username=github_username,
                     role="super_admin",
                     is_active=True,
@@ -312,11 +369,13 @@ class SetupService:
 
             database_url = all_config.get("DATABASE_URL", "")
             admin_github = all_config.get("ADMIN_GITHUB_USERNAME", "")
+            admin_telegram_id = all_config.get("ADMIN_TELEGRAM_ID", "")
 
             # 3. 初始化数据库并创建管理员
-            if database_url:
-                if admin_github:
-                    await self.create_admin_user(admin_github, database_url)
+            if database_url and admin_github and admin_telegram_id:
+                await self.create_admin_user(
+                    admin_github, int(admin_telegram_id), database_url
+                )
 
             # 4. 写入完成标记
             mark_setup_completed()

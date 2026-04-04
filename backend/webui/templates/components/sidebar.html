@@ -58,6 +58,7 @@
         </a>
         {% endif %}
 
+        {% if current_user and (current_user.role == 'admin' or current_user.role == 'super_admin') %}
         <!-- 分隔线 -->
         <div class="border-t border-gray-200 dark:border-gray-700 my-3"></div>
 
@@ -78,6 +79,7 @@
             </svg>
             仓库管理
         </a>
+        {% endif %}
 
         <!-- 分隔线 -->
         <div class="border-t border-gray-200 dark:border-gray-700 my-3"></div>
