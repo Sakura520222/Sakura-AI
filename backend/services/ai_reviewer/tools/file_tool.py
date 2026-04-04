@@ -113,34 +113,49 @@ class FileToolHandler:
                     0, min(context_lines, limits["max_context_lines"])
                 )
 
-            # 智能分支选择：优先尝试PR的HEAD分支
+            # 智能分支选择
             content_file = None
             tried_branches = []
 
-            # 1. 先尝试从PR的HEAD分支读取
-            try:
-                content_file = repo.get_contents(file_path, pr.head.sha)
-                tried_branches.append("HEAD")
-                logger.debug(f"✅ 从PR的HEAD分支读取文件成功: {file_path}")
-            except Exception as head_error:
-                logger.debug(
-                    f"⚠️  从PR的HEAD分支读取失败: {file_path}, 错误: {head_error}"
-                )
-
-                # 2. 如果HEAD分支失败，尝试从base分支读取
+            if pr is not None:
+                # PR 场景：优先从 HEAD 分支读取，失败则尝试 base 分支
                 try:
-                    content_file = repo.get_contents(file_path, pr.base.sha)
-                    tried_branches.append("base")
-                    logger.debug(f"✅ 从PR的base分支读取文件成功: {file_path}")
-                except Exception as base_error:
+                    content_file = repo.get_contents(file_path, pr.head.sha)
+                    tried_branches.append("HEAD")
+                    logger.debug(f"✅ 从PR的HEAD分支读取文件成功: {file_path}")
+                except Exception as head_error:
                     logger.debug(
-                        f"⚠️  从PR的base分支读取也失败: {file_path}, 错误: {base_error}"
+                        f"⚠️  从PR的HEAD分支读取失败: {file_path}, 错误: {head_error}"
                     )
+
+                    try:
+                        content_file = repo.get_contents(file_path, pr.base.sha)
+                        tried_branches.append("base")
+                        logger.debug(f"✅ 从PR的base分支读取文件成功: {file_path}")
+                    except Exception as base_error:
+                        logger.debug(
+                            f"⚠️  从PR的base分支读取也失败: {file_path}, 错误: {base_error}"
+                        )
+
+                        return {
+                            "file_path": file_path,
+                            "error": "文件在PR的HEAD和base分支中都不存在",
+                            "hint": "这可能是一个新增的文件，请基于PR diff中的patch进行审查",
+                            "tried_branches": tried_branches,
+                        }
+            else:
+                # 非 PR 场景（如 Issue 分析）：从仓库默认分支读取
+                try:
+                    content_file = repo.get_contents(file_path)
+                    tried_branches.append("default")
+                    logger.debug(f"✅ 从默认分支读取文件成功: {file_path}")
+                except Exception as e:
+                    logger.debug(f"⚠️  从默认分支读取文件失败: {file_path}, 错误: {e}")
 
                     return {
                         "file_path": file_path,
-                        "error": "文件在PR的HEAD和base分支中都不存在",
-                        "hint": "这可能是一个新增的文件，请基于PR diff中的patch进行审查",
+                        "error": f"文件不存在或无法访问: {str(e)}",
+                        "hint": "请确认文件路径是否正确，或检查仓库访问权限",
                         "tried_branches": tried_branches,
                     }
 
@@ -331,34 +346,51 @@ class FileToolHandler:
                         "count": 0,
                     }
 
-            # 智能分支选择：优先尝试PR的HEAD分支
+            # 智能分支选择
             contents = None
             tried_branches = []
 
-            # 1. 先尝试从PR的HEAD分支读取
-            try:
-                contents = repo.get_contents(directory, pr.head.sha)
-                tried_branches.append("HEAD")
-                logger.debug(f"✅ 从PR的HEAD分支列出目录成功: {directory}")
-            except Exception as head_error:
-                logger.debug(
-                    f"⚠️  从PR的HEAD分支列出目录失败: {directory}, 错误: {head_error}"
-                )
-
-                # 2. 如果HEAD分支失败，尝试从base分支读取
+            if pr is not None:
+                # PR 场景：优先从 HEAD 分支读取，失败则尝试 base 分支
                 try:
-                    contents = repo.get_contents(directory, pr.base.sha)
-                    tried_branches.append("base")
-                    logger.debug(f"✅ 从PR的base分支列出目录成功: {directory}")
-                except Exception as base_error:
+                    contents = repo.get_contents(directory, pr.head.sha)
+                    tried_branches.append("HEAD")
+                    logger.debug(f"✅ 从PR的HEAD分支列出目录成功: {directory}")
+                except Exception as head_error:
                     logger.debug(
-                        f"⚠️  从PR的base分支列出目录也失败: {directory}, 错误: {base_error}"
+                        f"⚠️  从PR的HEAD分支列出目录失败: {directory}, 错误: {head_error}"
                     )
+
+                    try:
+                        contents = repo.get_contents(directory, pr.base.sha)
+                        tried_branches.append("base")
+                        logger.debug(f"✅ 从PR的base分支列出目录成功: {directory}")
+                    except Exception as base_error:
+                        logger.debug(
+                            f"⚠️  从PR的base分支列出目录也失败: {directory}, 错误: {base_error}"
+                        )
+
+                        return {
+                            "directory": directory,
+                            "error": "目录在PR的HEAD和base分支中都不存在",
+                            "hint": "这可能是一个新增的目录，请基于PR diff中的patch进行审查",
+                            "items": [],
+                            "count": 0,
+                            "tried_branches": tried_branches,
+                        }
+            else:
+                # 非 PR 场景（如 Issue 分析）：从仓库默认分支读取
+                try:
+                    contents = repo.get_contents(directory)
+                    tried_branches.append("default")
+                    logger.debug(f"✅ 从默认分支列出目录成功: {directory}")
+                except Exception as e:
+                    logger.debug(f"⚠️  从默认分支列出目录失败: {directory}, 错误: {e}")
 
                     return {
                         "directory": directory,
-                        "error": "目录在PR的HEAD和base分支中都不存在",
-                        "hint": "这可能是一个新增的目录，请基于PR diff中的patch进行审查",
+                        "error": f"目录不存在或无法访问: {str(e)}",
+                        "hint": "请确认目录路径是否正确，或检查仓库访问权限",
                         "items": [],
                         "count": 0,
                         "tried_branches": tried_branches,

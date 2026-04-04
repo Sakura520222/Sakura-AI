@@ -19,7 +19,7 @@
 | FastAPI    | 0.109.0 | 现代异步 Web 框架，已有 |
 | SQLAlchemy | 2.0.25  | 异步 ORM，已有          |
 | Alembic    | 1.13.1  | 数据库迁移，已有        |
-| Pydantic   | 2.5.3   | 数据验证，已有          |
+| Pydantic   | 2.6.0   | 数据验证，已有          |
 | loguru     | 0.7.2   | 日志，已有              |
 | Redis      | 5.0.1   | 缓存，已有              |
 

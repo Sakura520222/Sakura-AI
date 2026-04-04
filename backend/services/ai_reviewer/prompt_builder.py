@@ -60,6 +60,16 @@ class PromptBuilder:
             "",
         ]
 
+        # 注入历史审查摘要（仅在增量审查时存在）
+        history_summary = context.get("review_history_summary")
+        if history_summary:
+            message_parts.append("## 历史审查上下文")
+            message_parts.append(
+                "这是对该 PR 的增量审查。以下是之前审查的历史摘要，请参考此上下文进行审查：\n"
+            )
+            message_parts.append(history_summary)
+            message_parts.append("")
+
         # 添加文件信息
         files = context.get("files", [])
         if files:

@@ -32,6 +32,21 @@ from backend.webui.deps import (
 )
 from backend.webui.helpers.admin_log import log_admin_action
 
+# 基础配置项（非动态配置），用于 WebUI 配置页面分组展示及 Settings 即时更新
+_BASIC_CONFIG_KEYS = frozenset({
+    "max_concurrent_reviews",
+    "review_timeout_seconds",
+    "enable_auto_review",
+    "issue_auto_create_labels",
+    "issue_max_tool_iterations",
+    "web_search_enabled",
+    "web_search_provider",
+    "web_search_api_key",
+    "web_search_max_results",
+    "web_search_max_content_length",
+    "web_search_timeout",
+})
+
 router = APIRouter(prefix="/config", tags=["WebUI Config"])
 templates = get_templates()
 
@@ -414,9 +429,61 @@ async def general_config_page(
     user: dict = Depends(require_super_admin),
     user_prefs: dict = Depends(get_user_preferences),
 ):
-    """全局配置页面"""
+    """全局配置页面（含动态配置分组）"""
+    # 读取所有 AppConfig 记录
     result = await db.execute(select(AppConfig).order_by(AppConfig.id))
     configs = result.scalars().all()
+    config_map = {c.key_name: c.key_value for c in configs}
+
+    # 构建动态配置分组数据
+    from backend.core.config import (
+        DYNAMIC_CONFIG_GROUPS,
+        DYNAMIC_CONFIG_LABELS,
+        DYNAMIC_CONFIG_SENSITIVE_KEYS,
+        DYNAMIC_CONFIG_SELECT_OPTIONS,
+        DYNAMIC_CONFIG_RANGES,
+        get_dynamic_config_input_type,
+        get_settings,
+        mask_sensitive_value,
+    )
+
+    settings = get_settings()
+    dynamic_groups = []
+    for group_id, group_data in DYNAMIC_CONFIG_GROUPS.items():
+        items = []
+        for key in group_data["keys"]:
+            value = config_map.get(key, str(getattr(settings, key, "")))
+            default_val = str(getattr(settings, key, ""))
+            input_type = get_dynamic_config_input_type(key)
+            is_sensitive = key in DYNAMIC_CONFIG_SENSITIVE_KEYS
+
+            display_value = mask_sensitive_value(value) if (is_sensitive and value) else value
+
+            items.append(
+                {
+                    "key": key,
+                    "label": DYNAMIC_CONFIG_LABELS.get(key, key),
+                    "description": group_data.get("descriptions", {}).get(key, ""),
+                    "input_type": input_type,
+                    "value": display_value,
+                    "default": mask_sensitive_value(default_val) if (is_sensitive and default_val) else default_val,
+                    "sensitive": is_sensitive,
+                    "select_options": DYNAMIC_CONFIG_SELECT_OPTIONS.get(key, []),
+                    "min_val": DYNAMIC_CONFIG_RANGES.get(key, (None, None))[0],
+                    "max_val": DYNAMIC_CONFIG_RANGES.get(key, (None, None))[1],
+                }
+            )
+        dynamic_groups.append(
+            {
+                "id": group_id,
+                "label": group_data["label"],
+                "icon": group_data.get("icon", ""),
+                "fields": items,
+            }
+        )
+
+    # 基础配置项（非动态配置）
+    basic_configs = [c for c in configs if c.key_name in _BASIC_CONFIG_KEYS]
 
     from backend.webui.routes.auth import APP_VERSION
 
@@ -428,7 +495,8 @@ async def general_config_page(
             "csrf_token": get_csrf_serializer().dumps({}),
             "active_page": "config_general",
             "user_prefs": user_prefs,
-            "configs": configs,
+            "configs": basic_configs,
+            "dynamic_groups": dynamic_groups,
             "app_version": APP_VERSION,
         },
     )
@@ -598,10 +666,96 @@ async def save_general_config(
                     old_val = cfg.key_value
                     log_old = f"***{old_val[-4:]}" if len(old_val) > 4 else "***"
                     log_new = f"***{val[-4:]}" if len(val) > 4 else "***"
-                    changed[key] = {"old": log_old, "new": log_new}
+                    changed[key] = {"old": log_old, "new": log_new, "raw_new": val}
                 else:
-                    changed[key] = {"old": cfg.key_value, "new": val}
+                    changed[key] = {"old": cfg.key_value, "new": val, "raw_new": val}
                 cfg.key_value = val
+
+        # ========== 动态配置保存 ==========
+        from backend.core.config import (
+            DYNAMIC_CONFIG_GROUPS,
+            DYNAMIC_CONFIG_SENSITIVE_KEYS,
+            DYNAMIC_CONFIG_RANGES,
+            DYNAMIC_CONFIG_SELECT_OPTIONS,
+            mask_sensitive_value as _mask,
+        )
+
+        for group_data in DYNAMIC_CONFIG_GROUPS.values():
+            for key in group_data["keys"]:
+                is_sensitive = key in DYNAMIC_CONFIG_SENSITIVE_KEYS
+
+                # 敏感字段：检查 _changed 标记
+                if is_sensitive:
+                    changed_flag = form.get(f"{key}_changed")
+                    if changed_flag != "true":
+                        continue
+
+                raw = form.get(key)
+                if raw is None:
+                    # boolean 字段未勾选时表单不提交
+                    # 从 Settings 获取类型判断
+                    from backend.core.config import _get_field_type
+
+                    if _get_field_type(key) is bool:
+                        raw = "false"
+                    else:
+                        continue
+
+                val = str(raw).strip()
+
+                # 验证
+                if key in DYNAMIC_CONFIG_RANGES:
+                    min_v, max_v = DYNAMIC_CONFIG_RANGES[key]
+                    try:
+                        num_val = float(val)
+                    except ValueError:
+                        return toast_redirect(
+                            "/webui/config/general",
+                            f"{key} 必须是有效数值",
+                            "error",
+                        )
+                    if not (min_v <= num_val <= max_v):
+                        return toast_redirect(
+                            "/webui/config/general",
+                            f"{key} 值须在 {min_v}-{max_v} 之间",
+                            "error",
+                        )
+
+                if key in DYNAMIC_CONFIG_SELECT_OPTIONS:
+                    valid_values = [
+                        opt["value"] for opt in DYNAMIC_CONFIG_SELECT_OPTIONS[key]
+                    ]
+                    if val not in valid_values:
+                        return toast_redirect(
+                            "/webui/config/general",
+                            f"{key} 值无效",
+                            "error",
+                        )
+
+                # 保存
+                result = await db.execute(
+                    select(AppConfig).where(AppConfig.key_name == key)
+                )
+                cfg = result.scalar_one_or_none()
+                if cfg is None:
+                    # 首次创建
+                    cfg = AppConfig(key_name=key, key_value=val, description=key)
+                    db.add(cfg)
+                    changed[key] = {
+                        "old": "(无)",
+                        "new": _mask(val) if is_sensitive else val,
+                        "raw_new": val,
+                    }
+                elif cfg.key_value != val:
+                    if is_sensitive:
+                        changed[key] = {
+                            "old": _mask(cfg.key_value),
+                            "new": _mask(val),
+                            "raw_new": val,
+                        }
+                    else:
+                        changed[key] = {"old": cfg.key_value, "new": val, "raw_new": val}
+                    cfg.key_value = val
 
         if not changed:
             return toast_redirect(
@@ -609,12 +763,36 @@ async def save_general_config(
             )
 
         await db.commit()
+
+        # 清除动态配置缓存 + 同步 Settings 单例
+        from backend.core.config import (
+            invalidate_dynamic_config_cache,
+            update_settings_field,
+            get_all_dynamic_config_keys,
+        )
+
+        all_dynamic_keys = get_all_dynamic_config_keys()
+        invalidate_dynamic_config_cache(all_dynamic_keys)
+
+        # 即时更新 Settings 单例，无需重启
+        for key, change in changed.items():
+            if key in all_dynamic_keys or key in _BASIC_CONFIG_KEYS:
+                update_settings_field(key, change.get("raw_new", change["new"]))
+
         logger.info(f"全局配置已更新, by={user['sub']}, changed={list(changed.keys())}")
+        # 构建脱敏日志副本（不包含 raw_new 明文，并对敏感键二次脱敏防御）
+        log_changed = {}
+        for k, v in changed.items():
+            log_entry = {"old": v["old"], "new": v["new"]}
+            if k in DYNAMIC_CONFIG_SENSITIVE_KEYS:
+                log_entry["old"] = _mask(str(log_entry["old"]))
+                log_entry["new"] = _mask(str(log_entry["new"]))
+            log_changed[k] = log_entry
         await log_admin_action(
-            db, user["user_id"], "config_save", "global", None, changed
+            db, user["user_id"], "config_save", "global", None, log_changed
         )
         return toast_redirect(
-            "/webui/config/general", "全局配置已保存（部分配置需重启后生效）"
+            "/webui/config/general", "全局配置已保存并即时生效"
         )
 
     except ValueError:

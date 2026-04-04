@@ -166,6 +166,32 @@ class ReviewWorker:
                 # 6. 准备审查上下文
                 context = await self.analyzer.prepare_review_context(analysis, pr)
 
+                # 6.3 注入历史审查上下文（仅在增量审查时）
+                if analysis.is_incremental:
+                    try:
+                        from backend.services.history_context_service import (
+                            HistoryContextService,
+                        )
+
+                        history_service = HistoryContextService(
+                            self.ai_reviewer.api_client
+                        )
+                        history_summary = await history_service.fetch_history_summary(
+                            pr_id=analysis.pr_id,
+                            repo_name=pr_info["repo_name"],
+                            repo_owner=pr_info["repo_owner"],
+                        )
+                        if history_summary:
+                            context["review_history_summary"] = history_summary
+                            logger.info(
+                                f"[{task_id}] 已注入历史审查上下文，摘要长度: {len(history_summary)} 字符"
+                            )
+                    except Exception as e:
+                        logger.warning(
+                            f"[{task_id}] 历史审查上下文注入失败（不影响审查）: {e}",
+                            exc_info=True,
+                        )
+
                 # 6.5 解析并注入 Issue 上下文（如果启用）
                 if (
                     hasattr(settings, "enable_pr_issue_linking")

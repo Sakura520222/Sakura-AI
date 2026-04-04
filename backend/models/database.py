@@ -476,6 +476,28 @@ async def create_tables_async():
         raise
 
 
+def _append_dynamic_config_defaults(default_configs: list) -> None:
+    """向 default_configs 列表追加动态配置默认值"""
+    try:
+        from backend.core.config import DYNAMIC_CONFIG_GROUPS, DYNAMIC_CONFIG_LABELS, get_settings
+
+        settings = get_settings()
+        for group_data in DYNAMIC_CONFIG_GROUPS.values():
+            for key in group_data["keys"]:
+                default_val = str(getattr(settings, key, ""))
+                default_configs.append(
+                    AppConfig(
+                        key_name=key,
+                        key_value=default_val,
+                        description=DYNAMIC_CONFIG_LABELS.get(key, key),
+                    )
+                )
+    except Exception as e:
+        import logging
+
+        logging.getLogger(__name__).warning(f"追加动态配置默认值失败: {e}")
+
+
 async def insert_default_configs_async():
     """异步插入默认配置"""
     global async_session
@@ -542,6 +564,9 @@ async def insert_default_configs_async():
             description="Issues 分析中 AI 工具调用最大迭代次数",
         ),
     ]
+
+    # 从 config 模块追加动态配置默认值
+    _append_dynamic_config_defaults(default_configs)
 
     try:
         async with async_session() as session:
@@ -661,6 +686,9 @@ def init_database(database_url: str):
                     description="Issues 分析中 AI 工具调用最大迭代次数",
                 ),
             ]
+
+            # 从 config 模块追加动态配置默认值
+            _append_dynamic_config_defaults(default_configs)
 
             added = 0
             for cfg in default_configs:

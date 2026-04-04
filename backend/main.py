@@ -48,6 +48,14 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.error(f"❌ 数据库初始化失败: {e}")
 
+    # 从数据库加载动态配置到 Settings 单例
+    try:
+        from backend.core.config import load_dynamic_configs_to_settings
+
+        await load_dynamic_configs_to_settings()
+    except Exception as e:
+        logger.warning(f"⚠️ 加载动态配置失败: {e}")
+
     # 启动 Telegram Bot（后台任务）
     telegram_task = None
     try:
@@ -109,7 +117,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title="Sakura AI Reviewer",
     description="GitHub PR AI代码审查机器人",
-    version="2.5.3",
+    version="2.6.0",
     lifespan=lifespan,
 )
 
@@ -141,7 +149,7 @@ async def root():
     """根路径"""
     return {
         "service": "Sakura AI Reviewer",
-        "version": "2.5.3",
+        "version": "2.6.0",
         "status": "running",
         "docs": "/docs",
     }

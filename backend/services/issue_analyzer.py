@@ -340,7 +340,7 @@ class IssueAnalyzer:
                             "content": json.dumps(result, ensure_ascii=False),
                         }
                     )
-                    logger.debug(f"执行工具 {tool_call.function.name} (Issue 分析)")
+                    logger.info(f"执行工具 {tool_call.function.name} (Issue 分析)")
                 except Exception as e:
                     logger.error(f"工具调用失败: {e}")
                     messages.append(
@@ -365,7 +365,7 @@ class IssueAnalyzer:
         )
         try:
             final_response = await self.api_client.call_with_retry(
-                model=settings.issue_analysis_model,
+                model=settings.openai_model,
                 messages=messages,
                 temperature=0.3,
             )
