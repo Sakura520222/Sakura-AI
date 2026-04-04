@@ -780,10 +780,14 @@ async def save_general_config(
                 update_settings_field(key, change.get("raw_new", change["new"]))
 
         logger.info(f"全局配置已更新, by={user['sub']}, changed={list(changed.keys())}")
-        # 构建脱敏日志副本（不包含 raw_new 明文）
-        log_changed = {
-            k: {"old": v["old"], "new": v["new"]} for k, v in changed.items()
-        }
+        # 构建脱敏日志副本（不包含 raw_new 明文，并对敏感键二次脱敏防御）
+        log_changed = {}
+        for k, v in changed.items():
+            log_entry = {"old": v["old"], "new": v["new"]}
+            if k in DYNAMIC_CONFIG_SENSITIVE_KEYS:
+                log_entry["old"] = _mask(str(log_entry["old"]))
+                log_entry["new"] = _mask(str(log_entry["new"]))
+            log_changed[k] = log_entry
         await log_admin_action(
             db, user["user_id"], "config_save", "global", None, log_changed
         )
