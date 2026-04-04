@@ -13,9 +13,7 @@ from sqlalchemy.orm import selectinload
 from backend.models.database import PRReview, PRStatus
 
 # 摘要生成常量
-HISTORY_SUMMARY_MAX_TOKENS = 1500
 HISTORY_SUMMARY_TEMPERATURE = 0.2
-MAX_HISTORY_REVIEWS = 5
 MAX_COMMENTS_PER_REVIEW = 10
 MAX_COMMENT_CONTENT_LENGTH = 200
 
