@@ -39,17 +39,22 @@ _CACHE_TTL = 5.0  # 秒
 def check_setup_state() -> SetupState:
     """检测 Setup 状态
 
-    - completed: .setup_complete 标记文件存在
-    - not_configured: .env 文件不存在
-    - in_progress: .env 存在但标记文件不存在
+    - completed: .setup_complete 标记文件存在，或 .env 中所有必填字段已配置
+    - not_configured: .env 文件不存在且标记文件不存在
+    - in_progress: .env 存在但必填字段不完整且标记文件不存在
     """
-    if SETUP_MARKER.exists():
+    # 标记文件存在且是文件（非目录）
+    if SETUP_MARKER.is_file():
         return "completed"
 
-    if not ENV_PATH.exists():
-        return "not_configured"
+    # 如果 .env 中所有必填字段都已配置，也视为完成
+    if ENV_PATH.is_file():
+        missing = get_missing_fields()
+        if not missing:
+            return "completed"
+        return "in_progress"
 
-    return "in_progress"
+    return "not_configured"
 
 
 def is_bootstrap_mode() -> bool:
@@ -72,6 +77,12 @@ def clear_bootstrap_cache():
 
 def mark_setup_completed() -> None:
     """写入 .setup_complete 标记文件"""
+    # 如果路径存在但是目录（Docker volume mount 可能创建目录），先删除
+    if SETUP_MARKER.exists() and SETUP_MARKER.is_dir():
+        import shutil
+        shutil.rmtree(SETUP_MARKER)
+        logger.info("已删除 .setup_complete 目录（将由文件替代）")
+
     marker_data = {
         "completed_at": datetime.now(timezone.utc).isoformat(),
         "version": "2.6.1",
