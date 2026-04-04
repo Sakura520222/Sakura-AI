@@ -97,13 +97,12 @@ class HistoryContextService:
         查询已完成的审查记录（含关联评论），按时间正序排列。
         """
         from backend.core.config import get_settings
-        from backend.workers.review_worker import get_async_session
+        from backend.models.database import async_session
 
         settings = get_settings()
         max_reviews = settings.incremental_history_max_reviews
-        AsyncSession = get_async_session()
 
-        async with AsyncSession() as session:
+        async with async_session() as session:
             stmt = (
                 select(PRReview)
                 .options(selectinload(PRReview.comments))

@@ -188,7 +188,8 @@ class ReviewWorker:
                             )
                     except Exception as e:
                         logger.warning(
-                            f"[{task_id}] 历史审查上下文注入失败（不影响审查）: {e}"
+                            f"[{task_id}] 历史审查上下文注入失败（不影响审查）: {e}",
+                            exc_info=True,
                         )
 
                 # 6.5 解析并注入 Issue 上下文（如果启用）

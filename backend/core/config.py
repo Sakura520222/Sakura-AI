@@ -732,9 +732,26 @@ async def load_dynamic_configs_to_settings():
     这样现有服务代码无需改动。
     """
     settings = get_settings()
+    all_keys = get_all_dynamic_config_keys()
+    if not all_keys:
+        return
+
+    try:
+        from backend.models.database import async_session, AppConfig
+        from sqlalchemy import select
+
+        async with async_session() as session:
+            result = await session.execute(
+                select(AppConfig).where(AppConfig.key_name.in_(all_keys))
+            )
+            config_map = {c.key_name: c.key_value for c in result.scalars().all()}
+    except Exception as e:
+        logger.warning(f"批量加载动态配置失败: {e}")
+        return
+
     loaded = 0
-    for key in get_all_dynamic_config_keys():
-        db_value = await _read_config_from_db(key)
+    for key in all_keys:
+        db_value = config_map.get(key)
         if db_value is not None:
             field_type = _get_field_type(key)
             typed_value = _cast_config_type(db_value, field_type)
