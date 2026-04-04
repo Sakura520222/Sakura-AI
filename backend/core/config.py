@@ -599,7 +599,7 @@ DYNAMIC_CONFIG_LABELS: dict[str, str] = {
     "label_auto_create": "自动创建标签",
 }
 
-# 内存 TTL 缓存（进程级，多 Worker 部署时各进程独立，需 Redis 共享缓存保证一致性）
+# 内存 TTL 缓存（进程级，多 Worker 部署时各进程独立，配置变更仅当前进程可见）
 _dynamic_config_cache: OrderedDict[str, tuple[str, float]] = OrderedDict()
 _CACHE_TTL = 60  # 秒
 _MAX_CACHE_SIZE = 200
