@@ -4,7 +4,7 @@ services:
     build:
       context: ..
       dockerfile: docker/Dockerfile
-    container_name: pr-reviewer-web
+    container_name: sakura-ai-reviewer
     restart: unless-stopped
     network_mode: host  # 使用宿主机网络,可直接访问 localhost
     env_file:
@@ -14,6 +14,8 @@ services:
       - ../config:/app/config
       - ../backend:/app/backend  # 开发模式：挂载 backend 代码目录
       - chroma_data:/app/data/chroma  # ChromaDB 向量数据库持久化
+      - ../.env:/app/.env  # 配置文件持久化（Setup Wizard 写入的配置需要保留）
+      - ../.setup_complete:/app/.setup_complete  # Setup 完成标记持久化
     healthcheck:
       test: ["CMD", "python", "-c", "import requests; requests.get('http://localhost:8000/health')"]
       interval: 30s

@@ -9,7 +9,9 @@ import sys
 import asyncio
 
 from backend.core.config import get_settings
+from backend.core.bootstrap import BootstrapMiddleware, is_bootstrap_mode
 from backend.models import init_db
+from backend.webui.routes.setup import router as setup_router
 from backend.api import webhook
 from backend.webui.routes import webui_router
 from backend.telegram import start_telegram_bot, stop_telegram_bot
@@ -33,46 +35,59 @@ async def lifespan(app: FastAPI):
     logger.info("🚀 Sakura AI Reviewer 启动中...")
     logger.info(f"📊 日志级别: {settings.log_level}")
     logger.info(f"🌐 应用域名: {settings.app_domain}")
-    logger.info(f"🤖 OpenAI模型: {settings.openai_model}")
 
-    # 检测默认 JWT 密钥
-    if settings.webui_secret_key == "change-me-in-production":
-        logger.warning(
-            "⚠️  WebUI JWT 密钥使用默认值！请设置 WEBUI_SECRET_KEY 环境变量，否则令牌可被伪造。"
-        )
-
-    # 初始化数据库
-    try:
-        await init_db()
-        logger.info("✅ 数据库初始化成功")
-    except Exception as e:
-        logger.error(f"❌ 数据库初始化失败: {e}")
-
-    # 从数据库加载动态配置到 Settings 单例
-    try:
-        from backend.core.config import load_dynamic_configs_to_settings
-
-        await load_dynamic_configs_to_settings()
-    except Exception as e:
-        logger.warning(f"⚠️ 加载动态配置失败: {e}")
-
-    # 启动 Telegram Bot（后台任务）
     telegram_task = None
-    try:
-        telegram_task = asyncio.create_task(start_telegram_bot())
-        logger.info("✅ Telegram Bot 已启动")
-    except Exception as e:
-        logger.error(f"❌ Telegram Bot 启动失败: {e}")
-
-    # 启动 Redis Pub/Sub 监听（SSE 多进程支持）
     redis_listener_task = None
-    try:
-        from backend.webui.sse import start_redis_listener
 
-        redis_listener_task = asyncio.create_task(start_redis_listener())
-        logger.info("✅ SSE Redis Pub/Sub 监听已启动")
-    except Exception as e:
-        logger.error(f"❌ SSE Redis Pub/Sub 监听启动失败: {e}")
+    if not is_bootstrap_mode():
+        # 正常模式：完整启动所有服务
+        logger.info(f"🤖 OpenAI模型: {settings.openai_model}")
+
+        # 校验必填配置
+        missing = settings.validate_required_fields()
+        if missing:
+            logger.error(f"❌ 缺少必填配置项: {', '.join(missing)}")
+            logger.error("请删除 .setup_complete 并通过 Setup Wizard 重新配置")
+        else:
+            # 检测默认 JWT 密钥
+            if settings.webui_secret_key == "change-me-in-production":
+                logger.warning(
+                    "⚠️  WebUI JWT 密钥使用默认值！请设置 WEBUI_SECRET_KEY 环境变量，否则令牌可被伪造。"
+                )
+
+            # 初始化数据库
+            try:
+                await init_db()
+                logger.info("✅ 数据库初始化成功")
+            except Exception as e:
+                logger.error(f"❌ 数据库初始化失败: {e}")
+
+            # 从数据库加载动态配置到 Settings 单例
+            try:
+                from backend.core.config import load_dynamic_configs_to_settings
+
+                await load_dynamic_configs_to_settings()
+            except Exception as e:
+                logger.warning(f"⚠️ 加载动态配置失败: {e}")
+
+            # 启动 Telegram Bot（后台任务）
+            try:
+                telegram_task = asyncio.create_task(start_telegram_bot())
+                logger.info("✅ Telegram Bot 已启动")
+            except Exception as e:
+                logger.error(f"❌ Telegram Bot 启动失败: {e}")
+
+            # 启动 Redis Pub/Sub 监听（SSE 多进程支持）
+            try:
+                from backend.webui.sse import start_redis_listener
+
+                redis_listener_task = asyncio.create_task(start_redis_listener())
+                logger.info("✅ SSE Redis Pub/Sub 监听已启动")
+            except Exception as e:
+                logger.error(f"❌ SSE Redis Pub/Sub 监听启动失败: {e}")
+    else:
+        logger.warning("🔧 Bootstrap 模式：仅 Setup Wizard 可用")
+        logger.info("请访问 /setup 完成初始配置")
 
     yield
 
@@ -131,7 +146,11 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# Bootstrap 中间件（CORS 之后、路由之前）
+app.add_middleware(BootstrapMiddleware)
+
 # 注册路由
+app.include_router(setup_router)
 app.include_router(webhook.router, prefix="/api/webhook", tags=["Webhook"])
 app.include_router(webui_router)
 
