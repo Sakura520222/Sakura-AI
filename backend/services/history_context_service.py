@@ -193,7 +193,11 @@ class HistoryContextService:
             max_tokens=settings.incremental_history_summary_max_tokens,
         )
 
-        return response.choices[0].message.content.strip()
+        if not response or not response.choices:
+            logger.warning("AI 摘要生成返回空响应")
+            return None
+        content = response.choices[0].message.content
+        return content.strip() if content else None
 
     @staticmethod
     def _build_summary_system_prompt() -> str:
