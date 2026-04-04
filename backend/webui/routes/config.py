@@ -466,7 +466,6 @@ async def general_config_page(
                     "description": group_data.get("descriptions", {}).get(key, ""),
                     "input_type": input_type,
                     "value": display_value,
-                    "raw_value": mask_sensitive_value(value) if (is_sensitive and value) else value,
                     "default": mask_sensitive_value(default_val) if (is_sensitive and default_val) else default_val,
                     "sensitive": is_sensitive,
                     "select_options": DYNAMIC_CONFIG_SELECT_OPTIONS.get(key, []),
@@ -768,13 +767,11 @@ async def save_general_config(
         # 清除动态配置缓存 + 同步 Settings 单例
         from backend.core.config import (
             invalidate_dynamic_config_cache,
-            DYNAMIC_CONFIG_GROUPS,
             update_settings_field,
+            get_all_dynamic_config_keys,
         )
 
-        all_dynamic_keys = []
-        for g in DYNAMIC_CONFIG_GROUPS.values():
-            all_dynamic_keys.extend(g["keys"])
+        all_dynamic_keys = get_all_dynamic_config_keys()
         invalidate_dynamic_config_cache(all_dynamic_keys)
 
         # 即时更新 Settings 单例，无需重启
@@ -783,8 +780,12 @@ async def save_general_config(
                 update_settings_field(key, change.get("raw_new", change["new"]))
 
         logger.info(f"全局配置已更新, by={user['sub']}, changed={list(changed.keys())}")
+        # 构建脱敏日志副本（不包含 raw_new 明文）
+        log_changed = {
+            k: {"old": v["old"], "new": v["new"]} for k, v in changed.items()
+        }
         await log_admin_action(
-            db, user["user_id"], "config_save", "global", None, changed
+            db, user["user_id"], "config_save", "global", None, log_changed
         )
         return toast_redirect(
             "/webui/config/general", "全局配置已保存并即时生效"

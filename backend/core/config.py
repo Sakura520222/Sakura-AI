@@ -599,7 +599,7 @@ DYNAMIC_CONFIG_LABELS: dict[str, str] = {
     "label_auto_create": "自动创建标签",
 }
 
-# 内存 TTL 缓存
+# 内存 TTL 缓存（进程级，多 Worker 部署时各进程独立，需 Redis 共享缓存保证一致性）
 _dynamic_config_cache: OrderedDict[str, tuple[str, float]] = OrderedDict()
 _CACHE_TTL = 60  # 秒
 _MAX_CACHE_SIZE = 200
@@ -758,8 +758,8 @@ async def load_dynamic_configs_to_settings():
             try:
                 setattr(settings, key, typed_value)
                 loaded += 1
-            except Exception:
-                pass
+            except Exception as e:
+                logger.warning(f"加载动态配置 [{key}] 到 Settings 失败: {e}")
     logger.info(f"已从数据库加载 {loaded} 项动态配置到 Settings")
 
 
