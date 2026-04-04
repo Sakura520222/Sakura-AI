@@ -74,6 +74,8 @@ async def test_connection(request: Request):
 
     if test_type == "database":
         return await setup_service.test_database_connection(body.get("url", ""))
+    elif test_type == "redis":
+        return await setup_service.test_redis_connection(body.get("url", ""))
     elif test_type == "github":
         return await setup_service.test_github_app(
             body.get("app_id", ""), body.get("private_key", "")

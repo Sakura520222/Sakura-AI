@@ -45,14 +45,19 @@ class GitHubAppClient:
             self.integration = self._create_integration()
         except Exception as e:
             logger.error(f"GitHub App客户端初始化失败: {e}", exc_info=True)
-            raise
+            self.integration = None
 
-    def _create_integration(self) -> GithubIntegration:
+    def _create_integration(self) -> Optional[GithubIntegration]:
         """创建GitHub Integration实例"""
         try:
             # 获取配置
-            app_id = str(settings.github_app_id)  # 确保是字符串
+            app_id = settings.github_app_id
             private_key = settings.github_private_key
+
+            # 未配置时跳过初始化（bootstrap 模式或未配置 GitHub App）
+            if not app_id or not private_key:
+                logger.warning("GitHub App 未配置（app_id 或 private_key 为空），跳过初始化")
+                return None
 
             logger.info(
                 f"开始创建GitHub Integration, App ID: {app_id} (类型: {type(app_id).__name__})"
@@ -91,8 +96,11 @@ class GitHubAppClient:
             logger.error(f"GitHub App初始化失败: {e}", exc_info=True)
             raise
 
-    def get_app_client(self) -> Github:
+    def get_app_client(self) -> Optional[Github]:
         """获取App级别的GitHub客户端"""
+        if self.integration is None:
+            logger.warning("GitHub Integration 未初始化，无法获取 App 客户端")
+            return None
         if self._app_client is None:
             # 使用 JWT token 访问 App 级别 API
             token = self.integration.create_jwt()
@@ -104,6 +112,9 @@ class GitHubAppClient:
     ) -> Optional[Github]:
         """获取安装级别的GitHub客户端（用于访问特定仓库）"""
         try:
+            if self.integration is None:
+                logger.warning("GitHub Integration 未初始化")
+                return None
             # 获取安装ID
             installation = self.integration.get_installation(
                 owner=repo_owner, repo=repo_name
@@ -822,8 +833,10 @@ class GitHubAppClient:
             机器人用户名或App slug
         """
         try:
+            if self.integration is None:
+                logger.warning("GitHub Integration 未初始化，无法获取 bot 用户名")
+                return getattr(settings, "bot_username", None) or "unknown-bot"
             # 直接使用 integration 对象获取 App 信息
-            # 不需要创建 app_client，避免认证类型不匹配的问题
             app = self.integration.get_app()
             app_slug = app.slug
 

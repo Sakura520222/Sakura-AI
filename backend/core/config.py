@@ -49,7 +49,7 @@ class Settings(BaseSettings):
     database_url: Optional[str] = None
 
     # Redis配置
-    redis_url: str = "redis://redis:6379/0"
+    redis_url: str = "redis://127.0.0.1:6379/0"
 
     # 应用配置
     app_domain: str = "localhost"
@@ -109,7 +109,7 @@ class Settings(BaseSettings):
     )
 
     # GitHub App机器人用户名（可选，用于幂等性检查）
-    bot_username: str = None  # 备用方案，当无法从GitHub API获取时使用
+    bot_username: Optional[str] = None  # 备用方案，当无法从GitHub API获取时使用
 
     def validate_required_fields(self) -> list[str]:
         """返回值为 None 的必填字段名列表（用于非 bootstrap 模式启动校验）"""

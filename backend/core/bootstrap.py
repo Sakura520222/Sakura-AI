@@ -27,7 +27,7 @@ REQUIRED_ENV_FIELDS = [
 ]
 
 # 文件路径
-SETUP_MARKER = Path(".setup_complete")
+SETUP_MARKER = Path("config/.setup_complete")
 ENV_PATH = Path(".env")
 
 # 进程级缓存（中间件高频调用）
@@ -39,22 +39,18 @@ _CACHE_TTL = 5.0  # 秒
 def check_setup_state() -> SetupState:
     """检测 Setup 状态
 
-    - completed: .setup_complete 标记文件存在，或 .env 中所有必填字段已配置
+    仅通过标记文件判断（不检测 .env 内容，避免 Setup 过程中误判）
+    - completed: .setup_complete 标记文件存在
     - not_configured: .env 文件不存在且标记文件不存在
-    - in_progress: .env 存在但必填字段不完整且标记文件不存在
+    - in_progress: .env 存在但标记文件不存在
     """
-    # 标记文件存在且是文件（非目录）
     if SETUP_MARKER.is_file():
         return "completed"
 
-    # 如果 .env 中所有必填字段都已配置，也视为完成
-    if ENV_PATH.is_file():
-        missing = get_missing_fields()
-        if not missing:
-            return "completed"
-        return "in_progress"
+    if not ENV_PATH.is_file():
+        return "not_configured"
 
-    return "not_configured"
+    return "in_progress"
 
 
 def is_bootstrap_mode() -> bool:
@@ -93,7 +89,10 @@ def mark_setup_completed() -> None:
 
 
 def parse_env_file(path: Path = ENV_PATH) -> dict[str, str]:
-    """解析 .env 文件为 key=value 字典"""
+    """解析 .env 文件为 key=value 字典
+
+    支持双引号包裹的值和 \\n 转义（用于多行 PEM 私钥等）
+    """
     result = {}
     if not path.exists():
         return result
@@ -101,7 +100,13 @@ def parse_env_file(path: Path = ENV_PATH) -> dict[str, str]:
         line = line.strip()
         if line and not line.startswith("#") and "=" in line:
             key, _, value = line.partition("=")
-            result[key.strip()] = value.strip()
+            value = value.strip()
+            # 去除双引号包裹
+            if value.startswith('"') and value.endswith('"'):
+                value = value[1:-1]
+            # 还原 \n 转义为真实换行
+            value = value.replace("\\n", "\n")
+            result[key.strip()] = value
     return result
 
 

@@ -66,8 +66,8 @@
                         <div class="flex items-start gap-3 p-3 rounded-lg bg-pink-50 dark:bg-pink-900/20">
                             <span class="text-pink-500 mt-0.5">●</span>
                             <div>
-                                <p class="font-medium text-gray-900 dark:text-white text-sm">数据库连接</p>
-                                <p class="text-xs text-gray-500 dark:text-gray-400">MySQL 或 PostgreSQL</p>
+                                <p class="font-medium text-gray-900 dark:text-white text-sm">数据库与缓存</p>
+                                <p class="text-xs text-gray-500 dark:text-gray-400">MySQL / PostgreSQL / Redis</p>
                             </div>
                         </div>
                         <div class="flex items-start gap-3 p-3 rounded-lg bg-pink-50 dark:bg-pink-900/20">
@@ -138,6 +138,36 @@
                          :class="testResults.database?.success ? 'bg-green-50 dark:bg-green-900/20 text-green-700 dark:text-green-300 border border-green-200 dark:border-green-800' : 'bg-red-50 dark:bg-red-900/20 text-red-700 dark:text-red-300 border border-red-200 dark:border-red-800'"
                          x-text="testResults.database?.message">
                     </div>
+
+                    <hr class="border-gray-200 dark:border-gray-700">
+
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+                            Redis 连接地址 <span class="text-red-500">*</span>
+                        </label>
+                        <p class="text-xs text-gray-500 dark:text-gray-400 mb-2">
+                            用于 SSE 实时推送和缓存。Docker 部署默认使用 <code class="text-xs bg-gray-100 dark:bg-gray-600 px-1 rounded">redis://127.0.0.1:6379/0</code>，
+                            本地测试可改为 <code class="text-xs bg-gray-100 dark:bg-gray-600 px-1 rounded">redis://127.0.0.1:6379/0</code>。
+                        </p>
+                        <input type="text" x-model="form.redis_url"
+                               placeholder="redis://127.0.0.1:6379/0"
+                               class="w-full px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-sm text-gray-900 dark:text-white focus:ring-2 focus:ring-pink-500 focus:border-transparent outline-none">
+                    </div>
+
+                    <button @click="testConnection('redis')"
+                            :disabled="!form.redis_url || testing"
+                            class="px-4 py-2 text-sm font-medium rounded-lg border border-gray-300 dark:border-gray-600 hover:bg-gray-50 dark:hover:bg-gray-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors text-gray-700 dark:text-gray-300">
+                        <span x-show="!testing">测试 Redis</span>
+                        <span x-show="testing" class="flex items-center gap-2">
+                            <span class="pulse-dot">●</span> 测试中...
+                        </span>
+                    </button>
+
+                    <div x-show="testResults.redis" x-cloak
+                         class="p-3 rounded-lg text-sm"
+                         :class="testResults.redis?.success ? 'bg-green-50 dark:bg-green-900/20 text-green-700 dark:text-green-300 border border-green-200 dark:border-green-800' : 'bg-red-50 dark:bg-red-900/20 text-red-700 dark:text-red-300 border border-red-200 dark:border-red-800'"
+                         x-text="testResults.redis?.message">
+                    </div>
                 </div>
             </div>
 
@@ -197,7 +227,7 @@
             <!-- Step 3: AI & 通知配置 -->
             <div x-show="currentStep === 3" x-cloak class="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 shadow-sm p-8">
                 <h2 class="text-xl font-bold text-gray-900 dark:text-white mb-1">AI 模型与通知配置</h2>
-                <p class="text-sm text-gray-500 dark:text-gray-400 mb-6">配置 AI 审查模型（必需）和 Telegram 通知（可选）</p>
+                <p class="text-sm text-gray-500 dark:text-gray-400 mb-6">配置 AI 审查模型和 Telegram 通知（均必需）</p>
 
                 <div class="space-y-5">
                     <div>
@@ -223,8 +253,21 @@
                         <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
                             AI 模型名称
                         </label>
-                        <input type="text" x-model="form.openai_model"
-                               class="w-full px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-sm text-gray-900 dark:text-white focus:ring-2 focus:ring-pink-500 focus:border-transparent outline-none">
+                        <!-- 有可用模型列表时显示下拉选择 -->
+                        <template x-if="_availableModels && _availableModels.length > 0">
+                            <select x-model="form.openai_model"
+                                    class="w-full px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-sm text-gray-900 dark:text-white focus:ring-2 focus:ring-pink-500 focus:border-transparent outline-none">
+                                <template x-for="m in _availableModels" :key="m">
+                                    <option :value="m" x-text="m"></option>
+                                </template>
+                            </select>
+                        </template>
+                        <!-- 无模型列表时显示手动输入 -->
+                        <template x-if="!_availableModels || _availableModels.length === 0">
+                            <input type="text" x-model="form.openai_model"
+                                   class="w-full px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-sm text-gray-900 dark:text-white focus:ring-2 focus:ring-pink-500 focus:border-transparent outline-none">
+                        </template>
+                        <p class="text-xs text-gray-400 dark:text-gray-500 mt-1">测试 API 后自动获取可用模型</p>
                     </div>
 
                     <button @click="testConnection('openai')"
@@ -246,18 +289,17 @@
 
                     <div>
                         <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
-                            Telegram Bot Token <span class="text-gray-400 text-xs">(可选)</span>
+                            Telegram Bot Token <span class="text-red-500">*</span>
                         </label>
                         <p class="text-xs text-gray-500 dark:text-gray-400 mb-2">
-                            用于发送审查通知。可稍后在 WebUI 配置页面设置。
-                            通过 <a href="https://t.me/BotFather" target="_blank" class="underline text-pink-500">@BotFather</a> 创建 Bot 获取。
+                            用于发送审查通知和用户管理。通过 <a href="https://t.me/BotFather" target="_blank" class="underline text-pink-500">@BotFather</a> 创建 Bot 获取。
                         </p>
                         <input type="text" x-model="form.telegram_bot_token"
                                placeholder="123456:ABC-DEF..."
                                class="w-full px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-sm text-gray-900 dark:text-white focus:ring-2 focus:ring-pink-500 focus:border-transparent outline-none">
                     </div>
 
-                    <button x-show="form.telegram_bot_token" @click="testConnection('telegram')"
+                    <button @click="testConnection('telegram')"
                             :disabled="!form.telegram_bot_token || testing"
                             class="px-4 py-2 text-sm font-medium rounded-lg border border-gray-300 dark:border-gray-600 hover:bg-gray-50 dark:hover:bg-gray-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors text-gray-700 dark:text-gray-300">
                         测试 Telegram Bot
@@ -274,7 +316,7 @@
             <!-- Step 4: 管理员配置 -->
             <div x-show="currentStep === 4" x-cloak class="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 shadow-sm p-8">
                 <h2 class="text-xl font-bold text-gray-900 dark:text-white mb-1">管理员配置</h2>
-                <p class="text-sm text-gray-500 dark:text-gray-400 mb-6">设置 WebUI 管理员账户和应用域名</p>
+                <p class="text-sm text-gray-500 dark:text-gray-400 mb-6">设置超级管理员账户信息</p>
 
                 <div class="space-y-5">
                     <div>
@@ -291,6 +333,18 @@
 
                     <div>
                         <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+                            管理员 Telegram ID <span class="text-red-500">*</span>
+                        </label>
+                        <p class="text-xs text-gray-500 dark:text-gray-400 mb-2">
+                            用于绑定 Telegram 账户。在 Telegram 中搜索 <a href="https://t.me/userinfobot" target="_blank" class="underline text-pink-500">@userinfobot</a> 并发送任意消息即可获取你的 ID。
+                        </p>
+                        <input type="text" x-model="form.admin_telegram_id"
+                               placeholder="123456789"
+                               class="w-full px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-sm text-gray-900 dark:text-white focus:ring-2 focus:ring-pink-500 focus:border-transparent outline-none">
+                    </div>
+
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
                             应用域名
                         </label>
                         <p class="text-xs text-gray-500 dark:text-gray-400 mb-2">
@@ -301,11 +355,47 @@
                                class="w-full px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-sm text-gray-900 dark:text-white focus:ring-2 focus:ring-pink-500 focus:border-transparent outline-none">
                     </div>
 
-                    <div class="p-4 bg-blue-50 dark:bg-blue-900/20 rounded-lg border border-blue-200 dark:border-blue-800">
-                        <p class="text-sm text-blue-800 dark:text-blue-200">
-                            <strong>提示：</strong>配置完成后应用将自动重启。重启后你需要配置 GitHub OAuth 才能登录 WebUI。
-                            OAuth 配置可在 WebUI 的配置页面完成。
+                    <hr class="border-gray-200 dark:border-gray-700">
+
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+                            GitHub OAuth Client ID <span class="text-red-500">*</span>
+                        </label>
+                        <p class="text-xs text-gray-500 dark:text-gray-400 mb-2">
+                            在 <a href="https://github.com/settings/developers" target="_blank" class="underline text-pink-500">GitHub Settings → Developer settings → OAuth Apps</a> 中创建 OAuth App 获取。
                         </p>
+                        <input type="text" x-model="form.github_oauth_client_id"
+                               placeholder="Ov23li..."
+                               class="w-full px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-sm text-gray-900 dark:text-white focus:ring-2 focus:ring-pink-500 focus:border-transparent outline-none">
+                    </div>
+
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+                            GitHub OAuth Client Secret <span class="text-red-500">*</span>
+                        </label>
+                        <input type="password" x-model="form.github_oauth_client_secret"
+                               placeholder="your-client-secret"
+                               class="w-full px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-sm text-gray-900 dark:text-white focus:ring-2 focus:ring-pink-500 focus:border-transparent outline-none">
+                    </div>
+
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+                            OAuth 回调地址 <span class="text-red-500">*</span>
+                        </label>
+                        <p class="text-xs text-gray-500 dark:text-gray-400 mb-2">
+                            必须与 GitHub OAuth App 中配置的 Authorization callback URL 一致。
+                            点击下方的"生成回调地址"可自动填写。
+                        </p>
+                        <div class="flex gap-2">
+                            <input type="text" x-model="form.github_oauth_redirect_uri"
+                                   placeholder="https://your-domain.com/webui/auth/callback"
+                                   class="flex-1 px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-sm text-gray-900 dark:text-white focus:ring-2 focus:ring-pink-500 focus:border-transparent outline-none">
+                            <button @click="generateOAuthCallback()"
+                                    :disabled="!form.app_domain"
+                                    class="px-3 py-2 text-xs font-medium rounded-lg border border-gray-300 dark:border-gray-600 hover:bg-gray-50 dark:hover:bg-gray-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors text-gray-700 dark:text-gray-300 whitespace-nowrap">
+                                生成回调地址
+                            </button>
+                        </div>
                     </div>
                 </div>
             </div>
@@ -384,6 +474,7 @@ function setupWizard() {
         ],
         form: {
             database_url: '',
+            redis_url: 'redis://127.0.0.1:6379/0',
             github_app_id: '',
             github_private_key: '',
             github_webhook_secret: '',
@@ -392,9 +483,15 @@ function setupWizard() {
             openai_model: 'gpt-4',
             telegram_bot_token: '',
             admin_github_username: '',
+            admin_telegram_id: '',
             app_domain: 'localhost',
+            github_oauth_client_id: '',
+            github_oauth_client_secret: '',
+            github_oauth_redirect_uri: '',
+            bot_username: '',
         },
         testResults: {},
+        _availableModels: [],
         testing: false,
         completing: false,
         restarting: false,
@@ -405,15 +502,22 @@ function setupWizard() {
         get canProceed() {
             switch (this.currentStep) {
                 case 0: return true;
-                case 1: return this.form.database_url.trim() !== '' && this.testResults.database?.success;
+                case 1: return this.form.database_url.trim() !== '' && this.testResults.database?.success && this.form.redis_url.trim() !== '' && this.testResults.redis?.success;
                 case 2: return this.form.github_app_id.trim() !== '' && this.form.github_private_key.trim() !== '' && this.form.github_webhook_secret.trim() !== '' && this.testResults.github?.success;
-                case 3: return this.form.openai_api_key.trim() !== '' && this.testResults.openai?.success;
+                case 3: return this.form.openai_api_key.trim() !== '' && this.testResults.openai?.success && this.form.telegram_bot_token.trim() !== '';
                 default: return false;
             }
         },
 
         get canComplete() {
-            return this.form.admin_github_username.trim() !== '' && this.form.app_domain.trim() !== '';
+            return this.form.admin_github_username.trim() !== '' && this.form.admin_telegram_id.trim() !== '' && this.form.app_domain.trim() !== '' && this.form.github_oauth_client_id.trim() !== '' && this.form.github_oauth_client_secret.trim() !== '' && this.form.github_oauth_redirect_uri.trim() !== '';
+        },
+
+        generateOAuthCallback() {
+            let domain = this.form.app_domain.trim().replace(/^https?:\/\//, '');
+            if (!domain) return;
+            const proto = domain.startsWith('localhost') ? 'http' : 'https';
+            this.form.github_oauth_redirect_uri = `${proto}://${domain}/webui/auth/callback`;
         },
 
         async init() {
@@ -474,6 +578,9 @@ function setupWizard() {
                     case 'database':
                         body.url = this.form.database_url;
                         break;
+                    case 'redis':
+                        body.url = this.form.redis_url;
+                        break;
                     case 'github':
                         body.app_id = this.form.github_app_id;
                         body.private_key = this.form.github_private_key;
@@ -493,6 +600,14 @@ function setupWizard() {
                     body: JSON.stringify(body),
                 });
                 this.testResults[type] = await resp.json();
+                // GitHub App 测试成功时自动获取 bot_username
+                if (type === 'github' && this.testResults[type]?.success && this.testResults[type]?.bot_username) {
+                    this.form.bot_username = this.testResults[type].bot_username;
+                }
+                // OpenAI 测试成功时保存可用模型列表
+                if (type === 'openai' && this.testResults[type]?.success && this.testResults[type]?.models) {
+                    this._availableModels = this.testResults[type].models;
+                }
             } catch (e) {
                 this.testResults[type] = { success: false, message: '请求失败: ' + e.message };
             } finally {
@@ -551,6 +666,7 @@ function setupWizard() {
             switch (this.currentStep) {
                 case 1:
                     if (this.form.database_url) map.DATABASE_URL = this.form.database_url;
+                    if (this.form.redis_url) map.REDIS_URL = this.form.redis_url;
                     break;
                 case 2:
                     if (this.form.github_app_id) map.GITHUB_APP_ID = this.form.github_app_id;
@@ -570,15 +686,21 @@ function setupWizard() {
         _getCompleteEnvMap() {
             const map = {};
             if (this.form.database_url) map.DATABASE_URL = this.form.database_url;
+            if (this.form.redis_url) map.REDIS_URL = this.form.redis_url;
             if (this.form.github_app_id) map.GITHUB_APP_ID = this.form.github_app_id;
             if (this.form.github_private_key) map.GITHUB_PRIVATE_KEY = this.form.github_private_key;
             if (this.form.github_webhook_secret) map.GITHUB_WEBHOOK_SECRET = this.form.github_webhook_secret;
+            if (this.form.bot_username) map.BOT_USERNAME = this.form.bot_username;
             if (this.form.openai_api_key) map.OPENAI_API_KEY = this.form.openai_api_key;
             if (this.form.openai_api_base) map.OPENAI_API_BASE = this.form.openai_api_base;
             if (this.form.openai_model) map.OPENAI_MODEL = this.form.openai_model;
             if (this.form.telegram_bot_token) map.TELEGRAM_BOT_TOKEN = this.form.telegram_bot_token;
             if (this.form.app_domain) map.APP_DOMAIN = this.form.app_domain;
             if (this.form.admin_github_username) map.ADMIN_GITHUB_USERNAME = this.form.admin_github_username;
+            if (this.form.admin_telegram_id) map.ADMIN_TELEGRAM_ID = this.form.admin_telegram_id;
+            if (this.form.github_oauth_client_id) map.GITHUB_OAUTH_CLIENT_ID = this.form.github_oauth_client_id;
+            if (this.form.github_oauth_client_secret) map.GITHUB_OAUTH_CLIENT_SECRET = this.form.github_oauth_client_secret;
+            if (this.form.github_oauth_redirect_uri) map.GITHUB_OAUTH_REDIRECT_URI = this.form.github_oauth_redirect_uri;
             return map;
         },
     }
