@@ -51,14 +51,11 @@ class AIReviewer:
 
         # 初始化辅助模型（摘要、压缩等轻量任务）
         self.summary_model = settings.summary_model or settings.openai_model
-        summary_api_base = settings.summary_api_base or settings.openai_api_base
-        summary_api_key = settings.summary_api_key or settings.openai_api_key
-        if (
-            summary_api_base == settings.openai_api_base
-            and summary_api_key == settings.openai_api_key
-        ):
+        if not settings.summary_api_base and not settings.summary_api_key:
             self.summary_api_client = self.api_client
         else:
+            summary_api_base = settings.summary_api_base or settings.openai_api_base
+            summary_api_key = settings.summary_api_key or settings.openai_api_key
             self.summary_api_client = AIApiClient(
                 base_url=summary_api_base, api_key=summary_api_key
             )
