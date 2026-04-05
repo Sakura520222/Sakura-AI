@@ -100,7 +100,7 @@ class ModelContextManager:
         default_context = 128  # 默认 128K
         logger.warning(
             f"未找到模型 {model_name} 的上下文信息，使用默认值: {default_context}K tokens。"
-            f"请在 .env 中设置 MODEL_CONTEXT_WINDOW 或确保模型在预定义列表中"
+            f"请在 WebUI 配置页面设置 MODEL_CONTEXT_WINDOW 或确保模型在预定义列表中"
         )
         return default_context
 

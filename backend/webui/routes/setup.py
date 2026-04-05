@@ -13,6 +13,7 @@ from backend.core.bootstrap import (
     get_current_step,
     get_missing_fields,
     clear_bootstrap_cache,
+    write_connection_config,
 )
 from backend.core.setup_service import setup_service
 from backend.webui.deps import get_templates
@@ -35,8 +36,8 @@ async def setup_page(request: Request):
     if redirect:
         return redirect
 
-    current_step = get_current_step()
-    missing = get_missing_fields()
+    current_step = await get_current_step()
+    missing = await get_missing_fields()
 
     return templates.TemplateResponse(
         "setup_wizard.html",
@@ -57,8 +58,8 @@ async def get_setup_state(request: Request):
     return JSONResponse(
         {
             "state": "in_progress",
-            "current_step": get_current_step(),
-            "missing_fields": get_missing_fields(),
+            "current_step": await get_current_step(),
+            "missing_fields": await get_missing_fields(),
         }
     )
 
@@ -96,7 +97,11 @@ async def test_connection(request: Request):
 
 @router.post("/api/save-step")
 async def save_step(request: Request):
-    """保存单步配置到 .env"""
+    """保存单步配置
+
+    Step 1（含 DATABASE_URL）：写入 connection.json + 初始化 DB + 存入 DB
+    其他步骤：直写 DB
+    """
     if not is_bootstrap_mode():
         return JSONResponse(
             {"success": False, "message": "Setup 已完成"}, status_code=403
@@ -109,7 +114,27 @@ async def save_step(request: Request):
         return JSONResponse({"success": False, "message": "没有配置需要保存"})
 
     try:
-        setup_service.write_env_config(values)
+        database_url = values.get("DATABASE_URL", "").strip()
+
+        if database_url:
+            # Step 1: 数据库配置 — 写入 connection.json 并初始化 DB
+            write_connection_config(database_url)
+
+            # 初始化 DB 引擎并创建表
+            await setup_service.init_database(database_url)
+
+            # 将当前步的所有配置写入 DB
+            await setup_service.save_configs_to_db(values)
+        else:
+            # 其他步骤：直写 DB（DB 已在 Step 1 初始化）
+            from backend.models import database as db_module
+
+            if db_module.async_engine is None:
+                return JSONResponse(
+                    {"success": False, "message": "数据库尚未配置，请先完成数据库配置"}
+                )
+            await setup_service.save_configs_to_db(values)
+
         clear_bootstrap_cache()
         return JSONResponse({"success": True, "message": "配置已保存"})
     except Exception as e:
