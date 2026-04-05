@@ -179,6 +179,7 @@ async def handle_pull_request_event(payload: Dict[str, Any]) -> JSONResponse:
                         item_type="PR",
                         item_number=pr_info["pr_number"],
                         reason=reason,
+                        chat_id=user.telegram_id,
                     )
                 return JSONResponse(
                     content={
@@ -723,6 +724,7 @@ async def handle_issue_event(payload: Dict[str, Any]) -> JSONResponse:
                         item_type="Issue",
                         item_number=issue_info["issue_number"],
                         reason=reason,
+                        chat_id=user.telegram_id,
                     )
                 return JSONResponse(
                     content={
@@ -806,6 +808,7 @@ async def handle_issue_analyze_command(payload: Dict[str, Any]) -> JSONResponse:
                         item_type="Issue",
                         item_number=issue_info["issue_number"],
                         reason=reason,
+                        chat_id=user.telegram_id,
                     )
                 return JSONResponse(
                     content={
