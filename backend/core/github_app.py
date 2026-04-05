@@ -56,7 +56,9 @@ class GitHubAppClient:
 
             # 未配置时跳过初始化（bootstrap 模式或未配置 GitHub App）
             if not app_id or not private_key:
-                logger.warning("GitHub App 未配置（app_id 或 private_key 为空），跳过初始化")
+                logger.warning(
+                    "GitHub App 未配置（app_id 或 private_key 为空），跳过初始化"
+                )
                 return None
 
             logger.info(

@@ -29,6 +29,14 @@ ENV_FIELD_GROUPS = {
         "OPENAI_MODEL",
         "TELEGRAM_BOT_TOKEN",
     ],
+    "rag": [
+        "EMBEDDING_API_KEY",
+        "EMBEDDING_BASE_URL",
+        "EMBEDDING_MODEL",
+        "RERANK_API_KEY",
+        "RERANK_BASE_URL",
+        "RERANK_MODEL",
+    ],
     "admin": ["APP_DOMAIN"],
 }
 
@@ -57,9 +65,7 @@ class SetupService:
             return {"success": False, "message": "数据库连接字符串不能为空"}
 
         # 确保使用异步驱动
-        if not database_url.startswith(
-            ("mysql+aiomysql://", "postgresql+asyncpg://")
-        ):
+        if not database_url.startswith(("mysql+aiomysql://", "postgresql+asyncpg://")):
             return {
                 "success": False,
                 "message": "连接字符串必须以 mysql+aiomysql:// 或 postgresql+asyncpg:// 开头",
@@ -98,9 +104,7 @@ class SetupService:
                 error_msg = error_msg.replace(redis_url, "***")
             return {"success": False, "message": f"连接失败: {error_msg}"}
 
-    async def test_github_app(
-        self, app_id: str, private_key: str
-    ) -> dict[str, Any]:
+    async def test_github_app(self, app_id: str, private_key: str) -> dict[str, Any]:
         """测试 GitHub App 凭证"""
         if not app_id or not private_key:
             return {"success": False, "message": "App ID 和 Private Key 不能为空"}
@@ -138,7 +142,10 @@ class SetupService:
                         "bot_username": bot_username,
                     }
                 elif resp.status_code == 401:
-                    return {"success": False, "message": "凭证无效，请检查 App ID 和 Private Key"}
+                    return {
+                        "success": False,
+                        "message": "凭证无效，请检查 App ID 和 Private Key",
+                    }
                 else:
                     return {
                         "success": False,
@@ -152,9 +159,7 @@ class SetupService:
                 error_msg = error_msg.replace(private_key, "***")
             return {"success": False, "message": f"验证异常: {error_msg}"}
 
-    async def test_openai_api(
-        self, api_key: str, api_base: str
-    ) -> dict[str, Any]:
+    async def test_openai_api(self, api_key: str, api_base: str) -> dict[str, Any]:
         """测试 OpenAI API Key"""
         if not api_key:
             return {"success": False, "message": "API Key 不能为空"}
@@ -191,7 +196,10 @@ class SetupService:
                         "message": f"验证失败 (HTTP {resp.status_code})",
                     }
         except httpx.ConnectError:
-            return {"success": False, "message": f"无法连接到 {base_url}，请检查 API Base URL"}
+            return {
+                "success": False,
+                "message": f"无法连接到 {base_url}，请检查 API Base URL",
+            }
         except Exception as e:
             return {"success": False, "message": f"验证异常: {e}"}
 
@@ -253,13 +261,38 @@ class SetupService:
 
                 # 按分组写入
                 sections = [
-                    ("GitHub App 配置", ["GITHUB_APP_ID", "GITHUB_PRIVATE_KEY", "GITHUB_WEBHOOK_SECRET"]),
+                    (
+                        "GitHub App 配置",
+                        [
+                            "GITHUB_APP_ID",
+                            "GITHUB_PRIVATE_KEY",
+                            "GITHUB_WEBHOOK_SECRET",
+                        ],
+                    ),
                     ("数据库配置", ["DATABASE_URL"]),
                     ("Redis 配置", ["REDIS_URL"]),
                     ("应用配置", ["APP_DOMAIN", "APP_PORT", "LOG_LEVEL"]),
-                    ("OpenAI 配置", ["OPENAI_API_BASE", "OPENAI_API_KEY", "OPENAI_MODEL"]),
+                    (
+                        "OpenAI 配置",
+                        ["OPENAI_API_BASE", "OPENAI_API_KEY", "OPENAI_MODEL"],
+                    ),
+                    (
+                        "RAG 嵌入与重排序配置",
+                        [
+                            "ENABLE_RAG",
+                            "EMBEDDING_API_KEY",
+                            "EMBEDDING_BASE_URL",
+                            "EMBEDDING_MODEL",
+                            "RERANK_API_KEY",
+                            "RERANK_BASE_URL",
+                            "RERANK_MODEL",
+                        ],
+                    ),
                     ("WebUI 配置", ["WEBUI_SECRET_KEY"]),
-                    ("Telegram Bot 配置", ["TELEGRAM_BOT_TOKEN", "TELEGRAM_ADMIN_USER_IDS"]),
+                    (
+                        "Telegram Bot 配置",
+                        ["TELEGRAM_BOT_TOKEN", "TELEGRAM_ADMIN_USER_IDS"],
+                    ),
                     (
                         "GitHub OAuth 配置",
                         [
@@ -283,9 +316,7 @@ class SetupService:
                         f.write("\n")
 
                 # 写入未分组的配置
-                remaining = {
-                    k: v for k, v in existing.items() if k not in written_keys
-                }
+                remaining = {k: v for k, v in existing.items() if k not in written_keys}
                 if remaining:
                     f.write("# 其他配置\n")
                     for k, v in remaining.items():
@@ -307,7 +338,11 @@ class SetupService:
             telegram_id: 管理员的 Telegram 用户 ID
             database_url: 数据库连接字符串
         """
-        from backend.models.database import init_async_db, create_tables_async, insert_default_configs_async
+        from backend.models.database import (
+            init_async_db,
+            create_tables_async,
+            insert_default_configs_async,
+        )
         from backend.models.telegram_models import TelegramUser
 
         # 初始化数据库引擎（可能已经初始化过）
@@ -364,7 +399,12 @@ class SetupService:
             # 1. 自动生成 WEBUI_SECRET_KEY
             all_config.setdefault("WEBUI_SECRET_KEY", secrets.token_hex(32))
 
-            # 2. 写入所有配置到 .env
+            # 2. 未配置嵌入 API Key 时自动禁用 RAG，避免空 Key 调用报错
+            if not all_config.get("EMBEDDING_API_KEY", "").strip():
+                all_config["ENABLE_RAG"] = "false"
+                logger.info("未配置嵌入 API Key，自动禁用 RAG 功能")
+
+            # 3. 写入所有配置到 .env
             self.write_env_config(all_config)
 
             database_url = all_config.get("DATABASE_URL", "")

@@ -24,7 +24,7 @@ class Settings(BaseSettings):
     )
 
     # GitHub App配置（Setup Wizard 模式下可为 None）
-    github_app_id: Optional[int] = None
+    github_app_id: Optional[str] = None
     github_private_key: Optional[str] = None
     github_webhook_secret: Optional[str] = None
 

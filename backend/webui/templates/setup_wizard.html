@@ -84,6 +84,13 @@
                                 <p class="text-xs text-gray-500 dark:text-gray-400">OpenAI 或兼容 API</p>
                             </div>
                         </div>
+                        <div class="flex items-start gap-3 p-3 rounded-lg bg-blue-50 dark:bg-blue-900/20">
+                            <span class="text-blue-500 mt-0.5">●</span>
+                            <div>
+                                <p class="font-medium text-gray-900 dark:text-white text-sm">RAG 配置（可选）</p>
+                                <p class="text-xs text-gray-500 dark:text-gray-400">嵌入与重排序模型，增强审查质量</p>
+                            </div>
+                        </div>
                         <div class="flex items-start gap-3 p-3 rounded-lg bg-pink-50 dark:bg-pink-900/20">
                             <span class="text-pink-500 mt-0.5">●</span>
                             <div>
@@ -285,6 +292,80 @@
                          x-text="testResults.openai?.message">
                     </div>
 
+                    <!-- RAG 嵌入与重排序配置（可选） -->
+                    <div x-data="{ ragOpen: false }" class="border border-gray-200 dark:border-gray-700 rounded-lg overflow-hidden">
+                        <button @click="ragOpen = !ragOpen" type="button"
+                                class="w-full flex items-center justify-between px-4 py-3 bg-gray-50 dark:bg-gray-750 hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors">
+                            <span class="text-sm font-medium text-gray-700 dark:text-gray-300">RAG 嵌入与重排序配置（可选）</span>
+                            <svg class="w-4 h-4 text-gray-400 transition-transform" :class="ragOpen ? 'rotate-180' : ''" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"></path>
+                            </svg>
+                        </button>
+                        <div x-show="ragOpen" x-cloak class="px-4 py-4 space-y-4 bg-white dark:bg-gray-800">
+                            <p class="text-xs text-gray-500 dark:text-gray-400">
+                                RAG 功能用于代码向量检索，增强 AI 审查质量。留空则使用默认配置（SiliconFlow），若嵌入 API Key 为空则自动禁用 RAG。
+                            </p>
+
+                            <div>
+                                <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+                                    嵌入 API Key
+                                </label>
+                                <p class="text-xs text-gray-500 dark:text-gray-400 mb-2">留空则使用上方的 AI API Key</p>
+                                <input type="password" x-model="form.embedding_api_key"
+                                       placeholder="sk-..."
+                                       class="w-full px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-sm text-gray-900 dark:text-white focus:ring-2 focus:ring-pink-500 focus:border-transparent outline-none">
+                            </div>
+
+                            <div>
+                                <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+                                    嵌入 API 地址
+                                </label>
+                                <input type="text" x-model="form.embedding_base_url"
+                                       placeholder="https://api.siliconflow.cn/v1"
+                                       class="w-full px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-sm text-gray-900 dark:text-white focus:ring-2 focus:ring-pink-500 focus:border-transparent outline-none">
+                            </div>
+
+                            <div>
+                                <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+                                    嵌入模型
+                                </label>
+                                <input type="text" x-model="form.embedding_model"
+                                       placeholder="BAAI/bge-m3"
+                                       class="w-full px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-sm text-gray-900 dark:text-white focus:ring-2 focus:ring-pink-500 focus:border-transparent outline-none">
+                            </div>
+
+                            <hr class="border-gray-200 dark:border-gray-700">
+
+                            <div>
+                                <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+                                    重排序 API Key
+                                </label>
+                                <p class="text-xs text-gray-500 dark:text-gray-400 mb-2">留空则使用嵌入 API Key</p>
+                                <input type="password" x-model="form.rerank_api_key"
+                                       placeholder="sk-..."
+                                       class="w-full px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-sm text-gray-900 dark:text-white focus:ring-2 focus:ring-pink-500 focus:border-transparent outline-none">
+                            </div>
+
+                            <div>
+                                <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+                                    重排序 API 地址
+                                </label>
+                                <input type="text" x-model="form.rerank_base_url"
+                                       placeholder="https://api.siliconflow.cn/v1/rerank"
+                                       class="w-full px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-sm text-gray-900 dark:text-white focus:ring-2 focus:ring-pink-500 focus:border-transparent outline-none">
+                            </div>
+
+                            <div>
+                                <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+                                    重排序模型
+                                </label>
+                                <input type="text" x-model="form.rerank_model"
+                                       placeholder="BAAI/bge-reranker-v2-m3"
+                                       class="w-full px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-sm text-gray-900 dark:text-white focus:ring-2 focus:ring-pink-500 focus:border-transparent outline-none">
+                            </div>
+                        </div>
+                    </div>
+
                     <hr class="border-gray-200 dark:border-gray-700">
 
                     <div>
@@ -481,6 +562,12 @@ function setupWizard() {
             openai_api_key: '',
             openai_api_base: 'https://api.openai.com/v1',
             openai_model: 'gpt-4',
+            embedding_api_key: '',
+            embedding_base_url: 'https://api.siliconflow.cn/v1',
+            embedding_model: 'BAAI/bge-m3',
+            rerank_api_key: '',
+            rerank_base_url: 'https://api.siliconflow.cn/v1/rerank',
+            rerank_model: 'BAAI/bge-reranker-v2-m3',
             telegram_bot_token: '',
             admin_github_username: '',
             admin_telegram_id: '',
@@ -677,6 +764,12 @@ function setupWizard() {
                     if (this.form.openai_api_key) map.OPENAI_API_KEY = this.form.openai_api_key;
                     if (this.form.openai_api_base) map.OPENAI_API_BASE = this.form.openai_api_base;
                     if (this.form.openai_model) map.OPENAI_MODEL = this.form.openai_model;
+                    if (this.form.embedding_api_key) map.EMBEDDING_API_KEY = this.form.embedding_api_key;
+                    if (this.form.embedding_base_url) map.EMBEDDING_BASE_URL = this.form.embedding_base_url;
+                    if (this.form.embedding_model) map.EMBEDDING_MODEL = this.form.embedding_model;
+                    if (this.form.rerank_api_key) map.RERANK_API_KEY = this.form.rerank_api_key;
+                    if (this.form.rerank_base_url) map.RERANK_BASE_URL = this.form.rerank_base_url;
+                    if (this.form.rerank_model) map.RERANK_MODEL = this.form.rerank_model;
                     if (this.form.telegram_bot_token) map.TELEGRAM_BOT_TOKEN = this.form.telegram_bot_token;
                     break;
             }
@@ -694,6 +787,12 @@ function setupWizard() {
             if (this.form.openai_api_key) map.OPENAI_API_KEY = this.form.openai_api_key;
             if (this.form.openai_api_base) map.OPENAI_API_BASE = this.form.openai_api_base;
             if (this.form.openai_model) map.OPENAI_MODEL = this.form.openai_model;
+            if (this.form.embedding_api_key) map.EMBEDDING_API_KEY = this.form.embedding_api_key;
+            if (this.form.embedding_base_url) map.EMBEDDING_BASE_URL = this.form.embedding_base_url;
+            if (this.form.embedding_model) map.EMBEDDING_MODEL = this.form.embedding_model;
+            if (this.form.rerank_api_key) map.RERANK_API_KEY = this.form.rerank_api_key;
+            if (this.form.rerank_base_url) map.RERANK_BASE_URL = this.form.rerank_base_url;
+            if (this.form.rerank_model) map.RERANK_MODEL = this.form.rerank_model;
             if (this.form.telegram_bot_token) map.TELEGRAM_BOT_TOKEN = this.form.telegram_bot_token;
             if (this.form.app_domain) map.APP_DOMAIN = this.form.app_domain;
             if (this.form.admin_github_username) map.ADMIN_GITHUB_USERNAME = this.form.admin_github_username;

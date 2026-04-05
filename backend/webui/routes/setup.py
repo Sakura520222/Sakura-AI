@@ -67,7 +67,9 @@ async def get_setup_state(request: Request):
 async def test_connection(request: Request):
     """测试各类连接"""
     if not is_bootstrap_mode():
-        return JSONResponse({"success": False, "message": "Setup 已完成"}, status_code=403)
+        return JSONResponse(
+            {"success": False, "message": "Setup 已完成"}, status_code=403
+        )
 
     body = await request.json()
     test_type = body.get("type", "")
@@ -96,7 +98,9 @@ async def test_connection(request: Request):
 async def save_step(request: Request):
     """保存单步配置到 .env"""
     if not is_bootstrap_mode():
-        return JSONResponse({"success": False, "message": "Setup 已完成"}, status_code=403)
+        return JSONResponse(
+            {"success": False, "message": "Setup 已完成"}, status_code=403
+        )
 
     body = await request.json()
     values = body.get("values", {})
@@ -117,7 +121,9 @@ async def save_step(request: Request):
 async def complete_setup(request: Request):
     """完成 Setup 全流程"""
     if not is_bootstrap_mode():
-        return JSONResponse({"success": False, "message": "Setup 已完成"}, status_code=403)
+        return JSONResponse(
+            {"success": False, "message": "Setup 已完成"}, status_code=403
+        )
 
     body = await request.json()
     result = await setup_service.complete_setup(body)
