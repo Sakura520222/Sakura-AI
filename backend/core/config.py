@@ -724,6 +724,7 @@ def invalidate_dynamic_config_cache(keys: list[str] | None = None):
 
 
 # 核心配置键（Setup Wizard 写入、运行时从 DB 加载）
+# 与 setup_service._ENV_TO_SETTINGS_KEY 的 values 集合对应，新增配置需同步更新两处
 CORE_CONFIG_KEYS = frozenset({
     "github_app_id",
     "github_private_key",

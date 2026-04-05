@@ -18,6 +18,7 @@ from backend.core.bootstrap import (
 )
 
 # 环境变量字段（大写） → Settings 字段名（小写）
+# 注意：此映射的 values 集合应与 config.py 中 CORE_CONFIG_KEYS 保持同步
 _ENV_TO_SETTINGS_KEY: dict[str, str] = {
     "GITHUB_APP_ID": "github_app_id",
     "GITHUB_PRIVATE_KEY": "github_private_key",
@@ -249,7 +250,7 @@ class SetupService:
         """将配置项保存到数据库 AppConfig 表
 
         Args:
-            values: 配置键值对（环境变量名大写形式）
+            values: 配置键值对（环境变量名大写形式 或 Settings 字段名小写形式）
 
         Returns:
             写入/更新的配置项数量
@@ -257,24 +258,41 @@ class SetupService:
         from backend.core.config import update_settings_field
         from backend.models.database import AppConfig, async_session
 
+        # 解析所有有效的配置键值对
+        items: dict[str, str] = {}
+        for env_key, env_value in values.items():
+            # 尝试大写环境变量名映射
+            settings_key = _ENV_TO_SETTINGS_KEY.get(env_key)
+            if settings_key is None:
+                # 也接受已经是小写的 Settings 字段名（动态配置场景）
+                settings_key = env_key if env_key.islower() else None
+            if settings_key is None or env_value is None:
+                continue
+            env_value = str(env_value).strip()
+            if not env_value:
+                continue
+            items[settings_key] = env_value
+
+        if not items:
+            return 0
+
         saved = 0
         async with async_session() as session:
-            for env_key, env_value in values.items():
-                settings_key = _ENV_TO_SETTINGS_KEY.get(env_key)
-                if not settings_key or env_value is None:
-                    continue
-                env_value = str(env_value).strip()
-                if not env_value:
-                    continue
-
-                result = await session.execute(
-                    select(AppConfig).where(AppConfig.key_name == settings_key)
+            # 批量查询已存在的配置项
+            result = await session.execute(
+                select(AppConfig).where(
+                    AppConfig.key_name.in_(list(items.keys()))
                 )
-                existing = result.scalar_one_or_none()
+            )
+            existing_map = {c.key_name: c for c in result.scalars().all()}
+
+            for settings_key, env_value in items.items():
+                existing = existing_map.get(settings_key)
                 if existing:
                     if existing.key_value != env_value:
                         existing.key_value = env_value
                         saved += 1
+                        update_settings_field(settings_key, env_value)
                 else:
                     session.add(
                         AppConfig(
@@ -283,9 +301,7 @@ class SetupService:
                         )
                     )
                     saved += 1
-
-                # 即时更新 Settings 单例
-                update_settings_field(settings_key, env_value)
+                    update_settings_field(settings_key, env_value)
 
             await session.commit()
 
@@ -372,51 +388,6 @@ class SetupService:
                 logger.info(f"已创建超级管理员: {github_username}")
             await session.commit()
 
-    async def _sync_dynamic_configs_to_db(self, all_config: dict[str, str]) -> None:
-        """将 Setup Wizard 中的动态配置同步写入数据库 AppConfig 表
-
-        解决 lru_cache 导致 insert_default_configs_async() 读取旧 Settings 值的问题：
-        直接用用户在 Setup Wizard 中填写的值 upsert 到数据库。
-        """
-        from backend.core.config import (
-            DYNAMIC_CONFIG_GROUPS,
-            update_settings_field,
-        )
-        from backend.models.database import AppConfig, async_session
-
-        synced = 0
-        for group_data in DYNAMIC_CONFIG_GROUPS.values():
-            for key in group_data["keys"]:
-                env_key = key.upper()
-                env_value = all_config.get(env_key, "").strip()
-                if not env_value:
-                    continue
-
-                async with async_session() as session:
-                    result = await session.execute(
-                        select(AppConfig).where(AppConfig.key_name == key)
-                    )
-                    existing = result.scalar_one_or_none()
-                    if existing:
-                        if existing.key_value != env_value:
-                            existing.key_value = env_value
-                            synced += 1
-                    else:
-                        session.add(
-                            AppConfig(
-                                key_name=key,
-                                key_value=env_value,
-                            )
-                        )
-                        synced += 1
-                    await session.commit()
-
-                # 同步更新 Settings 单例
-                update_settings_field(key, env_value)
-
-        if synced:
-            logger.info(f"已同步 {synced} 项动态配置到数据库")
-
     async def complete_setup(self, all_config: dict[str, str]) -> dict[str, Any]:
         """完成 Setup 全流程
 
@@ -448,10 +419,7 @@ class SetupService:
             # 4. 将所有配置写入数据库
             await self.save_configs_to_db(all_config)
 
-            # 5. 同步动态配置到数据库（覆盖 insert_default_configs_async 中可能的空值）
-            await self._sync_dynamic_configs_to_db(all_config)
-
-            # 6. 创建管理员
+            # 5. 创建管理员
             if admin_github and admin_telegram_id:
                 try:
                     telegram_id_int = int(admin_telegram_id)
@@ -469,10 +437,10 @@ class SetupService:
                     "message": "管理员 GitHub 用户名和 Telegram ID 为必填项",
                 }
 
-            # 7. 写入 connection.json 标记完成
+            # 6. 写入 connection.json 标记完成
             mark_setup_completed(database_url)
 
-            # 8. 返回成功（前端开始轮询 /health）
+            # 7. 返回成功（前端开始轮询 /health）
             return {"success": True, "message": "配置完成，正在重启应用..."}
         except Exception as e:
             logger.error(f"Setup 完成失败: {e}")
