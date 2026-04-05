@@ -190,7 +190,8 @@ class ReviewWorker:
                         )
 
                         history_service = HistoryContextService(
-                            self.ai_reviewer.api_client
+                            self.ai_reviewer.summary_api_client,
+                            model=self.ai_reviewer.summary_model,
                         )
                         history_summary = await history_service.fetch_history_summary(
                             pr_id=analysis.pr_id,

@@ -33,6 +33,11 @@ class Settings(BaseSettings):
     openai_temperature: float = 0.3
     openai_max_tokens: int = 4000
 
+    # 辅助模型配置（摘要、压缩等轻量任务，未设置时回退到主模型）
+    summary_model: str = ""  # 为空时使用 openai_model
+    summary_api_base: str = ""  # 为空时使用 openai_api_base
+    summary_api_key: str = ""  # 为空时使用 openai_api_key
+
     # 模型上下文配置
     model_context_window: int = 0  # 自定义上下文窗口大小（K tokens），0 表示自动检测
     auto_fetch_model_context: bool = True  # 是否自动从 API 获取模型上下文
@@ -438,6 +443,23 @@ DYNAMIC_CONFIG_GROUPS: OrderedDict[str, dict] = OrderedDict(
             },
         ),
         (
+            "summary_model",
+            {
+                "label": "辅助模型配置",
+                "icon": "zap",
+                "descriptions": {
+                    "summary_model": "用于摘要生成、上下文压缩等轻量任务，留空则使用主模型",
+                    "summary_api_base": "辅助模型的 API 地址，留空则使用主模型地址",
+                    "summary_api_key": "辅助模型的 API Key，留空则使用主模型 Key",
+                },
+                "keys": [
+                    "summary_model",
+                    "summary_api_base",
+                    "summary_api_key",
+                ],
+            },
+        ),
+        (
             "rag",
             {
                 "label": "RAG 配置",
@@ -544,6 +566,7 @@ DYNAMIC_CONFIG_GROUPS: OrderedDict[str, dict] = OrderedDict(
 # 敏感字段（API Key 等）
 DYNAMIC_CONFIG_SENSITIVE_KEYS = frozenset({
     "openai_api_key",
+    "summary_api_key",
     "embedding_api_key",
     "rerank_api_key",
     "github_webhook_secret",
@@ -588,6 +611,9 @@ DYNAMIC_CONFIG_LABELS: dict[str, str] = {
     "openai_api_base": "API Base URL",
     "openai_api_key": "API Key",
     "openai_model": "模型名称",
+    "summary_model": "辅助模型名称",
+    "summary_api_base": "辅助模型 API 地址",
+    "summary_api_key": "辅助模型 API Key",
     "enable_rag": "启用 RAG",
     "chroma_persist_dir": "ChromaDB 存储路径",
     "embedding_model": "嵌入模型",

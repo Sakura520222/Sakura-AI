@@ -48,6 +48,20 @@ class AIReviewer:
         self.api_client = AIApiClient(
             base_url=settings.openai_api_base, api_key=settings.openai_api_key
         )
+
+        # 初始化辅助模型（摘要、压缩等轻量任务）
+        self.summary_model = settings.summary_model or settings.openai_model
+        summary_api_base = settings.summary_api_base or settings.openai_api_base
+        summary_api_key = settings.summary_api_key or settings.openai_api_key
+        if (
+            summary_api_base == settings.openai_api_base
+            and summary_api_key == settings.openai_api_key
+        ):
+            self.summary_api_client = self.api_client
+        else:
+            self.summary_api_client = AIApiClient(
+                base_url=summary_api_base, api_key=summary_api_key
+            )
         self.prompt_builder = PromptBuilder()
         self.result_parser = ReviewResultParser()
         self.batch_processor = BatchProcessor(
@@ -74,8 +88,8 @@ class AIReviewer:
         self.compression_threshold = settings.context_compression_threshold
         self.keep_rounds = settings.context_compression_keep_rounds
         self.context_compressor = ContextCompressor(
-            api_client=self.api_client,
-            model=settings.openai_model,
+            api_client=self.summary_api_client,
+            model=self.summary_model,
             keep_rounds=self.keep_rounds,
         )
         self.model_context_mgr = get_model_context_manager()
