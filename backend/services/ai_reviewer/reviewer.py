@@ -93,9 +93,10 @@ class AIReviewer:
 
         # 初始化标签推荐
         self.label_recommender = LabelRecommender(
-            api_client=self.api_client,
+            api_client=self.summary_api_client,
             prompt_builder=self.prompt_builder,
             result_parser=self.result_parser,
+            model=self.summary_model,
         )
 
         # 存储工具定义（用于向后兼容）
