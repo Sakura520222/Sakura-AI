@@ -117,14 +117,20 @@ async def save_step(request: Request):
         database_url = values.get("DATABASE_URL", "").strip()
 
         if database_url:
-            # Step 1: 数据库配置 — 写入 connection.json 并初始化 DB
-            write_connection_config(database_url)
+            # Step 1: 数据库配置 — 先验证连接，再初始化 DB，最后写 connection.json
+            # 先验证数据库连接可用
+            test_result = await setup_service.test_database_connection(database_url)
+            if not test_result["success"]:
+                return JSONResponse(test_result)
 
             # 初始化 DB 引擎并创建表
             await setup_service.init_database(database_url)
 
             # 将当前步的所有配置写入 DB
             await setup_service.save_configs_to_db(values)
+
+            # 全部成功后才写入 connection.json
+            write_connection_config(database_url)
         else:
             # 其他步骤：直写 DB（DB 已在 Step 1 初始化）
             from backend.models import database as db_module

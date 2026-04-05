@@ -53,7 +53,11 @@ async def lifespan(app: FastAPI):
             database_url = settings.database_url
 
         if not database_url:
-            logger.error("❌ 无法获取 DATABASE_URL，请检查 config/connection.json")
+            logger.error(
+                "❌ 无法获取 DATABASE_URL，请检查 config/connection.json 或访问 /setup 完成初始配置"
+            )
+            # 无法连接数据库，进入 bootstrap 模式引导用户配置
+            logger.warning("🔧 因缺少 DATABASE_URL 进入 bootstrap 模式，请访问 /setup")
         else:
             logger.info(f"📊 日志级别: {settings.log_level}")
             logger.info(f"🌐 应用域名: {settings.app_domain}")

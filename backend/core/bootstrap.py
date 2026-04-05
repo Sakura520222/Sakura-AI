@@ -5,6 +5,7 @@
 """
 
 import json
+import os
 import time
 from datetime import datetime, timezone
 from pathlib import Path
@@ -65,6 +66,11 @@ def write_connection_config(
         json.dumps(config, indent=2, ensure_ascii=False),
         encoding="utf-8",
     )
+    # 限制文件权限为仅所有者可读写（包含数据库凭证等敏感信息）
+    try:
+        os.chmod(CONNECTION_CONFIG_PATH, 0o600)
+    except OSError:
+        logger.debug("无法设置 connection.json 文件权限（Windows 可忽略）")
     clear_bootstrap_cache()
     logger.info(f"连接配置已写入 ({'已完成' if setup_completed else '进行中'})")
 
@@ -83,14 +89,14 @@ def check_setup_state() -> SetupState:
     """检测 Setup 状态
 
     通过 connection.json 判断：
-    - completed: 文件存在且 setup_completed == True
     - not_configured: 文件不存在
+    - completed: 文件存在且 setup_completed == True
     - in_progress: 文件存在但 setup_completed != True
     """
-    config = read_connection_config()
-
-    if not config:
+    if not CONNECTION_CONFIG_PATH.exists():
         return "not_configured"
+
+    config = read_connection_config()
 
     if config.get("setup_completed"):
         return "completed"
@@ -137,9 +143,11 @@ async def get_missing_fields() -> list[str]:
                 )
             )
             db_values = {row[0]: row[1] for row in result.all()}
-    except Exception:
+    except Exception as exc:
         # 数据库不可用时，回退到 Settings 单例
         from backend.core.config import get_settings
+
+        logger.debug(f"数据库不可用，回退到 Settings 检查缺失字段: {exc}")
 
         settings = get_settings()
         missing = []
@@ -192,7 +200,8 @@ async def get_current_step() -> int:
                 )
             )
             db_values = {row[0]: (row[1] or "") for row in result.all()}
-    except Exception:
+    except Exception as exc:
+        logger.debug(f"数据库不可用，回退到 Step 0: {exc}")
         return 0
 
     # Step 1: GitHub App
