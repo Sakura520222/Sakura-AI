@@ -97,6 +97,7 @@ class CodeIndexService:
                 if not content:
                     logger.warning(f"文件 {file_path} 没有内容，跳过索引")
                     skipped_count += 1
+                    consecutive_failures = 0
                     continue
 
                 try:

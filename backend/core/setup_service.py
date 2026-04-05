@@ -5,7 +5,6 @@
 
 import os
 import secrets
-import shutil
 import signal
 from typing import Any
 
@@ -17,6 +16,7 @@ from sqlalchemy.ext.asyncio import create_async_engine
 from backend.core.bootstrap import (
     ENV_PATH,
     mark_setup_completed,
+    parse_env_file,
 )
 
 # 环境变量字段与 Settings 字段的映射
@@ -235,19 +235,7 @@ class SetupService:
             values: 环境变量键值对
         """
         # 1. 读取已有 .env 内容
-        existing = {}
-        if ENV_PATH.exists():
-            for line in ENV_PATH.read_text(encoding="utf-8").splitlines():
-                line = line.strip()
-                if line and not line.startswith("#") and "=" in line:
-                    key, _, value = line.partition("=")
-                    value = value.strip()
-                    # 去除双引号包裹
-                    if value.startswith('"') and value.endswith('"'):
-                        value = value[1:-1]
-                    # 还原 \n 转义为真实换行
-                    value = value.replace("\\n", "\n")
-                    existing[key.strip()] = value
+        existing = parse_env_file()
 
         # 2. 合并新值
         existing.update(values)
@@ -322,7 +310,7 @@ class SetupService:
                     for k, v in remaining.items():
                         f.write(f"{k}={_format_env_value(v)}\n")
 
-            shutil.move(str(tmp_path), str(ENV_PATH))
+            os.replace(str(tmp_path), str(ENV_PATH))
             logger.info(f".env 配置已写入 ({len(values)} 项)")
         except Exception:
             tmp_path.unlink(missing_ok=True)
@@ -362,10 +350,13 @@ class SetupService:
                 select(TelegramUser).where(
                     (TelegramUser.github_username == github_username)
                     | (TelegramUser.telegram_id == telegram_id)
-                    | (TelegramUser.telegram_id == 0)
+                    | (
+                        (TelegramUser.telegram_id == 0)
+                        & (TelegramUser.github_username.is_(None))
+                    )
                 )
             )
-            existing = result.scalar_one_or_none()
+            existing = result.scalars().first()
             if existing:
                 existing.role = "super_admin"
                 existing.github_username = github_username
@@ -457,9 +448,21 @@ class SetupService:
             admin_telegram_id = all_config.get("ADMIN_TELEGRAM_ID", "")
 
             # 3. 初始化数据库并创建管理员
-            if database_url and admin_github and admin_telegram_id:
+            if database_url:
+                if not admin_github or not admin_telegram_id:
+                    return {
+                        "success": False,
+                        "message": "管理员 GitHub 用户名和 Telegram ID 为必填项",
+                    }
+                try:
+                    telegram_id_int = int(admin_telegram_id)
+                except (ValueError, TypeError):
+                    return {
+                        "success": False,
+                        "message": f"管理员 Telegram ID 格式无效: {admin_telegram_id}",
+                    }
                 await self.create_admin_user(
-                    admin_github, int(admin_telegram_id), database_url
+                    admin_github, telegram_id_int, database_url
                 )
 
             # 4. 同步动态配置到数据库（覆盖 insert_default_configs_async 中可能的空值）
