@@ -21,7 +21,7 @@ MAX_COMMENT_CONTENT_LENGTH = 200
 class HistoryContextService:
     """PR 增量审查历史上下文服务"""
 
-    def __init__(self, api_client, model=None):
+    def __init__(self, api_client, model: str | None = None):
         """初始化
 
         Args:
