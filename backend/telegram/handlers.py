@@ -121,11 +121,11 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     async with get_async_session() as session:
         service = TelegramService(session)
 
-        # 检查是否为超级管理员（优先检查 .env 配置）
+        # 检查是否为超级管理员
         is_super_admin = await service.is_super_admin(telegram_id)
 
         if is_super_admin:
-            role_text = "👑 超级管理员（.env配置）"
+            role_text = "👑 超级管理员"
         else:
             user = await service.get_user_by_telegram_id(telegram_id)
             if user:

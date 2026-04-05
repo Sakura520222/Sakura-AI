@@ -48,6 +48,17 @@ class AIReviewer:
         self.api_client = AIApiClient(
             base_url=settings.openai_api_base, api_key=settings.openai_api_key
         )
+
+        # 初始化辅助模型（摘要、压缩等轻量任务）
+        self.summary_model = settings.summary_model or settings.openai_model
+        if not settings.summary_api_base and not settings.summary_api_key:
+            self.summary_api_client = self.api_client
+        else:
+            summary_api_base = settings.summary_api_base or settings.openai_api_base
+            summary_api_key = settings.summary_api_key or settings.openai_api_key
+            self.summary_api_client = AIApiClient(
+                base_url=summary_api_base, api_key=summary_api_key
+            )
         self.prompt_builder = PromptBuilder()
         self.result_parser = ReviewResultParser()
         self.batch_processor = BatchProcessor(
@@ -74,17 +85,18 @@ class AIReviewer:
         self.compression_threshold = settings.context_compression_threshold
         self.keep_rounds = settings.context_compression_keep_rounds
         self.context_compressor = ContextCompressor(
-            api_client=self.api_client,
-            model=settings.openai_model,
+            api_client=self.summary_api_client,
+            model=self.summary_model,
             keep_rounds=self.keep_rounds,
         )
         self.model_context_mgr = get_model_context_manager()
 
         # 初始化标签推荐
         self.label_recommender = LabelRecommender(
-            api_client=self.api_client,
+            api_client=self.summary_api_client,
             prompt_builder=self.prompt_builder,
             result_parser=self.result_parser,
+            model=self.summary_model,
         )
 
         # 存储工具定义（用于向后兼容）

@@ -16,8 +16,6 @@ class Settings(BaseSettings):
     """应用配置"""
 
     model_config = SettingsConfigDict(
-        env_file=".env",
-        env_file_encoding="utf-8",
         case_sensitive=False,
         extra="ignore",
         protected_namespaces=("settings_",),
@@ -34,6 +32,11 @@ class Settings(BaseSettings):
     openai_model: str = "gpt-4"
     openai_temperature: float = 0.3
     openai_max_tokens: int = 4000
+
+    # 辅助模型配置（摘要、压缩等轻量任务，未设置时回退到主模型）
+    summary_model: str = ""  # 为空时使用 openai_model
+    summary_api_base: str = ""  # 为空时使用 openai_api_base
+    summary_api_key: str = ""  # 为空时使用 openai_api_key
 
     # 模型上下文配置
     model_context_window: int = 0  # 自定义上下文窗口大小（K tokens），0 表示自动检测
@@ -440,6 +443,23 @@ DYNAMIC_CONFIG_GROUPS: OrderedDict[str, dict] = OrderedDict(
             },
         ),
         (
+            "summary_model",
+            {
+                "label": "辅助模型配置",
+                "icon": "zap",
+                "descriptions": {
+                    "summary_model": "用于摘要生成、上下文压缩等轻量任务，留空则使用主模型",
+                    "summary_api_base": "辅助模型的 API 地址，留空则使用主模型地址",
+                    "summary_api_key": "辅助模型的 API Key，留空则使用主模型 Key",
+                },
+                "keys": [
+                    "summary_model",
+                    "summary_api_base",
+                    "summary_api_key",
+                ],
+            },
+        ),
+        (
             "rag",
             {
                 "label": "RAG 配置",
@@ -544,9 +564,16 @@ DYNAMIC_CONFIG_GROUPS: OrderedDict[str, dict] = OrderedDict(
 )
 
 # 敏感字段（API Key 等）
-DYNAMIC_CONFIG_SENSITIVE_KEYS = frozenset(
-    {"openai_api_key", "embedding_api_key", "rerank_api_key"}
-)
+DYNAMIC_CONFIG_SENSITIVE_KEYS = frozenset({
+    "openai_api_key",
+    "summary_api_key",
+    "embedding_api_key",
+    "rerank_api_key",
+    "github_webhook_secret",
+    "webui_secret_key",
+    "github_oauth_client_secret",
+    "telegram_bot_token",
+})
 
 # 选择类字段的选项
 DYNAMIC_CONFIG_SELECT_OPTIONS: dict[str, list[dict]] = {
@@ -584,6 +611,9 @@ DYNAMIC_CONFIG_LABELS: dict[str, str] = {
     "openai_api_base": "API Base URL",
     "openai_api_key": "API Key",
     "openai_model": "模型名称",
+    "summary_model": "辅助模型名称",
+    "summary_api_base": "辅助模型 API 地址",
+    "summary_api_key": "辅助模型 API Key",
     "enable_rag": "启用 RAG",
     "chroma_persist_dir": "ChromaDB 存储路径",
     "embedding_model": "嵌入模型",
@@ -613,6 +643,19 @@ DYNAMIC_CONFIG_LABELS: dict[str, str] = {
     "enable_label_recommendation": "启用标签推荐",
     "label_confidence_threshold": "标签置信度阈值",
     "label_auto_create": "自动创建标签",
+    # 核心配置标签
+    "github_app_id": "GitHub App ID",
+    "github_private_key": "GitHub App 私钥",
+    "github_webhook_secret": "GitHub Webhook Secret",
+    "telegram_bot_token": "Telegram Bot Token",
+    "webui_secret_key": "WebUI 密钥",
+    "app_domain": "应用域名",
+    "app_port": "应用端口",
+    "log_level": "日志级别",
+    "bot_username": "Bot 用户名",
+    "github_oauth_client_id": "GitHub OAuth Client ID",
+    "github_oauth_client_secret": "GitHub OAuth Client Secret",
+    "github_oauth_redirect_uri": "GitHub OAuth 回调地址",
 }
 
 # 内存 TTL 缓存（进程级，多 Worker 部署时各进程独立，配置变更仅当前进程可见）
@@ -706,11 +749,42 @@ def invalidate_dynamic_config_cache(keys: list[str] | None = None):
             _dynamic_config_cache.pop(k, None)
 
 
+# 核心配置键（Setup Wizard 写入、运行时从 DB 加载）
+# 与 setup_service._ENV_TO_SETTINGS_KEY 的 values 集合对应，新增配置需同步更新两处
+CORE_CONFIG_KEYS = frozenset({
+    "github_app_id",
+    "github_private_key",
+    "github_webhook_secret",
+    "openai_api_key",
+    "openai_api_base",
+    "openai_model",
+    "telegram_bot_token",
+    "webui_secret_key",
+    "app_domain",
+    "app_port",
+    "log_level",
+    "bot_username",
+    "github_oauth_client_id",
+    "github_oauth_client_secret",
+    "github_oauth_redirect_uri",
+    "database_url",
+})
+
+
 def get_all_dynamic_config_keys() -> list[str]:
     """获取所有动态配置键名"""
     keys = []
     for group in DYNAMIC_CONFIG_GROUPS.values():
         keys.extend(group["keys"])
+    return keys
+
+
+def get_all_db_config_keys() -> list[str]:
+    """获取所有应从 DB 加载的配置键（动态配置 + 核心配置）"""
+    keys = get_all_dynamic_config_keys()
+    for key in CORE_CONFIG_KEYS:
+        if key not in keys:
+            keys.append(key)
     return keys
 
 
@@ -742,13 +816,13 @@ def _evict_config_cache():
 
 
 async def load_dynamic_configs_to_settings():
-    """从数据库加载动态配置到 Settings 单例
+    """从数据库加载全部配置到 Settings 单例
 
-    启动时调用一次，让所有使用 settings.xxx 的服务直接拿到 DB 中的值。
-    这样现有服务代码无需改动。
+    启动时调用一次，覆盖所有已迁移到 DB 的配置项（动态配置 + 核心配置）。
+    让所有使用 settings.xxx 的服务直接拿到 DB 中的值。
     """
     settings = get_settings()
-    all_keys = get_all_dynamic_config_keys()
+    all_keys = get_all_db_config_keys()
     if not all_keys:
         return
 
