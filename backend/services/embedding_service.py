@@ -132,7 +132,10 @@ class EmbeddingService:
             return all_embeddings
 
         except Exception as e:
-            logger.error(f"❌ OpenAI API 嵌入失败: {e}")
+            logger.error(
+                f"❌ Embedding API 请求失败 ({settings.embedding_base_url}): "
+                f"{type(e).__name__}: {e}"
+            )
             raise
 
     async def _embed_via_huggingface(self, texts: List[str]) -> List[List[float]]:

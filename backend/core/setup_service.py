@@ -386,6 +386,51 @@ class SetupService:
                 logger.info(f"已创建超级管理员: {github_username}")
             await session.commit()
 
+    async def _sync_dynamic_configs_to_db(self, all_config: dict[str, str]) -> None:
+        """将 Setup Wizard 中的动态配置同步写入数据库 AppConfig 表
+
+        解决 lru_cache 导致 insert_default_configs_async() 读取旧 Settings 值的问题：
+        直接用用户在 Setup Wizard 中填写的值 upsert 到数据库。
+        """
+        from backend.core.config import (
+            DYNAMIC_CONFIG_GROUPS,
+            update_settings_field,
+        )
+        from backend.models.database import AppConfig, async_session
+
+        synced = 0
+        for group_data in DYNAMIC_CONFIG_GROUPS.values():
+            for key in group_data["keys"]:
+                env_key = key.upper()
+                env_value = all_config.get(env_key, "").strip()
+                if not env_value:
+                    continue
+
+                async with async_session() as session:
+                    result = await session.execute(
+                        select(AppConfig).where(AppConfig.key_name == key)
+                    )
+                    existing = result.scalar_one_or_none()
+                    if existing:
+                        if existing.key_value != env_value:
+                            existing.key_value = env_value
+                            synced += 1
+                    else:
+                        session.add(
+                            AppConfig(
+                                key_name=key,
+                                key_value=env_value,
+                            )
+                        )
+                        synced += 1
+                    await session.commit()
+
+                # 同步更新 Settings 单例
+                update_settings_field(key, env_value)
+
+        if synced:
+            logger.info(f"✅ 已同步 {synced} 项动态配置到数据库")
+
     async def complete_setup(self, all_config: dict[str, str]) -> dict[str, Any]:
         """完成 Setup 全流程
 
@@ -417,7 +462,10 @@ class SetupService:
                     admin_github, int(admin_telegram_id), database_url
                 )
 
-            # 4. 写入完成标记
+            # 4. 同步动态配置到数据库（覆盖 insert_default_configs_async 中可能的空值）
+            await self._sync_dynamic_configs_to_db(all_config)
+
+            # 5. 写入完成标记
             mark_setup_completed()
 
             # 5. 返回成功（前端开始轮询 /health）
