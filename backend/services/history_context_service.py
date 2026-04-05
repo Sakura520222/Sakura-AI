@@ -21,13 +21,15 @@ MAX_COMMENT_CONTENT_LENGTH = 200
 class HistoryContextService:
     """PR 增量审查历史上下文服务"""
 
-    def __init__(self, api_client):
+    def __init__(self, api_client, model=None):
         """初始化
 
         Args:
             api_client: AIApiClient 实例，复用已有的 API 客户端
+            model: 模型名称，None 时回退到 settings.openai_model
         """
         self.api_client = api_client
+        self.model = model
 
     async def fetch_history_summary(
         self,
@@ -189,7 +191,7 @@ class HistoryContextService:
                     "content": self._build_summary_user_prompt(history_text),
                 },
             ],
-            model=settings.openai_model,
+            model=self.model or settings.openai_model,
             temperature=HISTORY_SUMMARY_TEMPERATURE,
             max_tokens=settings.incremental_history_summary_max_tokens,
         )
