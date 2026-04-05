@@ -17,17 +17,19 @@ class LabelRecommender:
     负责根据 PR 的代码变更推荐合适的标签。
     """
 
-    def __init__(self, api_client, prompt_builder, result_parser):
+    def __init__(self, api_client, prompt_builder, result_parser, model: str | None = None):
         """初始化标签推荐器
 
         Args:
             api_client: AI API 客户端
             prompt_builder: 提示词构建器
             result_parser: 结果解析器
+            model: 模型名称，None 时回退到 settings.openai_model
         """
         self.api_client = api_client
         self.prompt_builder = prompt_builder
         self.result_parser = result_parser
+        self.model = model
 
     async def recommend_labels(
         self,
@@ -60,7 +62,7 @@ class LabelRecommender:
             from backend.core.config import get_settings
 
             response = await self.api_client.call_with_retry(
-                model=get_settings().openai_model,
+                model=self.model or get_settings().openai_model,
                 messages=[
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": user_message},
