@@ -479,7 +479,11 @@ async def create_tables_async():
 def _append_dynamic_config_defaults(default_configs: list) -> None:
     """向 default_configs 列表追加动态配置默认值"""
     try:
-        from backend.core.config import DYNAMIC_CONFIG_GROUPS, DYNAMIC_CONFIG_LABELS, get_settings
+        from backend.core.config import (
+            DYNAMIC_CONFIG_GROUPS,
+            DYNAMIC_CONFIG_LABELS,
+            get_settings,
+        )
 
         settings = get_settings()
         for group_data in DYNAMIC_CONFIG_GROUPS.values():

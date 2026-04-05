@@ -16,8 +16,6 @@ from backend.workers.review_worker import submit_review_task
 from backend.services.telegram_service import TelegramService
 from backend.telegram.notifications import get_notification_sender
 from backend.core.config import get_settings
-import asyncio
-
 settings = get_settings()
 
 
@@ -164,34 +162,7 @@ async def handle_pull_request_event(payload: Dict[str, Any]) -> JSONResponse:
                     content={"status": "skipped", "reason": "unregistered user"}
                 )
 
-            # 2. 检查仓库是否已授权（管理员和超级管理员可以跳过此检查）
-            # 管理员和超级管理员可以审查任何仓库
-            # 转换为小写进行比较，支持大小写不敏感
-            role_lower = user.role.lower().strip() if user.role else ""
-            if role_lower in ["admin", "super_admin"]:
-                logger.info(
-                    f"管理员/超级管理员跳过仓库白名单检查: {github_username} (role: {user.role})"
-                )
-            else:
-                # 普通用户需要仓库在白名单中
-                is_authorized = await service.is_authorized_repo(
-                    pr_info["repo_full_name"]
-                )
-                if not is_authorized:
-                    logger.warning(f"未授权的仓库: {pr_info['repo_full_name']}")
-                    if notification_sender:
-                        await notification_sender.send_unauthorized_repo(
-                            repo_name=pr_info["repo_full_name"],
-                            pr_number=pr_info["pr_number"],
-                        )
-                    return JSONResponse(
-                        content={
-                            "status": "skipped",
-                            "reason": "unauthorized repository",
-                        }
-                    )
-
-            # 3. 检查并消耗配额
+            # 2. 检查并消耗配额
             allowed, reason = await service.check_and_consume_quota(
                 github_username=github_username,
                 repo_name=pr_info["repo_full_name"],
@@ -206,6 +177,7 @@ async def handle_pull_request_event(payload: Dict[str, Any]) -> JSONResponse:
                         item_type="PR",
                         item_number=pr_info["pr_number"],
                         reason=reason,
+                        chat_id=user.telegram_id,
                     )
                 return JSONResponse(
                     content={
@@ -242,16 +214,6 @@ async def handle_pull_request_event(payload: Dict[str, Any]) -> JSONResponse:
             f"已提交审查任务: {pr_info['repo_full_name']}#{pr_info['pr_number']}, "
             f"任务ID: {task_id}"
         )
-
-        # 异步索引PR代码变更（不阻塞响应）
-        if settings.auto_index_pr_changes:
-            asyncio.create_task(
-                _index_pr_code_async(
-                    pr_info["repo_full_name"],
-                    pr_info["pr_number"],
-                    pr_info.get("install_id", 0),
-                )
-            )
 
         return JSONResponse(
             content={
@@ -736,22 +698,6 @@ async def handle_issue_event(payload: Dict[str, Any]) -> JSONResponse:
                     content={"status": "skipped", "reason": "unregistered user"}
                 )
 
-            role_lower = user.role.lower().strip() if user.role else ""
-            if role_lower not in ["admin", "super_admin"]:
-                is_authorized = await service.is_authorized_repo(
-                    issue_info["repo_full_name"]
-                )
-                if not is_authorized:
-                    logger.warning(
-                        f"未授权的仓库: {issue_info['repo_full_name']}, user: {github_username}, role: {user.role}"
-                    )
-                    return JSONResponse(
-                        content={
-                            "status": "skipped",
-                            "reason": "unauthorized repository",
-                        }
-                    )
-
             # Issue 配额检查
             allowed, reason = await service.check_and_consume_issue_quota(
                 github_username=github_username,
@@ -766,6 +712,7 @@ async def handle_issue_event(payload: Dict[str, Any]) -> JSONResponse:
                         item_type="Issue",
                         item_number=issue_info["issue_number"],
                         reason=reason,
+                        chat_id=user.telegram_id,
                     )
                 return JSONResponse(
                     content={
@@ -836,22 +783,6 @@ async def handle_issue_analyze_command(payload: Dict[str, Any]) -> JSONResponse:
                     content={"status": "skipped", "reason": "unregistered user"}
                 )
 
-            role_lower = user.role.lower().strip() if user.role else ""
-            if role_lower not in ["admin", "super_admin"]:
-                is_authorized = await service.is_authorized_repo(
-                    issue_info["repo_full_name"]
-                )
-                if not is_authorized:
-                    logger.warning(
-                        f"未授权的仓库: {issue_info['repo_full_name']}, user: {commenter}, role: {user.role}"
-                    )
-                    return JSONResponse(
-                        content={
-                            "status": "skipped",
-                            "reason": "unauthorized repository",
-                        }
-                    )
-
             allowed, reason = await service.check_and_consume_issue_quota(
                 github_username=commenter,
                 repo_name=issue_info["repo_full_name"],
@@ -865,6 +796,7 @@ async def handle_issue_analyze_command(payload: Dict[str, Any]) -> JSONResponse:
                         item_type="Issue",
                         item_number=issue_info["issue_number"],
                         reason=reason,
+                        chat_id=user.telegram_id,
                     )
                 return JSONResponse(
                     content={
@@ -905,38 +837,3 @@ async def health_check() -> JSONResponse:
     return JSONResponse(content={"status": "healthy", "service": "Sakura AI Reviewer"})
 
 
-async def _index_pr_code_async(
-    repo_full_name: str,
-    pr_number: int,
-    install_id: int,
-) -> None:
-    """异步索引PR代码变更
-
-    Args:
-        repo_full_name: 仓库名称
-        pr_number: PR编号
-        install_id: GitHub App安装ID
-    """
-    try:
-        # 检查是否启用代码索引
-        if not settings.enable_code_index:
-            logger.debug(f"代码索引功能未启用，跳过 PR #{pr_number} 代码索引")
-            return
-        from backend.services.pr_code_indexer import get_pr_code_indexer
-
-        indexer = get_pr_code_indexer()
-        result = await indexer.index_pr_changes(
-            repo_full_name=repo_full_name,
-            pr_number=pr_number,
-            install_id=install_id,
-        )
-
-        logger.info(
-            f"PR #{pr_number} 代码索引完成: "
-            f"索引={result.get('indexed', 0)}, "
-            f"跳过={result.get('skipped', 0)}, "
-            f"代码块={result.get('total_chunks', 0)}"
-        )
-
-    except Exception as e:
-        logger.error(f"异步索引PR代码失败 (PR #{pr_number}): {e}", exc_info=True)

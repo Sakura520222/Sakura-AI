@@ -79,7 +79,7 @@ CREATE TABLE IF NOT EXISTS review_queue (
 
 -- 插入默认配置
 INSERT IGNORE INTO app_config (key_name, key_value, description) VALUES
-('app_version', '2.6.0', '应用版本号'),
+('app_version', '2.7.0', '应用版本号'),
 ('max_concurrent_reviews', '5', '最大并发审查数量'),
 ('review_timeout_seconds', '300', '审查超时时间（秒）'),
 ('enable_auto_review', 'true', '是否启用自动审查'),

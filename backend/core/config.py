@@ -23,14 +23,14 @@ class Settings(BaseSettings):
         protected_namespaces=("settings_",),
     )
 
-    # GitHub App配置
-    github_app_id: int
-    github_private_key: str
-    github_webhook_secret: str
+    # GitHub App配置（Setup Wizard 模式下可为 None）
+    github_app_id: Optional[str] = None
+    github_private_key: Optional[str] = None
+    github_webhook_secret: Optional[str] = None
 
     # OpenAI配置
     openai_api_base: str = "https://api.openai.com/v1"
-    openai_api_key: str
+    openai_api_key: Optional[str] = None
     openai_model: str = "gpt-4"
     openai_temperature: float = 0.3
     openai_max_tokens: int = 4000
@@ -46,10 +46,10 @@ class Settings(BaseSettings):
     context_compression_keep_rounds: int = 2  # 保留最近几轮对话不压缩
 
     # 数据库配置
-    database_url: str
+    database_url: Optional[str] = None
 
     # Redis配置
-    redis_url: str = "redis://redis:6379/0"
+    redis_url: str = "redis://127.0.0.1:6379/0"
 
     # 应用配置
     app_domain: str = "localhost"
@@ -98,7 +98,7 @@ class Settings(BaseSettings):
     )
 
     # Telegram Bot配置
-    telegram_bot_token: str
+    telegram_bot_token: Optional[str] = None
     telegram_admin_user_ids: str = ""  # 逗号分隔的超级管理员ID列表
     telegram_default_chat_id: str = ""  # 默认接收通知的聊天ID
     register_quota_multiplier: float = Field(
@@ -109,7 +109,23 @@ class Settings(BaseSettings):
     )
 
     # GitHub App机器人用户名（可选，用于幂等性检查）
-    bot_username: str = None  # 备用方案，当无法从GitHub API获取时使用
+    bot_username: Optional[str] = None  # 备用方案，当无法从GitHub API获取时使用
+
+    def validate_required_fields(self) -> list[str]:
+        """返回值为 None 的必填字段名列表（用于非 bootstrap 模式启动校验）"""
+        required = [
+            "github_app_id",
+            "github_private_key",
+            "github_webhook_secret",
+            "openai_api_key",
+            "database_url",
+            "telegram_bot_token",
+        ]
+        missing = []
+        for field_name in required:
+            if getattr(self, field_name, None) is None:
+                missing.append(field_name)
+        return missing
 
     @property
     def webhook_url(self) -> str:

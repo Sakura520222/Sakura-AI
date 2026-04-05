@@ -6,10 +6,6 @@ from telegram import Bot
 from telegram.helpers import escape_markdown
 from loguru import logger
 
-from backend.core.config import get_settings
-
-settings = get_settings()
-
 
 class NotificationSender:
     """通知发送器"""
@@ -144,7 +140,10 @@ class NotificationSender:
                 f"💡 请联系管理员增加配额"
             )
 
-            target_chat_id = chat_id or int(settings.telegram_default_chat_id)
+            target_chat_id = chat_id
+            if not target_chat_id:
+                logger.warning("无通知目标 chat_id，跳过配额不足通知发送")
+                return
             await self.bot.send_message(
                 chat_id=target_chat_id,
                 text=text,
@@ -154,34 +153,6 @@ class NotificationSender:
 
         except Exception as e:
             logger.error(f"❌ 发送配额不足通知失败: {e}")
-
-    async def send_unauthorized_repo(
-        self,
-        repo_name: str,
-        pr_number: int,
-        chat_id: Optional[int] = None,
-    ):
-        """发送未授权仓库通知（系统告警，仅发管理员）"""
-        try:
-            safe_repo_name = escape_markdown(repo_name, version=1)
-
-            text = (
-                f"🚫 *未授权的仓库*\n\n"
-                f"📦 仓库: {safe_repo_name}\n"
-                f"🔢 PR: #{pr_number}\n\n"
-                f"⚠️ 该仓库未在白名单中，审查已跳过"
-            )
-
-            target_chat_id = chat_id or int(settings.telegram_default_chat_id)
-            await self.bot.send_message(
-                chat_id=target_chat_id,
-                text=text,
-                parse_mode="Markdown",
-            )
-            logger.warning(f"⚠️ 未授权仓库审查请求: {repo_name}#{pr_number}")
-
-        except Exception as e:
-            logger.error(f"❌ 发送未授权通知失败: {e}")
 
     async def send_unauthorized_user(
         self,
@@ -203,7 +174,10 @@ class NotificationSender:
                 f"⚠️ 该用户未注册，审查已跳过"
             )
 
-            target_chat_id = chat_id or int(settings.telegram_default_chat_id)
+            target_chat_id = chat_id
+            if not target_chat_id:
+                logger.warning("无通知目标 chat_id，跳过未注册用户通知发送")
+                return
             await self.bot.send_message(
                 chat_id=target_chat_id,
                 text=text,

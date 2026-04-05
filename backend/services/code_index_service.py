@@ -75,15 +75,29 @@ class CodeIndexService:
         skipped_count = 0
         failed_count = 0
         total_chunks = 0
+        consecutive_failures = 0
 
         async with async_session() as session:
             for file_info in files:
+                # 连续失败 >= 3 次，提前终止索引
+                if consecutive_failures >= 3:
+                    remaining = len(files) - (
+                        indexed_count + skipped_count + failed_count
+                    )
+                    if remaining > 0:
+                        logger.warning(
+                            f"⚠️  Embedding 服务连续失败 {consecutive_failures} 次，"
+                            f"跳过剩余 {remaining} 个文件"
+                        )
+                        failed_count += remaining
+                    break
                 file_path = file_info["path"]
                 content = file_info.get("content")
 
                 if not content:
                     logger.warning(f"文件 {file_path} 没有内容，跳过索引")
                     skipped_count += 1
+                    consecutive_failures = 0
                     continue
 
                 try:
@@ -152,6 +166,7 @@ class CodeIndexService:
                     )
 
                     indexed_count += 1
+                    consecutive_failures = 0
                     logger.debug(
                         f"✅ 已索引文件 {file_path}，生成 {len(chunks)} 个代码块"
                     )
@@ -159,6 +174,7 @@ class CodeIndexService:
                 except Exception as e:
                     logger.error(f"❌ 索引文件 {file_path} 失败: {e}")
                     failed_count += 1
+                    consecutive_failures += 1
 
             # 更新索引状态
             await self._update_code_index_status(

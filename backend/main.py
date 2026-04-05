@@ -9,7 +9,9 @@ import sys
 import asyncio
 
 from backend.core.config import get_settings
+from backend.core.bootstrap import BootstrapMiddleware, is_bootstrap_mode
 from backend.models import init_db
+from backend.webui.routes.setup import router as setup_router
 from backend.api import webhook
 from backend.webui.routes import webui_router
 from backend.telegram import start_telegram_bot, stop_telegram_bot
@@ -33,46 +35,60 @@ async def lifespan(app: FastAPI):
     logger.info("🚀 Sakura AI Reviewer 启动中...")
     logger.info(f"📊 日志级别: {settings.log_level}")
     logger.info(f"🌐 应用域名: {settings.app_domain}")
-    logger.info(f"🤖 OpenAI模型: {settings.openai_model}")
 
-    # 检测默认 JWT 密钥
-    if settings.webui_secret_key == "change-me-in-production":
-        logger.warning(
-            "⚠️  WebUI JWT 密钥使用默认值！请设置 WEBUI_SECRET_KEY 环境变量，否则令牌可被伪造。"
-        )
-
-    # 初始化数据库
-    try:
-        await init_db()
-        logger.info("✅ 数据库初始化成功")
-    except Exception as e:
-        logger.error(f"❌ 数据库初始化失败: {e}")
-
-    # 从数据库加载动态配置到 Settings 单例
-    try:
-        from backend.core.config import load_dynamic_configs_to_settings
-
-        await load_dynamic_configs_to_settings()
-    except Exception as e:
-        logger.warning(f"⚠️ 加载动态配置失败: {e}")
-
-    # 启动 Telegram Bot（后台任务）
     telegram_task = None
-    try:
-        telegram_task = asyncio.create_task(start_telegram_bot())
-        logger.info("✅ Telegram Bot 已启动")
-    except Exception as e:
-        logger.error(f"❌ Telegram Bot 启动失败: {e}")
-
-    # 启动 Redis Pub/Sub 监听（SSE 多进程支持）
     redis_listener_task = None
-    try:
-        from backend.webui.sse import start_redis_listener
 
-        redis_listener_task = asyncio.create_task(start_redis_listener())
-        logger.info("✅ SSE Redis Pub/Sub 监听已启动")
-    except Exception as e:
-        logger.error(f"❌ SSE Redis Pub/Sub 监听启动失败: {e}")
+    if not is_bootstrap_mode():
+        # 正常模式：完整启动所有服务
+        logger.info(f"🤖 OpenAI模型: {settings.openai_model}")
+
+        # 检测默认 JWT 密钥
+        if settings.webui_secret_key == "change-me-in-production":
+            logger.warning(
+                "⚠️  WebUI JWT 密钥使用默认值！请设置 WEBUI_SECRET_KEY 环境变量，否则令牌可被伪造。"
+            )
+
+        # 初始化数据库
+        try:
+            await init_db()
+            logger.info("✅ 数据库初始化成功")
+        except Exception as e:
+            logger.error(f"❌ 数据库初始化失败: {e}")
+
+        # 从数据库加载动态配置到 Settings 单例
+        try:
+            from backend.core.config import load_dynamic_configs_to_settings
+
+            await load_dynamic_configs_to_settings()
+        except Exception as e:
+            logger.warning(f"⚠️ 加载动态配置失败: {e}")
+
+        # 动态配置加载后再次校验必填字段（仅警告，不阻止启动）
+        missing = settings.validate_required_fields()
+        if missing:
+            logger.warning(
+                f"⚠️ 以下配置项未设置: {', '.join(missing)}，部分功能可能不可用"
+            )
+
+        # 启动 Telegram Bot（后台任务）
+        try:
+            telegram_task = asyncio.create_task(start_telegram_bot())
+            logger.info("✅ Telegram Bot 已启动")
+        except Exception as e:
+            logger.error(f"❌ Telegram Bot 启动失败: {e}")
+
+        # 启动 Redis Pub/Sub 监听（SSE 多进程支持）
+        try:
+            from backend.webui.sse import start_redis_listener
+
+            redis_listener_task = asyncio.create_task(start_redis_listener())
+            logger.info("✅ SSE Redis Pub/Sub 监听已启动")
+        except Exception as e:
+            logger.error(f"❌ SSE Redis Pub/Sub 监听启动失败: {e}")
+    else:
+        logger.warning("🔧 Bootstrap 模式：仅 Setup Wizard 可用")
+        logger.info("请访问 /setup 完成初始配置")
 
     yield
 
@@ -117,7 +133,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title="Sakura AI Reviewer",
     description="GitHub PR AI代码审查机器人",
-    version="2.6.0",
+    version="2.7.0",
     lifespan=lifespan,
 )
 
@@ -131,7 +147,11 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# Bootstrap 中间件（CORS 之后、路由之前）
+app.add_middleware(BootstrapMiddleware)
+
 # 注册路由
+app.include_router(setup_router)
 app.include_router(webhook.router, prefix="/api/webhook", tags=["Webhook"])
 app.include_router(webui_router)
 
@@ -149,7 +169,7 @@ async def root():
     """根路径"""
     return {
         "service": "Sakura AI Reviewer",
-        "version": "2.6.0",
+        "version": "2.7.0",
         "status": "running",
         "docs": "/docs",
     }

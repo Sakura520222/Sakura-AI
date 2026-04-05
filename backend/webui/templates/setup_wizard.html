@@ -1,0 +1,810 @@
+<!DOCTYPE html>
+<html lang="zh-CN" class="light">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>初始配置 - Sakura AI Reviewer</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        tailwind.config = { darkMode: 'class' }
+    </script>
+    <script defer src="https://unpkg.com/alpinejs@3.x.x/dist/cdn.min.js"></script>
+    <style>
+        [x-cloak] { display: none !important; }
+        @keyframes pulse-dot { 0%, 100% { opacity: 1; } 50% { opacity: 0.3; } }
+        .pulse-dot { animation: pulse-dot 1.5s ease-in-out infinite; }
+    </style>
+</head>
+<body class="bg-gray-50 dark:bg-gray-900 min-h-screen">
+
+<div x-data="setupWizard()" x-init="init()" class="min-h-screen flex flex-col">
+
+    <!-- 顶部进度条 -->
+    <div class="bg-white dark:bg-gray-800 border-b border-gray-200 dark:border-gray-700 px-6 py-4">
+        <div class="max-w-3xl mx-auto">
+            <div class="flex items-center justify-between mb-2">
+                <h1 class="text-lg font-bold text-gray-900 dark:text-white">
+                    🌸 Sakura AI Reviewer 初始配置
+                </h1>
+                <span class="text-sm text-gray-500 dark:text-gray-400" x-text="`步骤 ${currentStep + 1} / ${steps.length}`"></span>
+            </div>
+            <!-- 进度指示器 -->
+            <div class="flex items-center gap-1">
+                <template x-for="(step, idx) in steps" :key="idx">
+                    <div class="flex-1 flex items-center">
+                        <div class="flex-1 h-2 rounded-full transition-all duration-300"
+                             :class="idx < currentStep ? 'bg-pink-500' : idx === currentStep ? 'bg-pink-400' : 'bg-gray-200 dark:bg-gray-600'">
+                        </div>
+                    </div>
+                </template>
+            </div>
+            <div class="flex justify-between mt-1">
+                <template x-for="(step, idx) in steps" :key="idx">
+                    <span class="text-xs transition-colors duration-200"
+                          :class="idx <= currentStep ? 'text-pink-600 dark:text-pink-400 font-medium' : 'text-gray-400 dark:text-gray-500'"
+                          x-text="step.title"></span>
+                </template>
+            </div>
+        </div>
+    </div>
+
+    <!-- 主内容区域 -->
+    <div class="flex-1 flex items-start justify-center px-6 py-8">
+        <div class="w-full max-w-3xl">
+
+            <!-- Step 0: 欢迎 -->
+            <div x-show="currentStep === 0" x-cloak class="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 shadow-sm p-8">
+                <div class="text-center mb-8">
+                    <div class="text-6xl mb-4">🌸</div>
+                    <h2 class="text-2xl font-bold text-gray-900 dark:text-white mb-2">欢迎使用 Sakura AI Reviewer</h2>
+                    <p class="text-gray-600 dark:text-gray-400">GitHub PR/Issue AI 审查机器人</p>
+                </div>
+
+                <div class="space-y-4 mb-8">
+                    <h3 class="font-semibold text-gray-900 dark:text-white">配置向导将引导你完成以下设置：</h3>
+                    <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
+                        <div class="flex items-start gap-3 p-3 rounded-lg bg-pink-50 dark:bg-pink-900/20">
+                            <span class="text-pink-500 mt-0.5">●</span>
+                            <div>
+                                <p class="font-medium text-gray-900 dark:text-white text-sm">数据库与缓存</p>
+                                <p class="text-xs text-gray-500 dark:text-gray-400">MySQL / PostgreSQL / Redis</p>
+                            </div>
+                        </div>
+                        <div class="flex items-start gap-3 p-3 rounded-lg bg-pink-50 dark:bg-pink-900/20">
+                            <span class="text-pink-500 mt-0.5">●</span>
+                            <div>
+                                <p class="font-medium text-gray-900 dark:text-white text-sm">GitHub App</p>
+                                <p class="text-xs text-gray-500 dark:text-gray-400">应用 ID、私钥、Webhook 密钥</p>
+                            </div>
+                        </div>
+                        <div class="flex items-start gap-3 p-3 rounded-lg bg-pink-50 dark:bg-pink-900/20">
+                            <span class="text-pink-500 mt-0.5">●</span>
+                            <div>
+                                <p class="font-medium text-gray-900 dark:text-white text-sm">AI 模型</p>
+                                <p class="text-xs text-gray-500 dark:text-gray-400">OpenAI 或兼容 API</p>
+                            </div>
+                        </div>
+                        <div class="flex items-start gap-3 p-3 rounded-lg bg-blue-50 dark:bg-blue-900/20">
+                            <span class="text-blue-500 mt-0.5">●</span>
+                            <div>
+                                <p class="font-medium text-gray-900 dark:text-white text-sm">RAG 配置（可选）</p>
+                                <p class="text-xs text-gray-500 dark:text-gray-400">嵌入与重排序模型，增强审查质量</p>
+                            </div>
+                        </div>
+                        <div class="flex items-start gap-3 p-3 rounded-lg bg-pink-50 dark:bg-pink-900/20">
+                            <span class="text-pink-500 mt-0.5">●</span>
+                            <div>
+                                <p class="font-medium text-gray-900 dark:text-white text-sm">管理员账户</p>
+                                <p class="text-xs text-gray-500 dark:text-gray-400">设置 WebUI 管理员</p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="p-4 bg-yellow-50 dark:bg-yellow-900/20 rounded-lg border border-yellow-200 dark:border-yellow-800">
+                    <p class="text-sm text-yellow-800 dark:text-yellow-200">
+                        <strong>前置条件：</strong>你需要一个 GitHub 账号，以及一个已创建的 GitHub App。
+                        如果还没有创建 GitHub App，<a href="https://docs.github.com/en/apps/creating-github-apps" target="_blank" class="underline text-yellow-700 dark:text-yellow-300 hover:text-yellow-600">点击这里查看创建指南</a>。
+                    </p>
+                </div>
+            </div>
+
+            <!-- Step 1: 数据库配置 -->
+            <div x-show="currentStep === 1" x-cloak class="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 shadow-sm p-8">
+                <h2 class="text-xl font-bold text-gray-900 dark:text-white mb-1">数据库配置</h2>
+                <p class="text-sm text-gray-500 dark:text-gray-400 mb-6">用于存储审查记录、用户配额等数据</p>
+
+                <div class="space-y-5">
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+                            数据库连接字符串 <span class="text-red-500">*</span>
+                        </label>
+                        <p class="text-xs text-gray-500 dark:text-gray-400 mb-2">
+                            支持 MySQL 和 PostgreSQL。应用会自动创建所需的数据表。
+                        </p>
+                        <input type="text" x-model="form.database_url"
+                               placeholder="mysql+aiomysql://user:password@localhost:3306/pr_reviewer"
+                               class="w-full px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-sm text-gray-900 dark:text-white focus:ring-2 focus:ring-pink-500 focus:border-transparent outline-none">
+                        <p class="text-xs text-gray-400 dark:text-gray-500 mt-1">
+                            格式: mysql+aiomysql://用户名:密码@主机:端口/数据库名
+                        </p>
+                    </div>
+
+                    <button @click="testConnection('database')"
+                            :disabled="!form.database_url || testing"
+                            class="px-4 py-2 text-sm font-medium rounded-lg border border-gray-300 dark:border-gray-600 hover:bg-gray-50 dark:hover:bg-gray-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors text-gray-700 dark:text-gray-300">
+                        <span x-show="!testing">测试连接</span>
+                        <span x-show="testing" class="flex items-center gap-2">
+                            <span class="pulse-dot">●</span> 测试中...
+                        </span>
+                    </button>
+
+                    <!-- 测试结果 -->
+                    <div x-show="testResults.database" x-cloak
+                         class="p-3 rounded-lg text-sm"
+                         :class="testResults.database?.success ? 'bg-green-50 dark:bg-green-900/20 text-green-700 dark:text-green-300 border border-green-200 dark:border-green-800' : 'bg-red-50 dark:bg-red-900/20 text-red-700 dark:text-red-300 border border-red-200 dark:border-red-800'"
+                         x-text="testResults.database?.message">
+                    </div>
+
+                    <hr class="border-gray-200 dark:border-gray-700">
+
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+                            Redis 连接地址 <span class="text-red-500">*</span>
+                        </label>
+                        <p class="text-xs text-gray-500 dark:text-gray-400 mb-2">
+                            用于 SSE 实时推送和缓存。Docker 部署默认使用 <code class="text-xs bg-gray-100 dark:bg-gray-600 px-1 rounded">redis://127.0.0.1:6379/0</code>，
+                            本地测试可改为 <code class="text-xs bg-gray-100 dark:bg-gray-600 px-1 rounded">redis://127.0.0.1:6379/0</code>。
+                        </p>
+                        <input type="text" x-model="form.redis_url"
+                               placeholder="redis://127.0.0.1:6379/0"
+                               class="w-full px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-sm text-gray-900 dark:text-white focus:ring-2 focus:ring-pink-500 focus:border-transparent outline-none">
+                    </div>
+
+                    <button @click="testConnection('redis')"
+                            :disabled="!form.redis_url || testing"
+                            class="px-4 py-2 text-sm font-medium rounded-lg border border-gray-300 dark:border-gray-600 hover:bg-gray-50 dark:hover:bg-gray-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors text-gray-700 dark:text-gray-300">
+                        <span x-show="!testing">测试 Redis</span>
+                        <span x-show="testing" class="flex items-center gap-2">
+                            <span class="pulse-dot">●</span> 测试中...
+                        </span>
+                    </button>
+
+                    <div x-show="testResults.redis" x-cloak
+                         class="p-3 rounded-lg text-sm"
+                         :class="testResults.redis?.success ? 'bg-green-50 dark:bg-green-900/20 text-green-700 dark:text-green-300 border border-green-200 dark:border-green-800' : 'bg-red-50 dark:bg-red-900/20 text-red-700 dark:text-red-300 border border-red-200 dark:border-red-800'"
+                         x-text="testResults.redis?.message">
+                    </div>
+                </div>
+            </div>
+
+            <!-- Step 2: GitHub App 配置 -->
+            <div x-show="currentStep === 2" x-cloak class="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 shadow-sm p-8">
+                <h2 class="text-xl font-bold text-gray-900 dark:text-white mb-1">GitHub App 配置</h2>
+                <p class="text-sm text-gray-500 dark:text-gray-400 mb-6">用于接收 Webhook 事件和发表审查评论</p>
+
+                <div class="space-y-5">
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+                            GitHub App ID <span class="text-red-500">*</span>
+                        </label>
+                        <p class="text-xs text-gray-500 dark:text-gray-400 mb-2">在 GitHub App 设置页面的 General 中可以找到</p>
+                        <input type="text" x-model="form.github_app_id"
+                               placeholder="123456"
+                               class="w-full px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-sm text-gray-900 dark:text-white focus:ring-2 focus:ring-pink-500 focus:border-transparent outline-none">
+                    </div>
+
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+                            GitHub App Private Key <span class="text-red-500">*</span>
+                        </label>
+                        <p class="text-xs text-gray-500 dark:text-gray-400 mb-2">在 GitHub App 设置页面生成并下载 .pem 文件，粘贴完整内容</p>
+                        <textarea x-model="form.github_private_key" rows="5"
+                                  placeholder="-----BEGIN RSA PRIVATE KEY-----&#10;...&#10;-----END RSA PRIVATE KEY-----"
+                                  class="w-full px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-sm text-gray-900 dark:text-white focus:ring-2 focus:ring-pink-500 focus:border-transparent outline-none font-mono"></textarea>
+                    </div>
+
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+                            Webhook Secret <span class="text-red-500">*</span>
+                        </label>
+                        <p class="text-xs text-gray-500 dark:text-gray-400 mb-2">在 GitHub App 设置页面的 Webhook 部分配置的密钥</p>
+                        <input type="text" x-model="form.github_webhook_secret"
+                               placeholder="your-webhook-secret"
+                               class="w-full px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-sm text-gray-900 dark:text-white focus:ring-2 focus:ring-pink-500 focus:border-transparent outline-none">
+                    </div>
+
+                    <button @click="testConnection('github')"
+                            :disabled="!form.github_app_id || !form.github_private_key || testing"
+                            class="px-4 py-2 text-sm font-medium rounded-lg border border-gray-300 dark:border-gray-600 hover:bg-gray-50 dark:hover:bg-gray-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors text-gray-700 dark:text-gray-300">
+                        <span x-show="!testing">测试 GitHub App</span>
+                        <span x-show="testing" class="flex items-center gap-2">
+                            <span class="pulse-dot">●</span> 测试中...
+                        </span>
+                    </button>
+
+                    <div x-show="testResults.github" x-cloak
+                         class="p-3 rounded-lg text-sm"
+                         :class="testResults.github?.success ? 'bg-green-50 dark:bg-green-900/20 text-green-700 dark:text-green-300 border border-green-200 dark:border-green-800' : 'bg-red-50 dark:bg-red-900/20 text-red-700 dark:text-red-300 border border-red-200 dark:border-red-800'"
+                         x-text="testResults.github?.message">
+                    </div>
+                </div>
+            </div>
+
+            <!-- Step 3: AI & 通知配置 -->
+            <div x-show="currentStep === 3" x-cloak class="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 shadow-sm p-8">
+                <h2 class="text-xl font-bold text-gray-900 dark:text-white mb-1">AI 模型与通知配置</h2>
+                <p class="text-sm text-gray-500 dark:text-gray-400 mb-6">配置 AI 审查模型和 Telegram 通知（均必需）</p>
+
+                <div class="space-y-5">
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+                            AI API Key <span class="text-red-500">*</span>
+                        </label>
+                        <p class="text-xs text-gray-500 dark:text-gray-400 mb-2">支持 OpenAI、DeepSeek、SiliconFlow 等兼容 API 的 Key</p>
+                        <input type="password" x-model="form.openai_api_key"
+                               placeholder="sk-..."
+                               class="w-full px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-sm text-gray-900 dark:text-white focus:ring-2 focus:ring-pink-500 focus:border-transparent outline-none">
+                    </div>
+
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+                            API Base URL
+                        </label>
+                        <p class="text-xs text-gray-500 dark:text-gray-400 mb-2">如使用非 OpenAI 的兼容 API，修改此项</p>
+                        <input type="text" x-model="form.openai_api_base"
+                               class="w-full px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-sm text-gray-900 dark:text-white focus:ring-2 focus:ring-pink-500 focus:border-transparent outline-none">
+                    </div>
+
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+                            AI 模型名称
+                        </label>
+                        <!-- 有可用模型列表时显示下拉选择 -->
+                        <template x-if="_availableModels && _availableModels.length > 0">
+                            <select x-model="form.openai_model"
+                                    class="w-full px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-sm text-gray-900 dark:text-white focus:ring-2 focus:ring-pink-500 focus:border-transparent outline-none">
+                                <template x-for="m in _availableModels" :key="m">
+                                    <option :value="m" x-text="m"></option>
+                                </template>
+                            </select>
+                        </template>
+                        <!-- 无模型列表时显示手动输入 -->
+                        <template x-if="!_availableModels || _availableModels.length === 0">
+                            <input type="text" x-model="form.openai_model"
+                                   class="w-full px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-sm text-gray-900 dark:text-white focus:ring-2 focus:ring-pink-500 focus:border-transparent outline-none">
+                        </template>
+                        <p class="text-xs text-gray-400 dark:text-gray-500 mt-1">测试 API 后自动获取可用模型</p>
+                    </div>
+
+                    <button @click="testConnection('openai')"
+                            :disabled="!form.openai_api_key || testing"
+                            class="px-4 py-2 text-sm font-medium rounded-lg border border-gray-300 dark:border-gray-600 hover:bg-gray-50 dark:hover:bg-gray-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors text-gray-700 dark:text-gray-300">
+                        <span x-show="!testing">测试 AI API</span>
+                        <span x-show="testing" class="flex items-center gap-2">
+                            <span class="pulse-dot">●</span> 测试中...
+                        </span>
+                    </button>
+
+                    <div x-show="testResults.openai" x-cloak
+                         class="p-3 rounded-lg text-sm"
+                         :class="testResults.openai?.success ? 'bg-green-50 dark:bg-green-900/20 text-green-700 dark:text-green-300 border border-green-200 dark:border-green-800' : 'bg-red-50 dark:bg-red-900/20 text-red-700 dark:text-red-300 border border-red-200 dark:border-red-800'"
+                         x-text="testResults.openai?.message">
+                    </div>
+
+                    <!-- RAG 嵌入与重排序配置（可选） -->
+                    <div x-data="{ ragOpen: false }" class="border border-gray-200 dark:border-gray-700 rounded-lg overflow-hidden">
+                        <button @click="ragOpen = !ragOpen" type="button"
+                                class="w-full flex items-center justify-between px-4 py-3 bg-gray-50 dark:bg-gray-750 hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors">
+                            <span class="text-sm font-medium text-gray-700 dark:text-gray-300">RAG 嵌入与重排序配置（可选）</span>
+                            <svg class="w-4 h-4 text-gray-400 transition-transform" :class="ragOpen ? 'rotate-180' : ''" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"></path>
+                            </svg>
+                        </button>
+                        <div x-show="ragOpen" x-cloak class="px-4 py-4 space-y-4 bg-white dark:bg-gray-800">
+                            <p class="text-xs text-gray-500 dark:text-gray-400">
+                                RAG 功能用于代码向量检索，增强 AI 审查质量。留空则使用默认配置（SiliconFlow），若嵌入 API Key 为空则自动禁用 RAG。
+                            </p>
+
+                            <div>
+                                <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+                                    嵌入 API Key
+                                </label>
+                                <p class="text-xs text-gray-500 dark:text-gray-400 mb-2">留空则使用上方的 AI API Key</p>
+                                <input type="password" x-model="form.embedding_api_key"
+                                       placeholder="sk-..."
+                                       class="w-full px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-sm text-gray-900 dark:text-white focus:ring-2 focus:ring-pink-500 focus:border-transparent outline-none">
+                            </div>
+
+                            <div>
+                                <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+                                    嵌入 API 地址
+                                </label>
+                                <input type="text" x-model="form.embedding_base_url"
+                                       placeholder="https://api.siliconflow.cn/v1"
+                                       class="w-full px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-sm text-gray-900 dark:text-white focus:ring-2 focus:ring-pink-500 focus:border-transparent outline-none">
+                            </div>
+
+                            <div>
+                                <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+                                    嵌入模型
+                                </label>
+                                <input type="text" x-model="form.embedding_model"
+                                       placeholder="BAAI/bge-m3"
+                                       class="w-full px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-sm text-gray-900 dark:text-white focus:ring-2 focus:ring-pink-500 focus:border-transparent outline-none">
+                            </div>
+
+                            <hr class="border-gray-200 dark:border-gray-700">
+
+                            <div>
+                                <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+                                    重排序 API Key
+                                </label>
+                                <p class="text-xs text-gray-500 dark:text-gray-400 mb-2">留空则使用嵌入 API Key</p>
+                                <input type="password" x-model="form.rerank_api_key"
+                                       placeholder="sk-..."
+                                       class="w-full px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-sm text-gray-900 dark:text-white focus:ring-2 focus:ring-pink-500 focus:border-transparent outline-none">
+                            </div>
+
+                            <div>
+                                <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+                                    重排序 API 地址
+                                </label>
+                                <input type="text" x-model="form.rerank_base_url"
+                                       placeholder="https://api.siliconflow.cn/v1/rerank"
+                                       class="w-full px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-sm text-gray-900 dark:text-white focus:ring-2 focus:ring-pink-500 focus:border-transparent outline-none">
+                            </div>
+
+                            <div>
+                                <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+                                    重排序模型
+                                </label>
+                                <input type="text" x-model="form.rerank_model"
+                                       placeholder="BAAI/bge-reranker-v2-m3"
+                                       class="w-full px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-sm text-gray-900 dark:text-white focus:ring-2 focus:ring-pink-500 focus:border-transparent outline-none">
+                            </div>
+                        </div>
+                    </div>
+
+                    <hr class="border-gray-200 dark:border-gray-700">
+
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+                            Telegram Bot Token <span class="text-red-500">*</span>
+                        </label>
+                        <p class="text-xs text-gray-500 dark:text-gray-400 mb-2">
+                            用于发送审查通知和用户管理。通过 <a href="https://t.me/BotFather" target="_blank" class="underline text-pink-500">@BotFather</a> 创建 Bot 获取。
+                        </p>
+                        <input type="text" x-model="form.telegram_bot_token"
+                               placeholder="123456:ABC-DEF..."
+                               class="w-full px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-sm text-gray-900 dark:text-white focus:ring-2 focus:ring-pink-500 focus:border-transparent outline-none">
+                    </div>
+
+                    <button @click="testConnection('telegram')"
+                            :disabled="!form.telegram_bot_token || testing"
+                            class="px-4 py-2 text-sm font-medium rounded-lg border border-gray-300 dark:border-gray-600 hover:bg-gray-50 dark:hover:bg-gray-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors text-gray-700 dark:text-gray-300">
+                        测试 Telegram Bot
+                    </button>
+
+                    <div x-show="testResults.telegram" x-cloak
+                         class="p-3 rounded-lg text-sm"
+                         :class="testResults.telegram?.success ? 'bg-green-50 dark:bg-green-900/20 text-green-700 dark:text-green-300 border border-green-200 dark:border-green-800' : 'bg-red-50 dark:bg-red-900/20 text-red-700 dark:text-red-300 border border-red-200 dark:border-red-800'"
+                         x-text="testResults.telegram?.message">
+                    </div>
+                </div>
+            </div>
+
+            <!-- Step 4: 管理员配置 -->
+            <div x-show="currentStep === 4" x-cloak class="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 shadow-sm p-8">
+                <h2 class="text-xl font-bold text-gray-900 dark:text-white mb-1">管理员配置</h2>
+                <p class="text-sm text-gray-500 dark:text-gray-400 mb-6">设置超级管理员账户信息</p>
+
+                <div class="space-y-5">
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+                            管理员 GitHub 用户名 <span class="text-red-500">*</span>
+                        </label>
+                        <p class="text-xs text-gray-500 dark:text-gray-400 mb-2">
+                            用于通过 GitHub OAuth 登录 WebUI 管理界面。请确保输入你真实的 GitHub 用户名。
+                        </p>
+                        <input type="text" x-model="form.admin_github_username"
+                               placeholder="your-github-username"
+                               class="w-full px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-sm text-gray-900 dark:text-white focus:ring-2 focus:ring-pink-500 focus:border-transparent outline-none">
+                    </div>
+
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+                            管理员 Telegram ID <span class="text-red-500">*</span>
+                        </label>
+                        <p class="text-xs text-gray-500 dark:text-gray-400 mb-2">
+                            用于绑定 Telegram 账户。在 Telegram 中搜索 <a href="https://t.me/userinfobot" target="_blank" class="underline text-pink-500">@userinfobot</a> 并发送任意消息即可获取你的 ID。
+                        </p>
+                        <input type="text" x-model="form.admin_telegram_id"
+                               placeholder="123456789"
+                               class="w-full px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-sm text-gray-900 dark:text-white focus:ring-2 focus:ring-pink-500 focus:border-transparent outline-none">
+                    </div>
+
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+                            应用域名
+                        </label>
+                        <p class="text-xs text-gray-500 dark:text-gray-400 mb-2">
+                            Webhook 回调和 OAuth 回调使用此域名。本地测试可使用 localhost。
+                        </p>
+                        <input type="text" x-model="form.app_domain"
+                               placeholder="localhost 或 your-domain.com"
+                               class="w-full px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-sm text-gray-900 dark:text-white focus:ring-2 focus:ring-pink-500 focus:border-transparent outline-none">
+                    </div>
+
+                    <hr class="border-gray-200 dark:border-gray-700">
+
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+                            GitHub OAuth Client ID <span class="text-red-500">*</span>
+                        </label>
+                        <p class="text-xs text-gray-500 dark:text-gray-400 mb-2">
+                            在 <a href="https://github.com/settings/developers" target="_blank" class="underline text-pink-500">GitHub Settings → Developer settings → OAuth Apps</a> 中创建 OAuth App 获取。
+                        </p>
+                        <input type="text" x-model="form.github_oauth_client_id"
+                               placeholder="Ov23li..."
+                               class="w-full px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-sm text-gray-900 dark:text-white focus:ring-2 focus:ring-pink-500 focus:border-transparent outline-none">
+                    </div>
+
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+                            GitHub OAuth Client Secret <span class="text-red-500">*</span>
+                        </label>
+                        <input type="password" x-model="form.github_oauth_client_secret"
+                               placeholder="your-client-secret"
+                               class="w-full px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-sm text-gray-900 dark:text-white focus:ring-2 focus:ring-pink-500 focus:border-transparent outline-none">
+                    </div>
+
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+                            OAuth 回调地址 <span class="text-red-500">*</span>
+                        </label>
+                        <p class="text-xs text-gray-500 dark:text-gray-400 mb-2">
+                            必须与 GitHub OAuth App 中配置的 Authorization callback URL 一致。
+                            点击下方的"生成回调地址"可自动填写。
+                        </p>
+                        <div class="flex gap-2">
+                            <input type="text" x-model="form.github_oauth_redirect_uri"
+                                   placeholder="https://your-domain.com/webui/auth/callback"
+                                   class="flex-1 px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-sm text-gray-900 dark:text-white focus:ring-2 focus:ring-pink-500 focus:border-transparent outline-none">
+                            <button @click="generateOAuthCallback()"
+                                    :disabled="!form.app_domain"
+                                    class="px-3 py-2 text-xs font-medium rounded-lg border border-gray-300 dark:border-gray-600 hover:bg-gray-50 dark:hover:bg-gray-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors text-gray-700 dark:text-gray-300 whitespace-nowrap">
+                                生成回调地址
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 底部导航按钮 -->
+            <div class="flex justify-between mt-6">
+                <button x-show="currentStep > 0" @click="prevStep()"
+                        class="px-6 py-2.5 border border-gray-300 dark:border-gray-600 rounded-lg text-sm font-medium text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors">
+                    上一步
+                </button>
+                <div x-show="currentStep === 0"></div>
+
+                <button x-show="currentStep < steps.length - 1" @click="nextStep()"
+                        :disabled="!canProceed"
+                        class="px-6 py-2.5 bg-pink-500 text-white rounded-lg text-sm font-medium hover:bg-pink-600 disabled:opacity-50 disabled:cursor-not-allowed transition-colors">
+                    下一步
+                </button>
+
+                <button x-show="currentStep === steps.length - 1" @click="completeSetup()"
+                        :disabled="!canComplete || completing"
+                        class="px-6 py-2.5 bg-pink-500 text-white rounded-lg text-sm font-medium hover:bg-pink-600 disabled:opacity-50 disabled:cursor-not-allowed transition-colors">
+                    <span x-show="!completing">完成配置</span>
+                    <span x-show="completing" class="flex items-center gap-2">
+                        <span class="pulse-dot">●</span> 配置中...
+                    </span>
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- 重启等待遮罩 -->
+    <div x-show="restarting" x-cloak
+         class="fixed inset-0 bg-black/60 flex items-center justify-center z-50"
+         x-transition:enter="transition ease-out duration-300"
+         x-transition:enter-start="opacity-0"
+         x-transition:enter-end="opacity-100">
+        <div class="bg-white dark:bg-gray-800 rounded-2xl p-8 max-w-md mx-4 text-center shadow-2xl">
+            <div class="text-4xl mb-4">🌸</div>
+            <h3 class="text-lg font-bold text-gray-900 dark:text-white mb-2">配置完成！</h3>
+            <p class="text-sm text-gray-600 dark:text-gray-400 mb-4">应用正在重启中，请稍候...</p>
+            <div class="flex justify-center gap-1.5 mb-4">
+                <span class="w-2 h-2 rounded-full bg-pink-500 pulse-dot" style="animation-delay: 0s"></span>
+                <span class="w-2 h-2 rounded-full bg-pink-500 pulse-dot" style="animation-delay: 0.3s"></span>
+                <span class="w-2 h-2 rounded-full bg-pink-500 pulse-dot" style="animation-delay: 0.6s"></span>
+            </div>
+            <p class="text-xs text-gray-400 dark:text-gray-500" x-text="restartMessage"></p>
+            <div x-show="restartError" class="mt-4">
+                <p class="text-sm text-red-600 dark:text-red-400 mb-2">重启超时，请手动刷新页面</p>
+                <button @click="window.location.reload()"
+                        class="px-4 py-2 bg-pink-500 text-white rounded-lg text-sm font-medium hover:bg-pink-600">
+                    刷新页面
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- 全局错误提示 -->
+    <div x-show="error" x-cloak
+         class="fixed bottom-4 right-4 max-w-sm bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg p-4 shadow-lg"
+         x-transition>
+        <p class="text-sm text-red-700 dark:text-red-300" x-text="error"></p>
+        <button @click="error = ''" class="absolute top-2 right-2 text-red-400 hover:text-red-600 text-lg">&times;</button>
+    </div>
+</div>
+
+<script>
+function setupWizard() {
+    return {
+        currentStep: 0,
+        steps: [
+            { title: '欢迎' },
+            { title: '数据库' },
+            { title: 'GitHub App' },
+            { title: 'AI 与通知' },
+            { title: '管理员' },
+        ],
+        form: {
+            database_url: '',
+            redis_url: 'redis://127.0.0.1:6379/0',
+            github_app_id: '',
+            github_private_key: '',
+            github_webhook_secret: '',
+            openai_api_key: '',
+            openai_api_base: 'https://api.openai.com/v1',
+            openai_model: 'gpt-4',
+            embedding_api_key: '',
+            embedding_base_url: 'https://api.siliconflow.cn/v1',
+            embedding_model: 'BAAI/bge-m3',
+            rerank_api_key: '',
+            rerank_base_url: 'https://api.siliconflow.cn/v1/rerank',
+            rerank_model: 'BAAI/bge-reranker-v2-m3',
+            telegram_bot_token: '',
+            admin_github_username: '',
+            admin_telegram_id: '',
+            app_domain: 'localhost',
+            github_oauth_client_id: '',
+            github_oauth_client_secret: '',
+            github_oauth_redirect_uri: '',
+            bot_username: '',
+        },
+        testResults: {},
+        _availableModels: [],
+        testing: false,
+        completing: false,
+        restarting: false,
+        restartError: false,
+        restartMessage: '',
+        error: '',
+
+        get canProceed() {
+            switch (this.currentStep) {
+                case 0: return true;
+                case 1: return this.form.database_url.trim() !== '' && this.testResults.database?.success && this.form.redis_url.trim() !== '' && this.testResults.redis?.success;
+                case 2: return this.form.github_app_id.trim() !== '' && this.form.github_private_key.trim() !== '' && this.form.github_webhook_secret.trim() !== '' && this.testResults.github?.success;
+                case 3: return this.form.openai_api_key.trim() !== '' && this.testResults.openai?.success && this.form.telegram_bot_token.trim() !== '';
+                default: return false;
+            }
+        },
+
+        get canComplete() {
+            return this.form.admin_github_username.trim() !== '' && this.form.admin_telegram_id.trim() !== '' && this.form.app_domain.trim() !== '' && this.form.github_oauth_client_id.trim() !== '' && this.form.github_oauth_client_secret.trim() !== '' && this.form.github_oauth_redirect_uri.trim() !== '';
+        },
+
+        generateOAuthCallback() {
+            let domain = this.form.app_domain.trim().replace(/^https?:\/\//, '');
+            if (!domain) return;
+            const proto = domain.startsWith('localhost') ? 'http' : 'https';
+            this.form.github_oauth_redirect_uri = `${proto}://${domain}/webui/auth/callback`;
+        },
+
+        async init() {
+            // 从服务端获取已保存的步骤状态
+            try {
+                const resp = await fetch('/setup/api/state');
+                const data = await resp.json();
+                if (data.state === 'completed') {
+                    window.location.href = '/webui/';
+                    return;
+                }
+                if (data.current_step > 0) {
+                    this.currentStep = data.current_step;
+                }
+            } catch (e) {
+                // 忽略，从第 0 步开始
+            }
+        },
+
+        prevStep() {
+            if (this.currentStep > 0) {
+                this.currentStep--;
+            }
+        },
+
+        async nextStep() {
+            if (!this.canProceed) return;
+
+            // 保存当前步骤配置
+            const envMap = this._getStepEnvMap();
+            if (Object.keys(envMap).length > 0) {
+                try {
+                    const resp = await fetch('/setup/api/save-step', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ values: envMap }),
+                    });
+                    const data = await resp.json();
+                    if (!data.success) {
+                        this.error = data.message;
+                        return;
+                    }
+                } catch (e) {
+                    this.error = '保存配置失败，请重试';
+                    return;
+                }
+            }
+            this.currentStep++;
+        },
+
+        async testConnection(type) {
+            this.testing = true;
+            this.testResults[type] = null;
+
+            try {
+                let body = { type };
+                switch (type) {
+                    case 'database':
+                        body.url = this.form.database_url;
+                        break;
+                    case 'redis':
+                        body.url = this.form.redis_url;
+                        break;
+                    case 'github':
+                        body.app_id = this.form.github_app_id;
+                        body.private_key = this.form.github_private_key;
+                        break;
+                    case 'openai':
+                        body.api_key = this.form.openai_api_key;
+                        body.api_base = this.form.openai_api_base;
+                        break;
+                    case 'telegram':
+                        body.token = this.form.telegram_bot_token;
+                        break;
+                }
+
+                const resp = await fetch('/setup/api/test-connection', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(body),
+                });
+                this.testResults[type] = await resp.json();
+                // GitHub App 测试成功时自动获取 bot_username
+                if (type === 'github' && this.testResults[type]?.success && this.testResults[type]?.bot_username) {
+                    this.form.bot_username = this.testResults[type].bot_username;
+                }
+                // OpenAI 测试成功时保存可用模型列表
+                if (type === 'openai' && this.testResults[type]?.success && this.testResults[type]?.models) {
+                    this._availableModels = this.testResults[type].models;
+                }
+            } catch (e) {
+                this.testResults[type] = { success: false, message: '请求失败: ' + e.message };
+            } finally {
+                this.testing = false;
+            }
+        },
+
+        async completeSetup() {
+            if (!this.canComplete) return;
+            this.completing = true;
+
+            try {
+                const envMap = this._getCompleteEnvMap();
+                const resp = await fetch('/setup/api/complete', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(envMap),
+                });
+                const data = await resp.json();
+
+                if (data.success) {
+                    this.restarting = true;
+                    this.restartMessage = '正在等待应用重启...';
+                    await this.waitForRestart();
+                } else {
+                    this.error = data.message;
+                }
+            } catch (e) {
+                this.error = '配置失败: ' + e.message;
+            } finally {
+                this.completing = false;
+            }
+        },
+
+        async waitForRestart() {
+            const maxAttempts = 60;
+            for (let i = 0; i < maxAttempts; i++) {
+                this.restartMessage = `正在等待应用重启... (${i + 1}/${maxAttempts})`;
+                await new Promise(r => setTimeout(r, 2000));
+                try {
+                    const resp = await fetch('/health');
+                    if (resp.ok) {
+                        window.location.href = '/webui/auth/login';
+                        return;
+                    }
+                } catch (e) {
+                    // 应用还在重启中
+                }
+            }
+            this.restartError = true;
+            this.restartMessage = '重启超时';
+        },
+
+        _getStepEnvMap() {
+            const map = {};
+            switch (this.currentStep) {
+                case 1:
+                    if (this.form.database_url) map.DATABASE_URL = this.form.database_url;
+                    if (this.form.redis_url) map.REDIS_URL = this.form.redis_url;
+                    break;
+                case 2:
+                    if (this.form.github_app_id) map.GITHUB_APP_ID = this.form.github_app_id;
+                    if (this.form.github_private_key) map.GITHUB_PRIVATE_KEY = this.form.github_private_key;
+                    if (this.form.github_webhook_secret) map.GITHUB_WEBHOOK_SECRET = this.form.github_webhook_secret;
+                    break;
+                case 3:
+                    if (this.form.openai_api_key) map.OPENAI_API_KEY = this.form.openai_api_key;
+                    if (this.form.openai_api_base) map.OPENAI_API_BASE = this.form.openai_api_base;
+                    if (this.form.openai_model) map.OPENAI_MODEL = this.form.openai_model;
+                    if (this.form.embedding_api_key) map.EMBEDDING_API_KEY = this.form.embedding_api_key;
+                    if (this.form.embedding_base_url) map.EMBEDDING_BASE_URL = this.form.embedding_base_url;
+                    if (this.form.embedding_model) map.EMBEDDING_MODEL = this.form.embedding_model;
+                    if (this.form.rerank_api_key) map.RERANK_API_KEY = this.form.rerank_api_key;
+                    if (this.form.rerank_base_url) map.RERANK_BASE_URL = this.form.rerank_base_url;
+                    if (this.form.rerank_model) map.RERANK_MODEL = this.form.rerank_model;
+                    if (this.form.telegram_bot_token) map.TELEGRAM_BOT_TOKEN = this.form.telegram_bot_token;
+                    break;
+            }
+            return map;
+        },
+
+        _getCompleteEnvMap() {
+            const map = {};
+            if (this.form.database_url) map.DATABASE_URL = this.form.database_url;
+            if (this.form.redis_url) map.REDIS_URL = this.form.redis_url;
+            if (this.form.github_app_id) map.GITHUB_APP_ID = this.form.github_app_id;
+            if (this.form.github_private_key) map.GITHUB_PRIVATE_KEY = this.form.github_private_key;
+            if (this.form.github_webhook_secret) map.GITHUB_WEBHOOK_SECRET = this.form.github_webhook_secret;
+            if (this.form.bot_username) map.BOT_USERNAME = this.form.bot_username;
+            if (this.form.openai_api_key) map.OPENAI_API_KEY = this.form.openai_api_key;
+            if (this.form.openai_api_base) map.OPENAI_API_BASE = this.form.openai_api_base;
+            if (this.form.openai_model) map.OPENAI_MODEL = this.form.openai_model;
+            if (this.form.embedding_api_key) map.EMBEDDING_API_KEY = this.form.embedding_api_key;
+            if (this.form.embedding_base_url) map.EMBEDDING_BASE_URL = this.form.embedding_base_url;
+            if (this.form.embedding_model) map.EMBEDDING_MODEL = this.form.embedding_model;
+            if (this.form.rerank_api_key) map.RERANK_API_KEY = this.form.rerank_api_key;
+            if (this.form.rerank_base_url) map.RERANK_BASE_URL = this.form.rerank_base_url;
+            if (this.form.rerank_model) map.RERANK_MODEL = this.form.rerank_model;
+            if (this.form.telegram_bot_token) map.TELEGRAM_BOT_TOKEN = this.form.telegram_bot_token;
+            if (this.form.app_domain) map.APP_DOMAIN = this.form.app_domain;
+            if (this.form.admin_github_username) map.ADMIN_GITHUB_USERNAME = this.form.admin_github_username;
+            if (this.form.admin_telegram_id) map.ADMIN_TELEGRAM_ID = this.form.admin_telegram_id;
+            if (this.form.github_oauth_client_id) map.GITHUB_OAUTH_CLIENT_ID = this.form.github_oauth_client_id;
+            if (this.form.github_oauth_client_secret) map.GITHUB_OAUTH_CLIENT_SECRET = this.form.github_oauth_client_secret;
+            if (this.form.github_oauth_redirect_uri) map.GITHUB_OAUTH_REDIRECT_URI = this.form.github_oauth_redirect_uri;
+            return map;
+        },
+    }
+}
+</script>
+
+</body>
+</html>

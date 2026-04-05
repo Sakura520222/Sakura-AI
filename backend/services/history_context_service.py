@@ -150,9 +150,12 @@ class HistoryContextService:
                     if c.severity not in ("critical", "major")
                 ]
                 half = MAX_COMMENTS_PER_REVIEW // 2
-                selected = critical_comments[:half] + other_comments[
-                    : MAX_COMMENTS_PER_REVIEW - len(critical_comments[:half])
-                ]
+                selected = (
+                    critical_comments[:half]
+                    + other_comments[
+                        : MAX_COMMENTS_PER_REVIEW - len(critical_comments[:half])
+                    ]
+                )
 
                 if selected:
                     section.append("- 关键评论:")
@@ -166,9 +169,7 @@ class HistoryContextService:
                             if comment.line_number:
                                 location += f":{comment.line_number}"
                             location += "]"
-                        section.append(
-                            f"  - [{comment.severity}]{location}: {content}"
-                        )
+                        section.append(f"  - [{comment.severity}]{location}: {content}")
 
             parts.append("\n".join(section))
 
@@ -183,7 +184,10 @@ class HistoryContextService:
         response = await self.api_client.call_with_retry(
             messages=[
                 {"role": "system", "content": self._build_summary_system_prompt()},
-                {"role": "user", "content": self._build_summary_user_prompt(history_text)},
+                {
+                    "role": "user",
+                    "content": self._build_summary_user_prompt(history_text),
+                },
             ],
             model=settings.openai_model,
             temperature=HISTORY_SUMMARY_TEMPERATURE,
@@ -193,7 +197,9 @@ class HistoryContextService:
         if not response or not response.choices:
             logger.warning("AI 摘要生成返回空响应")
             return None
-        content = response.choices[0].message.content if response.choices[0].message else None
+        content = (
+            response.choices[0].message.content if response.choices[0].message else None
+        )
         return content.strip() if content else None
 
     @staticmethod
