@@ -33,19 +33,21 @@ from backend.webui.deps import (
 from backend.webui.helpers.admin_log import log_admin_action
 
 # 基础配置项（非动态配置），用于 WebUI 配置页面分组展示及 Settings 即时更新
-_BASIC_CONFIG_KEYS = frozenset({
-    "max_concurrent_reviews",
-    "review_timeout_seconds",
-    "enable_auto_review",
-    "issue_auto_create_labels",
-    "issue_max_tool_iterations",
-    "web_search_enabled",
-    "web_search_provider",
-    "web_search_api_key",
-    "web_search_max_results",
-    "web_search_max_content_length",
-    "web_search_timeout",
-})
+_BASIC_CONFIG_KEYS = frozenset(
+    {
+        "max_concurrent_reviews",
+        "review_timeout_seconds",
+        "enable_auto_review",
+        "issue_auto_create_labels",
+        "issue_max_tool_iterations",
+        "web_search_enabled",
+        "web_search_provider",
+        "web_search_api_key",
+        "web_search_max_results",
+        "web_search_max_content_length",
+        "web_search_timeout",
+    }
+)
 
 router = APIRouter(prefix="/config", tags=["WebUI Config"])
 templates = get_templates()
@@ -457,7 +459,9 @@ async def general_config_page(
             input_type = get_dynamic_config_input_type(key)
             is_sensitive = key in DYNAMIC_CONFIG_SENSITIVE_KEYS
 
-            display_value = mask_sensitive_value(value) if (is_sensitive and value) else value
+            display_value = (
+                mask_sensitive_value(value) if (is_sensitive and value) else value
+            )
 
             items.append(
                 {
@@ -466,7 +470,9 @@ async def general_config_page(
                     "description": group_data.get("descriptions", {}).get(key, ""),
                     "input_type": input_type,
                     "value": display_value,
-                    "default": mask_sensitive_value(default_val) if (is_sensitive and default_val) else default_val,
+                    "default": mask_sensitive_value(default_val)
+                    if (is_sensitive and default_val)
+                    else default_val,
                     "sensitive": is_sensitive,
                     "select_options": DYNAMIC_CONFIG_SELECT_OPTIONS.get(key, []),
                     "min_val": DYNAMIC_CONFIG_RANGES.get(key, (None, None))[0],
@@ -754,7 +760,11 @@ async def save_general_config(
                             "raw_new": val,
                         }
                     else:
-                        changed[key] = {"old": cfg.key_value, "new": val, "raw_new": val}
+                        changed[key] = {
+                            "old": cfg.key_value,
+                            "new": val,
+                            "raw_new": val,
+                        }
                     cfg.key_value = val
 
         if not changed:
@@ -791,9 +801,7 @@ async def save_general_config(
         await log_admin_action(
             db, user["user_id"], "config_save", "global", None, log_changed
         )
-        return toast_redirect(
-            "/webui/config/general", "全局配置已保存并即时生效"
-        )
+        return toast_redirect("/webui/config/general", "全局配置已保存并即时生效")
 
     except ValueError:
         return toast_redirect(

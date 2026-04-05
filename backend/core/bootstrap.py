@@ -76,6 +76,7 @@ def mark_setup_completed() -> None:
     # 如果路径存在但是目录（Docker volume mount 可能创建目录），先删除
     if SETUP_MARKER.exists() and SETUP_MARKER.is_dir():
         import shutil
+
         shutil.rmtree(SETUP_MARKER)
         logger.info("已删除 .setup_complete 目录（将由文件替代）")
 
