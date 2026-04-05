@@ -21,6 +21,7 @@
 - **增量审查学习**：AI 自动总结历史审查记录，识别评分趋势和问题热点，逐步提升审查质量
 - **智能审查批准**：基于 AI 评分自动决策 APPROVE / REQUEST_CHANGES / COMMENT
 - **一键撤回**：管理员使用 `/revoke` 命令一键撤回所有 AI 评论和 Review
+- **辅助模型支持**：独立配置轻量级模型处理摘要、上下文压缩、标签推荐等任务，降低推理成本
 
 ### AI 工具与知识库
 
@@ -106,35 +107,14 @@
 - GitHub 账号
 - DeepSeek API Key（或其他 OpenAI 兼容 API）
 
-### 2. 克隆与配置
+### 2. 克隆项目
 
 ```bash
 git clone https://github.com/Sakura520222/Sakura-AI-Reviewer.git
 cd Sakura-AI-Reviewer
-cp .env.example .env
 ```
 
-编辑 `.env` 文件，填写基础配置（其余配置可在 Setup Wizard 中完成）：
-
-```env
-# GitHub App（必填）
-GITHUB_APP_ID=your_app_id
-GITHUB_PRIVATE_KEY="-----BEGIN RSA PRIVATE KEY-----\n...\n-----END RSA PRIVATE KEY-----"
-GITHUB_WEBHOOK_SECRET=your_webhook_secret
-
-# AI 模型（必填）
-OPENAI_API_BASE=https://api.deepseek.com
-OPENAI_API_KEY=your_api_key
-OPENAI_MODEL=deepseek-reasoner
-
-# 数据库（必填）
-DATABASE_URL=mysql+aiomysql://root:your_password@host.docker.internal:3306/sakura-pr
-REDIS_URL=redis://host.docker.internal:6379/0
-
-# 应用（必填）
-APP_DOMAIN=your-domain.com
-WEBUI_SECRET_KEY=your-random-secret-key
-```
+> 所有配置（GitHub App、AI 模型、数据库等）通过首次启动后的 Setup Wizard 在 Web 界面完成，无需手动编辑配置文件。
 
 ### 3. 创建 GitHub App
 
@@ -143,7 +123,7 @@ WEBUI_SECRET_KEY=your-random-secret-key
 3. **Repository permissions**：Pull requests `Read and write`，Contents `Read-only`，Issues `Read and write`（可选）
 4. **Webhook URL**：`https://your-domain.com:8000/api/webhook/github`，填写 Webhook secret
 5. **Webhook events**：勾选 Pull requests、Pull request reviews、Issues（可选）、Issue comments（可选）
-6. 创建后，在 App 页面底部 **Generate a private key**，下载 `.pem` 文件并转为单行格式填入 `.env`
+6. 创建后，在 App 页面底部 **Generate a private key**，下载 `.pem` 文件（Setup Wizard 中需粘贴完整私钥内容）
 7. 点击左侧 **Install App**，选择要启用审查的仓库
 
 > WebUI 登录需额外创建 [OAuth App](https://github.com/settings/developers)，回调地址设为 `https://your-domain.com/webui/auth/callback`
@@ -170,11 +150,14 @@ docker-compose up -d
 
 ### 6. Setup Wizard 引导配置
 
-首次启动后访问 `https://your-domain.com/setup`，Setup Wizard 将引导完成：
+首次启动后访问 `https://your-domain.com/setup`，Setup Wizard 将分步引导完成所有配置（支持断点续配）：
 
-1. **管理员账号**：设置管理员 GitHub 用户名和 Telegram ID
-2. **GitHub App 验证**：自动检测并验证 App 连接
-3. **RAG 知识库**：配置嵌入模型、重排序模型等（可跳过，后续在 WebUI 中配置）
+1. **数据库配置**：填写 MySQL 和 Redis 连接地址，提供在线连接测试
+2. **GitHub App 配置**：填写 App ID、私钥和 Webhook Secret，自动验证 App 连接
+3. **AI 模型与通知**：配置 AI API（支持自动获取模型列表）和 Telegram Bot Token
+4. **管理员与 OAuth**：设置管理员账户、应用域名和 GitHub OAuth 凭证
+
+> Setup Wizard 内置 RAG 嵌入与重排序模型配置（可折叠），可跳过后续在 WebUI 中配置。
 
 ### 7. 验证部署
 
@@ -215,20 +198,22 @@ WebUI：`https://your-domain.com/webui/`
 
 ## ⚙️ 配置说明
 
-所有配置遵循优先级：**数据库 app_config > .env > config/*.yaml**
+所有配置遵循优先级：**数据库 app_config（WebUI 管理） > Settings 默认值**，YAML 配置文件（`config/strategies.yaml`、`config/labels.yaml`）管理审查策略和标签定义。
 
-> **动态配置**：通过 WebUI 的配置管理页面修改的配置项即时生效，无需重启服务。支持 AI 模型、RAG、Web 搜索、代码索引等多个配置分组。
+> **动态配置**：通过 WebUI 的配置管理页面修改的配置项即时生效，无需重启服务。支持 AI 模型、辅助模型、RAG、Web 搜索、代码索引等多个配置分组。
 
+- **AI 模型**：WebUI 配置管理中设置 API 地址、API Key 和模型名称
+- **辅助模型**：WebUI 配置管理中设置 `summary_model`、`summary_api_base`、`summary_api_key`，用于摘要生成、上下文压缩、标签推荐等轻量任务，留空则自动回退到主模型
 - **审查策略**：编辑 `config/strategies.yaml`，支持快速/标准/深度/大PR 四种策略
 - **文件过滤**：在 `config/strategies.yaml` 中配置跳过的文件扩展名和路径
-- **AI 工具**：`.env` 中 `ENABLE_AI_TOOLS` / `MAX_TOOL_ITERATIONS`
-- **标签推荐**：`.env` 中 `ENABLE_LABEL_RECOMMENDATION` / `LABEL_CONFIDENCE_THRESHOLD`
+- **AI 工具**：WebUI 配置管理中 `enable_ai_tools` / `max_tool_iterations`
+- **标签推荐**：WebUI 配置管理中 `enable_label_recommendation` / `label_confidence_threshold`
 - **审查批准**：`config/strategies.yaml` 中 `review_policy` 配置阈值和仓库级覆盖
-- **RAG 知识库**：`.env` 中配置嵌入模型（支持 BAAI/bge-m3 等）、重排序模型、ChromaDB 等，可在 Setup Wizard 或 WebUI 中配置
-- **PR 代码索引**：`.env` 中配置代码分块、支持语言、核心目录等
-- **增量审查历史**：`.env` 中 `ENABLE_INCREMENTAL_HISTORY_CONTEXT` 启用后，AI 自动学习历史审查记录
-- **Web 搜索工具**：`.env` 中 `WEB_SEARCH_PROVIDER` 配置搜索提供商（`duckduckgo` 免费或 `tavily` 高级）
-- **模型上下文**：`.env` 中配置上下文窗口、自动压缩等，详见 [模型上下文管理](docs/MODEL_CONTEXT_FEATURE.md)
+- **RAG 知识库**：WebUI 配置管理中配置嵌入模型（支持 BAAI/bge-m3 等）、重排序模型、ChromaDB 等
+- **PR 代码索引**：WebUI 配置管理中配置代码分块、支持语言、核心目录等
+- **增量审查历史**：WebUI 配置管理中 `enable_incremental_history_context`，AI 自动学习历史审查记录
+- **Web 搜索工具**：WebUI 配置管理中 `web_search_provider`（`duckduckgo` 免费或 `tavily` 高级）
+- **模型上下文**：WebUI 配置管理中配置上下文窗口、自动压缩等，详见 [模型上下文管理](docs/MODEL_CONTEXT_FEATURE.md)
 
 ---
 
@@ -258,9 +243,10 @@ WebUI：`https://your-domain.com/webui/`
 
 ```bash
 pip install -r requirements.txt
-cp .env.example .env
 python -m backend.main
 ```
+
+> 首次启动将进入 Bootstrap 模式，访问 `http://localhost:8000/setup` 通过 Setup Wizard 完成配置。
 
 ### 代码检查
 
