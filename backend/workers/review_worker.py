@@ -145,6 +145,22 @@ class ReviewWorker:
                     await self._save_skip_record(analysis, pr_info)
                     return task_id
 
+                # 2.5 代码索引（在 AI 审查前完成，确保 search_code_context 工具可用）
+                if settings.auto_index_pr_changes and settings.enable_code_index:
+                    try:
+                        from backend.services.pr_code_indexer import get_pr_code_indexer
+
+                        indexer = get_pr_code_indexer()
+                        logger.info(f"[{task_id}] 开始代码索引...")
+                        await indexer.index_pr_changes(
+                            repo_full_name=pr_info["repo_full_name"],
+                            pr_number=pr_info["pr_number"],
+                            install_id=pr_info.get("install_id", 0),
+                        )
+                        logger.info(f"[{task_id}] 代码索引完成")
+                    except Exception as e:
+                        logger.warning(f"[{task_id}] 代码索引失败（将继续审查）: {e}")
+
                 # 3. 创建数据库记录
                 review_id = await self._create_review_record(analysis, pr_info, task_id)
 
