@@ -2,6 +2,7 @@
 
 > 基于 AI 的智能 GitHub Pull Request 代码审查与 Issue 分析机器人，具备主动探索代码库的能力
 
+[![Version](https://img.shields.io/badge/Version-2.7.0-blue.svg)](https://github.com/Sakura520222/Sakura-AI-Reviewer/releases)
 [![Python](https://img.shields.io/badge/Python-3.11+-blue.svg)](https://www.python.org/)
 [![FastAPI](https://img.shields.io/badge/FastAPI-Latest-green.svg)](https://fastapi.tiangolo.com/)
 [![License](https://img.shields.io/badge/License-AGPLv3-yellow.svg)](LICENSE)
@@ -11,19 +12,38 @@
 
 ## ✨ 核心特性
 
+### 审查能力
+
 - **AI 推理模式**：利用 AI 推理能力进行深度代码分析，主动调用工具查看项目结构和任意文件
 - **跨文件依赖理解**：通过多轮对话理解模块间的复杂依赖关系，具备"全域视野"
 - **自适应审查策略**：根据 PR 规模自动选择快速/标准/深度审查模式
-- **结构化审查报告**：整体评分 + 分类问题（🔴严重/🟡重要/💡优化）+ 折叠详情
+- **结构化审查报告**：整体评分 + 分类问题（🔴严重/🟡重要/💡优化）+ `<details>` 折叠详情
+- **增量审查学习**：AI 自动总结历史审查记录，识别评分趋势和问题热点，逐步提升审查质量
 - **智能审查批准**：基于 AI 评分自动决策 APPROVE / REQUEST_CHANGES / COMMENT
-- **智能标签推荐**：AI 自动分类并推荐 PR 标签，高置信度自动应用
-- **Issue 智能分析**：自动分类、优先级判定、标签推荐、重复检测、关联 PR 发现
-- **PR-Issue 关联**：自动解析 Issue 引用，注入上下文增强审查精度
+- **一键撤回**：管理员使用 `/revoke` 命令一键撤回所有 AI 评论和 Review
+
+### AI 工具与知识库
+
 - **AI 工具系统**：read_file、list_directory、search_web，AI 按需主动调用
+- **Web 搜索增强**：支持 DuckDuckGo / Tavily，AI 可主动检索互联网信息辅助审查决策
 - **仓库级知识库（RAG）**：向量语义检索项目文档，为 AI 审查提供规范上下文
 - **PR 代码自动索引**：语法感知分块 + 语义搜索，AI 可精准定位相关代码
+
+### Issue 分析
+
+- **Issue 智能分析**：自动分类、优先级判定、标签推荐、重复检测、关联 PR 发现
+- **Issue 自动打标**：AI 自动分类并推荐标签，高置信度自动应用
+- **PR-Issue 关联**：自动解析 Issue 引用，注入上下文增强审查精度
+
+### 管理与运维
+
+- **首次部署引导（Setup Wizard）**：首次启动自动检测配置状态，分步引导完成 GitHub App、数据库、AI 模型、RAG 等配置，支持断点续配
+- **动态配置管理**：通过 WebUI 修改配置即时生效，无需重启服务
+- **SSE 实时推送**：基于 Redis Pub/Sub 的多进程实时通信，WebUI 数据即时更新
+- **配额制访问控制**：基于配额的灵活访问管理体系，支持用户自注册
+- **管理员操作审计**：完整的操作日志，覆盖配置变更、用户管理等关键操作
+- **WebUI 管理界面**：仪表盘、PR 管理、用户管理、配置管理、队列监控、操作日志
 - **Telegram Bot**：实时通知、三级权限体系（超级管理员/管理员/普通用户）、配额管理
-- **WebUI 管理界面**：仪表盘、PR 管理、用户管理、仓库白名单、配置管理、队列监控
 - **GitHub OAuth 登录**：与 Telegram 用户体系打通，明暗主题切换
 
 ---
@@ -32,7 +52,8 @@
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
-│                        GitHub PR                             │
+│                        GitHub                                │
+│                    PR / Issue / OAuth                        │
 └──────────┬───────────────────────────────┬──────────────────┘
            │ Webhook                       │ OAuth / API
            ▼                               ▼
@@ -41,10 +62,12 @@
 │  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐      │
 │  │   Webhook    │  │   PR 分析器   │  │  评论服务    │      │
 │  │   Handler    │  │  (策略选择)   │  │  (发布结果)  │      │
-│  │ (PR+Issue)   │  │             │  │             │      │
+│  │ (PR+Issue)   │  │              │  │              │      │
 │  └──────────────┘  └──────────────┘  └──────────────┘      │
 │  ┌──────────────────────────────────────────────────────┐   │
-│  │              WebUI 管理界面 (Jinja2 + HTMX)          │   │
+│  │    WebUI (Jinja2 + HTMX + Alpine.js) · SSE 实时推送   │   │
+│  ├──────────────────────────────────────────────────────┤   │
+│  │    Setup Wizard · 动态配置管理 · 管理员操作审计        │   │
 │  └──────────────────────────────────────────────────────┘   │
 └──────────────────────┬──────────────────────────────────────┘
                        │
@@ -52,7 +75,10 @@
 ┌─────────────────────────────────────────────────────────────┐
 │                     AI 审查引擎                              │
 │  ┌────────────┐  ┌────────────┐  ┌────────────┐            │
-│  │ read_file  │  │list_dir    │  │ search_web │            │
+│  │ read_file  │  │ list_dir   │  │ search_web │            │
+│  └────────────┘  └────────────┘  └────────────┘            │
+│  ┌────────────┐  ┌────────────┐  ┌────────────┐            │
+│  │ RAG 检索   │  │ 代码索引    │  │ 历史上下文  │            │
 │  └────────────┘  └────────────┘  └────────────┘            │
 └──────────────────────┬──────────────────────────────────────┘
                        │
@@ -61,12 +87,12 @@
 │                    数据存储层                                │
 │  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐      │
 │  │    MySQL     │  │    Redis     │  │  ChromaDB    │      │
-│  │  (审查记录)   │  │   (队列)     │  │  (向量检索)  │      │
+│  │  (业务数据)   │  │ (队列/PubSub)│  │  (向量检索)  │      │
 │  └──────────────┘  └──────────────┘  └──────────────┘      │
 └─────────────────────────────────────────────────────────────┘
 ```
 
-**技术栈**：FastAPI (Python 3.11+) · Jinja2 + Tailwind CSS + HTMX · DeepSeek-R1 / OpenAI 兼容 API · MySQL 8.0 + Redis + ChromaDB · GitHub App (PyGithub) + OAuth · Docker + Docker Compose
+**技术栈**：FastAPI (Python 3.11+) · Jinja2 + Tailwind CSS + HTMX + Alpine.js · DeepSeek-R1 / OpenAI 兼容 API · MySQL 8.0 + Redis (队列/PubSub) + ChromaDB · GitHub App (PyGithub) + OAuth · Docker Compose · 可选 Celery Worker
 
 ---
 
@@ -88,32 +114,26 @@ cd Sakura-AI-Reviewer
 cp .env.example .env
 ```
 
-编辑 `.env` 文件，主要配置项：
+编辑 `.env` 文件，填写基础配置（其余配置可在 Setup Wizard 中完成）：
 
 ```env
-# GitHub App
+# GitHub App（必填）
 GITHUB_APP_ID=your_app_id
 GITHUB_PRIVATE_KEY="-----BEGIN RSA PRIVATE KEY-----\n...\n-----END RSA PRIVATE KEY-----"
 GITHUB_WEBHOOK_SECRET=your_webhook_secret
 
-# AI 模型
+# AI 模型（必填）
 OPENAI_API_BASE=https://api.deepseek.com
 OPENAI_API_KEY=your_api_key
 OPENAI_MODEL=deepseek-reasoner
 
-# 数据库（Docker 容器通过 host.docker.internal 访问宿主机）
+# 数据库（必填）
 DATABASE_URL=mysql+aiomysql://root:your_password@host.docker.internal:3306/sakura-pr
 REDIS_URL=redis://host.docker.internal:6379/0
 
-# 应用
+# 应用（必填）
 APP_DOMAIN=your-domain.com
-APP_PORT=8000
 WEBUI_SECRET_KEY=your-random-secret-key
-
-# GitHub OAuth（WebUI 登录）
-GITHUB_OAUTH_CLIENT_ID=your_client_id
-GITHUB_OAUTH_CLIENT_SECRET=your_client_secret
-GITHUB_OAUTH_REDIRECT_URI=https://your-domain.com/webui/auth/callback
 ```
 
 ### 3. 创建 GitHub App
@@ -148,7 +168,15 @@ cd docker
 docker-compose up -d
 ```
 
-### 6. 验证部署
+### 6. Setup Wizard 引导配置
+
+首次启动后访问 `https://your-domain.com/setup`，Setup Wizard 将引导完成：
+
+1. **管理员账号**：设置管理员 GitHub 用户名和 Telegram ID
+2. **GitHub App 验证**：自动检测并验证 App 连接
+3. **RAG 知识库**：配置嵌入模型、重排序模型等（可跳过，后续在 WebUI 中配置）
+
+### 7. 验证部署
 
 ```bash
 curl http://your-domain.com:8000/health
@@ -163,7 +191,7 @@ WebUI：`https://your-domain.com/webui/`
 
 ### PR 审查
 
-在已安装 App 的仓库中创建 PR，AI 会自动审查并发布结构化报告。在 PR 中可使用以下命令：
+在已安装 App 的仓库中创建 PR，AI 会自动审查并发布结构化报告。审查报告使用 `<details>` 折叠详情，保持评论简洁。在 PR 中可使用以下命令：
 
 - `/full-review` — 清理旧评论并触发全量重新审查（PR 作者或协作者）
 - `/revoke` — 一键撤回所有 AI 评论和 Review（仅管理员）
@@ -171,11 +199,13 @@ WebUI：`https://your-domain.com/webui/`
 ### Issue 分析
 
 - **自动分析**：Issue opened/edited/reopened 时自动触发，发布分类、优先级、标签建议
+- **自动打标**：AI 推荐标签，高置信度自动应用到 Issue
 - **手动触发**：在 Issue 中评论 `/analyze`
+- **重复检测**：自动识别重复 Issue 并关联已有 Issue
 
 ### WebUI 管理
 
-访问 `https://your-domain.com/webui/`，使用 GitHub 账号登录（需先在 Telegram Bot 中注册）。支持仪表盘、PR 管理、用户管理、仓库白名单、配置管理、审查队列监控等功能。
+访问 `https://your-domain.com/webui/`，使用 GitHub 账号登录（需先在 Telegram Bot 中注册）。支持仪表盘图表、PR 管理、用户管理、动态配置管理、审查队列监控、操作日志等功能。配置修改即时生效，无需重启服务。
 
 ### Telegram Bot
 
@@ -187,13 +217,17 @@ WebUI：`https://your-domain.com/webui/`
 
 所有配置遵循优先级：**数据库 app_config > .env > config/*.yaml**
 
+> **动态配置**：通过 WebUI 的配置管理页面修改的配置项即时生效，无需重启服务。支持 AI 模型、RAG、Web 搜索、代码索引等多个配置分组。
+
 - **审查策略**：编辑 `config/strategies.yaml`，支持快速/标准/深度/大PR 四种策略
 - **文件过滤**：在 `config/strategies.yaml` 中配置跳过的文件扩展名和路径
 - **AI 工具**：`.env` 中 `ENABLE_AI_TOOLS` / `MAX_TOOL_ITERATIONS`
 - **标签推荐**：`.env` 中 `ENABLE_LABEL_RECOMMENDATION` / `LABEL_CONFIDENCE_THRESHOLD`
 - **审查批准**：`config/strategies.yaml` 中 `review_policy` 配置阈值和仓库级覆盖
-- **RAG 知识库**：`.env` 中配置嵌入模型、重排序模型、ChromaDB 等
+- **RAG 知识库**：`.env` 中配置嵌入模型（支持 BAAI/bge-m3 等）、重排序模型、ChromaDB 等，可在 Setup Wizard 或 WebUI 中配置
 - **PR 代码索引**：`.env` 中配置代码分块、支持语言、核心目录等
+- **增量审查历史**：`.env` 中 `ENABLE_INCREMENTAL_HISTORY_CONTEXT` 启用后，AI 自动学习历史审查记录
+- **Web 搜索工具**：`.env` 中 `WEB_SEARCH_PROVIDER` 配置搜索提供商（`duckduckgo` 免费或 `tavily` 高级）
 - **模型上下文**：`.env` 中配置上下文窗口、自动压缩等，详见 [模型上下文管理](docs/MODEL_CONTEXT_FEATURE.md)
 
 ---
@@ -239,20 +273,30 @@ python run_ruff.py
 ```
 Sakura-AI-Reviewer/
 ├── backend/
-│   ├── api/               # API 路由
-│   ├── core/              # 核心配置
-│   ├── models/            # 数据模型
+│   ├── api/               # API 路由（webhook、health）
+│   ├── core/              # 核心配置、动态配置管理
+│   ├── models/            # 数据模型（SQLAlchemy）
 │   ├── services/          # 业务逻辑
-│   │   ├── ai_reviewer/   # AI 审查引擎 + 工具系统
+│   │   ├── ai_reviewer/   # AI 审查引擎
+│   │   │   ├── tools/     #   AI 工具（文件读取、Web 搜索）
+│   │   │   └── compression/ # 上下文压缩
 │   │   ├── pr_analyzer.py # PR 分析器（策略选择）
 │   │   ├── issue_analyzer.py  # Issue 分析引擎
 │   │   ├── decision_engine.py # 审查决策引擎
-│   │   └── comment_service.py # 评论服务
-│   ├── webui/             # WebUI（Jinja2 + HTMX）
+│   │   ├── comment_service.py # 评论服务
+│   │   ├── rag_service.py     # RAG 知识库
+│   │   ├── code_index_service.py  # 代码索引
+│   │   └── history_context_service.py  # 增量审查历史
+│   ├── webui/             # WebUI 管理界面
+│   │   ├── routes/        #   路由（dashboard, config, users, ...）
+│   │   ├── templates/     #   Jinja2 模板
+│   │   ├── auth.py        #   GitHub OAuth 认证
+│   │   └── sse.py         #   SSE 实时推送
 │   ├── workers/           # 后台任务（review_worker, issue_worker）
-│   └── telegram/          # Telegram Bot
-├── config/                # YAML 配置文件
-├── docker/                # Docker Compose
+│   ├── telegram/          # Telegram Bot（通知、命令、权限）
+│   └── bootstrap.py       # Setup Wizard 引导配置
+├── config/                # YAML 配置文件（strategies.yaml）
+├── docker/                # Docker Compose 部署
 └── docs/                  # 项目文档
 ```
 
