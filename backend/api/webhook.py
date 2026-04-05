@@ -164,34 +164,7 @@ async def handle_pull_request_event(payload: Dict[str, Any]) -> JSONResponse:
                     content={"status": "skipped", "reason": "unregistered user"}
                 )
 
-            # 2. 检查仓库是否已授权（管理员和超级管理员可以跳过此检查）
-            # 管理员和超级管理员可以审查任何仓库
-            # 转换为小写进行比较，支持大小写不敏感
-            role_lower = user.role.lower().strip() if user.role else ""
-            if role_lower in ["admin", "super_admin"]:
-                logger.info(
-                    f"管理员/超级管理员跳过仓库白名单检查: {github_username} (role: {user.role})"
-                )
-            else:
-                # 普通用户需要仓库在白名单中
-                is_authorized = await service.is_authorized_repo(
-                    pr_info["repo_full_name"]
-                )
-                if not is_authorized:
-                    logger.warning(f"未授权的仓库: {pr_info['repo_full_name']}")
-                    if notification_sender:
-                        await notification_sender.send_unauthorized_repo(
-                            repo_name=pr_info["repo_full_name"],
-                            pr_number=pr_info["pr_number"],
-                        )
-                    return JSONResponse(
-                        content={
-                            "status": "skipped",
-                            "reason": "unauthorized repository",
-                        }
-                    )
-
-            # 3. 检查并消耗配额
+            # 2. 检查并消耗配额
             allowed, reason = await service.check_and_consume_quota(
                 github_username=github_username,
                 repo_name=pr_info["repo_full_name"],
@@ -736,22 +709,6 @@ async def handle_issue_event(payload: Dict[str, Any]) -> JSONResponse:
                     content={"status": "skipped", "reason": "unregistered user"}
                 )
 
-            role_lower = user.role.lower().strip() if user.role else ""
-            if role_lower not in ["admin", "super_admin"]:
-                is_authorized = await service.is_authorized_repo(
-                    issue_info["repo_full_name"]
-                )
-                if not is_authorized:
-                    logger.warning(
-                        f"未授权的仓库: {issue_info['repo_full_name']}, user: {github_username}, role: {user.role}"
-                    )
-                    return JSONResponse(
-                        content={
-                            "status": "skipped",
-                            "reason": "unauthorized repository",
-                        }
-                    )
-
             # Issue 配额检查
             allowed, reason = await service.check_and_consume_issue_quota(
                 github_username=github_username,
@@ -835,22 +792,6 @@ async def handle_issue_analyze_command(payload: Dict[str, Any]) -> JSONResponse:
                 return JSONResponse(
                     content={"status": "skipped", "reason": "unregistered user"}
                 )
-
-            role_lower = user.role.lower().strip() if user.role else ""
-            if role_lower not in ["admin", "super_admin"]:
-                is_authorized = await service.is_authorized_repo(
-                    issue_info["repo_full_name"]
-                )
-                if not is_authorized:
-                    logger.warning(
-                        f"未授权的仓库: {issue_info['repo_full_name']}, user: {commenter}, role: {user.role}"
-                    )
-                    return JSONResponse(
-                        content={
-                            "status": "skipped",
-                            "reason": "unauthorized repository",
-                        }
-                    )
 
             allowed, reason = await service.check_and_consume_issue_quota(
                 github_username=commenter,
