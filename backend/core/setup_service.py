@@ -1,6 +1,6 @@
 """Setup Wizard 业务逻辑
 
-处理连接测试、.env 配置写入、管理员创建和应用重启。
+处理连接测试、配置写入数据库、管理员创建和应用重启。
 """
 
 import os
@@ -14,14 +14,45 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import create_async_engine
 
 from backend.core.bootstrap import (
-    ENV_PATH,
     mark_setup_completed,
-    parse_env_file,
 )
 
-# 环境变量字段与 Settings 字段的映射
+# 环境变量字段（大写） → Settings 字段名（小写）
+_ENV_TO_SETTINGS_KEY: dict[str, str] = {
+    "GITHUB_APP_ID": "github_app_id",
+    "GITHUB_PRIVATE_KEY": "github_private_key",
+    "GITHUB_WEBHOOK_SECRET": "github_webhook_secret",
+    "OPENAI_API_KEY": "openai_api_key",
+    "OPENAI_API_BASE": "openai_api_base",
+    "OPENAI_MODEL": "openai_model",
+    "TELEGRAM_BOT_TOKEN": "telegram_bot_token",
+    "WEBUI_SECRET_KEY": "webui_secret_key",
+    "APP_DOMAIN": "app_domain",
+    "APP_PORT": "app_port",
+    "LOG_LEVEL": "log_level",
+    "BOT_USERNAME": "bot_username",
+    "DATABASE_URL": "database_url",
+    "REDIS_URL": "redis_url",
+    "ENABLE_WEBUI": "enable_webui",
+    "ENABLE_RAG": "enable_rag",
+    "GITHUB_OAUTH_CLIENT_ID": "github_oauth_client_id",
+    "GITHUB_OAUTH_CLIENT_SECRET": "github_oauth_client_secret",
+    "GITHUB_OAUTH_REDIRECT_URI": "github_oauth_redirect_uri",
+    # 嵌入 & 重排序
+    "EMBEDDING_API_KEY": "embedding_api_key",
+    "EMBEDDING_BASE_URL": "embedding_base_url",
+    "EMBEDDING_MODEL": "embedding_model",
+    "EMBEDDING_PROVIDER": "embedding_provider",
+    "EMBEDDING_DIMENSION": "embedding_dimension",
+    "RERANK_API_KEY": "rerank_api_key",
+    "RERANK_BASE_URL": "rerank_base_url",
+    "RERANK_MODEL": "rerank_model",
+    "RERANK_PROVIDER": "rerank_provider",
+}
+
+# 环境变量字段与 Settings 字段的分组（前端步骤用）
 ENV_FIELD_GROUPS = {
-    "database": ["DATABASE_URL"],
+    "database": ["DATABASE_URL", "REDIS_URL"],
     "github": ["GITHUB_APP_ID", "GITHUB_PRIVATE_KEY", "GITHUB_WEBHOOK_SECRET"],
     "ai": [
         "OPENAI_API_KEY",
@@ -39,21 +70,6 @@ ENV_FIELD_GROUPS = {
     ],
     "admin": ["APP_DOMAIN"],
 }
-
-
-def _format_env_value(value: str) -> str:
-    """格式化 .env 文件中的值
-
-    多行值（如 PEM 私钥）将实际换行替换为 \\n 并用双引号包裹，
-    确保 python-dotenv 能正确解析。
-    """
-    if "\n" in value:
-        escaped = value.replace("\n", "\\n")
-        return f'"{escaped}"'
-    # 包含 # 或空格的值也用引号包裹
-    if "#" in value or (value and value[0] == " "):
-        return f'"{value}"'
-    return value
 
 
 class SetupService:
@@ -111,6 +127,7 @@ class SetupService:
 
         try:
             import time
+
             import jwt
 
             now = int(time.time())
@@ -228,93 +245,71 @@ class SetupService:
         except Exception as e:
             return {"success": False, "message": f"验证异常: {e}"}
 
-    def write_env_config(self, values: dict[str, str]) -> None:
-        """写入 .env 配置（合并模式，原子写入）
+    async def save_configs_to_db(self, values: dict[str, str]) -> int:
+        """将配置项保存到数据库 AppConfig 表
 
         Args:
-            values: 环境变量键值对
+            values: 配置键值对（环境变量名大写形式）
+
+        Returns:
+            写入/更新的配置项数量
         """
-        # 1. 读取已有 .env 内容
-        existing = parse_env_file()
+        from backend.core.config import update_settings_field
+        from backend.models.database import AppConfig, async_session
 
-        # 2. 合并新值
-        existing.update(values)
+        saved = 0
+        async with async_session() as session:
+            for env_key, env_value in values.items():
+                settings_key = _ENV_TO_SETTINGS_KEY.get(env_key)
+                if not settings_key or env_value is None:
+                    continue
+                env_value = str(env_value).strip()
+                if not env_value:
+                    continue
 
-        # 3. 原子写入
-        tmp_path = ENV_PATH.with_suffix(".env.tmp")
-        try:
-            with open(tmp_path, "w", encoding="utf-8") as f:
-                f.write("# Sakura AI Reviewer 配置文件\n")
-                f.write("# 由 Setup Wizard 生成，也可手动编辑\n\n")
+                result = await session.execute(
+                    select(AppConfig).where(AppConfig.key_name == settings_key)
+                )
+                existing = result.scalar_one_or_none()
+                if existing:
+                    if existing.key_value != env_value:
+                        existing.key_value = env_value
+                        saved += 1
+                else:
+                    session.add(
+                        AppConfig(
+                            key_name=settings_key,
+                            key_value=env_value,
+                        )
+                    )
+                    saved += 1
 
-                # 按分组写入
-                sections = [
-                    (
-                        "GitHub App 配置",
-                        [
-                            "GITHUB_APP_ID",
-                            "GITHUB_PRIVATE_KEY",
-                            "GITHUB_WEBHOOK_SECRET",
-                        ],
-                    ),
-                    ("数据库配置", ["DATABASE_URL"]),
-                    ("Redis 配置", ["REDIS_URL"]),
-                    ("应用配置", ["APP_DOMAIN", "APP_PORT", "LOG_LEVEL"]),
-                    (
-                        "OpenAI 配置",
-                        ["OPENAI_API_BASE", "OPENAI_API_KEY", "OPENAI_MODEL"],
-                    ),
-                    (
-                        "RAG 嵌入与重排序配置",
-                        [
-                            "ENABLE_RAG",
-                            "EMBEDDING_API_KEY",
-                            "EMBEDDING_BASE_URL",
-                            "EMBEDDING_MODEL",
-                            "RERANK_API_KEY",
-                            "RERANK_BASE_URL",
-                            "RERANK_MODEL",
-                        ],
-                    ),
-                    ("WebUI 配置", ["WEBUI_SECRET_KEY"]),
-                    (
-                        "Telegram Bot 配置",
-                        ["TELEGRAM_BOT_TOKEN", "TELEGRAM_ADMIN_USER_IDS"],
-                    ),
-                    (
-                        "GitHub OAuth 配置",
-                        [
-                            "GITHUB_OAUTH_CLIENT_ID",
-                            "GITHUB_OAUTH_CLIENT_SECRET",
-                            "GITHUB_OAUTH_REDIRECT_URI",
-                        ],
-                    ),
-                ]
+                # 即时更新 Settings 单例
+                update_settings_field(settings_key, env_value)
 
-                written_keys = set()
-                for section_title, section_keys in sections:
-                    section_items = {
-                        k: v for k, v in existing.items() if k in section_keys
-                    }
-                    if section_items:
-                        f.write(f"# {section_title}\n")
-                        for k, v in section_items.items():
-                            f.write(f"{k}={_format_env_value(v)}\n")
-                            written_keys.add(k)
-                        f.write("\n")
+            await session.commit()
 
-                # 写入未分组的配置
-                remaining = {k: v for k, v in existing.items() if k not in written_keys}
-                if remaining:
-                    f.write("# 其他配置\n")
-                    for k, v in remaining.items():
-                        f.write(f"{k}={_format_env_value(v)}\n")
+        if saved:
+            logger.info(f"已保存 {saved} 项配置到数据库")
+        return saved
 
-            os.replace(str(tmp_path), str(ENV_PATH))
-            logger.info(f".env 配置已写入 ({len(values)} 项)")
-        except Exception:
-            tmp_path.unlink(missing_ok=True)
-            raise
+    async def init_database(self, database_url: str) -> None:
+        """初始化数据库引擎并创建表
+
+        Args:
+            database_url: 数据库连接字符串
+        """
+        from backend.models.database import (
+            init_async_db,
+            create_tables_async,
+            insert_default_configs_async,
+        )
+        from backend.models import database as db_module
+
+        if db_module.async_engine is None:
+            init_async_db(database_url)
+            await create_tables_async()
+            await insert_default_configs_async()
 
     async def create_admin_user(
         self, github_username: str, telegram_id: int, database_url: str
@@ -420,7 +415,7 @@ class SetupService:
                 update_settings_field(key, env_value)
 
         if synced:
-            logger.info(f"✅ 已同步 {synced} 项动态配置到数据库")
+            logger.info(f"已同步 {synced} 项动态配置到数据库")
 
     async def complete_setup(self, all_config: dict[str, str]) -> dict[str, Any]:
         """完成 Setup 全流程
@@ -440,38 +435,44 @@ class SetupService:
                 all_config["ENABLE_RAG"] = "false"
                 logger.info("未配置嵌入 API Key，自动禁用 RAG 功能")
 
-            # 3. 写入所有配置到 .env
-            self.write_env_config(all_config)
-
             database_url = all_config.get("DATABASE_URL", "")
             admin_github = all_config.get("ADMIN_GITHUB_USERNAME", "")
             admin_telegram_id = all_config.get("ADMIN_TELEGRAM_ID", "")
 
-            # 3. 初始化数据库并创建管理员
-            if database_url:
-                if not admin_github or not admin_telegram_id:
-                    return {
-                        "success": False,
-                        "message": "管理员 GitHub 用户名和 Telegram ID 为必填项",
-                    }
+            if not database_url:
+                return {"success": False, "message": "数据库连接字符串为必填项"}
+
+            # 3. 初始化数据库并创建表
+            await self.init_database(database_url)
+
+            # 4. 将所有配置写入数据库
+            await self.save_configs_to_db(all_config)
+
+            # 5. 同步动态配置到数据库（覆盖 insert_default_configs_async 中可能的空值）
+            await self._sync_dynamic_configs_to_db(all_config)
+
+            # 6. 创建管理员
+            if admin_github and admin_telegram_id:
                 try:
                     telegram_id_int = int(admin_telegram_id)
+                    await self.create_admin_user(
+                        admin_github, telegram_id_int, database_url
+                    )
                 except (ValueError, TypeError):
                     return {
                         "success": False,
                         "message": f"管理员 Telegram ID 格式无效: {admin_telegram_id}",
                     }
-                await self.create_admin_user(
-                    admin_github, telegram_id_int, database_url
-                )
+            else:
+                return {
+                    "success": False,
+                    "message": "管理员 GitHub 用户名和 Telegram ID 为必填项",
+                }
 
-            # 4. 同步动态配置到数据库（覆盖 insert_default_configs_async 中可能的空值）
-            await self._sync_dynamic_configs_to_db(all_config)
+            # 7. 写入 connection.json 标记完成
+            mark_setup_completed(database_url)
 
-            # 5. 写入完成标记
-            mark_setup_completed()
-
-            # 5. 返回成功（前端开始轮询 /health）
+            # 8. 返回成功（前端开始轮询 /health）
             return {"success": True, "message": "配置完成，正在重启应用..."}
         except Exception as e:
             logger.error(f"Setup 完成失败: {e}")

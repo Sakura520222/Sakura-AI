@@ -8,14 +8,11 @@ services:
     container_name: sakura-ai-reviewer
     restart: unless-stopped
     network_mode: host  # 使用宿主机网络,可直接访问 localhost
-    env_file:
-      - ../.env
     volumes:
       - ../logs:/app/logs
-      - ../config:/app/config
+      - ../config:/app/config  # 存放 connection.json 和策略/标签配置
       - ../backend:/app/backend  # 开发模式：挂载 backend 代码目录
       - chroma_data:/app/data/chroma  # ChromaDB 向量数据库持久化
-      - ../.env:/app/.env  # 配置文件持久化（Setup Wizard 写入的配置需要保留）
     healthcheck:
       test: ["CMD", "python", "-c", "import requests; requests.get('http://localhost:8000/health')"]
       interval: 30s
@@ -33,8 +30,6 @@ services:
     restart: unless-stopped
     network_mode: host  # 使用宿主机网络,可直接访问 localhost
     command: celery -A backend.workers.celery_app worker --loglevel=info --concurrency=2
-    env_file:
-      - ../.env
     volumes:
       - ../logs:/app/logs
       - ../config:/app/config
