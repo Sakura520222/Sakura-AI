@@ -16,8 +16,6 @@ from backend.workers.review_worker import submit_review_task
 from backend.services.telegram_service import TelegramService
 from backend.telegram.notifications import get_notification_sender
 from backend.core.config import get_settings
-import asyncio
-
 settings = get_settings()
 
 
@@ -216,16 +214,6 @@ async def handle_pull_request_event(payload: Dict[str, Any]) -> JSONResponse:
             f"已提交审查任务: {pr_info['repo_full_name']}#{pr_info['pr_number']}, "
             f"任务ID: {task_id}"
         )
-
-        # 异步索引PR代码变更（不阻塞响应）
-        if settings.auto_index_pr_changes:
-            asyncio.create_task(
-                _index_pr_code_async(
-                    pr_info["repo_full_name"],
-                    pr_info["pr_number"],
-                    pr_info.get("install_id", 0),
-                )
-            )
 
         return JSONResponse(
             content={
