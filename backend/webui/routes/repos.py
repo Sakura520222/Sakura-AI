@@ -10,7 +10,7 @@ from datetime import datetime
 from fastapi import APIRouter, Request, Depends
 from fastapi.responses import JSONResponse
 from loguru import logger
-from sqlalchemy import select, func
+from sqlalchemy import select, func, tuple_
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.models.database import PRReview, IssueAnalysis
@@ -57,36 +57,51 @@ async def _get_installations_with_stats(db: AsyncSession) -> list[dict]:
         data = await asyncio.to_thread(github_app.get_all_installations_with_repos)
         _installations_cache = (data, now)
 
-    # 收集所有仓库名，批量查询统计（4N → 4 查询）
-    all_repo_names = [
-        repo["full_name"] for inst in data for repo in inst["repos"]
-    ]
-    if all_repo_names:
+    # 收集所有仓库的 (owner, short_name)，批量查询统计（4N → 4 查询）
+    # 数据库 repo_name 存短名称，repo_owner 存 owner，用两者组合区分同名仓库
+    all_repo_keys: list[tuple[str, str]] = []
+    repo_key_map: dict[str, tuple[str, str]] = {}  # full_name → (owner, short_name)
+    for inst in data:
+        for repo in inst["repos"]:
+            parts = repo["full_name"].split("/")
+            key = (parts[0], parts[-1])
+            all_repo_keys.append(key)
+            repo_key_map[repo["full_name"]] = key
+
+    if all_repo_keys:
+        # 去重，避免 IN 子句参数膨胀
+        unique_keys = list(set(all_repo_keys))
+
         pr_counts = (await db.execute(
-            select(PRReview.repo_name, func.count(PRReview.id))
-            .where(PRReview.repo_name.in_(all_repo_names))
-            .group_by(PRReview.repo_name)
+            select(PRReview.repo_owner, PRReview.repo_name, func.count(PRReview.id))
+            .where(tuple_(PRReview.repo_owner, PRReview.repo_name).in_(unique_keys))
+            .group_by(PRReview.repo_owner, PRReview.repo_name)
         )).all()
         issue_counts = (await db.execute(
-            select(IssueAnalysis.repo_name, func.count(IssueAnalysis.id))
-            .where(IssueAnalysis.repo_name.in_(all_repo_names))
-            .group_by(IssueAnalysis.repo_name)
+            select(IssueAnalysis.repo_owner, IssueAnalysis.repo_name,
+                   func.count(IssueAnalysis.id))
+            .where(tuple_(IssueAnalysis.repo_owner, IssueAnalysis.repo_name)
+                   .in_(unique_keys))
+            .group_by(IssueAnalysis.repo_owner, IssueAnalysis.repo_name)
         )).all()
         last_prs = (await db.execute(
-            select(PRReview.repo_name, func.max(PRReview.created_at))
-            .where(PRReview.repo_name.in_(all_repo_names))
-            .group_by(PRReview.repo_name)
+            select(PRReview.repo_owner, PRReview.repo_name, func.max(PRReview.created_at))
+            .where(tuple_(PRReview.repo_owner, PRReview.repo_name).in_(unique_keys))
+            .group_by(PRReview.repo_owner, PRReview.repo_name)
         )).all()
         last_issues = (await db.execute(
-            select(IssueAnalysis.repo_name, func.max(IssueAnalysis.created_at))
-            .where(IssueAnalysis.repo_name.in_(all_repo_names))
-            .group_by(IssueAnalysis.repo_name)
+            select(IssueAnalysis.repo_owner, IssueAnalysis.repo_name,
+                   func.max(IssueAnalysis.created_at))
+            .where(tuple_(IssueAnalysis.repo_owner, IssueAnalysis.repo_name)
+                   .in_(unique_keys))
+            .group_by(IssueAnalysis.repo_owner, IssueAnalysis.repo_name)
         )).all()
 
-        pr_count_map = dict(pr_counts)
-        issue_count_map = dict(issue_counts)
-        last_pr_map = dict(last_prs)
-        last_issue_map = dict(last_issues)
+        # 用 (owner, short_name) 元组作为 key，避免同名仓库统计混淆
+        pr_count_map = {(r[0], r[1]): r[2] for r in pr_counts}
+        issue_count_map = {(r[0], r[1]): r[2] for r in issue_counts}
+        last_pr_map = {(r[0], r[1]): r[2] for r in last_prs}
+        last_issue_map = {(r[0], r[1]): r[2] for r in last_issues}
     else:
         pr_count_map = {}
         issue_count_map = {}
@@ -95,11 +110,11 @@ async def _get_installations_with_stats(db: AsyncSession) -> list[dict]:
 
     for inst in data:
         for repo in inst["repos"]:
-            full_name = repo["full_name"]
-            repo["pr_count"] = pr_count_map.get(full_name, 0)
-            repo["issue_count"] = issue_count_map.get(full_name, 0)
-            lp = last_pr_map.get(full_name)
-            li = last_issue_map.get(full_name)
+            key = repo_key_map[repo["full_name"]]
+            repo["pr_count"] = pr_count_map.get(key, 0)
+            repo["issue_count"] = issue_count_map.get(key, 0)
+            lp = last_pr_map.get(key)
+            li = last_issue_map.get(key)
             last_activity = max(lp or datetime.min, li or datetime.min)
             repo["last_activity"] = last_activity if last_activity != datetime.min else None
 
