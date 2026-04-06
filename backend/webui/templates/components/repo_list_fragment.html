@@ -1,105 +1,62 @@
-<!-- 添加仓库表单 -->
-<div class="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 shadow-sm p-4 mb-4">
-    <form method="POST" action="/webui/repos/add" class="flex gap-3">
-        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-        <div class="flex-1 relative">
-            <svg class="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/>
-            </svg>
-            <input type="text" name="repo_name" placeholder="输入仓库名称 (如 owner/repo)" required
-                   class="w-full pl-10 pr-4 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-sm focus:ring-2 focus:ring-pink-500 focus:border-transparent outline-none">
-        </div>
-        <button type="submit"
-                class="px-4 py-2 bg-pink-500 text-white rounded-lg text-sm font-medium hover:bg-pink-600 transition-colors">
-            添加仓库
-        </button>
-    </form>
-</div>
+<!-- 按 installation 分组的仓库列表 -->
+{% for inst in installations %}
+<div class="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 shadow-sm overflow-hidden mb-4">
+    <!-- 账户头 -->
+    <div class="px-5 py-3 border-b border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-750 flex items-center gap-2">
+        <svg class="w-5 h-5 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4"/>
+        </svg>
+        <h3 class="text-sm font-semibold">{{ inst.account_login }}</h3>
+        <span class="text-xs text-gray-400 dark:text-gray-500 bg-gray-200 dark:bg-gray-700 px-2 py-0.5 rounded">{{ inst.account_type }}</span>
+        <span class="text-xs text-gray-400 dark:text-gray-500 ml-auto">{{ inst.repos | length }} 个仓库</span>
+    </div>
 
-<!-- 搜索和过滤 -->
-<div class="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 shadow-sm p-4 mb-4">
-    <form id="repo-filter-form" class="flex flex-col sm:flex-row gap-3">
-        <div class="flex-1 relative">
-            <svg class="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/>
-            </svg>
-            <input type="text" name="search" value="{{ search }}" placeholder="搜索仓库名称..."
-                   class="w-full pl-10 pr-4 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-sm focus:ring-2 focus:ring-pink-500 focus:border-transparent outline-none">
-        </div>
-        <select name="status"
-                class="px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-sm focus:ring-2 focus:ring-pink-500 focus:border-transparent outline-none">
-            <option value="active" {% if status == 'active' %}selected{% endif %}>已启用</option>
-            <option value="all" {% if status == 'all' %}selected{% endif %}>全部</option>
-        </select>
-        <button type="submit"
-                class="px-4 py-2 bg-pink-500 text-white rounded-lg text-sm font-medium hover:bg-pink-600 transition-colors">
-            搜索
-        </button>
-    </form>
-</div>
-
-<!-- 仓库列表 -->
-<div class="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 shadow-sm overflow-hidden">
-    {% if repos %}
-    <div class="divide-y divide-gray-200 dark:divide-gray-700">
-        {% for r in repos %}
-        <div class="flex items-center gap-4 px-5 py-3.5 hover:bg-gray-50 dark:hover:bg-gray-700/50 transition-colors">
-            <!-- 状态 -->
-            <div class="flex-shrink-0">
-                {% if r.is_active %}
-                <span class="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-medium bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-400">
-                    <span class="w-1.5 h-1.5 bg-green-500 rounded-full"></span>启用
-                </span>
-                {% else %}
-                <span class="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-medium bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-400">
-                    <span class="w-1.5 h-1.5 bg-gray-400 rounded-full"></span>已禁用
-                </span>
-                {% endif %}
-            </div>
-
-            <!-- 仓库信息 -->
+    <!-- 仓库列表 -->
+    <div class="divide-y divide-gray-100 dark:divide-gray-700/50">
+        {% for repo in inst.repos %}
+        <div class="flex items-center gap-4 px-5 py-3 hover:bg-gray-50 dark:hover:bg-gray-700/50 transition-colors">
+            <!-- 仓库名 + 私有标记 -->
             <div class="flex-1 min-w-0">
-                <p class="text-sm font-medium truncate">
-                    <svg class="w-4 h-4 inline mr-1 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <div class="flex items-center gap-2">
+                    <svg class="w-4 h-4 text-gray-400 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z"/>
                     </svg>
-                    {{ r.repo_name }}
-                </p>
-                <p class="text-xs text-gray-500 dark:text-gray-400 mt-0.5">
-                    {% if r.added_by %}添加者 ID: {{ r.added_by }}{% endif %}
-                </p>
+                    <a href="{{ repo.html_url }}" target="_blank" rel="noopener"
+                       class="text-sm font-medium hover:text-pink-500 dark:hover:text-pink-400 transition-colors truncate">
+                        {{ repo.full_name }}
+                    </a>
+                    {% if repo.private %}
+                    <span class="inline-flex items-center px-1.5 py-0.5 rounded text-xs bg-yellow-100 dark:bg-yellow-900/30 text-yellow-700 dark:text-yellow-400 flex-shrink-0">
+                        私有
+                    </span>
+                    {% endif %}
+                </div>
             </div>
 
-            <!-- 时间 -->
-            <div class="flex-shrink-0 text-xs text-gray-400 dark:text-gray-500 hidden md:block">
-                {{ r.created_at.strftime('%Y-%m-%d %H:%M') if r.created_at else '-' }}
+            <!-- 统计 -->
+            <div class="flex items-center gap-4 flex-shrink-0 text-xs">
+                <a href="/webui/pr/?search={{ repo.full_name }}"
+                   class="text-gray-500 dark:text-gray-400 hover:text-pink-500 dark:hover:text-pink-400 transition-colors">
+                    PR: {{ repo.pr_count }}
+                </a>
+                <a href="/webui/issues/?repo_name={{ repo.full_name }}"
+                   class="text-gray-500 dark:text-gray-400 hover:text-pink-500 dark:hover:text-pink-400 transition-colors">
+                    Issue: {{ repo.issue_count }}
+                </a>
+                <span class="text-gray-400 dark:text-gray-500 hidden md:inline">
+                    {{ repo.last_activity.strftime('%Y-%m-%d %H:%M') if repo.last_activity else '-' }}
+                </span>
             </div>
 
-            <!-- 操作 -->
+            <!-- 操作按钮 -->
             <div class="flex gap-2 flex-shrink-0">
-                <form method="POST" action="/webui/repos/{{ r.id }}/toggle" class="inline"
-                      data-confirm="确定要{{ '禁用' if r.is_active else '启用' }}此仓库吗？">
-                    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-                    <button type="submit" class="px-3 py-1.5 rounded-lg text-sm border border-gray-300 dark:border-gray-600 hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors">
-                        {% if r.is_active %}禁用{% else %}启用{% endif %}
-                    </button>
-                </form>
-                <form method="POST" action="/webui/repos/{{ r.id }}/remove" class="inline"
-                      data-confirm="确定要删除此仓库吗？" data-confirm-warning="此操作不可撤销" data-confirm-text="删除">
-                    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-                    <button type="submit" class="px-3 py-1.5 rounded-lg text-sm text-red-600 dark:text-red-400 border border-red-300 dark:border-red-800 hover:bg-red-50 dark:hover:bg-red-900/20 transition-colors">
-                        删除
-                    </button>
-                </form>
-                <button type="button" onclick="triggerIndex({{ r.id }}, 'docs', '{{ csrf_token }}')"
-                        id="index-docs-btn-{{ r.id }}"
-                        class="px-3 py-1.5 rounded-lg text-sm border border-blue-300 dark:border-blue-800
+                <button type="button" onclick="triggerIndex(this, '{{ repo.full_name }}', 'docs', '{{ csrf_token }}')"
+                        class="px-3 py-1.5 rounded-lg text-xs border border-blue-300 dark:border-blue-800
                                text-blue-600 dark:text-blue-400 hover:bg-blue-50 dark:hover:bg-blue-900/20 transition-colors">
                     索引文档
                 </button>
-                <button type="button" onclick="triggerIndex({{ r.id }}, 'code', '{{ csrf_token }}')"
-                        id="index-code-btn-{{ r.id }}"
-                        class="px-3 py-1.5 rounded-lg text-sm border border-purple-300 dark:border-purple-800
+                <button type="button" onclick="triggerIndex(this, '{{ repo.full_name }}', 'code', '{{ csrf_token }}')"
+                        class="px-3 py-1.5 rounded-lg text-xs border border-purple-300 dark:border-purple-800
                                text-purple-600 dark:text-purple-400 hover:bg-purple-50 dark:hover:bg-purple-900/20 transition-colors">
                     索引代码
                 </button>
@@ -107,50 +64,13 @@
         </div>
         {% endfor %}
     </div>
-
-    <!-- 分页 -->
-    {% if total_pages > 1 %}
-    <div class="px-5 py-3 border-t border-gray-200 dark:border-gray-700 flex items-center justify-between">
-        <p class="text-sm text-gray-500 dark:text-gray-400">
-            共 {{ total }} 条，第 {{ page }}/{{ total_pages }} 页
-        </p>
-        <div class="flex gap-1">
-            {% if page > 1 %}
-            <a href="#" onclick="loadRepoPage({{ page - 1 }}); return false;"
-               class="px-3 py-1.5 rounded-lg text-sm border border-gray-300 dark:border-gray-600 hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors">
-                上一页
-            </a>
-            {% endif %}
-
-            {% for p in range(1, total_pages + 1) %}
-                {% if p == page %}
-                <span class="px-3 py-1.5 rounded-lg text-sm bg-pink-500 text-white">{{ p }}</span>
-                {% elif p <= 3 or p >= total_pages - 2 or (p >= page - 1 and p <= page + 1) %}
-                <a href="#" onclick="loadRepoPage({{ p }}); return false;"
-                   class="px-3 py-1.5 rounded-lg text-sm border border-gray-300 dark:border-gray-600 hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors">
-                    {{ p }}
-                </a>
-                {% elif p == 4 or p == total_pages - 3 %}
-                <span class="px-2 py-1.5 text-gray-400">...</span>
-                {% endif %}
-            {% endfor %}
-
-            {% if page < total_pages %}
-            <a href="#" onclick="loadRepoPage({{ page + 1 }}); return false;"
-               class="px-3 py-1.5 rounded-lg text-sm border border-gray-300 dark:border-gray-600 hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors">
-                下一页
-            </a>
-            {% endif %}
-        </div>
-    </div>
-    {% endif %}
-
-    {% else %}
-    <div class="p-12 text-center">
-        <svg class="w-12 h-12 mx-auto text-gray-300 dark:text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z"/>
-        </svg>
-        <p class="mt-4 text-gray-500 dark:text-gray-400">没有找到匹配的仓库</p>
-    </div>
-    {% endif %}
 </div>
+{% else %}
+<div class="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 shadow-sm p-12 text-center">
+    <svg class="w-12 h-12 mx-auto text-gray-300 dark:text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z"/>
+    </svg>
+    <p class="mt-4 text-gray-500 dark:text-gray-400">未找到已安装的仓库</p>
+    <p class="mt-1 text-sm text-gray-400 dark:text-gray-500">请确保 GitHub App 已安装到您的仓库</p>
+</div>
+{% endfor %}

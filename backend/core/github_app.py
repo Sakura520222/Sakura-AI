@@ -109,6 +109,62 @@ class GitHubAppClient:
             self._app_client = Github(login_or_token=token)
         return self._app_client
 
+    def get_all_installations_with_repos(self) -> list[dict]:
+        """获取所有 GitHub App 安装及其仓库列表
+
+        Returns:
+            [{"installation_id": int, "account_login": str, "account_type": str,
+              "repos": [{"full_name": str, "name": str, "private": bool, "html_url": str}]}]
+        """
+        if not self.integration:
+            logger.warning("GitHub Integration 未初始化，尝试重新初始化...")
+            self._init_integration()
+            if not self.integration:
+                logger.error("重新初始化 GitHub Integration 仍然失败，无法获取安装仓库")
+                return []
+
+        installations = list(self.integration.get_installations())
+        logger.info(f"获取到 {len(installations)} 个 installation")
+        result = []
+        for inst in installations:
+            try:
+                logger.info(f"处理 installation: id={inst.id}, target_type={inst.target_type}")
+                repos = list(inst.get_repos())
+                logger.info(f"installation {inst.id} 有 {len(repos)} 个仓库")
+                # 从 html_url 解析 account_login，格式如：
+                # https://github.com/settings/installations/123 → User
+                # https://github.com/organizations/xxx/settings/installations/123 → Organization
+                account_login = ""
+                html_url = getattr(inst, "html_url", "")
+                if "/organizations/" in html_url:
+                    # https://github.com/organizations/OWNER/settings/installations/ID
+                    parts = html_url.split("/organizations/")
+                    if len(parts) > 1:
+                        account_login = parts[1].split("/")[0]
+                elif repos:
+                    # 从第一个仓库的 full_name 提取 owner
+                    account_login = repos[0].full_name.split("/")[0]
+
+                result.append(
+                    {
+                        "installation_id": inst.id,
+                        "account_login": account_login,
+                        "account_type": inst.target_type,
+                        "repos": [
+                            {
+                                "full_name": repo.full_name,
+                                "name": repo.name,
+                                "private": repo.private,
+                                "html_url": repo.html_url,
+                            }
+                            for repo in repos
+                        ],
+                    }
+                )
+            except Exception as e:
+                logger.warning(f"获取 installation {inst.id} 仓库失败: {e}", exc_info=True)
+        return result
+
     def get_installation_client(
         self, repo_owner: str, repo_name: str
     ) -> Optional[Github]:
