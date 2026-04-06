@@ -10,7 +10,7 @@ from datetime import datetime
 from fastapi import APIRouter, Request, Depends
 from fastapi.responses import JSONResponse
 from loguru import logger
-from sqlalchemy import select, func
+from sqlalchemy import select, func, tuple_
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.models.database import PRReview, IssueAnalysis
@@ -69,31 +69,31 @@ async def _get_installations_with_stats(db: AsyncSession) -> list[dict]:
             repo_key_map[repo["full_name"]] = key
 
     if all_repo_keys:
-        owners = [k[0] for k in all_repo_keys]
-        short_names = [k[1] for k in all_repo_keys]
+        # 去重，避免 IN 子句参数膨胀
+        unique_keys = list(set(all_repo_keys))
 
         pr_counts = (await db.execute(
             select(PRReview.repo_owner, PRReview.repo_name, func.count(PRReview.id))
-            .where(PRReview.repo_owner.in_(owners), PRReview.repo_name.in_(short_names))
+            .where(tuple_(PRReview.repo_owner, PRReview.repo_name).in_(unique_keys))
             .group_by(PRReview.repo_owner, PRReview.repo_name)
         )).all()
         issue_counts = (await db.execute(
             select(IssueAnalysis.repo_owner, IssueAnalysis.repo_name,
                    func.count(IssueAnalysis.id))
-            .where(IssueAnalysis.repo_owner.in_(owners),
-                   IssueAnalysis.repo_name.in_(short_names))
+            .where(tuple_(IssueAnalysis.repo_owner, IssueAnalysis.repo_name)
+                   .in_(unique_keys))
             .group_by(IssueAnalysis.repo_owner, IssueAnalysis.repo_name)
         )).all()
         last_prs = (await db.execute(
             select(PRReview.repo_owner, PRReview.repo_name, func.max(PRReview.created_at))
-            .where(PRReview.repo_owner.in_(owners), PRReview.repo_name.in_(short_names))
+            .where(tuple_(PRReview.repo_owner, PRReview.repo_name).in_(unique_keys))
             .group_by(PRReview.repo_owner, PRReview.repo_name)
         )).all()
         last_issues = (await db.execute(
             select(IssueAnalysis.repo_owner, IssueAnalysis.repo_name,
                    func.max(IssueAnalysis.created_at))
-            .where(IssueAnalysis.repo_owner.in_(owners),
-                   IssueAnalysis.repo_name.in_(short_names))
+            .where(tuple_(IssueAnalysis.repo_owner, IssueAnalysis.repo_name)
+                   .in_(unique_keys))
             .group_by(IssueAnalysis.repo_owner, IssueAnalysis.repo_name)
         )).all()
 
