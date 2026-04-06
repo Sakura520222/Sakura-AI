@@ -30,6 +30,7 @@ router = APIRouter(prefix="/repos", tags=["WebUI Repos"])
 templates = get_templates()
 
 # 索引任务锁：防止同一仓库同时执行多个索引
+# 注意：此锁为进程级，多 worker 部署时可能存在竞争
 _active_index_tasks: dict[str, asyncio.Task] = {}
 
 
@@ -40,39 +41,60 @@ def _is_index_locked(repo_name: str, index_type: str) -> bool:
     return task is not None and not task.done()
 
 
+async def _clone_repo_for_indexing(repo_name: str) -> str:
+    """克隆仓库到临时目录，返回 temp_dir 路径
+
+    使用 Installation Access Token 进行 git clone 认证。
+    调用方负责在 finally 中使用 shutil.rmtree 清理临时目录。
+    """
+    from backend.core.github_app import GitHubAppClient
+
+    if "/" not in repo_name:
+        raise ValueError(f"无效的仓库名称格式: {repo_name}，应为 owner/repo")
+
+    github_app = GitHubAppClient()
+    repo_owner, repo_name_only = repo_name.split("/", 1)
+    client = github_app.get_repo_client(repo_owner, repo_name_only)
+    if not client:
+        raise RuntimeError(f"无法访问仓库: {repo_name}")
+
+    # 获取 installation access token 用于 git clone 认证
+    installation = github_app.integration.get_installation(
+        owner=repo_owner, repo=repo_name_only
+    )
+    auth_token = github_app.integration.get_access_token(installation.id)
+
+    repo = await asyncio.to_thread(client.get_repo, repo_name)
+    temp_dir = tempfile.mkdtemp()
+
+    try:
+        clone_url = repo.clone_url.replace(
+            "https://", f"https://x-access-token:{auth_token.token}@"
+        )
+        await asyncio.to_thread(
+            subprocess.run,
+            ["git", "clone", "--depth", "1", clone_url, temp_dir],
+            check=True,
+            capture_output=True,
+            timeout=60,
+        )
+    except Exception:
+        shutil.rmtree(temp_dir, ignore_errors=True)
+        raise
+
+    return temp_dir
+
+
 async def _run_docs_index(repo_name: str, user_id: int) -> None:
     """后台执行文档索引"""
     key = f"{repo_name}:docs"
     try:
-        from backend.core.config import get_settings
-        from backend.core.github_app import GitHubAppClient
         from backend.services.rag_service import get_rag_service
         from backend.webui.sse import publish_event
 
-        settings = get_settings()
-
-        # 克隆仓库到临时目录
-        github_app = GitHubAppClient()
-        repo_owner, repo_name_only = repo_name.split("/", 1)
-        client = github_app.get_repo_client(repo_owner, repo_name_only)
-        if not client:
-            raise RuntimeError(f"无法访问仓库: {repo_name}")
-
-        repo = await asyncio.to_thread(client.get_repo, repo_name)
-        temp_dir = tempfile.mkdtemp()
+        temp_dir = await _clone_repo_for_indexing(repo_name)
 
         try:
-            clone_url = repo.clone_url.replace(
-                "https://", f"https://x-access-token:{settings.github_app_id}@"
-            )
-            await asyncio.to_thread(
-                subprocess.run,
-                ["git", "clone", "--depth", "1", clone_url, temp_dir],
-                check=True,
-                capture_output=True,
-                timeout=60,
-            )
-
             # 执行文档索引
             rag_service = get_rag_service()
             result = await rag_service.index_repository_docs(repo_name, temp_dir)
@@ -114,35 +136,12 @@ async def _run_code_index(repo_name: str, user_id: int) -> None:
     """后台执行代码索引"""
     key = f"{repo_name}:code"
     try:
-        from backend.core.config import get_settings
-        from backend.core.github_app import GitHubAppClient
         from backend.services.code_index_service import get_code_index_service
         from backend.webui.sse import publish_event
 
-        settings = get_settings()
-
-        # 克隆仓库到临时目录
-        github_app = GitHubAppClient()
-        repo_owner, repo_name_only = repo_name.split("/", 1)
-        client = github_app.get_repo_client(repo_owner, repo_name_only)
-        if not client:
-            raise RuntimeError(f"无法访问仓库: {repo_name}")
-
-        repo = await asyncio.to_thread(client.get_repo, repo_name)
-        temp_dir = tempfile.mkdtemp()
+        temp_dir = await _clone_repo_for_indexing(repo_name)
 
         try:
-            clone_url = repo.clone_url.replace(
-                "https://", f"https://x-access-token:{settings.github_app_id}@"
-            )
-            await asyncio.to_thread(
-                subprocess.run,
-                ["git", "clone", "--depth", "1", clone_url, temp_dir],
-                check=True,
-                capture_output=True,
-                timeout=60,
-            )
-
             # 获取 commit SHA
             commit_result = await asyncio.to_thread(
                 subprocess.run,
@@ -405,6 +404,9 @@ async def index_docs(
     _active_index_tasks[f"{repo.repo_name}:docs"] = task
 
     logger.info(f"WebUI 触发文档索引: {repo.repo_name}, by={user['sub']}")
+    await log_admin_action(
+        db, user["user_id"], "repo_index_docs", "repo", repo.repo_name
+    )
     return JSONResponse({"success": True, "message": f"文档索引已启动: {repo.repo_name}"})
 
 
@@ -448,4 +450,7 @@ async def index_code(
     _active_index_tasks[f"{repo.repo_name}:code"] = task
 
     logger.info(f"WebUI 触发代码索引: {repo.repo_name}, by={user['sub']}")
+    await log_admin_action(
+        db, user["user_id"], "repo_index_code", "repo", repo.repo_name
+    )
     return JSONResponse({"success": True, "message": f"代码索引已启动: {repo.repo_name}"})

@@ -2,7 +2,7 @@
 
 import time
 from collections import OrderedDict
-from typing import Optional
+from typing import Any, Optional
 from functools import lru_cache
 
 from fastapi import Request, HTTPException, Depends, Form, Header
@@ -70,7 +70,7 @@ def build_review_search_filter(search: str):
     )
 
 
-def build_user_scope_filter(user: dict, model) -> Optional:
+def build_user_scope_filter(user: dict, model: type) -> Optional[Any]:
     """构建用户数据范围过滤条件
 
     普通用户只能看到 repo_owner 或 author 与自己 GitHub 用户名匹配的记录；

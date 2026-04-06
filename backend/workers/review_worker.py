@@ -187,9 +187,21 @@ class ReviewWorker:
                                 repo = await asyncio.to_thread(
                                     client.get_repo, pr_info["repo_full_name"]
                                 )
+                                # 获取 installation access token 用于 git clone 认证
+                                installation = (
+                                    self.github_app.integration.get_installation(
+                                        owner=pr_info["repo_owner"],
+                                        repo=pr_info["repo_name"],
+                                    )
+                                )
+                                auth_token = (
+                                    self.github_app.integration.get_access_token(
+                                        installation.id
+                                    )
+                                )
                                 clone_url = repo.clone_url.replace(
                                     "https://",
-                                    f"https://x-access-token:{settings.github_app_id}@",
+                                    f"https://x-access-token:{auth_token.token}@",
                                 )
                                 await asyncio.to_thread(
                                     subprocess.run,

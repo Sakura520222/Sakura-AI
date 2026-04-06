@@ -62,9 +62,9 @@ function triggerIndex(repoId, indexType, csrfToken) {
 // SSE: 文档索引完成
 window.addEventListener('sse:index-docs', function(e) {
     var detail = e.detail;
-    var msg = detail.success
-        ? '文档索引完成: ' + detail.repo_name + ' (' + detail.result.total_files + ' 文件, ' + detail.result.total_chunks + ' 块)'
-        : '文档索引失败: ' + detail.repo_name + ' - ' + detail.error;
+    var msg = detail.success && detail.result
+        ? '文档索引完成: ' + detail.repo_name + ' (' + (detail.result.total_files || 0) + ' 文件, ' + (detail.result.total_chunks || 0) + ' 块)'
+        : '文档索引失败: ' + detail.repo_name + ' - ' + (detail.error || '未知错误');
     window.dispatchEvent(new CustomEvent('show-toast', {
         detail: { message: msg, type: detail.success ? 'success' : 'error' }
     }));
@@ -75,9 +75,9 @@ window.addEventListener('sse:index-docs', function(e) {
 // SSE: 代码索引完成
 window.addEventListener('sse:index-code', function(e) {
     var detail = e.detail;
-    var msg = detail.success
-        ? '代码索引完成: ' + detail.repo_name + ' (' + detail.result.indexed + ' 文件, ' + detail.result.total_chunks + ' 块)'
-        : '代码索引失败: ' + detail.repo_name + ' - ' + detail.error;
+    var msg = detail.success && detail.result
+        ? '代码索引完成: ' + detail.repo_name + ' (' + (detail.result.indexed || 0) + ' 文件, ' + (detail.result.total_chunks || 0) + ' 块)'
+        : '代码索引失败: ' + detail.repo_name + ' - ' + (detail.error || '未知错误');
     window.dispatchEvent(new CustomEvent('show-toast', {
         detail: { message: msg, type: detail.success ? 'success' : 'error' }
     }));
