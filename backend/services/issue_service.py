@@ -15,6 +15,13 @@ from backend.core.github_app import GitHubAppClient
 from backend.core.config import get_settings, get_strategy_config
 
 
+def _apply_scope_filter(query, scope_filter):
+    """应用用户数据范围过滤"""
+    if scope_filter is not None:
+        return query.where(scope_filter)
+    return query
+
+
 class IssueService:
     """Issue 管理服务（单例模式）"""
 
@@ -426,33 +433,31 @@ class IssueService:
             scope_filter: 可选的用户数据范围过滤条件
         """
 
-        def _apply_filter(query):
-            if scope_filter is not None:
-                return query.where(scope_filter)
-            return query
-
         total_result = await db.execute(
-            _apply_filter(select(func.count(IssueAnalysis.id)))
+            _apply_scope_filter(select(func.count(IssueAnalysis.id)), scope_filter)
         )
         total = total_result.scalar() or 0
 
         total_cost_result = await db.execute(
-            _apply_filter(
-                select(func.coalesce(func.sum(IssueAnalysis.estimated_cost), 0))
+            _apply_scope_filter(
+                select(func.coalesce(func.sum(IssueAnalysis.estimated_cost), 0)),
+                scope_filter,
             )
         )
         total_cost = total_cost_result.scalar() or 0
 
         total_prompt_result = await db.execute(
-            _apply_filter(
-                select(func.coalesce(func.sum(IssueAnalysis.prompt_tokens), 0))
+            _apply_scope_filter(
+                select(func.coalesce(func.sum(IssueAnalysis.prompt_tokens), 0)),
+                scope_filter,
             )
         )
         total_prompt_tokens = total_prompt_result.scalar() or 0
 
         total_completion_result = await db.execute(
-            _apply_filter(
-                select(func.coalesce(func.sum(IssueAnalysis.completion_tokens), 0))
+            _apply_scope_filter(
+                select(func.coalesce(func.sum(IssueAnalysis.completion_tokens), 0)),
+                scope_filter,
             )
         )
         total_completion_tokens = total_completion_result.scalar() or 0
@@ -470,10 +475,11 @@ class IssueService:
             "other",
         ]:
             result = await db.execute(
-                _apply_filter(
+                _apply_scope_filter(
                     select(func.count(IssueAnalysis.id)).where(
                         IssueAnalysis.category == cat
-                    )
+                    ),
+                    scope_filter,
                 )
             )
             category_stats[cat] = result.scalar() or 0
@@ -481,10 +487,11 @@ class IssueService:
         priority_stats = {}
         for pri in ["critical", "high", "medium", "low"]:
             result = await db.execute(
-                _apply_filter(
+                _apply_scope_filter(
                     select(func.count(IssueAnalysis.id)).where(
                         IssueAnalysis.priority == pri
-                    )
+                    ),
+                    scope_filter,
                 )
             )
             priority_stats[pri] = result.scalar() or 0
