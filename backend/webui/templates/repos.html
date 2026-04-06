@@ -1,24 +1,42 @@
 {% extends "base.html" %}
 
-{% block title %}仓库管理 - Sakura AI Reviewer{% endblock %}
+{% block title %}已安装仓库 - Sakura AI Reviewer{% endblock %}
 
 {% block content %}
 <div class="space-y-4">
     <!-- 页面标题 -->
-    <div>
-        <h1 class="text-2xl font-bold">仓库管理</h1>
-        <p class="mt-1 text-sm text-gray-500 dark:text-gray-400">管理仓库白名单</p>
+    <div class="flex items-center justify-between">
+        <div>
+            <h1 class="text-2xl font-bold">已安装仓库</h1>
+            <p class="mt-1 text-sm text-gray-500 dark:text-gray-400">GitHub App 已安装的仓库列表</p>
+        </div>
+        <button onclick="loadListPage('repo-list-container', '/webui/repos/list-fragment', 1)"
+                class="px-4 py-2 text-sm border border-gray-300 dark:border-gray-600 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors">
+            <svg class="w-4 h-4 inline mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/>
+            </svg>
+            刷新
+        </button>
     </div>
 
-    <!-- 仓库列表（通过 HTMX 加载） -->
-    <div id="repo-list-container" hx-get="/webui/repos/list-fragment" hx-trigger="load" hx-swap="innerHTML">
-        <div class="text-center py-8 text-gray-400">
-            <svg class="w-8 h-8 mx-auto animate-spin" fill="none" viewBox="0 0 24 24">
-                <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/>
-                <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/>
-            </svg>
-            <p class="mt-2">加载中...</p>
+    <!-- 仓库列表（按 installation 分组） -->
+    <div id="repo-list-container">
+        {% if error_message %}
+        <div class="bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-xl p-4 mb-4">
+            <div class="flex items-center gap-2 text-red-700 dark:text-red-400 text-sm">
+                <svg class="w-5 h-5 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/>
+                </svg>
+                <span>{{ error_message }}</span>
+            </div>
         </div>
+        {% endif %}
+
+        {% if installations %}
+            {% include "components/repo_list_fragment.html" %}
+        {% else %}
+            {% include "components/empty_repos_state.html" %}
+        {% endif %}
     </div>
 </div>
 {% endblock %}
@@ -26,7 +44,66 @@
 {% block extra_scripts %}
 {{ super() }}
 <script>
-var loadRepoPage = function(n) { loadListPage('repo-list-container', '/webui/repos/list-fragment', n); };
-initFilterForm('repo-filter-form', 'repo-list-container', '/webui/repos/list-fragment');
+// 刷新仓库列表
+function refreshRepoList() {
+    loadListPage('repo-list-container', '/webui/repos/list-fragment', 1);
+}
+
+// 触发索引（文档或代码）
+function triggerIndex(btn, repoName, indexType, csrfToken) {
+    if (btn.disabled) return;
+
+    btn.disabled = true;
+    btn.dataset.originalText = btn.textContent;
+    btn.textContent = '索引中...';
+
+    var encodedName = encodeURIComponent(repoName).replace(/%2F/g, '/');
+    fetch('/webui/repos/' + encodedName + '/index-' + indexType, {
+        method: 'POST',
+        headers: { 'X-CSRF-Token': csrfToken }
+    })
+    .then(function(r) { return r.json(); })
+    .then(function(data) {
+        if (!data.success) {
+            btn.disabled = false;
+            btn.textContent = btn.dataset.originalText;
+            window.dispatchEvent(new CustomEvent('show-toast', { detail: { message: data.message, type: 'error' } }));
+        } else {
+            window.dispatchEvent(new CustomEvent('show-toast', { detail: { message: data.message, type: 'success' } }));
+        }
+    })
+    .catch(function() {
+        btn.disabled = false;
+        btn.textContent = btn.dataset.originalText;
+        window.dispatchEvent(new CustomEvent('show-toast', { detail: { message: '请求失败', type: 'error' } }));
+    });
+}
+
+// SSE: 文档索引完成
+window.addEventListener('sse:index-docs', function(e) {
+    var detail = e.detail;
+    var isSuccess = detail.success && detail.result;
+    var msg = isSuccess
+        ? '文档索引完成: ' + detail.repo_name + ' (' + (detail.result.total_files || 0) + ' 文件, ' + (detail.result.total_chunks || 0) + ' 块)'
+        : '文档索引失败: ' + detail.repo_name + ' - ' + (detail.error || '未知错误');
+    window.dispatchEvent(new CustomEvent('show-toast', {
+        detail: { message: msg, type: isSuccess ? 'success' : 'error' }
+    }));
+    // 刷新列表以恢复按钮状态
+    refreshRepoList();
+});
+
+// SSE: 代码索引完成
+window.addEventListener('sse:index-code', function(e) {
+    var detail = e.detail;
+    var isSuccess = detail.success && detail.result;
+    var msg = isSuccess
+        ? '代码索引完成: ' + detail.repo_name + ' (' + (detail.result.indexed || 0) + ' 文件, ' + (detail.result.total_chunks || 0) + ' 块)'
+        : '代码索引失败: ' + detail.repo_name + ' - ' + (detail.error || '未知错误');
+    window.dispatchEvent(new CustomEvent('show-toast', {
+        detail: { message: msg, type: isSuccess ? 'success' : 'error' }
+    }));
+    refreshRepoList();
+});
 </script>
 {% endblock %}

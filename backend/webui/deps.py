@@ -2,10 +2,10 @@
 
 import time
 from collections import OrderedDict
-from typing import Optional
+from typing import Any, Optional
 from functools import lru_cache
 
-from fastapi import Request, HTTPException, Depends, Form
+from fastapi import Request, HTTPException, Depends, Form, Header
 from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 from sqlalchemy import Select
@@ -70,6 +70,23 @@ def build_review_search_filter(search: str):
     )
 
 
+def build_user_scope_filter(user: dict, model: type) -> Optional[Any]:
+    """构建用户数据范围过滤条件
+
+    普通用户只能看到 repo_owner 或 author 与自己 GitHub 用户名匹配的记录；
+    admin/super_admin 可看全部。
+
+    Args:
+        user: 当前登录用户信息（含 sub=github_username, role）
+        model: ORM 模型类（需有 repo_owner 和 author 属性）
+    Returns:
+        过滤表达式或 None（管理员时不过滤）
+    """
+    if user.get("role") in ("admin", "super_admin"):
+        return None
+    return or_(model.repo_owner == user["sub"], model.author == user["sub"])
+
+
 async def paginate(
     db: AsyncSession,
     query: Select,
@@ -129,6 +146,15 @@ async def require_csrf(csrf_token: str = Form(...)) -> str:
     if not validate_csrf_token(csrf_token):
         raise HTTPException(status_code=403, detail="CSRF 验证失败")
     return csrf_token
+
+
+async def require_csrf_header(
+    x_csrf_token: str = Header(..., alias="X-CSRF-Token"),
+) -> str:
+    """FastAPI 依赖：从 Header 验证 CSRF Token（用于 JSON API）"""
+    if not validate_csrf_token(x_csrf_token):
+        raise HTTPException(status_code=403, detail="CSRF 验证失败")
+    return x_csrf_token
 
 
 def error_page(

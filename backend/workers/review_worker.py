@@ -1,6 +1,7 @@
 """审查任务Worker"""
 
 import asyncio
+import subprocess
 from typing import Dict, Any, Optional
 from datetime import datetime
 from loguru import logger
@@ -160,6 +161,74 @@ class ReviewWorker:
                         logger.info(f"[{task_id}] 代码索引完成")
                     except Exception as e:
                         logger.warning(f"[{task_id}] 代码索引失败（将继续审查）: {e}")
+
+                # 2.6 文档索引（如果启用 RAG 且仓库尚未索引过文档）
+                if settings.enable_rag:
+                    try:
+                        from backend.services.rag_service import get_rag_service
+
+                        rag_service = get_rag_service()
+                        doc_count = await rag_service.vector_store.get_collection_count(
+                            pr_info["repo_full_name"]
+                        )
+
+                        if doc_count == 0:
+                            import shutil
+                            import tempfile
+
+                            logger.info(
+                                f"[{task_id}] 仓库尚无文档索引，开始自动索引 .sakura/ 文档..."
+                            )
+                            temp_dir = tempfile.mkdtemp()
+                            try:
+                                client = self.github_app.get_repo_client(
+                                    pr_info["repo_owner"], pr_info["repo_name"]
+                                )
+                                repo = await asyncio.to_thread(
+                                    client.get_repo, pr_info["repo_full_name"]
+                                )
+                                # 获取 installation access token 用于 git clone 认证
+                                installation = (
+                                    self.github_app.integration.get_installation(
+                                        owner=pr_info["repo_owner"],
+                                        repo=pr_info["repo_name"],
+                                    )
+                                )
+                                auth_token = (
+                                    self.github_app.integration.get_access_token(
+                                        installation.id
+                                    )
+                                )
+                                clone_url = repo.clone_url.replace(
+                                    "https://",
+                                    f"https://x-access-token:{auth_token.token}@",
+                                )
+                                await asyncio.to_thread(
+                                    subprocess.run,
+                                    [
+                                        "git",
+                                        "clone",
+                                        "--depth",
+                                        "1",
+                                        clone_url,
+                                        temp_dir,
+                                    ],
+                                    check=True,
+                                    capture_output=True,
+                                    timeout=60,
+                                )
+                                result = await rag_service.index_repository_docs(
+                                    pr_info["repo_full_name"], temp_dir
+                                )
+                                logger.info(
+                                    f"[{task_id}] 文档索引完成: {result['total_files']} 文件, {result['total_chunks']} 块"
+                                )
+                            finally:
+                                shutil.rmtree(temp_dir, ignore_errors=True)
+                    except Exception as e:
+                        logger.warning(
+                            f"[{task_id}] 文档自动索引失败（将继续审查）: {e}"
+                        )
 
                 # 3. 创建数据库记录
                 review_id = await self._create_review_record(analysis, pr_info, task_id)
