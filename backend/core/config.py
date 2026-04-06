@@ -67,11 +67,6 @@ class Settings(BaseSettings):
     # AI工具配置
     enable_ai_tools: bool = True
 
-    # 标签推荐配置
-    enable_label_recommendation: bool = True
-    label_confidence_threshold: float = 0.7
-    label_auto_create: bool = False
-
     # Webhook配置
     webhook_path: str = "/api/webhook/github"
 
@@ -548,18 +543,6 @@ DYNAMIC_CONFIG_GROUPS: OrderedDict[str, dict] = OrderedDict(
                 ],
             },
         ),
-        (
-            "label",
-            {
-                "label": "标签推荐配置",
-                "icon": "tag",
-                "keys": [
-                    "enable_label_recommendation",
-                    "label_confidence_threshold",
-                    "label_auto_create",
-                ],
-            },
-        ),
     ]
 )
 
@@ -603,7 +586,6 @@ DYNAMIC_CONFIG_RANGES: dict[str, tuple[float, float]] = {
     "max_line_count": (100, 100000000),
     "incremental_history_max_reviews": (1, 20),
     "incremental_history_summary_max_tokens": (500, 4096),
-    "label_confidence_threshold": (0.0, 1.0),
 }
 
 # 字段中文标签
@@ -640,9 +622,6 @@ DYNAMIC_CONFIG_LABELS: dict[str, str] = {
     "enable_incremental_history_context": "启用增量审查历史上下文",
     "incremental_history_max_reviews": "历史审查轮数上限",
     "incremental_history_summary_max_tokens": "摘要生成最大 Token",
-    "enable_label_recommendation": "启用标签推荐",
-    "label_confidence_threshold": "标签置信度阈值",
-    "label_auto_create": "自动创建标签",
     # 核心配置标签
     "github_app_id": "GitHub App ID",
     "github_private_key": "GitHub App 私钥",

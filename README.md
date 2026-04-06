@@ -207,7 +207,7 @@ WebUI：`https://your-domain.com/webui/`
 - **审查策略**：编辑 `config/strategies.yaml`，支持快速/标准/深度/大PR 四种策略
 - **文件过滤**：在 `config/strategies.yaml` 中配置跳过的文件扩展名和路径
 - **AI 工具**：WebUI 配置管理中 `enable_ai_tools` / `max_tool_iterations`
-- **标签推荐**：WebUI 配置管理中 `enable_label_recommendation` / `label_confidence_threshold`
+- **标签推荐**：`config/labels.yaml` 配置 PR 标签推荐开关与置信度；Issue 标签在全局配置页 `issue_auto_create_labels` / `issue_confidence_threshold`
 - **审查批准**：`config/strategies.yaml` 中 `review_policy` 配置阈值和仓库级覆盖
 - **RAG 知识库**：WebUI 配置管理中配置嵌入模型（支持 BAAI/bge-m3 等）、重排序模型、ChromaDB 等
 - **PR 代码索引**：WebUI 配置管理中配置代码分块、支持语言、核心目录等
