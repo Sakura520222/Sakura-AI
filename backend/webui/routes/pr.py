@@ -19,6 +19,7 @@ from backend.webui.deps import (
     paginate,
     error_page,
     build_review_search_filter,
+    build_user_scope_filter,
 )
 
 router = APIRouter(prefix="/pr", tags=["WebUI PR"])
@@ -54,6 +55,11 @@ async def export_pr_csv(
 ):
     """导出 PR 审查列表为 CSV"""
     query = select(PRReview)
+
+    # 用户数据范围过滤
+    scope_filter = build_user_scope_filter(user, PRReview)
+    if scope_filter:
+        query = query.where(scope_filter)
 
     # 搜索过滤
     search_filter = build_review_search_filter(search)
@@ -135,6 +141,12 @@ async def pr_list_fragment(
     query = select(PRReview)
     count_query = select(func.count(PRReview.id))
 
+    # 用户数据范围过滤
+    scope_filter = build_user_scope_filter(user, PRReview)
+    if scope_filter:
+        query = query.where(scope_filter)
+        count_query = count_query.where(scope_filter)
+
     # 搜索过滤
     search_filter = build_review_search_filter(search)
     if search_filter:
@@ -185,11 +197,17 @@ async def pr_detail_page(
     user_prefs: dict = Depends(get_user_preferences),
 ) -> HTMLResponse:
     """PR 详情页面"""
-    # 查询 PR 审查记录
-    review = await db.execute(select(PRReview).where(PRReview.id == review_id))
-    review = review.scalar_one_or_none()
+    # 查询 PR 审查记录（含用户数据范围检查）
+    query = select(PRReview).where(PRReview.id == review_id)
+    scope_filter = build_user_scope_filter(user, PRReview)
+    if scope_filter:
+        query = query.where(scope_filter)
+    review = (await db.execute(query)).scalar_one_or_none()
     if not review:
-        return error_page(request, message="审查记录不存在", user=user)
+        return error_page(
+            request, status_code=404, title="未找到",
+            message="审查记录不存在或无权访问", user=user,
+        )
 
     # 查询关联评论
     comments_result = await db.execute(
@@ -240,11 +258,16 @@ async def pr_files_page(
     user_prefs: dict = Depends(get_user_preferences),
 ) -> HTMLResponse:
     """PR 文件级审查页面"""
-    review = (
-        await db.execute(select(PRReview).where(PRReview.id == review_id))
-    ).scalar_one_or_none()
+    query = select(PRReview).where(PRReview.id == review_id)
+    scope_filter = build_user_scope_filter(user, PRReview)
+    if scope_filter:
+        query = query.where(scope_filter)
+    review = (await db.execute(query)).scalar_one_or_none()
     if not review:
-        return error_page(request, message="审查记录不存在", user=user)
+        return error_page(
+            request, status_code=404, title="未找到",
+            message="审查记录不存在或无权访问", user=user,
+        )
 
     return templates.TemplateResponse(
         "pr_files.html",

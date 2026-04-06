@@ -16,6 +16,7 @@ from backend.webui.deps import (
     get_user_preferences,
     paginate,
     error_page,
+    build_user_scope_filter,
 )
 
 router = APIRouter(prefix="/issues", tags=["WebUI Issues"])
@@ -61,6 +62,12 @@ async def issue_list_fragment(
 
     query = select(IssueAnalysis)
     count_query = select(func.count(IssueAnalysis.id))
+
+    # 用户数据范围过滤
+    scope_filter = build_user_scope_filter(user, IssueAnalysis)
+    if scope_filter:
+        query = query.where(scope_filter)
+        count_query = count_query.where(scope_filter)
 
     if search:
         search_pattern = f"%{search}%"
@@ -119,7 +126,8 @@ async def issue_stats(
     """Issue 统计数据"""
     from backend.services.issue_service import issue_service
 
-    stats = await issue_service.get_issue_stats(db)
+    scope_filter = build_user_scope_filter(user, IssueAnalysis)
+    stats = await issue_service.get_issue_stats(db, scope_filter=scope_filter)
     return templates.TemplateResponse(
         "components/issue_stats_cards.html",
         {
@@ -138,10 +146,17 @@ async def issue_detail_page(
     user_prefs: dict = Depends(get_user_preferences),
 ) -> HTMLResponse:
     """Issue 分析详情页面"""
-    result = await db.execute(select(IssueAnalysis).where(IssueAnalysis.id == issue_id))
+    query = select(IssueAnalysis).where(IssueAnalysis.id == issue_id)
+    scope_filter = build_user_scope_filter(user, IssueAnalysis)
+    if scope_filter:
+        query = query.where(scope_filter)
+    result = await db.execute(query)
     analysis = result.scalar_one_or_none()
     if not analysis:
-        return error_page(request, message="分析记录不存在", user=user)
+        return error_page(
+            request, status_code=404, title="未找到",
+            message="分析记录不存在或无权访问", user=user,
+        )
 
     # 解析 JSON 字段
     suggested_labels = []
@@ -191,10 +206,14 @@ async def issue_detail_fragment(
     user: dict = Depends(require_auth),
 ):
     """Issue 详情 HTMX 片段"""
-    result = await db.execute(select(IssueAnalysis).where(IssueAnalysis.id == issue_id))
+    query = select(IssueAnalysis).where(IssueAnalysis.id == issue_id)
+    scope_filter = build_user_scope_filter(user, IssueAnalysis)
+    if scope_filter:
+        query = query.where(scope_filter)
+    result = await db.execute(query)
     analysis = result.scalar_one_or_none()
     if not analysis:
-        return HTMLResponse(content="<p>记录不存在</p>")
+        return HTMLResponse(content="<p>记录不存在或无权访问</p>")
 
     return templates.TemplateResponse(
         "components/issue_detail_fragment.html",
@@ -213,11 +232,16 @@ async def reanalyze_issue(
     user: dict = Depends(require_auth),
 ):
     """重新分析 Issue"""
-    result = await db.execute(select(IssueAnalysis).where(IssueAnalysis.id == issue_id))
+    query = select(IssueAnalysis).where(IssueAnalysis.id == issue_id)
+    scope_filter = build_user_scope_filter(user, IssueAnalysis)
+    if scope_filter:
+        query = query.where(scope_filter)
+    result = await db.execute(query)
     analysis = result.scalar_one_or_none()
     if not analysis:
         return JSONResponse(
-            content={"success": False, "message": "记录不存在"}, status_code=404
+            content={"success": False, "message": "记录不存在或无权访问"},
+            status_code=404,
         )
 
     # 构造 issue_info
