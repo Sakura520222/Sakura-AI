@@ -57,38 +57,51 @@ async def _get_installations_with_stats(db: AsyncSession) -> list[dict]:
         data = await asyncio.to_thread(github_app.get_all_installations_with_repos)
         _installations_cache = (data, now)
 
-    # 为每个仓库附加统计数据
+    # 收集所有仓库名，批量查询统计（4N → 4 查询）
+    all_repo_names = [
+        repo["full_name"] for inst in data for repo in inst["repos"]
+    ]
+    if all_repo_names:
+        pr_counts = (await db.execute(
+            select(PRReview.repo_name, func.count(PRReview.id))
+            .where(PRReview.repo_name.in_(all_repo_names))
+            .group_by(PRReview.repo_name)
+        )).all()
+        issue_counts = (await db.execute(
+            select(IssueAnalysis.repo_name, func.count(IssueAnalysis.id))
+            .where(IssueAnalysis.repo_name.in_(all_repo_names))
+            .group_by(IssueAnalysis.repo_name)
+        )).all()
+        last_prs = (await db.execute(
+            select(PRReview.repo_name, func.max(PRReview.created_at))
+            .where(PRReview.repo_name.in_(all_repo_names))
+            .group_by(PRReview.repo_name)
+        )).all()
+        last_issues = (await db.execute(
+            select(IssueAnalysis.repo_name, func.max(IssueAnalysis.created_at))
+            .where(IssueAnalysis.repo_name.in_(all_repo_names))
+            .group_by(IssueAnalysis.repo_name)
+        )).all()
+
+        pr_count_map = dict(pr_counts)
+        issue_count_map = dict(issue_counts)
+        last_pr_map = dict(last_prs)
+        last_issue_map = dict(last_issues)
+    else:
+        pr_count_map = {}
+        issue_count_map = {}
+        last_pr_map = {}
+        last_issue_map = {}
+
     for inst in data:
         for repo in inst["repos"]:
             full_name = repo["full_name"]
-            # 查询 PR 数量
-            pr_count = await db.scalar(
-                select(func.count(PRReview.id)).where(PRReview.repo_name == full_name)
-            )
-            # 查询 Issue 数量
-            issue_count = await db.scalar(
-                select(func.count(IssueAnalysis.id)).where(
-                    IssueAnalysis.repo_name == full_name
-                )
-            )
-            # 最后活动时间
-            last_pr = await db.scalar(
-                select(func.max(PRReview.created_at)).where(
-                    PRReview.repo_name == full_name
-                )
-            )
-            last_issue = await db.scalar(
-                select(func.max(IssueAnalysis.created_at)).where(
-                    IssueAnalysis.repo_name == full_name
-                )
-            )
-            last_activity = max(last_pr or datetime.min, last_issue or datetime.min)
-            if last_activity == datetime.min:
-                last_activity = None
-
-            repo["pr_count"] = pr_count or 0
-            repo["issue_count"] = issue_count or 0
-            repo["last_activity"] = last_activity
+            repo["pr_count"] = pr_count_map.get(full_name, 0)
+            repo["issue_count"] = issue_count_map.get(full_name, 0)
+            lp = last_pr_map.get(full_name)
+            li = last_issue_map.get(full_name)
+            last_activity = max(lp or datetime.min, li or datetime.min)
+            repo["last_activity"] = last_activity if last_activity != datetime.min else None
 
     return data
 
@@ -258,7 +271,7 @@ async def repo_list_page(
     except Exception as e:
         logger.error(f"获取安装仓库列表失败: {e}", exc_info=True)
         installations = []
-        error_message = f"获取仓库列表失败: {e}"
+        error_message = "获取仓库列表失败，请检查 GitHub App 配置或稍后重试"
 
     return templates.TemplateResponse(
         "repos.html",
