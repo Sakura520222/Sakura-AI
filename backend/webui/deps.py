@@ -5,7 +5,7 @@ from collections import OrderedDict
 from typing import Optional
 from functools import lru_cache
 
-from fastapi import Request, HTTPException, Depends, Form
+from fastapi import Request, HTTPException, Depends, Form, Header
 from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 from sqlalchemy import Select
@@ -146,6 +146,15 @@ async def require_csrf(csrf_token: str = Form(...)) -> str:
     if not validate_csrf_token(csrf_token):
         raise HTTPException(status_code=403, detail="CSRF 验证失败")
     return csrf_token
+
+
+async def require_csrf_header(
+    x_csrf_token: str = Header(..., alias="X-CSRF-Token"),
+) -> str:
+    """FastAPI 依赖：从 Header 验证 CSRF Token（用于 JSON API）"""
+    if not validate_csrf_token(x_csrf_token):
+        raise HTTPException(status_code=403, detail="CSRF 验证失败")
+    return x_csrf_token
 
 
 def error_page(
