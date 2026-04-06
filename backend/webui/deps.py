@@ -70,6 +70,23 @@ def build_review_search_filter(search: str):
     )
 
 
+def build_user_scope_filter(user: dict, model) -> Optional:
+    """构建用户数据范围过滤条件
+
+    普通用户只能看到 repo_owner 或 author 与自己 GitHub 用户名匹配的记录；
+    admin/super_admin 可看全部。
+
+    Args:
+        user: 当前登录用户信息（含 sub=github_username, role）
+        model: ORM 模型类（需有 repo_owner 和 author 属性）
+    Returns:
+        过滤表达式或 None（管理员时不过滤）
+    """
+    if user.get("role") in ("admin", "super_admin"):
+        return None
+    return or_(model.repo_owner == user["sub"], model.author == user["sub"])
+
+
 async def paginate(
     db: AsyncSession,
     query: Select,
