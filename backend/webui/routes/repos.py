@@ -58,28 +58,29 @@ async def _get_installations_with_stats(db: AsyncSession) -> list[dict]:
         _installations_cache = (data, now)
 
     # 收集所有仓库名，批量查询统计（4N → 4 查询）
-    all_repo_names = [
-        repo["full_name"] for inst in data for repo in inst["repos"]
+    # 数据库中 repo_name 存的是短名称（如 "repo"），需用短名称匹配
+    all_repo_short_names = [
+        repo["full_name"].split("/")[-1] for inst in data for repo in inst["repos"]
     ]
-    if all_repo_names:
+    if all_repo_short_names:
         pr_counts = (await db.execute(
             select(PRReview.repo_name, func.count(PRReview.id))
-            .where(PRReview.repo_name.in_(all_repo_names))
+            .where(PRReview.repo_name.in_(all_repo_short_names))
             .group_by(PRReview.repo_name)
         )).all()
         issue_counts = (await db.execute(
             select(IssueAnalysis.repo_name, func.count(IssueAnalysis.id))
-            .where(IssueAnalysis.repo_name.in_(all_repo_names))
+            .where(IssueAnalysis.repo_name.in_(all_repo_short_names))
             .group_by(IssueAnalysis.repo_name)
         )).all()
         last_prs = (await db.execute(
             select(PRReview.repo_name, func.max(PRReview.created_at))
-            .where(PRReview.repo_name.in_(all_repo_names))
+            .where(PRReview.repo_name.in_(all_repo_short_names))
             .group_by(PRReview.repo_name)
         )).all()
         last_issues = (await db.execute(
             select(IssueAnalysis.repo_name, func.max(IssueAnalysis.created_at))
-            .where(IssueAnalysis.repo_name.in_(all_repo_names))
+            .where(IssueAnalysis.repo_name.in_(all_repo_short_names))
             .group_by(IssueAnalysis.repo_name)
         )).all()
 
@@ -95,11 +96,11 @@ async def _get_installations_with_stats(db: AsyncSession) -> list[dict]:
 
     for inst in data:
         for repo in inst["repos"]:
-            full_name = repo["full_name"]
-            repo["pr_count"] = pr_count_map.get(full_name, 0)
-            repo["issue_count"] = issue_count_map.get(full_name, 0)
-            lp = last_pr_map.get(full_name)
-            li = last_issue_map.get(full_name)
+            short_name = repo["full_name"].split("/")[-1]
+            repo["pr_count"] = pr_count_map.get(short_name, 0)
+            repo["issue_count"] = issue_count_map.get(short_name, 0)
+            lp = last_pr_map.get(short_name)
+            li = last_issue_map.get(short_name)
             last_activity = max(lp or datetime.min, li or datetime.min)
             repo["last_activity"] = last_activity if last_activity != datetime.min else None
 
