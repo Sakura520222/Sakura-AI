@@ -28,5 +28,60 @@
 <script>
 var loadRepoPage = function(n) { loadListPage('repo-list-container', '/webui/repos/list-fragment', n); };
 initFilterForm('repo-filter-form', 'repo-list-container', '/webui/repos/list-fragment');
+
+// 触发索引（文档或代码）
+function triggerIndex(repoId, indexType, csrfToken) {
+    var btn = document.getElementById('index-' + indexType + '-btn-' + repoId);
+    if (!btn || btn.disabled) return;
+
+    btn.disabled = true;
+    btn.dataset.originalText = btn.textContent;
+    btn.textContent = '索引中...';
+
+    fetch('/webui/repos/' + repoId + '/index-' + indexType, {
+        method: 'POST',
+        headers: { 'X-CSRF-Token': csrfToken }
+    })
+    .then(function(r) { return r.json(); })
+    .then(function(data) {
+        if (!data.success) {
+            btn.disabled = false;
+            btn.textContent = btn.dataset.originalText;
+            window.dispatchEvent(new CustomEvent('show-toast', { detail: { message: data.message, type: 'error' } }));
+        } else {
+            window.dispatchEvent(new CustomEvent('show-toast', { detail: { message: data.message, type: 'success' } }));
+        }
+    })
+    .catch(function() {
+        btn.disabled = false;
+        btn.textContent = btn.dataset.originalText;
+        window.dispatchEvent(new CustomEvent('show-toast', { detail: { message: '请求失败', type: 'error' } }));
+    });
+}
+
+// SSE: 文档索引完成
+window.addEventListener('sse:index-docs', function(e) {
+    var detail = e.detail;
+    var msg = detail.success
+        ? '文档索引完成: ' + detail.repo_name + ' (' + detail.result.total_files + ' 文件, ' + detail.result.total_chunks + ' 块)'
+        : '文档索引失败: ' + detail.repo_name + ' - ' + detail.error;
+    window.dispatchEvent(new CustomEvent('show-toast', {
+        detail: { message: msg, type: detail.success ? 'success' : 'error' }
+    }));
+    // 刷新列表以恢复按钮状态
+    loadListPage('repo-list-container', '/webui/repos/list-fragment', 1);
+});
+
+// SSE: 代码索引完成
+window.addEventListener('sse:index-code', function(e) {
+    var detail = e.detail;
+    var msg = detail.success
+        ? '代码索引完成: ' + detail.repo_name + ' (' + detail.result.indexed + ' 文件, ' + detail.result.total_chunks + ' 块)'
+        : '代码索引失败: ' + detail.repo_name + ' - ' + detail.error;
+    window.dispatchEvent(new CustomEvent('show-toast', {
+        detail: { message: msg, type: detail.success ? 'success' : 'error' }
+    }));
+    loadListPage('repo-list-container', '/webui/repos/list-fragment', 1);
+});
 </script>
 {% endblock %}

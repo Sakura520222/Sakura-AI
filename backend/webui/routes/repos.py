@@ -1,7 +1,12 @@
 """WebUI 仓库管理路由"""
 
+import asyncio
+import shutil
+import subprocess
+import tempfile
+
 from fastapi import APIRouter, Request, Depends, Form, Query
-from fastapi.responses import RedirectResponse
+from fastapi.responses import RedirectResponse, JSONResponse
 from loguru import logger
 from sqlalchemy import select, func, desc
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -13,6 +18,7 @@ from backend.webui.deps import (
     get_templates,
     get_csrf_serializer,
     require_csrf,
+    require_csrf_header,
     get_user_preferences,
     paginate,
     error_page,
@@ -22,6 +28,169 @@ from backend.webui.helpers.admin_log import log_admin_action
 
 router = APIRouter(prefix="/repos", tags=["WebUI Repos"])
 templates = get_templates()
+
+# 索引任务锁：防止同一仓库同时执行多个索引
+_active_index_tasks: dict[str, asyncio.Task] = {}
+
+
+def _is_index_locked(repo_name: str, index_type: str) -> bool:
+    """检查仓库的指定索引类型是否正在执行"""
+    key = f"{repo_name}:{index_type}"
+    task = _active_index_tasks.get(key)
+    return task is not None and not task.done()
+
+
+async def _run_docs_index(repo_name: str, user_id: int) -> None:
+    """后台执行文档索引"""
+    key = f"{repo_name}:docs"
+    try:
+        from backend.core.config import get_settings
+        from backend.core.github_app import GitHubAppClient
+        from backend.services.rag_service import get_rag_service
+        from backend.webui.sse import publish_event
+
+        settings = get_settings()
+
+        # 克隆仓库到临时目录
+        github_app = GitHubAppClient()
+        repo_owner, repo_name_only = repo_name.split("/", 1)
+        client = github_app.get_repo_client(repo_owner, repo_name_only)
+        if not client:
+            raise RuntimeError(f"无法访问仓库: {repo_name}")
+
+        repo = await asyncio.to_thread(client.get_repo, repo_name)
+        temp_dir = tempfile.mkdtemp()
+
+        try:
+            clone_url = repo.clone_url.replace(
+                "https://", f"https://x-access-token:{settings.github_app_id}@"
+            )
+            await asyncio.to_thread(
+                subprocess.run,
+                ["git", "clone", "--depth", "1", clone_url, temp_dir],
+                check=True,
+                capture_output=True,
+                timeout=60,
+            )
+
+            # 执行文档索引
+            rag_service = get_rag_service()
+            result = await rag_service.index_repository_docs(repo_name, temp_dir)
+
+            logger.info(f"WebUI 文档索引完成: {repo_name}, result={result}")
+            publish_event(
+                "index:docs_completed",
+                {
+                    "repo_name": repo_name,
+                    "success": True,
+                    "result": result,
+                    "error": None,
+                },
+            )
+        finally:
+            shutil.rmtree(temp_dir, ignore_errors=True)
+
+    except Exception as e:
+        logger.error(f"WebUI 文档索引失败: {repo_name}, error={e}", exc_info=True)
+        try:
+            from backend.webui.sse import publish_event
+
+            publish_event(
+                "index:docs_completed",
+                {
+                    "repo_name": repo_name,
+                    "success": False,
+                    "result": None,
+                    "error": str(e),
+                },
+            )
+        except Exception:
+            pass
+    finally:
+        _active_index_tasks.pop(key, None)
+
+
+async def _run_code_index(repo_name: str, user_id: int) -> None:
+    """后台执行代码索引"""
+    key = f"{repo_name}:code"
+    try:
+        from backend.core.config import get_settings
+        from backend.core.github_app import GitHubAppClient
+        from backend.services.code_index_service import get_code_index_service
+        from backend.webui.sse import publish_event
+
+        settings = get_settings()
+
+        # 克隆仓库到临时目录
+        github_app = GitHubAppClient()
+        repo_owner, repo_name_only = repo_name.split("/", 1)
+        client = github_app.get_repo_client(repo_owner, repo_name_only)
+        if not client:
+            raise RuntimeError(f"无法访问仓库: {repo_name}")
+
+        repo = await asyncio.to_thread(client.get_repo, repo_name)
+        temp_dir = tempfile.mkdtemp()
+
+        try:
+            clone_url = repo.clone_url.replace(
+                "https://", f"https://x-access-token:{settings.github_app_id}@"
+            )
+            await asyncio.to_thread(
+                subprocess.run,
+                ["git", "clone", "--depth", "1", clone_url, temp_dir],
+                check=True,
+                capture_output=True,
+                timeout=60,
+            )
+
+            # 获取 commit SHA
+            commit_result = await asyncio.to_thread(
+                subprocess.run,
+                ["git", "rev-parse", "HEAD"],
+                cwd=temp_dir,
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+            commit_sha = commit_result.stdout.strip()
+
+            # 执行代码索引
+            code_index_service = get_code_index_service()
+            result = await code_index_service.index_repository_code(
+                repo_name, temp_dir, commit_sha
+            )
+
+            logger.info(f"WebUI 代码索引完成: {repo_name}, result={result}")
+            publish_event(
+                "index:code_completed",
+                {
+                    "repo_name": repo_name,
+                    "success": True,
+                    "result": result,
+                    "error": None,
+                },
+            )
+        finally:
+            shutil.rmtree(temp_dir, ignore_errors=True)
+
+    except Exception as e:
+        logger.error(f"WebUI 代码索引失败: {repo_name}, error={e}", exc_info=True)
+        try:
+            from backend.webui.sse import publish_event
+
+            publish_event(
+                "index:code_completed",
+                {
+                    "repo_name": repo_name,
+                    "success": False,
+                    "result": None,
+                    "error": str(e),
+                },
+            )
+        except Exception:
+            pass
+    finally:
+        _active_index_tasks.pop(key, None)
 
 
 @router.get("/")
@@ -194,3 +363,89 @@ async def remove_repo(
     logger.info(f"仓库已从白名单移除: {repo_name}, by={user['sub']}")
     await log_admin_action(db, user["user_id"], "repo_remove", "repo", repo_name)
     return toast_redirect("/webui/repos/", f"仓库 {repo_name} 已从白名单移除")
+
+
+@router.post("/{repo_id}/index-docs")
+async def index_docs(
+    repo_id: int,
+    db: AsyncSession = Depends(get_db),
+    user: dict = Depends(require_admin),
+    csrf_token: str = Depends(require_csrf_header),
+) -> JSONResponse:
+    """触发仓库文档索引（异步后台执行）"""
+    from backend.core.config import get_settings
+
+    # 查询仓库
+    result = await db.execute(
+        select(RepoSubscription).where(RepoSubscription.id == repo_id)
+    )
+    repo = result.scalar_one_or_none()
+    if not repo:
+        return JSONResponse(
+            {"success": False, "message": "仓库不存在"}, status_code=404
+        )
+
+    # 检查 RAG 功能是否启用
+    settings = get_settings()
+    if not settings.enable_rag:
+        return JSONResponse(
+            {"success": False, "message": "RAG 功能未启用，请在设置中开启"},
+            status_code=400,
+        )
+
+    # 检查是否正在索引
+    if _is_index_locked(repo.repo_name, "docs"):
+        return JSONResponse(
+            {"success": False, "message": f"仓库 {repo.repo_name} 正在索引中，请稍后再试"},
+            status_code=409,
+        )
+
+    # 启动后台任务
+    task = asyncio.create_task(_run_docs_index(repo.repo_name, user["user_id"]))
+    _active_index_tasks[f"{repo.repo_name}:docs"] = task
+
+    logger.info(f"WebUI 触发文档索引: {repo.repo_name}, by={user['sub']}")
+    return JSONResponse({"success": True, "message": f"文档索引已启动: {repo.repo_name}"})
+
+
+@router.post("/{repo_id}/index-code")
+async def index_code(
+    repo_id: int,
+    db: AsyncSession = Depends(get_db),
+    user: dict = Depends(require_admin),
+    csrf_token: str = Depends(require_csrf_header),
+) -> JSONResponse:
+    """触发仓库代码索引（异步后台执行）"""
+    from backend.core.config import get_settings
+
+    # 查询仓库
+    result = await db.execute(
+        select(RepoSubscription).where(RepoSubscription.id == repo_id)
+    )
+    repo = result.scalar_one_or_none()
+    if not repo:
+        return JSONResponse(
+            {"success": False, "message": "仓库不存在"}, status_code=404
+        )
+
+    # 检查代码索引功能是否启用
+    settings = get_settings()
+    if not settings.enable_code_index:
+        return JSONResponse(
+            {"success": False, "message": "代码索引功能未启用，请在设置中开启"},
+            status_code=400,
+        )
+
+    # 检查是否正在索引
+    if _is_index_locked(repo.repo_name, "code"):
+        return JSONResponse(
+            {"success": False, "message": f"仓库 {repo.repo_name} 正在索引中，请稍后再试"},
+            status_code=409,
+        )
+
+    # 启动后台任务
+    task = asyncio.create_task(_run_code_index(repo.repo_name, user["user_id"]))
+    _active_index_tasks[f"{repo.repo_name}:code"] = task
+
+    logger.info(f"WebUI 触发代码索引: {repo.repo_name}, by={user['sub']}")
+    return JSONResponse({"success": True, "message": f"代码索引已启动: {repo.repo_name}"})

@@ -36,6 +36,25 @@
             }
         });
 
+        // 索引完成事件
+        eventSource.addEventListener('index:docs_completed', function(e) {
+            try {
+                var data = JSON.parse(e.data);
+                window.dispatchEvent(new CustomEvent('sse:index-docs', { detail: data }));
+            } catch(err) {
+                console.error('[SSE] 解析 index docs 事件失败:', err);
+            }
+        });
+
+        eventSource.addEventListener('index:code_completed', function(e) {
+            try {
+                var data = JSON.parse(e.data);
+                window.dispatchEvent(new CustomEvent('sse:index-code', { detail: data }));
+            } catch(err) {
+                console.error('[SSE] 解析 index code 事件失败:', err);
+            }
+        });
+
         eventSource.onopen = function() {
             reconnectDelay = 1000;
             console.log('[SSE] 连接已建立');
