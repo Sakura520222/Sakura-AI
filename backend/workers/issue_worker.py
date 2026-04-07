@@ -250,6 +250,50 @@ class IssueWorker:
                         except Exception as e:
                             logger.warning(f"[{task_id}] 应用标签失败: {e}")
 
+                    # 10.5 应用建议指派人（优先从 DB 读取配置）
+                    issue_auto_assign = settings.issue_auto_assign
+                    try:
+                        if async_session is not None:
+                            async with async_session() as session:
+                                cfg_result = await session.execute(
+                                    select(AppConfig).where(
+                                        AppConfig.key_name == "issue_auto_assign"
+                                    )
+                                )
+                                cfg = cfg_result.scalar_one_or_none()
+                                if cfg:
+                                    issue_auto_assign = cfg.key_value == "true"
+                    except Exception:
+                        pass
+
+                    if issue_auto_assign:
+                        try:
+                            assignees_data = json.loads(
+                                analysis_record.suggested_assignees or "[]"
+                            )
+                            if assignees_data:
+                                assign_result = (
+                                    await issue_service.apply_suggested_assignees(
+                                        repo_owner,
+                                        repo_name,
+                                        issue_number,
+                                        assignees_data,
+                                        db,
+                                    )
+                                )
+                                if assign_result.get("applied"):
+                                    logger.info(
+                                        f"[{task_id}] 已指派: "
+                                        f"{[a['username'] for a in assign_result['applied']]}"
+                                    )
+                                if assign_result.get("failed"):
+                                    logger.warning(
+                                        f"[{task_id}] 指派失败: "
+                                        f"{[a['username'] for a in assign_result['failed']]}"
+                                    )
+                        except Exception as e:
+                            logger.warning(f"[{task_id}] 应用指派人失败: {e}")
+
                     # 11. Critical 告警
                     category = analysis_result.get("category", "")
                     priority = analysis_result.get("priority", "")

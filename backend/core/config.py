@@ -195,6 +195,9 @@ class Settings(BaseSettings):
     issue_auto_comment: bool = True
     issue_confidence_threshold: float = 0.7
     issue_auto_create_labels: bool = True
+    issue_auto_assign: bool = True
+    issue_assignee_confidence_threshold: float = 0.8
+    issue_auto_assign_max: int = 3
     issue_detect_duplicates: bool = True
     issue_suggest_assignees: bool = True
     issue_suggest_milestones: bool = False
