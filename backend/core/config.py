@@ -225,6 +225,7 @@ class Settings(BaseSettings):
 
     # ========== 增量审查历史上下文配置 ==========
     enable_incremental_history_context: bool = True  # 是否启用增量审查历史上下文
+    enable_pr_summary: bool = False  # 是否启用 PR 变更自动总结
     incremental_history_max_reviews: int = 5  # 最多查询的历史审查轮数
     incremental_history_summary_max_tokens: int = 1500  # 摘要生成最大 token
 
@@ -546,6 +547,16 @@ DYNAMIC_CONFIG_GROUPS: OrderedDict[str, dict] = OrderedDict(
                 ],
             },
         ),
+        (
+            "pr_summary",
+            {
+                "label": "PR 总结配置",
+                "icon": "file-text",
+                "keys": [
+                    "enable_pr_summary",
+                ],
+            },
+        ),
     ]
 )
 
@@ -623,6 +634,7 @@ DYNAMIC_CONFIG_LABELS: dict[str, str] = {
     "max_file_count": "最大文件数",
     "max_line_count": "最大行数",
     "enable_incremental_history_context": "启用增量审查历史上下文",
+    "enable_pr_summary": "启用 PR 变更总结",
     "incremental_history_max_reviews": "历史审查轮数上限",
     "incremental_history_summary_max_tokens": "摘要生成最大 Token",
     # 核心配置标签

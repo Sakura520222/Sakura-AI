@@ -70,6 +70,16 @@ class PromptBuilder:
             message_parts.append(history_summary)
             message_parts.append("")
 
+        # 注入 PR 变更总结（如果启用）
+        pr_summary = context.get("pr_summary")
+        if pr_summary:
+            message_parts.append("## PR 变更总结")
+            message_parts.append(
+                "以下是该 PR 的 AI 生成变更总结，供参考：\n"
+            )
+            message_parts.append(pr_summary)
+            message_parts.append("")
+
         # 添加文件信息
         files = context.get("files", [])
         if files:
