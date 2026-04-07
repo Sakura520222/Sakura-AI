@@ -195,6 +195,9 @@ class Settings(BaseSettings):
     issue_auto_comment: bool = True
     issue_confidence_threshold: float = 0.7
     issue_auto_create_labels: bool = True
+    issue_auto_assign: bool = True
+    issue_assignee_confidence_threshold: float = 0.8
+    issue_auto_assign_max: int = 3
     issue_detect_duplicates: bool = True
     issue_suggest_assignees: bool = True
     issue_suggest_milestones: bool = False
@@ -222,8 +225,14 @@ class Settings(BaseSettings):
 
     # ========== 增量审查历史上下文配置 ==========
     enable_incremental_history_context: bool = True  # 是否启用增量审查历史上下文
+    enable_pr_summary: bool = False  # 是否启用 PR 变更自动总结
     incremental_history_max_reviews: int = 5  # 最多查询的历史审查轮数
     incremental_history_summary_max_tokens: int = 1500  # 摘要生成最大 token
+
+    # ========== PR 依赖图配置 ==========
+    enable_pr_dependency_graph: bool = False  # 是否启用 PR 依赖图生成
+    pr_dependency_graph_max_nodes: int = 25  # 依赖图最大节点数
+    pr_dependency_graph_max_files: int = 50  # 参与分析的最大文件数
 
     # 支持的编程语言
     code_index_languages: list[str] = [
@@ -543,6 +552,28 @@ DYNAMIC_CONFIG_GROUPS: OrderedDict[str, dict] = OrderedDict(
                 ],
             },
         ),
+        (
+            "pr_summary",
+            {
+                "label": "PR 总结配置",
+                "icon": "file-text",
+                "keys": [
+                    "enable_pr_summary",
+                ],
+            },
+        ),
+        (
+            "pr_dependency_graph",
+            {
+                "label": "PR 依赖图配置",
+                "icon": "git-branch",
+                "keys": [
+                    "enable_pr_dependency_graph",
+                    "pr_dependency_graph_max_nodes",
+                    "pr_dependency_graph_max_files",
+                ],
+            },
+        ),
     ]
 )
 
@@ -586,6 +617,8 @@ DYNAMIC_CONFIG_RANGES: dict[str, tuple[float, float]] = {
     "max_line_count": (100, 100000000),
     "incremental_history_max_reviews": (1, 20),
     "incremental_history_summary_max_tokens": (500, 4096),
+    "pr_dependency_graph_max_nodes": (5, 50),
+    "pr_dependency_graph_max_files": (5, 200),
 }
 
 # 字段中文标签
@@ -620,8 +653,12 @@ DYNAMIC_CONFIG_LABELS: dict[str, str] = {
     "max_file_count": "最大文件数",
     "max_line_count": "最大行数",
     "enable_incremental_history_context": "启用增量审查历史上下文",
+    "enable_pr_summary": "启用 PR 变更总结",
     "incremental_history_max_reviews": "历史审查轮数上限",
     "incremental_history_summary_max_tokens": "摘要生成最大 Token",
+    "enable_pr_dependency_graph": "启用 PR 依赖图",
+    "pr_dependency_graph_max_nodes": "依赖图最大节点数",
+    "pr_dependency_graph_max_files": "分析文件数上限",
     # 核心配置标签
     "github_app_id": "GitHub App ID",
     "github_private_key": "GitHub App 私钥",

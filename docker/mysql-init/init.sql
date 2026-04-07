@@ -79,9 +79,10 @@ CREATE TABLE IF NOT EXISTS review_queue (
 
 -- 插入默认配置
 INSERT IGNORE INTO app_config (key_name, key_value, description) VALUES
-('app_version', '2.7.2', '应用版本号'),
+('app_version', '2.7.3', '应用版本号'),
 ('max_concurrent_reviews', '5', '最大并发审查数量'),
 ('review_timeout_seconds', '300', '审查超时时间（秒）'),
 ('enable_auto_review', 'true', '是否启用自动审查'),
 ('issue_auto_create_labels', 'true', '自动为 Issue 应用 AI 推荐的标签'),
+('issue_auto_assign', 'true', '自动为 Issue 指派 AI 推荐的负责人'),
 ('issue_max_tool_iterations', '15', 'Issues 分析中 AI 工具调用最大迭代次数');

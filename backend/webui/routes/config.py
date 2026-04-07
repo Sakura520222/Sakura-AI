@@ -39,6 +39,7 @@ _BASIC_CONFIG_KEYS = frozenset(
         "review_timeout_seconds",
         "enable_auto_review",
         "issue_auto_create_labels",
+        "issue_auto_assign",
         "issue_max_tool_iterations",
         "web_search_enabled",
         "web_search_provider",
@@ -150,6 +151,7 @@ async def strategies_page(
             "batch": config_data.get("batch", {}),
             "context_enhancement": config_data.get("context_enhancement", {}),
             "review_policy": config_data.get("review_policy", {}),
+            "pr_dependency_graph": config_data.get("pr_dependency_graph", {}),
             "active_tab": tab,
         },
     )
@@ -260,6 +262,12 @@ async def save_strategies_section(
                         "request_changes": form.get("template_request_changes", ""),
                         "comment": form.get("template_comment", ""),
                     },
+                }
+
+            elif section == "depgraph":
+                config["pr_dependency_graph"] = {
+                    "system_prompt": form.get("depgraph_system_prompt", ""),
+                    "user_template": form.get("depgraph_user_template", ""),
                 }
             else:
                 raise HTTPException(status_code=400, detail=f"未知 section: {section}")
@@ -583,6 +591,17 @@ async def save_general_config(
             changed["issue_auto_create_labels"] = {"old": cfg.key_value, "new": val}
             cfg.key_value = val
 
+        # issue_auto_assign (checkbox)
+        raw = form.get("issue_auto_assign")
+        val = "true" if raw == "true" else "false"
+        result = await db.execute(
+            select(AppConfig).where(AppConfig.key_name == "issue_auto_assign")
+        )
+        cfg = result.scalar_one_or_none()
+        if cfg and cfg.key_value != val:
+            changed["issue_auto_assign"] = {"old": cfg.key_value, "new": val}
+            cfg.key_value = val
+
         # issue_max_tool_iterations
         raw = form.get("issue_max_tool_iterations")
         if raw is not None:
@@ -594,10 +613,10 @@ async def save_general_config(
                     "AI 工具调用迭代次数必须是有效整数",
                     "error",
                 )
-            if not 1 <= val <= 50:
+            if not 1 <= val <= 150:
                 return toast_redirect(
                     "/webui/config/general",
-                    "AI 工具调用迭代次数须在 1-50 之间",
+                    "AI 工具调用迭代次数须在 1-150 之间",
                     "error",
                 )
             result = await db.execute(

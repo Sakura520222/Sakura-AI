@@ -1097,7 +1097,7 @@ issue_analysis:
     2. **优先级**: critical/high/medium/low
     3. **可行性**: 基于代码库理解评估修复难度和工作量（主动使用工具查看相关代码）
     4. **建议标签**: 从仓库可用标签中选择合适的标签
-    5. **建议指派人**: 基于代码修改区域判断可能的负责人
+    5. **建议指派人**: 基于代码修改区域判断可能的负责人，confidence 表示对指派建议的确信程度(0-1)
 
     ## 输出格式
     严格返回 JSON 格式（不要包含 ```json 标记）：
@@ -1107,7 +1107,7 @@ issue_analysis:
       "summary": "简要摘要...",
       "feasibility": "可行性分析...",
       "suggested_labels": [{"name": "bug", "confidence": 0.9, "reason": "..."}],
-      "suggested_assignees": [{"username": "developer1", "reason": "..."}],
+      "suggested_assignees": [{"username": "developer1", "confidence": 0.9, "reason": "..."}],
       "suggested_milestone": null,
       "duplicate_of": null
     }
@@ -1134,3 +1134,49 @@ issue_analysis:
 
     ---
     *此评论由 Sakura AI Reviewer 自动生成*
+
+# ========== PR 总结配置 ==========
+pr_summary:
+  system_prompt: |
+    你是专业的代码审查助手，擅长总结代码变更。请根据提供的 PR 变更信息，生成简洁清晰的总结。
+    要求：
+    - 使用中文
+    - 结构化输出：变更概览、主要改动列表、影响范围
+    - 突出重要变更（新增功能、重构、Bug修复等）
+    - 保持简洁，不超过 300 字
+  user_template: |
+    请总结以下 PR 的变更内容：
+
+    PR 标题: {title}
+    变更文件数: {file_count}
+    代码变更: +{additions}/-{deletions}
+
+    变更文件列表:
+    {file_list}
+
+    Commit 信息:
+    {commits}
+
+# ========== PR 依赖图配置 ==========
+pr_dependency_graph:
+  system_prompt: |
+    你是代码依赖分析专家。根据提供的 PR 变更文件及其 import/模块引用信息，生成 Mermaid 语法描述的依赖关系图。
+
+    要求：
+    - 使用中文标注节点（文件短名），保持简洁可读
+    - 只包含有实际依赖关系的文件，不要孤立节点
+    - 使用 graph TD（从上到下）方向
+    - PR 变更文件使用实线连接，变更文件对外部模块的依赖使用虚线连接（style ... stroke-dasharray: 5 5）
+    - 节点总数不超过 {max_nodes} 个
+    - 输出纯 Mermaid 代码块，不要额外解释
+  user_template: |
+    请根据以下 PR 变更信息生成依赖关系图：
+
+    PR 标题: {title}
+    变更文件数: {file_count}
+
+    文件依赖关系:
+    {import_context}
+
+    请生成 Mermaid graph TD 语法的依赖图。只展示文件间的直接依赖关系。
+    如果变更文件之间没有任何依赖关系，请输出文字说明"该 PR 的变更文件之间没有明显的模块依赖关系"。

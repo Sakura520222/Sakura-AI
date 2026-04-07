@@ -50,7 +50,7 @@
                 <h3 class="text-sm font-semibold text-gray-700 dark:text-gray-300 mb-4">审查任务配置</h3>
                 <div class="space-y-4">
                     {% for config in configs %}
-                    {% if config.key_name in ('max_concurrent_reviews', 'review_timeout_seconds', 'enable_auto_review', 'issue_auto_create_labels', 'issue_max_tool_iterations') %}
+                    {% if config.key_name in ('max_concurrent_reviews', 'review_timeout_seconds', 'enable_auto_review', 'issue_auto_create_labels', 'issue_auto_assign', 'issue_max_tool_iterations') %}
                     <div class="flex items-center justify-between">
                         <div>
                             <h4 class="text-sm font-medium text-gray-700 dark:text-gray-300">{{ config.description or config.key_name }}</h4>
@@ -59,11 +59,12 @@
                                 {% elif config.key_name == 'review_timeout_seconds' %}单次审查任务的超时时间（秒）
                                 {% elif config.key_name == 'enable_auto_review' %}是否自动审查新提交的 PR
                                 {% elif config.key_name == 'issue_auto_create_labels' %}是否自动为 Issue 应用 AI 推荐的标签
+                                {% elif config.key_name == 'issue_auto_assign' %}是否自动为 Issue 指派 AI 推荐的负责人
                                 {% elif config.key_name == 'issue_max_tool_iterations' %}Issues 分析中 AI 工具调用的最大轮数
                                 {% endif %}
                             </p>
                         </div>
-                        {% if config.key_name in ('enable_auto_review', 'issue_auto_create_labels') %}
+                        {% if config.key_name in ('enable_auto_review', 'issue_auto_create_labels', 'issue_auto_assign') %}
                         <label class="relative inline-flex items-center cursor-pointer">
                             <input type="checkbox" name="{{ config.key_name }}" value="true" class="sr-only peer"
                                    {% if config.key_value == 'true' %}checked{% endif %}>
@@ -74,6 +75,10 @@
                                name="{{ config.key_name }}"
                                value="{{ config.key_value }}"
                                min="1"
+                               {% if config.key_name == 'review_timeout_seconds' %}max="3600"
+                               {% elif config.key_name == 'issue_max_tool_iterations' %}max="150"
+                               {% elif config.key_name == 'max_concurrent_reviews' %}max="100"
+                               {% endif %}
                                class="w-32 px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-sm text-right focus:ring-2 focus:ring-pink-500 focus:border-transparent outline-none">
                         {% endif %}
                     </div>
