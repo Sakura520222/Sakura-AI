@@ -50,12 +50,12 @@
 
             <!-- 操作按钮 -->
             <div class="flex gap-2 flex-shrink-0">
-                <button type="button" onclick="triggerIndex(this, {{ repo.full_name | tojson }}, 'docs', {{ csrf_token | tojson }})"
+                <button type="button" onclick='triggerIndex(this, {{ repo.full_name | tojson }}, "docs", {{ csrf_token | tojson }})'
                         class="px-3 py-1.5 rounded-lg text-xs border border-blue-300 dark:border-blue-800
                                text-blue-600 dark:text-blue-400 hover:bg-blue-50 dark:hover:bg-blue-900/20 transition-colors">
                     索引文档
                 </button>
-                <button type="button" onclick="triggerIndex(this, {{ repo.full_name | tojson }}, 'code', {{ csrf_token | tojson }})"
+                <button type="button" onclick='triggerIndex(this, {{ repo.full_name | tojson }}, "code", {{ csrf_token | tojson }})'
                         class="px-3 py-1.5 rounded-lg text-xs border border-purple-300 dark:border-purple-800
                                text-purple-600 dark:text-purple-400 hover:bg-purple-50 dark:hover:bg-purple-900/20 transition-colors">
                     索引代码
