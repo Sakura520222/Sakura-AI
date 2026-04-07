@@ -33,7 +33,8 @@ _IMPORT_PATTERNS: Dict[str, List[str]] = {
     ],
     "go": [
         r'^import\s+"([\w./\-]+)"\s*$',
-        r'^\s+"([\w./\-]+)"',
+        r'^\t"([\w./\-]+)"',
+        r'^import\s+\w+\s+"([\w./\-]+)"',
     ],
     "java": [
         r"^import\s+([\w.]+)",
@@ -93,6 +94,9 @@ class PRDependencyGraphService:
 
     START_MARKER = "<!-- sakura-ai-depgraph-start -->"
     END_MARKER = "<!-- sakura-ai-depgraph-end -->"
+
+    # import 语句通常出现在文件顶部，只扫描前 N 行以提升性能
+    _IMPORT_SCAN_LINES: int = 150
 
     def __init__(self, api_client: AIApiClient, model: str):
         self.api_client = api_client
@@ -247,9 +251,6 @@ class PRDependencyGraphService:
             if file_path.endswith(ext):
                 return lang
         return None
-
-    # import 语句通常出现在文件顶部，只扫描前 N 行以提升性能
-    _IMPORT_SCAN_LINES = 100
 
     def _extract_imports(self, file_path: str, content: str) -> List[str]:
         """从代码内容中提取 import 语句（只扫描文件顶部）"""
