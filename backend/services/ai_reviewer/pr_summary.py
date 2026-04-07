@@ -57,7 +57,11 @@ class PRSummaryService:
             max_tokens=1000,
         )
 
-        if not response.choices or not response.choices[0].message.content:
+        if (
+            not response.choices
+            or not response.choices[0].message
+            or not response.choices[0].message.content
+        ):
             raise ValueError("AI 返回的总结内容为空")
         content = response.choices[0].message.content
         summary_text = content.strip()
@@ -166,7 +170,7 @@ class PRSummaryService:
         """构建带标记的摘要块"""
         return (
             f"{self.START_MARKER}\n\n"
-            f"## 🌸 AI 变更总结\n\n{summary}\n\n"
+            f"## 🌸 Sakura AI Reviewer的总结\n\n{summary}\n\n"
             f"{self.END_MARKER}"
         )
 
@@ -185,7 +189,7 @@ class PRSummaryService:
         return original
 
     def _extract_previous_summary(self, body: str) -> str | None:
-        """从 PR body 中提取上一次的 AI 摘要内容"""
+        """从 PR body 中提取上一次的 AI 摘要内容（不含标题行）"""
         if not body:
             return None
 
@@ -199,4 +203,9 @@ class PRSummaryService:
             return None
 
         content = match.group(1).strip()
+        if not content:
+            return None
+
+        # 去掉旧标题行（AI 可能生成带后缀的变体，如 "更新版"）
+        content = re.sub(r"^## 🌸 Sakura AI Reviewer的总结[^\n]*\n*", "", content).strip()
         return content if content else None
