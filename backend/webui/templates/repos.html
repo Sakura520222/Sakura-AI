@@ -62,20 +62,27 @@ function triggerIndex(btn, repoName, indexType, csrfToken) {
         method: 'POST',
         headers: { 'X-CSRF-Token': csrfToken }
     })
-    .then(function(r) { return r.json(); })
+    .then(function(r) {
+        if (!r.ok) {
+            return r.json().catch(function() { return {}; }).then(function(data) {
+                throw new Error(data.message || data.detail || '请求失败 (' + r.status + ')');
+            });
+        }
+        return r.json();
+    })
     .then(function(data) {
         if (!data.success) {
             btn.disabled = false;
             btn.textContent = btn.dataset.originalText;
-            window.dispatchEvent(new CustomEvent('show-toast', { detail: { message: data.message, type: 'error' } }));
+            window.dispatchEvent(new CustomEvent('show-toast', { detail: { message: data.message || data.detail || '操作失败', type: 'error' } }));
         } else {
             window.dispatchEvent(new CustomEvent('show-toast', { detail: { message: data.message, type: 'success' } }));
         }
     })
-    .catch(function() {
+    .catch(function(err) {
         btn.disabled = false;
         btn.textContent = btn.dataset.originalText;
-        window.dispatchEvent(new CustomEvent('show-toast', { detail: { message: '请求失败', type: 'error' } }));
+        window.dispatchEvent(new CustomEvent('show-toast', { detail: { message: err.message || '请求失败', type: 'error' } }));
     });
 }
 
