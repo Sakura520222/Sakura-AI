@@ -319,7 +319,8 @@ class PRDependencyGraphService:
         system_prompt = depgraph_cfg.get(
             "system_prompt",
             "你是代码依赖分析专家。根据提供的 PR 变更文件及其 import 信息，"
-            "生成 Mermaid graph TD 语法的依赖关系图。只输出纯 Mermaid 代码块。",
+            "生成 Mermaid graph TD 语法的依赖关系图。\n"
+            "节点总数不超过 {max_nodes} 个。只输出纯 Mermaid 代码块。",
         ).replace("{max_nodes}", str(settings.pr_dependency_graph_max_nodes))
 
         user_template = depgraph_cfg.get(
