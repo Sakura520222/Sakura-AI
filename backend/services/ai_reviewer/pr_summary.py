@@ -52,7 +52,10 @@ class PRSummaryService:
             max_tokens=1000,
         )
 
-        summary_text = response.choices[0].message.content.strip()
+        content = response.choices[0].message.content
+        if not content:
+            raise ValueError("AI 返回的总结内容为空")
+        summary_text = content.strip()
         logger.info(f"PR 总结生成完成，长度: {len(summary_text)} 字符")
         return summary_text
 
@@ -127,14 +130,19 @@ class PRSummaryService:
     def _build_commit_info(
         self, analysis: PRAnalysis, pr_info: Dict[str, Any]
     ) -> str:
-        """构建 commit 信息文本"""
+        """构建 commit 信息文本
+
+        增量审查时使用 new_commits，否则从 pr_info 提取可用信息。
+        """
         commits = analysis.new_commits
         if not commits:
-            return "（无可用的 commit 信息）"
+            return f"PR 标题: {pr_info.get('title', '（未知）')}"
 
         lines = []
         for c in commits[:20]:  # 最多显示 20 条
-            lines.append(f"  - {c['sha'][:7]} {c['title']}")
+            sha = c.get("sha", "unknown")
+            title = c.get("title", "")
+            lines.append(f"  - {sha[:7]} {title}")
         return "\n".join(lines)
 
     def _build_summary_block(self, summary: str) -> str:
