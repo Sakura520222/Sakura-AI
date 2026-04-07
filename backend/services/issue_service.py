@@ -329,7 +329,7 @@ class IssueService:
         repo_owner: str,
         repo_name: str,
         issue_number: int,
-        suggested_assignees: list,
+        suggested_assignees: list[Dict[str, Any]],
     ) -> Dict[str, Any]:
         """应用建议指派人到 Issue（支持置信度过滤）
 
@@ -420,6 +420,8 @@ class IssueService:
                 reason = assignee.get("reason", "")
                 if len(result["applied"]) >= max_assign:
                     reason += " (已达最大指派数量)"
+                elif confidence < threshold:
+                    reason += " (置信度不足)"
                 result["suggested"].append(
                     {
                         "username": matched_username,
