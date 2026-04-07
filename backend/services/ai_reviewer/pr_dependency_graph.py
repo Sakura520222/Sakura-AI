@@ -32,7 +32,8 @@ _IMPORT_PATTERNS: Dict[str, List[str]] = {
         r"""^(?:import|require)\s*\(?\s*['"]([^'"]+)['"]\)?\s*;?""",
     ],
     "go": [
-        r'^\s*"([\w./\-]+)"',
+        r'^import\s+"([\w./\-]+)"\s*$',
+        r'^\s+"([\w./\-]+)"',
     ],
     "java": [
         r"^import\s+([\w.]+)",
@@ -164,10 +165,9 @@ class PRDependencyGraphService:
             logger.info("AI 未生成有效的 Mermaid 图，跳过依赖图注入")
             return None
 
-        # 注入 PR Body
-        await self.update_pr_body_with_graph(
-            pr, mermaid_graph, pr_info.get("body", "")
-        )
+        # 注入 PR Body（从 GitHub 读取最新 body，避免竞态覆盖 PR Summary）
+        current_body = await asyncio.to_thread(lambda: pr.body or "")
+        await self.update_pr_body_with_graph(pr, mermaid_graph, current_body)
         logger.info(f"PR 依赖图已生成，长度: {len(mermaid_graph)} 字符")
         return mermaid_graph
 
@@ -248,16 +248,22 @@ class PRDependencyGraphService:
                 return lang
         return None
 
+    # import 语句通常出现在文件顶部，只扫描前 N 行以提升性能
+    _IMPORT_SCAN_LINES = 100
+
     def _extract_imports(self, file_path: str, content: str) -> List[str]:
-        """从代码内容中提取 import 语句"""
+        """从代码内容中提取 import 语句（只扫描文件顶部）"""
         lang = self._get_language(file_path)
         if not lang:
             return []
 
+        # 只扫描文件顶部
+        top_content = "\n".join(content.split("\n")[: self._IMPORT_SCAN_LINES])
+
         patterns = _IMPORT_PATTERNS.get(lang, [])
         imports: List[str] = []
         for pattern in patterns:
-            for match in re.finditer(pattern, content, re.MULTILINE):
+            for match in re.finditer(pattern, top_content, re.MULTILINE):
                 imp = match.group(1).strip()
                 if imp and imp not in imports:
                     imports.append(imp)
@@ -313,7 +319,7 @@ class PRDependencyGraphService:
             "system_prompt",
             "你是代码依赖分析专家。根据提供的 PR 变更文件及其 import 信息，"
             "生成 Mermaid graph TD 语法的依赖关系图。只输出纯 Mermaid 代码块。",
-        ).format(max_nodes=settings.pr_dependency_graph_max_nodes)
+        ).replace("{max_nodes}", str(settings.pr_dependency_graph_max_nodes))
 
         user_template = depgraph_cfg.get(
             "user_template",
