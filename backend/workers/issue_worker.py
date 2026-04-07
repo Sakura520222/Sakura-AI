@@ -219,7 +219,7 @@ class IssueWorker:
                                 if cfg:
                                     issue_auto_create_labels = cfg.key_value == "true"
                     except Exception as e:
-                        logger.debug(f"[{task_id}] 读取 DB 配置 issue_auto_create_labels 失败，使用默认值: {e}")
+                        logger.warning(f"[{task_id}] 读取 DB 配置 issue_auto_create_labels 失败，使用默认值: {e}")
 
                     if issue_auto_create_labels:
                         try:
@@ -264,7 +264,7 @@ class IssueWorker:
                                 if cfg:
                                     issue_auto_assign = cfg.key_value == "true"
                     except Exception as e:
-                        logger.debug(f"[{task_id}] 读取 DB 配置 issue_auto_assign 失败，使用默认值: {e}")
+                        logger.warning(f"[{task_id}] 读取 DB 配置 issue_auto_assign 失败，使用默认值: {e}")
 
                     if issue_auto_assign:
                         try:
