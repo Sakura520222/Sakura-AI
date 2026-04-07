@@ -263,8 +263,8 @@ class IssueWorker:
                                 cfg = cfg_result.scalar_one_or_none()
                                 if cfg:
                                     issue_auto_assign = cfg.key_value == "true"
-                    except Exception:
-                        pass
+                    except Exception as e:
+                        logger.debug(f"[{task_id}] 读取 DB 配置 issue_auto_assign 失败，使用默认值: {e}")
 
                     if issue_auto_assign:
                         try:
@@ -278,7 +278,6 @@ class IssueWorker:
                                         repo_name,
                                         issue_number,
                                         assignees_data,
-                                        db,
                                     )
                                 )
                                 if assign_result.get("applied"):
