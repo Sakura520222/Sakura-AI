@@ -52,9 +52,9 @@ class PRSummaryService:
             max_tokens=1000,
         )
 
-        content = response.choices[0].message.content
-        if not content:
+        if not response.choices or not response.choices[0].message.content:
             raise ValueError("AI 返回的总结内容为空")
+        content = response.choices[0].message.content
         summary_text = content.strip()
         logger.info(f"PR 总结生成完成，长度: {len(summary_text)} 字符")
         return summary_text
