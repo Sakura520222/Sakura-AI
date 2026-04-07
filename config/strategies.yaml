@@ -1156,3 +1156,27 @@ pr_summary:
 
     Commit 信息:
     {commits}
+
+# ========== PR 依赖图配置 ==========
+pr_dependency_graph:
+  system_prompt: |
+    你是代码依赖分析专家。根据提供的 PR 变更文件及其 import/模块引用信息，生成 Mermaid 语法描述的依赖关系图。
+
+    要求：
+    - 使用中文标注节点（文件短名），保持简洁可读
+    - 只包含有实际依赖关系的文件，不要孤立节点
+    - 使用 graph TD（从上到下）方向
+    - PR 变更文件使用实线连接，变更文件对外部模块的依赖使用虚线连接（style ... stroke-dasharray: 5 5）
+    - 节点总数不超过 {max_nodes} 个
+    - 输出纯 Mermaid 代码块，不要额外解释
+  user_template: |
+    请根据以下 PR 变更信息生成依赖关系图：
+
+    PR 标题: {title}
+    变更文件数: {file_count}
+
+    文件依赖关系:
+    {import_context}
+
+    请生成 Mermaid graph TD 语法的依赖图。只展示文件间的直接依赖关系。
+    如果变更文件之间没有任何依赖关系，请输出文字说明"该 PR 的变更文件之间没有明显的模块依赖关系"。
