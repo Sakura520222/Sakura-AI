@@ -39,6 +39,7 @@ _BASIC_CONFIG_KEYS = frozenset(
         "review_timeout_seconds",
         "enable_auto_review",
         "issue_auto_create_labels",
+        "issue_auto_assign",
         "issue_max_tool_iterations",
         "web_search_enabled",
         "web_search_provider",
@@ -581,6 +582,17 @@ async def save_general_config(
         cfg = result.scalar_one_or_none()
         if cfg and cfg.key_value != val:
             changed["issue_auto_create_labels"] = {"old": cfg.key_value, "new": val}
+            cfg.key_value = val
+
+        # issue_auto_assign (checkbox)
+        raw = form.get("issue_auto_assign")
+        val = "true" if raw == "true" else "false"
+        result = await db.execute(
+            select(AppConfig).where(AppConfig.key_name == "issue_auto_assign")
+        )
+        cfg = result.scalar_one_or_none()
+        if cfg and cfg.key_value != val:
+            changed["issue_auto_assign"] = {"old": cfg.key_value, "new": val}
             cfg.key_value = val
 
         # issue_max_tool_iterations

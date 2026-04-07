@@ -324,6 +324,106 @@ class IssueService:
 
         return result
 
+    async def apply_suggested_assignees(
+        self,
+        repo_owner: str,
+        repo_name: str,
+        issue_number: int,
+        suggested_assignees: list,
+        db: AsyncSession,
+    ) -> Dict[str, Any]:
+        """应用建议指派人到 Issue（支持置信度过滤）
+
+        Args:
+            suggested_assignees: AI 建议的指派人列表
+                [{"username": str, "confidence": float, "reason": str}]
+
+        Returns:
+            {"applied": [], "suggested": [], "failed": []}
+        """
+        settings = get_settings()
+        threshold = settings.issue_assignee_confidence_threshold
+        max_assign = settings.issue_auto_assign_max
+        result: Dict[str, Any] = {"applied": [], "suggested": [], "failed": []}
+
+        if not suggested_assignees:
+            return result
+
+        # 获取仓库协作者列表，验证 username 有效性
+        collaborators = await asyncio.to_thread(
+            self.github_app.get_repo_collaborators, repo_owner, repo_name
+        )
+        collaborators_lower = {c.lower(): c for c in collaborators}
+
+        processed: set = set()
+
+        for assignee in suggested_assignees:
+            username = assignee.get("username", "")
+            confidence = float(assignee.get("confidence", 0))
+
+            if not username:
+                continue
+
+            username_lower = username.lower()
+            if username_lower in processed:
+                continue
+
+            # 验证是否为仓库协作者（大小写不敏感匹配）
+            matched_username = collaborators_lower.get(username_lower)
+            if not matched_username:
+                result["suggested"].append(
+                    {
+                        "username": username,
+                        "confidence": confidence,
+                        "reason": assignee.get("reason", "") + " (非仓库协作者)",
+                    }
+                )
+                logger.debug(
+                    f"Issue #{issue_number} 指派人 {username} 非仓库协作者，跳过"
+                )
+                continue
+
+            processed.add(username_lower)
+
+            # 根据置信度决定是否自动指派
+            if confidence >= threshold and len(result["applied"]) < max_assign:
+                success = await asyncio.to_thread(
+                    self.github_app.add_assignees_to_issue,
+                    repo_owner,
+                    repo_name,
+                    issue_number,
+                    [matched_username],
+                )
+                if success:
+                    result["applied"].append(
+                        {
+                            "username": matched_username,
+                            "confidence": confidence,
+                            "reason": assignee.get("reason", ""),
+                        }
+                    )
+                else:
+                    result["failed"].append(
+                        {
+                            "username": matched_username,
+                            "confidence": confidence,
+                            "reason": assignee.get("reason", ""),
+                        }
+                    )
+                    logger.warning(
+                        f"Issue #{issue_number} 指派 {matched_username} 失败"
+                    )
+            else:
+                result["suggested"].append(
+                    {
+                        "username": matched_username,
+                        "confidence": confidence,
+                        "reason": assignee.get("reason", ""),
+                    }
+                )
+
+        return result
+
     async def detect_duplicates(
         self,
         repo_owner: str,

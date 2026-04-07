@@ -994,6 +994,22 @@ class GitHubAppClient:
             )
             return False
 
+    def add_assignees_to_issue(
+        self, repo_owner: str, repo_name: str, issue_number: int, assignees: list
+    ) -> bool:
+        """给 Issue 添加指派人"""
+        client = self.get_repo_client(repo_owner, repo_name)
+        repo = client.get_repo(f"{repo_owner}/{repo_name}")
+        try:
+            issue = repo.get_issue(issue_number)
+            issue.add_to_assignees(*assignees)
+            return True
+        except Exception as e:
+            logger.error(
+                f"添加 Issue 指派人失败: {repo_owner}/{repo_name}#{issue_number}: {e}"
+            )
+            return False
+
     def get_repo_collaborators(self, repo_owner: str, repo_name: str) -> list:
         """获取仓库协作者列表"""
         try:
