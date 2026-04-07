@@ -995,7 +995,7 @@ class GitHubAppClient:
             return False
 
     def add_assignees_to_issue(
-        self, repo_owner: str, repo_name: str, issue_number: int, assignees: list
+        self, repo_owner: str, repo_name: str, issue_number: int, assignees: list[str]
     ) -> bool:
         """给 Issue 添加指派人"""
         client = self.get_repo_client(repo_owner, repo_name)

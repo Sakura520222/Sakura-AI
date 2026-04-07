@@ -330,7 +330,6 @@ class IssueService:
         repo_name: str,
         issue_number: int,
         suggested_assignees: list,
-        db: AsyncSession,
     ) -> Dict[str, Any]:
         """应用建议指派人到 Issue（支持置信度过滤）
 
@@ -353,9 +352,13 @@ class IssueService:
         collaborators = await asyncio.to_thread(
             self.github_app.get_repo_collaborators, repo_owner, repo_name
         )
+        if not collaborators:
+            logger.warning(
+                f"Issue #{issue_number} 协作者列表为空，可能是权限不足，自动指派将降级为仅建议"
+            )
         collaborators_lower = {c.lower(): c for c in collaborators}
 
-        processed: set = set()
+        processed: set[str] = set()
 
         for assignee in suggested_assignees:
             username = assignee.get("username", "")
@@ -414,11 +417,14 @@ class IssueService:
                         f"Issue #{issue_number} 指派 {matched_username} 失败"
                     )
             else:
+                reason = assignee.get("reason", "")
+                if len(result["applied"]) >= max_assign:
+                    reason += " (已达最大指派数量)"
                 result["suggested"].append(
                     {
                         "username": matched_username,
                         "confidence": confidence,
-                        "reason": assignee.get("reason", ""),
+                        "reason": reason,
                     }
                 )
 
