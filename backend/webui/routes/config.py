@@ -151,6 +151,7 @@ async def strategies_page(
             "batch": config_data.get("batch", {}),
             "context_enhancement": config_data.get("context_enhancement", {}),
             "review_policy": config_data.get("review_policy", {}),
+            "pr_dependency_graph": config_data.get("pr_dependency_graph", {}),
             "active_tab": tab,
         },
     )
@@ -261,6 +262,12 @@ async def save_strategies_section(
                         "request_changes": form.get("template_request_changes", ""),
                         "comment": form.get("template_comment", ""),
                     },
+                }
+
+            elif section == "depgraph":
+                config["pr_dependency_graph"] = {
+                    "system_prompt": form.get("depgraph_system_prompt", ""),
+                    "user_template": form.get("depgraph_user_template", ""),
                 }
             else:
                 raise HTTPException(status_code=400, detail=f"未知 section: {section}")

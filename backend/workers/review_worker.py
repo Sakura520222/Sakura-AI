@@ -265,6 +265,26 @@ class ReviewWorker:
                     except Exception as e:
                         logger.warning(f"[{task_id}] PR 变更总结生成失败: {e}")
 
+                # 4.6 PR 依赖图生成（如果启用）
+                if settings.enable_pr_dependency_graph:
+                    try:
+                        from backend.services.ai_reviewer.pr_dependency_graph import (
+                            PRDependencyGraphService,
+                        )
+
+                        depgraph_service = PRDependencyGraphService(
+                            self.ai_reviewer.summary_api_client,
+                            model=self.ai_reviewer.summary_model,
+                        )
+                        await depgraph_service.generate_dependency_graph(
+                            analysis, pr_info, pr
+                        )
+                        logger.info(f"[{task_id}] PR 依赖图已生成并注入")
+                    except Exception as e:
+                        logger.warning(
+                            f"[{task_id}] PR 依赖图生成失败（不影响审查）: {e}"
+                        )
+
                 # 5. 【第一阶段】创建占位评论
                 logger.info(f"[{task_id}] 创建占位评论...")
                 review_obj = await self.comment_service.create_placeholder_comment(
