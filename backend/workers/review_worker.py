@@ -242,6 +242,29 @@ class ReviewWorker:
                 )
                 pr = await asyncio.to_thread(repo.get_pull, pr_info["pr_number"])
 
+                # 4.5 PR 变更总结（如果启用）
+                pr_summary_text = None
+                if settings.enable_pr_summary:
+                    try:
+                        from backend.services.ai_reviewer.pr_summary import (
+                            PRSummaryService,
+                        )
+
+                        summary_service = PRSummaryService(
+                            self.ai_reviewer.summary_api_client,
+                            model=self.ai_reviewer.summary_model,
+                        )
+                        summary = await summary_service.generate_summary(
+                            analysis, pr_info
+                        )
+                        await summary_service.update_pr_body(
+                            pr, summary, pr_info.get("body", "")
+                        )
+                        pr_summary_text = summary
+                        logger.info(f"[{task_id}] PR 变更总结已更新")
+                    except Exception as e:
+                        logger.warning(f"[{task_id}] PR 变更总结生成失败: {e}")
+
                 # 5. 【第一阶段】创建占位评论
                 logger.info(f"[{task_id}] 创建占位评论...")
                 review_obj = await self.comment_service.create_placeholder_comment(
@@ -250,6 +273,10 @@ class ReviewWorker:
 
                 # 6. 准备审查上下文
                 context = await self.analyzer.prepare_review_context(analysis, pr)
+
+                # 6.1 注入 PR 变更总结到审查上下文
+                if pr_summary_text:
+                    context["pr_summary"] = pr_summary_text
 
                 # 6.3 注入历史审查上下文（仅在增量审查时）
                 if analysis.is_incremental:
