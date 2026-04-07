@@ -606,10 +606,10 @@ async def save_general_config(
                     "AI 工具调用迭代次数必须是有效整数",
                     "error",
                 )
-            if not 1 <= val <= 50:
+            if not 1 <= val <= 150:
                 return toast_redirect(
                     "/webui/config/general",
-                    "AI 工具调用迭代次数须在 1-50 之间",
+                    "AI 工具调用迭代次数须在 1-150 之间",
                     "error",
                 )
             result = await db.execute(
