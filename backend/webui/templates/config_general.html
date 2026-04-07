@@ -75,7 +75,10 @@
                                name="{{ config.key_name }}"
                                value="{{ config.key_value }}"
                                min="1"
-                               max="150"
+                               {% if config.key_name == 'review_timeout_seconds' %}max="3600"
+                               {% elif config.key_name == 'issue_max_tool_iterations' %}max="150"
+                               {% elif config.key_name == 'max_concurrent_reviews' %}max="100"
+                               {% endif %}
                                class="w-32 px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-sm text-right focus:ring-2 focus:ring-pink-500 focus:border-transparent outline-none">
                         {% endif %}
                     </div>
