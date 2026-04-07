@@ -39,7 +39,12 @@ class PRSummaryService:
         Returns:
             AI 生成的总结文本
         """
-        system_prompt, user_message = self._build_prompts(analysis, pr_info)
+        # 从 PR body 中提取旧摘要（增量更新时用于保持上下文连贯）
+        previous_summary = self._extract_previous_summary(pr_info.get("body", ""))
+
+        system_prompt, user_message = self._build_prompts(
+            analysis, pr_info, previous_summary
+        )
 
         response = await self.api_client.call_with_retry(
             model=self.model,
@@ -77,7 +82,10 @@ class PRSummaryService:
         logger.info("PR body 已更新（追加/替换 AI 摘要）")
 
     def _build_prompts(
-        self, analysis: PRAnalysis, pr_info: Dict[str, Any]
+        self,
+        analysis: PRAnalysis,
+        pr_info: Dict[str, Any],
+        previous_summary: str | None = None,
     ) -> tuple[str, str]:
         """构建系统提示词和用户消息
 
@@ -110,6 +118,15 @@ class PRSummaryService:
             file_list=file_list,
             commits=commits,
         )
+
+        # 增量更新时，注入旧摘要让 AI 在其基础上整合
+        if previous_summary:
+            user_message += (
+                "\n\n---\n"
+                "以下是该 PR 之前的 AI 总结，请在此基础上整合新的变更信息，"
+                "生成一份完整的更新总结（保留之前的重要内容，补充新变更）：\n\n"
+                f"{previous_summary}"
+            )
 
         return system_prompt, user_message
 
@@ -166,3 +183,20 @@ class PRSummaryService:
         # re.DOTALL 使 . 匹配换行符
         original = re.sub(pattern, "", body, flags=re.DOTALL).strip()
         return original
+
+    def _extract_previous_summary(self, body: str) -> str | None:
+        """从 PR body 中提取上一次的 AI 摘要内容"""
+        if not body:
+            return None
+
+        pattern = (
+            re.escape(self.START_MARKER)
+            + r"(.*?)"
+            + re.escape(self.END_MARKER)
+        )
+        match = re.search(pattern, body, flags=re.DOTALL)
+        if not match:
+            return None
+
+        content = match.group(1).strip()
+        return content if content else None
