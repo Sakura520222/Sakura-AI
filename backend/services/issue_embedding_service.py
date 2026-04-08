@@ -260,6 +260,8 @@ class IssueEmbeddingService:
         pr_title: str,
         pr_body: str,
         candidates: List[Dict[str, Any]],
+        pr_summary: str = "",
+        pr_files: str = "",
     ) -> List[Dict[str, Any]]:
         """使用 AI 批量验证候选 issues 是否真正与 PR 相关
 
@@ -270,6 +272,8 @@ class IssueEmbeddingService:
             pr_title: PR 标题
             pr_body: PR 描述
             candidates: search_related_issues 的返回结果
+            pr_summary: PR 摘要（可选，提供更多上下文）
+            pr_files: PR 变更文件列表文本（可选）
 
         Returns:
             通过 AI 验证的候选列表（可能为空）
@@ -299,22 +303,30 @@ class IssueEmbeddingService:
                     f"{content}\n"
                 )
 
+            # 构建 PR 上下文
+            pr_context = f"标题: {pr_title}\n描述: {pr_body or '无描述'}"
+            if pr_summary:
+                pr_context += f"\n\nPR 摘要:\n{pr_summary}"
+            if pr_files:
+                pr_context += f"\n\n变更文件:\n{pr_files}"
+
             system_prompt = (
-                "你是一个专业的代码审查助手。判断给定的 Issues 是否与 PR 真正相关。\n"
-                "判断标准：\n"
-                "- Issue 描述的问题与 PR 的变更内容有实际关联\n"
-                "- Issue 的主题与 PR 的目的匹配\n"
-                "- 排除仅有表面文字相似但实际无关的 Issues\n\n"
-                '仅返回 JSON 格式：{"verified": [issue_number1, issue_number2, ...]}\n'
-                "只包含确实相关的编号。如果都不相关，返回空列表。"
+                "你是一个代码审查助手。判断给定的 Issues 是否与 PR 相关。\n"
+                "宽泛判断：只要 Issue 的主题与 PR 的变更方向一致即可，"
+                "不需要完全对应。宁可多关联也不要遗漏。\n\n"
+                '返回 JSON: {"verified": [issue_number1, ...]}\n'
+                "只返回 JSON，不要其他文字。"
             )
 
             user_prompt = (
-                f"## Pull Request\n"
-                f"标题: {pr_title}\n"
-                f"描述: {pr_body or '无描述'}\n\n"
-                f"## 候选相关 Issues\n{issues_text}\n\n"
-                "请判断以上哪些 Issues 与该 PR 真正相关。"
+                f"## Pull Request\n{pr_context}\n\n"
+                f"## 候选 Issues\n{issues_text}\n\n"
+                "判断哪些 Issues 与该 PR 相关，返回 JSON。"
+            )
+
+            logger.info(
+                f"AI 验证请求: {len(candidates)} 个候选, "
+                f"issues 内容长度: {sum(len(i.get('content', '')) for i in candidates)}"
             )
 
             response = await client.call_with_retry(
@@ -329,8 +341,9 @@ class IssueEmbeddingService:
             )
 
             # 解析 AI 响应
-            content = response.choices[0].message.content
-            verified_numbers = self._parse_verified_numbers(content)
+            ai_content = response.choices[0].message.content
+            logger.info(f"AI 验证原始响应: {ai_content}")
+            verified_numbers = self._parse_verified_numbers(ai_content)
 
             if verified_numbers is None:
                 logger.warning("AI 验证响应解析失败，回退使用原始候选")

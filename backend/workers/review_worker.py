@@ -396,11 +396,22 @@ class ReviewWorker:
 
                         if related_issues:
                             # AI 验证：过滤误判的候选 issues
+                            # 构建变更文件列表
+                            file_list = ""
+                            if analysis and analysis.code_files:
+                                file_list = "\n".join(
+                                    f"- {f.path}"
+                                    for f in analysis.code_files
+                                )
                             related_issues = (
                                 await issue_emb_service.verify_related_issues(
                                     pr_title=pr_info.get("title", ""),
                                     pr_body=pr_info.get("body", ""),
                                     candidates=related_issues,
+                                    pr_summary=context.get(
+                                        "pr_summary", ""
+                                    ),
+                                    pr_files=file_list,
                                 )
                             )
 
