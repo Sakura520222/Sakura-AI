@@ -115,7 +115,7 @@ class PRIssueLinker:
         # 构建 "Related to #xxx" 引用列表
         lines = [self.ISSUE_LINKS_START, ""]
         for issue in related_issues:
-            lines.append(f"Related to #{issue['number']}")
+            lines.append(f"Resolves #{issue['number']}")
         lines.extend(["", self.ISSUE_LINKS_END])
 
         new_block = "\n".join(lines)

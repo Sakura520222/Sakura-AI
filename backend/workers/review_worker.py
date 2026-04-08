@@ -391,16 +391,20 @@ class ReviewWorker:
                         )
 
                         if related_issues:
-                            # 更新 PR body（添加 "Related to #xxx"）
+                            # 更新 PR body（添加 "Resolves #xxx"）
+                            # 重新获取最新 PR body（PR Summary / Dependency Graph 可能已修改）
                             semantic_linker = PRIssueLinker()
 
-                            current_body = pr.body or ""
+                            latest_pr = await asyncio.to_thread(
+                                repo.get_pull, pr_info["pr_number"]
+                            )
+                            current_body = latest_pr.body or ""
                             new_body = semantic_linker.build_updated_pr_body(
                                 current_body, related_issues
                             )
                             if new_body != current_body:
                                 await asyncio.to_thread(
-                                    pr.edit, body=new_body
+                                    latest_pr.edit, body=new_body
                                 )
 
                             # 注入上下文
@@ -409,7 +413,8 @@ class ReviewWorker:
                             )
 
                             # 保存到数据库
-                            async with get_async_session() as db_session:
+                            AsyncSession = get_async_session()
+                            async with AsyncSession() as db_session:
                                 for issue in related_issues:
                                     link = PRIssueLink(
                                         pr_id=pr_info["pr_number"],
@@ -419,7 +424,7 @@ class ReviewWorker:
                                         issue_number=issue["number"],
                                         link_type="semantic",
                                         reference_text=(
-                                            f"Related to #{issue['number']}"
+                                            f"Resolves #{issue['number']}"
                                         ),
                                         inference_reason=(
                                             f"similarity: {issue['similarity']}"
