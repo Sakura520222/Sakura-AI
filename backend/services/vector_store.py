@@ -159,7 +159,7 @@ class VectorStore:
             metadatas = [doc.get("metadata", {}) for doc in documents]
 
             # 如果所有 embeddings 都是 None，则不提供（让 ChromaDB 自动生成）
-            if all(e is None for e in embeddings):
+            if embeddings and all(e is None for e in embeddings):
                 embeddings = None
 
             # 添加文档
@@ -308,6 +308,9 @@ class VectorStore:
         Returns:
             更新的文档数量
         """
+        if not documents:
+            return 0
+
         try:
             collection = await self.get_or_create_collection(repo_full_name)
 
@@ -316,7 +319,7 @@ class VectorStore:
             documents_text = [doc["content"] for doc in documents]
             metadatas = [doc.get("metadata", {}) for doc in documents]
 
-            if all(e is None for e in embeddings):
+            if embeddings and all(e is None for e in embeddings):
                 embeddings = None
 
             collection.upsert(
