@@ -104,13 +104,11 @@ class PRIssueLinker:
         Returns:
             更新后的 PR body
         """
+        pattern = self._issue_links_pattern()
+
         if not related_issues:
             # 移除已有标记区域
             if self.ISSUE_LINKS_START in original_body:
-                pattern = (
-                    f"{re.escape(self.ISSUE_LINKS_START)}.*?"
-                    f"{re.escape(self.ISSUE_LINKS_END)}"
-                )
                 return re.sub(pattern, "", original_body, flags=re.DOTALL).rstrip()
             return original_body
 
@@ -124,10 +122,13 @@ class PRIssueLinker:
 
         # 替换已有标记区域或追加
         if self.ISSUE_LINKS_START in original_body:
-            pattern = (
-                f"{re.escape(self.ISSUE_LINKS_START)}.*?"
-                f"{re.escape(self.ISSUE_LINKS_END)}"
-            )
             return re.sub(pattern, new_block, original_body, flags=re.DOTALL)
         else:
             return f"{original_body.rstrip()}\n\n{new_block}"
+
+    def _issue_links_pattern(self) -> str:
+        """语义关联区域的正则匹配模式"""
+        return (
+            f"{re.escape(self.ISSUE_LINKS_START)}.*?"
+            f"{re.escape(self.ISSUE_LINKS_END)}"
+        )

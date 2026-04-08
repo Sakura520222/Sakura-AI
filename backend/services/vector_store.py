@@ -299,7 +299,7 @@ class VectorStore:
     async def upsert_documents(
         self, repo_full_name: str, documents: List[Dict[str, Any]]
     ) -> int:
-        """更新或插入文档（先删后加）
+        """更新或插入文档（使用 ChromaDB 原生 upsert）
 
         Args:
             repo_full_name: 仓库名称
@@ -310,16 +310,26 @@ class VectorStore:
         """
         try:
             collection = await self.get_or_create_collection(repo_full_name)
-            doc_ids = [doc["id"] for doc in documents]
 
-            # 先尝试删除旧文档（可能不存在）
-            try:
-                collection.delete(ids=doc_ids)
-            except Exception:
-                pass
+            ids = [doc["id"] for doc in documents]
+            embeddings = [doc.get("embedding") for doc in documents]
+            documents_text = [doc["content"] for doc in documents]
+            metadatas = [doc.get("metadata", {}) for doc in documents]
 
-            # 再添加新文档
-            return await self.add_documents(repo_full_name, documents)
+            if all(e is None for e in embeddings):
+                embeddings = None
+
+            collection.upsert(
+                ids=ids,
+                embeddings=embeddings,
+                documents=documents_text,
+                metadatas=metadatas,
+            )
+
+            logger.debug(
+                f"已 upsert {len(documents)} 个文档到 {repo_full_name}"
+            )
+            return len(documents)
         except Exception as e:
             logger.error(f"❌ upsert 文档失败 (repo: {repo_full_name}): {e}")
             raise

@@ -3,6 +3,9 @@
 利用 ChromaDB 缓存仓库 issues 的向量嵌入，
 在 PR 审查时进行语义检索关联。
 检索流程：Embedding 初步召回 → Reranker 重排序 → 阈值过滤
+
+注意：向量库在首次 PR 审查时全量构建，后续依赖 webhook 增量同步。
+如果 webhook 事件丢失（如服务宕机），可通过清空 ChromaDB collection 触发重建。
 """
 
 import asyncio
@@ -10,15 +13,12 @@ from typing import Any, Dict, List
 
 from loguru import logger
 
-from backend.core.config import get_settings
 from backend.core.github_app import GitHubAppClient
 from backend.services.embedding_service import (
     get_embedding_service,
     get_reranker_service,
 )
 from backend.services.vector_store import get_vector_store
-
-settings = get_settings()
 
 
 class IssueEmbeddingService:
@@ -54,6 +54,14 @@ class IssueEmbeddingService:
     def _collection_key(self, repo_owner: str, repo_name: str) -> str:
         """生成 ChromaDB Collection key"""
         return f"{repo_owner}/{repo_name}{self.ISSUE_COLLECTION_SUFFIX}"
+
+    @staticmethod
+    def _safe_parse_number(value) -> int:
+        """安全地将 metadata 中的 number 转为 int"""
+        try:
+            return int(value)
+        except (ValueError, TypeError):
+            return 0
 
     async def index_repo_issues(
         self, repo_owner: str, repo_name: str
@@ -145,6 +153,12 @@ class IssueEmbeddingService:
         exclude_set: set,
     ) -> List[Dict[str, Any]]:
         """使用 Reranker 对候选进行精排"""
+        # 检查 Reranker 是否启用
+        if self.reranker_service.client is None:
+            return self._filter_by_cosine(
+                candidates, top_k, threshold, exclude_set
+            )
+
         # 构造 reranker 输入格式
         docs_for_rerank = [
             {"content": c["content"], "metadata": c["metadata"]}
@@ -155,16 +169,10 @@ class IssueEmbeddingService:
             query=query, docs=docs_for_rerank, top_k=top_k
         )
 
-        # Reranker 未启用时回退到 cosine similarity
-        if reranked_docs == docs_for_rerank[:top_k]:
-            return self._filter_by_cosine(
-                candidates, top_k, threshold, exclude_set
-            )
-
         # 从 reranked 结果中提取 issue 信息
         results = []
         for doc in reranked_docs:
-            number = int(doc["metadata"].get("number", 0))
+            number = self._safe_parse_number(doc["metadata"].get("number"))
             if number in exclude_set or number == 0:
                 continue
             results.append({
@@ -187,10 +195,11 @@ class IssueEmbeddingService:
         """回退：使用 cosine similarity 过滤"""
         results = []
         for c in candidates:
-            number = int(c["metadata"].get("number", 0))
+            number = self._safe_parse_number(c["metadata"].get("number"))
             if number in exclude_set or number == 0:
                 continue
-            similarity = 1 - c["distance"]
+            # ChromaDB 默认 cosine distance，clamp 防止异常值
+            similarity = max(0.0, 1.0 - c["distance"])
             if similarity < threshold:
                 continue
             results.append({
@@ -282,10 +291,19 @@ class IssueEmbeddingService:
     def _fetch_all_open_issues(
         self, repo_owner: str, repo_name: str
     ) -> list:
-        """同步获取仓库所有 open issues（线程内调用，PyGithub 自动分页）"""
+        """同步获取仓库所有 open issues（线程内调用，PyGithub 自动分页）
+
+        注意：PyGithub 的 get_issues() 会同时返回 Issue 和 PR，
+        通过 pull_request 属性过滤掉 PR。
+        """
         client = self.github_app.get_repo_client(repo_owner, repo_name)
         if not client:
             logger.warning(f"无法获取仓库客户端: {repo_owner}/{repo_name}")
             return []
         repo = client.get_repo(f"{repo_owner}/{repo_name}")
-        return list(repo.get_issues(state="open"))
+        # 过滤掉 Pull Request（PyGithub 的 get_issues 会包含 PR）
+        return [
+            issue
+            for issue in repo.get_issues(state="open")
+            if issue.pull_request is None
+        ]
