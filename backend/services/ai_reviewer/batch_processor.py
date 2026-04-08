@@ -265,7 +265,9 @@ class BatchProcessor:
         enabled_tools = await tool_manager.get_enabled_tools(repo_full_name)
 
         # 多轮对话循环
-        max_iterations = MAX_TOOL_ITERATIONS
+        max_iterations = get_strategy_config().get_context_enhancement_config().get(
+            "max_tool_iterations", MAX_TOOL_ITERATIONS
+        )
         iteration = 0
 
         while iteration < max_iterations:
@@ -336,8 +338,19 @@ class BatchProcessor:
                         }
                     )
 
-        # 超过最大迭代次数，强制返回
-        logger.warning(f"超过最大迭代次数 {max_iterations}，强制结束")
+        # 达到最大迭代次数，引导 AI 基于已有信息交付最终审查结果
+        logger.warning(
+            f"达到最大工具调用次数 ({max_iterations})，引导 AI 交付最终审查结果"
+        )
+        messages.append(
+            {
+                "role": "user",
+                "content": (
+                    "已达到最大工具调用次数，请基于你当前已掌握的所有信息，"
+                    "立即返回最终的代码审查结果。"
+                ),
+            }
+        )
         last_response = await self.api_client.call_with_retry(
             model=settings.openai_model,
             messages=messages,
