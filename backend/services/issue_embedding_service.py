@@ -311,9 +311,9 @@ class IssueEmbeddingService:
                 pr_context += f"\n\n变更文件:\n{pr_files}"
 
             system_prompt = (
-                "你是一个代码审查助手。判断给定的 Issues 是否与 PR 相关。\n"
-                "宽泛判断：只要 Issue 的主题与 PR 的变更方向一致即可，"
-                "不需要完全对应。宁可多关联也不要遗漏。\n\n"
+                "你是一个代码审查助手。判断给定的 Issues 是否与 PR 的变更内容有实际关联。\n"
+                "关联标准：Issue 描述的问题/需求会被该 PR 的代码变更直接解决或影响。\n"
+                "不关联的情况：仅关键词相似、属于同一模块但无直接因果关系。\n\n"
                 '返回 JSON: {"verified": [issue_number1, ...]}\n'
                 "只返回 JSON，不要其他文字。"
             )
