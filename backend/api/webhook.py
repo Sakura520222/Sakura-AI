@@ -678,28 +678,33 @@ async def handle_issue_event(payload: Dict[str, Any]) -> JSONResponse:
             and settings.enable_semantic_issue_linking
         ):
             try:
-                from backend.services.issue_embedding_service import (
-                    IssueEmbeddingService,
-                )
-
-                emb_service = IssueEmbeddingService()
-                repo_owner = issue_info["repo_owner"]
-                repo_name = issue_info["repo_name"]
-                issue_number = issue_info["issue_number"]
-
-                if action in ("opened", "edited", "reopened"):
-                    await emb_service.upsert_issue(
-                        repo_owner,
-                        repo_name,
-                        issue_number,
-                        issue_info.get("title", ""),
-                        issue_info.get("body", ""),
-                        issue_info.get("state", "open"),
+                # 过滤 Pull Request（PR 也触发 issues 事件）
+                issue_payload = payload.get("issue", {})
+                if not issue_payload.get("pull_request"):
+                    from backend.services.issue_embedding_service import (
+                        IssueEmbeddingService,
                     )
-                elif action == "closed":
-                    await emb_service.remove_issue(
-                        repo_owner, repo_name, issue_number
-                    )
+
+                    emb_service = IssueEmbeddingService()
+                    repo_owner = issue_info["repo_owner"]
+                    repo_name = issue_info["repo_name"]
+                    issue_number = issue_info["issue_number"]
+
+                    if action in ("opened", "edited", "reopened"):
+                        await emb_service.upsert_issue(
+                            repo_owner,
+                            repo_name,
+                            issue_number,
+                            issue_info.get("title", ""),
+                            issue_info.get("body", ""),
+                            issue_info.get("state", "open"),
+                        )
+                    elif action == "closed":
+                        await emb_service.remove_issue(
+                            repo_owner, repo_name, issue_number
+                        )
+                else:
+                    logger.debug("跳过 Pull Request 的 Issue 向量同步")
             except Exception as e:
                 logger.warning(f"语义 Issue 向量同步失败: {e}")
 
