@@ -234,6 +234,11 @@ class Settings(BaseSettings):
     pr_dependency_graph_max_nodes: int = 25  # 依赖图最大节点数
     pr_dependency_graph_max_files: int = 50  # 参与分析的最大文件数
 
+    # ========== 语义 Issue 关联配置 ==========
+    enable_semantic_issue_linking: bool = False  # 是否启用语义 Issue 关联
+    semantic_issue_similarity_threshold: float = 0.65  # 语义相似度阈值
+    semantic_issue_max_links: int = 5  # 最大关联 Issue 数量
+
     # 支持的编程语言
     code_index_languages: list[str] = [
         "python",
@@ -574,6 +579,18 @@ DYNAMIC_CONFIG_GROUPS: OrderedDict[str, dict] = OrderedDict(
                 ],
             },
         ),
+        (
+            "semantic_issue_linking",
+            {
+                "label": "语义 Issue 关联",
+                "icon": "link",
+                "keys": [
+                    "enable_semantic_issue_linking",
+                    "semantic_issue_similarity_threshold",
+                    "semantic_issue_max_links",
+                ],
+            },
+        ),
     ]
 )
 
@@ -619,6 +636,8 @@ DYNAMIC_CONFIG_RANGES: dict[str, tuple[float, float]] = {
     "incremental_history_summary_max_tokens": (500, 4096),
     "pr_dependency_graph_max_nodes": (5, 50),
     "pr_dependency_graph_max_files": (5, 200),
+    "semantic_issue_similarity_threshold": (0.0, 1.0),
+    "semantic_issue_max_links": (1, 20),
 }
 
 # 字段中文标签
@@ -659,6 +678,9 @@ DYNAMIC_CONFIG_LABELS: dict[str, str] = {
     "enable_pr_dependency_graph": "启用 PR 依赖图",
     "pr_dependency_graph_max_nodes": "依赖图最大节点数",
     "pr_dependency_graph_max_files": "分析文件数上限",
+    "enable_semantic_issue_linking": "启用语义 Issue 关联",
+    "semantic_issue_similarity_threshold": "语义相似度阈值",
+    "semantic_issue_max_links": "最大关联 Issue 数量",
     # 核心配置标签
     "github_app_id": "GitHub App ID",
     "github_private_key": "GitHub App 私钥",

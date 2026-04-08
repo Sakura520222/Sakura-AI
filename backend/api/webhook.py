@@ -659,7 +659,7 @@ async def handle_issue_event(payload: Dict[str, Any]) -> JSONResponse:
         action = issue_info["action"]
 
         # 只处理以下动作
-        supported_actions = ["opened", "edited", "reopened"]
+        supported_actions = ["opened", "edited", "reopened", "closed"]
         if action not in supported_actions:
             logger.info(f"忽略 Issue 动作: {action}")
             return JSONResponse(content={"status": "ignored", "action": action})
@@ -670,6 +670,43 @@ async def handle_issue_event(payload: Dict[str, Any]) -> JSONResponse:
             logger.info("跳过 Bot 自身创建的 Issue 事件")
             return JSONResponse(
                 content={"status": "ignored", "reason": "bot self-event"}
+            )
+
+        # 语义关联 Issue 向量同步（独立于 issue 分析，仓库级别）
+        if (
+            hasattr(settings, "enable_semantic_issue_linking")
+            and settings.enable_semantic_issue_linking
+        ):
+            try:
+                from backend.services.issue_embedding_service import (
+                    IssueEmbeddingService,
+                )
+
+                emb_service = IssueEmbeddingService()
+                repo_owner = issue_info["repo_owner"]
+                repo_name = issue_info["repo_name"]
+                issue_number = issue_info["issue_number"]
+
+                if action in ("opened", "edited", "reopened"):
+                    await emb_service.upsert_issue(
+                        repo_owner,
+                        repo_name,
+                        issue_number,
+                        issue_info.get("title", ""),
+                        issue_info.get("body", ""),
+                        issue_info.get("state", "open"),
+                    )
+                elif action == "closed":
+                    await emb_service.remove_issue(
+                        repo_owner, repo_name, issue_number
+                    )
+            except Exception as e:
+                logger.warning(f"语义 Issue 向量同步失败: {e}")
+
+        # closed 事件仅用于向量同步，不需要触发 Issue 分析
+        if action == "closed":
+            return JSONResponse(
+                content={"status": "accepted", "action": "closed", "sync": "vector_only"}
             )
 
         # 检查功能是否启用

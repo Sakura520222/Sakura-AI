@@ -275,6 +275,55 @@ class VectorStore:
             logger.error(f"❌ 获取文档数量失败 (repo: {repo_full_name}): {e}")
             return 0
 
+    async def delete_documents(self, repo_full_name: str, doc_ids: List[str]) -> bool:
+        """从 Collection 中删除指定文档
+
+        Args:
+            repo_full_name: 仓库名称
+            doc_ids: 要删除的文档 ID 列表
+
+        Returns:
+            是否删除成功
+        """
+        try:
+            collection = await self.get_or_create_collection(repo_full_name)
+            collection.delete(ids=doc_ids)
+            logger.debug(
+                f"已从 {repo_full_name} 删除 {len(doc_ids)} 个文档"
+            )
+            return True
+        except Exception as e:
+            logger.warning(f"删除文档失败 (repo: {repo_full_name}): {e}")
+            return False
+
+    async def upsert_documents(
+        self, repo_full_name: str, documents: List[Dict[str, Any]]
+    ) -> int:
+        """更新或插入文档（先删后加）
+
+        Args:
+            repo_full_name: 仓库名称
+            documents: 文档列表，格式同 add_documents
+
+        Returns:
+            更新的文档数量
+        """
+        try:
+            collection = await self.get_or_create_collection(repo_full_name)
+            doc_ids = [doc["id"] for doc in documents]
+
+            # 先尝试删除旧文档（可能不存在）
+            try:
+                collection.delete(ids=doc_ids)
+            except Exception:
+                pass
+
+            # 再添加新文档
+            return await self.add_documents(repo_full_name, documents)
+        except Exception as e:
+            logger.error(f"❌ upsert 文档失败 (repo: {repo_full_name}): {e}")
+            raise
+
     async def clear_collection(self, repo_full_name: str) -> bool:
         """清空 Collection 中的所有文档
 

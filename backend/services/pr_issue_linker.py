@@ -11,6 +11,10 @@ from backend.core.config import get_strategy_config
 class PRIssueLinker:
     """PR-Issue 关联分析器"""
 
+    # PR body 中语义关联区域的 HTML 标记（幂等更新）
+    ISSUE_LINKS_START = "<!-- sakura-ai-issue-links-start -->"
+    ISSUE_LINKS_END = "<!-- sakura-ai-issue-links-end -->"
+
     def __init__(self):
         self.github_app = GitHubAppClient()
         config = get_strategy_config().get_issue_analysis_config()
@@ -84,3 +88,46 @@ class PRIssueLinker:
                 lines.append(f"  > {summary}")
 
         return "\n".join(lines)
+
+    def build_updated_pr_body(
+        self, original_body: str, related_issues: List[Dict[str, Any]]
+    ) -> str:
+        """构建包含语义关联 issues 的 PR body
+
+        使用 HTML 注释标记界定区域，支持幂等更新。
+        参考 PRSummaryService 和 PRDependencyGraphService 的模式。
+
+        Args:
+            original_body: PR 原始 body
+            related_issues: 语义关联的 issue 列表，含 number 字段
+
+        Returns:
+            更新后的 PR body
+        """
+        if not related_issues:
+            # 移除已有标记区域
+            if self.ISSUE_LINKS_START in original_body:
+                pattern = (
+                    f"{re.escape(self.ISSUE_LINKS_START)}.*?"
+                    f"{re.escape(self.ISSUE_LINKS_END)}"
+                )
+                return re.sub(pattern, "", original_body, flags=re.DOTALL).rstrip()
+            return original_body
+
+        # 构建 "Related to #xxx" 引用列表
+        lines = [self.ISSUE_LINKS_START, ""]
+        for issue in related_issues:
+            lines.append(f"Related to #{issue['number']}")
+        lines.extend(["", self.ISSUE_LINKS_END])
+
+        new_block = "\n".join(lines)
+
+        # 替换已有标记区域或追加
+        if self.ISSUE_LINKS_START in original_body:
+            pattern = (
+                f"{re.escape(self.ISSUE_LINKS_START)}.*?"
+                f"{re.escape(self.ISSUE_LINKS_END)}"
+            )
+            return re.sub(pattern, new_block, original_body, flags=re.DOTALL)
+        else:
+            return f"{original_body.rstrip()}\n\n{new_block}"
