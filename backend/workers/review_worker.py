@@ -24,6 +24,7 @@ from backend.models.database import (
     CommentSeverity,
     CommentType,
     ReviewDecision,
+    PRIssueLink,
 )
 
 settings = get_settings()
@@ -354,6 +355,88 @@ class ReviewWorker:
                             )
                     except Exception as e:
                         logger.warning(f"[{task_id}] Issue 关联失败（不影响审查）: {e}")
+
+                # 6.6 语义 Issue 关联（如果启用）
+                if (
+                    hasattr(settings, "enable_semantic_issue_linking")
+                    and settings.enable_semantic_issue_linking
+                ):
+                    try:
+                        from backend.services.issue_embedding_service import (
+                            IssueEmbeddingService,
+                        )
+
+                        issue_emb_service = IssueEmbeddingService()
+                        max_links = getattr(
+                            settings, "semantic_issue_max_links", 5
+                        )
+                        threshold = getattr(
+                            settings, "semantic_issue_similarity_threshold", 0.65
+                        )
+
+                        # 已显式引用的 issues（排除）
+                        explicit_numbers = context.get(
+                            "linked_issue_numbers", []
+                        )
+
+                        related_issues = await issue_emb_service.search_related_issues(
+                            repo_owner=pr_info["repo_owner"],
+                            repo_name=pr_info["repo_name"],
+                            pr_title=pr_info.get("title", ""),
+                            pr_body=pr_info.get("body", ""),
+                            exclude_numbers=explicit_numbers,
+                            top_k=max_links,
+                            similarity_threshold=threshold,
+                        )
+
+                        if related_issues:
+                            # 更新 PR body（添加 "Related to #xxx"）
+                            if "issue_linker" not in dir():
+                                issue_linker = PRIssueLinker()
+
+                            current_body = pr.body or ""
+                            new_body = issue_linker.build_updated_pr_body(
+                                current_body, related_issues
+                            )
+                            if new_body != current_body:
+                                await asyncio.to_thread(
+                                    pr.edit, body=new_body
+                                )
+
+                            # 注入上下文
+                            context["semantically_linked_issues"] = (
+                                related_issues
+                            )
+
+                            # 保存到数据库
+                            async with get_async_session() as db_session:
+                                for issue in related_issues:
+                                    link = PRIssueLink(
+                                        pr_id=pr_info["pr_number"],
+                                        repo_name=pr_info[
+                                            "repo_full_name"
+                                        ],
+                                        issue_number=issue["number"],
+                                        link_type="semantic",
+                                        reference_text=(
+                                            f"Related to #{issue['number']}"
+                                        ),
+                                        inference_reason=(
+                                            f"similarity: {issue['similarity']}"
+                                        ),
+                                    )
+                                    db_session.add(link)
+                                await db_session.commit()
+
+                            logger.info(
+                                f"[{task_id}] 语义关联了 {len(related_issues)} 个 Issues: "
+                                f"{[i['number'] for i in related_issues]}"
+                            )
+                    except Exception as e:
+                        logger.warning(
+                            f"[{task_id}] 语义 Issue 关联失败（不影响审查）: {e}",
+                            exc_info=True,
+                        )
 
                 # 7. 并行执行AI审查和标签推荐
                 await self._update_review_status(review_id, PRStatus.REVIEWING)
