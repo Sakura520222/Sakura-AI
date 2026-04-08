@@ -379,6 +379,10 @@ class ReviewWorker:
                         explicit_numbers = context.get(
                             "linked_issue_numbers", []
                         )
+                        # 排除 PR 自身编号（PR 在 GitHub 中也是 issue）
+                        explicit_numbers = list(
+                            set(explicit_numbers + [pr_info["pr_number"]])
+                        )
 
                         related_issues = await issue_emb_service.search_related_issues(
                             repo_owner=pr_info["repo_owner"],
@@ -389,6 +393,16 @@ class ReviewWorker:
                             top_k=max_links,
                             similarity_threshold=threshold,
                         )
+
+                        if related_issues:
+                            # AI 验证：过滤误判的候选 issues
+                            related_issues = (
+                                await issue_emb_service.verify_related_issues(
+                                    pr_title=pr_info.get("title", ""),
+                                    pr_body=pr_info.get("body", ""),
+                                    candidates=related_issues,
+                                )
+                            )
 
                         if related_issues:
                             # 更新 PR body（添加 "Resolves #xxx"）

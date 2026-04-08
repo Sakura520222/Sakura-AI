@@ -3,13 +3,15 @@
 利用 ChromaDB 缓存仓库 issues 的向量嵌入，
 在 PR 审查时进行语义检索关联。
 
-检索流程：Embedding 初步召回 → Reranker 重排序 → 阈值过滤
+检索流程：Embedding 初步召回 → Reranker 重排序 → 阈值过滤 → AI 验证
 
 向量库在首次 PR 审查时全量构建，后续依赖 webhook 增量同步。
 如果 webhook 事件丢失（如服务宕机），可通过清空 ChromaDB collection 触发重建。
 """
 
 import asyncio
+import json
+import re
 from typing import Any, Dict, List
 
 from loguru import logger
@@ -179,6 +181,7 @@ class IssueEmbeddingService:
             results.append({
                 "number": number,
                 "title": doc["metadata"].get("title", ""),
+                "content": doc.get("content", ""),
                 "similarity": "reranked",
             })
             if len(results) >= top_k:
@@ -206,6 +209,7 @@ class IssueEmbeddingService:
             results.append({
                 "number": number,
                 "title": c["metadata"].get("title", ""),
+                "content": c.get("content", ""),
                 "similarity": round(similarity, 3),
             })
             if len(results) >= top_k:
@@ -250,6 +254,121 @@ class IssueEmbeddingService:
                 f"更新 issue 向量失败: {repo_owner}/{repo_name}#{issue_number}: {e}"
             )
             return False
+
+    async def verify_related_issues(
+        self,
+        pr_title: str,
+        pr_body: str,
+        candidates: List[Dict[str, Any]],
+    ) -> List[Dict[str, Any]]:
+        """使用 AI 批量验证候选 issues 是否真正与 PR 相关
+
+        一次 LLM 调用，传入所有候选 issues，AI 返回真正相关的编号列表。
+        使用辅助模型（summary_model）以降低成本。失败时回退返回原始候选。
+
+        Args:
+            pr_title: PR 标题
+            pr_body: PR 描述
+            candidates: search_related_issues 的返回结果
+
+        Returns:
+            通过 AI 验证的候选列表（可能为空）
+        """
+        if not candidates:
+            return candidates
+
+        try:
+            from backend.core.config import get_settings
+            from backend.services.ai_reviewer.api_client import AIApiClient
+
+            settings = get_settings()
+
+            # 使用辅助模型（更便宜）
+            api_base = settings.summary_api_base or settings.openai_api_base
+            api_key = settings.summary_api_key or settings.openai_api_key
+            model = settings.summary_model or settings.openai_model
+
+            client = AIApiClient(base_url=api_base, api_key=api_key)
+
+            # 构建候选 issues 文本
+            issues_text = ""
+            for issue in candidates:
+                content = issue.get("content", "")
+                issues_text += (
+                    f"\n### Issue #{issue['number']}: {issue['title']}\n"
+                    f"{content}\n"
+                )
+
+            system_prompt = (
+                "你是一个专业的代码审查助手。判断给定的 Issues 是否与 PR 真正相关。\n"
+                "判断标准：\n"
+                "- Issue 描述的问题与 PR 的变更内容有实际关联\n"
+                "- Issue 的主题与 PR 的目的匹配\n"
+                "- 排除仅有表面文字相似但实际无关的 Issues\n\n"
+                '仅返回 JSON 格式：{"verified": [issue_number1, issue_number2, ...]}\n'
+                "只包含确实相关的编号。如果都不相关，返回空列表。"
+            )
+
+            user_prompt = (
+                f"## Pull Request\n"
+                f"标题: {pr_title}\n"
+                f"描述: {pr_body or '无描述'}\n\n"
+                f"## 候选相关 Issues\n{issues_text}\n\n"
+                "请判断以上哪些 Issues 与该 PR 真正相关。"
+            )
+
+            response = await client.call_with_retry(
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_prompt},
+                ],
+                model=model,
+                temperature=0.1,
+                max_tokens=500,
+                timeout=30.0,
+            )
+
+            # 解析 AI 响应
+            content = response.choices[0].message.content
+            verified_numbers = self._parse_verified_numbers(content)
+
+            if verified_numbers is None:
+                logger.warning("AI 验证响应解析失败，回退使用原始候选")
+                return candidates
+
+            # 过滤候选
+            verified = [
+                c for c in candidates if c["number"] in verified_numbers
+            ]
+
+            filtered_count = len(candidates) - len(verified)
+            if filtered_count > 0:
+                logger.info(
+                    f"AI 验证过滤了 {filtered_count} 个误判: "
+                    f"保留 {[c['number'] for c in verified]}, "
+                    f"移除 {[c['number'] for c in candidates if c['number'] not in verified_numbers]}"
+                )
+
+            return verified
+
+        except Exception as e:
+            logger.warning(f"AI 验证失败，回退使用原始候选: {e}")
+            return candidates
+
+    @staticmethod
+    def _parse_verified_numbers(content: str) -> set | None:
+        """从 AI 响应中解析验证通过的 issue 编号集合"""
+        try:
+            # 尝试提取 JSON（可能被 markdown 代码块包裹）
+            json_match = re.search(
+                r'\{[^}]*"verified"\s*:\s*\[[^\]]*\][^}]*\}', content
+            )
+            if json_match:
+                data = json.loads(json_match.group())
+                return set(int(n) for n in data.get("verified", []))
+        except (json.JSONDecodeError, ValueError, TypeError) as e:
+            logger.debug(f"解析 AI 验证响应失败: {e}")
+        return None
 
     async def remove_issue(
         self, repo_owner: str, repo_name: str, issue_number: int
