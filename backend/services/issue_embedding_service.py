@@ -2,9 +2,10 @@
 
 利用 ChromaDB 缓存仓库 issues 的向量嵌入，
 在 PR 审查时进行语义检索关联。
+
 检索流程：Embedding 初步召回 → Reranker 重排序 → 阈值过滤
 
-注意：向量库在首次 PR 审查时全量构建，后续依赖 webhook 增量同步。
+向量库在首次 PR 审查时全量构建，后续依赖 webhook 增量同步。
 如果 webhook 事件丢失（如服务宕机），可通过清空 ChromaDB collection 触发重建。
 """
 
@@ -56,12 +57,12 @@ class IssueEmbeddingService:
         return f"{repo_owner}/{repo_name}{self.ISSUE_COLLECTION_SUFFIX}"
 
     @staticmethod
-    def _safe_parse_number(value) -> int:
-        """安全地将 metadata 中的 number 转为 int"""
+    def _safe_parse_number(value) -> int | None:
+        """安全地将 metadata 中的 number 转为 int，失败返回 None"""
         try:
             return int(value)
         except (ValueError, TypeError):
-            return 0
+            return None
 
     async def index_repo_issues(
         self, repo_owner: str, repo_name: str
@@ -173,7 +174,7 @@ class IssueEmbeddingService:
         results = []
         for doc in reranked_docs:
             number = self._safe_parse_number(doc["metadata"].get("number"))
-            if number in exclude_set or number == 0:
+            if number is None or number in exclude_set:
                 continue
             results.append({
                 "number": number,
@@ -196,7 +197,7 @@ class IssueEmbeddingService:
         results = []
         for c in candidates:
             number = self._safe_parse_number(c["metadata"].get("number"))
-            if number in exclude_set or number == 0:
+            if number is None or number in exclude_set:
                 continue
             # ChromaDB 默认 cosine distance，clamp 防止异常值
             similarity = max(0.0, 1.0 - c["distance"])
