@@ -1,6 +1,8 @@
 """Telegram Bot 主逻辑"""
 
+import httpx
 from telegram import Bot, BotCommand
+from telegram.error import NetworkError, TimedOut
 from telegram.ext import Application, CommandHandler
 from loguru import logger
 
@@ -74,6 +76,17 @@ async def register_bot_commands(bot: Bot):
     logger.info("✅ Bot 命令菜单已注册")
 
 
+async def _telegram_error_handler(update: object, context) -> None:
+    """处理 Telegram Bot 运行时错误，将瞬态网络错误降级为 WARNING"""
+    error = context.error
+    if isinstance(error, (httpx.ReadError, httpx.ConnectError, httpx.ReadTimeout)):
+        logger.warning(f"⚡ Telegram 网络瞬态错误（将自动重试）: {error}")
+    elif isinstance(error, (NetworkError, TimedOut)):
+        logger.warning(f"⚡ Telegram 网络瞬态错误（将自动重试）: {error}")
+    else:
+        logger.error(f"❌ Telegram Bot 未预期的错误: {error}", exc_info=error)
+
+
 async def start_telegram_bot():
     """启动 Telegram Bot"""
     global _telegram_bot, _telegram_app
@@ -84,8 +97,16 @@ async def start_telegram_bot():
         # 创建 Bot 实例
         _telegram_bot = Bot(token=settings.telegram_bot_token)
 
-        # 创建 Application
-        _telegram_app = Application.builder().token(settings.telegram_bot_token).build()
+        # 创建 Application（配置超时参数，适应不稳定网络环境）
+        _telegram_app = (
+            Application.builder()
+            .token(settings.telegram_bot_token)
+            .get_updates_read_timeout(30)
+            .get_updates_connect_timeout(10)
+            .read_timeout(30)
+            .connect_timeout(10)
+            .build()
+        )
 
         # 注册命令处理器
         _telegram_app.add_handler(CommandHandler("start", cmd_start))
@@ -120,10 +141,13 @@ async def start_telegram_bot():
         notification_sender = NotificationSender(_telegram_bot)
         set_notification_sender(notification_sender)
 
+        # 注册错误处理器
+        _telegram_app.add_error_handler(_telegram_error_handler)
+
         # 启动 Bot（非阻塞）
         await _telegram_app.initialize()
         await _telegram_app.start()
-        await _telegram_app.updater.start_polling()
+        await _telegram_app.updater.start_polling(drop_pending_updates=True)
 
         # 注册命令菜单
         await register_bot_commands(_telegram_bot)
