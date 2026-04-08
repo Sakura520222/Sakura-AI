@@ -365,6 +365,7 @@ class ReviewWorker:
                         from backend.services.issue_embedding_service import (
                             IssueEmbeddingService,
                         )
+                        from backend.services.pr_issue_linker import PRIssueLinker
 
                         issue_emb_service = IssueEmbeddingService()
                         max_links = getattr(
@@ -391,11 +392,10 @@ class ReviewWorker:
 
                         if related_issues:
                             # 更新 PR body（添加 "Related to #xxx"）
-                            if "issue_linker" not in dir():
-                                issue_linker = PRIssueLinker()
+                            semantic_linker = PRIssueLinker()
 
                             current_body = pr.body or ""
-                            new_body = issue_linker.build_updated_pr_body(
+                            new_body = semantic_linker.build_updated_pr_body(
                                 current_body, related_issues
                             )
                             if new_body != current_body:
