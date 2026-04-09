@@ -39,7 +39,19 @@ class IssueService:
     def __init__(self):
         if not self._initialized:
             self.github_app = GitHubAppClient()
+            self._issue_embedding_service = None
             self.__class__._initialized = True
+
+    @property
+    def issue_embedding_service(self):
+        """懒加载 IssueEmbeddingService"""
+        if self._issue_embedding_service is None:
+            from backend.services.issue_embedding_service import (
+                IssueEmbeddingService,
+            )
+
+            self._issue_embedding_service = IssueEmbeddingService()
+        return self._issue_embedding_service
 
     async def save_analysis_result(
         self,
@@ -448,24 +460,48 @@ class IssueService:
         body: str,
         current_issue_number: int = None,
     ) -> List[Dict[str, Any]]:
-        """检测重复 Issue（GitHub Search API + AI 相似度二次筛选）"""
+        """检测重复 Issue（优先语义检索，回退到 GitHub Search API）"""
+        # 优先使用 IssueEmbeddingService 语义检索
+        try:
+            exclude_numbers = [current_issue_number] if current_issue_number else []
+            results = await self.issue_embedding_service.search_related_issues(
+                repo_owner=repo_owner,
+                repo_name=repo_name,
+                pr_title=title,
+                pr_body=body or "",
+                exclude_numbers=exclude_numbers,
+                top_k=5,
+                similarity_threshold=0.75,
+            )
+            if results:
+                return [
+                    {
+                        "issue_number": r["number"],
+                        "title": r["title"],
+                        "state": "open",
+                        "similarity": r.get("similarity", 0),
+                    }
+                    for r in results
+                ]
+        except Exception as e:
+            logger.warning(f"语义检索查重失败，回退到 GitHub Search API: {e}")
+
+        # Fallback: GitHub Search API + cosine similarity
         keywords = title.split()[:5]
         query = " ".join(keywords)
         issues = await asyncio.to_thread(
             self.github_app.search_issues, repo_owner, repo_name, query, "open", 10
         )
 
-        # 过滤当前 Issue
-        candidates = []
-        for issue in issues:
-            if current_issue_number and issue.number == current_issue_number:
-                continue
-            candidates.append(issue)
+        candidates = [
+            issue
+            for issue in issues
+            if not (current_issue_number and issue.number == current_issue_number)
+        ]
 
         if not candidates:
             return []
 
-        # AI 相似度二次筛选
         try:
             from backend.services.embedding_service import get_embedding_service
 
