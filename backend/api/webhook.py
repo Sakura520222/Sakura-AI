@@ -244,24 +244,23 @@ async def handle_issue_comment_event(payload: Dict[str, Any]) -> JSONResponse:
         # 提取评论内容
         comment_body = payload.get("comment", {}).get("body", "").strip()
 
+        # 提前获取 issue 信息，供命令分发使用
+        issue = payload.get("issue", {})
+
         # 检查是否为 /full-review 指令（精确匹配，避免误匹配 /full-review-extra 等）
         if not re.match(r"^/full-review(\s|$)", comment_body):
             # 检查 /revoke 命令
             if re.match(r"^/revoke(\s|$)", comment_body):
                 return await handle_revoke_command(payload)
+            # 检查 /analyze 命令（仅限 Issue）
+            if re.match(r"^/analyze(\s|$)", comment_body):
+                if not issue.get("pull_request"):
+                    return await handle_issue_analyze_command(payload)
+                return JSONResponse(
+                    content={"status": "ignored", "reason": "/analyze 仅适用于 Issue"}
+                )
             return JSONResponse(
                 content={"status": "ignored", "reason": "not a review command"}
-            )
-
-        # 检查是否为PR评论（排除普通Issue）
-        issue = payload.get("issue", {})
-        if not issue.get("pull_request"):
-            # 非 PR 评论：检测 /analyze 命令
-            comment_body_check = payload.get("comment", {}).get("body", "").strip()
-            if re.match(r"^/analyze(\s|$)", comment_body_check):
-                return await handle_issue_analyze_command(payload)
-            return JSONResponse(
-                content={"status": "ignored", "reason": "not a recognized command"}
             )
 
         # 提取PR信息
