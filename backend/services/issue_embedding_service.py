@@ -298,6 +298,10 @@ class IssueEmbeddingService:
             issues_text = ""
             for issue in candidates:
                 content = issue.get("content", "")
+                logger.info(
+                    f"Issue #{issue['number']} content 长度: "
+                    f"{len(content)}, 前100字: {content[:100]!r}"
+                )
                 issues_text += (
                     f"\n### Issue #{issue['number']}: {issue['title']}\n"
                     f"{content}\n"
@@ -311,17 +315,26 @@ class IssueEmbeddingService:
                 pr_context += f"\n\n变更文件:\n{pr_files}"
 
             system_prompt = (
-                "你是一个代码审查助手。判断给定的 Issues 是否与 PR 的变更内容有实际关联。\n"
-                "关联标准：Issue 描述的问题/需求会被该 PR 的代码变更直接解决或影响。\n"
-                "不关联的情况：仅关键词相似、属于同一模块但无直接因果关系。\n\n"
-                '返回 JSON: {"verified": [issue_number1, ...]}\n'
+                "你是一个严格的代码审查助手。判断给定的 Issues 是否与 PR 的代码变更有【直接因果关系】。\n\n"
+                "严格关联标准（必须满足）：\n"
+                "Issue 描述的具体问题或功能需求，会被该 PR 的代码变更直接修复或实现。"
+                "你能从 PR 的变更文件和内容中明确看到解决该 Issue 的改动。\n\n"
+                "以下情况【不算关联】：\n"
+                "- 仅关键词或主题相似，但 PR 并未解决 Issue 描述的具体问题\n"
+                "- 属于同一项目/模块，但无直接解决关系\n"
+                "- Issue 是一个广泛的需求，PR 只是碰巧涉及相关代码\n"
+                "- 无法从 PR 变更中看出与 Issue 的直接因果关系\n\n"
+                "宁可不关联也不要误关联。如果不确定，则不关联。\n\n"
+                '返回 JSON: {"verified": [issue_number, ...], '
+                '"reasons": {"编号": "一句话说明为什么关联或不关联"}}\n'
+                "如果都不关联，返回 {\"verified\": [], \"reasons\": {}}\n"
                 "只返回 JSON，不要其他文字。"
             )
 
             user_prompt = (
                 f"## Pull Request\n{pr_context}\n\n"
                 f"## 候选 Issues\n{issues_text}\n\n"
-                "判断哪些 Issues 与该 PR 相关，返回 JSON。"
+                "逐一判断每个 Issue 是否与该 PR 有直接因果关系，返回 JSON。"
             )
 
             logger.info(
