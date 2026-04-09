@@ -315,16 +315,18 @@ class IssueEmbeddingService:
                 pr_context += f"\n\n变更文件:\n{pr_files}"
 
             system_prompt = (
-                "你是一个严格的代码审查助手。判断给定的 Issues 是否与 PR 的代码变更有【直接因果关系】。\n\n"
-                "严格关联标准（必须满足）：\n"
-                "Issue 描述的具体问题或功能需求，会被该 PR 的代码变更直接修复或实现。"
-                "你能从 PR 的变更文件和内容中明确看到解决该 Issue 的改动。\n\n"
-                "以下情况【不算关联】：\n"
+                "你是一个代码审查助手。判断给定的 Issues 是否与 PR 的代码变更有关联。\n\n"
+                "关联方式（满足任一即可）：\n"
+                "1. PR 描述显式提及修复/实现该 Issue\n"
+                "2. PR 的代码变更直接修复了 Issue 描述的具体问题"
+                "（例如 Issue 报告 API 返回 413 错误，PR 添加了请求体截断逻辑）\n"
+                "3. PR 的代码变更直接实现了 Issue 要求的功能\n\n"
+                "以下情况不算关联：\n"
                 "- 仅关键词或主题相似，但 PR 并未解决 Issue 描述的具体问题\n"
                 "- 属于同一项目/模块，但无直接解决关系\n"
-                "- Issue 是一个广泛的需求，PR 只是碰巧涉及相关代码\n"
-                "- 无法从 PR 变更中看出与 Issue 的直接因果关系\n\n"
-                "宁可不关联也不要误关联。如果不确定，则不关联。\n\n"
+                "- Issue 是一个广泛的需求，PR 只是碰巧涉及相关代码\n\n"
+                "判断原则：如果 PR 的代码变更能够解决 Issue 描述的问题，即使 PR 描述未显式提及，也应判定为关联。"
+                "仅在确实无法确认因果关系时才不关联。\n\n"
                 '返回 JSON: {"verified": [issue_number, ...], '
                 '"reasons": {"编号": "一句话说明为什么关联或不关联"}}\n'
                 "如果都不关联，返回 {\"verified\": [], \"reasons\": {}}\n"
@@ -334,7 +336,7 @@ class IssueEmbeddingService:
             user_prompt = (
                 f"## Pull Request\n{pr_context}\n\n"
                 f"## 候选 Issues\n{issues_text}\n\n"
-                "逐一判断每个 Issue 是否与该 PR 有直接因果关系，返回 JSON。"
+                "逐一判断每个 Issue 是否与该 PR 有关联，返回 JSON。"
             )
 
             logger.info(
