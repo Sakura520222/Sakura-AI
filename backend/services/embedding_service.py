@@ -17,6 +17,9 @@ from backend.core.config import get_settings
 
 settings = get_settings()
 
+# 嵌入文本最大字符数（防御性兜底，~8000 tokens 安全上限）
+MAX_EMBEDDING_CHARS = 24000
+
 
 class EmbeddingService:
     """嵌入服务
@@ -100,6 +103,17 @@ class EmbeddingService:
             logger.error(f"❌ 生成嵌入向量失败: {e}")
             raise
 
+    @staticmethod
+    def _truncate_text(text: str, max_chars: int = MAX_EMBEDDING_CHARS) -> str:
+        """截断超长文本（防御性兜底，优先在段落边界截断）"""
+        if len(text) <= max_chars:
+            return text
+        truncated = text[:max_chars]
+        last_break = truncated.rfind("\n\n")
+        if last_break > max_chars * 0.7:
+            truncated = truncated[:last_break]
+        return truncated
+
     async def _embed_via_openai_api(self, texts: List[str]) -> List[List[float]]:
         """通过 OpenAI 兼容 API 生成嵌入（支持批处理）
 
@@ -112,7 +126,7 @@ class EmbeddingService:
             # 分批处理（API 有批次大小限制）
             total_batches = (len(texts) + batch_size - 1) // batch_size
             for i in range(0, len(texts), batch_size):
-                batch = texts[i : i + batch_size]
+                batch = [self._truncate_text(t) for t in texts[i : i + batch_size]]
                 batch_num = i // batch_size + 1
 
                 logger.debug(
