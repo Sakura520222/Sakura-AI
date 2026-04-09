@@ -672,6 +672,15 @@ async def handle_issue_event(payload: Dict[str, Any]) -> JSONResponse:
                 content={"status": "ignored", "reason": "bot self-event"}
             )
 
+        # 过滤 Bot 触发的 edited 事件（如自动改写标题）
+        if action == "edited" and bot_username:
+            sender = payload.get("sender", {}).get("login", "")
+            if sender == bot_username:
+                logger.info("跳过 Bot 触发的 Issue edited 事件")
+                return JSONResponse(
+                    content={"status": "ignored", "reason": "bot edited event"}
+                )
+
         # 语义关联 Issue 向量同步（独立于 issue 分析，仓库级别）
         if (
             hasattr(settings, "enable_semantic_issue_linking")
