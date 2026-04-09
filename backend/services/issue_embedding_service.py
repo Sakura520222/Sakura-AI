@@ -384,30 +384,46 @@ class IssueEmbeddingService:
     @staticmethod
     def _parse_verified_numbers(content: str) -> set | None:
         """从 AI 响应中解析验证通过的 issue 编号集合"""
+        # 1. 直接尝试解析整个响应
         try:
-            # 1. 直接尝试解析整个响应
+            data = json.loads(content.strip())
+            if "verified" in data:
+                return set(int(n) for n in data["verified"])
+        except (json.JSONDecodeError, ValueError):
+            pass
+
+        # 2. 尝试从 markdown 代码块中提取完整内容再解析
+        code_match = re.search(r"```(?:json)?\s*(.*?)\s*```", content, re.DOTALL)
+        if code_match:
             try:
-                data = json.loads(content.strip())
+                data = json.loads(code_match.group(1).strip())
                 if "verified" in data:
                     return set(int(n) for n in data["verified"])
             except (json.JSONDecodeError, ValueError):
                 pass
 
-            # 2. 尝试从 markdown 代码块中提取 JSON
-            code_match = re.search(r"```(?:json)?\s*(\{.*?\})\s*```", content, re.DOTALL)
-            if code_match:
-                data = json.loads(code_match.group(1))
-                if "verified" in data:
-                    return set(int(n) for n in data["verified"])
+        # 3. 逐字符花括号计数提取最外层完整 JSON
+        depth = 0
+        start = None
+        for i, ch in enumerate(content):
+            if ch == "{":
+                if depth == 0:
+                    start = i
+                depth += 1
+            elif ch == "}":
+                depth -= 1
+                if depth == 0 and start is not None:
+                    try:
+                        data = json.loads(content[start : i + 1])
+                        if "verified" in data:
+                            return set(int(n) for n in data["verified"])
+                    except (json.JSONDecodeError, ValueError):
+                        pass
+                    start = None
 
-            # 3. 尝试匹配最外层 JSON（处理嵌套对象）
-            brace_match = re.search(r"\{.*\}", content, re.DOTALL)
-            if brace_match:
-                data = json.loads(brace_match.group())
-                if "verified" in data:
-                    return set(int(n) for n in data["verified"])
-        except (json.JSONDecodeError, ValueError, TypeError) as e:
-            logger.warning(f"解析 AI 验证响应失败: {e}")
+        logger.warning(
+            f"解析 AI 验证响应失败，前200字: {content[:200]!r}"
+        )
         return None
 
     async def remove_issue(
