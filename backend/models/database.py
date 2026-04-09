@@ -374,6 +374,7 @@ class IssueAnalysis(Base):
     priority = Column(String(50), nullable=True)
     summary = Column(Text, nullable=True)
     feasibility = Column(Text, nullable=True)
+    suggested_title = Column(String(256), nullable=True)
     suggested_assignees = Column(Text, nullable=True)
     suggested_labels = Column(Text, nullable=True)
     suggested_milestone = Column(String(255), nullable=True)

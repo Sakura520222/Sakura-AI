@@ -659,7 +659,7 @@ async def handle_issue_event(payload: Dict[str, Any]) -> JSONResponse:
         action = issue_info["action"]
 
         # 只处理以下动作
-        supported_actions = ["opened", "edited", "reopened"]
+        supported_actions = ["opened", "edited", "reopened", "closed"]
         if action not in supported_actions:
             logger.info(f"忽略 Issue 动作: {action}")
             return JSONResponse(content={"status": "ignored", "action": action})
@@ -670,6 +670,49 @@ async def handle_issue_event(payload: Dict[str, Any]) -> JSONResponse:
             logger.info("跳过 Bot 自身创建的 Issue 事件")
             return JSONResponse(
                 content={"status": "ignored", "reason": "bot self-event"}
+            )
+
+        # 过滤 Bot 触发的 edited 事件（如自动改写标题）
+        if action == "edited" and bot_username:
+            sender = payload.get("sender", {}).get("login", "")
+            if sender == bot_username:
+                logger.info("跳过 Bot 触发的 Issue edited 事件")
+                return JSONResponse(
+                    content={"status": "ignored", "reason": "bot edited event"}
+                )
+
+        # 语义关联 Issue 向量同步（独立于 issue 分析，仓库级别）
+        if (
+            hasattr(settings, "enable_semantic_issue_linking")
+            and settings.enable_semantic_issue_linking
+        ):
+            try:
+                # 过滤 Pull Request（PR 也触发 issues 事件）
+                issue_payload = payload.get("issue", {})
+                if not issue_payload.get("pull_request"):
+                    from backend.services.issue_embedding_service import (
+                        IssueEmbeddingService,
+                    )
+
+                    emb_service = IssueEmbeddingService()
+                    repo_owner = issue_info["repo_owner"]
+                    repo_name = issue_info["repo_name"]
+                    issue_number = issue_info["issue_number"]
+
+                    # embedding 改为在 issue_worker 中 AI 分析完成后使用摘要执行
+                    if action == "closed":
+                        await emb_service.remove_issue(
+                            repo_owner, repo_name, issue_number
+                        )
+                else:
+                    logger.debug("跳过 Pull Request 的 Issue 向量同步")
+            except Exception as e:
+                logger.warning(f"语义 Issue 向量同步失败: {e}")
+
+        # closed 事件仅用于向量同步，不需要触发 Issue 分析
+        if action == "closed":
+            return JSONResponse(
+                content={"status": "accepted", "action": "closed", "sync": "vector_only"}
             )
 
         # 检查功能是否启用

@@ -6,7 +6,7 @@ import uuid
 from typing import Dict, Any, Optional
 from loguru import logger
 
-from backend.core.config import get_settings
+from backend.core.config import get_settings, get_dynamic_config
 from backend.core.github_app import GitHubAppClient
 from backend.models.database import (
     async_session,
@@ -144,14 +144,40 @@ class IssueWorker:
                         logger.error(f"[{task_id}] 未找到待更新的分析记录")
                         return task_id
 
-                    # 6. 重复检测
+                    # 5.5 使用 AI 摘要更新 Issue 向量
+                    try:
+                        from backend.services.issue_embedding_service import (
+                            IssueEmbeddingService,
+                        )
+
+                        summary = analysis_result.get("summary", "")
+                        if summary:
+                            emb_service = IssueEmbeddingService()
+                            await emb_service.upsert_issue(
+                                repo_owner,
+                                repo_name,
+                                issue_number,
+                                title=issue_info.get("title", ""),
+                                body=summary,
+                                state=issue_info.get("state", "open"),
+                            )
+                            logger.info(
+                                f"[{task_id}] 已使用 AI 摘要更新 Issue 向量"
+                            )
+                    except Exception as e:
+                        logger.warning(
+                            f"[{task_id}] 使用 AI 摘要更新向量失败: {e}"
+                        )
+
+                    # 6. 重复检测（优先使用 AI 摘要）
                     if settings.issue_detect_duplicates:
                         try:
+                            summary = analysis_result.get("summary", "")
                             duplicates = await issue_service.detect_duplicates(
                                 repo_owner,
                                 repo_name,
                                 issue_info.get("title", ""),
-                                issue_info.get("body", ""),
+                                summary or issue_info.get("body", ""),
                                 current_issue_number=issue_number,
                             )
                             if duplicates:
@@ -292,6 +318,35 @@ class IssueWorker:
                                     )
                         except Exception as e:
                             logger.warning(f"[{task_id}] 应用指派人失败: {e}")
+
+                    # 10.7 自动改写标题（优先从 DB 读取配置）
+                    issue_auto_rewrite_title = await get_dynamic_config(
+                        "issue_auto_rewrite_title"
+                    )
+
+                    if issue_auto_rewrite_title:
+                        try:
+                            suggested_title = analysis_record.suggested_title
+                            original_title = issue_info.get("title", "")
+                            if suggested_title and suggested_title != original_title:
+                                if len(suggested_title) > 256:
+                                    logger.info(
+                                        f"[{task_id}] 建议标题超过 256 字符，已截断"
+                                    )
+                                    suggested_title = suggested_title[:256]
+                                success = await asyncio.to_thread(
+                                    self.github_app.update_issue_title,
+                                    repo_owner,
+                                    repo_name,
+                                    issue_number,
+                                    suggested_title,
+                                )
+                                if success:
+                                    logger.info(
+                                        f"[{task_id}] 已改写标题: {suggested_title}"
+                                    )
+                        except Exception as e:
+                            logger.warning(f"[{task_id}] 改写标题失败: {e}")
 
                     # 11. Critical 告警
                     category = analysis_result.get("category", "")

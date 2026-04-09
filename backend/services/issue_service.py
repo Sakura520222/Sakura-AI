@@ -80,6 +80,7 @@ class IssueService:
         record.priority = analysis_data.get("priority")
         record.summary = analysis_data.get("summary")
         record.feasibility = analysis_data.get("feasibility")
+        record.suggested_title = analysis_data.get("suggested_title")
         record.suggested_assignees = json.dumps(
             analysis_data.get("suggested_assignees", []), ensure_ascii=False
         )
@@ -203,6 +204,12 @@ class IssueService:
         except (json.JSONDecodeError, TypeError):
             pass
 
+        suggested_title_section = ""
+        if analysis.suggested_title:
+            suggested_title_section = (
+                f"\n- **建议标题**: `{analysis.suggested_title}`"
+            )
+
         body = template.format(
             category=analysis.category or "unknown",
             priority=analysis.priority or "unknown",
@@ -211,6 +218,7 @@ class IssueService:
             labels=", ".join(labels) if labels else "无建议",
             assignees=", ".join(assignees) if assignees else "无建议",
             related_info=related_info,
+            suggested_title_section=suggested_title_section,
         )
 
         success = await asyncio.to_thread(

@@ -1010,6 +1010,33 @@ class GitHubAppClient:
             )
             return False
 
+    def update_issue_title(
+        self, repo_owner: str, repo_name: str, issue_number: int, new_title: str
+    ) -> bool:
+        """修改 Issue 标题"""
+        try:
+            new_title = new_title.strip()
+            if not new_title:
+                logger.warning(
+                    f"修改 Issue 标题跳过: 标题为空 {repo_owner}/{repo_name}#{issue_number}"
+                )
+                return False
+            client = self.get_repo_client(repo_owner, repo_name)
+            if client is None:
+                logger.error(
+                    f"修改 Issue 标题失败: 无法获取仓库客户端 {repo_owner}/{repo_name}"
+                )
+                return False
+            repo = client.get_repo(f"{repo_owner}/{repo_name}")
+            issue = repo.get_issue(issue_number)
+            issue.edit(title=new_title)
+            return True
+        except Exception as e:
+            logger.error(
+                f"修改 Issue 标题失败: {repo_owner}/{repo_name}#{issue_number}: {e}"
+            )
+            return False
+
     def get_repo_collaborators(self, repo_owner: str, repo_name: str) -> list:
         """获取仓库协作者列表"""
         try:

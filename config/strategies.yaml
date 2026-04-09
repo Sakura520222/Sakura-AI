@@ -1098,6 +1098,7 @@ issue_analysis:
     3. **可行性**: 基于代码库理解评估修复难度和工作量（主动使用工具查看相关代码）
     4. **建议标签**: 从仓库可用标签中选择合适的标签
     5. **建议指派人**: 基于代码修改区域判断可能的负责人，confidence 表示对指派建议的确信程度(0-1)
+    6. **建议标题**: 基于 Issue 内容生成规范化的标题，格式为 [分类][优先级] 简洁描述，不超过 80 字符。仅在原标题含义不清、格式混乱时才建议修改，原标题已足够清晰时设为 null
 
     ## 输出格式
     严格返回 JSON 格式（不要包含 ```json 标记）：
@@ -1109,7 +1110,8 @@ issue_analysis:
       "suggested_labels": [{"name": "bug", "confidence": 0.9, "reason": "..."}],
       "suggested_assignees": [{"username": "developer1", "confidence": 0.9, "reason": "..."}],
       "suggested_milestone": null,
-      "duplicate_of": null
+      "duplicate_of": null,
+      "suggested_title": null
     }
 
   # 自动评论模板
@@ -1120,6 +1122,7 @@ issue_analysis:
     - **分类**: {category}
     - **优先级**: {priority}
     - **可行性**: {feasibility}
+    {suggested_title_section}
 
     ### 📝 摘要
     {summary}
