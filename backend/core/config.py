@@ -196,6 +196,7 @@ class Settings(BaseSettings):
     issue_confidence_threshold: float = 0.7
     issue_auto_create_labels: bool = True
     issue_auto_assign: bool = True
+    issue_auto_rewrite_title: bool = False
     issue_assignee_confidence_threshold: float = 0.8
     issue_auto_assign_max: int = 3
     issue_detect_duplicates: bool = True
@@ -588,6 +589,19 @@ DYNAMIC_CONFIG_GROUPS: OrderedDict[str, dict] = OrderedDict(
                     "enable_semantic_issue_linking",
                     "semantic_issue_similarity_threshold",
                     "semantic_issue_max_links",
+                ],
+            },
+        ),
+        (
+            "issue_rewrite",
+            {
+                "label": "Issue 标题改写",
+                "icon": "pen-line",
+                "descriptions": {
+                    "issue_auto_rewrite_title": "开启后，AI 分析 Issue 时会生成规范化标题并自动修改（默认关闭）",
+                },
+                "keys": [
+                    "issue_auto_rewrite_title",
                 ],
             },
         ),

@@ -293,6 +293,43 @@ class IssueWorker:
                         except Exception as e:
                             logger.warning(f"[{task_id}] 应用指派人失败: {e}")
 
+                    # 10.7 自动改写标题（优先从 DB 读取配置）
+                    issue_auto_rewrite_title = settings.issue_auto_rewrite_title
+                    try:
+                        if async_session is not None:
+                            async with async_session() as session:
+                                cfg_result = await session.execute(
+                                    select(AppConfig).where(
+                                        AppConfig.key_name == "issue_auto_rewrite_title"
+                                    )
+                                )
+                                cfg = cfg_result.scalar_one_or_none()
+                                if cfg:
+                                    issue_auto_rewrite_title = cfg.key_value == "true"
+                    except Exception as e:
+                        logger.warning(
+                            f"[{task_id}] 读取 DB 配置 issue_auto_rewrite_title 失败，使用默认值: {e}"
+                        )
+
+                    if issue_auto_rewrite_title:
+                        try:
+                            suggested_title = analysis_record.suggested_title
+                            original_title = issue_info.get("title", "")
+                            if suggested_title and suggested_title != original_title:
+                                success = await asyncio.to_thread(
+                                    self.github_app.update_issue_title,
+                                    repo_owner,
+                                    repo_name,
+                                    issue_number,
+                                    suggested_title,
+                                )
+                                if success:
+                                    logger.info(
+                                        f"[{task_id}] 已改写标题: {suggested_title}"
+                                    )
+                        except Exception as e:
+                            logger.warning(f"[{task_id}] 改写标题失败: {e}")
+
                     # 11. Critical 告警
                     category = analysis_result.get("category", "")
                     priority = analysis_result.get("priority", "")
