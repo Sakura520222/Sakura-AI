@@ -316,6 +316,11 @@ class IssueWorker:
                             suggested_title = analysis_record.suggested_title
                             original_title = issue_info.get("title", "")
                             if suggested_title and suggested_title != original_title:
+                                if len(suggested_title) > 256:
+                                    logger.info(
+                                        f"[{task_id}] 建议标题超过 256 字符，已截断"
+                                    )
+                                    suggested_title = suggested_title[:256]
                                 success = await asyncio.to_thread(
                                     self.github_app.update_issue_title,
                                     repo_owner,
