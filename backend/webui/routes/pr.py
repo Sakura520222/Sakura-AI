@@ -58,7 +58,7 @@ async def export_pr_csv(
 
     # 用户数据范围过滤
     scope_filter = build_user_scope_filter(user, PRReview)
-    if scope_filter:
+    if scope_filter is not None:
         query = query.where(scope_filter)
 
     # 搜索过滤
@@ -143,7 +143,7 @@ async def pr_list_fragment(
 
     # 用户数据范围过滤
     scope_filter = build_user_scope_filter(user, PRReview)
-    if scope_filter:
+    if scope_filter is not None:
         query = query.where(scope_filter)
         count_query = count_query.where(scope_filter)
 
@@ -200,7 +200,7 @@ async def pr_detail_page(
     # 查询 PR 审查记录（含用户数据范围检查）
     query = select(PRReview).where(PRReview.id == review_id)
     scope_filter = build_user_scope_filter(user, PRReview)
-    if scope_filter:
+    if scope_filter is not None:
         query = query.where(scope_filter)
     review = (await db.execute(query)).scalar_one_or_none()
     if not review:
@@ -260,7 +260,7 @@ async def pr_files_page(
     """PR 文件级审查页面"""
     query = select(PRReview).where(PRReview.id == review_id)
     scope_filter = build_user_scope_filter(user, PRReview)
-    if scope_filter:
+    if scope_filter is not None:
         query = query.where(scope_filter)
     review = (await db.execute(query)).scalar_one_or_none()
     if not review:

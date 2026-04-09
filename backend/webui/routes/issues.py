@@ -65,7 +65,7 @@ async def issue_list_fragment(
 
     # 用户数据范围过滤
     scope_filter = build_user_scope_filter(user, IssueAnalysis)
-    if scope_filter:
+    if scope_filter is not None:
         query = query.where(scope_filter)
         count_query = count_query.where(scope_filter)
 
@@ -148,7 +148,7 @@ async def issue_detail_page(
     """Issue 分析详情页面"""
     query = select(IssueAnalysis).where(IssueAnalysis.id == issue_id)
     scope_filter = build_user_scope_filter(user, IssueAnalysis)
-    if scope_filter:
+    if scope_filter is not None:
         query = query.where(scope_filter)
     result = await db.execute(query)
     analysis = result.scalar_one_or_none()
@@ -208,7 +208,7 @@ async def issue_detail_fragment(
     """Issue 详情 HTMX 片段"""
     query = select(IssueAnalysis).where(IssueAnalysis.id == issue_id)
     scope_filter = build_user_scope_filter(user, IssueAnalysis)
-    if scope_filter:
+    if scope_filter is not None:
         query = query.where(scope_filter)
     result = await db.execute(query)
     analysis = result.scalar_one_or_none()
@@ -234,7 +234,7 @@ async def reanalyze_issue(
     """重新分析 Issue"""
     query = select(IssueAnalysis).where(IssueAnalysis.id == issue_id)
     scope_filter = build_user_scope_filter(user, IssueAnalysis)
-    if scope_filter:
+    if scope_filter is not None:
         query = query.where(scope_filter)
     result = await db.execute(query)
     analysis = result.scalar_one_or_none()
