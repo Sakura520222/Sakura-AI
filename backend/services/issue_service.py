@@ -207,7 +207,7 @@ class IssueService:
         suggested_title_section = ""
         if analysis.suggested_title:
             suggested_title_section = (
-                f"\n- **建议标题**: {analysis.suggested_title}"
+                f"\n- **建议标题**: `{analysis.suggested_title}`"
             )
 
         body = template.format(

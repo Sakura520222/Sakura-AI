@@ -1015,6 +1015,12 @@ class GitHubAppClient:
     ) -> bool:
         """修改 Issue 标题"""
         try:
+            new_title = new_title.strip()
+            if not new_title:
+                logger.warning(
+                    f"修改 Issue 标题跳过: 标题为空 {repo_owner}/{repo_name}#{issue_number}"
+                )
+                return False
             client = self.get_repo_client(repo_owner, repo_name)
             if client is None:
                 logger.error(

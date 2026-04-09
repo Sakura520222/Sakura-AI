@@ -6,7 +6,7 @@ import uuid
 from typing import Dict, Any, Optional
 from loguru import logger
 
-from backend.core.config import get_settings
+from backend.core.config import get_settings, get_dynamic_config
 from backend.core.github_app import GitHubAppClient
 from backend.models.database import (
     async_session,
@@ -294,22 +294,9 @@ class IssueWorker:
                             logger.warning(f"[{task_id}] 应用指派人失败: {e}")
 
                     # 10.7 自动改写标题（优先从 DB 读取配置）
-                    issue_auto_rewrite_title = settings.issue_auto_rewrite_title
-                    try:
-                        if async_session is not None:
-                            async with async_session() as session:
-                                cfg_result = await session.execute(
-                                    select(AppConfig).where(
-                                        AppConfig.key_name == "issue_auto_rewrite_title"
-                                    )
-                                )
-                                cfg = cfg_result.scalar_one_or_none()
-                                if cfg:
-                                    issue_auto_rewrite_title = cfg.key_value == "true"
-                    except Exception as e:
-                        logger.warning(
-                            f"[{task_id}] 读取 DB 配置 issue_auto_rewrite_title 失败，使用默认值: {e}"
-                        )
+                    issue_auto_rewrite_title = await get_dynamic_config(
+                        "issue_auto_rewrite_title"
+                    )
 
                     if issue_auto_rewrite_title:
                         try:
