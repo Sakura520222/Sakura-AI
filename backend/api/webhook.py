@@ -249,19 +249,16 @@ async def handle_issue_comment_event(payload: Dict[str, Any]) -> JSONResponse:
             # 检查 /revoke 命令
             if re.match(r"^/revoke(\s|$)", comment_body):
                 return await handle_revoke_command(payload)
+            # 检查 /analyze 命令（仅限 Issue）
+            if re.match(r"^/analyze(\s|$)", comment_body):
+                issue = payload.get("issue", {})
+                if not issue.get("pull_request"):
+                    return await handle_issue_analyze_command(payload)
+                return JSONResponse(
+                    content={"status": "ignored", "reason": "/analyze only for issues"}
+                )
             return JSONResponse(
                 content={"status": "ignored", "reason": "not a review command"}
-            )
-
-        # 检查是否为PR评论（排除普通Issue）
-        issue = payload.get("issue", {})
-        if not issue.get("pull_request"):
-            # 非 PR 评论：检测 /analyze 命令
-            comment_body_check = payload.get("comment", {}).get("body", "").strip()
-            if re.match(r"^/analyze(\s|$)", comment_body_check):
-                return await handle_issue_analyze_command(payload)
-            return JSONResponse(
-                content={"status": "ignored", "reason": "not a recognized command"}
             )
 
         # 提取PR信息
