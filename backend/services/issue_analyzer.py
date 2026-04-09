@@ -81,8 +81,6 @@ class IssueAnalyzer:
 
         body = issue_info.get("body", "")
         if body:
-            if len(body) > 3000:
-                body = body[:3000] + "\n\n...（内容已截断）"
             parts.append(f"\n**内容**:\n{body}")
 
         existing_labels = issue_info.get("labels", [])
