@@ -385,15 +385,29 @@ class IssueEmbeddingService:
     def _parse_verified_numbers(content: str) -> set | None:
         """从 AI 响应中解析验证通过的 issue 编号集合"""
         try:
-            # 尝试提取 JSON（可能被 markdown 代码块包裹）
-            json_match = re.search(
-                r'\{[^}]*"verified"\s*:\s*\[[^\]]*\][^}]*\}', content
-            )
-            if json_match:
-                data = json.loads(json_match.group())
-                return set(int(n) for n in data.get("verified", []))
+            # 1. 直接尝试解析整个响应
+            try:
+                data = json.loads(content.strip())
+                if "verified" in data:
+                    return set(int(n) for n in data["verified"])
+            except (json.JSONDecodeError, ValueError):
+                pass
+
+            # 2. 尝试从 markdown 代码块中提取 JSON
+            code_match = re.search(r"```(?:json)?\s*(\{.*?\})\s*```", content, re.DOTALL)
+            if code_match:
+                data = json.loads(code_match.group(1))
+                if "verified" in data:
+                    return set(int(n) for n in data["verified"])
+
+            # 3. 尝试匹配最外层 JSON（处理嵌套对象）
+            brace_match = re.search(r"\{.*\}", content, re.DOTALL)
+            if brace_match:
+                data = json.loads(brace_match.group())
+                if "verified" in data:
+                    return set(int(n) for n in data["verified"])
         except (json.JSONDecodeError, ValueError, TypeError) as e:
-            logger.debug(f"解析 AI 验证响应失败: {e}")
+            logger.warning(f"解析 AI 验证响应失败: {e}")
         return None
 
     async def remove_issue(
