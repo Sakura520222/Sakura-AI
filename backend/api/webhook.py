@@ -699,16 +699,8 @@ async def handle_issue_event(payload: Dict[str, Any]) -> JSONResponse:
                     repo_name = issue_info["repo_name"]
                     issue_number = issue_info["issue_number"]
 
-                    if action in ("opened", "edited", "reopened"):
-                        await emb_service.upsert_issue(
-                            repo_owner,
-                            repo_name,
-                            issue_number,
-                            issue_info.get("title", ""),
-                            issue_info.get("body", ""),
-                            issue_info.get("state", "open"),
-                        )
-                    elif action == "closed":
+                    # embedding 改为在 issue_worker 中 AI 分析完成后使用摘要执行
+                    if action == "closed":
                         await emb_service.remove_issue(
                             repo_owner, repo_name, issue_number
                         )

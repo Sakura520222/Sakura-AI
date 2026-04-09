@@ -144,14 +144,40 @@ class IssueWorker:
                         logger.error(f"[{task_id}] 未找到待更新的分析记录")
                         return task_id
 
-                    # 6. 重复检测
+                    # 5.5 使用 AI 摘要更新 Issue 向量
+                    try:
+                        from backend.services.issue_embedding_service import (
+                            IssueEmbeddingService,
+                        )
+
+                        summary = analysis_result.get("summary", "")
+                        if summary:
+                            emb_service = IssueEmbeddingService()
+                            await emb_service.upsert_issue(
+                                repo_owner,
+                                repo_name,
+                                issue_number,
+                                title=issue_info.get("title", ""),
+                                body=summary,
+                                state=issue_info.get("state", "open"),
+                            )
+                            logger.info(
+                                f"[{task_id}] 已使用 AI 摘要更新 Issue 向量"
+                            )
+                    except Exception as e:
+                        logger.warning(
+                            f"[{task_id}] 使用 AI 摘要更新向量失败: {e}"
+                        )
+
+                    # 6. 重复检测（优先使用 AI 摘要）
                     if settings.issue_detect_duplicates:
                         try:
+                            summary = analysis_result.get("summary", "")
                             duplicates = await issue_service.detect_duplicates(
                                 repo_owner,
                                 repo_name,
                                 issue_info.get("title", ""),
-                                issue_info.get("body", ""),
+                                summary or issue_info.get("body", ""),
                                 current_issue_number=issue_number,
                             )
                             if duplicates:
