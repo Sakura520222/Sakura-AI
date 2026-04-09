@@ -38,7 +38,11 @@ class ContextCompressor:
         self.model_context_mgr = get_model_context_manager()
 
     async def compress_conversation_history(
-        self, messages: List[Dict[str, Any]], system_prompt: str, max_tokens: int
+        self,
+        messages: List[Dict[str, Any]],
+        system_prompt: str,
+        max_tokens: int,
+        tracker=None,
     ) -> List[Dict[str, Any]]:
         """智能压缩对话历史，保留工具调用的完整性
 
@@ -51,6 +55,7 @@ class ContextCompressor:
             messages: 当前的消息列表
             system_prompt: 系统提示词
             max_tokens: 压缩后的最大 token 数
+            tracker: 可选的 TokenTracker，用于记录压缩调用的 token 消耗
 
         Returns:
             压缩后的消息列表
@@ -108,7 +113,7 @@ class ContextCompressor:
             # 4. 如果有早期历史，进行压缩
             if early_history:
                 compressed_summary = await self._compress_early_history(
-                    early_history, max_tokens
+                    early_history, max_tokens, tracker=tracker
                 )
 
                 compressed_messages.append(
@@ -142,13 +147,14 @@ class ContextCompressor:
             return self._fallback_simplify_messages_full(messages, system_prompt)
 
     async def _compress_early_history(
-        self, early_history: List[Dict], max_tokens: int
+        self, early_history: List[Dict], max_tokens: int, tracker=None
     ) -> str:
         """压缩早期对话历史
 
         Args:
             early_history: 早期消息列表
             max_tokens: 最大token数
+            tracker: 可选的 TokenTracker
 
         Returns:
             压缩后的摘要
@@ -217,6 +223,10 @@ class ContextCompressor:
             timeout=60.0,
             max_tokens=max_tokens,
         )
+
+        # 记录压缩调用的 token 消耗
+        if tracker is not None:
+            tracker.accumulate(response)
 
         return response.choices[0].message.content.strip()
 

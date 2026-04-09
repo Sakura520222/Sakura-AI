@@ -11,6 +11,7 @@ from backend.core.config import get_settings, get_strategy_config
 from backend.core.github_app import GitHubAppClient
 from backend.services.pr_analyzer import PRAnalyzer, PRAnalysis
 from backend.services.ai_reviewer import AIReviewer
+from backend.services.ai_reviewer.token_tracker import TokenTracker
 from backend.services.comment_service import CommentService
 from backend.services.label_service import label_service
 from backend.services.decision_engine import get_decision_engine
@@ -727,6 +728,20 @@ class ReviewWorker:
                 record = await session.get(PRReview, review_id)
                 if record:
                     record.review_summary = review_result.get("summary", "")
+
+                    # 保存 Token 消耗数据
+                    token_usage = review_result.get("token_usage", {})
+                    record.prompt_tokens = token_usage.get("prompt_tokens", 0)
+                    record.completion_tokens = token_usage.get("completion_tokens", 0)
+
+                    # 计算预估成本
+                    s = get_settings()
+                    tracker = TokenTracker()
+                    tracker.prompt_tokens = record.prompt_tokens
+                    tracker.completion_tokens = record.completion_tokens
+                    record.estimated_cost = tracker.calculate_cost(
+                        s.review_price_per_1k_prompt, s.review_price_per_1k_completion
+                    )
 
                 # 保存整体评论
                 comments = review_result.get("comments", [])

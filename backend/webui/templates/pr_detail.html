@@ -108,6 +108,32 @@
         </div>
     </div>
 
+    <!-- Token 消耗 -->
+    {% if review.prompt_tokens or review.completion_tokens %}
+    <div class="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 shadow-sm p-6">
+        <h2 class="text-lg font-semibold mb-3 flex items-center gap-2">
+            <svg class="w-5 h-5 text-cyan-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"/>
+            </svg>
+            Token 消耗
+        </h2>
+        <div class="grid grid-cols-3 gap-4">
+            <div>
+                <p class="text-xs text-gray-500 dark:text-gray-400">输入 Token</p>
+                <p class="text-lg font-bold">{{ "{:,}".format(review.prompt_tokens or 0) }}</p>
+            </div>
+            <div>
+                <p class="text-xs text-gray-500 dark:text-gray-400">输出 Token</p>
+                <p class="text-lg font-bold">{{ "{:,}".format(review.completion_tokens or 0) }}</p>
+            </div>
+            <div>
+                <p class="text-xs text-gray-500 dark:text-gray-400">预估成本</p>
+                <p class="text-lg font-bold">{{ "%.2f"|format((review.estimated_cost or 0) / 100) }}</p>
+            </div>
+        </div>
+    </div>
+    {% endif %}
+
     <!-- 审查摘要 -->
     {% if review.review_summary %}
     <div class="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 shadow-sm p-6">
