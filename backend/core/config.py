@@ -208,6 +208,10 @@ class Settings(BaseSettings):
     issue_price_per_1k_prompt: float = 0.0
     issue_price_per_1k_completion: float = 0.0
 
+    # ========== PR 审查价格配置 ==========
+    review_price_per_1k_prompt: float = 0.0
+    review_price_per_1k_completion: float = 0.0
+
     # ========== Web 搜索配置 ==========
     web_search_enabled: bool = False  # 是否启用 Web 搜索工具
     web_search_provider: str = "duckduckgo"  # 搜索提供商：duckduckgo(免费) | tavily

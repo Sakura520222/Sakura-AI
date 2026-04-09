@@ -25,6 +25,7 @@ from backend.services.ai_reviewer.constants import (
     SUMMARY_MAX_TOKENS,
     SUMMARY_TIMEOUT,
 )
+from backend.services.ai_reviewer.token_tracker import TokenTracker
 
 
 class BatchProcessor:
@@ -217,6 +218,11 @@ class BatchProcessor:
         review_text = response.choices[0].message.content
         result = self.result_parser.parse_review_result(review_text, strategy)
 
+        # 记录 token 消耗
+        tracker = TokenTracker()
+        tracker.accumulate(response)
+        result["token_usage"] = tracker.to_dict()
+
         return result
 
     async def _review_with_tools(
@@ -246,6 +252,7 @@ class BatchProcessor:
         system_prompt = self.prompt_builder.build_system_prompt(
             strategy_config_data.get("prompt", ""), context, include_tools=True
         )
+        tracker = TokenTracker()
 
         # 构建用户消息
         user_message = self.prompt_builder.build_user_message(
@@ -281,6 +288,7 @@ class BatchProcessor:
                 tool_choice="auto",
                 temperature=settings.openai_temperature,
             )
+            tracker.accumulate(response)
 
             # 检查是否有工具调用
             tool_calls = response.choices[0].message.tool_calls
@@ -289,6 +297,7 @@ class BatchProcessor:
                 # AI完成了审查，返回结果
                 review_text = response.choices[0].message.content
                 result = self.result_parser.parse_review_result(review_text, strategy)
+                result["token_usage"] = tracker.to_dict()
                 return result
 
             # 处理工具调用
@@ -356,8 +365,11 @@ class BatchProcessor:
             messages=messages,
             temperature=settings.openai_temperature,
         )
+        tracker.accumulate(last_response)
         review_text = last_response.choices[0].message.content
-        return self.result_parser.parse_review_result(review_text, strategy)
+        result = self.result_parser.parse_review_result(review_text, strategy)
+        result["token_usage"] = tracker.to_dict()
+        return result
 
     async def review_batches_parallel(
         self,
@@ -472,14 +484,20 @@ class BatchProcessor:
                 max_tokens=SUMMARY_MAX_TOKENS,
             )
 
+            # 记录 Reduce 阶段的 token 消耗
+            reduce_tracker = TokenTracker()
+            reduce_tracker.accumulate(response)
+
             # 5. 解析AI总结结果
             summary_text = response.choices[0].message.content.strip()
             logger.info(f"✅ AI总结完成，响应长度: {len(summary_text)} 字符")
 
             # 6. 解析JSON并构建最终结果
-            return self._build_final_result_from_summary(
+            final_result = self._build_final_result_from_summary(
                 summary_text, valid_results, batch_results, context, strategy
             )
+            final_result["token_usage"] = reduce_tracker.to_dict()
+            return final_result
 
         except json.JSONDecodeError as e:
             logger.error(f"AI总结JSON解析失败: {e}")
