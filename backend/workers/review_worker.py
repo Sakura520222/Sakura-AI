@@ -396,13 +396,22 @@ class ReviewWorker:
 
                         if related_issues:
                             # AI 验证：过滤误判的候选 issues
-                            # 构建变更文件列表
+                            # 构建变更文件列表（含 patch 摘要）
                             file_list = ""
                             if analysis and analysis.code_files:
-                                file_list = "\n".join(
-                                    f"- {f.path}"
-                                    for f in analysis.code_files
-                                )
+                                file_parts = []
+                                total_len = 0
+                                for f in analysis.code_files:
+                                    part = f"- {f.path} ({f.status})"
+                                    if f.patch:
+                                        # 截取 patch 前 300 字符
+                                        preview = f.patch[:300]
+                                        part += f"\n```diff\n{preview}\n```"
+                                    file_parts.append(part)
+                                    total_len += len(part)
+                                    if total_len > 4000:
+                                        break
+                                file_list = "\n".join(file_parts)
                             related_issues = (
                                 await issue_emb_service.verify_related_issues(
                                     pr_title=pr_info.get("title", ""),
