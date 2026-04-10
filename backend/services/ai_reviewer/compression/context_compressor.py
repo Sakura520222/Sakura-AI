@@ -9,9 +9,12 @@
 """
 
 import json
-from typing import Any, Dict, List
+from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
 from loguru import logger
+
+if TYPE_CHECKING:
+    from backend.services.ai_reviewer.token_tracker import TokenTracker
 
 from backend.core.config import get_strategy_config
 from backend.core.model_context import get_model_context_manager
@@ -42,7 +45,7 @@ class ContextCompressor:
         messages: List[Dict[str, Any]],
         system_prompt: str,
         max_tokens: int,
-        tracker=None,
+        tracker: Optional["TokenTracker"] = None,
     ) -> List[Dict[str, Any]]:
         """智能压缩对话历史，保留工具调用的完整性
 
@@ -147,7 +150,10 @@ class ContextCompressor:
             return self._fallback_simplify_messages_full(messages, system_prompt)
 
     async def _compress_early_history(
-        self, early_history: List[Dict], max_tokens: int, tracker=None
+        self,
+        early_history: List[Dict],
+        max_tokens: int,
+        tracker: Optional["TokenTracker"] = None,
     ) -> str:
         """压缩早期对话历史
 

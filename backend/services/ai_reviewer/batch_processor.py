@@ -198,6 +198,7 @@ class BatchProcessor:
         settings = get_settings()
         strategy_config_data = get_strategy_config().get_strategy(strategy)
         system_prompt = strategy_config_data.get("prompt", "")
+        tracker = TokenTracker()
 
         # 构建用户消息
         user_message = self.prompt_builder.build_user_message(
@@ -213,14 +214,11 @@ class BatchProcessor:
             ],
             temperature=settings.openai_temperature,
         )
+        tracker.accumulate(response)
 
         # 解析结果
         review_text = response.choices[0].message.content
         result = self.result_parser.parse_review_result(review_text, strategy)
-
-        # 记录 token 消耗
-        tracker = TokenTracker()
-        tracker.accumulate(response)
         result["token_usage"] = tracker.to_dict()
 
         return result
@@ -882,5 +880,12 @@ class BatchProcessor:
             f"合并批次结果: {len(all_comments)} 条整体评论, "
             f"{len(all_inline_comments)} 条行内评论"
         )
+
+        # 合并各批次的 token 消耗
+        merged_tracker = TokenTracker()
+        for result in batch_results:
+            if isinstance(result, dict) and "token_usage" in result:
+                merged_tracker.merge(TokenTracker.from_dict(result["token_usage"]))
+        merged_result["token_usage"] = merged_tracker.to_dict()
 
         return merged_result
