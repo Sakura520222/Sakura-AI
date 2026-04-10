@@ -22,6 +22,7 @@ from .constants import (
 from .label_recommender import LabelRecommender
 from .prompt_builder import PromptBuilder
 from .result_parser import ReviewResultParser
+from .token_tracker import TokenTracker
 from .tools import FileToolHandler, SearchToolHandler, ToolHandler, ToolManager
 
 
@@ -118,6 +119,7 @@ class AIReviewer:
             settings = get_settings()
             strategy_config_data = get_strategy_config().get_strategy(strategy)
             system_prompt = strategy_config_data.get("prompt", "")
+            tracker = TokenTracker()
 
             # 构建用户消息
             user_message = self.prompt_builder.build_user_message(
@@ -133,10 +135,12 @@ class AIReviewer:
                 ],
                 temperature=settings.openai_temperature,
             )
+            tracker.accumulate(response)
 
             # 解析结果
             review_text = response.choices[0].message.content
             result = self.result_parser.parse_review_result(review_text, strategy)
+            result["token_usage"] = tracker.to_dict()
 
             logger.info(f"AI审查完成，策略: {strategy}")
             return result
@@ -167,6 +171,7 @@ class AIReviewer:
             system_prompt = self.prompt_builder.build_system_prompt(
                 strategy_config_data.get("prompt", ""), context, include_tools=True
             )
+            tracker = TokenTracker()
 
             # 构建用户消息
             user_message = self.prompt_builder.build_user_message(
@@ -211,6 +216,7 @@ class AIReviewer:
                     tool_choice="auto",
                     temperature=settings.openai_temperature,
                 )
+                tracker.accumulate(response)
 
                 # 检查是否有工具调用
                 tool_calls = response.choices[0].message.tool_calls
@@ -221,6 +227,7 @@ class AIReviewer:
                     result = self.result_parser.parse_review_result(
                         review_text, strategy
                     )
+                    result["token_usage"] = tracker.to_dict()
                     logger.info(
                         f"AI审查完成（使用了{iteration}轮对话），策略: {strategy}"
                     )
@@ -297,7 +304,8 @@ class AIReviewer:
 
                         messages = (
                             await self.context_compressor.compress_conversation_history(
-                                messages, system_prompt, threshold_tokens
+                                messages, system_prompt, threshold_tokens,
+                                tracker=tracker,
                             )
                         )
 
@@ -321,8 +329,11 @@ class AIReviewer:
                 messages=messages,
                 temperature=settings.openai_temperature,
             )
+            tracker.accumulate(last_response)
             review_text = last_response.choices[0].message.content
-            return self.result_parser.parse_review_result(review_text, strategy)
+            result = self.result_parser.parse_review_result(review_text, strategy)
+            result["token_usage"] = tracker.to_dict()
+            return result
 
         except Exception as e:
             logger.error(f"AI审查（带工具）时出错: {e}", exc_info=True)
@@ -421,6 +432,26 @@ class AIReviewer:
                         "overall_score": None,
                     }
                 )
+
+            # 合并所有批次的 token 消耗
+            final_tracker = TokenTracker()
+            for batch_result in batch_results:
+                if isinstance(batch_result, dict) and "token_usage" in batch_result:
+                    final_tracker.merge(
+                        TokenTracker.from_dict(batch_result["token_usage"])
+                    )
+            # Reduce 阶段的 token（如果有的话）
+            if isinstance(merged_result, dict) and "token_usage" in merged_result:
+                reduce_tracker = TokenTracker.from_dict(merged_result["token_usage"])
+                final_tracker.merge(reduce_tracker)
+                del merged_result["token_usage"]
+            merged_result["token_usage"] = final_tracker.to_dict()
+
+            logger.debug(
+                f"分批审查 token 合并完成: "
+                f"{final_tracker.prompt_tokens}+{final_tracker.completion_tokens} "
+                f"({final_tracker.api_call_count}次API调用)"
+            )
 
             logger.info(
                 f"分批审查完成: {len(batches)} 个批次, "

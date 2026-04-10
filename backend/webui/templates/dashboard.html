@@ -45,6 +45,15 @@ function dashboardInit() {
             document.getElementById('stat-approved').textContent = data.approved;
             document.getElementById('stat-changes').textContent = data.changes_requested;
             document.getElementById('stat-score').textContent = data.avg_score;
+
+            // Token 统计
+            var totalTokens = (data.total_prompt_tokens || 0) + (data.total_completion_tokens || 0);
+            document.getElementById('stat-total-tokens').textContent = totalTokens.toLocaleString();
+            document.getElementById('stat-prompt-completion').textContent =
+                (data.total_prompt_tokens || 0).toLocaleString() + ' / ' +
+                (data.total_completion_tokens || 0).toLocaleString();
+            document.getElementById('stat-cost').textContent =
+                ((data.total_estimated_cost || 0) / 100).toFixed(2);
         })
         .catch(err => console.error('加载统计数据失败:', err));
 

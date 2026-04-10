@@ -137,6 +137,34 @@ async def get_stats(
                         else_=None,
                     )
                 ).label("avg_score"),
+                # Token 消耗仅统计已完成的审查
+                func.coalesce(
+                    func.sum(
+                        case(
+                            (PRReview.status == "completed", PRReview.prompt_tokens),
+                            else_=0,
+                        )
+                    ),
+                    0,
+                ).label("total_prompt_tokens"),
+                func.coalesce(
+                    func.sum(
+                        case(
+                            (PRReview.status == "completed", PRReview.completion_tokens),
+                            else_=0,
+                        )
+                    ),
+                    0,
+                ).label("total_completion_tokens"),
+                func.coalesce(
+                    func.sum(
+                        case(
+                            (PRReview.status == "completed", PRReview.estimated_cost),
+                            else_=0,
+                        )
+                    ),
+                    0,
+                ).label("total_estimated_cost"),
             )
         )
     ).one()
@@ -158,6 +186,9 @@ async def get_stats(
         "changes_requested": int(stats_row.changes_requested or 0),
         "avg_score": avg_score,
         "comment_count": comment_count,
+        "total_prompt_tokens": int(stats_row.total_prompt_tokens or 0),
+        "total_completion_tokens": int(stats_row.total_completion_tokens or 0),
+        "total_estimated_cost": int(stats_row.total_estimated_cost or 0),
     }
 
     _stats_cache = (result, time.time())
@@ -276,6 +307,29 @@ async def get_chart_data(
     repo_labels = [r.repo_name for r in repo_rows]
     repo_counts = [r.cnt for r in repo_rows]
 
+    # 4. Token 消耗趋势（最近 30 天，仅已完成的审查）
+    token_rows = (
+        await db.execute(
+            select(
+                func.date(PRReview.created_at).label("day"),
+                (
+                    func.coalesce(func.sum(PRReview.prompt_tokens), 0)
+                    + func.coalesce(func.sum(PRReview.completion_tokens), 0)
+                ).label("tokens"),
+            )
+            .where(PRReview.created_at >= thirty_days_ago)
+            .where(PRReview.status == "completed")
+            .group_by(func.date(PRReview.created_at))
+        )
+    ).all()
+
+    token_data = [0] * len(labels)
+    for row in token_rows:
+        if row.day:
+            idx = (row.day - thirty_days_ago.date()).days
+            if 0 <= idx < len(labels):
+                token_data[idx] = int(row.tokens)
+
     result = {
         "trend": {
             "labels": labels,
@@ -289,6 +343,10 @@ async def get_chart_data(
         "top_repos": {
             "labels": repo_labels,
             "counts": repo_counts,
+        },
+        "tokens": {
+            "labels": labels,
+            "tokens": token_data,
         },
     }
 

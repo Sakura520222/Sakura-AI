@@ -150,6 +150,11 @@ class PRReview(Base):
     decision = Column(String(50), nullable=True)
     decision_reason = Column(Text, nullable=True)
 
+    # Token 消耗与成本
+    prompt_tokens = Column(Integer, default=0, nullable=True)
+    completion_tokens = Column(Integer, default=0, nullable=True)
+    estimated_cost = Column(Integer, default=0, nullable=True)
+
     # 时间戳
     created_at = Column(TIMESTAMP, default=datetime.utcnow, nullable=False)
     updated_at = Column(

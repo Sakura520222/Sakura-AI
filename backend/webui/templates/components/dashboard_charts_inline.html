@@ -145,8 +145,57 @@ async function initDashboardCharts() {
                 },
             });
 
+            // 4. Token 消耗趋势柱状图
+            var tokenChart = null;
+            if (data.tokens && document.getElementById('tokenChart')) {
+                tokenChart = new Chart(document.getElementById('tokenChart'), {
+                    type: 'bar',
+                    data: {
+                        labels: data.tokens.labels,
+                        datasets: [{
+                            label: 'Token 消耗',
+                            data: data.tokens.tokens,
+                            backgroundColor: 'rgba(6, 182, 212, 0.4)',
+                            borderColor: '#06B6D4',
+                            borderWidth: 1,
+                            borderRadius: 2,
+                        }],
+                    },
+                    options: {
+                        responsive: true,
+                        maintainAspectRatio: false,
+                        plugins: {
+                            legend: { display: false },
+                            tooltip: {
+                                callbacks: {
+                                    label: function(ctx) {
+                                        return ctx.parsed.y.toLocaleString() + ' tokens';
+                                    }
+                                }
+                            },
+                        },
+                        scales: {
+                            x: { grid: { color: colors.gridColor } },
+                            y: {
+                                beginAtZero: true,
+                                grid: { color: colors.gridColor },
+                                ticks: {
+                                    callback: function(val) {
+                                        if (val >= 1000000) return (val / 1000000).toFixed(1) + 'M';
+                                        if (val >= 1000) return (val / 1000).toFixed(0) + 'K';
+                                        return val;
+                                    }
+                                },
+                            },
+                        },
+                    },
+                });
+            }
+
             // 保存引用，用于暗色模式切换时重绘
-            _dashboardCharts = { trendChart: trendChart, decisionChart: decisionChart, repoChart: repoChart };
+            var _charts = { trendChart: trendChart, decisionChart: decisionChart, repoChart: repoChart };
+            if (tokenChart) _charts.tokenChart = tokenChart;
+            _dashboardCharts = _charts;
 
             // 监听暗色模式切换
             var _themeObserver = new MutationObserver(function() {
@@ -159,6 +208,12 @@ async function initDashboardCharts() {
                 repoChart.update();
                 // 环形图依赖 centerTextPlugin 中的 textColor，需要重绘
                 decisionChart.update();
+                // Token 图表
+                if (tokenChart) {
+                    tokenChart.options.scales.x.grid.color = c.gridColor;
+                    tokenChart.options.scales.y.grid.color = c.gridColor;
+                    tokenChart.update();
+                }
             });
             _themeObserver.observe(document.documentElement, { attributes: true, attributeFilter: ['class'] });
 
