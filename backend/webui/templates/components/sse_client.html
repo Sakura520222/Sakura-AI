@@ -55,6 +55,15 @@
             }
         });
 
+        eventSource.addEventListener('index:issues_completed', function(e) {
+            try {
+                var data = JSON.parse(e.data);
+                window.dispatchEvent(new CustomEvent('sse:index-issues', { detail: data }));
+            } catch(err) {
+                console.error('[SSE] 解析 index issues 事件失败:', err);
+            }
+        });
+
         eventSource.onopen = function() {
             reconnectDelay = 1000;
             console.log('[SSE] 连接已建立');

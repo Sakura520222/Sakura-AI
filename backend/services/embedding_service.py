@@ -17,8 +17,9 @@ from backend.core.config import get_settings
 
 settings = get_settings()
 
-# 嵌入文本最大字符数（防御性兜底，~8000 tokens 安全上限）
-MAX_EMBEDDING_CHARS = 24000
+# 嵌入文本最大字符数（防御性兜底，确保不超过 BGE-M3 的 8192 token 限制）
+# 中文约 1 token ≈ 1.5 字符，8000 字符 ≈ 5300 tokens，留足余量
+MAX_EMBEDDING_CHARS = 8000
 
 
 class EmbeddingService:
