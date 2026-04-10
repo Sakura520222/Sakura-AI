@@ -112,9 +112,25 @@ class PRIssueLinker:
                 return re.sub(pattern, "", original_body, flags=re.DOTALL).rstrip()
             return original_body
 
-        # 构建 "Related to #xxx" 引用列表
+        # 提取标记区域中已有的 issue 编号，实现增量合并
+        existing_numbers: set[int] = set()
+        if self.ISSUE_LINKS_START in original_body:
+            match = re.search(pattern, original_body, flags=re.DOTALL)
+            if match:
+                existing_numbers = set(
+                    int(m.group(1))
+                    for m in re.finditer(r"Resolves\s+#(\d+)", match.group(0))
+                )
+
+        # 合并已有编号与新传入的 issues（去重）
+        merged_issues: List[Dict[str, Any]] = list(related_issues)
+        new_numbers = {i["number"] for i in related_issues}
+        for num in existing_numbers - new_numbers:
+            merged_issues.append({"number": num})
+
+        # 构建 "Resolves #xxx" 引用列表
         lines = [self.ISSUE_LINKS_START, ""]
-        for issue in related_issues:
+        for issue in merged_issues:
             lines.append(f"Resolves #{issue['number']}")
         lines.extend(["", self.ISSUE_LINKS_END])
 
