@@ -700,8 +700,21 @@ async def handle_issue_event(payload: Dict[str, Any]) -> JSONResponse:
 
                     # embedding 改为在 issue_worker 中 AI 分析完成后使用摘要执行
                     if action == "closed":
-                        await emb_service.remove_issue(
+                        # 标记为 closed 而非删除，保留在向量库中供查重
+                        await emb_service.close_issue(
                             repo_owner, repo_name, issue_number
+                        )
+                    elif action == "reopened":
+                        # reopened 时及时更新 state，issue_worker 的 AI 分析可能延迟
+                        issue_title = issue_payload.get("title", "")
+                        issue_body = issue_payload.get("body", "") or ""
+                        await emb_service.upsert_issue(
+                            repo_owner,
+                            repo_name,
+                            issue_number,
+                            title=issue_title,
+                            body=issue_body,
+                            state="open",
                         )
                 else:
                     logger.debug("跳过 Pull Request 的 Issue 向量同步")

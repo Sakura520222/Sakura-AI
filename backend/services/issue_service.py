@@ -478,7 +478,7 @@ class IssueService:
                     {
                         "issue_number": r["number"],
                         "title": r["title"],
-                        "state": "open",
+                        "state": r.get("state", "open"),
                         "similarity": r.get("similarity", 0),
                     }
                     for r in results
@@ -486,12 +486,16 @@ class IssueService:
         except Exception as e:
             logger.warning(f"语义检索查重失败，回退到 GitHub Search API: {e}")
 
-        # Fallback: GitHub Search API + cosine similarity
+        # Fallback: GitHub Search API + cosine similarity（搜索 open + closed）
         keywords = title.split()[:5]
         query = " ".join(keywords)
-        issues = await asyncio.to_thread(
-            self.github_app.search_issues, repo_owner, repo_name, query, "open", 10
+        open_issues = await asyncio.to_thread(
+            self.github_app.search_issues, repo_owner, repo_name, query, "open", 5
         )
+        closed_issues = await asyncio.to_thread(
+            self.github_app.search_issues, repo_owner, repo_name, query, "closed", 5
+        )
+        issues = open_issues + closed_issues
 
         candidates = [
             issue
