@@ -137,15 +137,34 @@ async def get_stats(
                         else_=None,
                     )
                 ).label("avg_score"),
-                func.coalesce(func.sum(PRReview.prompt_tokens), 0).label(
-                    "total_prompt_tokens"
-                ),
-                func.coalesce(func.sum(PRReview.completion_tokens), 0).label(
-                    "total_completion_tokens"
-                ),
-                func.coalesce(func.sum(PRReview.estimated_cost), 0).label(
-                    "total_estimated_cost"
-                ),
+                # Token 消耗仅统计已完成的审查
+                func.coalesce(
+                    func.sum(
+                        case(
+                            (PRReview.status == "completed", PRReview.prompt_tokens),
+                            else_=0,
+                        )
+                    ),
+                    0,
+                ).label("total_prompt_tokens"),
+                func.coalesce(
+                    func.sum(
+                        case(
+                            (PRReview.status == "completed", PRReview.completion_tokens),
+                            else_=0,
+                        )
+                    ),
+                    0,
+                ).label("total_completion_tokens"),
+                func.coalesce(
+                    func.sum(
+                        case(
+                            (PRReview.status == "completed", PRReview.estimated_cost),
+                            else_=0,
+                        )
+                    ),
+                    0,
+                ).label("total_estimated_cost"),
             )
         )
     ).one()
@@ -288,13 +307,14 @@ async def get_chart_data(
     repo_labels = [r.repo_name for r in repo_rows]
     repo_counts = [r.cnt for r in repo_rows]
 
-    # 4. Token 消耗趋势（最近 30 天）
+    # 4. Token 消耗趋势（最近 30 天，仅已完成的审查）
     token_rows = (
         await db.execute(
             select(
                 func.date(PRReview.created_at).label("day"),
-                func.coalesce(
-                    func.sum(PRReview.prompt_tokens + PRReview.completion_tokens), 0
+                (
+                    func.coalesce(func.sum(PRReview.prompt_tokens), 0)
+                    + func.coalesce(func.sum(PRReview.completion_tokens), 0)
                 ).label("tokens"),
             )
             .where(PRReview.created_at >= thirty_days_ago)

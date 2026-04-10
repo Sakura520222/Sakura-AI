@@ -447,6 +447,12 @@ class AIReviewer:
                 del merged_result["token_usage"]
             merged_result["token_usage"] = final_tracker.to_dict()
 
+            logger.debug(
+                f"分批审查 token 合并完成: "
+                f"{final_tracker.prompt_tokens}+{final_tracker.completion_tokens} "
+                f"({final_tracker.api_call_count}次API调用)"
+            )
+
             logger.info(
                 f"分批审查完成: {len(batches)} 个批次, "
                 f"{len(merged_result.get('comments', []))} 条整体评论, "
