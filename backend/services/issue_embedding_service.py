@@ -234,7 +234,7 @@ class IssueEmbeddingService:
                 ids=doc_ids, include=["embeddings", "metadatas", "documents"]
             )
         except Exception as e:
-            logger.debug(f"批量获取 issue 文档失败: {e}")
+            logger.warning(f"批量获取 issue 文档失败: {e}")
             return 0
 
         # 筛选出 state 确实变化的文档，批量 upsert
@@ -260,6 +260,7 @@ class IssueEmbeddingService:
                 )
             except Exception as e:
                 logger.debug(f"批量更新 issue state 失败: {e}")
+                return 0
 
         return len(to_update)
 
