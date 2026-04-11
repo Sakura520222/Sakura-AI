@@ -489,11 +489,13 @@ class IssueService:
         # Fallback: GitHub Search API + cosine similarity（搜索 open + closed）
         keywords = title.split()[:5]
         query = " ".join(keywords)
-        open_issues = await asyncio.to_thread(
-            self.github_app.search_issues, repo_owner, repo_name, query, "open", 5
-        )
-        closed_issues = await asyncio.to_thread(
-            self.github_app.search_issues, repo_owner, repo_name, query, "closed", 5
+        open_issues, closed_issues = await asyncio.gather(
+            asyncio.to_thread(
+                self.github_app.search_issues, repo_owner, repo_name, query, "open", 5
+            ),
+            asyncio.to_thread(
+                self.github_app.search_issues, repo_owner, repo_name, query, "closed", 5
+            ),
         )
         issues = open_issues + closed_issues
 

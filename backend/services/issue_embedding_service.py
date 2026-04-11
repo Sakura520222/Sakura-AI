@@ -138,7 +138,8 @@ class IssueEmbeddingService:
         )
         existing_ids = set()
         if existing_count > 0:
-            all_existing = collection.get(include=["metadatas"])
+            # 仅获取 ids，避免大量 issues 时一次性加载 metadatas 导致 OOM
+            all_existing = collection.get(include=[])
             existing_ids = set(all_existing["ids"])
 
         # 3. 从数据库获取 AI 分析结果
@@ -223,33 +224,44 @@ class IssueEmbeddingService:
         collection = await self.vector_store.get_or_create_collection(
             collection_key
         )
-        updated = 0
-        for doc_id, issue in state_updates:
+
+        # 批量获取所有需要更新的文档
+        doc_ids = [doc_id for doc_id, _ in state_updates]
+        issue_map = {doc_id: issue for doc_id, issue in state_updates}
+
+        try:
+            all_existing = collection.get(
+                ids=doc_ids, include=["embeddings", "metadatas", "documents"]
+            )
+        except Exception as e:
+            logger.debug(f"批量获取 issue 文档失败: {e}")
+            return 0
+
+        # 筛选出 state 确实变化的文档，批量 upsert
+        to_update = []
+        for i, doc_id in enumerate(all_existing["ids"]):
+            old_metadata = all_existing["metadatas"][i]
+            issue = issue_map[doc_id]
+            if old_metadata.get("state") == issue.state:
+                continue
+
+            new_metadata = {**old_metadata, "state": issue.state}
+            to_update.append({
+                "id": doc_id,
+                "content": all_existing["documents"][i],
+                "embedding": all_existing["embeddings"][i],
+                "metadata": new_metadata,
+            })
+
+        if to_update:
             try:
-                existing = collection.get(
-                    ids=[doc_id], include=["embeddings", "metadatas", "documents"]
-                )
-                if not existing["ids"]:
-                    continue
-
-                old_metadata = existing["metadatas"][0]
-                if old_metadata.get("state") == issue.state:
-                    continue
-
-                new_metadata = {**old_metadata, "state": issue.state}
                 await self.vector_store.upsert_documents(
-                    collection_key,
-                    [{
-                        "id": doc_id,
-                        "content": existing["documents"][0],
-                        "embedding": existing["embeddings"][0],
-                        "metadata": new_metadata,
-                    }],
+                    collection_key, to_update
                 )
-                updated += 1
             except Exception as e:
-                logger.debug(f"更新 issue state 失败 {doc_id}: {e}")
-        return updated
+                logger.debug(f"批量更新 issue state 失败: {e}")
+
+        return len(to_update)
 
     async def _add_new_issues_with_ai(
         self,

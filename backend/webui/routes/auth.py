@@ -26,6 +26,14 @@ from backend.core.redis import get_async_redis
 router = APIRouter(prefix="/auth", tags=["WebUI Auth"])
 templates = get_templates()
 
+
+def _get_telegram_deep_link() -> str | None:
+    """构建 Telegram Bot 深链接（用于注册引导）"""
+    settings = get_settings()
+    if settings.telegram_bot_username:
+        return f"https://t.me/{settings.telegram_bot_username}?start=sign"
+    return None
+
 APP_VERSION = "2.7.6"
 
 _OAUTH_STATE_TTL = 600  # state 有效期 10 分钟
@@ -123,11 +131,7 @@ async def login_page(request: Request):
 
     settings = get_settings()
     has_oauth = bool(settings.github_oauth_client_id)
-    telegram_deep_link = (
-        f"https://t.me/{settings.telegram_bot_username}?start=sign"
-        if settings.telegram_bot_username
-        else None
-    )
+    telegram_deep_link = _get_telegram_deep_link()
 
     return templates.TemplateResponse(
         "login.html",
@@ -284,11 +288,7 @@ async def github_callback(
 
     if not user:
         logger.info(f"GitHub OAuth: 用户 {github_username} 未在系统中注册")
-        deep_link = (
-            f"https://t.me/{settings.telegram_bot_username}?start=sign"
-            if settings.telegram_bot_username
-            else None
-        )
+        deep_link = _get_telegram_deep_link()
         return templates.TemplateResponse(
             "register.html",
             {

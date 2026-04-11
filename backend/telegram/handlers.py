@@ -1127,7 +1127,7 @@ async def cmd_sign(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
 
-    github_username = context.args[0].strip()
+    github_username = context.args[0].strip().lower()
 
     # 简单校验 GitHub 用户名格式
     if not re.match(

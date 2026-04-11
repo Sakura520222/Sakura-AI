@@ -104,7 +104,7 @@ async def _check_github_app_installed(github_username: str) -> Optional[bool]:
     # Redis 缓存检查
     try:
         r = await get_async_redis()
-        cache_key = f"github_app_installed:{github_username}"
+        cache_key = f"github_app_installed:{github_username.lower()}"
         cached = await r.get(cache_key)
         if cached is not None:
             return cached == "1"
