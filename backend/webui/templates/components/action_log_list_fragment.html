@@ -57,7 +57,7 @@
                         {{ log.created_at.strftime('%Y-%m-%d %H:%M:%S') if log.created_at else '-' }}
                     </td>
                     <td class="px-5 py-3 text-sm">
-                        {{ admin_name or ('ID:' + str(log.admin_id)) }}
+                        {{ admin_name or ('ID:' ~ log.admin_id) if log.admin_id else '已删除用户' }}
                     </td>
                     <td class="px-5 py-3">
                         <span class="inline-flex items-center px-2.5 py-1 rounded-full text-xs font-medium
