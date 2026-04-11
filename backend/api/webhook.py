@@ -80,6 +80,8 @@ async def handle_github_webhook(
             return await handle_issue_event(payload_data)
         elif x_github_event == "issue_comment":
             return await handle_issue_comment_event(payload_data)
+        elif x_github_event == "installation":
+            return await handle_installation_event(payload_data)
         else:
             logger.info(f"忽略事件类型: {x_github_event}")
             return JSONResponse(content={"status": "ignored", "event": x_github_event})
@@ -881,6 +883,48 @@ async def handle_issue_analyze_command(payload: Dict[str, Any]) -> JSONResponse:
 
     except Exception as e:
         logger.error(f"处理 /analyze 命令时出错: {e}", exc_info=True)
+        return JSONResponse(
+            status_code=500, content={"status": "error", "message": "内部服务错误"}
+        )
+
+
+async def handle_installation_event(payload: Dict[str, Any]) -> JSONResponse:
+    """处理 GitHub App installation 事件，清除安装状态缓存"""
+    try:
+        action = payload.get("action", "")
+        installation = payload.get("installation", {})
+        account = installation.get("account", {})
+        account_login = account.get("login", "")
+
+        if not account_login:
+            logger.warning("installation 事件缺少 account.login")
+            return JSONResponse(
+                status_code=200,
+                content={"status": "processed", "action": action},
+            )
+
+        logger.info(
+            f"GitHub App installation 事件: {action}, account={account_login}"
+        )
+
+        # 清除该用户的安装状态 Redis 缓存
+        try:
+            from backend.core.redis import get_async_redis
+
+            r = await get_async_redis()
+            cache_key = f"github_app_installed:{account_login}"
+            deleted = await r.delete(cache_key)
+            if deleted:
+                logger.info(f"已清除 {account_login} 的安装状态缓存")
+        except Exception as e:
+            logger.warning(f"清除安装状态缓存失败: {e}")
+
+        return JSONResponse(
+            status_code=200,
+            content={"status": "processed", "action": action},
+        )
+    except Exception as e:
+        logger.error(f"处理 installation 事件出错: {e}", exc_info=True)
         return JSONResponse(
             status_code=500, content={"status": "error", "message": "内部服务错误"}
         )
