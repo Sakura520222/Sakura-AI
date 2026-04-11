@@ -64,6 +64,32 @@ async def _fetch_recent_reviews(
 
 _APP_INSTALL_CACHE_TTL = 1800  # 30 分钟
 
+# GitHub App slug 缓存（不变量，启动后获取一次即可）
+_app_slug_cache: str | None = None
+
+
+async def _get_github_app_install_url() -> str | None:
+    """获取 GitHub App 安装链接"""
+    global _app_slug_cache
+
+    if _app_slug_cache:
+        return f"https://github.com/apps/{_app_slug_cache}/installations/new"
+
+    try:
+        from backend.core.github_app import GitHubAppClient
+
+        github_app = GitHubAppClient()
+        slug = await asyncio.to_thread(github_app.get_bot_username)
+        if slug and slug != "unknown-bot":
+            # 去掉 bot_username 中可能携带的 [bot] 后缀
+            slug = slug.removesuffix("[bot]")
+            _app_slug_cache = slug
+            return f"https://github.com/apps/{slug}/installations/new"
+    except Exception as e:
+        logger.warning(f"获取 GitHub App slug 失败: {e}")
+
+    return None
+
 
 async def _check_github_app_installed(github_username: str) -> Optional[bool]:
     """检查用户是否已安装 GitHub App
@@ -119,6 +145,11 @@ async def dashboard_page(
 ):
     """渲染仪表盘页面"""
     github_app_installed = await _check_github_app_installed(user["sub"])
+    github_app_install_url = (
+        await _get_github_app_install_url()
+        if github_app_installed is False
+        else None
+    )
 
     return templates.TemplateResponse(
         "dashboard.html",
@@ -129,6 +160,7 @@ async def dashboard_page(
             "active_page": "dashboard",
             "user_prefs": user_prefs,
             "github_app_installed": github_app_installed,
+            "github_app_install_url": github_app_install_url,
         },
     )
 
