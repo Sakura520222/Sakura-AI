@@ -62,7 +62,8 @@ async def _fetch_recent_reviews(
     return result.scalars().all()
 
 
-_APP_INSTALL_CACHE_TTL = 1800  # 30 分钟
+_APP_INSTALL_CACHE_TTL = 1800  # 30 分钟（已安装）
+_APP_INSTALL_CACHE_TTL_NEGATIVE = 60  # 60 秒（未安装，便于安装后快速刷新）
 
 # GitHub App slug 缓存（不变量，启动后获取一次即可）
 _app_slug_cache: str | None = None
@@ -122,12 +123,11 @@ async def _check_github_app_installed(github_username: str) -> Optional[bool]:
             for inst in installations
         )
 
-        # 写入 Redis 缓存
+        # 写入 Redis 缓存（已安装 30 分钟，未安装 60 秒）
         try:
             r = await get_async_redis()
-            await r.setex(
-                cache_key, _APP_INSTALL_CACHE_TTL, "1" if installed else "0"
-            )
+            ttl = _APP_INSTALL_CACHE_TTL if installed else _APP_INSTALL_CACHE_TTL_NEGATIVE
+            await r.setex(cache_key, ttl, "1" if installed else "0")
         except Exception:
             pass
 
