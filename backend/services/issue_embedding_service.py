@@ -259,7 +259,7 @@ class IssueEmbeddingService:
                     collection_key, to_update
                 )
             except Exception as e:
-                logger.debug(f"批量更新 issue state 失败: {e}")
+                logger.warning(f"批量更新 issue state 失败: {e}")
                 return 0
 
         return len(to_update)
