@@ -1,0 +1,76 @@
+<!DOCTYPE html>
+<html lang="zh-CN" class="light">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>注册 - Sakura AI Reviewer</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>tailwind.config = { darkMode: 'class' }</script>
+    <script>
+        if (localStorage.getItem('theme') === 'dark') document.documentElement.classList.add('dark');
+    </script>
+</head>
+<body class="bg-gray-50 dark:bg-gray-900 flex items-center justify-center min-h-screen">
+    <div class="w-full max-w-md px-4">
+        <!-- Logo -->
+        <div class="text-center mb-8">
+            <span class="text-5xl">🌸</span>
+            <h1 class="mt-4 text-2xl font-bold text-gray-900 dark:text-white">Sakura AI Reviewer</h1>
+            <p class="mt-2 text-gray-500 dark:text-gray-400">GitHub PR 智能审查平台</p>
+        </div>
+
+        <!-- 注册引导卡片 -->
+        <div class="bg-white dark:bg-gray-800 rounded-2xl shadow-lg p-8 border border-gray-200 dark:border-gray-700">
+            <!-- 提示信息 -->
+            <div class="text-center mb-6">
+                <div class="inline-flex items-center justify-center w-12 h-12 rounded-full bg-amber-100 dark:bg-amber-900/30 mb-4">
+                    <svg class="w-6 h-6 text-amber-600 dark:text-amber-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z"/>
+                    </svg>
+                </div>
+                <h2 class="text-lg font-semibold text-gray-900 dark:text-white">账号未注册</h2>
+                <p class="mt-2 text-sm text-gray-500 dark:text-gray-400">
+                    你的 GitHub 账号 <span class="font-medium text-gray-700 dark:text-gray-300">@{{ github_username }}</span> 尚未在系统中注册。
+                </p>
+            </div>
+
+            {% if deep_link %}
+            <!-- Telegram 注册按钮 -->
+            <a href="{{ deep_link }}" target="_blank"
+               class="flex items-center justify-center gap-3 w-full py-3 px-4 bg-[#0088cc] hover:bg-[#006699] text-white font-medium rounded-lg transition-all">
+                <svg class="w-5 h-5" viewBox="0 0 24 24" fill="currentColor">
+                    <path d="M11.944 0A12 12 0 0 0 0 12a12 12 0 0 0 12 12 12 12 0 0 0 12-12A12 12 0 0 0 12 0a12 12 0 0 0-.056 0zm4.962 7.224c.1-.002.321.023.465.14a.506.506 0 0 1 .171.325c.016.093.036.306.02.472-.18 1.898-.962 6.502-1.36 8.627-.168.9-.499 1.201-.82 1.23-.696.065-1.225-.46-1.9-.902-1.056-.693-1.653-1.124-2.678-1.8-1.185-.78-.417-1.21.258-1.91.177-.184 3.247-2.977 3.307-3.23.007-.032.014-.15-.056-.212s-.174-.041-.249-.024c-.106.024-1.793 1.14-5.061 3.345-.48.33-.913.49-1.302.48-.428-.008-1.252-.241-1.865-.44-.752-.245-1.349-.374-1.297-.789.027-.216.325-.437.893-.663 3.498-1.524 5.83-2.529 6.998-3.014 3.332-1.386 4.025-1.627 4.476-1.635z"/>
+                </svg>
+                通过 Telegram 注册
+            </a>
+
+            <div class="mt-4 text-center">
+                <p class="text-xs text-gray-400 dark:text-gray-500 leading-relaxed">
+                    点击上方按钮将在 Telegram 中打开 Bot，<br>
+                    发送 <code class="px-1 py-0.5 bg-gray-100 dark:bg-gray-700 rounded text-xs">/sign {{ github_username }}</code> 即可完成注册。
+                </p>
+            </div>
+            {% else %}
+            <!-- Bot 未配置时的降级提示 -->
+            <div class="text-center py-4">
+                <p class="text-sm text-gray-500 dark:text-gray-400">
+                    请联系管理员配置 Telegram Bot 后重试，<br>
+                    或通过 Telegram Bot 发送 <code class="px-1 py-0.5 bg-gray-100 dark:bg-gray-700 rounded text-xs">/sign {{ github_username }}</code> 完成注册。
+                </p>
+            </div>
+            {% endif %}
+
+            <!-- 注册完成后提示 -->
+            <div class="mt-6 pt-4 border-t border-gray-100 dark:border-gray-700">
+                <p class="text-center text-xs text-gray-400 dark:text-gray-500">
+                    注册完成后，<a href="/webui/auth/login" class="text-blue-500 hover:text-blue-600 dark:text-blue-400">返回登录页</a> 使用 GitHub 登录。
+                </p>
+            </div>
+        </div>
+
+        <p class="mt-6 text-center text-xs text-gray-400 dark:text-gray-500">
+            Sakura AI Reviewer v{{ app_version }}
+        </p>
+    </div>
+</body>
+</html>

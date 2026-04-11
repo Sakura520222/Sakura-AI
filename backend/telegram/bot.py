@@ -152,6 +152,14 @@ async def start_telegram_bot():
         # 注册命令菜单
         await register_bot_commands(_telegram_bot)
 
+        # 获取 Bot 用户名并缓存到 Settings（用于构造深链接）
+        try:
+            bot_info = await _telegram_bot.get_me()
+            settings.telegram_bot_username = bot_info.username
+            logger.info(f"Telegram Bot 用户名: @{bot_info.username}")
+        except Exception as e:
+            logger.warning(f"获取 Telegram Bot 用户名失败: {e}")
+
         logger.info("✅ Telegram Bot 启动成功")
 
     except Exception as e:

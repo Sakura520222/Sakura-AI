@@ -97,6 +97,7 @@ class Settings(BaseSettings):
 
     # Telegram Bot配置
     telegram_bot_token: Optional[str] = None
+    telegram_bot_username: Optional[str] = None  # 启动时通过 getMe 自动填充
     telegram_admin_user_ids: str = ""  # 逗号分隔的超级管理员ID列表
     telegram_default_chat_id: str = ""  # 默认接收通知的聊天ID
     register_quota_multiplier: float = Field(
