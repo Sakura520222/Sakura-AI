@@ -272,6 +272,49 @@ async def _run_code_index(repo_name: str, user_id: int) -> None:
         _active_index_tasks.pop(key, None)
 
 
+async def _run_issues_index(repo_name: str, user_id: int) -> None:
+    """后台执行 Issues 索引（open + closed 全量重建）"""
+    key = f"{repo_name}:issues"
+    try:
+        from backend.services.issue_embedding_service import IssueEmbeddingService
+        from backend.webui.sse import publish_event
+
+        repo_owner, repo_name_only = repo_name.split("/", 1)
+        emb_service = IssueEmbeddingService()
+        result = await emb_service.index_repo_issues(
+            repo_owner, repo_name_only, force=True
+        )
+
+        logger.info(f"WebUI Issues 索引完成: {repo_name}, result={result}")
+        await publish_event(
+            "index:issues_completed",
+            {
+                "repo_name": repo_name,
+                "success": True,
+                "result": result,
+                "error": None,
+            },
+        )
+    except Exception as e:
+        logger.error("WebUI Issues 索引失败: {}, error={}", repo_name, e, exc_info=True)
+        try:
+            from backend.webui.sse import publish_event
+
+            await publish_event(
+                "index:issues_completed",
+                {
+                    "repo_name": repo_name,
+                    "success": False,
+                    "result": None,
+                    "error": str(e),
+                },
+            )
+        except Exception as sse_err:
+            logger.debug(f"SSE 发布索引失败事件失败: {sse_err}")
+    finally:
+        _active_index_tasks.pop(key, None)
+
+
 @router.get("/")
 async def repo_list_page(
     request: Request,
@@ -393,3 +436,38 @@ async def index_code(
     logger.info(f"WebUI 触发代码索引: {repo_name}, by={user['sub']}")
     await log_admin_action(db, user["user_id"], "repo_index_code", "repo", repo_name)
     return JSONResponse({"success": True, "message": f"代码索引已启动: {repo_name}"})
+
+
+@router.post("/{repo_name:path}/index-issues")
+async def index_issues(
+    request: Request,
+    repo_name: str,
+    db: AsyncSession = Depends(get_db),
+    user: dict = Depends(require_admin),
+    csrf_token: str = Depends(require_csrf_header),
+) -> JSONResponse:
+    """触发仓库 Issues 索引（异步后台执行，含 open + closed 全量重建）"""
+    from backend.core.config import get_settings
+
+    # 检查语义 Issue 关联功能是否启用
+    settings = get_settings()
+    if not settings.enable_semantic_issue_linking:
+        return JSONResponse(
+            {"success": False, "message": "语义 Issue 关联功能未启用，请在设置中开启"},
+            status_code=400,
+        )
+
+    # 检查是否正在索引
+    if _is_index_locked(repo_name, "issues"):
+        return JSONResponse(
+            {"success": False, "message": f"仓库 {repo_name} 正在索引中，请稍后再试"},
+            status_code=409,
+        )
+
+    # 启动后台任务
+    task = asyncio.create_task(_run_issues_index(repo_name, user["user_id"]))
+    _active_index_tasks[f"{repo_name}:issues"] = task
+
+    logger.info(f"WebUI 触发 Issues 索引: {repo_name}, by={user['sub']}")
+    await log_admin_action(db, user["user_id"], "repo_index_issues", "repo", repo_name)
+    return JSONResponse({"success": True, "message": f"Issues 索引已启动: {repo_name}"})

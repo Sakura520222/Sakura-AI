@@ -67,29 +67,37 @@ class IssueEmbeddingService:
             return None
 
     async def index_repo_issues(
-        self, repo_owner: str, repo_name: str
+        self, repo_owner: str, repo_name: str, *, force: bool = False
     ) -> Dict[str, Any]:
-        """将仓库所有 open issues 索引到 ChromaDB
+        """将仓库 issues 索引到 ChromaDB
 
-        Collection 已有数据时跳过（依赖 webhook 增量同步）。
+        Args:
+            force: 增量补充缺失的 issues（含 open + closed），已有文档保留 AI 摘要。
+                   默认 False 时仅索引 open issues 且跳过已有缓存。
 
         Returns:
-            {"status": "cached"|"indexed"|"no_issues", "count": int}
+            {"status": "cached"|"indexed"|"reindexed"|"no_issues", "count": int}
         """
         collection_key = self._collection_key(repo_owner, repo_name)
 
         # 检查已有缓存
         count = await self.vector_store.get_collection_count(collection_key)
-        if count > 0:
+        if count > 0 and not force:
             logger.debug(
                 f"Issue 向量库已存在 ({count} 条): {repo_owner}/{repo_name}"
             )
             return {"status": "cached", "count": count}
 
-        # 获取所有 open issues（PyGithub 自动分页）
+        if force:
+            return await self._incremental_reindex(
+                repo_owner, repo_name, collection_key, count
+            )
+
+        # 首次索引：仅获取 open issues
         issues = await asyncio.to_thread(
             self._fetch_all_open_issues, repo_owner, repo_name
         )
+
         if not issues:
             return {"status": "no_issues", "count": 0}
 
@@ -102,9 +110,197 @@ class IssueEmbeddingService:
         # 写入 ChromaDB
         await self.vector_store.add_documents(collection_key, documents)
         logger.info(
-            f"✅ 已索引 {len(documents)} 个 issues 到向量库: {repo_owner}/{repo_name}"
+            f"✅ 已索引 {len(documents)} 个 issues "
+            f"到向量库: {repo_owner}/{repo_name}"
         )
         return {"status": "indexed", "count": len(documents)}
+
+    async def _incremental_reindex(
+        self,
+        repo_owner: str,
+        repo_name: str,
+        collection_key: str,
+        existing_count: int,
+    ) -> Dict[str, Any]:
+        """增量重索引：补充缺失 issues，已有文档保留 AI 摘要并更新 state"""
+        # 1. 获取所有 issues（open + closed）
+        issues = await asyncio.to_thread(
+            self._fetch_all_issues, repo_owner, repo_name
+        )
+        if not issues:
+            return {"status": "no_issues", "count": existing_count}
+
+        issue_map = {issue.number: issue for issue in issues}
+
+        # 2. 获取已有文档 ID
+        collection = await self.vector_store.get_or_create_collection(
+            collection_key
+        )
+        existing_ids = set()
+        if existing_count > 0:
+            # 仅获取 ids，避免大量 issues 时一次性加载 metadatas 导致 OOM
+            all_existing = collection.get(include=[])
+            existing_ids = set(all_existing["ids"])
+
+        # 3. 从数据库获取 AI 分析结果
+        ai_results = await self._fetch_ai_analysis(
+            repo_owner, repo_name, list(issue_map.keys())
+        )
+
+        # 4. 分类：需要新增 vs 需要更新 state
+        new_issues = []
+        state_updates = []
+        for number, issue in issue_map.items():
+            doc_id = f"{self.ISSUE_ID_PREFIX}{number}"
+            if doc_id not in existing_ids:
+                new_issues.append(issue)
+            else:
+                # 检查 state 是否需要更新
+                state_updates.append((doc_id, issue))
+
+        # 5. 更新已有文档的 state metadata
+        updated_count = 0
+        if state_updates:
+            updated_count = await self._update_existing_states(
+                collection_key, state_updates
+            )
+
+        # 6. 新增缺失的 issues
+        added_count = 0
+        if new_issues:
+            added_count = await self._add_new_issues_with_ai(
+                collection_key, new_issues, ai_results
+            )
+
+        total = existing_count + added_count
+        logger.info(
+            f"✅ Issues 增量重索引完成: {repo_owner}/{repo_name}, "
+            f"新增={added_count}, state更新={updated_count}, 总计={total}"
+        )
+        return {
+            "status": "reindexed",
+            "count": total,
+            "added": added_count,
+            "updated": updated_count,
+        }
+
+    async def _fetch_ai_analysis(
+        self, repo_owner: str, repo_name: str, issue_numbers: list[int]
+    ) -> Dict[int, Dict[str, str]]:
+        """从数据库获取 issues 的 AI 分析结果（summary + suggested_title）"""
+        try:
+            from backend.models.database import IssueAnalysis, async_session
+            from sqlalchemy import select
+
+            repo_full = f"{repo_owner}/{repo_name}"
+            async with async_session() as session:
+                result = await session.execute(
+                    select(
+                        IssueAnalysis.issue_number,
+                        IssueAnalysis.summary,
+                        IssueAnalysis.suggested_title,
+                    ).where(
+                        IssueAnalysis.repo_name == repo_full,
+                        IssueAnalysis.issue_number.in_(issue_numbers),
+                    )
+                )
+                return {
+                    row.issue_number: {
+                        "summary": row.summary or "",
+                        "suggested_title": row.suggested_title or "",
+                    }
+                    for row in result
+                }
+        except Exception as e:
+            logger.warning(f"获取 AI 分析结果失败: {e}")
+            return {}
+
+    async def _update_existing_states(
+        self,
+        collection_key: str,
+        state_updates: list[tuple[str, Any]],
+    ) -> int:
+        """批量更新已有文档的 state metadata"""
+        collection = await self.vector_store.get_or_create_collection(
+            collection_key
+        )
+
+        # 批量获取所有需要更新的文档
+        doc_ids = [doc_id for doc_id, _ in state_updates]
+        issue_map = {doc_id: issue for doc_id, issue in state_updates}
+
+        try:
+            all_existing = collection.get(
+                ids=doc_ids, include=["embeddings", "metadatas", "documents"]
+            )
+        except Exception as e:
+            logger.warning(f"批量获取 issue 文档失败: {e}")
+            return 0
+
+        # 筛选出 state 确实变化的文档，批量 upsert
+        to_update = []
+        for i, doc_id in enumerate(all_existing["ids"]):
+            old_metadata = all_existing["metadatas"][i]
+            issue = issue_map[doc_id]
+            if old_metadata.get("state") == issue.state:
+                continue
+
+            new_metadata = {**old_metadata, "state": issue.state}
+            to_update.append({
+                "id": doc_id,
+                "content": all_existing["documents"][i],
+                "embedding": all_existing["embeddings"][i],
+                "metadata": new_metadata,
+            })
+
+        if to_update:
+            try:
+                await self.vector_store.upsert_documents(
+                    collection_key, to_update
+                )
+            except Exception as e:
+                logger.warning(f"批量更新 issue state 失败: {e}")
+                return 0
+
+        return len(to_update)
+
+    async def _add_new_issues_with_ai(
+        self,
+        collection_key: str,
+        new_issues: list,
+        ai_results: Dict[int, Dict[str, str]],
+    ) -> int:
+        """新增缺失的 issues，优先使用 AI 分析结果"""
+        documents = []
+        texts = []
+        for issue in new_issues:
+            ai = ai_results.get(issue.number, {})
+            # 优先使用 AI 建议标题，否则用原始标题
+            title = ai.get("suggested_title") or issue.title
+            # 优先使用 AI 摘要，否则用原始 body
+            body = ai.get("summary") or (issue.body or "")
+
+            text = f"{title}\n{body}"
+            texts.append(text)
+            documents.append({
+                "id": f"{self.ISSUE_ID_PREFIX}{issue.number}",
+                "content": text,
+                "metadata": {
+                    "number": str(issue.number),
+                    "title": title,
+                    "state": issue.state,
+                },
+            })
+
+        if not texts:
+            return 0
+
+        embeddings = await self.embedding_service.embed_texts(texts)
+        for i, emb in enumerate(embeddings):
+            documents[i]["embedding"] = emb
+
+        await self.vector_store.add_documents(collection_key, documents)
+        return len(documents)
 
     async def search_related_issues(
         self,
@@ -115,6 +311,7 @@ class IssueEmbeddingService:
         exclude_numbers: List[int],
         top_k: int = 5,
         similarity_threshold: float = 0.65,
+        state_filter: str | None = None,
     ) -> List[Dict[str, Any]]:
         """检索与 PR 语义相关的 issues
 
@@ -132,8 +329,9 @@ class IssueEmbeddingService:
         query_embedding = await self.embedding_service.embed_query(pr_text)
 
         # 3. ChromaDB ANN 初步召回（多取候选用于后续过滤）
+        where_clause = {"state": state_filter} if state_filter else None
         candidates = await self.vector_store.search(
-            collection_key, query_embedding, top_k=top_k * 3
+            collection_key, query_embedding, top_k=top_k * 3, where=where_clause
         )
 
         if not candidates:
@@ -183,6 +381,7 @@ class IssueEmbeddingService:
                 "title": doc["metadata"].get("title", ""),
                 "content": doc.get("content", ""),
                 "similarity": "reranked",
+                "state": doc["metadata"].get("state", "open"),
             })
             if len(results) >= top_k:
                 break
@@ -211,6 +410,7 @@ class IssueEmbeddingService:
                 "title": c["metadata"].get("title", ""),
                 "content": c.get("content", ""),
                 "similarity": round(similarity, 3),
+                "state": c["metadata"].get("state", "open"),
             })
             if len(results) >= top_k:
                 break
@@ -446,6 +646,57 @@ class IssueEmbeddingService:
             )
             return False
 
+    async def close_issue(
+        self, repo_owner: str, repo_name: str, issue_number: int
+    ) -> bool:
+        """将 issue 标记为 closed（更新 metadata.state，而非删除）
+
+        如果向量库中不存在该 issue，静默返回 True（可能尚未索引）。
+        """
+        try:
+            collection_key = self._collection_key(repo_owner, repo_name)
+            doc_id = f"{self.ISSUE_ID_PREFIX}{issue_number}"
+
+            # 获取已有文档（含 embedding）
+            collection = await self.vector_store.get_or_create_collection(
+                collection_key
+            )
+            existing = collection.get(
+                ids=[doc_id], include=["embeddings", "metadatas", "documents"]
+            )
+            if not existing["ids"]:
+                logger.debug(
+                    f"Issue 向量不存在，跳过关闭: "
+                    f"{repo_owner}/{repo_name}#{issue_number}"
+                )
+                return True
+
+            old_metadata = existing["metadatas"][0]
+            old_content = existing["documents"][0]
+            old_embedding = existing["embeddings"][0]
+
+            new_metadata = {**old_metadata, "state": "closed"}
+
+            await self.vector_store.upsert_documents(
+                collection_key,
+                [{
+                    "id": doc_id,
+                    "content": old_content,
+                    "embedding": old_embedding,
+                    "metadata": new_metadata,
+                }],
+            )
+            logger.debug(
+                f"已标记 issue 为 closed: {repo_owner}/{repo_name}#{issue_number}"
+            )
+            return True
+        except Exception as e:
+            logger.warning(
+                f"标记 issue closed 失败: "
+                f"{repo_owner}/{repo_name}#{issue_number}: {e}"
+            )
+            return False
+
     def _build_documents(
         self, issues: list
     ) -> tuple:
@@ -485,3 +736,42 @@ class IssueEmbeddingService:
             for issue in repo.get_issues(state="open")
             if issue.pull_request is None
         ]
+
+    def _fetch_all_issues(
+        self, repo_owner: str, repo_name: str, states: list[str] | None = None
+    ) -> list:
+        """同步获取仓库所有 issues（含 open + closed），按 number 去重
+
+        用于 WebUI 强制重索引场景。首次自动索引仍使用 _fetch_all_open_issues
+        以减少 GitHub API 调用量。
+        """
+        if states is None:
+            states = ["open", "closed"]
+
+        client = self.github_app.get_repo_client(repo_owner, repo_name)
+        if not client:
+            logger.warning(f"无法获取仓库客户端: {repo_owner}/{repo_name}")
+            return []
+        repo = client.get_repo(f"{repo_owner}/{repo_name}")
+
+        all_issues = []
+        for state in states:
+            all_issues.extend([
+                issue
+                for issue in repo.get_issues(state=state)
+                if issue.pull_request is None
+            ])
+
+        # 按 number 去重（open/closed 列表可能有重叠）
+        seen: set[int] = set()
+        unique = []
+        for issue in all_issues:
+            if issue.number not in seen:
+                seen.add(issue.number)
+                unique.append(issue)
+
+        logger.debug(
+            f"获取 issues: {repo_owner}/{repo_name}, "
+            f"states={states}, unique={len(unique)}"
+        )
+        return unique

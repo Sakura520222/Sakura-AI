@@ -14,7 +14,7 @@ class AdminActionLog(Base):
     __tablename__ = "admin_action_logs"
 
     id = Column(Integer, primary_key=True, autoincrement=True)
-    admin_id = Column(Integer, ForeignKey("telegram_users.id"), nullable=False)
+    admin_id = Column(Integer, ForeignKey("telegram_users.id", ondelete="SET NULL"), nullable=True)
     action = Column(String(50), nullable=False, index=True)
     target_type = Column(String(50), nullable=True)
     target_id = Column(String(255), nullable=True)

@@ -115,8 +115,30 @@ async def check_permission(
 
 
 async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """开始命令"""
+    """开始命令，支持深链接参数"""
     telegram_id = update.effective_user.id
+
+    # 深链接注册引导（/start sign）
+    if context.args and context.args[0].strip().lower() == "sign":
+        async with get_async_session() as session:
+            service = TelegramService(session)
+            user = await service.get_user_by_telegram_id(telegram_id)
+
+            if user:
+                await update.message.reply_text(
+                    f"你已经注册了（GitHub: @{user.github_username}）。\n\n"
+                    f"可以直接通过 GitHub 登录 WebUI。"
+                )
+                return
+
+        await update.message.reply_text(
+            "🌸 欢迎注册 Sakura AI Reviewer！\n\n"
+            "请输入你的 GitHub 用户名完成注册：\n"
+            "/sign <github_username>\n\n"
+            "示例: /sign mygithub\n\n"
+            "⚠️ 注册后将绑定此 Telegram 账号与 GitHub 用户名。"
+        )
+        return
 
     async with get_async_session() as session:
         service = TelegramService(session)
@@ -1105,7 +1127,7 @@ async def cmd_sign(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
 
-    github_username = context.args[0].strip()
+    github_username = context.args[0].strip().lower()
 
     # 简单校验 GitHub 用户名格式
     if not re.match(

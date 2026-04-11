@@ -1,10 +1,13 @@
 """WebUI 仪表盘路由"""
 
+import asyncio
 import time
 from datetime import datetime, timedelta
+from typing import Optional
 
 from fastapi import APIRouter, Request, Depends
 from fastapi.responses import HTMLResponse
+from loguru import logger
 from sqlalchemy import select, func, desc, case, and_
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -59,6 +62,81 @@ async def _fetch_recent_reviews(
     return result.scalars().all()
 
 
+_APP_INSTALL_CACHE_TTL = 1800  # 30 分钟（已安装）
+_APP_INSTALL_CACHE_TTL_NEGATIVE = 60  # 60 秒（未安装，便于安装后快速刷新）
+
+# GitHub App slug 缓存（不变量，启动后获取一次即可）
+_app_slug_cache: str | None = None
+
+
+async def _get_github_app_install_url() -> str | None:
+    """获取 GitHub App 安装链接"""
+    global _app_slug_cache
+
+    if _app_slug_cache:
+        return f"https://github.com/apps/{_app_slug_cache}/installations/new"
+
+    try:
+        from backend.core.github_app import GitHubAppClient
+
+        github_app = GitHubAppClient()
+        slug = await asyncio.to_thread(github_app.get_bot_username)
+        if slug and slug != "unknown-bot":
+            # 去掉 bot_username 中可能携带的 [bot] 后缀
+            slug = slug.removesuffix("[bot]")
+            _app_slug_cache = slug
+            return f"https://github.com/apps/{slug}/installations/new"
+    except Exception as e:
+        logger.warning(f"获取 GitHub App slug 失败: {e}")
+
+    return None
+
+
+async def _check_github_app_installed(github_username: str) -> Optional[bool]:
+    """检查用户是否已安装 GitHub App
+
+    Returns:
+        True: 已安装, False: 未安装, None: 无法检测
+    """
+    from backend.core.github_app import GitHubAppClient
+    from backend.core.redis import get_async_redis
+
+    # Redis 缓存检查
+    try:
+        r = await get_async_redis()
+        cache_key = f"github_app_installed:{github_username.lower()}"
+        cached = await r.get(cache_key)
+        if cached is not None:
+            return cached == "1"
+    except Exception as e:
+        logger.debug(f"Redis 读取安装状态缓存失败: {e}")
+
+    # 查询 GitHub App installations
+    try:
+        github_app = GitHubAppClient()
+        installations = await asyncio.to_thread(
+            github_app.get_all_installations_with_repos
+        )
+
+        installed = any(
+            inst.get("account_login", "").lower() == github_username.lower()
+            for inst in installations
+        )
+
+        # 写入 Redis 缓存（已安装 30 分钟，未安装 60 秒）
+        try:
+            r = await get_async_redis()
+            ttl = _APP_INSTALL_CACHE_TTL if installed else _APP_INSTALL_CACHE_TTL_NEGATIVE
+            await r.setex(cache_key, ttl, "1" if installed else "0")
+        except Exception:
+            pass
+
+        return installed
+    except Exception as e:
+        logger.warning(f"检测 GitHub App 安装状态失败: {e}")
+        return None
+
+
 @router.get("/")
 async def dashboard_page(
     request: Request,
@@ -66,6 +144,13 @@ async def dashboard_page(
     user_prefs: dict = Depends(get_user_preferences),
 ):
     """渲染仪表盘页面"""
+    github_app_installed = await _check_github_app_installed(user["sub"])
+    github_app_install_url = (
+        await _get_github_app_install_url()
+        if github_app_installed is False
+        else None
+    )
+
     return templates.TemplateResponse(
         "dashboard.html",
         {
@@ -74,6 +159,8 @@ async def dashboard_page(
             "csrf_token": get_csrf_serializer().dumps({}),
             "active_page": "dashboard",
             "user_prefs": user_prefs,
+            "github_app_installed": github_app_installed,
+            "github_app_install_url": github_app_install_url,
         },
     )
 

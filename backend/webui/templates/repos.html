@@ -112,5 +112,18 @@ window.addEventListener('sse:index-code', function(e) {
     }));
     refreshRepoList();
 });
+
+// SSE: Issues 索引完成
+window.addEventListener('sse:index-issues', function(e) {
+    var detail = e.detail;
+    var isSuccess = detail.success && detail.result;
+    var msg = isSuccess
+        ? 'Issues 索引完成: ' + detail.repo_name + ' (' + (detail.result.count || 0) + ' 条)'
+        : 'Issues 索引失败: ' + detail.repo_name + ' - ' + (detail.error || '未知错误');
+    window.dispatchEvent(new CustomEvent('show-toast', {
+        detail: { message: msg, type: isSuccess ? 'success' : 'error' }
+    }));
+    refreshRepoList();
+});
 </script>
 {% endblock %}

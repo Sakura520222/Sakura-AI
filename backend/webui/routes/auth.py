@@ -26,7 +26,15 @@ from backend.core.redis import get_async_redis
 router = APIRouter(prefix="/auth", tags=["WebUI Auth"])
 templates = get_templates()
 
-APP_VERSION = "2.7.5"
+
+def _get_telegram_deep_link() -> str | None:
+    """构建 Telegram Bot 深链接（用于注册引导）"""
+    settings = get_settings()
+    if settings.telegram_bot_username:
+        return f"https://t.me/{settings.telegram_bot_username}?start=sign"
+    return None
+
+APP_VERSION = "2.7.6"
 
 _OAUTH_STATE_TTL = 600  # state 有效期 10 分钟
 _OAUTH_STATE_KEY_PREFIX = "oauth:state:"
@@ -45,7 +53,11 @@ def _cleanup_expired_states():
 
 
 def _oauth_error(
-    request: Request, error_msg: str, has_oauth: bool = True, status_code: int = 400
+    request: Request,
+    error_msg: str,
+    has_oauth: bool = True,
+    status_code: int = 400,
+    telegram_deep_link: str | None = None,
 ):
     """统一的 OAuth 错误页面响应"""
     return templates.TemplateResponse(
@@ -56,6 +68,7 @@ def _oauth_error(
             "error": error_msg,
             "app_version": APP_VERSION,
             "has_oauth": has_oauth,
+            "telegram_deep_link": telegram_deep_link,
         },
         status_code=status_code,
     )
@@ -118,6 +131,7 @@ async def login_page(request: Request):
 
     settings = get_settings()
     has_oauth = bool(settings.github_oauth_client_id)
+    telegram_deep_link = _get_telegram_deep_link()
 
     return templates.TemplateResponse(
         "login.html",
@@ -127,6 +141,7 @@ async def login_page(request: Request):
             "error": None,
             "app_version": APP_VERSION,
             "has_oauth": has_oauth,
+            "telegram_deep_link": telegram_deep_link,
         },
     )
 
@@ -273,9 +288,16 @@ async def github_callback(
 
     if not user:
         logger.info(f"GitHub OAuth: 用户 {github_username} 未在系统中注册")
-        return _oauth_error(
-            request,
-            f"用户 @{github_username} 未注册。请先通过 Telegram Bot 注册后再登录。",
+        deep_link = _get_telegram_deep_link()
+        return templates.TemplateResponse(
+            "register.html",
+            {
+                "request": request,
+                "csrf_token": get_csrf_serializer().dumps({}),
+                "github_username": github_username,
+                "deep_link": deep_link,
+                "app_version": APP_VERSION,
+            },
             status_code=403,
         )
 
