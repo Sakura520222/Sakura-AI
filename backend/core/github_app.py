@@ -146,6 +146,7 @@ class GitHubAppClient:
                     account_login = repos[0].full_name.split("/")[0]
 
                 # 回退：从原始 API 数据获取（适用于 0 仓库的新安装）
+                # NOTE: raw_data/_rawData 为 PyGithub 内部属性，版本升级后可能失效
                 if not account_login:
                     raw = getattr(inst, "raw_data", None) or getattr(
                         inst, "_rawData", {}

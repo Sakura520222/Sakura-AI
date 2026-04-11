@@ -309,8 +309,8 @@ async def _run_issues_index(repo_name: str, user_id: int) -> None:
                     "error": str(e),
                 },
             )
-        except Exception:
-            pass
+        except Exception as sse_err:
+            logger.debug(f"SSE 发布索引失败事件失败: {sse_err}")
     finally:
         _active_index_tasks.pop(key, None)
 

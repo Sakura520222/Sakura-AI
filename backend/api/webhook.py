@@ -912,7 +912,7 @@ async def handle_installation_event(payload: Dict[str, Any]) -> JSONResponse:
             from backend.core.redis import get_async_redis
 
             r = await get_async_redis()
-            cache_key = f"github_app_installed:{account_login}"
+            cache_key = f"github_app_installed:{account_login.lower()}"
             deleted = await r.delete(cache_key)
             if deleted:
                 logger.info(f"已清除 {account_login} 的安装状态缓存")
