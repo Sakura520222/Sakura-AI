@@ -5,6 +5,27 @@
 {% block content %}
 <div class="space-y-6" x-data="dashboardInit()">
 
+    {% if github_app_installed == false %}
+    <!-- GitHub App 安装引导横幅 -->
+    <div x-data="{ dismissed: false }" x-show="!dismissed"
+         class="p-4 bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 rounded-xl flex items-start gap-3">
+        <svg class="w-5 h-5 text-amber-500 mt-0.5 shrink-0" fill="currentColor" viewBox="0 0 20 20">
+            <path fill-rule="evenodd" d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.213 2.98-1.742 2.98H4.42c-1.53 0-2.493-1.646-1.743-2.98l5.58-9.92zM11 13a1 1 0 11-2 0 1 1 0 012 0zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z" clip-rule="evenodd"/>
+        </svg>
+        <div class="flex-1">
+            <p class="text-sm font-medium text-amber-800 dark:text-amber-300">尚未安装 GitHub App</p>
+            <p class="mt-1 text-xs text-amber-600 dark:text-amber-400">
+                安装 GitHub App 到你的仓库后，才能使用自动 PR 审查功能。如果你的组织已安装，可忽略此提示。
+            </p>
+        </div>
+        <button @click="dismissed = true" class="text-amber-400 hover:text-amber-600 dark:hover:text-amber-300 shrink-0">
+            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/>
+            </svg>
+        </button>
+    </div>
+    {% endif %}
+
     <!-- 页面标题 -->
     <div>
         <h1 class="text-2xl font-bold">仪表盘</h1>
