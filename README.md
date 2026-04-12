@@ -1,3 +1,5 @@
+[English](README_EN.md) | **中文**
+
 # 🌸 Sakura AI Reviewer
 
 > 基于 AI 的智能 GitHub Pull Request 代码审查与 Issue 分析机器人，具备主动探索代码库的能力
@@ -20,6 +22,9 @@
 - **结构化审查报告**：整体评分 + 分类问题（🔴严重/🟡重要/💡优化）+ `<details>` 折叠详情
 - **增量审查学习**：AI 自动总结历史审查记录，识别评分趋势和问题热点，逐步提升审查质量
 - **智能审查批准**：基于 AI 评分自动决策 APPROVE / REQUEST_CHANGES / COMMENT
+- **PR 变更自动总结**：AI 自动生成 PR 变更摘要，并在 PR 更新时增量更新总结内容
+- **PR 依赖图生成**：AI 分析变更文件的 import/模块依赖，生成 Mermaid 格式可视化依赖关系图
+- **Token 消耗追踪**：实时追踪审查中所有 AI API 调用的 token 消耗量与预估成本
 - **一键撤回**：管理员使用 `/revoke` 命令一键撤回所有 AI 评论和 Review
 - **辅助模型支持**：独立配置轻量级模型处理摘要、上下文压缩、标签推荐等任务，降低推理成本
 
@@ -34,12 +39,16 @@
 
 - **Issue 智能分析**：自动分类、优先级判定、标签推荐、重复检测、关联 PR 发现
 - **Issue 自动打标**：AI 自动分类并推荐标签，高置信度自动应用
+- **Issue 自动指派**：AI 分析内容并自动指派给合适的仓库协作者
+- **Issue 标题改写**：AI 自动优化模糊或不够准确的 Issue 标题
 - **PR-Issue 关联**：自动解析 Issue 引用，注入上下文增强审查精度
+- **语义 Issue 关联**：基于向量语义相似度发现并关联相关 Issue
 
 ### 管理与运维
 
 - **首次部署引导（Setup Wizard）**：首次启动自动检测配置状态，分步引导完成 GitHub App、数据库、AI 模型、RAG 等配置，支持断点续配
 - **动态配置管理**：通过 WebUI 修改配置即时生效，无需重启服务
+- **GitHub App 安装管理**：自动处理 GitHub App 安装/卸载事件，同步仓库授权状态
 - **SSE 实时推送**：基于 Redis Pub/Sub 的多进程实时通信，WebUI 数据即时更新
 - **配额制访问控制**：基于配额的灵活访问管理体系，支持用户自注册
 - **管理员操作审计**：完整的操作日志，覆盖配置变更、用户管理等关键操作
@@ -209,8 +218,14 @@ WebUI：`https://your-domain.com/webui/`
 - **AI 工具**：WebUI 配置管理中 `enable_ai_tools` / `max_tool_iterations`
 - **标签推荐**：`config/labels.yaml` 配置 PR 标签推荐开关与置信度；Issue 标签在全局配置页 `issue_auto_create_labels` / `issue_confidence_threshold`
 - **审查批准**：`config/strategies.yaml` 中 `review_policy` 配置阈值和仓库级覆盖
+- **PR 变更总结**：WebUI 配置管理中 `enable_pr_summary`
+- **PR 依赖图**：WebUI 配置管理中 `enable_pr_dependency_graph` / `pr_dependency_graph_max_nodes` / `pr_dependency_graph_max_files`
+- **Token 成本追踪**：WebUI 配置管理中 `review_price_per_1k_prompt` / `review_price_per_1k_completion`，追踪审查 Token 消耗与成本
 - **RAG 知识库**：WebUI 配置管理中配置嵌入模型（支持 BAAI/bge-m3 等）、重排序模型、ChromaDB 等
 - **PR 代码索引**：WebUI 配置管理中配置代码分块、支持语言、核心目录等
+- **Issue 自动指派**：WebUI 配置管理中 `issue_auto_assign` / `issue_assignee_confidence_threshold`
+- **Issue 标题改写**：WebUI 配置管理中 `issue_auto_rewrite_title`
+- **语义 Issue 关联**：WebUI 配置管理中 `enable_semantic_issue_linking` / `semantic_issue_similarity_threshold`
 - **增量审查历史**：WebUI 配置管理中 `enable_incremental_history_context`，AI 自动学习历史审查记录
 - **Web 搜索工具**：WebUI 配置管理中 `web_search_provider`（`duckduckgo` 免费或 `tavily` 高级）
 - **模型上下文**：WebUI 配置管理中配置上下文窗口、自动压缩等，详见 [模型上下文管理](docs/MODEL_CONTEXT_FEATURE.md)
@@ -268,6 +283,9 @@ Sakura-AI-Reviewer/
 │   │   │   └── compression/ # 上下文压缩
 │   │   ├── pr_analyzer.py # PR 分析器（策略选择）
 │   │   ├── issue_analyzer.py  # Issue 分析引擎
+│   │   ├── issue_service.py   # Issue 服务（打标、指派、改写）
+│   │   ├── issue_embedding_service.py  # Issue 向量嵌入
+│   │   ├── pr_issue_linker.py # PR-Issue 关联
 │   │   ├── decision_engine.py # 审查决策引擎
 │   │   ├── comment_service.py # 评论服务
 │   │   ├── rag_service.py     # RAG 知识库
