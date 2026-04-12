@@ -1,8 +1,8 @@
-[English](README_EN.md) | **中文**
-
 # 🌸 Sakura AI Reviewer
 
 > 基于 AI 的智能 GitHub Pull Request 代码审查与 Issue 分析机器人，具备主动探索代码库的能力
+
+[English](README_EN.md) | **中文**
 
 [![Version](https://img.shields.io/badge/Version-2.7.6-blue.svg)](https://github.com/Sakura520222/Sakura-AI-Reviewer/releases)
 [![Python](https://img.shields.io/badge/Python-3.11+-blue.svg)](https://www.python.org/)

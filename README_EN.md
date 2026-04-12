@@ -1,8 +1,8 @@
-**English** | [中文](README.md)
-
 # 🌸 Sakura AI Reviewer
 
 > AI-powered intelligent GitHub Pull Request code review and Issue analysis bot with proactive codebase exploration capabilities
+
+**English** | [中文](README.md)
 
 [![Version](https://img.shields.io/badge/Version-2.7.6-blue.svg)](https://github.com/Sakura520222/Sakura-AI-Reviewer/releases)
 [![Python](https://img.shields.io/badge/Python-3.11+-blue.svg)](https://www.python.org/)
