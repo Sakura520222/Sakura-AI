@@ -2,6 +2,7 @@
 
 import asyncio
 import time
+from collections import OrderedDict
 from datetime import datetime, timedelta
 from typing import Optional
 
@@ -18,6 +19,7 @@ from backend.webui.deps import (
     get_templates,
     get_csrf_serializer,
     get_user_preferences,
+    build_user_scope_filter,
 )
 
 router = APIRouter(tags=["WebUI Dashboard"])
@@ -25,13 +27,15 @@ templates = get_templates()
 
 _RECENT_REVIEW_LIMIT = 10
 
-# stats 接口缓存（避免频繁聚合查询）
-_stats_cache: tuple[dict, float] | None = None
+# stats 接口按用户缓存（避免频繁聚合查询 & 用户间数据串扰）
+_stats_cache: OrderedDict[int, tuple[dict, float]] = OrderedDict()
 _STATS_CACHE_TTL = 10  # 秒
+_MAX_STATS_CACHE_SIZE = 100
 
-# chart-data 接口缓存
-_chart_cache: tuple[dict, float] | None = None
+# chart-data 接口按用户缓存
+_chart_cache: OrderedDict[int, tuple[dict, float]] = OrderedDict()
 _CHART_CACHE_TTL = 20  # 秒
+_MAX_CHART_CACHE_SIZE = 100
 
 
 def _serialize_review(r: PRReview) -> dict:
@@ -53,12 +57,18 @@ def _serialize_review(r: PRReview) -> dict:
 
 
 async def _fetch_recent_reviews(
-    db: AsyncSession, limit: int = _RECENT_REVIEW_LIMIT
+    db: AsyncSession,
+    user: dict,
+    limit: int = _RECENT_REVIEW_LIMIT,
 ) -> list[PRReview]:
-    """获取最近的审查记录"""
-    result = await db.execute(
-        select(PRReview).order_by(desc(PRReview.created_at)).limit(limit)
-    )
+    """获取最近的审查记录（按用户权限过滤）"""
+    query = select(PRReview).order_by(desc(PRReview.created_at)).limit(limit)
+
+    scope_filter = build_user_scope_filter(user, PRReview)
+    if scope_filter is not None:
+        query = query.where(scope_filter)
+
+    result = await db.execute(query)
     return result.scalars().all()
 
 
@@ -170,96 +180,106 @@ async def get_stats(
     db: AsyncSession = Depends(get_db),
     user: dict = Depends(require_auth),
 ):
-    """获取仪表盘统计数据"""
-    global _stats_cache
+    """获取仪表盘统计数据（按用户权限过滤）"""
+    uid = user["user_id"]
 
-    # 检查缓存
-    if _stats_cache and time.time() - _stats_cache[1] < _STATS_CACHE_TTL:
-        return _stats_cache[0]
+    # 检查按用户缓存
+    if uid in _stats_cache:
+        cached_data, ts = _stats_cache[uid]
+        if time.time() - ts < _STATS_CACHE_TTL:
+            _stats_cache.move_to_end(uid)
+            return cached_data
+
+    # 构建用户过滤条件
+    scope_filter = build_user_scope_filter(user, PRReview)
 
     # 单次条件聚合查询（PRReview 表）
-    stats_row = (
-        await db.execute(
-            select(
-                func.count(PRReview.id).label("total"),
-                func.sum(case((PRReview.status == "completed", 1), else_=0)).label(
-                    "completed"
-                ),
-                func.sum(case((PRReview.status == "reviewing", 1), else_=0)).label(
-                    "reviewing"
-                ),
-                func.sum(case((PRReview.status == "pending", 1), else_=0)).label(
-                    "pending"
-                ),
-                func.sum(case((PRReview.status == "failed", 1), else_=0)).label(
-                    "failed"
-                ),
-                func.sum(
-                    case(
-                        (
-                            and_(
-                                PRReview.status == "completed",
-                                PRReview.decision == "approve",
-                            ),
-                            1,
-                        ),
-                        else_=0,
-                    )
-                ).label("approved"),
-                func.sum(
-                    case(
-                        (
-                            and_(
-                                PRReview.status == "completed",
-                                PRReview.decision == "request_changes",
-                            ),
-                            1,
-                        ),
-                        else_=0,
-                    )
-                ).label("changes_requested"),
-                func.avg(
-                    case(
-                        (PRReview.status == "completed", PRReview.overall_score),
-                        else_=None,
-                    )
-                ).label("avg_score"),
-                # Token 消耗仅统计已完成的审查
-                func.coalesce(
-                    func.sum(
-                        case(
-                            (PRReview.status == "completed", PRReview.prompt_tokens),
-                            else_=0,
-                        )
+    stats_query = select(
+        func.count(PRReview.id).label("total"),
+        func.sum(case((PRReview.status == "completed", 1), else_=0)).label(
+            "completed"
+        ),
+        func.sum(case((PRReview.status == "reviewing", 1), else_=0)).label(
+            "reviewing"
+        ),
+        func.sum(case((PRReview.status == "pending", 1), else_=0)).label(
+            "pending"
+        ),
+        func.sum(case((PRReview.status == "failed", 1), else_=0)).label(
+            "failed"
+        ),
+        func.sum(
+            case(
+                (
+                    and_(
+                        PRReview.status == "completed",
+                        PRReview.decision == "approve",
                     ),
-                    0,
-                ).label("total_prompt_tokens"),
-                func.coalesce(
-                    func.sum(
-                        case(
-                            (PRReview.status == "completed", PRReview.completion_tokens),
-                            else_=0,
-                        )
-                    ),
-                    0,
-                ).label("total_completion_tokens"),
-                func.coalesce(
-                    func.sum(
-                        case(
-                            (PRReview.status == "completed", PRReview.estimated_cost),
-                            else_=0,
-                        )
-                    ),
-                    0,
-                ).label("total_estimated_cost"),
+                    1,
+                ),
+                else_=0,
             )
-        )
-    ).one()
+        ).label("approved"),
+        func.sum(
+            case(
+                (
+                    and_(
+                        PRReview.status == "completed",
+                        PRReview.decision == "request_changes",
+                    ),
+                    1,
+                ),
+                else_=0,
+            )
+        ).label("changes_requested"),
+        func.avg(
+            case(
+                (PRReview.status == "completed", PRReview.overall_score),
+                else_=None,
+            )
+        ).label("avg_score"),
+        # Token 消耗仅统计已完成的审查
+        func.coalesce(
+            func.sum(
+                case(
+                    (PRReview.status == "completed", PRReview.prompt_tokens),
+                    else_=0,
+                )
+            ),
+            0,
+        ).label("total_prompt_tokens"),
+        func.coalesce(
+            func.sum(
+                case(
+                    (PRReview.status == "completed", PRReview.completion_tokens),
+                    else_=0,
+                )
+            ),
+            0,
+        ).label("total_completion_tokens"),
+        func.coalesce(
+            func.sum(
+                case(
+                    (PRReview.status == "completed", PRReview.estimated_cost),
+                    else_=0,
+                )
+            ),
+            0,
+        ).label("total_estimated_cost"),
+    )
+    if scope_filter is not None:
+        stats_query = stats_query.where(scope_filter)
 
-    # 评论总数查询
-    comment_count = (
-        await db.execute(select(func.count(ReviewComment.id)))
-    ).scalar() or 0
+    stats_row = (await db.execute(stats_query)).one()
+
+    # 评论总数查询（通过 join PRReview 进行用户过滤）
+    comment_query = select(func.count(ReviewComment.id))
+    if scope_filter is not None:
+        comment_query = comment_query.join(
+            PRReview, ReviewComment.review_id == PRReview.id
+        ).where(scope_filter)
+
+    comment_count = (await db.execute(comment_query)).scalar() or 0
 
     avg_score = round(stats_row.avg_score, 1) if stats_row.avg_score else 0
 
@@ -278,7 +298,10 @@ async def get_stats(
         "total_estimated_cost": int(stats_row.total_estimated_cost or 0),
     }
 
-    _stats_cache = (result, time.time())
+    # LRU 淘汰 + 写入缓存
+    if len(_stats_cache) >= _MAX_STATS_CACHE_SIZE:
+        _stats_cache.popitem(last=False)
+    _stats_cache[uid] = (result, time.time())
     return result
 
 
@@ -288,7 +311,7 @@ async def get_recent_reviews(
     user: dict = Depends(require_auth),
 ):
     """获取最近审查列表（最近 10 条）"""
-    reviews = await _fetch_recent_reviews(db)
+    reviews = await _fetch_recent_reviews(db, user)
     return [_serialize_review(r) for r in reviews]
 
 
@@ -299,7 +322,7 @@ async def get_recent_reviews_html(
     user: dict = Depends(require_auth),
 ) -> HTMLResponse:
     """返回最近审查的 HTML 片段（供仪表盘 HTMX 加载）"""
-    reviews = await _fetch_recent_reviews(db)
+    reviews = await _fetch_recent_reviews(db, user)
     return templates.TemplateResponse(
         "components/recent_reviews.html",
         {
@@ -314,29 +337,36 @@ async def get_chart_data(
     db: AsyncSession = Depends(get_db),
     user: dict = Depends(require_auth),
 ):
-    """获取仪表盘图表数据"""
-    global _chart_cache
+    """获取仪表盘图表数据（按用户权限过滤）"""
+    uid = user["user_id"]
 
-    # 检查缓存
-    if _chart_cache and time.time() - _chart_cache[1] < _CHART_CACHE_TTL:
-        return _chart_cache[0]
+    # 检查按用户缓存
+    if uid in _chart_cache:
+        cached_data, ts = _chart_cache[uid]
+        if time.time() - ts < _CHART_CACHE_TTL:
+            _chart_cache.move_to_end(uid)
+            return cached_data
 
     now = datetime.utcnow()
     thirty_days_ago = now - timedelta(days=30)
 
+    # 构建用户过滤条件
+    scope_filter = build_user_scope_filter(user, PRReview)
+
     # 1. 审查趋势（最近 30 天）
-    trend_rows = (
-        await db.execute(
-            select(
-                func.date(PRReview.created_at).label("day"),
-                PRReview.status,
-                func.count(PRReview.id).label("cnt"),
-            )
-            .where(PRReview.created_at >= thirty_days_ago)
-            .group_by(func.date(PRReview.created_at), PRReview.status)
-            .order_by(func.date(PRReview.created_at))
+    trend_query = (
+        select(
+            func.date(PRReview.created_at).label("day"),
+            PRReview.status,
+            func.count(PRReview.id).label("cnt"),
         )
-    ).all()
+        .where(PRReview.created_at >= thirty_days_ago)
+        .group_by(func.date(PRReview.created_at), PRReview.status)
+        .order_by(func.date(PRReview.created_at))
+    )
+    if scope_filter is not None:
+        trend_query = trend_query.where(scope_filter)
+    trend_rows = (await db.execute(trend_query)).all()
 
     # 构建连续日期标签
     labels = []
@@ -360,13 +390,14 @@ async def get_chart_data(
                     failed_data[idx] = row.cnt
 
     # 2. 决策分布
-    decision_rows = (
-        await db.execute(
-            select(PRReview.decision, func.count(PRReview.id).label("cnt"))
-            .where(PRReview.status == "completed", PRReview.decision.isnot(None))
-            .group_by(PRReview.decision)
-        )
-    ).all()
+    decision_query = (
+        select(PRReview.decision, func.count(PRReview.id).label("cnt"))
+        .where(PRReview.status == "completed", PRReview.decision.isnot(None))
+        .group_by(PRReview.decision)
+    )
+    if scope_filter is not None:
+        decision_query = decision_query.where(scope_filter)
+    decision_rows = (await db.execute(decision_query)).all()
 
     decision_labels = []
     decision_counts = []
@@ -382,33 +413,35 @@ async def get_chart_data(
         decision_counts.append(row.cnt)
 
     # 3. 仓库排行 Top 10
-    repo_rows = (
-        await db.execute(
-            select(PRReview.repo_name, func.count(PRReview.id).label("cnt"))
-            .group_by(PRReview.repo_name)
-            .order_by(desc(func.count(PRReview.id)))
-            .limit(10)
-        )
-    ).all()
+    repo_query = (
+        select(PRReview.repo_name, func.count(PRReview.id).label("cnt"))
+        .group_by(PRReview.repo_name)
+        .order_by(desc(func.count(PRReview.id)))
+        .limit(10)
+    )
+    if scope_filter is not None:
+        repo_query = repo_query.where(scope_filter)
+    repo_rows = (await db.execute(repo_query)).all()
 
     repo_labels = [r.repo_name for r in repo_rows]
     repo_counts = [r.cnt for r in repo_rows]
 
     # 4. Token 消耗趋势（最近 30 天，仅已完成的审查）
-    token_rows = (
-        await db.execute(
-            select(
-                func.date(PRReview.created_at).label("day"),
-                (
-                    func.coalesce(func.sum(PRReview.prompt_tokens), 0)
-                    + func.coalesce(func.sum(PRReview.completion_tokens), 0)
-                ).label("tokens"),
-            )
-            .where(PRReview.created_at >= thirty_days_ago)
-            .where(PRReview.status == "completed")
-            .group_by(func.date(PRReview.created_at))
+    token_query = (
+        select(
+            func.date(PRReview.created_at).label("day"),
+            (
+                func.coalesce(func.sum(PRReview.prompt_tokens), 0)
+                + func.coalesce(func.sum(PRReview.completion_tokens), 0)
+            ).label("tokens"),
         )
-    ).all()
+        .where(PRReview.created_at >= thirty_days_ago)
+        .where(PRReview.status == "completed")
+        .group_by(func.date(PRReview.created_at))
+    )
+    if scope_filter is not None:
+        token_query = token_query.where(scope_filter)
+    token_rows = (await db.execute(token_query)).all()
 
     token_data = [0] * len(labels)
     for row in token_rows:
@@ -437,14 +470,17 @@ async def get_chart_data(
         },
     }
 
-    _chart_cache = (result, time.time())
+    # LRU 淘汰 + 写入缓存
+    if len(_chart_cache) >= _MAX_CHART_CACHE_SIZE:
+        _chart_cache.popitem(last=False)
+    _chart_cache[uid] = (result, time.time())
     return result
 
 
 @router.post("/api/webui/cache/refresh")
 async def refresh_cache(user: dict = Depends(require_auth)):
-    """手动刷新仪表盘缓存"""
-    global _stats_cache, _chart_cache
-    _stats_cache = None
-    _chart_cache = None
+    """手动刷新仪表盘缓存（仅清除当前用户）"""
+    uid = user["user_id"]
+    _stats_cache.pop(uid, None)
+    _chart_cache.pop(uid, None)
     return {"status": "ok"}
