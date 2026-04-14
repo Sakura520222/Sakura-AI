@@ -17,7 +17,9 @@ class LabelRecommender:
     负责根据 PR 的代码变更推荐合适的标签。
     """
 
-    def __init__(self, api_client, prompt_builder, result_parser, model: str | None = None):
+    def __init__(
+        self, api_client, prompt_builder, result_parser, model: str | None = None
+    ):
         """初始化标签推荐器
 
         Args:

@@ -205,8 +205,11 @@ async def pr_detail_page(
     review = (await db.execute(query)).scalar_one_or_none()
     if not review:
         return error_page(
-            request, status_code=404, title="未找到",
-            message="审查记录不存在或无权访问", user=user,
+            request,
+            status_code=404,
+            title="未找到",
+            message="审查记录不存在或无权访问",
+            user=user,
         )
 
     # 查询关联评论
@@ -265,8 +268,11 @@ async def pr_files_page(
     review = (await db.execute(query)).scalar_one_or_none()
     if not review:
         return error_page(
-            request, status_code=404, title="未找到",
-            message="审查记录不存在或无权访问", user=user,
+            request,
+            status_code=404,
+            title="未找到",
+            message="审查记录不存在或无权访问",
+            user=user,
         )
 
     return templates.TemplateResponse(

@@ -369,17 +369,13 @@ class ReviewWorker:
                         from backend.services.pr_issue_linker import PRIssueLinker
 
                         issue_emb_service = IssueEmbeddingService()
-                        max_links = getattr(
-                            settings, "semantic_issue_max_links", 5
-                        )
+                        max_links = getattr(settings, "semantic_issue_max_links", 5)
                         threshold = getattr(
                             settings, "semantic_issue_similarity_threshold", 0.65
                         )
 
                         # 已显式引用的 issues（排除）
-                        explicit_numbers = context.get(
-                            "linked_issue_numbers", []
-                        )
+                        explicit_numbers = context.get("linked_issue_numbers", [])
                         # 排除 PR 自身编号（PR 在 GitHub 中也是 issue）
                         explicit_numbers = list(
                             set(explicit_numbers + [pr_info["pr_number"]])
@@ -418,9 +414,7 @@ class ReviewWorker:
                                     pr_title=pr_info.get("title", ""),
                                     pr_body=pr_info.get("body", ""),
                                     candidates=related_issues,
-                                    pr_summary=context.get(
-                                        "pr_summary", ""
-                                    ),
+                                    pr_summary=context.get("pr_summary", ""),
                                     pr_files=file_list,
                                 )
                             )
@@ -438,14 +432,10 @@ class ReviewWorker:
                                 current_body, related_issues
                             )
                             if new_body != current_body:
-                                await asyncio.to_thread(
-                                    latest_pr.edit, body=new_body
-                                )
+                                await asyncio.to_thread(latest_pr.edit, body=new_body)
 
                             # 注入上下文
-                            context["semantically_linked_issues"] = (
-                                related_issues
-                            )
+                            context["semantically_linked_issues"] = related_issues
 
                             # 保存到数据库
                             AsyncSession = get_async_session()
@@ -453,14 +443,10 @@ class ReviewWorker:
                                 for issue in related_issues:
                                     link = PRIssueLink(
                                         pr_id=pr_info["pr_number"],
-                                        repo_name=pr_info[
-                                            "repo_full_name"
-                                        ],
+                                        repo_name=pr_info["repo_full_name"],
                                         issue_number=issue["number"],
                                         link_type="semantic",
-                                        reference_text=(
-                                            f"Resolves #{issue['number']}"
-                                        ),
+                                        reference_text=(f"Resolves #{issue['number']}"),
                                         inference_reason=(
                                             f"similarity: {issue['similarity']}"
                                         ),

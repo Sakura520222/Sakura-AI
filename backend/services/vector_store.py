@@ -288,9 +288,7 @@ class VectorStore:
         try:
             collection = await self.get_or_create_collection(repo_full_name)
             collection.delete(ids=doc_ids)
-            logger.debug(
-                f"已从 {repo_full_name} 删除 {len(doc_ids)} 个文档"
-            )
+            logger.debug(f"已从 {repo_full_name} 删除 {len(doc_ids)} 个文档")
             return True
         except Exception as e:
             logger.warning(f"删除文档失败 (repo: {repo_full_name}): {e}")
@@ -329,9 +327,7 @@ class VectorStore:
                 metadatas=metadatas,
             )
 
-            logger.debug(
-                f"已 upsert {len(documents)} 个文档到 {repo_full_name}"
-            )
+            logger.debug(f"已 upsert {len(documents)} 个文档到 {repo_full_name}")
             return len(documents)
         except Exception as e:
             logger.error(f"❌ upsert 文档失败 (repo: {repo_full_name}): {e}")

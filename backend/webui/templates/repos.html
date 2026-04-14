@@ -125,5 +125,55 @@ window.addEventListener('sse:index-issues', function(e) {
     }));
     refreshRepoList();
 });
+
+// 触发仓库扫描
+function triggerScan(btn, repoName, csrfToken) {
+    if (btn.disabled) return;
+    if (!confirm('确认扫描仓库 ' + repoName + '？')) return;
+
+    btn.disabled = true;
+    btn.dataset.originalText = btn.textContent;
+    btn.textContent = '扫描中...';
+
+    var encodedName = encodeURIComponent(repoName).replace(/%2F/g, '/');
+    fetch('/webui/repos/' + encodedName + '/scan', {
+        method: 'POST',
+        headers: { 'X-CSRF-Token': csrfToken }
+    })
+    .then(function(r) {
+        if (!r.ok) {
+            return r.json().catch(function() { return {}; }).then(function(data) {
+                throw new Error(data.message || data.detail || '请求失败 (' + r.status + ')');
+            });
+        }
+        return r.json();
+    })
+    .then(function(data) {
+        if (!data.success) {
+            btn.disabled = false;
+            btn.textContent = btn.dataset.originalText;
+            window.dispatchEvent(new CustomEvent('show-toast', { detail: { message: data.message || '扫描失败', type: 'error' } }));
+        } else {
+            window.dispatchEvent(new CustomEvent('show-toast', { detail: { message: data.message, type: 'success' } }));
+        }
+    })
+    .catch(function(err) {
+        btn.disabled = false;
+        btn.textContent = btn.dataset.originalText;
+        window.dispatchEvent(new CustomEvent('show-toast', { detail: { message: err.message || '请求失败', type: 'error' } }));
+    });
+}
+
+// SSE: 扫描完成
+window.addEventListener('sse:scan-completed', function(e) {
+    var detail = e.detail;
+    var msg = detail.success
+        ? '仓库扫描完成: ' + detail.repo_name
+        : '仓库扫描失败: ' + detail.repo_name + ' - ' + (detail.error || '未知错误');
+    window.dispatchEvent(new CustomEvent('show-toast', {
+        detail: { message: msg, type: detail.success ? 'success' : 'error' }
+    }));
+    refreshRepoList();
+});
 </script>
 {% endblock %}

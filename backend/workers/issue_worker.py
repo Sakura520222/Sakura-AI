@@ -161,13 +161,9 @@ class IssueWorker:
                                 body=summary,
                                 state=issue_info.get("state", "open"),
                             )
-                            logger.info(
-                                f"[{task_id}] 已使用 AI 摘要更新 Issue 向量"
-                            )
+                            logger.info(f"[{task_id}] 已使用 AI 摘要更新 Issue 向量")
                     except Exception as e:
-                        logger.warning(
-                            f"[{task_id}] 使用 AI 摘要更新向量失败: {e}"
-                        )
+                        logger.warning(f"[{task_id}] 使用 AI 摘要更新向量失败: {e}")
 
                     # 6. 重复检测（优先使用 AI 摘要）
                     if settings.issue_detect_duplicates:
@@ -245,7 +241,9 @@ class IssueWorker:
                                 if cfg:
                                     issue_auto_create_labels = cfg.key_value == "true"
                     except Exception as e:
-                        logger.warning(f"[{task_id}] 读取 DB 配置 issue_auto_create_labels 失败，使用默认值: {e}")
+                        logger.warning(
+                            f"[{task_id}] 读取 DB 配置 issue_auto_create_labels 失败，使用默认值: {e}"
+                        )
 
                     if issue_auto_create_labels:
                         try:
@@ -290,7 +288,9 @@ class IssueWorker:
                                 if cfg:
                                     issue_auto_assign = cfg.key_value == "true"
                     except Exception as e:
-                        logger.warning(f"[{task_id}] 读取 DB 配置 issue_auto_assign 失败，使用默认值: {e}")
+                        logger.warning(
+                            f"[{task_id}] 读取 DB 配置 issue_auto_assign 失败，使用默认值: {e}"
+                        )
 
                     if issue_auto_assign:
                         try:

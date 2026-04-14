@@ -74,9 +74,7 @@ class PromptBuilder:
         pr_summary = context.get("pr_summary")
         if pr_summary:
             message_parts.append("## PR 变更总结")
-            message_parts.append(
-                "以下是该 PR 的 AI 生成变更总结，供参考：\n"
-            )
+            message_parts.append("以下是该 PR 的 AI 生成变更总结，供参考：\n")
             message_parts.append(pr_summary)
             message_parts.append("")
 

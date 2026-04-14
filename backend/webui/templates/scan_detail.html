@@ -1,0 +1,184 @@
+{% extends "base.html" %}
+
+{% block title %}扫描详情 - {{ scan.repo_name }} - Sakura AI Reviewer{% endblock %}
+
+{% block content %}
+<div class="space-y-6">
+    <!-- 返回链接 -->
+    <a href="/webui/scans/" class="inline-flex items-center gap-1 text-sm text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200">
+        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7"/>
+        </svg>
+        返回扫描列表
+    </a>
+
+    <!-- 扫描概览 -->
+    <div class="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 p-6">
+        <div class="flex items-start justify-between">
+            <div>
+                <h1 class="text-xl font-bold">{{ scan.repo_name }}</h1>
+                <p class="mt-1 text-sm text-gray-500 dark:text-gray-400">
+                    {% if scan.trigger_type == 'scheduled' %}定时扫描{% else %}手动触发{% endif %}
+                    {% if scan.triggered_by %} · 操作人: {{ scan.triggered_by }}{% endif %}
+                </p>
+            </div>
+            <!-- 状态标签 -->
+            <div>
+                {% if scan.status == 'completed' %}
+                <span class="inline-flex items-center gap-1 px-3 py-1 rounded-full text-sm font-medium bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-400">
+                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/></svg>
+                    已完成
+                </span>
+                {% elif scan.status == 'failed' %}
+                <span class="inline-flex items-center gap-1 px-3 py-1 rounded-full text-sm font-medium bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-400">失败</span>
+                {% elif scan.status in ('indexing', 'analyzing', 'reporting') %}
+                <span class="inline-flex items-center gap-1 px-3 py-1 rounded-full text-sm font-medium bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-400">
+                    <svg class="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg>
+                    {{ scan.current_phase or '进行中' }}
+                </span>
+                {% else %}
+                <span class="inline-flex items-center gap-1 px-3 py-1 rounded-full text-sm font-medium bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-400">{{ scan.status }}</span>
+                {% endif %}
+            </div>
+        </div>
+
+        <!-- 详情网格 -->
+        <div class="mt-4 grid grid-cols-2 sm:grid-cols-4 gap-4 text-sm">
+            <div>
+                <span class="text-gray-500 dark:text-gray-400">Commit</span>
+                <p class="font-mono mt-0.5">{{ scan.commit_sha[:7] if scan.commit_sha else '-' }}</p>
+            </div>
+            <div>
+                <span class="text-gray-500 dark:text-gray-400">扫描文件</span>
+                <p class="mt-0.5">{{ scan.code_file_count or 0 }}</p>
+            </div>
+            <div>
+                <span class="text-gray-500 dark:text-gray-400">Token 消耗</span>
+                <p class="mt-0.5">{{ (scan.prompt_tokens or 0) + (scan.completion_tokens or 0) }}</p>
+            </div>
+            <div>
+                <span class="text-gray-500 dark:text-gray-400">扫描时间</span>
+                <p class="mt-0.5">{{ scan.created_at.strftime('%Y-%m-%d %H:%M') if scan.created_at else '-' }}</p>
+            </div>
+        </div>
+
+        <!-- 健康评分 -->
+        {% if scan.overall_health_score is not none %}
+        <div class="mt-4 pt-4 border-t border-gray-200 dark:border-gray-700">
+            <div class="flex items-center gap-3">
+                <span class="text-sm text-gray-500 dark:text-gray-400">健康评分</span>
+                <div class="flex-1 bg-gray-200 dark:bg-gray-700 rounded-full h-3">
+                    <div class="h-3 rounded-full transition-all"
+                         style="width: {{ scan.overall_health_score }}%;
+                                background-color: {% if scan.overall_health_score >= 80 %}#22c55e{% elif scan.overall_health_score >= 60 %}#eab308{% else %}#ef4444{% endif %}">
+                    </div>
+                </div>
+                <span class="text-lg font-bold">{{ scan.overall_health_score }}/100</span>
+            </div>
+        </div>
+        {% endif %}
+
+        <!-- 错误信息 -->
+        {% if scan.error_message %}
+        <div class="mt-4 p-3 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg text-sm text-red-700 dark:text-red-400">
+            <strong>错误:</strong> {{ scan.error_message[:500] }}
+        </div>
+        {% endif %}
+    </div>
+
+    <!-- 问题统计 -->
+    {% if scan.status == 'completed' %}
+    <div class="grid grid-cols-2 sm:grid-cols-4 gap-4">
+        <div class="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 p-4 text-center">
+            <p class="text-2xl font-bold text-red-500">{{ scan.critical_count or 0 }}</p>
+            <p class="text-xs text-gray-500 mt-1">Critical</p>
+        </div>
+        <div class="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 p-4 text-center">
+            <p class="text-2xl font-bold text-yellow-500">{{ scan.major_count or 0 }}</p>
+            <p class="text-xs text-gray-500 mt-1">Major</p>
+        </div>
+        <div class="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 p-4 text-center">
+            <p class="text-2xl font-bold text-orange-500">{{ scan.minor_count or 0 }}</p>
+            <p class="text-xs text-gray-500 mt-1">Minor</p>
+        </div>
+        <div class="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 p-4 text-center">
+            <p class="text-2xl font-bold text-blue-500">{{ scan.suggestion_count or 0 }}</p>
+            <p class="text-xs text-gray-500 mt-1">Suggestion</p>
+        </div>
+    </div>
+    {% endif %}
+
+    <!-- GitHub Issue 链接 -->
+    {% if scan.report_issue_url %}
+    <div class="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 p-4 flex items-center gap-3">
+        <svg class="w-5 h-5 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14"/>
+        </svg>
+        <span class="text-sm">扫描报告 Issue:</span>
+        <a href="{{ scan.report_issue_url }}" target="_blank" class="text-sm text-pink-500 hover:text-pink-600 font-medium">
+            #{{ scan.report_issue_number }}
+        </a>
+    </div>
+    {% endif %}
+
+    <!-- Findings 列表 -->
+    {% if findings %}
+    {% for sev in ['critical', 'major', 'minor', 'suggestion'] %}
+    {% set items = grouped_findings.get(sev, []) %}
+    {% if items %}
+    <div class="space-y-3">
+        <h2 class="text-lg font-semibold flex items-center gap-2">
+            {% if sev == 'critical' %}
+            <span class="w-3 h-3 rounded-full bg-red-500"></span> Critical
+            {% elif sev == 'major' %}
+            <span class="w-3 h-3 rounded-full bg-yellow-500"></span> Major
+            {% elif sev == 'minor' %}
+            <span class="w-3 h-3 rounded-full bg-orange-500"></span> Minor
+            {% else %}
+            <span class="w-3 h-3 rounded-full bg-blue-500"></span> Suggestion
+            {% endif %}
+            <span class="text-sm text-gray-500 font-normal">({{ items|length }})</span>
+        </h2>
+
+        {% for f in items %}
+        <div class="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 p-4">
+            <div class="flex items-start justify-between gap-3">
+                <div class="flex-1">
+                    <h3 class="font-medium text-sm">{{ f.title }}</h3>
+                    {% if f.file_path %}
+                    <p class="text-xs text-gray-500 dark:text-gray-400 mt-1 font-mono">
+                        {{ f.file_path }}{% if f.line_start %}:{{ f.line_start }}{% endif %}
+                    </p>
+                    {% endif %}
+                </div>
+                <div class="flex items-center gap-2 flex-shrink-0">
+                    <span class="px-2 py-0.5 rounded text-xs font-medium bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-400">
+                        {{ f.category }}
+                    </span>
+                    {% if f.confidence is not none %}
+                    <span class="text-xs text-gray-400">{{ f.confidence }}%</span>
+                    {% endif %}
+                </div>
+            </div>
+            <p class="mt-2 text-sm text-gray-600 dark:text-gray-300">{{ f.description }}</p>
+            {% if f.suggestion %}
+            <div class="mt-2 p-2 bg-green-50 dark:bg-green-900/20 rounded-lg text-sm text-green-700 dark:text-green-400">
+                <strong>建议:</strong> {{ f.suggestion }}
+            </div>
+            {% endif %}
+        </div>
+        {% endfor %}
+    </div>
+    {% endif %}
+    {% endfor %}
+    {% elif scan.status == 'completed' %}
+    <div class="text-center py-12 text-gray-400">
+        <svg class="w-12 h-12 mx-auto text-green-300 dark:text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"/>
+        </svg>
+        <p class="mt-3 text-lg font-medium text-green-500">未发现问题</p>
+        <p class="mt-1 text-sm">该仓库代码质量良好</p>
+    </div>
+    {% endif %}
+</div>
+{% endblock %}

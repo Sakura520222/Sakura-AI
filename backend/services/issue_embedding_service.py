@@ -83,9 +83,7 @@ class IssueEmbeddingService:
         # 检查已有缓存
         count = await self.vector_store.get_collection_count(collection_key)
         if count > 0 and not force:
-            logger.debug(
-                f"Issue 向量库已存在 ({count} 条): {repo_owner}/{repo_name}"
-            )
+            logger.debug(f"Issue 向量库已存在 ({count} 条): {repo_owner}/{repo_name}")
             return {"status": "cached", "count": count}
 
         if force:
@@ -110,8 +108,7 @@ class IssueEmbeddingService:
         # 写入 ChromaDB
         await self.vector_store.add_documents(collection_key, documents)
         logger.info(
-            f"✅ 已索引 {len(documents)} 个 issues "
-            f"到向量库: {repo_owner}/{repo_name}"
+            f"✅ 已索引 {len(documents)} 个 issues 到向量库: {repo_owner}/{repo_name}"
         )
         return {"status": "indexed", "count": len(documents)}
 
@@ -124,18 +121,14 @@ class IssueEmbeddingService:
     ) -> Dict[str, Any]:
         """增量重索引：补充缺失 issues，已有文档保留 AI 摘要并更新 state"""
         # 1. 获取所有 issues（open + closed）
-        issues = await asyncio.to_thread(
-            self._fetch_all_issues, repo_owner, repo_name
-        )
+        issues = await asyncio.to_thread(self._fetch_all_issues, repo_owner, repo_name)
         if not issues:
             return {"status": "no_issues", "count": existing_count}
 
         issue_map = {issue.number: issue for issue in issues}
 
         # 2. 获取已有文档 ID
-        collection = await self.vector_store.get_or_create_collection(
-            collection_key
-        )
+        collection = await self.vector_store.get_or_create_collection(collection_key)
         existing_ids = set()
         if existing_count > 0:
             # 仅获取 ids，避免大量 issues 时一次性加载 metadatas 导致 OOM
@@ -221,9 +214,7 @@ class IssueEmbeddingService:
         state_updates: list[tuple[str, Any]],
     ) -> int:
         """批量更新已有文档的 state metadata"""
-        collection = await self.vector_store.get_or_create_collection(
-            collection_key
-        )
+        collection = await self.vector_store.get_or_create_collection(collection_key)
 
         # 批量获取所有需要更新的文档
         doc_ids = [doc_id for doc_id, _ in state_updates]
@@ -246,18 +237,18 @@ class IssueEmbeddingService:
                 continue
 
             new_metadata = {**old_metadata, "state": issue.state}
-            to_update.append({
-                "id": doc_id,
-                "content": all_existing["documents"][i],
-                "embedding": all_existing["embeddings"][i],
-                "metadata": new_metadata,
-            })
+            to_update.append(
+                {
+                    "id": doc_id,
+                    "content": all_existing["documents"][i],
+                    "embedding": all_existing["embeddings"][i],
+                    "metadata": new_metadata,
+                }
+            )
 
         if to_update:
             try:
-                await self.vector_store.upsert_documents(
-                    collection_key, to_update
-                )
+                await self.vector_store.upsert_documents(collection_key, to_update)
             except Exception as e:
                 logger.warning(f"批量更新 issue state 失败: {e}")
                 return 0
@@ -282,15 +273,17 @@ class IssueEmbeddingService:
 
             text = f"{title}\n{body}"
             texts.append(text)
-            documents.append({
-                "id": f"{self.ISSUE_ID_PREFIX}{issue.number}",
-                "content": text,
-                "metadata": {
-                    "number": str(issue.number),
-                    "title": title,
-                    "state": issue.state,
-                },
-            })
+            documents.append(
+                {
+                    "id": f"{self.ISSUE_ID_PREFIX}{issue.number}",
+                    "content": text,
+                    "metadata": {
+                        "number": str(issue.number),
+                        "title": title,
+                        "state": issue.state,
+                    },
+                }
+            )
 
         if not texts:
             return 0
@@ -356,14 +349,11 @@ class IssueEmbeddingService:
         """使用 Reranker 对候选进行精排"""
         # 检查 Reranker 是否启用
         if self.reranker_service.client is None:
-            return self._filter_by_cosine(
-                candidates, top_k, threshold, exclude_set
-            )
+            return self._filter_by_cosine(candidates, top_k, threshold, exclude_set)
 
         # 构造 reranker 输入格式
         docs_for_rerank = [
-            {"content": c["content"], "metadata": c["metadata"]}
-            for c in candidates
+            {"content": c["content"], "metadata": c["metadata"]} for c in candidates
         ]
 
         reranked_docs = await self.reranker_service.rerank(
@@ -376,13 +366,15 @@ class IssueEmbeddingService:
             number = self._safe_parse_number(doc["metadata"].get("number"))
             if number is None or number in exclude_set:
                 continue
-            results.append({
-                "number": number,
-                "title": doc["metadata"].get("title", ""),
-                "content": doc.get("content", ""),
-                "similarity": "reranked",
-                "state": doc["metadata"].get("state", "open"),
-            })
+            results.append(
+                {
+                    "number": number,
+                    "title": doc["metadata"].get("title", ""),
+                    "content": doc.get("content", ""),
+                    "similarity": "reranked",
+                    "state": doc["metadata"].get("state", "open"),
+                }
+            )
             if len(results) >= top_k:
                 break
 
@@ -405,13 +397,15 @@ class IssueEmbeddingService:
             similarity = max(0.0, 1.0 - c["distance"])
             if similarity < threshold:
                 continue
-            results.append({
-                "number": number,
-                "title": c["metadata"].get("title", ""),
-                "content": c.get("content", ""),
-                "similarity": round(similarity, 3),
-                "state": c["metadata"].get("state", "open"),
-            })
+            results.append(
+                {
+                    "number": number,
+                    "title": c["metadata"].get("title", ""),
+                    "content": c.get("content", ""),
+                    "similarity": round(similarity, 3),
+                    "state": c["metadata"].get("state", "open"),
+                }
+            )
             if len(results) >= top_k:
                 break
         return results
@@ -442,12 +436,8 @@ class IssueEmbeddingService:
                 },
             }
 
-            await self.vector_store.upsert_documents(
-                collection_key, [document]
-            )
-            logger.debug(
-                f"已更新 issue 向量: {repo_owner}/{repo_name}#{issue_number}"
-            )
+            await self.vector_store.upsert_documents(collection_key, [document])
+            logger.debug(f"已更新 issue 向量: {repo_owner}/{repo_name}#{issue_number}")
             return True
         except Exception as e:
             logger.warning(
@@ -503,8 +493,7 @@ class IssueEmbeddingService:
                     f"{len(content)}, 前100字: {content[:100]!r}"
                 )
                 issues_text += (
-                    f"\n### Issue #{issue['number']}: {issue['title']}\n"
-                    f"{content}\n"
+                    f"\n### Issue #{issue['number']}: {issue['title']}\n{content}\n"
                 )
 
             # 构建 PR 上下文
@@ -529,7 +518,7 @@ class IssueEmbeddingService:
                 "仅在确实无法确认因果关系时才不关联。\n\n"
                 '返回 JSON: {"verified": [issue_number, ...], '
                 '"reasons": {"编号": "一句话说明为什么关联或不关联"}}\n'
-                "如果都不关联，返回 {\"verified\": [], \"reasons\": {}}\n"
+                '如果都不关联，返回 {"verified": [], "reasons": {}}\n'
                 "只返回 JSON，不要其他文字。"
             )
 
@@ -565,9 +554,7 @@ class IssueEmbeddingService:
                 return candidates
 
             # 过滤候选
-            verified = [
-                c for c in candidates if c["number"] in verified_numbers
-            ]
+            verified = [c for c in candidates if c["number"] in verified_numbers]
 
             filtered_count = len(candidates) - len(verified)
             if filtered_count > 0:
@@ -623,9 +610,7 @@ class IssueEmbeddingService:
                         pass
                     start = None
 
-        logger.warning(
-            f"解析 AI 验证响应失败，前200字: {content[:200]!r}"
-        )
+        logger.warning(f"解析 AI 验证响应失败，前200字: {content[:200]!r}")
         return None
 
     async def remove_issue(
@@ -636,9 +621,7 @@ class IssueEmbeddingService:
             collection_key = self._collection_key(repo_owner, repo_name)
             doc_id = f"{self.ISSUE_ID_PREFIX}{issue_number}"
             await self.vector_store.delete_documents(collection_key, [doc_id])
-            logger.debug(
-                f"已删除 issue 向量: {repo_owner}/{repo_name}#{issue_number}"
-            )
+            logger.debug(f"已删除 issue 向量: {repo_owner}/{repo_name}#{issue_number}")
             return True
         except Exception as e:
             logger.warning(
@@ -679,12 +662,14 @@ class IssueEmbeddingService:
 
             await self.vector_store.upsert_documents(
                 collection_key,
-                [{
-                    "id": doc_id,
-                    "content": old_content,
-                    "embedding": old_embedding,
-                    "metadata": new_metadata,
-                }],
+                [
+                    {
+                        "id": doc_id,
+                        "content": old_content,
+                        "embedding": old_embedding,
+                        "metadata": new_metadata,
+                    }
+                ],
             )
             logger.debug(
                 f"已标记 issue 为 closed: {repo_owner}/{repo_name}#{issue_number}"
@@ -692,34 +677,31 @@ class IssueEmbeddingService:
             return True
         except Exception as e:
             logger.warning(
-                f"标记 issue closed 失败: "
-                f"{repo_owner}/{repo_name}#{issue_number}: {e}"
+                f"标记 issue closed 失败: {repo_owner}/{repo_name}#{issue_number}: {e}"
             )
             return False
 
-    def _build_documents(
-        self, issues: list
-    ) -> tuple:
+    def _build_documents(self, issues: list) -> tuple:
         """从 PyGithub Issue 对象构建 ChromaDB 文档"""
         documents = []
         texts = []
         for issue in issues:
             text = f"{issue.title}\n{issue.body or ''}"
             texts.append(text)
-            documents.append({
-                "id": f"{self.ISSUE_ID_PREFIX}{issue.number}",
-                "content": text,
-                "metadata": {
-                    "number": str(issue.number),
-                    "title": issue.title,
-                    "state": issue.state,
-                },
-            })
+            documents.append(
+                {
+                    "id": f"{self.ISSUE_ID_PREFIX}{issue.number}",
+                    "content": text,
+                    "metadata": {
+                        "number": str(issue.number),
+                        "title": issue.title,
+                        "state": issue.state,
+                    },
+                }
+            )
         return documents, texts
 
-    def _fetch_all_open_issues(
-        self, repo_owner: str, repo_name: str
-    ) -> list:
+    def _fetch_all_open_issues(self, repo_owner: str, repo_name: str) -> list:
         """同步获取仓库所有 open issues（线程内调用，PyGithub 自动分页）
 
         注意：PyGithub 的 get_issues() 会同时返回 Issue 和 PR，
@@ -756,11 +738,13 @@ class IssueEmbeddingService:
 
         all_issues = []
         for state in states:
-            all_issues.extend([
-                issue
-                for issue in repo.get_issues(state=state)
-                if issue.pull_request is None
-            ])
+            all_issues.extend(
+                [
+                    issue
+                    for issue in repo.get_issues(state=state)
+                    if issue.pull_request is None
+                ]
+            )
 
         # 按 number 去重（open/closed 列表可能有重叠）
         seen: set[int] = set()

@@ -128,7 +128,9 @@ class GitHubAppClient:
         result = []
         for inst in installations:
             try:
-                logger.info(f"处理 installation: id={inst.id}, target_type={inst.target_type}")
+                logger.info(
+                    f"处理 installation: id={inst.id}, target_type={inst.target_type}"
+                )
                 repos = list(inst.get_repos())
                 logger.info(f"installation {inst.id} 有 {len(repos)} 个仓库")
                 # 从 html_url 解析 account_login，格式如：
@@ -151,7 +153,9 @@ class GitHubAppClient:
                     raw = getattr(inst, "raw_data", None) or getattr(
                         inst, "_rawData", {}
                     )
-                    account_info = raw.get("account", {}) if isinstance(raw, dict) else {}
+                    account_info = (
+                        raw.get("account", {}) if isinstance(raw, dict) else {}
+                    )
                     account_login = account_info.get("login", "")
 
                 result.append(
@@ -171,7 +175,9 @@ class GitHubAppClient:
                     }
                 )
             except Exception as e:
-                logger.warning(f"获取 installation {inst.id} 仓库失败: {e}", exc_info=True)
+                logger.warning(
+                    f"获取 installation {inst.id} 仓库失败: {e}", exc_info=True
+                )
         return result
 
     def get_installation_client(

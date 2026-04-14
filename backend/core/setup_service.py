@@ -280,9 +280,7 @@ class SetupService:
         async with async_session() as session:
             # 批量查询已存在的配置项
             result = await session.execute(
-                select(AppConfig).where(
-                    AppConfig.key_name.in_(list(items.keys()))
-                )
+                select(AppConfig).where(AppConfig.key_name.in_(list(items.keys())))
             )
             existing_map = {c.key_name: c for c in result.scalars().all()}
 

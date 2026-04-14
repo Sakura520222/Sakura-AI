@@ -205,25 +205,17 @@ class PRDependencyGraphService:
     # ==================== 内部方法 ====================
 
     @staticmethod
-    def _trim_files(
-        analysis: PRAnalysis, settings: Any
-    ) -> List[PRFileInfo]:
+    def _trim_files(analysis: PRAnalysis, settings: Any) -> List[PRFileInfo]:
         """大型 PR 裁剪：按变更量排序取 top N 文件"""
         files = [f for f in analysis.code_files if f.status != "deleted"]
         max_files = settings.pr_dependency_graph_max_files
         if len(files) > max_files:
-            files = sorted(files, key=lambda f: f.changes, reverse=True)[
-                :max_files
-            ]
-            logger.info(
-                f"PR 变更文件数超过限制，只分析 top {max_files} 个文件"
-            )
+            files = sorted(files, key=lambda f: f.changes, reverse=True)[:max_files]
+            logger.info(f"PR 变更文件数超过限制，只分析 top {max_files} 个文件")
         return files
 
     @staticmethod
-    def _fetch_file_contents_sync(
-        files: List[PRFileInfo], pr: Any
-    ) -> Dict[str, str]:
+    def _fetch_file_contents_sync(files: List[PRFileInfo], pr: Any) -> Dict[str, str]:
         """同步获取变更文件的代码内容"""
         import base64
 
@@ -384,9 +376,7 @@ class PRDependencyGraphService:
 
         # 移除依赖图标记区域
         depgraph_pattern = (
-            re.escape(self.START_MARKER)
-            + r".*?"
-            + re.escape(self.END_MARKER)
+            re.escape(self.START_MARKER) + r".*?" + re.escape(self.END_MARKER)
         )
         clean = re.sub(depgraph_pattern, "", body, flags=re.DOTALL)
 
@@ -419,11 +409,7 @@ class PRDependencyGraphService:
         if not body:
             return None
 
-        pattern = (
-            re.escape(self.START_MARKER)
-            + r"(.*?)"
-            + re.escape(self.END_MARKER)
-        )
+        pattern = re.escape(self.START_MARKER) + r"(.*?)" + re.escape(self.END_MARKER)
         match = re.search(pattern, body, flags=re.DOTALL)
         if not match:
             return None

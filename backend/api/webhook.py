@@ -16,6 +16,7 @@ from backend.workers.review_worker import submit_review_task
 from backend.services.telegram_service import TelegramService
 from backend.telegram.notifications import get_notification_sender
 from backend.core.config import get_settings
+
 settings = get_settings()
 
 
@@ -726,7 +727,11 @@ async def handle_issue_event(payload: Dict[str, Any]) -> JSONResponse:
         # closed 事件仅用于向量同步，不需要触发 Issue 分析
         if action == "closed":
             return JSONResponse(
-                content={"status": "accepted", "action": "closed", "sync": "vector_only"}
+                content={
+                    "status": "accepted",
+                    "action": "closed",
+                    "sync": "vector_only",
+                }
             )
 
         # 检查功能是否启用
@@ -903,9 +908,7 @@ async def handle_installation_event(payload: Dict[str, Any]) -> JSONResponse:
                 content={"status": "processed", "action": action},
             )
 
-        logger.info(
-            f"GitHub App installation 事件: {action}, account={account_login}"
-        )
+        logger.info(f"GitHub App installation 事件: {action}, account={account_login}")
 
         # 清除该用户的安装状态 Redis 缓存
         try:
@@ -934,5 +937,3 @@ async def handle_installation_event(payload: Dict[str, Any]) -> JSONResponse:
 async def health_check() -> JSONResponse:
     """健康检查端点"""
     return JSONResponse(content={"status": "healthy", "service": "Sakura AI Reviewer"})
-
-

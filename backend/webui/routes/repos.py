@@ -16,6 +16,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from backend.models.database import PRReview, IssueAnalysis
 from backend.webui.deps import (
     require_admin,
+    require_super_admin,
     get_db,
     get_templates,
     get_csrf_serializer,
@@ -48,7 +49,10 @@ async def _get_installations_with_stats(db: AsyncSession) -> list[dict]:
     global _installations_cache
     now = time.time()
 
-    if _installations_cache and (now - _installations_cache[1]) < _INSTALLATIONS_CACHE_TTL:
+    if (
+        _installations_cache
+        and (now - _installations_cache[1]) < _INSTALLATIONS_CACHE_TTL
+    ):
         data = _installations_cache[0]
     else:
         from backend.core.github_app import GitHubAppClient
@@ -72,30 +76,54 @@ async def _get_installations_with_stats(db: AsyncSession) -> list[dict]:
         # 去重，避免 IN 子句参数膨胀
         unique_keys = list(set(all_repo_keys))
 
-        pr_counts = (await db.execute(
-            select(PRReview.repo_owner, PRReview.repo_name, func.count(PRReview.id))
-            .where(tuple_(PRReview.repo_owner, PRReview.repo_name).in_(unique_keys))
-            .group_by(PRReview.repo_owner, PRReview.repo_name)
-        )).all()
-        issue_counts = (await db.execute(
-            select(IssueAnalysis.repo_owner, IssueAnalysis.repo_name,
-                   func.count(IssueAnalysis.id))
-            .where(tuple_(IssueAnalysis.repo_owner, IssueAnalysis.repo_name)
-                   .in_(unique_keys))
-            .group_by(IssueAnalysis.repo_owner, IssueAnalysis.repo_name)
-        )).all()
-        last_prs = (await db.execute(
-            select(PRReview.repo_owner, PRReview.repo_name, func.max(PRReview.created_at))
-            .where(tuple_(PRReview.repo_owner, PRReview.repo_name).in_(unique_keys))
-            .group_by(PRReview.repo_owner, PRReview.repo_name)
-        )).all()
-        last_issues = (await db.execute(
-            select(IssueAnalysis.repo_owner, IssueAnalysis.repo_name,
-                   func.max(IssueAnalysis.created_at))
-            .where(tuple_(IssueAnalysis.repo_owner, IssueAnalysis.repo_name)
-                   .in_(unique_keys))
-            .group_by(IssueAnalysis.repo_owner, IssueAnalysis.repo_name)
-        )).all()
+        pr_counts = (
+            await db.execute(
+                select(PRReview.repo_owner, PRReview.repo_name, func.count(PRReview.id))
+                .where(tuple_(PRReview.repo_owner, PRReview.repo_name).in_(unique_keys))
+                .group_by(PRReview.repo_owner, PRReview.repo_name)
+            )
+        ).all()
+        issue_counts = (
+            await db.execute(
+                select(
+                    IssueAnalysis.repo_owner,
+                    IssueAnalysis.repo_name,
+                    func.count(IssueAnalysis.id),
+                )
+                .where(
+                    tuple_(IssueAnalysis.repo_owner, IssueAnalysis.repo_name).in_(
+                        unique_keys
+                    )
+                )
+                .group_by(IssueAnalysis.repo_owner, IssueAnalysis.repo_name)
+            )
+        ).all()
+        last_prs = (
+            await db.execute(
+                select(
+                    PRReview.repo_owner,
+                    PRReview.repo_name,
+                    func.max(PRReview.created_at),
+                )
+                .where(tuple_(PRReview.repo_owner, PRReview.repo_name).in_(unique_keys))
+                .group_by(PRReview.repo_owner, PRReview.repo_name)
+            )
+        ).all()
+        last_issues = (
+            await db.execute(
+                select(
+                    IssueAnalysis.repo_owner,
+                    IssueAnalysis.repo_name,
+                    func.max(IssueAnalysis.created_at),
+                )
+                .where(
+                    tuple_(IssueAnalysis.repo_owner, IssueAnalysis.repo_name).in_(
+                        unique_keys
+                    )
+                )
+                .group_by(IssueAnalysis.repo_owner, IssueAnalysis.repo_name)
+            )
+        ).all()
 
         # 用 (owner, short_name) 元组作为 key，避免同名仓库统计混淆
         pr_count_map = {(r[0], r[1]): r[2] for r in pr_counts}
@@ -116,7 +144,9 @@ async def _get_installations_with_stats(db: AsyncSession) -> list[dict]:
             lp = last_pr_map.get(key)
             li = last_issue_map.get(key)
             last_activity = max(lp or datetime.min, li or datetime.min)
-            repo["last_activity"] = last_activity if last_activity != datetime.min else None
+            repo["last_activity"] = (
+                last_activity if last_activity != datetime.min else None
+            )
 
     return data
 
@@ -362,13 +392,13 @@ async def repo_list_fragment(
         "components/repo_list_fragment.html",
         {
             "request": request,
+            "current_user": user,
             "installations": installations,
             "csrf_token": get_csrf_serializer().dumps({}),
         },
     )
 
 
-@router.post("/{repo_name:path}/index-docs")
 async def index_docs(
     request: Request,
     repo_name: str,
@@ -471,3 +501,69 @@ async def index_issues(
     logger.info(f"WebUI 触发 Issues 索引: {repo_name}, by={user['sub']}")
     await log_admin_action(db, user["user_id"], "repo_index_issues", "repo", repo_name)
     return JSONResponse({"success": True, "message": f"Issues 索引已启动: {repo_name}"})
+
+
+async def _run_repo_scan(repo_name: str, user_id: int) -> None:
+    """后台执行仓库扫描"""
+    key = f"{repo_name}:scan"
+    try:
+        from backend.webui.sse import publish_event
+        from backend.workers.scan_worker import ScanWorker
+
+        worker = ScanWorker()
+        scan_id = await worker.create_scan_record(
+            repo_name=repo_name,
+            trigger_type="manual",
+            triggered_by=f"webui:{user_id}",
+        )
+
+        logger.info(f"WebUI 触发仓库扫描: {repo_name}, scan_id={scan_id}")
+        await worker.process_scan(scan_id)
+
+        await publish_event(
+            "scan:completed",
+            {"repo_name": repo_name, "scan_id": scan_id, "success": True},
+        )
+    except Exception as e:
+        logger.error(f"WebUI 仓库扫描失败: {repo_name}, error={e}", exc_info=True)
+        try:
+            from backend.webui.sse import publish_event
+
+            await publish_event(
+                "scan:completed",
+                {
+                    "repo_name": repo_name,
+                    "scan_id": None,
+                    "success": False,
+                    "error": str(e),
+                },
+            )
+        except Exception:
+            pass
+    finally:
+        _active_index_tasks.pop(key, None)
+
+
+@router.post("/{repo_name:path}/scan")
+async def trigger_repo_scan(
+    request: Request,
+    repo_name: str,
+    db: AsyncSession = Depends(get_db),
+    user: dict = Depends(require_super_admin),
+    csrf_token: str = Depends(require_csrf_header),
+) -> JSONResponse:
+    """触发仓库扫描（仅超级管理员）"""
+    # 检查是否正在扫描
+    if _is_index_locked(repo_name, "scan"):
+        return JSONResponse(
+            {"success": False, "message": f"仓库 {repo_name} 正在扫描中，请稍后再试"},
+            status_code=409,
+        )
+
+    # 启动后台任务
+    task = asyncio.create_task(_run_repo_scan(repo_name, user["user_id"]))
+    _active_index_tasks[f"{repo_name}:scan"] = task
+
+    logger.info(f"WebUI 触发仓库扫描: {repo_name}, by={user['sub']}")
+    await log_admin_action(db, user["user_id"], "repo_scan", "repo", repo_name)
+    return JSONResponse({"success": True, "message": f"仓库扫描已启动: {repo_name}"})
