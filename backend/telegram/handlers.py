@@ -115,7 +115,7 @@ async def check_permission(
 
 
 async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """开始命令，支持深链接参数"""
+    """开始命令，支持深链接参数，默认显示按钮主菜单"""
     telegram_id = update.effective_user.id
 
     # 深链接注册引导（/start sign）
@@ -140,114 +140,47 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
 
+    # 默认行为：显示带按钮的主菜单
+    from backend.telegram.menu import build_main_menu, _get_user_role
+
+    role = await _get_user_role(telegram_id)
+
+    # 构建角色显示文本
     async with get_async_session() as session:
         service = TelegramService(session)
-
-        # 检查是否为超级管理员
         is_super_admin = await service.is_super_admin(telegram_id)
 
-        if is_super_admin:
-            role_text = "👑 超级管理员"
-        else:
-            user = await service.get_user_by_telegram_id(telegram_id)
-            if user:
-                # 将角色字符串转换为小写，支持大小写不敏感的匹配
-                role_lower = user.role.lower() if user.role else "user"
+    if is_super_admin:
+        role_text = "👑 超级管理员"
+    elif role:
+        role_display = {
+            "user": "普通用户",
+            "admin": "管理员",
+            "super_admin": "超级管理员",
+        }.get(role, role)
+        role_text = f"👤 {role_display}"
+    else:
+        role_text = "❌ 未注册"
 
-                # 将角色字符串转换为更友好的显示
-                role_display = {
-                    "user": "普通用户",
-                    "admin": "管理员",
-                    "super_admin": "超级管理员",
-                }.get(role_lower, user.role)
-                role_text = f"👤 {role_display}"
-            else:
-                role_text = "❌ 未注册"
+    text = (
+        f"🌸 *Sakura AI Reviewer Bot*\n\n"
+        f"👤 你的ID: `{telegram_id}`\n"
+        f"🏷️ 角色: {role_text}\n\n"
+        f"请选择功能："
+    )
 
-        text = (
-            f"🌸 *Sakura AI Reviewer Bot*\n\n"
-            f"👤 你的ID: `{telegram_id}`\n"
-            f"🏷️ 角色: {role_text}\n\n"
-            f"使用 /help 查看可用命令"
-        )
-
-        await update.message.reply_text(text, parse_mode="Markdown")
+    await update.message.reply_text(
+        text, parse_mode="Markdown", reply_markup=build_main_menu(role)
+    )
 
 
 async def cmd_help(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """帮助命令"""
-    text = (
-        "🌸 *Sakura AI Reviewer Bot - 使用帮助*\n\n"
-        "━━━━━━━━━━━━━━━━━━━━━━\n"
-        "*📖 基础命令（所有人可用）*\n"
-        "━━━━━━━━━━━━━━━━━━━━━━\n"
-        "/start - 启动 Bot 并查看你的角色\n"
-        "/help - 显示此帮助信息\n"
-        "/status - 查看系统状态\n"
-        "/recent - 查看最近 10 条审查记录\n"
-        "/myquota - 查看我的配额使用情况\n"
-        "/docs_status <owner/repo> - 查看仓库文档索引状态\n"
-        "/code_status <owner/repo> - 查看仓库代码索引状态\n\n"
-        "━━━━━━━━━━━━━━━━━━━━━━\n"
-        "*👨‍💼 管理员命令（ADMIN 及以上）*\n"
-        "━━━━━━━━━━━━━━━━━━━━━━\n"
-        "*用户管理：*\n"
-        "➤ /user\\_add <telegram\\_id> <github\\_username>\n"
-        "   示例: /user\\_add 123456789 Sakura520222\n"
-        "   说明: 添加新用户（需要 Telegram ID 和 GitHub 用户名）\n\n"
-        "➤ /user\\_remove <github\\_username>\n"
-        "   示例: /user\\_remove Sakura520222\n"
-        "   说明: 移除指定用户\n\n"
-        "➤ /users\n"
-        "   说明: 列出所有注册用户\n\n"
-        "*仓库管理：*\n"
-        "➤ /repo\\_add <owner/repo>\n"
-        "   示例: /repo\\_add Sakura520222/my-project\n"
-        "   说明: 添加仓库到授权列表\n\n"
-        "➤ /repo\\_remove <owner/repo>\n"
-        "   示例: /repo\\_remove Sakura520222/my-project\n"
-        "   说明: 从授权列表移除仓库\n\n"
-        "➤ /repos\n"
-        "   说明: 列出所有授权仓库\n\n"
-        "*配额管理：*\n"
-        "➤ /quota\\_set <github\\_username> <daily|weekly|monthly> <limit>\n"
-        "   示例: /quota\\_set Sakura520222 daily 20\n"
-        "   说明: 设置指定用户的配额限制\n\n"
-        "*文档管理：*\n"
-        "➤ /update\\_docs <owner/repo>\n"
-        "   示例: /update\\_docs Sakura520222/my-project\n"
-        "   说明: 手动触发仓库文档索引更新\n\n"
-        "*代码管理：*\n"
-        "➤ /code\\_index <owner/repo> [paths...]\n"
-        "   示例: /code\\_index Sakura520222/my-project\n"
-        "         /code\\_index Sakura520222/my-project src/ lib/\n"
-        "   说明: 手动触发仓库代码索引\n\n"
-        "➤ /code\\_status <owner/repo>\n"
-        "   示例: /code\\_status Sakura520222/my-project\n"
-        "   说明: 查看仓库代码索引状态\n\n"
-        "━━━━━━━━━━━━━━━━━━━━━━\n"
-        "*👑 超级管理员命令（SUPER\\_ADMIN）*\n"
-        "━━━━━━━━━━━━━━━━━━━━━━\n"
-        "➤ /admin\\_add <telegram\\_id> <github\\_username>\n"
-        "   示例: /admin\\_add 123456789 Sakura520222\n"
-        "   说明: 添加管理员用户\n\n"
-        "➤ /admin\\_remove <telegram\\_id>\n"
-        "   示例: /admin\\_remove 123456789\n"
-        "   说明: 移除管理员\n\n"
-        "➤ /review <pr\\_url>\n"
-        "   示例: /review https://github.com/owner/repo/pull/123\n"
-        "   说明: 手动触发 PR 审查\n\n"
-        "━━━━━━━━━━━━━━━━━━━━━━\n"
-        "*💡 提示：*\n"
-        "━━━━━━━━━━━━━━━━━━━━━━\n"
-        "• 获取你的 Telegram ID: 发送 /start 命令查看\n"
-        "• 命令中的参数使用空格分隔\n"
-        "• GitHub 用户名不需要 @ 符号\n"
-        "• 仓库名格式: owner/repo\n"
-        "• 管理员和超级管理员不受配额限制\n"
-    )
+    """帮助命令 — 显示带分页按钮的帮助信息"""
+    from backend.telegram.menu import build_help_markup, _HELP_BASIC
 
-    await update.message.reply_text(text, parse_mode="Markdown")
+    await update.message.reply_text(
+        _HELP_BASIC, parse_mode="Markdown", reply_markup=build_help_markup("help_basic")
+    )
 
 
 async def cmd_status(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -315,10 +248,13 @@ async def cmd_myquota(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text("❌ 无法获取配额信息")
             return
 
+        username = escape_markdown(quota_info['github_username'], version=1)
+        role_text = escape_markdown(quota_info['role'], version=1)
+
         text = (
             f"📊 *我的配额*\n\n"
-            f"👤 用户: {quota_info['github_username']}\n"
-            f"🏷️ 角色: {quota_info['role']}\n\n"
+            f"👤 用户: {username}\n"
+            f"🏷️ 角色: {role_text}\n\n"
             f"🔍 *PR 审查配额*\n"
             f"📅 每日: {quota_info['daily']['used']}/{quota_info['daily']['limit']}\n"
             f"📆 每周: {quota_info['weekly']['used']}/{quota_info['weekly']['limit']}\n"
