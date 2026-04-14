@@ -34,6 +34,7 @@ def _get_telegram_deep_link() -> str | None:
         return f"https://t.me/{settings.telegram_bot_username}?start=sign"
     return None
 
+
 APP_VERSION = "2.7.6"
 
 _OAUTH_STATE_TTL = 600  # state 有效期 10 分钟

@@ -270,8 +270,10 @@ class BatchProcessor:
         enabled_tools = await tool_manager.get_enabled_tools(repo_full_name)
 
         # 多轮对话循环
-        max_iterations = get_strategy_config().get_context_enhancement_config().get(
-            "max_tool_iterations", MAX_TOOL_ITERATIONS
+        max_iterations = (
+            get_strategy_config()
+            .get_context_enhancement_config()
+            .get("max_tool_iterations", MAX_TOOL_ITERATIONS)
         )
         iteration = 0
 

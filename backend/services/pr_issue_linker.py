@@ -145,6 +145,5 @@ class PRIssueLinker:
     def _issue_links_pattern(self) -> str:
         """语义关联区域的正则匹配模式"""
         return (
-            f"{re.escape(self.ISSUE_LINKS_START)}.*?"
-            f"{re.escape(self.ISSUE_LINKS_END)}"
+            f"{re.escape(self.ISSUE_LINKS_START)}.*?{re.escape(self.ISSUE_LINKS_END)}"
         )
