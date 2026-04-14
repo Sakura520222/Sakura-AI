@@ -154,8 +154,11 @@ async def issue_detail_page(
     analysis = result.scalar_one_or_none()
     if not analysis:
         return error_page(
-            request, status_code=404, title="未找到",
-            message="分析记录不存在或无权访问", user=user,
+            request,
+            status_code=404,
+            title="未找到",
+            message="分析记录不存在或无权访问",
+            user=user,
         )
 
     # 解析 JSON 字段

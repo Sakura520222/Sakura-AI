@@ -136,7 +136,9 @@ async def _check_github_app_installed(github_username: str) -> Optional[bool]:
         # 写入 Redis 缓存（已安装 30 分钟，未安装 60 秒）
         try:
             r = await get_async_redis()
-            ttl = _APP_INSTALL_CACHE_TTL if installed else _APP_INSTALL_CACHE_TTL_NEGATIVE
+            ttl = (
+                _APP_INSTALL_CACHE_TTL if installed else _APP_INSTALL_CACHE_TTL_NEGATIVE
+            )
             await r.setex(cache_key, ttl, "1" if installed else "0")
         except Exception:
             pass
@@ -156,9 +158,7 @@ async def dashboard_page(
     """渲染仪表盘页面"""
     github_app_installed = await _check_github_app_installed(user["sub"])
     github_app_install_url = (
-        await _get_github_app_install_url()
-        if github_app_installed is False
-        else None
+        await _get_github_app_install_url() if github_app_installed is False else None
     )
 
     return templates.TemplateResponse(
@@ -196,18 +196,10 @@ async def get_stats(
     # 单次条件聚合查询（PRReview 表）
     stats_query = select(
         func.count(PRReview.id).label("total"),
-        func.sum(case((PRReview.status == "completed", 1), else_=0)).label(
-            "completed"
-        ),
-        func.sum(case((PRReview.status == "reviewing", 1), else_=0)).label(
-            "reviewing"
-        ),
-        func.sum(case((PRReview.status == "pending", 1), else_=0)).label(
-            "pending"
-        ),
-        func.sum(case((PRReview.status == "failed", 1), else_=0)).label(
-            "failed"
-        ),
+        func.sum(case((PRReview.status == "completed", 1), else_=0)).label("completed"),
+        func.sum(case((PRReview.status == "reviewing", 1), else_=0)).label("reviewing"),
+        func.sum(case((PRReview.status == "pending", 1), else_=0)).label("pending"),
+        func.sum(case((PRReview.status == "failed", 1), else_=0)).label("failed"),
         func.sum(
             case(
                 (

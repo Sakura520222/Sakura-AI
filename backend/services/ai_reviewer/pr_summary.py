@@ -68,9 +68,7 @@ class PRSummaryService:
         logger.info(f"PR 总结生成完成，长度: {len(summary_text)} 字符")
         return summary_text
 
-    async def update_pr_body(
-        self, pr: Any, summary: str, original_body: str
-    ) -> None:
+    async def update_pr_body(self, pr: Any, summary: str, original_body: str) -> None:
         """更新 PR body，追加或替换 AI 摘要部分
 
         Args:
@@ -80,7 +78,9 @@ class PRSummaryService:
         """
         original = self._extract_original_body(original_body)
         summary_block = self._build_summary_block(summary)
-        new_body = f"{original}\n\n{summary_block}" if original.strip() else summary_block
+        new_body = (
+            f"{original}\n\n{summary_block}" if original.strip() else summary_block
+        )
 
         await asyncio.to_thread(pr.edit, body=new_body)
         logger.info("PR body 已更新（追加/替换 AI 摘要）")
@@ -141,16 +141,12 @@ class PRSummaryService:
             status_icon = {"added": "+", "modified": "~", "deleted": "-"}.get(
                 f.status, "?"
             )
-            lines.append(
-                f"  {status_icon} {f.path} (+{f.additions}/-{f.deletions})"
-            )
+            lines.append(f"  {status_icon} {f.path} (+{f.additions}/-{f.deletions})")
         if not lines:
             return "（无代码文件变更）"
         return "\n".join(lines[:50])  # 最多显示 50 个文件
 
-    def _build_commit_info(
-        self, analysis: PRAnalysis, pr_info: Dict[str, Any]
-    ) -> str:
+    def _build_commit_info(self, analysis: PRAnalysis, pr_info: Dict[str, Any]) -> str:
         """构建 commit 信息文本
 
         增量审查时使用 new_commits，否则从 pr_info 提取可用信息。
@@ -179,11 +175,7 @@ class PRSummaryService:
         if not body:
             return ""
 
-        pattern = (
-            re.escape(self.START_MARKER)
-            + r".*?"
-            + re.escape(self.END_MARKER)
-        )
+        pattern = re.escape(self.START_MARKER) + r".*?" + re.escape(self.END_MARKER)
         # re.DOTALL 使 . 匹配换行符
         original = re.sub(pattern, "", body, flags=re.DOTALL).strip()
         return original
@@ -193,11 +185,7 @@ class PRSummaryService:
         if not body:
             return None
 
-        pattern = (
-            re.escape(self.START_MARKER)
-            + r"(.*?)"
-            + re.escape(self.END_MARKER)
-        )
+        pattern = re.escape(self.START_MARKER) + r"(.*?)" + re.escape(self.END_MARKER)
         match = re.search(pattern, body, flags=re.DOTALL)
         if not match:
             return None
@@ -207,5 +195,7 @@ class PRSummaryService:
             return None
 
         # 去掉旧标题行（AI 可能生成带后缀的变体，如 "更新版"）
-        content = re.sub(r"^## 🌸 Sakura AI Reviewer的总结[^\n]*\n*", "", content).strip()
+        content = re.sub(
+            r"^## 🌸 Sakura AI Reviewer的总结[^\n]*\n*", "", content
+        ).strip()
         return content if content else None

@@ -185,18 +185,21 @@ async def get_current_step() -> int:
 
         # 确保数据库引擎已初始化
         from backend.models import database as db_module
+
         if db_module.async_engine is None:
             return 0
 
         async with async_session() as session:
             result = await session.execute(
                 select(AppConfig.key_name, AppConfig.key_value).where(
-                    AppConfig.key_name.in_([
-                        "github_app_id",
-                        "github_private_key",
-                        "github_webhook_secret",
-                        "openai_api_key",
-                    ])
+                    AppConfig.key_name.in_(
+                        [
+                            "github_app_id",
+                            "github_private_key",
+                            "github_webhook_secret",
+                            "openai_api_key",
+                        ]
+                    )
                 )
             )
             db_values = {row[0]: (row[1] or "") for row in result.all()}
@@ -219,7 +222,6 @@ async def get_current_step() -> int:
 
     # Step 3: 管理员
     return 3
-
 
 
 class BootstrapMiddleware(BaseHTTPMiddleware):
