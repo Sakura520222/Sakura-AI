@@ -143,18 +143,18 @@ async def handle_pull_request_event(payload: Dict[str, Any]) -> JSONResponse:
             service = TelegramService(session)
 
             # 1. 先检查用户是否已注册
-            github_username = pr_info.get("author", "")
+            github_username = pr_info.get("repo_owner", "")
             if not github_username:
                 logger.warning(
-                    f"无法获取PR作者: {pr_info['repo_full_name']}#{pr_info['pr_number']}"
+                    f"无法获取仓库所有者: {pr_info['repo_full_name']}#{pr_info['pr_number']}"
                 )
                 return JSONResponse(
-                    content={"status": "skipped", "reason": "unknown author"}
+                    content={"status": "skipped", "reason": "unknown repo owner"}
                 )
 
             user = await service.get_user_by_github_username(github_username)
             if not user:
-                logger.warning(f"未注册的用户: {github_username}")
+                logger.warning(f"仓库所有者未注册: {github_username}")
                 if notification_sender:
                     await notification_sender.send_unauthorized_user(
                         repo_name=pr_info["repo_full_name"],
@@ -162,7 +162,7 @@ async def handle_pull_request_event(payload: Dict[str, Any]) -> JSONResponse:
                         github_username=github_username,
                     )
                 return JSONResponse(
-                    content={"status": "skipped", "reason": "unregistered user"}
+                    content={"status": "skipped", "reason": "unregistered repo owner"}
                 )
 
             # 2. 检查并消耗配额
@@ -173,7 +173,7 @@ async def handle_pull_request_event(payload: Dict[str, Any]) -> JSONResponse:
             )
 
             if not allowed:
-                logger.warning(f"配额不足: {github_username} - {reason}")
+                logger.warning(f"配额不足: {github_username} (仓库所有者) - {reason}")
                 if notification_sender:
                     await notification_sender.send_quota_exceeded(
                         repo_name=pr_info["repo_full_name"],
@@ -746,18 +746,18 @@ async def handle_issue_event(payload: Dict[str, Any]) -> JSONResponse:
         async with get_async_session() as session:
             service = TelegramService(session)
 
-            github_username = issue_info.get("author", "")
+            github_username = issue_info.get("repo_owner", "")
             if not github_username:
-                logger.warning("无法获取 Issue 作者")
+                logger.warning("无法获取 Issue 仓库所有者")
                 return JSONResponse(
-                    content={"status": "skipped", "reason": "unknown author"}
+                    content={"status": "skipped", "reason": "unknown repo owner"}
                 )
 
             user = await service.get_user_by_github_username(github_username)
             if not user:
-                logger.info(f"Issue 作者未注册: {github_username}，跳过分析")
+                logger.info(f"Issue 仓库所有者未注册: {github_username}，跳过分析")
                 return JSONResponse(
-                    content={"status": "skipped", "reason": "unregistered user"}
+                    content={"status": "skipped", "reason": "unregistered repo owner"}
                 )
 
             # Issue 配额检查
@@ -767,7 +767,7 @@ async def handle_issue_event(payload: Dict[str, Any]) -> JSONResponse:
                 issue_number=issue_info["issue_number"],
             )
             if not allowed:
-                logger.warning(f"Issue 配额不足: {github_username} - {reason}")
+                logger.warning(f"Issue 配额不足: {github_username} (仓库所有者) - {reason}")
                 if notification_sender:
                     await notification_sender.send_quota_exceeded(
                         repo_name=issue_info["repo_full_name"],
