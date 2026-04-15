@@ -225,7 +225,7 @@ class ScanWorker:
             )
 
             # 6. 使用 AIReviewer 工具链进行全仓扫描
-            all_findings = await self._full_scan_with_tools(
+            all_findings, ai_health_score = await self._full_scan_with_tools(
                 scan_id=scan_id,
                 repo_name=repo_name,
                 repo_path=repo_path,
@@ -233,8 +233,8 @@ class ScanWorker:
                 budget=budget,
             )
 
-            # 7. 聚合结果
-            aggregated = self._aggregate_findings(all_findings)
+            # 7. 聚合结果（使用 AI 评估的健康评分）
+            aggregated = self._aggregate_findings(all_findings, ai_health_score=ai_health_score)
 
             # 8. 写入 ScanFinding 记录
             await self._save_findings(scan_id, aggregated["findings"])
@@ -255,8 +255,19 @@ class ScanWorker:
                 completion_tokens=budget.completion_tokens,
             )
 
-            # 10. 生成报告
-            report_info = await self._generate_reports(scan_id)
+            # 10. 生成报告（直接传递聚合数据，避免 DB 读取时序问题）
+            report_data = {
+                "code_file_count": file_count,
+                "total_findings": aggregated["total_findings"],
+                "critical_count": aggregated["critical_count"],
+                "major_count": aggregated["major_count"],
+                "minor_count": aggregated["minor_count"],
+                "suggestion_count": aggregated["suggestion_count"],
+                "overall_health_score": aggregated["health_score"],
+                "prompt_tokens": budget.prompt_tokens,
+                "completion_tokens": budget.completion_tokens,
+            }
+            report_info = await self._generate_reports(scan_id, report_data)
             issue_number = report_info.get("issue_number")
             issue_url = report_info.get("issue_url")
 
@@ -395,11 +406,14 @@ class ScanWorker:
         repo_path: str,
         commit_sha: str | None,
         budget: ScanTokenBudget,
-    ) -> list[dict]:
+    ) -> tuple[list[dict], int | None]:
         """使用 AIReviewer 工具链进行全仓扫描
 
         让 AI 自主使用 read_file / list_directory / search_code_context
         浏览整个仓库，真正实现全量扫描。
+
+        Returns:
+            (findings, ai_health_score) 元组，ai_health_score 为 AI 评估的评分（可能为 None）
         """
         from backend.services.scan_prompt_builder import (
             collect_code_files,
@@ -412,7 +426,7 @@ class ScanWorker:
         file_list = collect_code_files(repo_path)
         if not file_list:
             logger.warning(f"仓库 {repo_name} 中无代码文件")
-            return []
+            return [], None
 
         logger.info(f"仓库 {repo_name} 共 {len(file_list)} 个代码文件")
 
@@ -512,7 +526,7 @@ class ScanWorker:
                         f"{len(result.get('findings', []))} 个问题, "
                         f"评分={result.get('overall_score', '-')}"
                     )
-                    return result.get("findings", [])
+                    return result.get("findings", []), result.get("overall_score")
 
                 # 处理工具调用
                 assistant_message = response.choices[0].message
@@ -602,7 +616,7 @@ class ScanWorker:
                 break
 
         logger.warning(f"全仓扫描达到最大轮次 ({max_iterations})，停止")
-        return []
+        return [], None
 
     async def _call_ai(
         self, messages: list[dict], budget: ScanTokenBudget | None = None
@@ -651,8 +665,15 @@ class ScanWorker:
             logger.error(f"调用 AI 失败: {e}")
             return "", {}
 
-    def _aggregate_findings(self, all_findings: list[dict]) -> dict:
-        """聚合并去重 findings，计算健康评分"""
+    def _aggregate_findings(
+        self, all_findings: list[dict], ai_health_score: int | None = None
+    ) -> dict:
+        """聚合并去重 findings，计算健康评分
+
+        Args:
+            all_findings: AI 返回的 findings 列表
+            ai_health_score: AI 直接评估的健康评分（优先使用）
+        """
         # 去重：同一 file_path + title 视为重复
         seen = set()
         deduplicated = []
@@ -668,15 +689,18 @@ class ScanWorker:
             sev = f.get("severity", "minor")
             severity_counts[sev] = severity_counts.get(sev, 0) + 1
 
-        # 计算健康评分（加权扣分，最低 0）
-        health_score = max(
-            0,
-            100
-            - severity_counts["critical"] * 20
-            - severity_counts["major"] * 10
-            - severity_counts["minor"] * 3
-            - severity_counts["suggestion"] * 1,
-        )
+        # 健康评分：优先使用 AI 评估值，回退到公式计算
+        if ai_health_score is not None and 0 <= ai_health_score <= 100:
+            health_score = ai_health_score
+        else:
+            health_score = max(
+                0,
+                100
+                - severity_counts["critical"] * 20
+                - severity_counts["major"] * 10
+                - severity_counts["minor"] * 3
+                - severity_counts["suggestion"] * 1,
+            )
 
         return {
             "total_findings": len(deduplicated),
@@ -717,15 +741,20 @@ class ScanWorker:
         await _db_retry(_save)
         logger.info(f"已保存 {len(findings)} 个 findings (scan_id={scan_id})")
 
-    async def _generate_reports(self, scan_id: int) -> dict:
-        """生成报告（GitHub Issue + Telegram 通知）"""
+    async def _generate_reports(self, scan_id: int, report_data: dict = None) -> dict:
+        """生成报告（GitHub Issue + Telegram 通知）
+
+        Args:
+            scan_id: 扫描记录 ID
+            report_data: 直接传递的聚合数据，绕过 DB 读取时序问题
+        """
         report_info = {}
 
         try:
             from backend.services.scan_report_service import ScanReportService
 
             report_service = ScanReportService()
-            report_info = await report_service.generate_and_deliver(scan_id)
+            report_info = await report_service.generate_and_deliver(scan_id, report_data)
         except Exception as e:
             logger.error(f"生成报告失败: {type(e).__name__}: {e}", exc_info=True)
 

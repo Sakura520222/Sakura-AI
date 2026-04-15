@@ -27,8 +27,13 @@ _SEVERITY_EMOJI = {
 class ScanReportService:
     """扫描报告生成与交付"""
 
-    async def generate_and_deliver(self, scan_id: int) -> dict:
+    async def generate_and_deliver(self, scan_id: int, report_data: dict = None) -> dict:
         """生成报告并交付到所有渠道
+
+        Args:
+            scan_id: 扫描记录 ID
+            report_data: 直接传递的聚合数据（code_file_count, overall_health_score 等），
+                         用于绕过 DB 读取时序问题
 
         Returns:
             {"issue_number": int|None, "issue_url": str|None}
@@ -43,8 +48,6 @@ class ScanReportService:
             if not scan:
                 logger.error(f"扫描记录不存在: {scan_id}")
                 return {}
-            # 刷新以确保获取 _update_scan 提交的最新数据
-            await session.refresh(scan)
 
             result = await session.execute(
                 select(ScanFinding)
@@ -52,6 +55,12 @@ class ScanReportService:
                 .order_by(ScanFinding.severity, ScanFinding.confidence.desc())
             )
             findings = result.scalars().all()
+
+        # 用直接传递的聚合数据覆盖可能过期的 DB 值
+        if report_data:
+            for key, value in report_data.items():
+                if hasattr(scan, key) and value is not None:
+                    setattr(scan, key, value)
 
         report_info = {}
 
@@ -61,10 +70,11 @@ class ScanReportService:
             if issue_info:
                 report_info.update(issue_info)
 
-        # 发送 Telegram 通知
+        # 发送 Telegram 通知（使用刚创建的 Issue URL）
         if settings.scan_send_telegram:
             logger.info(f"正在发送扫描 Telegram 通知: {scan.repo_name}")
-            await self._send_telegram_notification(scan)
+            issue_url = report_info.get("issue_url") or scan.report_issue_url
+            await self._send_telegram_notification(scan, issue_url=issue_url)
         else:
             logger.info("Telegram 扫描通知已禁用")
 
@@ -146,7 +156,9 @@ class ScanReportService:
 
         return "\n".join(lines)
 
-    def generate_telegram_message(self, scan: "RepoScan") -> str:
+    def generate_telegram_message(
+        self, scan: "RepoScan", issue_url: str = None
+    ) -> str:
         """生成 Telegram 通知消息"""
         health = scan.overall_health_score or 0
         health_emoji = "🟢" if health >= 80 else "🟡" if health >= 60 else "🔴"
@@ -201,9 +213,10 @@ class ScanReportService:
             lines.append("✅ 未发现问题，代码质量良好")
             lines.append("")
 
-        # 链接
-        if scan.report_issue_url:
-            lines.append(f"[📎 查看详细报告]({scan.report_issue_url})")
+        # 链接（优先使用传入的 issue_url，其次 DB 值，最后 WebUI URL）
+        link_url = issue_url or scan.report_issue_url
+        if link_url:
+            lines.append(f"[📎 查看详细报告]({link_url})")
         else:
             webui_url = f"https://{settings.app_domain}/webui/scans/{scan.id}"
             lines.append(f"[🌐 WebUI 查看详情]({webui_url})")
@@ -303,7 +316,7 @@ class ScanReportService:
             )
             return None
 
-    async def _send_telegram_notification(self, scan: "RepoScan"):
+    async def _send_telegram_notification(self, scan: "RepoScan", issue_url: str = None):
         """发送 Telegram 通知"""
         try:
             from backend.telegram.notifications import get_notification_sender
@@ -349,7 +362,7 @@ class ScanReportService:
                 logger.warning(f"无 Telegram 通知目标: {scan.repo_name}")
                 return
 
-            text = self.generate_telegram_message(scan)
+            text = self.generate_telegram_message(scan, issue_url=issue_url)
             await sender.send_to_targets(text, chat_ids)
 
             logger.info(f"✅ 扫描通知已发送: {scan.repo_name} → {len(chat_ids)} 个目标")
