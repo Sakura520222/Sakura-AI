@@ -4,6 +4,11 @@
 
 set -e
 
+REBUILD=false
+if [[ "$1" == "--rebuild" ]]; then
+    REBUILD=true
+fi
+
 echo "🚀 Sakura AI Reviewer 启动脚本"
 echo "=========================="
 
@@ -20,8 +25,32 @@ fi
 
 echo "✅ 环境检查完成"
 
-# 创建日志目录
-mkdir -p logs
+# 创建必要目录
+mkdir -p logs .deploy
+
+# 依赖变更检测
+DEPLOY_HASH_DIR=".deploy"
+CURRENT_HASH=""
+SAVED_HASH_FILE="$DEPLOY_HASH_DIR/requirements.hash"
+
+if [[ -f "requirements.txt" ]]; then
+    CURRENT_HASH=$(md5sum requirements.txt | awk '{print $1}')
+fi
+
+NEED_BUILD=false
+
+if $REBUILD; then
+    echo "🔄 强制重建模式"
+    NEED_BUILD=true
+elif [[ ! -f "$SAVED_HASH_FILE" ]]; then
+    echo "📦 首次部署，需要构建镜像"
+    NEED_BUILD=true
+elif [[ "$CURRENT_HASH" != "$(cat "$SAVED_HASH_FILE")" ]]; then
+    echo "📦 检测到依赖变更，需要重新构建镜像"
+    NEED_BUILD=true
+else
+    echo "✅ 依赖未变更，跳过构建"
+fi
 
 # 停止现有容器
 echo "🛑 停止现有容器..."
@@ -29,8 +58,18 @@ cd docker
 docker-compose down
 
 # 构建并启动
-echo "🔨 构建并启动服务..."
-docker-compose up -d --build
+if $NEED_BUILD; then
+    echo "🔨 构建并启动服务..."
+    docker-compose up -d --build
+    # 保存当前哈希
+    cd ..
+    echo "$CURRENT_HASH" > "$SAVED_HASH_FILE"
+    echo "✅ 依赖哈希已更新"
+    cd docker
+else
+    echo "🔧 启动服务（无构建）..."
+    docker-compose up -d
+fi
 
 # 等待服务启动
 echo "⏳ 等待服务启动..."
