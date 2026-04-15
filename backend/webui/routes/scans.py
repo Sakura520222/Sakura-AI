@@ -2,7 +2,7 @@
 
 from fastapi import APIRouter, Request, Depends, Query
 from fastapi.responses import HTMLResponse
-from sqlalchemy import select, func, desc
+from sqlalchemy import select, func, desc, or_
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.models.scan_models import RepoScan, ScanFinding, ScanStatus
@@ -20,6 +20,23 @@ from backend.webui.deps import (
 
 router = APIRouter(prefix="/scans", tags=["WebUI Scans"])
 templates = get_templates()
+
+
+def _apply_scan_filters(q, search: str, repo_name: str, status: str):
+    """为扫描列表查询应用公共过滤条件"""
+    if search:
+        search_pattern = f"%{search}%"
+        q = q.where(
+            or_(
+                RepoScan.repo_name.like(search_pattern),
+                RepoScan.error_message.like(search_pattern),
+            )
+        )
+    if repo_name:
+        q = q.where(RepoScan.repo_name == repo_name)
+    if status:
+        q = q.where(RepoScan.status == status)
+    return q
 
 
 @router.get("/")
@@ -61,25 +78,8 @@ async def scan_list_fragment(
     count_query = select(func.count(RepoScan.id))
 
     # 构建公共过滤条件
-    def apply_filters(q):
-        if search:
-            search_pattern = f"%{search}%"
-            from sqlalchemy import or_
-
-            q = q.where(
-                or_(
-                    RepoScan.repo_name.like(search_pattern),
-                    RepoScan.error_message.like(search_pattern),
-                )
-            )
-        if repo_name:
-            q = q.where(RepoScan.repo_name == repo_name)
-        if status:
-            q = q.where(RepoScan.status == status)
-        return q
-
-    query = apply_filters(query)
-    count_query = apply_filters(count_query)
+    query = _apply_scan_filters(query, search, repo_name, status)
+    count_query = _apply_scan_filters(count_query, search, repo_name, status)
 
     query = query.order_by(desc(RepoScan.created_at))
     scans, total, total_pages, page = await paginate(
