@@ -11,7 +11,7 @@
     </div>
 
     {% if analysis.summary %}
-    <p class="text-sm text-gray-700 dark:text-gray-300 whitespace-pre-wrap">{{ analysis.summary }}</p>
+    <div data-markdown class="prose dark:prose-invert max-w-none text-sm text-gray-700 dark:text-gray-300">{{ analysis.summary }}</div>
     {% else %}
     <p class="text-sm text-gray-400">暂无分析结果</p>
     {% endif %}

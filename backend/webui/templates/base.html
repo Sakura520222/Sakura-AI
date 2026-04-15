@@ -16,6 +16,11 @@
     <script src="https://unpkg.com/htmx.org@2.0.4"></script>
     <!-- Alpine.js -->
     <script defer src="https://unpkg.com/alpinejs@3.x.x/dist/cdn.min.js"></script>
+    <!-- Markdown 渲染 -->
+    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/dompurify/dist/purify.min.js"></script>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/highlightjs/cdn-release/build/styles/github.min.css">
+    <script src="https://cdn.jsdelivr.net/gh/highlightjs/cdn-release/build/highlight.min.js"></script>
     <script>
     document.addEventListener('alpine:init', () => {
         Alpine.data('toastManager', () => ({
@@ -133,6 +138,8 @@
         ::-webkit-scrollbar-track { background: transparent; }
         ::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 3px; }
         .dark ::-webkit-scrollbar-thumb { background: #475569; }
+        /* highlight.js 与 Tailwind prose 兼容 */
+        .prose pre code.hljs { background: transparent; padding: 0; }
     </style>
     {% block extra_head %}{% endblock %}
 </head>
@@ -373,6 +380,23 @@
 
     <!-- SSE 实时推送客户端 -->
     {% include "components/sse_client.html" %}
+
+    /* === Markdown 渲染 === */
+    <script>
+    marked.setOptions({ gfm: true, breaks: true });
+    function renderMarkdownElements(root) {
+        root = root || document;
+        root.querySelectorAll('[data-markdown]').forEach(function(el) {
+            var html = DOMPurify.sanitize(marked.parse(el.textContent));
+            el.innerHTML = html;
+            el.querySelectorAll('pre code').forEach(function(block) {
+                hljs.highlightElement(block);
+            });
+        });
+    }
+    renderMarkdownElements();
+    document.body.addEventListener('htmx:afterSettle', renderMarkdownElements);
+    </script>
     {% endblock %}
 </body>
 </html>
