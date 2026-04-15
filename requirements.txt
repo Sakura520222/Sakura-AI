@@ -20,6 +20,7 @@ alembic==1.13.1
 # 任务队列
 celery==5.3.6
 redis==5.0.1
+APScheduler>=3.10.0
 
 # 工具库
 typing-extensions>=4.5.0

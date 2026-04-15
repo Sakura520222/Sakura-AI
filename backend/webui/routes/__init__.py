@@ -14,6 +14,7 @@ from backend.webui.routes import (
     action_logs,
     issues,
     sse,
+    scans,
 )
 
 webui_router = APIRouter(prefix="/webui")
@@ -30,3 +31,4 @@ webui_router.include_router(queue.router)
 webui_router.include_router(action_logs.router)
 webui_router.include_router(issues.router)
 webui_router.include_router(sse.router)
+webui_router.include_router(scans.router)

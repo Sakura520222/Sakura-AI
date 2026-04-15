@@ -13,7 +13,7 @@ class NotificationSender:
     def __init__(self, bot: Bot):
         self.bot = bot
 
-    async def _send_to_targets(
+    async def send_to_targets(
         self, text: str, chat_ids: List[int], parse_mode: str = "Markdown", **kwargs
     ):
         """向多个目标发送消息，单个失败不影响其他"""
@@ -63,7 +63,7 @@ class NotificationSender:
                 logger.debug(f"无通知目标，跳过审查开始通知: {repo_name}#{pr_number}")
                 return
 
-            await self._send_to_targets(text, chat_ids)
+            await self.send_to_targets(text, chat_ids)
             logger.info(
                 f"✅ 发送审查开始通知: {repo_name}#{pr_number} → {len(chat_ids)} 人"
             )
@@ -97,7 +97,7 @@ class NotificationSender:
                 logger.debug(f"无通知目标，跳过审查完成通知: {repo_name}#{pr_number}")
                 return
 
-            await self._send_to_targets(text, chat_ids, disable_web_page_preview=True)
+            await self.send_to_targets(text, chat_ids, disable_web_page_preview=True)
             logger.info(
                 f"✅ 发送审查完成通知: {repo_name}#{pr_number} → {len(chat_ids)} 人"
             )
@@ -226,13 +226,52 @@ class NotificationSender:
                 )
                 return
 
-            await self._send_to_targets(text, chat_ids)
+            await self.send_to_targets(text, chat_ids)
             logger.info(
                 f"Issue 分析完成通知已发送: {repo_name}#{issue_number} → {len(chat_ids)} 人"
             )
 
         except Exception as e:
             logger.error(f"发送 Issue 分析完成通知失败: {e}")
+
+    async def send_scan_complete(
+        self,
+        repo_name: str,
+        health_score: int,
+        critical_count: int,
+        major_count: int,
+        total_findings: int,
+        issue_url: str = "",
+        chat_ids: Optional[List[int]] = None,
+    ):
+        """扫描完成通知"""
+        try:
+            safe_repo_name = escape_markdown(repo_name, version=1)
+            health_emoji = (
+                "🟢" if health_score >= 80 else "🟡" if health_score >= 60 else "🔴"
+            )
+
+            text = (
+                f"🛡️ *Sakura AI 仓库扫描完成*\n\n"
+                f"📦 仓库: {safe_repo_name}\n"
+                f"{health_emoji} 健康评分: *{health_score}/100*\n"
+                f"🔴 Critical: {critical_count}\n"
+                f"🟡 Major: {major_count}\n"
+                f"📝 总计发现: {total_findings} 个问题\n"
+            )
+
+            if issue_url:
+                text += f"\n[查看详细报告]({issue_url})"
+
+            if not chat_ids:
+                logger.debug(f"无通知目标，跳过扫描完成通知: {repo_name}")
+                return
+
+            await self.send_to_targets(text, chat_ids, disable_web_page_preview=True)
+            logger.info(f"✅ 发送扫描完成通知: {repo_name} → {len(chat_ids)} 人")
+
+        except Exception as e:
+            logger.error(f"❌ 发送扫描完成通知失败: {e}")
 
     async def send_critical_issue_alert(
         self,
@@ -285,7 +324,7 @@ class NotificationSender:
                 )
                 return
 
-            await self._send_to_targets(text, chat_ids)
+            await self.send_to_targets(text, chat_ids)
             logger.info(
                 f"Critical Issue 告警已发送: {repo_name}#{issue_number} → {len(chat_ids)} 人"
             )

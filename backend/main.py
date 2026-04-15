@@ -39,6 +39,7 @@ async def lifespan(app: FastAPI):
 
     telegram_task = None
     redis_listener_task = None
+    scan_scheduler = None
 
     if not is_bootstrap_mode():
         # 正常模式：完整启动所有服务
@@ -49,7 +50,9 @@ async def lifespan(app: FastAPI):
             settings.database_url = database_url
             logger.info("📊 从 connection.json 加载 DATABASE_URL")
         else:
-            logger.warning("⚠️ connection.json 中无 DATABASE_URL，尝试从 Settings 默认值加载")
+            logger.warning(
+                "⚠️ connection.json 中无 DATABASE_URL，尝试从 Settings 默认值加载"
+            )
             database_url = settings.database_url
 
         if not database_url:
@@ -72,6 +75,7 @@ async def lifespan(app: FastAPI):
             # 2. 初始化数据库
             try:
                 from backend.models import init_db
+
                 await init_db()
                 logger.info("✅ 数据库初始化成功")
             except Exception as e:
@@ -108,6 +112,15 @@ async def lifespan(app: FastAPI):
                 logger.info("✅ SSE Redis Pub/Sub 监听已启动")
             except Exception as e:
                 logger.error(f"❌ SSE Redis Pub/Sub 监听启动失败: {e}")
+
+            # 启动仓库扫描调度器
+            try:
+                from backend.services.scan_scheduler import ScanScheduler
+
+                scan_scheduler = ScanScheduler()
+                scan_scheduler.start()
+            except Exception as e:
+                logger.error(f"❌ 仓库扫描调度器启动失败: {e}")
     else:
         logger.warning("🔧 Bootstrap 模式：仅 Setup Wizard 可用")
         logger.info("请访问 /setup 完成初始配置")
@@ -150,12 +163,16 @@ async def lifespan(app: FastAPI):
         except asyncio.CancelledError:
             pass
 
+    # 停止仓库扫描调度器
+    if scan_scheduler:
+        scan_scheduler.stop()
+
 
 # 创建FastAPI应用
 app = FastAPI(
     title="Sakura AI Reviewer",
     description="GitHub PR AI代码审查机器人",
-    version="2.7.6",
+    version="2.8.0",
     lifespan=lifespan,
 )
 
@@ -191,7 +208,7 @@ async def root():
     """根路径"""
     return {
         "service": "Sakura AI Reviewer",
-        "version": "2.7.6",
+        "version": "2.8.0",
         "status": "running",
         "docs": "/docs",
     }

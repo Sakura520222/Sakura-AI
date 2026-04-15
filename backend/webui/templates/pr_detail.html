@@ -143,7 +143,7 @@
             </svg>
             审查摘要
         </h2>
-        <div class="prose dark:prose-invert max-w-none text-sm text-gray-700 dark:text-gray-300 whitespace-pre-wrap leading-relaxed">
+        <div data-markdown class="prose dark:prose-invert max-w-none text-sm text-gray-700 dark:text-gray-300 leading-relaxed">
             {{ review.review_summary }}
         </div>
     </div>
@@ -158,7 +158,7 @@
             </svg>
             决策理由
         </h2>
-        <div class="text-sm text-gray-700 dark:text-gray-300 whitespace-pre-wrap leading-relaxed">
+        <div data-markdown class="prose dark:prose-invert max-w-none text-sm text-gray-700 dark:text-gray-300 leading-relaxed">
             {{ review.decision_reason }}
         </div>
     </div>
@@ -223,7 +223,7 @@
                         {% endif %}
 
                         <!-- 评论内容 -->
-                        <div class="text-sm text-gray-700 dark:text-gray-300 whitespace-pre-wrap leading-relaxed">
+                        <div data-markdown class="prose dark:prose-invert max-w-none text-sm text-gray-700 dark:text-gray-300 leading-relaxed">
                             {{ c.content }}
                         </div>
                     </div>

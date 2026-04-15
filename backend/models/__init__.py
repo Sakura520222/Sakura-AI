@@ -13,6 +13,13 @@ from backend.models.database import (
     Base,
 )
 from backend.models.admin_action_log import AdminActionLog
+from backend.models.scan_models import (
+    RepoScan,
+    ScanFinding,
+    ScanStatus,
+    FindingSeverity,
+    FindingCategory,
+)
 from backend.core.config import get_settings
 import logging
 
@@ -24,6 +31,11 @@ __all__ = [
     "AppConfig",
     "ReviewQueue",
     "AdminActionLog",
+    "RepoScan",
+    "ScanFinding",
+    "ScanStatus",
+    "FindingSeverity",
+    "FindingCategory",
     "init_database",
     "init_async_db",
     "close_async_db",
