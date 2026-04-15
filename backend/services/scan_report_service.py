@@ -43,6 +43,8 @@ class ScanReportService:
             if not scan:
                 logger.error(f"扫描记录不存在: {scan_id}")
                 return {}
+            # 刷新以确保获取 _update_scan 提交的最新数据
+            await session.refresh(scan)
 
             result = await session.execute(
                 select(ScanFinding)
@@ -203,7 +205,8 @@ class ScanReportService:
         if scan.report_issue_url:
             lines.append(f"[📎 查看详细报告]({scan.report_issue_url})")
         else:
-            lines.append(f"[🌐 WebUI 查看详情](/webui/scans/{scan.id})")
+            webui_url = f"https://{settings.app_domain}/webui/scans/{scan.id}"
+            lines.append(f"[🌐 WebUI 查看详情]({webui_url})")
 
         return "\n".join(lines)
 
