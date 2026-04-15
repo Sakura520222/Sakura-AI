@@ -354,8 +354,8 @@ class ScanReportService:
         except Exception as e:
             logger.error(f"发送 Telegram 扫描通知失败: {e}")
 
-    @staticmethod
-    async def _get_all_admin_telegram_ids() -> list[int]:
+    @classmethod
+    async def _get_all_admin_telegram_ids(cls) -> list[int]:
         """查询所有管理员的 telegram_id"""
         from backend.models.database import async_session
         from backend.models.telegram_models import TelegramUser
