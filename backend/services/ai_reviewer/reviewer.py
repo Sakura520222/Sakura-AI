@@ -200,8 +200,10 @@ class AIReviewer:
                 )
 
             # 多轮对话循环
-            max_iterations = get_strategy_config().get_context_enhancement_config().get(
-                "max_tool_iterations", MAX_TOOL_ITERATIONS
+            max_iterations = (
+                get_strategy_config()
+                .get_context_enhancement_config()
+                .get("max_tool_iterations", MAX_TOOL_ITERATIONS)
             )
             iteration = 0
 
@@ -304,7 +306,9 @@ class AIReviewer:
 
                         messages = (
                             await self.context_compressor.compress_conversation_history(
-                                messages, system_prompt, threshold_tokens,
+                                messages,
+                                system_prompt,
+                                threshold_tokens,
                                 tracker=tracker,
                             )
                         )

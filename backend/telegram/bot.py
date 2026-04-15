@@ -33,6 +33,7 @@ from backend.telegram.handlers import (
     cmd_my_subscriptions,
 )
 from backend.telegram.notifications import NotificationSender, set_notification_sender
+from backend.telegram.menu import get_callback_handler, get_force_reply_handler
 
 settings = get_settings()
 
@@ -79,6 +80,12 @@ async def register_bot_commands(bot: Bot):
 async def _telegram_error_handler(update: object, context) -> None:
     """处理 Telegram Bot 运行时错误，将瞬态网络错误降级为 WARNING"""
     error = context.error
+    error_str = str(error)
+
+    # 忽略消息内容未变更（用户重复点击同页按钮）
+    if "Message is not modified" in error_str:
+        return
+
     if isinstance(error, (httpx.ReadError, httpx.ConnectError, httpx.ReadTimeout)):
         logger.warning(f"⚡ Telegram 网络瞬态错误（将自动重试）: {error}")
     elif isinstance(error, (NetworkError, TimedOut)):
@@ -136,6 +143,10 @@ async def start_telegram_bot():
         _telegram_app.add_handler(
             CommandHandler("my_subscriptions", cmd_my_subscriptions)
         )
+
+        # 注册按钮菜单处理器
+        _telegram_app.add_handler(get_callback_handler())
+        _telegram_app.add_handler(get_force_reply_handler())
 
         # 设置通知发送器
         notification_sender = NotificationSender(_telegram_bot)
