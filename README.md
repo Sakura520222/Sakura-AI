@@ -35,6 +35,14 @@
 - **仓库级知识库（RAG）**：向量语义检索项目文档，为 AI 审查提供规范上下文
 - **PR 代码自动索引**：语法感知分块 + 语义搜索，AI 可精准定位相关代码
 
+### 仓库扫描
+
+- **AI 全仓库扫描**：定期对仓库进行全面的 AI 代码扫描，自动发现代码质量问题和安全隐患
+- **自动创建 Issue**：扫描发现的问题自动创建 GitHub Issue，包含详细的问题描述和修复建议
+- **灵活扫描配置**：可配置扫描间隔、冷却时间、Token 预算、并发数等参数
+- **扫描管理界面**：WebUI 中查看扫描列表、扫描详情和统计数据
+- **扫描通知**：扫描完成后通过 Telegram Bot 发送通知
+
 ### Issue 分析
 
 - **Issue 智能分析**：自动分类、优先级判定、标签推荐、重复检测、关联 PR 发现
@@ -52,8 +60,8 @@
 - **SSE 实时推送**：基于 Redis Pub/Sub 的多进程实时通信，WebUI 数据即时更新
 - **配额制访问控制**：基于配额的灵活访问管理体系，支持用户自注册
 - **管理员操作审计**：完整的操作日志，覆盖配置变更、用户管理等关键操作
-- **WebUI 管理界面**：仪表盘、PR 管理、用户管理、配置管理、队列监控、操作日志
-- **Telegram Bot**：实时通知、三级权限体系（超级管理员/管理员/普通用户）、配额管理
+- **WebUI 管理界面**：仪表盘、PR 管理、用户管理、配置管理、队列监控、操作日志、仓库扫描管理，支持 Markdown 内容渲染
+- **Telegram Bot**：实时通知、按钮菜单交互、三级权限体系（超级管理员/管理员/普通用户）、配额管理
 - **GitHub OAuth 登录**：与 Telegram 用户体系打通，明暗主题切换
 
 ---
@@ -290,14 +298,17 @@ Sakura-AI-Reviewer/
 │   │   ├── comment_service.py # 评论服务
 │   │   ├── rag_service.py     # RAG 知识库
 │   │   ├── code_index_service.py  # 代码索引
+│   │   ├── scan_prompt_builder.py # 仓库扫描 Prompt 构建
+│   │   ├── scan_report_service.py # 扫描报告服务
+│   │   ├── scan_scheduler.py      # 扫描调度器
 │   │   └── history_context_service.py  # 增量审查历史
 │   ├── webui/             # WebUI 管理界面
 │   │   ├── routes/        #   路由（dashboard, config, users, ...）
 │   │   ├── templates/     #   Jinja2 模板
 │   │   ├── auth.py        #   GitHub OAuth 认证
 │   │   └── sse.py         #   SSE 实时推送
-│   ├── workers/           # 后台任务（review_worker, issue_worker）
-│   ├── telegram/          # Telegram Bot（通知、命令、权限）
+│   ├── workers/           # 后台任务（review_worker, issue_worker, scan_worker）
+│   ├── telegram/          # Telegram Bot（通知、命令、按钮菜单、权限）
 │   └── bootstrap.py       # Setup Wizard 引导配置
 ├── config/                # YAML 配置文件（strategies.yaml）
 ├── docker/                # Docker Compose 部署
