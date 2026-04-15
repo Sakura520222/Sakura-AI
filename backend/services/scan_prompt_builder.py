@@ -73,6 +73,30 @@ CODE_EXTENSIONS = (
 )
 
 
+# 跳过的依赖目录（模块级常量，避免循环内重复创建）
+_SKIP_DIRS = frozenset({
+    "node_modules",
+    ".git",
+    "__pycache__",
+    ".idea",
+    ".vscode",
+    "venv",
+    ".venv",
+    "dist",
+    "build",
+    ".next",
+    "target",
+    ".gradle",
+    "vendor",
+    "Pods",
+    ".mypy_cache",
+    ".pytest_cache",
+    "site-packages",
+    ".eggs",
+    "egg-info",
+})
+
+
 def collect_code_files(repo_path: str, max_files: int = 500) -> list[dict]:
     """从磁盘收集仓库中的代码文件列表
 
@@ -96,28 +120,7 @@ def collect_code_files(repo_path: str, max_files: int = 500) -> list[dict]:
             continue
 
         # 跳过依赖目录
-        skip_dirs = {
-            "node_modules",
-            ".git",
-            "__pycache__",
-            ".idea",
-            ".vscode",
-            "venv",
-            ".venv",
-            "dist",
-            "build",
-            ".next",
-            "target",
-            ".gradle",
-            "vendor",
-            "Pods",
-            ".mypy_cache",
-            ".pytest_cache",
-            "site-packages",
-            ".eggs",
-            "egg-info",
-        }
-        if any(part in skip_dirs for part in parts):
+        if any(part in _SKIP_DIRS for part in parts):
             continue
 
         # 只收集代码文件

@@ -372,11 +372,18 @@ async def _handle_exec(query, target: str, telegram_id: int, context) -> None:
         return
 
     # 构造兼容的 mock update/context，让原 handler 正常工作
+    def _default_attr(self, name):
+        return None
+
     mock_update = type("MockUpdate", (), {
         "effective_user": query.from_user,
         "message": query.message,
+        "__getattr__": _default_attr,
     })()
-    mock_ctx = type("MockContext", (), {"args": []})()
+    mock_ctx = type("MockContext", (), {
+        "args": [],
+        "__getattr__": _default_attr,
+    })()
 
     try:
         await handler(mock_update, mock_ctx)
@@ -648,11 +655,18 @@ async def _do_quota_set(update, args: list, telegram_id: int) -> None:
 
 def _make_mock(update: Update, args: list):
     """构造 mock update/context 供原 handler 复用"""
+    def _default_attr(self, name):
+        return None
+
     mock_update = type("MockUpdate", (), {
         "effective_user": update.effective_user,
         "message": update.message,
+        "__getattr__": _default_attr,
     })()
-    mock_ctx = type("MockContext", (), {"args": args})()
+    mock_ctx = type("MockContext", (), {
+        "args": args,
+        "__getattr__": _default_attr,
+    })()
     return mock_update, mock_ctx
 
 
