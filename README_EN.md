@@ -35,6 +35,14 @@
 - **Repository-level Knowledge Base (RAG)**: Vector semantic retrieval of project documentation, providing normative context for AI reviews
 - **PR Code Auto-indexing**: Syntax-aware chunking + semantic search, enabling AI to precisely locate relevant code
 
+### Repository Scanning
+
+- **AI Full Repository Scan**: Periodic AI-powered code scanning across the entire repository, automatically detecting code quality issues and security vulnerabilities
+- **Auto-create Issues**: Automatically creates GitHub Issues for discovered problems, with detailed descriptions and fix suggestions
+- **Flexible Scan Configuration**: Configurable scan interval, cooldown time, token budget, concurrency, and more
+- **Scan Management UI**: View scan list, scan details, and statistics in WebUI
+- **Scan Notifications**: Sends notifications via Telegram Bot when scans complete
+
 ### Issue Analysis
 
 - **Intelligent Issue Analysis**: Auto-classification, priority assessment, label recommendation, duplicate detection, linked PR discovery
@@ -52,8 +60,8 @@
 - **SSE Real-time Push**: Multi-process real-time communication based on Redis Pub/Sub, with instant WebUI data updates
 - **Quota-based Access Control**: Flexible quota-based access management system with user self-registration support
 - **Admin Action Audit**: Complete operation logs covering configuration changes, user management, and other critical actions
-- **WebUI Dashboard**: Dashboard charts, PR management, user management, configuration management, queue monitoring, action logs
-- **Telegram Bot**: Real-time notifications, three-tier permission system (super admin / admin / user), quota management
+- **WebUI Dashboard**: Dashboard charts, PR management, user management, configuration management, queue monitoring, action logs, repository scan management, with Markdown content rendering support
+- **Telegram Bot**: Real-time notifications, interactive button menus, three-tier permission system (super admin / admin / user), quota management
 - **GitHub OAuth Login**: Integrated with Telegram user system, light/dark theme switching
 
 ---
@@ -290,14 +298,17 @@ Sakura-AI-Reviewer/
 │   │   ├── comment_service.py # Comment service
 │   │   ├── rag_service.py     # RAG knowledge base
 │   │   ├── code_index_service.py  # Code indexing
+│   │   ├── scan_prompt_builder.py # Repository scan prompt builder
+│   │   ├── scan_report_service.py # Scan report service
+│   │   ├── scan_scheduler.py      # Scan scheduler
 │   │   └── history_context_service.py  # Incremental review history
 │   ├── webui/             # WebUI management interface
 │   │   ├── routes/        #   Routes (dashboard, config, users, ...)
 │   │   ├── templates/     #   Jinja2 templates
 │   │   ├── auth.py        #   GitHub OAuth authentication
 │   │   └── sse.py         #   SSE real-time push
-│   ├── workers/           # Background tasks (review_worker, issue_worker)
-│   ├── telegram/          # Telegram Bot (notifications, commands, permissions)
+│   ├── workers/           # Background tasks (review_worker, issue_worker, scan_worker)
+│   ├── telegram/          # Telegram Bot (notifications, commands, button menus, permissions)
 │   └── bootstrap.py       # Setup Wizard guided configuration
 ├── config/                # YAML config files (strategies.yaml)
 ├── docker/                # Docker Compose deployment
