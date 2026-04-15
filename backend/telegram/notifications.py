@@ -63,7 +63,7 @@ class NotificationSender:
                 logger.debug(f"无通知目标，跳过审查开始通知: {repo_name}#{pr_number}")
                 return
 
-            await self._send_to_targets(text, chat_ids)
+            await self.send_to_targets(text, chat_ids)
             logger.info(
                 f"✅ 发送审查开始通知: {repo_name}#{pr_number} → {len(chat_ids)} 人"
             )
@@ -97,7 +97,7 @@ class NotificationSender:
                 logger.debug(f"无通知目标，跳过审查完成通知: {repo_name}#{pr_number}")
                 return
 
-            await self._send_to_targets(text, chat_ids, disable_web_page_preview=True)
+            await self.send_to_targets(text, chat_ids, disable_web_page_preview=True)
             logger.info(
                 f"✅ 发送审查完成通知: {repo_name}#{pr_number} → {len(chat_ids)} 人"
             )
@@ -226,7 +226,7 @@ class NotificationSender:
                 )
                 return
 
-            await self._send_to_targets(text, chat_ids)
+            await self.send_to_targets(text, chat_ids)
             logger.info(
                 f"Issue 分析完成通知已发送: {repo_name}#{issue_number} → {len(chat_ids)} 人"
             )
@@ -267,7 +267,7 @@ class NotificationSender:
                 logger.debug(f"无通知目标，跳过扫描完成通知: {repo_name}")
                 return
 
-            await self._send_to_targets(text, chat_ids, disable_web_page_preview=True)
+            await self.send_to_targets(text, chat_ids, disable_web_page_preview=True)
             logger.info(f"✅ 发送扫描完成通知: {repo_name} → {len(chat_ids)} 人")
 
         except Exception as e:
@@ -324,7 +324,7 @@ class NotificationSender:
                 )
                 return
 
-            await self._send_to_targets(text, chat_ids)
+            await self.send_to_targets(text, chat_ids)
             logger.info(
                 f"Critical Issue 告警已发送: {repo_name}#{issue_number} → {len(chat_ids)} 人"
             )
