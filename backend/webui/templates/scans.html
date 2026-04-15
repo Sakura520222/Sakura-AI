@@ -52,7 +52,7 @@ function triggerScan() {
     if (!confirm('确认对所有候选仓库触发扫描？')) return;
     fetch('/webui/scans/trigger', {
         method: 'POST',
-        headers: {'Content-Type': 'application/json'}
+        headers: {'Content-Type': 'application/json', 'X-CSRF-Token': '{{ csrf_token }}'}
     })
     .then(r => r.json())
     .then(data => {
