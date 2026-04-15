@@ -91,6 +91,12 @@ _PERMISSION_MAP = {
 # ---------------------------------------------------------------------------
 
 
+def _mock_default_attr(self, name: str):
+    """mock 对象的 __getattr__ 兜底，未模拟的属性返回 None 并记录警告"""
+    logger.warning(f"Mock 对象访问了未模拟的属性: {name}")
+    return None
+
+
 def build_main_menu(user_role: str) -> InlineKeyboardMarkup:
     """根据用户角色构建主菜单"""
     rows = []
@@ -372,17 +378,14 @@ async def _handle_exec(query, target: str, telegram_id: int, context) -> None:
         return
 
     # 构造兼容的 mock update/context，让原 handler 正常工作
-    def _default_attr(self, name):
-        return None
-
     mock_update = type("MockUpdate", (), {
         "effective_user": query.from_user,
         "message": query.message,
-        "__getattr__": _default_attr,
+        "__getattr__": _mock_default_attr,
     })()
     mock_ctx = type("MockContext", (), {
         "args": [],
-        "__getattr__": _default_attr,
+        "__getattr__": _mock_default_attr,
     })()
 
     try:
@@ -655,17 +658,14 @@ async def _do_quota_set(update, args: list, telegram_id: int) -> None:
 
 def _make_mock(update: Update, args: list):
     """构造 mock update/context 供原 handler 复用"""
-    def _default_attr(self, name):
-        return None
-
     mock_update = type("MockUpdate", (), {
         "effective_user": update.effective_user,
         "message": update.message,
-        "__getattr__": _default_attr,
+        "__getattr__": _mock_default_attr,
     })()
     mock_ctx = type("MockContext", (), {
         "args": args,
-        "__getattr__": _default_attr,
+        "__getattr__": _mock_default_attr,
     })()
     return mock_update, mock_ctx
 

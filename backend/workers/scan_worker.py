@@ -22,10 +22,10 @@ async def _get_scan_semaphore() -> asyncio.Semaphore:
     """获取扫描并发信号量（懒初始化）"""
     global _scan_semaphore
     if _scan_semaphore is None:
-        s = get_settings()
-        _scan_semaphore = asyncio.Semaphore(s.scan_max_concurrent)
+        settings = get_settings()
+        _scan_semaphore = asyncio.Semaphore(settings.scan_max_concurrent)
         logger.info(
-            f"扫描并发信号量初始化: 最大 {s.scan_max_concurrent} 个并发任务"
+            f"扫描并发信号量初始化: 最大 {settings.scan_max_concurrent} 个并发任务"
         )
     return _scan_semaphore
 
@@ -116,8 +116,8 @@ class ScanWorker:
                 return []
 
             # 排除冷却期内已成功扫描的仓库
-            s = get_settings()
-            cutoff = datetime.utcnow() - timedelta(hours=s.scan_cooldown_hours)
+            settings = get_settings()
+            cutoff = datetime.utcnow() - timedelta(hours=settings.scan_cooldown_hours)
             recent_result = await session.execute(
                 select(RepoScan.repo_name).where(
                     RepoScan.status == ScanStatus.COMPLETED.value,
@@ -167,7 +167,8 @@ class ScanWorker:
         """扫描内部逻辑"""
         from backend.models.database import async_session
 
-        budget = ScanTokenBudget(max_tokens=get_settings().scan_max_tokens_per_repo)
+        settings = get_settings()
+        budget = ScanTokenBudget(max_tokens=settings.scan_max_tokens_per_repo)
         repo_path = None
 
         try:
@@ -615,10 +616,10 @@ class ScanWorker:
         try:
             from openai import AsyncOpenAI
 
-            s = get_settings()
+            settings = get_settings()
             client = AsyncOpenAI(
-                api_key=s.openai_api_key,
-                base_url=s.openai_api_base,
+                api_key=settings.openai_api_key,
+                base_url=settings.openai_api_base,
             )
 
             # 根据剩余预算计算 completion 上限
@@ -631,9 +632,9 @@ class ScanWorker:
                 completion_cap = min(4000, remaining)
 
             response = await client.chat.completions.create(
-                model=s.scan_model or s.openai_model,
+                model=settings.scan_model or settings.openai_model,
                 messages=messages,
-                temperature=s.scan_temperature,
+                temperature=settings.scan_temperature,
                 max_tokens=completion_cap,
             )
 
