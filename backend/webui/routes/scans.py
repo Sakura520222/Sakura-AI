@@ -8,9 +8,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from backend.models.scan_models import RepoScan, ScanFinding, ScanStatus
 from backend.webui.deps import (
     require_auth,
+    require_super_admin,
+    require_csrf_header,
     get_db,
     get_templates,
     get_user_preferences,
+    get_csrf_serializer,
     paginate,
     error_page,
 )
@@ -33,6 +36,7 @@ async def scan_list_page(
             "current_user": user,
             "active_page": "scans",
             "user_prefs": user_prefs,
+            "csrf_token": get_csrf_serializer().dumps({}),
         },
     )
 
@@ -56,30 +60,26 @@ async def scan_list_fragment(
     query = select(RepoScan)
     count_query = select(func.count(RepoScan.id))
 
-    if search:
-        search_pattern = f"%{search}%"
-        from sqlalchemy import or_
+    # 构建公共过滤条件
+    def apply_filters(q):
+        if search:
+            search_pattern = f"%{search}%"
+            from sqlalchemy import or_
 
-        query = query.where(
-            or_(
-                RepoScan.repo_name.like(search_pattern),
-                RepoScan.error_message.like(search_pattern),
+            q = q.where(
+                or_(
+                    RepoScan.repo_name.like(search_pattern),
+                    RepoScan.error_message.like(search_pattern),
+                )
             )
-        )
-        count_query = count_query.where(
-            or_(
-                RepoScan.repo_name.like(search_pattern),
-                RepoScan.error_message.like(search_pattern),
-            )
-        )
+        if repo_name:
+            q = q.where(RepoScan.repo_name == repo_name)
+        if status:
+            q = q.where(RepoScan.status == status)
+        return q
 
-    if repo_name:
-        query = query.where(RepoScan.repo_name == repo_name)
-        count_query = count_query.where(RepoScan.repo_name == repo_name)
-
-    if status:
-        query = query.where(RepoScan.status == status)
-        count_query = count_query.where(RepoScan.status == status)
+    query = apply_filters(query)
+    count_query = apply_filters(count_query)
 
     query = query.order_by(desc(RepoScan.created_at))
     scans, total, total_pages, page = await paginate(
@@ -211,7 +211,8 @@ async def scan_detail_page(
 @router.post("/trigger")
 async def trigger_scan(
     request: Request,
-    user: dict = Depends(require_auth),
+    user: dict = Depends(require_super_admin),
+    _csrf: str = Depends(require_csrf_header),
 ):
     """手动触发扫描"""
     from backend.workers.scan_worker import ScanWorker

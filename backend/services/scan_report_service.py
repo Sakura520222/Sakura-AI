@@ -307,7 +307,6 @@ class ScanReportService:
             from backend.models.database import async_session
             from backend.models.telegram_models import (
                 UserRepoSubscription,
-                TelegramUser,
             )
             from sqlalchemy import select
 
@@ -317,7 +316,7 @@ class ScanReportService:
                 return
 
             # 获取订阅该仓库的 Telegram 用户 telegram_id
-            chat_ids = []
+            chat_ids: list[int] = []
             async with async_session() as session:
                 # 1. 查询 UserRepoSubscription（用户主动订阅）
                 result = await session.execute(
@@ -325,27 +324,11 @@ class ScanReportService:
                     .where(UserRepoSubscription.repo_name == scan.repo_name)
                     .distinct()
                 )
-                chat_ids = [r[0] for r in result.all()]
+                chat_ids = [r[0] for r in result.all() if r[0]]
 
-                # 2. 查询 RepoSubscription 的管理员
-                if not chat_ids:
-                    from backend.models.telegram_models import RepoSubscription
-
-                    sub_result = await session.execute(
-                        select(RepoSubscription).where(
-                            RepoSubscription.repo_name == scan.repo_name,
-                            RepoSubscription.is_active == True,  # noqa: E712
-                        )
-                    )
-                    subs = sub_result.scalars().all()
-                    if subs:
-                        # 查询所有管理员的 telegram_id
-                        admin_result = await session.execute(
-                            select(TelegramUser.telegram_id).where(
-                                TelegramUser.role.in_(("admin", "super_admin"))
-                            )
-                        )
-                        chat_ids = [r[0] for r in admin_result.all() if r[0]]
+            # 兜底：无订阅用户时查询所有管理员
+            if not chat_ids:
+                chat_ids = await self._get_all_admin_telegram_ids()
 
             # 添加默认管理员通知
             from backend.core.config import get_settings
@@ -359,24 +342,29 @@ class ScanReportService:
                 except ValueError:
                     pass
 
-            # 兜底：查询所有管理员
-            if not chat_ids:
-                async with async_session() as admin_session:
-                    admin_result = await admin_session.execute(
-                        select(TelegramUser.telegram_id).where(
-                            TelegramUser.role.in_(("admin", "super_admin"))
-                        )
-                    )
-                    chat_ids = [r[0] for r in admin_result.all() if r[0]]
-
             if not chat_ids:
                 logger.warning(f"无 Telegram 通知目标: {scan.repo_name}")
                 return
 
             text = self.generate_telegram_message(scan)
-            await sender._send_to_targets(text, chat_ids)
+            await sender.send_to_targets(text, chat_ids)
 
             logger.info(f"✅ 扫描通知已发送: {scan.repo_name} → {len(chat_ids)} 个目标")
 
         except Exception as e:
             logger.error(f"发送 Telegram 扫描通知失败: {e}")
+
+    @staticmethod
+    async def _get_all_admin_telegram_ids() -> list[int]:
+        """查询所有管理员的 telegram_id"""
+        from backend.models.database import async_session
+        from backend.models.telegram_models import TelegramUser
+        from sqlalchemy import select
+
+        async with async_session() as session:
+            result = await session.execute(
+                select(TelegramUser.telegram_id).where(
+                    TelegramUser.role.in_(("admin", "super_admin"))
+                )
+            )
+            return [r[0] for r in result.all() if r[0]]

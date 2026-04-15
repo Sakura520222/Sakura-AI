@@ -14,8 +14,6 @@ from sqlalchemy.exc import OperationalError, InterfaceError
 from backend.core.config import get_settings
 from backend.models.scan_models import RepoScan, ScanFinding, ScanStatus
 
-settings = get_settings()
-
 # 扫描并发控制信号量
 _scan_semaphore: Optional[asyncio.Semaphore] = None
 
@@ -24,9 +22,10 @@ async def _get_scan_semaphore() -> asyncio.Semaphore:
     """获取扫描并发信号量（懒初始化）"""
     global _scan_semaphore
     if _scan_semaphore is None:
-        _scan_semaphore = asyncio.Semaphore(settings.scan_max_concurrent)
+        s = get_settings()
+        _scan_semaphore = asyncio.Semaphore(s.scan_max_concurrent)
         logger.info(
-            f"扫描并发信号量初始化: 最大 {settings.scan_max_concurrent} 个并发任务"
+            f"扫描并发信号量初始化: 最大 {s.scan_max_concurrent} 个并发任务"
         )
     return _scan_semaphore
 
@@ -117,7 +116,8 @@ class ScanWorker:
                 return []
 
             # 排除冷却期内已成功扫描的仓库
-            cutoff = datetime.utcnow() - timedelta(hours=settings.scan_cooldown_hours)
+            s = get_settings()
+            cutoff = datetime.utcnow() - timedelta(hours=s.scan_cooldown_hours)
             recent_result = await session.execute(
                 select(RepoScan.repo_name).where(
                     RepoScan.status == ScanStatus.COMPLETED.value,
@@ -167,7 +167,7 @@ class ScanWorker:
         """扫描内部逻辑"""
         from backend.models.database import async_session
 
-        budget = ScanTokenBudget(max_tokens=settings.scan_max_tokens_per_repo)
+        budget = ScanTokenBudget(max_tokens=get_settings().scan_max_tokens_per_repo)
         repo_path = None
 
         try:
@@ -294,10 +294,8 @@ class ScanWorker:
     async def _clone_repo(self, repo_name: str) -> Optional[str]:
         """克隆仓库到临时目录"""
         try:
-            from backend.core.github_app import GitHubAppClient
-
             repo_owner, repo_name_only = repo_name.split("/", 1)
-            github_app = GitHubAppClient()
+            github_app = self.github_app
 
             # 获取 installation access token
             client = await asyncio.to_thread(
@@ -388,71 +386,6 @@ class ScanWorker:
         except Exception as e:
             logger.warning(f"索引仓库失败（继续分析）: {e}")
             return {"indexed": 0, "total_chunks": 0}
-
-    async def _analyze_dimension(
-        self, repo_name: str, dimension: str, budget: ScanTokenBudget
-    ) -> dict:
-        """按维度调用 AI 分析（使用关键词搜索代码片段）"""
-        from backend.services.scan_prompt_builder import ScanPromptBuilder
-        from backend.services.code_index_service import CodeIndexService
-
-        # 获取维度定义
-        dim_def = ScanPromptBuilder.get_dimension(dimension)
-        if not dim_def:
-            return {"findings": [], "tokens": 0}
-
-        # 搜索相关代码片段
-        code_chunks = []
-        try:
-            index_service = CodeIndexService()
-            for keyword in dim_def["search_keywords"][:3]:
-                results = await index_service.search_code_context(
-                    repo_full_name=repo_name,
-                    query=keyword,
-                    top_k=5,
-                )
-                for r in results:
-                    code_chunks.append(
-                        {
-                            "file_path": r.get("file_path", ""),
-                            "content": r.get("content", ""),
-                        }
-                    )
-        except Exception as e:
-            logger.warning(f"搜索代码上下文失败 ({dimension}): {e}")
-
-        # 去重（按 file_path）
-        seen = set()
-        unique_chunks = []
-        for c in code_chunks:
-            fp = c["file_path"]
-            if fp not in seen:
-                seen.add(fp)
-                unique_chunks.append(c)
-
-        if not unique_chunks:
-            logger.info(f"维度 [{dimension}] 无相关代码片段，跳过")
-            return {"findings": [], "tokens": 0}
-
-        # 构建 Prompt
-        messages = ScanPromptBuilder.build_scan_prompt(
-            repo_name=repo_name,
-            dimension=dimension,
-            code_chunks=unique_chunks,
-        )
-
-        # 调用 AI
-        response_text, token_usage = await self._call_ai(messages, budget=budget)
-        if token_usage:
-            budget.consume(
-                token_usage.get("prompt_tokens", 0),
-                token_usage.get("completion_tokens", 0),
-            )
-
-        # 解析结果
-        findings = ScanPromptBuilder.parse_findings(response_text)
-
-        return {"findings": findings, "tokens": budget.used_tokens}
 
     async def _full_scan_with_tools(
         self,
@@ -682,9 +615,10 @@ class ScanWorker:
         try:
             from openai import AsyncOpenAI
 
+            s = get_settings()
             client = AsyncOpenAI(
-                api_key=settings.openai_api_key,
-                base_url=settings.openai_api_base,
+                api_key=s.openai_api_key,
+                base_url=s.openai_api_base,
             )
 
             # 根据剩余预算计算 completion 上限
@@ -697,9 +631,9 @@ class ScanWorker:
                 completion_cap = min(4000, remaining)
 
             response = await client.chat.completions.create(
-                model=settings.scan_model or settings.openai_model,
+                model=s.scan_model or s.openai_model,
                 messages=messages,
-                temperature=settings.scan_temperature,
+                temperature=s.scan_temperature,
                 max_tokens=completion_cap,
             )
 

@@ -13,7 +13,7 @@ class NotificationSender:
     def __init__(self, bot: Bot):
         self.bot = bot
 
-    async def _send_to_targets(
+    async def send_to_targets(
         self, text: str, chat_ids: List[int], parse_mode: str = "Markdown", **kwargs
     ):
         """向多个目标发送消息，单个失败不影响其他"""
