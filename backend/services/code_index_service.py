@@ -9,6 +9,7 @@
 
 from typing import List, Dict, Any, Optional
 from loguru import logger
+import asyncio
 import hashlib
 from pathlib import Path
 from datetime import datetime
@@ -100,7 +101,14 @@ class CodeIndexService:
                 # 处理 removed 状态的文件，清理旧索引
                 if file_status == "removed":
                     try:
-                        await self.delete_file_index(repo_full_name, file_path)
+                        await self.vector_store.delete_by_file(
+                            repo_full_name, file_path
+                        )
+                        existing = await self._get_code_file(
+                            session, repo_full_name, file_path
+                        )
+                        if existing:
+                            existing.is_deleted = 1
                         removed_count += 1
                         logger.info(f"已清理删除文件的索引: {file_path}")
                     except Exception as e:
@@ -618,7 +626,7 @@ class CodeIndexService:
                     )
                     if existing:
                         existing.is_deleted = 1
-                    cleaned_count += 1
+                        cleaned_count += 1
                 except Exception as e:
                     logger.error(
                         f"清理删除文件索引失败 ({file_path}): {e}"
@@ -678,8 +686,6 @@ class CodeIndexService:
         Returns:
             (added, modified, deleted) 三元组，失败返回 None
         """
-        import asyncio
-
         try:
             proc = await asyncio.create_subprocess_exec(
                 "git",
@@ -703,16 +709,27 @@ class CodeIndexService:
             for line in stdout.decode().strip().split("\n"):
                 if not line.strip():
                     continue
-                parts = line.split("\t", 1)
-                if len(parts) != 2:
+                parts = line.split("\t")
+                if len(parts) < 2:
                     continue
-                status, file_path = parts
+                status = parts[0]
                 # 过滤只保留支持的代码文件
+                if status.startswith("R") or status.startswith("C"):
+                    # 重命名/复制: "R100\told\tnew" -> 取新路径
+                    if len(parts) >= 3:
+                        file_path = parts[-1]
+                    else:
+                        continue
+                else:
+                    file_path = parts[1]
+
                 if not self._is_supported_code_file(file_path):
                     continue
                 if status == "A":
                     added.append(file_path)
-                elif status in ("M", "R"):
+                elif status.startswith("M"):
+                    modified.append(file_path)
+                elif status.startswith("R") or status.startswith("C"):
                     modified.append(file_path)
                 elif status == "D":
                     deleted.append(file_path)

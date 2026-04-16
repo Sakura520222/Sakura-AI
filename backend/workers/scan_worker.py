@@ -100,7 +100,6 @@ class ScanWorker:
 
     async def get_scan_candidates(self) -> dict:
         """获取待扫描仓库列表（GitHub App 安装仓库 + 冷却期内未扫描）"""
-        import asyncio
 
         from backend.models.database import async_session
 
