@@ -399,6 +399,7 @@ async def repo_list_fragment(
     )
 
 
+@router.post("/{repo_name:path}/index-docs")
 async def index_docs(
     request: Request,
     repo_name: str,
