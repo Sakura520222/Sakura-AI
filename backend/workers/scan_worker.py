@@ -99,28 +99,31 @@ class ScanWorker:
         self.github_app = GitHubAppClient()
 
     async def get_scan_candidates(self) -> dict:
-        """获取待扫描仓库列表（活跃订阅 + 冷却期内未扫描）"""
+        """获取待扫描仓库列表（GitHub App 安装仓库 + 冷却期内未扫描）"""
+        import asyncio
+
         from backend.models.database import async_session
-        from backend.models.telegram_models import RepoSubscription
+
+        # 从 GitHub App 安装获取仓库列表
+        installations = await asyncio.to_thread(
+            self.github_app.get_all_installations_with_repos
+        )
+        active_repos = []
+        for inst in installations:
+            for repo in inst["repos"]:
+                active_repos.append(repo["full_name"])
+
+        settings = get_settings()
+
+        if not active_repos:
+            return {
+                "candidates": [],
+                "total_active": 0,
+                "cooldown_count": 0,
+                "cooldown_hours": settings.scan_cooldown_hours,
+            }
 
         async with async_session() as session:
-            # 获取活跃仓库
-            result = await session.execute(
-                select(RepoSubscription.repo_name).where(
-                    RepoSubscription.is_active.is_(True)
-                )
-            )
-            active_repos = [r[0] for r in result.all()]
-            settings = get_settings()
-
-            if not active_repos:
-                return {
-                    "candidates": [],
-                    "total_active": 0,
-                    "cooldown_count": 0,
-                    "cooldown_hours": settings.scan_cooldown_hours,
-                }
-
             # 排除冷却期内已成功扫描的仓库
             cutoff = datetime.utcnow() - timedelta(hours=settings.scan_cooldown_hours)
             recent_result = await session.execute(

@@ -227,7 +227,7 @@ async def trigger_scan(
         if not candidates:
             total_active = result["total_active"]
             if total_active == 0:
-                message = "当前无活跃仓库订阅，请先添加仓库"
+                message = "当前无已安装的仓库，请确保 GitHub App 已安装到目标仓库"
             else:
                 cooldown_hours = result["cooldown_hours"]
                 message = (
