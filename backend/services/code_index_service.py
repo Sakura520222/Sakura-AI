@@ -99,6 +99,9 @@ class CodeIndexService:
                 content = file_info.get("content")
 
                 # 处理 removed 状态的文件，清理旧索引
+                # 注意：此处内联清理逻辑而非调用 delete_file_index，
+                # 是为了使用外部 session 保持事务一致性，
+                # 避免独立 session 提交后外层回滚导致数据不一致
                 if file_status == "removed":
                     try:
                         await self.vector_store.delete_by_file(
@@ -109,8 +112,10 @@ class CodeIndexService:
                         )
                         if existing:
                             existing.is_deleted = 1
-                        removed_count += 1
-                        logger.info(f"已清理删除文件的索引: {file_path}")
+                            removed_count += 1
+                            logger.info(
+                                f"已清理删除文件的索引: {file_path}"
+                            )
                     except Exception as e:
                         logger.error(
                             f"清理删除文件索引失败 ({file_path}): {e}"
