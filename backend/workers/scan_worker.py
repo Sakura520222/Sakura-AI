@@ -98,7 +98,7 @@ class ScanWorker:
 
         self.github_app = GitHubAppClient()
 
-    async def get_scan_candidates(self) -> list[str]:
+    async def get_scan_candidates(self) -> dict:
         """获取待扫描仓库列表（活跃订阅 + 冷却期内未扫描）"""
         from backend.models.database import async_session
         from backend.models.telegram_models import RepoSubscription
@@ -111,12 +111,17 @@ class ScanWorker:
                 )
             )
             active_repos = [r[0] for r in result.all()]
+            settings = get_settings()
 
             if not active_repos:
-                return []
+                return {
+                    "candidates": [],
+                    "total_active": 0,
+                    "cooldown_count": 0,
+                    "cooldown_hours": settings.scan_cooldown_hours,
+                }
 
             # 排除冷却期内已成功扫描的仓库
-            settings = get_settings()
             cutoff = datetime.utcnow() - timedelta(hours=settings.scan_cooldown_hours)
             recent_result = await session.execute(
                 select(RepoScan.repo_name).where(
@@ -131,7 +136,12 @@ class ScanWorker:
                 f"扫描候选仓库: {len(candidates)}/{len(active_repos)} "
                 f"({len(recent_repo_set)} 个在冷却期内)"
             )
-            return candidates
+            return {
+                "candidates": candidates,
+                "total_active": len(active_repos),
+                "cooldown_count": len(recent_repo_set),
+                "cooldown_hours": settings.scan_cooldown_hours,
+            }
 
     async def create_scan_record(
         self, repo_name: str, trigger_type: str, triggered_by: str | None = None
