@@ -64,6 +64,7 @@ class CodeParserService:
         self.chunk_size = chunk_size
         self.chunk_overlap = chunk_overlap
         self.enable_context_padding = enable_context_padding
+        self._current_file_content_hash: Optional[str] = None
 
     def detect_language(self, file_path: str) -> Optional[str]:
         """检测文件的语言类型
@@ -87,6 +88,7 @@ class CodeParserService:
         repo_full_name: str,
         pr_number: Optional[int] = None,
         commit_sha: Optional[str] = None,
+        file_content_hash: Optional[str] = None,
     ) -> List[CodeChunk]:
         """解析代码文件为代码块
 
@@ -96,10 +98,28 @@ class CodeParserService:
             repo_full_name: 仓库名称
             pr_number: PR编号（可选）
             commit_sha: Commit SHA（可选）
+            file_content_hash: 文件内容 hash（可选），用于生成版本化的 chunk ID
 
         Returns:
             代码块列表
         """
+        self._current_file_content_hash = file_content_hash
+        try:
+            return self._parse_code_file_impl(
+                file_path, content, repo_full_name, pr_number, commit_sha
+            )
+        finally:
+            self._current_file_content_hash = None
+
+    def _parse_code_file_impl(
+        self,
+        file_path: str,
+        content: str,
+        repo_full_name: str,
+        pr_number: Optional[int] = None,
+        commit_sha: Optional[str] = None,
+    ) -> List[CodeChunk]:
+        """解析代码文件的内部实现"""
         language = self.detect_language(file_path)
 
         # 根据语言选择解析策略
@@ -606,12 +626,13 @@ class CodeParserService:
         """
         content = "\n".join(lines).strip()
 
-        # 生成唯一ID
+        # 生成唯一ID（包含文件内容 hash 以区分不同版本）
         import hashlib
 
-        content_hash = hashlib.md5(
-            f"{file_path}:{start_line}:{end_line}".encode()
-        ).hexdigest()[:12]
+        id_input = f"{file_path}:{start_line}:{end_line}"
+        if self._current_file_content_hash:
+            id_input = f"{id_input}:{self._current_file_content_hash}"
+        content_hash = hashlib.md5(id_input.encode()).hexdigest()[:12]
 
         chunk_id = f"chunk_{content_hash}"
 
