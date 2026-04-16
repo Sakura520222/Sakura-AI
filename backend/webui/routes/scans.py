@@ -221,11 +221,21 @@ async def trigger_scan(
 
     try:
         worker = ScanWorker()
-        candidates = await worker.get_scan_candidates()
+        result = await worker.get_scan_candidates()
+        candidates = result["candidates"]
 
         if not candidates:
+            total_active = result["total_active"]
+            if total_active == 0:
+                message = "当前无已安装的仓库，请确保 GitHub App 已安装到目标仓库"
+            else:
+                cooldown_hours = result["cooldown_hours"]
+                message = (
+                    f"所有 {total_active} 个仓库均在冷却期内"
+                    f"（{cooldown_hours} 小时），请稍后重试"
+                )
             return JSONResponse(
-                {"success": False, "message": "无可扫描仓库"},
+                {"success": False, "message": message},
                 status_code=400,
             )
 
