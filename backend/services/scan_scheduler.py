@@ -65,10 +65,17 @@ class ScanScheduler:
         """定时扫描入口"""
         try:
             logger.info("🕐 定时扫描任务触发")
-            candidates = await self._worker.get_scan_candidates()
+            result = await self._worker.get_scan_candidates()
+            candidates = result["candidates"]
 
             if not candidates:
-                logger.info("无可扫描仓库，跳过本轮")
+                total_active = result["total_active"]
+                if total_active == 0:
+                    logger.info("无可扫描仓库（无活跃订阅），跳过本轮")
+                else:
+                    logger.info(
+                        f"无可扫描仓库（{result['cooldown_count']}/{total_active} 个在冷却期内），跳过本轮"
+                    )
                 return
 
             logger.info(f"本轮扫描候选仓库: {len(candidates)} 个")
