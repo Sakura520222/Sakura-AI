@@ -1,0 +1,310 @@
+"""API v1 仪表盘端点"""
+
+import time
+from collections import OrderedDict
+from datetime import datetime, timedelta
+
+from fastapi import APIRouter, Depends
+from sqlalchemy import select, func, desc, case, and_
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from backend.models.database import PRReview, ReviewComment
+from backend.webui.deps import (
+    get_db,
+    build_user_scope_filter,
+)
+
+from backend.api.v1.deps import require_api_auth
+from backend.api.v1.responses import success_response
+
+router = APIRouter(prefix="/dashboard", tags=["Dashboard"])
+
+# 复用 dashboard 路由中的缓存策略
+_stats_cache: OrderedDict[int, tuple[dict, float]] = OrderedDict()
+_STATS_CACHE_TTL = 10
+_MAX_STATS_CACHE_SIZE = 100
+
+_chart_cache: OrderedDict[int, tuple[dict, float]] = OrderedDict()
+_CHART_CACHE_TTL = 20
+_MAX_CHART_CACHE_SIZE = 100
+
+
+@router.get("/stats")
+async def get_stats(
+    db: AsyncSession = Depends(get_db),
+    user: dict = Depends(require_api_auth),
+):
+    """获取仪表盘统计数据（按用户权限过滤）"""
+    uid = user["user_id"]
+
+    # 缓存检查
+    if uid in _stats_cache:
+        cached_data, ts = _stats_cache[uid]
+        if time.time() - ts < _STATS_CACHE_TTL:
+            _stats_cache.move_to_end(uid)
+            return success_response(data=cached_data)
+
+    scope_filter = build_user_scope_filter(user, PRReview)
+
+    # 聚合查询
+    stats_query = select(
+        func.count(PRReview.id).label("total"),
+        func.sum(case((PRReview.status == "completed", 1), else_=0)).label("completed"),
+        func.sum(case((PRReview.status == "reviewing", 1), else_=0)).label("reviewing"),
+        func.sum(case((PRReview.status == "pending", 1), else_=0)).label("pending"),
+        func.sum(case((PRReview.status == "failed", 1), else_=0)).label("failed"),
+        func.sum(
+            case(
+                (and_(PRReview.status == "completed", PRReview.decision == "approve"), 1),
+                else_=0,
+            )
+        ).label("approved"),
+        func.sum(
+            case(
+                (
+                    and_(
+                        PRReview.status == "completed",
+                        PRReview.decision == "request_changes",
+                    ),
+                    1,
+                ),
+                else_=0,
+            )
+        ).label("changes_requested"),
+        func.avg(
+            case((PRReview.status == "completed", PRReview.overall_score), else_=None)
+        ).label("avg_score"),
+        func.coalesce(
+            func.sum(
+                case((PRReview.status == "completed", PRReview.prompt_tokens), else_=0)
+            ),
+            0,
+        ).label("total_prompt_tokens"),
+        func.coalesce(
+            func.sum(
+                case(
+                    (PRReview.status == "completed", PRReview.completion_tokens), else_=0
+                )
+            ),
+            0,
+        ).label("total_completion_tokens"),
+        func.coalesce(
+            func.sum(
+                case((PRReview.status == "completed", PRReview.estimated_cost), else_=0)
+            ),
+            0,
+        ).label("total_estimated_cost"),
+    )
+    if scope_filter is not None:
+        stats_query = stats_query.where(scope_filter)
+
+    stats_row = (await db.execute(stats_query)).one()
+
+    # 评论总数
+    comment_query = select(func.count(ReviewComment.id))
+    if scope_filter is not None:
+        comment_query = comment_query.join(
+            PRReview, ReviewComment.review_id == PRReview.id
+        ).where(scope_filter)
+    comment_count = (await db.execute(comment_query)).scalar() or 0
+
+    avg_score = round(stats_row.avg_score, 1) if stats_row.avg_score else 0
+
+    result = {
+        "total": int(stats_row.total or 0),
+        "completed": int(stats_row.completed or 0),
+        "reviewing": int(stats_row.reviewing or 0),
+        "pending": int(stats_row.pending or 0),
+        "failed": int(stats_row.failed or 0),
+        "approved": int(stats_row.approved or 0),
+        "changes_requested": int(stats_row.changes_requested or 0),
+        "avg_score": avg_score,
+        "comment_count": comment_count,
+        "total_prompt_tokens": int(stats_row.total_prompt_tokens or 0),
+        "total_completion_tokens": int(stats_row.total_completion_tokens or 0),
+        "total_estimated_cost": int(stats_row.total_estimated_cost or 0),
+    }
+
+    # LRU 缓存
+    if len(_stats_cache) >= _MAX_STATS_CACHE_SIZE:
+        _stats_cache.popitem(last=False)
+    _stats_cache[uid] = (result, time.time())
+
+    return success_response(data=result)
+
+
+@router.get("/recent-reviews")
+async def get_recent_reviews(
+    db: AsyncSession = Depends(get_db),
+    user: dict = Depends(require_api_auth),
+):
+    """获取最近审查列表（最近 10 条）"""
+    query = select(PRReview).order_by(desc(PRReview.created_at)).limit(10)
+    scope_filter = build_user_scope_filter(user, PRReview)
+    if scope_filter is not None:
+        query = query.where(scope_filter)
+
+    result = await db.execute(query)
+    reviews = result.scalars().all()
+
+    items = []
+    for r in reviews:
+        items.append({
+            "id": r.id,
+            "pr_id": r.pr_id,
+            "repo_name": r.repo_name,
+            "repo_owner": r.repo_owner,
+            "title": r.title,
+            "author": r.author,
+            "status": r.status,
+            "overall_score": r.overall_score,
+            "decision": r.decision,
+            "strategy": r.strategy,
+            "created_at": r.created_at.isoformat() if r.created_at else None,
+            "completed_at": r.completed_at.isoformat() if r.completed_at else None,
+        })
+
+    return success_response(data=items)
+
+
+@router.get("/chart-data")
+async def get_chart_data(
+    db: AsyncSession = Depends(get_db),
+    user: dict = Depends(require_api_auth),
+):
+    """获取仪表盘图表数据（按用户权限过滤）"""
+    uid = user["user_id"]
+
+    # 缓存检查
+    if uid in _chart_cache:
+        cached_data, ts = _chart_cache[uid]
+        if time.time() - ts < _CHART_CACHE_TTL:
+            _chart_cache.move_to_end(uid)
+            return success_response(data=cached_data)
+
+    now = datetime.utcnow()
+    thirty_days_ago = now - timedelta(days=30)
+    scope_filter = build_user_scope_filter(user, PRReview)
+
+    # 1. 审查趋势（最近 30 天）
+    trend_query = (
+        select(
+            func.date(PRReview.created_at).label("day"),
+            PRReview.status,
+            func.count(PRReview.id).label("cnt"),
+        )
+        .where(PRReview.created_at >= thirty_days_ago)
+        .group_by(func.date(PRReview.created_at), PRReview.status)
+        .order_by(func.date(PRReview.created_at))
+    )
+    if scope_filter is not None:
+        trend_query = trend_query.where(scope_filter)
+    trend_rows = (await db.execute(trend_query)).all()
+
+    labels = []
+    completed_data = []
+    failed_data = []
+    current = thirty_days_ago
+    while current <= now:
+        labels.append(current.strftime("%m-%d"))
+        completed_data.append(0)
+        failed_data.append(0)
+        current += timedelta(days=1)
+
+    for row in trend_rows:
+        if row.day:
+            idx = (row.day - thirty_days_ago.date()).days
+            if 0 <= idx < len(labels):
+                if row.status == "completed":
+                    completed_data[idx] = row.cnt
+                elif row.status == "failed":
+                    failed_data[idx] = row.cnt
+
+    # 2. 决策分布
+    decision_query = (
+        select(PRReview.decision, func.count(PRReview.id).label("cnt"))
+        .where(PRReview.status == "completed", PRReview.decision.isnot(None))
+        .group_by(PRReview.decision)
+    )
+    if scope_filter is not None:
+        decision_query = decision_query.where(scope_filter)
+    decision_rows = (await db.execute(decision_query)).all()
+
+    decision_map = {
+        "approve": "通过",
+        "request_changes": "需修改",
+        "comment": "评论",
+        "skip": "跳过",
+    }
+    decision_labels = [decision_map.get(r.decision, r.decision or "其他") for r in decision_rows]
+    decision_counts = [r.cnt for r in decision_rows]
+
+    # 3. 仓库排行 Top 10
+    repo_query = (
+        select(PRReview.repo_name, func.count(PRReview.id).label("cnt"))
+        .group_by(PRReview.repo_name)
+        .order_by(desc(func.count(PRReview.id)))
+        .limit(10)
+    )
+    if scope_filter is not None:
+        repo_query = repo_query.where(scope_filter)
+    repo_rows = (await db.execute(repo_query)).all()
+
+    # 4. Token 消耗趋势
+    token_query = (
+        select(
+            func.date(PRReview.created_at).label("day"),
+            (
+                func.coalesce(func.sum(PRReview.prompt_tokens), 0)
+                + func.coalesce(func.sum(PRReview.completion_tokens), 0)
+            ).label("tokens"),
+        )
+        .where(PRReview.created_at >= thirty_days_ago)
+        .where(PRReview.status == "completed")
+        .group_by(func.date(PRReview.created_at))
+    )
+    if scope_filter is not None:
+        token_query = token_query.where(scope_filter)
+    token_rows = (await db.execute(token_query)).all()
+
+    token_data = [0] * len(labels)
+    for row in token_rows:
+        if row.day:
+            idx = (row.day - thirty_days_ago.date()).days
+            if 0 <= idx < len(labels):
+                token_data[idx] = int(row.tokens)
+
+    result = {
+        "trend": {
+            "labels": labels,
+            "completed": completed_data,
+            "failed": failed_data,
+        },
+        "decisions": {
+            "labels": decision_labels,
+            "counts": decision_counts,
+        },
+        "top_repos": {
+            "labels": [r.repo_name for r in repo_rows],
+            "counts": [r.cnt for r in repo_rows],
+        },
+        "tokens": {
+            "labels": labels,
+            "tokens": token_data,
+        },
+    }
+
+    if len(_chart_cache) >= _MAX_CHART_CACHE_SIZE:
+        _chart_cache.popitem(last=False)
+    _chart_cache[uid] = (result, time.time())
+
+    return success_response(data=result)
+
+
+@router.post("/cache/refresh")
+async def refresh_cache(user: dict = Depends(require_api_auth)):
+    """手动刷新仪表盘缓存（仅清除当前用户）"""
+    uid = user["user_id"]
+    _stats_cache.pop(uid, None)
+    _chart_cache.pop(uid, None)
+    return success_response(message="缓存已刷新")

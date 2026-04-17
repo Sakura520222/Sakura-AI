@@ -46,3 +46,6 @@ python-jose[cryptography]>=3.3.0
 itsdangerous>=2.1.0
 
 # GitHub签名验证 (hmac 和 hashlib 是 Python 内置模块，无需安装)
+
+# API 限流
+slowapi>=0.1.9
