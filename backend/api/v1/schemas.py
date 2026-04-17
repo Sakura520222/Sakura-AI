@@ -123,7 +123,6 @@ class ReviewResponse(BaseModel):
     created_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None
     completed_at: Optional[datetime] = None
-    comments: Optional[list[ReviewCommentResponse]] = None
 
     model_config = {"from_attributes": True}
 
