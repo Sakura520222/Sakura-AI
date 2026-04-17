@@ -12,6 +12,7 @@ from sqlalchemy import select
 from sqlalchemy.exc import OperationalError, InterfaceError
 
 from backend.core.config import get_settings
+from backend.core.git_utils import create_git_auth_env
 from backend.models.scan_models import RepoScan, ScanFinding, ScanStatus
 
 # 扫描并发控制信号量
@@ -337,22 +338,27 @@ class ScanWorker:
 
             # 创建临时目录
             tmp_dir = tempfile.mkdtemp(prefix="sakura_scan_")
-            clone_url = (
-                f"https://x-access-token:{auth_token.token}@github.com/{repo_name}.git"
-            )
 
-            # 浅克隆，只获取最新 commit
-            proc = await asyncio.create_subprocess_exec(
-                "git",
-                "clone",
-                "--depth",
-                "1",
-                clone_url,
-                tmp_dir,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-            )
-            _, stderr = await asyncio.wait_for(proc.communicate(), timeout=120)
+            # 使用 GIT_ASKPASS 安全传递凭证，避免 token 出现在进程参数
+            clone_env, askpass_path = create_git_auth_env(auth_token.token)
+            try:
+                clone_url = f"https://github.com/{repo_name}.git"
+
+                # 浅克隆，只获取最新 commit
+                proc = await asyncio.create_subprocess_exec(
+                    "git",
+                    "clone",
+                    "--depth",
+                    "1",
+                    clone_url,
+                    tmp_dir,
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE,
+                    env=clone_env,
+                )
+                _, stderr = await asyncio.wait_for(proc.communicate(), timeout=120)
+            finally:
+                os.unlink(askpass_path)
 
             if proc.returncode != 0:
                 logger.error(f"克隆仓库失败: {stderr.decode()[:500]}")

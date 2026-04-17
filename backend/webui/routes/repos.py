@@ -1,6 +1,7 @@
 """WebUI 仓库管理路由"""
 
 import asyncio
+import os
 import shutil
 import subprocess
 import tempfile
@@ -14,6 +15,7 @@ from sqlalchemy import select, func, tuple_
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.models.database import PRReview, IssueAnalysis
+from backend.core.git_utils import create_git_auth_env
 from backend.webui.deps import (
     require_admin,
     require_super_admin,
@@ -178,16 +180,20 @@ async def _clone_repo_for_indexing(repo_name: str) -> str:
     temp_dir = tempfile.mkdtemp()
 
     try:
-        clone_url = repo.clone_url.replace(
-            "https://", f"https://x-access-token:{auth_token.token}@"
-        )
-        await asyncio.to_thread(
-            subprocess.run,
-            ["git", "clone", "--depth", "1", clone_url, temp_dir],
-            check=True,
-            capture_output=True,
-            timeout=60,
-        )
+        # 使用 GIT_ASKPASS 安全传递凭证
+        clone_env, askpass_path = create_git_auth_env(auth_token.token)
+        try:
+            clone_url = repo.clone_url
+            await asyncio.to_thread(
+                subprocess.run,
+                ["git", "clone", "--depth", "1", clone_url, temp_dir],
+                check=True,
+                capture_output=True,
+                timeout=60,
+                env=clone_env,
+            )
+        finally:
+            os.unlink(askpass_path)
     except Exception:
         shutil.rmtree(temp_dir, ignore_errors=True)
         raise

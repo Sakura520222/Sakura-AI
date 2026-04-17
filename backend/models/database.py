@@ -618,10 +618,9 @@ def init_database(database_url: str):
 
     logger = logging.getLogger(__name__)
 
-    try:
-        # 创建数据库引擎
-        engine = create_engine(database_url, echo=False)
+    engine = create_engine(database_url, echo=False)
 
+    try:
         # 创建所有表
         Base.metadata.create_all(engine)
 
@@ -727,6 +726,7 @@ def init_database(database_url: str):
         return engine
 
     except Exception as e:
+        engine.dispose()
         logger.error(f"数据库初始化失败: {e}")
         raise
 

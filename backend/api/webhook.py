@@ -16,6 +16,7 @@ from backend.workers.review_worker import submit_review_task
 from backend.services.telegram_service import TelegramService
 from backend.telegram.notifications import get_notification_sender
 from backend.core.config import get_settings
+from backend.api.v1.deps import limiter
 
 settings = get_settings()
 
@@ -39,6 +40,7 @@ router = APIRouter()
 
 
 @router.post("/github")
+@limiter.limit("60/minute")
 async def handle_github_webhook(
     request: Request,
     x_hub_signature: str = Header(None, alias="X-Hub-Signature-256"),

@@ -132,4 +132,7 @@ async def start_redis_listener(_attempt: int = 1):
             f"{delay:.1f}秒后重连 (第 {_attempt}/{_RECONNECT_MAX_ATTEMPTS} 次)"
         )
         await asyncio.sleep(delay)
+        # 创建新任务前取消可能残留的旧任务
+        if _reconnect_task and not _reconnect_task.done():
+            _reconnect_task.cancel()
         _reconnect_task = asyncio.create_task(start_redis_listener(_attempt + 1))

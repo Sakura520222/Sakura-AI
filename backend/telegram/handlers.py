@@ -762,6 +762,7 @@ async def cmd_update_docs(update: Update, context: ContextTypes.DEFAULT_TYPE):
         from backend.services.rag_service import get_rag_service
         from backend.core.github_app import GitHubAppClient
         from backend.core.config import get_settings
+        from backend.core.git_utils import create_git_auth_env
 
         settings = get_settings()
 
@@ -787,25 +788,34 @@ async def cmd_update_docs(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         repo = client.get_repo(repo_name)
 
+        # 获取 installation access token 用于 git clone 认证
+        installation = github_app_client.integration.get_installation(
+            owner=repo_owner, repo=repo_name_only
+        )
+        auth_token = github_app_client.integration.get_access_token(installation.id)
+
         # 克隆仓库到临时目录
         import tempfile
         import shutil
+        import os
 
         temp_dir = tempfile.mkdtemp()
         try:
-            # 使用 git clone
+            # 使用 git clone + GIT_ASKPASS 安全凭证传递
             import subprocess
 
-            clone_url = repo.clone_url.replace(
-                "https://", f"https://x-access-token:{settings.github_app_id}@"
-            )
-
-            subprocess.run(
-                ["git", "clone", "--depth", "1", clone_url, temp_dir],
-                check=True,
-                capture_output=True,
-                timeout=60,
-            )
+            clone_env, askpass_path = create_git_auth_env(auth_token.token)
+            try:
+                clone_url = repo.clone_url
+                subprocess.run(
+                    ["git", "clone", "--depth", "1", clone_url, temp_dir],
+                    check=True,
+                    capture_output=True,
+                    timeout=60,
+                    env=clone_env,
+                )
+            finally:
+                os.unlink(askpass_path)
 
             # 执行索引
             rag_service = get_rag_service()

@@ -1,6 +1,7 @@
 """审查任务Worker"""
 
 import asyncio
+import os
 import subprocess
 from typing import Dict, Any, Optional
 from datetime import datetime
@@ -8,6 +9,7 @@ from loguru import logger
 import uuid
 
 from backend.core.config import get_settings, get_strategy_config
+from backend.core.git_utils import create_git_auth_env
 from backend.core.github_app import GitHubAppClient
 from backend.services.pr_analyzer import PRAnalyzer, PRAnalysis
 from backend.services.ai_reviewer import AIReviewer
@@ -201,24 +203,27 @@ class ReviewWorker:
                                         installation.id
                                     )
                                 )
-                                clone_url = repo.clone_url.replace(
-                                    "https://",
-                                    f"https://x-access-token:{auth_token.token}@",
-                                )
-                                await asyncio.to_thread(
-                                    subprocess.run,
-                                    [
-                                        "git",
-                                        "clone",
-                                        "--depth",
-                                        "1",
-                                        clone_url,
-                                        temp_dir,
-                                    ],
-                                    check=True,
-                                    capture_output=True,
-                                    timeout=60,
-                                )
+                                # 使用 GIT_ASKPASS 安全传递凭证
+                                clone_env, askpass_path = create_git_auth_env(auth_token.token)
+                                try:
+                                    clone_url = repo.clone_url
+                                    await asyncio.to_thread(
+                                        subprocess.run,
+                                        [
+                                            "git",
+                                            "clone",
+                                            "--depth",
+                                            "1",
+                                            clone_url,
+                                            temp_dir,
+                                        ],
+                                        check=True,
+                                        capture_output=True,
+                                        timeout=60,
+                                        env=clone_env,
+                                    )
+                                finally:
+                                    os.unlink(askpass_path)
                                 result = await rag_service.index_repository_docs(
                                     pr_info["repo_full_name"], temp_dir
                                 )

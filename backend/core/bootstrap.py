@@ -228,7 +228,7 @@ class BootstrapMiddleware(BaseHTTPMiddleware):
     """Bootstrap 模式中间件：未完成 Setup 时拦截所有请求"""
 
     # 始终放行的路径
-    ALLOWED_PATHS = ("/setup", "/health", "/docs", "/openapi.json", "/redoc")
+    ALLOWED_PATHS = ("/setup", "/health")
 
     async def dispatch(self, request: Request, call_next):
         if not is_bootstrap_mode():
