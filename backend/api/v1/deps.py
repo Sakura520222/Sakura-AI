@@ -26,7 +26,12 @@ async def get_api_current_user(
     """
     token = None
 
-    # 模式 1：Bearer Token（API 客户端 / 移动端）
+    # 当通过 Depends() 直接注入时 authorization 是字符串；
+    # 当被 require_api_auth 等函数手动调用时它是 Header FieldInfo 对象，
+    # 需要从 request.headers 回退提取。
+    if authorization is None or not isinstance(authorization, str):
+        authorization = request.headers.get("authorization")
+
     if authorization and authorization.startswith("Bearer "):
         token = authorization[7:]
 
