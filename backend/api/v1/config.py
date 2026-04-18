@@ -7,6 +7,7 @@ from fastapi import APIRouter, Depends
 from loguru import logger
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from backend.core.config import get_label_config, reload_label_config
 from backend.models.database import AppConfig
 from backend.webui.deps import get_db
 
@@ -135,7 +136,7 @@ async def update_strategy_section(
                 _STRATEGIES_PATH.write_text, dump, encoding="utf-8"
             )
 
-        # 重载
+        # 重载（在锁内保证原子性）
         from backend.core.config import reload_strategy_config
         reload_strategy_config()
 
@@ -150,10 +151,10 @@ async def update_strategy_section(
 async def get_labels(user: dict = Depends(require_api_super_admin)):
     """获取标签配置"""
     try:
-        from backend.core.config import get_label_config
-
         config = get_label_config()
-        return success_response(data={"labels": config.get("labels", []), "recommendation": config.get("recommendation", {})})
+        return success_response(
+            data={"labels": config.get("labels", []), "recommendation": config.get("recommendation", {})}
+        )
     except Exception as e:
         logger.error(f"读取标签配置失败: {e}")
         return error_response("读取标签配置失败")
@@ -171,7 +172,6 @@ async def update_labels(
 
     try:
         import yaml
-        from backend.core.config import reload_label_config
 
         async with _config_lock:
             config_content = await asyncio.to_thread(
@@ -207,7 +207,6 @@ async def update_label_recommendation(
 
     try:
         import yaml
-        from backend.core.config import reload_label_config
 
         async with _config_lock:
             config_content = await asyncio.to_thread(
