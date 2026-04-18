@@ -27,6 +27,16 @@ from backend.api.v1.responses import success_response, error_response, paginated
 router = APIRouter(prefix="/users", tags=["Users"])
 
 
+def _validate_user_input(telegram_id: int, github_username: str) -> str | None:
+    """校验用户输入，返回错误信息或 None"""
+    if telegram_id <= 0:
+        return "Telegram ID 必须为正整数"
+    github_username = github_username.strip()
+    if not github_username:
+        return "GitHub 用户名不能为空"
+    return None
+
+
 @router.get("")
 async def list_users(
     db: AsyncSession = Depends(get_db),
@@ -78,12 +88,10 @@ async def create_user(
     if body.role not in ("user", "admin", "super_admin"):
         return error_response("无效的角色值")
 
-    if body.telegram_id <= 0:
-        return error_response("Telegram ID 必须为正整数")
-
+    err = _validate_user_input(body.telegram_id, body.github_username)
+    if err:
+        return error_response(err)
     body.github_username = body.github_username.strip()
-    if not body.github_username:
-        return error_response("GitHub 用户名不能为空")
 
     for q in (
         body.daily_quota, body.weekly_quota, body.monthly_quota,
@@ -347,12 +355,10 @@ async def update_user_info(
     user: dict = Depends(require_api_super_admin),
 ):
     """修改用户基本信息（超级管理员）"""
-    if body.telegram_id <= 0:
-        return error_response("Telegram ID 必须为正整数")
-
+    err = _validate_user_input(body.telegram_id, body.github_username)
+    if err:
+        return error_response(err)
     body.github_username = body.github_username.strip()
-    if not body.github_username:
-        return error_response("GitHub 用户名不能为空")
 
     result = await db.execute(select(TelegramUser).where(TelegramUser.id == user_id))
     target = result.scalar_one_or_none()

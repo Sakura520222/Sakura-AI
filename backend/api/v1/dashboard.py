@@ -2,7 +2,7 @@
 
 import time
 from collections import OrderedDict
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, Depends
 from sqlalchemy import select, func, desc, case, and_
@@ -182,7 +182,7 @@ async def get_chart_data(
             _chart_cache.move_to_end(uid)
             return success_response(data=cached_data)
 
-    now = datetime.utcnow()
+    now = datetime.now(timezone.utc)
     thirty_days_ago = now - timedelta(days=30)
     scope_filter = build_user_scope_filter(user, PRReview)
 

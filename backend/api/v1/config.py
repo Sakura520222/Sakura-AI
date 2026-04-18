@@ -1,6 +1,7 @@
 """API v1 配置管理端点"""
 
 import asyncio
+from pathlib import Path
 
 from fastapi import APIRouter, Depends
 from loguru import logger
@@ -21,6 +22,11 @@ from backend.api.v1.schemas import (
 router = APIRouter(prefix="/config", tags=["Config"])
 
 _config_lock = asyncio.Lock()
+
+# 配置文件绝对路径（不依赖工作目录）
+_CONFIG_DIR = Path(__file__).resolve().parent.parent.parent / "config"
+_STRATEGIES_PATH = _CONFIG_DIR / "strategies.yaml"
+_LABELS_PATH = _CONFIG_DIR / "labels.yaml"
 
 
 def _mask_sensitive(value: str, key: str) -> str:
@@ -95,7 +101,8 @@ async def get_strategies(user: dict = Depends(require_api_super_admin)):
         config = get_strategy_config()
         return success_response(data={"strategies": config})
     except Exception as e:
-        return error_response(f"读取策略配置失败: {e}")
+        logger.error(f"读取策略配置失败: {e}")
+        return error_response("读取策略配置失败")
 
 
 @router.patch("/strategies/{section}")
@@ -111,24 +118,23 @@ async def update_strategy_section(
 
     try:
         import yaml
-        from pathlib import Path
 
-        config_path = Path("config/strategies.yaml")
+        # 先读取并验证 section 存在性（在锁外执行）
+        config_content = await asyncio.to_thread(
+            _STRATEGIES_PATH.read_text, encoding="utf-8"
+        )
+        config = yaml.safe_load(config_content) or {}
+
+        if section not in config:
+            return error_response(f"未知的策略 section: {section}")
+
+        # 验证通过后加锁写入
+        config[section].update(data)
 
         async with _config_lock:
-            config_content = await asyncio.to_thread(
-                config_path.read_text, encoding="utf-8"
-            )
-            config = yaml.safe_load(config_content) or {}
-
-            if section not in config:
-                return error_response(f"未知的策略 section: {section}")
-
-            config[section].update(data)
-
             dump = yaml.dump(config, default_flow_style=False, allow_unicode=True)
             await asyncio.to_thread(
-                config_path.write_text, dump, encoding="utf-8"
+                _STRATEGIES_PATH.write_text, dump, encoding="utf-8"
             )
 
         # 重载
@@ -138,7 +144,8 @@ async def update_strategy_section(
         logger.info(f"API 更新策略配置: section={section}, by={user['sub']}")
         return success_response(message=f"策略配置 {section} 已更新")
     except Exception as e:
-        return error_response(f"更新策略配置失败: {e}")
+        logger.error(f"更新策略配置失败: {e}")
+        return error_response("更新策略配置失败")
 
 
 @router.get("/labels")
@@ -150,7 +157,8 @@ async def get_labels(user: dict = Depends(require_api_super_admin)):
         config = get_label_config()
         return success_response(data={"labels": config.get("labels", []), "recommendation": config.get("recommendation", {})})
     except Exception as e:
-        return error_response(f"读取标签配置失败: {e}")
+        logger.error(f"读取标签配置失败: {e}")
+        return error_response("读取标签配置失败")
 
 
 @router.put("/labels")
@@ -165,14 +173,11 @@ async def update_labels(
 
     try:
         import yaml
-        from pathlib import Path
         from backend.core.config import reload_label_config
-
-        config_path = Path("config/labels.yaml")
 
         async with _config_lock:
             config_content = await asyncio.to_thread(
-                config_path.read_text, encoding="utf-8"
+                _LABELS_PATH.read_text, encoding="utf-8"
             )
             config = yaml.safe_load(config_content) or {}
 
@@ -180,7 +185,7 @@ async def update_labels(
 
             dump = yaml.dump(config, default_flow_style=False, allow_unicode=True)
             await asyncio.to_thread(
-                config_path.write_text, dump, encoding="utf-8"
+                _LABELS_PATH.write_text, dump, encoding="utf-8"
             )
 
         reload_label_config()
@@ -188,7 +193,8 @@ async def update_labels(
         logger.info(f"API 更新标签定义, by={user['sub']}")
         return success_response(message="标签定义已更新")
     except Exception as e:
-        return error_response(f"更新标签配置失败: {e}")
+        logger.error(f"更新标签配置失败: {e}")
+        return error_response("更新标签配置失败")
 
 
 @router.patch("/labels/recommendation")
@@ -203,14 +209,11 @@ async def update_label_recommendation(
 
     try:
         import yaml
-        from pathlib import Path
         from backend.core.config import reload_label_config
-
-        config_path = Path("config/labels.yaml")
 
         async with _config_lock:
             config_content = await asyncio.to_thread(
-                config_path.read_text, encoding="utf-8"
+                _LABELS_PATH.read_text, encoding="utf-8"
             )
             config = yaml.safe_load(config_content) or {}
 
@@ -218,7 +221,7 @@ async def update_label_recommendation(
 
             dump = yaml.dump(config, default_flow_style=False, allow_unicode=True)
             await asyncio.to_thread(
-                config_path.write_text, dump, encoding="utf-8"
+                _LABELS_PATH.write_text, dump, encoding="utf-8"
             )
 
         reload_label_config()
@@ -226,4 +229,5 @@ async def update_label_recommendation(
         logger.info(f"API 更新标签推荐设置, by={user['sub']}")
         return success_response(message="标签推荐设置已更新")
     except Exception as e:
-        return error_response(f"更新推荐设置失败: {e}")
+        logger.error(f"更新推荐设置失败: {e}")
+        return error_response("更新推荐设置失败")
