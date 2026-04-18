@@ -1,5 +1,3 @@
-#!/bin/bash
-
 # Sakura AI Reviewer 快速启动脚本
 
 set -e
