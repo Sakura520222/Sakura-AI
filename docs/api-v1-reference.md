@@ -2318,7 +2318,7 @@ Issue 分析详情。
   "success": true,
   "message": "ok",
   "data": {
-    "version": "2.8.1",
+    "version": "2.8.2",
     "build_date": "2026-04-17"
   }
 }
