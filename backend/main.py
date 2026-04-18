@@ -17,6 +17,10 @@ from backend.core.bootstrap import (
 from backend.webui.routes.setup import router as setup_router
 from backend.api import webhook
 from backend.webui.routes import webui_router
+from backend.api.v1 import api_v1_router
+from backend.api.v1.deps import limiter
+from slowapi import _rate_limit_exceeded_handler
+from slowapi.errors import RateLimitExceeded
 from backend.telegram import start_telegram_bot, stop_telegram_bot
 
 # 配置日志
@@ -172,7 +176,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title="Sakura AI Reviewer",
     description="GitHub AI代码审查机器人",
-    version="2.8.1",
+    version="2.8.2",
     lifespan=lifespan,
 )
 
@@ -193,6 +197,11 @@ app.add_middleware(BootstrapMiddleware)
 app.include_router(setup_router)
 app.include_router(webhook.router, prefix="/api/webhook", tags=["Webhook"])
 app.include_router(webui_router)
+app.include_router(api_v1_router, prefix="/api/v1", tags=["API v1"])
+
+# 限流：注册 slowapi 状态 + 异常处理
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
 
 # WebUI 认证异常处理：页面路由 401 时重定向到登录页
@@ -208,7 +217,7 @@ async def root():
     """根路径"""
     return {
         "service": "Sakura AI Reviewer",
-        "version": "2.8.1",
+        "version": "2.8.2",
         "status": "running",
         "docs": "/docs",
     }
