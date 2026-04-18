@@ -207,7 +207,7 @@ async def trigger_scan(
                 )
                 task = asyncio.create_task(worker.process_scan(scan_id))
                 _active_scan_tasks[scan_id] = task
-                task.add_done_callback(lambda t: _active_scan_tasks.pop(scan_id, None))
+                task.add_done_callback(lambda t, sid=scan_id: _active_scan_tasks.pop(sid, None))
                 triggered.append({"repo": repo_name, "scan_id": scan_id})
             except Exception as e:
                 logger.error(f"触发扫描失败 ({repo_name}): {e}")
@@ -246,7 +246,7 @@ async def retry_scan(
         worker = ScanWorker()
         task = asyncio.create_task(worker.process_scan(scan_id))
         _active_scan_tasks[scan_id] = task
-        task.add_done_callback(lambda t: _active_scan_tasks.pop(scan_id, None))
+        task.add_done_callback(lambda t, sid=scan_id: _active_scan_tasks.pop(sid, None))
         return success_response(message="扫描已重新触发")
     except Exception as e:
         logger.error(f"重试扫描失败 ({scan_id}): {e}")
