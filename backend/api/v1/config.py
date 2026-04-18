@@ -1,6 +1,6 @@
 """API v1 配置管理端点"""
 
-import threading
+import asyncio
 
 from fastapi import APIRouter, Depends
 from loguru import logger
@@ -11,11 +11,16 @@ from backend.webui.deps import get_db
 
 from backend.api.v1.deps import require_api_super_admin
 from backend.api.v1.responses import success_response, error_response
+from backend.api.v1.schemas import (
+    ConfigGeneralUpdateRequest,
+    ConfigStrategyUpdateRequest,
+    ConfigLabelsUpdateRequest,
+    ConfigLabelRecommendationUpdateRequest,
+)
 
 router = APIRouter(prefix="/config", tags=["Config"])
 
-# 配置读写锁（复用 WebUI config 路由的锁模式）
-_config_lock = threading.Lock()
+_config_lock = asyncio.Lock()
 
 
 def _mask_sensitive(value: str, key: str) -> str:
@@ -46,18 +51,18 @@ async def get_general_config(
 
 @router.patch("/general")
 async def update_general_config(
-    body: dict,
+    body: ConfigGeneralUpdateRequest,
     db: AsyncSession = Depends(get_db),
     user: dict = Depends(require_api_super_admin),
 ):
     """更新全局配置"""
     from sqlalchemy import select
 
-    configs = body.get("configs", {})
+    configs = body.configs
     if not configs:
         return error_response("配置内容不能为空")
 
-    with _config_lock:
+    async with _config_lock:
         for key, value in configs.items():
             result = await db.execute(
                 select(AppConfig).where(AppConfig.key_name == key)
@@ -96,11 +101,11 @@ async def get_strategies(user: dict = Depends(require_api_super_admin)):
 @router.patch("/strategies/{section}")
 async def update_strategy_section(
     section: str,
-    body: dict,
+    body: ConfigStrategyUpdateRequest,
     user: dict = Depends(require_api_super_admin),
 ):
     """更新策略配置的某个 section"""
-    data = body.get("data", body)
+    data = body.data
     if not data:
         return error_response("配置内容不能为空")
 
@@ -110,17 +115,21 @@ async def update_strategy_section(
 
         config_path = Path("config/strategies.yaml")
 
-        with _config_lock:
-            with open(config_path, "r", encoding="utf-8") as f:
-                config = yaml.safe_load(f) or {}
+        async with _config_lock:
+            config_content = await asyncio.to_thread(
+                config_path.read_text, encoding="utf-8"
+            )
+            config = yaml.safe_load(config_content) or {}
 
             if section not in config:
                 return error_response(f"未知的策略 section: {section}")
 
             config[section].update(data)
 
-            with open(config_path, "w", encoding="utf-8") as f:
-                yaml.dump(config, f, default_flow_style=False, allow_unicode=True)
+            dump = yaml.dump(config, default_flow_style=False, allow_unicode=True)
+            await asyncio.to_thread(
+                config_path.write_text, dump, encoding="utf-8"
+            )
 
         # 重载
         from backend.core.config import reload_strategy_config
@@ -146,11 +155,11 @@ async def get_labels(user: dict = Depends(require_api_super_admin)):
 
 @router.put("/labels")
 async def update_labels(
-    body: dict,
+    body: ConfigLabelsUpdateRequest,
     user: dict = Depends(require_api_super_admin),
 ):
     """更新标签定义（全量覆盖）"""
-    labels = body.get("labels", [])
+    labels = body.labels
     if not labels:
         return error_response("标签列表不能为空")
 
@@ -161,14 +170,18 @@ async def update_labels(
 
         config_path = Path("config/labels.yaml")
 
-        with _config_lock:
-            with open(config_path, "r", encoding="utf-8") as f:
-                config = yaml.safe_load(f) or {}
+        async with _config_lock:
+            config_content = await asyncio.to_thread(
+                config_path.read_text, encoding="utf-8"
+            )
+            config = yaml.safe_load(config_content) or {}
 
             config["labels"] = labels
 
-            with open(config_path, "w", encoding="utf-8") as f:
-                yaml.dump(config, f, default_flow_style=False, allow_unicode=True)
+            dump = yaml.dump(config, default_flow_style=False, allow_unicode=True)
+            await asyncio.to_thread(
+                config_path.write_text, dump, encoding="utf-8"
+            )
 
         reload_label_config()
 
@@ -180,11 +193,11 @@ async def update_labels(
 
 @router.patch("/labels/recommendation")
 async def update_label_recommendation(
-    body: dict,
+    body: ConfigLabelRecommendationUpdateRequest,
     user: dict = Depends(require_api_super_admin),
 ):
     """更新标签推荐设置"""
-    recommendation = body.get("recommendation", body)
+    recommendation = body.recommendation
     if not recommendation:
         return error_response("推荐设置不能为空")
 
@@ -195,14 +208,18 @@ async def update_label_recommendation(
 
         config_path = Path("config/labels.yaml")
 
-        with _config_lock:
-            with open(config_path, "r", encoding="utf-8") as f:
-                config = yaml.safe_load(f) or {}
+        async with _config_lock:
+            config_content = await asyncio.to_thread(
+                config_path.read_text, encoding="utf-8"
+            )
+            config = yaml.safe_load(config_content) or {}
 
             config["recommendation"] = recommendation
 
-            with open(config_path, "w", encoding="utf-8") as f:
-                yaml.dump(config, f, default_flow_style=False, allow_unicode=True)
+            dump = yaml.dump(config, default_flow_style=False, allow_unicode=True)
+            await asyncio.to_thread(
+                config_path.write_text, dump, encoding="utf-8"
+            )
 
         reload_label_config()
 
