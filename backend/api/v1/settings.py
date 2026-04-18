@@ -1,6 +1,6 @@
 """API v1 个人设置端点"""
 
-from datetime import datetime
+from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends
 from loguru import logger
@@ -91,5 +91,5 @@ async def get_about(
 
     return success_response(data={
         "version": APP_VERSION,
-        "build_date": datetime.utcnow().strftime("%Y-%m-%d"),
+        "build_date": datetime.now(timezone.utc).strftime("%Y-%m-%d"),
     })

@@ -1,7 +1,7 @@
 """API v1 认证端点（含移动端 OAuth）"""
 
 import secrets
-from urllib.parse import urlencode
+from urllib.parse import urlencode, urlparse
 
 import httpx
 from fastapi import APIRouter, Depends, Query, Request
@@ -81,11 +81,13 @@ async def github_mobile_authorize(
     # 白名单校验：自定义 redirect_uri 必须在允许列表中
     if redirect_uri and redirect_uri != settings.github_oauth_redirect_uri:
         allowed = [
-            u.strip()
+            urlparse(u.strip()).geturl()
             for u in settings.mobile_oauth_allowed_redirect_uris.split(",")
             if u.strip()
         ]
-        if redirect_uri not in allowed:
+        normalized_uri = urlparse(redirect_uri).geturl()
+        if normalized_uri not in allowed:
+            logger.warning(f"OAuth 白名单拒绝: {redirect_uri}")
             return error_response("不支持的回调地址", status_code=400)
 
     state = secrets.token_urlsafe(32)
@@ -135,6 +137,7 @@ async def github_callback(request: Request, body: OAuthCallbackRequest):
 
         if token_resp.status_code != 200:
             logger.error(f"API OAuth token 交换失败: status={token_resp.status_code}")
+            logger.debug(f"OAuth 响应体: {token_resp.text[:500]}")
             return error_response("获取访问令牌失败", status_code=502)
 
         token_data = token_resp.json()

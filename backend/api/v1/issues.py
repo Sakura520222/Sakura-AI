@@ -20,6 +20,15 @@ from backend.api.v1.responses import success_response, error_response, paginated
 router = APIRouter(prefix="/issues", tags=["Issues"])
 
 
+def _parse_json_field(value: str | None) -> list:
+    if not value:
+        return []
+    try:
+        return json.loads(value)
+    except (json.JSONDecodeError, TypeError):
+        return []
+
+
 @router.get("")
 async def list_issues(
     db: AsyncSession = Depends(get_db),
@@ -74,19 +83,9 @@ async def list_issues(
     items = []
     for a in analyses:
         data = IssueAnalysisResponse.model_validate(a, from_attributes=True).model_dump()
-        # 解析 JSON 字段
-        try:
-            data["suggested_labels"] = json.loads(a.suggested_labels) if a.suggested_labels else []
-        except (json.JSONDecodeError, TypeError):
-            data["suggested_labels"] = []
-        try:
-            data["suggested_assignees"] = json.loads(a.suggested_assignees) if a.suggested_assignees else []
-        except (json.JSONDecodeError, TypeError):
-            data["suggested_assignees"] = []
-        try:
-            data["related_prs"] = json.loads(a.related_prs) if a.related_prs else []
-        except (json.JSONDecodeError, TypeError):
-            data["related_prs"] = []
+        data["suggested_labels"] = _parse_json_field(a.suggested_labels)
+        data["suggested_assignees"] = _parse_json_field(a.suggested_assignees)
+        data["related_prs"] = _parse_json_field(a.related_prs)
         items.append(data)
 
     return paginated_response(items, total, page, total_pages, per_page)
@@ -123,13 +122,8 @@ async def get_issue(
         return error_response("分析记录不存在或无权访问", status_code=404)
 
     data = IssueAnalysisResponse.model_validate(analysis, from_attributes=True).model_dump()
-    # 解析 JSON 字段
     for field in ("suggested_labels", "suggested_assignees", "related_prs"):
-        raw = getattr(analysis, field)
-        try:
-            data[field] = json.loads(raw) if raw else []
-        except (json.JSONDecodeError, TypeError):
-            data[field] = []
+        data[field] = _parse_json_field(getattr(analysis, field))
 
     return success_response(data=data)
 

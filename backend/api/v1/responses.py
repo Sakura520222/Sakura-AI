@@ -9,13 +9,12 @@ def success_response(
     data: Any = None,
     message: str = "ok",
     status_code: int = 200,
-) -> dict:
+) -> JSONResponse:
     """成功响应"""
-    return {
-        "success": True,
-        "message": message,
-        "data": data,
-    }
+    return JSONResponse(
+        status_code=status_code,
+        content={"success": True, "message": message, "data": data},
+    )
 
 
 def error_response(
@@ -43,7 +42,7 @@ def paginated_response(
     total_pages: int,
     per_page: int,
     message: str = "ok",
-) -> dict:
+) -> JSONResponse:
     """分页成功响应"""
     return success_response(
         data={

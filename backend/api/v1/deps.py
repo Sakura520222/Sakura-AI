@@ -40,6 +40,8 @@ async def get_api_current_user(
         token = request.cookies.get("webui_token")
 
     # 模式 3：查询参数（SSE 等无法设置 Header 的场景）
+    # 安全警告：URL 中的 token 会被记录到访问日志、浏览器历史、Referer 头中。
+    # 仅限 SSE 等无法设置 Header 的场景使用，建议配置日志中间件过滤 token 参数。
     if not token:
         token = request.query_params.get("token")
 

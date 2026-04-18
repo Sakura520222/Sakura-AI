@@ -63,7 +63,7 @@ async def list_review_logs(
             query = query.where(PRReview.created_at >= df)
             count_query = count_query.where(PRReview.created_at >= df)
         except ValueError:
-            pass
+            return error_response("date_from 格式错误，请使用 YYYY-MM-DD", status_code=400)
     if date_to:
         from datetime import datetime, timedelta
         try:
@@ -71,7 +71,7 @@ async def list_review_logs(
             query = query.where(PRReview.created_at < dt)
             count_query = count_query.where(PRReview.created_at < dt)
         except ValueError:
-            pass
+            return error_response("date_to 格式错误，请使用 YYYY-MM-DD", status_code=400)
 
     query = query.order_by(desc(PRReview.created_at))
 
@@ -187,7 +187,7 @@ async def list_action_logs(
             query = query.where(AdminActionLog.created_at >= sd)
             count_query = count_query.where(AdminActionLog.created_at >= sd)
         except ValueError:
-            pass
+            return error_response("start_date 格式错误，请使用 YYYY-MM-DD", status_code=400)
 
     if end_date:
         from datetime import datetime, timedelta
@@ -196,7 +196,7 @@ async def list_action_logs(
             query = query.where(AdminActionLog.created_at < ed)
             count_query = count_query.where(AdminActionLog.created_at < ed)
         except ValueError:
-            pass
+            return error_response("end_date 格式错误，请使用 YYYY-MM-DD", status_code=400)
 
     query = query.order_by(desc(AdminActionLog.created_at))
 
