@@ -71,7 +71,7 @@ async def list_users(
     )
 
     items = [
-        UserResponse.model_validate(u, from_attributes=True).model_dump()
+        UserResponse.model_validate(u, from_attributes=True).model_dump(mode='json')
         for u in users
     ]
     return paginated_response(items, total, page, total_pages, per_page)
@@ -155,7 +155,7 @@ async def create_user(
     if auto_super_admin:
         msg += "（已自动提升为超级管理员）"
 
-    data = UserResponse.model_validate(new_user, from_attributes=True).model_dump()
+    data = UserResponse.model_validate(new_user, from_attributes=True).model_dump(mode='json')
     return success_response(data=data, message=msg)
 
 
@@ -171,7 +171,7 @@ async def get_user(
     if not target:
         return error_response("用户不存在", status_code=404)
 
-    data = UserResponse.model_validate(target, from_attributes=True).model_dump()
+    data = UserResponse.model_validate(target, from_attributes=True).model_dump(mode='json')
 
     # 配额使用历史（最近 20 条）
     logs_result = await db.execute(

@@ -108,7 +108,7 @@ async def get_stats(
         ).where(scope_filter)
     comment_count = (await db.execute(comment_query)).scalar() or 0
 
-    avg_score = round(stats_row.avg_score, 1) if stats_row.avg_score else 0
+    avg_score = float(round(stats_row.avg_score, 1)) if stats_row.avg_score else 0.0
 
     result = {
         "total": int(stats_row.total or 0),
