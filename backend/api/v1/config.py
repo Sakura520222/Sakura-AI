@@ -136,9 +136,9 @@ async def update_strategy_section(
                 _STRATEGIES_PATH.write_text, dump, encoding="utf-8"
             )
 
-        # 重载（在锁内保证原子性）
-        from backend.core.config import reload_strategy_config
-        reload_strategy_config()
+            # 重载（在锁内保证原子性）
+            from backend.core.config import reload_strategy_config
+            reload_strategy_config()
 
         logger.info(f"API 更新策略配置: section={section}, by={user['sub']}")
         return success_response(message=f"策略配置 {section} 已更新")
