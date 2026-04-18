@@ -16,7 +16,12 @@ from backend.api.v1.deps import limiter
 
 router = APIRouter(prefix="/scans", tags=["Scans"])
 
-_active_scan_tasks: set[asyncio.Task] = set()
+_active_scan_tasks: dict[int, asyncio.Task] = {}
+
+
+def get_active_scan_count() -> int:
+    """获取当前活跃的扫描任务数量"""
+    return len(_active_scan_tasks)
 
 
 @router.get("")
@@ -201,8 +206,8 @@ async def trigger_scan(
                     triggered_by=f"api:{user['sub']}",
                 )
                 task = asyncio.create_task(worker.process_scan(scan_id))
-                _active_scan_tasks.add(task)
-                task.add_done_callback(_active_scan_tasks.discard)
+                _active_scan_tasks[scan_id] = task
+                task.add_done_callback(lambda t: _active_scan_tasks.pop(scan_id, None))
                 triggered.append({"repo": repo_name, "scan_id": scan_id})
             except Exception as e:
                 logger.error(f"触发扫描失败 ({repo_name}): {e}")
@@ -240,8 +245,8 @@ async def retry_scan(
     try:
         worker = ScanWorker()
         task = asyncio.create_task(worker.process_scan(scan_id))
-        _active_scan_tasks.add(task)
-        task.add_done_callback(_active_scan_tasks.discard)
+        _active_scan_tasks[scan_id] = task
+        task.add_done_callback(lambda t: _active_scan_tasks.pop(scan_id, None))
         return success_response(message="扫描已重新触发")
     except Exception as e:
         logger.error(f"重试扫描失败 ({scan_id}): {e}")
@@ -269,8 +274,8 @@ async def cancel_scan(
     await db.commit()
 
     # 尝试取消正在运行的后台任务
-    for task in list(_active_scan_tasks):
-        if not task.done():
-            task.cancel()
+    task = _active_scan_tasks.get(scan_id)
+    if task and not task.done():
+        task.cancel()
 
     return success_response(message="扫描已取消")
