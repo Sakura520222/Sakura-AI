@@ -16,9 +16,12 @@ from backend.api.v1.deps import limiter
 
 router = APIRouter(prefix="/scans", tags=["Scans"])
 
+_active_scan_tasks: set[asyncio.Task] = set()
+
 
 @router.get("")
 async def list_scans(
+    # 扫描记录不按用户权限过滤（管理员需要查看所有仓库的扫描状态）
     db: AsyncSession = Depends(get_db),
     user: dict = Depends(require_api_auth),
     search: str = Query("", description="搜索关键词"),
@@ -199,7 +202,9 @@ async def trigger_scan(
                     trigger_type="manual_api",
                     triggered_by=f"api:{user['sub']}",
                 )
-                asyncio.create_task(worker.process_scan(scan_id))
+                task = asyncio.create_task(worker.process_scan(scan_id))
+                _active_scan_tasks.add(task)
+                task.add_done_callback(_active_scan_tasks.discard)
                 triggered.append({"repo": repo_name, "scan_id": scan_id})
             except Exception as e:
                 logger.error(f"触发扫描失败 ({repo_name}): {e}")
@@ -209,7 +214,8 @@ async def trigger_scan(
             message=f"已触发 {len(triggered)} 个仓库扫描",
         )
     except Exception as e:
-        return error_response(str(e), status_code=500)
+        logger.error(f"触发扫描失败: {e}")
+        return error_response("触发扫描失败", status_code=500)
 
 
 @router.post("/{scan_id}/retry")
@@ -235,11 +241,13 @@ async def retry_scan(
 
     try:
         worker = ScanWorker()
-        asyncio.create_task(worker.process_scan(scan_id))
+        task = asyncio.create_task(worker.process_scan(scan_id))
+        _active_scan_tasks.add(task)
+        task.add_done_callback(_active_scan_tasks.discard)
         return success_response(message="扫描已重新触发")
     except Exception as e:
         logger.error(f"重试扫描失败 ({scan_id}): {e}")
-        return error_response(str(e), status_code=500)
+        return error_response("重试扫描失败", status_code=500)
 
 
 @router.post("/{scan_id}/cancel")
