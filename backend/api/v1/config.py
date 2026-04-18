@@ -119,19 +119,17 @@ async def update_strategy_section(
     try:
         import yaml
 
-        # 先读取并验证 section 存在性（在锁外执行）
-        config_content = await asyncio.to_thread(
-            _STRATEGIES_PATH.read_text, encoding="utf-8"
-        )
-        config = yaml.safe_load(config_content) or {}
-
-        if section not in config:
-            return error_response(f"未知的策略 section: {section}")
-
-        # 验证通过后加锁写入
-        config[section].update(data)
-
         async with _config_lock:
+            config_content = await asyncio.to_thread(
+                _STRATEGIES_PATH.read_text, encoding="utf-8"
+            )
+            config = yaml.safe_load(config_content) or {}
+
+            if section not in config:
+                return error_response(f"未知的策略 section: {section}")
+
+            config[section].update(data)
+
             dump = yaml.dump(config, default_flow_style=False, allow_unicode=True)
             await asyncio.to_thread(
                 _STRATEGIES_PATH.write_text, dump, encoding="utf-8"

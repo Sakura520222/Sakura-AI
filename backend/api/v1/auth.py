@@ -87,7 +87,7 @@ async def github_mobile_authorize(
         ]
         normalized_uri = urlparse(redirect_uri).geturl()
         if normalized_uri not in allowed:
-            logger.warning(f"OAuth 白名单拒绝: {redirect_uri}")
+            logger.warning(f"OAuth 白名单拒绝: {redirect_uri[:200]}")
             return error_response("不支持的回调地址", status_code=400)
 
     state = secrets.token_urlsafe(32)
