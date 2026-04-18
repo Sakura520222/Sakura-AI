@@ -34,7 +34,8 @@ router = APIRouter(prefix="/auth", tags=["Auth"])
 
 
 @router.get("/github")
-async def github_authorize():
+@limiter.limit("10/minute")
+async def github_authorize(request: Request):
     """获取 GitHub OAuth 授权 URL（JSON 响应，不重定向）"""
     settings = get_settings()
 
@@ -64,7 +65,9 @@ async def github_authorize():
 
 
 @router.get("/github/mobile")
+@limiter.limit("10/minute")
 async def github_mobile_authorize(
+    request: Request,
     redirect_uri: str = Query(None, description="移动端回调 URI"),
 ):
     """获取移动端 GitHub OAuth 授权 URL（支持自定义 redirect_uri）"""
@@ -75,8 +78,19 @@ async def github_mobile_authorize(
 
     uri = redirect_uri or settings.github_oauth_redirect_uri
 
+    # 白名单校验：自定义 redirect_uri 必须在允许列表中
+    if redirect_uri and redirect_uri != settings.github_oauth_redirect_uri:
+        allowed = [
+            u.strip()
+            for u in settings.mobile_oauth_allowed_redirect_uris.split(",")
+            if u.strip()
+        ]
+        if redirect_uri not in allowed:
+            return error_response("不支持的回调地址", status_code=400)
+
     state = secrets.token_urlsafe(32)
-    await _save_oauth_state(state, "/api/v1/auth/callback")
+    # 将 redirect_uri 绑定到 state 中，回调时验证一致性
+    await _save_oauth_state(state, uri)
 
     params = {
         "client_id": settings.github_oauth_client_id,

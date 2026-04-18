@@ -198,7 +198,7 @@ async def complete_setup(request: Request, body: CompleteSetupRequest):
         # 异步触发重启（延迟 2 秒）
         import asyncio
 
-        asyncio.get_event_loop().call_later(2, setup_service.trigger_restart)
+        asyncio.get_running_loop().call_later(2, setup_service.trigger_restart)
         return success_response(data=result, message=result["message"])
     else:
         return error_response(result["message"], status_code=400)

@@ -1,8 +1,12 @@
 """API v1 SSE 事件流端点"""
 
+import asyncio
+import json
+
 from fastapi import APIRouter, Depends, Request
 from fastapi.responses import StreamingResponse
 
+from backend.webui.sse import sse_manager
 from backend.api.v1.deps import require_api_auth
 
 router = APIRouter(tags=["Events"])
@@ -14,15 +18,21 @@ async def sse_events(
     user: dict = Depends(require_api_auth),
 ):
     """SSE 事件流（Bearer Token 认证）"""
-    from backend.webui.sse import SSEManager
-
-    sse_manager = SSEManager()
+    channel = "webui:events"
 
     async def event_generator():
-        async for event in sse_manager.subscribe(user["user_id"]):
-            if await request.is_disconnected():
-                break
-            yield event
+        queue = sse_manager.subscribe(channel)
+        try:
+            while True:
+                if await request.is_disconnected():
+                    break
+                try:
+                    event = await asyncio.wait_for(queue.get(), timeout=30)
+                    yield f"event: {event['type']}\ndata: {json.dumps(event['data'])}\n\n"
+                except asyncio.TimeoutError:
+                    yield ": keepalive\n\n"
+        finally:
+            sse_manager.unsubscribe(channel, queue)
 
     return StreamingResponse(
         event_generator(),
