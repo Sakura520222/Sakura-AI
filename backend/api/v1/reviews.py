@@ -69,7 +69,7 @@ async def list_reviews(
     )
 
     items = [
-        ReviewResponse.model_validate(r, from_attributes=True).model_dump()
+        ReviewResponse.model_validate(r, from_attributes=True).model_dump(mode='json')
         for r in reviews
     ]
 
@@ -165,7 +165,7 @@ async def get_review(
     )
     comments = comments_result.scalars().all()
 
-    review_data = ReviewResponse.model_validate(review, from_attributes=True).model_dump()
+    review_data = ReviewResponse.model_validate(review, from_attributes=True).model_dump(mode='json')
     review_data["comments"] = [
         {
             "id": c.id,
@@ -227,7 +227,7 @@ async def get_review_files(
                     "suggestion": row.suggestion,
                 },
                 comment_count=row.total,
-            ).model_dump()
+            ).model_dump(mode='json')
         )
 
     return success_response(data=items)
