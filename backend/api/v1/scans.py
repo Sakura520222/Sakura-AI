@@ -173,8 +173,6 @@ async def trigger_scan(
     user: dict = Depends(require_api_super_admin),
 ):
     """手动触发扫描（超级管理员）"""
-    import asyncio
-
     from backend.workers.scan_worker import ScanWorker
 
     try:
@@ -269,5 +267,10 @@ async def cancel_scan(
     scan.status = "cancelled"
     scan.error_message = "用户手动取消"
     await db.commit()
+
+    # 尝试取消正在运行的后台任务
+    for task in list(_active_scan_tasks):
+        if not task.done():
+            task.cancel()
 
     return success_response(message="扫描已取消")

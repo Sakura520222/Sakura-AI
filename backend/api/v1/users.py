@@ -28,11 +28,10 @@ router = APIRouter(prefix="/users", tags=["Users"])
 
 
 def _validate_user_input(telegram_id: int, github_username: str) -> str | None:
-    """校验用户输入，返回错误信息或 None"""
+    """校验用户输入（不修改原值），返回错误信息或 None"""
     if telegram_id <= 0:
         return "Telegram ID 必须为正整数"
-    github_username = github_username.strip()
-    if not github_username:
+    if not github_username.strip():
         return "GitHub 用户名不能为空"
     return None
 
