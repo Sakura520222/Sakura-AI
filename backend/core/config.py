@@ -94,6 +94,10 @@ class Settings(BaseSettings):
         "",
         description="OAuth 回调地址，必须与 GitHub OAuth App 中配置的 Authorization callback URL 一致",
     )
+    mobile_oauth_allowed_redirect_uris: str = Field(
+        "",
+        description="移动端 OAuth 允许的回调 URI（逗号分隔，为空时仅允许默认 redirect_uri）",
+    )
 
     # Telegram Bot配置
     telegram_bot_token: Optional[str] = None

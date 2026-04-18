@@ -100,6 +100,7 @@ async def issue_stats(
     """Issue 统计数据"""
     from backend.services.issue_service import issue_service
 
+    # IssueAnalysis 需支持 repo_owner/author 字段以正确过滤
     scope_filter = build_user_scope_filter(user, IssueAnalysis)
     stats = await issue_service.get_issue_stats(db, scope_filter=scope_filter)
     return success_response(data=stats)

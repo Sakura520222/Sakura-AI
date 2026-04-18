@@ -1,5 +1,7 @@
 """API v1 扫描管理端点"""
 
+import asyncio
+
 from fastapi import APIRouter, Depends, Query, Request
 from loguru import logger
 from sqlalchemy import select, func, desc, or_
@@ -217,9 +219,6 @@ async def retry_scan(
     user: dict = Depends(require_api_super_admin),
 ):
     """重试失败的扫描"""
-    import asyncio
-    from loguru import logger
-
     from backend.workers.scan_worker import ScanWorker
 
     result = await db.execute(select(RepoScan).where(RepoScan.id == scan_id))

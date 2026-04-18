@@ -19,7 +19,7 @@ from backend.api.v1.responses import success_response
 
 router = APIRouter(prefix="/dashboard", tags=["Dashboard"])
 
-# 复用 dashboard 路由中的缓存策略
+# 复用 dashboard 路由中的缓存策略（注意：多 worker 部署时各 worker 缓存独立，不共享）
 _stats_cache: OrderedDict[int, tuple[dict, float]] = OrderedDict()
 _STATS_CACHE_TTL = 10
 _MAX_STATS_CACHE_SIZE = 100

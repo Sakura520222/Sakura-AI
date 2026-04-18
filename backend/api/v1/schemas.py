@@ -54,12 +54,6 @@ class OAuthCallbackRequest(BaseModel):
     state: str
 
 
-class MobileOAuthAuthorizeRequest(BaseModel):
-    """移动端 OAuth 授权请求"""
-
-    redirect_uri: Optional[str] = None
-
-
 class TokenResponse(BaseModel):
     """Token 响应"""
 

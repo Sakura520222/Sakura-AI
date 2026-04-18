@@ -65,11 +65,11 @@ async def list_review_logs(
         except ValueError:
             pass
     if date_to:
-        from datetime import datetime
+        from datetime import datetime, timedelta
         try:
-            dt = datetime.strptime(date_to, "%Y-%m-%d")
-            query = query.where(PRReview.created_at <= dt)
-            count_query = count_query.where(PRReview.created_at <= dt)
+            dt = datetime.strptime(date_to, "%Y-%m-%d") + timedelta(days=1)
+            query = query.where(PRReview.created_at < dt)
+            count_query = count_query.where(PRReview.created_at < dt)
         except ValueError:
             pass
 
@@ -190,11 +190,11 @@ async def list_action_logs(
             pass
 
     if end_date:
-        from datetime import datetime
+        from datetime import datetime, timedelta
         try:
-            ed = datetime.strptime(end_date, "%Y-%m-%d")
-            query = query.where(AdminActionLog.created_at <= ed)
-            count_query = count_query.where(AdminActionLog.created_at <= ed)
+            ed = datetime.strptime(end_date, "%Y-%m-%d") + timedelta(days=1)
+            query = query.where(AdminActionLog.created_at < ed)
+            count_query = count_query.where(AdminActionLog.created_at < ed)
         except ValueError:
             pass
 

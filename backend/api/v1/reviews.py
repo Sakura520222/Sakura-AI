@@ -23,6 +23,8 @@ from backend.api.v1.responses import success_response, error_response, paginated
 
 router = APIRouter(prefix="/reviews", tags=["Reviews"])
 
+OVERALL_COMMENT = "__overall__"
+
 
 @router.get("")
 async def list_reviews(
@@ -217,7 +219,7 @@ async def get_review_files(
     for row in file_stats:
         items.append(
             ReviewFileStatsResponse(
-                file_path=row.file_path or "__overall__",
+                file_path=row.file_path or OVERALL_COMMENT,
                 severity_counts={
                     "critical": row.critical,
                     "major": row.major,
@@ -251,7 +253,7 @@ async def get_review_comments(
     # 构建评论查询
     comment_query = select(ReviewComment).where(ReviewComment.review_id == review_id)
 
-    if file_path == "__overall__":
+    if file_path == OVERALL_COMMENT:
         comment_query = comment_query.where(ReviewComment.file_path.is_(None))
     elif file_path:
         comment_query = comment_query.where(ReviewComment.file_path == file_path)
