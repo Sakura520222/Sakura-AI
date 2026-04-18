@@ -7,7 +7,7 @@ from fastapi import APIRouter, Depends
 from loguru import logger
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from backend.core.config import get_label_config, reload_label_config
+from backend.core.config import get_label_config, reload_label_config, reload_strategy_config
 from backend.models.database import AppConfig
 from backend.webui.deps import get_db
 
@@ -137,7 +137,6 @@ async def update_strategy_section(
             )
 
             # 重载（在锁内保证原子性）
-            from backend.core.config import reload_strategy_config
             reload_strategy_config()
 
         logger.info(f"API 更新策略配置: section={section}, by={user['sub']}")
