@@ -103,7 +103,7 @@ async def scan_stats(
     return success_response(data={
         "total": sum(by_status.values()),
         "by_status": by_status,
-        "avg_health_score": round(avg_score, 1) if avg_score else None,
+        "avg_health_score": float(round(avg_score, 1)) if avg_score else None,
     })
 
 
