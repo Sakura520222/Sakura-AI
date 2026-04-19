@@ -7,7 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.models.scan_models import RepoScan, ScanFinding, ScanStatus
 from backend.webui.deps import (
-    require_auth,
+    require_admin,
     require_super_admin,
     require_csrf_header,
     get_db,
@@ -42,7 +42,7 @@ def _apply_scan_filters(q, search: str, repo_name: str, status: str):
 @router.get("/")
 async def scan_list_page(
     request: Request,
-    user: dict = Depends(require_auth),
+    user: dict = Depends(require_admin),
     user_prefs: dict = Depends(get_user_preferences),
 ):
     """扫描列表页面"""
@@ -62,7 +62,7 @@ async def scan_list_page(
 async def scan_list_fragment(
     request: Request,
     db: AsyncSession = Depends(get_db),
-    user: dict = Depends(require_auth),
+    user: dict = Depends(require_admin),
     user_prefs: dict = Depends(get_user_preferences),
     search: str = Query("", description="搜索关键词"),
     repo_name: str = Query("", description="按仓库过滤"),
@@ -106,7 +106,7 @@ async def scan_list_fragment(
 async def scan_stats(
     request: Request,
     db: AsyncSession = Depends(get_db),
-    user: dict = Depends(require_auth),
+    user: dict = Depends(require_admin),
 ):
     """扫描统计数据"""
     # 总扫描数
@@ -165,7 +165,7 @@ async def scan_detail_page(
     request: Request,
     scan_id: int,
     db: AsyncSession = Depends(get_db),
-    user: dict = Depends(require_auth),
+    user: dict = Depends(require_admin),
     user_prefs: dict = Depends(get_user_preferences),
 ) -> HTMLResponse:
     """扫描详情页面"""
