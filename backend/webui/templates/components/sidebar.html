@@ -47,6 +47,7 @@
             </svg>
             仓库扫描
         </a>
+        {% endif %}
 
         {% if current_user and (current_user.role == 'admin' or current_user.role == 'super_admin') %}
         <a href="/webui/logs/actions/"
