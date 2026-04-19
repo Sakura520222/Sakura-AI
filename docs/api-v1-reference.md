@@ -167,9 +167,9 @@ JWT Token 通过 OAuth 登录流程获取，有效期 24 小时（86400 秒）�
 | 54 | POST | `/queue/items/{item_id}/retry` | admin | 重试队列项 |
 | 55 | DELETE | `/queue/items/{item_id}` | admin | 删除队列项 |
 | 56 | POST | `/queue/purge` | admin | 批量清理队列 |
-| 57 | GET | `/scans` | auth | 扫描列表（分页） |
-| 58 | GET | `/scans/stats` | auth | 扫描统计 |
-| 59 | GET | `/scans/{scan_id}` | auth | 扫描详情 |
+| 57 | GET | `/scans` | admin | 扫描列表（分页） |
+| 58 | GET | `/scans/stats` | admin | 扫描统计 |
+| 59 | GET | `/scans/{scan_id}` | admin | 扫描详情 |
 | 60 | POST | `/scans/trigger` | super_admin | 手动触发扫描 |
 | 61 | POST | `/scans/{scan_id}/retry` | super_admin | 重试扫描 |
 | 62 | POST | `/scans/{scan_id}/cancel` | super_admin | 取消扫描 |
@@ -2034,7 +2034,7 @@ Issue 分析详情。
 
 扫描列表，支持分页和过滤。
 
-**认证级别**：auth
+**认证级别**：admin
 
 **查询参数**：
 
@@ -2067,7 +2067,7 @@ Issue 分析详情。
 
 扫描统计数据。
 
-**认证级别**：auth
+**认证级别**：admin
 
 **响应字段**：
 
@@ -2101,7 +2101,7 @@ Issue 分析详情。
 
 扫描详情，含所有发现（findings）。
 
-**认证级别**：auth
+**认证级别**：admin
 
 **路径参数**：
 
@@ -2417,4 +2417,4 @@ val sseSource = EventSource.Factory.create(request, eventListener)
 
 ---
 
-> 文档版本：v1.1 | 最后更新：2026-04-18 | 端点总数：66
+> 文档版本：v1.1 | 最后更新：2026-04-19 | 端点总数：66
