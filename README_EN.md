@@ -9,7 +9,7 @@
 [![FastAPI](https://img.shields.io/badge/FastAPI-Latest-green.svg)](https://fastapi.tiangolo.com/)
 [![License](https://img.shields.io/badge/License-AGPLv3-yellow.svg)](LICENSE)
 [![Live Demo](https://img.shields.io/badge/🌐_Free_Demo-Online-success.svg)](https://pr-bot.firefly520.top/webui)
-[![Android App](https://img.shields.io/badge/Android_App-🚧_In_Development-orange.svg)](https://github.com/Sakura520222/Sakura-AI-Reviewer)
+[![Android App](https://img.shields.io/badge/Android_App-🚧_In_Development-orange.svg)](https://github.com/Sakura520222/Sakura-AI-Reviewer-APP)
 
 ---
 
@@ -112,6 +112,12 @@
 ```
 
 **Tech Stack**: FastAPI (Python 3.11+) · Jinja2 + Tailwind CSS + HTMX + Alpine.js · DeepSeek-R1 / OpenAI-compatible API · MySQL 8.0 + Redis (Queue/PubSub) + ChromaDB · GitHub App (PyGithub) + OAuth · Docker Compose · Optional Celery Worker
+
+### Client Applications
+
+- **Native Android App**: 🚧 Under
+  development → [Sakura-AI-Reviewer-APP](https://github.com/Sakura520222/Sakura-AI-Reviewer-APP)
+  Connects to the Sakura-AI-Reviewer backend via the [API v1 interface](docs/api-v1-reference.md) for mobile management
 
 ---
 
@@ -320,13 +326,14 @@ Sakura-AI-Reviewer/
 
 ## 📚 Documentation
 
-| Document | Description |
-| ---- | ---- |
-| [Telegram Bot Integration Guide](docs/TELEGRAM_SETUP.md) | Bot setup, permission system, command reference |
-| [Review Approval Feature](docs/APPROVAL_FEATURE_SUMMARY.md) | Smart review approval system details |
-| [Manual Review Feature](docs/MANUAL_REVIEW_FEATURE.md) | Super admin manual review triggering |
-| [Model Context Management](docs/MODEL_CONTEXT_FEATURE.md) | AI model context and compression features |
-| [WebUI Design Document](docs/plans/2026-03-27-webui-design.md) | WebUI design specification |
+| Document                                                       | Description                                     |
+|----------------------------------------------------------------|-------------------------------------------------|
+| [Telegram Bot Integration Guide](docs/TELEGRAM_SETUP.md)       | Bot setup, permission system, command reference |
+| [Review Approval Feature](docs/APPROVAL_FEATURE_SUMMARY.md)    | Smart review approval system details            |
+| [Manual Review Feature](docs/MANUAL_REVIEW_FEATURE.md)         | Super admin manual review triggering            |
+| [Model Context Management](docs/MODEL_CONTEXT_FEATURE.md)      | AI model context and compression features       |
+| [API v1 Reference](docs/api-v1-reference.md)                   | RESTful API documentation (mobile integration)  |
+| [WebUI Design Document](docs/plans/2026-03-27-webui-design.md) | WebUI design specification                      |
 
 ---
 
