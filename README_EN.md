@@ -251,17 +251,17 @@ All configuration follows this priority: **Database app_config (WebUI) > Setting
 
 <div align="center">
 
-<img src="res/发送正在审查中和自动打标.png" width="80%" alt="Review in progress">
+<img src="res/发送正在审查中和自动打标.png" width="1901" alt="Review in progress">
 
-<img src="res/PR审查完成示例.png" width="80%" alt="Review report">
+<img src="res/PR审查完成示例.png" width="1090" alt="Review report">
 
-<img src="res/Issues分析.png" width="80%" alt="Issue analysis">
+<img src="res/Issues分析.png" width="1707" alt="Issue analysis">
 
-<img src="res/WebUI.png" width="80%" alt="WebUI dashboard">
+<img src="res/WebUI.png" width="1707" alt="WebUI dashboard">
 
-<img src="res/Telegram通知-1.png" width="80%" alt="Telegram notification">
+<img src="res/Telegram通知-1.png" width="627" alt="Telegram notification">
 
-<img src="res/Telegram通知-2.png" width="80%" alt="Telegram notification">
+<img src="res/Telegram通知-2.png" width="537" alt="Telegram notification">
 
 </div>
 
