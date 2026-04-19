@@ -10,7 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from backend.models.scan_models import RepoScan, ScanFinding
 from backend.webui.deps import get_db, paginate
 
-from backend.api.v1.deps import require_api_auth, require_api_super_admin
+from backend.api.v1.deps import require_api_admin, require_api_super_admin
 from backend.api.v1.responses import success_response, error_response, paginated_response
 from backend.api.v1.deps import limiter
 
@@ -28,7 +28,7 @@ def get_active_scan_count() -> int:
 async def list_scans(
     # 扫描记录不按用户权限过滤（管理员需要查看所有仓库的扫描状态）
     db: AsyncSession = Depends(get_db),
-    user: dict = Depends(require_api_auth),
+    user: dict = Depends(require_api_admin),
     search: str = Query("", description="搜索关键词"),
     repo_name: str = Query("", description="按仓库过滤"),
     status: str = Query("", description="按状态过滤"),
@@ -82,7 +82,7 @@ async def list_scans(
 @router.get("/stats")
 async def scan_stats(
     db: AsyncSession = Depends(get_db),
-    user: dict = Depends(require_api_auth),
+    user: dict = Depends(require_api_admin),
 ):
     """扫描统计"""
     status_counts = (
@@ -103,7 +103,7 @@ async def scan_stats(
     return success_response(data={
         "total": sum(by_status.values()),
         "by_status": by_status,
-        "avg_health_score": round(avg_score, 1) if avg_score else None,
+        "avg_health_score": float(round(avg_score, 1)) if avg_score else None,
     })
 
 
@@ -111,7 +111,7 @@ async def scan_stats(
 async def get_scan(
     scan_id: int,
     db: AsyncSession = Depends(get_db),
-    user: dict = Depends(require_api_auth),
+    user: dict = Depends(require_api_admin),
 ):
     """扫描详情（含 findings）"""
     result = await db.execute(select(RepoScan).where(RepoScan.id == scan_id))

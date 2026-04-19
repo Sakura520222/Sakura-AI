@@ -96,6 +96,8 @@ JWT Token 通过 OAuth 登录流程获取，有效期 24 小时（86400 秒）�
 | 端点 | 限流策略 |
 |------|---------|
 | 健康检查 `GET /health` | 10 次/秒 |
+| OAuth 授权 `GET /auth/github` | 10 次/分钟 |
+| 移动端 OAuth `GET /auth/github/mobile` | 10 次/分钟 |
 | OAuth 回调 `POST /auth/callback` | 5 次/分钟 |
 | 登出 `POST /auth/logout` | 10 次/分钟 |
 | Setup 连接测试 `POST /setup/test-connection` | 10 次/分钟 |
@@ -165,9 +167,9 @@ JWT Token 通过 OAuth 登录流程获取，有效期 24 小时（86400 秒）�
 | 54 | POST | `/queue/items/{item_id}/retry` | admin | 重试队列项 |
 | 55 | DELETE | `/queue/items/{item_id}` | admin | 删除队列项 |
 | 56 | POST | `/queue/purge` | admin | 批量清理队列 |
-| 57 | GET | `/scans` | auth | 扫描列表（分页） |
-| 58 | GET | `/scans/stats` | auth | 扫描统计 |
-| 59 | GET | `/scans/{scan_id}` | auth | 扫描详情 |
+| 57 | GET | `/scans` | admin | 扫描列表（分页） |
+| 58 | GET | `/scans/stats` | admin | 扫描统计 |
+| 59 | GET | `/scans/{scan_id}` | admin | 扫描详情 |
 | 60 | POST | `/scans/trigger` | super_admin | 手动触发扫描 |
 | 61 | POST | `/scans/{scan_id}/retry` | super_admin | 重试扫描 |
 | 62 | POST | `/scans/{scan_id}/cancel` | super_admin | 取消扫描 |
@@ -259,6 +261,8 @@ JWT Token 通过 OAuth 登录流程获取，有效期 24 小时（86400 秒）�
 ```
 
 > **Android 接入建议**：使用 `redirect_uri` 参数指定 App 的 Deep Link（如 `myapp://oauth/callback`），用户在浏览器完成 GitHub 授权后会回调到该 URI 并携带 `code` 和 `state` 参数。
+>
+> **安全说明**：自定义 `redirect_uri` 必须在服务端配置的白名单中（环境变量 `MOBILE_OAUTH_ALLOWED_REDIRECT_URIS`，逗号分隔）。不在白名单中的 URI 将返回 `400 "不支持的回调地址"`。`redirect_uri` 会绑定到 `state` 中，回调时验证一致性，防止 open redirect 攻击。
 
 ---
 
@@ -1540,7 +1544,7 @@ Issue 分析详情。
 
 ### 3.9 配置管理 (Config)
 
-> 所有配置端点需要 super_admin 权限。敏感字段（含 `secret`、`key`、`token`、`password`、`credential`）会被脱敏为 `****` 格式。
+> 所有配置端点需要 super_admin 权限。敏感字段（含 `secret`、`key`、`token`、`password`、`credential`）会被脱敏为 `****` 格式。错误响应不暴露内部异常详情，仅返回通用错误消息。
 
 #### GET /config/general
 
@@ -1736,8 +1740,8 @@ Issue 分析详情。
 | `search` | string | `""` | 搜索关键词（匹配标题、仓库名、作者） |
 | `repo` | string | `""` | 按仓库过滤 |
 | `status` | string | `""` | 按状态过滤 |
-| `date_from` | string | `""` | 开始日期（YYYY-MM-DD） |
-| `date_to` | string | `""` | 结束日期（YYYY-MM-DD） |
+| `date_from` | string | `""` | 开始日期（YYYY-MM-DD，无效格式返回 400） |
+| `date_to` | string | `""` | 结束日期（YYYY-MM-DD，包含当天全天，无效格式返回 400） |
 | `page` | int | 1 | 页码 |
 | `per_page` | int | 20 | 每页数量（1-100） |
 
@@ -1812,8 +1816,8 @@ Issue 分析详情。
 | 参数 | 类型 | 默认值 | 说明 |
 |------|------|--------|------|
 | `action` | string | `""` | 操作类型过滤 |
-| `start_date` | string | `""` | 开始日期 |
-| `end_date` | string | `""` | 结束日期 |
+| `start_date` | string | `""` | 开始日期（YYYY-MM-DD，无效格式返回 400） |
+| `end_date` | string | `""` | 结束日期（YYYY-MM-DD，包含当天全天，无效格式返回 400） |
 | `page` | int | 1 | 页码 |
 | `per_page` | int | 20 | 每页数量（1-100） |
 
@@ -2030,7 +2034,7 @@ Issue 分析详情。
 
 扫描列表，支持分页和过滤。
 
-**认证级别**：auth
+**认证级别**：admin
 
 **查询参数**：
 
@@ -2063,7 +2067,7 @@ Issue 分析详情。
 
 扫描统计数据。
 
-**认证级别**：auth
+**认证级别**：admin
 
 **响应字段**：
 
@@ -2097,7 +2101,7 @@ Issue 分析详情。
 
 扫描详情，含所有发现（findings）。
 
-**认证级别**：auth
+**认证级别**：admin
 
 **路径参数**：
 
@@ -2221,7 +2225,7 @@ Issue 分析详情。
 
 **前置条件**：扫描状态必须为 `pending`、`indexing`、`analyzing` 或 `reporting`。
 
-**响应示例**：
+> **行为说明**：除更新数据库状态外，还会尝试取消正在运行的 asyncio 后台任务，确保扫描进程立即终止。
 
 ```json
 {
@@ -2352,12 +2356,17 @@ X-Accel-Buffering: no
 **事件格式**（标准 SSE）：
 
 ```
-event: message
-data: {"type": "review_completed", "review_id": 42, ...}
+event: review_completed
+data: {"review_id": 42, "repo_name": "my-org/my-repo", ...}
 
-event: message
-data: {"type": "scan_progress", "scan_id": 101, "progress": 50, ...}
+event: scan_progress
+data: {"scan_id": 101, "progress": 50, ...}
+
+: keepalive
+
 ```
+
+> **Keepalive**：每 30 秒发送一次 `: keepalive\n\n` 注释行，防止连接被代理/负载均衡器因超时断开。
 
 ---
 
@@ -2408,4 +2417,4 @@ val sseSource = EventSource.Factory.create(request, eventListener)
 
 ---
 
-> 文档版本：v1.0 | 最后更新：2026-04-17 | 端点总数：66
+> 文档版本：v1.1 | 最后更新：2026-04-19 | 端点总数：66
