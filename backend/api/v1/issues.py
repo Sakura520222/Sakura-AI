@@ -82,7 +82,7 @@ async def list_issues(
 
     items = []
     for a in analyses:
-        data = IssueAnalysisResponse.model_validate(a, from_attributes=True).model_dump()
+        data = IssueAnalysisResponse.model_validate(a, from_attributes=True).model_dump(mode='json')
         data["suggested_labels"] = _parse_json_field(a.suggested_labels)
         data["suggested_assignees"] = _parse_json_field(a.suggested_assignees)
         data["related_prs"] = _parse_json_field(a.related_prs)
@@ -121,7 +121,7 @@ async def get_issue(
     if not analysis:
         return error_response("分析记录不存在或无权访问", status_code=404)
 
-    data = IssueAnalysisResponse.model_validate(analysis, from_attributes=True).model_dump()
+    data = IssueAnalysisResponse.model_validate(analysis, from_attributes=True).model_dump(mode='json')
     for field in ("suggested_labels", "suggested_assignees", "related_prs"):
         data[field] = _parse_json_field(getattr(analysis, field))
 
