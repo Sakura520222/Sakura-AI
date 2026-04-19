@@ -9,7 +9,7 @@
 [![FastAPI](https://img.shields.io/badge/FastAPI-Latest-green.svg)](https://fastapi.tiangolo.com/)
 [![License](https://img.shields.io/badge/License-AGPLv3-yellow.svg)](LICENSE)
 [![Live Demo](https://img.shields.io/badge/🌐_免费体验-Online-success.svg)](https://pr-bot.firefly520.top/webui)
-[![Android App](https://img.shields.io/badge/Android_App-🚧_开发中-orange.svg)](https://github.com/Sakura520222/Sakura-AI-Reviewer)
+[![Android App](https://img.shields.io/badge/Android_App-🚧_开发中-orange.svg)](https://github.com/Sakura520222/Sakura-AI-Reviewer-APP)
 
 ---
 
@@ -115,7 +115,8 @@
 
 ### 客户端
 
-- **原生 Android App**：🚧 锐意开发中，敬请期待...
+- **原生 Android App**：🚧 锐意开发中 → [Sakura-AI-Reviewer-APP](https://github.com/Sakura520222/Sakura-AI-Reviewer-APP)
+  通过 [API v1 接口](docs/api-v1-reference.md) 与 Sakura-AI-Reviewer 后端对接，提供移动端管理体验
 
 ---
 
@@ -324,13 +325,14 @@ Sakura-AI-Reviewer/
 
 ## 📚 详细文档
 
-| 文档 | 说明 |
-| ---- | ---- |
-| [Telegram Bot 集成指南](docs/TELEGRAM_SETUP.md) | Bot 设置、权限体系、命令参考 |
-| [审查批准功能](docs/APPROVAL_FEATURE_SUMMARY.md) | 智能审查批准系统详细说明 |
-| [手动审查功能](docs/MANUAL_REVIEW_FEATURE.md) | 超级管理员手动触发审查 |
-| [模型上下文管理](docs/MODEL_CONTEXT_FEATURE.md) | AI 模型上下文和压缩功能 |
-| [WebUI 设计文档](docs/plans/2026-03-27-webui-design.md) | WebUI 设计规范 |
+| 文档                                                  | 说明                      |
+|-----------------------------------------------------|-------------------------|
+| [Telegram Bot 集成指南](docs/TELEGRAM_SETUP.md)         | Bot 设置、权限体系、命令参考        |
+| [审查批准功能](docs/APPROVAL_FEATURE_SUMMARY.md)          | 智能审查批准系统详细说明            |
+| [手动审查功能](docs/MANUAL_REVIEW_FEATURE.md)             | 超级管理员手动触发审查             |
+| [模型上下文管理](docs/MODEL_CONTEXT_FEATURE.md)            | AI 模型上下文和压缩功能           |
+| [API v1 参考文档](docs/api-v1-reference.md)             | RESTful API 接口文档（移动端对接） |
+| [WebUI 设计文档](docs/plans/2026-03-27-webui-design.md) | WebUI 设计规范              |
 
 ---
 
