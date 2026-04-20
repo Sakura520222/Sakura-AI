@@ -31,7 +31,9 @@
 
 ### AI Tools & Knowledge Base
 
-- **AI Tool System**: read_file, list_directory, search_web — AI proactively invokes tools on demand
+- **AI Tool System**: read_file, list_directory, search_in_files, get_git_info, list_commits, search_web — AI proactively invokes tools on demand
+- **Cross-file Code Search**: AI can search keywords across files in the repository, quickly locating all usages of functions, variables, and classes
+- **Git Information Query**: AI can retrieve repository info, branch lists, and commit history to understand project evolution
 - **Web Search Enhancement**: Supports DuckDuckGo / Tavily, allowing AI to actively search the internet to assist review decisions
 - **Repository-level Knowledge Base (RAG)**: Vector semantic retrieval of project documentation, providing normative context for AI reviews
 - **PR Code Auto-indexing**: Syntax-aware chunking + semantic search, enabling AI to precisely locate relevant code
@@ -94,7 +96,10 @@
 ┌─────────────────────────────────────────────────────────────┐
 │                     AI Review Engine                         │
 │  ┌────────────┐  ┌────────────┐  ┌────────────┐            │
-│  │ read_file  │  │ list_dir   │  │ search_web │            │
+│  │ read_file  │  │ list_dir   │  │search_files│            │
+│  └────────────┘  └────────────┘  └────────────┘            │
+│  ┌────────────┐  ┌────────────┐  ┌────────────┐            │
+│  │  git_info  │  │  commits   │  │ search_web │            │
 │  └────────────┘  └────────────┘  └────────────┘            │
 │  ┌────────────┐  ┌────────────┐  ┌────────────┐            │
 │  │ RAG Search │  │ Code Index │  │  History   │            │
@@ -243,6 +248,8 @@ All configuration follows this priority: **Database app_config (WebUI) > Setting
 - **Semantic Issue Linking**: `enable_semantic_issue_linking` / `semantic_issue_similarity_threshold` in WebUI configuration
 - **Incremental Review History**: `enable_incremental_history_context` in WebUI configuration, AI auto-learns from historical review records
 - **Web Search Tool**: `web_search_provider` in WebUI configuration (`duckduckgo` free or `tavily` premium)
+- **Cross-file Search**: `context_enhancement.search_in_files` in `config/strategies.yaml` — configure GitHub Search API priority, context lines, max results, etc.
+- **Git Info Tool**: `context_enhancement.git_tools` in `config/strategies.yaml` — configure default branch and commit return counts
 - **Model Context**: Configure context window, auto-compression in WebUI configuration, see [Model Context Management](docs/MODEL_CONTEXT_FEATURE.md)
 
 ---
@@ -289,12 +296,13 @@ python run_ruff.py
 ```
 Sakura-AI-Reviewer/
 ├── backend/
-│   ├── api/               # API routes (webhook, health)
+│   ├── api/               # API routes (webhook, health, v1)
+│   │   └── v1/            #   RESTful API v1 (mobile integration)
 │   ├── core/              # Core config, dynamic configuration
 │   ├── models/            # Data models (SQLAlchemy)
 │   ├── services/          # Business logic
 │   │   ├── ai_reviewer/   # AI review engine
-│   │   │   ├── tools/     #   AI tools (file reading, web search)
+│   │   │   ├── tools/     #   AI tools (file reading, cross-file search, git info, web search)
 │   │   │   └── compression/ # Context compression
 │   │   ├── pr_analyzer.py # PR analyzer (strategy selection)
 │   │   ├── issue_analyzer.py  # Issue analysis engine
