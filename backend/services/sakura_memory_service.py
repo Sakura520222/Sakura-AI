@@ -398,7 +398,7 @@ class SakuraMemoryService:
             elif is_incremental:
                 review_type = "增量审查"
                 new_commits_summary = "\n".join(
-                    f"  - {c.sha}: {c.title}"
+                    f"  - {c['sha']}: {c['title']}"
                     for c in new_commits[:10]
                 ) or "无新增提交信息"
                 incremental_scope = f"新增 {len(new_commits)} 个提交"
