@@ -119,18 +119,43 @@ class GitHubWriteService:
 
             # PyGithub create_file/update_file 返回 dict
             # Return format: {"content": ContentFile, "commit": Commit}
-            commit_obj = result.get("commit") if isinstance(result, dict) else result["commit"]
+            if not isinstance(result, dict):
+                raise RuntimeError(
+                    f"GitHub API returned unexpected type {type(result).__name__} "
+                    f"for {path}. This usually means the GitHub App lacks "
+                    f"'contents:write' permission. Result: {result!r}"
+                )
+
+            commit_obj = result.get("commit")
             if commit_obj is None:
-                raise RuntimeError(f"create_file/update_file returned no commit for {path}")
+                # Check if the response contains an error message instead
+                error_msg = result.get("message", "unknown error")
+                raise RuntimeError(
+                    f"GitHub API returned no commit for {path}. "
+                    f"Response: message={error_msg}, keys={list(result.keys())}. "
+                    f"Ensure the GitHub App has 'contents:write' permission."
+                )
             return commit_obj.sha
 
         try:
             sha = await asyncio.to_thread(_commit_sync)
-            logger.info(f"✅ Committed {path} -> {sha[:8]}")
+            logger.info(f"Committed {path} -> {sha[:8]}")
             return sha
+        except KeyError as e:
+            # PyGithub 2.1.1: 当 GitHub API 返回非预期响应（如权限不足的 403），
+            # JSON 解析可能得到字符串而非 dict，导致 data["content"] / data["commit"] 抛出 KeyError
+            logger.error(
+                f"KeyError {e} while committing {path} to {repo.full_name}:{branch}. "
+                f"This is a known PyGithub issue when GitHub App lacks 'contents:write' permission. "
+                f"Please upgrade the GitHub App permissions: Contents = Read and Write"
+            )
+            raise RuntimeError(
+                f"GitHub API returned unexpected response for {path} (KeyError: {e}). "
+                f"Most likely cause: GitHub App does not have 'contents:write' permission."
+            ) from e
         except Exception as e:
             logger.error(
-                f"❌ Failed to commit {path} to {repo.full_name}:{branch}: "
+                f"Failed to commit {path} to {repo.full_name}:{branch}: "
                 f"[{type(e).__name__}] {e}",
                 exc_info=True,
             )
