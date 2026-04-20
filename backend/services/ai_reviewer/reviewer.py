@@ -23,7 +23,14 @@ from .label_recommender import LabelRecommender
 from .prompt_builder import PromptBuilder
 from .result_parser import ReviewResultParser
 from .token_tracker import TokenTracker
-from .tools import FileToolHandler, SearchToolHandler, ToolHandler, ToolManager
+from .tools import (
+    FileToolHandler,
+    GitToolHandler,
+    SearchFilesToolHandler,
+    SearchToolHandler,
+    ToolHandler,
+    ToolManager,
+)
 
 
 class AIReviewer:
@@ -71,6 +78,8 @@ class AIReviewer:
         # 初始化工具相关
         file_tool = FileToolHandler()
         search_tool = SearchToolHandler()
+        git_tool = GitToolHandler()
+        search_files_tool = SearchFilesToolHandler()
         web_search_tool = None
         if settings.web_search_enabled:
             from backend.services.ai_reviewer.tools.web_search_tool import (
@@ -78,7 +87,7 @@ class AIReviewer:
             )
 
             web_search_tool = WebSearchToolHandler()
-        self.tool_handler = ToolHandler(file_tool, search_tool, web_search_tool)
+        self.tool_handler = ToolHandler(file_tool, search_tool, web_search_tool, git_tool, search_files_tool)
         self.tool_manager = ToolManager()
 
         # 初始化上下文压缩

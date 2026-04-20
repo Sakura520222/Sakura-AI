@@ -61,7 +61,7 @@ ISSUE_CATEGORIES = ["critical", "major", "minor", "suggestions"]
 # =============================================================================
 # 工具定义
 # =============================================================================
-BASE_TOOLS = ["read_file", "list_directory"]
+BASE_TOOLS = ["read_file", "list_directory", "search_in_files", "get_git_info", "list_commits"]
 RAG_TOOLS = ["search_project_docs"]
 CODE_INDEX_TOOLS = ["search_code_context"]
 WEB_SEARCH_TOOLS = ["search_web"]
@@ -277,12 +277,93 @@ SEARCH_WEB_TOOL = {
     },
 }
 
+SEARCH_IN_FILES_TOOL = {
+    "type": "function",
+    "function": {
+        "name": "search_in_files",
+        "description": "在仓库中跨文件搜索指定关键词，返回所有匹配的文件和行内容。类似于 grep 搜索。",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "keyword": {
+                    "type": "string",
+                    "description": "搜索关键词",
+                },
+                "file_extension": {
+                    "type": "string",
+                    "description": "可选：限定文件后缀，如 .py、.ts",
+                },
+                "directory": {
+                    "type": "string",
+                    "description": "可选：限定搜索目录",
+                },
+                "context_lines": {
+                    "type": "integer",
+                    "description": "匹配行上下文行数",
+                    "default": 3,
+                },
+                "max_results": {
+                    "type": "integer",
+                    "description": "最大返回匹配结果数",
+                    "default": 20,
+                },
+            },
+            "required": ["keyword"],
+        },
+    },
+}
+
+GET_GIT_INFO_TOOL = {
+    "type": "function",
+    "function": {
+        "name": "get_git_info",
+        "description": "获取仓库基本信息，包括描述、默认分支、语言统计、分支列表等。",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "branch_count": {
+                    "type": "integer",
+                    "description": "返回的分支数量",
+                    "default": 20,
+                },
+            },
+            "required": [],
+        },
+    },
+}
+
+LIST_COMMITS_TOOL = {
+    "type": "function",
+    "function": {
+        "name": "list_commits",
+        "description": "查看指定分支的提交历史记录。",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "branch": {
+                    "type": "string",
+                    "description": "分支名，默认为 PR 的 HEAD 分支或仓库默认分支",
+                },
+                "per_page": {
+                    "type": "integer",
+                    "description": "返回的提交数量",
+                    "default": 10,
+                },
+            },
+            "required": [],
+        },
+    },
+}
+
 ALL_TOOL_DEFINITIONS = [
     READ_FILE_TOOL,
     LIST_DIRECTORY_TOOL,
     SEARCH_PROJECT_DOCS_TOOL,
     SEARCH_CODE_CONTEXT_TOOL,
     SEARCH_WEB_TOOL,
+    SEARCH_IN_FILES_TOOL,
+    GET_GIT_INFO_TOOL,
+    LIST_COMMITS_TOOL,
 ]
 
 # 工具名称到定义的映射
@@ -292,4 +373,7 @@ TOOL_NAME_TO_DEFINITION = {
     "search_project_docs": SEARCH_PROJECT_DOCS_TOOL,
     "search_code_context": SEARCH_CODE_CONTEXT_TOOL,
     "search_web": SEARCH_WEB_TOOL,
+    "search_in_files": SEARCH_IN_FILES_TOOL,
+    "get_git_info": GET_GIT_INFO_TOOL,
+    "list_commits": LIST_COMMITS_TOOL,
 }

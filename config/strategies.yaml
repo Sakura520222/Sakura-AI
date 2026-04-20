@@ -937,6 +937,17 @@ context_enhancement:
   # 搜索匹配时的最大上下文行数
   max_context_lines: 200
 
+  # 跨文件搜索工具配置
+  search_in_files:
+    default_context_lines: 3    # 默认上下文行数
+    default_max_results: 20     # 默认最大结果数
+    skip_binary: true           # 是否跳过二进制文件
+
+  # Git 工具配置
+  git_tools:
+    default_branch_count: 20    # 默认返回分支数量
+    default_commit_count: 10    # 默认返回提交数量
+
 # 审查批准策略配置
 review_policy:
   # 是否启用自动批准功能（建议先设为false观察效果）
@@ -1085,12 +1096,21 @@ issue_analysis:
        - 使用场景：需要查找相似实现、调用链、类继承关系时
     5. **search_web**: 搜索互联网
        - 使用场景：需要查找最新文档、API 参考、最佳实践时（优先使用本地工具）
+    6. **search_in_files**: 在仓库中跨文件搜索指定关键词
+       - 使用场景：需要查找某个函数/变量/类的所有使用位置时
+    7. **get_git_info**: 获取仓库基本信息和分支列表
+       - 使用场景：需要了解项目基本信息、分支结构时
+    8. **list_commits**: 查看提交历史记录
+       - 使用场景：需要了解最近的变更历史、追踪功能开发进度时
 
     ## 工具使用策略
     - 优先使用 search_code_context 或 search_project_docs 快速定位相关代码区域
     - 定位到关键文件后，使用 read_file 查看具体实现细节
     - 需要了解项目整体结构时，使用 list_directory 浏览目录
     - 仅在本地工具无法获取足够信息时使用 search_web
+    - 需要查找特定代码片段的使用位置时，使用 search_in_files
+    - 需要了解项目基本信息或分支结构时，使用 get_git_info
+    - 需要了解最近变更历史时，使用 list_commits
 
     ## 分析维度
     1. **分类**: bug/feature/question/documentation/enhancement/performance/security/refactor/other
