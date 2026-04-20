@@ -327,9 +327,11 @@ class SakuraMemoryService:
             logger.info(f"已初始化 .sakura/ 目录: {repo_full_name}")
 
         except Exception as e:
+            import traceback
             logger.error(
-                f"初始化 .sakura/ 失败 ({repo_full_name}): {e}", exc_info=True
+                f"初始化 .sakura/ 失败 ({repo_full_name}): [{type(e).__name__}] {e}"
             )
+            logger.error(f"完整堆栈:\n{traceback.format_exc()}")
             raise
 
     async def reflect(

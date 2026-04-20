@@ -99,6 +99,7 @@ class GitHubWriteService:
                 if isinstance(existing, list):
                     raise ValueError(f"Path {path} is a directory")
                 # 更新已有文件 / Update existing file
+                logger.info(f"Updating existing file: {path}")
                 result = repo.update_file(
                     path=path,
                     message=message,
@@ -109,6 +110,7 @@ class GitHubWriteService:
                 )
             except UnknownObjectException:
                 # 文件不存在，创建新文件 / File doesn't exist, create new
+                logger.info(f"Creating new file: {path}")
                 result = repo.create_file(
                     path=path,
                     message=message,
@@ -116,6 +118,10 @@ class GitHubWriteService:
                     branch=branch,
                     author=author,
                 )
+
+            logger.info(f"create_file/update_file returned type={type(result).__name__}")
+            if isinstance(result, dict):
+                logger.info(f"result keys={list(result.keys())}")
 
             # PyGithub create_file/update_file 返回 dict
             # Return format: {"content": ContentFile, "commit": Commit}
@@ -142,22 +148,20 @@ class GitHubWriteService:
             logger.info(f"Committed {path} -> {sha[:8]}")
             return sha
         except KeyError as e:
-            # PyGithub 2.1.1: 当 GitHub API 返回非预期响应（如权限不足的 403），
-            # JSON 解析可能得到字符串而非 dict，导致 data["content"] / data["commit"] 抛出 KeyError
+            import traceback
             logger.error(
                 f"KeyError {e} while committing {path} to {repo.full_name}:{branch}. "
-                f"This is a known PyGithub issue when GitHub App lacks 'contents:write' permission. "
-                f"Please upgrade the GitHub App permissions: Contents = Read and Write"
+                f"Full traceback:\n{traceback.format_exc()}"
             )
             raise RuntimeError(
                 f"GitHub API returned unexpected response for {path} (KeyError: {e}). "
                 f"Most likely cause: GitHub App does not have 'contents:write' permission."
             ) from e
         except Exception as e:
+            import traceback
             logger.error(
                 f"Failed to commit {path} to {repo.full_name}:{branch}: "
-                f"[{type(e).__name__}] {e}",
-                exc_info=True,
+                f"[{type(e).__name__}] {e}\n{traceback.format_exc()}"
             )
             raise
 

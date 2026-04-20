@@ -78,6 +78,8 @@ if $NEED_PIP_INSTALL; then
     echo "$CURRENT_HASH" > "$SAVED_HASH_FILE"
     echo "✅ 依赖安装完成，哈希已更新"
     cd docker
+    echo "🔄 重启容器以使新依赖生效..."
+    docker-compose restart web
 fi
 
 # 等待服务启动
