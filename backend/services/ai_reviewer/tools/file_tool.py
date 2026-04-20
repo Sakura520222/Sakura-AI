@@ -273,7 +273,7 @@ class FileToolHandler:
                     "total_lines": total_lines,
                     "match_count": len(matches),
                     "context_lines": effective_context_lines,
-                    "returned_lines": numbered_content.count("\n") + 1,
+                    "returned_lines": len(numbered_content.split("\n")),
                     "size": content_file.size,
                     "branch": tried_branches[0] if tried_branches else "unknown",
                     "hint": (
