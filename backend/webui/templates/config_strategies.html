@@ -261,6 +261,77 @@
                                 </div>
                             </div>
                         </div>
+
+                        <div class="border-t border-gray-200 dark:border-gray-700"></div>
+
+                        <!-- Search Files Tool Config -->
+                        <div>
+                            <h3 class="text-sm font-semibold text-gray-800 dark:text-gray-200 mb-3">跨文件搜索工具</h3>
+                            {% set sif = ce.get('search_in_files', {}) %}
+                            <div class="space-y-4">
+                                <div class="flex items-center justify-between">
+                                    <label class="text-sm font-medium text-gray-700 dark:text-gray-300">优先使用 GitHub Search API</label>
+                                    <label class="relative inline-flex items-center cursor-pointer">
+                                        <input type="checkbox" name="sif_use_search_api" value="true"
+                                               {% if sif.get('use_search_api', true) %}checked{% endif %}
+                                               class="sr-only peer">
+                                        <div class="w-11 h-6 bg-gray-200 peer-focus:ring-2 peer-focus:ring-pink-300 dark:peer-focus:ring-pink-800 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-pink-500"></div>
+                                    </label>
+                                </div>
+                                <div class="flex items-center justify-between">
+                                    <label class="text-sm font-medium text-gray-700 dark:text-gray-300">跳过二进制文件</label>
+                                    <label class="relative inline-flex items-center cursor-pointer">
+                                        <input type="checkbox" name="sif_skip_binary" value="true"
+                                               {% if sif.get('skip_binary', true) %}checked{% endif %}
+                                               class="sr-only peer">
+                                        <div class="w-11 h-6 bg-gray-200 peer-focus:ring-2 peer-focus:ring-pink-300 dark:peer-focus:ring-pink-800 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-pink-500"></div>
+                                    </label>
+                                </div>
+                                <div class="grid grid-cols-1 sm:grid-cols-3 gap-6">
+                                    <div>
+                                        <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">默认上下文行数</label>
+                                        <input type="number" name="sif_default_context_lines" min="0"
+                                               value="{{ sif.get('default_context_lines', 3) }}"
+                                               class="w-full px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-sm focus:ring-2 focus:ring-pink-500 focus:border-transparent outline-none">
+                                    </div>
+                                    <div>
+                                        <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">默认最大结果数</label>
+                                        <input type="number" name="sif_default_max_results" min="1"
+                                               value="{{ sif.get('default_max_results', 20) }}"
+                                               class="w-full px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-sm focus:ring-2 focus:ring-pink-500 focus:border-transparent outline-none">
+                                    </div>
+                                    <div>
+                                        <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">回退最大扫描文件数</label>
+                                        <input type="number" name="sif_max_files_to_search" min="1"
+                                               value="{{ sif.get('max_files_to_search', 100) }}"
+                                               class="w-full px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-sm focus:ring-2 focus:ring-pink-500 focus:border-transparent outline-none">
+                                        <p class="mt-1 text-xs text-gray-500">API 不可用时逐文件遍历的上限</p>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="border-t border-gray-200 dark:border-gray-700"></div>
+
+                        <!-- Git Tools Config -->
+                        <div>
+                            <h3 class="text-sm font-semibold text-gray-800 dark:text-gray-200 mb-3">Git 信息工具</h3>
+                            {% set gt = ce.get('git_tools', {}) %}
+                            <div class="grid grid-cols-1 sm:grid-cols-2 gap-6">
+                                <div>
+                                    <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">默认返回分支数量</label>
+                                    <input type="number" name="gt_default_branch_count" min="1"
+                                           value="{{ gt.get('default_branch_count', 20) }}"
+                                           class="w-full px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-sm focus:ring-2 focus:ring-pink-500 focus:border-transparent outline-none">
+                                </div>
+                                <div>
+                                    <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">默认返回提交数量</label>
+                                    <input type="number" name="gt_default_commit_count" min="1"
+                                           value="{{ gt.get('default_commit_count', 10) }}"
+                                           class="w-full px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-sm focus:ring-2 focus:ring-pink-500 focus:border-transparent outline-none">
+                                </div>
+                            </div>
+                        </div>
                     </div>
 
                     <div class="mt-6 pt-4 border-t border-gray-200 dark:border-gray-700">
