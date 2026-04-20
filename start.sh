@@ -36,6 +36,7 @@ if [[ -f "requirements.txt" ]]; then
 fi
 
 NEED_BUILD=false
+NEED_PIP_INSTALL=false
 
 if $REBUILD; then
     echo "🔄 强制重建模式"
@@ -44,8 +45,8 @@ elif [[ ! -f "$SAVED_HASH_FILE" ]]; then
     echo "📦 首次部署，需要构建镜像"
     NEED_BUILD=true
 elif [[ "$CURRENT_HASH" != "$(cat "$SAVED_HASH_FILE")" ]]; then
-    echo "📦 检测到依赖变更，需要重新构建镜像"
-    NEED_BUILD=true
+    echo "📦 检测到依赖变更，将在容器内安装依赖"
+    NEED_PIP_INSTALL=true
 else
     echo "✅ 依赖未变更，跳过构建"
 fi
@@ -67,6 +68,16 @@ if $NEED_BUILD; then
 else
     echo "🔧 启动服务（无构建）..."
     docker-compose up -d
+fi
+
+# 依赖变更时在运行中的容器内安装
+if $NEED_PIP_INSTALL; then
+    echo "📦 在容器内安装新依赖..."
+    docker-compose exec -T web pip install -r /app/requirements.txt -q
+    cd ..
+    echo "$CURRENT_HASH" > "$SAVED_HASH_FILE"
+    echo "✅ 依赖安装完成，哈希已更新"
+    cd docker
 fi
 
 # 等待服务启动
