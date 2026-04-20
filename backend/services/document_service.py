@@ -64,7 +64,16 @@ class DocumentService:
         files_info = []
         for md_file in md_files:
             try:
-                relative_path = str(md_file.relative_to(repo_path))
+                rel = md_file.relative_to(repo_path)
+                relative_path = str(rel)
+
+                # 跳过记忆系统文件 / Skip memory system files
+                rel_str = str(md_file.relative_to(repo_path)).replace("\\", "/")
+                if rel_str in (".sakura/SAKURA.md", ".sakura/memory.md"):
+                    continue
+                if "/memory/" in rel_str:
+                    continue
+
                 file_size = md_file.stat().st_size
                 file_hash = await self.calculate_file_hash(str(md_file))
 

@@ -86,3 +86,18 @@ INSERT IGNORE INTO app_config (key_name, key_value, description) VALUES
 ('issue_auto_create_labels', 'true', '自动为 Issue 应用 AI 推荐的标签'),
 ('issue_auto_assign', 'true', '自动为 Issue 指派 AI 推荐的负责人'),
 ('issue_max_tool_iterations', '15', 'Issues 分析中 AI 工具调用最大迭代次数');
+
+-- 创建 Sakura 记忆系统状态表
+CREATE TABLE IF NOT EXISTS sakura_memory_states (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    repo_full_name VARCHAR(255) UNIQUE NOT NULL,
+    reflection_count INT NOT NULL DEFAULT 0,
+    last_consolidation_at TIMESTAMP NULL,
+    is_initialized TINYINT(1) NOT NULL DEFAULT 0,
+    last_sakura_md_sha VARCHAR(40) NULL,
+    last_memory_md_sha VARCHAR(40) NULL,
+    consolidation_interval INT NOT NULL DEFAULT 5,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP NOT NULL,
+    INDEX idx_repo_full_name (repo_full_name)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;

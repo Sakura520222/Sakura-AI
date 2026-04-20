@@ -300,6 +300,25 @@ class ReviewWorker:
                 if pr_summary_text:
                     context["pr_summary"] = pr_summary_text
 
+                # 6.2 注入 .sakura/ 记忆上下文 / Inject .sakura/ memory context
+                try:
+                    from backend.services.sakura_memory_service import get_sakura_memory_service
+                    sakura_memory_service = get_sakura_memory_service()
+                    sakura_context = await sakura_memory_service.get_sakura_context(
+                        repo=pr.base.repo,
+                        repo_full_name=pr_info["repo_full_name"],
+                    )
+                    if sakura_context:
+                        context["sakura_docs_context"] = sakura_context
+                        logger.info(
+                            f"[{task_id}] 已注入 .sakura/ 记忆上下文"
+                        )
+                except Exception as e:
+                    logger.warning(
+                        f"[{task_id}] .sakura/ 记忆上下文注入失败（不影响审查）: {e}",
+                        exc_info=True,
+                    )
+
                 # 6.3 注入历史审查上下文（仅在增量审查时）
                 if analysis.is_incremental:
                     try:
@@ -601,6 +620,24 @@ class ReviewWorker:
                     decision=decision,
                     decision_reason=decision_reason,
                 )
+
+                # 11.5 异步触发 .sakura/ 反思 / Trigger .sakura/ reflection async
+                try:
+                    if settings.sakura_memory_enabled and settings.sakura_reflection_enabled:
+                        from backend.services.sakura_memory_service import get_sakura_memory_service
+                        sakura_memory_service = get_sakura_memory_service()
+                        asyncio.create_task(
+                            sakura_memory_service.reflect(
+                                repo=pr.base.repo,
+                                repo_full_name=pr_info["repo_full_name"],
+                                pr=pr,
+                                review_result=review_result,
+                                analysis=analysis,
+                            )
+                        )
+                        logger.info(f"[{task_id}] 已触发 .sakura/ 反思任务")
+                except Exception as e:
+                    logger.warning(f"[{task_id}] 触发 .sakura/ 反思失败（不影响审查）: {e}")
 
                 # 12. 发送Telegram审查完成通知
                 await self._send_review_complete_notification(pr_info, review_result)

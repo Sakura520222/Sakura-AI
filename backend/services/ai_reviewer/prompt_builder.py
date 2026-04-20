@@ -135,6 +135,20 @@ class PromptBuilder:
                     message_parts.append(f"\n> {body}")
                 message_parts.append("")
 
+        # 注入 .sakura/ 记忆上下文 / Inject .sakura/ memory context
+        sakura_docs = context.get("sakura_docs_context", {})
+        if sakura_docs:
+            message_parts.append("\n## 项目知识（来自 .sakura/ 目录）")
+            sakura_md = sakura_docs.get("sakura_md", "")
+            memory_md = sakura_docs.get("memory_md", "")
+            if sakura_md:
+                message_parts.append("\n### 项目概述")
+                message_parts.append(sakura_md)
+            if memory_md:
+                message_parts.append("\n### 项目记忆")
+                message_parts.append(memory_md)
+            message_parts.append("")
+
         # 添加工具说明（如果需要）
         if include_tools:
             message_parts.append(
@@ -151,6 +165,8 @@ class PromptBuilder:
 - `search_in_files`: 在仓库中跨文件搜索指定关键词
 - `get_git_info`: 获取仓库基本信息和分支列表
 - `list_commits`: 查看提交历史记录
+- `read_sakura_docs`: 读取项目 .sakura/ 目录中的指导文档
+- `list_sakura_directory`: 列出 .sakura/ 目录的结构
 
 请根据需要使用工具查看相关文件。
 """
@@ -226,6 +242,14 @@ class PromptBuilder:
    - 使用场景：需要查询最新的 API 文档、版本变更说明、特定技术的最佳实践
    - 参数：query（必填，搜索查询），top_k（可选，返回数量）
    - **注意**：仅在本地工具无法获取足够信息时使用
+
+9. **read_sakura_docs**: 读取项目 .sakura/ 目录中的指导文档
+   - 使用场景：需要查看项目的编码规范、架构设计文档、review规则等
+   - 参数：doc_path（可选，.sakura/ 下的文档路径，留空返回概览）
+
+10. **list_sakura_directory**: 列出 .sakura/ 目录的结构
+   - 使用场景：了解项目 .sakura/ 目录中有哪些指导文档
+   - 参数：subdirectory（可选，子目录路径）
 
 ## 使用建议
 

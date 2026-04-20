@@ -950,6 +950,54 @@ context_enhancement:
     default_branch_count: 20    # 默认返回分支数量
     default_commit_count: 10    # 默认返回提交数量
 
+  # .sakura/ 记忆系统配置 / .sakura/ memory system config
+  sakura_memory:
+    # 是否启用记忆系统 / Enable memory system
+    enabled: true
+
+    # 反思配置 / Reflection config
+    reflection:
+      # 是否启用审查后反思 / Enable post-review reflection
+      enabled: true
+      # 反思使用的模型（null=使用与审查相同的模型）/ Model for reflection (null=same as review model)
+      model: null
+      # 反思 Prompt 模板路径（可选覆盖）/ Reflection prompt template path (optional override)
+      prompt_template: null
+
+    # 合并配置 / Consolidation config
+    consolidation:
+      # 触发合并的反思轮数 / Reflections before consolidation
+      interval: 5
+      # 合并使用的模型 / Model for consolidation
+      model: null
+      # memory.md 最大字符数 / Max chars for memory.md
+      max_memory_chars: 2000
+      # SAKURA.md 最大字符数 / Max chars for SAKURA.md
+      max_sakura_chars: 5000
+      # 合并后是否清理旧的反思文件 / Clean old reflections after consolidation
+      cleanup_old_reflections: false
+
+    # 初始化配置 / Initialization config
+    initialization:
+      # 是否自动初始化 / Auto-init .sakura/ for new repos
+      auto_init: true
+      # 自动初始化的提交信息 / Commit message for auto-init
+      init_commit_message: "chore: initialize .sakura/ directory for Sakura AI Reviewer"
+
+    # 目录结构约定 / Directory structure convention
+    directory_convention:
+      enabled: true
+      categories:
+        rules:
+          description: "审查规则、编码规范 / Review rules, coding standards"
+          priority: 1
+        docs:
+          description: "架构文档、设计决策 / Architecture docs, design decisions"
+          priority: 2
+        plans:
+          description: "开发计划、路线图 / Development plans, roadmaps"
+          priority: 3
+
 # 审查批准策略配置
 review_policy:
   # 是否启用自动批准功能（建议先设为false观察效果）

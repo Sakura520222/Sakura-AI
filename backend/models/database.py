@@ -2,6 +2,7 @@
 
 from datetime import datetime
 from sqlalchemy import (
+    Boolean,
     Column,
     Integer,
     BigInteger,
@@ -810,3 +811,32 @@ class WebUIConfig(Base):
 
     def __repr__(self):
         return f"<WebUIConfig(user_id={self.user_id}, theme={self.theme})>"
+
+
+class SakuraMemoryState(Base):
+    """Sakura 记忆系统状态跟踪 / Sakura memory system state tracking"""
+
+    __tablename__ = "sakura_memory_states"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    repo_full_name = Column(String(255), unique=True, nullable=False, index=True)
+
+    # 状态跟踪 / State tracking
+    reflection_count = Column(Integer, default=0, nullable=False)
+    last_consolidation_at = Column(TIMESTAMP, nullable=True)
+    is_initialized = Column(Boolean, default=False, nullable=False)
+
+    # 最后写入的文件 SHA / Last written file SHAs
+    last_sakura_md_sha = Column(String(40), nullable=True)
+    last_memory_md_sha = Column(String(40), nullable=True)
+
+    # 配置覆盖 / Config override
+    consolidation_interval = Column(Integer, default=5, nullable=False)
+
+    created_at = Column(TIMESTAMP, default=datetime.utcnow, nullable=False)
+    updated_at = Column(
+        TIMESTAMP, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False
+    )
+
+    def __repr__(self):
+        return f"<SakuraMemoryState(repo={self.repo_full_name}, initialized={self.is_initialized})>"
