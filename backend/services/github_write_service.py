@@ -12,7 +12,7 @@ import base64
 import threading
 from typing import Optional
 
-from github import InputGitTreeElement
+from github import InputGitAuthor, InputGitTreeElement
 from github.GithubException import UnknownObjectException
 from loguru import logger
 
@@ -97,13 +97,16 @@ class GitHubWriteService:
             new_tree = repo.create_git_tree(tree_elements, commit.tree)
 
             # 5. 创建新提交 / Create new commit
-            author_name = "Sakura AI Reviewer"
+            author = InputGitAuthor(
+                name="Sakura AI Reviewer",
+                email="noreply@sakura-ai.dev",
+            )
             new_commit = repo.create_git_commit(
                 message=message,
                 tree=new_tree,
                 parents=[commit],
-                author={"name": author_name, "email": "noreply@sakura-ai.dev"},
-                committer={"name": author_name, "email": "noreply@sakura-ai.dev"},
+                author=author,
+                committer=author,
             )
 
             # 6. 更新分支引用 / Update branch reference
