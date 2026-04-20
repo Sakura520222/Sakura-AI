@@ -21,6 +21,8 @@ class ToolHandler:
         file_tool,
         search_tool,
         web_search_tool=None,
+        git_tool=None,
+        search_files_tool=None,
     ):
         """初始化工具处理器
 
@@ -28,10 +30,14 @@ class ToolHandler:
             file_tool: 文件工具处理器
             search_tool: 搜索工具处理器
             web_search_tool: Web 搜索工具处理器（可选）
+            git_tool: Git 信息工具处理器（可选）
+            search_files_tool: 跨文件搜索工具处理器（可选）
         """
         self.file_tool = file_tool
         self.search_tool = search_tool
         self.web_search_tool = web_search_tool
+        self.git_tool = git_tool
+        self.search_files_tool = search_files_tool
 
     async def handle_tool_call(
         self, tool_call: Any, repo: Any, pr: Any
@@ -86,6 +92,35 @@ class ToolHandler:
                 return await self.web_search_tool.search_web(
                     query=arguments.get("query", ""),
                     top_k=arguments.get("top_k"),
+                )
+            elif function_name == "search_in_files":
+                if not self.search_files_tool:
+                    return {"error": "跨文件搜索工具未启用"}
+                return await self.search_files_tool.search_in_files(
+                    keyword=arguments["keyword"],
+                    repo=repo,
+                    pr=pr,
+                    file_extension=arguments.get("file_extension"),
+                    directory=arguments.get("directory"),
+                    context_lines=arguments.get("context_lines"),
+                    max_results=arguments.get("max_results"),
+                )
+            elif function_name == "get_git_info":
+                if not self.git_tool:
+                    return {"error": "Git 信息工具未启用"}
+                return await self.git_tool.get_git_info(
+                    repo=repo,
+                    pr=pr,
+                    branch_count=arguments.get("branch_count"),
+                )
+            elif function_name == "list_commits":
+                if not self.git_tool:
+                    return {"error": "Git 提交历史工具未启用"}
+                return await self.git_tool.list_commits(
+                    repo=repo,
+                    pr=pr,
+                    branch=arguments.get("branch"),
+                    per_page=arguments.get("per_page"),
                 )
             else:
                 return {"error": f"未知工具: {function_name}"}
