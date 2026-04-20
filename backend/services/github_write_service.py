@@ -2,17 +2,20 @@
 
 使用 PyGithub Contents API 将文件提交回仓库，
 用于 .sakura/ 记忆系统等需要写入文件到仓库的场景。
+当仓库分支保护禁止直接提交时，自动回退为创建分支 + PR + 尝试合并。
 
 Uses PyGithub's Contents API to commit files back to repositories,
-for scenarios like the .sakura/ memory system that need to write files to repos.
+for scenarios like the .sakura/ memory system. Falls back to creating
+a branch + PR + auto-merge when branch protection blocks direct commits.
 """
 
 import asyncio
 import base64
+from datetime import datetime
 from typing import Optional
 
 from github import InputGitAuthor
-from github.GithubException import UnknownObjectException
+from github.GithubException import GithubException, UnknownObjectException
 from loguru import logger
 
 
@@ -21,6 +24,7 @@ class GitHubWriteService:
 
     DEFAULT_AUTHOR_NAME = "Sakura AI Reviewer"
     DEFAULT_AUTHOR_EMAIL = "Sakura520222@outlook.com"
+    SAKURA_BRANCH_PREFIX = "sakura-memory"
 
     _instance = None
     _initialized = False
@@ -46,8 +50,8 @@ class GitHubWriteService:
     ) -> str:
         """通过 Contents API 提交多个文件到仓库
 
-        使用 create_file / update_file 逐个提交文件。
-        Each file gets its own commit via the Contents API.
+        先尝试直接提交到目标分支；若遇到分支保护规则（409），
+        自动回退为创建新分支 + PR + 尝试合并。
 
         Args:
             repo: PyGithub Repository 对象
@@ -68,18 +72,30 @@ class GitHubWriteService:
             name=self.DEFAULT_AUTHOR_NAME,
             email=self.DEFAULT_AUTHOR_EMAIL,
         )
-        last_sha = None
 
-        for path, content in files.items():
-            last_sha = await self._commit_single_file(
-                repo, path, content, message, branch, author
+        # 尝试直接提交 / Try direct commit first
+        try:
+            last_sha = None
+            for path, content in files.items():
+                last_sha = await self._commit_single_file(
+                    repo, path, content, message, branch, author,
+                )
+            logger.info(
+                "Committed {} file(s) directly to {}:{} -> {}",
+                len(files), repo.full_name, branch,
+                last_sha[:8] if last_sha else "unknown",
             )
+            return last_sha or ""
+        except GithubException as e:
+            if e.status != 409:
+                raise
 
+        # 409: 分支保护 → 回退到 PR / Branch protection → fallback to PR
         logger.info(
-            f"Committed {len(files)} file(s) to {repo.full_name}:{branch} "
-            f"-> {last_sha[:8] if last_sha else 'unknown'}"
+            "Branch protection (409) on {}:{}, falling back to PR",
+            repo.full_name, branch,
         )
-        return last_sha or ""
+        return await self._commit_via_pr(repo, files, message, branch, author)
 
     async def _commit_single_file(
         self,
@@ -90,108 +106,149 @@ class GitHubWriteService:
         branch: str,
         author: InputGitAuthor,
     ) -> str:
-        """提交单个文件（自动判断创建或更新）/ Commit a single file (auto create/update)"""
+        """提交单个文件（自动判断创建或更新）/ Commit a single file"""
 
-        def _commit_sync() -> str:
+        def _sync() -> str:
             try:
-                # 尝试获取已有文件（用于更新）/ Try to get existing file for update
                 existing = repo.get_contents(path, ref=branch)
                 if isinstance(existing, list):
                     raise ValueError(f"Path {path} is a directory")
-                # 更新已有文件 / Update existing file
-                logger.info(f"Updating existing file: {path}")
                 result = repo.update_file(
-                    path=path,
-                    message=message,
-                    content=content,
-                    sha=existing.sha,
-                    branch=branch,
-                    author=author,
+                    path=path, message=message, content=content,
+                    sha=existing.sha, branch=branch, author=author,
                 )
             except UnknownObjectException:
-                # 文件不存在，创建新文件 / File doesn't exist, create new
-                logger.info(f"Creating new file: {path}")
                 result = repo.create_file(
-                    path=path,
-                    message=message,
-                    content=content,
-                    branch=branch,
-                    author=author,
+                    path=path, message=message, content=content,
+                    branch=branch, author=author,
                 )
 
-            logger.info(f"create_file/update_file returned type={type(result).__name__}")
-            if isinstance(result, dict):
-                logger.info(f"result keys={list(result.keys())}")
-
-            # PyGithub create_file/update_file 返回 dict
-            # Return format: {"content": ContentFile, "commit": Commit}
-            if not isinstance(result, dict):
-                raise RuntimeError(
-                    f"GitHub API returned unexpected type {type(result).__name__} "
-                    f"for {path}. This usually means the GitHub App lacks "
-                    f"'contents:write' permission. Result: {result!r}"
-                )
-
-            commit_obj = result.get("commit")
+            commit_obj = result.get("commit") if isinstance(result, dict) else None
             if commit_obj is None:
-                # Check if the response contains an error message instead
-                error_msg = result.get("message", "unknown error")
-                raise RuntimeError(
-                    f"GitHub API returned no commit for {path}. "
-                    f"Response: message={error_msg}, keys={list(result.keys())}. "
-                    f"Ensure the GitHub App has 'contents:write' permission."
-                )
+                raise RuntimeError(f"create_file/update_file returned no commit for {path}")
             return commit_obj.sha
 
-        try:
-            sha = await asyncio.to_thread(_commit_sync)
-            logger.info(f"Committed {path} -> {sha[:8]}")
-            return sha
-        except KeyError as e:
-            import traceback
-            logger.error(
-                f"KeyError {e} while committing {path} to {repo.full_name}:{branch}. "
-                f"Full traceback:\n{traceback.format_exc()}"
+        sha = await asyncio.to_thread(_sync)
+        logger.info("Committed {} -> {}", path, sha[:8])
+        return sha
+
+    async def _commit_via_pr(
+        self, repo, files: dict, message: str, base_branch: str, author: InputGitAuthor,
+    ) -> str:
+        """通过创建分支 + PR + 尝试合并来提交文件 / Commit via branch + PR + auto-merge"""
+
+        timestamp = datetime.utcnow().strftime("%Y%m%d-%H%M%S")
+        new_branch = f"{self.SAKURA_BRANCH_PREFIX}/{timestamp}"
+
+        def _sync() -> str:
+            # 1. 从 base branch 创建新分支 / Create branch from base
+            ref = repo.get_git_ref(f"heads/{base_branch}")
+            base_sha = ref.object.sha
+            repo.create_git_ref(ref=f"refs/heads/{new_branch}", sha=base_sha)
+            logger.info(
+                "Created branch {} from {}:{}", new_branch, repo.full_name, base_branch,
             )
-            raise RuntimeError(
-                f"GitHub API returned unexpected response for {path} (KeyError: {e}). "
-                f"Most likely cause: GitHub App does not have 'contents:write' permission."
-            ) from e
+
+            # 2. 提交文件到新分支 / Commit files to new branch
+            last_sha = None
+            for path, content in files.items():
+                try:
+                    existing = repo.get_contents(path, ref=new_branch)
+                    if isinstance(existing, list):
+                        raise ValueError(f"Path {path} is a directory")
+                    result = repo.update_file(
+                        path=path, message=message, content=content,
+                        sha=existing.sha, branch=new_branch, author=author,
+                    )
+                except UnknownObjectException:
+                    result = repo.create_file(
+                        path=path, message=message, content=content,
+                        branch=new_branch, author=author,
+                    )
+                commit_obj = result.get("commit") if isinstance(result, dict) else None
+                if commit_obj:
+                    last_sha = commit_obj.sha
+
+            # 3. 创建 PR / Create pull request
+            pr_title = f"chore(sakura): {message[:60]}"
+            pr_body = (
+                "Automated commit by **Sakura AI Reviewer**.\n\n"
+                f"Files: {', '.join(f'`{p}`' for p in files.keys())}"
+            )
+            pr = repo.create_pull(
+                title=pr_title,
+                body=pr_body,
+                head=new_branch,
+                base=base_branch,
+            )
+            logger.info(
+                "Created PR #{}: {} -> {}",
+                pr.number, new_branch, base_branch,
+            )
+
+            # 4. 尝试自动合并 / Try auto-merge
+            try:
+                merge_result = pr.merge(merge_method="merge")
+                if merge_result.merged:
+                    logger.info(
+                        "Auto-merged PR #{} for {}", pr.number, repo.full_name,
+                    )
+                    # 5. 合并成功后清理分支 / Cleanup branch after merge
+                    try:
+                        ref = repo.get_git_ref(f"heads/{new_branch}")
+                        ref.delete()
+                        logger.info("Deleted branch {}", new_branch)
+                    except Exception as cleanup_err:
+                        logger.debug("Branch cleanup skipped: {}", cleanup_err)
+                else:
+                    logger.warning(
+                        "Auto-merge returned not-merged for PR #{}: {}",
+                        pr.number, merge_result.message,
+                    )
+            except Exception as merge_err:
+                logger.warning(
+                    "Auto-merge failed for PR #{}, files will be available after manual merge: {}",
+                    pr.number, merge_err,
+                )
+
+            return last_sha or ""
+
+        try:
+            return await asyncio.to_thread(_sync)
         except Exception as e:
-            import traceback
             logger.error(
-                f"Failed to commit {path} to {repo.full_name}:{branch}: "
-                f"[{type(e).__name__}] {e}\n{traceback.format_exc()}"
+                "Failed to commit via PR to {}:{}: [{}] {}",
+                repo.full_name, base_branch, type(e).__name__, e,
             )
             raise
 
     async def read_file(self, repo, path: str, ref: Optional[str] = None) -> Optional[str]:
         """从仓库读取文件内容 / Read file content from repository"""
 
-        def _read_sync() -> Optional[str]:
+        def _sync() -> Optional[str]:
             kwargs = {}
             if ref is not None:
                 kwargs["ref"] = ref
             content_file = repo.get_contents(path, **kwargs)
             if isinstance(content_file, list):
-                logger.warning(f"Path {path} is a directory, not a file")
+                logger.warning("Path {} is a directory, not a file", path)
                 return None
             decoded = base64.b64decode(content_file.content)
             return decoded.decode("utf-8")
 
         try:
-            return await asyncio.to_thread(_read_sync)
+            return await asyncio.to_thread(_sync)
         except UnknownObjectException:
-            logger.debug(f"File not found: {path}")
+            logger.debug("File not found: {}", path)
             return None
         except Exception as e:
-            logger.error(f"Failed to read file {path}: {e}", exc_info=True)
+            logger.error("Failed to read file {}: {}", path, e)
             return None
 
     async def file_exists(self, repo, path: str, ref: Optional[str] = None) -> bool:
         """检查文件是否存在于仓库中 / Check if a file exists in the repository"""
 
-        def _exists_sync() -> bool:
+        def _sync() -> bool:
             kwargs = {}
             if ref is not None:
                 kwargs["ref"] = ref
@@ -199,11 +256,11 @@ class GitHubWriteService:
             return True
 
         try:
-            return await asyncio.to_thread(_exists_sync)
+            return await asyncio.to_thread(_sync)
         except UnknownObjectException:
             return False
         except Exception as e:
-            logger.error(f"Failed to check file existence {path}: {e}", exc_info=True)
+            logger.error("Failed to check file existence {}: {}", path, e)
             return False
 
     async def get_default_branch(self, repo) -> str:
@@ -212,8 +269,8 @@ class GitHubWriteService:
             return await asyncio.to_thread(lambda: repo.default_branch)
         except Exception as e:
             logger.warning(
-                f"Failed to get default branch for {repo.full_name}: {e}, "
-                f"falling back to 'main'"
+                "Failed to get default branch for {}: {}, falling back to 'main'",
+                repo.full_name, e,
             )
             return "main"
 

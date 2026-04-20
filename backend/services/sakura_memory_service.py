@@ -223,7 +223,7 @@ class SakuraMemoryService:
                 except Exception as e:
                     await session.rollback()
                     # Concurrent insert — re-query
-                    logger.debug(f"并发创建状态，重新查询 / Concurrent create, re-querying: {e}")
+                    logger.info("并发创建状态，重新查询 / Concurrent create, re-querying: {}", e)
                     result = await session.execute(
                         select(SakuraMemoryState).where(
                             SakuraMemoryState.repo_full_name == repo_full_name
@@ -444,7 +444,7 @@ class SakuraMemoryService:
                 await self.consolidate(repo, repo_full_name, new_count)
 
         except Exception as e:
-            logger.error(f"反思失败 ({repo_full_name}): {e}", exc_info=True)
+            logger.error("反思失败 ({}): {}", repo_full_name, e, exc_info=True)
 
     async def consolidate(
         self, repo, repo_full_name: str, total_count: int
@@ -580,7 +580,7 @@ class SakuraMemoryService:
             return result
 
         except Exception as e:
-            logger.warning(f"获取 .sakura/ 上下文失败 ({repo_full_name}): {e}")
+            logger.warning("获取 .sakura/ 上下文失败 ({}): {}", repo_full_name, e)
             return {}
 
     async def _read_recent_reflections(self, repo, count: int) -> str:
@@ -620,7 +620,7 @@ class SakuraMemoryService:
             return "\n\n---\n\n".join(reflections)
 
         except Exception as e:
-            logger.warning(f"读取反思文件失败: {e}")
+            logger.warning("读取反思文件失败: {}", e)
             return ""
 
     async def _get_directory_overview(self, repo) -> str:
