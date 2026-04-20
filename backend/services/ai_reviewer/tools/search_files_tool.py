@@ -5,6 +5,7 @@
 """
 
 from typing import Any, Dict, List, Optional
+from urllib.parse import urlencode
 
 from loguru import logger
 
@@ -207,14 +208,14 @@ class SearchFilesToolHandler:
             ext = file_extension.lstrip(".")
             query += f" extension:{ext}"
         if directory:
-            query += f" path:{directory}"
+            escaped_dir = directory.replace(" ", "\\ ").replace('"', '\\"')
+            query += f" path:{escaped_dir}"
 
         logger.debug(f"GitHub Search API 查询: {query}")
 
         # search_code 在 Github 主客户端上，不在 Repository 上
         # Use repo._requester to call the Search API directly
-        from urllib.parse import urlencode
-
+        # COMPAT: repo._requester 是 PyGithub 私有 API，升级 PyGithub 时需验证兼容性
         encoded_query = urlencode({"q": query})
         requester = repo._requester
         _, data = requester.requestJsonAndCheck(
@@ -255,7 +256,10 @@ class SearchFilesToolHandler:
                 if content_file.size > MAX_FILE_SIZE_BYTES:
                     continue
 
-                decoded = content_file.decoded_content.decode("utf-8")
+                decoded_content = content_file.decoded_content
+                if decoded_content is None:
+                    continue
+                decoded = decoded_content.decode("utf-8")
                 lines = decoded.split("\n")
 
                 # 搜索匹配行 / Search for matching lines
@@ -411,7 +415,10 @@ class SearchFilesToolHandler:
                 if content_file.size > MAX_FILE_SIZE_BYTES:
                     continue
 
-                content = content_file.decoded_content.decode("utf-8")
+                decoded_content = content_file.decoded_content
+                if decoded_content is None:
+                    continue
+                content = decoded_content.decode("utf-8")
                 lines = content.split("\n")
 
                 # 搜索匹配行 / Search for matching lines
