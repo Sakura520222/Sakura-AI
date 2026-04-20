@@ -633,6 +633,7 @@ class ReviewWorker:
                                 pr=pr,
                                 review_result=review_result,
                                 analysis=analysis,
+                                pr_info=pr_info,
                             )
                         )
                         logger.info(f"[{task_id}] 已触发 .sakura/ 反思任务")

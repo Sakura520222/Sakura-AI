@@ -30,6 +30,11 @@ REFLECTION_PROMPT = """你是一个代码审查反思助手。请对以下审查
 - 审查策略: {strategy}
 - 评分: {score}/10
 - 决策: {decision}
+- 审查类型: {review_type}
+- 本次变更范围: {incremental_scope}
+
+## 新增提交
+{new_commits_summary}
 
 ## 审查摘要
 {review_summary}
@@ -64,6 +69,8 @@ REFLECTION_PROMPT = """你是一个代码审查反思助手。请对以下审查
 4. **经验教训**
    - 值得在未来审查中关注的要点
    - 对特定技术或模式的审查经验
+
+{incremental_reflection_prompt}
 
 请用中文输出，保持简洁但深入。"""
 
@@ -341,6 +348,7 @@ class SakuraMemoryService:
         pr,
         review_result: dict,
         analysis,
+        pr_info: dict = None,
     ) -> None:
         """审查后反思 / Post-review reflection
 
@@ -352,7 +360,8 @@ class SakuraMemoryService:
             repo_full_name: 仓库完整名称
             pr: PyGithub PullRequest 对象
             review_result: 审查结果字典，包含 overall_score, decision, comments 等
-            analysis: PR 分析结果对象，包含 code_files, strategy 等
+            analysis: PR 分析结果对象，包含 code_files, strategy, is_incremental 等
+            pr_info: PR webhook 信息字典，包含 action 等
         """
         config = self._get_config()
         if not config.get("enabled", True):
@@ -370,6 +379,40 @@ class SakuraMemoryService:
             current_memory = (
                 await self.write_service.read_file(repo, ".sakura/memory.md") or ""
             )
+
+            # 提取增量审查上下文 / Extract incremental review context
+            pr_info = pr_info or {}
+            action = pr_info.get("action", "")
+            is_incremental = getattr(analysis, "is_incremental", False)
+            new_commits = getattr(analysis, "new_commits", None) or []
+
+            if action == "full_review":
+                review_type = "手动全量重审（/full-review）"
+                new_commits_summary = "全部文件重新审查"
+                incremental_scope = "全量"
+                incremental_reflection_prompt = (
+                    "5. **手动全量重审反思**\n"
+                    "   - 本次是用户手动触发的全量重审，之前可能已有增量审查\n"
+                    "   - 重新全量审查是否发现了之前增量审查遗漏的问题？"
+                )
+            elif is_incremental:
+                review_type = "增量审查"
+                new_commits_summary = "\n".join(
+                    f"  - {c.sha}: {c.title}"
+                    for c in new_commits[:10]
+                ) or "无新增提交信息"
+                incremental_scope = f"新增 {len(new_commits)} 个提交"
+                incremental_reflection_prompt = (
+                    "5. **增量审查反思**\n"
+                    "   - 新增提交是否解决了之前审查提出的问题？\n"
+                    "   - 增量变更是否引入了新的风险？\n"
+                    "   - 审查覆盖度是否因只看增量部分而有所下降？"
+                )
+            else:
+                review_type = "首次全量审查"
+                new_commits_summary = "无（首次审查）"
+                incremental_scope = "全部变更"
+                incremental_reflection_prompt = ""
 
             # 构建反思 Prompt / Build reflection prompt
             pr_number = getattr(pr, "number", 0)
@@ -405,6 +448,10 @@ class SakuraMemoryService:
                 strategy=getattr(analysis, "strategy", "unknown"),
                 score=review_result.get("overall_score", "N/A"),
                 decision=review_result.get("decision", "unknown"),
+                review_type=review_type,
+                incremental_scope=incremental_scope,
+                new_commits_summary=new_commits_summary,
+                incremental_reflection_prompt=incremental_reflection_prompt,
                 review_summary=review_result.get("review_summary", "无摘要"),
                 comments_summary=comments_summary or "无评论",
                 changed_files=changed_files or "无文件信息",
@@ -416,11 +463,17 @@ class SakuraMemoryService:
             model = self._get_model(config.get("reflection", {}))
             reflection_content = await self._call_llm(prompt, model=model)
 
-            # 格式化反思文件名: YYYY-MM-DD_PR{N}_{sha}.md
+            # 格式化反思文件名 / Format reflection filename
             today = datetime.now().strftime("%Y-%m-%d")
-            reflection_path = (
-                f".sakura/memory/{today}_PR{pr_number}_{commit_sha}.md"
-            )
+            if is_incremental:
+                round_num = await self._count_pr_reflections(repo, pr_number) + 1
+                reflection_path = (
+                    f".sakura/memory/{today}_PR{pr_number}_incr{round_num}_{commit_sha}.md"
+                )
+            else:
+                reflection_path = (
+                    f".sakura/memory/{today}_PR{pr_number}_{commit_sha}.md"
+                )
 
             # 提交反思文件 / Commit reflection file
             files = {reflection_path: reflection_content}
@@ -432,7 +485,8 @@ class SakuraMemoryService:
             await self._update_state(repo_full_name, reflection_count=new_count)
 
             logger.info(
-                f"已写入反思: {repo_full_name} PR#{pr_number} (第{new_count}次反思)"
+                "已写入反思: {} PR#{} [{}] (第{}次反思)",
+                repo_full_name, pr_number, review_type, new_count,
             )
 
             # 检查是否需要合并 / Check if consolidation is needed
@@ -445,6 +499,18 @@ class SakuraMemoryService:
 
         except Exception as e:
             logger.error("反思失败 ({}): {}", repo_full_name, e, exc_info=True)
+
+    async def _count_pr_reflections(self, repo, pr_number: int) -> int:
+        """统计某 PR 已有的反思文件数 / Count existing reflection files for a PR"""
+        try:
+            contents = await asyncio.to_thread(
+                lambda: repo.get_contents(".sakura/memory")
+            )
+            if not contents or not isinstance(contents, list):
+                return 0
+            return sum(1 for c in contents if f"_PR{pr_number}_" in c.name)
+        except Exception:
+            return 0
 
     async def consolidate(
         self, repo, repo_full_name: str, total_count: int
