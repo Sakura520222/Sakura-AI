@@ -11,6 +11,8 @@ from backend.models.database import AppConfig, async_session
 from backend.services.ai_reviewer.api_client import AIApiClient
 from backend.services.ai_reviewer.tools import (
     FileToolHandler,
+    GitToolHandler,
+    SearchFilesToolHandler,
     SearchToolHandler,
     ToolHandler,
     ToolManager,
@@ -31,6 +33,8 @@ class IssueAnalyzer:
         )
         file_tool = FileToolHandler()
         search_tool = SearchToolHandler()
+        git_tool = GitToolHandler()
+        search_files_tool = SearchFilesToolHandler()
         web_search_tool = None
         if settings.web_search_enabled:
             from backend.services.ai_reviewer.tools.web_search_tool import (
@@ -38,7 +42,7 @@ class IssueAnalyzer:
             )
 
             web_search_tool = WebSearchToolHandler()
-        self.tool_handler = ToolHandler(file_tool, search_tool, web_search_tool)
+        self.tool_handler = ToolHandler(file_tool, search_tool, web_search_tool, git_tool, search_files_tool)
         self.tool_manager = ToolManager()
         self.tools = self.tool_manager.get_all_tools_definitions()
 
