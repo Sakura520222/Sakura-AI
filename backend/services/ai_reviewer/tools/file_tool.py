@@ -25,7 +25,7 @@ def format_search_results(
 
     Shared utility for search-related tools.
     """
-    included_indices: set = set()
+    included_indices: set[int] = set()
     for match_idx in match_indices:
         ctx_start = max(0, match_idx - context_lines)
         ctx_end = min(len(lines), match_idx + context_lines + 1)
@@ -265,14 +265,6 @@ class FileToolHandler:
                     lines, matches, effective_context_lines
                 )
 
-                # Compute returned lines count
-                returned_count = 0
-                for m in matches:
-                    returned_count += (
-                        min(len(lines), m + effective_context_lines + 1)
-                        - max(0, m - effective_context_lines)
-                    )
-
                 return {
                     "file_path": file_path,
                     "content": numbered_content,
@@ -281,7 +273,7 @@ class FileToolHandler:
                     "total_lines": total_lines,
                     "match_count": len(matches),
                     "context_lines": effective_context_lines,
-                    "returned_lines": returned_count,
+                    "returned_lines": numbered_content.count("\n") + 1,
                     "size": content_file.size,
                     "branch": tried_branches[0] if tried_branches else "unknown",
                     "hint": (
