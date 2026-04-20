@@ -238,6 +238,27 @@ async def save_strategies_section(
                         float(form.get("default_context_lines", 20))
                     ),
                     "max_context_lines": int(float(form.get("max_context_lines", 200))),
+                    "search_in_files": {
+                        "use_search_api": form.get("sif_use_search_api") is not None,
+                        "skip_binary": form.get("sif_skip_binary") is not None,
+                        "default_context_lines": int(
+                            float(form.get("sif_default_context_lines", 3))
+                        ),
+                        "default_max_results": int(
+                            float(form.get("sif_default_max_results", 20))
+                        ),
+                        "max_files_to_search": int(
+                            float(form.get("sif_max_files_to_search", 100))
+                        ),
+                    },
+                    "git_tools": {
+                        "default_branch_count": int(
+                            float(form.get("gt_default_branch_count", 20))
+                        ),
+                        "default_commit_count": int(
+                            float(form.get("gt_default_commit_count", 10))
+                        ),
+                    },
                 }
 
             elif section == "review_policy":

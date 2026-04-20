@@ -5,7 +5,7 @@
 - _tool_list_directory (1587-1711行)
 """
 
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
 from loguru import logger
 
@@ -16,6 +16,32 @@ from backend.services.ai_reviewer.constants import (
     MAX_FILE_LINES,
     MAX_FILE_SIZE_BYTES,
 )
+
+
+def format_search_results(
+    lines: List[str], match_indices: List[int], context_lines: int
+) -> str:
+    """Format search results with line numbers and match markers.
+
+    Shared utility for search-related tools.
+    """
+    included_indices: set = set()
+    for match_idx in match_indices:
+        ctx_start = max(0, match_idx - context_lines)
+        ctx_end = min(len(lines), match_idx + context_lines + 1)
+        for i in range(ctx_start, ctx_end):
+            included_indices.add(i)
+
+    sorted_indices = sorted(included_indices)
+    match_set = set(match_indices)
+    result_parts = []
+    for i in sorted_indices:
+        line_prefix = f"{i + 1:>6}\t"
+        if i in match_set:
+            line_prefix += ">>>\t"
+        result_parts.append(f"{line_prefix}{lines[i]}")
+
+    return "\n".join(result_parts)
 
 
 class FileToolHandler:
@@ -235,25 +261,18 @@ class FileToolHandler:
                         "branch": tried_branches[0] if tried_branches else "unknown",
                     }
 
-                # 收集匹配行及其上下文，使用集合避免重复
-                included_indices = set()
-                for match_idx in matches:
-                    ctx_start = max(0, match_idx - effective_context_lines)
-                    ctx_end = min(len(lines), match_idx + effective_context_lines + 1)
-                    for i in range(ctx_start, ctx_end):
-                        included_indices.add(i)
+                numbered_content = format_search_results(
+                    lines, matches, effective_context_lines
+                )
 
-                # 按行号排序输出
-                sorted_indices = sorted(included_indices)
-                match_set = set(matches)
-                result_parts = []
-                for i in sorted_indices:
-                    line_prefix = f"{i + 1:>6}\t"
-                    if i in match_set:
-                        line_prefix += ">>>\t"
-                    result_parts.append(f"{line_prefix}{lines[i]}")
+                # Compute returned lines count
+                returned_count = 0
+                for m in matches:
+                    returned_count += (
+                        min(len(lines), m + effective_context_lines + 1)
+                        - max(0, m - effective_context_lines)
+                    )
 
-                numbered_content = "\n".join(result_parts)
                 return {
                     "file_path": file_path,
                     "content": numbered_content,
@@ -262,7 +281,7 @@ class FileToolHandler:
                     "total_lines": total_lines,
                     "match_count": len(matches),
                     "context_lines": effective_context_lines,
-                    "returned_lines": len(sorted_indices),
+                    "returned_lines": returned_count,
                     "size": content_file.size,
                     "branch": tried_branches[0] if tried_branches else "unknown",
                     "hint": (

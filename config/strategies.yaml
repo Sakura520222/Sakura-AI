@@ -939,9 +939,11 @@ context_enhancement:
 
   # 跨文件搜索工具配置
   search_in_files:
-    default_context_lines: 3    # 默认上下文行数
-    default_max_results: 20     # 默认最大结果数
-    skip_binary: true           # 是否跳过二进制文件
+    use_search_api: true           # 优先使用 GitHub Search API
+    default_context_lines: 3       # 默认上下文行数
+    default_max_results: 20        # 默认最大结果数
+    skip_binary: true              # 是否跳过二进制文件
+    max_files_to_search: 100       # 回退模式下最大扫描文件数
 
   # Git 工具配置
   git_tools:

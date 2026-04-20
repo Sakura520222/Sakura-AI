@@ -51,7 +51,9 @@ class GitToolHandler:
         """
         try:
             config = self._get_config()
-            effective_branch_count = branch_count or config["default_branch_count"]
+            effective_branch_count = (
+                branch_count if branch_count is not None else config["default_branch_count"]
+            )
 
             # 获取仓库基本信息 / Get basic repo info
             info: Dict[str, Any] = {
@@ -99,7 +101,7 @@ class GitToolHandler:
                 # PyGithub PaginatedList 无法直接获取 total_count，
                 # 如果返回数量等于请求数量，说明可能还有更多
                 info["branches"] = branch_list
-                info["total_branches"] = len(branch_list)
+                info["returned_branch_count"] = len(branch_list)
                 if len(branch_list) >= effective_branch_count:
                     info["branches_hint"] = (
                         f"仅显示前 {effective_branch_count} 个分支，"
@@ -108,7 +110,7 @@ class GitToolHandler:
             except Exception as e:
                 logger.debug(f"获取仓库分支列表失败: {e}")
                 info["branches"] = []
-                info["total_branches"] = 0
+                info["returned_branch_count"] = 0
 
             return info
 
@@ -140,7 +142,9 @@ class GitToolHandler:
         """
         try:
             config = self._get_config()
-            effective_per_page = per_page or config["default_commit_count"]
+            effective_per_page = (
+                per_page if per_page is not None else config["default_commit_count"]
+            )
 
             # 确定分支 / Determine branch
             ref = branch
