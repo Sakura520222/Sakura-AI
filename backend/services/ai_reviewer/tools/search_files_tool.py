@@ -153,7 +153,6 @@ class SearchFilesToolHandler:
             return await self._search_per_file(
                 keyword,
                 repo,
-                pr,
                 ref,
                 skip_paths,
                 skip_binary,
@@ -202,26 +201,35 @@ class SearchFilesToolHandler:
             搜索结果字典
         """
         # 构造 GitHub Search API 查询 / Build GitHub Search API query
-        query = f'"{keyword}" repo:{repo.full_name}'
+        escaped_keyword = keyword.replace("\\", "\\\\").replace('"', '\\"')
+        query = f'"{escaped_keyword}" repo:{repo.full_name}'
         if file_extension:
-            # 去掉前导点号 / Strip leading dot
             ext = file_extension.lstrip(".")
             query += f" extension:{ext}"
         if directory:
             query += f" path:{directory}"
 
         logger.debug(f"GitHub Search API 查询: {query}")
-        search_results = repo.search_code(query)
+
+        # search_code 在 Github 主客户端上，不在 Repository 上
+        # Use repo._requester to call the Search API directly
+        from urllib.parse import urlencode
+
+        encoded_query = urlencode({"q": query})
+        requester = repo._requester
+        _, data = requester.requestJsonAndCheck(
+            "GET", f"/search/code?{encoded_query}"
+        )
 
         all_results: List[Dict[str, Any]] = []
         keyword_lower = keyword.lower()
         files_searched = 0
 
-        for code_result in search_results:
+        for item in data.get("items", []):
             if len(all_results) >= effective_max_results:
                 break
 
-            file_path = code_result.path
+            file_path = item.get("path", "")
 
             # 跳过 skip_paths / Skip paths in skip list
             should_skip = False
@@ -241,10 +249,13 @@ class SearchFilesToolHandler:
             files_searched += 1
 
             try:
-                content = code_result.decoded_content
-                if content is None:
+                # 获取文件内容 / Fetch file content
+                content_file = repo.get_contents(file_path, ref)
+
+                if content_file.size > MAX_FILE_SIZE_BYTES:
                     continue
-                decoded = content.decode("utf-8")
+
+                decoded = content_file.decoded_content.decode("utf-8")
                 lines = decoded.split("\n")
 
                 # 搜索匹配行 / Search for matching lines
@@ -300,7 +311,6 @@ class SearchFilesToolHandler:
         self,
         keyword: str,
         repo: Any,
-        pr: Any,
         ref: str,
         skip_paths: List[str],
         skip_binary: bool,
@@ -315,7 +325,6 @@ class SearchFilesToolHandler:
         Args:
             keyword: 搜索关键词
             repo: GitHub 仓库对象
-            pr: GitHub PR 对象（可选）
             ref: Git 引用 (SHA or branch)
             skip_paths: 需要跳过的路径前缀列表
             skip_binary: 是否跳过二进制文件
@@ -353,8 +362,10 @@ class SearchFilesToolHandler:
                 continue
 
             # 按 file_extension 过滤 / Filter by file extension
-            if file_extension and not path.endswith(file_extension):
-                continue
+            if file_extension:
+                normalized_ext = file_extension.lstrip(".")
+                if not path.endswith(f".{normalized_ext}"):
+                    continue
 
             # 跳过 skip_paths / Skip paths in skip list
             should_skip = False
