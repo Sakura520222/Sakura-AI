@@ -97,7 +97,6 @@ class GitHubWriteService:
                 # 尝试获取已有文件（用于更新）/ Try to get existing file for update
                 existing = repo.get_contents(path, ref=branch)
                 if isinstance(existing, list):
-                    # Path is a directory, shouldn't happen
                     raise ValueError(f"Path {path} is a directory")
                 # 更新已有文件 / Update existing file
                 result = repo.update_file(
@@ -108,7 +107,6 @@ class GitHubWriteService:
                     branch=branch,
                     author=author,
                 )
-                return result["commit"].sha
             except UnknownObjectException:
                 # 文件不存在，创建新文件 / File doesn't exist, create new
                 result = repo.create_file(
@@ -118,14 +116,24 @@ class GitHubWriteService:
                     branch=branch,
                     author=author,
                 )
-                return result["commit"].sha
+
+            # PyGithub create_file/update_file 返回 dict
+            # Return format: {"content": ContentFile, "commit": Commit}
+            commit_obj = result.get("commit") if isinstance(result, dict) else result["commit"]
+            if commit_obj is None:
+                raise RuntimeError(f"create_file/update_file returned no commit for {path}")
+            return commit_obj.sha
 
         try:
             sha = await asyncio.to_thread(_commit_sync)
-            logger.debug(f"Committed {path} -> {sha[:8]}")
+            logger.info(f"✅ Committed {path} -> {sha[:8]}")
             return sha
         except Exception as e:
-            logger.error(f"Failed to commit {path}: {e}", exc_info=True)
+            logger.error(
+                f"❌ Failed to commit {path} to {repo.full_name}:{branch}: "
+                f"[{type(e).__name__}] {e}",
+                exc_info=True,
+            )
             raise
 
     async def read_file(self, repo, path: str, ref: Optional[str] = None) -> Optional[str]:
