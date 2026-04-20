@@ -277,18 +277,22 @@ class SakuraMemoryService:
                 return
 
             # 收集仓库信息 / Collect repo info
+            logger.info(f"[sakura] 步骤1: 收集仓库信息 {repo_full_name}")
             languages = await asyncio.to_thread(lambda: dict(repo.get_languages()))
             lang_str = ", ".join(f"{k}: {v}" for k, v in languages.items())
 
             # 获取目录结构（前2层）/ Get directory structure (top 2 levels)
+            logger.info(f"[sakura] 步骤2: 获取目录结构 {repo_full_name}")
             dir_structure = await self._get_directory_overview(repo)
 
             # 获取 README / Get README
+            logger.info(f"[sakura] 步骤3: 获取README {repo_full_name}")
             readme_content = (
                 await self.write_service.read_file(repo, "README.md") or "（无 README）"
             )
 
             # 生成初始 SAKURA.md / Generate initial SAKURA.md
+            logger.info(f"[sakura] 步骤4: 生成SAKURA.md {repo_full_name}")
             prompt = INIT_PROMPT.format(
                 repo_full_name=repo_full_name,
                 languages=lang_str,
@@ -300,6 +304,10 @@ class SakuraMemoryService:
                 prompt, model=self._get_model(config.get("reflection", {}))
             )
 
+            if not sakura_md:
+                logger.warning(f"LLM 返回空内容，跳过初始化: {repo_full_name}")
+                return
+
             # 创建初始文件 / Create initial files
             files = {
                 ".sakura/SAKURA.md": sakura_md,
@@ -310,9 +318,11 @@ class SakuraMemoryService:
                 "init_commit_message",
                 "chore: initialize .sakura/ directory for Sakura AI Reviewer",
             )
+            logger.info(f"[sakura] 步骤5: 提交文件到仓库 {repo_full_name}, {len(files)} 个文件")
             await self.write_service.commit_files(repo, files, commit_msg)
 
             # 更新状态 / Update state
+            logger.info(f"[sakura] 步骤6: 更新数据库状态 {repo_full_name}")
             await self._update_state(repo_full_name, is_initialized=True)
             logger.info(f"已初始化 .sakura/ 目录: {repo_full_name}")
 
