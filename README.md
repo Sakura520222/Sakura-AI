@@ -31,7 +31,9 @@
 
 ### AI 工具与知识库
 
-- **AI 工具系统**：read_file、list_directory、search_web，AI 按需主动调用
+- **AI 工具系统**：read_file、list_directory、search_in_files、get_git_info、list_commits、search_web，AI 按需主动调用
+- **跨文件代码搜索**：AI 可在仓库中跨文件搜索关键词，快速定位函数/变量/类的所有使用位置
+- **Git 信息查询**：AI 可获取仓库基本信息、分支列表和提交历史，理解项目演进脉络
 - **Web 搜索增强**：支持 DuckDuckGo / Tavily，AI 可主动检索互联网信息辅助审查决策
 - **仓库级知识库（RAG）**：向量语义检索项目文档，为 AI 审查提供规范上下文
 - **PR 代码自动索引**：语法感知分块 + 语义搜索，AI 可精准定位相关代码
@@ -94,7 +96,10 @@
 ┌─────────────────────────────────────────────────────────────┐
 │                     AI 审查引擎                              │
 │  ┌────────────┐  ┌────────────┐  ┌────────────┐            │
-│  │ read_file  │  │ list_dir   │  │ search_web │            │
+│  │ read_file  │  │ list_dir   │  │search_files│            │
+│  └────────────┘  └────────────┘  └────────────┘            │
+│  ┌────────────┐  ┌────────────┐  ┌────────────┐            │
+│  │  git_info  │  │  commits   │  │ search_web │            │
 │  └────────────┘  └────────────┘  └────────────┘            │
 │  ┌────────────┐  ┌────────────┐  ┌────────────┐            │
 │  │ RAG 检索   │  │ 代码索引    │  │ 历史上下文  │            │
@@ -242,6 +247,8 @@ WebUI：`https://your-domain.com/webui/`
 - **语义 Issue 关联**：WebUI 配置管理中 `enable_semantic_issue_linking` / `semantic_issue_similarity_threshold`
 - **增量审查历史**：WebUI 配置管理中 `enable_incremental_history_context`，AI 自动学习历史审查记录
 - **Web 搜索工具**：WebUI 配置管理中 `web_search_provider`（`duckduckgo` 免费或 `tavily` 高级）
+- **跨文件搜索**：`config/strategies.yaml` 中 `context_enhancement.search_in_files`，配置 GitHub Search API 优先策略、上下文行数、最大结果数等
+- **Git 信息工具**：`config/strategies.yaml` 中 `context_enhancement.git_tools`，配置默认分支和提交返回数量
 - **模型上下文**：WebUI 配置管理中配置上下文窗口、自动压缩等，详见 [模型上下文管理](docs/MODEL_CONTEXT_FEATURE.md)
 
 ---
@@ -288,12 +295,13 @@ python run_ruff.py
 ```
 Sakura-AI-Reviewer/
 ├── backend/
-│   ├── api/               # API 路由（webhook、health）
+│   ├── api/               # API 路由（webhook、health、v1）
+│   │   └── v1/            #   RESTful API v1（移动端对接）
 │   ├── core/              # 核心配置、动态配置管理
 │   ├── models/            # 数据模型（SQLAlchemy）
 │   ├── services/          # 业务逻辑
 │   │   ├── ai_reviewer/   # AI 审查引擎
-│   │   │   ├── tools/     #   AI 工具（文件读取、Web 搜索）
+│   │   │   ├── tools/     #   AI 工具（文件读取、跨文件搜索、Git 信息、Web 搜索）
 │   │   │   └── compression/ # 上下文压缩
 │   │   ├── pr_analyzer.py # PR 分析器（策略选择）
 │   │   ├── issue_analyzer.py  # Issue 分析引擎
