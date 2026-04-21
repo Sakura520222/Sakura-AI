@@ -23,6 +23,23 @@ class SakuraToolHandler:
         ce_config = get_strategy_config().get_context_enhancement_config()
         return ce_config.get("sakura_memory", {})
 
+    @staticmethod
+    def _validate_sakura_path(user_input: str) -> Optional[str]:
+        """验证并规范化 .sakura/ 下的路径，防止路径遍历
+
+        Returns:
+            规范化后的路径，或 None 表示非法
+        """
+        normalized = user_input.strip().replace("\\", "/")
+        if "../" in normalized or "..\\" in user_input:
+            return None
+        normalized = normalized.strip("/")
+        if not normalized.startswith(".sakura/"):
+            normalized = f".sakura/{normalized}"
+        if not normalized.startswith(".sakura/") or normalized.count("/") < 1:
+            return None
+        return normalized
+
     async def read_sakura_docs(
         self,
         doc_path: Optional[str] = None,
@@ -40,19 +57,17 @@ class SakuraToolHandler:
             if not doc_path or doc_path.strip() in ("", "/"):
                 return await self._get_docs_overview(repo)
 
-            # Normalize path
-            doc_path = doc_path.strip("/")
-            if not doc_path.startswith(".sakura/"):
-                doc_path = f".sakura/{doc_path}"
+            safe_path = self._validate_sakura_path(doc_path)
+            if safe_path is None:
+                return {"error": "路径不能包含 '..' 或逃逸 .sakura/ 目录"}
 
-            # Read the specific file
-            content = await self._read_file_from_repo(repo, doc_path)
+            content = await self._read_file_from_repo(repo, safe_path)
 
             if content is None:
-                return {"error": f"文件不存在: {doc_path}"}
+                return {"error": f"文件不存在: {safe_path}"}
 
             return {
-                "file_path": doc_path,
+                "file_path": safe_path,
                 "content": content,
                 "size": len(content),
             }
@@ -79,8 +94,10 @@ class SakuraToolHandler:
             if not subdirectory or subdirectory.strip() in ("", "/"):
                 path = ".sakura"
             else:
-                subdirectory = subdirectory.strip("/")
-                path = f".sakura/{subdirectory}"
+                safe_path = self._validate_sakura_path(subdirectory)
+                if safe_path is None:
+                    return {"error": "路径不能包含 '..' 或逃逸 .sakura/ 目录"}
+                path = safe_path
 
             # Get directory contents
             contents = await self._list_directory(repo, path)

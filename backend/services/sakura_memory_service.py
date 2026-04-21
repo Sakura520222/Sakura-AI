@@ -240,6 +240,10 @@ class SakuraMemoryService:
                         )
                     )
                     state = result.scalar_one_or_none()
+            if state is None:
+                raise RuntimeError(
+                    f"Failed to get or create memory state for {repo_full_name}"
+                )
             return state
 
     async def _update_state(self, repo_full_name: str, **kwargs) -> None:
