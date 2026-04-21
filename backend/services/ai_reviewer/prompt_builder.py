@@ -65,7 +65,11 @@ class PromptBuilder:
         if history_summary:
             message_parts.append("## 历史审查上下文")
             message_parts.append(
-                "这是对该 PR 的增量审查。以下是之前审查的历史摘要，请参考此上下文进行审查：\n"
+                "这是对该 PR 的增量审查。以下是之前审查的历史摘要，"
+                "**请特别关注：**\n"
+                "1. 之前提出的严重/重要问题是否在本次变更中已修复\n"
+                "2. 如果已修复，在评论中明确说明「问题已修复」\n"
+                "3. 如果未修复，继续标记为问题\n\n"
             )
             message_parts.append(history_summary)
             message_parts.append("")

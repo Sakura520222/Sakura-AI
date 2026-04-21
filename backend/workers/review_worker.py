@@ -257,7 +257,7 @@ class ReviewWorker:
                             model=self.ai_reviewer.summary_model,
                         )
                         summary = await summary_service.generate_summary(
-                            analysis, pr_info
+                            analysis, pr_info, pr
                         )
                         await summary_service.update_pr_body(
                             pr, summary, pr_info.get("body", "")
@@ -643,6 +643,7 @@ class ReviewWorker:
                                 analysis=analysis,
                                 pr_info=pr_info,
                                 history_summary=context.get("review_history_summary"),
+                                review_id=review_id,
                             )
                         )
                         logger.info(f"[{task_id}] 已触发 .sakura/ 反思任务")

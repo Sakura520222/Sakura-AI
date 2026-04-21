@@ -361,6 +361,7 @@ class SakuraMemoryService:
         analysis,
         pr_info: dict = None,
         history_summary: str = None,
+        review_id: int = None,
     ) -> None:
         """审查后反思 / Post-review reflection
 
@@ -375,6 +376,7 @@ class SakuraMemoryService:
             analysis: PR 分析结果对象，包含 code_files, strategy, is_incremental 等
             pr_info: PR webhook 信息字典，包含 action 等
             history_summary: 历史审查上下文摘要（增量审查时由 HistoryContextService 生成）
+            review_id: 数据库审查记录 ID，用于从数据库读取准确的评论数据
         """
         config = self._get_config()
         if not config.get("enabled", True):
@@ -441,12 +443,16 @@ class SakuraMemoryService:
                 for f in (analysis.code_files or [])[:20]
             )
 
-            comments_summary = review_result.get("review_summary", "")
-            if not comments_summary and "comments" in review_result:
-                comments_summary = "\n".join(
-                    f"- [{c.get('severity', '?')}] {c.get('content', '')[:100]}"
-                    for c in review_result["comments"][:10]
-                )
+            # 优先从数据库读取准确的评论数据（severity 从 emoji 精确提取）
+            if review_id:
+                comments_summary = await self._fetch_comments_from_db(review_id)
+            else:
+                comments_summary = ""
+                if "comments" in review_result:
+                    comments_summary = "\n".join(
+                        f"- [{c.get('severity', '?')}] {c.get('content', '')[:100]}"
+                        for c in review_result["comments"][:10]
+                    )
 
             pr_description = ""
             try:
@@ -465,7 +471,7 @@ class SakuraMemoryService:
                 incremental_scope=incremental_scope,
                 new_commits_summary=new_commits_summary,
                 incremental_reflection_prompt=incremental_reflection_prompt,
-                review_summary=review_result.get("review_summary", "无摘要"),
+                review_summary=review_result.get("summary", "无摘要"),
                 comments_summary=comments_summary or "无评论",
                 changed_files=changed_files or "无文件信息",
                 current_memory=current_memory or "暂无记忆",
@@ -685,6 +691,44 @@ class SakuraMemoryService:
         except Exception as e:
             logger.warning("获取 .sakura/ 上下文失败 ({}): {}", repo_full_name, e)
             return {}
+
+    async def _fetch_comments_from_db(self, review_id: int) -> str:
+        """从数据库读取审查评论（severity 准确，来自 emoji 精确提取）
+
+        Args:
+            review_id: 数据库审查记录 ID
+
+        Returns:
+            格式化的评论摘要文本
+        """
+        from sqlalchemy import select
+
+        from backend.models.database import ReviewComment
+
+        async with async_session() as session:
+            stmt = (
+                select(ReviewComment)
+                .where(ReviewComment.review_id == review_id)
+                .order_by(ReviewComment.severity, ReviewComment.created_at)
+            )
+            result = await session.execute(stmt)
+            comments = list(result.scalars().all())
+
+        if not comments:
+            return "无评论"
+
+        lines = []
+        for comment in comments[:20]:
+            location = ""
+            if comment.file_path:
+                location = f" [{comment.file_path}"
+                if comment.line_number:
+                    location += f":{comment.line_number}"
+                location += "]"
+            lines.append(
+                f"- [{comment.severity}]{location}: {comment.content[:150]}"
+            )
+        return "\n".join(lines)
 
     async def _read_recent_reflections(self, repo, count: int) -> str:
         """读取最近的反思文件 / Read recent reflection files
