@@ -28,13 +28,14 @@ class PRSummaryService:
         self.model = model
 
     async def generate_summary(
-        self, analysis: PRAnalysis, pr_info: Dict[str, Any]
+        self, analysis: PRAnalysis, pr_info: Dict[str, Any], pr: Any = None
     ) -> str:
         """生成 PR 变更摘要
 
         Args:
             analysis: PR 分析结果
             pr_info: PR 信息字典（包含 title、body 等）
+            pr: PyGithub PullRequest 对象，增量审查时用于获取累计统计
 
         Returns:
             AI 生成的总结文本
@@ -43,7 +44,7 @@ class PRSummaryService:
         previous_summary = self._extract_previous_summary(pr_info.get("body", ""))
 
         system_prompt, user_message = self._build_prompts(
-            analysis, pr_info, previous_summary
+            analysis, pr_info, previous_summary, pr
         )
 
         response = await self.api_client.call_with_retry(
@@ -90,6 +91,7 @@ class PRSummaryService:
         analysis: PRAnalysis,
         pr_info: Dict[str, Any],
         previous_summary: str | None = None,
+        pr: Any = None,
     ) -> tuple[str, str]:
         """构建系统提示词和用户消息
 
@@ -114,11 +116,21 @@ class PRSummaryService:
         # 构建 commit 信息
         commits = self._build_commit_info(analysis, pr_info)
 
+        # 增量审查时使用 PR 累计统计，避免摘要漂移
+        if pr and analysis.is_incremental:
+            additions = pr.additions
+            deletions = pr.deletions
+            file_count = pr.changed_files
+        else:
+            additions = analysis.total_additions
+            deletions = analysis.total_deletions
+            file_count = analysis.total_files
+
         user_message = user_template.format(
             title=pr_info.get("title", ""),
-            file_count=analysis.total_files,
-            additions=analysis.total_additions,
-            deletions=analysis.total_deletions,
+            file_count=file_count,
+            additions=additions,
+            deletions=deletions,
             file_list=file_list,
             commits=commits,
         )

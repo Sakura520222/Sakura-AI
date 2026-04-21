@@ -11,6 +11,7 @@ from loguru import logger
 from backend.core.config import get_settings
 from backend.services.ai_reviewer.constants import (
     BASE_TOOLS,
+    SAKURA_TOOLS,
     TOOL_NAME_TO_DEFINITION,
 )
 
@@ -131,6 +132,14 @@ class ToolManager:
                 if web_tool:
                     enabled_tools.append(web_tool)
                     logger.debug("已启用 search_web 工具")
+
+            # 检查 .sakura/ 文档工具 / Check .sakura/ doc tools
+            if settings.sakura_memory_enabled:
+                for tool_name in SAKURA_TOOLS:
+                    tool_def = TOOL_NAME_TO_DEFINITION.get(tool_name)
+                    if tool_def:
+                        enabled_tools.append(tool_def)
+                logger.debug("已启用 .sakura/ 文档工具")
 
         except Exception as e:
             # 索引状态检查失败时，保守策略：仅使用基础工具

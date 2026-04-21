@@ -65,8 +65,9 @@ BASE_TOOLS = ["read_file", "list_directory", "search_in_files", "get_git_info", 
 RAG_TOOLS = ["search_project_docs"]
 CODE_INDEX_TOOLS = ["search_code_context"]
 WEB_SEARCH_TOOLS = ["search_web"]
+SAKURA_TOOLS = ["read_sakura_docs", "list_sakura_directory"]
 
-ALL_TOOLS = BASE_TOOLS + RAG_TOOLS + CODE_INDEX_TOOLS + WEB_SEARCH_TOOLS
+ALL_TOOLS = BASE_TOOLS + RAG_TOOLS + CODE_INDEX_TOOLS + WEB_SEARCH_TOOLS + SAKURA_TOOLS
 
 # =============================================================================
 # 上下文压缩配置
@@ -355,6 +356,48 @@ LIST_COMMITS_TOOL = {
     },
 }
 
+READ_SAKURA_DOCS_TOOL = {
+    "type": "function",
+    "function": {
+        "name": "read_sakura_docs",
+        "description": (
+            "读取项目 .sakura/ 目录中的指导文档（编码规范、架构设计、review规则等）。"
+            "如果不指定 doc_path，返回所有文档的概览；指定路径则返回该文档的完整内容。"
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "doc_path": {
+                    "type": "string",
+                    "description": ".sakura/ 下的文档路径，如 'rules/review-rules.md'。留空返回所有文档概览。",
+                },
+            },
+            "required": [],
+        },
+    },
+}
+
+LIST_SAKURA_DIRECTORY_TOOL = {
+    "type": "function",
+    "function": {
+        "name": "list_sakura_directory",
+        "description": (
+            "列出项目 .sakura/ 目录的结构，查看其中有哪些指导文档和子目录。"
+            "用于了解项目文档的组织方式。"
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "subdirectory": {
+                    "type": "string",
+                    "description": ".sakura/ 下的子目录路径，留空列出根目录。",
+                },
+            },
+            "required": [],
+        },
+    },
+}
+
 ALL_TOOL_DEFINITIONS = [
     READ_FILE_TOOL,
     LIST_DIRECTORY_TOOL,
@@ -364,6 +407,8 @@ ALL_TOOL_DEFINITIONS = [
     SEARCH_IN_FILES_TOOL,
     GET_GIT_INFO_TOOL,
     LIST_COMMITS_TOOL,
+    READ_SAKURA_DOCS_TOOL,
+    LIST_SAKURA_DIRECTORY_TOOL,
 ]
 
 # 工具名称到定义的映射
@@ -376,4 +421,6 @@ TOOL_NAME_TO_DEFINITION = {
     "search_in_files": SEARCH_IN_FILES_TOOL,
     "get_git_info": GET_GIT_INFO_TOOL,
     "list_commits": LIST_COMMITS_TOOL,
+    "read_sakura_docs": READ_SAKURA_DOCS_TOOL,
+    "list_sakura_directory": LIST_SAKURA_DIRECTORY_TOOL,
 }
