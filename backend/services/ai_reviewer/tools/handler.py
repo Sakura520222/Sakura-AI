@@ -23,6 +23,7 @@ class ToolHandler:
         web_search_tool=None,
         git_tool=None,
         search_files_tool=None,
+        sakura_tool=None,
     ):
         """初始化工具处理器
 
@@ -32,12 +33,14 @@ class ToolHandler:
             web_search_tool: Web 搜索工具处理器（可选）
             git_tool: Git 信息工具处理器（可选）
             search_files_tool: 跨文件搜索工具处理器（可选）
+            sakura_tool: .sakura/ 文档工具处理器（可选）
         """
         self.file_tool = file_tool
         self.search_tool = search_tool
         self.web_search_tool = web_search_tool
         self.git_tool = git_tool
         self.search_files_tool = search_files_tool
+        self.sakura_tool = sakura_tool
 
     async def handle_tool_call(
         self, tool_call: Any, repo: Any, pr: Any
@@ -121,6 +124,22 @@ class ToolHandler:
                     pr=pr,
                     branch=arguments.get("branch"),
                     per_page=arguments.get("per_page"),
+                )
+            elif function_name == "read_sakura_docs":
+                if not self.sakura_tool:
+                    return {"error": ".sakura/ 文档工具未启用"}
+                return await self.sakura_tool.read_sakura_docs(
+                    doc_path=arguments.get("doc_path"),
+                    repo=repo,
+                    pr=pr,
+                )
+            elif function_name == "list_sakura_directory":
+                if not self.sakura_tool:
+                    return {"error": ".sakura/ 目录工具未启用"}
+                return await self.sakura_tool.list_sakura_directory(
+                    subdirectory=arguments.get("subdirectory"),
+                    repo=repo,
+                    pr=pr,
                 )
             else:
                 return {"error": f"未知工具: {function_name}"}

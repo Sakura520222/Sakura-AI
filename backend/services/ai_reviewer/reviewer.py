@@ -26,6 +26,7 @@ from .token_tracker import TokenTracker
 from .tools import (
     FileToolHandler,
     GitToolHandler,
+    SakuraToolHandler,
     SearchFilesToolHandler,
     SearchToolHandler,
     ToolHandler,
@@ -80,6 +81,7 @@ class AIReviewer:
         search_tool = SearchToolHandler()
         git_tool = GitToolHandler()
         search_files_tool = SearchFilesToolHandler()
+        sakura_tool = SakuraToolHandler()
         web_search_tool = None
         if settings.web_search_enabled:
             from backend.services.ai_reviewer.tools.web_search_tool import (
@@ -87,7 +89,7 @@ class AIReviewer:
             )
 
             web_search_tool = WebSearchToolHandler()
-        self.tool_handler = ToolHandler(file_tool, search_tool, web_search_tool, git_tool, search_files_tool)
+        self.tool_handler = ToolHandler(file_tool, search_tool, web_search_tool, git_tool, search_files_tool, sakura_tool)
         self.tool_manager = ToolManager()
 
         # 初始化上下文压缩

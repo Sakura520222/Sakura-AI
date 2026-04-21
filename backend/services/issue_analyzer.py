@@ -12,6 +12,7 @@ from backend.services.ai_reviewer.api_client import AIApiClient
 from backend.services.ai_reviewer.tools import (
     FileToolHandler,
     GitToolHandler,
+    SakuraToolHandler,
     SearchFilesToolHandler,
     SearchToolHandler,
     ToolHandler,
@@ -35,6 +36,7 @@ class IssueAnalyzer:
         search_tool = SearchToolHandler()
         git_tool = GitToolHandler()
         search_files_tool = SearchFilesToolHandler()
+        sakura_tool = SakuraToolHandler()
         web_search_tool = None
         if settings.web_search_enabled:
             from backend.services.ai_reviewer.tools.web_search_tool import (
@@ -42,7 +44,7 @@ class IssueAnalyzer:
             )
 
             web_search_tool = WebSearchToolHandler()
-        self.tool_handler = ToolHandler(file_tool, search_tool, web_search_tool, git_tool, search_files_tool)
+        self.tool_handler = ToolHandler(file_tool, search_tool, web_search_tool, git_tool, search_files_tool, sakura_tool)
         self.tool_manager = ToolManager()
         self.tools = self.tool_manager.get_all_tools_definitions()
 
@@ -190,6 +192,27 @@ class IssueAnalyzer:
         user_message = self._build_user_message(
             issue_info, available_labels, collaborators
         )
+
+        # 注入 .sakura/ 记忆上下文 / Inject .sakura/ memory context
+        try:
+            from backend.services.sakura_memory_service import get_sakura_memory_service
+            sakura_memory_service = get_sakura_memory_service()
+            sakura_context = await sakura_memory_service.get_sakura_context(
+                repo=repo,
+                repo_full_name=repo_full_name,
+            )
+            if sakura_context:
+                sakura_md = sakura_context.get("sakura_md", "")
+                memory_md = sakura_context.get("memory_md", "")
+                if sakura_md or memory_md:
+                    sakura_section = "\n\n## 项目知识（来自 .sakura/ 目录）"
+                    if sakura_md:
+                        sakura_section += f"\n\n### 项目概述\n{sakura_md}"
+                    if memory_md:
+                        sakura_section += f"\n\n### 项目记忆\n{memory_md}"
+                    user_message += sakura_section
+        except Exception as e:
+            logger.warning(f".sakura/ 记忆上下文注入失败（不影响分析）: {e}")
 
         # 初始化消息列表
         messages = [

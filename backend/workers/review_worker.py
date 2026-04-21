@@ -125,6 +125,7 @@ class ReviewWorker:
         self.analyzer = PRAnalyzer()
         self.ai_reviewer = AIReviewer()
         self.comment_service = CommentService()
+        self._background_tasks: set = set()
 
     async def process_review_task(self, pr_info: Dict[str, Any]) -> str:
         """处理审查任务"""
@@ -257,7 +258,7 @@ class ReviewWorker:
                             model=self.ai_reviewer.summary_model,
                         )
                         summary = await summary_service.generate_summary(
-                            analysis, pr_info
+                            analysis, pr_info, pr
                         )
                         await summary_service.update_pr_body(
                             pr, summary, pr_info.get("body", "")
@@ -299,6 +300,31 @@ class ReviewWorker:
                 # 6.1 注入 PR 变更总结到审查上下文
                 if pr_summary_text:
                     context["pr_summary"] = pr_summary_text
+
+                # 6.2 注入 .sakura/ 记忆上下文 / Inject .sakura/ memory context
+                try:
+                    from backend.services.sakura_memory_service import get_sakura_memory_service
+                    sakura_memory_service = get_sakura_memory_service()
+                    sakura_context = await sakura_memory_service.get_sakura_context(
+                        repo=pr.base.repo,
+                        repo_full_name=pr_info["repo_full_name"],
+                    )
+                    if sakura_context:
+                        context["sakura_docs_context"] = sakura_context
+                        parts = []
+                        if "sakura_md" in sakura_context:
+                            parts.append(f"SAKURA.md({len(sakura_context['sakura_md'])}字)")
+                        if "memory_md" in sakura_context:
+                            parts.append(f"memory.md({len(sakura_context['memory_md'])}字)")
+                        logger.info(
+                            "[{}] 已注入 .sakura/ 记忆上下文: {}",
+                            task_id, ", ".join(parts) or "空",
+                        )
+                except Exception as e:
+                    logger.warning(
+                        f"[{task_id}] .sakura/ 记忆上下文注入失败（不影响审查）: {e}",
+                        exc_info=True,
+                    )
 
                 # 6.3 注入历史审查上下文（仅在增量审查时）
                 if analysis.is_incremental:
@@ -601,6 +627,31 @@ class ReviewWorker:
                     decision=decision,
                     decision_reason=decision_reason,
                 )
+
+                # 11.5 异步触发 .sakura/ 反思 / Trigger .sakura/ reflection async
+                try:
+                    if settings.sakura_memory_enabled and settings.sakura_reflection_enabled:
+                        from backend.services.sakura_memory_service import get_sakura_memory_service
+                        sakura_memory_service = get_sakura_memory_service()
+                        # 将 decision 写入 review_result 供反思使用
+                        review_result["decision"] = decision.value if decision else "unknown"
+                        task = asyncio.create_task(
+                            sakura_memory_service.reflect(
+                                repo=pr.base.repo,
+                                repo_full_name=pr_info["repo_full_name"],
+                                pr=pr,
+                                review_result=review_result,
+                                analysis=analysis,
+                                pr_info=pr_info,
+                                history_summary=context.get("review_history_summary"),
+                                review_id=review_id,
+                            )
+                        )
+                        self._background_tasks.add(task)
+                        task.add_done_callback(self._background_tasks.discard)
+                        logger.info(f"[{task_id}] 已触发 .sakura/ 反思任务")
+                except Exception as e:
+                    logger.warning(f"[{task_id}] 触发 .sakura/ 反思失败（不影响审查）: {e}")
 
                 # 12. 发送Telegram审查完成通知
                 await self._send_review_complete_notification(pr_info, review_result)

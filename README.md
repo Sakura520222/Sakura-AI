@@ -4,7 +4,7 @@
 
 [English](README_EN.md) | **中文**
 
-[![Version](https://img.shields.io/badge/Version-2.8.3-blue.svg)](https://github.com/Sakura520222/Sakura-AI-Reviewer/releases)
+[![Version](https://img.shields.io/badge/Version-2.8.4-blue.svg)](https://github.com/Sakura520222/Sakura-AI-Reviewer/releases)
 [![Python](https://img.shields.io/badge/Python-3.11+-blue.svg)](https://www.python.org/)
 [![FastAPI](https://img.shields.io/badge/FastAPI-Latest-green.svg)](https://fastapi.tiangolo.com/)
 [![License](https://img.shields.io/badge/License-AGPLv3-yellow.svg)](LICENSE)
@@ -31,12 +31,13 @@
 
 ### AI 工具与知识库
 
-- **AI 工具系统**：read_file、list_directory、search_in_files、get_git_info、list_commits、search_web，AI 按需主动调用
+- **AI 工具系统**：read_file、list_directory、search_in_files、get_git_info、list_commits、search_web、read_sakura_docs、list_sakura_directory，AI 按需主动调用
 - **跨文件代码搜索**：AI 可在仓库中跨文件搜索关键词，快速定位函数/变量/类的所有使用位置
 - **Git 信息查询**：AI 可获取仓库基本信息、分支列表和提交历史，理解项目演进脉络
 - **Web 搜索增强**：支持 DuckDuckGo / Tavily，AI 可主动检索互联网信息辅助审查决策
 - **仓库级知识库（RAG）**：向量语义检索项目文档，为 AI 审查提供规范上下文
 - **PR 代码自动索引**：语法感知分块 + 语义搜索，AI 可精准定位相关代码
+- 🧠 **项目记忆系统**：基于 `.sakura/` 目录的自我反思和知识积累，AI 审查越来越了解你的项目
 
 ### 仓库扫描
 
@@ -104,6 +105,9 @@
 │  ┌────────────┐  ┌────────────┐  ┌────────────┐            │
 │  │ RAG 检索   │  │ 代码索引    │  │ 历史上下文  │            │
 │  └────────────┘  └────────────┘  └────────────┘            │
+│  ┌──────────────────────┐  ┌──────────────────────┐        │
+│  │ read_sakura_docs     │  │ list_sakura_directory │        │
+│  └──────────────────────┘  └──────────────────────┘        │
 └──────────────────────┬──────────────────────────────────────┘
                        │
                        ▼
@@ -148,7 +152,7 @@ cd Sakura-AI-Reviewer
 
 1. 访问 [GitHub Apps 设置](https://github.com/settings/apps)，点击 **New GitHub App**
 2. 填写名称、Homepage URL
-3. **Repository permissions**：Pull requests `Read and write`，Contents `Read-only`，Issues `Read and write`（可选）
+3. **Repository permissions**：Pull requests `Read and write`，Contents `Read and write`，Issues `Read and write`（可选）
 4. **Webhook URL**：`https://your-domain.com:8000/api/webhook/github`，填写 Webhook secret
 5. **Webhook events**：勾选 Pull requests、Pull request reviews、Issues（可选）、Issue comments（可选）
 6. 创建后，在 App 页面底部 **Generate a private key**，下载 `.pem` 文件（Setup Wizard 中需粘贴完整私钥内容）
@@ -301,7 +305,7 @@ Sakura-AI-Reviewer/
 │   ├── models/            # 数据模型（SQLAlchemy）
 │   ├── services/          # 业务逻辑
 │   │   ├── ai_reviewer/   # AI 审查引擎
-│   │   │   ├── tools/     #   AI 工具（文件读取、跨文件搜索、Git 信息、Web 搜索）
+│   │   │   ├── tools/     #   AI 工具（文件读取、跨文件搜索、Git 信息、Web 搜索、Sakura 记忆）
 │   │   │   └── compression/ # 上下文压缩
 │   │   ├── pr_analyzer.py # PR 分析器（策略选择）
 │   │   ├── issue_analyzer.py  # Issue 分析引擎
@@ -316,6 +320,8 @@ Sakura-AI-Reviewer/
 │   │   ├── scan_report_service.py # 扫描报告服务
 │   │   ├── scan_scheduler.py      # 扫描调度器
 │   │   └── history_context_service.py  # 增量审查历史
+│   │   ├── sakura_memory_service.py    # .sakura/ 项目记忆服务
+│   │   ├── github_write_service.py     # GitHub 写操作服务（.sakura/ 写入）
 │   ├── webui/             # WebUI 管理界面
 │   │   ├── routes/        #   路由（dashboard, config, users, ...）
 │   │   ├── templates/     #   Jinja2 模板
