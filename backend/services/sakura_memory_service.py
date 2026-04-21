@@ -8,6 +8,7 @@
 """
 
 import asyncio
+import functools
 from datetime import datetime
 from typing import Dict, Optional
 
@@ -605,29 +606,24 @@ class SakuraMemoryService:
             # 根据配置决定是否允许部分提交 / Partial commit config
             partial = consolidation_config.get("partial_commit", False)
 
-            if partial:
-                results = await asyncio.gather(
-                    self._call_llm(sakura_prompt, model=model),
-                    self._call_llm(memory_prompt, model=model),
-                    return_exceptions=True,
-                )
-                sakura_md = self._clean_llm_output(
-                    results[0] if not isinstance(results[0], BaseException) else None
-                )
-                memory_md = self._clean_llm_output(
-                    results[1] if not isinstance(results[1], BaseException) else None
-                )
-                if isinstance(results[0], BaseException):
-                    logger.warning("[consolidate] SAKURA.md LLM 调用失败: {}", results[0])
-                if isinstance(results[1], BaseException):
-                    logger.warning("[consolidate] memory.md LLM 调用失败: {}", results[1])
-            else:
-                sakura_response, memory_response = await asyncio.gather(
-                    self._call_llm(sakura_prompt, model=model),
-                    self._call_llm(memory_prompt, model=model),
-                )
-                sakura_md = self._clean_llm_output(sakura_response)
-                memory_md = self._clean_llm_output(memory_response)
+            results = await asyncio.gather(
+                self._call_llm(sakura_prompt, model=model),
+                self._call_llm(memory_prompt, model=model),
+                return_exceptions=True,
+            )
+
+            sakura_md = self._clean_llm_output(
+                results[0] if not isinstance(results[0], BaseException) else None
+            )
+            memory_md = self._clean_llm_output(
+                results[1] if not isinstance(results[1], BaseException) else None
+            )
+
+            for i, label in enumerate(["SAKURA.md", "memory.md"]):
+                if isinstance(results[i], BaseException):
+                    if not partial:
+                        raise results[i]
+                    logger.warning("[consolidate] {} LLM 调用失败: {}", label, results[i])
 
             if sakura_md:
                 files[".sakura/SAKURA.md"] = sakura_md
@@ -778,7 +774,7 @@ class SakuraMemoryService:
                 )
                 try:
                     tree = await asyncio.to_thread(
-                        lambda: repo.get_git_tree("HEAD", recursive=True)
+                        functools.partial(repo.get_git_tree, "HEAD", recursive=True)
                     )
                     memory_entries = [
                         e for e in tree.tree
