@@ -310,8 +310,14 @@ class ReviewWorker:
                     )
                     if sakura_context:
                         context["sakura_docs_context"] = sakura_context
+                        parts = []
+                        if "sakura_md" in sakura_context:
+                            parts.append(f"SAKURA.md({len(sakura_context['sakura_md'])}字)")
+                        if "memory_md" in sakura_context:
+                            parts.append(f"memory.md({len(sakura_context['memory_md'])}字)")
                         logger.info(
-                            f"[{task_id}] 已注入 .sakura/ 记忆上下文"
+                            "[{}] 已注入 .sakura/ 记忆上下文: {}",
+                            task_id, ", ".join(parts) or "空",
                         )
                 except Exception as e:
                     logger.warning(
@@ -626,6 +632,8 @@ class ReviewWorker:
                     if settings.sakura_memory_enabled and settings.sakura_reflection_enabled:
                         from backend.services.sakura_memory_service import get_sakura_memory_service
                         sakura_memory_service = get_sakura_memory_service()
+                        # 将 decision 写入 review_result 供反思使用
+                        review_result["decision"] = decision.value if decision else "unknown"
                         asyncio.create_task(
                             sakura_memory_service.reflect(
                                 repo=pr.base.repo,
@@ -634,6 +642,7 @@ class ReviewWorker:
                                 review_result=review_result,
                                 analysis=analysis,
                                 pr_info=pr_info,
+                                history_summary=context.get("review_history_summary"),
                             )
                         )
                         logger.info(f"[{task_id}] 已触发 .sakura/ 反思任务")

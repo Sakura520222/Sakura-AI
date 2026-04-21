@@ -51,6 +51,9 @@ REFLECTION_PROMPT = """你是一个代码审查反思助手。请对以下审查
 ## PR 描述
 {pr_description}
 
+## 历史审查上下文
+{history_context}
+
 请从以下维度进行深度反思：
 
 1. **审查质量评估**
@@ -349,6 +352,7 @@ class SakuraMemoryService:
         review_result: dict,
         analysis,
         pr_info: dict = None,
+        history_summary: str = None,
     ) -> None:
         """审查后反思 / Post-review reflection
 
@@ -362,6 +366,7 @@ class SakuraMemoryService:
             review_result: 审查结果字典，包含 overall_score, decision, comments 等
             analysis: PR 分析结果对象，包含 code_files, strategy, is_incremental 等
             pr_info: PR webhook 信息字典，包含 action 等
+            history_summary: 历史审查上下文摘要（增量审查时由 HistoryContextService 生成）
         """
         config = self._get_config()
         if not config.get("enabled", True):
@@ -457,6 +462,7 @@ class SakuraMemoryService:
                 changed_files=changed_files or "无文件信息",
                 current_memory=current_memory or "暂无记忆",
                 pr_description=pr_description or "无描述",
+                history_context=history_summary or "无历史审查记录（首次审查）",
             )
 
             # 生成反思内容 / Generate reflection content
