@@ -70,4 +70,4 @@
 ## 仓库信息
 - 仓库名: Sakura520222/Sakura-AI-Reviewer
 - 语言统计: Python: 1244675, HTML: 396178, Shell: 2355, Dockerfile: 862
-- 累计反思次数: 16
+- 累计反思次数: 13
