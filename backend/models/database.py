@@ -10,6 +10,7 @@ from sqlalchemy import (
     Text,
     TIMESTAMP,
     ForeignKey,
+    text,
 )
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import relationship
@@ -483,6 +484,89 @@ async def create_tables_async():
         raise
 
 
+async def _auto_migrate():
+    """自动检测并执行 schema 迁移 / Auto-detect and run schema migrations
+
+    用 Inspector 对比 SQLAlchemy 模型定义与数据库实际列，
+    自动 ALTER TABLE 添加缺失的列（仅 ADD COLUMN，不做 DROP 或 MODIFY）。
+    """
+    from sqlalchemy import inspect, text
+
+    import logging
+
+    _logger = logging.getLogger(__name__)
+
+    if async_engine is None:
+        return
+
+    async with async_engine.begin() as conn:
+        # 确保 schema_migrations 表存在
+        await conn.run_sync(
+            lambda sync_conn: SchemaMigration.__table__.create(
+                sync_conn, checkfirst=True
+            )
+        )
+
+        # 用 Inspector 逐表检测缺失列
+        def _get_missing_columns(sync_conn):
+            insp = inspect(sync_conn)
+            missing = []
+            for table_cls in Base.__subclasses__():
+                table_name = getattr(table_cls, "__tablename__", None)
+                if not table_name:
+                    continue
+                if not insp.has_table(table_name):
+                    continue
+                db_columns = {col["name"] for col in insp.get_columns(table_name)}
+                for col in table_cls.__table__.columns:
+                    if col.name not in db_columns:
+                        missing.append((table_name, col))
+            return missing
+
+        missing = await conn.run_sync(_get_missing_columns)
+
+        if not missing:
+            return
+
+        # 执行 ALTER TABLE ADD COLUMN
+        for table_name, col in missing:
+            col_type = col.type.compile(dialect=async_engine.dialect)
+            sql = f"ALTER TABLE `{table_name}` ADD COLUMN `{col.name}` {col_type}"
+            if col.nullable:
+                sql += " NULL"
+            else:
+                default = _get_default_sql(col)
+                if default:
+                    sql += f" NOT NULL DEFAULT {default}"
+                else:
+                    sql += " NOT NULL"
+            await conn.execute(text(sql))
+            _logger.info("[auto-migrate] 添加列: {}.{}", table_name, col.name)
+
+        # 记录迁移版本
+        version = datetime.utcnow().strftime("%Y%m%d%H%M%S")
+        await conn.execute(
+            text("INSERT INTO schema_migrations (version) VALUES (:v)"),
+            {"v": version},
+        )
+        _logger.info("[auto-migrate] 迁移完成, version={}", version)
+
+
+def _get_default_sql(col) -> str | None:
+    """获取列的默认值 SQL / Get default value SQL for a column"""
+    if col.default is not None and col.default.is_scalar:
+        val = col.default.arg
+        if isinstance(val, bool):
+            return "1" if val else "0"
+        if isinstance(val, (int, float)):
+            return str(val)
+        if isinstance(val, str):
+            return f"'{val}'"
+    if col.server_default is not None:
+        return str(col.server_default.arg)
+    return None
+
+
 def _append_dynamic_config_defaults(default_configs: list) -> None:
     """向 default_configs 列表追加动态配置默认值"""
     try:
@@ -824,6 +908,7 @@ class SakuraMemoryState(Base):
     # 状态跟踪 / State tracking
     reflection_count = Column(Integer, default=0, nullable=False)
     last_consolidation_at = Column(TIMESTAMP, nullable=True)
+    last_consolidation_count = Column(Integer, nullable=True)  # 上次合并时的 reflection_count
     is_initialized = Column(Boolean, default=False, nullable=False)
 
     # 最后写入的文件 SHA / Last written file SHAs
@@ -840,3 +925,15 @@ class SakuraMemoryState(Base):
 
     def __repr__(self):
         return f"<SakuraMemoryState(repo={self.repo_full_name}, initialized={self.is_initialized})>"
+
+
+class SchemaMigration(Base):
+    """Schema 迁移记录 / Schema migration log"""
+
+    __tablename__ = "schema_migrations"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    version = Column(String(50), unique=True, nullable=False)
+    applied_at = Column(
+        TIMESTAMP, default=datetime.utcnow, server_default=text("CURRENT_TIMESTAMP"), nullable=False
+    )

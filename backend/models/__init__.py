@@ -61,7 +61,11 @@ async def init_db():
         # 2. 异步创建所有表
         await create_tables_async()
 
-        # 3. 异步插入默认配置
+        # 3. 自动迁移（检测缺失列并添加）
+        from backend.models.database import _auto_migrate
+        await _auto_migrate()
+
+        # 4. 异步插入默认配置
         await insert_default_configs_async()
 
         logger.info("✅ 数据库初始化成功")

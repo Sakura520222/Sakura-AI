@@ -93,6 +93,7 @@ CREATE TABLE IF NOT EXISTS sakura_memory_states (
     repo_full_name VARCHAR(255) UNIQUE NOT NULL,
     reflection_count INT NOT NULL DEFAULT 0,
     last_consolidation_at TIMESTAMP NULL,
+    last_consolidation_count INT NULL,
     is_initialized TINYINT(1) NOT NULL DEFAULT 0,
     last_sakura_md_sha VARCHAR(40) NULL,
     last_memory_md_sha VARCHAR(40) NULL,

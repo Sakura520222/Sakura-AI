@@ -20,26 +20,15 @@ from loguru import logger
 
 
 class GitHubWriteService:
-    """GitHub 文件写入服务（单例模式）/ GitHub file write service (singleton)"""
+    """GitHub 文件写入服务 / GitHub file write service"""
 
     DEFAULT_AUTHOR_NAME = "Sakura AI Reviewer"
     DEFAULT_AUTHOR_EMAIL = "Sakura520222@outlook.com"
     SAKURA_BRANCH_PREFIX = "sakura-memory"
 
-    _instance = None
-    _initialized = False
-
-    def __new__(cls):
-        """确保只有一个实例 / Ensure singleton"""
-        if cls._instance is None:
-            cls._instance = super().__new__(cls)
-        return cls._instance
-
     def __init__(self):
-        """初始化（只执行一次）/ Initialize (only once)"""
-        if not self._initialized:
-            self.__class__._initialized = True
-            logger.info("GitHubWriteService singleton initialized")
+        """初始化 / Initialize"""
+        logger.info("GitHubWriteService initialized")
 
     async def commit_files(
         self,

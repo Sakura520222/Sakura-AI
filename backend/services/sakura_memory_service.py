@@ -88,7 +88,7 @@ CONSOLIDATE_SAKURA_PROMPT = """你是一个项目知识管理助手。请根据�
 ## 仓库信息
 - 仓库名: {repo_full_name}
 - 语言统计: {languages}
-- 累计反思次数: {total_reflections}
+- 累计反思次数: {total_reflections}（此数值已精确计算，必须原样使用，禁止自行加减或重算）
 
 请直接输出更新后的 SAKURA.md 内容（不超过 {max_chars} 字符），包含：
 - 项目简介和技术栈
@@ -109,7 +109,7 @@ CONSOLIDATE_MEMORY_PROMPT = """你是一个代码审查经验总结助手。请�
 
 ## 仓库信息
 - 仓库名: {repo_full_name}
-- 累计反思次数: {total_reflections}
+- 累计反思次数: {total_reflections}（此数值已精确计算，必须原样使用，禁止自行加减或重算）
 
 请直接输出更新后的 memory.md 内容（不超过 {max_chars} 字符），包含：
 - 常见代码问题和审查要点
@@ -184,6 +184,7 @@ class SakuraMemoryService:
                 "max_memory_chars": settings.sakura_max_memory_chars,
                 "max_sakura_chars": settings.sakura_max_sakura_chars,
                 "cleanup_old_reflections": yaml_config.get("consolidation", {}).get("cleanup_old_reflections", False),
+                "partial_commit": yaml_config.get("consolidation", {}).get("partial_commit", False),
             },
             "initialization": {
                 "auto_init": settings.sakura_auto_init,
@@ -441,7 +442,7 @@ class SakuraMemoryService:
             )
 
             # 优先从数据库读取准确的评论数据（severity 从 emoji 精确提取）
-            if review_id:
+            if review_id is not None and isinstance(review_id, int) and review_id > 0:
                 comments_summary = await self._fetch_comments_from_db(review_id)
             else:
                 comments_summary = ""
@@ -511,7 +512,8 @@ class SakuraMemoryService:
             interval = consolidation_config.get(
                 "interval", state.consolidation_interval
             )
-            if new_count % interval == 0:
+            since_last = new_count - (state.last_consolidation_count or 0)
+            if since_last >= interval:
                 await self.consolidate(repo, repo_full_name, new_count)
 
         except Exception as e:
@@ -600,13 +602,32 @@ class SakuraMemoryService:
                 total_reflections=total_count,
                 max_chars=max_memory,
             )
-            sakura_response, memory_response = await asyncio.gather(
-                self._call_llm(sakura_prompt, model=model),
-                self._call_llm(memory_prompt, model=model),
-            )
+            # 根据配置决定是否允许部分提交 / Partial commit config
+            partial = consolidation_config.get("partial_commit", False)
 
-            sakura_md = self._clean_llm_output(sakura_response)
-            memory_md = self._clean_llm_output(memory_response)
+            if partial:
+                results = await asyncio.gather(
+                    self._call_llm(sakura_prompt, model=model),
+                    self._call_llm(memory_prompt, model=model),
+                    return_exceptions=True,
+                )
+                sakura_md = self._clean_llm_output(
+                    results[0] if not isinstance(results[0], BaseException) else None
+                )
+                memory_md = self._clean_llm_output(
+                    results[1] if not isinstance(results[1], BaseException) else None
+                )
+                if isinstance(results[0], BaseException):
+                    logger.warning("[consolidate] SAKURA.md LLM 调用失败: {}", results[0])
+                if isinstance(results[1], BaseException):
+                    logger.warning("[consolidate] memory.md LLM 调用失败: {}", results[1])
+            else:
+                sakura_response, memory_response = await asyncio.gather(
+                    self._call_llm(sakura_prompt, model=model),
+                    self._call_llm(memory_prompt, model=model),
+                )
+                sakura_md = self._clean_llm_output(sakura_response)
+                memory_md = self._clean_llm_output(memory_response)
 
             if sakura_md:
                 files[".sakura/SAKURA.md"] = sakura_md
@@ -630,6 +651,7 @@ class SakuraMemoryService:
                 await self._update_state(
                     repo_full_name,
                     last_consolidation_at=datetime.utcnow(),
+                    last_consolidation_count=total_count,
                 )
 
                 logger.info(
@@ -746,6 +768,39 @@ class SakuraMemoryService:
             )
             if not contents:
                 return ""
+
+            # GitHub Contents API 对大目录可能截断(1000文件上限)，回退到 Git Trees API
+            if isinstance(contents, list) and len(contents) >= 1000:
+                logger.warning(
+                    "[_read_recent_reflections] 目录可能被截断 ({} 个文件), "
+                    "尝试 Git Trees API",
+                    len(contents),
+                )
+                try:
+                    tree = await asyncio.to_thread(
+                        lambda: repo.get_git_tree("HEAD", recursive=True)
+                    )
+                    memory_entries = [
+                        e for e in tree.tree
+                        if e.path.startswith(".sakura/memory/")
+                        and e.path.endswith(".md")
+                    ]
+
+                    class _TreeEntry:
+                        __slots__ = ("name",)
+
+                        def __init__(self, name: str):
+                            self.name = name
+
+                    contents = [
+                        _TreeEntry(e.path.split("/")[-1])
+                        for e in memory_entries
+                    ]
+                except Exception as tree_err:
+                    logger.warning(
+                        "[_read_recent_reflections] Git Trees API 失败: {}",
+                        tree_err,
+                    )
 
             # 过滤 .md 文件并按文件名排序（文件名包含日期）
             # Filter .md files and sort by name (which contains date)

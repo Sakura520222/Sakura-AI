@@ -125,6 +125,7 @@ class ReviewWorker:
         self.analyzer = PRAnalyzer()
         self.ai_reviewer = AIReviewer()
         self.comment_service = CommentService()
+        self._background_tasks: set = set()
 
     async def process_review_task(self, pr_info: Dict[str, Any]) -> str:
         """处理审查任务"""
@@ -634,7 +635,7 @@ class ReviewWorker:
                         sakura_memory_service = get_sakura_memory_service()
                         # 将 decision 写入 review_result 供反思使用
                         review_result["decision"] = decision.value if decision else "unknown"
-                        asyncio.create_task(
+                        task = asyncio.create_task(
                             sakura_memory_service.reflect(
                                 repo=pr.base.repo,
                                 repo_full_name=pr_info["repo_full_name"],
@@ -646,6 +647,8 @@ class ReviewWorker:
                                 review_id=review_id,
                             )
                         )
+                        self._background_tasks.add(task)
+                        task.add_done_callback(self._background_tasks.discard)
                         logger.info(f"[{task_id}] 已触发 .sakura/ 反思任务")
                 except Exception as e:
                     logger.warning(f"[{task_id}] 触发 .sakura/ 反思失败（不影响审查）: {e}")

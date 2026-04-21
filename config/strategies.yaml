@@ -976,6 +976,8 @@ context_enhancement:
       max_sakura_chars: 5000
       # 合并后是否清理旧的反思文件 / Clean old reflections after consolidation
       cleanup_old_reflections: false
+      # 一个文件失败时是否仍提交另一个 / Commit partial results on failure
+      partial_commit: false
 
     # 初始化配置 / Initialization config
     initialization:

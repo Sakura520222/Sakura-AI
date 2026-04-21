@@ -304,6 +304,7 @@ class Settings(BaseSettings):
     sakura_max_memory_chars: int = 2000  # memory.md 最大字符数
     sakura_max_sakura_chars: int = 5000  # SAKURA.md 最大字符数
     sakura_auto_init: bool = True  # 是否自动初始化 .sakura/ 目录
+    sakura_consolidation_partial_commit: bool = False  # 合并时一个文件失败是否仍提交另一个
 
 
 class StrategyConfig:
@@ -689,6 +690,7 @@ DYNAMIC_CONFIG_GROUPS: OrderedDict[str, dict] = OrderedDict(
                     "sakura_max_memory_chars": "memory.md 文件的最大字符数限制",
                     "sakura_max_sakura_chars": "SAKURA.md 文件的最大字符数限制",
                     "sakura_auto_init": "首次审查时自动在仓库中初始化 .sakura/ 目录",
+                    "sakura_consolidation_partial_commit": "合并时一个文件生成失败是否仍提交成功生成的文件",
                 },
                 "keys": [
                     "sakura_memory_enabled",
@@ -699,6 +701,7 @@ DYNAMIC_CONFIG_GROUPS: OrderedDict[str, dict] = OrderedDict(
                     "sakura_max_memory_chars",
                     "sakura_max_sakura_chars",
                     "sakura_auto_init",
+                    "sakura_consolidation_partial_commit",
                 ],
             },
         ),
@@ -840,6 +843,7 @@ DYNAMIC_CONFIG_LABELS: dict[str, str] = {
     "sakura_max_memory_chars": "memory.md 最大字符数",
     "sakura_max_sakura_chars": "SAKURA.md 最大字符数",
     "sakura_auto_init": "自动初始化 .sakura/",
+    "sakura_consolidation_partial_commit": "部分提交",
 }
 
 # 内存 TTL 缓存（进程级，多 Worker 部署时各进程独立，配置变更仅当前进程可见）
