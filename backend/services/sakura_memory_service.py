@@ -535,13 +535,20 @@ class SakuraMemoryService:
         consolidation_config = config.get("consolidation", {})
 
         try:
+            logger.info(
+                "[consolidate] 开始合并记忆: {} (第{}次反思, interval={})",
+                repo_full_name, total_count,
+                consolidation_config.get("interval", 5),
+            )
+
             # 读取最近的反思 / Read recent reflections
             reflections = await self._read_recent_reflections(
                 repo, consolidation_config.get("interval", 5)
             )
             if not reflections:
-                logger.warning(f"未找到反思文件: {repo_full_name}")
+                logger.warning("[consolidate] 未找到反思文件: {}", repo_full_name)
                 return
+            logger.info("[consolidate] 读取到 {} 字符反思内容", len(reflections))
 
             # 读取当前文件 / Read current files
             current_sakura = (
@@ -549,6 +556,10 @@ class SakuraMemoryService:
             )
             current_memory = (
                 await self.write_service.read_file(repo, ".sakura/memory.md") or ""
+            )
+            logger.info(
+                "[consolidate] 当前文件: SAKURA.md={}字, memory.md={}字",
+                len(current_sakura), len(current_memory),
             )
 
             # 获取仓库信息 / Get repo info
@@ -571,14 +582,24 @@ class SakuraMemoryService:
 
             # 生成合并内容 / Generate consolidated content
             model = self._get_model(consolidation_config)
+            logger.info("[consolidate] 调用 LLM 生成合并内容, model={}", model)
             response = await self._call_llm(prompt, model=model)
+            logger.info("[consolidate] LLM 返回 {} 字符", len(response or ""))
 
             # 解析响应 / Parse the response
             sakura_md, memory_md = self._parse_consolidation_response(response)
 
             if not sakura_md and not memory_md:
-                logger.warning(f"合并解析失败: {repo_full_name}")
+                logger.warning(
+                    "[consolidate] 合并解析失败，LLM 响应未能提取到 SAKURA.md 或 memory.md, "
+                    "响应前200字: {}",
+                    (response or "")[:200],
+                )
                 return
+            logger.info(
+                "[consolidate] 解析结果: SAKURA.md={}字, memory.md={}字",
+                len(sakura_md), len(memory_md),
+            )
 
             # 截断到最大字符数 / Truncate to max chars
             if sakura_md and len(sakura_md) > max_sakura:
@@ -605,7 +626,9 @@ class SakuraMemoryService:
                 )
 
                 logger.info(
-                    f"已合并记忆: {repo_full_name} (第{total_count}次反思后)"
+                    "[consolidate] 合并完成: {} (第{}次反思后), 更新文件: {}",
+                    repo_full_name, total_count,
+                    ", ".join(files.keys()),
                 )
 
         except Exception as e:
@@ -785,24 +808,29 @@ class SakuraMemoryService:
         if memory_match:
             memory_md = memory_match.group(1).strip()
 
-        # 回退: 如果标记未找到，尝试按标题分割
-        # Fallback: if markers not found, try to split by headers
-        if not sakura_md and not memory_md:
+        # 回退: 如果任一标记未找到，尝试按标题分割
+        # Fallback: if either marker missing, try to split by headers
+        if not sakura_md or not memory_md:
             lower_response = response.lower()
             if "### memory.md" in lower_response:
-                parts = response.split("### memory.md")
+                parts = response.split("### memory.md", maxsplit=1)
             elif "## memory.md" in lower_response:
-                parts = response.split("## memory.md")
+                parts = response.split("## memory.md", maxsplit=1)
+            elif "### memory" in lower_response:
+                parts = response.split("### memory", maxsplit=1)
             else:
-                parts = [response]
+                parts = []
 
             if len(parts) == 2:
-                sakura_md = parts[0].strip()
-                memory_md = parts[1].strip()
-            else:
-                # 最后手段: 使用整个响应作为 SAKURA.md
-                # Last resort: use the whole response as SAKURA.md
-                sakura_md = response.strip()
+                # 标记提取失败时用标题分割结果覆盖
+                if not sakura_md:
+                    sakura_md = parts[0].strip()
+                if not memory_md:
+                    memory_md = parts[1].strip()
+
+        # 最后手段: 使用整个响应作为 SAKURA.md
+        if not sakura_md and not memory_md:
+            sakura_md = response.strip()
 
         return sakura_md, memory_md
 
