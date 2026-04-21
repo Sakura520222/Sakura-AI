@@ -253,6 +253,7 @@ WebUI：`https://your-domain.com/webui/`
 - **Web 搜索工具**：WebUI 配置管理中 `web_search_provider`（`duckduckgo` 免费或 `tavily` 高级）
 - **跨文件搜索**：`config/strategies.yaml` 中 `context_enhancement.search_in_files`，配置 GitHub Search API 优先策略、上下文行数、最大结果数等
 - **Git 信息工具**：`config/strategies.yaml` 中 `context_enhancement.git_tools`，配置默认分支和提交返回数量
+- **项目记忆系统**：WebUI 配置管理中 `sakura_memory_enabled` 启用记忆系统，`sakura_reflection_enabled` 启用审查后反思，`sakura_consolidation_interval` 合并触发的反思轮数（默认 5），`sakura_auto_init` 自动初始化 `.sakura/` 目录
 - **模型上下文**：WebUI 配置管理中配置上下文窗口、自动压缩等，详见 [模型上下文管理](docs/MODEL_CONTEXT_FEATURE.md)
 
 ---
@@ -347,6 +348,7 @@ Sakura-AI-Reviewer/
 | [模型上下文管理](docs/MODEL_CONTEXT_FEATURE.md)            | AI 模型上下文和压缩功能           |
 | [API v1 参考文档](docs/api-v1-reference.md)             | RESTful API 接口文档（移动端对接） |
 | [WebUI 设计文档](docs/plans/2026-03-27-webui-design.md) | WebUI 设计规范              |
+| [项目记忆系统设计](docs/plans/2026-04-20-sakura-memory-design.md) | .sakura/ 记忆系统架构与配置 |
 
 ---
 
