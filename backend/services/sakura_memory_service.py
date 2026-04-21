@@ -8,7 +8,6 @@
 """
 
 import asyncio
-import re
 from datetime import datetime
 from typing import Dict, Optional
 
@@ -78,7 +77,7 @@ REFLECTION_PROMPT = """你是一个代码审查反思助手。请对以下审查
 请用中文输出，保持简洁但深入。"""
 
 # Consolidation prompt template / 合并 Prompt 模板
-CONSOLIDATION_PROMPT = """你是一个项目知识管理助手。请根据最近的审查反思，更新项目的知识文件。
+CONSOLIDATE_SAKURA_PROMPT = """你是一个项目知识管理助手。请根据最近的审查反思，更新项目的 SAKURA.md 概述文件。
 
 ## 最近的审查反思
 {reflections}
@@ -86,41 +85,39 @@ CONSOLIDATION_PROMPT = """你是一个项目知识管理助手。请根据最近
 ## 当前 SAKURA.md 内容
 {current_sakura_md}
 
-## 当前 memory.md 内容
-{current_memory_md}
-
 ## 仓库信息
 - 仓库名: {repo_full_name}
 - 语言统计: {languages}
 - 累计反思次数: {total_reflections}
 
-请生成更新后的两个文件：
-
-### SAKURA.md（项目概述，最大 {max_sakura_chars} 字符）
-应包含：
+请直接输出更新后的 SAKURA.md 内容（不超过 {max_chars} 字符），包含：
 - 项目简介和技术栈
 - 架构设计和关键决策
 - 已知问题和注意事项
 - 审查中发现的重要模式
 - 团队约定和规范
 
-### memory.md（精炼记忆，最大 {max_memory_chars} 字符）
-应包含：
+直接输出 Markdown 内容，不要包含代码块标记（```），不要包含任何说明文字。"""
+
+CONSOLIDATE_MEMORY_PROMPT = """你是一个代码审查经验总结助手。请根据最近的审查反思，更新项目的 memory.md 记忆文件。
+
+## 最近的审查反思
+{reflections}
+
+## 当前 memory.md 内容
+{current_memory_md}
+
+## 仓库信息
+- 仓库名: {repo_full_name}
+- 累计反思次数: {total_reflections}
+
+请直接输出更新后的 memory.md 内容（不超过 {max_chars} 字符），包含：
 - 常见代码问题和审查要点
 - 近期审查模式总结
 - 规范建议和经验教训
 - 需要特别关注的领域
 
-请按以下格式输出（不要包含 markdown 代码块标记）：
-
-<<<SAKURA_MD_START>>>
-在此输出更新后的 SAKURA.md 内容
-<<<SAKURA_MD_END>>>
-
-<<<MEMORY_MD_START>>>
-在此输出更新后的 memory.md 内容
-<<<MEMORY_MD_END>>>
-"""
+直接输出 Markdown 内容，不要包含代码块标记（```），不要包含任何说明文字。"""
 
 # Initialization prompt template / 初始化 Prompt 模板
 INIT_PROMPT = """你是一个项目分析助手。请根据以下仓库信息，生成一个项目概述文档。
@@ -537,8 +534,8 @@ class SakuraMemoryService:
     ) -> None:
         """合并反思，更新 SAKURA.md 和 memory.md / Consolidate reflections
 
-        读取最近的反思文件，通过 LLM 合并更新知识文件。
-        Read recent reflections, merge via LLM to update knowledge files.
+        读取最近的反思文件，通过两次独立 LLM 调用分别更新两个知识文件。
+        Read recent reflections, update each knowledge file via separate LLM calls.
 
         Args:
             repo: PyGithub Repository 对象
@@ -582,52 +579,48 @@ class SakuraMemoryService:
 
             max_sakura = consolidation_config.get("max_sakura_chars", 5000)
             max_memory = consolidation_config.get("max_memory_chars", 2000)
+            model = self._get_model(consolidation_config)
 
-            prompt = CONSOLIDATION_PROMPT.format(
+            files = {}
+
+            # --- 并行调用 LLM 生成两个文件 ---
+            logger.info("[consolidate] 并行调用 LLM 更新两个文件, model={}", model)
+            sakura_prompt = CONSOLIDATE_SAKURA_PROMPT.format(
                 reflections=reflections,
                 current_sakura_md=current_sakura or "（空文件）",
-                current_memory_md=current_memory or "（空文件）",
                 repo_full_name=repo_full_name,
                 languages=lang_str,
                 total_reflections=total_count,
-                max_sakura_chars=max_sakura,
-                max_memory_chars=max_memory,
+                max_chars=max_sakura,
+            )
+            memory_prompt = CONSOLIDATE_MEMORY_PROMPT.format(
+                reflections=reflections,
+                current_memory_md=current_memory or "（空文件）",
+                repo_full_name=repo_full_name,
+                total_reflections=total_count,
+                max_chars=max_memory,
+            )
+            sakura_response, memory_response = await asyncio.gather(
+                self._call_llm(sakura_prompt, model=model),
+                self._call_llm(memory_prompt, model=model),
             )
 
-            # 生成合并内容 / Generate consolidated content
-            model = self._get_model(consolidation_config)
-            logger.info("[consolidate] 调用 LLM 生成合并内容, model={}", model)
-            response = await self._call_llm(prompt, model=model)
-            logger.info("[consolidate] LLM 返回 {} 字符", len(response or ""))
+            sakura_md = self._clean_llm_output(sakura_response)
+            memory_md = self._clean_llm_output(memory_response)
 
-            # 解析响应 / Parse the response
-            sakura_md, memory_md = self._parse_consolidation_response(response)
-
-            if not sakura_md and not memory_md:
-                logger.warning(
-                    "[consolidate] 合并解析失败，LLM 响应未能提取到 SAKURA.md 或 memory.md, "
-                    "响应前200字: {}",
-                    (response or "")[:200],
-                )
-                return
-            logger.info(
-                "[consolidate] 解析结果: SAKURA.md={}字, memory.md={}字",
-                len(sakura_md), len(memory_md),
-            )
-
-            # 截断到最大字符数 / Truncate to max chars
-            if sakura_md and len(sakura_md) > max_sakura:
-                sakura_md = sakura_md[:max_sakura] + "\n\n...（已截断）"
-            if memory_md and len(memory_md) > max_memory:
-                memory_md = memory_md[:max_memory] + "\n\n...（已截断）"
-
-            # 提交更新 / Commit updates
-            files = {}
             if sakura_md:
                 files[".sakura/SAKURA.md"] = sakura_md
+                logger.info("[consolidate] SAKURA.md 更新: {}字", len(sakura_md))
+            else:
+                logger.warning("[consolidate] SAKURA.md 生成失败（LLM 返回空）")
+
             if memory_md:
                 files[".sakura/memory.md"] = memory_md
+                logger.info("[consolidate] memory.md 更新: {}字", len(memory_md))
+            else:
+                logger.warning("[consolidate] memory.md 生成失败（LLM 返回空）")
 
+            # 提交更新 / Commit updates
             if files:
                 commit_msg = (
                     f"chore(sakura): consolidate memory (reflection #{total_count})"
@@ -643,6 +636,10 @@ class SakuraMemoryService:
                     "[consolidate] 合并完成: {} (第{}次反思后), 更新文件: {}",
                     repo_full_name, total_count,
                     ", ".join(files.keys()),
+                )
+            else:
+                logger.warning(
+                    "[consolidate] 两个文件均生成失败: {}", repo_full_name,
                 )
 
         except Exception as e:
@@ -828,88 +825,27 @@ class SakuraMemoryService:
         content = response.choices[0].message.content
         return content or ""
 
-    def _parse_consolidation_response(self, response: str) -> tuple[str, str]:
-        """解析合并响应 / Parse consolidation response
-
-        三层提取策略：
-        1. 精确标记提取（START...END 成对出现）
-        2. 宽松标记提取（只有 START，提取到下一个标记或文末）
-        3. 标题分割回退
-
-        最后清除所有残留标记文本。
+    @staticmethod
+    def _clean_llm_output(response: str | None) -> str:
+        """清理 LLM 输出：去除代码块标记和前后说明文字
 
         Args:
-            response: LLM 生成的原始响应文本
+            response: LLM 原始响应
 
         Returns:
-            (sakura_md, memory_md) 元组
+            清理后的纯 Markdown 内容
         """
-        sakura_md = ""
-        memory_md = ""
-
-        # --- 第一层：精确标记提取 ---
-        sakura_match = re.search(
-            r"<<<SAKURA_MD_START>>>(.*?)<<<SAKURA_MD_END>>>",
-            response, re.DOTALL,
-        )
-        memory_match = re.search(
-            r"<<<MEMORY_MD_START>>>(.*?)<<<MEMORY_MD_END>>>",
-            response, re.DOTALL,
-        )
-
-        if sakura_match:
-            sakura_md = sakura_match.group(1).strip()
-        if memory_match:
-            memory_md = memory_match.group(1).strip()
-
-        # --- 第二层：宽松标记提取（START 存在但 END 缺失）---
-        if not sakura_md:
-            # 从 START 提取到下一个标记或文末
-            sakura_match = re.search(
-                r"<<<SAKURA_MD_START>>>(.*?)(?=<<<(?:MEMORY_MD_START|SAKURA_MD_END)>>>|$)",
-                response, re.DOTALL,
-            )
-            if sakura_match:
-                sakura_md = sakura_match.group(1).strip()
-
-        if not memory_md:
-            memory_match = re.search(
-                r"<<<MEMORY_MD_START>>>(.*?)(?=<<<SAKURA_MD_END>>>|$)",
-                response, re.DOTALL,
-            )
-            if memory_match:
-                memory_md = memory_match.group(1).strip()
-
-        # --- 第三层：标题分割回退 ---
-        if not sakura_md or not memory_md:
-            lower_response = response.lower()
-            if "### memory.md" in lower_response:
-                parts = response.split("### memory.md", maxsplit=1)
-            elif "## memory.md" in lower_response:
-                parts = response.split("## memory.md", maxsplit=1)
-            elif "### memory" in lower_response:
-                parts = response.split("### memory", maxsplit=1)
-            else:
-                parts = []
-
-            if len(parts) == 2:
-                if not sakura_md:
-                    sakura_md = parts[0].strip()
-                if not memory_md:
-                    memory_md = parts[1].strip()
-
-        # --- 清除所有残留标记文本 ---
-        marker_pattern = r"<<<(?:SAKURA_MD|MEMORY_MD)_(?:START|END)>>>"
-        if sakura_md:
-            sakura_md = re.sub(marker_pattern, "", sakura_md).strip()
-        if memory_md:
-            memory_md = re.sub(marker_pattern, "", memory_md).strip()
-
-        # --- 最后手段 ---
-        if not sakura_md and not memory_md:
-            sakura_md = re.sub(marker_pattern, "", response).strip()
-
-        return sakura_md, memory_md
+        if not response:
+            return ""
+        content = response.strip()
+        # 去除 markdown 代码块包裹
+        if content.startswith("```markdown") and content.endswith("```"):
+            content = content[len("```markdown"): -len("```")].strip()
+        elif content.startswith("```md") and content.endswith("```"):
+            content = content[len("```md"): -len("```")].strip()
+        elif content.startswith("```") and content.endswith("```"):
+            content = content[3:-3].strip()
+        return content
 
 
 # Singleton / 单例
