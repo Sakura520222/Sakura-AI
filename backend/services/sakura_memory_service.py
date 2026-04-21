@@ -279,10 +279,15 @@ class SakuraMemoryService:
             return
 
         try:
-            # 检查 .sakura/SAKURA.md 是否已存在 / Check if SAKURA.md already exists
-            if await self.write_service.file_exists(repo, ".sakura/SAKURA.md"):
+            # 检查核心文件是否已存在 / Check if core files already exist
+            has_sakura_md = await self.write_service.file_exists(repo, ".sakura/SAKURA.md")
+            has_memory_md = await self.write_service.file_exists(repo, ".sakura/memory.md")
+            if has_sakura_md or has_memory_md:
                 await self._update_state(repo_full_name, is_initialized=True)
-                logger.info(f".sakura/SAKURA.md 已存在，标记为已初始化: {repo_full_name}")
+                logger.info(
+                    ".sakura/ 已初始化 (SAKURA.md={}, memory.md={}), 跳过: {}",
+                    has_sakura_md, has_memory_md, repo_full_name,
+                )
                 return
 
             # 收集仓库信息 / Collect repo info
