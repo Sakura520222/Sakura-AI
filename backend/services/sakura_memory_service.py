@@ -831,8 +831,12 @@ class SakuraMemoryService:
     def _parse_consolidation_response(self, response: str) -> tuple[str, str]:
         """解析合并响应 / Parse consolidation response
 
-        尝试用标记提取，回退到按标题分割，最后使用整段响应作为 SAKURA.md。
-        Try marker extraction, fall back to header splitting, then use full response.
+        三层提取策略：
+        1. 精确标记提取（START...END 成对出现）
+        2. 宽松标记提取（只有 START，提取到下一个标记或文末）
+        3. 标题分割回退
+
+        最后清除所有残留标记文本。
 
         Args:
             response: LLM 生成的原始响应文本
@@ -843,16 +847,14 @@ class SakuraMemoryService:
         sakura_md = ""
         memory_md = ""
 
-        # 尝试使用标记提取 / Try to extract using markers
+        # --- 第一层：精确标记提取 ---
         sakura_match = re.search(
             r"<<<SAKURA_MD_START>>>(.*?)<<<SAKURA_MD_END>>>",
-            response,
-            re.DOTALL,
+            response, re.DOTALL,
         )
         memory_match = re.search(
             r"<<<MEMORY_MD_START>>>(.*?)<<<MEMORY_MD_END>>>",
-            response,
-            re.DOTALL,
+            response, re.DOTALL,
         )
 
         if sakura_match:
@@ -860,8 +862,25 @@ class SakuraMemoryService:
         if memory_match:
             memory_md = memory_match.group(1).strip()
 
-        # 回退: 如果任一标记未找到，尝试按标题分割
-        # Fallback: if either marker missing, try to split by headers
+        # --- 第二层：宽松标记提取（START 存在但 END 缺失）---
+        if not sakura_md:
+            # 从 START 提取到下一个标记或文末
+            sakura_match = re.search(
+                r"<<<SAKURA_MD_START>>>(.*?)(?=<<<(?:MEMORY_MD_START|SAKURA_MD_END)>>>|$)",
+                response, re.DOTALL,
+            )
+            if sakura_match:
+                sakura_md = sakura_match.group(1).strip()
+
+        if not memory_md:
+            memory_match = re.search(
+                r"<<<MEMORY_MD_START>>>(.*?)(?=<<<SAKURA_MD_END>>>|$)",
+                response, re.DOTALL,
+            )
+            if memory_match:
+                memory_md = memory_match.group(1).strip()
+
+        # --- 第三层：标题分割回退 ---
         if not sakura_md or not memory_md:
             lower_response = response.lower()
             if "### memory.md" in lower_response:
@@ -874,15 +893,21 @@ class SakuraMemoryService:
                 parts = []
 
             if len(parts) == 2:
-                # 标记提取失败时用标题分割结果覆盖
                 if not sakura_md:
                     sakura_md = parts[0].strip()
                 if not memory_md:
                     memory_md = parts[1].strip()
 
-        # 最后手段: 使用整个响应作为 SAKURA.md
+        # --- 清除所有残留标记文本 ---
+        marker_pattern = r"<<<(?:SAKURA_MD|MEMORY_MD)_(?:START|END)>>>"
+        if sakura_md:
+            sakura_md = re.sub(marker_pattern, "", sakura_md).strip()
+        if memory_md:
+            memory_md = re.sub(marker_pattern, "", memory_md).strip()
+
+        # --- 最后手段 ---
         if not sakura_md and not memory_md:
-            sakura_md = response.strip()
+            sakura_md = re.sub(marker_pattern, "", response).strip()
 
         return sakura_md, memory_md
 
