@@ -78,10 +78,36 @@ jobs:
           echo "变更类型: $CHANGE_TYPE"
       
       - name: 提取提交信息到文件
+        id: extract_commits
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          git log --pretty=format:"%s" ${{ github.event.pull_request.base.sha }}..${{ github.event.pull_request.head.sha }} > "${{ runner.temp }}/commits_list.txt"
-          
-          echo "📝 提交信息已写入 ${{ runner.temp }}/commits_list.txt"
+          COMMITS_FILE="${{ runner.temp }}/commits_list.txt"
+          PR_NUMBER="${{ github.event.pull_request.number }}"
+
+          # workflow_dispatch 手动触发时无 PR 上下文
+          if [ -z "$PR_NUMBER" ]; then
+            echo "" > "$COMMITS_FILE"
+            echo "ℹ️ 手动触发，无 PR 提交信息"
+            exit 0
+          fi
+
+          # GitHub API 获取 PR 提交（兼容所有合并策略）
+          if ! gh api "repos/${{ github.repository }}/pulls/${PR_NUMBER}/commits" \
+               --jq '.[].commit.message | split("\n") | .[0]' \
+               > "$COMMITS_FILE" 2>/dev/null; then
+            echo "⚠️ API 获取失败，尝试 git log 备用方案"
+            if ! git log --pretty=format:"%s" \
+                 "${{ github.event.pull_request.base.sha }}..${{ github.event.pull_request.head.sha }}" \
+                 > "$COMMITS_FILE" 2>/dev/null; then
+              echo "⚠️ git log 也失败，创建空提交文件"
+              echo "" > "$COMMITS_FILE"
+            fi
+          fi
+
+          COMMIT_COUNT=$(grep -c . "$COMMITS_FILE" 2>/dev/null || echo "0")
+          echo "commit_count=$COMMIT_COUNT" >> $GITHUB_OUTPUT
+          echo "📝 已提取 ${COMMIT_COUNT} 条提交信息到 $COMMITS_FILE"
       
       - name: 读取当前版本
         id: read_version
