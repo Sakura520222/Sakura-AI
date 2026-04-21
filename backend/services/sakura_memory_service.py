@@ -114,11 +114,11 @@ CONSOLIDATION_PROMPT = """你是一个项目知识管理助手。请根据最近
 请按以下格式输出（不要包含 markdown 代码块标记）：
 
 <<<SAKURA_MD_START>>>
-{更新后的 SAKURA.md 内容}
+在此输出更新后的 SAKURA.md 内容
 <<<SAKURA_MD_END>>>
 
 <<<MEMORY_MD_START>>>
-{更新后的 memory.md 内容}
+在此输出更新后的 memory.md 内容
 <<<MEMORY_MD_END>>>
 """
 
