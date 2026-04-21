@@ -4,7 +4,7 @@ uvicorn[standard]==0.27.0
 python-multipart==0.0.6
 
 # GitHub集成
-PyGithub==2.1.1
+PyGithub>=2.9.1
 cryptography==41.0.7
 
 # AI集成

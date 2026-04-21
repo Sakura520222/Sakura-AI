@@ -4,7 +4,7 @@
 
 **English** | [中文](README.md)
 
-[![Version](https://img.shields.io/badge/Version-2.8.3-blue.svg)](https://github.com/Sakura520222/Sakura-AI-Reviewer/releases)
+[![Version](https://img.shields.io/badge/Version-2.8.4-blue.svg)](https://github.com/Sakura520222/Sakura-AI-Reviewer/releases)
 [![Python](https://img.shields.io/badge/Python-3.11+-blue.svg)](https://www.python.org/)
 [![FastAPI](https://img.shields.io/badge/FastAPI-Latest-green.svg)](https://fastapi.tiangolo.com/)
 [![License](https://img.shields.io/badge/License-AGPLv3-yellow.svg)](LICENSE)
@@ -31,12 +31,13 @@
 
 ### AI Tools & Knowledge Base
 
-- **AI Tool System**: read_file, list_directory, search_in_files, get_git_info, list_commits, search_web — AI proactively invokes tools on demand
+- **AI Tool System**: read_file, list_directory, search_in_files, get_git_info, list_commits, search_web, read_sakura_docs, list_sakura_directory — AI proactively invokes tools on demand
 - **Cross-file Code Search**: AI can search keywords across files in the repository, quickly locating all usages of functions, variables, and classes
 - **Git Information Query**: AI can retrieve repository info, branch lists, and commit history to understand project evolution
 - **Web Search Enhancement**: Supports DuckDuckGo / Tavily, allowing AI to actively search the internet to assist review decisions
 - **Repository-level Knowledge Base (RAG)**: Vector semantic retrieval of project documentation, providing normative context for AI reviews
 - **PR Code Auto-indexing**: Syntax-aware chunking + semantic search, enabling AI to precisely locate relevant code
+- 🧠 **Project Memory System**: Self-reflection and knowledge accumulation based on `.sakura/` directory, AI reviews get smarter about your project over time
 
 ### Repository Scanning
 
@@ -104,6 +105,9 @@
 │  ┌────────────┐  ┌────────────┐  ┌────────────┐            │
 │  │ RAG Search │  │ Code Index │  │  History   │            │
 │  └────────────┘  └────────────┘  └────────────┘            │
+│  ┌──────────────────────┐  ┌──────────────────────┐        │
+│  │ read_sakura_docs     │  │ list_sakura_directory │        │
+│  └──────────────────────┘  └──────────────────────┘        │
 └──────────────────────┬──────────────────────────────────────┘
                        │
                        ▼
@@ -149,7 +153,7 @@ cd Sakura-AI-Reviewer
 
 1. Go to [GitHub Apps settings](https://github.com/settings/apps) and click **New GitHub App**
 2. Fill in the name and Homepage URL
-3. **Repository permissions**: Pull requests `Read and write`, Contents `Read-only`, Issues `Read and write` (optional)
+3. **Repository permissions**: Pull requests `Read and write`, Contents `Read and write`, Issues `Read and write` (optional)
 4. **Webhook URL**: `https://your-domain.com:8000/api/webhook/github`, enter Webhook secret
 5. **Webhook events**: Check Pull requests, Pull request reviews, Issues (optional), Issue comments (optional)
 6. After creation, click **Generate a private key** at the bottom of the App page, download the `.pem` file (paste the full private key content in Setup Wizard)
@@ -302,7 +306,7 @@ Sakura-AI-Reviewer/
 │   ├── models/            # Data models (SQLAlchemy)
 │   ├── services/          # Business logic
 │   │   ├── ai_reviewer/   # AI review engine
-│   │   │   ├── tools/     #   AI tools (file reading, cross-file search, git info, web search)
+│   │   │   ├── tools/     #   AI tools (file reading, cross-file search, git info, web search, sakura memory)
 │   │   │   └── compression/ # Context compression
 │   │   ├── pr_analyzer.py # PR analyzer (strategy selection)
 │   │   ├── issue_analyzer.py  # Issue analysis engine
@@ -317,6 +321,8 @@ Sakura-AI-Reviewer/
 │   │   ├── scan_report_service.py # Scan report service
 │   │   ├── scan_scheduler.py      # Scan scheduler
 │   │   └── history_context_service.py  # Incremental review history
+│   │   ├── sakura_memory_service.py    # .sakura/ project memory service
+│   │   ├── github_write_service.py     # GitHub write operations service (.sakura/ writes)
 │   ├── webui/             # WebUI management interface
 │   │   ├── routes/        #   Routes (dashboard, config, users, ...)
 │   │   ├── templates/     #   Jinja2 templates
