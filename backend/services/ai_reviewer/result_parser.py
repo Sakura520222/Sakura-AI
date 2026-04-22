@@ -71,11 +71,19 @@ class ReviewResultParser:
             json_data = self._extract_structured_json(review_text)
             if json_data and self._apply_json_result(result, json_data):
                 result["parse_source"] = "json"
+
+                # JSON 提取 score/decision/summary，但 Markdown 行内评论仍需提取
+                # AI 可能在 Markdown 中写了详细的行内评论但 JSON 中未完整包含
+                json_inline_count = len(result["inline_comments"])
+                self.extract_inline_comments(result, review_text)
+                markdown_inline_count = len(result["inline_comments"]) - json_inline_count
+                self._parse_structured_comments(result, review_text)
+
                 logger.info(
                     f"✅ 结构化 JSON 解析成功 (策略: {strategy}, "
                     f"decision: {result.get('ai_decision')}, "
-                    f"issues: {len(result['inline_comments'])} 行内 + "
-                    f"{len(result['comments'])} 整体)"
+                    f"JSON 行内: {json_inline_count}, Markdown 行内: {markdown_inline_count}, "
+                    f"整体评论: {len(result['comments'])})"
                 )
                 return result
 
