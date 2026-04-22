@@ -72,7 +72,10 @@ class ReviewResultParser:
             if json_data and self._apply_json_result(result, json_data):
                 result["parse_source"] = "json"
 
-                # JSON 提取 score/decision/summary，但 Markdown 行内评论仍需提取
+                # 用去掉 JSON 块的完整 Markdown 作为摘要，保留 AI 的详细审查正文
+                result["summary"] = self._strip_json_block(review_text)
+
+                # JSON 提取 score/decision，但 Markdown 行内评论仍需提取
                 # AI 可能在 Markdown 中写了详细的行内评论但 JSON 中未完整包含
                 json_inline_count = len(result["inline_comments"])
                 self.extract_inline_comments(result, review_text)
@@ -381,6 +384,16 @@ class ReviewResultParser:
 
         return line_numbers
 
+    def _strip_json_block(self, review_text: str) -> str:
+        """去除审查文本中的 JSON 块，保留 Markdown 正文"""
+        start_idx = review_text.find(JSON_BLOCK_START_MARKER)
+        if start_idx == -1:
+            return review_text
+        end_idx = review_text.find(JSON_BLOCK_END_MARKER, start_idx)
+        if end_idx == -1:
+            return review_text
+        return review_text[:start_idx].strip()
+
     def _extract_structured_json(self, review_text: str) -> dict | None:
         """从审查文本中提取结构化 JSON 块
 
@@ -467,9 +480,8 @@ class ReviewResultParser:
             if isinstance(score, (int, float)):
                 result["overall_score"] = int(score)
 
-            # 提取摘要
-            if json_data.get("summary"):
-                result["summary"] = json_data["summary"]
+            # JSON summary 仅作为辅助字段存储，不覆盖原始 Markdown 审查正文
+            # result["summary"] 保持为完整 review_text（由调用方去除 JSON 块）
 
             # 提取决策
             if json_data.get("decision"):

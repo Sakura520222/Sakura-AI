@@ -156,7 +156,7 @@ class TestApplyJsonResult:
         success = parser._apply_json_result(result, json_data)
         assert success
         assert result["overall_score"] == 7
-        assert result["summary"] == "代码整体质量良好，有一个命名问题建议修复"
+        # summary 不再由 _apply_json_result 设置，由 parse_review_result 统一处理
         assert result["ai_decision"] == "approve"
         assert result["ai_decision_reason"] == "代码质量良好"
 
