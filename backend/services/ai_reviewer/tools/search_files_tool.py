@@ -144,7 +144,9 @@ class SearchFilesToolHandler:
                             "当前 repo 对象不支持 GitHub Search API"
                         )
                 except ImportError:
-                    pass
+                    raise NotImplementedError(
+                        "无法导入 PyGithub，无法判断是否支持 Search API"
+                    )
                 try:
                     return await self._search_via_api(
                         keyword,

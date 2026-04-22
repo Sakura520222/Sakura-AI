@@ -19,10 +19,7 @@ _REF_PATTERN = re.compile(r"^[a-zA-Z0-9_./\-~^:@{}]+$")
 
 def _is_safe_path(resolved_path: Path, repo_root: Path) -> bool:
     """检查解析后的路径是否在仓库根目录内"""
-    return (
-        resolved_path == repo_root
-        or str(resolved_path).startswith(str(repo_root) + os.sep)
-    )
+    return resolved_path == repo_root or resolved_path.is_relative_to(repo_root)
 
 
 class _LocalContentFile:
@@ -92,8 +89,8 @@ def _detect_default_branch(repo_path: str) -> str:
 class LocalRepoAdapter:
     """基于本地 clone 的仓库适配器，提供 PyGithub Repository 兼容接口
 
-    注意：不支持 GitHub Search API（缺少 _requester 属性），
-    调用方应使用 isinstance 检查或 hasattr(repo, "_requester") 判断。
+    注意：不支持 GitHub Search API，调用方应使用 isinstance(repo, Repository)
+    判断是否支持 API 搜索，LocalRepoAdapter 实例不支持。
     """
 
     def __init__(self, repo_path: str, repo_name: str):
@@ -158,6 +155,10 @@ class LocalRepoAdapter:
 
         if not full_path.exists():
             raise FileNotFoundError(f"文件不存在: {path}")
+
+        # 统一拦截符号链接，防止指向仓库外的文件
+        if full_path.is_symlink():
+            raise PermissionError(f"不允许通过符号链接访问: {path}")
 
         if full_path.is_file():
             return _LocalContentFile(str(full_path), clean_path)
