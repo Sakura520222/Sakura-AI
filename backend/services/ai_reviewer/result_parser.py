@@ -80,6 +80,7 @@ class ReviewResultParser:
                 markdown_text = result["summary"]
                 json_inline_count = len(result["inline_comments"])
                 self.extract_inline_comments(result, markdown_text)
+                self._dedup_inline_comments(result)
                 markdown_inline_count = len(result["inline_comments"]) - json_inline_count
                 self._parse_structured_comments(result, markdown_text)
 
@@ -118,6 +119,7 @@ class ReviewResultParser:
         except Exception as e:
             logger.warning(f"解析审查结果时出错: {e}")
             result["summary"] = review_text
+            result["parse_source"] = "error"
 
         return result
 
@@ -385,15 +387,27 @@ class ReviewResultParser:
 
         return line_numbers
 
+    def _dedup_inline_comments(self, result: dict[str, Any]) -> None:
+        """去除重复的行内评论（基于 file_path + line_number）"""
+        seen: set[tuple[str, int]] = set()
+        deduped: list[dict[str, Any]] = []
+        for comment in result["inline_comments"]:
+            key = (comment.get("file_path", ""), comment.get("line_number", 0))
+            if key not in seen:
+                seen.add(key)
+                deduped.append(comment)
+        result["inline_comments"] = deduped
+
     def _strip_json_block(self, review_text: str) -> str:
-        """去除审查文本中的 JSON 块，保留 Markdown 正文"""
+        """去除审查文本中的 JSON 块，保留其前后的 Markdown 正文"""
         start_idx = review_text.find(JSON_BLOCK_START_MARKER)
         if start_idx == -1:
             return review_text
         end_idx = review_text.find(JSON_BLOCK_END_MARKER, start_idx)
         if end_idx == -1:
             return review_text
-        return review_text[:start_idx].strip()
+        after_end = end_idx + len(JSON_BLOCK_END_MARKER)
+        return (review_text[:start_idx] + review_text[after_end:]).strip()
 
     def _extract_structured_json(self, review_text: str) -> dict | None:
         """从审查文本中提取结构化 JSON 块
