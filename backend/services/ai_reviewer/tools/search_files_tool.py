@@ -136,6 +136,10 @@ class SearchFilesToolHandler:
                 ref = repo.default_branch
 
             if config["use_search_api"]:
+                if not hasattr(repo, "_requester"):
+                    raise NotImplementedError(
+                        "当前 repo 对象不支持 GitHub Search API"
+                    )
                 try:
                     return await self._search_via_api(
                         keyword,
