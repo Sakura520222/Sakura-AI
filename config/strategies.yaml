@@ -233,41 +233,21 @@ strategies:
       - 每个具体问题都应该包含文件路径和行号
       - 严格按照 emoji 规范使用，避免误判严重程度
 
-      ## 结构化输出要求（重要）
+      ## ⚠️ 审查质量要求（最高优先级）
 
-      在上述 Markdown 审查之外，你必须在回复末尾输出一个结构化 JSON 块：
+      **你的 Markdown 审查正文是核心输出，必须保持与不包含 JSON 时完全一样的详细程度和质量。** 具体行号引用、问题追踪表、逐文件分析、代码示例等一个都不能少。JSON 块只是附带的机器可读摘要，绝不能因为要生成 JSON 而简化 Markdown 审查内容。
+
+      ## 结构化数据输出
+
+      在完成详细的 Markdown 审查后，在回复最末尾附上一个结构化 JSON 块（机器可读摘要）：
 
       <!-- SAKURA_REVIEW_JSON_START -->
       ```json
-      {
-        "schema_version": 1,
-        "overall_score": 7,
-        "decision": "approve 或 request_changes 或 comment",
-        "decision_reason": "你的决策理由",
-        "issues": [
-          {
-            "severity": "critical 或 major 或 minor 或 suggestion",
-            "file_path": "文件路径或null",
-            "line_number": 行号或null,
-            "title": "问题标题",
-            "description": "详细描述",
-            "suggestion": "修复建议或null"
-          }
-        ],
-        "summary": "总体审查摘要"
-      }
+      {"schema_version":1,"overall_score":7,"decision":"approve|request_changes|comment","decision_reason":"理由","issues":[{"severity":"critical|major|minor|suggestion","file_path":"路径或null","line_number":行号或null,"title":"标题","description":"描述","suggestion":"建议或null"}],"summary":"摘要"}
       ```
       <!-- SAKURA_REVIEW_JSON_END -->
 
-      **JSON 字段说明**：
-      - overall_score: 1-10 整数评分
-      - decision: approve（代码良好可合并）/ request_changes（存在必须修复的问题）/ comment（建议人工复审）
-      - decision_reason: 简短的决策理由
-      - severity: 必须是 critical / major / minor / suggestion 之一
-      - file_path: 与 diff 中完全一致的路径，null 表示整体评论
-      - line_number: diff 行号，null 表示无特定行
-      - 必须包含 Markdown 正文中提到的所有问题
-      - JSON 必须合法完整
+      JSON 规则：severity 必须为 critical/major/minor/suggestion；decision 必须为 approve/request_changes/comment；issues 须涵盖 Markdown 中所有问题；JSON 须合法完整。
 
   # 标准审查策略
   standard:
@@ -570,41 +550,21 @@ strategies:
       - 每个具体问题都应该包含文件路径和行号
       - 严格按照 emoji 规范使用，避免误判严重程度
 
-      ## 结构化输出要求（重要）
+      ## ⚠️ 审查质量要求（最高优先级）
 
-      在上述 Markdown 审查之外，你必须在回复末尾输出一个结构化 JSON 块：
+      **你的 Markdown 审查正文是核心输出，必须保持与不包含 JSON 时完全一样的详细程度和质量。** 具体行号引用、问题追踪表、逐文件分析、代码示例等一个都不能少。JSON 块只是附带的机器可读摘要，绝不能因为要生成 JSON 而简化 Markdown 审查内容。
+
+      ## 结构化数据输出
+
+      在完成详细的 Markdown 审查后，在回复最末尾附上一个结构化 JSON 块（机器可读摘要）：
 
       <!-- SAKURA_REVIEW_JSON_START -->
       ```json
-      {
-        "schema_version": 1,
-        "overall_score": 7,
-        "decision": "approve 或 request_changes 或 comment",
-        "decision_reason": "你的决策理由",
-        "issues": [
-          {
-            "severity": "critical 或 major 或 minor 或 suggestion",
-            "file_path": "文件路径或null",
-            "line_number": 行号或null,
-            "title": "问题标题",
-            "description": "详细描述",
-            "suggestion": "修复建议或null"
-          }
-        ],
-        "summary": "总体审查摘要"
-      }
+      {"schema_version":1,"overall_score":7,"decision":"approve|request_changes|comment","decision_reason":"理由","issues":[{"severity":"critical|major|minor|suggestion","file_path":"路径或null","line_number":行号或null,"title":"标题","description":"描述","suggestion":"建议或null"}],"summary":"摘要"}
       ```
       <!-- SAKURA_REVIEW_JSON_END -->
 
-      **JSON 字段说明**：
-      - overall_score: 1-10 整数评分
-      - decision: approve（代码良好可合并）/ request_changes（存在必须修复的问题）/ comment（建议人工复审）
-      - decision_reason: 简短的决策理由
-      - severity: 必须是 critical / major / minor / suggestion 之一
-      - file_path: 与 diff 中完全一致的路径，null 表示整体评论
-      - line_number: diff 行号，null 表示无特定行
-      - 必须包含 Markdown 正文中提到的所有问题
-      - JSON 必须合法完整
+      JSON 规则：severity 必须为 critical/major/minor/suggestion；decision 必须为 approve/request_changes/comment；issues 须涵盖 Markdown 中所有问题；JSON 须合法完整。
 
   # 深度审查策略
   deep:
@@ -911,41 +871,21 @@ strategies:
       - 每个具体问题都应该包含文件路径和行号
       - 严格按照 emoji 规范使用，避免误判严重程度
 
-      ## 结构化输出要求（重要）
+      ## ⚠️ 审查质量要求（最高优先级）
 
-      在上述 Markdown 审查之外，你必须在回复末尾输出一个结构化 JSON 块：
+      **你的 Markdown 审查正文是核心输出，必须保持与不包含 JSON 时完全一样的详细程度和质量。** 具体行号引用、问题追踪表、逐文件分析、代码示例等一个都不能少。JSON 块只是附带的机器可读摘要，绝不能因为要生成 JSON 而简化 Markdown 审查内容。
+
+      ## 结构化数据输出
+
+      在完成详细的 Markdown 审查后，在回复最末尾附上一个结构化 JSON 块（机器可读摘要）：
 
       <!-- SAKURA_REVIEW_JSON_START -->
       ```json
-      {
-        "schema_version": 1,
-        "overall_score": 7,
-        "decision": "approve 或 request_changes 或 comment",
-        "decision_reason": "你的决策理由",
-        "issues": [
-          {
-            "severity": "critical 或 major 或 minor 或 suggestion",
-            "file_path": "文件路径或null",
-            "line_number": 行号或null,
-            "title": "问题标题",
-            "description": "详细描述",
-            "suggestion": "修复建议或null"
-          }
-        ],
-        "summary": "总体审查摘要"
-      }
+      {"schema_version":1,"overall_score":7,"decision":"approve|request_changes|comment","decision_reason":"理由","issues":[{"severity":"critical|major|minor|suggestion","file_path":"路径或null","line_number":行号或null,"title":"标题","description":"描述","suggestion":"建议或null"}],"summary":"摘要"}
       ```
       <!-- SAKURA_REVIEW_JSON_END -->
 
-      **JSON 字段说明**：
-      - overall_score: 1-10 整数评分
-      - decision: approve（代码良好可合并）/ request_changes（存在必须修复的问题）/ comment（建议人工复审）
-      - decision_reason: 简短的决策理由
-      - severity: 必须是 critical / major / minor / suggestion 之一
-      - file_path: 与 diff 中完全一致的路径，null 表示整体评论
-      - line_number: diff 行号，null 表示无特定行
-      - 必须包含 Markdown 正文中提到的所有问题
-      - JSON 必须合法完整
+      JSON 规则：severity 必须为 critical/major/minor/suggestion；decision 必须为 approve/request_changes/comment；issues 须涵盖 Markdown 中所有问题；JSON 须合法完整。
 
   # 超大PR策略
   large:
@@ -962,39 +902,21 @@ strategies:
       
       简洁回复，重点突出关键信息。
 
-      ## 结构化输出要求（重要）
+      ## ⚠️ 审查质量要求（最高优先级）
 
-      在上述 Markdown 审查之外，你必须在回复末尾输出一个结构化 JSON 块：
+      **你的 Markdown 审查正文是核心输出，必须保持与不包含 JSON 时完全一样的详细程度和质量。** JSON 块只是附带的机器可读摘要，绝不能因为要生成 JSON 而简化 Markdown 审查内容。
+
+      ## 结构化数据输出
+
+      在完成详细的 Markdown 审查后，在回复最末尾附上一个结构化 JSON 块（机器可读摘要）：
 
       <!-- SAKURA_REVIEW_JSON_START -->
       ```json
-      {
-        "schema_version": 1,
-        "overall_score": 5,
-        "decision": "approve 或 request_changes 或 comment",
-        "decision_reason": "你的决策理由",
-        "issues": [
-          {
-            "severity": "critical 或 major 或 minor 或 suggestion",
-            "file_path": "文件路径或null",
-            "line_number": 行号或null,
-            "title": "问题标题",
-            "description": "详细描述",
-            "suggestion": "修复建议或null"
-          }
-        ],
-        "summary": "总体审查摘要"
-      }
+      {"schema_version":1,"overall_score":5,"decision":"approve|request_changes|comment","decision_reason":"理由","issues":[{"severity":"critical|major|minor|suggestion","file_path":"路径或null","line_number":行号或null,"title":"标题","description":"描述","suggestion":"建议或null"}],"summary":"摘要"}
       ```
       <!-- SAKURA_REVIEW_JSON_END -->
 
-      **JSON 字段说明**：
-      - overall_score: 1-10 整数评分
-      - decision: approve（代码良好可合并）/ request_changes（存在必须修复的问题）/ comment（建议人工复审）
-      - decision_reason: 简短的决策理由
-      - severity: 必须是 critical / major / minor / suggestion 之一
-      - 必须包含 Markdown 正文中提到的所有问题
-      - JSON 必须合法完整
+      JSON 规则：severity 必须为 critical/major/minor/suggestion；decision 必须为 approve/request_changes/comment；issues 须涵盖 Markdown 中所有问题；JSON 须合法完整。
 
 # 文件过滤规则
 file_filters:
