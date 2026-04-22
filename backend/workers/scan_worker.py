@@ -492,7 +492,9 @@ class ScanWorker:
                 enabled_tools.append(tool_def)
 
         # 5. 获取 repo 对象供工具使用（优先 GitHub API，回退本地适配器）
-        _owner, _name = repo_name.split("/", 1)
+        _owner, _name = (
+            repo_name.split("/", 1) if "/" in repo_name else ("", repo_name)
+        )
         _client = await asyncio.to_thread(
             self.github_app.get_installation_client, _owner, _name
         )
