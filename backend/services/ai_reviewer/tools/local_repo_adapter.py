@@ -7,6 +7,7 @@ GitHub API client 时仍能正常工作。
 
 import os
 import subprocess
+from pathlib import Path
 from typing import Any, List, Optional
 
 
@@ -29,6 +30,17 @@ class _LocalContentFile:
                 return f.read()
         except OSError:
             return None
+
+
+class _LocalGitContentFile:
+    """基于 git show 输出的 ContentFile，用于指定 ref 时读取文件"""
+
+    def __init__(self, repo_relative_path: str, content: bytes):
+        self.path = repo_relative_path.replace("\\", "/")
+        self.name = os.path.basename(repo_relative_path)
+        self.type = "file"
+        self.size = len(content)
+        self.decoded_content = content
 
 
 class _LocalGitTreeEntry:
@@ -96,23 +108,44 @@ class LocalRepoAdapter:
         - 文件路径 → 返回单个 ContentFile
         - 目录路径 → 返回 ContentFile 列表
         - 不存在 → 抛出异常
+
+        当指定 ref 时，通过 git show 读取对应引用的文件内容，
+        确保 detached HEAD 等场景下内容与预期分支一致。
         """
         clean_path = path.lstrip("/").replace("\\", "/")
-        full_path = os.path.join(self._repo_path, clean_path)
+        repo_root = Path(self._repo_path).resolve()
 
-        if not os.path.exists(full_path):
+        # ref 指定且为文件路径：通过 git show 读取指定引用的内容
+        if ref:
+            result = subprocess.run(
+                ["git", "show", f"{ref}:{clean_path}"],
+                cwd=self._repo_path,
+                capture_output=True,
+                timeout=10,
+            )
+            if result.returncode == 0:
+                return _LocalGitContentFile(clean_path, result.stdout)
+            # git show 失败时 fallback 到工作树读取
+
+        full_path = (repo_root / clean_path).resolve()
+        if full_path != repo_root and not str(full_path).startswith(
+            str(repo_root) + os.sep
+        ):
+            raise PermissionError(f"路径超出仓库范围: {path}")
+
+        if not full_path.exists():
             raise FileNotFoundError(f"文件不存在: {path}")
 
-        if os.path.isfile(full_path):
-            return _LocalContentFile(full_path, clean_path)
+        if full_path.is_file():
+            return _LocalContentFile(str(full_path), clean_path)
 
-        if os.path.isdir(full_path):
+        if full_path.is_dir():
             items = []
             try:
                 for entry in sorted(os.listdir(full_path)):
-                    entry_path = os.path.join(full_path, entry)
+                    entry_path = full_path / entry
                     rel_path = f"{clean_path}/{entry}" if clean_path else entry
-                    items.append(_LocalContentFile(entry_path, rel_path))
+                    items.append(_LocalContentFile(str(entry_path), rel_path))
             except OSError:
                 pass
             return items
@@ -124,6 +157,10 @@ class LocalRepoAdapter:
 
         模拟 PyGithub Repository.get_git_tree() 的行为，
         用于跨文件搜索工具的文件遍历。
+
+        Note: sha 参数被忽略，始终遍历当前工作树。
+        对于 shallow clone 场景（扫描默认使用 --depth 1），
+        工作树即为目标分支完整内容，因此该限制可接受。
         """
         entries: List[_LocalGitTreeEntry] = []
         for root, dirs, files in os.walk(self._repo_path):
