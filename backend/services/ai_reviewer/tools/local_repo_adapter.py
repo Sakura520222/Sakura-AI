@@ -6,9 +6,15 @@ GitHub API client 时仍能正常工作。
 """
 
 import os
+import re
 import subprocess
 from pathlib import Path
 from typing import Any, List, Optional
+
+from loguru import logger
+
+# 合法的 git ref 字符：分支名、tag、SHA、相对引用等
+_REF_PATTERN = re.compile(r"^[a-zA-Z0-9_./\-~^:@{}]+$")
 
 
 class _LocalContentFile:
@@ -19,14 +25,15 @@ class _LocalContentFile:
         self.name = os.path.basename(full_path)
         self.type = "file" if os.path.isfile(full_path) else "dir"
         self.size = os.path.getsize(full_path) if os.path.isfile(full_path) else 0
+        self.decoded_content: Optional[bytes] = (
+            self._read_file(full_path) if self.type == "file" else None
+        )
         self._full_path = full_path
 
-    @property
-    def decoded_content(self) -> Optional[bytes]:
-        if self.type != "file":
-            return None
+    @staticmethod
+    def _read_file(full_path: str) -> Optional[bytes]:
         try:
-            with open(self._full_path, "rb") as f:
+            with open(full_path, "rb") as f:
                 return f.read()
         except OSError:
             return None
@@ -40,7 +47,7 @@ class _LocalGitContentFile:
         self.name = os.path.basename(repo_relative_path)
         self.type = "file"
         self.size = len(content)
-        self.decoded_content = content
+        self.decoded_content: Optional[bytes] = content
 
 
 class _LocalGitTreeEntry:
@@ -70,8 +77,8 @@ def _detect_default_branch(repo_path: str) -> str:
         )
         if result.returncode == 0 and result.stdout.strip():
             return result.stdout.strip()
-    except Exception:
-        pass
+    except Exception as e:
+        logger.warning(f"检测默认分支失败，回退到 'main': {e}")
     return "main"
 
 
@@ -117,6 +124,10 @@ class LocalRepoAdapter:
 
         # ref 指定且为文件路径：通过 git show 读取指定引用的内容
         if ref:
+            if not clean_path:
+                raise ValueError("指定 ref 时必须同时指定文件路径")
+            if not _REF_PATTERN.match(ref):
+                raise ValueError(f"无效的 ref 格式: {ref}")
             result = subprocess.run(
                 ["git", "show", f"{ref}:{clean_path}"],
                 cwd=self._repo_path,
@@ -125,7 +136,10 @@ class LocalRepoAdapter:
             )
             if result.returncode == 0:
                 return _LocalGitContentFile(clean_path, result.stdout)
-            # git show 失败时 fallback 到工作树读取
+            logger.warning(
+                f"git show {ref}:{clean_path} 失败 (exit={result.returncode})，"
+                f"fallback 到工作树读取"
+            )
 
         full_path = (repo_root / clean_path).resolve()
         if full_path != repo_root and not str(full_path).startswith(
