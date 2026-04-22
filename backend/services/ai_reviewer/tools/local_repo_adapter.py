@@ -149,16 +149,17 @@ class LocalRepoAdapter:
                 f"fallback 到工作树读取。返回的内容可能与 {ref} 引用不一致！"
             )
 
-        full_path = (self._repo_root / clean_path).resolve()
+        # 在 resolve 之前检查符号链接，防止指向仓库外
+        original_path = self._repo_root / clean_path
+        if original_path.is_symlink():
+            raise PermissionError(f"不允许通过符号链接访问: {path}")
+
+        full_path = original_path.resolve()
         if not _is_safe_path(full_path, self._repo_root):
             raise PermissionError(f"路径超出仓库范围: {path}")
 
         if not full_path.exists():
             raise FileNotFoundError(f"文件不存在: {path}")
-
-        # 统一拦截符号链接，防止指向仓库外的文件
-        if full_path.is_symlink():
-            raise PermissionError(f"不允许通过符号链接访问: {path}")
 
         if full_path.is_file():
             return _LocalContentFile(str(full_path), clean_path)
