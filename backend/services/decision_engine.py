@@ -53,6 +53,8 @@ class DecisionEngine:
                 "enable_idempotency_check": True,
                 "ignored_patterns": [],
                 "repo_overrides": {},
+                "trust_ai_decision": True,
+                "ai_decision_block_on_critical": True,
             }
 
     def _get_repo_policy(self, repo_full_name: str) -> Dict[str, Any]:

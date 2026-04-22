@@ -76,11 +76,12 @@ class ReviewResultParser:
                 result["summary"] = self._strip_json_block(review_text)
 
                 # JSON 提取 score/decision，但 Markdown 行内评论仍需提取
-                # AI 可能在 Markdown 中写了详细的行内评论但 JSON 中未完整包含
+                # 传已去除 JSON 块的文本，避免 JSON 内容被当作章节解析
+                markdown_text = result["summary"]
                 json_inline_count = len(result["inline_comments"])
-                self.extract_inline_comments(result, review_text)
+                self.extract_inline_comments(result, markdown_text)
                 markdown_inline_count = len(result["inline_comments"]) - json_inline_count
-                self._parse_structured_comments(result, review_text)
+                self._parse_structured_comments(result, markdown_text)
 
                 logger.info(
                     f"✅ 结构化 JSON 解析成功 (策略: {strategy}, "
@@ -407,7 +408,7 @@ class ReviewResultParser:
             return None
 
         start_idx = review_text.find(JSON_BLOCK_START_MARKER)
-        end_idx = review_text.find(JSON_BLOCK_END_MARKER)
+        end_idx = review_text.find(JSON_BLOCK_END_MARKER, start_idx) if start_idx != -1 else -1
 
         if start_idx == -1 or end_idx == -1 or end_idx <= start_idx:
             return None
@@ -491,36 +492,46 @@ class ReviewResultParser:
 
             # 分类 issues
             for issue in json_data.get("issues", []):
-                severity = issue.get("severity", "suggestion")
-                issues_key = SEVERITY_TO_ISSUES_KEY.get(severity, "suggestions")
+                try:
+                    severity = issue.get("severity", "suggestion")
+                    issues_key = SEVERITY_TO_ISSUES_KEY.get(severity, "suggestions")
 
-                file_path = issue.get("file_path")
-                line_number = issue.get("line_number")
+                    file_path = issue.get("file_path")
+                    line_number = issue.get("line_number")
 
-                if file_path and line_number is not None:
-                    # 行内评论
-                    inline_comment = {
-                        "file_path": file_path,
-                        "line_number": int(line_number),
-                        "body": issue.get("description", ""),
-                        "severity": severity,
-                    }
-                    if issue.get("end_line"):
-                        inline_comment["start_line"] = int(line_number)
-                        inline_comment["line_number"] = int(issue["end_line"])
-                    result["inline_comments"].append(inline_comment)
-                else:
-                    # 整体评论
-                    content = issue.get("description", issue.get("title", ""))
-                    if content:
-                        result["comments"].append(
-                            {"content": content, "severity": severity, "type": "overall"}
-                        )
+                    if file_path and line_number is not None:
+                        line_number = int(line_number)
+                        # 行内评论
+                        inline_comment = {
+                            "file_path": file_path,
+                            "line_number": line_number,
+                            "body": issue.get("description", ""),
+                            "severity": severity,
+                        }
+                        if issue.get("end_line"):
+                            inline_comment["start_line"] = line_number
+                            inline_comment["line_number"] = int(issue["end_line"])
+                        result["inline_comments"].append(inline_comment)
+                    else:
+                        # 整体评论
+                        content = issue.get("description", issue.get("title", ""))
+                        if content:
+                            result["comments"].append(
+                                {
+                                    "content": content,
+                                    "severity": severity,
+                                    "type": "overall",
+                                }
+                            )
 
-                # 按 severity 分组
-                title_or_desc = issue.get("title") or issue.get("description", "")
-                if title_or_desc and issues_key in result["issues"]:
-                    result["issues"][issues_key].append(title_or_desc)
+                    # 按 severity 分组
+                    title_or_desc = issue.get("title") or issue.get("description", "")
+                    if title_or_desc and issues_key in result["issues"]:
+                        result["issues"][issues_key].append(title_or_desc)
+
+                except (ValueError, TypeError):
+                    logger.warning(f"跳过格式异常的 issue: {issue.get('title', '?')}")
+                    continue
 
             return True
 
