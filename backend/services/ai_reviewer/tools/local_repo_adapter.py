@@ -17,6 +17,14 @@ from loguru import logger
 _REF_PATTERN = re.compile(r"^[a-zA-Z0-9_./\-~^:@{}]+$")
 
 
+def _is_safe_path(resolved_path: Path, repo_root: Path) -> bool:
+    """检查解析后的路径是否在仓库根目录内"""
+    return (
+        resolved_path == repo_root
+        or str(resolved_path).startswith(str(repo_root) + os.sep)
+    )
+
+
 class _LocalContentFile:
     """模拟 PyGithub ContentFile，基于本地文件系统"""
 
@@ -28,7 +36,6 @@ class _LocalContentFile:
         self.decoded_content: Optional[bytes] = (
             self._read_file(full_path) if self.type == "file" else None
         )
-        self._full_path = full_path
 
     @staticmethod
     def _read_file(full_path: str) -> Optional[bytes]:
@@ -83,10 +90,15 @@ def _detect_default_branch(repo_path: str) -> str:
 
 
 class LocalRepoAdapter:
-    """基于本地 clone 的仓库适配器，提供 PyGithub Repository 兼容接口"""
+    """基于本地 clone 的仓库适配器，提供 PyGithub Repository 兼容接口
+
+    注意：不支持 GitHub Search API（缺少 _requester 属性），
+    调用方应使用 isinstance 检查或 hasattr(repo, "_requester") 判断。
+    """
 
     def __init__(self, repo_path: str, repo_name: str):
         self._repo_path = repo_path
+        self._repo_root = Path(repo_path).resolve()
         parts = repo_name.split("/", 1)
         self._owner = parts[0] if len(parts) > 1 else ""
         self._name = parts[1] if len(parts) > 1 else repo_name
@@ -120,7 +132,6 @@ class LocalRepoAdapter:
         确保 detached HEAD 等场景下内容与预期分支一致。
         """
         clean_path = path.lstrip("/").replace("\\", "/")
-        repo_root = Path(self._repo_path).resolve()
 
         # ref 指定且为文件路径：通过 git show 读取指定引用的内容
         if ref:
@@ -138,13 +149,11 @@ class LocalRepoAdapter:
                 return _LocalGitContentFile(clean_path, result.stdout)
             logger.warning(
                 f"git show {ref}:{clean_path} 失败 (exit={result.returncode})，"
-                f"fallback 到工作树读取"
+                f"fallback 到工作树读取。返回的内容可能与 {ref} 引用不一致！"
             )
 
-        full_path = (repo_root / clean_path).resolve()
-        if full_path != repo_root and not str(full_path).startswith(
-            str(repo_root) + os.sep
-        ):
+        full_path = (self._repo_root / clean_path).resolve()
+        if not _is_safe_path(full_path, self._repo_root):
             raise PermissionError(f"路径超出仓库范围: {path}")
 
         if not full_path.exists():
@@ -157,11 +166,17 @@ class LocalRepoAdapter:
             items = []
             try:
                 for entry in sorted(os.listdir(full_path)):
-                    entry_path = full_path / entry
+                    entry_path = (full_path / entry).resolve()
+                    # 跳过符号链接和逃逸路径
+                    if (full_path / entry).is_symlink():
+                        continue
+                    if not _is_safe_path(entry_path, self._repo_root):
+                        logger.warning(f"跳过逃逸路径: {clean_path}/{entry}")
+                        continue
                     rel_path = f"{clean_path}/{entry}" if clean_path else entry
                     items.append(_LocalContentFile(str(entry_path), rel_path))
-            except OSError:
-                pass
+            except OSError as e:
+                logger.warning(f"遍历目录 {clean_path} 失败: {e}")
             return items
 
         raise FileNotFoundError(f"路径类型未知: {path}")
@@ -176,8 +191,19 @@ class LocalRepoAdapter:
         对于 shallow clone 场景（扫描默认使用 --depth 1），
         工作树即为目标分支完整内容，因此该限制可接受。
         """
+        if sha is not None:
+            logger.warning(
+                f"get_git_tree: sha 参数 '{sha}' 被忽略，始终返回当前工作树内容"
+            )
+
         entries: List[_LocalGitTreeEntry] = []
-        for root, dirs, files in os.walk(self._repo_path):
+        for root, dirs, files in os.walk(self._repo_path, followlinks=False):
+            # 安全校验：确保当前遍历目录在仓库范围内
+            resolved_root = Path(root).resolve()
+            if not _is_safe_path(resolved_root, self._repo_root):
+                dirs.clear()
+                continue
+
             # 跳过 .git 目录
             dirs[:] = [d for d in dirs if d != ".git"]
 
