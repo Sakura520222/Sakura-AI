@@ -491,27 +491,7 @@ class ScanWorker:
             for tool_def in tool_defs:
                 enabled_tools.append(tool_def)
 
-        # 5. 获取 repo 对象供工具使用（优先 GitHub API，回退本地适配器）
-        _owner, _name = (
-            repo_name.split("/", 1) if "/" in repo_name else ("", repo_name)
-        )
-        _client = await asyncio.to_thread(
-            self.github_app.get_installation_client, _owner, _name
-        )
-        if _client:
-            _scan_repo = await asyncio.to_thread(_client.get_repo, repo_name)
-            logger.info(f"使用 GitHub API repo 对象: {repo_name}")
-        else:
-            from backend.services.ai_reviewer.tools.local_repo_adapter import (
-                LocalRepoAdapter,
-            )
-
-            _scan_repo = LocalRepoAdapter(repo_path, repo_name)
-            logger.warning(
-                f"GitHub client 不可用，使用本地文件系统适配器: {repo_name}"
-            )
-
-        # 6. 多轮工具调用（使用扫描独立配置）
+        # 5. 多轮工具调用（使用扫描独立配置）
         from backend.core.config import get_settings
 
         settings = get_settings()
@@ -580,6 +560,13 @@ class ScanWorker:
                 messages.append(assistant_msg_dict)
 
                 import json
+
+                # 构造轻量 repo 对象供搜索工具使用（仅需 owner.login + name）
+                _owner, _name = repo_name.split("/", 1) if "/" in repo_name else ("", repo_name)
+                _scan_repo = type("Repo", (), {
+                    "owner": type("Owner", (), {"login": _owner})(),
+                    "name": _name,
+                })()
 
                 for tool_call in tool_calls:
                     try:
