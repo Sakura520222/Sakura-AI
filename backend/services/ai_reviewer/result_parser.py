@@ -18,7 +18,12 @@ from loguru import logger
 from .constants import (
     EMOJI_TO_SEVERITY,
     INLINE_COMMENT_PATTERN,
+    JSON_BLOCK_END_MARKER,
+    JSON_BLOCK_START_MARKER,
+    JSON_SCHEMA_VERSION,
     SEVERITY_TO_ISSUES_KEY,
+    VALID_DECISIONS,
+    VALID_SEVERITIES,
 )
 
 
@@ -46,6 +51,9 @@ class ReviewResultParser:
             - inline_comments: 行内评论列表
             - overall_score: 总体评分
             - issues: 按严重程度分类的问题
+            - parse_source: 解析来源 ("json" / "emoji" / "fallback")
+            - ai_decision: AI 建议的决策 (仅 JSON 模式)
+            - ai_decision_reason: AI 决策理由 (仅 JSON 模式)
         """
         result = {
             "summary": review_text,
@@ -53,10 +61,25 @@ class ReviewResultParser:
             "inline_comments": [],
             "overall_score": None,
             "issues": {"critical": [], "major": [], "minor": [], "suggestions": []},
+            "parse_source": "fallback",
+            "ai_decision": None,
+            "ai_decision_reason": None,
         }
 
         try:
-            # 使用ScoreExtractor提取评分
+            # 优先尝试结构化 JSON 提取
+            json_data = self._extract_structured_json(review_text)
+            if json_data and self._apply_json_result(result, json_data):
+                result["parse_source"] = "json"
+                logger.info(
+                    f"✅ 结构化 JSON 解析成功 (策略: {strategy}, "
+                    f"decision: {result.get('ai_decision')}, "
+                    f"issues: {len(result['inline_comments'])} 行内 + "
+                    f"{len(result['comments'])} 整体)"
+                )
+                return result
+
+            # Fallback: emoji 解析
             from backend.services.score_extractor import score_extractor
 
             extracted_score = score_extractor.extract_from_text(review_text)
@@ -77,6 +100,8 @@ class ReviewResultParser:
             # 如果没有提取到结构化评论，将整个文本作为摘要
             if not result["comments"]:
                 result["summary"] = review_text
+
+            result["parse_source"] = "emoji"
 
         except Exception as e:
             logger.warning(f"解析审查结果时出错: {e}")
@@ -347,6 +372,141 @@ class ReviewResultParser:
             return []
 
         return line_numbers
+
+    def _extract_structured_json(self, review_text: str) -> dict | None:
+        """从审查文本中提取结构化 JSON 块
+
+        Args:
+            review_text: AI 审查文本
+
+        Returns:
+            解析后的 JSON 字典，失败返回 None
+        """
+        if not review_text:
+            return None
+
+        start_idx = review_text.find(JSON_BLOCK_START_MARKER)
+        end_idx = review_text.find(JSON_BLOCK_END_MARKER)
+
+        if start_idx == -1 or end_idx == -1 or end_idx <= start_idx:
+            return None
+
+        # 提取 markers 之间的内容
+        json_content = review_text[
+            start_idx + len(JSON_BLOCK_START_MARKER) : end_idx
+        ].strip()
+
+        # 去除可能的 ```json``` 围栏
+        if json_content.startswith("```json"):
+            json_content = json_content[7:]
+        elif json_content.startswith("```"):
+            json_content = json_content[3:]
+        if json_content.endswith("```"):
+            json_content = json_content[:-3]
+        json_content = json_content.strip()
+
+        try:
+            data = json.loads(json_content)
+        except json.JSONDecodeError as e:
+            logger.warning(f"结构化 JSON 解析失败: {e}")
+            return None
+
+        if not isinstance(data, dict):
+            logger.warning("结构化 JSON 不是字典类型")
+            return None
+
+        # 校验 schema_version
+        if data.get("schema_version") != JSON_SCHEMA_VERSION:
+            logger.warning(
+                f"JSON schema_version 不匹配: {data.get('schema_version')} != {JSON_SCHEMA_VERSION}"
+            )
+            return None
+
+        # 校验必要字段
+        if "issues" not in data or "overall_score" not in data:
+            logger.warning("JSON 缺少 issues 或 overall_score 字段")
+            return None
+
+        # 校验 severity 值
+        for issue in data.get("issues", []):
+            severity = issue.get("severity", "")
+            if severity not in VALID_SEVERITIES:
+                logger.warning(f"JSON issue 包含非法 severity: {severity}")
+                return None
+
+        # 校验 decision 值（如果存在）
+        if "decision" in data and data["decision"] not in VALID_DECISIONS:
+            logger.warning(f"JSON 包含非法 decision: {data['decision']}")
+            return None
+
+        return data
+
+    def _apply_json_result(
+        self, result: dict[str, Any], json_data: dict[str, Any]
+    ) -> bool:
+        """将结构化 JSON 数据应用到结果字典
+
+        Args:
+            result: 结果字典（将被修改）
+            json_data: 解析后的 JSON 数据
+
+        Returns:
+            是否成功应用
+        """
+        try:
+            # 提取评分
+            score = json_data.get("overall_score")
+            if isinstance(score, (int, float)):
+                result["overall_score"] = int(score)
+
+            # 提取摘要
+            if json_data.get("summary"):
+                result["summary"] = json_data["summary"]
+
+            # 提取决策
+            if json_data.get("decision"):
+                result["ai_decision"] = json_data["decision"]
+            if json_data.get("decision_reason"):
+                result["ai_decision_reason"] = json_data["decision_reason"]
+
+            # 分类 issues
+            for issue in json_data.get("issues", []):
+                severity = issue.get("severity", "suggestion")
+                issues_key = SEVERITY_TO_ISSUES_KEY.get(severity, "suggestions")
+
+                file_path = issue.get("file_path")
+                line_number = issue.get("line_number")
+
+                if file_path and line_number is not None:
+                    # 行内评论
+                    inline_comment = {
+                        "file_path": file_path,
+                        "line_number": int(line_number),
+                        "body": issue.get("description", ""),
+                        "severity": severity,
+                    }
+                    if issue.get("end_line"):
+                        inline_comment["start_line"] = int(line_number)
+                        inline_comment["line_number"] = int(issue["end_line"])
+                    result["inline_comments"].append(inline_comment)
+                else:
+                    # 整体评论
+                    content = issue.get("description", issue.get("title", ""))
+                    if content:
+                        result["comments"].append(
+                            {"content": content, "severity": severity, "type": "overall"}
+                        )
+
+                # 按 severity 分组
+                title_or_desc = issue.get("title") or issue.get("description", "")
+                if title_or_desc and issues_key in result["issues"]:
+                    result["issues"][issues_key].append(title_or_desc)
+
+            return True
+
+        except Exception as e:
+            logger.warning(f"应用 JSON 结果失败: {e}")
+            return False
 
     def parse_label_recommendation(self, response_text: str) -> List[Dict[str, Any]]:
         """解析标签推荐响应
