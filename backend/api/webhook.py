@@ -116,6 +116,28 @@ async def handle_pull_request_event(payload: Dict[str, Any]) -> JSONResponse:
             logger.info(f"忽略PR动作: {action}")
             return JSONResponse(content={"status": "ignored", "action": action})
 
+        # 过滤 Bot 自身创建的 PR（如 sakura-memory 系统创建的 PR）
+        bot_username = settings.bot_username
+        sender = pr_info.get("sender", "")
+        author = pr_info.get("author", "")
+
+        if bot_username and (sender == bot_username or author == bot_username):
+            logger.info(
+                f"跳过 Bot 自身创建的 PR: {pr_info['repo_full_name']}#{pr_info['pr_number']}"
+            )
+            return JSONResponse(
+                content={"status": "ignored", "reason": "bot self-created PR"}
+            )
+
+        # 过滤 sakura-memory 分支 PR（兜底过滤）
+        if pr_info.get("branch", "").startswith("sakura-memory/"):
+            logger.info(
+                f"跳过 sakura-memory 分支 PR: {pr_info['repo_full_name']}#{pr_info['pr_number']}"
+            )
+            return JSONResponse(
+                content={"status": "ignored", "reason": "sakura-memory branch PR"}
+            )
+
         # 检查PR状态
         if pr_info.get("merged"):
             logger.info(

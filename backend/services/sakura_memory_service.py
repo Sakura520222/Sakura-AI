@@ -261,7 +261,9 @@ class SakuraMemoryService:
                     setattr(state, key, value)
                 await session.commit()
 
-    async def initialize(self, repo, repo_full_name: str) -> None:
+    async def initialize(
+        self, repo, repo_full_name: str, prepare_only: bool = False,
+    ) -> Optional[dict]:
         """初始化 .sakura/ 目录 / Initialize .sakura/ directory
 
         为新仓库自动创建 .sakura/ 目录，包含 SAKURA.md 和 memory.md。
@@ -270,16 +272,20 @@ class SakuraMemoryService:
         Args:
             repo: PyGithub Repository 对象
             repo_full_name: 仓库完整名称 (owner/repo)
+            prepare_only: 只收集文件不提交，返回文件字典供调用方合并提交
+
+        Returns:
+            prepare_only=True 时返回文件字典，否则返回 None
         """
         # 检查是否已初始化 / Check if already initialized
         state = await self._get_or_create_state(repo_full_name)
         if state.is_initialized:
-            return
+            return {} if prepare_only else None
 
         config = self._get_config()
         init_config = config.get("initialization", {})
         if not init_config.get("auto_init", True):
-            return
+            return {} if prepare_only else None
 
         try:
             # 检查核心文件是否已存在 / Check if core files already exist
@@ -291,7 +297,7 @@ class SakuraMemoryService:
                     ".sakura/ 已初始化 (SAKURA.md={}, memory.md={}), 跳过: {}",
                     has_sakura_md, has_memory_md, repo_full_name,
                 )
-                return
+                return {} if prepare_only else None
 
             # 收集仓库信息 / Collect repo info
             logger.info(f"[sakura] 步骤1: 收集仓库信息 {repo_full_name}")
@@ -323,13 +329,20 @@ class SakuraMemoryService:
 
             if not sakura_md:
                 logger.warning(f"LLM 返回空内容，跳过初始化: {repo_full_name}")
-                return
+                return {} if prepare_only else None
 
             # 创建初始文件 / Create initial files
             files = {
                 ".sakura/SAKURA.md": sakura_md,
                 ".sakura/memory.md": "# 项目记忆\n\n（首次初始化，暂无记忆）\n",
             }
+
+            if prepare_only:
+                logger.info(
+                    "[sakura] prepare_only: {} init files for {}",
+                    len(files), repo_full_name,
+                )
+                return files
 
             commit_msg = init_config.get(
                 "init_commit_message",
@@ -386,12 +399,19 @@ class SakuraMemoryService:
         try:
             # 确保已初始化 / Ensure initialized
             state = await self._get_or_create_state(repo_full_name)
-            if not state.is_initialized:
-                await self.initialize(repo, repo_full_name)
+            init_files = {}
+            needs_init = not state.is_initialized
+            if needs_init:
+                init_files = await self.initialize(
+                    repo, repo_full_name, prepare_only=True,
+                ) or {}
 
-            # 读取当前 memory.md / Read current memory.md
+            # 从 PR 分支或 main 读取 memory.md / Read memory.md from PR branch or main
+            sakura_ref = await self.write_service.get_sakura_branch(repo)
             current_memory = (
-                await self.write_service.read_file(repo, ".sakura/memory.md") or ""
+                await self.write_service.read_file(
+                    repo, ".sakura/memory.md", ref=sakura_ref,
+                ) or ""
             )
 
             # 提取增量审查上下文 / Extract incremental review context
@@ -497,15 +517,28 @@ class SakuraMemoryService:
             # 提交反思文件 / Commit reflection file
             files = {reflection_path: reflection_content}
             commit_msg = f"chore(sakura): add reflection for PR#{pr_number}"
+            if init_files:
+                files.update(init_files)
+                commit_msg = (
+                    f"chore(sakura): initialize .sakura/ and add reflection for PR#{pr_number}"
+                )
+                logger.info(
+                    "[sakura] combining init ({}) + reflection into single commit for {}",
+                    len(init_files), repo_full_name,
+                )
             await self.write_service.commit_files(repo, files, commit_msg)
 
-            # 更新反思计数 / Update reflection count
+            # 更新状态 / Update state
+            state_updates = {"reflection_count": state.reflection_count + 1}
+            if needs_init:
+                state_updates["is_initialized"] = True
+            await self._update_state(repo_full_name, **state_updates)
             new_count = state.reflection_count + 1
-            await self._update_state(repo_full_name, reflection_count=new_count)
 
             logger.info(
-                "已写入反思: {} PR#{} [{}] (第{}次反思)",
+                "已写入反思: {} PR#{} [{}] (第{}次反思{})",
                 repo_full_name, pr_number, review_type, new_count,
+                ", 初始化完成" if needs_init else "",
             )
 
             # 检查是否需要合并 / Check if consolidation is needed
@@ -556,8 +589,9 @@ class SakuraMemoryService:
             )
 
             # 读取最近的反思 / Read recent reflections
+            sakura_ref = await self.write_service.get_sakura_branch(repo)
             reflections = await self._read_recent_reflections(
-                repo, consolidation_config.get("interval", 5)
+                repo, consolidation_config.get("interval", 5), ref=sakura_ref,
             )
             if not reflections:
                 logger.warning("[consolidate] 未找到反思文件: {}", repo_full_name)
@@ -566,10 +600,14 @@ class SakuraMemoryService:
 
             # 读取当前文件 / Read current files
             current_sakura = (
-                await self.write_service.read_file(repo, ".sakura/SAKURA.md") or ""
+                await self.write_service.read_file(
+                    repo, ".sakura/SAKURA.md", ref=sakura_ref,
+                ) or ""
             )
             current_memory = (
-                await self.write_service.read_file(repo, ".sakura/memory.md") or ""
+                await self.write_service.read_file(
+                    repo, ".sakura/memory.md", ref=sakura_ref,
+                ) or ""
             )
             logger.info(
                 "[consolidate] 当前文件: SAKURA.md={}字, memory.md={}字",
@@ -688,11 +726,12 @@ class SakuraMemoryService:
             if not state.is_initialized:
                 return {}
 
+            sakura_ref = await self.write_service.get_sakura_branch(repo)
             sakura_md = await self.write_service.read_file(
-                repo, ".sakura/SAKURA.md"
+                repo, ".sakura/SAKURA.md", ref=sakura_ref,
             )
             memory_md = await self.write_service.read_file(
-                repo, ".sakura/memory.md"
+                repo, ".sakura/memory.md", ref=sakura_ref,
             )
 
             result = {}
@@ -745,7 +784,9 @@ class SakuraMemoryService:
             )
         return "\n".join(lines)
 
-    async def _read_recent_reflections(self, repo, count: int) -> str:
+    async def _read_recent_reflections(
+        self, repo, count: int, ref: Optional[str] = None,
+    ) -> str:
         """读取最近的反思文件 / Read recent reflection files
 
         从 .sakura/memory/ 目录读取最近的反思文件并合并为文本。
@@ -754,13 +795,14 @@ class SakuraMemoryService:
         Args:
             repo: PyGithub Repository 对象
             count: 要读取的文件数量
+            ref: 分支引用，默认 HEAD（main）
 
         Returns:
             合并后的反思内容字符串
         """
         try:
             contents = await asyncio.to_thread(
-                lambda: repo.get_contents(".sakura/memory")
+                lambda: repo.get_contents(".sakura/memory", ref=ref or "HEAD")
             )
             if not contents:
                 return ""
