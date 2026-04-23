@@ -145,6 +145,11 @@ class GitHubWriteService:
                 commit_obj = result.get("commit") if isinstance(result, dict) else None
                 if commit_obj:
                     last_sha = commit_obj.sha
+                else:
+                    logger.warning(
+                        "create_file/update_file returned no commit for {} on {}",
+                        path, branch,
+                    )
             return last_sha or ""
 
         sha = await asyncio.to_thread(_sync)
@@ -161,9 +166,10 @@ class GitHubWriteService:
         """通过创建分支 + PR + 尝试合并来提交文件 / Commit via branch + PR + auto-merge"""
 
         # 查找已有未合并分支 / Check for existing open sakura PR branch
-        existing_branch = await self._find_open_sakura_branch(repo)
+        found = await self._find_open_sakura_branch(repo, base_branch=base_branch)
 
-        if existing_branch:
+        if found:
+            existing_branch, _ = found
             logger.info(
                 "Found existing open branch {} for {}, appending commits",
                 existing_branch, repo.full_name,
@@ -310,14 +316,27 @@ class GitHubWriteService:
             )
             return "main"
 
-    async def _find_open_sakura_branch(self, repo) -> Optional[str]:
-        """查找已有的未合并 sakura 分支 / Find existing open sakura PR branch"""
+    async def _find_open_sakura_branch(
+        self, repo, base_branch: Optional[str] = None,
+    ) -> Optional[tuple]:
+        """查找已有的未合并 sakura 分支 / Find existing open sakura PR branch
 
-        def _sync() -> Optional[str]:
+        Returns:
+            (head_ref, base_ref) 元组，未找到时返回 None
+        """
+
+        def _sync() -> Optional[tuple]:
             pulls = repo.get_pulls(state="open")
             for pr in pulls:
                 if pr.head.ref.startswith(f"{self.SAKURA_BRANCH_PREFIX}/"):
-                    return pr.head.ref
+                    # 校验 base 分支一致性 / Verify base branch matches
+                    if base_branch and pr.base.ref != base_branch:
+                        logger.warning(
+                            "Open sakura PR #{} targets {} but expected {}, skipping",
+                            pr.number, pr.base.ref, base_branch,
+                        )
+                        continue
+                    return (pr.head.ref, pr.base.ref)
             return None
 
         try:
@@ -332,7 +351,8 @@ class GitHubWriteService:
         Get the open sakura branch name for reading files before merge.
         Returns None if no open sakura PR exists (files are on main).
         """
-        return await self._find_open_sakura_branch(repo)
+        found = await self._find_open_sakura_branch(repo)
+        return found[0] if found else None
 
 
 # 模块级单例访问 / Module-level singleton accessor
