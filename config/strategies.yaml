@@ -232,7 +232,23 @@ strategies:
       - 行号应该是 diff 中显示的行号（以 + 或 - 开头的行）
       - 每个具体问题都应该包含文件路径和行号
       - 严格按照 emoji 规范使用，避免误判严重程度
-    
+
+      ## ⚠️ 审查质量要求（最高优先级）
+
+      **你的 Markdown 审查正文是核心输出，必须保持与不包含 JSON 时完全一样的详细程度和质量。** 具体行号引用、问题追踪表、逐文件分析、代码示例等一个都不能少。JSON 块只是附带的机器可读摘要，绝不能因为要生成 JSON 而简化 Markdown 审查内容。
+
+      ## 结构化数据输出
+
+      在完成详细的 Markdown 审查后，在回复最末尾附上一个结构化 JSON 块（机器可读摘要）：
+
+      <!-- SAKURA_REVIEW_JSON_START -->
+      ```json
+      {"schema_version":1,"overall_score":7,"decision":"approve|request_changes|comment","decision_reason":"理由","issues":[{"severity":"critical|major|minor|suggestion","file_path":"路径或null","line_number":行号或null,"title":"标题","description":"描述","suggestion":"建议或null"}],"summary":"摘要"}
+      ```
+      <!-- SAKURA_REVIEW_JSON_END -->
+
+      JSON 规则：severity 必须为 critical/major/minor/suggestion；decision 必须为 approve/request_changes/comment；issues 须涵盖 Markdown 中所有问题；JSON 须合法完整。
+
   # 标准审查策略
   standard:
     name: "🔍 标准审查"
@@ -533,6 +549,22 @@ strategies:
       - 行号应该是 diff 中显示的行号（以 + 或 - 开头的行）
       - 每个具体问题都应该包含文件路径和行号
       - 严格按照 emoji 规范使用，避免误判严重程度
+
+      ## ⚠️ 审查质量要求（最高优先级）
+
+      **你的 Markdown 审查正文是核心输出，必须保持与不包含 JSON 时完全一样的详细程度和质量。** 具体行号引用、问题追踪表、逐文件分析、代码示例等一个都不能少。JSON 块只是附带的机器可读摘要，绝不能因为要生成 JSON 而简化 Markdown 审查内容。
+
+      ## 结构化数据输出
+
+      在完成详细的 Markdown 审查后，在回复最末尾附上一个结构化 JSON 块（机器可读摘要）：
+
+      <!-- SAKURA_REVIEW_JSON_START -->
+      ```json
+      {"schema_version":1,"overall_score":7,"decision":"approve|request_changes|comment","decision_reason":"理由","issues":[{"severity":"critical|major|minor|suggestion","file_path":"路径或null","line_number":行号或null,"title":"标题","description":"描述","suggestion":"建议或null"}],"summary":"摘要"}
+      ```
+      <!-- SAKURA_REVIEW_JSON_END -->
+
+      JSON 规则：severity 必须为 critical/major/minor/suggestion；decision 必须为 approve/request_changes/comment；issues 须涵盖 Markdown 中所有问题；JSON 须合法完整。
 
   # 深度审查策略
   deep:
@@ -839,6 +871,22 @@ strategies:
       - 每个具体问题都应该包含文件路径和行号
       - 严格按照 emoji 规范使用，避免误判严重程度
 
+      ## ⚠️ 审查质量要求（最高优先级）
+
+      **你的 Markdown 审查正文是核心输出，必须保持与不包含 JSON 时完全一样的详细程度和质量。** 具体行号引用、问题追踪表、逐文件分析、代码示例等一个都不能少。JSON 块只是附带的机器可读摘要，绝不能因为要生成 JSON 而简化 Markdown 审查内容。
+
+      ## 结构化数据输出
+
+      在完成详细的 Markdown 审查后，在回复最末尾附上一个结构化 JSON 块（机器可读摘要）：
+
+      <!-- SAKURA_REVIEW_JSON_START -->
+      ```json
+      {"schema_version":1,"overall_score":7,"decision":"approve|request_changes|comment","decision_reason":"理由","issues":[{"severity":"critical|major|minor|suggestion","file_path":"路径或null","line_number":行号或null,"title":"标题","description":"描述","suggestion":"建议或null"}],"summary":"摘要"}
+      ```
+      <!-- SAKURA_REVIEW_JSON_END -->
+
+      JSON 规则：severity 必须为 critical/major/minor/suggestion；decision 必须为 approve/request_changes/comment；issues 须涵盖 Markdown 中所有问题；JSON 须合法完整。
+
   # 超大PR策略
   large:
     name: "📋 汇总报告"
@@ -853,6 +901,22 @@ strategies:
       3. **建议**：是否建议拆分成多个小PR
       
       简洁回复，重点突出关键信息。
+
+      ## ⚠️ 审查质量要求（最高优先级）
+
+      **你的 Markdown 审查正文是核心输出，必须保持与不包含 JSON 时完全一样的详细程度和质量。** JSON 块只是附带的机器可读摘要，绝不能因为要生成 JSON 而简化 Markdown 审查内容。
+
+      ## 结构化数据输出
+
+      在完成详细的 Markdown 审查后，在回复最末尾附上一个结构化 JSON 块（机器可读摘要）：
+
+      <!-- SAKURA_REVIEW_JSON_START -->
+      ```json
+      {"schema_version":1,"overall_score":5,"decision":"approve|request_changes|comment","decision_reason":"理由","issues":[{"severity":"critical|major|minor|suggestion","file_path":"路径或null","line_number":行号或null,"title":"标题","description":"描述","suggestion":"建议或null"}],"summary":"摘要"}
+      ```
+      <!-- SAKURA_REVIEW_JSON_END -->
+
+      JSON 规则：severity 必须为 critical/major/minor/suggestion；decision 必须为 approve/request_changes/comment；issues 须涵盖 Markdown 中所有问题；JSON 须合法完整。
 
 # 文件过滤规则
 file_filters:

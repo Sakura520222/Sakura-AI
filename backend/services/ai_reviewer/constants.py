@@ -94,6 +94,15 @@ INLINE_COMMENT_PATTERN = (
 )
 
 # =============================================================================
+# 结构化 JSON 输出配置
+# =============================================================================
+JSON_BLOCK_START_MARKER = "<!-- SAKURA_REVIEW_JSON_START -->"
+JSON_BLOCK_END_MARKER = "<!-- SAKURA_REVIEW_JSON_END -->"
+JSON_SCHEMA_VERSION = 1
+VALID_SEVERITIES = {"critical", "major", "minor", "suggestion"}
+VALID_DECISIONS = {"approve", "request_changes", "comment"}
+
+# =============================================================================
 # 日志消息模板
 # =============================================================================
 LOG_MESSAGES = {

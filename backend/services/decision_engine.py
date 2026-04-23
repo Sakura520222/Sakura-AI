@@ -29,6 +29,8 @@ class DecisionEngine:
                 "enable_idempotency_check": True,
                 "ignored_patterns": [],
                 "repo_overrides": {},
+                "trust_ai_decision": True,
+                "ai_decision_block_on_critical": True,
             }
 
             # 合并配置
@@ -51,6 +53,8 @@ class DecisionEngine:
                 "enable_idempotency_check": True,
                 "ignored_patterns": [],
                 "repo_overrides": {},
+                "trust_ai_decision": True,
+                "ai_decision_block_on_critical": True,
             }
 
     def _get_repo_policy(self, repo_full_name: str) -> Dict[str, Any]:
@@ -118,50 +122,129 @@ class DecisionEngine:
             if review_result.get("overall_score") is None:
                 logger.warning("AI未返回评分，使用默认值0进行决策")
 
-            # 规则1: Critical问题阻断（一票否决）
-            if critical_count > 0 and policy.get("block_on_critical", True):
-                return (
-                    ReviewDecision.REQUEST_CHANGES,
-                    f"发现 {critical_count} 个严重问题必须修复后才能合并",
+            # AI 建议决策路径
+            ai_decision = review_result.get("ai_decision")
+            ai_decision_reason = review_result.get("ai_decision_reason", "")
+
+            if ai_decision and policy.get("trust_ai_decision", True):
+                final_decision, final_reason = self._apply_ai_decision(
+                    ai_decision=ai_decision,
+                    ai_reason=ai_decision_reason,
+                    critical_count=critical_count,
+                    policy=policy,
                 )
-
-            # 规则2: 低分阻断
-            block_threshold = policy.get("block_threshold", 4)
-            if score < block_threshold:
-                return (
-                    ReviewDecision.REQUEST_CHANGES,
-                    f"代码质量评分 ({score}/10) 低于最低要求 ({block_threshold}/10)",
+                logger.info(
+                    f"AI 决策: {ai_decision} → 最终决策: {final_decision.value}"
                 )
+                return (final_decision, final_reason)
 
-            # 规则3: 高分批准
-            approve_threshold = policy.get("approve_threshold", 8)
-            max_major = policy.get("max_major_issues", 1)
-
-            if score >= approve_threshold and major_count <= max_major:
-                # 构建批准理由
-                reason_parts = [
-                    f"代码质量评分: {score}/10 (达到批准标准 {approve_threshold}/10)",
-                    f"严重问题: {critical_count} 个",
-                    f"重要问题: {major_count} 个 (上限 {max_major} 个)",
-                ]
-
-                if minor_count > 0:
-                    reason_parts.append(f"次要问题: {minor_count} 个")
-                if suggestion_count > 0:
-                    reason_parts.append(f"优化建议: {suggestion_count} 条")
-
-                return (ReviewDecision.APPROVE, "代码质量优秀，符合合并标准")
-
-            # 规则4: 中间状态 - 中立评论
-            return (
-                ReviewDecision.COMMENT,
-                f"代码质量评分 ({score}/10) 处于中间状态，建议人工复审",
+            # Fallback: 规则引擎决策
+            return self._rule_based_decision(
+                score=score,
+                critical_count=critical_count,
+                major_count=major_count,
+                minor_count=minor_count,
+                suggestion_count=suggestion_count,
+                policy=policy,
             )
 
         except Exception as e:
             logger.error(f"决策引擎执行失败: {e}", exc_info=True)
             # 出错时默认为COMMENT，避免阻断
             return (ReviewDecision.COMMENT, f"决策过程出现异常: {str(e)}")
+
+    def _apply_ai_decision(
+        self,
+        ai_decision: str,
+        ai_reason: str,
+        critical_count: int,
+        policy: Dict[str, Any],
+    ) -> Tuple[ReviewDecision, str]:
+        """处理 AI 建议决策，应用安全护栏
+
+        Args:
+            ai_decision: AI 建议的决策
+            ai_reason: AI 决策理由
+            critical_count: critical 问题数量
+            policy: 策略配置
+
+        Returns:
+            (最终决策, 决策理由)
+        """
+        if ai_decision == "request_changes":
+            reason = ai_reason or "AI 建议驳回，存在需要修复的问题"
+            return (ReviewDecision.REQUEST_CHANGES, reason)
+
+        if ai_decision == "approve":
+            # 安全护栏：有 critical issue 时覆盖为 REQUEST_CHANGES
+            if critical_count > 0 and policy.get("ai_decision_block_on_critical", True):
+                logger.info(
+                    f"AI 建议 approve 但存在 {critical_count} 个 critical issue，安全护栏覆盖为 REQUEST_CHANGES"
+                )
+                return (
+                    ReviewDecision.REQUEST_CHANGES,
+                    f"AI 建议通过，但发现 {critical_count} 个严重问题必须修复",
+                )
+            reason = ai_reason or "代码质量良好，符合合并标准"
+            return (ReviewDecision.APPROVE, reason)
+
+        if ai_decision == "comment":
+            reason = ai_reason or "建议人工复审"
+            return (ReviewDecision.COMMENT, reason)
+
+        # 未知决策类型，fallback
+        logger.warning(f"未知的 AI 决策类型: {ai_decision}")
+        return (ReviewDecision.COMMENT, ai_reason or "未知的 AI 决策类型")
+
+    def _rule_based_decision(
+        self,
+        score: int,
+        critical_count: int,
+        major_count: int,
+        minor_count: int,
+        suggestion_count: int,
+        policy: Dict[str, Any],
+    ) -> Tuple[ReviewDecision, str]:
+        """基于规则的决策（原有逻辑，作为 fallback）
+
+        Args:
+            score: 代码质量评分
+            critical_count: critical 问题数量
+            major_count: major 问题数量
+            minor_count: minor 问题数量
+            suggestion_count: suggestion 问题数量
+            policy: 策略配置
+
+        Returns:
+            (决策类型, 决策理由)
+        """
+        # 规则1: Critical问题阻断（一票否决）
+        if critical_count > 0 and policy.get("block_on_critical", True):
+            return (
+                ReviewDecision.REQUEST_CHANGES,
+                f"发现 {critical_count} 个严重问题必须修复后才能合并",
+            )
+
+        # 规则2: 低分阻断
+        block_threshold = policy.get("block_threshold", 4)
+        if score < block_threshold:
+            return (
+                ReviewDecision.REQUEST_CHANGES,
+                f"代码质量评分 ({score}/10) 低于最低要求 ({block_threshold}/10)",
+            )
+
+        # 规则3: 高分批准
+        approve_threshold = policy.get("approve_threshold", 8)
+        max_major = policy.get("max_major_issues", 1)
+
+        if score >= approve_threshold and major_count <= max_major:
+            return (ReviewDecision.APPROVE, "代码质量优秀，符合合并标准")
+
+        # 规则4: 中间状态 - 中立评论
+        return (
+            ReviewDecision.COMMENT,
+            f"代码质量评分 ({score}/10) 处于中间状态，建议人工复审",
+        )
 
     def format_review_body(
         self,
