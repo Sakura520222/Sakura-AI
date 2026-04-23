@@ -511,6 +511,37 @@ class ScanWorker:
                 f"GitHub client 不可用，使用本地文件系统适配器: {repo_name}"
             )
 
+        # 5.5 注入 .sakura/ 记忆上下文 / Inject .sakura/ memory context
+        try:
+            from backend.services.sakura_memory_service import get_sakura_memory_service
+
+            sakura_memory_service = get_sakura_memory_service()
+            sakura_context = await sakura_memory_service.get_sakura_context(
+                repo=_scan_repo,
+                repo_full_name=repo_full_name,
+            )
+            if sakura_context:
+                sakura_md = sakura_context.get("sakura_md", "")
+                memory_md = sakura_context.get("memory_md", "")
+                if sakura_md or memory_md:
+                    sakura_section = "\n\n## 项目知识（来自 .sakura/ 目录）"
+                    if sakura_md:
+                        sakura_section += f"\n\n### 项目概述\n{sakura_md}"
+                    if memory_md:
+                        sakura_section += f"\n\n### 项目记忆\n{memory_md}"
+                    messages[1]["content"] += sakura_section
+                    parts = []
+                    if sakura_md:
+                        parts.append(f"SAKURA.md({len(sakura_md)}字)")
+                    if memory_md:
+                        parts.append(f"memory.md({len(memory_md)}字)")
+                    logger.info(f"已注入 .sakura/ 记忆上下文: {', '.join(parts)}")
+        except Exception as e:
+            logger.warning(
+                f".sakura/ 记忆上下文注入失败（不影响扫描）: {e}",
+                exc_info=True,
+            )
+
         # 6. 多轮工具调用（使用扫描独立配置）
         from backend.core.config import get_settings
 
