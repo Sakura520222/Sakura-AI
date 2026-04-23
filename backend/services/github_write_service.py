@@ -125,6 +125,8 @@ class GitHubWriteService:
         self, repo, files: dict, message: str, branch: str, author: InputGitAuthor,
     ) -> str:
         """提交文件到指定分支（不创建 PR）/ Commit files to an existing branch"""
+        if not files:
+            raise ValueError("files must not be empty")
 
         def _sync() -> str:
             last_sha = None
