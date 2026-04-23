@@ -1142,6 +1142,7 @@ def extract_pr_info_from_webhook(payload: Dict[str, Any]) -> Optional[Dict[str, 
             "state": pull_request["state"],
             "draft": pull_request.get("draft", False),
             "merged": pull_request.get("merged", False),
+            "sender": payload.get("sender", {}).get("login", ""),
             "before": payload.get("before"),
             "after": payload.get("after"),
         }
