@@ -23,7 +23,7 @@ class GitHubWriteService:
     """GitHub 文件写入服务 / GitHub file write service"""
 
     DEFAULT_AUTHOR_NAME = "Sakura AI Reviewer"
-    DEFAULT_AUTHOR_EMAIL = "Sakura520222@outlook.com"
+    DEFAULT_AUTHOR_EMAIL = "sakura@firefly520.top"
     SAKURA_BRANCH_PREFIX = "sakura-memory"
 
     def __init__(self):
@@ -121,11 +121,64 @@ class GitHubWriteService:
         logger.info("Committed {} -> {}", path, sha[:8])
         return sha
 
+    async def _commit_to_branch(
+        self, repo, files: dict, message: str, branch: str, author: InputGitAuthor,
+    ) -> str:
+        """提交文件到指定分支（不创建 PR）/ Commit files to an existing branch"""
+        if not files:
+            raise ValueError("files must not be empty")
+
+        def _sync() -> str:
+            last_sha = None
+            for path, content in files.items():
+                try:
+                    existing = repo.get_contents(path, ref=branch)
+                    if isinstance(existing, list):
+                        raise ValueError(f"Path {path} is a directory")
+                    result = repo.update_file(
+                        path=path, message=message, content=content,
+                        sha=existing.sha, branch=branch, author=author,
+                    )
+                except UnknownObjectException:
+                    result = repo.create_file(
+                        path=path, message=message, content=content,
+                        branch=branch, author=author,
+                    )
+                commit_obj = result.get("commit") if isinstance(result, dict) else None
+                if commit_obj is None:
+                    raise RuntimeError(
+                        f"create_file/update_file returned no commit for {path}"
+                    )
+                last_sha = commit_obj.sha
+            return last_sha
+
+        sha = await asyncio.to_thread(_sync)
+        logger.info(
+            "Appended {} file(s) to {}:{} -> {}",
+            len(files), repo.full_name, branch,
+            sha[:8] if sha else "unknown",
+        )
+        return sha
+
     async def _commit_via_pr(
         self, repo, files: dict, message: str, base_branch: str, author: InputGitAuthor,
     ) -> str:
         """通过创建分支 + PR + 尝试合并来提交文件 / Commit via branch + PR + auto-merge"""
 
+        # 查找已有未合并分支 / Check for existing open sakura PR branch
+        found = await self._find_open_sakura_branch(repo, base_branch=base_branch)
+
+        if found:
+            existing_branch, _ = found
+            logger.info(
+                "Found existing open branch {} for {}, appending commits",
+                existing_branch, repo.full_name,
+            )
+            return await self._commit_to_branch(
+                repo, files, message, existing_branch, author,
+            )
+
+        # 无已有分支 → 创建新分支 + PR / No existing branch → create new
         timestamp = datetime.utcnow().strftime("%Y%m%d-%H%M%S")
         new_branch = f"{self.SAKURA_BRANCH_PREFIX}/{timestamp}"
 
@@ -262,6 +315,45 @@ class GitHubWriteService:
                 repo.full_name, e,
             )
             return "main"
+
+    async def _find_open_sakura_branch(
+        self, repo, base_branch: Optional[str] = None,
+    ) -> Optional[tuple]:
+        """查找已有的未合并 sakura 分支 / Find existing open sakura PR branch
+
+        Returns:
+            (head_ref, base_ref) 元组，未找到时返回 None
+        """
+
+        def _sync() -> Optional[tuple]:
+            # NOTE: get_pulls 默认只返回前 30 条，超 30 个 open PR 时可能遗漏
+            pulls = repo.get_pulls(state="open")
+            for pr in pulls:
+                if pr.head.ref.startswith(f"{self.SAKURA_BRANCH_PREFIX}/"):
+                    # 校验 base 分支一致性 / Verify base branch matches
+                    if base_branch and pr.base.ref != base_branch:
+                        logger.warning(
+                            "Open sakura PR #{} targets {} but expected {}, skipping",
+                            pr.number, pr.base.ref, base_branch,
+                        )
+                        continue
+                    return (pr.head.ref, pr.base.ref)
+            return None
+
+        try:
+            return await asyncio.to_thread(_sync)
+        except Exception as e:
+            logger.debug("Failed to search open PRs: {}", e)
+            return None
+
+    async def get_sakura_branch(self, repo) -> Optional[str]:
+        """获取当前未合并的 sakura 分支名（供读取用）
+
+        Get the open sakura branch name for reading files before merge.
+        Returns None if no open sakura PR exists (files are on main).
+        """
+        found = await self._find_open_sakura_branch(repo)
+        return found[0] if found else None
 
 
 # 模块级单例访问 / Module-level singleton accessor
