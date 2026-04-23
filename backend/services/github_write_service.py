@@ -23,7 +23,7 @@ class GitHubWriteService:
     """GitHub 文件写入服务 / GitHub file write service"""
 
     DEFAULT_AUTHOR_NAME = "Sakura AI Reviewer"
-    DEFAULT_AUTHOR_EMAIL = "Sakura520222@163.com"
+    DEFAULT_AUTHOR_EMAIL = "sakura@firefly520.top"
     SAKURA_BRANCH_PREFIX = "sakura-memory"
 
     def __init__(self):
