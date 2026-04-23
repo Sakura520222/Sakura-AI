@@ -143,13 +143,11 @@ class GitHubWriteService:
                         branch=branch, author=author,
                     )
                 commit_obj = result.get("commit") if isinstance(result, dict) else None
-                if commit_obj:
-                    last_sha = commit_obj.sha
-                else:
-                    logger.warning(
-                        "create_file/update_file returned no commit for {} on {}",
-                        path, branch,
+                if commit_obj is None:
+                    raise RuntimeError(
+                        f"create_file/update_file returned no commit for {path}"
                     )
+                last_sha = commit_obj.sha
             return last_sha or ""
 
         sha = await asyncio.to_thread(_sync)
@@ -326,6 +324,7 @@ class GitHubWriteService:
         """
 
         def _sync() -> Optional[tuple]:
+            # NOTE: get_pulls 默认只返回前 30 条，超 30 个 open PR 时可能遗漏
             pulls = repo.get_pulls(state="open")
             for pr in pulls:
                 if pr.head.ref.startswith(f"{self.SAKURA_BRANCH_PREFIX}/"):
