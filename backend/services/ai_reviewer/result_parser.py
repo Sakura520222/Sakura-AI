@@ -106,6 +106,7 @@ class ReviewResultParser:
 
             # 提取行内评论
             self.extract_inline_comments(result, review_text)
+            self._dedup_inline_comments(result)
 
             # 提取结构化评论
             self._parse_structured_comments(result, review_text)
@@ -396,6 +397,8 @@ class ReviewResultParser:
             if key not in seen:
                 seen.add(key)
                 deduped.append(comment)
+            else:
+                logger.debug(f"去重丢弃行内评论: {key}")
         result["inline_comments"] = deduped
 
     def _strip_json_block(self, review_text: str) -> str:
