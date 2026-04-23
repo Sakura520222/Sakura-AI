@@ -2322,7 +2322,7 @@ Issue 分析详情。
   "success": true,
   "message": "ok",
   "data": {
-    "version": "2.8.4",
+    "version": "2.8.5",
     "build_date": "2026-04-17"
   }
 }
