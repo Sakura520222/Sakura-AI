@@ -148,7 +148,7 @@ class GitHubWriteService:
                         f"create_file/update_file returned no commit for {path}"
                     )
                 last_sha = commit_obj.sha
-            return last_sha or ""
+            return last_sha
 
         sha = await asyncio.to_thread(_sync)
         logger.info(
