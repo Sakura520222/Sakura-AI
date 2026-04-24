@@ -9,6 +9,7 @@
 
 import asyncio
 import functools
+import hashlib
 from datetime import datetime
 from typing import Dict, Optional
 
@@ -74,6 +75,74 @@ REFLECTION_PROMPT = """你是一个代码审查反思助手。请对以下审查
    - 对特定技术或模式的审查经验
 
 {incremental_reflection_prompt}
+
+请用中文输出，保持简洁但深入。"""
+
+# Issue reflection prompt template / Issue 反思 Prompt 模板
+ISSUE_REFLECTION_PROMPT = """你是一个 Issue 分析反思助手。请对以下 Issue 分析结果进行深度反思。
+
+## 分析信息
+- Issue: #{issue_number}
+- 仓库: {repo_full_name}
+- 作者: {author}
+- 原始标题: {original_title}
+- 原始内容摘要: {original_body}
+
+## 分析结果
+- 分类: {category}
+- 优先级: {priority}
+- 可行性: {feasibility}
+- 摘要: {summary}
+
+## 建议标签
+{suggested_labels}
+
+## 建议指派人
+{suggested_assignees}
+
+## 建议标题
+{suggested_title}
+
+## 重复检测结果
+{duplicate_info}
+
+## 关联 PR
+{related_prs}
+
+## 当前项目记忆
+{current_memory}
+
+请从以下维度进行深度反思：
+
+1. **分类与优先级准确性**
+   - 分类是否准确？是否有更合适的类别？
+   - 优先级判断是否合理？关键词匹配是否产生了误判？
+   - 是否考虑到 Issue 的实际影响范围？
+
+2. **标签推荐质量**
+   - 建议的标签是否贴切？置信度评估是否合理？
+   - 是否遗漏了重要的标签？
+   - 标签与仓库现有标签体系的一致性如何？
+
+3. **可行性判断质量**
+   - 可行性评估是否充分参考了代码库实际情况？
+   - 工作量估算是否合理？
+   - 是否正确识别了技术依赖和风险？
+
+4. **重复检测准确性**
+   - 重复检测的结果是否准确？
+   - 是否存在误报（将不同问题标记为重复）？
+   - 是否存在漏报（遗漏了实际重复的 Issue）？
+
+5. **标题改写适当性**
+   - 建议标题是否比原标题更清晰？
+   - 改写是否保留了原始问题的核心信息？
+   - 是否过度改写或不必要地改写了原本清晰的标题？
+
+6. **经验教训**
+   - 值得在未来 Issue 分析中关注的要点
+   - 对特定类型 Issue 的分析经验
+   - 仓库特有的模式和建议
 
 请用中文输出，保持简洁但深入。"""
 
@@ -178,6 +247,11 @@ class SakuraMemoryService:
                 "enabled": settings.sakura_reflection_enabled,
                 "model": reflection_model,
                 "prompt_template": yaml_config.get("reflection", {}).get("prompt_template"),
+            },
+            "issue_reflection": {
+                "enabled": settings.sakura_issue_reflection_enabled,
+                "model": yaml_config.get("issue_reflection", {}).get("model"),
+                "prompt_template": yaml_config.get("issue_reflection", {}).get("prompt_template"),
             },
             "consolidation": {
                 "interval": settings.sakura_consolidation_interval,
@@ -564,6 +638,161 @@ class SakuraMemoryService:
             return sum(1 for c in contents if f"_PR{pr_number}_" in c.name)
         except Exception:
             return 0
+
+    async def reflect_issue(
+        self,
+        repo,
+        repo_full_name: str,
+        issue_number: int,
+        issue_info: dict,
+        analysis_result: dict,
+        analysis_record,
+    ) -> None:
+        """Issue 分析后反思 / Post-issue-analysis reflection
+
+        Issue 分析完成后，对分析结果进行深度反思并写入 .sakura/memory/ 目录。
+        After issue analysis, reflect on results and write to .sakura/memory/ directory.
+
+        Args:
+            repo: PyGithub Repository 对象
+            repo_full_name: 仓库完整名称
+            issue_number: Issue 编号
+            issue_info: Issue webhook 信息字典
+            analysis_result: AI 分析结果字典
+            analysis_record: IssueAnalysis ORM 对象
+        """
+        config = self._get_config()
+        if not config.get("enabled", True):
+            return
+        if not config.get("issue_reflection", {}).get("enabled", True):
+            return
+
+        try:
+            # 确保已初始化 / Ensure initialized
+            state = await self._get_or_create_state(repo_full_name)
+            init_files = {}
+            needs_init = not state.is_initialized
+            if needs_init:
+                init_files = await self.initialize(
+                    repo, repo_full_name, prepare_only=True,
+                ) or {}
+
+            # 读取 memory.md / Read memory.md
+            sakura_ref = await self.write_service.get_sakura_branch(repo)
+            current_memory = (
+                await self.write_service.read_file(
+                    repo, ".sakura/memory.md", ref=sakura_ref,
+                ) or ""
+            )
+
+            # 从 analysis_record 提取数据 / Extract data from analysis_record
+            import json as _json
+
+            suggested_labels = analysis_record.suggested_labels or "无"
+            try:
+                labels_data = _json.loads(suggested_labels) if isinstance(suggested_labels, str) else suggested_labels
+                if isinstance(labels_data, list):
+                    suggested_labels = "\n".join(
+                        f"- {label.get('name', label) if isinstance(label, dict) else label}"
+                        f"（置信度: {label.get('confidence', 'N/A')}）" if isinstance(label, dict) else f"- {label}"
+                        for label in labels_data[:10]
+                    )
+            except (ValueError, TypeError):
+                pass
+
+            suggested_assignees = analysis_record.suggested_assignees or "无"
+            try:
+                assignees_data = _json.loads(suggested_assignees) if isinstance(suggested_assignees, str) else suggested_assignees
+                if isinstance(assignees_data, list):
+                    suggested_assignees = ", ".join(
+                        a.get("username", a) if isinstance(a, dict) else str(a)
+                        for a in assignees_data[:10]
+                    )
+            except (ValueError, TypeError):
+                pass
+
+            duplicate_of = analysis_record.duplicate_of
+            duplicate_info = f"可能是 #{duplicate_of} 的重复" if duplicate_of else "未检测到重复"
+
+            related_prs = analysis_record.related_prs or "无"
+            try:
+                prs_data = _json.loads(related_prs) if isinstance(related_prs, str) else related_prs
+                if isinstance(prs_data, list):
+                    related_prs = "\n".join(
+                        f"- PR #{p.get('number', p)}: {p.get('title', '')}" if isinstance(p, dict) else f"- {p}"
+                        for p in prs_data[:10]
+                    )
+            except (ValueError, TypeError):
+                pass
+
+            # 构建 Prompt / Build prompt
+            prompt = ISSUE_REFLECTION_PROMPT.format(
+                issue_number=issue_number,
+                repo_full_name=repo_full_name,
+                author=issue_info.get("sender", {}).get("login", "unknown"),
+                original_title=issue_info.get("title", ""),
+                original_body=(issue_info.get("body", "") or "")[:500],
+                category=analysis_result.get("category", "unknown"),
+                priority=analysis_result.get("priority", "unknown"),
+                feasibility=analysis_result.get("feasibility", "unknown"),
+                summary=analysis_result.get("summary", "无摘要"),
+                suggested_labels=suggested_labels,
+                suggested_assignees=suggested_assignees,
+                suggested_title=analysis_record.suggested_title or "无建议",
+                duplicate_info=duplicate_info,
+                related_prs=related_prs,
+                current_memory=current_memory or "暂无记忆",
+            )
+
+            # 生成反思 / Generate reflection
+            model = self._get_model(config.get("issue_reflection", {}))
+            reflection_content = await self._call_llm(prompt, model=model)
+
+            # 格式化文件名 / Format filename
+            today = datetime.now().strftime("%Y-%m-%d")
+            short_hash = hashlib.md5(
+                f"{repo_full_name}#{issue_number}#{datetime.now().isoformat()}".encode()
+            ).hexdigest()[:7]
+            reflection_path = f".sakura/memory/{today}_ISSUE{issue_number}_{short_hash}.md"
+
+            # 提交 / Commit
+            files = {reflection_path: reflection_content}
+            commit_msg = f"chore(sakura): add reflection for Issue#{issue_number}"
+            if init_files:
+                files.update(init_files)
+                commit_msg = (
+                    f"chore(sakura): initialize .sakura/ and add reflection for Issue#{issue_number}"
+                )
+                logger.info(
+                    "[sakura] combining init ({}) + issue reflection into single commit for {}",
+                    len(init_files), repo_full_name,
+                )
+            await self.write_service.commit_files(repo, files, commit_msg)
+
+            # 更新状态 / Update state
+            state_updates = {"reflection_count": state.reflection_count + 1}
+            if needs_init:
+                state_updates["is_initialized"] = True
+            await self._update_state(repo_full_name, **state_updates)
+            new_count = state.reflection_count + 1
+
+            logger.info(
+                "已写入 Issue 反思: {} Issue#{} (第{}次反思{})",
+                repo_full_name, issue_number, new_count,
+                ", 初始化完成" if needs_init else "",
+            )
+
+            # 检查合并触发 / Check consolidation trigger
+            consolidation_config = config.get("consolidation", {})
+            interval = consolidation_config.get(
+                "interval", state.consolidation_interval
+            )
+            since_last = new_count - (state.last_consolidation_count or 0)
+            if since_last >= interval:
+                await self.consolidate(repo, repo_full_name, new_count)
+
+        except Exception as e:
+            logger.error("Issue 反思失败 ({}): {}", repo_full_name, e, exc_info=True)
 
     async def consolidate(
         self, repo, repo_full_name: str, total_count: int
