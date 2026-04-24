@@ -10,6 +10,7 @@
 import asyncio
 import functools
 import hashlib
+import json
 from datetime import datetime
 from typing import Dict, Optional
 
@@ -240,6 +241,7 @@ class SakuraMemoryService:
 
         reflection_model = settings.sakura_reflection_model or yaml_config.get("reflection", {}).get("model")
         consolidation_model = settings.sakura_consolidation_model or yaml_config.get("consolidation", {}).get("model")
+        issue_reflection_model = settings.sakura_issue_reflection_model or yaml_config.get("issue_reflection", {}).get("model")
 
         return {
             "enabled": settings.sakura_memory_enabled,
@@ -250,7 +252,7 @@ class SakuraMemoryService:
             },
             "issue_reflection": {
                 "enabled": settings.sakura_issue_reflection_enabled,
-                "model": yaml_config.get("issue_reflection", {}).get("model"),
+                "model": issue_reflection_model,
                 "prompt_template": yaml_config.get("issue_reflection", {}).get("prompt_template"),
             },
             "consolidation": {
@@ -603,11 +605,11 @@ class SakuraMemoryService:
             await self.write_service.commit_files(repo, files, commit_msg)
 
             # 更新状态 / Update state
-            state_updates = {"reflection_count": state.reflection_count + 1}
+            new_count = state.reflection_count + 1
+            state_updates = {"reflection_count": new_count}
             if needs_init:
                 state_updates["is_initialized"] = True
             await self._update_state(repo_full_name, **state_updates)
-            new_count = state.reflection_count + 1
 
             logger.info(
                 "已写入反思: {} PR#{} [{}] (第{}次反思{})",
@@ -686,23 +688,25 @@ class SakuraMemoryService:
             )
 
             # 从 analysis_record 提取数据 / Extract data from analysis_record
-            import json as _json
-
             suggested_labels = analysis_record.suggested_labels or "无"
             try:
-                labels_data = _json.loads(suggested_labels) if isinstance(suggested_labels, str) else suggested_labels
+                labels_data = json.loads(suggested_labels) if isinstance(suggested_labels, str) else suggested_labels
                 if isinstance(labels_data, list):
-                    suggested_labels = "\n".join(
-                        f"- {label.get('name', label) if isinstance(label, dict) else label}"
-                        f"（置信度: {label.get('confidence', 'N/A')}）" if isinstance(label, dict) else f"- {label}"
-                        for label in labels_data[:10]
-                    )
+                    formatted_labels = []
+                    for label in labels_data[:10]:
+                        if isinstance(label, dict):
+                            name = label.get("name", label)
+                            confidence = label.get("confidence", "N/A")
+                            formatted_labels.append(f"- {name}（置信度: {confidence}）")
+                        else:
+                            formatted_labels.append(f"- {label}")
+                    suggested_labels = "\n".join(formatted_labels)
             except (ValueError, TypeError):
                 pass
 
             suggested_assignees = analysis_record.suggested_assignees or "无"
             try:
-                assignees_data = _json.loads(suggested_assignees) if isinstance(suggested_assignees, str) else suggested_assignees
+                assignees_data = json.loads(suggested_assignees) if isinstance(suggested_assignees, str) else suggested_assignees
                 if isinstance(assignees_data, list):
                     suggested_assignees = ", ".join(
                         a.get("username", a) if isinstance(a, dict) else str(a)
@@ -716,7 +720,7 @@ class SakuraMemoryService:
 
             related_prs = analysis_record.related_prs or "无"
             try:
-                prs_data = _json.loads(related_prs) if isinstance(related_prs, str) else related_prs
+                prs_data = json.loads(related_prs) if isinstance(related_prs, str) else related_prs
                 if isinstance(prs_data, list):
                     related_prs = "\n".join(
                         f"- PR #{p.get('number', p)}: {p.get('title', '')}" if isinstance(p, dict) else f"- {p}"
@@ -749,9 +753,10 @@ class SakuraMemoryService:
             reflection_content = await self._call_llm(prompt, model=model)
 
             # 格式化文件名 / Format filename
-            today = datetime.now().strftime("%Y-%m-%d")
+            now = datetime.now()
+            today = now.strftime("%Y-%m-%d")
             short_hash = hashlib.md5(
-                f"{repo_full_name}#{issue_number}#{datetime.now().isoformat()}".encode()
+                f"{repo_full_name}#{issue_number}#{now.isoformat()}".encode()
             ).hexdigest()[:7]
             reflection_path = f".sakura/memory/{today}_ISSUE{issue_number}_{short_hash}.md"
 
@@ -770,11 +775,11 @@ class SakuraMemoryService:
             await self.write_service.commit_files(repo, files, commit_msg)
 
             # 更新状态 / Update state
-            state_updates = {"reflection_count": state.reflection_count + 1}
+            new_count = state.reflection_count + 1
+            state_updates = {"reflection_count": new_count}
             if needs_init:
                 state_updates["is_initialized"] = True
             await self._update_state(repo_full_name, **state_updates)
-            new_count = state.reflection_count + 1
 
             logger.info(
                 "已写入 Issue 反思: {} Issue#{} (第{}次反思{})",
