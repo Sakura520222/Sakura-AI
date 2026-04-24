@@ -305,6 +305,7 @@ class Settings(BaseSettings):
     sakura_max_sakura_chars: int = 5000  # SAKURA.md 最大字符数
     sakura_auto_init: bool = True  # 是否自动初始化 .sakura/ 目录
     sakura_consolidation_partial_commit: bool = False  # 合并时一个文件失败是否仍提交另一个
+    sakura_issue_reflection_enabled: bool = True  # 是否启用 Issue 分析后反思
 
 
 class StrategyConfig:
@@ -684,6 +685,7 @@ DYNAMIC_CONFIG_GROUPS: OrderedDict[str, dict] = OrderedDict(
                 "descriptions": {
                     "sakura_memory_enabled": "启用 .sakura/ 记忆系统，在 PR 审查中自动积累项目知识",
                     "sakura_reflection_enabled": "启用审查后反思，AI 会分析自身审查质量并总结经验",
+                    "sakura_issue_reflection_enabled": "启用 Issue 分析后反思，AI 会分析自身分类、标签推荐等质量并总结经验",
                     "sakura_reflection_model": "反思使用的 AI 模型，留空则使用审查模型",
                     "sakura_consolidation_interval": "积累多少轮反思后触发知识合并（建议 3-10）",
                     "sakura_consolidation_model": "合并使用的 AI 模型，留空则使用审查模型",
@@ -695,6 +697,7 @@ DYNAMIC_CONFIG_GROUPS: OrderedDict[str, dict] = OrderedDict(
                 "keys": [
                     "sakura_memory_enabled",
                     "sakura_reflection_enabled",
+                    "sakura_issue_reflection_enabled",
                     "sakura_reflection_model",
                     "sakura_consolidation_interval",
                     "sakura_consolidation_model",
@@ -837,6 +840,7 @@ DYNAMIC_CONFIG_LABELS: dict[str, str] = {
     # Sakura 记忆系统
     "sakura_memory_enabled": "启用记忆系统",
     "sakura_reflection_enabled": "启用审查反思",
+    "sakura_issue_reflection_enabled": "启用 Issue 反思",
     "sakura_reflection_model": "反思模型名称",
     "sakura_consolidation_interval": "合并触发反思轮数",
     "sakura_consolidation_model": "合并模型名称",
