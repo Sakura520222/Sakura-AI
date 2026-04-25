@@ -24,6 +24,7 @@ class ToolHandler:
         git_tool=None,
         search_files_tool=None,
         sakura_tool=None,
+        fetch_url_tool=None,
     ):
         """初始化工具处理器
 
@@ -34,6 +35,7 @@ class ToolHandler:
             git_tool: Git 信息工具处理器（可选）
             search_files_tool: 跨文件搜索工具处理器（可选）
             sakura_tool: .sakura/ 文档工具处理器（可选）
+            fetch_url_tool: URL 抓取工具处理器（可选）
         """
         self.file_tool = file_tool
         self.search_tool = search_tool
@@ -41,6 +43,7 @@ class ToolHandler:
         self.git_tool = git_tool
         self.search_files_tool = search_files_tool
         self.sakura_tool = sakura_tool
+        self.fetch_url_tool = fetch_url_tool
 
     async def handle_tool_call(
         self, tool_call: Any, repo: Any, pr: Any
@@ -95,6 +98,12 @@ class ToolHandler:
                 return await self.web_search_tool.search_web(
                     query=arguments.get("query", ""),
                     top_k=arguments.get("top_k"),
+                )
+            elif function_name == "fetch_url":
+                if not self.fetch_url_tool:
+                    return {"error": "URL 抓取工具未启用"}
+                return await self.fetch_url_tool.fetch_url(
+                    url=arguments.get("url", ""),
                 )
             elif function_name == "search_in_files":
                 if not self.search_files_tool:
