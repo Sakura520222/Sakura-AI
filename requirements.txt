@@ -49,3 +49,6 @@ itsdangerous>=2.1.0
 
 # API 限流
 slowapi>=0.1.9
+
+# URL 抓取工具
+beautifulsoup4>=4.12.0

@@ -539,7 +539,7 @@ async def insert_default_configs_async():
         ),
         AppConfig(
             key_name="web_search_enabled",
-            key_value="false",
+            key_value="true",
             description="启用 Web 搜索工具",
         ),
         AppConfig(

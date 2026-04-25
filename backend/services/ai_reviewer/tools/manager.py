@@ -133,6 +133,31 @@ class ToolManager:
                     enabled_tools.append(web_tool)
                     logger.debug("已启用 search_web 工具")
 
+                # fetch_url 仅在 web_search 启用时才检查
+                fetch_url_enabled = settings.fetch_url_enabled
+                try:
+                    from backend.models.database import AppConfig, async_session
+                    from sqlalchemy import select
+
+                    if async_session is not None:
+                        async with async_session() as sess:
+                            result = await sess.execute(
+                                select(AppConfig).where(
+                                    AppConfig.key_name == "fetch_url_enabled"
+                                )
+                            )
+                            cfg = result.scalar_one_or_none()
+                            if cfg:
+                                fetch_url_enabled = cfg.key_value == "true"
+                except Exception:
+                    pass
+
+                if fetch_url_enabled:
+                    fetch_tool = TOOL_NAME_TO_DEFINITION.get("fetch_url")
+                    if fetch_tool:
+                        enabled_tools.append(fetch_tool)
+                        logger.debug("已启用 fetch_url 工具")
+
             # 检查 .sakura/ 文档工具 / Check .sakura/ doc tools
             if settings.sakura_memory_enabled:
                 for tool_name in SAKURA_TOOLS:

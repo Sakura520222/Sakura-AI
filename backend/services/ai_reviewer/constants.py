@@ -64,7 +64,7 @@ ISSUE_CATEGORIES = ["critical", "major", "minor", "suggestions"]
 BASE_TOOLS = ["read_file", "list_directory", "search_in_files", "get_git_info", "list_commits"]
 RAG_TOOLS = ["search_project_docs"]
 CODE_INDEX_TOOLS = ["search_code_context"]
-WEB_SEARCH_TOOLS = ["search_web"]
+WEB_SEARCH_TOOLS = ["search_web", "fetch_url"]
 SAKURA_TOOLS = ["read_sakura_docs", "list_sakura_directory"]
 
 ALL_TOOLS = BASE_TOOLS + RAG_TOOLS + CODE_INDEX_TOOLS + WEB_SEARCH_TOOLS + SAKURA_TOOLS
@@ -261,14 +261,10 @@ SEARCH_WEB_TOOL = {
     "type": "function",
     "function": {
         "name": "search_web",
-        "description": """搜索互联网获取最新文档、API 参考、最佳实践等信息。
-
-重要：仅在以下情况使用此工具：
-- 本地文档搜索（search_project_docs）和代码搜索（search_code_context）均未找到答案时
-- 需要查询最新的 API 文档或版本变更时
-- 需要了解特定技术/框架的最新最佳实践时
-
-不要用于可以通过本地工具解决的问题。""",
+        "description": """搜索互联网获取最新文档、API 参考、最佳实践等信息。适用于：
+- 查询最新的 API 文档、版本变更或技术规范
+- 了解特定技术/框架的最佳实践和推荐用法
+- 获取与代码相关的最新社区讨论和解决方案""",
         "parameters": {
             "type": "object",
             "properties": {
@@ -283,6 +279,28 @@ SEARCH_WEB_TOOL = {
                 },
             },
             "required": ["query"],
+        },
+    },
+}
+
+FETCH_URL_TOOL = {
+    "type": "function",
+    "function": {
+        "name": "fetch_url",
+        "description": """抓取指定 URL 的网页内容并转换为纯文本。适用于：
+- 深入阅读搜索结果中的链接内容
+- 获取官方文档、API 参考的完整页面
+- 查看特定技术文章或博客的详细内容
+注意：仅支持 HTTP/HTTPS 协议，大页面内容会被截断。""",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "url": {
+                    "type": "string",
+                    "description": "要抓取的网页 URL，例如：'https://docs.python.org/3/library/asyncio.html'",
+                },
+            },
+            "required": ["url"],
         },
     },
 }
@@ -413,6 +431,7 @@ ALL_TOOL_DEFINITIONS = [
     SEARCH_PROJECT_DOCS_TOOL,
     SEARCH_CODE_CONTEXT_TOOL,
     SEARCH_WEB_TOOL,
+    FETCH_URL_TOOL,
     SEARCH_IN_FILES_TOOL,
     GET_GIT_INFO_TOOL,
     LIST_COMMITS_TOOL,
@@ -427,6 +446,7 @@ TOOL_NAME_TO_DEFINITION = {
     "search_project_docs": SEARCH_PROJECT_DOCS_TOOL,
     "search_code_context": SEARCH_CODE_CONTEXT_TOOL,
     "search_web": SEARCH_WEB_TOOL,
+    "fetch_url": FETCH_URL_TOOL,
     "search_in_files": SEARCH_IN_FILES_TOOL,
     "get_git_info": GET_GIT_INFO_TOOL,
     "list_commits": LIST_COMMITS_TOOL,
