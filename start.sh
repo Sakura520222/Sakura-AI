@@ -1,23 +1,41 @@
+#!/usr/bin/env bash
 # Sakura AI Reviewer 快速启动脚本
-
-set -e
+set -euo pipefail
 
 REBUILD=false
-if [[ "$1" == "--rebuild" ]]; then
-    REBUILD=true
+for arg in "$@"; do
+    case "$arg" in
+        --rebuild) REBUILD=true ;;
+        --help|-h)
+            echo "用法: ./start.sh [--rebuild] [--help]"
+            echo "  --rebuild  强制重建镜像"
+            echo "  --help     显示帮助"
+            exit 0
+            ;;
+        *)
+            echo "未知参数: $arg"
+            exit 1
+            ;;
+    esac
+done
+
+# 检测 docker compose 命令 (v2 优先)
+COMPOSE_FILE="docker/docker-compose.yml"
+if docker compose version &>/dev/null; then
+    COMPOSE="docker compose -f $COMPOSE_FILE"
+elif command -v docker-compose &>/dev/null; then
+    COMPOSE="docker-compose -f $COMPOSE_FILE"
+else
+    echo "❌ Docker Compose 未安装，请先安装 Docker Compose"
+    exit 1
 fi
 
 echo "🚀 Sakura AI Reviewer 启动脚本"
 echo "=========================="
 
 # 检查 Docker
-if ! command -v docker &> /dev/null; then
+if ! command -v docker &>/dev/null; then
     echo "❌ Docker 未安装，请先安装 Docker"
-    exit 1
-fi
-
-if ! command -v docker-compose &> /dev/null; then
-    echo "❌ Docker Compose 未安装，请先安装 Docker Compose"
     exit 1
 fi
 
@@ -27,10 +45,8 @@ echo "✅ 环境检查完成"
 mkdir -p logs .deploy
 
 # 依赖变更检测
-DEPLOY_HASH_DIR=".deploy"
+SAVED_HASH_FILE=".deploy/requirements.hash"
 CURRENT_HASH=""
-SAVED_HASH_FILE="$DEPLOY_HASH_DIR/requirements.hash"
-
 if [[ -f "requirements.txt" ]]; then
     CURRENT_HASH=$(md5sum requirements.txt | awk '{print $1}')
 fi
@@ -45,7 +61,7 @@ elif [[ ! -f "$SAVED_HASH_FILE" ]]; then
     echo "📦 首次部署，需要构建镜像"
     NEED_BUILD=true
 elif [[ "$CURRENT_HASH" != "$(cat "$SAVED_HASH_FILE")" ]]; then
-    echo "📦 检测到依赖变更，将在容器内安装依赖"
+    echo "📦 检测到依赖变更，将在容器内安装新依赖"
     NEED_PIP_INSTALL=true
 else
     echo "✅ 依赖未变更，跳过构建"
@@ -53,47 +69,69 @@ fi
 
 # 停止现有容器
 echo "🛑 停止现有容器..."
-cd docker
-docker-compose down
+$COMPOSE down
 
 # 构建并启动
 if $NEED_BUILD; then
     echo "🔨 构建并启动服务..."
-    docker-compose up -d --build
-    # 保存当前哈希
-    cd ..
+    $COMPOSE up -d --build
     echo "$CURRENT_HASH" > "$SAVED_HASH_FILE"
-    echo "✅ 依赖哈希已更新"
-    cd docker
+    echo "✅ 镜像构建完成，依赖哈希已更新"
 else
     echo "🔧 启动服务（无构建）..."
-    docker-compose up -d
+    $COMPOSE up -d
 fi
 
-# 依赖变更时在运行中的容器内安装
+# 依赖变更时在容器内安装（比重建快）
 if $NEED_PIP_INSTALL; then
     echo "📦 在容器内安装新依赖..."
-    docker-compose exec -T web pip install -r /app/requirements.txt -q
-    cd ..
+    # 等待容器启动完成
+    for i in $(seq 1 15); do
+        if $COMPOSE exec -T web python -c "print('ok')" &>/dev/null; then
+            break
+        fi
+        sleep 1
+    done
+    if ! $COMPOSE exec -T web pip install -r /app/requirements.txt; then
+        echo "❌ pip install 失败，请尝试 ./start.sh --rebuild"
+        exit 1
+    fi
+    # docker commit 将容器当前状态（含新安装的包）写入镜像，后续 down/up 不会丢失
+    IMAGE_TAG="sakura-ai-reviewer:pip-${CURRENT_HASH:0:8}"
+    echo "💾 将依赖写入镜像 $IMAGE_TAG ..."
+    docker commit sakura-ai-reviewer "$IMAGE_TAG"
+    docker tag "$IMAGE_TAG" sakura-ai-reviewer:latest
     echo "$CURRENT_HASH" > "$SAVED_HASH_FILE"
-    echo "✅ 依赖安装完成，哈希已更新"
-    cd docker
-    echo "🔄 重启容器以使新依赖生效..."
-    docker-compose restart web
+    echo "🔄 重启容器以加载新依赖..."
+    $COMPOSE restart web
+    echo "✅ 依赖安装完成，镜像已更新"
 fi
 
-# 等待服务启动
+# 轮询等待服务就绪
 echo "⏳ 等待服务启动..."
-sleep 10
+TIMEOUT=60
+ELAPSED=0
+while [[ $ELAPSED -lt $TIMEOUT ]]; do
+    if curl -sf http://localhost:8000/health >/dev/null 2>&1; then
+        echo "✅ 服务已就绪 (${ELAPSED}s)"
+        break
+    fi
+    sleep 2
+    ELAPSED=$((ELAPSED + 2))
+done
+
+if [[ $ELAPSED -ge $TIMEOUT ]]; then
+    echo "⚠️  服务启动超时 (${TIMEOUT}s)，请检查日志: $COMPOSE logs -f"
+fi
 
 # 检查服务状态
+echo ""
 echo "📊 服务状态:"
-docker-compose ps
+$COMPOSE ps
 
-# 显示日志
 echo ""
 echo "📋 查看日志命令:"
-echo "  cd docker && docker-compose logs -f"
+echo "  $COMPOSE logs -f"
 echo ""
 echo "✅ 启动完成！"
 echo ""
