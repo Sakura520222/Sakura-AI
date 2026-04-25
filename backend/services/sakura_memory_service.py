@@ -227,11 +227,18 @@ class SakuraMemoryService:
         """初始化服务 / Initialize service"""
         self.write_service = get_github_write_service()
         settings = get_settings()
-        # 使用主模型配置创建 API 客户端 / Use main model config for API client
-        self.api_client = AIApiClient(
-            base_url=settings.openai_api_base,
-            api_key=settings.openai_api_key,
-        )
+        if settings.sakura_use_summary_model:
+            self.api_client = AIApiClient(
+                base_url=settings.summary_api_base or settings.openai_api_base,
+                api_key=settings.summary_api_key or settings.openai_api_key,
+            )
+            self._default_model = settings.summary_model or settings.openai_model
+        else:
+            self.api_client = AIApiClient(
+                base_url=settings.openai_api_base,
+                api_key=settings.openai_api_key,
+            )
+            self._default_model = settings.openai_model
 
     def _get_config(self) -> dict:
         """获取 sakura_memory 配置，优先使用 DB/WebUI 配置 / Get config, DB/WebUI overrides yaml"""
@@ -281,7 +288,7 @@ class SakuraMemoryService:
         model = config_section.get("model")
         if model:
             return model
-        return get_settings().openai_model
+        return self._default_model
 
     async def _get_or_create_state(self, repo_full_name: str) -> SakuraMemoryState:
         """获取或创建仓库的记忆状态 / Get or create memory state for a repo"""
@@ -1142,7 +1149,7 @@ class SakuraMemoryService:
         messages = [{"role": "user", "content": prompt}]
         response = await self.api_client.call_with_retry(
             messages=messages,
-            model=model or get_settings().openai_model,
+            model=model or self._default_model,
             temperature=0.7,
             max_tokens=4000,
         )
