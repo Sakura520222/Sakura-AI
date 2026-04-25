@@ -233,6 +233,7 @@ class Settings(BaseSettings):
     fetch_url_max_calls_per_session: int = 3  # 单次会话最大调用次数
     fetch_url_domain_policy: str = "off"  # 域名过滤策略：off / blacklist / whitelist
     fetch_url_domain_list: str = ""  # 域名列表（逗号分隔）
+    fetch_url_force_https: bool = False  # 强制仅允许 HTTPS 协议
 
     # ========== 代码索引配置 ==========
     enable_code_index: bool = True  # 是否启用代码索引功能
@@ -736,6 +737,7 @@ DYNAMIC_CONFIG_GROUPS: OrderedDict[str, dict] = OrderedDict(
                     "fetch_url_max_calls_per_session": "单次审查/分析会话中允许的最大抓取次数",
                     "fetch_url_domain_policy": "域名过滤策略：off（仅 IP 拦截）/ blacklist（黑名单）/ whitelist（白名单）",
                     "fetch_url_domain_list": "域名列表（逗号分隔），根据策略用作黑名单或白名单，支持 * 通配符",
+                    "fetch_url_force_https": "强制仅允许 HTTPS 协议，拒绝 HTTP 明文传输",
                 },
                 "keys": [
                     "fetch_url_enabled",
@@ -745,6 +747,7 @@ DYNAMIC_CONFIG_GROUPS: OrderedDict[str, dict] = OrderedDict(
                     "fetch_url_max_calls_per_session",
                     "fetch_url_domain_policy",
                     "fetch_url_domain_list",
+                    "fetch_url_force_https",
                 ],
             },
         ),
