@@ -307,6 +307,7 @@ class Settings(BaseSettings):
     sakura_consolidation_partial_commit: bool = False  # 合并时一个文件失败是否仍提交另一个
     sakura_issue_reflection_enabled: bool = True  # 是否启用 Issue 分析后反思
     sakura_issue_reflection_model: str = ""  # Issue 反思使用的模型，为空时使用审查模型
+    sakura_use_summary_model: bool = False  # 反思/合并任务使用辅助模型凭据以降低成本
 
 
 class StrategyConfig:
@@ -695,6 +696,7 @@ DYNAMIC_CONFIG_GROUPS: OrderedDict[str, dict] = OrderedDict(
                     "sakura_max_sakura_chars": "SAKURA.md 文件的最大字符数限制",
                     "sakura_auto_init": "首次审查时自动在仓库中初始化 .sakura/ 目录",
                     "sakura_consolidation_partial_commit": "合并时一个文件生成失败是否仍提交成功生成的文件",
+                    "sakura_use_summary_model": "启用后反思、合并等后台任务将使用辅助模型的 API 凭据，降低成本",
                 },
                 "keys": [
                     "sakura_memory_enabled",
@@ -708,6 +710,7 @@ DYNAMIC_CONFIG_GROUPS: OrderedDict[str, dict] = OrderedDict(
                     "sakura_max_sakura_chars",
                     "sakura_auto_init",
                     "sakura_consolidation_partial_commit",
+                    "sakura_use_summary_model",
                 ],
             },
         ),
@@ -852,6 +855,7 @@ DYNAMIC_CONFIG_LABELS: dict[str, str] = {
     "sakura_max_sakura_chars": "SAKURA.md 最大字符数",
     "sakura_auto_init": "自动初始化 .sakura/",
     "sakura_consolidation_partial_commit": "部分提交",
+    "sakura_use_summary_model": "使用辅助模型",
 }
 
 # 内存 TTL 缓存（进程级，多 Worker 部署时各进程独立，配置变更仅当前进程可见）
