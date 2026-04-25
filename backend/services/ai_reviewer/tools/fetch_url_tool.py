@@ -45,14 +45,12 @@ _CONFUSABLE_CATEGORIES = frozenset({"Mn", "Cf", "Co"})
 _CONFUSABLE_RANGES: list[tuple[int, int]] = [
     (0x0300, 0x036F),   # Combining diacritical marks
     (0x1AB0, 0x1AFF),   # Combining diacritical marks extended
+    (0x0400, 0x04FF),   # Cyrillic (confusable with Latin)
     (0x200B, 0x200F),   # Zero-width chars, direction marks
     (0x2028, 0x202F),   # Line/word separators, directional
     (0x2060, 0x206F),   # Word joiner, invisible chars
     (0xFE00, 0xFE0F),   # Variation selectors
     (0xFEFF, 0xFEFF),   # BOM / zero-width no-break space
-    (0xFF00, 0xFFEF),   # Fullwidth forms (e.g. Ａ looks like A)
-    (0x0400, 0x04FF),   # Cyrillic (confusable with Latin)
-    (0x0300, 0x036F),   # Greek extended combining
 ]
 
 
@@ -88,16 +86,15 @@ class FetchUrlToolHandler:
     未找到时回退到环境变量配置。
     """
 
-    _CONFIG_MAP = {
-        "fetch_url_enabled": "fetch_url_enabled",
-        "fetch_url_timeout": "fetch_url_timeout",
-        "fetch_url_max_content_length": "fetch_url_max_content_length",
-        "fetch_url_max_download_size": "fetch_url_max_download_size",
-        "fetch_url_max_calls_per_session": "fetch_url_max_calls_per_session",
-        "fetch_url_domain_policy": "fetch_url_domain_policy",
-        "fetch_url_domain_list": "fetch_url_domain_list",
-        "fetch_url_force_https": "fetch_url_force_https",
-    }
+    _CONFIG_KEYS = [
+        "fetch_url_timeout",
+        "fetch_url_max_content_length",
+        "fetch_url_max_download_size",
+        "fetch_url_max_calls_per_session",
+        "fetch_url_domain_policy",
+        "fetch_url_domain_list",
+        "fetch_url_force_https",
+    ]
 
     _CONFIG_CACHE_TTL = 60
 
@@ -130,9 +127,10 @@ class FetchUrlToolHandler:
                 return
 
             async with async_session() as session:
-                keys = list(self._CONFIG_MAP.keys())
                 result = await session.execute(
-                    select(AppConfig).where(AppConfig.key_name.in_(keys))
+                    select(AppConfig).where(
+                        AppConfig.key_name.in_(self._CONFIG_KEYS)
+                    )
                 )
                 configs = result.scalars().all()
                 config_values = {c.key_name: c.key_value for c in configs}
@@ -270,16 +268,20 @@ class FetchUrlToolHandler:
 
         return None
 
-    def _resolve_and_check_ssrf(self, hostname: str) -> str:
+    async def _resolve_and_check_ssrf(self, hostname: str) -> str:
         """DNS 解析并检查 IP 是否为内网地址，返回解析到的 IP
 
+        使用 run_in_executor 避免阻塞事件循环。
         NOTE: 存在 TOCTOU 风险 — DNS 解析在此完成，但 httpx 发起请求时会
         再次独立解析。攻击者理论上可通过 DNS rebinding 绕过（第一次解析返回
         合法 IP，第二次返回内网 IP）。实际利用难度高（时间窗口极短），且
         httpx 不支持自定义 DNS resolver，此处作为已知可接受风险。
         """
+        loop = asyncio.get_running_loop()
         try:
-            addr_infos = socket.getaddrinfo(hostname, None)
+            addr_infos = await loop.run_in_executor(
+                None, socket.getaddrinfo, hostname, None
+            )
         except socket.gaierror as e:
             raise ValueError(f"DNS 解析失败: {hostname} — {e}")
 
@@ -461,7 +463,7 @@ class FetchUrlToolHandler:
             self._check_domain_policy(hostname)
 
             # Step 3: DNS resolve + SSRF IP check
-            resolved_ip = self._resolve_and_check_ssrf(hostname)
+            resolved_ip = await self._resolve_and_check_ssrf(hostname)
 
             # Step 4: Fetch with redirect control and Content-Type check
             content, status_code, download_bytes = await self._fetch_with_redirects(
@@ -557,11 +559,11 @@ class FetchUrlToolHandler:
                     },
                 )
 
-                # Check Content-Type on every response (including errors)
-                ct = response.headers.get("content-type")
-                self._check_content_type(ct)
-
+                # Check Content-Type on redirect responses
                 if response.status_code in (301, 302, 303, 307, 308):
+                    ct = response.headers.get("content-type")
+                    self._check_content_type(ct)
+
                     # Account for redirect response body bytes
                     redirect_body_len = len(response.content) if response.content else 0
                     total_bytes += redirect_body_len
@@ -590,13 +592,23 @@ class FetchUrlToolHandler:
                         redirect_parsed.hostname or ""
                     )
                     self._check_domain_policy(redirect_hostname)
-                    self._resolve_and_check_ssrf(redirect_hostname)
+                    await self._resolve_and_check_ssrf(redirect_hostname)
 
                     current_url = redirect_url
                     continue
 
-                # Not a redirect — read body with size limit
+                # Non-redirect response
                 status_code = response.status_code
+
+                # Reject non-2xx errors early
+                if not (200 <= status_code < 300):
+                    raise ValueError(
+                        f"HTTP {status_code}: 无法获取页面内容"
+                    )
+
+                # Content-Type check only for successful responses
+                ct = response.headers.get("content-type")
+                self._check_content_type(ct)
                 download_bytes = 0
                 chunks: list[bytes] = []
 
