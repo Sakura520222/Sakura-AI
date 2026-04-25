@@ -46,12 +46,13 @@ class TestNormalizeIPHostname:
     def test_regular_hostname_unchanged(self):
         assert self.handler._normalize_ip_hostname("example.com") == "example.com"
 
-    def test_ipv4_mapped_private_blocked_in_ssrf(self):
+    @pytest.mark.asyncio
+    async def test_ipv4_mapped_private_blocked_in_ssrf(self):
         """After normalization, ::ffff:10.0.0.1 should be caught by SSRF check"""
         normalized = self.handler._normalize_ip_hostname("::ffff:10.0.0.1")
         assert normalized == "10.0.0.1"
         with pytest.raises(ValueError, match="内网"):
-            self.handler._resolve_and_check_ssrf(normalized)
+            await self.handler._resolve_and_check_ssrf(normalized)
 
 
 class TestNormalizeIPOctet:
@@ -134,36 +135,43 @@ class TestSSRFCheck:
     def setup_method(self):
         self.handler = FetchUrlToolHandler()
 
-    def test_loopback_blocked(self):
+    @pytest.mark.asyncio
+    async def test_loopback_blocked(self):
         with pytest.raises(ValueError, match="内网"):
-            self.handler._resolve_and_check_ssrf("127.0.0.1")
+            await self.handler._resolve_and_check_ssrf("127.0.0.1")
 
-    def test_private_10_blocked(self):
+    @pytest.mark.asyncio
+    async def test_private_10_blocked(self):
         with pytest.raises(ValueError, match="内网"):
-            self.handler._resolve_and_check_ssrf("10.0.0.1")
+            await self.handler._resolve_and_check_ssrf("10.0.0.1")
 
-    def test_private_192_168_blocked(self):
+    @pytest.mark.asyncio
+    async def test_private_192_168_blocked(self):
         with pytest.raises(ValueError, match="内网"):
-            self.handler._resolve_and_check_ssrf("192.168.1.1")
+            await self.handler._resolve_and_check_ssrf("192.168.1.1")
 
-    def test_private_172_16_blocked(self):
+    @pytest.mark.asyncio
+    async def test_private_172_16_blocked(self):
         with pytest.raises(ValueError, match="内网"):
-            self.handler._resolve_and_check_ssrf("172.16.0.1")
+            await self.handler._resolve_and_check_ssrf("172.16.0.1")
 
-    def test_link_local_blocked(self):
+    @pytest.mark.asyncio
+    async def test_link_local_blocked(self):
         with pytest.raises(ValueError, match="内网"):
-            self.handler._resolve_and_check_ssrf("169.254.1.1")
+            await self.handler._resolve_and_check_ssrf("169.254.1.1")
 
-    def test_ipv6_loopback_blocked(self):
+    @pytest.mark.asyncio
+    async def test_ipv6_loopback_blocked(self):
         with pytest.raises(ValueError, match="内网"):
-            self.handler._resolve_and_check_ssrf("::1")
+            await self.handler._resolve_and_check_ssrf("::1")
 
-    def test_unresolvable_host(self):
+    @pytest.mark.asyncio
+    async def test_unresolvable_host(self):
         with patch.object(
             socket, "getaddrinfo", side_effect=socket.gaierror("DNS lookup failed")
         ):
             with pytest.raises(ValueError, match="DNS 解析失败"):
-                self.handler._resolve_and_check_ssrf("nonexistent.invalid")
+                await self.handler._resolve_and_check_ssrf("nonexistent.invalid")
 
 
 # ── Content-Type 白名单 ─────────────────────────────────────────
