@@ -44,7 +44,14 @@ class IssueAnalyzer:
             )
 
             web_search_tool = WebSearchToolHandler()
-        self.tool_handler = ToolHandler(file_tool, search_tool, web_search_tool, git_tool, search_files_tool, sakura_tool)
+        fetch_url_tool = None
+        if web_search_tool is not None and settings.fetch_url_enabled:
+            from backend.services.ai_reviewer.tools.fetch_url_tool import (
+                FetchUrlToolHandler,
+            )
+
+            fetch_url_tool = FetchUrlToolHandler()
+        self.tool_handler = ToolHandler(file_tool, search_tool, web_search_tool, git_tool, search_files_tool, sakura_tool, fetch_url_tool)
         self.tool_manager = ToolManager()
         self.tools = self.tool_manager.get_all_tools_definitions()
 
@@ -154,6 +161,9 @@ class IssueAnalyzer:
         Returns:
             分析结果字典，包含 token 和 cost 信息
         """
+        if self.tool_handler.fetch_url_tool:
+            await self.tool_handler.fetch_url_tool.reset_session()
+
         settings = get_settings()
 
         repo_full_name = f"{repo_owner}/{repo_name}"

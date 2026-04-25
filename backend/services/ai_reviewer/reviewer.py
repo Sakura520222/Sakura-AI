@@ -89,7 +89,14 @@ class AIReviewer:
             )
 
             web_search_tool = WebSearchToolHandler()
-        self.tool_handler = ToolHandler(file_tool, search_tool, web_search_tool, git_tool, search_files_tool, sakura_tool)
+        fetch_url_tool = None
+        if web_search_tool is not None and settings.fetch_url_enabled:
+            from backend.services.ai_reviewer.tools.fetch_url_tool import (
+                FetchUrlToolHandler,
+            )
+
+            fetch_url_tool = FetchUrlToolHandler()
+        self.tool_handler = ToolHandler(file_tool, search_tool, web_search_tool, git_tool, search_files_tool, sakura_tool, fetch_url_tool)
         self.tool_manager = ToolManager()
 
         # 初始化上下文压缩
@@ -174,6 +181,8 @@ class AIReviewer:
         Returns:
             审查结果字典
         """
+        if self.tool_handler.fetch_url_tool:
+            await self.tool_handler.fetch_url_tool.reset_session()
         try:
             logger.info(f"开始AI审查（带工具支持），策略: {strategy}")
 
@@ -378,6 +387,8 @@ class AIReviewer:
         Returns:
             审查结果字典
         """
+        if self.tool_handler.fetch_url_tool:
+            await self.tool_handler.fetch_url_tool.reset_session()
         try:
             files = context.get("files", [])
 
