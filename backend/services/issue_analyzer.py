@@ -162,7 +162,7 @@ class IssueAnalyzer:
             分析结果字典，包含 token 和 cost 信息
         """
         if self.tool_handler.fetch_url_tool:
-            self.tool_handler.fetch_url_tool.reset_session()
+            await self.tool_handler.fetch_url_tool.reset_session()
 
         settings = get_settings()
 

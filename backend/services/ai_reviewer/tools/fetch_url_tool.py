@@ -1,13 +1,15 @@
 """URL 抓取工具处理器
 
 为 AI 审查员提供网页内容抓取能力，使 AI 在搜索后能深入阅读相关文档/网页。
-包含 SSRF 深层防护、下载体积限制、调用频率限制和审计日志。
+包含 SSRF 深层防护、下载体积限制、调用频率限制、Content-Type 白名单和审计日志。
 """
 
+import asyncio
 import ipaddress
 import re
 import socket
 import time
+import unicodedata
 from fnmatch import fnmatch
 from typing import Any, Dict, List
 from urllib.parse import urljoin, urlparse, urlunparse
@@ -31,6 +33,52 @@ _PRIVATE_NETWORKS = [
 
 _MAX_REDIRECTS = 3
 _ALLOWED_SCHEMES = frozenset({"http", "https"})
+_ALLOWED_CONTENT_TYPES = frozenset({
+    "text/html",
+    "application/xhtml+xml",
+})
+
+# Unicode categories used by confusable (homoglyph) characters
+_CONFUSABLE_CATEGORIES = frozenset({"Mn", "Cf", "Co"})
+
+# Common confusable character ranges
+_CONFUSABLE_RANGES: list[tuple[int, int]] = [
+    (0x0300, 0x036F),   # Combining diacritical marks
+    (0x1AB0, 0x1AFF),   # Combining diacritical marks extended
+    (0x200B, 0x200F),   # Zero-width chars, direction marks
+    (0x2028, 0x202F),   # Line/word separators, directional
+    (0x2060, 0x206F),   # Word joiner, invisible chars
+    (0xFE00, 0xFE0F),   # Variation selectors
+    (0xFEFF, 0xFEFF),   # BOM / zero-width no-break space
+    (0xFF00, 0xFFEF),   # Fullwidth forms (e.g. Ａ looks like A)
+    (0x0400, 0x04FF),   # Cyrillic (confusable with Latin)
+    (0x0300, 0x036F),   # Greek extended combining
+]
+
+
+def _normalize_ip_octet(octet: str) -> int:
+    """Normalize a single IP octet: handle octal (077), hex (0x7f), decimal (127)."""
+    if not octet:
+        return 0
+    if octet.lower().startswith("0x"):
+        return int(octet, 16)
+    if len(octet) > 1 and octet[0] == "0" and octet[1:].isdigit():
+        return int(octet, 8)
+    return int(octet)
+
+
+def _try_parse_mixed_radix_ipv4(hostname: str) -> str | None:
+    """Try to parse mixed-radix IPv4 like 0177.0.0x1.1"""
+    parts = hostname.split(".")
+    if len(parts) != 4:
+        return None
+    try:
+        octets = [_normalize_ip_octet(p) for p in parts]
+        if any(o < 0 or o > 255 for o in octets):
+            return None
+        return str(ipaddress.IPv4Address(bytes(octets)))
+    except (ValueError, TypeError):
+        return None
 
 
 class FetchUrlToolHandler:
@@ -48,6 +96,7 @@ class FetchUrlToolHandler:
         "fetch_url_max_calls_per_session": "fetch_url_max_calls_per_session",
         "fetch_url_domain_policy": "fetch_url_domain_policy",
         "fetch_url_domain_list": "fetch_url_domain_list",
+        "fetch_url_force_https": "fetch_url_force_https",
     }
 
     _CONFIG_CACHE_TTL = 60
@@ -60,11 +109,14 @@ class FetchUrlToolHandler:
         self._max_calls_per_session: int = settings.fetch_url_max_calls_per_session
         self._domain_policy: str = settings.fetch_url_domain_policy
         self._domain_list: str = settings.fetch_url_domain_list
+        self._force_https: bool = settings.fetch_url_force_https
         self._last_config_load: float = 0.0
         self._session_call_count: int = 0
+        self._session_lock = asyncio.Lock()
 
-    def reset_session(self) -> None:
-        self._session_call_count = 0
+    async def reset_session(self) -> None:
+        async with self._session_lock:
+            self._session_call_count = 0
 
     async def _load_config(self) -> None:
         if time.time() - self._last_config_load < self._CONFIG_CACHE_TTL:
@@ -106,6 +158,8 @@ class FetchUrlToolHandler:
                 self._domain_policy = config_values["fetch_url_domain_policy"]
             if config_values.get("fetch_url_domain_list") is not None:
                 self._domain_list = config_values["fetch_url_domain_list"]
+            if config_values.get("fetch_url_force_https") is not None:
+                self._force_https = config_values["fetch_url_force_https"] == "true"
 
             self._last_config_load = time.time()
 
@@ -118,7 +172,11 @@ class FetchUrlToolHandler:
         """校验与标准化 URL，防止解析混淆绕过"""
         parsed = urlparse(url)
 
-        if parsed.scheme.lower() not in _ALLOWED_SCHEMES:
+        scheme = parsed.scheme.lower()
+        if self._force_https:
+            if scheme != "https":
+                raise ValueError("当前配置仅允许 HTTPS 协议")
+        elif scheme not in _ALLOWED_SCHEMES:
             raise ValueError(
                 f"不允许的协议: {parsed.scheme}，仅支持 {', '.join(_ALLOWED_SCHEMES)}"
             )
@@ -144,44 +202,73 @@ class FetchUrlToolHandler:
         return urlunparse(normalized)
 
     def _normalize_ip_hostname(self, hostname: str) -> str:
-        """将非标准 IP 表示法标准化为十进制格式"""
-        # Try parsing as IPv4 — handles octal, hex, decimal, abbreviated forms
+        """将非标准 IP 表示法标准化为十进制格式
+
+        处理场景：
+        - IPv4-mapped IPv6: ::ffff:127.0.0.1 → 127.0.0.1
+        - 混合进制: 0177.0.0x1.1 → 127.0.0.1
+        - 全数字域名: 2130706433 → 127.0.0.1
+        - 十六进制整数: 0x7f000001 → 127.0.0.1
+        - 八进制整数: 017700000001 → 127.0.0.1
+        """
+        # Unwrap IPv4-mapped or IPv4-compatible IPv6
+        unwrapped = self._unwrap_ipv6_mapped(hostname)
+        if unwrapped:
+            return unwrapped
+
+        # Mixed-radix dotted notation (e.g. 0177.0.0x1.1)
+        if "." in hostname:
+            mixed = _try_parse_mixed_radix_ipv4(hostname)
+            if mixed:
+                return mixed
+
+        # Standard ipaddress parsing
         try:
-            # Python's ipaddress handles many non-standard forms
             addr = ipaddress.ip_address(hostname)
             return str(addr)
         except ValueError:
             pass
 
-        # Try interpreting as integer-based IPv4
-        try:
-            addr = ipaddress.IPv4Address(int(hostname))
-            return str(addr)
-        except (ValueError, TypeError):
-            pass
-
-        # Try interpreting as hex integer IPv4
-        if hostname.startswith("0x") or hostname.startswith("0X"):
+        # All-numeric hostname (integer IPv4, e.g. 2130706433)
+        if hostname.isdigit():
             try:
-                addr = ipaddress.IPv4Address(int(hostname, 16))
-                return str(addr)
+                return str(ipaddress.IPv4Address(int(hostname)))
             except (ValueError, TypeError):
                 pass
 
-        # Try interpreting as octal (all digits start with 0)
-        if (
-            len(hostname) > 1
-            and hostname[0] == "0"
-            and hostname[1:].isdigit()
-            and "." not in hostname
-        ):
+        # Hex integer IPv4 (e.g. 0x7f000001)
+        if hostname.lower().startswith("0x"):
             try:
-                addr = ipaddress.IPv4Address(int(hostname, 8))
-                return str(addr)
+                return str(ipaddress.IPv4Address(int(hostname, 16)))
+            except (ValueError, TypeError):
+                pass
+
+        # Octal integer IPv4 (e.g. 017700000001)
+        if len(hostname) > 1 and hostname[0] == "0" and hostname[1:].isdigit():
+            try:
+                return str(ipaddress.IPv4Address(int(hostname, 8)))
             except (ValueError, TypeError):
                 pass
 
         return hostname
+
+    def _unwrap_ipv6_mapped(self, hostname: str) -> str | None:
+        """Unwrap IPv4-mapped or IPv4-compatible IPv6 to plain IPv4.
+
+        ::ffff:127.0.0.1 → 127.0.0.1
+        ::ffff:7f00:1    → 127.0.0.1
+        """
+        try:
+            addr = ipaddress.ip_address(hostname)
+        except ValueError:
+            return None
+
+        if isinstance(addr, ipaddress.IPv6Address):
+            # IPv4-mapped (::ffff:x.x.x.x)
+            if addr.ipv4_mapped:
+                return str(addr.ipv4_mapped)
+
+        return None
 
     def _resolve_and_check_ssrf(self, hostname: str) -> str:
         """DNS 解析并检查 IP 是否为内网地址，返回解析到的 IP
@@ -201,10 +288,12 @@ class FetchUrlToolHandler:
             ip_str = sockaddr[0]
             resolved_ips.append(ip_str)
 
-        # Check all resolved IPs against private networks
         for ip_str in resolved_ips:
+            # Unwrap IPv4-mapped IPv6 before checking
+            unwrapped = self._unwrap_ipv6_mapped(ip_str)
+            check_ip = unwrapped or ip_str
             try:
-                addr = ipaddress.ip_address(ip_str)
+                addr = ipaddress.ip_address(check_ip)
                 for network in _PRIVATE_NETWORKS:
                     if addr in network:
                         raise ValueError(
@@ -213,7 +302,6 @@ class FetchUrlToolHandler:
             except ValueError as e:
                 if "属于内网" in str(e):
                     raise
-                # If ip_address() fails, skip this entry
                 continue
 
         return resolved_ips[0]
@@ -266,26 +354,62 @@ class FetchUrlToolHandler:
 
         return urlunparse(parsed._replace(query="&".join(redacted)))
 
-    def _html_to_text(self, html: str) -> str:
-        """使用 BeautifulSoup4 将 HTML 转换为纯文本"""
+    @staticmethod
+    def _check_content_type(content_type: str | None) -> None:
+        """Strict Content-Type whitelist — reject non-HTML responses"""
+        if not content_type:
+            raise ValueError("响应缺少 Content-Type 头，拒绝处理")
+
+        # Extract MIME type (ignore parameters like charset)
+        mime = content_type.split(";")[0].strip().lower()
+        if mime not in _ALLOWED_CONTENT_TYPES:
+            raise ValueError(
+                f"不允许的 Content-Type: {mime}，仅支持 "
+                f"{', '.join(_ALLOWED_CONTENT_TYPES)}"
+            )
+
+    @staticmethod
+    def _detect_suspicious_text(text: str) -> bool:
+        """Detect homoglyph characters and suspicious Unicode patterns"""
+        suspicious_count = 0
+        for ch in text:
+            cp = ord(ch)
+            # Check known confusable ranges
+            for start, end in _CONFUSABLE_RANGES:
+                if start <= cp <= end:
+                    suspicious_count += 1
+                    break
+            else:
+                # Check Unicode category for invisible/confusable marks
+                cat = unicodedata.category(ch)
+                if cat in _CONFUSABLE_CATEGORIES:
+                    suspicious_count += 1
+
+        # Flag if more than 5 suspicious characters found
+        return suspicious_count > 5
+
+    def _html_to_text(self, html: str) -> tuple[str, bool]:
+        """使用 BeautifulSoup4 将 HTML 转换为纯文本
+
+        Returns:
+            (text, suspicious) tuple — extracted text and suspicious flag
+        """
         soup = BeautifulSoup(html, "html.parser")
 
-        # Remove unwanted tags
         for tag in soup.find_all(
             ["script", "style", "nav", "footer", "header", "noscript", "iframe"]
         ):
             tag.decompose()
 
-        # Try to get <body> content, fall back to whole document
         body = soup.find("body")
         target = body if body else soup
 
         text = target.get_text(separator="\n", strip=True)
-
-        # Collapse excessive blank lines
         text = re.sub(r"\n{3,}", "\n\n", text)
+        text = text.strip()
 
-        return text.strip()
+        suspicious = self._detect_suspicious_text(text)
+        return text, suspicious
 
     def _truncate(self, text: str) -> str:
         if len(text) <= self._max_content_length:
@@ -296,9 +420,10 @@ class FetchUrlToolHandler:
         """抓取网页并转换为纯文本"""
         start_time = time.time()
 
-        # Check session call limit
-        self._session_call_count += 1
-        call_num = self._session_call_count
+        # Check session call limit (protected by lock)
+        async with self._session_lock:
+            self._session_call_count += 1
+            call_num = self._session_call_count
 
         if call_num > self._max_calls_per_session:
             logger.warning(
@@ -338,13 +463,15 @@ class FetchUrlToolHandler:
             # Step 3: DNS resolve + SSRF IP check
             resolved_ip = self._resolve_and_check_ssrf(hostname)
 
-            # Step 4: Fetch with redirect control
+            # Step 4: Fetch with redirect control and Content-Type check
             content, status_code, download_bytes = await self._fetch_with_redirects(
-                validated_url, resolved_ip
+                validated_url
             )
 
-            # Step 5: Extract text
-            text = self._html_to_text(content)
+            # Step 5: Extract text and check for suspicious content
+            text, suspicious = self._html_to_text(content)
+            if suspicious:
+                security_events.append("可疑 Unicode 字符（可能为同形异义攻击）")
             truncated = len(text) > self._max_content_length
             text = self._truncate(text)
 
@@ -370,6 +497,8 @@ class FetchUrlToolHandler:
 
             if resolved_ip:
                 result["resolved_ip"] = resolved_ip
+            if suspicious:
+                result["suspicious"] = True
 
             return result
 
@@ -406,11 +535,15 @@ class FetchUrlToolHandler:
             return {"url": url, "content": "", "error": f"抓取失败: {e}"}
 
     async def _fetch_with_redirects(
-        self, url: str, _resolved_ip: str
+        self, url: str
     ) -> tuple[str, int, int]:
-        """执行 HTTP 请求，手动处理重定向并在每步进行 SSRF 校验"""
+        """执行 HTTP 请求，手动处理重定向并在每步进行 SSRF 校验
+
+        跟踪重定向链的总下载量，防止反射放大攻击。
+        """
         current_url = url
         redirect_count = 0
+        total_bytes = 0
 
         async with httpx.AsyncClient(
             timeout=self._timeout, follow_redirects=False
@@ -420,11 +553,24 @@ class FetchUrlToolHandler:
                     current_url,
                     headers={
                         "User-Agent": "Sakura-AI-Reviewer/1.0",
-                        "Accept": "text/html,application/xhtml+xml,text/plain",
+                        "Accept": "text/html,application/xhtml+xml",
                     },
                 )
 
+                # Check Content-Type on every response (including errors)
+                ct = response.headers.get("content-type")
+                self._check_content_type(ct)
+
                 if response.status_code in (301, 302, 303, 307, 308):
+                    # Account for redirect response body bytes
+                    redirect_body_len = len(response.content) if response.content else 0
+                    total_bytes += redirect_body_len
+                    if total_bytes > self._max_download_size:
+                        raise ValueError(
+                            f"重定向链累计下载量 ({total_bytes} 字节) 超过限制 "
+                            f"({self._max_download_size} 字节)"
+                        )
+
                     redirect_count += 1
                     if redirect_count > _MAX_REDIRECTS:
                         raise ValueError(
@@ -456,22 +602,24 @@ class FetchUrlToolHandler:
 
                 # Check Content-Length header first
                 content_length = response.headers.get("content-length")
-                if content_length and int(content_length) > self._max_download_size:
-                    raise ValueError(
-                        f"响应体积 ({content_length} 字节) 超过下载限制 "
-                        f"({self._max_download_size} 字节)"
-                    )
+                if content_length:
+                    cl = int(content_length)
+                    if total_bytes + cl > self._max_download_size:
+                        raise ValueError(
+                            f"响应体积 ({cl} 字节) + 已下载 ({total_bytes} 字节) "
+                            f"超过下载限制 ({self._max_download_size} 字节)"
+                        )
 
                 # Stream-read with byte counting
                 async for chunk in response.aiter_bytes(chunk_size=8192):
                     download_bytes += len(chunk)
-                    if download_bytes > self._max_download_size:
+                    if total_bytes + download_bytes > self._max_download_size:
                         break
                     chunks.append(chunk)
 
+                total_bytes += download_bytes
                 body = b"".join(chunks)
 
-                # Try to decode as text
                 try:
                     content = body.decode(
                         response.encoding or "utf-8", errors="replace"
@@ -479,7 +627,7 @@ class FetchUrlToolHandler:
                 except (UnicodeDecodeError, LookupError):
                     content = body.decode("utf-8", errors="replace")
 
-                return content, status_code, download_bytes
+                return content, status_code, total_bytes
 
     def _audit_log(
         self,
