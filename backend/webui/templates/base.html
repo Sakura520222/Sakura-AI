@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>{% block title %}Sakura AI Reviewer{% endblock %}</title>
     <!-- Tailwind CSS CDN -->
-    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.tailwindcss.com?plugins=typography"></script>
     <script>if(localStorage.getItem('theme')==='dark'){document.documentElement.classList.replace('light','dark')}</script>
     <script>
         tailwind.config = {
@@ -19,7 +19,9 @@
     <!-- Markdown 渲染 -->
     <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/dompurify/dist/purify.min.js"></script>
-    <link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/highlightjs/cdn-release/build/styles/github.min.css">
+    <link id="hljs-light" rel="stylesheet" href="https://cdn.jsdelivr.net/gh/highlightjs/cdn-release/build/styles/github.min.css">
+    <link id="hljs-dark" rel="stylesheet" href="https://cdn.jsdelivr.net/gh/highlightjs/cdn-release/build/styles/github-dark.min.css" disabled>
+    <script>if(localStorage.getItem('theme')==='dark'){document.getElementById('hljs-light').disabled=true;document.getElementById('hljs-dark').disabled=false}</script>
     <script src="https://cdn.jsdelivr.net/gh/highlightjs/cdn-release/build/highlight.min.js"></script>
     <script>
     document.addEventListener('alpine:init', () => {
@@ -139,6 +141,7 @@
         ::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 3px; }
         .dark ::-webkit-scrollbar-thumb { background: #475569; }
         /* highlight.js 与 Tailwind prose 兼容 */
+        .prose pre { --tw-prose-pre-bg: transparent; padding: 0; }
         .prose pre code.hljs { background: transparent; padding: 0; }
     </style>
     {% block extra_head %}{% endblock %}
@@ -147,6 +150,8 @@
       x-data="{ theme: localStorage.getItem('theme') || 'light' }"
       x-init="$watch('theme', val => {
           document.documentElement.classList.toggle('dark', val === 'dark');
+          document.getElementById('hljs-light').disabled = val === 'dark';
+          document.getElementById('hljs-dark').disabled = val !== 'dark';
           localStorage.setItem('theme', val);
           fetch('/webui/auth/api/theme', {
               method: 'POST',
@@ -381,8 +386,8 @@
     <!-- SSE 实时推送客户端 -->
     {% include "components/sse_client.html" %}
 
-    /* === Markdown 渲染 === */
     <script>
+    // === Markdown 渲染 ===
     marked.setOptions({ gfm: true, breaks: true });
     function renderMarkdownElements(root) {
         root = root || document;
