@@ -3,7 +3,7 @@
     {% if review.review_summary %}
     <div>
         <h4 class="text-sm font-medium text-gray-700 dark:text-gray-300">审查摘要</h4>
-        <p class="mt-1 text-sm text-gray-600 dark:text-gray-400 whitespace-pre-wrap">{{ review.review_summary }}</p>
+        <div data-markdown class="prose dark:prose-invert max-w-none text-sm text-gray-700 dark:text-gray-300 leading-relaxed">{{ review.review_summary }}</div>
     </div>
     {% endif %}
 
