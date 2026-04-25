@@ -89,9 +89,11 @@
             {% if suggested_assignees %}
             <div class="space-y-2">
                 {% for assignee in suggested_assignees %}
-                <div class="flex items-center gap-2 text-sm">
+                <div class="text-sm">
                     <span class="text-gray-700 dark:text-gray-300">@{{ assignee.username }}</span>
-                    {% if assignee.reason %}<span class="text-gray-400 text-xs">{{ assignee.reason }}</span>{% endif %}
+                    {% if assignee.reason %}
+                    <div data-markdown class="prose dark:prose-invert max-w-none text-xs text-gray-500 dark:text-gray-400 mt-1 leading-relaxed">{{ assignee.reason }}</div>
+                    {% endif %}
                 </div>
                 {% endfor %}
             </div>
