@@ -556,6 +556,9 @@ class SakuraMemoryService:
                         for c in review_result["comments"][:10]
                     )
 
+            def _escape_braces(s: str) -> str:
+                return s.replace("{", "{{").replace("}", "}}")
+
             pr_description = ""
             try:
                 pr_description = (getattr(pr, "body", None) or "")[:500]
@@ -577,7 +580,7 @@ class SakuraMemoryService:
                 comments_summary=comments_summary or "无评论",
                 changed_files=changed_files or "无文件信息",
                 current_memory=current_memory or "暂无记忆",
-                pr_description=pr_description or "无描述",
+                pr_description=_escape_braces(pr_description) or "无描述",
                 history_context=history_summary or "无历史审查记录（首次审查）",
             )
 
@@ -737,12 +740,15 @@ class SakuraMemoryService:
                 pass
 
             # 构建 Prompt / Build prompt
+            def _escape_braces(s: str) -> str:
+                return s.replace("{", "{{").replace("}", "}}")
+
             prompt = ISSUE_REFLECTION_PROMPT.format(
                 issue_number=issue_number,
                 repo_full_name=repo_full_name,
                 author=issue_info.get("sender", {}).get("login", "unknown"),
-                original_title=issue_info.get("title", ""),
-                original_body=(issue_info.get("body", "") or "")[:500],
+                original_title=_escape_braces(issue_info.get("title", "")),
+                original_body=_escape_braces((issue_info.get("body", "") or "")[:500]),
                 category=analysis_result.get("category", "unknown"),
                 priority=analysis_result.get("priority", "unknown"),
                 feasibility=analysis_result.get("feasibility", "unknown"),
