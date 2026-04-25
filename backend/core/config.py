@@ -218,7 +218,7 @@ class Settings(BaseSettings):
     review_price_per_1k_completion: float = 0.0
 
     # ========== Web 搜索配置 ==========
-    web_search_enabled: bool = False  # 是否启用 Web 搜索工具
+    web_search_enabled: bool = True  # 是否启用 Web 搜索工具
     web_search_provider: str = "duckduckgo"  # 搜索提供商：duckduckgo(免费) | tavily
     web_search_api_key: str = ""  # API Key（tavily 需要，duckduckgo 不需要）
     web_search_max_results: int = 3  # 最大返回结果数
