@@ -89,7 +89,14 @@ class AIReviewer:
             )
 
             web_search_tool = WebSearchToolHandler()
-        self.tool_handler = ToolHandler(file_tool, search_tool, web_search_tool, git_tool, search_files_tool, sakura_tool)
+        fetch_url_tool = None
+        if web_search_tool is not None:
+            from backend.services.ai_reviewer.tools.fetch_url_tool import (
+                FetchUrlToolHandler,
+            )
+
+            fetch_url_tool = FetchUrlToolHandler()
+        self.tool_handler = ToolHandler(file_tool, search_tool, web_search_tool, git_tool, search_files_tool, sakura_tool, fetch_url_tool)
         self.tool_manager = ToolManager()
 
         # 初始化上下文压缩

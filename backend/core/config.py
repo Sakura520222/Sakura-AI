@@ -225,6 +225,15 @@ class Settings(BaseSettings):
     web_search_max_content_length: int = 500  # 每个结果截断长度（字符）
     web_search_timeout: int = 15  # 搜索超时（秒）
 
+    # ========== URL 抓取配置 ==========
+    fetch_url_enabled: bool = True  # 是否启用 URL 抓取工具
+    fetch_url_timeout: int = 15  # 抓取超时（秒）
+    fetch_url_max_content_length: int = 5000  # 文本截断长度（字符）
+    fetch_url_max_download_size: int = 1048576  # 原始 HTML 下载大小限制（字节，默认 1MB）
+    fetch_url_max_calls_per_session: int = 3  # 单次会话最大调用次数
+    fetch_url_domain_policy: str = "off"  # 域名过滤策略：off / blacklist / whitelist
+    fetch_url_domain_list: str = ""  # 域名列表（逗号分隔）
+
     # ========== 代码索引配置 ==========
     enable_code_index: bool = True  # 是否启用代码索引功能
     auto_index_pr_changes: bool = True  # PR审查时自动索引变更文件
@@ -711,6 +720,31 @@ DYNAMIC_CONFIG_GROUPS: OrderedDict[str, dict] = OrderedDict(
                     "sakura_auto_init",
                     "sakura_consolidation_partial_commit",
                     "sakura_use_summary_model",
+                ],
+            },
+        ),
+        (
+            "fetch_url",
+            {
+                "label": "URL 抓取配置",
+                "icon": "globe",
+                "descriptions": {
+                    "fetch_url_enabled": "启用后 AI 可抓取网页内容（需同时启用 Web 搜索）",
+                    "fetch_url_timeout": "抓取超时时间（秒）",
+                    "fetch_url_max_content_length": "提取的纯文本最大长度（字符），超出部分截断",
+                    "fetch_url_max_download_size": "原始 HTML 最大下载大小（字节），防止内存耗尽",
+                    "fetch_url_max_calls_per_session": "单次审查/分析会话中允许的最大抓取次数",
+                    "fetch_url_domain_policy": "域名过滤策略：off（仅 IP 拦截）/ blacklist（黑名单）/ whitelist（白名单）",
+                    "fetch_url_domain_list": "域名列表（逗号分隔），根据策略用作黑名单或白名单，支持 * 通配符",
+                },
+                "keys": [
+                    "fetch_url_enabled",
+                    "fetch_url_timeout",
+                    "fetch_url_max_content_length",
+                    "fetch_url_max_download_size",
+                    "fetch_url_max_calls_per_session",
+                    "fetch_url_domain_policy",
+                    "fetch_url_domain_list",
                 ],
             },
         ),
