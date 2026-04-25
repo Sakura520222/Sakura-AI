@@ -10,18 +10,13 @@ import socket
 import time
 from fnmatch import fnmatch
 from typing import Any, Dict, List
-from urllib.parse import urlparse, urlunparse
+from urllib.parse import urljoin, urlparse, urlunparse
 
 import httpx
 from bs4 import BeautifulSoup
 from loguru import logger
 
 from backend.core.config import get_settings
-
-# Sensitive query parameter keys to redact in audit logs
-_SENSITIVE_PARAMS = frozenset(
-    {"token", "key", "api_key", "apikey", "secret", "password", "access_token", "auth"}
-)
 
 _PRIVATE_NETWORKS = [
     ipaddress.ip_network("10.0.0.0/8"),
@@ -93,21 +88,21 @@ class FetchUrlToolHandler:
             if not config_values:
                 return
 
-            if config_values.get("fetch_url_timeout"):
+            if config_values.get("fetch_url_timeout") is not None:
                 self._timeout = int(config_values["fetch_url_timeout"])
-            if config_values.get("fetch_url_max_content_length"):
+            if config_values.get("fetch_url_max_content_length") is not None:
                 self._max_content_length = int(
                     config_values["fetch_url_max_content_length"]
                 )
-            if config_values.get("fetch_url_max_download_size"):
+            if config_values.get("fetch_url_max_download_size") is not None:
                 self._max_download_size = int(
                     config_values["fetch_url_max_download_size"]
                 )
-            if config_values.get("fetch_url_max_calls_per_session"):
+            if config_values.get("fetch_url_max_calls_per_session") is not None:
                 self._max_calls_per_session = int(
                     config_values["fetch_url_max_calls_per_session"]
                 )
-            if config_values.get("fetch_url_domain_policy"):
+            if config_values.get("fetch_url_domain_policy") is not None:
                 self._domain_policy = config_values["fetch_url_domain_policy"]
             if config_values.get("fetch_url_domain_list") is not None:
                 self._domain_list = config_values["fetch_url_domain_list"]
@@ -189,7 +184,13 @@ class FetchUrlToolHandler:
         return hostname
 
     def _resolve_and_check_ssrf(self, hostname: str) -> str:
-        """DNS 解析并检查 IP 是否为内网地址，返回解析到的 IP"""
+        """DNS 解析并检查 IP 是否为内网地址，返回解析到的 IP
+
+        NOTE: 存在 TOCTOU 风险 — DNS 解析在此完成，但 httpx 发起请求时会
+        再次独立解析。攻击者理论上可通过 DNS rebinding 绕过（第一次解析返回
+        合法 IP，第二次返回内网 IP）。实际利用难度高（时间窗口极短），且
+        httpx 不支持自定义 DNS resolver，此处作为已知可接受风险。
+        """
         try:
             addr_infos = socket.getaddrinfo(hostname, None)
         except socket.gaierror as e:
@@ -247,14 +248,23 @@ class FetchUrlToolHandler:
         if not parsed.query:
             return url
 
-        # Simple redaction for sensitive params
-        redacted = re.sub(
-            r"([?&])([^&=]*(?:token|key|secret|password|auth)[^&=]*)=([^&]*)",
-            r"\1\2=***REDACTED***",
-            url,
-            flags=re.IGNORECASE,
-        )
-        return redacted
+        sensitive_keys = {
+            "token", "key", "api_key", "apikey", "secret",
+            "password", "access_token", "auth",
+        }
+        params = parsed.query.split("&")
+        redacted = []
+        for param in params:
+            if "=" not in param:
+                redacted.append(param)
+                continue
+            key, _ = param.split("=", 1)
+            if key.lower() in sensitive_keys:
+                redacted.append(f"{key}=***REDACTED***")
+            else:
+                redacted.append(param)
+
+        return urlunparse(parsed._replace(query="&".join(redacted)))
 
     def _html_to_text(self, html: str) -> str:
         """使用 BeautifulSoup4 将 HTML 转换为纯文本"""
@@ -396,7 +406,7 @@ class FetchUrlToolHandler:
             return {"url": url, "content": "", "error": f"抓取失败: {e}"}
 
     async def _fetch_with_redirects(
-        self, url: str, resolved_ip: str
+        self, url: str, _resolved_ip: str
     ) -> tuple[str, int, int]:
         """执行 HTTP 请求，手动处理重定向并在每步进行 SSRF 校验"""
         current_url = url
@@ -424,8 +434,6 @@ class FetchUrlToolHandler:
                     location = response.headers.get("location", "")
                     if not location:
                         raise ValueError("重定向响应缺少 Location 头")
-
-                    from urllib.parse import urljoin
 
                     redirect_url = urljoin(current_url, location)
 
