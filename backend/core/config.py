@@ -226,7 +226,7 @@ class Settings(BaseSettings):
     web_search_timeout: int = 15  # 搜索超时（秒）
 
     # ========== URL 抓取配置 ==========
-    fetch_url_enabled: bool = True  # 是否启用 URL 抓取工具
+    fetch_url_enabled: bool = False  # 是否启用 URL 抓取工具
     fetch_url_timeout: int = 15  # 抓取超时（秒）
     fetch_url_max_content_length: int = 5000  # 文本截断长度（字符）
     fetch_url_max_download_size: int = 1048576  # 原始 HTML 下载大小限制（字节，默认 1MB）
