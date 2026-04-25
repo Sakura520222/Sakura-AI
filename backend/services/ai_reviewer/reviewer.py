@@ -181,6 +181,8 @@ class AIReviewer:
         Returns:
             审查结果字典
         """
+        if self.tool_handler.fetch_url_tool:
+            self.tool_handler.fetch_url_tool.reset_session()
         try:
             logger.info(f"开始AI审查（带工具支持），策略: {strategy}")
 
@@ -385,6 +387,8 @@ class AIReviewer:
         Returns:
             审查结果字典
         """
+        if self.tool_handler.fetch_url_tool:
+            self.tool_handler.fetch_url_tool.reset_session()
         try:
             files = context.get("files", [])
 
