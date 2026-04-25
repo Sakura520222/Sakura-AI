@@ -261,14 +261,10 @@ SEARCH_WEB_TOOL = {
     "type": "function",
     "function": {
         "name": "search_web",
-        "description": """搜索互联网获取最新文档、API 参考、最佳实践等信息。
-
-重要：仅在以下情况使用此工具：
-- 本地文档搜索（search_project_docs）和代码搜索（search_code_context）均未找到答案时
-- 需要查询最新的 API 文档或版本变更时
-- 需要了解特定技术/框架的最新最佳实践时
-
-不要用于可以通过本地工具解决的问题。""",
+        "description": """搜索互联网获取最新文档、API 参考、最佳实践等信息。适用于：
+- 查询最新的 API 文档、版本变更或技术规范
+- 了解特定技术/框架的最佳实践和推荐用法
+- 获取与代码相关的最新社区讨论和解决方案""",
         "parameters": {
             "type": "object",
             "properties": {
