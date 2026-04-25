@@ -102,9 +102,10 @@ class ToolHandler:
             elif function_name == "fetch_url":
                 if not self.fetch_url_tool:
                     return {"error": "URL 抓取工具未启用"}
-                return await self.fetch_url_tool.fetch_url(
-                    url=arguments.get("url", ""),
-                )
+                url = arguments.get("url")
+                if not url:
+                    return {"error": "缺少必填参数: url"}
+                return await self.fetch_url_tool.fetch_url(url=url)
             elif function_name == "search_in_files":
                 if not self.search_files_tool:
                     return {"error": "跨文件搜索工具未启用"}

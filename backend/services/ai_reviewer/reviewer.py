@@ -90,7 +90,7 @@ class AIReviewer:
 
             web_search_tool = WebSearchToolHandler()
         fetch_url_tool = None
-        if web_search_tool is not None:
+        if web_search_tool is not None and settings.fetch_url_enabled:
             from backend.services.ai_reviewer.tools.fetch_url_tool import (
                 FetchUrlToolHandler,
             )
