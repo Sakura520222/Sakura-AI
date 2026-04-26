@@ -221,7 +221,7 @@ class RerankerService:
             if self.provider == "siliconflow":
                 # SiliconFlow Rerank API (使用 httpx)
                 self.client = httpx.AsyncClient(
-                    base_url=settings.rerank_base_url,
+                    base_url=settings.rerank_base_url.rstrip("/"),
                     headers={"Authorization": f"Bearer {settings.rerank_api_key}"},
                     timeout=30.0,
                 )
@@ -298,7 +298,7 @@ class RerankerService:
 
             # 调用 Rerank API
             response = await self.client.post(
-                "/",
+                "",
                 json={
                     "model": settings.rerank_model,
                     "query": query,
