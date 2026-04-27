@@ -224,6 +224,7 @@ class RerankerService:
                     base_url=settings.rerank_base_url,
                     headers={"Authorization": f"Bearer {settings.rerank_api_key}"},
                     timeout=30.0,
+                    follow_redirects=True,
                 )
                 logger.info(
                     f"✅ 重排序服务初始化成功: {self.provider} ({settings.rerank_model})"
@@ -296,7 +297,7 @@ class RerankerService:
             # 提取文档内容
             texts = [doc["content"] for doc in docs]
 
-            # 调用 Rerank API (路径留空，避免与 base_url 拼接后产生尾部斜杠触发 307 重定向)
+            # 调用 Rerank API
             response = await self.client.post(
                 "",
                 json={
