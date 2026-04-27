@@ -296,9 +296,9 @@ class RerankerService:
             # 提取文档内容
             texts = [doc["content"] for doc in docs]
 
-            # 调用 Rerank API
+            # 调用 Rerank API (路径留空，避免与 base_url 拼接后产生尾部斜杠触发 307 重定向)
             response = await self.client.post(
-                "/",
+                "",
                 json={
                     "model": settings.rerank_model,
                     "query": query,
