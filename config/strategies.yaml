@@ -191,14 +191,36 @@ strategies:
       ### 🔴 文件路径:行号
       **问题**: [问题描述]
       **建议**: [修复建议]
+      **修复**:
+      ```python
+      [修复后的完整代码，可直接替换问题行]
+      ```
+      **置信度**: [0.0-1.0，你对修复正确性的把握程度]
       
       ### 🟡 文件路径:行号
       **问题**: [问题描述]
       **建议**: [修复建议]
+      **修复**:
+      ```python
+      [修复后的完整代码，可直接替换问题行]
+      ```
+      **置信度**: [0.0-1.0，你对修复正确性的把握程度]
       
       ### 💡 文件路径:行号
       **问题**: [问题描述]
       **建议**: [修复建议]
+      **修复**:
+      ```python
+      [修复后的完整代码，可直接替换问题行]
+      ```
+      **置信度**: [0.0-1.0，你对修复正确性的把握程度]
+
+      **修复代码要求**：
+      - 每条行内评论都应尽量提供修复代码，这是最重要的字段之一
+      - 修复代码必须是可以直接替换问题行的完整代码（不是片段或伪代码）
+      - 如果无法给出具体修复代码（如架构设计问题），**修复** 代码块可以省略
+      - 置信度范围 0.0-1.0：0.9+ 非常确定，0.7-0.9 较有把握，0.7 以下不确定但值得参考
+      - 代码块的语言标记应与文件实际语言一致（如 java、go、typescript 等，不限于 python）
       
       ## Emoji 使用规范（严格遵循）
       
@@ -243,17 +265,11 @@ strategies:
 
       <!-- SAKURA_REVIEW_JSON_START -->
       ```json
-      {"schema_version":1,"overall_score":7,"decision":"approve|request_changes|comment","decision_reason":"理由","issues":[{"severity":"critical|major|minor|suggestion","file_path":"路径或null","line_number":行号或null,"end_line":结束行号或null,"title":"标题","description":"描述","suggestion":"建议或null","fix_suggestion":"修复代码或null","fix_confidence":0.9}],"summary":"摘要"}
+      {"schema_version":1,"overall_score":7,"decision":"approve|request_changes|comment","decision_reason":"理由","issues":[{"severity":"critical|major|minor|suggestion","file_path":"路径或null","line_number":行号或null,"title":"标题","description":"描述","suggestion":"建议或null"}],"summary":"摘要"}
       ```
       <!-- SAKURA_REVIEW_JSON_END -->
 
-      JSON 规则：
-      - severity 必须为 critical/major/minor/suggestion
-      - decision 必须为 approve/request_changes/comment
-      - issues 须涵盖 Markdown 中所有问题
-      - JSON 须合法完整
-      - **fix_suggestion**（可选）：当问题有明确的代码修复方案时，提供修复后的完整代码片段（可直接替换原代码）。仅在有把握时提供，否则设为 null。
-      - **fix_confidence**（可选）：修复建议的置信度，0.0-1.0 之间。0.9 以上表示非常确定修复正确；0.7-0.9 表示较有把握；低于 0.7 则不建议提供 fix_suggestion。无修复建议时设为 null。
+      JSON 规则：severity 必须为 critical/major/minor/suggestion；decision 必须为 approve/request_changes/comment；issues 须涵盖 Markdown 中所有问题；JSON 须合法完整。
 
   # 标准审查策略
   standard:
@@ -514,14 +530,36 @@ strategies:
       ### 🔴 文件路径:行号
       **问题**: [问题描述]
       **建议**: [修复建议]
+      **修复**:
+      ```python
+      [修复后的完整代码，可直接替换问题行]
+      ```
+      **置信度**: [0.0-1.0，你对修复正确性的把握程度]
       
       ### 🟡 文件路径:行号
       **问题**: [问题描述]
       **建议**: [修复建议]
+      **修复**:
+      ```python
+      [修复后的完整代码，可直接替换问题行]
+      ```
+      **置信度**: [0.0-1.0，你对修复正确性的把握程度]
       
       ### 💡 文件路径:行号
       **问题**: [问题描述]
       **建议**: [修复建议]
+      **修复**:
+      ```python
+      [修复后的完整代码，可直接替换问题行]
+      ```
+      **置信度**: [0.0-1.0，你对修复正确性的把握程度]
+
+      **修复代码要求**：
+      - 每条行内评论都应尽量提供修复代码，这是最重要的字段之一
+      - 修复代码必须是可以直接替换问题行的完整代码（不是片段或伪代码）
+      - 如果无法给出具体修复代码（如架构设计问题），**修复** 代码块可以省略
+      - 置信度范围 0.0-1.0：0.9+ 非常确定，0.7-0.9 较有把握，0.7 以下不确定但值得参考
+      - 代码块的语言标记应与文件实际语言一致（如 java、go、typescript 等，不限于 python）
       
       ## Emoji 使用规范（严格遵循）
       
@@ -566,17 +604,11 @@ strategies:
 
       <!-- SAKURA_REVIEW_JSON_START -->
       ```json
-      {"schema_version":1,"overall_score":7,"decision":"approve|request_changes|comment","decision_reason":"理由","issues":[{"severity":"critical|major|minor|suggestion","file_path":"路径或null","line_number":行号或null,"end_line":结束行号或null,"title":"标题","description":"描述","suggestion":"建议或null","fix_suggestion":"修复代码或null","fix_confidence":0.9}],"summary":"摘要"}
+      {"schema_version":1,"overall_score":7,"decision":"approve|request_changes|comment","decision_reason":"理由","issues":[{"severity":"critical|major|minor|suggestion","file_path":"路径或null","line_number":行号或null,"title":"标题","description":"描述","suggestion":"建议或null"}],"summary":"摘要"}
       ```
       <!-- SAKURA_REVIEW_JSON_END -->
 
-      JSON 规则：
-      - severity 必须为 critical/major/minor/suggestion
-      - decision 必须为 approve/request_changes/comment
-      - issues 须涵盖 Markdown 中所有问题
-      - JSON 须合法完整
-      - **fix_suggestion**（可选）：当问题有明确的代码修复方案时，提供修复后的完整代码片段（可直接替换原代码）。仅在有把握时提供，否则设为 null。
-      - **fix_confidence**（可选）：修复建议的置信度，0.0-1.0 之间。无修复建议时设为 null。
+      JSON 规则：severity 必须为 critical/major/minor/suggestion；decision 必须为 approve/request_changes/comment；issues 须涵盖 Markdown 中所有问题；JSON 须合法完整。
 
   # 深度审查策略
   deep:
@@ -841,14 +873,36 @@ strategies:
       ### 🔴 文件路径:行号
       **问题**: [问题描述]
       **建议**: [修复建议]
+      **修复**:
+      ```python
+      [修复后的完整代码，可直接替换问题行]
+      ```
+      **置信度**: [0.0-1.0，你对修复正确性的把握程度]
       
       ### 🟡 文件路径:行号
       **问题**: [问题描述]
       **建议**: [修复建议]
+      **修复**:
+      ```python
+      [修复后的完整代码，可直接替换问题行]
+      ```
+      **置信度**: [0.0-1.0，你对修复正确性的把握程度]
       
       ### 💡 文件路径:行号
       **问题**: [问题描述]
       **建议**: [修复建议]
+      **修复**:
+      ```python
+      [修复后的完整代码，可直接替换问题行]
+      ```
+      **置信度**: [0.0-1.0，你对修复正确性的把握程度]
+
+      **修复代码要求**：
+      - 每条行内评论都应尽量提供修复代码，这是最重要的字段之一
+      - 修复代码必须是可以直接替换问题行的完整代码（不是片段或伪代码）
+      - 如果无法给出具体修复代码（如架构设计问题），**修复** 代码块可以省略
+      - 置信度范围 0.0-1.0：0.9+ 非常确定，0.7-0.9 较有把握，0.7 以下不确定但值得参考
+      - 代码块的语言标记应与文件实际语言一致（如 java、go、typescript 等，不限于 python）
       
       ## Emoji 使用规范（严格遵循）
       
@@ -893,17 +947,11 @@ strategies:
 
       <!-- SAKURA_REVIEW_JSON_START -->
       ```json
-      {"schema_version":1,"overall_score":7,"decision":"approve|request_changes|comment","decision_reason":"理由","issues":[{"severity":"critical|major|minor|suggestion","file_path":"路径或null","line_number":行号或null,"end_line":结束行号或null,"title":"标题","description":"描述","suggestion":"建议或null","fix_suggestion":"修复代码或null","fix_confidence":0.9}],"summary":"摘要"}
+      {"schema_version":1,"overall_score":7,"decision":"approve|request_changes|comment","decision_reason":"理由","issues":[{"severity":"critical|major|minor|suggestion","file_path":"路径或null","line_number":行号或null,"title":"标题","description":"描述","suggestion":"建议或null"}],"summary":"摘要"}
       ```
       <!-- SAKURA_REVIEW_JSON_END -->
 
-      JSON 规则：
-      - severity 必须为 critical/major/minor/suggestion
-      - decision 必须为 approve/request_changes/comment
-      - issues 须涵盖 Markdown 中所有问题
-      - JSON 须合法完整
-      - **fix_suggestion**（可选）：当问题有明确的代码修复方案时，提供修复后的完整代码片段。仅在有把握时提供，否则设为 null。
-      - **fix_confidence**（可选）：修复建议的置信度，0.0-1.0 之间。无修复建议时设为 null。
+      JSON 规则：severity 必须为 critical/major/minor/suggestion；decision 必须为 approve/request_changes/comment；issues 须涵盖 Markdown 中所有问题；JSON 须合法完整。
 
   # 超大PR策略
   large:
@@ -930,17 +978,11 @@ strategies:
 
       <!-- SAKURA_REVIEW_JSON_START -->
       ```json
-      {"schema_version":1,"overall_score":5,"decision":"approve|request_changes|comment","decision_reason":"理由","issues":[{"severity":"critical|major|minor|suggestion","file_path":"路径或null","line_number":行号或null,"end_line":结束行号或null,"title":"标题","description":"描述","suggestion":"建议或null","fix_suggestion":"修复代码或null","fix_confidence":0.9}],"summary":"摘要"}
+      {"schema_version":1,"overall_score":5,"decision":"approve|request_changes|comment","decision_reason":"理由","issues":[{"severity":"critical|major|minor|suggestion","file_path":"路径或null","line_number":行号或null,"title":"标题","description":"描述","suggestion":"建议或null"}],"summary":"摘要"}
       ```
       <!-- SAKURA_REVIEW_JSON_END -->
 
-      JSON 规则：
-      - severity 必须为 critical/major/minor/suggestion
-      - decision 必须为 approve/request_changes/comment
-      - issues 须涵盖 Markdown 中所有问题
-      - JSON 须合法完整
-      - **fix_suggestion**（可选）：修复代码片段。仅在有把握时提供，否则设为 null。
-      - **fix_confidence**（可选）：修复置信度 0.0-1.0。无修复建议时设为 null。
+      JSON 规则：severity 必须为 critical/major/minor/suggestion；decision 必须为 approve/request_changes/comment；issues 须涵盖 Markdown 中所有问题；JSON 须合法完整。
 
 # 文件过滤规则
 file_filters:
