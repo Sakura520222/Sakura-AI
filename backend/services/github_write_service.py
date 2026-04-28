@@ -22,13 +22,27 @@ from loguru import logger
 class GitHubWriteService:
     """GitHub 文件写入服务 / GitHub file write service"""
 
-    DEFAULT_AUTHOR_NAME = "Sakura AI Reviewer"
     DEFAULT_AUTHOR_EMAIL = "sakura@firefly520.top"
     SAKURA_BRANCH_PREFIX = "sakura-memory"
 
     def __init__(self):
         """初始化 / Initialize"""
+        self._bot_name: Optional[str] = None
         logger.info("GitHubWriteService initialized")
+
+    def _get_bot_name(self) -> str:
+        """懒加载获取 bot 提交名字 / Lazily resolve bot commit author name"""
+        if self._bot_name is None:
+            from backend.core.github_app import GitHubAppClient
+
+            client = GitHubAppClient()
+            slug = client.get_bot_username()
+            if slug and slug != "unknown-bot":
+                self._bot_name = f"{slug}[bot]"
+            else:
+                self._bot_name = "Sakura AI Reviewer"
+            logger.info("Bot commit identity resolved: {}", self._bot_name)
+        return self._bot_name
 
     async def commit_files(
         self,
@@ -58,7 +72,7 @@ class GitHubWriteService:
             branch = await self.get_default_branch(repo)
 
         author = InputGitAuthor(
-            name=self.DEFAULT_AUTHOR_NAME,
+            name=self._get_bot_name(),
             email=self.DEFAULT_AUTHOR_EMAIL,
         )
 
