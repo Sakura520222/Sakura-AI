@@ -14,7 +14,6 @@ import base64
 from datetime import datetime
 from typing import Optional
 
-from github import InputGitAuthor
 from github.GithubException import GithubException, UnknownObjectException
 from loguru import logger
 
@@ -22,27 +21,11 @@ from loguru import logger
 class GitHubWriteService:
     """GitHub 文件写入服务 / GitHub file write service"""
 
-    DEFAULT_AUTHOR_EMAIL = "sakura@firefly520.top"
     SAKURA_BRANCH_PREFIX = "sakura-memory"
 
     def __init__(self):
         """初始化 / Initialize"""
-        self._bot_name: Optional[str] = None
         logger.info("GitHubWriteService initialized")
-
-    def _get_bot_name(self) -> str:
-        """懒加载获取 bot 提交名字 / Lazily resolve bot commit author name"""
-        if self._bot_name is None:
-            from backend.core.github_app import GitHubAppClient
-
-            client = GitHubAppClient()
-            slug = client.get_bot_username()
-            if slug and slug != "unknown-bot":
-                self._bot_name = f"{slug}[bot]"
-            else:
-                self._bot_name = "Sakura AI Reviewer"
-            logger.info("Bot commit identity resolved: {}", self._bot_name)
-        return self._bot_name
 
     async def commit_files(
         self,
@@ -71,17 +54,12 @@ class GitHubWriteService:
         if branch is None:
             branch = await self.get_default_branch(repo)
 
-        author = InputGitAuthor(
-            name=self._get_bot_name(),
-            email=self.DEFAULT_AUTHOR_EMAIL,
-        )
-
         # 尝试直接提交 / Try direct commit first
         try:
             last_sha = None
             for path, content in files.items():
                 last_sha = await self._commit_single_file(
-                    repo, path, content, message, branch, author,
+                    repo, path, content, message, branch,
                 )
             logger.info(
                 "Committed {} file(s) directly to {}:{} -> {}",
@@ -98,7 +76,7 @@ class GitHubWriteService:
             "Branch protection (409) on {}:{}, falling back to PR",
             repo.full_name, branch,
         )
-        return await self._commit_via_pr(repo, files, message, branch, author)
+        return await self._commit_via_pr(repo, files, message, branch)
 
     async def _commit_single_file(
         self,
@@ -107,7 +85,6 @@ class GitHubWriteService:
         content: str,
         message: str,
         branch: str,
-        author: InputGitAuthor,
     ) -> str:
         """提交单个文件（自动判断创建或更新）/ Commit a single file"""
 
@@ -118,12 +95,12 @@ class GitHubWriteService:
                     raise ValueError(f"Path {path} is a directory")
                 result = repo.update_file(
                     path=path, message=message, content=content,
-                    sha=existing.sha, branch=branch, author=author,
+                    sha=existing.sha, branch=branch,
                 )
             except UnknownObjectException:
                 result = repo.create_file(
                     path=path, message=message, content=content,
-                    branch=branch, author=author,
+                    branch=branch,
                 )
 
             commit_obj = result.get("commit") if isinstance(result, dict) else None
@@ -136,7 +113,7 @@ class GitHubWriteService:
         return sha
 
     async def _commit_to_branch(
-        self, repo, files: dict, message: str, branch: str, author: InputGitAuthor,
+        self, repo, files: dict, message: str, branch: str,
     ) -> str:
         """提交文件到指定分支（不创建 PR）/ Commit files to an existing branch"""
         if not files:
@@ -151,12 +128,12 @@ class GitHubWriteService:
                         raise ValueError(f"Path {path} is a directory")
                     result = repo.update_file(
                         path=path, message=message, content=content,
-                        sha=existing.sha, branch=branch, author=author,
+                        sha=existing.sha, branch=branch,
                     )
                 except UnknownObjectException:
                     result = repo.create_file(
                         path=path, message=message, content=content,
-                        branch=branch, author=author,
+                        branch=branch,
                     )
                 commit_obj = result.get("commit") if isinstance(result, dict) else None
                 if commit_obj is None:
@@ -175,7 +152,7 @@ class GitHubWriteService:
         return sha
 
     async def _commit_via_pr(
-        self, repo, files: dict, message: str, base_branch: str, author: InputGitAuthor,
+        self, repo, files: dict, message: str, base_branch: str,
     ) -> str:
         """通过创建分支 + PR + 尝试合并来提交文件 / Commit via branch + PR + auto-merge"""
 
@@ -189,7 +166,7 @@ class GitHubWriteService:
                 existing_branch, repo.full_name,
             )
             return await self._commit_to_branch(
-                repo, files, message, existing_branch, author,
+                repo, files, message, existing_branch,
             )
 
         # 无已有分支 → 创建新分支 + PR / No existing branch → create new
@@ -214,12 +191,12 @@ class GitHubWriteService:
                         raise ValueError(f"Path {path} is a directory")
                     result = repo.update_file(
                         path=path, message=message, content=content,
-                        sha=existing.sha, branch=new_branch, author=author,
+                        sha=existing.sha, branch=new_branch,
                     )
                 except UnknownObjectException:
                     result = repo.create_file(
                         path=path, message=message, content=content,
-                        branch=new_branch, author=author,
+                        branch=new_branch,
                     )
                 commit_obj = result.get("commit") if isinstance(result, dict) else None
                 if commit_obj:
