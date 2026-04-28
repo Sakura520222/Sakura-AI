@@ -495,6 +495,7 @@ class CommentService:
 
             # 3. 验证 start_line（多行评论的起始行）
             start_line = comment.get("start_line")
+            start_line_downgraded = False  # Track if start_line was removed
             if start_line is not None:
                 if start_line == line_number:
                     # 单行评论不需要 start_line，移除避免 API 问题
@@ -505,6 +506,7 @@ class CommentService:
                         f"(文件: {matched_path})，降级为单行评论 (行号 {line_number})"
                     )
                     start_line = None
+                    start_line_downgraded = True
                 # start_line 和 line_number 必须在同一 hunk 内
                 elif (
                     analysis.hunk_boundaries
@@ -524,6 +526,7 @@ class CommentService:
                             f"降级为单行评论 (行号 {line_number})"
                         )
                         start_line = None
+                        start_line_downgraded = True
 
             # 4. 构建验证通过的评论副本（不修改原始数据）
             validated_comment = {
@@ -538,7 +541,17 @@ class CommentService:
             # 保留修复建议字段（用于格式化渲染）
             if comment.get("fix_suggestion"):
                 validated_comment["fix_suggestion"] = comment["fix_suggestion"]
-            if comment.get("fix_confidence") is not None:
+                # If start_line was downgraded and fix has multiple lines,
+                # force low-confidence rendering (details block) to prevent
+                # one-click apply from replacing wrong lines.
+                if start_line_downgraded and "\n" in comment["fix_suggestion"]:
+                    logger.info(
+                        f"多行修复建议因 start_line 降级，强制使用折叠渲染: {matched_path}"
+                    )
+                    validated_comment["fix_confidence"] = 0.0
+                elif comment.get("fix_confidence") is not None:
+                    validated_comment["fix_confidence"] = comment["fix_confidence"]
+            elif comment.get("fix_confidence") is not None:
                 validated_comment["fix_confidence"] = comment["fix_confidence"]
             if comment.get("suggestion"):
                 validated_comment["suggestion"] = comment["suggestion"]
