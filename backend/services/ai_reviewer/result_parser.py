@@ -250,6 +250,9 @@ class ReviewResultParser:
                 # 提取内容
                 body = self._extract_inline_body(content_block)
 
+                # 提取修复建议（**建议**: xxx）
+                suggestion = self._extract_suggestion_from_body(content_block)
+
                 # 识别严重程度
                 severity = self._extract_inline_severity(match.group(0))
                 issues_key = SEVERITY_TO_ISSUES_KEY.get(severity, "suggestions")
@@ -265,6 +268,10 @@ class ReviewResultParser:
                     "body": body,
                     "severity": severity,
                 }
+
+                # 附加建议文本（如果有）
+                if suggestion:
+                    inline_comment["suggestion"] = suggestion
 
                 result["inline_comments"].append(inline_comment)
 
@@ -335,6 +342,27 @@ class ReviewResultParser:
             body = lines[0].strip()
 
         return body
+
+    def _extract_suggestion_from_body(self, content_block: str) -> str | None:
+        """从行内评论内容块中提取建议文本
+
+        解析 **建议**: xxx 格式，提取建议内容。
+
+        Args:
+            content_block: 内容块文本
+
+        Returns:
+            建议文本，如果没有则返回 None
+        """
+        # 匹配 **建议**: 后面的内容（到下一个 **xxx**: 标记或内容结尾）
+        suggestion_pattern = re.compile(
+            r"\*\*建议\*\*\s*[:：]\s*(.+?)(?=\n\*\*|$)",
+            re.DOTALL,
+        )
+        match = suggestion_pattern.search(content_block)
+        if match:
+            return match.group(1).strip()
+        return None
 
     def _extract_inline_severity(self, match_text: str) -> str:
         """从匹配文本中提取严重程度
@@ -528,6 +556,26 @@ class ReviewResultParser:
                         if issue.get("end_line"):
                             inline_comment["start_line"] = line_number
                             inline_comment["line_number"] = int(issue["end_line"])
+
+                        # 提取修复建议字段
+                        fix_suggestion = issue.get("fix_suggestion")
+                        fix_confidence = issue.get("fix_confidence")
+                        suggestion_text = issue.get("suggestion")
+
+                        if fix_suggestion:
+                            inline_comment["fix_suggestion"] = fix_suggestion
+                        if fix_confidence is not None:
+                            try:
+                                inline_comment["fix_confidence"] = float(
+                                    fix_confidence
+                                )
+                            except (ValueError, TypeError):
+                                logger.debug(
+                                    f"忽略无效的 fix_confidence 值: {fix_confidence}"
+                                )
+                        if suggestion_text:
+                            inline_comment["suggestion"] = suggestion_text
+
                         result["inline_comments"].append(inline_comment)
                     else:
                         # 整体评论

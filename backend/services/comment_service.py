@@ -4,8 +4,24 @@ import asyncio
 from typing import Dict, Any, Optional
 from loguru import logger
 
-from backend.core.config import get_strategy_config
+from backend.core.config import get_settings, get_strategy_config
 from backend.services.label_service import label_service
+
+
+def _get_fix_confidence_threshold() -> float:
+    """获取修复建议置信度阈值（安全降级）"""
+    try:
+        return get_settings().fix_confidence_threshold
+    except Exception:
+        return 0.8
+
+
+def _is_fix_suggestions_enabled() -> bool:
+    """检查是否启用了修复建议功能"""
+    try:
+        return get_settings().enable_fix_suggestions
+    except Exception:
+        return True
 
 
 class CommentService:
@@ -365,7 +381,11 @@ class CommentService:
                         "minor": "🔵",
                     }.get(severity, "💡")
 
-                    formatted_body = f"{severity_emoji} {body}"
+                    # 格式化修复建议（suggestion 块 / 参考代码块）
+                    formatted_body = self._format_inline_comment_body(
+                        body, comment_data
+                    )
+                    formatted_body = f"{severity_emoji} {formatted_body}"
 
                     # 构建评论字典
                     comment_dict = {
@@ -511,10 +531,55 @@ class CommentService:
             }
             if start_line:
                 validated_comment["start_line"] = start_line
+
+            # 保留修复建议字段（用于格式化渲染）
+            if comment.get("fix_suggestion"):
+                validated_comment["fix_suggestion"] = comment["fix_suggestion"]
+            if comment.get("fix_confidence") is not None:
+                validated_comment["fix_confidence"] = comment["fix_confidence"]
+            if comment.get("suggestion"):
+                validated_comment["suggestion"] = comment["suggestion"]
+
             validated.append(validated_comment)
             logger.debug(f"✓ 验证通过: {matched_path}:{line_number}")
 
         return validated
+
+    def _format_inline_comment_body(
+        self, body: str, comment_data: Dict[str, Any]
+    ) -> str:
+        """格式化行内评论内容，支持修复建议渲染
+
+        根据置信度阈值，将修复建议格式化为：
+        - 高置信度（>= threshold）：GitHub suggestion 块，支持用户一键 Commit
+        - 低置信度（< threshold）：普通代码块，仅供参考
+
+        Args:
+            body: 原始评论内容
+            comment_data: 行内评论数据（可能包含 fix_suggestion、fix_confidence）
+
+        Returns:
+            格式化后的评论内容
+        """
+        if not _is_fix_suggestions_enabled():
+            return body
+
+        fix_suggestion = comment_data.get("fix_suggestion")
+        if not fix_suggestion:
+            return body
+
+        fix_confidence = comment_data.get("fix_confidence", 0.0)
+        threshold = _get_fix_confidence_threshold()
+
+        if fix_confidence >= threshold:
+            # 高置信度：使用 GitHub suggestion 块（支持一键 Commit）
+            suggestion_block = f"\n\n```suggestion\n{fix_suggestion}\n```"
+            confidence_note = f"\n\n> 💚 **置信度 {fix_confidence:.0%}** — 点击上方 suggestion 块即可一键应用修复"
+            return body + suggestion_block + confidence_note
+        else:
+            # 低置信度：仅作为参考代码块
+            code_block = f"\n\n<details><summary>🔧 参考修复方案（置信度 {fix_confidence:.0%}）</summary>\n\n```code\n{fix_suggestion}\n```\n\n</details>"
+            return body + code_block
 
     def _match_file_path(self, ai_path: str, pr_files: set) -> Optional[str]:
         """智能匹配文件路径
