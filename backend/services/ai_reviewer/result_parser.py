@@ -253,6 +253,12 @@ class ReviewResultParser:
                 # 提取修复建议（**建议**: xxx）
                 suggestion = self._extract_suggestion_from_body(content_block)
 
+                # 提取修复代码（**修复**: ```code block```）
+                fix_code = self._extract_fix_from_body(content_block)
+
+                # 提取置信度（**置信度**: 0.85）
+                fix_confidence = self._extract_confidence_from_body(content_block)
+
                 # 识别严重程度
                 severity = self._extract_inline_severity(match.group(0))
                 issues_key = SEVERITY_TO_ISSUES_KEY.get(severity, "suggestions")
@@ -272,6 +278,12 @@ class ReviewResultParser:
                 # 附加建议文本（如果有）
                 if suggestion:
                     inline_comment["suggestion"] = suggestion
+
+                # 附加修复代码和置信度（优先使用 Markdown 格式，JSON 作为补充）
+                if fix_code:
+                    inline_comment["fix_suggestion"] = fix_code
+                if fix_confidence is not None:
+                    inline_comment["fix_confidence"] = fix_confidence
 
                 result["inline_comments"].append(inline_comment)
 
@@ -364,6 +376,51 @@ class ReviewResultParser:
             return match.group(1).strip()
         return None
 
+    def _extract_fix_from_body(self, content_block: str) -> str | None:
+        """从行内评论内容块中提取修复代码
+
+        解析 **修复**: 后面紧跟的代码块（```lang ... ```），提取修复代码内容。
+
+        Args:
+            content_block: 内容块文本
+
+        Returns:
+            修复代码文本，如果没有则返回 None
+        """
+        # 匹配 **修复** 后面紧跟的代码块 ```lang\n...\n```
+        fix_pattern = re.compile(
+            r"\*\*修复\*\*\s*[:：]?\s*\n```[\w]*\n(.*?)\n```",
+            re.DOTALL,
+        )
+        match = fix_pattern.search(content_block)
+        if match:
+            return match.group(1).strip()
+        return None
+
+    def _extract_confidence_from_body(self, content_block: str) -> float | None:
+        """从行内评论内容块中提取置信度
+
+        解析 **置信度**: 0.85 格式，提取置信度数值。
+
+        Args:
+            content_block: 内容块文本
+
+        Returns:
+            置信度数值 (0.0-1.0)，如果没有或无效则返回 None
+        """
+        confidence_pattern = re.compile(
+            r"\*\*置信度\*\*\s*[:：]\s*([0-9]*\.?[0-9]+)",
+        )
+        match = confidence_pattern.search(content_block)
+        if match:
+            try:
+                val = float(match.group(1))
+                # clamp 到 [0.0, 1.0]
+                return max(0.0, min(1.0, val))
+            except (ValueError, TypeError):
+                return None
+        return None
+
     def _extract_inline_severity(self, match_text: str) -> str:
         """从匹配文本中提取严重程度
 
@@ -417,15 +474,26 @@ class ReviewResultParser:
         return line_numbers
 
     def _dedup_inline_comments(self, result: dict[str, Any]) -> None:
-        """去除重复的行内评论（基于 file_path + line_number）"""
-        seen: set[tuple[str, int]] = set()
+        """去除重复的行内评论（基于 file_path + line_number）
+
+        当 JSON 和 Markdown 提取到同一位置的评论时，保留先到的那条，
+        并用后到的评论中非空字段补充缺失的数据（如 fix_suggestion、fix_confidence）。
+        """
+        seen: dict[tuple[str, int], dict[str, Any]] = {}
         deduped: list[dict[str, Any]] = []
         for comment in result["inline_comments"]:
             key = (comment.get("file_path", ""), comment.get("line_number", 0))
             if key not in seen:
-                seen.add(key)
+                seen[key] = comment
                 deduped.append(comment)
             else:
+                # 补充已有评论中缺失的字段
+                existing = seen[key]
+                for field in ("fix_suggestion", "fix_confidence", "suggestion"):
+                    if field not in existing or existing[field] is None:
+                        if field in comment and comment[field] is not None:
+                            existing[field] = comment[field]
+                logger.debug(f"去重合并行内评论: {key}")
                 logger.debug(f"去重丢弃行内评论: {key}")
         result["inline_comments"] = deduped
 
