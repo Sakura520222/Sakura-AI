@@ -320,7 +320,26 @@ class ReviewResultParser:
         Returns:
             处理后的主体文本
         """
-        lines = content_block.split("\n", 1)
+        # Strip **修复**: code blocks and **置信度**: from body — they are rendered separately
+        # via _format_inline_comment_body() as GitHub suggestion blocks.
+        cleaned_block = content_block
+        # Remove **修复**: ```lang\n...\n```
+        cleaned_block = re.sub(
+            r"\*\*修复\*\*\s*[:：]?\s*\n```[\w]*\n.*?\n```",
+            "",
+            cleaned_block,
+            flags=re.DOTALL,
+        )
+        # Remove **置信度**: 0.85
+        cleaned_block = re.sub(
+            r"\*\*置信度\*\*\s*[:：]\s*[0-9]*\.?[0-9]+",
+            "",
+            cleaned_block,
+        )
+        # Clean up excessive blank lines
+        cleaned_block = re.sub(r"\n{3,}", "\n\n", cleaned_block).strip()
+
+        lines = cleaned_block.split("\n", 1)
 
         if len(lines) == 2:
             first_line = lines[0].strip()
