@@ -86,6 +86,8 @@ class ReviewCommentResponse(BaseModel):
     comment_type: Optional[str] = None
     severity: Optional[str] = None
     content: Optional[str] = None
+    fix_suggestion: Optional[str] = None
+    fix_confidence: Optional[float] = None
     created_at: Optional[datetime] = None
 
     model_config = {"from_attributes": True}

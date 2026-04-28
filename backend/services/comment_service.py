@@ -6,6 +6,7 @@ from loguru import logger
 
 from backend.core.config import get_settings, get_strategy_config
 from backend.services.label_service import label_service
+from backend.services.ai_reviewer.constants import DEFAULT_FIX_CONFIDENCE
 
 
 def _get_fix_confidence_threshold() -> float:
@@ -13,7 +14,8 @@ def _get_fix_confidence_threshold() -> float:
     try:
         return get_settings().fix_confidence_threshold
     except Exception:
-        return 0.8
+        logger.warning("获取 fix_confidence_threshold 失败，使用默认值 {}", DEFAULT_FIX_CONFIDENCE)
+        return DEFAULT_FIX_CONFIDENCE
 
 
 def _is_fix_suggestions_enabled() -> bool:
@@ -21,6 +23,7 @@ def _is_fix_suggestions_enabled() -> bool:
     try:
         return get_settings().enable_fix_suggestions
     except Exception:
+        logger.warning("获取 enable_fix_suggestions 失败，默认启用")
         return True
 
 
