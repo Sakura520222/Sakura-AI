@@ -655,20 +655,13 @@ class ReviewResultParser:
                             try:
                                 val = float(fix_confidence)
                                 if not (0.0 <= val <= 1.0):
-if not (0.0 <= val <= 1.0):
-                            logger.warning(
-                                f"fix_confidence 超出范围 {val}，已 clamp 到 [0.0, 1.0]"
-                            )
-                            val = max(0.0, min(1.0, val))
-                        inline_comment["fix_confidence"] = val
-                    except (ValueError, TypeError):
-                        logger.warning(
-                            f"忽略无效的 fix_confidence 值: {fix_confidence}"
-                        )
+                                    logger.warning(
+                                        f"fix_confidence 超出范围 {val}，已 clamp 到 [0.0, 1.0]"
+                                    )
                                     val = max(0.0, min(1.0, val))
                                 inline_comment["fix_confidence"] = val
                             except (ValueError, TypeError):
-                                logger.debug(
+                                logger.warning(
                                     f"忽略无效的 fix_confidence 值: {fix_confidence}"
                                 )
                         if suggestion_text:
