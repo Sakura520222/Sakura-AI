@@ -587,6 +587,22 @@ class CommentService:
         fix_confidence = comment_data.get("fix_confidence", 0.0)
         threshold = _get_fix_confidence_threshold()
 
+        # Safety check: suggestion block line count must match the range
+        # [start_line, line_number]. If they don't match, the "Apply suggestion"
+        # button would replace the wrong lines and corrupt the code.
+        start_line = comment_data.get("start_line")
+        line_number = comment_data.get("line_number")
+        if start_line and line_number:
+            expected_lines = line_number - start_line + 1
+            actual_lines = len(fix_suggestion.splitlines())
+            if actual_lines != expected_lines:
+                logger.warning(
+                    f"修复代码行数({actual_lines})与范围({start_line}-{line_number}, "
+                    f"期望{expected_lines}行)不匹配，降级为折叠渲染: "
+                    f"{comment_data.get('file_path', '?')}"
+                )
+                fix_confidence = 0.0  # Force details block rendering
+
         if fix_confidence >= threshold:
             # 高置信度：使用 GitHub suggestion 块（支持一键 Commit）
             suggestion_block = f"\n\n```suggestion\n{fix_suggestion}\n```"
