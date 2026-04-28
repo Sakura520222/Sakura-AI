@@ -946,6 +946,13 @@ class ReviewWorker:
                 # 只使用验证通过的评论
                 inline_comments = validated_comments
 
+            # 5.2 格式化行内评论 body（渲染修复建议为 GitHub suggestion 块）
+            if inline_comments:
+                for comment in inline_comments:
+                    comment["body"] = self.comment_service._format_inline_comment_body(
+                        comment.get("body", ""), comment
+                    )
+
                 if not inline_comments:
                     logger.warning(
                         f"[{task_id}] 所有行内评论都被过滤，将只提交整体评论"
