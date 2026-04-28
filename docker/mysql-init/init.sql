@@ -39,6 +39,8 @@ CREATE TABLE IF NOT EXISTS review_comments (
     comment_type ENUM('overall', 'file', 'line') NOT NULL DEFAULT 'overall',
     severity ENUM('critical', 'major', 'minor', 'suggestion') NOT NULL DEFAULT 'suggestion',
     content TEXT NOT NULL,
+    fix_suggestion TEXT DEFAULT NULL COMMENT 'AI生成的修复代码片段',
+    fix_confidence FLOAT DEFAULT NULL COMMENT '修复建议置信度(0.0-1.0)',
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL,
     FOREIGN KEY (review_id) REFERENCES pr_reviews(id) ON DELETE CASCADE,
     INDEX idx_review_id (review_id),
@@ -79,7 +81,7 @@ CREATE TABLE IF NOT EXISTS review_queue (
 
 -- 插入默认配置
 INSERT IGNORE INTO app_config (key_name, key_value, description) VALUES
-('app_version', '2.8.8', '应用版本号'),
+('app_version', '2.9.0', '应用版本号'),
 ('max_concurrent_reviews', '5', '最大并发审查数量'),
 ('review_timeout_seconds', '300', '审查超时时间（秒）'),
 ('enable_auto_review', 'true', '是否启用自动审查'),

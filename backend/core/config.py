@@ -217,6 +217,15 @@ class Settings(BaseSettings):
     review_price_per_1k_prompt: float = 0.0
     review_price_per_1k_completion: float = 0.0
 
+    # ========== PR 审查修复建议配置 ==========
+    enable_fix_suggestions: bool = True  # 是否启用 AI 修复建议（suggestion 块）
+    fix_confidence_threshold: float = Field(
+        0.8,
+        ge=0.0,
+        le=1.0,
+        description="修复建议置信度阈值：高于此值渲染为 GitHub suggestion 块（支持一键 Commit），低于此值仅渲染为参考代码块",
+    )
+
     # ========== Web 搜索配置 ==========
     web_search_enabled: bool = True  # 是否启用 Web 搜索工具
     web_search_provider: str = "duckduckgo"  # 搜索提供商：duckduckgo(免费) | tavily
@@ -596,6 +605,21 @@ DYNAMIC_CONFIG_GROUPS: OrderedDict[str, dict] = OrderedDict(
             },
         ),
         (
+            "fix_suggestion",
+            {
+                "label": "修复建议配置",
+                "icon": "wrench",
+                "descriptions": {
+                    "enable_fix_suggestions": "启用后，AI 在审查中会生成可一键应用的代码修复方案（GitHub suggestion 块）",
+                    "fix_confidence_threshold": "置信度阈值（0.0-1.0）：高于此值渲染为可一键 Commit 的 suggestion 块，低于此值仅渲染为参考代码块",
+                },
+                "keys": [
+                    "enable_fix_suggestions",
+                    "fix_confidence_threshold",
+                ],
+            },
+        ),
+        (
             "incremental_review",
             {
                 "label": "增量审查配置",
@@ -794,6 +818,8 @@ DYNAMIC_CONFIG_RANGES: dict[str, tuple[float, float]] = {
     "context_compression_keep_rounds": (1, 20),
     "max_file_count": (1, 100000),
     "max_line_count": (100, 100000000),
+    # 修复建议
+    "fix_confidence_threshold": (0.0, 1.0),
     "incremental_history_max_reviews": (1, 20),
     "incremental_history_summary_max_tokens": (500, 4096),
     "pr_dependency_graph_max_nodes": (5, 50),
@@ -844,6 +870,9 @@ DYNAMIC_CONFIG_LABELS: dict[str, str] = {
     "context_compression_keep_rounds": "保留对话轮数",
     "max_file_count": "最大文件数",
     "max_line_count": "最大行数",
+    # 修复建议配置标签
+    "enable_fix_suggestions": "启用修复建议",
+    "fix_confidence_threshold": "修复建议置信度阈值",
     "enable_incremental_history_context": "启用增量审查历史上下文",
     "enable_pr_summary": "启用 PR 变更总结",
     "incremental_history_max_reviews": "历史审查轮数上限",

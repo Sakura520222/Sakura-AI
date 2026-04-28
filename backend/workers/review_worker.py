@@ -807,6 +807,8 @@ class ReviewWorker:
                             comment_data.get("severity", "suggestion")
                         ),
                         content=comment_data.get("body", ""),
+                        fix_suggestion=comment_data.get("fix_suggestion"),
+                        fix_confidence=comment_data.get("fix_confidence"),
                     )
                     session.add(comment)
 

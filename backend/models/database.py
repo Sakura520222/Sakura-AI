@@ -4,6 +4,7 @@ from datetime import datetime
 from sqlalchemy import (
     Boolean,
     Column,
+    Float,
     Integer,
     BigInteger,
     String,
@@ -193,6 +194,12 @@ class ReviewComment(Base):
         String(50), default=CommentSeverity.SUGGESTION.value, nullable=False
     )
     content = Column(Text, nullable=False)
+
+    # 修复建议（AI 生成的一键修复方案）
+    fix_suggestion = Column(Text, nullable=True, comment="AI 生成的修复代码片段")
+    fix_confidence = Column(
+        Float, nullable=True, comment="修复建议置信度 (0.0-1.0)"
+    )
 
     # 创建时间
     created_at = Column(TIMESTAMP, default=datetime.utcnow, nullable=False)
@@ -939,8 +946,12 @@ async def _auto_migrate():
 
         # 记录迁移版本
         version = datetime.utcnow().strftime("%Y%m%d%H%M%S")
+        now = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
         await conn.execute(
-            text("INSERT INTO schema_migrations (version) VALUES (:v)"),
-            {"v": version},
+            text(
+                "INSERT INTO schema_migrations (version, applied_at) "
+                "VALUES (:v, :at)"
+            ),
+            {"v": version, "at": now},
         )
         _logger.info("[auto-migrate] 迁移完成, version={}", version)
