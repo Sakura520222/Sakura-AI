@@ -84,8 +84,7 @@ class CodeIndexService:
                 # 连续失败 >= 3 次，提前终止索引
                 if consecutive_failures >= 3:
                     remaining = len(files) - (
-                        indexed_count + skipped_count + failed_count
-                        + removed_count
+                        indexed_count + skipped_count + failed_count + removed_count
                     )
                     if remaining > 0:
                         logger.warning(
@@ -113,13 +112,9 @@ class CodeIndexService:
                         if existing:
                             existing.is_deleted = 1
                             removed_count += 1
-                            logger.info(
-                                f"已清理删除文件的索引: {file_path}"
-                            )
+                            logger.info(f"已清理删除文件的索引: {file_path}")
                     except Exception as e:
-                        logger.error(
-                            f"清理删除文件索引失败 ({file_path}): {e}"
-                        )
+                        logger.error(f"清理删除文件索引失败 ({file_path}): {e}")
                         failed_count += 1
                     consecutive_failures = 0
                     continue
@@ -149,9 +144,7 @@ class CodeIndexService:
 
                     # 文件 hash 变化时清理旧代码块
                     if existing and existing.file_hash != file_hash:
-                        await self._cleanup_stale_file_chunks(
-                            repo_full_name, file_path
-                        )
+                        await self._cleanup_stale_file_chunks(repo_full_name, file_path)
 
                     # 解析代码
                     chunks = self.parser.parse_code_file(
@@ -374,9 +367,7 @@ class CodeIndexService:
                         )
                         indexed_file.is_deleted = 1
                         cleaned_count += 1
-                        logger.debug(
-                            f"清理已删除文件的索引: {indexed_file.file_path}"
-                        )
+                        logger.debug(f"清理已删除文件的索引: {indexed_file.file_path}")
                     except Exception as e:
                         logger.error(
                             f"清理文件索引失败 ({indexed_file.file_path}): {e}"
@@ -492,9 +483,7 @@ class CodeIndexService:
         last_commit_hash = await self._get_last_commit_hash(repo_full_name)
 
         if not last_commit_hash:
-            logger.info(
-                f"仓库 {repo_full_name} 无历史索引记录，执行全量索引"
-            )
+            logger.info(f"仓库 {repo_full_name} 无历史索引记录，执行全量索引")
             return await self.index_repository_code(
                 repo_full_name=repo_full_name,
                 repo_path=repo_path,
@@ -508,9 +497,7 @@ class CodeIndexService:
 
         if changed_files is None:
             # git diff 失败，回退到全量索引
-            logger.warning(
-                f"获取变更文件列表失败，回退到全量索引: {repo_full_name}"
-            )
+            logger.warning(f"获取变更文件列表失败，回退到全量索引: {repo_full_name}")
             return await self.index_repository_code(
                 repo_full_name=repo_full_name,
                 repo_path=repo_path,
@@ -542,12 +529,8 @@ class CodeIndexService:
                         skipped_count += 1
                         continue
 
-                    content = full_path.read_text(
-                        encoding="utf-8", errors="ignore"
-                    )
-                    file_hash = hashlib.sha256(
-                        content.encode()
-                    ).hexdigest()
+                    content = full_path.read_text(encoding="utf-8", errors="ignore")
+                    file_hash = hashlib.sha256(content.encode()).hexdigest()
 
                     # 检查是否需要索引
                     existing = await self._get_code_file(
@@ -563,9 +546,7 @@ class CodeIndexService:
 
                     # 文件 hash 变化时清理旧代码块
                     if existing and existing.file_hash != file_hash:
-                        await self._cleanup_stale_file_chunks(
-                            repo_full_name, file_path
-                        )
+                        await self._cleanup_stale_file_chunks(repo_full_name, file_path)
 
                     # 解析代码
                     chunks = self.parser.parse_code_file(
@@ -582,9 +563,7 @@ class CodeIndexService:
 
                     # 生成嵌入向量
                     chunk_texts = [chunk.content for chunk in chunks]
-                    embeddings = await self.embedding_service.embed_texts(
-                        chunk_texts
-                    )
+                    embeddings = await self.embedding_service.embed_texts(chunk_texts)
 
                     # 准备向量存储数据
                     vector_chunks = [
@@ -615,17 +594,13 @@ class CodeIndexService:
                     indexed_count += 1
 
                 except Exception as e:
-                    logger.error(
-                        f"增量索引文件 {file_path} 失败: {e}"
-                    )
+                    logger.error(f"增量索引文件 {file_path} 失败: {e}")
                     failed_count += 1
 
             # 处理删除的文件
             for file_path in deleted_files:
                 try:
-                    await self.vector_store.delete_by_file(
-                        repo_full_name, file_path
-                    )
+                    await self.vector_store.delete_by_file(repo_full_name, file_path)
                     existing = await self._get_code_file(
                         session, repo_full_name, file_path
                     )
@@ -633,9 +608,7 @@ class CodeIndexService:
                         existing.is_deleted = 1
                         cleaned_count += 1
                 except Exception as e:
-                    logger.error(
-                        f"清理删除文件索引失败 ({file_path}): {e}"
-                    )
+                    logger.error(f"清理删除文件索引失败 ({file_path}): {e}")
                     failed_count += 1
 
             # 更新索引状态
@@ -665,9 +638,7 @@ class CodeIndexService:
             "total_chunks": total_chunks,
         }
 
-    async def _get_last_commit_hash(
-        self, repo_full_name: str
-    ) -> Optional[str]:
+    async def _get_last_commit_hash(self, repo_full_name: str) -> Optional[str]:
         """获取仓库上一次索引的 commit hash"""
         async with async_session() as session:
             result = await session.execute(
@@ -705,9 +676,7 @@ class CodeIndexService:
             stdout, stderr = await proc.communicate()
 
             if proc.returncode != 0:
-                logger.warning(
-                    f"git diff 执行失败: {stderr.decode()[:200]}"
-                )
+                logger.warning(f"git diff 执行失败: {stderr.decode()[:200]}")
                 return None
 
             added, modified, deleted = [], [], []
@@ -816,9 +785,7 @@ class CodeIndexService:
                 repo_full_name, file_path
             )
             if deleted_count > 0:
-                logger.debug(
-                    f"已清理文件 {file_path} 的 {deleted_count} 个旧代码块"
-                )
+                logger.debug(f"已清理文件 {file_path} 的 {deleted_count} 个旧代码块")
             return deleted_count
         except Exception as e:
             logger.warning(f"清理旧代码块失败 ({file_path}): {e}")

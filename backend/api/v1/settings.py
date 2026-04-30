@@ -89,7 +89,9 @@ async def get_about(
     """获取系统版本信息"""
     from backend.webui.routes.auth import APP_VERSION
 
-    return success_response(data={
-        "version": APP_VERSION,
-        "build_date": datetime.now(timezone.utc).strftime("%Y-%m-%d"),
-    })
+    return success_response(
+        data={
+            "version": APP_VERSION,
+            "build_date": datetime.now(timezone.utc).strftime("%Y-%m-%d"),
+        }
+    )

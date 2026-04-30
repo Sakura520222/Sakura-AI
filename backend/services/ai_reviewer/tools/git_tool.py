@@ -52,7 +52,9 @@ class GitToolHandler:
         try:
             config = self._get_config()
             effective_branch_count = (
-                branch_count if branch_count is not None else config["default_branch_count"]
+                branch_count
+                if branch_count is not None
+                else config["default_branch_count"]
             )
 
             # 获取仓库基本信息 / Get basic repo info
@@ -79,8 +81,12 @@ class GitToolHandler:
                 license_info = repo.get_license()
                 if license_info:
                     info["license"] = {
-                        "name": license_info.license.name if license_info.license else None,
-                        "spdx_id": license_info.license.spdx_id if license_info.license else None,
+                        "name": license_info.license.name
+                        if license_info.license
+                        else None,
+                        "spdx_id": license_info.license.spdx_id
+                        if license_info.license
+                        else None,
                     }
             except Exception as e:
                 logger.debug(f"获取仓库许可证信息失败: {e}")

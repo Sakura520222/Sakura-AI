@@ -789,7 +789,9 @@ async def handle_issue_event(payload: Dict[str, Any]) -> JSONResponse:
                 issue_number=issue_info["issue_number"],
             )
             if not allowed:
-                logger.warning(f"Issue 配额不足: {github_username} (仓库所有者) - {reason}")
+                logger.warning(
+                    f"Issue 配额不足: {github_username} (仓库所有者) - {reason}"
+                )
                 if notification_sender:
                     await notification_sender.send_quota_exceeded(
                         repo_name=issue_info["repo_full_name"],

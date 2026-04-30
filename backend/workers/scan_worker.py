@@ -246,7 +246,9 @@ class ScanWorker:
             )
 
             # 7. 聚合结果（使用 AI 评估的健康评分）
-            aggregated = self._aggregate_findings(all_findings, ai_health_score=ai_health_score)
+            aggregated = self._aggregate_findings(
+                all_findings, ai_health_score=ai_health_score
+            )
 
             # 8. 写入 ScanFinding 记录
             await self._save_findings(scan_id, aggregated["findings"])
@@ -492,9 +494,7 @@ class ScanWorker:
                 enabled_tools.append(tool_def)
 
         # 5. 获取 repo 对象供工具使用（优先 GitHub API，回退本地适配器）
-        _owner, _name = (
-            repo_name.split("/", 1) if "/" in repo_name else ("", repo_name)
-        )
+        _owner, _name = repo_name.split("/", 1) if "/" in repo_name else ("", repo_name)
         _client = await asyncio.to_thread(
             self.github_app.get_installation_client, _owner, _name
         )
@@ -507,9 +507,7 @@ class ScanWorker:
             )
 
             _scan_repo = LocalRepoAdapter(repo_path, repo_name)
-            logger.warning(
-                f"GitHub client 不可用，使用本地文件系统适配器: {repo_name}"
-            )
+            logger.warning(f"GitHub client 不可用，使用本地文件系统适配器: {repo_name}")
 
         # 5.5 注入 .sakura/ 记忆上下文 / Inject .sakura/ memory context
         try:
@@ -810,7 +808,9 @@ class ScanWorker:
             from backend.services.scan_report_service import ScanReportService
 
             report_service = ScanReportService()
-            report_info = await report_service.generate_and_deliver(scan_id, report_data)
+            report_info = await report_service.generate_and_deliver(
+                scan_id, report_data
+            )
         except Exception as e:
             logger.error(f"生成报告失败: {type(e).__name__}: {e}", exc_info=True)
 

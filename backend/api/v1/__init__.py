@@ -5,8 +5,18 @@ from fastapi import APIRouter, Request
 from backend.api.v1.deps import limiter
 from backend.api.v1 import (
     setup,
-    auth, dashboard, reviews, issues, users, repos,
-    config, logs, queue, scans, settings, events,
+    auth,
+    dashboard,
+    reviews,
+    issues,
+    users,
+    repos,
+    config,
+    logs,
+    queue,
+    scans,
+    settings,
+    events,
 )
 
 api_v1_router = APIRouter()
