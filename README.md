@@ -264,8 +264,6 @@ WebUI：`https://your-domain.com/webui/`
 
 <img src="res/发送正在审查中和自动打标.png" width="1901" alt="审查进行中">
 
-<img src="res/PR审查完成示例.png" width="1090" alt="审查报告">
-
 <img src="res/Issues分析.png" width="1707" alt="Issue分析">
 
 <img src="res/WebUI.png" width="1707" alt="WebUI管理界面">
