@@ -15,7 +15,11 @@ from backend.webui.deps import (
 
 from backend.api.v1.deps import require_api_auth
 from backend.api.v1.schemas import IssueAnalysisResponse
-from backend.api.v1.responses import success_response, error_response, paginated_response
+from backend.api.v1.responses import (
+    success_response,
+    error_response,
+    paginated_response,
+)
 
 router = APIRouter(prefix="/issues", tags=["Issues"])
 
@@ -51,7 +55,7 @@ async def list_issues(
         count_query = count_query.where(scope_filter)
 
     if search:
-        escaped = search.replace('%', r'\%').replace('_', r'\_')
+        escaped = search.replace("%", r"\%").replace("_", r"\_")
         pattern = f"%{escaped}%"
         search_filter = or_(
             IssueAnalysis.title.like(pattern),
@@ -82,7 +86,9 @@ async def list_issues(
 
     items = []
     for a in analyses:
-        data = IssueAnalysisResponse.model_validate(a, from_attributes=True).model_dump(mode='json')
+        data = IssueAnalysisResponse.model_validate(a, from_attributes=True).model_dump(
+            mode="json"
+        )
         data["suggested_labels"] = _parse_json_field(a.suggested_labels)
         data["suggested_assignees"] = _parse_json_field(a.suggested_assignees)
         data["related_prs"] = _parse_json_field(a.related_prs)
@@ -121,7 +127,9 @@ async def get_issue(
     if not analysis:
         return error_response("分析记录不存在或无权访问", status_code=404)
 
-    data = IssueAnalysisResponse.model_validate(analysis, from_attributes=True).model_dump(mode='json')
+    data = IssueAnalysisResponse.model_validate(
+        analysis, from_attributes=True
+    ).model_dump(mode="json")
     for field in ("suggested_labels", "suggested_assignees", "related_prs"):
         data[field] = _parse_json_field(getattr(analysis, field))
 

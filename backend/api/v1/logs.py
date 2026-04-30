@@ -14,7 +14,11 @@ from backend.webui.deps import (
 )
 
 from backend.api.v1.deps import require_api_auth, require_api_admin
-from backend.api.v1.responses import success_response, error_response, paginated_response
+from backend.api.v1.responses import (
+    success_response,
+    error_response,
+    paginated_response,
+)
 
 router = APIRouter(prefix="/logs", tags=["Logs"])
 
@@ -58,20 +62,26 @@ async def list_review_logs(
         count_query = count_query.where(PRReview.status == status)
     if date_from:
         from datetime import datetime
+
         try:
             df = datetime.strptime(date_from, "%Y-%m-%d")
             query = query.where(PRReview.created_at >= df)
             count_query = count_query.where(PRReview.created_at >= df)
         except ValueError:
-            return error_response("date_from 格式错误，请使用 YYYY-MM-DD", status_code=400)
+            return error_response(
+                "date_from 格式错误，请使用 YYYY-MM-DD", status_code=400
+            )
     if date_to:
         from datetime import datetime, timedelta
+
         try:
             dt = datetime.strptime(date_to, "%Y-%m-%d") + timedelta(days=1)
             query = query.where(PRReview.created_at < dt)
             count_query = count_query.where(PRReview.created_at < dt)
         except ValueError:
-            return error_response("date_to 格式错误，请使用 YYYY-MM-DD", status_code=400)
+            return error_response(
+                "date_to 格式错误，请使用 YYYY-MM-DD", status_code=400
+            )
 
     query = query.order_by(desc(PRReview.created_at))
 
@@ -146,7 +156,9 @@ async def get_review_log(
         "prompt_tokens": review.prompt_tokens,
         "completion_tokens": review.completion_tokens,
         "created_at": review.created_at.isoformat() if review.created_at else None,
-        "completed_at": review.completed_at.isoformat() if review.completed_at else None,
+        "completed_at": review.completed_at.isoformat()
+        if review.completed_at
+        else None,
         "comments": [
             {
                 "id": c.id,
@@ -182,21 +194,27 @@ async def list_action_logs(
 
     if start_date:
         from datetime import datetime
+
         try:
             sd = datetime.strptime(start_date, "%Y-%m-%d")
             query = query.where(AdminActionLog.created_at >= sd)
             count_query = count_query.where(AdminActionLog.created_at >= sd)
         except ValueError:
-            return error_response("start_date 格式错误，请使用 YYYY-MM-DD", status_code=400)
+            return error_response(
+                "start_date 格式错误，请使用 YYYY-MM-DD", status_code=400
+            )
 
     if end_date:
         from datetime import datetime, timedelta
+
         try:
             ed = datetime.strptime(end_date, "%Y-%m-%d") + timedelta(days=1)
             query = query.where(AdminActionLog.created_at < ed)
             count_query = count_query.where(AdminActionLog.created_at < ed)
         except ValueError:
-            return error_response("end_date 格式错误，请使用 YYYY-MM-DD", status_code=400)
+            return error_response(
+                "end_date 格式错误，请使用 YYYY-MM-DD", status_code=400
+            )
 
     query = query.order_by(desc(AdminActionLog.created_at))
 
@@ -237,13 +255,15 @@ async def get_action_log(
         return error_response("操作日志不存在", status_code=404)
 
     log, admin_name = row
-    return success_response(data={
-        "id": log.id,
-        "admin_id": log.admin_id,
-        "admin_username": admin_name,
-        "action": log.action,
-        "target_type": log.target_type,
-        "target_id": log.target_id,
-        "detail": log.detail,
-        "created_at": log.created_at.isoformat() if log.created_at else None,
-    })
+    return success_response(
+        data={
+            "id": log.id,
+            "admin_id": log.admin_id,
+            "admin_username": admin_name,
+            "action": log.action,
+            "target_type": log.target_type,
+            "target_id": log.target_id,
+            "detail": log.detail,
+            "created_at": log.created_at.isoformat() if log.created_at else None,
+        }
+    )

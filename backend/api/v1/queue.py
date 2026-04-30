@@ -8,7 +8,11 @@ from backend.models.database import ReviewQueue
 from backend.webui.deps import get_db, paginate
 
 from backend.api.v1.deps import require_api_admin
-from backend.api.v1.responses import success_response, error_response, paginated_response
+from backend.api.v1.responses import (
+    success_response,
+    error_response,
+    paginated_response,
+)
 
 router = APIRouter(prefix="/queue", tags=["Queue"])
 
@@ -21,8 +25,9 @@ async def queue_stats(
     """队列统计"""
     status_counts = (
         await db.execute(
-            select(ReviewQueue.status, func.count(ReviewQueue.id))
-            .group_by(ReviewQueue.status)
+            select(ReviewQueue.status, func.count(ReviewQueue.id)).group_by(
+                ReviewQueue.status
+            )
         )
     ).all()
 
@@ -94,26 +99,26 @@ async def get_queue_item(
     user: dict = Depends(require_api_admin),
 ):
     """队列项详情"""
-    result = await db.execute(
-        select(ReviewQueue).where(ReviewQueue.id == item_id)
-    )
+    result = await db.execute(select(ReviewQueue).where(ReviewQueue.id == item_id))
     item = result.scalar_one_or_none()
     if not item:
         return error_response("队列项不存在", status_code=404)
 
-    return success_response(data={
-        "id": item.id,
-        "pr_id": item.pr_id,
-        "repo_name": item.repo_name,
-        "action": item.action,
-        "priority": item.priority,
-        "status": item.status,
-        "retry_count": item.retry_count,
-        "max_retries": item.max_retries,
-        "error_message": item.error_message,
-        "created_at": item.created_at.isoformat() if item.created_at else None,
-        "updated_at": item.updated_at.isoformat() if item.updated_at else None,
-    })
+    return success_response(
+        data={
+            "id": item.id,
+            "pr_id": item.pr_id,
+            "repo_name": item.repo_name,
+            "action": item.action,
+            "priority": item.priority,
+            "status": item.status,
+            "retry_count": item.retry_count,
+            "max_retries": item.max_retries,
+            "error_message": item.error_message,
+            "created_at": item.created_at.isoformat() if item.created_at else None,
+            "updated_at": item.updated_at.isoformat() if item.updated_at else None,
+        }
+    )
 
 
 @router.post("/items/{item_id}/retry")
@@ -123,9 +128,7 @@ async def retry_queue_item(
     user: dict = Depends(require_api_admin),
 ):
     """重试失败的队列项"""
-    result = await db.execute(
-        select(ReviewQueue).where(ReviewQueue.id == item_id)
-    )
+    result = await db.execute(select(ReviewQueue).where(ReviewQueue.id == item_id))
     item = result.scalar_one_or_none()
     if not item:
         return error_response("队列项不存在", status_code=404)
@@ -146,9 +149,7 @@ async def delete_queue_item(
     user: dict = Depends(require_api_admin),
 ):
     """删除队列项"""
-    result = await db.execute(
-        select(ReviewQueue).where(ReviewQueue.id == item_id)
-    )
+    result = await db.execute(select(ReviewQueue).where(ReviewQueue.id == item_id))
     item = result.scalar_one_or_none()
     if not item:
         return error_response("队列项不存在", status_code=404)
@@ -183,9 +184,7 @@ async def purge_queue(
     # 批量删除
     from sqlalchemy import delete
 
-    await db.execute(
-        delete(ReviewQueue).where(ReviewQueue.status == status)
-    )
+    await db.execute(delete(ReviewQueue).where(ReviewQueue.status == status))
     await db.commit()
 
     return success_response(

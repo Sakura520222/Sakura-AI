@@ -303,7 +303,10 @@ class ReviewWorker:
 
                 # 6.2 注入 .sakura/ 记忆上下文 / Inject .sakura/ memory context
                 try:
-                    from backend.services.sakura_memory_service import get_sakura_memory_service
+                    from backend.services.sakura_memory_service import (
+                        get_sakura_memory_service,
+                    )
+
                     sakura_memory_service = get_sakura_memory_service()
                     sakura_context = await sakura_memory_service.get_sakura_context(
                         repo=pr.base.repo,
@@ -313,12 +316,17 @@ class ReviewWorker:
                         context["sakura_docs_context"] = sakura_context
                         parts = []
                         if "sakura_md" in sakura_context:
-                            parts.append(f"SAKURA.md({len(sakura_context['sakura_md'])}字)")
+                            parts.append(
+                                f"SAKURA.md({len(sakura_context['sakura_md'])}字)"
+                            )
                         if "memory_md" in sakura_context:
-                            parts.append(f"memory.md({len(sakura_context['memory_md'])}字)")
+                            parts.append(
+                                f"memory.md({len(sakura_context['memory_md'])}字)"
+                            )
                         logger.info(
                             "[{}] 已注入 .sakura/ 记忆上下文: {}",
-                            task_id, ", ".join(parts) or "空",
+                            task_id,
+                            ", ".join(parts) or "空",
                         )
                 except Exception as e:
                     logger.warning(
@@ -541,13 +549,25 @@ class ReviewWorker:
                                 pr_info["repo_owner"], pr_info["repo_name"]
                             )
 
-                            # AI推荐标签
+                            # 获取 PR 已有标签（用于增量审查冲突检测）
+                            pr_existing_labels = (
+                                await label_service.get_pr_existing_labels(
+                                    pr_info["repo_owner"],
+                                    pr_info["repo_name"],
+                                    pr_info["pr_number"],
+                                )
+                            )
+
+                            # AI推荐标签（传入已有标签）
                             recommendations = await self.ai_reviewer.recommend_labels(
-                                context, available_labels, pr_info
+                                context,
+                                available_labels,
+                                pr_info,
+                                existing_labels=pr_existing_labels,
                             )
 
                             if recommendations:
-                                # 应用标签到PR
+                                # 应用标签到PR（传入已有标签用于冲突检测）
                                 confidence_threshold = _get_label_rec_setting(
                                     "confidence_threshold", 0.7
                                 )
@@ -562,12 +582,14 @@ class ReviewWorker:
                                     recommendations,
                                     confidence_threshold=confidence_threshold,
                                     auto_create=auto_create_labels,
+                                    existing_labels=pr_existing_labels,
                                 )
 
                                 logger.info(
                                     f"[{task_id}] 标签应用完成: "
                                     f"已应用 {len(label_results.get('applied', []))} 个, "
-                                    f"建议 {len(label_results.get('suggested', []))} 个"
+                                    f"建议 {len(label_results.get('suggested', []))} 个, "
+                                    f"冲突跳过 {len(label_results.get('conflict_blocked', []))} 个"
                                 )
                                 return label_results
                             else:
@@ -630,11 +652,19 @@ class ReviewWorker:
 
                 # 11.5 异步触发 .sakura/ 反思 / Trigger .sakura/ reflection async
                 try:
-                    if settings.sakura_memory_enabled and settings.sakura_reflection_enabled:
-                        from backend.services.sakura_memory_service import get_sakura_memory_service
+                    if (
+                        settings.sakura_memory_enabled
+                        and settings.sakura_reflection_enabled
+                    ):
+                        from backend.services.sakura_memory_service import (
+                            get_sakura_memory_service,
+                        )
+
                         sakura_memory_service = get_sakura_memory_service()
                         # 将 decision 写入 review_result 供反思使用
-                        review_result["decision"] = decision.value if decision else "unknown"
+                        review_result["decision"] = (
+                            decision.value if decision else "unknown"
+                        )
                         task = asyncio.create_task(
                             sakura_memory_service.reflect(
                                 repo=pr.base.repo,
@@ -651,7 +681,9 @@ class ReviewWorker:
                         task.add_done_callback(self._background_tasks.discard)
                         logger.info(f"[{task_id}] 已触发 .sakura/ 反思任务")
                 except Exception as e:
-                    logger.warning(f"[{task_id}] 触发 .sakura/ 反思失败（不影响审查）: {e}")
+                    logger.warning(
+                        f"[{task_id}] 触发 .sakura/ 反思失败（不影响审查）: {e}"
+                    )
 
                 # 12. 发送Telegram审查完成通知
                 await self._send_review_complete_notification(pr_info, review_result)

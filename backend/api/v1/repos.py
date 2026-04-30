@@ -54,7 +54,9 @@ async def index_docs(
         return error_response("RAG 功能未启用，请在设置中开启")
 
     if _is_index_locked(repo_name, "docs"):
-        return error_response(f"仓库 {repo_name} 正在索引中，请稍后再试", status_code=409)
+        return error_response(
+            f"仓库 {repo_name} 正在索引中，请稍后再试", status_code=409
+        )
 
     task = asyncio.create_task(_run_docs_index(repo_name, user["user_id"]))
     _active_index_tasks[f"{repo_name}:docs"] = task
@@ -78,7 +80,9 @@ async def index_code(
         return error_response("代码索引功能未启用，请在设置中开启")
 
     if _is_index_locked(repo_name, "code"):
-        return error_response(f"仓库 {repo_name} 正在索引中，请稍后再试", status_code=409)
+        return error_response(
+            f"仓库 {repo_name} 正在索引中，请稍后再试", status_code=409
+        )
 
     task = asyncio.create_task(_run_code_index(repo_name, user["user_id"]))
     _active_index_tasks[f"{repo_name}:code"] = task
@@ -102,7 +106,9 @@ async def index_issues(
         return error_response("语义 Issue 关联功能未启用，请在设置中开启")
 
     if _is_index_locked(repo_name, "issues"):
-        return error_response(f"仓库 {repo_name} 正在索引中，请稍后再试", status_code=409)
+        return error_response(
+            f"仓库 {repo_name} 正在索引中，请稍后再试", status_code=409
+        )
 
     task = asyncio.create_task(_run_issues_index(repo_name, user["user_id"]))
     _active_index_tasks[f"{repo_name}:issues"] = task
@@ -120,7 +126,9 @@ async def trigger_repo_scan(
 ):
     """触发仓库扫描（超级管理员）"""
     if _is_index_locked(repo_name, "scan"):
-        return error_response(f"仓库 {repo_name} 正在扫描中，请稍后再试", status_code=409)
+        return error_response(
+            f"仓库 {repo_name} 正在扫描中，请稍后再试", status_code=409
+        )
 
     task = asyncio.create_task(_run_repo_scan(repo_name, user["user_id"]))
     _active_index_tasks[f"{repo_name}:scan"] = task

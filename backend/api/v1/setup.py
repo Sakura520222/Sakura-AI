@@ -71,9 +71,7 @@ class CompleteSetupRequest(BaseModel):
 def _check_bootstrap():
     """检查是否处于 bootstrap 模式"""
     if not is_bootstrap_mode():
-        return error_response(
-            "系统已完成初始化，Setup Wizard 不可用", status_code=403
-        )
+        return error_response("系统已完成初始化，Setup Wizard 不可用", status_code=403)
     return None
 
 
@@ -132,9 +130,7 @@ async def test_connection(request: Request, body: TestConnectionRequest):
         return bootstrap_error
 
     if body.type == "database":
-        result = await setup_service.test_database_connection(
-            body.database_url or ""
-        )
+        result = await setup_service.test_database_connection(body.database_url or "")
     elif body.type == "redis":
         result = await setup_service.test_redis_connection(body.redis_url or "")
     elif body.type == "github":
@@ -188,9 +184,7 @@ async def complete_setup(request: Request, body: CompleteSetupRequest):
     if bootstrap_error:
         return bootstrap_error
 
-    all_config = {
-        k: str(v) for k, v in body.model_dump().items() if v is not None
-    }
+    all_config = {k: str(v) for k, v in body.model_dump().items() if v is not None}
 
     result = await setup_service.complete_setup(all_config)
 

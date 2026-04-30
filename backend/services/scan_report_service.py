@@ -27,7 +27,9 @@ _SEVERITY_EMOJI = {
 class ScanReportService:
     """扫描报告生成与交付"""
 
-    async def generate_and_deliver(self, scan_id: int, report_data: dict = None) -> dict:
+    async def generate_and_deliver(
+        self, scan_id: int, report_data: dict = None
+    ) -> dict:
         """生成报告并交付到所有渠道
 
         Args:
@@ -156,9 +158,7 @@ class ScanReportService:
 
         return "\n".join(lines)
 
-    def generate_telegram_message(
-        self, scan: "RepoScan", issue_url: str = None
-    ) -> str:
+    def generate_telegram_message(self, scan: "RepoScan", issue_url: str = None) -> str:
         """生成 Telegram 通知消息"""
         health = scan.overall_health_score or 0
         health_emoji = "🟢" if health >= 80 else "🟡" if health >= 60 else "🔴"
@@ -316,7 +316,9 @@ class ScanReportService:
             )
             return None
 
-    async def _send_telegram_notification(self, scan: "RepoScan", issue_url: str = None):
+    async def _send_telegram_notification(
+        self, scan: "RepoScan", issue_url: str = None
+    ):
         """发送 Telegram 通知"""
         try:
             from backend.telegram.notifications import get_notification_sender

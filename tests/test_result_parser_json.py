@@ -20,7 +20,9 @@ def parser():
 def _make_json_block(data: dict) -> str:
     """Helper: wrap JSON data in markers"""
     json_str = json.dumps(data, ensure_ascii=False, indent=2)
-    return f"{JSON_BLOCK_START_MARKER}\n```json\n{json_str}\n```\n{JSON_BLOCK_END_MARKER}"
+    return (
+        f"{JSON_BLOCK_START_MARKER}\n```json\n{json_str}\n```\n{JSON_BLOCK_END_MARKER}"
+    )
 
 
 def _valid_json_data(**overrides) -> dict:
@@ -210,10 +212,34 @@ class TestApplyJsonResult:
         }
         json_data = _valid_json_data(
             issues=[
-                {"severity": "critical", "file_path": "a.py", "line_number": 1, "title": "Bug", "description": "desc"},
-                {"severity": "major", "file_path": "b.py", "line_number": 2, "title": "Quality", "description": "desc"},
-                {"severity": "minor", "file_path": "c.py", "line_number": 3, "title": "Style", "description": "desc"},
-                {"severity": "suggestion", "file_path": None, "line_number": None, "title": "Idea", "description": "desc"},
+                {
+                    "severity": "critical",
+                    "file_path": "a.py",
+                    "line_number": 1,
+                    "title": "Bug",
+                    "description": "desc",
+                },
+                {
+                    "severity": "major",
+                    "file_path": "b.py",
+                    "line_number": 2,
+                    "title": "Quality",
+                    "description": "desc",
+                },
+                {
+                    "severity": "minor",
+                    "file_path": "c.py",
+                    "line_number": 3,
+                    "title": "Style",
+                    "description": "desc",
+                },
+                {
+                    "severity": "suggestion",
+                    "file_path": None,
+                    "line_number": None,
+                    "title": "Idea",
+                    "description": "desc",
+                },
             ]
         )
         parser._apply_json_result(result, json_data)
@@ -232,10 +258,7 @@ class TestParseReviewResult:
     def test_json_priority_over_emoji(self, parser):
         """When both JSON and emoji present, JSON takes priority"""
         json_data = _valid_json_data(overall_score=9, decision="approve")
-        review_text = (
-            "### 🔴 严重问题\n有 bug\n"
-            + _make_json_block(json_data)
-        )
+        review_text = "### 🔴 严重问题\n有 bug\n" + _make_json_block(json_data)
         result = parser.parse_review_result(review_text, "quick")
         assert result["parse_source"] == "json"
         assert result["overall_score"] == 9

@@ -61,7 +61,13 @@ ISSUE_CATEGORIES = ["critical", "major", "minor", "suggestions"]
 # =============================================================================
 # 工具定义
 # =============================================================================
-BASE_TOOLS = ["read_file", "list_directory", "search_in_files", "get_git_info", "list_commits"]
+BASE_TOOLS = [
+    "read_file",
+    "list_directory",
+    "search_in_files",
+    "get_git_info",
+    "list_commits",
+]
 RAG_TOOLS = ["search_project_docs"]
 CODE_INDEX_TOOLS = ["search_code_context"]
 WEB_SEARCH_TOOLS = ["search_web", "fetch_url"]

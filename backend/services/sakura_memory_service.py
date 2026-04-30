@@ -246,35 +246,50 @@ class SakuraMemoryService:
         yaml_config = ce_config.get("sakura_memory", {})
         settings = get_settings()
 
-        reflection_model = settings.sakura_reflection_model or yaml_config.get("reflection", {}).get("model")
-        consolidation_model = settings.sakura_consolidation_model or yaml_config.get("consolidation", {}).get("model")
-        issue_reflection_model = settings.sakura_issue_reflection_model or yaml_config.get("issue_reflection", {}).get("model")
+        reflection_model = settings.sakura_reflection_model or yaml_config.get(
+            "reflection", {}
+        ).get("model")
+        consolidation_model = settings.sakura_consolidation_model or yaml_config.get(
+            "consolidation", {}
+        ).get("model")
+        issue_reflection_model = (
+            settings.sakura_issue_reflection_model
+            or yaml_config.get("issue_reflection", {}).get("model")
+        )
 
         return {
             "enabled": settings.sakura_memory_enabled,
             "reflection": {
                 "enabled": settings.sakura_reflection_enabled,
                 "model": reflection_model,
-                "prompt_template": yaml_config.get("reflection", {}).get("prompt_template"),
+                "prompt_template": yaml_config.get("reflection", {}).get(
+                    "prompt_template"
+                ),
             },
             "issue_reflection": {
                 "enabled": settings.sakura_issue_reflection_enabled,
                 "model": issue_reflection_model,
-                "prompt_template": yaml_config.get("issue_reflection", {}).get("prompt_template"),
+                "prompt_template": yaml_config.get("issue_reflection", {}).get(
+                    "prompt_template"
+                ),
             },
             "consolidation": {
                 "interval": settings.sakura_consolidation_interval,
                 "model": consolidation_model,
                 "max_memory_chars": settings.sakura_max_memory_chars,
                 "max_sakura_chars": settings.sakura_max_sakura_chars,
-                "cleanup_old_reflections": yaml_config.get("consolidation", {}).get("cleanup_old_reflections", False),
-                "partial_commit": yaml_config.get("consolidation", {}).get("partial_commit", False),
+                "cleanup_old_reflections": yaml_config.get("consolidation", {}).get(
+                    "cleanup_old_reflections", False
+                ),
+                "partial_commit": yaml_config.get("consolidation", {}).get(
+                    "partial_commit", False
+                ),
             },
             "initialization": {
                 "auto_init": settings.sakura_auto_init,
                 "init_commit_message": yaml_config.get("initialization", {}).get(
                     "init_commit_message",
-                    "chore: initialize .sakura/ directory for Sakura AI Reviewer"
+                    "chore: initialize .sakura/ directory for Sakura AI Reviewer",
                 ),
             },
             "directory_convention": yaml_config.get("directory_convention", {}),
@@ -315,7 +330,9 @@ class SakuraMemoryService:
                 except Exception as e:
                     await session.rollback()
                     # Concurrent insert — re-query
-                    logger.info("并发创建状态，重新查询 / Concurrent create, re-querying: {}", e)
+                    logger.info(
+                        "并发创建状态，重新查询 / Concurrent create, re-querying: {}", e
+                    )
                     result = await session.execute(
                         select(SakuraMemoryState).where(
                             SakuraMemoryState.repo_full_name == repo_full_name
@@ -345,7 +362,10 @@ class SakuraMemoryService:
                 await session.commit()
 
     async def initialize(
-        self, repo, repo_full_name: str, prepare_only: bool = False,
+        self,
+        repo,
+        repo_full_name: str,
+        prepare_only: bool = False,
     ) -> Optional[dict]:
         """初始化 .sakura/ 目录 / Initialize .sakura/ directory
 
@@ -372,13 +392,19 @@ class SakuraMemoryService:
 
         try:
             # 检查核心文件是否已存在 / Check if core files already exist
-            has_sakura_md = await self.write_service.file_exists(repo, ".sakura/SAKURA.md")
-            has_memory_md = await self.write_service.file_exists(repo, ".sakura/memory.md")
+            has_sakura_md = await self.write_service.file_exists(
+                repo, ".sakura/SAKURA.md"
+            )
+            has_memory_md = await self.write_service.file_exists(
+                repo, ".sakura/memory.md"
+            )
             if has_sakura_md or has_memory_md:
                 await self._update_state(repo_full_name, is_initialized=True)
                 logger.info(
                     ".sakura/ 已初始化 (SAKURA.md={}, memory.md={}), 跳过: {}",
-                    has_sakura_md, has_memory_md, repo_full_name,
+                    has_sakura_md,
+                    has_memory_md,
+                    repo_full_name,
                 )
                 return {} if prepare_only else None
 
@@ -423,7 +449,8 @@ class SakuraMemoryService:
             if prepare_only:
                 logger.info(
                     "[sakura] prepare_only: {} init files for {}",
-                    len(files), repo_full_name,
+                    len(files),
+                    repo_full_name,
                 )
                 return files
 
@@ -431,7 +458,9 @@ class SakuraMemoryService:
                 "init_commit_message",
                 "chore: initialize .sakura/ directory for Sakura AI Reviewer",
             )
-            logger.info(f"[sakura] 步骤5: 提交文件到仓库 {repo_full_name}, {len(files)} 个文件")
+            logger.info(
+                f"[sakura] 步骤5: 提交文件到仓库 {repo_full_name}, {len(files)} 个文件"
+            )
             await self.write_service.commit_files(repo, files, commit_msg)
 
             # 更新状态 / Update state
@@ -441,6 +470,7 @@ class SakuraMemoryService:
 
         except Exception as e:
             import traceback
+
             logger.error(
                 f"初始化 .sakura/ 失败 ({repo_full_name}): [{type(e).__name__}] {e}"
             )
@@ -485,16 +515,24 @@ class SakuraMemoryService:
             init_files = {}
             needs_init = not state.is_initialized
             if needs_init:
-                init_files = await self.initialize(
-                    repo, repo_full_name, prepare_only=True,
-                ) or {}
+                init_files = (
+                    await self.initialize(
+                        repo,
+                        repo_full_name,
+                        prepare_only=True,
+                    )
+                    or {}
+                )
 
             # 从 PR 分支或 main 读取 memory.md / Read memory.md from PR branch or main
             sakura_ref = await self.write_service.get_sakura_branch(repo)
             current_memory = (
                 await self.write_service.read_file(
-                    repo, ".sakura/memory.md", ref=sakura_ref,
-                ) or ""
+                    repo,
+                    ".sakura/memory.md",
+                    ref=sakura_ref,
+                )
+                or ""
             )
 
             # 提取增量审查上下文 / Extract incremental review context
@@ -514,10 +552,10 @@ class SakuraMemoryService:
                 )
             elif is_incremental:
                 review_type = "增量审查"
-                new_commits_summary = "\n".join(
-                    f"  - {c['sha']}: {c['title']}"
-                    for c in new_commits[:10]
-                ) or "无新增提交信息"
+                new_commits_summary = (
+                    "\n".join(f"  - {c['sha']}: {c['title']}" for c in new_commits[:10])
+                    or "无新增提交信息"
+                )
                 incremental_scope = f"新增 {len(new_commits)} 个提交"
                 incremental_reflection_prompt = (
                     "5. **增量审查反思**\n"
@@ -592,9 +630,7 @@ class SakuraMemoryService:
             today = datetime.now().strftime("%Y-%m-%d")
             if is_incremental:
                 round_num = await self._count_pr_reflections(repo, pr_number) + 1
-                reflection_path = (
-                    f".sakura/memory/{today}_PR{pr_number}_incr{round_num}_{commit_sha}.md"
-                )
+                reflection_path = f".sakura/memory/{today}_PR{pr_number}_incr{round_num}_{commit_sha}.md"
             else:
                 reflection_path = (
                     f".sakura/memory/{today}_PR{pr_number}_{commit_sha}.md"
@@ -605,12 +641,11 @@ class SakuraMemoryService:
             commit_msg = f"chore(sakura): add reflection for PR#{pr_number}"
             if init_files:
                 files.update(init_files)
-                commit_msg = (
-                    f"chore(sakura): initialize .sakura/ and add reflection for PR#{pr_number}"
-                )
+                commit_msg = f"chore(sakura): initialize .sakura/ and add reflection for PR#{pr_number}"
                 logger.info(
                     "[sakura] combining init ({}) + reflection into single commit for {}",
-                    len(init_files), repo_full_name,
+                    len(init_files),
+                    repo_full_name,
                 )
             await self.write_service.commit_files(repo, files, commit_msg)
 
@@ -623,7 +658,10 @@ class SakuraMemoryService:
 
             logger.info(
                 "已写入反思: {} PR#{} [{}] (第{}次反思{})",
-                repo_full_name, pr_number, review_type, new_count,
+                repo_full_name,
+                pr_number,
+                review_type,
+                new_count,
                 ", 初始化完成" if needs_init else "",
             )
 
@@ -685,22 +723,34 @@ class SakuraMemoryService:
             init_files = {}
             needs_init = not state.is_initialized
             if needs_init:
-                init_files = await self.initialize(
-                    repo, repo_full_name, prepare_only=True,
-                ) or {}
+                init_files = (
+                    await self.initialize(
+                        repo,
+                        repo_full_name,
+                        prepare_only=True,
+                    )
+                    or {}
+                )
 
             # 读取 memory.md / Read memory.md
             sakura_ref = await self.write_service.get_sakura_branch(repo)
             current_memory = (
                 await self.write_service.read_file(
-                    repo, ".sakura/memory.md", ref=sakura_ref,
-                ) or ""
+                    repo,
+                    ".sakura/memory.md",
+                    ref=sakura_ref,
+                )
+                or ""
             )
 
             # 从 analysis_record 提取数据 / Extract data from analysis_record
             suggested_labels = analysis_record.suggested_labels or "无"
             try:
-                labels_data = json.loads(suggested_labels) if isinstance(suggested_labels, str) else suggested_labels
+                labels_data = (
+                    json.loads(suggested_labels)
+                    if isinstance(suggested_labels, str)
+                    else suggested_labels
+                )
                 if isinstance(labels_data, list):
                     formatted_labels = []
                     for label in labels_data[:10]:
@@ -716,7 +766,11 @@ class SakuraMemoryService:
 
             suggested_assignees = analysis_record.suggested_assignees or "无"
             try:
-                assignees_data = json.loads(suggested_assignees) if isinstance(suggested_assignees, str) else suggested_assignees
+                assignees_data = (
+                    json.loads(suggested_assignees)
+                    if isinstance(suggested_assignees, str)
+                    else suggested_assignees
+                )
                 if isinstance(assignees_data, list):
                     suggested_assignees = ", ".join(
                         a.get("username", a) if isinstance(a, dict) else str(a)
@@ -726,14 +780,22 @@ class SakuraMemoryService:
                 pass
 
             duplicate_of = analysis_record.duplicate_of
-            duplicate_info = f"可能是 #{duplicate_of} 的重复" if duplicate_of else "未检测到重复"
+            duplicate_info = (
+                f"可能是 #{duplicate_of} 的重复" if duplicate_of else "未检测到重复"
+            )
 
             related_prs = analysis_record.related_prs or "无"
             try:
-                prs_data = json.loads(related_prs) if isinstance(related_prs, str) else related_prs
+                prs_data = (
+                    json.loads(related_prs)
+                    if isinstance(related_prs, str)
+                    else related_prs
+                )
                 if isinstance(prs_data, list):
                     related_prs = "\n".join(
-                        f"- PR #{p.get('number', p)}: {p.get('title', '')}" if isinstance(p, dict) else f"- {p}"
+                        f"- PR #{p.get('number', p)}: {p.get('title', '')}"
+                        if isinstance(p, dict)
+                        else f"- {p}"
                         for p in prs_data[:10]
                     )
             except (ValueError, TypeError):
@@ -771,19 +833,20 @@ class SakuraMemoryService:
             short_hash = hashlib.md5(
                 f"{repo_full_name}#{issue_number}#{now.isoformat()}".encode()
             ).hexdigest()[:7]
-            reflection_path = f".sakura/memory/{today}_ISSUE{issue_number}_{short_hash}.md"
+            reflection_path = (
+                f".sakura/memory/{today}_ISSUE{issue_number}_{short_hash}.md"
+            )
 
             # 提交 / Commit
             files = {reflection_path: reflection_content}
             commit_msg = f"chore(sakura): add reflection for Issue#{issue_number}"
             if init_files:
                 files.update(init_files)
-                commit_msg = (
-                    f"chore(sakura): initialize .sakura/ and add reflection for Issue#{issue_number}"
-                )
+                commit_msg = f"chore(sakura): initialize .sakura/ and add reflection for Issue#{issue_number}"
                 logger.info(
                     "[sakura] combining init ({}) + issue reflection into single commit for {}",
-                    len(init_files), repo_full_name,
+                    len(init_files),
+                    repo_full_name,
                 )
             await self.write_service.commit_files(repo, files, commit_msg)
 
@@ -796,7 +859,9 @@ class SakuraMemoryService:
 
             logger.info(
                 "已写入 Issue 反思: {} Issue#{} (第{}次反思{})",
-                repo_full_name, issue_number, new_count,
+                repo_full_name,
+                issue_number,
+                new_count,
                 ", 初始化完成" if needs_init else "",
             )
 
@@ -812,9 +877,7 @@ class SakuraMemoryService:
         except Exception as e:
             logger.error("Issue 反思失败 ({}): {}", repo_full_name, e, exc_info=True)
 
-    async def consolidate(
-        self, repo, repo_full_name: str, total_count: int
-    ) -> None:
+    async def consolidate(self, repo, repo_full_name: str, total_count: int) -> None:
         """合并反思，更新 SAKURA.md 和 memory.md / Consolidate reflections
 
         读取最近的反思文件，通过两次独立 LLM 调用分别更新两个知识文件。
@@ -831,14 +894,17 @@ class SakuraMemoryService:
         try:
             logger.info(
                 "[consolidate] 开始合并记忆: {} (第{}次反思, interval={})",
-                repo_full_name, total_count,
+                repo_full_name,
+                total_count,
                 consolidation_config.get("interval", 5),
             )
 
             # 读取最近的反思 / Read recent reflections
             sakura_ref = await self.write_service.get_sakura_branch(repo)
             reflections = await self._read_recent_reflections(
-                repo, consolidation_config.get("interval", 5), ref=sakura_ref,
+                repo,
+                consolidation_config.get("interval", 5),
+                ref=sakura_ref,
             )
             if not reflections:
                 logger.warning("[consolidate] 未找到反思文件: {}", repo_full_name)
@@ -848,17 +914,24 @@ class SakuraMemoryService:
             # 读取当前文件 / Read current files
             current_sakura = (
                 await self.write_service.read_file(
-                    repo, ".sakura/SAKURA.md", ref=sakura_ref,
-                ) or ""
+                    repo,
+                    ".sakura/SAKURA.md",
+                    ref=sakura_ref,
+                )
+                or ""
             )
             current_memory = (
                 await self.write_service.read_file(
-                    repo, ".sakura/memory.md", ref=sakura_ref,
-                ) or ""
+                    repo,
+                    ".sakura/memory.md",
+                    ref=sakura_ref,
+                )
+                or ""
             )
             logger.info(
                 "[consolidate] 当前文件: SAKURA.md={}字, memory.md={}字",
-                len(current_sakura), len(current_memory),
+                len(current_sakura),
+                len(current_memory),
             )
 
             # 获取仓库信息 / Get repo info
@@ -908,7 +981,9 @@ class SakuraMemoryService:
                 if isinstance(results[i], BaseException):
                     if not partial:
                         raise results[i]
-                    logger.warning("[consolidate] {} LLM 调用失败: {}", label, results[i])
+                    logger.warning(
+                        "[consolidate] {} LLM 调用失败: {}", label, results[i]
+                    )
 
             if sakura_md:
                 files[".sakura/SAKURA.md"] = sakura_md
@@ -937,22 +1012,20 @@ class SakuraMemoryService:
 
                 logger.info(
                     "[consolidate] 合并完成: {} (第{}次反思后), 更新文件: {}",
-                    repo_full_name, total_count,
+                    repo_full_name,
+                    total_count,
                     ", ".join(files.keys()),
                 )
             else:
                 logger.warning(
-                    "[consolidate] 两个文件均生成失败: {}", repo_full_name,
+                    "[consolidate] 两个文件均生成失败: {}",
+                    repo_full_name,
                 )
 
         except Exception as e:
-            logger.error(
-                f"合并记忆失败 ({repo_full_name}): {e}", exc_info=True
-            )
+            logger.error(f"合并记忆失败 ({repo_full_name}): {e}", exc_info=True)
 
-    async def get_sakura_context(
-        self, repo, repo_full_name: str
-    ) -> Dict[str, str]:
+    async def get_sakura_context(self, repo, repo_full_name: str) -> Dict[str, str]:
         """获取 SAKURA.md 和 memory.md 用于注入审查 prompt
 
         Get SAKURA.md and memory.md for review prompt injection.
@@ -975,10 +1048,14 @@ class SakuraMemoryService:
 
             sakura_ref = await self.write_service.get_sakura_branch(repo)
             sakura_md = await self.write_service.read_file(
-                repo, ".sakura/SAKURA.md", ref=sakura_ref,
+                repo,
+                ".sakura/SAKURA.md",
+                ref=sakura_ref,
             )
             memory_md = await self.write_service.read_file(
-                repo, ".sakura/memory.md", ref=sakura_ref,
+                repo,
+                ".sakura/memory.md",
+                ref=sakura_ref,
             )
 
             result = {}
@@ -1026,13 +1103,14 @@ class SakuraMemoryService:
                 if comment.line_number:
                     location += f":{comment.line_number}"
                 location += "]"
-            lines.append(
-                f"- [{comment.severity}]{location}: {comment.content[:150]}"
-            )
+            lines.append(f"- [{comment.severity}]{location}: {comment.content[:150]}")
         return "\n".join(lines)
 
     async def _read_recent_reflections(
-        self, repo, count: int, ref: Optional[str] = None,
+        self,
+        repo,
+        count: int,
+        ref: Optional[str] = None,
     ) -> str:
         """读取最近的反思文件 / Read recent reflection files
 
@@ -1066,7 +1144,8 @@ class SakuraMemoryService:
                         functools.partial(repo.get_git_tree, "HEAD", recursive=True)
                     )
                     memory_entries = [
-                        e for e in tree.tree
+                        e
+                        for e in tree.tree
                         if e.path.startswith(".sakura/memory/")
                         and e.path.endswith(".md")
                     ]
@@ -1078,8 +1157,7 @@ class SakuraMemoryService:
                             self.name = name
 
                     contents = [
-                        _TreeEntry(e.path.split("/")[-1])
-                        for e in memory_entries
+                        _TreeEntry(e.path.split("/")[-1]) for e in memory_entries
                     ]
                 except Exception as tree_err:
                     logger.warning(
@@ -1180,9 +1258,9 @@ class SakuraMemoryService:
         content = response.strip()
         # 去除 markdown 代码块包裹
         if content.startswith("```markdown") and content.endswith("```"):
-            content = content[len("```markdown"): -len("```")].strip()
+            content = content[len("```markdown") : -len("```")].strip()
         elif content.startswith("```md") and content.endswith("```"):
-            content = content[len("```md"): -len("```")].strip()
+            content = content[len("```md") : -len("```")].strip()
         elif content.startswith("```") and content.endswith("```"):
             content = content[3:-3].strip()
         return content

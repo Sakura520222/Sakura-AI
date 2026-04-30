@@ -33,24 +33,26 @@ _PRIVATE_NETWORKS = [
 
 _MAX_REDIRECTS = 3
 _ALLOWED_SCHEMES = frozenset({"http", "https"})
-_ALLOWED_CONTENT_TYPES = frozenset({
-    "text/html",
-    "application/xhtml+xml",
-})
+_ALLOWED_CONTENT_TYPES = frozenset(
+    {
+        "text/html",
+        "application/xhtml+xml",
+    }
+)
 
 # Unicode categories used by confusable (homoglyph) characters
 _CONFUSABLE_CATEGORIES = frozenset({"Mn", "Cf", "Co"})
 
 # Common confusable character ranges
 _CONFUSABLE_RANGES: list[tuple[int, int]] = [
-    (0x0300, 0x036F),   # Combining diacritical marks
-    (0x1AB0, 0x1AFF),   # Combining diacritical marks extended
-    (0x0400, 0x04FF),   # Cyrillic (confusable with Latin)
-    (0x200B, 0x200F),   # Zero-width chars, direction marks
-    (0x2028, 0x202F),   # Line/word separators, directional
-    (0x2060, 0x206F),   # Word joiner, invisible chars
-    (0xFE00, 0xFE0F),   # Variation selectors
-    (0xFEFF, 0xFEFF),   # BOM / zero-width no-break space
+    (0x0300, 0x036F),  # Combining diacritical marks
+    (0x1AB0, 0x1AFF),  # Combining diacritical marks extended
+    (0x0400, 0x04FF),  # Cyrillic (confusable with Latin)
+    (0x200B, 0x200F),  # Zero-width chars, direction marks
+    (0x2028, 0x202F),  # Line/word separators, directional
+    (0x2060, 0x206F),  # Word joiner, invisible chars
+    (0xFE00, 0xFE0F),  # Variation selectors
+    (0xFEFF, 0xFEFF),  # BOM / zero-width no-break space
 ]
 
 
@@ -128,9 +130,7 @@ class FetchUrlToolHandler:
 
             async with async_session() as session:
                 result = await session.execute(
-                    select(AppConfig).where(
-                        AppConfig.key_name.in_(self._CONFIG_KEYS)
-                    )
+                    select(AppConfig).where(AppConfig.key_name.in_(self._CONFIG_KEYS))
                 )
                 configs = result.scalars().all()
                 config_values = {c.key_name: c.key_value for c in configs}
@@ -325,12 +325,8 @@ class FetchUrlToolHandler:
                     raise ValueError(f"域名 {hostname} 在黑名单中，禁止访问")
 
         elif policy == "whitelist":
-            if domain_list and not any(
-                fnmatch(hostname_lower, p) for p in domain_list
-            ):
-                raise ValueError(
-                    f"域名 {hostname} 不在白名单中，禁止访问"
-                )
+            if domain_list and not any(fnmatch(hostname_lower, p) for p in domain_list):
+                raise ValueError(f"域名 {hostname} 不在白名单中，禁止访问")
 
     def _sanitize_url_for_log(self, url: str) -> str:
         """脱敏 URL 中的敏感查询参数"""
@@ -339,8 +335,14 @@ class FetchUrlToolHandler:
             return url
 
         sensitive_keys = {
-            "token", "key", "api_key", "apikey", "secret",
-            "password", "access_token", "auth",
+            "token",
+            "key",
+            "api_key",
+            "apikey",
+            "secret",
+            "password",
+            "access_token",
+            "auth",
         }
         params = parsed.query.split("&")
         redacted = []
@@ -536,9 +538,7 @@ class FetchUrlToolHandler:
             )
             return {"url": url, "content": "", "error": f"抓取失败: {e}"}
 
-    async def _fetch_with_redirects(
-        self, url: str
-    ) -> tuple[str, int, int]:
+    async def _fetch_with_redirects(self, url: str) -> tuple[str, int, int]:
         """执行 HTTP 请求，手动处理重定向并在每步进行 SSRF 校验
 
         跟踪重定向链的总下载量，防止反射放大攻击。
@@ -575,9 +575,7 @@ class FetchUrlToolHandler:
 
                     redirect_count += 1
                     if redirect_count > _MAX_REDIRECTS:
-                        raise ValueError(
-                            f"重定向次数超过限制 ({_MAX_REDIRECTS})"
-                        )
+                        raise ValueError(f"重定向次数超过限制 ({_MAX_REDIRECTS})")
 
                     location = response.headers.get("location", "")
                     if not location:
@@ -602,9 +600,7 @@ class FetchUrlToolHandler:
 
                 # Reject non-2xx errors early
                 if not (200 <= status_code < 300):
-                    raise ValueError(
-                        f"HTTP {status_code}: 无法获取页面内容"
-                    )
+                    raise ValueError(f"HTTP {status_code}: 无法获取页面内容")
 
                 # Content-Type check only for successful responses
                 ct = response.headers.get("content-type")

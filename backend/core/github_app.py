@@ -2,7 +2,7 @@
 
 import hmac
 import hashlib
-from typing import Optional, Dict, Any
+from typing import List, Optional, Dict, Any
 from github import Github, GithubIntegration
 from loguru import logger
 from backend.core.config import get_settings
@@ -306,6 +306,39 @@ class GitHubAppClient:
         except Exception as e:
             logger.error(f"获取仓库标签失败: {e}", exc_info=True)
             return {}
+
+    def get_pr_labels(
+        self, repo_owner: str, repo_name: str, pr_number: int
+    ) -> List[str]:
+        """获取PR当前的标签列表
+
+        Args:
+            repo_owner: 仓库所有者
+            repo_name: 仓库名称
+            pr_number: PR编号
+
+        Returns:
+            PR已有标签名称列表
+        """
+        try:
+            client = self.get_repo_client(repo_owner, repo_name)
+            if not client:
+                logger.error(f"无法获取 {repo_owner}/{repo_name} 的客户端")
+                return []
+
+            repo = client.get_repo(f"{repo_owner}/{repo_name}")
+            pr = repo.get_pull(pr_number)
+            pr_labels = [label.name for label in pr.labels]
+
+            logger.info(
+                f"成功获取 PR {repo_owner}/{repo_name}#{pr_number} "
+                f"的 {len(pr_labels)} 个标签: {pr_labels}"
+            )
+            return pr_labels
+
+        except Exception as e:
+            logger.error(f"获取PR标签失败: {e}", exc_info=True)
+            return []
 
     def add_labels_to_pr(
         self,

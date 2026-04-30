@@ -151,12 +151,16 @@ class SakuraToolHandler:
                     # Read file content for overview
                     content = await self._read_file_from_repo(repo, item.path)
                     if content:
-                        overview["files"].append({
-                            "name": item.name,
-                            "path": item.path,
-                            "size": len(content),
-                            "preview": content[:200] + "..." if len(content) > 200 else content,
-                        })
+                        overview["files"].append(
+                            {
+                                "name": item.name,
+                                "path": item.path,
+                                "size": len(content),
+                                "preview": content[:200] + "..."
+                                if len(content) > 200
+                                else content,
+                            }
+                        )
                 elif item.type == "dir":
                     # List directory contents
                     sub_contents = await self._list_directory(repo, item.path)
@@ -164,16 +168,20 @@ class SakuraToolHandler:
                     if sub_contents:
                         for sub in sub_contents:
                             if sub.type == "file":
-                                dir_files.append({
-                                    "name": sub.name,
-                                    "path": sub.path,
-                                })
-                    overview["directories"].append({
-                        "name": item.name,
-                        "path": item.path,
-                        "file_count": len(dir_files),
-                        "files": dir_files[:10],  # Limit preview
-                    })
+                                dir_files.append(
+                                    {
+                                        "name": sub.name,
+                                        "path": sub.path,
+                                    }
+                                )
+                    overview["directories"].append(
+                        {
+                            "name": item.name,
+                            "path": item.path,
+                            "file_count": len(dir_files),
+                            "files": dir_files[:10],  # Limit preview
+                        }
+                    )
 
             return overview
 
@@ -184,6 +192,7 @@ class SakuraToolHandler:
     async def _read_file_from_repo(self, repo: Any, path: str) -> Optional[str]:
         """从仓库读取文件内容 / Read file content from repo"""
         try:
+
             def _read():
                 content = repo.get_contents(path)
                 if isinstance(content, list):
@@ -197,6 +206,7 @@ class SakuraToolHandler:
     async def _list_directory(self, repo: Any, path: str) -> Optional[list]:
         """列出目录内容 / List directory contents"""
         try:
+
             def _list():
                 contents = repo.get_contents(path)
                 if isinstance(contents, list):

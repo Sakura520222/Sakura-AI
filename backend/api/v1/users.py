@@ -22,7 +22,11 @@ from backend.api.v1.schemas import (
     UserIssueQuotaUpdateRequest,
     UserInfoUpdateRequest,
 )
-from backend.api.v1.responses import success_response, error_response, paginated_response
+from backend.api.v1.responses import (
+    success_response,
+    error_response,
+    paginated_response,
+)
 
 router = APIRouter(prefix="/users", tags=["Users"])
 
@@ -71,7 +75,7 @@ async def list_users(
     )
 
     items = [
-        UserResponse.model_validate(u, from_attributes=True).model_dump(mode='json')
+        UserResponse.model_validate(u, from_attributes=True).model_dump(mode="json")
         for u in users
     ]
     return paginated_response(items, total, page, total_pages, per_page)
@@ -93,21 +97,31 @@ async def create_user(
     body.github_username = body.github_username.strip()
 
     for q in (
-        body.daily_quota, body.weekly_quota, body.monthly_quota,
-        body.issue_daily_quota, body.issue_weekly_quota, body.issue_monthly_quota,
+        body.daily_quota,
+        body.weekly_quota,
+        body.monthly_quota,
+        body.issue_daily_quota,
+        body.issue_weekly_quota,
+        body.issue_monthly_quota,
     ):
         if q < 0:
             return error_response("配额值不能为负数")
 
     # 唯一性检查
-    if (await db.execute(
-        select(TelegramUser).where(TelegramUser.telegram_id == body.telegram_id)
-    )).scalar_one_or_none():
+    if (
+        await db.execute(
+            select(TelegramUser).where(TelegramUser.telegram_id == body.telegram_id)
+        )
+    ).scalar_one_or_none():
         return error_response(f"Telegram ID {body.telegram_id} 已存在")
 
-    if (await db.execute(
-        select(TelegramUser).where(TelegramUser.github_username == body.github_username)
-    )).scalar_one_or_none():
+    if (
+        await db.execute(
+            select(TelegramUser).where(
+                TelegramUser.github_username == body.github_username
+            )
+        )
+    ).scalar_one_or_none():
         return error_response(f"GitHub 用户名 {body.github_username} 已被使用")
 
     # 超级管理员自动检测
@@ -147,15 +161,25 @@ async def create_user(
         f"API 创建用户: telegram_id={body.telegram_id}, github={body.github_username}, role={role}, by={user['sub']}"
     )
     await log_admin_action(
-        db, user["user_id"], "user_add", "user", str(new_user.id),
-        {"telegram_id": body.telegram_id, "github_username": body.github_username, "role": role},
+        db,
+        user["user_id"],
+        "user_add",
+        "user",
+        str(new_user.id),
+        {
+            "telegram_id": body.telegram_id,
+            "github_username": body.github_username,
+            "role": role,
+        },
     )
 
     msg = f"用户 {body.github_username} 已成功添加"
     if auto_super_admin:
         msg += "（已自动提升为超级管理员）"
 
-    data = UserResponse.model_validate(new_user, from_attributes=True).model_dump(mode='json')
+    data = UserResponse.model_validate(new_user, from_attributes=True).model_dump(
+        mode="json"
+    )
     return success_response(data=data, message=msg)
 
 
@@ -171,7 +195,9 @@ async def get_user(
     if not target:
         return error_response("用户不存在", status_code=404)
 
-    data = UserResponse.model_validate(target, from_attributes=True).model_dump(mode='json')
+    data = UserResponse.model_validate(target, from_attributes=True).model_dump(
+        mode="json"
+    )
 
     # 配额使用历史（最近 20 条）
     logs_result = await db.execute(
@@ -220,9 +246,15 @@ async def update_user_role(
     target.role = body.role
     await db.commit()
 
-    logger.info(f"API 用户角色变更: {target.github_username}, {old_role}->{body.role}, by={user['sub']}")
+    logger.info(
+        f"API 用户角色变更: {target.github_username}, {old_role}->{body.role}, by={user['sub']}"
+    )
     await log_admin_action(
-        db, user["user_id"], "user_role", "user", str(user_id),
+        db,
+        user["user_id"],
+        "user_role",
+        "user",
+        str(user_id),
         {"old_role": old_role, "new_role": body.role},
     )
     return success_response(message=f"用户角色已更改为 {body.role}")
@@ -244,7 +276,11 @@ async def update_user_quota(
     if not target:
         return error_response("用户不存在", status_code=404)
 
-    old = {"daily": target.daily_quota, "weekly": target.weekly_quota, "monthly": target.monthly_quota}
+    old = {
+        "daily": target.daily_quota,
+        "weekly": target.weekly_quota,
+        "monthly": target.monthly_quota,
+    }
     target.daily_quota = body.daily_quota
     target.weekly_quota = body.weekly_quota
     target.monthly_quota = body.monthly_quota
@@ -252,8 +288,19 @@ async def update_user_quota(
 
     logger.info(f"API 用户配额变更: {target.github_username}, by={user['sub']}")
     await log_admin_action(
-        db, user["user_id"], "user_quota", "user", str(user_id),
-        {"old": old, "new": {"daily": body.daily_quota, "weekly": body.weekly_quota, "monthly": body.monthly_quota}},
+        db,
+        user["user_id"],
+        "user_quota",
+        "user",
+        str(user_id),
+        {
+            "old": old,
+            "new": {
+                "daily": body.daily_quota,
+                "weekly": body.weekly_quota,
+                "monthly": body.monthly_quota,
+            },
+        },
     )
     return success_response(message="用户配额已更新")
 
@@ -266,7 +313,11 @@ async def update_user_issue_quota(
     user: dict = Depends(require_api_admin),
 ):
     """修改用户 Issue 配额"""
-    if body.issue_daily_quota < 0 or body.issue_weekly_quota < 0 or body.issue_monthly_quota < 0:
+    if (
+        body.issue_daily_quota < 0
+        or body.issue_weekly_quota < 0
+        or body.issue_monthly_quota < 0
+    ):
         return error_response("配额值不能为负数")
 
     result = await db.execute(select(TelegramUser).where(TelegramUser.id == user_id))
@@ -280,7 +331,9 @@ async def update_user_issue_quota(
     await db.commit()
 
     logger.info(f"API 用户 Issue 配额变更: {target.github_username}, by={user['sub']}")
-    await log_admin_action(db, user["user_id"], "user_issue_quota", "user", str(user_id), {})
+    await log_admin_action(
+        db, user["user_id"], "user_issue_quota", "user", str(user_id), {}
+    )
     return success_response(message="Issue 配额已更新")
 
 
@@ -306,9 +359,15 @@ async def toggle_user_status(
     await db.commit()
 
     status = "启用" if target.is_active else "禁用"
-    logger.info(f"API 用户状态变更: {target.github_username}, {status}, by={user['sub']}")
+    logger.info(
+        f"API 用户状态变更: {target.github_username}, {status}, by={user['sub']}"
+    )
     await log_admin_action(
-        db, user["user_id"], "user_toggle", "user", str(user_id),
+        db,
+        user["user_id"],
+        "user_toggle",
+        "user",
+        str(user_id),
         {"is_active": target.is_active},
     )
     return success_response(message=f"用户 {target.github_username} 已{status}")
@@ -340,7 +399,11 @@ async def delete_user(
 
     logger.info(f"API 用户已删除: id={user_id}, github={github}, by={user['sub']}")
     await log_admin_action(
-        db, user["user_id"], "user_delete", "user", str(user_id),
+        db,
+        user["user_id"],
+        "user_delete",
+        "user",
+        str(user_id),
         {"github_username": github},
     )
     return success_response(message=f"用户 {github} 已删除")
@@ -365,18 +428,23 @@ async def update_user_info(
         return error_response("用户不存在", status_code=404)
 
     # 唯一性检查（排除自身）
-    if (await db.execute(
-        select(TelegramUser).where(
-            TelegramUser.telegram_id == body.telegram_id, TelegramUser.id != user_id
+    if (
+        await db.execute(
+            select(TelegramUser).where(
+                TelegramUser.telegram_id == body.telegram_id, TelegramUser.id != user_id
+            )
         )
-    )).scalar_one_or_none():
+    ).scalar_one_or_none():
         return error_response(f"Telegram ID {body.telegram_id} 已被其他用户使用")
 
-    if (await db.execute(
-        select(TelegramUser).where(
-            TelegramUser.github_username == body.github_username, TelegramUser.id != user_id
+    if (
+        await db.execute(
+            select(TelegramUser).where(
+                TelegramUser.github_username == body.github_username,
+                TelegramUser.id != user_id,
+            )
         )
-    )).scalar_one_or_none():
+    ).scalar_one_or_none():
         return error_response(f"GitHub 用户名 {body.github_username} 已被其他用户使用")
 
     old_github = target.github_username
@@ -385,10 +453,21 @@ async def update_user_info(
     target.github_username = body.github_username
     await db.commit()
 
-    logger.info(f"API 用户信息变更: id={user_id}, {old_github}->{body.github_username}, by={user['sub']}")
+    logger.info(
+        f"API 用户信息变更: id={user_id}, {old_github}->{body.github_username}, by={user['sub']}"
+    )
     await log_admin_action(
-        db, user["user_id"], "user_info", "user", str(user_id),
-        {"old_telegram_id": old_tg, "new_telegram_id": body.telegram_id, "old_github_username": old_github, "new_github_username": body.github_username},
+        db,
+        user["user_id"],
+        "user_info",
+        "user",
+        str(user_id),
+        {
+            "old_telegram_id": old_tg,
+            "new_telegram_id": body.telegram_id,
+            "old_github_username": old_github,
+            "new_github_username": body.github_username,
+        },
     )
     return success_response(message="用户基本信息已更新")
 
@@ -407,19 +486,41 @@ async def reset_user_quota(
 
     now = datetime.now(timezone.utc)
     old_used = {
-        "daily": target.daily_used, "weekly": target.weekly_used, "monthly": target.monthly_used,
-        "issue_daily": target.issue_daily_used, "issue_weekly": target.issue_weekly_used, "issue_monthly": target.issue_monthly_used,
+        "daily": target.daily_used,
+        "weekly": target.weekly_used,
+        "monthly": target.monthly_used,
+        "issue_daily": target.issue_daily_used,
+        "issue_weekly": target.issue_weekly_used,
+        "issue_monthly": target.issue_monthly_used,
     }
 
-    for field in ("daily_used", "weekly_used", "monthly_used", "issue_daily_used", "issue_weekly_used", "issue_monthly_used"):
+    for field in (
+        "daily_used",
+        "weekly_used",
+        "monthly_used",
+        "issue_daily_used",
+        "issue_weekly_used",
+        "issue_monthly_used",
+    ):
         setattr(target, field, 0)
-    for field in ("last_reset_daily", "last_reset_weekly", "last_reset_monthly",
-                  "last_reset_issue_daily", "last_reset_issue_weekly", "last_reset_issue_monthly"):
+    for field in (
+        "last_reset_daily",
+        "last_reset_weekly",
+        "last_reset_monthly",
+        "last_reset_issue_daily",
+        "last_reset_issue_weekly",
+        "last_reset_issue_monthly",
+    ):
         setattr(target, field, now)
     await db.commit()
 
     logger.info(f"API 用户配额重置: {target.github_username}, by={user['sub']}")
     await log_admin_action(
-        db, user["user_id"], "user_reset_quota", "user", str(user_id), {"old_used": old_used}
+        db,
+        user["user_id"],
+        "user_reset_quota",
+        "user",
+        str(user_id),
+        {"old_used": old_used},
     )
     return success_response(message=f"用户 {target.github_username} 的配额使用量已重置")

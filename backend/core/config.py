@@ -1,7 +1,7 @@
 """配置管理模块"""
 
 from collections import OrderedDict
-from typing import Any, Optional
+from typing import Any, Dict, Optional
 
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -229,7 +229,9 @@ class Settings(BaseSettings):
     fetch_url_enabled: bool = False  # 是否启用 URL 抓取工具
     fetch_url_timeout: int = 15  # 抓取超时（秒）
     fetch_url_max_content_length: int = 5000  # 文本截断长度（字符）
-    fetch_url_max_download_size: int = 1048576  # 原始 HTML 下载大小限制（字节，默认 1MB）
+    fetch_url_max_download_size: int = (
+        1048576  # 原始 HTML 下载大小限制（字节，默认 1MB）
+    )
     fetch_url_max_calls_per_session: int = 3  # 单次会话最大调用次数
     fetch_url_domain_policy: str = "off"  # 域名过滤策略：off / blacklist / whitelist
     fetch_url_domain_list: str = ""  # 域名列表（逗号分隔）
@@ -314,7 +316,9 @@ class Settings(BaseSettings):
     sakura_max_memory_chars: int = 2000  # memory.md 最大字符数
     sakura_max_sakura_chars: int = 5000  # SAKURA.md 最大字符数
     sakura_auto_init: bool = True  # 是否自动初始化 .sakura/ 目录
-    sakura_consolidation_partial_commit: bool = False  # 合并时一个文件失败是否仍提交另一个
+    sakura_consolidation_partial_commit: bool = (
+        False  # 合并时一个文件失败是否仍提交另一个
+    )
     sakura_issue_reflection_enabled: bool = True  # 是否启用 Issue 分析后反思
     sakura_issue_reflection_model: str = ""  # Issue 反思使用的模型，为空时使用审查模型
     sakura_use_summary_model: bool = False  # 反思/合并任务使用辅助模型凭据以降低成本
@@ -470,6 +474,14 @@ class LabelConfig:
     def get_recommendation_settings(self) -> dict:
         """获取标签推荐设置"""
         return self.config.get("recommendation", {})
+
+    def get_conflict_rules(self) -> Dict[str, list]:
+        """获取标签冲突规则
+
+        Returns:
+            冲突规则字典，格式：{已有标签: [禁止添加的标签列表]}
+        """
+        return self.config.get("conflict_rules", {})
 
 
 @lru_cache()

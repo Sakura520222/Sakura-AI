@@ -248,8 +248,8 @@ async def cmd_myquota(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text("❌ 无法获取配额信息")
             return
 
-        username = escape_markdown(quota_info['github_username'], version=1)
-        role_text = escape_markdown(quota_info['role'], version=1)
+        username = escape_markdown(quota_info["github_username"], version=1)
+        role_text = escape_markdown(quota_info["role"], version=1)
 
         text = (
             f"📊 *我的配额*\n\n"

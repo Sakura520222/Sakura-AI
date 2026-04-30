@@ -55,7 +55,12 @@ async def get_stats(
         func.sum(case((PRReview.status == "failed", 1), else_=0)).label("failed"),
         func.sum(
             case(
-                (and_(PRReview.status == "completed", PRReview.decision == "approve"), 1),
+                (
+                    and_(
+                        PRReview.status == "completed", PRReview.decision == "approve"
+                    ),
+                    1,
+                ),
                 else_=0,
             )
         ).label("approved"),
@@ -83,7 +88,8 @@ async def get_stats(
         func.coalesce(
             func.sum(
                 case(
-                    (PRReview.status == "completed", PRReview.completion_tokens), else_=0
+                    (PRReview.status == "completed", PRReview.completion_tokens),
+                    else_=0,
                 )
             ),
             0,
@@ -149,20 +155,22 @@ async def get_recent_reviews(
 
     items = []
     for r in reviews:
-        items.append({
-            "id": r.id,
-            "pr_id": r.pr_id,
-            "repo_name": r.repo_name,
-            "repo_owner": r.repo_owner,
-            "title": r.title,
-            "author": r.author,
-            "status": r.status,
-            "overall_score": r.overall_score,
-            "decision": r.decision,
-            "strategy": r.strategy,
-            "created_at": r.created_at.isoformat() if r.created_at else None,
-            "completed_at": r.completed_at.isoformat() if r.completed_at else None,
-        })
+        items.append(
+            {
+                "id": r.id,
+                "pr_id": r.pr_id,
+                "repo_name": r.repo_name,
+                "repo_owner": r.repo_owner,
+                "title": r.title,
+                "author": r.author,
+                "status": r.status,
+                "overall_score": r.overall_score,
+                "decision": r.decision,
+                "strategy": r.strategy,
+                "created_at": r.created_at.isoformat() if r.created_at else None,
+                "completed_at": r.completed_at.isoformat() if r.completed_at else None,
+            }
+        )
 
     return success_response(data=items)
 
@@ -236,7 +244,9 @@ async def get_chart_data(
         "comment": "评论",
         "skip": "跳过",
     }
-    decision_labels = [decision_map.get(r.decision, r.decision or "其他") for r in decision_rows]
+    decision_labels = [
+        decision_map.get(r.decision, r.decision or "其他") for r in decision_rows
+    ]
     decision_counts = [r.cnt for r in decision_rows]
 
     # 3. 仓库排行 Top 10

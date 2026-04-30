@@ -49,8 +49,7 @@ INPUT_PROMPTS = {
     ),
     "user_remove": "请输入要移除的 GitHub 用户名：\n示例: mygithub",
     "admin_add": (
-        "请输入 Telegram ID 和 GitHub 用户名：\n"
-        "格式: <telegram_id> <github_username>"
+        "请输入 Telegram ID 和 GitHub 用户名：\n格式: <telegram_id> <github_username>"
     ),
     "admin_remove": "请输入要移除的 Telegram ID：\n示例: 123456789",
     "quota_set": (
@@ -203,7 +202,9 @@ def build_admin_mgmt_menu() -> InlineKeyboardMarkup:
         [
             [
                 InlineKeyboardButton("➕ 添加管理员", callback_data="input:admin_add"),
-                InlineKeyboardButton("➖ 移除管理员", callback_data="input:admin_remove"),
+                InlineKeyboardButton(
+                    "➖ 移除管理员", callback_data="input:admin_remove"
+                ),
             ],
             [InlineKeyboardButton("🔙 返回主菜单", callback_data="menu:main")],
         ]
@@ -218,10 +219,16 @@ def build_help_markup(current_page: str) -> InlineKeyboardMarkup:
         InlineKeyboardButton("👑 超管", callback_data="menu:help_superadmin"),
     ]
     # 高亮当前页（用括号标记）
-    labels = {"help_basic": "📖 基础命令", "help_admin": "👨‍💼 管理员", "help_superadmin": "👑 超管"}
-    highlighted = [InlineKeyboardButton(
-        f"👉 {labels[current_page]}", callback_data=f"menu:{current_page}"
-    )]
+    labels = {
+        "help_basic": "📖 基础命令",
+        "help_admin": "👨‍💼 管理员",
+        "help_superadmin": "👑 超管",
+    }
+    highlighted = [
+        InlineKeyboardButton(
+            f"👉 {labels[current_page]}", callback_data=f"menu:{current_page}"
+        )
+    ]
     return InlineKeyboardMarkup([highlighted, buttons])
 
 
@@ -378,15 +385,23 @@ async def _handle_exec(query, target: str, telegram_id: int, context) -> None:
         return
 
     # 构造兼容的 mock update/context，让原 handler 正常工作
-    mock_update = type("MockUpdate", (), {
-        "effective_user": query.from_user,
-        "message": query.message,
-        "__getattr__": _mock_default_attr,
-    })()
-    mock_ctx = type("MockContext", (), {
-        "args": [],
-        "__getattr__": _mock_default_attr,
-    })()
+    mock_update = type(
+        "MockUpdate",
+        (),
+        {
+            "effective_user": query.from_user,
+            "message": query.message,
+            "__getattr__": _mock_default_attr,
+        },
+    )()
+    mock_ctx = type(
+        "MockContext",
+        (),
+        {
+            "args": [],
+            "__getattr__": _mock_default_attr,
+        },
+    )()
 
     try:
         await handler(mock_update, mock_ctx)
@@ -424,7 +439,9 @@ async def _handle_input(query, target: str, telegram_id: int, context) -> None:
 # ---------------------------------------------------------------------------
 
 
-async def handle_force_reply(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+async def handle_force_reply(
+    update: Update, context: ContextTypes.DEFAULT_TYPE
+) -> None:
     """处理 ForceReply 的用户回复"""
     pending = context.user_data.get("pending_action")
 
@@ -517,7 +534,9 @@ async def _do_sign(update, args: list, telegram_id: int) -> None:
         return
 
     github_username = args[0].strip().lower()
-    if not re.match(r"^[a-zA-Z0-9](?:[a-zA-Z0-9]|-(?=[a-zA-Z0-9])){0,38}$", github_username):
+    if not re.match(
+        r"^[a-zA-Z0-9](?:[a-zA-Z0-9]|-(?=[a-zA-Z0-9])){0,38}$", github_username
+    ):
         await update.message.reply_text("❌ GitHub 用户名格式无效")
         return
 
@@ -652,21 +671,31 @@ async def _do_quota_set(update, args: list, telegram_id: int) -> None:
 
     async with get_async_session() as session:
         service = TelegramService(session)
-        success, message = await service.set_user_quota(github_username, quota_type, limit)
+        success, message = await service.set_user_quota(
+            github_username, quota_type, limit
+        )
         await update.message.reply_text(f"✅ {message}" if success else f"❌ {message}")
 
 
 def _make_mock(update: Update, args: list):
     """构造 mock update/context 供原 handler 复用"""
-    mock_update = type("MockUpdate", (), {
-        "effective_user": update.effective_user,
-        "message": update.message,
-        "__getattr__": _mock_default_attr,
-    })()
-    mock_ctx = type("MockContext", (), {
-        "args": args,
-        "__getattr__": _mock_default_attr,
-    })()
+    mock_update = type(
+        "MockUpdate",
+        (),
+        {
+            "effective_user": update.effective_user,
+            "message": update.message,
+            "__getattr__": _mock_default_attr,
+        },
+    )()
+    mock_ctx = type(
+        "MockContext",
+        (),
+        {
+            "args": args,
+            "__getattr__": _mock_default_attr,
+        },
+    )()
     return mock_update, mock_ctx
 
 
@@ -676,6 +705,7 @@ async def _do_review(update, args: list, telegram_id: int) -> None:
         await update.message.reply_text("❌ 请提供 PR URL")
         return
     from backend.telegram import handlers
+
     mock_update, mock_ctx = _make_mock(update, args)
     await handlers.cmd_review(mock_update, mock_ctx)
 
@@ -686,6 +716,7 @@ async def _do_update_docs(update, args: list, telegram_id: int) -> None:
         await update.message.reply_text("❌ 请提供仓库名")
         return
     from backend.telegram import handlers
+
     mock_update, mock_ctx = _make_mock(update, args)
     await handlers.cmd_update_docs(mock_update, mock_ctx)
 
@@ -696,6 +727,7 @@ async def _do_code_index(update, args: list, telegram_id: int) -> None:
         await update.message.reply_text("❌ 请提供仓库名")
         return
     from backend.telegram import handlers
+
     mock_update, mock_ctx = _make_mock(update, args)
     await handlers.cmd_code_index(mock_update, mock_ctx)
 
@@ -706,6 +738,7 @@ async def _do_docs_status(update, args: list) -> None:
         await update.message.reply_text("❌ 请提供仓库名")
         return
     from backend.telegram import handlers
+
     mock_update, mock_ctx = _make_mock(update, args)
     await handlers.cmd_docs_status(mock_update, mock_ctx)
 
@@ -716,6 +749,7 @@ async def _do_code_status(update, args: list) -> None:
         await update.message.reply_text("❌ 请提供仓库名")
         return
     from backend.telegram import handlers
+
     mock_update, mock_ctx = _make_mock(update, args)
     await handlers.cmd_code_status(mock_update, mock_ctx)
 
@@ -768,4 +802,6 @@ def get_callback_handler() -> CallbackQueryHandler:
 
 def get_force_reply_handler() -> MessageHandler:
     """获取 ForceReply 响应处理器"""
-    return MessageHandler(filters.REPLY & filters.TEXT & ~filters.COMMAND, handle_force_reply)
+    return MessageHandler(
+        filters.REPLY & filters.TEXT & ~filters.COMMAND, handle_force_reply
+    )

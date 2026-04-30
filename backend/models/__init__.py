@@ -63,6 +63,7 @@ async def init_db():
 
         # 3. 自动迁移（检测缺失列并添加）
         from backend.models.database import _auto_migrate
+
         await _auto_migrate()
 
         # 4. 异步插入默认配置

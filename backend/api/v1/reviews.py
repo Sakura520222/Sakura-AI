@@ -19,7 +19,11 @@ from backend.webui.deps import (
 
 from backend.api.v1.deps import require_api_auth
 from backend.api.v1.schemas import ReviewResponse, ReviewFileStatsResponse
-from backend.api.v1.responses import success_response, error_response, paginated_response
+from backend.api.v1.responses import (
+    success_response,
+    error_response,
+    paginated_response,
+)
 
 router = APIRouter(prefix="/reviews", tags=["Reviews"])
 
@@ -69,7 +73,7 @@ async def list_reviews(
     )
 
     items = [
-        ReviewResponse.model_validate(r, from_attributes=True).model_dump(mode='json')
+        ReviewResponse.model_validate(r, from_attributes=True).model_dump(mode="json")
         for r in reviews
     ]
 
@@ -107,23 +111,34 @@ async def export_reviews_csv(
     output = io.StringIO()
     output.write("\ufeff")  # UTF-8 BOM
     writer = csv.writer(output)
-    writer.writerow([
-        "PR ID", "仓库名", "PR 标题", "作者", "状态", "决策", "评分",
-        "创建时间", "完成时间",
-    ])
+    writer.writerow(
+        [
+            "PR ID",
+            "仓库名",
+            "PR 标题",
+            "作者",
+            "状态",
+            "决策",
+            "评分",
+            "创建时间",
+            "完成时间",
+        ]
+    )
 
     for r in reviews:
-        writer.writerow([
-            r.pr_id,
-            r.repo_name,
-            r.title or "",
-            r.author or "",
-            r.status,
-            r.decision or "",
-            r.overall_score or "",
-            r.created_at.strftime("%Y-%m-%d %H:%M") if r.created_at else "",
-            r.completed_at.strftime("%Y-%m-%d %H:%M") if r.completed_at else "",
-        ])
+        writer.writerow(
+            [
+                r.pr_id,
+                r.repo_name,
+                r.title or "",
+                r.author or "",
+                r.status,
+                r.decision or "",
+                r.overall_score or "",
+                r.created_at.strftime("%Y-%m-%d %H:%M") if r.created_at else "",
+                r.completed_at.strftime("%Y-%m-%d %H:%M") if r.completed_at else "",
+            ]
+        )
 
     output.seek(0)
     filename = f"pr_reviews_{datetime.now().strftime('%Y%m%d')}.csv"
@@ -165,7 +180,9 @@ async def get_review(
     )
     comments = comments_result.scalars().all()
 
-    review_data = ReviewResponse.model_validate(review, from_attributes=True).model_dump(mode='json')
+    review_data = ReviewResponse.model_validate(
+        review, from_attributes=True
+    ).model_dump(mode="json")
     review_data["comments"] = [
         {
             "id": c.id,
@@ -204,10 +221,14 @@ async def get_review_files(
             select(
                 ReviewComment.file_path,
                 func.count(ReviewComment.id).label("total"),
-                func.count(case((ReviewComment.severity == "critical", 1))).label("critical"),
+                func.count(case((ReviewComment.severity == "critical", 1))).label(
+                    "critical"
+                ),
                 func.count(case((ReviewComment.severity == "major", 1))).label("major"),
                 func.count(case((ReviewComment.severity == "minor", 1))).label("minor"),
-                func.count(case((ReviewComment.severity == "suggestion", 1))).label("suggestion"),
+                func.count(case((ReviewComment.severity == "suggestion", 1))).label(
+                    "suggestion"
+                ),
             )
             .where(ReviewComment.review_id == review_id)
             .group_by(ReviewComment.file_path)
@@ -227,7 +248,7 @@ async def get_review_files(
                     "suggestion": row.suggestion,
                 },
                 comment_count=row.total,
-            ).model_dump(mode='json')
+            ).model_dump(mode="json")
         )
 
     return success_response(data=items)
@@ -314,18 +335,20 @@ async def get_file_comments(
     )
     comments = (await db.execute(comment_query)).scalars().all()
 
-    return success_response(data={
-        "file_path": file_path,
-        "comment_count": len(comments),
-        "comments": [
-            {
-                "id": c.id,
-                "line_number": c.line_number,
-                "comment_type": c.comment_type,
-                "severity": c.severity,
-                "content": c.content,
-                "created_at": c.created_at.isoformat() if c.created_at else None,
-            }
-            for c in comments
-        ],
-    })
+    return success_response(
+        data={
+            "file_path": file_path,
+            "comment_count": len(comments),
+            "comments": [
+                {
+                    "id": c.id,
+                    "line_number": c.line_number,
+                    "comment_type": c.comment_type,
+                    "severity": c.severity,
+                    "content": c.content,
+                    "created_at": c.created_at.isoformat() if c.created_at else None,
+                }
+                for c in comments
+            ],
+        }
+    )

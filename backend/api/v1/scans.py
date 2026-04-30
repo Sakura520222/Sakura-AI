@@ -11,7 +11,11 @@ from backend.models.scan_models import RepoScan, ScanFinding
 from backend.webui.deps import get_db, paginate
 
 from backend.api.v1.deps import require_api_admin, require_api_super_admin
-from backend.api.v1.responses import success_response, error_response, paginated_response
+from backend.api.v1.responses import (
+    success_response,
+    error_response,
+    paginated_response,
+)
 from backend.api.v1.deps import limiter
 
 router = APIRouter(prefix="/scans", tags=["Scans"])
@@ -87,24 +91,26 @@ async def scan_stats(
     """扫描统计"""
     status_counts = (
         await db.execute(
-            select(RepoScan.status, func.count(RepoScan.id))
-            .group_by(RepoScan.status)
+            select(RepoScan.status, func.count(RepoScan.id)).group_by(RepoScan.status)
         )
     ).all()
 
     by_status = {row[0]: row[1] for row in status_counts}
 
     avg_score_result = await db.execute(
-        select(func.avg(RepoScan.overall_health_score))
-        .where(RepoScan.status == "completed", RepoScan.overall_health_score.isnot(None))
+        select(func.avg(RepoScan.overall_health_score)).where(
+            RepoScan.status == "completed", RepoScan.overall_health_score.isnot(None)
+        )
     )
     avg_score = avg_score_result.scalar()
 
-    return success_response(data={
-        "total": sum(by_status.values()),
-        "by_status": by_status,
-        "avg_health_score": float(round(avg_score, 1)) if avg_score else None,
-    })
+    return success_response(
+        data={
+            "total": sum(by_status.values()),
+            "by_status": by_status,
+            "avg_health_score": float(round(avg_score, 1)) if avg_score else None,
+        }
+    )
 
 
 @router.get("/{scan_id}")
@@ -207,7 +213,9 @@ async def trigger_scan(
                 )
                 task = asyncio.create_task(worker.process_scan(scan_id))
                 _active_scan_tasks[scan_id] = task
-                task.add_done_callback(lambda t, sid=scan_id: _active_scan_tasks.pop(sid, None))
+                task.add_done_callback(
+                    lambda t, sid=scan_id: _active_scan_tasks.pop(sid, None)
+                )
                 triggered.append({"repo": repo_name, "scan_id": scan_id})
             except Exception as e:
                 logger.error(f"触发扫描失败 ({repo_name}): {e}")

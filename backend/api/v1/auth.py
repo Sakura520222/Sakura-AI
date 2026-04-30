@@ -60,7 +60,7 @@ async def github_authorize(request: Request):
         data=OAuthAuthorizeResponse(
             authorization_url=authorization_url,
             state=state,
-        ).model_dump(mode='json')
+        ).model_dump(mode="json")
     )
 
 
@@ -106,7 +106,7 @@ async def github_mobile_authorize(
         data=OAuthAuthorizeResponse(
             authorization_url=authorization_url,
             state=state,
-        ).model_dump(mode='json')
+        ).model_dump(mode="json")
     )
 
 
@@ -217,7 +217,7 @@ async def github_callback(request: Request, body: OAuthCallbackRequest):
                 github_id=github_id,
                 avatar_url=avatar_url,
             ),
-        ).model_dump(mode='json')
+        ).model_dump(mode="json")
     )
 
 
@@ -239,5 +239,5 @@ async def get_current_user_info(user: dict = Depends(require_api_auth)):
             user_id=user["user_id"],
             github_id=user.get("github_id"),
             avatar_url=user.get("avatar_url"),
-        ).model_dump(mode='json')
+        ).model_dump(mode="json")
     )
