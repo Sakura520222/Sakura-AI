@@ -476,11 +476,9 @@ async def save_conflict_rules(
                     source = str(form[key]).strip()
                     blocked_raw = str(form.get(f"conflict_blocked_{idx}", "")).strip()
                     if source and blocked_raw:
-                        # 解析逗号或空格分隔的被阻止标签
+                        # 仅按逗号分隔，保留标签内部空格（如 "good first issue"）
                         blocked = [
-                            b.strip()
-                            for b in blocked_raw.replace(",", " ").split()
-                            if b.strip()
+                            b.strip() for b in blocked_raw.split(",") if b.strip()
                         ]
                         if blocked:
                             _validate_label_name(source)
