@@ -146,7 +146,7 @@ class LabelRecommender:
 
 请以JSON格式返回推荐结果：
 
-```
+```json
 {
   "labels": [
     {
