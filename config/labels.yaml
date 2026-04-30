@@ -56,3 +56,21 @@ recommendation:
   enabled: true
   confidence_threshold: 0.7
   auto_create: false
+
+# 标签冲突规则
+# 当 PR 已有 key 中的标签时，不会自动添加 value 列表中的标签。
+# 用于增量审查时避免基于增量 diff 内容推荐与 PR 整体意图矛盾的标签。
+# 示例：PR 已标记 "enhancement"（新功能），增量提交中的修复代码不应触发 "bug" 标签。
+conflict_rules:
+  enhancement:
+    - bug          # 新功能 PR 的增量修复不应打 bug 标签
+  refactor:
+    - bug          # 重构 PR 的增量修复不应打 bug 标签
+  documentation:
+    - bug          # 文档 PR 不应打 bug 标签
+    - enhancement  # 文档 PR 不应打 enhancement 标签
+  test:
+    - bug          # 测试 PR 不应打 bug 标签
+  style:
+    - bug          # 样式 PR 不应打 bug 标签
+    - enhancement  # 样式 PR 不应打 enhancement 标签

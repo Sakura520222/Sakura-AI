@@ -59,11 +59,17 @@ class GitHubWriteService:
             last_sha = None
             for path, content in files.items():
                 last_sha = await self._commit_single_file(
-                    repo, path, content, message, branch,
+                    repo,
+                    path,
+                    content,
+                    message,
+                    branch,
                 )
             logger.info(
                 "Committed {} file(s) directly to {}:{} -> {}",
-                len(files), repo.full_name, branch,
+                len(files),
+                repo.full_name,
+                branch,
                 last_sha[:8] if last_sha else "unknown",
             )
             return last_sha or ""
@@ -74,7 +80,8 @@ class GitHubWriteService:
         # 409: 分支保护 → 回退到 PR / Branch protection → fallback to PR
         logger.info(
             "Branch protection (409) on {}:{}, falling back to PR",
-            repo.full_name, branch,
+            repo.full_name,
+            branch,
         )
         return await self._commit_via_pr(repo, files, message, branch)
 
@@ -94,18 +101,25 @@ class GitHubWriteService:
                 if isinstance(existing, list):
                     raise ValueError(f"Path {path} is a directory")
                 result = repo.update_file(
-                    path=path, message=message, content=content,
-                    sha=existing.sha, branch=branch,
+                    path=path,
+                    message=message,
+                    content=content,
+                    sha=existing.sha,
+                    branch=branch,
                 )
             except UnknownObjectException:
                 result = repo.create_file(
-                    path=path, message=message, content=content,
+                    path=path,
+                    message=message,
+                    content=content,
                     branch=branch,
                 )
 
             commit_obj = result.get("commit") if isinstance(result, dict) else None
             if commit_obj is None:
-                raise RuntimeError(f"create_file/update_file returned no commit for {path}")
+                raise RuntimeError(
+                    f"create_file/update_file returned no commit for {path}"
+                )
             return commit_obj.sha
 
         sha = await asyncio.to_thread(_sync)
@@ -113,7 +127,11 @@ class GitHubWriteService:
         return sha
 
     async def _commit_to_branch(
-        self, repo, files: dict, message: str, branch: str,
+        self,
+        repo,
+        files: dict,
+        message: str,
+        branch: str,
     ) -> str:
         """提交文件到指定分支（不创建 PR）/ Commit files to an existing branch"""
         if not files:
@@ -127,12 +145,17 @@ class GitHubWriteService:
                     if isinstance(existing, list):
                         raise ValueError(f"Path {path} is a directory")
                     result = repo.update_file(
-                        path=path, message=message, content=content,
-                        sha=existing.sha, branch=branch,
+                        path=path,
+                        message=message,
+                        content=content,
+                        sha=existing.sha,
+                        branch=branch,
                     )
                 except UnknownObjectException:
                     result = repo.create_file(
-                        path=path, message=message, content=content,
+                        path=path,
+                        message=message,
+                        content=content,
                         branch=branch,
                     )
                 commit_obj = result.get("commit") if isinstance(result, dict) else None
@@ -146,13 +169,19 @@ class GitHubWriteService:
         sha = await asyncio.to_thread(_sync)
         logger.info(
             "Appended {} file(s) to {}:{} -> {}",
-            len(files), repo.full_name, branch,
+            len(files),
+            repo.full_name,
+            branch,
             sha[:8] if sha else "unknown",
         )
         return sha
 
     async def _commit_via_pr(
-        self, repo, files: dict, message: str, base_branch: str,
+        self,
+        repo,
+        files: dict,
+        message: str,
+        base_branch: str,
     ) -> str:
         """通过创建分支 + PR + 尝试合并来提交文件 / Commit via branch + PR + auto-merge"""
 
@@ -163,10 +192,14 @@ class GitHubWriteService:
             existing_branch, _ = found
             logger.info(
                 "Found existing open branch {} for {}, appending commits",
-                existing_branch, repo.full_name,
+                existing_branch,
+                repo.full_name,
             )
             return await self._commit_to_branch(
-                repo, files, message, existing_branch,
+                repo,
+                files,
+                message,
+                existing_branch,
             )
 
         # 无已有分支 → 创建新分支 + PR / No existing branch → create new
@@ -179,7 +212,10 @@ class GitHubWriteService:
             base_sha = ref.object.sha
             repo.create_git_ref(ref=f"refs/heads/{new_branch}", sha=base_sha)
             logger.info(
-                "Created branch {} from {}:{}", new_branch, repo.full_name, base_branch,
+                "Created branch {} from {}:{}",
+                new_branch,
+                repo.full_name,
+                base_branch,
             )
 
             # 2. 提交文件到新分支 / Commit files to new branch
@@ -190,12 +226,17 @@ class GitHubWriteService:
                     if isinstance(existing, list):
                         raise ValueError(f"Path {path} is a directory")
                     result = repo.update_file(
-                        path=path, message=message, content=content,
-                        sha=existing.sha, branch=new_branch,
+                        path=path,
+                        message=message,
+                        content=content,
+                        sha=existing.sha,
+                        branch=new_branch,
                     )
                 except UnknownObjectException:
                     result = repo.create_file(
-                        path=path, message=message, content=content,
+                        path=path,
+                        message=message,
+                        content=content,
                         branch=new_branch,
                     )
                 commit_obj = result.get("commit") if isinstance(result, dict) else None
@@ -216,7 +257,9 @@ class GitHubWriteService:
             )
             logger.info(
                 "Created PR #{}: {} -> {}",
-                pr.number, new_branch, base_branch,
+                pr.number,
+                new_branch,
+                base_branch,
             )
 
             # 4. 尝试自动合并 / Try auto-merge
@@ -224,7 +267,9 @@ class GitHubWriteService:
                 merge_result = pr.merge(merge_method="merge")
                 if merge_result.merged:
                     logger.info(
-                        "Auto-merged PR #{} for {}", pr.number, repo.full_name,
+                        "Auto-merged PR #{} for {}",
+                        pr.number,
+                        repo.full_name,
                     )
                     # 5. 合并成功后清理分支 / Cleanup branch after merge
                     try:
@@ -236,12 +281,14 @@ class GitHubWriteService:
                 else:
                     logger.warning(
                         "Auto-merge returned not-merged for PR #{}: {}",
-                        pr.number, merge_result.message,
+                        pr.number,
+                        merge_result.message,
                     )
             except Exception as merge_err:
                 logger.warning(
                     "Auto-merge failed for PR #{}, files will be available after manual merge: {}",
-                    pr.number, merge_err,
+                    pr.number,
+                    merge_err,
                 )
 
             return last_sha or ""
@@ -251,11 +298,16 @@ class GitHubWriteService:
         except Exception as e:
             logger.error(
                 "Failed to commit via PR to {}:{}: [{}] {}",
-                repo.full_name, base_branch, type(e).__name__, e,
+                repo.full_name,
+                base_branch,
+                type(e).__name__,
+                e,
             )
             raise
 
-    async def read_file(self, repo, path: str, ref: Optional[str] = None) -> Optional[str]:
+    async def read_file(
+        self, repo, path: str, ref: Optional[str] = None
+    ) -> Optional[str]:
         """从仓库读取文件内容 / Read file content from repository"""
 
         def _sync() -> Optional[str]:
@@ -303,12 +355,15 @@ class GitHubWriteService:
         except Exception as e:
             logger.warning(
                 "Failed to get default branch for {}: {}, falling back to 'main'",
-                repo.full_name, e,
+                repo.full_name,
+                e,
             )
             return "main"
 
     async def _find_open_sakura_branch(
-        self, repo, base_branch: Optional[str] = None,
+        self,
+        repo,
+        base_branch: Optional[str] = None,
     ) -> Optional[tuple]:
         """查找已有的未合并 sakura 分支 / Find existing open sakura PR branch
 
@@ -325,7 +380,9 @@ class GitHubWriteService:
                     if base_branch and pr.base.ref != base_branch:
                         logger.warning(
                             "Open sakura PR #{} targets {} but expected {}, skipping",
-                            pr.number, pr.base.ref, base_branch,
+                            pr.number,
+                            pr.base.ref,
+                            base_branch,
                         )
                         continue
                     return (pr.head.ref, pr.base.ref)

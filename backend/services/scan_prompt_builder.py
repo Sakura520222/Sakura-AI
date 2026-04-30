@@ -74,27 +74,29 @@ CODE_EXTENSIONS = (
 
 
 # 跳过的依赖目录（模块级常量，避免循环内重复创建）
-_SKIP_DIRS = frozenset({
-    "node_modules",
-    ".git",
-    "__pycache__",
-    ".idea",
-    ".vscode",
-    "venv",
-    ".venv",
-    "dist",
-    "build",
-    ".next",
-    "target",
-    ".gradle",
-    "vendor",
-    "Pods",
-    ".mypy_cache",
-    ".pytest_cache",
-    "site-packages",
-    ".eggs",
-    "egg-info",
-})
+_SKIP_DIRS = frozenset(
+    {
+        "node_modules",
+        ".git",
+        "__pycache__",
+        ".idea",
+        ".vscode",
+        "venv",
+        ".venv",
+        "dist",
+        "build",
+        ".next",
+        "target",
+        ".gradle",
+        "vendor",
+        "Pods",
+        ".mypy_cache",
+        ".pytest_cache",
+        "site-packages",
+        ".eggs",
+        "egg-info",
+    }
+)
 
 
 def collect_code_files(repo_path: str, max_files: int = 500) -> list[dict]:
