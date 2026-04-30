@@ -192,7 +192,7 @@ class LabelService:
 
     async def get_pr_existing_labels(
         self, repo_owner: str, repo_name: str, pr_number: int
-    ) -> List[str]:
+    ) -> List[str] | None:
         """获取PR当前的已有标签
 
         Args:
@@ -201,7 +201,7 @@ class LabelService:
             pr_number: PR编号
 
         Returns:
-            PR已有标签名称列表
+            PR已有标签名称列表；获取失败时返回 None（与空列表区分）
         """
         try:
             labels = await asyncio.to_thread(
@@ -213,7 +213,7 @@ class LabelService:
             return labels
         except Exception as e:
             logger.error(f"获取PR已有标签失败: {e}", exc_info=True)
-            return []
+            return None
 
     def format_labels_for_ai(self, labels: Dict[str, Dict[str, Any]]) -> str:
         """格式化标签列表供AI理解
@@ -374,10 +374,21 @@ class LabelService:
         }
 
         # 如果未传入已有标签，尝试获取
+        labels_fetch_failed = False
         if existing_labels is None:
             existing_labels = await self.get_pr_existing_labels(
                 repo_owner, repo_name, pr_number
             )
+            # None 表示获取失败（与空列表区分）
+            if existing_labels is None:
+                labels_fetch_failed = True
+                existing_labels = []
+                logger.warning(
+                    f"PR #{pr_number} 已有标签获取失败，将禁用自动应用仅输出建议"
+                )
+
+        # 维护动态标签集合：初始为 PR 已有标签 + 每次成功应用后即时更新
+        effective_labels = set(existing_labels)
 
         # 获取仓库现有标签
         repo_labels = await self.get_repo_labels(repo_owner, repo_name)
@@ -388,15 +399,17 @@ class LabelService:
             confidence = rec["confidence"]
 
             # 跳过PR已有的标签（无需重复添加）
-            if label_name in existing_labels:
+            if label_name in effective_labels:
                 logger.info(f"标签 {label_name} 已存在于 PR #{pr_number}，跳过")
                 continue
 
-            # 检查标签是否与PR已有标签冲突
-            conflict_with = self.check_label_conflict(existing_labels, label_name)
+            # 检查标签是否与已有标签（含本次已应用的）冲突
+            conflict_with = self.check_label_conflict(
+                list(effective_labels), label_name
+            )
             if conflict_with:
                 logger.info(
-                    f"标签 {label_name} 与 PR 已有标签 {conflict_with} 冲突，跳过自动应用"
+                    f"标签 {label_name} 与已有标签 {conflict_with} 冲突，跳过自动应用"
                 )
                 result["conflict_blocked"].append(
                     {
@@ -433,6 +446,17 @@ class LabelService:
                     result["failed"].append(label_name)
                     continue
 
+            # 当已有标签获取失败时，降级为仅建议不自动应用
+            if labels_fetch_failed:
+                result["suggested"].append(
+                    {
+                        "name": label_name,
+                        "confidence": confidence,
+                        "reason": rec.get("reason", ""),
+                    }
+                )
+                continue
+
             # 根据置信度决定是否自动应用
             if confidence >= confidence_threshold:
                 success = await asyncio.to_thread(
@@ -450,6 +474,8 @@ class LabelService:
                             "reason": rec.get("reason", ""),
                         }
                     )
+                    # 成功应用后即时加入动态集合，后续标签的冲突检测会考虑
+                    effective_labels.add(label_name)
                 else:
                     result["failed"].append(label_name)
             else:
