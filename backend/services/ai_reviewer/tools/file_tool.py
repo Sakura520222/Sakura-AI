@@ -192,6 +192,15 @@ class FileToolHandler:
                     "tried_branches": tried_branches,
                 }
 
+            # GitHub API returns a list when the path is a directory
+            if isinstance(content_file, list):
+                return {
+                    "file_path": file_path,
+                    "error": "该路径是目录而非文件，请使用 list_directory 工具",
+                    "hint": f"目录包含 {len(content_file)} 个项目",
+                    "tried_branches": tried_branches,
+                }
+
             if content_file.size > MAX_FILE_SIZE_BYTES:
                 return {
                     "file_path": file_path,
