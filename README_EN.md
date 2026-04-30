@@ -265,8 +265,6 @@ All configuration follows this priority: **Database app_config (WebUI) > Setting
 
 <img src="res/发送正在审查中和自动打标.png" width="1901" alt="Review in progress">
 
-<img src="res/PR审查完成示例.png" width="1090" alt="Review report">
-
 <img src="res/Issues分析.png" width="1707" alt="Issue analysis">
 
 <img src="res/WebUI.png" width="1707" alt="WebUI dashboard">
