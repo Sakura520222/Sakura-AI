@@ -1147,3 +1147,210 @@ async def cmd_my_subscriptions(update: Update, context: ContextTypes.DEFAULT_TYP
         await update.message.reply_text(
             f"📋 已订阅 {len(repos)} 个仓库:\n\n{repo_list}"
         )
+
+
+async def cmd_plans(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """查看可用套餐"""
+    from backend.services.payment_service import PaymentService
+
+    async with get_async_session() as session:
+        svc = PaymentService(session)
+        plans = await svc.list_plans(active_only=True)
+
+        if not plans:
+            await update.message.reply_text("📦 暂无可用套餐")
+            return
+
+        lines = ["💳 *可用套餐*\n"]
+        for plan in plans:
+            type_label = "订阅" if plan.plan_type == "subscription" else "一次性"
+            price = f"¥{plan.price_cents / 100:.2f}" if plan.price_cents > 0 else "免费"
+            lines.append(f"*{plan.name}* \\({type_label}\\) — {price}")
+
+            if plan.pr_quota_bonus > 0:
+                lines.append(f"  PR 审查 +{plan.pr_quota_bonus}次")
+            if plan.issue_quota_bonus > 0:
+                lines.append(f"  Issue 分析 +{plan.issue_quota_bonus}次")
+            if plan.plan_type == "subscription" and plan.duration_days:
+                lines.append(f"  有效期 {plan.duration_days} 天")
+            lines.append("")
+
+        text = "\n".join(lines)
+        text += "\n使用 /redeem <兑换码> 兑换套餐"
+
+        await update.message.reply_text(text, parse_mode="MarkdownV2")
+
+
+async def cmd_redeem(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """兑换码兑换"""
+    from backend.services.payment_service import PaymentService, PaymentError
+
+    if not context.args or len(context.args) != 1:
+        await update.message.reply_text("用法: /redeem <兑换码>")
+        return
+
+    code = context.args[0].strip().upper()
+    telegram_id = update.effective_user.id
+
+    async with get_async_session() as session:
+        svc = TelegramService(session)
+        user = await svc.get_user_by_telegram_id(telegram_id)
+        if not user:
+            await update.message.reply_text("❌ 请先使用 /sign 注册")
+            return
+
+        pay_svc = PaymentService(session)
+        try:
+            order = await pay_svc.redeem_code(user.id, code)
+            await session.commit()
+            plan_name = order.plan.name if order.plan else "未知套餐"
+            await update.message.reply_text(
+                f"✅ 兑换成功！\n\n"
+                f"📦 套餐: {plan_name}\n"
+                f"📝 订单号: `{order.order_no}`",
+                parse_mode="Markdown",
+            )
+        except PaymentError as e:
+            await session.rollback()
+            await update.message.reply_text(f"❌ 兑换失败: {e}")
+
+
+async def cmd_myorders(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """查看我的订单"""
+    from backend.services.payment_service import PaymentService
+
+    telegram_id = update.effective_user.id
+
+    async with get_async_session() as session:
+        svc = TelegramService(session)
+        user = await svc.get_user_by_telegram_id(telegram_id)
+        if not user:
+            await update.message.reply_text("❌ 请先使用 /sign 注册")
+            return
+
+        pay_svc = PaymentService(session)
+        orders, _ = await pay_svc.list_user_orders(user.id, limit=10)
+
+        if not orders:
+            await update.message.reply_text("📝 暂无订单记录")
+            return
+
+        lines = ["📝 *最近订单*\n"]
+        for order in orders:
+            plan_name = order.plan.name if order.plan else "已删除"
+            status_map = {
+                "fulfilled": "✅",
+                "pending": "⏳",
+                "paid": "💰",
+                "refunded": "↩️",
+                "expired": "⌛",
+                "cancelled": "❌",
+            }
+            status_icon = status_map.get(order.status, "?")
+            date_str = order.created_at.strftime("%m-%d %H:%M") if order.created_at else "?"
+            lines.append(
+                f"{status_icon} `{order.order_no}`\n"
+                f"   {plan_name} — {date_str}"
+            )
+
+        text = "\n".join(lines)
+        await update.message.reply_text(text, parse_mode="Markdown")
+
+
+async def cmd_gen_codes(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """批量生成兑换码（管理员）"""
+    from backend.services.payment_service import PaymentService, PaymentError
+
+    if not await check_permission(update.effective_user.id, UserRole.ADMIN):
+        await update.message.reply_text("❌ 此命令仅管理员可用")
+        return
+
+    if not context.args or len(context.args) < 2:
+        await update.message.reply_text("用法: /gen_codes <套餐ID> <数量> [批次名]")
+        return
+
+    try:
+        plan_id = int(context.args[0])
+        count = int(context.args[1])
+    except ValueError:
+        await update.message.reply_text("❌ 套餐ID和数量必须为数字")
+        return
+
+    if count < 1 or count > 100:
+        await update.message.reply_text("❌ 数量应在 1-100 之间")
+        return
+
+    batch_name = context.args[2] if len(context.args) > 2 else None
+    telegram_id = update.effective_user.id
+
+    async with get_async_session() as session:
+        svc = TelegramService(session)
+        user = await svc.get_user_by_telegram_id(telegram_id)
+
+        pay_svc = PaymentService(session)
+        try:
+            codes = await pay_svc.generate_redeem_codes(
+                plan_id=plan_id,
+                count=count,
+                batch_name=batch_name,
+                created_by=user.id if user else None,
+            )
+            await session.commit()
+
+            code_list = "\n".join(f"  `{c.code}`" for c in codes)
+            await update.message.reply_text(
+                f"✅ 已生成 {len(codes)} 个兑换码:\n\n{code_list}",
+                parse_mode="Markdown",
+            )
+        except PaymentError as e:
+            await session.rollback()
+            await update.message.reply_text(f"❌ 生成失败: {e}")
+
+
+async def cmd_grant(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """手动为用户充值套餐（管理员）"""
+    from backend.services.payment_service import PaymentService, PaymentError
+
+    if not await check_permission(update.effective_user.id, UserRole.ADMIN):
+        await update.message.reply_text("❌ 此命令仅管理员可用")
+        return
+
+    if not context.args or len(context.args) < 2:
+        await update.message.reply_text("用法: /grant <用户Telegram ID> <套餐ID>")
+        return
+
+    try:
+        target_telegram_id = int(context.args[0])
+        plan_id = int(context.args[1])
+    except ValueError:
+        await update.message.reply_text("❌ 参数必须为数字")
+        return
+
+    operator_telegram_id = update.effective_user.id
+
+    async with get_async_session() as session:
+        svc = TelegramService(session)
+        target_user = await svc.get_user_by_telegram_id(target_telegram_id)
+        if not target_user:
+            await update.message.reply_text("❌ 目标用户未注册")
+            return
+
+        operator = await svc.get_user_by_telegram_id(operator_telegram_id)
+
+        pay_svc = PaymentService(session)
+        try:
+            order = await pay_svc.grant_plan_to_user(
+                user_id=target_user.id,
+                plan_id=plan_id,
+                operator_id=operator.id if operator else None,
+            )
+            await session.commit()
+            await update.message.reply_text(
+                f"✅ 充值成功！\n\n"
+                f"👤 用户: {target_user.github_username or str(target_user.telegram_id)}\n"
+                f"📝 订单号: `{order.order_no}`",
+                parse_mode="Markdown",
+            )
+        except PaymentError as e:
+            await session.rollback()
+            await update.message.reply_text(f"❌ 充值失败: {e}")

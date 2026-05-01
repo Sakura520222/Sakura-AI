@@ -1,0 +1,186 @@
+{% extends "base.html" %}
+
+{% block title %}套餐中心 - Sakura AI Reviewer{% endblock %}
+
+{% block content %}
+<div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+    <div class="mb-8">
+        <h1 class="text-2xl font-bold text-gray-900 dark:text-white">套餐中心</h1>
+        <p class="mt-1 text-sm text-gray-500 dark:text-gray-400">查看配额、兑换码充值、管理订阅</p>
+    </div>
+
+    <!-- 当前配额概览 -->
+    {% if db_user %}
+    <div class="mb-8 bg-white dark:bg-gray-800 rounded-lg shadow p-6">
+        <h2 class="text-lg font-semibold text-gray-900 dark:text-white mb-4">当前配额</h2>
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+            <div>
+                <h3 class="text-sm font-medium text-gray-500 dark:text-gray-400 mb-3">PR 审查配额</h3>
+                <div class="space-y-2">
+                    {% for label, quota, used in [
+                        ("每日", db_user.daily_quota, db_user.daily_used),
+                        ("每周", db_user.weekly_quota, db_user.weekly_used),
+                        ("每月", db_user.monthly_quota, db_user.monthly_used)
+                    ] %}
+                    <div class="flex items-center justify-between">
+                        <span class="text-sm text-gray-700 dark:text-gray-300">{{ label }}</span>
+                        <span class="text-sm {{ 'text-red-600' if used >= quota else 'text-gray-900 dark:text-white' }}">
+                            {{ used }} / {{ quota }}
+                        </span>
+                    </div>
+                    <div class="w-full bg-gray-200 dark:bg-gray-700 rounded-full h-2">
+                        <div class="h-2 rounded-full {{ 'bg-red-500' if used >= quota else 'bg-pink-500' }}"
+                             style="width: {{ percentage(used, quota) }}%"></div>
+                    </div>
+                    {% endfor %}
+                </div>
+            </div>
+            <div>
+                <h3 class="text-sm font-medium text-gray-500 dark:text-gray-400 mb-3">Issue 分析配额</h3>
+                <div class="space-y-2">
+                    {% for label, quota, used in [
+                        ("每日", db_user.issue_daily_quota, db_user.issue_daily_used),
+                        ("每周", db_user.issue_weekly_quota, db_user.issue_weekly_used),
+                        ("每月", db_user.issue_monthly_quota, db_user.issue_monthly_used)
+                    ] %}
+                    <div class="flex items-center justify-between">
+                        <span class="text-sm text-gray-700 dark:text-gray-300">{{ label }}</span>
+                        <span class="text-sm {{ 'text-red-600' if used >= quota else 'text-gray-900 dark:text-white' }}">
+                            {{ used }} / {{ quota }}
+                        </span>
+                    </div>
+                    <div class="w-full bg-gray-200 dark:bg-gray-700 rounded-full h-2">
+                        <div class="h-2 rounded-full {{ 'bg-red-500' if used >= quota else 'bg-purple-500' }}"
+                             style="width: {{ percentage(used, quota) }}%"></div>
+                    </div>
+                    {% endfor %}
+                </div>
+            </div>
+        </div>
+    </div>
+    {% endif %}
+
+    <!-- 兑换码 -->
+    <div class="mb-8 bg-white dark:bg-gray-800 rounded-lg shadow p-6">
+        <h2 class="text-lg font-semibold text-gray-900 dark:text-white mb-4">兑换码充值</h2>
+        <form action="/webui/billing/redeem" method="POST" class="flex gap-3">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+            <input type="text" name="code" required
+                   class="flex-1 px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-lg
+                          bg-white dark:bg-gray-700 text-gray-900 dark:text-white
+                          focus:ring-2 focus:ring-pink-500 focus:border-transparent"
+                   placeholder="请输入兑换码">
+            <button type="submit"
+                    class="px-6 py-2 bg-pink-600 hover:bg-pink-700 text-white font-medium rounded-lg
+                           transition-colors duration-200">
+                兑换
+            </button>
+        </form>
+    </div>
+
+    <!-- 可用套餐 -->
+    {% if plans %}
+    <div class="mb-8">
+        <h2 class="text-lg font-semibold text-gray-900 dark:text-white mb-4">可用套餐</h2>
+        <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+            {% for plan in plans %}
+            <div class="bg-white dark:bg-gray-800 rounded-lg shadow p-6 border border-gray-200 dark:border-gray-700">
+                <div class="flex items-center justify-between mb-3">
+                    <h3 class="text-lg font-semibold text-gray-900 dark:text-white">{{ plan.name }}</h3>
+                    <span class="text-xs px-2 py-1 rounded-full
+                                 {{ 'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400' if plan.plan_type == 'subscription' else 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400' }}">
+                        {{ '订阅' if plan.plan_type == 'subscription' else '一次性' }}
+                    </span>
+                </div>
+                <div class="text-2xl font-bold text-pink-600 dark:text-pink-400 mb-4">
+                    ¥{{ "%.2f"|format(plan.price_cents / 100) }}
+                </div>
+                {% if plan.description %}
+                <p class="text-sm text-gray-500 dark:text-gray-400 mb-3">{{ plan.description }}</p>
+                {% endif %}
+                <ul class="space-y-1 text-sm text-gray-700 dark:text-gray-300">
+                    {% if plan.pr_quota_bonus > 0 %}
+                    <li>+{{ plan.pr_quota_bonus }} PR 审查次数（一次性）</li>
+                    {% endif %}
+                    {% if plan.pr_daily_add > 0 %}
+                    <li>每日 PR 配额 +{{ plan.pr_daily_add }}</li>
+                    {% endif %}
+                    {% if plan.pr_weekly_add > 0 %}
+                    <li>每周 PR 配额 +{{ plan.pr_weekly_add }}</li>
+                    {% endif %}
+                    {% if plan.pr_monthly_add > 0 %}
+                    <li>每月 PR 配额 +{{ plan.pr_monthly_add }}</li>
+                    {% endif %}
+                    {% if plan.issue_quota_bonus > 0 %}
+                    <li>+{{ plan.issue_quota_bonus }} Issue 分析次数（一次性）</li>
+                    {% endif %}
+                    {% if plan.issue_daily_add > 0 %}
+                    <li>每日 Issue 配额 +{{ plan.issue_daily_add }}</li>
+                    {% endif %}
+                    {% if plan.issue_weekly_add > 0 %}
+                    <li>每周 Issue 配额 +{{ plan.issue_weekly_add }}</li>
+                    {% endif %}
+                    {% if plan.issue_monthly_add > 0 %}
+                    <li>每月 Issue 配额 +{{ plan.issue_monthly_add }}</li>
+                    {% endif %}
+                    {% if plan.plan_type == 'subscription' and plan.duration_days %}
+                    <li>有效期 {{ plan.duration_days }} 天</li>
+                    {% endif %}
+                </ul>
+            </div>
+            {% endfor %}
+        </div>
+    </div>
+    {% endif %}
+
+    <!-- 订单历史 -->
+    <div class="bg-white dark:bg-gray-800 rounded-lg shadow">
+        <div class="px-6 py-4 border-b border-gray-200 dark:border-gray-700">
+            <h2 class="text-lg font-semibold text-gray-900 dark:text-white">订单记录</h2>
+        </div>
+        {% if orders %}
+        <div class="overflow-x-auto">
+            <table class="min-w-full divide-y divide-gray-200 dark:divide-gray-700">
+                <thead class="bg-gray-50 dark:bg-gray-700">
+                    <tr>
+                        <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase">订单号</th>
+                        <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase">套餐</th>
+                        <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase">金额</th>
+                        <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase">状态</th>
+                        <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase">时间</th>
+                    </tr>
+                </thead>
+                <tbody class="bg-white dark:bg-gray-800 divide-y divide-gray-200 dark:divide-gray-700">
+                    {% for order in orders %}
+                    <tr>
+                        <td class="px-6 py-4 text-sm font-mono text-gray-900 dark:text-white">{{ order.order_no }}</td>
+                        <td class="px-6 py-4 text-sm text-gray-700 dark:text-gray-300">
+                            {{ order.plan.name if order.plan else '-' }}
+                        </td>
+                        <td class="px-6 py-4 text-sm text-gray-700 dark:text-gray-300">
+                            {% if order.amount_cents == 0 %}免费{% else %}¥{{ "%.2f"|format(order.amount_cents / 100) }}{% endif %}
+                        </td>
+                        <td class="px-6 py-4">
+                            <span class="text-xs px-2 py-1 rounded-full
+                                         {{ 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400' if order.status == 'fulfilled' else
+                                            'bg-yellow-100 text-yellow-700 dark:bg-yellow-900/30 dark:text-yellow-400' if order.status == 'pending' else
+                                            'bg-gray-100 text-gray-700 dark:bg-gray-900/30 dark:text-gray-400' }}">
+                                {{ order.status }}
+                            </span>
+                        </td>
+                        <td class="px-6 py-4 text-sm text-gray-500 dark:text-gray-400">
+                            {{ order.created_at.strftime('%Y-%m-%d %H:%M') if order.created_at else '-' }}
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+        {% else %}
+        <div class="px-6 py-12 text-center text-gray-500 dark:text-gray-400">
+            暂无订单记录
+        </div>
+        {% endif %}
+    </div>
+</div>
+{% endblock %}

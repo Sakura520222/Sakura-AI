@@ -1,0 +1,129 @@
+{% extends "base.html" %}
+
+{% block title %}兑换码管理 - Sakura AI Reviewer{% endblock %}
+
+{% block content %}
+<div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+    <div class="mb-8 flex items-center justify-between">
+        <div>
+            <h1 class="text-2xl font-bold text-gray-900 dark:text-white">兑换码管理</h1>
+            <p class="mt-1 text-sm text-gray-500 dark:text-gray-400">批量生成和管理兑换码</p>
+        </div>
+        <button onclick="document.getElementById('generate-modal').classList.remove('hidden')"
+                class="px-4 py-2 bg-pink-600 hover:bg-pink-700 text-white font-medium rounded-lg transition-colors">
+            生成兑换码
+        </button>
+    </div>
+
+    <!-- 兑换码列表 -->
+    <div class="bg-white dark:bg-gray-800 rounded-lg shadow overflow-hidden">
+        <table class="min-w-full divide-y divide-gray-200 dark:divide-gray-700">
+            <thead class="bg-gray-50 dark:bg-gray-700">
+                <tr>
+                    <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase">兑换码</th>
+                    <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase">套餐</th>
+                    <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase">批次</th>
+                    <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase">使用</th>
+                    <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase">状态</th>
+                    <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase">过期时间</th>
+                </tr>
+            </thead>
+            <tbody class="bg-white dark:bg-gray-800 divide-y divide-gray-200 dark:divide-gray-700">
+                {% for code in codes %}
+                <tr>
+                    <td class="px-6 py-4 text-sm font-mono text-gray-900 dark:text-white">{{ code.code }}</td>
+                    <td class="px-6 py-4 text-sm text-gray-700 dark:text-gray-300">
+                        {{ code.plan.name if code.plan else '-' }}
+                    </td>
+                    <td class="px-6 py-4 text-sm text-gray-700 dark:text-gray-300">
+                        {{ code.batch_name or '-' }}
+                    </td>
+                    <td class="px-6 py-4 text-sm text-gray-700 dark:text-gray-300">
+                        {{ code.used_count }} / {{ code.max_uses }}
+                    </td>
+                    <td class="px-6 py-4">
+                        <span class="text-xs px-2 py-1 rounded-full
+                                     {{ 'bg-green-100 text-green-700' if code.status == 'active' else
+                                        'bg-gray-100 text-gray-700' if code.status == 'exhausted' else
+                                        'bg-red-100 text-red-700' }}">
+                            {{ code.status }}
+                        </span>
+                    </td>
+                    <td class="px-6 py-4 text-sm text-gray-500 dark:text-gray-400">
+                        {{ code.expires_at.strftime('%Y-%m-%d %H:%M') if code.expires_at else '永不过期' }}
+                    </td>
+                </tr>
+                {% endfor %}
+                {% if not codes %}
+                <tr>
+                    <td colspan="6" class="px-6 py-12 text-center text-gray-500 dark:text-gray-400">
+                        暂无兑换码，点击上方按钮生成
+                    </td>
+                </tr>
+                {% endif %}
+            </tbody>
+        </table>
+    </div>
+</div>
+
+<!-- 生成兑换码弹窗 -->
+<div id="generate-modal" class="hidden fixed inset-0 z-50 flex items-center justify-center">
+    <div class="absolute inset-0 bg-black/50" onclick="this.parentElement.classList.add('hidden')"></div>
+    <div class="relative bg-white dark:bg-gray-800 rounded-lg shadow-xl max-w-md w-full mx-4">
+        <div class="px-6 py-4 border-b border-gray-200 dark:border-gray-700 flex items-center justify-between">
+            <h3 class="text-lg font-semibold text-gray-900 dark:text-white">生成兑换码</h3>
+            <button onclick="this.closest('#generate-modal').classList.add('hidden')"
+                    class="text-gray-400 hover:text-gray-600 dark:hover:text-gray-300">&times;</button>
+        </div>
+        <form action="/webui/billing/admin/codes/generate" method="POST" class="px-6 py-4 space-y-4">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+
+            <div>
+                <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">选择套餐</label>
+                <select name="plan_id" required
+                        class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg
+                               bg-white dark:bg-gray-700 text-gray-900 dark:text-white">
+                    {% for plan in plans %}
+                    <option value="{{ plan.id }}">{{ plan.name }} (¥{{ "%.2f"|format(plan.price_cents / 100) }})</option>
+                    {% endfor %}
+                </select>
+            </div>
+
+            <div>
+                <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">生成数量（1-100）</label>
+                <input type="number" name="count" value="10" min="1" max="100" required
+                       class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg
+                              bg-white dark:bg-gray-700 text-gray-900 dark:text-white">
+            </div>
+
+            <div>
+                <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">批次名称</label>
+                <input type="text" name="batch_name" placeholder="可选"
+                       class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg
+                              bg-white dark:bg-gray-700 text-gray-900 dark:text-white">
+            </div>
+
+            <div>
+                <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">每个码最大使用次数</label>
+                <input type="number" name="max_uses" value="1" min="1" required
+                       class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg
+                              bg-white dark:bg-gray-700 text-gray-900 dark:text-white">
+            </div>
+
+            <div class="flex justify-end gap-3 pt-2">
+                <button type="button"
+                        onclick="this.closest('#generate-modal').classList.add('hidden')"
+                        class="px-4 py-2 text-gray-700 dark:text-gray-300 bg-gray-100 dark:bg-gray-700 rounded-lg
+                               hover:bg-gray-200 dark:hover:bg-gray-600">
+                    取消
+                </button>
+                <button type="submit"
+                        class="px-4 py-2 bg-pink-600 hover:bg-pink-700 text-white font-medium rounded-lg
+                               transition-colors">
+                    生成
+                </button>
+            </div>
+        </form>
+    </div>
+</div>
+{% endblock %}
