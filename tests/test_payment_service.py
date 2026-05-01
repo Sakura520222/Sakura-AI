@@ -114,16 +114,23 @@ class TestPlanManagement:
         result = await svc.get_plan(1)
         assert result == sample_plan
 
-    async def test_update_plan_ignores_non_editable_fields(self, svc, mock_session, sample_plan):
+    async def test_update_plan_ignores_non_editable_fields(
+        self, svc, mock_session, sample_plan
+    ):
         mock_result = MagicMock()
         mock_result.scalar_one_or_none.return_value = sample_plan
         mock_session.execute.return_value = mock_result
 
-        updated = await svc.update_plan(1, name="新名称", id=999, created_at=datetime.utcnow())
+        updated = await svc.update_plan(
+            1, name="新名称", id=999, created_at=datetime.utcnow()
+        )
 
         assert updated.name == "新名称"
         assert updated.id == 1
-    async def test_update_plan_ignores_none_values(self, svc, mock_session, sample_plan):
+
+    async def test_update_plan_ignores_none_values(
+        self, svc, mock_session, sample_plan
+    ):
         mock_result = MagicMock()
         mock_result.scalar_one_or_none.return_value = sample_plan
         mock_session.execute.return_value = mock_result
@@ -166,9 +173,7 @@ class TestRedeemCodeGeneration:
 
 @pytest.mark.asyncio
 class TestRedeemCodeUsage:
-    async def test_redeem_success(
-        self, svc, mock_session, sample_user, sample_plan
-    ):
+    async def test_redeem_success(self, svc, mock_session, sample_user, sample_plan):
         mock_session.get.return_value = sample_user
 
         redeem_code = RedeemCode(
@@ -228,9 +233,7 @@ class TestRedeemCodeUsage:
         with pytest.raises(PaymentError, match="Invalid"):
             await svc.redeem_code(user_id=1, code="INVALID")
 
-    async def test_redeem_expired_code(
-        self, svc, mock_session, sample_user
-    ):
+    async def test_redeem_expired_code(self, svc, mock_session, sample_user):
         mock_session.get.return_value = sample_user
 
         expired_code = RedeemCode(
@@ -249,9 +252,7 @@ class TestRedeemCodeUsage:
         with pytest.raises(PaymentError, match="expired"):
             await svc.redeem_code(user_id=1, code="EXPIREDCODE")
 
-    async def test_redeem_exhausted_code(
-        self, svc, mock_session, sample_user
-    ):
+    async def test_redeem_exhausted_code(self, svc, mock_session, sample_user):
         mock_session.get.return_value = sample_user
 
         exhausted_code = RedeemCode(
@@ -282,9 +283,7 @@ class TestQuotaApplication:
     async def test_apply_subscription_adds(
         self, svc, mock_session, sample_user, sample_subscription_plan
     ):
-        result = await svc._apply_plan_to_user(
-            sample_user, sample_subscription_plan
-        )
+        result = await svc._apply_plan_to_user(sample_user, sample_subscription_plan)
         assert result.daily_quota == 15  # 10 + 5 daily_add
         assert result.monthly_quota == 300  # 200 + 100 monthly_add
 
@@ -303,9 +302,7 @@ class TestQuotaApplication:
 
 @pytest.mark.asyncio
 class TestManualGrant:
-    async def test_grant_success(
-        self, svc, mock_session, sample_user, sample_plan
-    ):
+    async def test_grant_success(self, svc, mock_session, sample_user, sample_plan):
         mock_session.get.side_effect = lambda model, pk: (
             sample_user if pk == 1 else sample_plan if pk == 1 else None
         )
@@ -314,9 +311,7 @@ class TestManualGrant:
         mock_result.scalar_one_or_none.return_value = sample_plan
         mock_session.execute.return_value = mock_result
 
-        order = await svc.grant_plan_to_user(
-            user_id=1, plan_id=1, operator_id=99
-        )
+        order = await svc.grant_plan_to_user(user_id=1, plan_id=1, operator_id=99)
         assert order.status == OrderStatus.FULFILLED.value
         assert order.payment_provider == "manual"
         assert order.amount_cents == 0
@@ -405,7 +400,9 @@ class TestSubscription:
             applied_pr_monthly_add=100,
         )
         mock_result = MagicMock()
-        mock_result.all.return_value = [(subscription, sample_user, sample_subscription_plan)]
+        mock_result.all.return_value = [
+            (subscription, sample_user, sample_subscription_plan)
+        ]
         mock_session.execute.return_value = mock_result
 
         expired_count = await svc.expire_due_subscriptions(sample_user.id)

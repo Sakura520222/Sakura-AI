@@ -117,7 +117,9 @@ async def list_orders(
 ):
     """用户订单历史"""
     svc = PaymentService(db)
-    orders, total = await svc.list_user_orders(user["user_id"], limit=limit, offset=offset)
+    orders, total = await svc.list_user_orders(
+        user["user_id"], limit=limit, offset=offset
+    )
     return {
         "total": total,
         "orders": [

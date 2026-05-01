@@ -100,7 +100,9 @@ class Plan(Base):
     redeem_codes = relationship("RedeemCode", back_populates="plan", lazy="selectin")
 
     def __repr__(self):
-        return f"<Plan(name={self.name}, type={self.plan_type}, price={self.price_cents})>"
+        return (
+            f"<Plan(name={self.name}, type={self.plan_type}, price={self.price_cents})>"
+        )
 
 
 class Order(Base):
@@ -150,9 +152,7 @@ class RedeemCode(Base):
     batch_name = Column(String(100), nullable=True)
     max_uses = Column(Integer, default=1, nullable=False)
     used_count = Column(Integer, default=0, nullable=False)
-    status = Column(
-        String(20), default=RedeemCodeStatus.ACTIVE.value, nullable=False
-    )
+    status = Column(String(20), default=RedeemCodeStatus.ACTIVE.value, nullable=False)
     expires_at = Column(TIMESTAMP, nullable=True)
     created_by = Column(
         Integer, ForeignKey("telegram_users.id", ondelete="SET NULL"), nullable=True
@@ -185,9 +185,7 @@ class UserSubscription(Base):
     plan_id = Column(
         Integer, ForeignKey("plan_plans.id", ondelete="CASCADE"), nullable=False
     )
-    status = Column(
-        String(20), default=SubscriptionStatus.ACTIVE.value, nullable=False
-    )
+    status = Column(String(20), default=SubscriptionStatus.ACTIVE.value, nullable=False)
     started_at = Column(TIMESTAMP, default=datetime.utcnow, nullable=False)
     expires_at = Column(TIMESTAMP, nullable=False)
     auto_renew = Column(Boolean, default=False, nullable=False)
@@ -208,9 +206,7 @@ class UserSubscription(Base):
         TIMESTAMP, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False
     )
 
-    __table_args__ = (
-        UniqueConstraint("user_id", "plan_id", name="uq_user_plan_sub"),
-    )
+    __table_args__ = (UniqueConstraint("user_id", "plan_id", name="uq_user_plan_sub"),)
 
     def __repr__(self):
         return f"<UserSubscription(user={self.user_id}, plan={self.plan_id}, status={self.status})>"
