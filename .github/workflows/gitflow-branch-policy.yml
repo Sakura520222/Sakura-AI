@@ -1,0 +1,60 @@
+name: Gitflow 分支规则校验
+
+on:
+  pull_request:
+    types: [opened, reopened, synchronize, edited, ready_for_review]
+    branches:
+      - main
+      - develop
+
+jobs:
+  validate-gitflow:
+    name: 校验 PR 分支流向
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
+
+    steps:
+      - name: 校验 Gitflow 规则
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const pr = context.payload.pull_request;
+            const base = pr.base.ref;
+            const head = pr.head.ref;
+            const errors = [];
+
+            const isFeatureLike = /^(feature|fix|refactor|docs|test|chore|perf|ci)\/.+/.test(head);
+            const isRelease = /^release\/\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$/.test(head);
+            const isHotfix = /^hotfix\/\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$/.test(head);
+
+            if (base === 'develop') {
+              if (!isFeatureLike && head !== 'main') {
+                errors.push('PR 到 develop 仅允许来自 feature/*、fix/*、refactor/*、docs/*、test/*、chore/*、perf/*、ci/* 或 main。');
+              }
+            } else if (base === 'main') {
+              if (!isRelease && !isHotfix) {
+                errors.push('PR 到 main 仅允许来自 release/x.y.z 或 hotfix/x.y.z。普通开发请提交到 develop。');
+              }
+            }
+
+            if (isRelease && base !== 'main') {
+              errors.push('release/x.y.z 分支应通过 PR 合并到 main。');
+            }
+
+            if (isHotfix && base !== 'main') {
+              errors.push('hotfix/x.y.z 分支应通过 PR 合并到 main。');
+            }
+
+            if (errors.length > 0) {
+              core.setFailed([
+                'Gitflow 分支规则校验失败：',
+                `- base: ${base}`,
+                `- head: ${head}`,
+                ...errors.map((error) => `- ${error}`),
+              ].join('\n'));
+              return;
+            }
+
+            core.info(`Gitflow 分支规则校验通过：${head} -> ${base}`);
