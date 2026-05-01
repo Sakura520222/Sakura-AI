@@ -1,0 +1,48 @@
+name: Gitflow 合并分支清理
+
+on:
+  pull_request:
+    types: [closed]
+    branches:
+      - main
+      - develop
+  workflow_dispatch:
+
+jobs:
+  cleanup-merged-branch:
+    name: 清理已合并分支
+    runs-on: ubuntu-latest
+    if: |
+      github.event_name == 'pull_request' &&
+      github.event.pull_request.merged == true &&
+      github.event.pull_request.head.repo.full_name == github.repository
+    permissions:
+      contents: write
+
+    steps:
+      - name: 删除已合并的 Gitflow 分支
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const pr = context.payload.pull_request;
+            const head = pr.head.ref;
+            const base = pr.base.ref;
+            const deletable = /^(feature|fix|refactor|docs|test|chore|perf|ci|release|hotfix)\/.+/.test(head);
+
+            if (!deletable) {
+              core.info(`跳过非 Gitflow 临时分支：${head}`);
+              return;
+            }
+
+            if (head === 'main' || head === 'develop') {
+              core.info(`跳过长期分支：${head}`);
+              return;
+            }
+
+            await github.rest.git.deleteRef({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              ref: `heads/${head}`,
+            });
+
+            core.info(`已删除合并到 ${base} 的分支：${head}`);

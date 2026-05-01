@@ -1,4 +1,4 @@
-name: PR 合并自动发布 Release
+name: Release/Hotfix 合并到 main 后自动发布
 
 on:
   pull_request:
@@ -10,15 +10,19 @@ jobs:
   analyze-and-update-release:
     name: 分析 PR 并更新 Release
     runs-on: ubuntu-latest
-    if: github.event.pull_request.merged == true || github.event_name == 'workflow_dispatch'
+    if: |
+      github.event_name == 'workflow_dispatch' ||
+      (github.event.pull_request.merged == true &&
+       (startsWith(github.event.pull_request.head.ref, 'release/') ||
+        startsWith(github.event.pull_request.head.ref, 'hotfix/')))
     permissions:
       contents: write
       pull-requests: write
     outputs:
       version: ${{ steps.read_version.outputs.current_version }}
       release_exists: ${{ steps.check_release.outputs.exists }}
-      pr_title: ${{ github.event.pull_request.title }}
-      pr_number: ${{ github.event.pull_request.number }}
+      pr_title: ${{ github.event.pull_request.title || '' }}
+      pr_number: ${{ github.event.pull_request.number || '' }}
     
     steps:
       - name: 检出代码
@@ -31,21 +35,20 @@ jobs:
       - name: 提取 PR 信息
         id: extract_pr_info
         run: |
-          echo "PR 标题: ${{ github.event.pull_request.title }}"
-          echo "PR 编号: ${{ github.event.pull_request.number }}"
+          echo "PR 标题: ${PR_TITLE}"
+          echo "PR 编号: ${PR_NUMBER}"
           echo "合并时间: $(date +'%Y-%m-%d')"
           
-          # 提取 PR 标签
-          LABELS="${{ join(github.event.pull_request.labels.*.name, ',') }}"
           echo "PR 标签: $LABELS"
           echo "labels=$LABELS" >> $GITHUB_OUTPUT
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title || '' }}
+          PR_NUMBER: ${{ github.event.pull_request.number || '' }}
+          LABELS: ${{ github.event_name == 'pull_request' && join(github.event.pull_request.labels.*.name, ',') || '' }}
       
       - name: 分析 PR 类型
         id: analyze_type
         run: |
-          TITLE="${{ github.event.pull_request.title }}"
-          LABELS="${{ steps.extract_pr_info.outputs.labels }}"
-          
           # 根据 PR 标签确定类型
           if echo "$LABELS" | grep -q "enhancement"; then
             CHANGE_TYPE="新增"
@@ -76,14 +79,19 @@ jobs:
           
           echo "change_type=$CHANGE_TYPE" >> $GITHUB_OUTPUT
           echo "变更类型: $CHANGE_TYPE"
+        env:
+          TITLE: ${{ github.event.pull_request.title || '' }}
+          LABELS: ${{ steps.extract_pr_info.outputs.labels }}
       
       - name: 提取提交信息到文件
         id: extract_commits
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_NUMBER: ${{ github.event.pull_request.number || '' }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha || '' }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha || '' }}
         run: |
           COMMITS_FILE="${{ runner.temp }}/commits_list.txt"
-          PR_NUMBER="${{ github.event.pull_request.number }}"
 
           # workflow_dispatch 手动触发时无 PR 上下文
           if [ -z "$PR_NUMBER" ]; then
@@ -98,7 +106,7 @@ jobs:
                > "$COMMITS_FILE" 2>/dev/null; then
             echo "⚠️ API 获取失败，尝试 git log 备用方案"
             if ! git log --pretty=format:"%s" \
-                 "${{ github.event.pull_request.base.sha }}..${{ github.event.pull_request.head.sha }}" \
+                "${BASE_SHA}..${HEAD_SHA}" \
                  > "$COMMITS_FILE" 2>/dev/null; then
               echo "⚠️ git log 也失败，创建空提交文件"
               echo "" > "$COMMITS_FILE"
@@ -303,8 +311,8 @@ jobs:
           VERSION: ${{ steps.read_version.outputs.current_version }}
           TODAY: ${{ steps.read_version.outputs.today }}
           CHANGE_TYPE: ${{ steps.analyze_type.outputs.change_type }}
-          TITLE: ${{ github.event.pull_request.title }}
-          PR_NUM: ${{ github.event.pull_request.number }}
+          TITLE: ${{ github.event.pull_request.title || '' }}
+          PR_NUM: ${{ github.event.pull_request.number || '' }}
           EXISTS: ${{ steps.check_release.outputs.exists }}
           LABELS: ${{ steps.extract_pr_info.outputs.labels }}
       
