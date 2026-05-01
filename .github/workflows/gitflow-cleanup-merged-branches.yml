@@ -39,10 +39,19 @@ jobs:
               return;
             }
 
-            await github.rest.git.deleteRef({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              ref: `heads/${head}`,
-            });
+            try {
+              await github.rest.git.deleteRef({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                ref: `heads/${head}`,
+              });
+            } catch (error) {
+              if (error.status === 422 || error.status === 404) {
+                core.info(`分支已不存在，跳过删除：${head}`);
+                return;
+              }
+
+              throw error;
+            }
 
             core.info(`已删除合并到 ${base} 的分支：${head}`);
