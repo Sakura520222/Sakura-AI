@@ -564,6 +564,36 @@ class PaymentService:
             0,
             user.issue_monthly_quota - (applied_values["issue_monthly_add"] or 0),
         )
+        if user.daily_used > user.daily_quota:
+            logger.warning(
+                f"Subscription expiry left PR daily usage above quota: "
+                f"user_id={user.id}, used={user.daily_used}, quota={user.daily_quota}"
+            )
+        if user.weekly_used > user.weekly_quota:
+            logger.warning(
+                f"Subscription expiry left PR weekly usage above quota: "
+                f"user_id={user.id}, used={user.weekly_used}, quota={user.weekly_quota}"
+            )
+        if user.monthly_used > user.monthly_quota:
+            logger.warning(
+                f"Subscription expiry left PR monthly usage above quota: "
+                f"user_id={user.id}, used={user.monthly_used}, quota={user.monthly_quota}"
+            )
+        if user.issue_daily_used > user.issue_daily_quota:
+            logger.warning(
+                f"Subscription expiry left Issue daily usage above quota: "
+                f"user_id={user.id}, used={user.issue_daily_used}, quota={user.issue_daily_quota}"
+            )
+        if user.issue_weekly_used > user.issue_weekly_quota:
+            logger.warning(
+                f"Subscription expiry left Issue weekly usage above quota: "
+                f"user_id={user.id}, used={user.issue_weekly_used}, quota={user.issue_weekly_quota}"
+            )
+        if user.issue_monthly_used > user.issue_monthly_quota:
+            logger.warning(
+                f"Subscription expiry left Issue monthly usage above quota: "
+                f"user_id={user.id}, used={user.issue_monthly_used}, quota={user.issue_monthly_quota}"
+            )
         subscription.status = SubscriptionStatus.EXPIRED.value
         await self.session.flush()
         return subscription
