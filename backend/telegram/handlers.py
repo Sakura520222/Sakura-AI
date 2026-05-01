@@ -1153,6 +1153,8 @@ async def cmd_my_subscriptions(update: Update, context: ContextTypes.DEFAULT_TYP
 async def _reply_if_payment_disabled(update: Update) -> bool:
     if await is_payment_enabled():
         return False
+    if not update.message:
+        return True
     await update.message.reply_text("付费配额系统未启用")
     return True
 
