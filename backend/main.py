@@ -212,7 +212,10 @@ def _get_webui_error_user(request: Request) -> dict | None:
     if not token:
         return None
 
-    payload = decode_access_token(token)
+    try:
+        payload = decode_access_token(token)
+    except Exception:
+        return None
     if not payload:
         return None
 
