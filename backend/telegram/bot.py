@@ -7,6 +7,7 @@ from telegram.ext import Application, CommandHandler
 from loguru import logger
 
 from backend.core.config import get_settings
+from backend.services.payment_service import is_payment_enabled
 from backend.telegram.handlers import (
     cmd_start,
     cmd_help,
@@ -62,9 +63,6 @@ async def register_bot_commands(bot: Bot):
         BotCommand("repo_subscribe", "📌 订阅仓库"),
         BotCommand("repo_unsubscribe", "❌ 取消订阅"),
         BotCommand("my_subscriptions", "📋 我的订阅"),
-        BotCommand("plans", "💳 可用套餐"),
-        BotCommand("redeem", "🎟️ 兑换码充值"),
-        BotCommand("myorders", "📝 我的订单"),
         # 管理员命令
         BotCommand("user_add", "➕ 添加用户"),
         BotCommand("user_remove", "➖ 移除用户"),
@@ -75,13 +73,22 @@ async def register_bot_commands(bot: Bot):
         BotCommand("quota_set", "⚙️ 设置配额"),
         BotCommand("update_docs", "🔄 更新文档"),
         BotCommand("code_index", "🔍 索引代码"),
-        BotCommand("gen_codes", "🎟️ 生成兑换码"),
-        BotCommand("grant", "🎁 手动充值"),
         # 超级管理员命令
         BotCommand("admin_add", "👑 添加管理员"),
         BotCommand("admin_remove", "🚫 移除管理员"),
         BotCommand("review", "🔧 手动审查"),
     ]
+
+    if await is_payment_enabled():
+        commands.extend(
+            [
+                BotCommand("plans", "💳 可用套餐"),
+                BotCommand("redeem", "🎟️ 兑换码充值"),
+                BotCommand("myorders", "📝 我的订单"),
+                BotCommand("gen_codes", "🎟️ 生成兑换码"),
+                BotCommand("grant", "🎁 手动充值"),
+            ]
+        )
 
     await bot.set_my_commands(commands)
     logger.info("✅ Bot 命令菜单已注册")

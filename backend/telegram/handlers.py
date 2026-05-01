@@ -6,8 +6,9 @@ from telegram.helpers import escape_markdown
 from loguru import logger
 
 from backend.models.database import init_async_db
-from backend.services.telegram_service import TelegramService
 from backend.models.telegram_models import UserRole
+from backend.services.telegram_service import TelegramService
+from backend.services.payment_service import is_payment_enabled
 from backend.core.config import get_settings
 import re
 
@@ -1149,8 +1150,18 @@ async def cmd_my_subscriptions(update: Update, context: ContextTypes.DEFAULT_TYP
         )
 
 
+async def _reply_if_payment_disabled(update: Update) -> bool:
+    if await is_payment_enabled():
+        return False
+    await update.message.reply_text("付费配额系统未启用")
+    return True
+
+
 async def cmd_plans(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """查看可用套餐"""
+    if await _reply_if_payment_disabled(update):
+        return
+
     from backend.services.payment_service import PaymentService
 
     async with get_async_session() as session:
@@ -1183,6 +1194,9 @@ async def cmd_plans(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def cmd_redeem(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """兑换码兑换"""
+    if await _reply_if_payment_disabled(update):
+        return
+
     from backend.services.payment_service import PaymentService, PaymentError
 
     if not context.args or len(context.args) != 1:
@@ -1217,6 +1231,9 @@ async def cmd_redeem(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def cmd_myorders(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """查看我的订单"""
+    if await _reply_if_payment_disabled(update):
+        return
+
     from backend.services.payment_service import PaymentService
 
     telegram_id = update.effective_user.id
@@ -1259,6 +1276,9 @@ async def cmd_myorders(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def cmd_gen_codes(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """批量生成兑换码（管理员）"""
+    if await _reply_if_payment_disabled(update):
+        return
+
     from backend.services.payment_service import PaymentService, PaymentError
 
     if not await check_permission(update.effective_user.id, UserRole.ADMIN):
@@ -1309,6 +1329,9 @@ async def cmd_gen_codes(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def cmd_grant(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """手动为用户充值套餐（管理员）"""
+    if await _reply_if_payment_disabled(update):
+        return
+
     from backend.services.payment_service import PaymentService, PaymentError
 
     if not await check_permission(update.effective_user.id, UserRole.ADMIN):
