@@ -4,7 +4,7 @@
 
 **English** | [中文](README.md)
 
-[![Version](https://img.shields.io/badge/Version-2.8.8-blue.svg)](https://github.com/Sakura520222/Sakura-AI-Reviewer/releases)
+[![Version](https://img.shields.io/badge/Version-2.9.0-blue.svg)](https://github.com/Sakura520222/Sakura-AI-Reviewer/releases)
 [![Python](https://img.shields.io/badge/Python-3.11+-blue.svg)](https://www.python.org/)
 [![FastAPI](https://img.shields.io/badge/FastAPI-Latest-green.svg)](https://fastapi.tiangolo.com/)
 [![License](https://img.shields.io/badge/License-AGPLv3-yellow.svg)](LICENSE)
@@ -63,6 +63,7 @@
 - **GitHub App Installation Management**: Automatically handles GitHub App install/uninstall events, syncing repository authorization status
 - **SSE Real-time Push**: Multi-process real-time communication based on Redis Pub/Sub, with instant WebUI data updates
 - **Quota-based Access Control**: Flexible quota-based access management system with user self-registration support
+- **Paid Quota System**: Plan management, batch redeem code generation and redemption, admin manual grants, supports one-time packages and subscription plans
 - **Admin Action Audit**: Complete operation logs covering configuration changes, user management, and other critical actions
 - **WebUI Dashboard**: Dashboard charts, PR management, user management, configuration management, queue monitoring, action logs, repository scan management, with Markdown content rendering support
 - **Telegram Bot**: Real-time notifications, interactive button menus, three-tier permission system (super admin / admin / user), quota management

@@ -14,10 +14,12 @@ from itsdangerous import URLSafeTimedSerializer, BadSignature
 
 from sqlalchemy import select, or_
 
+from backend.core.config import get_settings
 from backend.models import database as db_module
 from backend.models.database import PRReview
 from backend.models.database import WebUIConfig
 from backend.webui.auth import decode_access_token
+from backend.services.payment_service import is_payment_enabled
 
 
 # ========== 模板引擎 ==========
@@ -26,6 +28,8 @@ def get_templates() -> Jinja2Templates:
     """获取 Jinja2 模板引擎单例"""
     templates = Jinja2Templates(directory="backend/webui/templates", autoescape=True)
     templates.env.globals["percentage"] = _percentage_filter
+    # get_settings() returns the cached singleton updated in place by dynamic config.
+    templates.env.globals["settings"] = get_settings()
     templates.env.filters["format_duration"] = _format_duration_filter
     return templates
 
@@ -101,6 +105,11 @@ async def paginate(
     page = min(page, total_pages)
     result = await db.execute(query.offset((page - 1) * per_page).limit(per_page))
     return result.scalars().all(), total, total_pages, page
+
+
+async def require_payment_enabled():
+    if not await is_payment_enabled():
+        raise HTTPException(status_code=404, detail="付费配额系统未启用")
 
 
 # ========== 数据库会话 ==========

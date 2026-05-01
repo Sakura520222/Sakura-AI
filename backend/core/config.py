@@ -237,6 +237,13 @@ class Settings(BaseSettings):
     fetch_url_domain_list: str = ""  # 域名列表（逗号分隔）
     fetch_url_force_https: bool = False  # 强制仅允许 HTTPS 协议
 
+    # ========== 支付配置 ==========
+    payment_enabled: bool = False  # 是否启用付费配额系统
+    payment_order_expire_minutes: int = Field(
+        30, description="未支付订单过期时间（分钟）"
+    )
+    payment_default_currency: str = Field("CNY", description="默认货币")
+
     # ========== 代码索引配置 ==========
     enable_code_index: bool = True  # 是否启用代码索引功能
     auto_index_pr_changes: bool = True  # PR审查时自动索引变更文件
@@ -763,6 +770,18 @@ DYNAMIC_CONFIG_GROUPS: OrderedDict[str, dict] = OrderedDict(
                 ],
             },
         ),
+        (
+            "payment",
+            {
+                "label": "付费配额配置",
+                "icon": "credit-card",
+                "keys": [
+                    "payment_enabled",
+                    "payment_order_expire_minutes",
+                    "payment_default_currency",
+                ],
+            },
+        ),
     ]
 )
 
@@ -866,6 +885,9 @@ DYNAMIC_CONFIG_LABELS: dict[str, str] = {
     "enable_semantic_issue_linking": "启用语义 Issue 关联",
     "semantic_issue_similarity_threshold": "语义相似度阈值",
     "semantic_issue_max_links": "最大关联 Issue 数量",
+    "payment_enabled": "启用付费配额系统",
+    "payment_order_expire_minutes": "订单过期时间（分钟）",
+    "payment_default_currency": "默认货币",
     # 核心配置标签
     "github_app_id": "GitHub App ID",
     "github_private_key": "GitHub App 私钥",

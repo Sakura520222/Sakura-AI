@@ -20,6 +20,18 @@ from backend.models.scan_models import (
     FindingSeverity,
     FindingCategory,
 )
+from backend.models.payment_models import (
+    Plan,
+    PlanType,
+    Order,
+    OrderStatus,
+    RedeemCode,
+    RedeemCodeStatus,
+    UserSubscription,
+    SubscriptionStatus,
+    PaymentLog,
+    PaymentAction,
+)
 from backend.core.config import get_settings
 import logging
 
@@ -31,6 +43,16 @@ __all__ = [
     "AppConfig",
     "ReviewQueue",
     "AdminActionLog",
+    "Plan",
+    "PlanType",
+    "Order",
+    "OrderStatus",
+    "RedeemCode",
+    "RedeemCodeStatus",
+    "UserSubscription",
+    "SubscriptionStatus",
+    "PaymentLog",
+    "PaymentAction",
     "RepoScan",
     "ScanFinding",
     "ScanStatus",
