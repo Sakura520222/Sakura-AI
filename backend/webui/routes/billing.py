@@ -90,9 +90,7 @@ async def redeem_code(
         order = await svc.redeem_code(user["user_id"], code)
         await db.commit()
         logger.info(f"User {user['sub']} redeemed code {code}, order {order.order_no}")
-        return toast_redirect(
-            "/webui/billing/", f"兑换成功！订单号: {order.order_no}"
-        )
+        return toast_redirect("/webui/billing/", f"兑换成功！订单号: {order.order_no}")
     except PaymentError as e:
         await db.rollback()
         return toast_redirect("/webui/billing/", str(e), "error")
@@ -253,9 +251,7 @@ async def admin_generate_codes(
             created_by=user["user_id"],
         )
         await db.commit()
-        logger.info(
-            f"Admin {user['sub']} generated {count} codes for plan {plan_id}"
-        )
+        logger.info(f"Admin {user['sub']} generated {count} codes for plan {plan_id}")
         return toast_redirect(
             "/webui/billing/admin/codes", f"成功生成 {len(codes)} 个兑换码"
         )
@@ -285,9 +281,7 @@ async def admin_grant(
             operator_id=user["user_id"],
         )
         await db.commit()
-        logger.info(
-            f"Admin {user['sub']} granted plan {plan_id} to user {user_id}"
-        )
+        logger.info(f"Admin {user['sub']} granted plan {plan_id} to user {user_id}")
         return toast_redirect(
             f"/webui/users/{user_id}", f"充值成功，订单号: {order.order_no}"
         )

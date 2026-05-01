@@ -1221,9 +1221,7 @@ async def cmd_redeem(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await session.commit()
             plan_name = order.plan.name if order.plan else "未知套餐"
             await update.message.reply_text(
-                f"✅ 兑换成功！\n\n"
-                f"📦 套餐: {plan_name}\n"
-                f"📝 订单号: `{order.order_no}`",
+                f"✅ 兑换成功！\n\n📦 套餐: {plan_name}\n📝 订单号: `{order.order_no}`",
                 parse_mode="Markdown",
             )
         except PaymentError as e:
@@ -1266,10 +1264,11 @@ async def cmd_myorders(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 "cancelled": "❌",
             }
             status_icon = status_map.get(order.status, "?")
-            date_str = order.created_at.strftime("%m-%d %H:%M") if order.created_at else "?"
+            date_str = (
+                order.created_at.strftime("%m-%d %H:%M") if order.created_at else "?"
+            )
             lines.append(
-                f"{status_icon} `{order.order_no}`\n"
-                f"   {plan_name} — {date_str}"
+                f"{status_icon} `{order.order_no}`\n   {plan_name} — {date_str}"
             )
 
         text = "\n".join(lines)
