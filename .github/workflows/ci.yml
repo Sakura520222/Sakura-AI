@@ -43,3 +43,5 @@ jobs:
 
       - name: 运行测试
         run: pytest -q
+        env:
+          PYTHONPATH: ${{ github.workspace }}
