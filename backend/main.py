@@ -17,6 +17,8 @@ from backend.core.bootstrap import (
 from backend.webui.routes.setup import router as setup_router
 from backend.api import webhook
 from backend.webui.routes import webui_router
+from backend.webui.deps import error_page
+from backend.webui.auth import decode_access_token
 from backend.api.v1 import api_v1_router
 from backend.api.v1.deps import limiter
 from slowapi import _rate_limit_exceeded_handler
@@ -176,7 +178,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title="Sakura AI Reviewer",
     description="GitHub AI代码审查机器人",
-    version="2.8.8",
+    version="2.9.0",
     lifespan=lifespan,
 )
 
@@ -205,10 +207,39 @@ app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
 
 # WebUI 认证异常处理：页面路由 401 时重定向到登录页
+def _get_webui_error_user(request: Request) -> dict | None:
+    token = request.cookies.get("webui_token")
+    if not token:
+        return None
+
+    try:
+        payload = decode_access_token(token)
+    except Exception:
+        return None
+    if not payload:
+        return None
+
+    return {
+        "sub": payload.get("sub") or "",
+        "role": payload.get("role", "user"),
+        "user_id": payload.get("user_id"),
+        "github_id": payload.get("github_id"),
+        "avatar_url": payload.get("avatar_url"),
+    }
+
+
 @app.exception_handler(HTTPException)
 async def auth_exception_handler(request: Request, exc: HTTPException):
     if exc.status_code == 401 and request.url.path.startswith("/webui"):
         return RedirectResponse(url="/webui/auth/login", status_code=302)
+    if request.url.path.startswith("/webui"):
+        return error_page(
+            request,
+            status_code=exc.status_code,
+            title="请求无法完成",
+            message=str(exc.detail),
+            user=_get_webui_error_user(request),
+        )
     return JSONResponse(status_code=exc.status_code, content={"detail": exc.detail})
 
 
@@ -217,7 +248,7 @@ async def root():
     """根路径"""
     return {
         "service": "Sakura AI Reviewer",
-        "version": "2.8.8",
+        "version": "2.9.0",
         "status": "running",
         "docs": "/docs",
     }

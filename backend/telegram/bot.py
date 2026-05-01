@@ -7,6 +7,7 @@ from telegram.ext import Application, CommandHandler
 from loguru import logger
 
 from backend.core.config import get_settings
+from backend.services.payment_service import is_payment_enabled
 from backend.telegram.handlers import (
     cmd_start,
     cmd_help,
@@ -31,6 +32,11 @@ from backend.telegram.handlers import (
     cmd_repo_subscribe,
     cmd_repo_unsubscribe,
     cmd_my_subscriptions,
+    cmd_plans,
+    cmd_redeem,
+    cmd_myorders,
+    cmd_gen_codes,
+    cmd_grant,
 )
 from backend.telegram.notifications import NotificationSender, set_notification_sender
 from backend.telegram.menu import get_callback_handler, get_force_reply_handler
@@ -72,6 +78,17 @@ async def register_bot_commands(bot: Bot):
         BotCommand("admin_remove", "🚫 移除管理员"),
         BotCommand("review", "🔧 手动审查"),
     ]
+
+    if await is_payment_enabled():
+        commands.extend(
+            [
+                BotCommand("plans", "💳 可用套餐"),
+                BotCommand("redeem", "🎟️ 兑换码充值"),
+                BotCommand("myorders", "📝 我的订单"),
+                BotCommand("gen_codes", "🎟️ 生成兑换码"),
+                BotCommand("grant", "🎁 手动充值"),
+            ]
+        )
 
     await bot.set_my_commands(commands)
     logger.info("✅ Bot 命令菜单已注册")
@@ -143,6 +160,11 @@ async def start_telegram_bot():
         _telegram_app.add_handler(
             CommandHandler("my_subscriptions", cmd_my_subscriptions)
         )
+        _telegram_app.add_handler(CommandHandler("plans", cmd_plans))
+        _telegram_app.add_handler(CommandHandler("redeem", cmd_redeem))
+        _telegram_app.add_handler(CommandHandler("myorders", cmd_myorders))
+        _telegram_app.add_handler(CommandHandler("gen_codes", cmd_gen_codes))
+        _telegram_app.add_handler(CommandHandler("grant", cmd_grant))
 
         # 注册按钮菜单处理器
         _telegram_app.add_handler(get_callback_handler())
