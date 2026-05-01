@@ -30,3 +30,8 @@ def test_get_webui_error_user_returns_none_without_valid_payload():
         assert _get_webui_error_user(RequestStub("token")) is None
 
     assert _get_webui_error_user(RequestStub(None)) is None
+
+
+def test_get_webui_error_user_returns_none_when_decode_fails():
+    with patch("backend.main.decode_access_token", side_effect=RuntimeError("boom")):
+        assert _get_webui_error_user(RequestStub("token")) is None
