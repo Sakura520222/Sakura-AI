@@ -34,6 +34,7 @@ def test_sidebar_hides_billing_links_when_payment_disabled():
     rendered = template.render(
         active_page="dashboard",
         current_user={"role": "super_admin"},
+        # Override cached template globals so this test is isolated from settings state.
         settings=SettingsStub(payment_enabled=False),
     )
 
@@ -49,6 +50,7 @@ def test_sidebar_shows_billing_links_when_payment_enabled():
     rendered = template.render(
         active_page="dashboard",
         current_user={"role": "super_admin"},
+        # Override cached template globals so this test is isolated from settings state.
         settings=SettingsStub(payment_enabled=True),
     )
 
