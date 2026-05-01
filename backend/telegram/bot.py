@@ -31,6 +31,11 @@ from backend.telegram.handlers import (
     cmd_repo_subscribe,
     cmd_repo_unsubscribe,
     cmd_my_subscriptions,
+    cmd_plans,
+    cmd_redeem,
+    cmd_myorders,
+    cmd_gen_codes,
+    cmd_grant,
 )
 from backend.telegram.notifications import NotificationSender, set_notification_sender
 from backend.telegram.menu import get_callback_handler, get_force_reply_handler
@@ -57,6 +62,9 @@ async def register_bot_commands(bot: Bot):
         BotCommand("repo_subscribe", "📌 订阅仓库"),
         BotCommand("repo_unsubscribe", "❌ 取消订阅"),
         BotCommand("my_subscriptions", "📋 我的订阅"),
+        BotCommand("plans", "💳 可用套餐"),
+        BotCommand("redeem", "🎟️ 兑换码充值"),
+        BotCommand("myorders", "📝 我的订单"),
         # 管理员命令
         BotCommand("user_add", "➕ 添加用户"),
         BotCommand("user_remove", "➖ 移除用户"),
@@ -67,6 +75,8 @@ async def register_bot_commands(bot: Bot):
         BotCommand("quota_set", "⚙️ 设置配额"),
         BotCommand("update_docs", "🔄 更新文档"),
         BotCommand("code_index", "🔍 索引代码"),
+        BotCommand("gen_codes", "🎟️ 生成兑换码"),
+        BotCommand("grant", "🎁 手动充值"),
         # 超级管理员命令
         BotCommand("admin_add", "👑 添加管理员"),
         BotCommand("admin_remove", "🚫 移除管理员"),
@@ -143,6 +153,11 @@ async def start_telegram_bot():
         _telegram_app.add_handler(
             CommandHandler("my_subscriptions", cmd_my_subscriptions)
         )
+        _telegram_app.add_handler(CommandHandler("plans", cmd_plans))
+        _telegram_app.add_handler(CommandHandler("redeem", cmd_redeem))
+        _telegram_app.add_handler(CommandHandler("myorders", cmd_myorders))
+        _telegram_app.add_handler(CommandHandler("gen_codes", cmd_gen_codes))
+        _telegram_app.add_handler(CommandHandler("grant", cmd_grant))
 
         # 注册按钮菜单处理器
         _telegram_app.add_handler(get_callback_handler())

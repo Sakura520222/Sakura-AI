@@ -63,6 +63,7 @@
 - **GitHub App Installation Management**: Automatically handles GitHub App install/uninstall events, syncing repository authorization status
 - **SSE Real-time Push**: Multi-process real-time communication based on Redis Pub/Sub, with instant WebUI data updates
 - **Quota-based Access Control**: Flexible quota-based access management system with user self-registration support
+- **Paid Quota System**: Plan management, batch redeem code generation and redemption, admin manual grants, supports one-time packages and subscription plans
 - **Admin Action Audit**: Complete operation logs covering configuration changes, user management, and other critical actions
 - **WebUI Dashboard**: Dashboard charts, PR management, user management, configuration management, queue monitoring, action logs, repository scan management, with Markdown content rendering support
 - **Telegram Bot**: Real-time notifications, interactive button menus, three-tier permission system (super admin / admin / user), quota management
