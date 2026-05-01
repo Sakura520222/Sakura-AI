@@ -49,9 +49,15 @@ def sample_user():
     user.daily_quota = 10
     user.weekly_quota = 50
     user.monthly_quota = 200
+    user.daily_used = 0
+    user.weekly_used = 0
+    user.monthly_used = 0
     user.issue_daily_quota = 20
     user.issue_weekly_quota = 80
     user.issue_monthly_quota = 300
+    user.issue_daily_used = 0
+    user.issue_weekly_used = 0
+    user.issue_monthly_used = 0
     return user
 
 
@@ -117,6 +123,14 @@ class TestPlanManagement:
 
         assert updated.name == "新名称"
         assert updated.id == 1
+    async def test_update_plan_ignores_none_values(self, svc, mock_session, sample_plan):
+        mock_result = MagicMock()
+        mock_result.scalar_one_or_none.return_value = sample_plan
+        mock_session.execute.return_value = mock_result
+
+        updated = await svc.update_plan(1, name=None)
+
+        assert updated.name == "10次PR包"
 
 
 @pytest.mark.asyncio

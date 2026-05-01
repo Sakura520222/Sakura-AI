@@ -1,14 +1,10 @@
 """WebUI 付费配额路由"""
 
-from fastapi import APIRouter, Request, Depends, Form, HTTPException
+from fastapi import APIRouter, Request, Depends, Form
 from loguru import logger
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from backend.services.payment_service import (
-    PaymentError,
-    PaymentService,
-    is_payment_enabled,
-)
+from backend.services.payment_service import PaymentError, PaymentService
 from backend.webui.deps import (
     require_auth,
     require_super_admin,
@@ -17,13 +13,9 @@ from backend.webui.deps import (
     get_csrf_serializer,
     require_csrf,
     get_user_preferences,
+    require_payment_enabled,
     toast_redirect,
 )
-
-async def require_payment_enabled():
-    if not await is_payment_enabled():
-        raise HTTPException(status_code=404, detail="付费配额系统未启用")
-
 
 router = APIRouter(
     prefix="/billing",

@@ -17,6 +17,7 @@ from backend.core.bootstrap import (
 from backend.webui.routes.setup import router as setup_router
 from backend.api import webhook
 from backend.webui.routes import webui_router
+from backend.webui.deps import error_page
 from backend.api.v1 import api_v1_router
 from backend.api.v1.deps import limiter
 from slowapi import _rate_limit_exceeded_handler
@@ -209,6 +210,13 @@ app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 async def auth_exception_handler(request: Request, exc: HTTPException):
     if exc.status_code == 401 and request.url.path.startswith("/webui"):
         return RedirectResponse(url="/webui/auth/login", status_code=302)
+    if request.url.path.startswith("/webui"):
+        return error_page(
+            request,
+            status_code=exc.status_code,
+            title="请求无法完成",
+            message=str(exc.detail),
+        )
     return JSONResponse(status_code=exc.status_code, content={"detail": exc.detail})
 
 
