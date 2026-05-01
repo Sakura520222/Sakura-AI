@@ -353,11 +353,29 @@ Sakura-AI-Reviewer/
 
 ## 🤝 贡献
 
+本项目使用标准 Gitflow 工作流：
+
+- `main`：生产发布分支，仅接收 `release/*` 与 `hotfix/*` 合并
+- `develop`：日常集成分支，普通功能与修复的目标分支
+- `feature/*`：功能分支，从 `develop` 创建并合回 `develop`
+- `release/*`：发布准备分支，从 `develop` 创建并合入 `main`
+- `hotfix/*`：线上紧急修复分支，从 `main` 创建并合入 `main`
+
+日常贡献流程：
+
 1. Fork 本项目
-2. 创建特性分支 (`git checkout -b feature/AmazingFeature`)
+2. 基于 `develop` 创建特性分支 (`git checkout develop && git checkout -b feature/amazing-feature`)
 3. 提交更改 (`git commit -m 'feat: add some amazing feature'`)
-4. 推送到分支 (`git push origin feature/AmazingFeature`)
-5. 开启 Pull Request
+4. 推送到分支 (`git push origin feature/amazing-feature`)
+5. 开启 Pull Request，目标分支选择 `develop`
+
+发布流程由维护者执行：从 `develop` 创建 `release/x.y.z`，完成版本号、文档和回归检查后合并到 `main`；合并后自动发布 Release，并将 `main` 回合到 `develop`。
+
+紧急修复流程由维护者执行：从 `main` 创建 `hotfix/x.y.z`，修复后合并到 `main` 并发布，再将 `main` 回合到 `develop`。
+
+自动化工作流会协助维护 Gitflow：PR 分支流向校验会阻止普通分支直接合入 `main`；CI 会在 `develop` / `main` PR 和主要开发分支上运行 Ruff 与测试；`release/*` 或 `hotfix/*` 合入 `main` 后会自动发布 Release，并自动尝试将 `main` 回合到 `develop`；已合并的临时 Gitflow 分支会自动清理。
+
+提交信息请使用英文 [Conventional Commits](https://www.conventionalcommits.org/) 格式。
 
 ---
 

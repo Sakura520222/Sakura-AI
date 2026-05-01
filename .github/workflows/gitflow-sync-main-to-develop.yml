@@ -1,0 +1,101 @@
+name: Gitflow 自动同步
+
+on:
+  pull_request:
+    types: [closed]
+    branches:
+      - main
+  workflow_dispatch:
+    inputs:
+      source_branch:
+        description: 要同步的源分支
+        required: false
+        default: main
+      target_branch:
+        description: 要同步的目标分支
+        required: false
+        default: develop
+
+jobs:
+  sync-main-to-develop:
+    name: 将 main 回合到 develop
+    runs-on: ubuntu-latest
+    if: |
+      github.event_name == 'workflow_dispatch' ||
+      (github.event.pull_request.merged == true &&
+       (startsWith(github.event.pull_request.head.ref, 'release/') ||
+        startsWith(github.event.pull_request.head.ref, 'hotfix/')))
+    permissions:
+      contents: write
+      pull-requests: write
+
+    steps:
+      - name: 计算同步分支
+        id: branches
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "source=${{ inputs.source_branch }}" >> "$GITHUB_OUTPUT"
+            echo "target=${{ inputs.target_branch }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "source=main" >> "$GITHUB_OUTPUT"
+            echo "target=develop" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: 检出目标分支
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.MY_RELEASE_PAT || secrets.GITHUB_TOKEN }}
+          fetch-depth: 0
+          ref: ${{ steps.branches.outputs.target }}
+
+      - name: 配置 Git 用户
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+      - name: 同步源分支到目标分支
+        id: sync
+        env:
+          SOURCE_BRANCH: ${{ steps.branches.outputs.source }}
+          TARGET_BRANCH: ${{ steps.branches.outputs.target }}
+        run: |
+          set -e
+          git fetch origin "$SOURCE_BRANCH" "$TARGET_BRANCH"
+          git checkout "$TARGET_BRANCH"
+
+          if git merge --no-ff --no-edit "origin/$SOURCE_BRANCH"; then
+            if git diff --quiet HEAD "origin/$TARGET_BRANCH"; then
+              echo "changed=false" >> "$GITHUB_OUTPUT"
+              echo "✅ ${TARGET_BRANCH} 已包含 ${SOURCE_BRANCH}，无需推送"
+            else
+              git push origin "HEAD:$TARGET_BRANCH"
+              echo "changed=true" >> "$GITHUB_OUTPUT"
+              echo "✅ 已将 ${SOURCE_BRANCH} 同步到 ${TARGET_BRANCH}"
+            fi
+          else
+            echo "conflict=true" >> "$GITHUB_OUTPUT"
+            git merge --abort || true
+            exit 1
+          fi
+
+      - name: 同步失败时创建 Issue
+        if: failure()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const source = '${{ steps.branches.outputs.source }}';
+            const target = '${{ steps.branches.outputs.target }}';
+            const runUrl = `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`;
+            await github.rest.issues.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              title: `Gitflow sync conflict: ${source} -> ${target}`,
+              body: [
+                `自动同步 ${source} 到 ${target} 失败，可能存在合并冲突。`,
+                '',
+                `请维护者手动执行同步并解决冲突。`,
+                '',
+                `Workflow run: ${runUrl}`,
+              ].join('\n'),
+              labels: ['gitflow', 'maintenance'],
+            });
