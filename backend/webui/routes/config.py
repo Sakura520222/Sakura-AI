@@ -343,6 +343,7 @@ async def labels_page(
             "user_prefs": user_prefs,
             "labels": label_config.get_labels(),
             "recommendation": label_config.get_recommendation_settings(),
+            "conflict_rules": label_config.get_conflict_rules(),
         },
     )
 
@@ -448,6 +449,80 @@ async def save_recommendation_settings(
         return toast_redirect("/webui/config/labels", "保存失败，请稍后重试", "error")
 
     return toast_redirect("/webui/config/labels", "标签推荐设置已更新")
+
+
+# ========== POST: 保存标签冲突规则 ==========
+
+
+@router.post("/labels/save-conflict-rules")
+async def save_conflict_rules(
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    user: dict = Depends(require_super_admin),
+    csrf_token: str = Depends(require_csrf),
+):
+    """保存标签冲突规则"""
+    try:
+        form = await request.form()
+        lock = _get_config_lock(str(LABELS_PATH))
+        async with lock:
+            config = _load_yaml(LABELS_PATH)
+
+            # 收集冲突规则行
+            conflict_rules: dict[str, list] = {}
+            for key in form:
+                if key.startswith("conflict_source_"):
+                    idx = key[len("conflict_source_") :]
+                    source = str(form[key]).strip()
+                    blocked_raw = str(form.get(f"conflict_blocked_{idx}", "")).strip()
+                    if source and blocked_raw:
+                        # 仅按逗号分隔，保留标签内部空格（如 "good first issue"）
+                        blocked = [
+                            b.strip() for b in blocked_raw.split(",") if b.strip()
+                        ]
+                        if blocked:
+                            _validate_label_name(source)
+                            for b in blocked:
+                                _validate_label_name(b)
+                            conflict_rules[source] = blocked
+
+            config["conflict_rules"] = conflict_rules
+            _atomic_yaml_write(LABELS_PATH, config)
+            reload_label_config()
+            label_service.reload_labels()
+            logger.info(
+                f"标签冲突规则已更新 ({len(conflict_rules)} 条), by={user['sub']}"
+            )
+            await log_admin_action(
+                db,
+                user["user_id"],
+                "config_save",
+                "conflict_rules",
+                None,
+                {"rule_count": len(conflict_rules)},
+            )
+
+    except ValueError as e:
+        logger.warning(f"冲突规则验证失败: {e}")
+        return toast_redirect("/webui/config/labels", f"冲突规则验证失败: {e}", "error")
+    except Exception as e:
+        logger.error(f"冲突规则保存失败: {e}", exc_info=True)
+        return toast_redirect("/webui/config/labels", "保存失败，请稍后重试", "error")
+
+    return toast_redirect(
+        "/webui/config/labels",
+        f"标签冲突规则已更新（{len(conflict_rules)} 条）",
+    )
+
+
+def _validate_label_name(name: str):
+    """验证标签名称格式（仅名称，不含颜色）"""
+    if len(name) > _MAX_LABEL_NAME_LEN:
+        raise ValueError(
+            f"标签名称过长（最多 {_MAX_LABEL_NAME_LEN} 字符）: {name[:20]}..."
+        )
+    if not _LABEL_NAME_RE.match(name):
+        raise ValueError(f"标签名称包含非法字符: {name}")
 
 
 # ========== GET: 全局配置页 ==========

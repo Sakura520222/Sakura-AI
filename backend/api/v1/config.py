@@ -7,7 +7,11 @@ from fastapi import APIRouter, Depends
 from loguru import logger
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from backend.core.config import get_label_config, reload_label_config, reload_strategy_config
+from backend.core.config import (
+    get_label_config,
+    reload_label_config,
+    reload_strategy_config,
+)
 from backend.models.database import AppConfig
 from backend.webui.deps import get_db
 
@@ -85,6 +89,7 @@ async def update_general_config(
     # 重新加载动态配置
     try:
         from backend.core.config import load_dynamic_configs_to_settings
+
         await load_dynamic_configs_to_settings()
     except Exception as e:
         logger.warning(f"重载动态配置失败: {e}")
@@ -132,9 +137,7 @@ async def update_strategy_section(
             config[section].update(data)
 
             dump = yaml.dump(config, default_flow_style=False, allow_unicode=True)
-            await asyncio.to_thread(
-                _STRATEGIES_PATH.write_text, dump, encoding="utf-8"
-            )
+            await asyncio.to_thread(_STRATEGIES_PATH.write_text, dump, encoding="utf-8")
 
             # 重载（在锁内保证原子性）
             reload_strategy_config()
@@ -152,7 +155,10 @@ async def get_labels(user: dict = Depends(require_api_super_admin)):
     try:
         config = get_label_config()
         return success_response(
-            data={"labels": config.get("labels", []), "recommendation": config.get("recommendation", {})}
+            data={
+                "labels": config.get("labels", []),
+                "recommendation": config.get("recommendation", {}),
+            }
         )
     except Exception as e:
         logger.error(f"读取标签配置失败: {e}")
@@ -181,9 +187,7 @@ async def update_labels(
             config["labels"] = labels
 
             dump = yaml.dump(config, default_flow_style=False, allow_unicode=True)
-            await asyncio.to_thread(
-                _LABELS_PATH.write_text, dump, encoding="utf-8"
-            )
+            await asyncio.to_thread(_LABELS_PATH.write_text, dump, encoding="utf-8")
 
         reload_label_config()
 
@@ -216,9 +220,7 @@ async def update_label_recommendation(
             config["recommendation"] = recommendation
 
             dump = yaml.dump(config, default_flow_style=False, allow_unicode=True)
-            await asyncio.to_thread(
-                _LABELS_PATH.write_text, dump, encoding="utf-8"
-            )
+            await asyncio.to_thread(_LABELS_PATH.write_text, dump, encoding="utf-8")
 
         reload_label_config()
 

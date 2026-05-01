@@ -412,8 +412,14 @@ class IssueWorker:
 
                     # 13. 异步触发 .sakura/ Issue 反思 / Trigger .sakura/ issue reflection async
                     try:
-                        if settings.sakura_memory_enabled and settings.sakura_issue_reflection_enabled:
-                            from backend.services.sakura_memory_service import get_sakura_memory_service
+                        if (
+                            settings.sakura_memory_enabled
+                            and settings.sakura_issue_reflection_enabled
+                        ):
+                            from backend.services.sakura_memory_service import (
+                                get_sakura_memory_service,
+                            )
+
                             sakura_memory_service = get_sakura_memory_service()
                             task = asyncio.create_task(
                                 sakura_memory_service.reflect_issue(
@@ -429,7 +435,9 @@ class IssueWorker:
                             task.add_done_callback(self._background_tasks.discard)
                             logger.info(f"[{task_id}] 已触发 .sakura/ Issue 反思任务")
                     except Exception as e:
-                        logger.warning(f"[{task_id}] 触发 .sakura/ Issue 反思失败（不影响分析）: {e}")
+                        logger.warning(
+                            f"[{task_id}] 触发 .sakura/ Issue 反思失败（不影响分析）: {e}"
+                        )
 
                     logger.info(
                         f"[{task_id}] Issue 分析完成: {repo_full_name}#{issue_number}"

@@ -81,7 +81,9 @@ class ReviewResultParser:
                 json_inline_count = len(result["inline_comments"])
                 self.extract_inline_comments(result, markdown_text)
                 self._dedup_inline_comments(result)
-                markdown_inline_count = len(result["inline_comments"]) - json_inline_count
+                markdown_inline_count = (
+                    len(result["inline_comments"]) - json_inline_count
+                )
                 self._parse_structured_comments(result, markdown_text)
 
                 logger.info(
@@ -425,7 +427,11 @@ class ReviewResultParser:
             return None
 
         start_idx = review_text.find(JSON_BLOCK_START_MARKER)
-        end_idx = review_text.find(JSON_BLOCK_END_MARKER, start_idx) if start_idx != -1 else -1
+        end_idx = (
+            review_text.find(JSON_BLOCK_END_MARKER, start_idx)
+            if start_idx != -1
+            else -1
+        )
 
         if start_idx == -1 or end_idx == -1 or end_idx <= start_idx:
             return None

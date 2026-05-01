@@ -96,7 +96,15 @@ class AIReviewer:
             )
 
             fetch_url_tool = FetchUrlToolHandler()
-        self.tool_handler = ToolHandler(file_tool, search_tool, web_search_tool, git_tool, search_files_tool, sakura_tool, fetch_url_tool)
+        self.tool_handler = ToolHandler(
+            file_tool,
+            search_tool,
+            web_search_tool,
+            git_tool,
+            search_files_tool,
+            sakura_tool,
+            fetch_url_tool,
+        )
         self.tool_manager = ToolManager()
 
         # 初始化上下文压缩
@@ -543,6 +551,7 @@ class AIReviewer:
         context: Dict[str, Any],
         available_labels: Dict[str, Dict[str, Any]],
         pr_info: Dict[str, Any],
+        existing_labels: List[str] | None = None,
     ) -> List[Dict[str, Any]]:
         """推荐PR标签
 
@@ -550,10 +559,11 @@ class AIReviewer:
             context: 审查上下文
             available_labels: 可用的标签字典
             pr_info: PR信息（包含标题、描述等）
+            existing_labels: PR 已有的标签名称列表（用于增量审查时避免冲突）
 
         Returns:
             推荐标签列表，格式：[{"name": str, "confidence": float, "reason": str}]
         """
         return await self.label_recommender.recommend_labels(
-            context, available_labels, pr_info
+            context, available_labels, pr_info, existing_labels=existing_labels
         )
