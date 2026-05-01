@@ -14,6 +14,7 @@ from itsdangerous import URLSafeTimedSerializer, BadSignature
 
 from sqlalchemy import select, or_
 
+from backend.core.config import get_settings
 from backend.models import database as db_module
 from backend.models.database import PRReview
 from backend.models.database import WebUIConfig
@@ -27,6 +28,7 @@ def get_templates() -> Jinja2Templates:
     """获取 Jinja2 模板引擎单例"""
     templates = Jinja2Templates(directory="backend/webui/templates", autoescape=True)
     templates.env.globals["percentage"] = _percentage_filter
+    templates.env.globals["settings"] = get_settings()
     templates.env.filters["format_duration"] = _format_duration_filter
     return templates
 
