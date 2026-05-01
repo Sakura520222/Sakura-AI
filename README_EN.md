@@ -4,7 +4,7 @@
 
 **English** | [中文](README.md)
 
-[![Version](https://img.shields.io/badge/Version-2.9.0-blue.svg)](https://github.com/Sakura520222/Sakura-AI-Reviewer/releases)
+[![Version](https://img.shields.io/badge/Version-2.9.1-blue.svg)](https://github.com/Sakura520222/Sakura-AI-Reviewer/releases)
 [![Python](https://img.shields.io/badge/Python-3.11+-blue.svg)](https://www.python.org/)
 [![FastAPI](https://img.shields.io/badge/FastAPI-Latest-green.svg)](https://fastapi.tiangolo.com/)
 [![License](https://img.shields.io/badge/License-AGPLv3-yellow.svg)](LICENSE)
@@ -354,11 +354,29 @@ Sakura-AI-Reviewer/
 
 ## 🤝 Contributing
 
+This project uses the standard Gitflow workflow:
+
+- `main`: production release branch, only accepts merges from `release/*` and `hotfix/*`
+- `develop`: daily integration branch and the target branch for regular features and fixes
+- `feature/*`: feature branches created from `develop` and merged back into `develop`
+- `release/*`: release preparation branches created from `develop` and merged into `main`
+- `hotfix/*`: urgent production fix branches created from `main` and merged into `main`
+
+Regular contribution flow:
+
 1. Fork this repository
-2. Create a feature branch (`git checkout -b feature/AmazingFeature`)
+2. Create a feature branch from `develop` (`git checkout develop && git checkout -b feature/amazing-feature`)
 3. Commit your changes (`git commit -m 'feat: add some amazing feature'`)
-4. Push to the branch (`git push origin feature/AmazingFeature`)
-5. Open a Pull Request
+4. Push to the branch (`git push origin feature/amazing-feature`)
+5. Open a Pull Request targeting `develop`
+
+Release flow is handled by maintainers: create `release/x.y.z` from `develop`, finish version, documentation, and regression checks, then merge it into `main`; after the merge, Release is published automatically and `main` is merged back into `develop`.
+
+Hotfix flow is handled by maintainers: create `hotfix/x.y.z` from `main`, merge it into `main` after the fix, publish the Release, then merge `main` back into `develop`.
+
+Automation workflows help maintain Gitflow: PR branch policy checks prevent regular branches from being merged directly into `main`; CI runs Ruff and tests on `develop` / `main` PRs and major development branches; after `release/*` or `hotfix/*` is merged into `main`, Release is published automatically and `main` is automatically synced back into `develop` when possible; merged temporary Gitflow branches are cleaned up automatically.
+
+Commit messages should follow the English [Conventional Commits](https://www.conventionalcommits.org/) format.
 
 ---
 
