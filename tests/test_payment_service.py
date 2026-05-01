@@ -4,7 +4,7 @@
 """
 
 from datetime import datetime, timedelta
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -18,7 +18,11 @@ from backend.models.payment_models import (
     SubscriptionStatus,
 )
 from backend.models.telegram_models import TelegramUser
-from backend.services.payment_service import PaymentService, PaymentError
+from backend.services.payment_service import (
+    PaymentError,
+    PaymentService,
+    is_payment_enabled,
+)
 
 
 @pytest.fixture
@@ -104,13 +108,15 @@ class TestPlanManagement:
         result = await svc.get_plan(1)
         assert result == sample_plan
 
-    async def test_update_plan(self, svc, mock_session, sample_plan):
+    async def test_update_plan_ignores_non_editable_fields(self, svc, mock_session, sample_plan):
         mock_result = MagicMock()
         mock_result.scalar_one_or_none.return_value = sample_plan
         mock_session.execute.return_value = mock_result
 
-        updated = await svc.update_plan(1, name="新名称")
+        updated = await svc.update_plan(1, name="新名称", id=999, created_at=datetime.utcnow())
+
         assert updated.name == "新名称"
+        assert updated.id == 1
 
 
 @pytest.mark.asyncio
@@ -173,6 +179,30 @@ class TestRedeemCodeUsage:
         assert order.provider_tx_id == "TESTCODE123456"
         assert redeem_code.used_count == 1
         assert redeem_code.status == RedeemCodeStatus.EXHAUSTED.value
+
+    async def test_redeem_code_query_locks_redeem_row(
+        self, svc, mock_session, sample_user, sample_plan
+    ):
+        mock_session.get.return_value = sample_user
+
+        redeem_code = RedeemCode(
+            id=1,
+            code="LOCKCODE123456",
+            plan_id=1,
+            max_uses=1,
+            used_count=0,
+            status=RedeemCodeStatus.ACTIVE.value,
+        )
+        redeem_result = MagicMock()
+        redeem_result.scalar_one_or_none.return_value = redeem_code
+        plan_result = MagicMock()
+        plan_result.scalar_one_or_none.return_value = sample_plan
+        mock_session.execute = AsyncMock(side_effect=[redeem_result, plan_result])
+
+        await svc.redeem_code(user_id=1, code="LOCKCODE123456")
+
+        redeem_stmt = mock_session.execute.await_args_list[0].args[0]
+        assert redeem_stmt._for_update_arg is not None
 
     async def test_redeem_invalid_code(self, svc, mock_session, sample_user):
         mock_session.get.return_value = sample_user
@@ -301,19 +331,51 @@ class TestSubscription:
         mock_session.add.assert_called()
         mock_session.flush.assert_awaited()
 
-    async def test_upsert_new_subscription_stores_applied_quota_snapshot(
+    async def test_upsert_new_subscription_reactivates_existing_subscription(
         self, svc, mock_session, sample_subscription_plan
     ):
+        existing = UserSubscription(
+            user_id=1,
+            plan_id=sample_subscription_plan.id,
+            status=SubscriptionStatus.EXPIRED.value,
+            expires_at=datetime.utcnow() - timedelta(days=1),
+        )
         mock_result = MagicMock()
-        mock_result.scalar_one_or_none.return_value = None
+        mock_result.scalar_one_or_none.return_value = existing
         mock_session.execute.return_value = mock_result
 
         sub = await svc._upsert_subscription(1, sample_subscription_plan, 1)
 
-        assert sub.applied_pr_daily_add == 5
-        assert sub.applied_pr_monthly_add == 100
-        assert sub.applied_pr_quota_bonus == 0
-        assert sub.applied_issue_daily_add == 0
+        assert sub is existing
+        assert sub.status == SubscriptionStatus.ACTIVE.value
+        assert sub.last_order_id == 1
+        mock_session.add.assert_not_called()
+
+    async def test_expire_subscription_keeps_zero_snapshot_without_plan_fallback(
+        self, svc, mock_session, sample_user
+    ):
+        plan = Plan(
+            id=2,
+            name="变更后的月卡",
+            plan_type=PlanType.SUBSCRIPTION.value,
+            price_cents=5000,
+            pr_daily_add=5,
+            is_active=True,
+        )
+        subscription = UserSubscription(
+            user_id=sample_user.id,
+            plan_id=plan.id,
+            status=SubscriptionStatus.ACTIVE.value,
+            expires_at=datetime.utcnow() - timedelta(days=1),
+            applied_pr_daily_add=0,
+            applied_pr_monthly_add=0,
+        )
+        sample_user.daily_quota = 10
+
+        await svc._expire_subscription(subscription, sample_user, plan)
+
+        assert sample_user.daily_quota == 10
+        assert subscription.status == SubscriptionStatus.EXPIRED.value
 
     async def test_expire_due_subscriptions_restores_expired_user_quota(
         self, svc, mock_session, sample_user, sample_subscription_plan
@@ -338,6 +400,18 @@ class TestSubscription:
         assert subscription.status == SubscriptionStatus.EXPIRED.value
         assert sample_user.daily_quota == 10
         assert sample_user.monthly_quota == 200
+
+
+@pytest.mark.asyncio
+class TestPaymentConfig:
+    async def test_is_payment_enabled_reads_dynamic_config(self):
+        with patch(
+            "backend.services.payment_service.get_dynamic_config",
+            new=AsyncMock(return_value=True),
+        ) as mock_get_config:
+            assert await is_payment_enabled() is True
+
+        mock_get_config.assert_awaited_once_with("payment_enabled")
 
 
 class TestOrderNumber:

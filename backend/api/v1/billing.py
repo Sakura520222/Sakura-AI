@@ -6,12 +6,24 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from backend.models.payment_models import Plan, Order
-from backend.services.payment_service import PaymentService, PaymentError
+from backend.services.payment_service import (
+    PaymentError,
+    PaymentService,
+    is_payment_enabled,
+)
 from backend.webui.deps import get_db
 from backend.api.v1.deps import require_api_auth, require_api_super_admin
 
-router = APIRouter(prefix="/billing", tags=["Billing"])
+async def require_payment_enabled():
+    if not await is_payment_enabled():
+        raise HTTPException(status_code=404, detail="付费配额系统未启用")
+
+
+router = APIRouter(
+    prefix="/billing",
+    tags=["Billing"],
+    dependencies=[Depends(require_payment_enabled)],
+)
 
 
 # ========== Schemas ==========

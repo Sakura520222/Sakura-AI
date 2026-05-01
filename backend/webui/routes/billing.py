@@ -1,11 +1,14 @@
 """WebUI 付费配额路由"""
 
-from fastapi import APIRouter, Request, Depends, Form
+from fastapi import APIRouter, Request, Depends, Form, HTTPException
 from loguru import logger
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from backend.models.payment_models import Order
-from backend.services.payment_service import PaymentService, PaymentError
+from backend.services.payment_service import (
+    PaymentError,
+    PaymentService,
+    is_payment_enabled,
+)
 from backend.webui.deps import (
     require_auth,
     require_super_admin,
@@ -17,8 +20,24 @@ from backend.webui.deps import (
     toast_redirect,
 )
 
-router = APIRouter(prefix="/billing", tags=["WebUI Billing"])
+async def require_payment_enabled():
+    if not await is_payment_enabled():
+        raise HTTPException(status_code=404, detail="付费配额系统未启用")
+
+
+router = APIRouter(
+    prefix="/billing",
+    tags=["WebUI Billing"],
+    dependencies=[Depends(require_payment_enabled)],
+)
 templates = get_templates()
+
+
+def _parse_page(value: str | None) -> int:
+    try:
+        return max(1, int(value or 1))
+    except (TypeError, ValueError):
+        return 1
 
 
 @router.get("/")
@@ -36,7 +55,7 @@ async def billing_index(
 
     db_user = await db.get(TelegramUser, user["user_id"])
 
-    page = int(request.query_params.get("page", 1))
+    page = _parse_page(request.query_params.get("page"))
     per_page = user_prefs.get("items_per_page", 20)
     offset = (page - 1) * per_page
     orders, total = await svc.list_user_orders(
@@ -193,7 +212,7 @@ async def admin_codes(
     """管理员兑换码管理页面"""
     svc = PaymentService(db)
     plans = await svc.list_plans(active_only=True)
-    page = int(request.query_params.get("page", 1))
+    page = _parse_page(request.query_params.get("page"))
     per_page = user_prefs.get("items_per_page", 20)
     offset = (page - 1) * per_page
     codes, total = await svc.list_redeem_codes(limit=per_page, offset=offset)
