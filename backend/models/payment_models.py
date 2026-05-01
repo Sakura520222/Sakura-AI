@@ -191,6 +191,14 @@ class UserSubscription(Base):
     started_at = Column(TIMESTAMP, default=datetime.utcnow, nullable=False)
     expires_at = Column(TIMESTAMP, nullable=False)
     auto_renew = Column(Boolean, default=False, nullable=False)
+    applied_pr_quota_bonus = Column(Integer, default=0, nullable=False)
+    applied_pr_daily_add = Column(Integer, default=0, nullable=False)
+    applied_pr_weekly_add = Column(Integer, default=0, nullable=False)
+    applied_pr_monthly_add = Column(Integer, default=0, nullable=False)
+    applied_issue_quota_bonus = Column(Integer, default=0, nullable=False)
+    applied_issue_daily_add = Column(Integer, default=0, nullable=False)
+    applied_issue_weekly_add = Column(Integer, default=0, nullable=False)
+    applied_issue_monthly_add = Column(Integer, default=0, nullable=False)
     last_order_id = Column(
         Integer, ForeignKey("payment_orders.id", ondelete="SET NULL"), nullable=True
     )
