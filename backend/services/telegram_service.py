@@ -14,6 +14,7 @@ from backend.models.telegram_models import (
     UserRole,
 )
 from backend.core.config import get_settings
+from backend.services.payment_service import PaymentService
 
 settings = get_settings()
 
@@ -95,6 +96,7 @@ class TelegramService:
             return True, ""
 
         # 重置过期配额
+        await PaymentService(self.session).expire_due_subscriptions(user.id)
         await self._reset_expired_quotas(user)
 
         # 使用原子UPDATE操作检查并消耗配额
@@ -203,6 +205,7 @@ class TelegramService:
         if role_lower in ["admin", "super_admin"]:
             return True, ""
 
+        await PaymentService(self.session).expire_due_subscriptions(user.id)
         await self._reset_expired_issue_quotas(user)
 
         stmt = (
@@ -399,6 +402,7 @@ class TelegramService:
         if not user:
             return None
 
+        await PaymentService(self.session).expire_due_subscriptions(user.id)
         await self._reset_expired_quotas(user)
 
         return {

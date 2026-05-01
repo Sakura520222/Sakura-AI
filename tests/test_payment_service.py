@@ -4,20 +4,18 @@
 """
 
 from datetime import datetime, timedelta
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
 from backend.models.payment_models import (
     Plan,
     PlanType,
-    Order,
     OrderStatus,
     RedeemCode,
     RedeemCodeStatus,
     UserSubscription,
     SubscriptionStatus,
-    PaymentLog,
 )
 from backend.models.telegram_models import TelegramUser
 from backend.services.payment_service import PaymentService, PaymentError
@@ -61,6 +59,7 @@ def sample_plan():
         plan_type=PlanType.ONE_TIME.value,
         price_cents=1000,
         pr_quota_bonus=10,
+        is_active=True,
     )
     plan.id = 1
     return plan
@@ -76,11 +75,13 @@ def sample_subscription_plan():
         duration_days=30,
         pr_daily_add=5,
         pr_monthly_add=100,
+        is_active=True,
     )
     plan.id = 2
     return plan
 
 
+@pytest.mark.asyncio
 class TestPlanManagement:
     async def test_create_plan(self, svc, mock_session):
         plan = await svc.create_plan(
@@ -112,6 +113,7 @@ class TestPlanManagement:
         assert updated.name == "新名称"
 
 
+@pytest.mark.asyncio
 class TestRedeemCodeGeneration:
     async def test_generate_codes(self, svc, mock_session, sample_plan):
         mock_result = MagicMock()
@@ -136,12 +138,13 @@ class TestRedeemCodeGeneration:
         with pytest.raises(PaymentError, match="Plan not found"):
             await svc.generate_redeem_codes(plan_id=999, count=5)
 
-    def test_generate_code_format(self):
+    async def test_generate_code_format(self):
         code = RedeemCode.generate_code()
         assert len(code) == 16
         assert code.isupper() or code.isalnum()
 
 
+@pytest.mark.asyncio
 class TestRedeemCodeUsage:
     async def test_redeem_success(
         self, svc, mock_session, sample_user, sample_plan
@@ -157,12 +160,11 @@ class TestRedeemCodeUsage:
             status=RedeemCodeStatus.ACTIVE.value,
         )
 
-        async def mock_execute(stmt):
-            result = MagicMock()
-            result.scalar_one_or_none.return_value = redeem_code
-            return result
-
-        mock_session.execute = AsyncMock(side_effect=mock_execute)
+        redeem_result = MagicMock()
+        redeem_result.scalar_one_or_none.return_value = redeem_code
+        plan_result = MagicMock()
+        plan_result.scalar_one_or_none.return_value = sample_plan
+        mock_session.execute = AsyncMock(side_effect=[redeem_result, plan_result])
 
         order = await svc.redeem_code(user_id=1, code="TESTCODE123456")
 
@@ -224,6 +226,7 @@ class TestRedeemCodeUsage:
             await svc.redeem_code(user_id=1, code="USEDCODE")
 
 
+@pytest.mark.asyncio
 class TestQuotaApplication:
     async def test_apply_one_time_bonus(
         self, svc, mock_session, sample_user, sample_plan
@@ -254,6 +257,7 @@ class TestQuotaApplication:
         assert result.issue_weekly_quota == 90  # 80 + 10
 
 
+@pytest.mark.asyncio
 class TestManualGrant:
     async def test_grant_success(
         self, svc, mock_session, sample_user, sample_plan
@@ -273,13 +277,17 @@ class TestManualGrant:
         assert order.payment_provider == "manual"
         assert order.amount_cents == 0
 
-    async def test_grant_user_not_found(self, svc, mock_session):
+    async def test_grant_user_not_found(self, svc, mock_session, sample_plan):
+        mock_result = MagicMock()
+        mock_result.scalar_one_or_none.return_value = sample_plan
+        mock_session.execute.return_value = mock_result
         mock_session.get.return_value = None
 
         with pytest.raises(PaymentError, match="User not found"):
             await svc.grant_plan_to_user(user_id=999, plan_id=1)
 
 
+@pytest.mark.asyncio
 class TestSubscription:
     async def test_upsert_new_subscription(
         self, svc, mock_session, sample_subscription_plan
@@ -292,6 +300,44 @@ class TestSubscription:
         assert sub.status == SubscriptionStatus.ACTIVE.value
         mock_session.add.assert_called()
         mock_session.flush.assert_awaited()
+
+    async def test_upsert_new_subscription_stores_applied_quota_snapshot(
+        self, svc, mock_session, sample_subscription_plan
+    ):
+        mock_result = MagicMock()
+        mock_result.scalar_one_or_none.return_value = None
+        mock_session.execute.return_value = mock_result
+
+        sub = await svc._upsert_subscription(1, sample_subscription_plan, 1)
+
+        assert sub.applied_pr_daily_add == 5
+        assert sub.applied_pr_monthly_add == 100
+        assert sub.applied_pr_quota_bonus == 0
+        assert sub.applied_issue_daily_add == 0
+
+    async def test_expire_due_subscriptions_restores_expired_user_quota(
+        self, svc, mock_session, sample_user, sample_subscription_plan
+    ):
+        sample_user.daily_quota = 15
+        sample_user.monthly_quota = 300
+        subscription = UserSubscription(
+            user_id=sample_user.id,
+            plan_id=sample_subscription_plan.id,
+            status=SubscriptionStatus.ACTIVE.value,
+            expires_at=datetime.utcnow() - timedelta(days=1),
+            applied_pr_daily_add=5,
+            applied_pr_monthly_add=100,
+        )
+        mock_result = MagicMock()
+        mock_result.all.return_value = [(subscription, sample_user, sample_subscription_plan)]
+        mock_session.execute.return_value = mock_result
+
+        expired_count = await svc.expire_due_subscriptions(sample_user.id)
+
+        assert expired_count == 1
+        assert subscription.status == SubscriptionStatus.EXPIRED.value
+        assert sample_user.daily_quota == 10
+        assert sample_user.monthly_quota == 200
 
 
 class TestOrderNumber:

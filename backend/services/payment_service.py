@@ -4,7 +4,7 @@ import uuid
 from datetime import datetime, timedelta
 from typing import List, Optional
 
-from sqlalchemy import select, and_, update, func
+from sqlalchemy import select, and_, func
 from sqlalchemy.ext.asyncio import AsyncSession
 from loguru import logger
 
@@ -91,7 +91,7 @@ class PaymentService:
     async def list_plans(self, active_only: bool = False) -> List[Plan]:
         stmt = select(Plan).order_by(Plan.sort_order, Plan.id)
         if active_only:
-            stmt = stmt.where(Plan.is_active == True)
+            stmt = stmt.where(Plan.is_active)
         result = await self.session.execute(stmt)
         return list(result.scalars().all())
 
@@ -312,6 +312,7 @@ class PaymentService:
     async def get_active_subscription(
         self, user_id: int
     ) -> Optional[UserSubscription]:
+        await self.expire_due_subscriptions(user_id)
         stmt = select(UserSubscription).where(
             and_(
                 UserSubscription.user_id == user_id,
@@ -321,6 +322,28 @@ class PaymentService:
         )
         result = await self.session.execute(stmt)
         return result.scalar_one_or_none()
+
+    async def expire_due_subscriptions(self, user_id: Optional[int] = None) -> int:
+        conditions = [
+            UserSubscription.status == SubscriptionStatus.ACTIVE.value,
+            UserSubscription.expires_at <= datetime.utcnow(),
+        ]
+        if user_id is not None:
+            conditions.append(UserSubscription.user_id == user_id)
+
+        stmt = (
+            select(UserSubscription, TelegramUser, Plan)
+            .join(TelegramUser, UserSubscription.user_id == TelegramUser.id)
+            .join(Plan, UserSubscription.plan_id == Plan.id)
+            .where(and_(*conditions))
+        )
+        result = await self.session.execute(stmt)
+        rows = result.all()
+
+        for subscription, user, plan in rows:
+            await self._expire_subscription(subscription, user, plan)
+
+        return len(rows)
 
     async def list_user_orders(
         self,
@@ -374,27 +397,40 @@ class PaymentService:
         await self.session.flush()
         return order
 
+    def _plan_quota_values(self, plan: Plan) -> dict[str, int]:
+        return {
+            "pr_quota_bonus": plan.pr_quota_bonus or 0,
+            "pr_daily_add": plan.pr_daily_add or 0,
+            "pr_weekly_add": plan.pr_weekly_add or 0,
+            "pr_monthly_add": plan.pr_monthly_add or 0,
+            "issue_quota_bonus": plan.issue_quota_bonus or 0,
+            "issue_daily_add": plan.issue_daily_add or 0,
+            "issue_weekly_add": plan.issue_weekly_add or 0,
+            "issue_monthly_add": plan.issue_monthly_add or 0,
+        }
+
     async def _apply_plan_to_user(
         self, user: TelegramUser, plan: Plan
     ) -> TelegramUser:
         """将套餐配额增量应用到用户"""
-        if plan.pr_quota_bonus > 0:
-            user.daily_quota += plan.pr_quota_bonus
-        if plan.pr_daily_add > 0:
-            user.daily_quota += plan.pr_daily_add
-        if plan.pr_weekly_add > 0:
-            user.weekly_quota += plan.pr_weekly_add
-        if plan.pr_monthly_add > 0:
-            user.monthly_quota += plan.pr_monthly_add
+        values = self._plan_quota_values(plan)
+        if values["pr_quota_bonus"] > 0:
+            user.daily_quota += values["pr_quota_bonus"]
+        if values["pr_daily_add"] > 0:
+            user.daily_quota += values["pr_daily_add"]
+        if values["pr_weekly_add"] > 0:
+            user.weekly_quota += values["pr_weekly_add"]
+        if values["pr_monthly_add"] > 0:
+            user.monthly_quota += values["pr_monthly_add"]
 
-        if plan.issue_quota_bonus > 0:
-            user.issue_daily_quota += plan.issue_quota_bonus
-        if plan.issue_daily_add > 0:
-            user.issue_daily_quota += plan.issue_daily_add
-        if plan.issue_weekly_add > 0:
-            user.issue_weekly_quota += plan.issue_weekly_add
-        if plan.issue_monthly_add > 0:
-            user.issue_monthly_quota += plan.issue_monthly_add
+        if values["issue_quota_bonus"] > 0:
+            user.issue_daily_quota += values["issue_quota_bonus"]
+        if values["issue_daily_add"] > 0:
+            user.issue_daily_quota += values["issue_daily_add"]
+        if values["issue_weekly_add"] > 0:
+            user.issue_weekly_quota += values["issue_weekly_add"]
+        if values["issue_monthly_add"] > 0:
+            user.issue_monthly_quota += values["issue_monthly_add"]
 
         await self.session.flush()
         return user
@@ -411,10 +447,19 @@ class PaymentService:
         )
         existing = (await self.session.execute(stmt)).scalar_one_or_none()
 
+        values = self._plan_quota_values(plan)
         if existing:
             existing.expires_at = datetime.utcnow() + timedelta(
                 days=plan.duration_days or 30
             )
+            existing.applied_pr_quota_bonus = values["pr_quota_bonus"]
+            existing.applied_pr_daily_add = values["pr_daily_add"]
+            existing.applied_pr_weekly_add = values["pr_weekly_add"]
+            existing.applied_pr_monthly_add = values["pr_monthly_add"]
+            existing.applied_issue_quota_bonus = values["issue_quota_bonus"]
+            existing.applied_issue_daily_add = values["issue_daily_add"]
+            existing.applied_issue_weekly_add = values["issue_weekly_add"]
+            existing.applied_issue_monthly_add = values["issue_monthly_add"]
             existing.last_order_id = order_id
             await self.session.flush()
             return existing
@@ -424,11 +469,76 @@ class PaymentService:
             plan_id=plan.id,
             status=SubscriptionStatus.ACTIVE.value,
             expires_at=datetime.utcnow() + timedelta(days=plan.duration_days or 30),
+            applied_pr_quota_bonus=values["pr_quota_bonus"],
+            applied_pr_daily_add=values["pr_daily_add"],
+            applied_pr_weekly_add=values["pr_weekly_add"],
+            applied_pr_monthly_add=values["pr_monthly_add"],
+            applied_issue_quota_bonus=values["issue_quota_bonus"],
+            applied_issue_daily_add=values["issue_daily_add"],
+            applied_issue_weekly_add=values["issue_weekly_add"],
+            applied_issue_monthly_add=values["issue_monthly_add"],
             last_order_id=order_id,
         )
         self.session.add(sub)
         await self.session.flush()
         return sub
+
+    async def _expire_subscription(
+        self, subscription: UserSubscription, user: TelegramUser, plan: Plan
+    ) -> UserSubscription:
+        """订阅过期时扣回已发放的套餐配额"""
+        applied_values = {
+            "pr_quota_bonus": getattr(subscription, "applied_pr_quota_bonus", None),
+            "pr_daily_add": getattr(subscription, "applied_pr_daily_add", None),
+            "pr_weekly_add": getattr(subscription, "applied_pr_weekly_add", None),
+            "pr_monthly_add": getattr(subscription, "applied_pr_monthly_add", None),
+            "issue_quota_bonus": getattr(subscription, "applied_issue_quota_bonus", None),
+            "issue_daily_add": getattr(subscription, "applied_issue_daily_add", None),
+            "issue_weekly_add": getattr(subscription, "applied_issue_weekly_add", None),
+            "issue_monthly_add": getattr(subscription, "applied_issue_monthly_add", None),
+        }
+
+        if not any(value for value in applied_values.values()):
+            applied_values = {
+                "pr_quota_bonus": plan.pr_quota_bonus,
+                "pr_daily_add": plan.pr_daily_add,
+                "pr_weekly_add": plan.pr_weekly_add,
+                "pr_monthly_add": plan.pr_monthly_add,
+                "issue_quota_bonus": plan.issue_quota_bonus,
+                "issue_daily_add": plan.issue_daily_add,
+                "issue_weekly_add": plan.issue_weekly_add,
+                "issue_monthly_add": plan.issue_monthly_add,
+            }
+
+        user.daily_quota = max(
+            0,
+            user.daily_quota
+            - (applied_values["pr_quota_bonus"] or 0)
+            - (applied_values["pr_daily_add"] or 0),
+        )
+        user.weekly_quota = max(
+            0, user.weekly_quota - (applied_values["pr_weekly_add"] or 0)
+        )
+        user.monthly_quota = max(
+            0, user.monthly_quota - (applied_values["pr_monthly_add"] or 0)
+        )
+        user.issue_daily_quota = max(
+            0,
+            user.issue_daily_quota
+            - (applied_values["issue_quota_bonus"] or 0)
+            - (applied_values["issue_daily_add"] or 0),
+        )
+        user.issue_weekly_quota = max(
+            0,
+            user.issue_weekly_quota - (applied_values["issue_weekly_add"] or 0),
+        )
+        user.issue_monthly_quota = max(
+            0,
+            user.issue_monthly_quota - (applied_values["issue_monthly_add"] or 0),
+        )
+        subscription.status = SubscriptionStatus.EXPIRED.value
+        await self.session.flush()
+        return subscription
 
     async def _log_payment(
         self,
