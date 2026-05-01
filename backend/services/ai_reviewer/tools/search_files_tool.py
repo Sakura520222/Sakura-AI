@@ -118,10 +118,14 @@ class SearchFilesToolHandler:
             # 读取配置 / Read config
             config = self._get_config()
             effective_context_lines = (
-                context_lines if context_lines is not None else config["default_context_lines"]
+                context_lines
+                if context_lines is not None
+                else config["default_context_lines"]
             )
             effective_max_results = (
-                max_results if max_results is not None else config["default_max_results"]
+                max_results
+                if max_results is not None
+                else config["default_max_results"]
             )
             skip_binary = config["skip_binary"]
 
@@ -226,9 +230,7 @@ class SearchFilesToolHandler:
         # COMPAT: repo._requester 是 PyGithub 私有 API，升级 PyGithub 时需验证兼容性
         encoded_query = urlencode({"q": query})
         requester = repo._requester
-        _, data = requester.requestJsonAndCheck(
-            "GET", f"/search/code?{encoded_query}"
-        )
+        _, data = requester.requestJsonAndCheck("GET", f"/search/code?{encoded_query}")
 
         all_results: List[Dict[str, Any]] = []
         keyword_lower = keyword.lower()
@@ -251,7 +253,9 @@ class SearchFilesToolHandler:
 
             # 跳过二进制文件 / Skip binary files
             if skip_binary:
-                _, ext = file_path.rsplit(".", 1) if "." in file_path else (file_path, "")
+                _, ext = (
+                    file_path.rsplit(".", 1) if "." in file_path else (file_path, "")
+                )
                 if f".{ext}" in BINARY_EXTENSIONS:
                     continue
 
@@ -396,9 +400,7 @@ class SearchFilesToolHandler:
 
             candidate_files.append(path)
 
-        logger.debug(
-            f"跨文件搜索 '{keyword}': 候选文件 {len(candidate_files)} 个"
-        )
+        logger.debug(f"跨文件搜索 '{keyword}': 候选文件 {len(candidate_files)} 个")
 
         # 逐文件搜索，带总数限制 / Per-file search with total limit
         all_results: List[Dict[str, Any]] = []

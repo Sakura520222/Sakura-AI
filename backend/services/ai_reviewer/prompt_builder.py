@@ -339,6 +339,7 @@ class PromptBuilder:
         context: Dict[str, Any],
         available_labels: Dict[str, Any],
         pr_info: Dict[str, Any],
+        existing_labels: list | None = None,
     ) -> str:
         """构建标签推荐的用户消息
 
@@ -346,6 +347,7 @@ class PromptBuilder:
             context: 审查上下文
             available_labels: 可用的标签字典
             pr_info: PR信息（包含标题、描述等）
+            existing_labels: PR 已有的标签名称列表（用于增量审查时避免冲突）
 
         Returns:
             构建好的用户消息
@@ -358,6 +360,14 @@ class PromptBuilder:
             "",
         ]
 
+        # PR 已有标签（增量审查时用于上下文参考）
+        if existing_labels:
+            lines.append("## PR 当前已有标签")
+            lines.append(
+                f"此 PR 已被标记: {', '.join(f'**{lbl}**' for lbl in existing_labels)}"
+            )
+            lines.append("请在推荐新标签时考虑这些已有标签所反映的 PR 整体意图。\n")
+
         # 增量审查时，添加新提交的标题和内容
         analysis = context.get("analysis")
         if (
@@ -365,7 +375,11 @@ class PromptBuilder:
             and getattr(analysis, "is_incremental", False)
             and getattr(analysis, "new_commits", None)
         ):
-            lines.append("## 本次新增提交")
+            lines.append("## 本次新增提交（增量审查）")
+            lines.append(
+                "**注意**: 这是对该 PR 的增量审查，以下是本次新增的提交。"
+                "请基于 PR 的整体意图（而非仅看本次增量提交）推荐标签。\n"
+            )
             for commit in analysis.new_commits:
                 title = commit.get("title", "无标题")
                 author = commit.get("author", "Unknown")

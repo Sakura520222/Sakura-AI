@@ -179,14 +179,10 @@ class HistoryContextService:
         if reviews:
             last_review = reviews[-1]
             critical_major = [
-                c
-                for c in last_review.comments
-                if c.severity in ("critical", "major")
+                c for c in last_review.comments if c.severity in ("critical", "major")
             ]
             if critical_major:
-                issue_lines = [
-                    "## 上一轮提出的严重/重要问题（请逐条检查是否已修复）"
-                ]
+                issue_lines = ["## 上一轮提出的严重/重要问题（请逐条检查是否已修复）"]
                 for c in critical_major:
                     location = ""
                     if c.file_path:
@@ -195,9 +191,7 @@ class HistoryContextService:
                             location += f":{c.line_number}"
                         location += "]"
                     content = c.content[:200] if c.content else ""
-                    issue_lines.append(
-                        f"- [{c.severity}]{location}: {content}"
-                    )
+                    issue_lines.append(f"- [{c.severity}]{location}: {content}")
                 parts.append("\n".join(issue_lines))
 
         return "\n\n".join(parts)

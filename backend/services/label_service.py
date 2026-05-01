@@ -70,8 +70,59 @@ class LabelService:
             # 标签缓存：{repo_full_name: {"labels": dict, "updated_at": datetime}}
             self._label_cache: Dict[str, Dict[str, Any]] = {}
             self._cache_ttl = timedelta(hours=1)  # 缓存1小时
+            # 标签冲突规则（从 labels.yaml 加载）
+            self._conflict_rules: Dict[str, List[str]] = {}
+            self._load_conflict_rules()
             self.__class__._initialized = True
             logger.info("LabelService单例初始化完成")
+
+    def _load_conflict_rules(self) -> None:
+        """从 labels.yaml 加载标签冲突规则"""
+        try:
+            from backend.core.config import get_label_config
+
+            config = get_label_config()
+            self._conflict_rules = config.get_conflict_rules()
+            if self._conflict_rules:
+                logger.info(
+                    f"已加载 {len(self._conflict_rules)} 条标签冲突规则: "
+                    f"{self._conflict_rules}"
+                )
+        except Exception as e:
+            logger.warning(f"加载标签冲突规则失败，将使用默认规则: {e}")
+            self._conflict_rules = self._default_conflict_rules()
+
+    @staticmethod
+    def _default_conflict_rules() -> Dict[str, List[str]]:
+        """默认标签冲突规则
+
+        规则含义：当 PR 已有 key 中的标签时，不应自动添加 value 列表中的标签。
+        """
+        return {
+            "enhancement": ["bug"],
+            "refactor": ["bug"],
+            "documentation": ["bug", "enhancement"],
+            "test": ["bug", "enhancement"],
+        }
+
+    def check_label_conflict(
+        self, existing_labels: List[str], new_label: str
+    ) -> Optional[str]:
+        """检查新标签是否与PR已有标签存在冲突
+
+        Args:
+            existing_labels: PR 已有的标签列表
+            new_label: 待添加的新标签名称
+
+        Returns:
+            冲突的已有标签名称（如果存在冲突），否则返回 None
+        """
+        for existing in existing_labels:
+            # 检查 existing 标签是否禁止 new_label
+            blocked = self._conflict_rules.get(existing, [])
+            if new_label in blocked:
+                return existing
+        return None
 
     def _get_default_labels(self) -> dict:
         """获取默认标签（优先从 labels.yaml 加载）"""
@@ -91,6 +142,7 @@ class LabelService:
             from backend.core.config import reload_label_config
 
             reload_label_config()
+            self._load_conflict_rules()
             self.clear_cache()
             logger.info("标签配置已重新加载")
         except Exception as e:
@@ -137,6 +189,31 @@ class LabelService:
         }
 
         return labels
+
+    async def get_pr_existing_labels(
+        self, repo_owner: str, repo_name: str, pr_number: int
+    ) -> List[str] | None:
+        """获取PR当前的已有标签
+
+        Args:
+            repo_owner: 仓库所有者
+            repo_name: 仓库名称
+            pr_number: PR编号
+
+        Returns:
+            PR已有标签名称列表；获取失败时返回 None（与空列表区分）
+        """
+        try:
+            labels = await asyncio.to_thread(
+                self.github_app.get_pr_labels,
+                repo_owner,
+                repo_name,
+                pr_number,
+            )
+            return labels
+        except Exception as e:
+            logger.error(f"获取PR已有标签失败: {e}", exc_info=True)
+            return None
 
     def format_labels_for_ai(self, labels: Dict[str, Dict[str, Any]]) -> str:
         """格式化标签列表供AI理解
@@ -272,6 +349,7 @@ class LabelService:
         recommendations: List[Dict[str, Any]],
         confidence_threshold: float = 0.7,
         auto_create: bool = False,
+        existing_labels: List[str] | None = None,
     ) -> Dict[str, Any]:
         """应用推荐的标签到PR
 
@@ -282,27 +360,69 @@ class LabelService:
             recommendations: AI推荐的标签列表
             confidence_threshold: 自动应用的置信度阈值
             auto_create: 是否自动创建不存在的标签
+            existing_labels: PR已有的标签列表（用于冲突检测）
 
         Returns:
-            应用结果：{"applied": list, "suggested": list, "created": list}
+            应用结果：{"applied": list, "suggested": list, "created": list, "conflict_blocked": list}
         """
         result = {
             "applied": [],  # 自动应用的标签
             "suggested": [],  # 建议的标签（低置信度）
             "created": [],  # 新创建的标签
             "failed": [],  # 应用失败的标签
+            "conflict_blocked": [],  # 因与已有标签冲突而跳过的标签
         }
 
+        # 如果未传入已有标签，尝试获取
+        labels_fetch_failed = False
+        if existing_labels is None:
+            existing_labels = await self.get_pr_existing_labels(
+                repo_owner, repo_name, pr_number
+            )
+            # None 表示获取失败（与空列表区分）
+            if existing_labels is None:
+                labels_fetch_failed = True
+                existing_labels = []
+                logger.warning(
+                    f"PR #{pr_number} 已有标签获取失败，将禁用自动应用仅输出建议"
+                )
+
+        # 维护动态标签集合：初始为 PR 已有标签 + 每次成功应用后即时更新
+        effective_labels = set(existing_labels)
+
         # 获取仓库现有标签
-        existing_labels = await self.get_repo_labels(repo_owner, repo_name)
+        repo_labels = await self.get_repo_labels(repo_owner, repo_name)
 
         # 处理每个推荐标签
         for rec in recommendations:
             label_name = rec["name"]
             confidence = rec["confidence"]
 
-            # 检查标签是否存在
-            if label_name not in existing_labels:
+            # 跳过PR已有的标签（无需重复添加）
+            if label_name in effective_labels:
+                logger.info(f"标签 {label_name} 已存在于 PR #{pr_number}，跳过")
+                continue
+
+            # 检查标签是否与已有标签（含本次已应用的）冲突
+            conflict_with = self.check_label_conflict(
+                list(effective_labels), label_name
+            )
+            if conflict_with:
+                logger.info(
+                    f"标签 {label_name} 与已有标签 {conflict_with} 冲突，跳过自动应用"
+                )
+                result["conflict_blocked"].append(
+                    {
+                        "name": label_name,
+                        "confidence": confidence,
+                        "reason": rec.get("reason", ""),
+                        "conflict_with": conflict_with,
+                    }
+                )
+                continue
+
+            # 检查标签是否存在于仓库
+            if label_name not in repo_labels:
                 if auto_create:
                     # 自动创建标签
                     default_info = self.DEFAULT_LABELS.get(
@@ -326,6 +446,17 @@ class LabelService:
                     result["failed"].append(label_name)
                     continue
 
+            # 当已有标签获取失败时，降级为仅建议不自动应用
+            if labels_fetch_failed:
+                result["suggested"].append(
+                    {
+                        "name": label_name,
+                        "confidence": confidence,
+                        "reason": rec.get("reason", ""),
+                    }
+                )
+                continue
+
             # 根据置信度决定是否自动应用
             if confidence >= confidence_threshold:
                 success = await asyncio.to_thread(
@@ -343,6 +474,8 @@ class LabelService:
                             "reason": rec.get("reason", ""),
                         }
                     )
+                    # 成功应用后即时加入动态集合，后续标签的冲突检测会考虑
+                    effective_labels.add(label_name)
                 else:
                     result["failed"].append(label_name)
             else:
@@ -395,6 +528,21 @@ class LabelService:
         # 新创建的标签
         if results["created"]:
             lines.append(f"📝 自动创建了 {len(results['created'])} 个新标签")
+
+        # 因冲突被阻止的标签
+        if results.get("conflict_blocked"):
+            lines.append("### 🚫 因冲突未应用的标签\n")
+            for item in results["conflict_blocked"]:
+                conf_pct = int(item["confidence"] * 100)
+                conflict_with = item.get("conflict_with", "")
+                lines.append(
+                    f"- ~~**{item['name']}**~~ ({conf_pct}%) - "
+                    f"与已有标签 `{conflict_with}` 冲突"
+                )
+            lines.append(
+                "\n*注：这些标签与 PR 已有标签存在语义冲突，已自动跳过。"
+                "如需添加，请手动操作。*\n"
+            )
 
         return "\n".join(lines)
 
