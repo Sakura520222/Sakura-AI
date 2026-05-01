@@ -21,9 +21,7 @@ from backend.models.payment_models import (
     PaymentAction,
 )
 from backend.models.telegram_models import TelegramUser
-from backend.core.config import get_settings
-
-settings = get_settings()
+from backend.core.config import get_dynamic_config, get_settings
 
 
 class PaymentError(Exception):
@@ -32,7 +30,30 @@ class PaymentError(Exception):
     pass
 
 
+async def is_payment_enabled() -> bool:
+    return bool(await get_dynamic_config("payment_enabled"))
+
+
 class PaymentService:
+    PLAN_UPDATE_FIELDS = {
+        "name",
+        "plan_type",
+        "price_cents",
+        "currency",
+        "duration_days",
+        "pr_quota_bonus",
+        "pr_daily_add",
+        "pr_weekly_add",
+        "pr_monthly_add",
+        "issue_quota_bonus",
+        "issue_daily_add",
+        "issue_weekly_add",
+        "issue_monthly_add",
+        "is_active",
+        "sort_order",
+        "description",
+    }
+
     def __init__(self, session: AsyncSession):
         self.session = session
 
@@ -83,7 +104,7 @@ class PaymentService:
         if not plan:
             raise PaymentError(f"Plan not found: {plan_id}")
         for key, value in kwargs.items():
-            if hasattr(plan, key) and value is not None:
+            if key in self.PLAN_UPDATE_FIELDS and value is not None:
                 setattr(plan, key, value)
         await self.session.flush()
         return plan
@@ -169,8 +190,15 @@ class PaymentService:
         if not user:
             raise PaymentError("User not found")
 
-        stmt = select(RedeemCode).where(
-            and_(RedeemCode.code == code, RedeemCode.status == RedeemCodeStatus.ACTIVE.value)
+        stmt = (
+            select(RedeemCode)
+            .where(
+                and_(
+                    RedeemCode.code == code,
+                    RedeemCode.status == RedeemCodeStatus.ACTIVE.value,
+                )
+            )
+            .with_for_update()
         )
         redeem = (await self.session.execute(stmt)).scalar_one_or_none()
         if not redeem:
@@ -235,7 +263,7 @@ class PaymentService:
         if not user:
             raise PaymentError("User not found")
 
-        expire_minutes = getattr(settings, "payment_order_expire_minutes", 30)
+        expire_minutes = getattr(get_settings(), "payment_order_expire_minutes", 30)
         order = Order(
             order_no=self._generate_order_no(),
             user_id=user_id,
@@ -442,13 +470,13 @@ class PaymentService:
             and_(
                 UserSubscription.user_id == user_id,
                 UserSubscription.plan_id == plan.id,
-                UserSubscription.status == SubscriptionStatus.ACTIVE.value,
             )
         )
         existing = (await self.session.execute(stmt)).scalar_one_or_none()
 
         values = self._plan_quota_values(plan)
         if existing:
+            existing.status = SubscriptionStatus.ACTIVE.value
             existing.expires_at = datetime.utcnow() + timedelta(
                 days=plan.duration_days or 30
             )
@@ -498,7 +526,7 @@ class PaymentService:
             "issue_monthly_add": getattr(subscription, "applied_issue_monthly_add", None),
         }
 
-        if not any(value for value in applied_values.values()):
+        if all(value is None for value in applied_values.values()):
             applied_values = {
                 "pr_quota_bonus": plan.pr_quota_bonus,
                 "pr_daily_add": plan.pr_daily_add,
