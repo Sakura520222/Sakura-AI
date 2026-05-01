@@ -17,6 +17,7 @@ from backend.api.v1 import (
     scans,
     settings,
     events,
+    billing,
 )
 
 api_v1_router = APIRouter()
@@ -37,6 +38,7 @@ api_v1_router.include_router(queue.router)
 api_v1_router.include_router(scans.router)
 api_v1_router.include_router(settings.router)
 api_v1_router.include_router(events.router)
+api_v1_router.include_router(billing.router)
 
 
 @api_v1_router.get("/health", tags=["Health"])
