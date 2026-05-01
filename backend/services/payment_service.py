@@ -330,16 +330,12 @@ class PaymentService:
         )
 
         order = await self._fulfill_order(order, user, plan, operator_id)
-        logger.info(
-            f"Admin {operator_id} granted plan {plan.name} to user {user_id}"
-        )
+        logger.info(f"Admin {operator_id} granted plan {plan.name} to user {user_id}")
         return order
 
     # ========== 订阅管理 ==========
 
-    async def get_active_subscription(
-        self, user_id: int
-    ) -> Optional[UserSubscription]:
+    async def get_active_subscription(self, user_id: int) -> Optional[UserSubscription]:
         await self.expire_due_subscriptions(user_id)
         stmt = select(UserSubscription).where(
             and_(
@@ -380,9 +376,7 @@ class PaymentService:
         offset: int = 0,
     ) -> tuple[List[Order], int]:
         count_stmt = (
-            select(func.count())
-            .select_from(Order)
-            .where(Order.user_id == user_id)
+            select(func.count()).select_from(Order).where(Order.user_id == user_id)
         )
         total = (await self.session.execute(count_stmt)).scalar() or 0
 
@@ -437,9 +431,7 @@ class PaymentService:
             "issue_monthly_add": plan.issue_monthly_add or 0,
         }
 
-    async def _apply_plan_to_user(
-        self, user: TelegramUser, plan: Plan
-    ) -> TelegramUser:
+    async def _apply_plan_to_user(self, user: TelegramUser, plan: Plan) -> TelegramUser:
         """将套餐配额增量应用到用户"""
         values = self._plan_quota_values(plan)
         if values["pr_quota_bonus"] > 0:
@@ -520,10 +512,14 @@ class PaymentService:
             "pr_daily_add": getattr(subscription, "applied_pr_daily_add", None),
             "pr_weekly_add": getattr(subscription, "applied_pr_weekly_add", None),
             "pr_monthly_add": getattr(subscription, "applied_pr_monthly_add", None),
-            "issue_quota_bonus": getattr(subscription, "applied_issue_quota_bonus", None),
+            "issue_quota_bonus": getattr(
+                subscription, "applied_issue_quota_bonus", None
+            ),
             "issue_daily_add": getattr(subscription, "applied_issue_daily_add", None),
             "issue_weekly_add": getattr(subscription, "applied_issue_weekly_add", None),
-            "issue_monthly_add": getattr(subscription, "applied_issue_monthly_add", None),
+            "issue_monthly_add": getattr(
+                subscription, "applied_issue_monthly_add", None
+            ),
         }
 
         if all(value is None for value in applied_values.values()):
