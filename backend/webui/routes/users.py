@@ -19,6 +19,7 @@ from backend.webui.deps import (
     paginate,
     error_page,
     toast_redirect,
+    render_template,
 )
 from backend.core.config import get_settings
 from backend.webui.helpers.admin_log import log_admin_action
@@ -34,15 +35,13 @@ async def user_list_page(
     user_prefs: dict = Depends(get_user_preferences),
 ):
     """渲染用户列表页面"""
-    return templates.TemplateResponse(
+    return render_template(
         "users.html",
-        {
-            "request": request,
-            "current_user": user,
-            "csrf_token": get_csrf_serializer().dumps({}),
-            "active_page": "users",
-            "user_prefs": user_prefs,
-        },
+        request,
+        user_prefs=user_prefs,
+        current_user=user,
+        csrf_token=get_csrf_serializer().dumps({}),
+        active_page="users",
     )
 
 
@@ -248,17 +247,16 @@ async def user_detail_page(
     )
     usage_logs = logs_result.scalars().all()
 
-    return templates.TemplateResponse(
+    return render_template(
         "user_detail.html",
-        {
-            "request": request,
-            "current_user": user,
-            "csrf_token": get_csrf_serializer().dumps({}),
-            "active_page": "users",
-            "user_prefs": user_prefs,
-            "target_user": target_user,
-            "usage_logs": usage_logs,
-        },
+        request,
+        user_prefs=user_prefs,
+        current_user=user,
+        csrf_token=get_csrf_serializer().dumps({}),
+        active_page="users",
+        target_user=target_user,
+        usage_logs=usage_logs,
+    )
     )
 
 

@@ -179,7 +179,14 @@ class IssueService:
     ) -> bool:
         """发布分析评论到 Issue"""
         config = get_strategy_config().get_issue_analysis_config()
-        template = config.get("comment_template", "")
+        # 根据 output_language 选择模板 / Select template based on output_language
+        output_lang = get_settings().output_language
+        if output_lang == "en":
+            template = config.get("comment_template_en", "")
+            if not template:
+                template = config.get("comment_template", "")
+        else:
+            template = config.get("comment_template", "")
 
         if not template:
             return False

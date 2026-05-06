@@ -1,13 +1,13 @@
 {% extends "base.html" %}
 
-{% block title %}仓库扫描 - Sakura AI Reviewer{% endblock %}
+{% block title %}{{ _('scan.title') }} - Sakura AI Reviewer{% endblock %}
 
 {% block content %}
 <div class="space-y-4">
     <!-- 页面标题 -->
     <div class="flex items-center justify-between">
         <div>
-            <h1 class="text-2xl font-bold">仓库扫描</h1>
+            <h1 class="text-2xl font-bold">{{ _('scan.title') }}</h1>
             <p class="mt-1 text-sm text-gray-500 dark:text-gray-400">查看仓库定时扫描记录和问题发现</p>
         </div>
         <button onclick="triggerScan()"

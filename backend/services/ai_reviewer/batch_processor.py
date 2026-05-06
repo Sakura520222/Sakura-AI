@@ -247,8 +247,13 @@ class BatchProcessor:
         """
         settings = get_settings()
         strategy_config_data = get_strategy_config().get_strategy(strategy)
+        # 获取 AI 输出语言配置 / Get AI output language config
+        output_lang = settings.output_language or ""
         system_prompt = self.prompt_builder.build_system_prompt(
-            strategy_config_data.get("prompt", ""), context, include_tools=True
+            strategy_config_data.get("prompt", ""),
+            context,
+            include_tools=True,
+            output_language=output_lang,
         )
         tracker = TokenTracker()
 

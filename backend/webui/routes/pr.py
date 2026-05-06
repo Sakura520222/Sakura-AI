@@ -20,6 +20,7 @@ from backend.webui.deps import (
     error_page,
     build_review_search_filter,
     build_user_scope_filter,
+    render_template,
 )
 
 router = APIRouter(prefix="/pr", tags=["WebUI PR"])
@@ -33,15 +34,13 @@ async def pr_list_page(
     user_prefs: dict = Depends(get_user_preferences),
 ):
     """渲染 PR 列表页面"""
-    return templates.TemplateResponse(
+    return render_template(
         "pr_list.html",
-        {
-            "request": request,
-            "current_user": user,
-            "csrf_token": get_csrf_serializer().dumps({}),
-            "active_page": "pr",
-            "user_prefs": user_prefs,
-        },
+        request,
+        user_prefs=user_prefs,
+        current_user=user,
+        csrf_token=get_csrf_serializer().dumps({}),
+        active_page="pr",
     )
 
 
@@ -236,19 +235,17 @@ async def pr_detail_page(
         else None
     )
 
-    return templates.TemplateResponse(
+    return render_template(
         "pr_detail.html",
-        {
-            "request": request,
-            "current_user": user,
-            "csrf_token": get_csrf_serializer().dumps({}),
-            "active_page": "pr",
-            "user_prefs": user_prefs,
-            "review": review,
-            "comments": comments,
-            "created_at_str": created_at_str,
-            "completed_at_str": completed_at_str,
-        },
+        request,
+        user_prefs=user_prefs,
+        current_user=user,
+        csrf_token=get_csrf_serializer().dumps({}),
+        active_page="pr",
+        review=review,
+        comments=comments,
+        created_at_str=created_at_str,
+        completed_at_str=completed_at_str,
     )
 
 
@@ -275,16 +272,14 @@ async def pr_files_page(
             user=user,
         )
 
-    return templates.TemplateResponse(
+    return render_template(
         "pr_files.html",
-        {
-            "request": request,
-            "current_user": user,
-            "csrf_token": get_csrf_serializer().dumps({}),
-            "active_page": "pr",
-            "user_prefs": user_prefs,
-            "review": review,
-        },
+        request,
+        user_prefs=user_prefs,
+        current_user=user,
+        csrf_token=get_csrf_serializer().dumps({}),
+        active_page="pr",
+        review=review,
     )
 
 

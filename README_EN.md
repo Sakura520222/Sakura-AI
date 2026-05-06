@@ -259,6 +259,7 @@ All configuration follows this priority: **Database app_config (WebUI) > Setting
 - **Git Info Tool**: `context_enhancement.git_tools` in `config/strategies.yaml` — configure default branch and commit return counts
 - **Project Memory System**: `sakura_memory_enabled` to enable memory system, `sakura_reflection_enabled` to enable post-review reflection, `sakura_consolidation_interval` for consolidation trigger threshold (default 5), `sakura_auto_init` to auto-initialize `.sakura/` directory — all in WebUI configuration
 - **Model Context**: Configure context window, auto-compression in WebUI configuration, see [Model Context Management](docs/MODEL_CONTEXT_FEATURE.md)
+- **Internationalization (i18n)**: WebUI supports Chinese/English interface switching (Settings page). AI output language can be configured via `OUTPUT_LANGUAGE` environment variable (`zh-CN` or `en`). Comment templates automatically match the selected language.
 
 ---
 

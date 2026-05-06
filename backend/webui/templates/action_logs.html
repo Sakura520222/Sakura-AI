@@ -1,13 +1,13 @@
 {% extends "base.html" %}
 
-{% block title %}操作日志 - Sakura AI Reviewer{% endblock %}
+{% block title %}{{ _('action_log.title') }} - Sakura AI Reviewer{% endblock %}
 
 {% block content %}
 <div class="space-y-4">
     <!-- 页面标题 -->
     <div>
-        <h1 class="text-2xl font-bold">操作日志</h1>
-        <p class="mt-1 text-sm text-gray-500 dark:text-gray-400">查看管理员操作审计记录</p>
+        <h1 class="text-2xl font-bold">{{ _('action_log.title') }}</h1>
+        <p class="mt-1 text-sm text-gray-500 dark:text-gray-400">{{ _('action_log.admin_action') }}</p>
     </div>
 
     <!-- 日志列表（通过 HTMX 加载） -->

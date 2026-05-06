@@ -45,6 +45,57 @@
     <link id="hljs-dark" rel="stylesheet" href="https://cdn.jsdelivr.net/gh/highlightjs/cdn-release/build/styles/github-dark.min.css" disabled>
     <script>if(localStorage.getItem('theme')==='dark'){document.getElementById('hljs-light').disabled=true;document.getElementById('hljs-dark').disabled=false}</script>
     <script src="https://cdn.jsdelivr.net/gh/highlightjs/cdn-release/build/highlight.min.js"></script>
+    <!-- i18n: 注入 JS 翻译对象 -->
+    <script>
+    var I18n = {
+        lang: '{{ lang | default("zh-CN") }}',
+        _data: {{ _ | default('{}') }}.__all__ ? {} : {},
+        t: function(key, fallback) {
+            return fallback || key;
+        }
+    };
+    // 常用 JS 翻译字符串 / Common JS translation strings
+    var _js_i18n = {
+        'zh-CN': {
+            'confirm_action': '确认操作',
+            'are_you_sure': '确定要执行此操作吗？',
+            'confirm': '确认',
+            'cancel': '取消',
+            'processing': '处理中...',
+            'success': '操作成功',
+            'error': '操作失败',
+            'repo_exists': '仓库已存在于白名单中',
+            'invalid_format': '仓库名称格式不正确，请使用 owner/repo 格式',
+            'validation_error': '参数验证失败，请检查输入值',
+            'save_failed': '保存失败，请稍后重试',
+            'invalid_config': '配置验证失败，请检查输入内容',
+            'permission_denied': '文件权限不足',
+            'retry': '操作失败，请重试',
+            'loading': '加载中...',
+        },
+        'en': {
+            'confirm_action': 'Confirm Action',
+            'are_you_sure': 'Are you sure you want to proceed?',
+            'confirm': 'Confirm',
+            'cancel': 'Cancel',
+            'processing': 'Processing...',
+            'success': 'Success',
+            'error': 'Error',
+            'repo_exists': 'Repository already in whitelist',
+            'invalid_format': 'Invalid repository name format, use owner/repo',
+            'validation_error': 'Validation error, please check your input',
+            'save_failed': 'Save failed, please try again later',
+            'invalid_config': 'Configuration validation failed',
+            'permission_denied': 'Permission denied',
+            'retry': 'Operation failed, please retry',
+            'loading': 'Loading...',
+        }
+    };
+    function _t(key) {
+        var lang = I18n.lang || 'zh-CN';
+        return (_js_i18n[lang] && _js_i18n[lang][key]) || (_js_i18n['zh-CN'] && _js_i18n['zh-CN'][key]) || key;
+    }
+    </script>
     <script>
     document.addEventListener('alpine:init', () => {
         Alpine.data('toastManager', () => ({
@@ -62,20 +113,20 @@
                 if (msg) {
                     this.show(msg, type);
                 } else if (params.has('saved')) {
-                    this.show('操作成功', 'success');
+                    this.show(_t('success'), 'success');
                 } else {
                     var error = params.get('error');
                     if (error) {
                         var messages = {
-                            'already_exists': '仓库已存在于白名单中',
-                            'invalid_format': '仓库名称格式不正确，请使用 owner/repo 格式',
-                            'validation': '参数验证失败，请检查输入值',
-                            'save_failed': '保存失败，请稍后重试',
-                            'invalid_config': '配置验证失败，请检查输入内容',
-                            'permission_denied': '文件权限不足',
-                            '1': '操作失败，请重试',
+                            'already_exists': _t('repo_exists'),
+                            'invalid_format': _t('invalid_format'),
+                            'validation': _t('validation_error'),
+                            'save_failed': _t('save_failed'),
+                            'invalid_config': _t('invalid_config'),
+                            'permission_denied': _t('permission_denied'),
+                            '1': _t('retry'),
                         };
-                        this.show(messages[error] || '操作失败，请重试', 'error');
+                        this.show(messages[error] || _t('retry'), 'error');
                     }
                 }
                 // 清理 URL 中的 toast 参数
@@ -118,17 +169,17 @@
 
         Alpine.data('confirmDialog', () => ({
             active: false,
-            title: '确认操作',
-            message: '确定要执行此操作吗？',
+            title: _t('confirm_action'),
+            message: _t('are_you_sure'),
             warning: '',
-            confirmText: '确认',
+            confirmText: _t('confirm'),
             loading: false,
             _callback: null,
             ask(options) {
-                this.title = options.title || '确认操作';
-                this.message = options.message || '确定要执行此操作吗？';
+                this.title = options.title || _t('confirm_action');
+                this.message = options.message || _t('are_you_sure');
                 this.warning = options.warning || '';
-                this.confirmText = options.confirmText || '确认';
+                this.confirmText = options.confirmText || _t('confirm');
                 this.loading = false;
                 this.active = true;
                 this._callback = options.onConfirm || null;
@@ -363,7 +414,7 @@
             <div class="mt-6 flex gap-3 justify-center">
                 <button @click="cancel()"
                         class="px-4 py-2 rounded-xl text-sm font-medium border border-gray-300 dark:border-gray-600 bg-white/80 dark:bg-gray-700/80 text-gray-700 dark:text-gray-300 hover:bg-white dark:hover:bg-gray-600 transition-colors">
-                    取消
+                    <script>document.write(_t('cancel'))</script>
                 </button>
                 <button @click="confirm()"
                         :disabled="loading"
@@ -372,7 +423,7 @@
                     <span x-show="!loading" x-text="confirmText"></span>
                     <span x-show="loading" class="flex items-center gap-2">
                         <svg class="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg>
-                        处理中...
+                        <script>document.write(_t('processing'))</script>
                     </span>
                 </button>
             </div>

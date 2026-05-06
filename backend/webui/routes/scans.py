@@ -16,6 +16,7 @@ from backend.webui.deps import (
     get_csrf_serializer,
     paginate,
     error_page,
+    render_template,
 )
 
 router = APIRouter(prefix="/scans", tags=["WebUI Scans"])
@@ -46,15 +47,13 @@ async def scan_list_page(
     user_prefs: dict = Depends(get_user_preferences),
 ):
     """扫描列表页面"""
-    return templates.TemplateResponse(
+    return render_template(
         "scans.html",
-        {
-            "request": request,
-            "current_user": user,
-            "active_page": "scans",
-            "user_prefs": user_prefs,
-            "csrf_token": get_csrf_serializer().dumps({}),
-        },
+        request,
+        user_prefs=user_prefs,
+        current_user=user,
+        active_page="scans",
+        csrf_token=get_csrf_serializer().dumps({}),
     )
 
 
@@ -193,18 +192,16 @@ async def scan_detail_page(
     for f in findings:
         grouped_findings.setdefault(f.severity, []).append(f)
 
-    return templates.TemplateResponse(
+    return render_template(
         "scan_detail.html",
-        {
-            "request": request,
-            "current_user": user,
-            "active_page": "scans",
-            "user_prefs": user_prefs,
-            "scan": scan,
-            "findings": findings,
-            "grouped_findings": grouped_findings,
-            "severity_order": severity_order,
-        },
+        request,
+        user_prefs=user_prefs,
+        current_user=user,
+        active_page="scans",
+        scan=scan,
+        findings=findings,
+        grouped_findings=grouped_findings,
+        severity_order=severity_order,
     )
 
 

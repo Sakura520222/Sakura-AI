@@ -18,6 +18,7 @@ from backend.webui.deps import (
     error_page,
     get_active_repos,
     build_review_search_filter,
+    render_template,
 )
 
 router = APIRouter(prefix="/logs", tags=["WebUI Logs"])
@@ -31,15 +32,13 @@ async def logs_page(
     user_prefs: dict = Depends(get_user_preferences),
 ):
     """渲染审查日志页面"""
-    return templates.TemplateResponse(
+    return render_template(
         "logs.html",
-        {
-            "request": request,
-            "current_user": user,
-            "csrf_token": get_csrf_serializer().dumps({}),
-            "active_page": "logs",
-            "user_prefs": user_prefs,
-        },
+        request,
+        user_prefs=user_prefs,
+        current_user=user,
+        csrf_token=get_csrf_serializer().dumps({}),
+        active_page="logs",
     )
 
 

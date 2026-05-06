@@ -17,6 +17,7 @@ from backend.webui.deps import (
     paginate,
     error_page,
     build_user_scope_filter,
+    render_template,
 )
 
 router = APIRouter(prefix="/issues", tags=["WebUI Issues"])
@@ -30,14 +31,14 @@ async def issue_list_page(
     user_prefs: dict = Depends(get_user_preferences),
 ):
     """渲染 Issue 分析列表页面"""
-    return templates.TemplateResponse(
+    return render_template(
         "issues.html",
-        {
-            "request": request,
-            "current_user": user,
-            "csrf_token": get_csrf_serializer().dumps({}),
-            "active_page": "issues",
-            "user_prefs": user_prefs,
+        request,
+        user_prefs=user_prefs,
+        current_user=user,
+        csrf_token=get_csrf_serializer().dumps({}),
+        active_page="issues",
+    )
         },
     )
 
@@ -186,18 +187,16 @@ async def issue_detail_page(
     except (json.JSONDecodeError, TypeError):
         pass
 
-    return templates.TemplateResponse(
+    return render_template(
         "issue_detail.html",
-        {
-            "request": request,
-            "current_user": user,
-            "analysis": analysis,
-            "suggested_labels": suggested_labels,
-            "suggested_assignees": suggested_assignees,
-            "related_prs": related_prs,
-            "active_page": "issues",
-            "user_prefs": user_prefs,
-        },
+        request,
+        user_prefs=user_prefs,
+        current_user=user,
+        analysis=analysis,
+        suggested_labels=suggested_labels,
+        suggested_assignees=suggested_assignees,
+        related_prs=related_prs,
+        active_page="issues",
     )
 
 

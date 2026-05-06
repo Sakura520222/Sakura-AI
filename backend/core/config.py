@@ -114,6 +114,16 @@ class Settings(BaseSettings):
     # GitHub App机器人用户名（可选，用于幂等性检查）
     bot_username: Optional[str] = None  # 备用方案，当无法从GitHub API获取时使用
 
+    # ========== 国际化配置 / i18n Configuration ==========
+    default_language: str = Field(
+        "zh-CN",
+        description="默认界面语言（zh-CN / en）",
+    )
+    output_language: str = Field(
+        "",
+        description="AI 输出语言（为空时跟随请求上下文，可设为 zh-CN / en 强制指定）",
+    )
+
     def validate_required_fields(self) -> list[str]:
         """返回值为 None 的必填字段名列表（用于非 bootstrap 模式启动校验）"""
         required = [

@@ -20,6 +20,7 @@ from backend.webui.deps import (
     get_csrf_serializer,
     get_user_preferences,
     build_user_scope_filter,
+    render_template,
 )
 
 router = APIRouter(tags=["WebUI Dashboard"])
@@ -161,17 +162,15 @@ async def dashboard_page(
         await _get_github_app_install_url() if github_app_installed is False else None
     )
 
-    return templates.TemplateResponse(
+    return render_template(
         "dashboard.html",
-        {
-            "request": request,
-            "current_user": user,
-            "csrf_token": get_csrf_serializer().dumps({}),
-            "active_page": "dashboard",
-            "user_prefs": user_prefs,
-            "github_app_installed": github_app_installed,
-            "github_app_install_url": github_app_install_url,
-        },
+        request,
+        user_prefs=user_prefs,
+        current_user=user,
+        csrf_token=get_csrf_serializer().dumps({}),
+        active_page="dashboard",
+        github_app_installed=github_app_installed,
+        github_app_install_url=github_app_install_url,
     )
 
 
