@@ -100,10 +100,16 @@ async def redeem_code(
         )
     except PaymentError as e:
         await db.rollback()
-        return toast_redirect("/webui/billing/", str(e), "error")
+        return toast_redirect(
+            "/webui/billing/",
+            "toast.payment_error",
+            "error",
+            lang=detect_language(),
+            error=str(e),
+        )
 
 
-# ========== 管理员：套餐管理 ==========
+# ========== Admin: Plan Management ==========
 
 
 @router.get("/admin/plans")
@@ -174,7 +180,13 @@ async def admin_create_plan(
         )
     except Exception as e:
         await db.rollback()
-        return toast_redirect("/webui/billing/admin/plans", str(e), "error")
+        return toast_redirect(
+            "/webui/billing/admin/plans",
+            "toast.payment_error",
+            "error",
+            lang=detect_language(),
+            error=str(e),
+        )
 
 
 @router.post("/admin/plans/{plan_id}/toggle")
@@ -278,10 +290,16 @@ async def admin_generate_codes(
         )
     except PaymentError as e:
         await db.rollback()
-        return toast_redirect("/webui/billing/admin/codes", str(e), "error")
+        return toast_redirect(
+            "/webui/billing/admin/codes",
+            "toast.payment_error",
+            "error",
+            lang=detect_language(),
+            error=str(e),
+        )
 
 
-# ========== 管理员：手动充值 ==========
+# ========== Admin: Manual Grant ==========
 
 
 @router.post("/admin/grant")
@@ -311,4 +329,10 @@ async def admin_grant(
         )
     except PaymentError as e:
         await db.rollback()
-        return toast_redirect(f"/webui/users/{user_id}", str(e), "error")
+        return toast_redirect(
+            f"/webui/users/{user_id}",
+            "toast.payment_error",
+            "error",
+            lang=detect_language(),
+            error=str(e),
+        )

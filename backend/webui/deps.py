@@ -231,7 +231,7 @@ def error_page(
 
 def toast_redirect(
     url: str,
-    message: str = "操作成功",
+    message: str = "toast.success",
     toast_type: str = "success",
     status_code: int = 302,
     lang: str = "",

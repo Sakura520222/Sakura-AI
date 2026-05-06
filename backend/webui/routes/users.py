@@ -557,7 +557,7 @@ async def delete_user(
         await db.rollback()
         return toast_redirect(
             f"/webui/users/{user_id}",
-            "toast.user_create_failed",
+            "toast.user_delete_failed",
             "error",
             lang=detect_language(),
         )

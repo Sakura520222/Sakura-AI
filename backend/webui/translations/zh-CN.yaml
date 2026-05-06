@@ -283,8 +283,9 @@ scan:
   indexing: "索引中"
   analyzing: "分析中"
   reporting: "报告生成中"
-  scheduled: "定时"
+  triggered_by: "触发者"
   manual: "手动"
+  scheduled: "定时"
   description: "查看仓库定时扫描记录和问题发现"
   confirm_trigger: "确认对所有候选仓库触发扫描？"
   no_scans: "暂无扫描记录"
@@ -307,6 +308,7 @@ queue:
   no_items: "队列为空"
   avg_duration: "平均耗时"
   failed: "失败"
+  completed_at: "完成时间"
 
 # ========== 用户管理 / User Management ==========
 user:
@@ -334,7 +336,16 @@ user:
   quota_unlimited: "无限制"
   github_id: "GitHub ID"
   telegram_id: "Telegram ID"
+  github_username: "GitHub 用户名"
   registered_at: "注册时间"
+  confirm_edit_info: "确定要修改此用户的基本信息吗？"
+  confirm_disable: "确定要禁用此用户吗？"
+  confirm_enable: "确定要启用此用户吗？"
+  confirm_role_change: "确定要修改此用户的角色吗？"
+  delete_warning: "删除后无法恢复，关联的订阅和使用记录将一并清除。"
+  confirm_delete_user: "确定要永久删除用户 {name} 吗？此操作不可撤销。"
+  reset_all_quota: "重置全部配额"
+  confirm_reset_quota: "确定要重置 {name} 的所有配额使用量吗？"
 
 # ========== 已安装仓库 / Installed Repos ==========
 repo:
@@ -568,6 +579,8 @@ toast:
   github_username_used: "GitHub 用户名 {github_username} 已被使用"
   user_create_failed_duplicate: "用户创建失败（可能已存在重复）"
   user_create_failed: "用户创建失败"
+  user_delete_failed: "用户删除失败"
+  payment_error: "支付错误: {error}"
   user_added: "用户 {github_username} 已成功添加"
   user_role_changed: "用户角色已更改为 {role}"
   user_quota_updated: "用户配额已更新"

@@ -19,7 +19,7 @@
                 <h1 class="text-xl font-bold">{{ scan.repo_name }}</h1>
                 <p class="mt-1 text-sm text-gray-500 dark:text-gray-400">
                     {% if scan.trigger_type == 'scheduled' %}{{ _('scan.scheduled') }}{% else %}{{ _('scan.manual') }}{% endif %}
-                    {% if scan.triggered_by %} · {{ _('action_log.user') }}: {{ scan.triggered_by }}{% endif %}
+                    {% if scan.triggered_by %} · {{ _('scan.triggered_by') }}: {{ scan.triggered_by }}{% endif %}
                 </p>
             </div>
             <!-- 状态标签 -->
