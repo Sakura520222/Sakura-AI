@@ -32,10 +32,10 @@
         <!-- 日期范围 -->
         <input type="date" name="date_from" value="{{ date_from }}"
                class="px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-sm focus:ring-2 focus:ring-pink-500 focus:border-transparent outline-none"
-               placeholder="开始日期">
+               placeholder="{{ _('common.start_date') }}">
         <input type="date" name="date_to" value="{{ date_to }}"
                class="px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-sm focus:ring-2 focus:ring-pink-500 focus:border-transparent outline-none"
-               placeholder="结束日期">
+               placeholder="{{ _('common.end_date') }}">
 
         <!-- 搜索按钮 -->
         <button type="submit"

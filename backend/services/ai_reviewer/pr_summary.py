@@ -152,7 +152,9 @@ class PRSummaryService:
                 "en": "English",
             }
             lang_display = language_names.get(output_lang, output_lang)
-            system_prompt += f"\n\n**Important**: You MUST write the summary in {lang_display}."
+            system_prompt += (
+                f"\n\n**Important**: You MUST write the summary in {lang_display}."
+            )
 
         return system_prompt, user_message
 

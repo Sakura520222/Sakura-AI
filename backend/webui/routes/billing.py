@@ -83,14 +83,21 @@ async def redeem_code(
     """兑换码兑换"""
     code = code.strip().upper()
     if not code:
-        return toast_redirect("/webui/billing/", "toast.code_required", "error", lang=detect_language())
+        return toast_redirect(
+            "/webui/billing/", "toast.code_required", "error", lang=detect_language()
+        )
 
     svc = PaymentService(db)
     try:
         order = await svc.redeem_code(user["user_id"], code)
         await db.commit()
         logger.info(f"User {user['sub']} redeemed code {code}, order {order.order_no}")
-        return toast_redirect("/webui/billing/", "toast.redeem_success", lang=detect_language(), order_no=order.order_no)
+        return toast_redirect(
+            "/webui/billing/",
+            "toast.redeem_success",
+            lang=detect_language(),
+            order_no=order.order_no,
+        )
     except PaymentError as e:
         await db.rollback()
         return toast_redirect("/webui/billing/", str(e), "error")
@@ -162,7 +169,9 @@ async def admin_create_plan(
             sort_order=sort_order,
         )
         await db.commit()
-        return toast_redirect("/webui/billing/admin/plans", "toast.plan_created", lang=detect_language())
+        return toast_redirect(
+            "/webui/billing/admin/plans", "toast.plan_created", lang=detect_language()
+        )
     except Exception as e:
         await db.rollback()
         return toast_redirect("/webui/billing/admin/plans", str(e), "error")
@@ -180,11 +189,21 @@ async def admin_toggle_plan(
     svc = PaymentService(db)
     plan = await svc.get_plan(plan_id)
     if not plan:
-        return toast_redirect("/webui/billing/admin/plans", "toast.plan_not_found", "error", lang=detect_language())
+        return toast_redirect(
+            "/webui/billing/admin/plans",
+            "toast.plan_not_found",
+            "error",
+            lang=detect_language(),
+        )
     plan.is_active = not plan.is_active
     await db.commit()
     status = "enabled" if plan.is_active else "disabled"
-    return toast_redirect("/webui/billing/admin/plans", "toast.plan_toggled", lang=detect_language(), status=status)
+    return toast_redirect(
+        "/webui/billing/admin/plans",
+        "toast.plan_toggled",
+        lang=detect_language(),
+        status=status,
+    )
 
 
 # ========== 管理员：兑换码管理 ==========
@@ -234,7 +253,10 @@ async def admin_generate_codes(
     """批量生成兑换码"""
     if count < 1 or count > 100:
         return toast_redirect(
-            "/webui/billing/admin/codes", "toast.code_count_range", "error", lang=detect_language()
+            "/webui/billing/admin/codes",
+            "toast.code_count_range",
+            "error",
+            lang=detect_language(),
         )
 
     svc = PaymentService(db)
@@ -249,7 +271,10 @@ async def admin_generate_codes(
         await db.commit()
         logger.info(f"Admin {user['sub']} generated {count} codes for plan {plan_id}")
         return toast_redirect(
-            "/webui/billing/admin/codes", "toast.code_generated", lang=detect_language(), count=len(codes)
+            "/webui/billing/admin/codes",
+            "toast.code_generated",
+            lang=detect_language(),
+            count=len(codes),
         )
     except PaymentError as e:
         await db.rollback()
@@ -279,7 +304,10 @@ async def admin_grant(
         await db.commit()
         logger.info(f"Admin {user['sub']} granted plan {plan_id} to user {user_id}")
         return toast_redirect(
-            f"/webui/users/{user_id}", "toast.grant_success", lang=detect_language(), order_no=order.order_no
+            f"/webui/users/{user_id}",
+            "toast.grant_success",
+            lang=detect_language(),
+            order_no=order.order_no,
         )
     except PaymentError as e:
         await db.rollback()

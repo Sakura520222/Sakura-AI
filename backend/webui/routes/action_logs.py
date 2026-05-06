@@ -12,6 +12,7 @@ from backend.webui.deps import (
     get_templates,
     get_csrf_serializer,
     get_user_preferences,
+    render_template,
 )
 
 router = APIRouter(prefix="/logs/actions", tags=["WebUI Action Logs"])
@@ -41,15 +42,13 @@ async def action_logs_page(
     user_prefs: dict = Depends(get_user_preferences),
 ):
     """操作日志页面（管理员专用）"""
-    return templates.TemplateResponse(
+    return render_template(
         "action_logs.html",
-        {
-            "request": request,
-            "current_user": user,
-            "csrf_token": get_csrf_serializer().dumps({}),
-            "active_page": "action_logs",
-            "user_prefs": user_prefs,
-        },
+        request,
+        user_prefs=user_prefs,
+        current_user=user,
+        csrf_token=get_csrf_serializer().dumps({}),
+        active_page="action_logs",
     )
 
 

@@ -457,6 +457,7 @@ class ScanWorker:
 
         # 注入输出语言指令 / Inject output language directive
         from backend.core.config import get_settings as _get_settings
+
         _settings = _get_settings()
         scan_system_prompt = SCAN_SYSTEM_PROMPT
         output_lang = _settings.output_language

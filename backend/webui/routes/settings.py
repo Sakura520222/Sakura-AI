@@ -55,7 +55,12 @@ async def save_settings(
     """保存个人设置"""
     # 验证参数范围
     if items_per_page not in (10, 20, 50, 100):
-        return toast_redirect("/webui/settings/", "toast.invalid_param", "error", lang=detect_language({"language": language}))
+        return toast_redirect(
+            "/webui/settings/",
+            "toast.invalid_param",
+            "error",
+            lang=detect_language({"language": language}),
+        )
 
     # 验证语言参数
     if language not in ("zh-CN", "en"):
@@ -83,7 +88,11 @@ async def save_settings(
     logger.info(
         f"WebUI 设置已更新: user={user['sub']}, items_per_page={items_per_page}, language={language}"
     )
-    return toast_redirect("/webui/settings/", "toast.settings_saved", lang=detect_language({"language": language}))
+    return toast_redirect(
+        "/webui/settings/",
+        "toast.settings_saved",
+        lang=detect_language({"language": language}),
+    )
 
 
 @router.get("/about")
