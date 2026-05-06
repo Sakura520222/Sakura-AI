@@ -597,6 +597,9 @@ async def general_config_page(
     )
 
     settings = get_settings()
+    from backend.webui.i18n import i18n as _i18n
+
+    lang = _i18n.detect_language(user_prefs)
     dynamic_groups = []
     for group_id, group_data in DYNAMIC_CONFIG_GROUPS.items():
         items = []
@@ -610,18 +613,50 @@ async def general_config_page(
                 mask_sensitive_value(value) if (is_sensitive and value) else value
             )
 
+            # Translate select options via i18n
+            raw_options = DYNAMIC_CONFIG_SELECT_OPTIONS.get(key, [])
+            translated_options = []
+            for opt in raw_options:
+                opt_key = f"config.option.{key}_{opt['value']}"
+                opt_label = _i18n.t(opt_key, lang=lang)
+                # Fallback to original label if key not found
+                translated_options.append(
+                    {
+                        "value": opt["value"],
+                        "label": opt_label if opt_key != opt_label else opt["label"],
+                    }
+                )
+
             items.append(
                 {
                     "key": key,
-                    "label": DYNAMIC_CONFIG_LABELS.get(key, key),
-                    "description": group_data.get("descriptions", {}).get(key, ""),
+                    "label": (
+                        translated_label
+                        if (
+                            translated_label := _i18n.t(
+                                f"config.label.{key}", lang=lang
+                            )
+                        )
+                        != f"config.label.{key}"
+                        else DYNAMIC_CONFIG_LABELS.get(key, key)
+                    ),
+                    "description": (
+                        ""
+                        if not group_data.get("descriptions", {}).get(key)
+                        else (
+                            translated
+                            if (translated := _i18n.t(f"config.desc.{key}", lang=lang))
+                            != f"config.desc.{key}"
+                            else group_data["descriptions"][key]
+                        )
+                    ),
                     "input_type": input_type,
                     "value": display_value,
                     "default": mask_sensitive_value(default_val)
                     if (is_sensitive and default_val)
                     else default_val,
                     "sensitive": is_sensitive,
-                    "select_options": DYNAMIC_CONFIG_SELECT_OPTIONS.get(key, []),
+                    "select_options": translated_options,
                     "min_val": DYNAMIC_CONFIG_RANGES.get(key, (None, None))[0],
                     "max_val": DYNAMIC_CONFIG_RANGES.get(key, (None, None))[1],
                 }
@@ -629,7 +664,16 @@ async def general_config_page(
         dynamic_groups.append(
             {
                 "id": group_id,
-                "label": group_data["label"],
+                "label": (
+                    translated_group
+                    if (
+                        translated_group := _i18n.t(
+                            f"config.group.{group_id}", lang=lang
+                        )
+                    )
+                    != f"config.group.{group_id}"
+                    else group_data["label"]
+                ),
                 "icon": group_data.get("icon", ""),
                 "fields": items,
             }
