@@ -23,10 +23,10 @@
         <!-- 日期范围 -->
         <input type="date" name="start_date" value="{{ start_date }}"
                class="px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-sm focus:ring-2 focus:ring-pink-500 focus:border-transparent outline-none"
-               placeholder="开始日期">
+               placeholder="{{ _('common.created_at') }}">
         <input type="date" name="end_date" value="{{ end_date }}"
                class="px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-sm focus:ring-2 focus:ring-pink-500 focus:border-transparent outline-none"
-               placeholder="结束日期">
+               placeholder="{{ _('common.updated_at') }}">
 
         <!-- 搜索按钮 -->
         <button type="submit"
@@ -43,11 +43,11 @@
         <table class="w-full">
             <thead class="bg-gray-50 dark:bg-gray-700/50">
                 <tr>
-                    <th class="px-5 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">时间</th>
+                    <th class="px-5 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">{{ _('billing.time') }}</th>
                     <th class="px-5 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">{{ _('action_log.user') }}</th>
                     <th class="px-5 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">{{ _('action_log.action') }}</th>
-                    <th class="px-5 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">目标</th>
-                    <th class="px-5 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">详情</th>
+                    <th class="px-5 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">{{ _('action_log.target') }}</th>
+                    <th class="px-5 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">{{ _('action_log.detail') }}</th>
                 </tr>
             </thead>
             <tbody class="divide-y divide-gray-200 dark:divide-gray-700">
@@ -57,7 +57,7 @@
                         {{ log.created_at.strftime('%Y-%m-%d %H:%M:%S') if log.created_at else '-' }}
                     </td>
                     <td class="px-5 py-3 text-sm">
-                        {{ admin_name or ('ID:' ~ log.admin_id) if log.admin_id else '已删除用户' }}
+                        {{ admin_name or ('ID:' ~ log.admin_id) if log.admin_id else _('billing.deleted_user') }}
                     </td>
                     <td class="px-5 py-3">
                         <span class="inline-flex items-center px-2.5 py-1 rounded-full text-xs font-medium
@@ -96,7 +96,7 @@
             {% if page > 1 %}
             <a href="#" onclick="loadActionLogPage({{ page - 1 }}); return false;"
                class="px-3 py-1.5 rounded-lg text-sm border border-gray-300 dark:border-gray-600 hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors">
-                上一页
+                {{ _('billing.prev_page') }}
             </a>
             {% endif %}
 
@@ -126,7 +126,7 @@
             {% if page < total_pages %}
             <a href="#" onclick="loadActionLogPage({{ page + 1 }}); return false;"
                class="px-3 py-1.5 rounded-lg text-sm border border-gray-300 dark:border-gray-600 hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors">
-                下一页
+                {{ _('billing.next_page') }}
             </a>
             {% endif %}
         </div>
