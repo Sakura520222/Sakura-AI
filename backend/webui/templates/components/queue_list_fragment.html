@@ -2,18 +2,18 @@
 <!-- 过滤栏 -->
 <form id="queue-filter-form" class="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 shadow-sm p-4">
     <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3">
-        <input type="text" name="search" value="{{ search }}" placeholder="搜索 PR 标题..."
+        <input type="text" name="search" value="{{ search }}" placeholder="{{ _('common.search') }}..."
                class="col-span-1 sm:col-span-2 lg:col-span-1 px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-white text-sm placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-pink-500 focus:border-transparent">
 
         <select name="repo" class="px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-white text-sm focus:outline-none focus:ring-2 focus:ring-pink-500 focus:border-transparent">
-            <option value="">全部仓库</option>
+            <option value="">{{ _('common.all') }} {{ _('pr.repo') }}</option>
             {% for r in active_repos %}
             <option value="{{ r }}" {% if r == repo %}selected{% endif %}>{{ r }}</option>
             {% endfor %}
         </select>
 
         <select name="status" class="px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-white text-sm focus:outline-none focus:ring-2 focus:ring-pink-500 focus:border-transparent">
-            <option value="">全部状态</option>
+            <option value="">{{ _('common.all') }} {{ _('common.status') }}</option>
             <option value="pending" {% if status == 'pending' %}selected{% endif %}>待处理</option>
             <option value="processing" {% if status == 'processing' %}selected{% endif %}>处理中</option>
             <option value="completed" {% if status == 'completed' %}selected{% endif %}>已完成</option>
@@ -41,8 +41,8 @@
             <thead>
                 <tr class="border-b border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800/50">
                     <th class="text-left px-4 py-3 font-medium text-gray-500 dark:text-gray-400">PR</th>
-                    <th class="text-left px-4 py-3 font-medium text-gray-500 dark:text-gray-400 hidden md:table-cell">仓库</th>
-                    <th class="text-left px-4 py-3 font-medium text-gray-500 dark:text-gray-400">状态</th>
+                    <th class="text-left px-4 py-3 font-medium text-gray-500 dark:text-gray-400 hidden md:table-cell">{{ _('pr.repo') }}</th>
+                    <th class="text-left px-4 py-3 font-medium text-gray-500 dark:text-gray-400">{{ _('common.status') }}</th>
                     <th class="text-left px-4 py-3 font-medium text-gray-500 dark:text-gray-400 hidden lg:table-cell">创建时间</th>
                     <th class="text-left px-4 py-3 font-medium text-gray-500 dark:text-gray-400 hidden lg:table-cell">完成时间</th>
                     <th class="text-left px-4 py-3 font-medium text-gray-500 dark:text-gray-400 hidden xl:table-cell">耗时</th>
@@ -103,7 +103,7 @@
     {% if total_pages > 1 %}
     <div class="px-5 py-3 border-t border-gray-200 dark:border-gray-700 flex items-center justify-between">
         <p class="text-sm text-gray-500 dark:text-gray-400">
-            共 {{ total }} 条，第 {{ page }}/{{ total_pages }} 页
+            {{ _('common.total') }} {{ total }} {{ _('common.items') }}, {{ _('common.page') }} {{ page }}/{{ total_pages }}
         </p>
         <div class="flex gap-1">
             {% if page > 1 %}

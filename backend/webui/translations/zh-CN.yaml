@@ -37,6 +37,10 @@ common:
   updated_at: "更新时间"
   no_data: "暂无数据"
   coming_soon: "即将推出"
+  total: "共"
+  items: "条"
+  page: "第"
+  page_of: "页"
   view_all: "查看全部"
   more: "更多"
   success: "操作成功"
@@ -45,6 +49,10 @@ common:
   info: "提示"
   are_you_sure: "确定要执行此操作吗？"
   confirm_action: "确认操作"
+  or: "或"
+  pending: "待处理"
+  processing: "处理中"
+  cache: "缓存与队列"
 
 # ========== 认证 / Auth ==========
 auth:
@@ -92,6 +100,7 @@ dashboard:
   approved: "已通过"
   changes_requested: "请求变更"
   commented: "仅评论"
+  processing: "审查中"
   this_month: "本月"
   this_week: "本周"
   today: "今天"
@@ -123,6 +132,10 @@ pr:
   no_inline_comments: "暂无行内评论"
   view_files: "查看变更文件"
   view_detail: "查看详情"
+  approved: "已通过"
+  changes_requested: "需修改"
+  commented: "评论"
+  processing: "审查中"
 
 # ========== Issue 分析 / Issue Analysis ==========
 issue:

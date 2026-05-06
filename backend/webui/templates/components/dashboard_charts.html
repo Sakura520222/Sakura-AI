@@ -4,14 +4,14 @@
     <div class="grid grid-cols-1 lg:grid-cols-3 gap-4">
         <!-- 审查趋势 -->
         <div class="lg:col-span-2 glass rounded-2xl border border-sakura-200/50 dark:border-sakura-800/30 shadow-sm p-5">
-            <h3 class="text-sm font-semibold text-gray-700 dark:text-gray-300 mb-4">审查趋势（近 30 天）</h3>
+            <h3 class="text-sm font-semibold text-gray-700 dark:text-gray-300 mb-4">{{ _('dashboard.recent_reviews') }}（30d）</h3>
             <div class="relative h-64">
                 <canvas id="trendChart"></canvas>
             </div>
         </div>
         <!-- 决策分布 -->
         <div class="glass rounded-2xl border border-sakura-200/50 dark:border-sakura-800/30 shadow-sm p-5">
-            <h3 class="text-sm font-semibold text-gray-700 dark:text-gray-300 mb-4">审查决策分布</h3>
+            <h3 class="text-sm font-semibold text-gray-700 dark:text-gray-300 mb-4">{{ _('pr.review_status') }}</h3>
             <div class="relative h-64 flex items-center justify-center">
                 <canvas id="decisionChart"></canvas>
             </div>
@@ -20,14 +20,14 @@
     <!-- 下排：仓库排行 + Token 趋势 -->
     <div class="grid grid-cols-1 lg:grid-cols-2 gap-4">
         <div class="glass rounded-2xl border border-sakura-200/50 dark:border-sakura-800/30 shadow-sm p-5">
-            <h3 class="text-sm font-semibold text-gray-700 dark:text-gray-300 mb-4">仓库审查量 Top 10</h3>
+            <h3 class="text-sm font-semibold text-gray-700 dark:text-gray-300 mb-4">{{ _('pr.repo') }} Top 10</h3>
             <div class="relative h-64">
                 <canvas id="repoChart"></canvas>
             </div>
         </div>
         <!-- Token 消耗趋势 -->
         <div class="glass rounded-2xl border border-sakura-200/50 dark:border-sakura-800/30 shadow-sm p-5">
-            <h3 class="text-sm font-semibold text-gray-700 dark:text-gray-300 mb-4">Token 消耗趋势（近 30 天）</h3>
+            <h3 class="text-sm font-semibold text-gray-700 dark:text-gray-300 mb-4">Token（30d）</h3>
             <div class="relative h-64">
                 <canvas id="tokenChart"></canvas>
             </div>

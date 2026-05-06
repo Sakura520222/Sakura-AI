@@ -10,7 +10,7 @@
             </div>
             <div>
                 <p class="text-2xl font-bold text-gray-900 dark:text-white">{{ pending }}</p>
-                <p class="text-xs text-gray-500 dark:text-gray-400">待处理</p>
+                <p class="text-xs text-gray-500 dark:text-gray-400">{{ _('queue.pending') }}</p>
             </div>
         </div>
     </div>
@@ -26,7 +26,7 @@
             </div>
             <div>
                 <p class="text-2xl font-bold text-sakura-600 dark:text-sakura-400">{{ processing }}</p>
-                <p class="text-xs text-gray-500 dark:text-gray-400">处理中</p>
+                <p class="text-xs text-gray-500 dark:text-gray-400">{{ _('queue.processing') }}</p>
             </div>
         </div>
     </div>
@@ -41,7 +41,7 @@
             </div>
             <div>
                 <p class="text-2xl font-bold text-green-600 dark:text-green-400">{{ completed }}</p>
-                <p class="text-xs text-gray-500 dark:text-gray-400">已完成</p>
+                <p class="text-xs text-gray-500 dark:text-gray-400">{{ _('queue.completed') }}</p>
             </div>
         </div>
     </div>
@@ -56,7 +56,7 @@
             </div>
             <div>
                 <p class="text-2xl font-bold text-red-600 dark:text-red-400">{{ failed }}</p>
-                <p class="text-xs text-gray-500 dark:text-gray-400">失败</p>
+                <p class="text-xs text-gray-500 dark:text-gray-400">{{ _('common.error') }}</p>
             </div>
         </div>
     </div>
@@ -71,7 +71,7 @@
             </div>
             <div>
                 <p class="text-2xl font-bold text-purple-600 dark:text-purple-400">{{ avg_duration }}</p>
-                <p class="text-xs text-gray-500 dark:text-gray-400">平均耗时</p>
+                <p class="text-xs text-gray-500 dark:text-gray-400">{{ _('common.description') }}</p>
             </div>
         </div>
     </div>

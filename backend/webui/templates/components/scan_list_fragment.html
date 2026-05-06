@@ -3,10 +3,10 @@
 <!-- 筛选表单 -->
 <form id="scan-filter-form" class="flex flex-wrap gap-2 mb-4"
       hx-get="/webui/scans/list-fragment" hx-target="#scan-list-container" hx-swap="innerHTML" hx-trigger="submit">
-    <input type="text" name="search" value="{{ search }}" placeholder="搜索仓库..."
+    <input type="text" name="search" value="{{ search }}" placeholder="{{ _('common.search') }}..."
            class="px-3 py-1.5 text-sm border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 focus:ring-2 focus:ring-pink-500 focus:border-transparent">
     <select name="status" class="px-3 py-1.5 text-sm border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 focus:ring-2 focus:ring-pink-500">
-        <option value="">全部状态</option>
+        <option value="">{{ _('common.all') }} {{ _('common.status') }}</option>
         <option value="completed" {% if status == 'completed' %}selected{% endif %}>已完成</option>
         <option value="failed" {% if status == 'failed' %}selected{% endif %}>失败</option>
         <option value="indexing" {% if status == 'indexing' %}selected{% endif %}>索引中</option>
@@ -85,7 +85,7 @@
     {% if total_pages > 1 %}
     <div class="px-5 py-3 border-t border-gray-200 dark:border-gray-700 flex items-center justify-between">
         <p class="text-sm text-gray-500 dark:text-gray-400">
-            共 {{ total }} 条，第 {{ page }}/{{ total_pages }} 页
+            {{ _('common.total') }} {{ total }} {{ _('common.items') }}, {{ _('common.page') }} {{ page }}/{{ total_pages }}
         </p>
         <div class="flex gap-1">
             {% if page > 1 %}
@@ -125,7 +125,7 @@
         <svg class="w-12 h-12 mx-auto mb-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"/>
         </svg>
-        <p>暂无扫描记录</p>
+        <p>{{ _('common.no_data') }}</p>
         <p class="text-sm mt-1">点击右上角「立即扫描」开始第一次扫描</p>
     </div>
     {% endif %}

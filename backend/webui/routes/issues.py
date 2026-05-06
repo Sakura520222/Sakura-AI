@@ -39,8 +39,6 @@ async def issue_list_page(
         csrf_token=get_csrf_serializer().dumps({}),
         active_page="issues",
     )
-        },
-    )
 
 
 @router.get("/list-fragment")

@@ -58,7 +58,7 @@
     {% if total_pages > 1 %}
     <div class="px-5 py-3 border-t border-gray-200 dark:border-gray-700 flex items-center justify-between">
         <p class="text-sm text-gray-500 dark:text-gray-400">
-            共 {{ total }} 条，第 {{ page }}/{{ total_pages }} 页
+            {{ _('common.total') }} {{ total }} {{ _('common.items') }}, {{ _('common.page') }} {{ page }}/{{ total_pages }}
         </p>
         <div class="flex gap-1">
             {% if page > 1 %}
