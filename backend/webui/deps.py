@@ -20,6 +20,7 @@ from backend.models.database import PRReview
 from backend.models.database import WebUIConfig
 from backend.webui.auth import decode_access_token
 from backend.services.payment_service import is_payment_enabled
+from backend.webui.i18n import make_translation_func
 
 
 # ========== 模板引擎 ==========
@@ -31,6 +32,8 @@ def get_templates() -> Jinja2Templates:
     # get_settings() returns the cached singleton updated in place by dynamic config.
     templates.env.globals["settings"] = get_settings()
     templates.env.filters["format_duration"] = _format_duration_filter
+    # i18n: 注入默认翻译函数（实际语言由模板上下文中的 _ 覆盖）
+    templates.env.globals["_"] = make_translation_func("zh-CN")
     return templates
 
 
@@ -53,6 +56,36 @@ def _format_duration_filter(seconds) -> str:
         return f"{minutes}m {remaining_seconds}s"
     hours, remaining_minutes = divmod(minutes, 60)
     return f"{hours}h {remaining_minutes}m"
+
+
+def render_template(
+    template_name: str,
+    request: Request,
+    user_prefs: Optional[dict] = None,
+    **context: Any,
+):
+    """渲染模板并自动注入 i18n 翻译函数
+
+    所有路由应使用此函数代替直接调用 templates.TemplateResponse，
+    以确保模板中的 _() 函数绑定到正确的语言。
+
+    Args:
+        template_name: 模板文件名
+        request: FastAPI Request 对象
+        user_prefs: 用户偏好（包含 language 字段）
+        **context: 传递给模板的额外上下文变量
+    """
+    from backend.webui.i18n import detect_language
+
+    lang = detect_language(user_prefs)
+    context["_"] = make_translation_func(lang)
+    context["lang"] = lang
+    context["supported_languages"] = ["zh-CN", "en"]
+    context["request"] = request
+    if user_prefs:
+        context["user_prefs"] = user_prefs
+
+    return get_templates().TemplateResponse(template_name, context)
 
 
 def build_review_search_filter(search: str):
@@ -175,8 +208,10 @@ def error_page(
     user_prefs: dict | None = None,
 ) -> HTMLResponse:
     """渲染统一的错误页面"""
-    templates = get_templates()
-    return templates.TemplateResponse(
+    from backend.webui.i18n import detect_language
+
+    lang = detect_language(user_prefs)
+    return get_templates().TemplateResponse(
         "error.html",
         {
             "request": request,
@@ -186,6 +221,9 @@ def error_page(
             "current_user": user,
             "csrf_token": get_csrf_serializer().dumps({}),
             "user_prefs": user_prefs or {"language": "zh-CN", "items_per_page": 20},
+            "_": make_translation_func(lang),
+            "lang": lang,
+            "supported_languages": ["zh-CN", "en"],
         },
         status_code=status_code,
     )

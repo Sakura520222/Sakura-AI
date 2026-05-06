@@ -29,6 +29,7 @@ from backend.webui.deps import (
     require_csrf,
     get_user_preferences,
     toast_redirect,
+    render_template,
 )
 from backend.webui.helpers.admin_log import log_admin_action
 
@@ -138,22 +139,20 @@ async def strategies_page(
     config_data = get_strategy_config().config
     tab = request.query_params.get("tab", "strategies")
 
-    return templates.TemplateResponse(
+    return render_template(
         "config_strategies.html",
-        {
-            "request": request,
-            "current_user": user,
-            "csrf_token": get_csrf_serializer().dumps({}),
-            "active_page": "config_strategies",
-            "user_prefs": user_prefs,
-            "strategies": config_data.get("strategies", {}),
-            "file_filters": config_data.get("file_filters", {}),
-            "batch": config_data.get("batch", {}),
-            "context_enhancement": config_data.get("context_enhancement", {}),
-            "review_policy": config_data.get("review_policy", {}),
-            "pr_dependency_graph": config_data.get("pr_dependency_graph", {}),
-            "active_tab": tab,
-        },
+        request,
+        user_prefs=user_prefs,
+        current_user=user,
+        csrf_token=get_csrf_serializer().dumps({}),
+        active_page="config_strategies",
+        strategies=config_data.get("strategies", {}),
+        file_filters=config_data.get("file_filters", {}),
+        batch=config_data.get("batch", {}),
+        context_enhancement=config_data.get("context_enhancement", {}),
+        review_policy=config_data.get("review_policy", {}),
+        pr_dependency_graph=config_data.get("pr_dependency_graph", {}),
+        active_tab=tab,
     )
 
 
@@ -333,18 +332,16 @@ async def labels_page(
 ):
     """渲染标签配置页"""
     label_config = get_label_config()
-    return templates.TemplateResponse(
+    return render_template(
         "config_labels.html",
-        {
-            "request": request,
-            "current_user": user,
-            "csrf_token": get_csrf_serializer().dumps({}),
-            "active_page": "config_labels",
-            "user_prefs": user_prefs,
-            "labels": label_config.get_labels(),
-            "recommendation": label_config.get_recommendation_settings(),
-            "conflict_rules": label_config.get_conflict_rules(),
-        },
+        request,
+        user_prefs=user_prefs,
+        current_user=user,
+        csrf_token=get_csrf_serializer().dumps({}),
+        active_page="config_labels",
+        labels=label_config.get_labels(),
+        recommendation=label_config.get_recommendation_settings(),
+        conflict_rules=label_config.get_conflict_rules(),
     )
 
 
@@ -597,18 +594,16 @@ async def general_config_page(
 
     from backend.webui.routes.auth import APP_VERSION
 
-    return templates.TemplateResponse(
+    return render_template(
         "config_general.html",
-        {
-            "request": request,
-            "current_user": user,
-            "csrf_token": get_csrf_serializer().dumps({}),
-            "active_page": "config_general",
-            "user_prefs": user_prefs,
-            "configs": basic_configs,
-            "dynamic_groups": dynamic_groups,
-            "app_version": APP_VERSION,
-        },
+        request,
+        user_prefs=user_prefs,
+        current_user=user,
+        csrf_token=get_csrf_serializer().dumps({}),
+        active_page="config_general",
+        configs=basic_configs,
+        dynamic_groups=dynamic_groups,
+        app_version=APP_VERSION,
     )
 
 

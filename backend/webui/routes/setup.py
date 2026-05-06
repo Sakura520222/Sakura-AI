@@ -16,7 +16,7 @@ from backend.core.bootstrap import (
     write_connection_config,
 )
 from backend.core.setup_service import setup_service
-from backend.webui.deps import get_templates
+from backend.webui.deps import get_templates, render_template
 
 router = APIRouter(prefix="/setup", tags=["Setup Wizard"])
 templates = get_templates()
@@ -39,13 +39,11 @@ async def setup_page(request: Request):
     current_step = await get_current_step()
     missing = await get_missing_fields()
 
-    return templates.TemplateResponse(
+    return render_template(
         "setup_wizard.html",
-        {
-            "request": request,
-            "current_step": current_step,
-            "missing_fields": missing,
-        },
+        request,
+        current_step=current_step,
+        missing_fields=missing,
     )
 
 

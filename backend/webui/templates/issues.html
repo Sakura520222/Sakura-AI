@@ -1,13 +1,13 @@
 {% extends "base.html" %}
 
-{% block title %}Issue 分析 - Sakura AI Reviewer{% endblock %}
+{% block title %}{{ _('issue.title') }} - Sakura AI Reviewer{% endblock %}
 
 {% block content %}
 <div class="space-y-4">
     <!-- 页面标题 -->
     <div>
-        <h1 class="text-2xl font-bold">Issue 分析</h1>
-        <p class="mt-1 text-sm text-gray-500 dark:text-gray-400">管理和查看所有 Issue 智能分析记录</p>
+        <h1 class="text-2xl font-bold">{{ _('issue.title') }}</h1>
+        <p class="mt-1 text-sm text-gray-500 dark:text-gray-400">{{ _('issue.list') }}</p>
     </div>
 
     <!-- 统计卡片 -->

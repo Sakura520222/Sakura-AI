@@ -15,6 +15,7 @@ from backend.webui.deps import (
     get_user_preferences,
     require_payment_enabled,
     toast_redirect,
+    render_template,
 )
 
 router = APIRouter(
@@ -54,21 +55,19 @@ async def billing_index(
         user["user_id"], limit=per_page, offset=offset
     )
 
-    return templates.TemplateResponse(
+    return render_template(
         "billing/index.html",
-        {
-            "request": request,
-            "current_user": user,
-            "csrf_token": get_csrf_serializer().dumps({}),
-            "active_page": "billing",
-            "user_prefs": user_prefs,
-            "plans": plans,
-            "db_user": db_user,
-            "orders": orders,
-            "total": total,
-            "page": page,
-            "per_page": per_page,
-        },
+        request,
+        user_prefs=user_prefs,
+        current_user=user,
+        csrf_token=get_csrf_serializer().dumps({}),
+        active_page="billing",
+        plans=plans,
+        db_user=db_user,
+        orders=orders,
+        total=total,
+        page=page,
+        per_page=per_page,
     )
 
 
@@ -110,16 +109,14 @@ async def admin_plans(
     svc = PaymentService(db)
     plans = await svc.list_plans(active_only=False)
 
-    return templates.TemplateResponse(
+    return render_template(
         "billing/admin_plans.html",
-        {
-            "request": request,
-            "current_user": user,
-            "csrf_token": get_csrf_serializer().dumps({}),
-            "active_page": "billing_admin",
-            "user_prefs": user_prefs,
-            "plans": plans,
-        },
+        request,
+        user_prefs=user_prefs,
+        current_user=user,
+        csrf_token=get_csrf_serializer().dumps({}),
+        active_page="billing_admin",
+        plans=plans,
     )
 
 
@@ -207,20 +204,18 @@ async def admin_codes(
     offset = (page - 1) * per_page
     codes, total = await svc.list_redeem_codes(limit=per_page, offset=offset)
 
-    return templates.TemplateResponse(
+    return render_template(
         "billing/admin_codes.html",
-        {
-            "request": request,
-            "current_user": user,
-            "csrf_token": get_csrf_serializer().dumps({}),
-            "active_page": "billing_admin",
-            "user_prefs": user_prefs,
-            "plans": plans,
-            "codes": codes,
-            "total": total,
-            "page": page,
-            "per_page": per_page,
-        },
+        request,
+        user_prefs=user_prefs,
+        current_user=user,
+        csrf_token=get_csrf_serializer().dumps({}),
+        active_page="billing_admin",
+        plans=plans,
+        codes=codes,
+        total=total,
+        page=page,
+        per_page=per_page,
     )
 
 

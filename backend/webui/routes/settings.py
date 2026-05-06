@@ -15,6 +15,7 @@ from backend.webui.deps import (
     get_user_preferences,
     toast_redirect,
     invalidate_user_prefs_cache,
+    render_template,
 )
 
 router = APIRouter(prefix="/settings", tags=["WebUI Settings"])
@@ -29,16 +30,15 @@ async def settings_page(
     user_prefs: dict = Depends(get_user_preferences),
 ):
     """渲染个人设置页面"""
-    return templates.TemplateResponse(
+    return render_template(
         "settings.html",
-        {
-            "request": request,
-            "current_user": user,
-            "csrf_token": get_csrf_serializer().dumps({}),
-            "active_page": "settings",
-            "user_prefs": user_prefs,
-            "items_per_page": user_prefs["items_per_page"],
-        },
+        request,
+        user_prefs=user_prefs,
+        current_user=user,
+        csrf_token=get_csrf_serializer().dumps({}),
+        active_page="settings",
+        items_per_page=user_prefs["items_per_page"],
+        language=user_prefs["language"],
     )
 
 
@@ -49,11 +49,16 @@ async def save_settings(
     user: dict = Depends(require_auth),
     csrf_token: str = Depends(require_csrf),
     items_per_page: int = Form(...),
+    language: str = Form(default="zh-CN"),
 ):
     """保存个人设置"""
     # 验证参数范围
     if items_per_page not in (10, 20, 50, 100):
-        return toast_redirect("/webui/settings/", "参数值无效", "error")
+        return toast_redirect("/webui/settings/", "Invalid parameter value", "error")
+
+    # 验证语言参数
+    if language not in ("zh-CN", "en"):
+        language = "zh-CN"
 
     # Upsert 配置
     result = await db.execute(
@@ -62,10 +67,12 @@ async def save_settings(
     config = result.scalar_one_or_none()
     if config:
         config.items_per_page = items_per_page
+        config.language = language
     else:
         config = WebUIConfig(
             user_id=user["user_id"],
             items_per_page=items_per_page,
+            language=language,
         )
         db.add(config)
     await db.commit()
@@ -73,9 +80,9 @@ async def save_settings(
     invalidate_user_prefs_cache(user["user_id"])
 
     logger.info(
-        f"WebUI 设置已更新: user={user['sub']}, items_per_page={items_per_page}"
+        f"WebUI 设置已更新: user={user['sub']}, items_per_page={items_per_page}, language={language}"
     )
-    return toast_redirect("/webui/settings/", "设置已保存")
+    return toast_redirect("/webui/settings/", "Settings saved")
 
 
 @router.get("/about")
@@ -88,15 +95,13 @@ async def about_page(
     from datetime import datetime
     from backend.webui.routes.auth import APP_VERSION
 
-    return templates.TemplateResponse(
+    return render_template(
         "about.html",
-        {
-            "request": request,
-            "current_user": user,
-            "csrf_token": get_csrf_serializer().dumps({}),
-            "active_page": "about",
-            "user_prefs": user_prefs,
-            "app_version": APP_VERSION,
-            "build_date": datetime.utcnow().strftime("%Y-%m-%d"),
-        },
+        request,
+        user_prefs=user_prefs,
+        current_user=user,
+        csrf_token=get_csrf_serializer().dumps({}),
+        active_page="about",
+        app_version=APP_VERSION,
+        build_date=datetime.utcnow().strftime("%Y-%m-%d"),
     )

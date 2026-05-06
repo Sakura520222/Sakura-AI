@@ -455,8 +455,21 @@ class ScanWorker:
         # 3. 构建消息
         from backend.services.scan_prompt_builder import SCAN_SYSTEM_PROMPT
 
+        # 注入输出语言指令 / Inject output language directive
+        from backend.core.config import get_settings as _get_settings
+        _settings = _get_settings()
+        scan_system_prompt = SCAN_SYSTEM_PROMPT
+        output_lang = _settings.output_language
+        if output_lang:
+            language_names = {
+                "zh-CN": "中文 (Simplified Chinese)",
+                "en": "English",
+            }
+            lang_display = language_names.get(output_lang, output_lang)
+            scan_system_prompt += f"\n\n## Output Language\n**Important**: You MUST write all scan findings, summaries, and suggestions in {lang_display}."
+
         messages = [
-            {"role": "system", "content": SCAN_SYSTEM_PROMPT},
+            {"role": "system", "content": scan_system_prompt},
             {
                 "role": "user",
                 "content": (
