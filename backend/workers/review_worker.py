@@ -957,6 +957,14 @@ class ReviewWorker:
             # 5. 获取行内评论
             inline_comments = review_result.get("inline_comments", [])
 
+            # 5.0 检查行内评论开关（关闭时清空，保留 AI 输出但跳过提交）
+            if not settings.enable_inline_comments:
+                if inline_comments:
+                    logger.info(
+                        f"[{task_id}] 行内评论功能已关闭，跳过 {len(inline_comments)} 条行内评论"
+                    )
+                inline_comments = []
+
             # 5.1 验证和过滤行内评论（使用 Diff 安全区）
             # 这一步确保文件路径正确匹配 PR 中的实际路径，避免 "Path could not be resolved" 错误
             if inline_comments and analysis and analysis.changed_lines_map:

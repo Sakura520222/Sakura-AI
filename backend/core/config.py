@@ -252,6 +252,9 @@ class Settings(BaseSettings):
     code_chunk_size: int = 500  # 代码块大小（字符数）
     code_chunk_overlap: int = 50  # 代码块重叠大小
 
+    # 行内评论配置
+    enable_inline_comments: bool = True  # 是否启用行内评论
+
     # ========== 增量审查历史上下文配置 ==========
     enable_incremental_history_context: bool = True  # 是否启用增量审查历史上下文
     enable_pr_summary: bool = False  # 是否启用 PR 变更自动总结
@@ -611,6 +614,7 @@ DYNAMIC_CONFIG_GROUPS: OrderedDict[str, dict] = OrderedDict(
                 "keys": [
                     "max_file_count",
                     "max_line_count",
+                    "enable_inline_comments",
                 ],
             },
         ),
@@ -876,6 +880,7 @@ DYNAMIC_CONFIG_LABELS: dict[str, str] = {
     "max_file_count": "最大文件数",
     "max_line_count": "最大行数",
     "enable_incremental_history_context": "启用增量审查历史上下文",
+    "enable_inline_comments": "启用行内评论",
     "enable_pr_summary": "启用 PR 变更总结",
     "incremental_history_max_reviews": "历史审查轮数上限",
     "incremental_history_summary_max_tokens": "摘要生成最大 Token",
