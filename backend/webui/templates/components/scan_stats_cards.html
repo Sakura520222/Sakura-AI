@@ -1,18 +1,18 @@
 <!-- 扫描统计卡片 -->
 <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
     <!-- 总扫描数 -->
-    <div class="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 p-4">
+    <div class="glass rounded-2xl border border-sakura-200/50 dark:border-sakura-800/30 p-4 card-hover">
         <p class="text-xs text-gray-500 dark:text-gray-400">总扫描次数</p>
         <p class="text-2xl font-bold mt-1">{{ stats.total }}</p>
         <p class="text-xs text-gray-400 mt-1">
             <span class="text-green-500">{{ stats.completed }} 完成</span>
             {% if stats.failed %} · <span class="text-red-500">{{ stats.failed }} 失败</span>{% endif %}
-            {% if stats.running %} · <span class="text-blue-500">{{ stats.running }} 进行中</span>{% endif %}
+            {% if stats.running %} · <span class="text-sakura-500">{{ stats.running }} 进行中</span>{% endif %}
         </p>
     </div>
 
     <!-- 平均健康评分 -->
-    <div class="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 p-4">
+    <div class="glass rounded-2xl border border-sakura-200/50 dark:border-sakura-800/30 p-4 card-hover">
         <p class="text-xs text-gray-500 dark:text-gray-400">平均健康评分</p>
         <p class="text-2xl font-bold mt-1 {% if stats.avg_health >= 80 %}text-green-500{% elif stats.avg_health >= 60 %}text-yellow-500{% else %}text-red-500{% endif %}">
             {{ stats.avg_health }}/100
@@ -20,13 +20,13 @@
     </div>
 
     <!-- 总发现数 -->
-    <div class="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 p-4">
+    <div class="glass rounded-2xl border border-sakura-200/50 dark:border-sakura-800/30 p-4 card-hover">
         <p class="text-xs text-gray-500 dark:text-gray-400">总问题发现</p>
         <p class="text-2xl font-bold mt-1">{{ stats.total_findings }}</p>
     </div>
 
     <!-- 最近扫描 -->
-    <div class="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 p-4">
+    <div class="glass rounded-2xl border border-sakura-200/50 dark:border-sakura-800/30 p-4 card-hover">
         <p class="text-xs text-gray-500 dark:text-gray-400">最近扫描</p>
         <p class="text-sm font-medium mt-1">
             {% if stats.last_scan_time %}
