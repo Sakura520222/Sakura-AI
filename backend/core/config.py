@@ -785,6 +785,21 @@ DYNAMIC_CONFIG_GROUPS: OrderedDict[str, dict] = OrderedDict(
             },
         ),
         (
+            "i18n",
+            {
+                "label": "国际化配置",
+                "icon": "globe",
+                "descriptions": {
+                    "default_language": "WebUI 默认界面语言（zh-CN / en）",
+                    "output_language": "AI 输出语言，为空时跟随用户界面语言，可设为 zh-CN 或 en 强制指定",
+                },
+                "keys": [
+                    "default_language",
+                    "output_language",
+                ],
+            },
+        ),
+        (
             "payment",
             {
                 "label": "付费配额配置",
@@ -824,6 +839,15 @@ DYNAMIC_CONFIG_SELECT_OPTIONS: dict[str, list[dict]] = {
     "rerank_provider": [
         {"value": "siliconflow", "label": "SiliconFlow"},
         {"value": "none", "label": "禁用"},
+    ],
+    "default_language": [
+        {"value": "zh-CN", "label": "简体中文"},
+        {"value": "en", "label": "English"},
+    ],
+    "output_language": [
+        {"value": "", "label": "跟随界面语言"},
+        {"value": "zh-CN", "label": "中文 (Simplified Chinese)"},
+        {"value": "en", "label": "English"},
     ],
 }
 
@@ -942,6 +966,20 @@ DYNAMIC_CONFIG_LABELS: dict[str, str] = {
     "sakura_auto_init": "自动初始化 .sakura/",
     "sakura_consolidation_partial_commit": "部分提交",
     "sakura_use_summary_model": "使用辅助模型",
+    # 国际化配置
+    "default_language": "默认界面语言",
+    "output_language": "AI 输出语言",
+    # URL 抓取配置
+    "fetch_url_enabled": "启用 URL 抓取",
+    "fetch_url_timeout": "抓取超时（秒）",
+    "fetch_url_max_content_length": "最大内容长度",
+    "fetch_url_max_download_size": "最大下载大小（字节）",
+    "fetch_url_max_calls_per_session": "单次会话最大抓取次数",
+    "fetch_url_domain_policy": "域名过滤策略",
+    "fetch_url_domain_list": "域名列表",
+    "fetch_url_force_https": "强制 HTTPS",
+    # Issue 标题改写
+    "issue_auto_rewrite_title": "自动改写 Issue 标题",
 }
 
 # 内存 TTL 缓存（进程级，多 Worker 部署时各进程独立，配置变更仅当前进程可见）
