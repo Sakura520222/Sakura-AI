@@ -5,22 +5,47 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>登录 - Sakura AI Reviewer</title>
     <script src="https://cdn.tailwindcss.com"></script>
-    <script>tailwind.config = { darkMode: 'class' }</script>
+    <script>
+        tailwind.config = {
+            darkMode: 'class',
+            theme: {
+                extend: {
+                    colors: {
+                        sakura: {
+                            50: '#fdf2f8', 100: '#fce7f3', 200: '#fbcfe8', 300: '#f9a8d4',
+                            400: '#f472b6', 500: '#ec4899', 600: '#db2777', 700: '#be185d',
+                            800: '#9d174d', 900: '#831843', 950: '#500724',
+                        },
+                    },
+                    fontFamily: {
+                        sans: ['"Inter"', 'system-ui', '-apple-system', '"Segoe UI"', 'sans-serif'],
+                    },
+                },
+            },
+        }
+    </script>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
     <script>
         if (localStorage.getItem('theme') === 'dark') document.documentElement.classList.add('dark');
     </script>
+    <style>
+        /* 樱花主题样式 — 共享自 components/sakura_theme_css.html */
+        {% include "components/sakura_theme_css.html" %}
+    </style>
 </head>
-<body class="bg-gray-50 dark:bg-gray-900 flex items-center justify-center min-h-screen">
+<body class="sakura-gradient-bg flex items-center justify-center min-h-screen font-sans">
     <div class="w-full max-w-md px-4">
         <!-- Logo -->
         <div class="text-center mb-8">
-            <span class="text-5xl">🌸</span>
-            <h1 class="mt-4 text-2xl font-bold text-gray-900 dark:text-white">Sakura AI Reviewer</h1>
-            <p class="mt-2 text-gray-500 dark:text-gray-400">GitHub PR 智能审查平台</p>
+            <span class="text-6xl inline-block sakura-logo-float">🌸</span>
+            <h1 class="mt-4 text-3xl font-extrabold bg-gradient-to-r from-sakura-600 to-purple-600 dark:from-sakura-400 dark:to-purple-400 bg-clip-text text-transparent">Sakura AI Reviewer</h1>
+            <p class="mt-2 text-gray-500 dark:text-gray-400 text-sm">GitHub PR 智能审查平台</p>
         </div>
 
         <!-- 登录卡片 -->
-        <div class="bg-white dark:bg-gray-800 rounded-2xl shadow-lg p-8 border border-gray-200 dark:border-gray-700">
+        <div class="glass rounded-2xl shadow-xl shadow-sakura-200/30 dark:shadow-sakura-950/30 p-8 border border-sakura-200/50 dark:border-sakura-800/30">
             {% if error %}
             <div class="mb-4 p-3 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg text-red-700 dark:text-red-400 text-sm">
                 {{ error }}
@@ -30,7 +55,7 @@
             {% if has_oauth %}
             <!-- GitHub OAuth 登录按钮 -->
             <a href="/webui/auth/github"
-               class="flex items-center justify-center gap-3 w-full py-3 px-4 bg-gray-900 dark:bg-white hover:bg-gray-800 dark:hover:bg-gray-100 text-white dark:text-gray-900 font-medium rounded-lg transition-all">
+               class="flex items-center justify-center gap-3 w-full py-3 px-4 bg-gradient-to-r from-gray-800 to-gray-900 dark:from-white dark:to-gray-100 hover:from-gray-700 hover:to-gray-800 dark:hover:from-gray-200 dark:hover:to-gray-100 text-white dark:text-gray-900 font-medium rounded-xl transition-all shadow-lg shadow-gray-800/25 dark:shadow-white/10">
                 <!-- GitHub Logo SVG -->
                 <svg class="w-5 h-5" fill="currentColor" viewBox="0 0 24 24">
                     <path d="M12 0c-6.626 0-12 5.373-12 12 0 5.302 3.438 9.8 8.207 11.387.599.111.793-.261.793-.577v-2.234c-3.338.726-4.033-1.416-4.033-1.416-.546-1.387-1.333-1.756-1.333-1.756-1.089-.745.083-.729.083-.729 1.205.084 1.839 1.237 1.839 1.237 1.07 1.834 2.807 1.304 3.492.997.107-.775.418-1.305.762-1.604-2.665-.305-5.467-1.334-5.467-5.931 0-1.311.469-2.381 1.236-3.221-.124-.303-.535-1.524.117-3.176 0 0 1.008-.322 3.301 1.23.957-.266 1.983-.399 3.003-.404 1.02.005 2.047.138 3.006.404 2.291-1.552 3.297-1.23 3.297-1.23.653 1.653.242 2.874.118 3.176.77.84 1.235 1.911 1.235 3.221 0 4.609-2.807 5.624-5.479 5.921.43.372.823 1.102.823 2.222v3.293c0 .319.192.694.801.576 4.765-1.589 8.199-6.086 8.199-11.386 0-6.627-5.373-12-12-12z"/>
@@ -49,7 +74,7 @@
             </div>
 
             <a href="{{ telegram_deep_link }}" target="_blank"
-               class="flex items-center justify-center gap-3 w-full py-3 px-4 bg-[#0088cc] hover:bg-[#006699] text-white font-medium rounded-lg transition-all">
+               class="flex items-center justify-center gap-3 w-full py-3 px-4 bg-gradient-to-r from-[#0088cc] to-[#00a8e8] hover:from-[#006699] hover:to-[#0088cc] text-white font-medium rounded-xl transition-all shadow-lg shadow-[#0088cc]/25">
                 <svg class="w-5 h-5" viewBox="0 0 24 24" fill="currentColor">
                     <path d="M11.944 0A12 12 0 0 0 0 12a12 12 0 0 0 12 12 12 12 0 0 0 12-12A12 12 0 0 0 12 0a12 12 0 0 0-.056 0zm4.962 7.224c.1-.002.321.023.465.14a.506.506 0 0 1 .171.325c.016.093.036.306.02.472-.18 1.898-.962 6.502-1.36 8.627-.168.9-.499 1.201-.82 1.23-.696.065-1.225-.46-1.9-.902-1.056-.693-1.653-1.124-2.678-1.8-1.185-.78-.417-1.21.258-1.91.177-.184 3.247-2.977 3.307-3.23.007-.032.014-.15-.056-.212s-.174-.041-.249-.024c-.106.024-1.793 1.14-5.061 3.345-.48.33-.913.49-1.302.48-.428-.008-1.252-.241-1.865-.44-.752-.245-1.349-.374-1.297-.789.027-.216.325-.437.893-.663 3.498-1.524 5.83-2.529 6.998-3.014 3.332-1.386 4.025-1.627 4.476-1.635z"/>
                 </svg>

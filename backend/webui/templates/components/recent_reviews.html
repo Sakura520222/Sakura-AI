@@ -1,14 +1,14 @@
 <!-- 最近审查列表（HTMX 片段） -->
 <div id="recent-reviews">
     {% if reviews %}
-    <div class="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 shadow-sm overflow-hidden">
-        <div class="px-5 py-4 border-b border-gray-200 dark:border-gray-700 flex items-center justify-between">
+    <div class="glass rounded-2xl border border-sakura-200/50 dark:border-sakura-800/30 shadow-sm overflow-hidden">
+        <div class="px-5 py-4 border-b border-sakura-200/50 dark:border-sakura-800/30 flex items-center justify-between">
             <h2 class="text-lg font-semibold">最近审查</h2>
-            <a href="/webui/pr/" class="text-sm text-pink-600 dark:text-pink-400 hover:underline">查看全部</a>
+            <a href="/webui/pr/" class="text-sm text-sakura-600 dark:text-sakura-400 hover:text-sakura-700 dark:hover:text-sakura-300 transition-colors">查看全部 →</a>
         </div>
-        <div class="divide-y divide-gray-200 dark:divide-gray-700">
+        <div class="divide-y divide-sakura-100/50 dark:divide-sakura-800/20">
             {% for r in reviews %}
-            <a href="/webui/pr/{{ r.id }}" class="flex items-center gap-4 px-5 py-3.5 hover:bg-gray-50 dark:hover:bg-gray-700/50 transition-colors">
+            <a href="/webui/pr/{{ r.id }}" class="flex items-center gap-4 px-5 py-3.5 hover:bg-sakura-50/50 dark:hover:bg-sakura-900/10 transition-colors">
                 <!-- 状态图标 -->
                 <div class="flex-shrink-0">
                     {% if r.status == "completed" and r.decision == "approve" %}
@@ -63,7 +63,7 @@
         </div>
     </div>
     {% else %}
-    <div class="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 shadow-sm p-12 text-center">
+    <div class="glass rounded-2xl border border-sakura-200/50 dark:border-sakura-800/30 shadow-sm p-12 text-center">
         <svg class="w-12 h-12 mx-auto text-gray-300 dark:text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/>
         </svg>
