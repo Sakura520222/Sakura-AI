@@ -64,6 +64,7 @@ Sakura AI Reviewer 是一款基于大语言模型的智能 GitHub 代码审查�
 - **异常消息透传风险**：直接向用户展示 `str(e)` 前须评估是否包含技术细节
 - **动态配置读取失败无可观测性**：`get_cached_config` 返回 `None` 时须记录警告日志
 - **i18n 增量审查盲区**：PR 声明 i18n 时必须扫描 JS 文件和所有 `toast_redirect` 调用点
+- **异常类缺少 user-facing message 属性**：自定义异常应内置 `user_message` 和 `log_message`，禁止调用方直接 `str(e)`
 
 ## 4. 审查中发现的重要模式
 
@@ -95,6 +96,7 @@ Sakura AI Reviewer 是一款基于大语言模型的智能 GitHub 代码审查�
 - **渐进式重构顺序**：先修复调用点，再提取公共函数，最后修正语义错误
 - **翻译键命名规范**：`toast.<action>_<outcome>` 风格统一
 - **异常处理分层不清**：业务异常未与展示层解耦，`str(e)` 直接透传
+- **增量审查的 i18n 翻译键存在性检查**：修改 `_('key')` 时必须验证对应 i18n 文件中该键存在
 
 ## 5. 团队约定和规范
 
@@ -126,7 +128,7 @@ Sakura AI Reviewer 是一款基于大语言模型的智能 GitHub 代码审查�
 - **新增纯视觉动画性能评估（major）**：飘落、bounce 须评估低端设备重绘/重排风险
 - **深色模式毛玻璃对比度验证（major）**：`bg-white/70` 须验证文字对比度 ≥ 4.5:1
 - **删除导入前全仓库引用搜索（minor）**：须确认无跨模块导入
-- **i18n 扫描完整性（major）**：扫描所有模板、路由 toast、JS 字符串、API 错误消息
+- **i18n 扫描完整性（major）**：扫描所有模板、路由 toast、JS 字符串、API 错误消息、`data-confirm` 属性
 - **`document.write` 禁止用于动态内容注入（major）**：改为 `x-text` 或 `textContent`
 - **toast 消息必须使用 i18n 函数（major）**：所有 `toast_redirect` 调用处须动态选择字符串
 - **异常消息透传审计（major）**：直接向用户展示 `str(e)` 前须评估是否包含技术细节
@@ -135,9 +137,13 @@ Sakura AI Reviewer 是一款基于大语言模型的智能 GitHub 代码审查�
 - **动态配置读取失败可观测性（minor）**：`get_cached_config` 返回 `None` 时须记录警告日志
 - **副本同步标记强制包含源位置行号（minor）**：复制代码时注释必须标注源文件路径+行号
 - **临时选择器必须标注预期移除版本或日期（minor）**：须注明“计划于 vX.X 移除”
-- **连续 3 轮未根治的问题自动升级严重度（major）**：相同问题即使有注释，从 suggestion 升为 major
+- **连续 3 轮未根治的问题自动升级严重度（major→critical）**：相同问题连续 3 轮被标记且未修复，当前 PR 应阻断合并，除非专门修复该问题
 - **跨模块导入私有符号必须通过公共访问函数（major）**：否则视为架构违规
 - **i18n PR 必须验证 YAML 翻译文件是否同时更新（major）**：新增 key 但未更新翻译文件标记 major
+- **异常类必须提供 user-facing message 属性（major）**：自定义异常应包含 `user_message`（支持 i18n 键）和 `log_message`
+- **代码注释语言不一致不标记 major**：注释语言风格问题最多为 minor 或 suggestion
+- **i18n 修复验证必须包含翻译键存在性检查（major）**：修改 `_('key')` 时须验证对应 i18n 文件中该键存在
+- **同一异常处理模式出现 ≥3 次须提取公共函数（minor）**
 - **语义版本验证（suggestion）**：检查变动幅度与版本号一致
 - **跨语言版本漂移标注（suggestion）**：Python + SQL 须标注风险
 - **测试必须验证异常路径被真正触发（minor）**：Mock 具体异常类型
@@ -155,6 +161,7 @@ Sakura AI Reviewer 是一款基于大语言模型的智能 GitHub 代码审查�
 - **Tailwind 类名选择器须标注脆弱性（minor）**：基于工具类名的 CSS 覆盖必须注释“脆弱，仅临时过渡”
 - **重复工具函数提取阈值（minor）**：同一辅助函数出现 ≥2 次必须提取到 `shared/utils`
 - **常量字典提取阈值（minor）**：同一常量字典出现 ≥2 次必须集中定义
+- **模板翻译键外不得硬编码标点符号（major）**：冒号、句号等须纳入翻译值
 
 ### suggestion 疲劳归档协议
 
@@ -179,10 +186,16 @@ Sakura AI Reviewer 是一款基于大语言模型的智能 GitHub 代码审查�
 - 增量审查中注释引用的任何符号须确认存在性，私有成员须标注稳定性风险
 - 任何 import 删除必须触发全仓库引用扫描
 - 连续多轮未修复的问题升级机制有效，建议增量审查输出“历史未解决问题清单”
-- i18n 增量审查须扫描所有 JS 文件和 `toast_redirect` 调用点，遗漏标 major
+- i18n 增量审查须扫描所有 JS 文件、`toast_redirect` 调用点和 `data-confirm` 属性，遗漏标 major
+- 增量审查必须抽样验证修复点的完整调用链（含翻译键存在性）
 
-### 仓库信息
+### 评分补充规范
+
+- 评分中加入“未解决的历史 major 问题数量”作为扣分项
+- 连续 3 轮评分相同且问题类型未改变，应自动标记“技术债务接受”并生成追踪 issue
+
+## 仓库信息
 
 - 仓库名: Sakura520222/Sakura-AI-Reviewer
-- 语言统计: Python: 1515328, HTML: 438196, Shell: 4194, Dockerfile: 862
-- 累计反思次数: 112
+- 语言统计: Python: 1515328, HTML: 438196, Shell: 4194, Dockerfile: 862, url: https://api.github.com/repos/Sakura520222/Sakura-AI-Reviewer/languages
+- 累计反思次数: 115
