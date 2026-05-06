@@ -4,7 +4,7 @@ import asyncio
 from typing import Dict, Any, Optional
 from loguru import logger
 
-from backend.core.config import get_settings, get_strategy_config
+from backend.core.config import get_strategy_config
 from backend.services.label_service import label_service
 
 
