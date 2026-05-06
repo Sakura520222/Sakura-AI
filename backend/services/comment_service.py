@@ -4,7 +4,7 @@ import asyncio
 from typing import Dict, Any, Optional
 from loguru import logger
 
-from backend.core.config import get_strategy_config
+from backend.core.config import get_settings, get_strategy_config
 from backend.services.label_service import label_service
 
 
@@ -93,6 +93,14 @@ class CommentService:
         try:
             # 检查是否有行内评论
             inline_comments = review_result.get("inline_comments", [])
+
+            # 行内评论开关检查（关闭时清空，保留 AI 输出但跳过提交）
+            if not get_settings().enable_inline_comments:
+                if inline_comments:
+                    logger.info(
+                        f"行内评论功能已关闭，跳过 {len(inline_comments)} 条行内评论"
+                    )
+                inline_comments = []
 
             if pr:
                 try:
