@@ -14,20 +14,20 @@
 
         <select name="status" class="px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-white text-sm focus:outline-none focus:ring-2 focus:ring-pink-500 focus:border-transparent">
             <option value="">{{ _('common.all') }} {{ _('common.status') }}</option>
-            <option value="pending" {% if status == 'pending' %}selected{% endif %}>待处理</option>
-            <option value="processing" {% if status == 'processing' %}selected{% endif %}>处理中</option>
-            <option value="completed" {% if status == 'completed' %}selected{% endif %}>已完成</option>
-            <option value="failed" {% if status == 'failed' %}selected{% endif %}>失败</option>
+            <option value="pending" {% if status == 'pending' %}selected{% endif %}>{{ _('common.pending') }}</option>
+            <option value="processing" {% if status == 'processing' %}selected{% endif %}>{{ _('common.processing') }}</option>
+            <option value="completed" {% if status == 'completed' %}selected{% endif %}>{{ _('queue.completed') }}</option>
+            <option value="failed" {% if status == 'failed' %}selected{% endif %}>{{ _('common.error') }}</option>
         </select>
 
-        <input type="date" name="start_date" value="{{ start_date }}" placeholder="开始日期"
+        <input type="date" name="start_date" value="{{ start_date }}" placeholder="{{ _('common.created_at') }}"
                class="px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-white text-sm focus:outline-none focus:ring-2 focus:ring-pink-500 focus:border-transparent">
 
         <div class="flex gap-2 col-span-1 sm:col-span-2 lg:col-span-1">
-            <input type="date" name="end_date" value="{{ end_date }}" placeholder="结束日期"
+            <input type="date" name="end_date" value="{{ end_date }}" placeholder="{{ _('common.updated_at') }}"
                    class="flex-1 px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-white text-sm focus:outline-none focus:ring-2 focus:ring-pink-500 focus:border-transparent">
             <button type="submit" class="px-4 py-2 bg-pink-500 hover:bg-pink-600 text-white rounded-lg text-sm font-medium transition-colors whitespace-nowrap">
-                筛选
+                {{ _('common.filter') }}
             </button>
         </div>
     </div>
@@ -62,13 +62,13 @@
                     </td>
                     <td class="px-4 py-3">
                         {% if r.status == "completed" %}
-                        <span class="px-2 py-1 rounded-full text-xs font-medium bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-400">已完成</span>
+                        <span class="px-2 py-1 rounded-full text-xs font-medium bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-400">{{ _('queue.completed') }}</span>
                         {% elif r.status == "processing" %}
-                        <span class="px-2 py-1 rounded-full text-xs font-medium bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-400">处理中</span>
+                        <span class="px-2 py-1 rounded-full text-xs font-medium bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-400">{{ _('common.processing') }}</span>
                         {% elif r.status == "pending" %}
-                        <span class="px-2 py-1 rounded-full text-xs font-medium bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-400">待处理</span>
+                        <span class="px-2 py-1 rounded-full text-xs font-medium bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-400">{{ _('common.pending') }}</span>
                         {% elif r.status == "failed" %}
-                        <span class="px-2 py-1 rounded-full text-xs font-medium bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-400">失败</span>
+                        <span class="px-2 py-1 rounded-full text-xs font-medium bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-400">{{ _('common.error') }}</span>
                         {% else %}
                         <span class="px-2 py-1 rounded-full text-xs font-medium bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-400">{{ r.status }}</span>
                         {% endif %}

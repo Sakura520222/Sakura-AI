@@ -124,7 +124,7 @@
                     <li>{{ _('billing.monthly') }} {{ _('billing.issue_quota') }} +{{ plan.issue_monthly_add }}</li>
                     {% endif %}
                     {% if plan.plan_type == 'subscription' and plan.duration_days %}
-                    <li>{{ _('billing.duration_days') }} {{ plan.duration_days }}</li>
+                    <li>{{ _('billing.validity_days', days=plan.duration_days) }}</li>
                     {% endif %}
                 </ul>
             </div>

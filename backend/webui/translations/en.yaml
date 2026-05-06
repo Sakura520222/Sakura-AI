@@ -101,6 +101,11 @@ dashboard:
   changes_requested: "Changes Requested"
   commented: "Commented"
   processing: "Reviewing"
+  total_tokens: "Total Tokens"
+  review_trend: "Review Trend (Last 30 Days)"
+  decision_distribution: "Decision Distribution"
+  top_repos: "Top 10 Repos by Reviews"
+  token_trend: "Token Usage Trend (Last 30 Days)"
   this_month: "This Month"
   this_week: "This Week"
   today: "Today"
@@ -207,6 +212,7 @@ queue:
   processing: "Processing"
   completed: "Completed"
   no_items: "Queue is empty"
+  avg_duration: "Avg Duration"
 
 # ========== User Management ==========
 user:
@@ -275,6 +281,7 @@ settings:
   theme: "Theme"
   items_per_page: "Display"
   items_per_page_unit: "items/page"
+  description: "Customize your WebUI preferences"
   save_success: "Settings saved"
   save_error: "Failed to save settings"
   languages:
@@ -381,6 +388,8 @@ billing:
   select_plan: "Select Plan"
   generate_count: "Generate Count (1-100)"
   never_expire: "Never expires"
+  expires_at: "Expires At"
+  validity_days: "{days} days"
   deleted_user: "Deleted User"
   prev_page: "Previous"
   next_page: "Next"

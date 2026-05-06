@@ -20,7 +20,7 @@ from backend.models.database import PRReview
 from backend.models.database import WebUIConfig
 from backend.webui.auth import decode_access_token
 from backend.services.payment_service import is_payment_enabled
-from backend.webui.i18n import make_translation_func
+from backend.webui.i18n import make_translation_func, SUPPORTED_LANGUAGES
 
 
 # ========== 模板引擎 ==========
@@ -80,7 +80,7 @@ def render_template(
     lang = detect_language(user_prefs)
     context["_"] = make_translation_func(lang)
     context["lang"] = lang
-    context["supported_languages"] = ["zh-CN", "en"]
+    context["supported_languages"] = SUPPORTED_LANGUAGES
     context["request"] = request
     if user_prefs:
         context["user_prefs"] = user_prefs
@@ -223,7 +223,7 @@ def error_page(
             "user_prefs": user_prefs or {"language": "zh-CN", "items_per_page": 20},
             "_": make_translation_func(lang),
             "lang": lang,
-            "supported_languages": ["zh-CN", "en"],
+            "supported_languages": SUPPORTED_LANGUAGES,
         },
         status_code=status_code,
     )

@@ -101,6 +101,11 @@ dashboard:
   changes_requested: "请求变更"
   commented: "仅评论"
   processing: "审查中"
+  total_tokens: "总 Token 消耗"
+  review_trend: "审查趋势（近 30 天）"
+  decision_distribution: "审查决策分布"
+  top_repos: "仓库审查量 Top 10"
+  token_trend: "Token 消耗趋势（近 30 天）"
   this_month: "本月"
   this_week: "本周"
   today: "今天"
@@ -207,6 +212,7 @@ queue:
   processing: "处理中"
   completed: "已完成"
   no_items: "队列为空"
+  avg_duration: "平均耗时"
 
 # ========== 用户管理 / User Management ==========
 user:
@@ -275,6 +281,7 @@ settings:
   theme: "主题"
   items_per_page: "列表显示"
   items_per_page_unit: "条/页"
+  description: "自定义您的 WebUI 偏好"
   save_success: "设置已保存"
   save_error: "设置保存失败"
   languages:
@@ -381,6 +388,8 @@ billing:
   select_plan: "选择套餐"
   generate_count: "生成数量（1-100）"
   never_expire: "永不过期"
+  expires_at: "过期时间"
+  validity_days: "{days} 天"
   deleted_user: "已删除用户"
   prev_page: "上一页"
   next_page: "下一页"

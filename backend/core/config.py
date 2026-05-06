@@ -846,7 +846,7 @@ DYNAMIC_CONFIG_SELECT_OPTIONS: dict[str, list[dict]] = {
     ],
     "output_language": [
         {"value": "", "label": "跟随界面语言"},
-        {"value": "zh-CN", "label": "中文 (Simplified Chinese)"},
+        {"value": "zh-CN", "label": "简体中文"},
         {"value": "en", "label": "English"},
     ],
 }
