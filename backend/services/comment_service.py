@@ -92,6 +92,9 @@ class CommentService:
         """
         try:
             # 检查是否有行内评论
+            # NOTE: 行内评论开关检查已移至 review_worker._make_and_submit_decision()
+            # 此方法当前未被 review_worker 调用（worker 走 submit_review_with_inline_comments 路径）
+            # 保留此方法供未来可能的调用者使用
             inline_comments = review_result.get("inline_comments", [])
 
             if pr:
