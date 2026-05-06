@@ -283,6 +283,7 @@ scan:
   indexing: "Indexing"
   analyzing: "Analyzing"
   reporting: "Generating Report"
+  triggered_by: "Triggered By"
   scheduled: "Scheduled"
   manual: "Manual"
   description: "View repository scheduled scan records and findings"
@@ -307,6 +308,7 @@ queue:
   no_items: "Queue is empty"
   avg_duration: "Avg Duration"
   failed: "Failed"
+  completed_at: "Completed At"
 
 # ========== User Management ==========
 user:
@@ -334,7 +336,16 @@ user:
   quota_unlimited: "Unlimited"
   github_id: "GitHub ID"
   telegram_id: "Telegram ID"
+  github_username: "GitHub Username"
   registered_at: "Registered At"
+  confirm_edit_info: "Are you sure you want to modify this user's basic info?"
+  confirm_disable: "Are you sure you want to disable this user?"
+  confirm_enable: "Are you sure you want to enable this user?"
+  confirm_role_change: "Are you sure you want to change this user's role?"
+  delete_warning: "This action is irreversible. Associated subscriptions and usage records will be permanently removed."
+  confirm_delete_user: "Are you sure you want to permanently delete user {name}? This action cannot be undone."
+  reset_all_quota: "Reset All Quotas"
+  confirm_reset_quota: "Are you sure you want to reset all quota usage for {name}?"
 
 # ========== Installed Repos ==========
 repo:
@@ -568,6 +579,8 @@ toast:
   github_username_used: "GitHub username {github_username} is already in use"
   user_create_failed_duplicate: "User creation failed (possible duplicate)"
   user_create_failed: "User creation failed"
+  user_delete_failed: "User deletion failed"
+  payment_error: "Payment error: {error}"
   user_added: "User {github_username} added successfully"
   user_role_changed: "User role changed to {role}"
   user_quota_updated: "User quota updated"
