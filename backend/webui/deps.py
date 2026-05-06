@@ -254,6 +254,7 @@ def toast_redirect(
     display_message = message
     if lang:
         from backend.webui.i18n import i18n as _i18n
+
         display_message = _i18n.t(message, lang=lang, **fmt_kwargs)
 
     params = {"_toast": display_message, "_toast_type": toast_type}

@@ -193,6 +193,7 @@ def detect_language(user_prefs: Optional[dict] = None) -> str:
     # 读取动态配置缓存（由异步请求填充，同步读取无 I/O）
     try:
         from backend.core.config import get_cached_config
+
         cached_value = get_cached_config("default_language")
         if cached_value is not None and cached_value in SUPPORTED_LANGUAGES:
             return cached_value
@@ -202,6 +203,7 @@ def detect_language(user_prefs: Optional[dict] = None) -> str:
     # 回退到 Settings 环境变量
     try:
         from backend.core.config import get_settings
+
         settings = get_settings()
         if settings.default_language in SUPPORTED_LANGUAGES:
             return settings.default_language

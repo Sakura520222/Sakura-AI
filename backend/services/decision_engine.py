@@ -177,7 +177,10 @@ class DecisionEngine:
             (最终决策, 决策理由)
         """
         if ai_decision == "request_changes":
-            reason = ai_reason or self._t("AI 建议驳回，存在需要修复的问题", "AI suggests changes, issues need fixing")
+            reason = ai_reason or self._t(
+                "AI 建议驳回，存在需要修复的问题",
+                "AI suggests changes, issues need fixing",
+            )
             return (ReviewDecision.REQUEST_CHANGES, reason)
 
         if ai_decision == "approve":
@@ -193,7 +196,10 @@ class DecisionEngine:
                         f"AI approved but found {critical_count} critical issues that must be fixed",
                     ),
                 )
-            reason = ai_reason or self._t("代码质量良好，符合合并标准", "Code quality is good, meets merge standards")
+            reason = ai_reason or self._t(
+                "代码质量良好，符合合并标准",
+                "Code quality is good, meets merge standards",
+            )
             return (ReviewDecision.APPROVE, reason)
 
         if ai_decision == "comment":
@@ -202,7 +208,10 @@ class DecisionEngine:
 
         # 未知决策类型，fallback
         logger.warning(f"未知的 AI 决策类型: {ai_decision}")
-        return (ReviewDecision.COMMENT, ai_reason or self._t("未知的 AI 决策类型", "Unknown AI decision type"))
+        return (
+            ReviewDecision.COMMENT,
+            ai_reason or self._t("未知的 AI 决策类型", "Unknown AI decision type"),
+        )
 
     def _rule_based_decision(
         self,
@@ -252,7 +261,13 @@ class DecisionEngine:
         max_major = policy.get("max_major_issues", 1)
 
         if score >= approve_threshold and major_count <= max_major:
-            return (ReviewDecision.APPROVE, self._t("代码质量优秀，符合合并标准", "Excellent code quality, meets merge standards"))
+            return (
+                ReviewDecision.APPROVE,
+                self._t(
+                    "代码质量优秀，符合合并标准",
+                    "Excellent code quality, meets merge standards",
+                ),
+            )
 
         # 规则4: 中间状态 - 中立评论
         return (
@@ -310,8 +325,14 @@ class DecisionEngine:
                 extracted = score_extractor.extract_score(review_result)
                 score = extracted if extracted is not None else "N/A"
 
-            no_summary_text = "No summary available" if output_lang == "en" else "暂无摘要"
-            view_detail_text = "View detailed review report" if output_lang == "en" else "查看详细审查报告"
+            no_summary_text = (
+                "No summary available" if output_lang == "en" else "暂无摘要"
+            )
+            view_detail_text = (
+                "View detailed review report"
+                if output_lang == "en"
+                else "查看详细审查报告"
+            )
             summary = review_result.get("summary", no_summary_text)
             if summary.strip():
                 summary = (

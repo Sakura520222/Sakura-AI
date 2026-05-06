@@ -17,7 +17,7 @@
         <div class="flex-1">
             <p class="text-sm font-medium text-amber-800 dark:text-amber-300">{{ _('dashboard.not_installed') }}</p>
             <p class="mt-1 text-xs text-amber-600 dark:text-amber-400">
-                安装 GitHub App 到你的仓库后，才能使用自动 PR 审查功能。如果你的组织已安装，可忽略此提示。
+                {{ _('dashboard.install_hint') }}
             </p>
             {% if github_app_install_url %}
             <a href="{{ github_app_install_url }}" target="_blank"

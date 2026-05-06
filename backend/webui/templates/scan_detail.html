@@ -18,8 +18,8 @@
             <div>
                 <h1 class="text-xl font-bold">{{ scan.repo_name }}</h1>
                 <p class="mt-1 text-sm text-gray-500 dark:text-gray-400">
-                    {% if scan.trigger_type == 'scheduled' %}定时扫描{% else %}手动触发{% endif %}
-                    {% if scan.triggered_by %} · 操作人: {{ scan.triggered_by }}{% endif %}
+                    {% if scan.trigger_type == 'scheduled' %}{{ _('scan.scheduled') }}{% else %}{{ _('scan.manual') }}{% endif %}
+                    {% if scan.triggered_by %} · {{ _('action_log.user') }}: {{ scan.triggered_by }}{% endif %}
                 </p>
             </div>
             <!-- 状态标签 -->
@@ -27,14 +27,14 @@
                 {% if scan.status == 'completed' %}
                 <span class="inline-flex items-center gap-1 px-3 py-1 rounded-full text-sm font-medium bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-400">
                     <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/></svg>
-                    已完成
+                    {{ _('scan.completed') }}
                 </span>
                 {% elif scan.status == 'failed' %}
-                <span class="inline-flex items-center gap-1 px-3 py-1 rounded-full text-sm font-medium bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-400">失败</span>
+                <span class="inline-flex items-center gap-1 px-3 py-1 rounded-full text-sm font-medium bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-400">{{ _('scan.failed') }}</span>
                 {% elif scan.status in ('indexing', 'analyzing', 'reporting') %}
                 <span class="inline-flex items-center gap-1 px-3 py-1 rounded-full text-sm font-medium bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-400">
                     <svg class="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg>
-                    {{ scan.current_phase or '进行中' }}
+                    {{ scan.current_phase or _('common.processing') }}
                 </span>
                 {% else %}
                 <span class="inline-flex items-center gap-1 px-3 py-1 rounded-full text-sm font-medium bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-400">{{ scan.status }}</span>
@@ -164,7 +164,7 @@
             <div data-markdown class="prose dark:prose-invert max-w-none text-sm text-gray-700 dark:text-gray-300 leading-relaxed">{{ f.description }}</div>
             {% if f.suggestion %}
             <div class="mt-2 p-2 bg-green-50 dark:bg-green-900/20 rounded-lg">
-                <p class="text-sm text-green-700 dark:text-green-400 font-medium mb-1">建议:</p>
+                <p class="text-sm text-green-700 dark:text-green-400 font-medium mb-1">{{ _('scan_report.suggestion') }}:</p>
                 <div data-markdown class="prose dark:prose-invert max-w-none text-sm text-green-700 dark:text-green-400 leading-relaxed">{{ f.suggestion }}</div>
             </div>
             {% endif %}

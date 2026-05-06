@@ -8,7 +8,7 @@
     <div class="flex items-center justify-between">
         <div>
             <h1 class="text-2xl font-bold">{{ _('config.strategies_title') }}</h1>
-            <p class="mt-1 text-sm text-gray-500 dark:text-gray-400">管理 strategies.yaml 中的审查策略和参数</p>
+            <p class="mt-1 text-sm text-gray-500 dark:text-gray-400">{{ _('strategy.manage_desc') }}</p>
         </div>
     </div>
 
@@ -19,32 +19,32 @@
                 <button @click="activeTab = 'strategies'"
                         :class="activeTab === 'strategies' ? 'border-pink-500 text-pink-600 dark:text-pink-400' : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300 dark:text-gray-400 dark:hover:text-gray-300'"
                         class="whitespace-nowrap px-4 py-3 text-sm font-medium border-b-2 transition-colors">
-                    审查策略
+                    {{ _('strategy.review_strategies') }}
                 </button>
                 <button @click="activeTab = 'filters'"
                         :class="activeTab === 'filters' ? 'border-pink-500 text-pink-600 dark:text-pink-400' : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300 dark:text-gray-400 dark:hover:text-gray-300'"
                         class="whitespace-nowrap px-4 py-3 text-sm font-medium border-b-2 transition-colors">
-                    文件过滤
+                    {{ _('strategy.file_filters') }}
                 </button>
                 <button @click="activeTab = 'batch'"
                         :class="activeTab === 'batch' ? 'border-pink-500 text-pink-600 dark:text-pink-400' : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300 dark:text-gray-400 dark:hover:text-gray-300'"
                         class="whitespace-nowrap px-4 py-3 text-sm font-medium border-b-2 transition-colors">
-                    批处理
+                    {{ _('strategy.batch') }}
                 </button>
                 <button @click="activeTab = 'context'"
                         :class="activeTab === 'context' ? 'border-pink-500 text-pink-600 dark:text-pink-400' : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300 dark:text-gray-400 dark:hover:text-gray-300'"
                         class="whitespace-nowrap px-4 py-3 text-sm font-medium border-b-2 transition-colors">
-                    上下文增强
+                    {{ _('strategy.context_enhancement') }}
                 </button>
                 <button @click="activeTab = 'policy'"
                         :class="activeTab === 'policy' ? 'border-pink-500 text-pink-600 dark:text-pink-400' : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300 dark:text-gray-400 dark:hover:text-gray-300'"
                         class="whitespace-nowrap px-4 py-3 text-sm font-medium border-b-2 transition-colors">
-                    审查政策
+                    {{ _('strategy.review_policy') }}
                 </button>
                 <button @click="activeTab = 'depgraph'"
                         :class="activeTab === 'depgraph' ? 'border-pink-500 text-pink-600 dark:text-pink-400' : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300 dark:text-gray-400 dark:hover:text-gray-300'"
                         class="whitespace-nowrap px-4 py-3 text-sm font-medium border-b-2 transition-colors">
-                    依赖图
+                    {{ _('strategy.dep_graph') }}
                 </button>
             </nav>
         </div>
@@ -76,7 +76,7 @@
                             <div x-show="expanded" x-cloak class="space-y-4">
                                 <!-- 策略名称 -->
                                 <div>
-                                    <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">策略名称</label>
+                                    <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">{{ _('strategy.strategy_name') }}</label>
                                     <input type="text" name="strategy_{{ key }}_name"
                                            value="{{ s.get('name', key) }}"
                                            class="w-full px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-sm focus:ring-2 focus:ring-pink-500 focus:border-transparent outline-none">
@@ -85,13 +85,13 @@
                                 <!-- 条件 -->
                                 <div class="grid grid-cols-2 gap-4">
                                     <div>
-                                        <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">最大文件数</label>
+                                        <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">{{ _('strategy.max_files') }}</label>
                                         <input type="number" name="strategy_{{ key }}_max_files" min="1"
                                                value="{{ conds.get('max_files', 999999) }}"
                                                class="w-full px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-sm focus:ring-2 focus:ring-pink-500 focus:border-transparent outline-none">
                                     </div>
                                     <div>
-                                        <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">最大行数</label>
+                                        <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">{{ _('strategy.max_lines') }}</label>
                                         <input type="number" name="strategy_{{ key }}_max_lines" min="1"
                                                value="{{ conds.get('max_lines', 99999999) }}"
                                                class="w-full px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-sm focus:ring-2 focus:ring-pink-500 focus:border-transparent outline-none">
@@ -100,7 +100,7 @@
 
                                 <!-- Prompt -->
                                 <div>
-                                    <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">审查 Prompt</label>
+                                    <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">{{ _('strategy.review_prompt') }}</label>
                                     <textarea name="strategy_{{ key }}_prompt" rows="12"
                                               class="w-full px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-sm font-mono focus:ring-2 focus:ring-pink-500 focus:border-transparent outline-none resize-y">{{ s.get('prompt', '') }}</textarea>
                                 </div>
@@ -111,7 +111,7 @@
 
                     <div class="mt-6 pt-4 border-t border-gray-200 dark:border-gray-700">
                         <button type="submit" class="px-4 py-2 bg-pink-500 text-white rounded-lg text-sm font-medium hover:bg-pink-600 transition-colors">
-                            保存策略配置
+                            {{ _('strategy.save_strategies') }}
                         </button>
                     </div>
                 </form>
@@ -125,20 +125,20 @@
 
                     <div class="space-y-6">
                         <div>
-                            <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">跳过的扩展名</label>
-                            <p class="text-xs text-gray-500 dark:text-gray-400 mb-2">每行一个扩展名（如 .lock）</p>
+                            <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">{{ _('strategy.skip_extensions') }}</label>
+                            <p class="text-xs text-gray-500 dark:text-gray-400 mb-2">{{ _('strategy.skip_extensions_desc') }}</p>
                             <textarea name="skip_extensions" rows="6"
                                       class="w-full px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-sm font-mono focus:ring-2 focus:ring-pink-500 focus:border-transparent outline-none resize-y">{{ file_filters.get('skip_extensions', []) | join('\n') }}</textarea>
                         </div>
                         <div>
-                            <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">跳过的路径</label>
-                            <p class="text-xs text-gray-500 dark:text-gray-400 mb-2">每行一个路径模式（如 node_modules/）</p>
+                            <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">{{ _('strategy.skip_paths') }}</label>
+                            <p class="text-xs text-gray-500 dark:text-gray-400 mb-2">{{ _('strategy.skip_paths_desc') }}</p>
                             <textarea name="skip_paths" rows="6"
                                       class="w-full px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-sm font-mono focus:ring-2 focus:ring-pink-500 focus:border-transparent outline-none resize-y">{{ file_filters.get('skip_paths', []) | join('\n') }}</textarea>
                         </div>
                         <div>
-                            <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">代码文件扩展名</label>
-                            <p class="text-xs text-gray-500 dark:text-gray-400 mb-2">每行一个扩展名（如 .py）</p>
+                            <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">{{ _('strategy.code_extensions') }}</label>
+                            <p class="text-xs text-gray-500 dark:text-gray-400 mb-2">{{ _('strategy.code_extensions_desc') }}</p>
                             <textarea name="code_extensions" rows="8"
                                       class="w-full px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-sm font-mono focus:ring-2 focus:ring-pink-500 focus:border-transparent outline-none resize-y">{{ file_filters.get('code_extensions', []) | join('\n') }}</textarea>
                         </div>
@@ -146,7 +146,7 @@
 
                     <div class="mt-6 pt-4 border-t border-gray-200 dark:border-gray-700">
                         <button type="submit" class="px-4 py-2 bg-pink-500 text-white rounded-lg text-sm font-medium hover:bg-pink-600 transition-colors">
-                            保存过滤规则
+                            {{ _('strategy.save_filters') }}
                         </button>
                     </div>
                 </form>
@@ -161,13 +161,13 @@
                     <div class="space-y-6">
                         <div class="grid grid-cols-1 sm:grid-cols-2 gap-6">
                             <div>
-                                <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">每批最大文件数</label>
+                                <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">{{ _('strategy.max_files_per_batch') }}</label>
                                 <input type="number" name="max_files_per_batch" min="1" max="100"
                                        value="{{ batch.get('max_files_per_batch', 10) }}"
                                        class="w-full px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-sm focus:ring-2 focus:ring-pink-500 focus:border-transparent outline-none">
                             </div>
                             <div>
-                                <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">每批最大行数</label>
+                                <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">{{ _('strategy.max_lines_per_batch') }}</label>
                                 <input type="number" name="max_lines_per_batch" min="100" max="100000"
                                        value="{{ batch.get('max_lines_per_batch', 2000) }}"
                                        class="w-full px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-sm focus:ring-2 focus:ring-pink-500 focus:border-transparent outline-none">
@@ -177,7 +177,7 @@
 
                     <div class="mt-6 pt-4 border-t border-gray-200 dark:border-gray-700">
                         <button type="submit" class="px-4 py-2 bg-pink-500 text-white rounded-lg text-sm font-medium hover:bg-pink-600 transition-colors">
-                            保存批处理配置
+                            {{ _('strategy.save_batch') }}
                         </button>
                     </div>
                 </form>
@@ -194,9 +194,9 @@
                         {% set ce = context_enhancement %}
                         <div class="space-y-4">
                             {% set toggle_fields = [
-                                ("enable_project_structure", "启用项目结构展示", ce.get('enable_project_structure', true)),
-                                ("enable_ai_tools", "启用 AI 函数工具", ce.get('enable_ai_tools', true)),
-                                ("enable_ai_tools_in_batch", "分批模式启用 AI 工具", ce.get('enable_ai_tools_in_batch', true)),
+                                ("enable_project_structure", _("strategy.enable_project_structure"), ce.get('enable_project_structure', true)),
+                                ("enable_ai_tools", _("strategy.enable_ai_tools"), ce.get('enable_ai_tools', true)),
+                                ("enable_ai_tools_in_batch", _("strategy.enable_ai_tools_in_batch"), ce.get('enable_ai_tools_in_batch', true)),
                             ] %}
                             {% for field_id, label, checked in toggle_fields %}
                             <div class="flex items-center justify-between">
@@ -218,19 +218,19 @@
                         <!-- Number inputs -->
                         <div class="grid grid-cols-1 sm:grid-cols-3 gap-6">
                             <div>
-                                <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">项目结构最大文件数</label>
+                                <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">{{ _('strategy.max_structure_files') }}</label>
                                 <input type="number" name="max_structure_files" min="1"
                                        value="{{ ce.get('max_structure_files', 500) }}"
                                        class="w-full px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-sm focus:ring-2 focus:ring-pink-500 focus:border-transparent outline-none">
                             </div>
                             <div>
-                                <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">AI 工具最大调用次数</label>
+                                <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">{{ _('strategy.max_tool_iterations') }}</label>
                                 <input type="number" name="max_tool_iterations" min="1" max="100"
                                        value="{{ ce.get('max_tool_iterations', 20) }}"
                                        class="w-full px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-sm focus:ring-2 focus:ring-pink-500 focus:border-transparent outline-none">
                             </div>
                             <div>
-                                <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">单文件最大大小 (字节)</label>
+                                <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">{{ _('strategy.max_file_size') }}</label>
                                 <input type="number" name="max_file_size" min="1000"
                                        value="{{ ce.get('max_file_size', 200000) }}"
                                        class="w-full px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-sm focus:ring-2 focus:ring-pink-500 focus:border-transparent outline-none">
@@ -239,22 +239,22 @@
 
                         <!-- File tool limits -->
                         <div class="mt-4">
-                            <h3 class="text-sm font-medium text-gray-700 dark:text-gray-300 mb-3">文件读取工具限制</h3>
+                            <h3 class="text-sm font-medium text-gray-700 dark:text-gray-300 mb-3">{{ _('strategy.file_read_limits') }}</h3>
                             <div class="grid grid-cols-1 sm:grid-cols-3 gap-6">
                                 <div>
-                                    <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">单文件最大读取行数</label>
+                                    <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">{{ _('strategy.max_file_lines') }}</label>
                                     <input type="number" name="max_file_lines" min="50"
                                            value="{{ ce.get('max_file_lines', 500) }}"
                                            class="w-full px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-sm focus:ring-2 focus:ring-pink-500 focus:border-transparent outline-none">
                                 </div>
                                 <div>
-                                    <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">搜索默认上下文行数</label>
+                                    <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">{{ _('strategy.default_context') }}</label>
                                     <input type="number" name="default_context_lines" min="0" max="500"
                                            value="{{ ce.get('default_context_lines', 20) }}"
                                            class="w-full px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-sm focus:ring-2 focus:ring-pink-500 focus:border-transparent outline-none">
                                 </div>
                                 <div>
-                                    <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">搜索最大上下文行数</label>
+                                    <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">{{ _('strategy.max_context') }}</label>
                                     <input type="number" name="max_context_lines" min="1" max="500"
                                            value="{{ ce.get('max_context_lines', 200) }}"
                                            class="w-full px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-sm focus:ring-2 focus:ring-pink-500 focus:border-transparent outline-none">
@@ -266,11 +266,11 @@
 
                         <!-- Search Files Tool Config -->
                         <div>
-                            <h3 class="text-sm font-semibold text-gray-800 dark:text-gray-200 mb-3">跨文件搜索工具</h3>
+                            <h3 class="text-sm font-semibold text-gray-800 dark:text-gray-200 mb-3">{{ _('strategy.cross_file_search') }}</h3>
                             {% set sif = ce.get('search_in_files', {}) %}
                             <div class="space-y-4">
                                 <div class="flex items-center justify-between">
-                                    <label class="text-sm font-medium text-gray-700 dark:text-gray-300">优先使用 GitHub Search API</label>
+                                    <label class="text-sm font-medium text-gray-700 dark:text-gray-300">{{ _('strategy.use_search_api') }}</label>
                                     <label class="relative inline-flex items-center cursor-pointer">
                                         <input type="checkbox" name="sif_use_search_api" value="true"
                                                {% if sif.get('use_search_api', true) %}checked{% endif %}
@@ -279,7 +279,7 @@
                                     </label>
                                 </div>
                                 <div class="flex items-center justify-between">
-                                    <label class="text-sm font-medium text-gray-700 dark:text-gray-300">跳过二进制文件</label>
+                                    <label class="text-sm font-medium text-gray-700 dark:text-gray-300">{{ _('strategy.skip_binary') }}</label>
                                     <label class="relative inline-flex items-center cursor-pointer">
                                         <input type="checkbox" name="sif_skip_binary" value="true"
                                                {% if sif.get('skip_binary', true) %}checked{% endif %}
@@ -289,23 +289,23 @@
                                 </div>
                                 <div class="grid grid-cols-1 sm:grid-cols-3 gap-6">
                                     <div>
-                                        <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">默认上下文行数</label>
+                                        <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">{{ _('strategy.default_context') }}</label>
                                         <input type="number" name="sif_default_context_lines" min="0"
                                                value="{{ sif.get('default_context_lines', 3) }}"
                                                class="w-full px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-sm focus:ring-2 focus:ring-pink-500 focus:border-transparent outline-none">
                                     </div>
                                     <div>
-                                        <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">默认最大结果数</label>
+                                        <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">{{ _('strategy.default_max_results') }}</label>
                                         <input type="number" name="sif_default_max_results" min="1"
                                                value="{{ sif.get('default_max_results', 20) }}"
                                                class="w-full px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-sm focus:ring-2 focus:ring-pink-500 focus:border-transparent outline-none">
                                     </div>
                                     <div>
-                                        <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">回退最大扫描文件数</label>
+                                        <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">{{ _('strategy.fallback_max_files') }}</label>
                                         <input type="number" name="sif_max_files_to_search" min="1"
                                                value="{{ sif.get('max_files_to_search', 100) }}"
                                                class="w-full px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-sm focus:ring-2 focus:ring-pink-500 focus:border-transparent outline-none">
-                                        <p class="mt-1 text-xs text-gray-500">API 不可用时逐文件遍历的上限</p>
+                                        <p class="mt-1 text-xs text-gray-500">{{ _('strategy.fallback_max_files_desc') }}</p>
                                     </div>
                                 </div>
                             </div>
@@ -315,17 +315,17 @@
 
                         <!-- Git Tools Config -->
                         <div>
-                            <h3 class="text-sm font-semibold text-gray-800 dark:text-gray-200 mb-3">Git 信息工具</h3>
+                            <h3 class="text-sm font-semibold text-gray-800 dark:text-gray-200 mb-3">{{ _('strategy.git_tools') }}</h3>
                             {% set gt = ce.get('git_tools', {}) %}
                             <div class="grid grid-cols-1 sm:grid-cols-2 gap-6">
                                 <div>
-                                    <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">默认返回分支数量</label>
+                                    <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">{{ _('strategy.default_branch_count') }}</label>
                                     <input type="number" name="gt_default_branch_count" min="1"
                                            value="{{ gt.get('default_branch_count', 20) }}"
                                            class="w-full px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-sm focus:ring-2 focus:ring-pink-500 focus:border-transparent outline-none">
                                 </div>
                                 <div>
-                                    <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">默认返回提交数量</label>
+                                    <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">{{ _('strategy.default_commit_count') }}</label>
                                     <input type="number" name="gt_default_commit_count" min="1"
                                            value="{{ gt.get('default_commit_count', 10) }}"
                                            class="w-full px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-sm focus:ring-2 focus:ring-pink-500 focus:border-transparent outline-none">
@@ -336,7 +336,7 @@
 
                     <div class="mt-6 pt-4 border-t border-gray-200 dark:border-gray-700">
                         <button type="submit" class="px-4 py-2 bg-pink-500 text-white rounded-lg text-sm font-medium hover:bg-pink-600 transition-colors">
-                            保存上下文增强配置
+                            {{ _('strategy.save_context') }}
                         </button>
                     </div>
                 </form>
@@ -354,9 +354,9 @@
                         <!-- Toggles -->
                         <div class="space-y-4">
                             {% set rp_toggles = [
-                                ("rp_enabled", "启用自动审查决策", rp.get('enabled', true)),
-                                ("block_on_critical", "存在严重问题时自动阻断", rp.get('block_on_critical', true)),
-                                ("enable_idempotency_check", "启用幂等性检查（避免重复提交）", rp.get('enable_idempotency_check', true)),
+                                ("rp_enabled", _("strategy.enable_auto_review"), rp.get('enabled', true)),
+                                ("block_on_critical", _("strategy.block_on_critical"), rp.get('block_on_critical', true)),
+                                ("enable_idempotency_check", _("strategy.enable_idempotency"), rp.get('enable_idempotency_check', true)),
                             ] %}
                             {% for field_id, label, checked in rp_toggles %}
                             <div class="flex items-center justify-between">
@@ -376,21 +376,21 @@
                         <!-- Thresholds -->
                         <div class="grid grid-cols-1 sm:grid-cols-3 gap-6">
                             <div>
-                                <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">批准阈值</label>
+                                <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">{{ _('strategy.approve_threshold') }}</label>
                                 <input type="number" name="approve_threshold" min="1" max="10"
                                        value="{{ rp.get('approve_threshold', 8) }}"
                                        class="w-full px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-sm focus:ring-2 focus:ring-pink-500 focus:border-transparent outline-none">
-                                <p class="mt-1 text-xs text-gray-500">评分 >= 此值才考虑批准</p>
+                                <p class="mt-1 text-xs text-gray-500">{{ _('strategy.approve_threshold_desc') }}</p>
                             </div>
                             <div>
-                                <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">阻断阈值</label>
+                                <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">{{ _('strategy.block_threshold') }}</label>
                                 <input type="number" name="block_threshold" min="1" max="10"
                                        value="{{ rp.get('block_threshold', 4) }}"
                                        class="w-full px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-sm focus:ring-2 focus:ring-pink-500 focus:border-transparent outline-none">
-                                <p class="mt-1 text-xs text-gray-500">评分 < 此值自动请求变更</p>
+                                <p class="mt-1 text-xs text-gray-500">{{ _('strategy.block_threshold_desc') }}</p>
                             </div>
                             <div>
-                                <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Major 问题上限</label>
+                                <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">{{ _('strategy.major_issue_limit') }}</label>
                                 <input type="number" name="max_major_issues" min="0"
                                        value="{{ rp.get('max_major_issues', 1) }}"
                                        class="w-full px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-sm focus:ring-2 focus:ring-pink-500 focus:border-transparent outline-none">
@@ -399,8 +399,8 @@
 
                         <!-- Ignored patterns -->
                         <div>
-                            <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">忽略的文件模式</label>
-                            <p class="text-xs text-gray-500 dark:text-gray-400 mb-2">这些文件不影响评分决策，每行一个 glob 模式</p>
+                            <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">{{ _('strategy.ignored_patterns') }}</label>
+                            <p class="text-xs text-gray-500 dark:text-gray-400 mb-2">{{ _('strategy.ignored_patterns_desc') }}</p>
                             <textarea name="ignored_patterns" rows="4"
                                       class="w-full px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-sm font-mono focus:ring-2 focus:ring-pink-500 focus:border-transparent outline-none resize-y">{{ rp.get('ignored_patterns', []) | join('\n') }}</textarea>
                         </div>
@@ -409,9 +409,9 @@
 
                         <!-- Review templates -->
                         <div>
-                            <h3 class="text-sm font-medium text-gray-700 dark:text-gray-300 mb-3">评论模板</h3>
+                            <h3 class="text-sm font-medium text-gray-700 dark:text-gray-300 mb-3">{{ _('strategy.comment_templates') }}</h3>
                             <p class="text-xs text-gray-500 dark:text-gray-400 mb-4">
-                                可用变量：<code class="px-1 py-0.5 bg-gray-100 dark:bg-gray-700 rounded text-xs">{strategy_name}</code>
+                                {{ _('strategy.template_variables }}：<code class="px-1 py-0.5 bg-gray-100 dark:bg-gray-700 rounded text-xs">{strategy_name}</code>
                                 <code class="px-1 py-0.5 bg-gray-100 dark:bg-gray-700 rounded text-xs">{summary}</code>
                                 <code class="px-1 py-0.5 bg-gray-100 dark:bg-gray-700 rounded text-xs">{score}</code>
                                 <code class="px-1 py-0.5 bg-gray-100 dark:bg-gray-700 rounded text-xs">{decision_reason}</code>
@@ -419,17 +419,17 @@
                             </p>
                             <div class="space-y-4">
                                 <div>
-                                    <label class="block text-xs font-medium text-green-700 dark:text-green-400 mb-1">批准模板</label>
+                                    <label class="block text-xs font-medium text-green-700 dark:text-green-400 mb-1">{{ _('strategy.approve_template') }}</label>
                                     <textarea name="template_approve" rows="6"
                                               class="w-full px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-sm font-mono focus:ring-2 focus:ring-pink-500 focus:border-transparent outline-none resize-y">{{ rt.get('approve', '') }}</textarea>
                                 </div>
                                 <div>
-                                    <label class="block text-xs font-medium text-red-700 dark:text-red-400 mb-1">请求变更模板</label>
+                                    <label class="block text-xs font-medium text-red-700 dark:text-red-400 mb-1">{{ _('strategy.request_changes_template') }}</label>
                                     <textarea name="template_request_changes" rows="6"
                                               class="w-full px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-sm font-mono focus:ring-2 focus:ring-pink-500 focus:border-transparent outline-none resize-y">{{ rt.get('request_changes', '') }}</textarea>
                                 </div>
                                 <div>
-                                    <label class="block text-xs font-medium text-blue-700 dark:text-blue-400 mb-1">评论模板</label>
+                                    <label class="block text-xs font-medium text-blue-700 dark:text-blue-400 mb-1">{{ _('strategy.comment_template') }}</label>
                                     <textarea name="template_comment" rows="6"
                                               class="w-full px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-sm font-mono focus:ring-2 focus:ring-pink-500 focus:border-transparent outline-none resize-y">{{ rt.get('comment', '') }}</textarea>
                                 </div>
@@ -439,13 +439,13 @@
 
                     <div class="mt-6 pt-4 border-t border-gray-200 dark:border-gray-700">
                         <button type="submit" class="px-4 py-2 bg-pink-500 text-white rounded-lg text-sm font-medium hover:bg-pink-600 transition-colors">
-                            保存审查政策
+                            {{ _('strategy.save_policy') }}
                         </button>
                     </div>
                 </form>
             </div>
 
-            <!-- ======== Tab: 依赖图 ======== -->
+            <!-- ======== Tab: 依赖图 ========= -->
             <div x-show="activeTab === 'depgraph'" x-cloak>
                 <form method="POST" action="/webui/config/strategies/save">
                     <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
@@ -454,14 +454,14 @@
                     {% set dg = pr_dependency_graph %}
                     <div class="space-y-6">
                         <div>
-                            <label class="block text-xs font-medium text-gray-700 dark:text-gray-300 mb-1">系统提示词</label>
-                            <p class="text-xs text-gray-500 dark:text-gray-400 mb-2">AI 生成依赖图时的系统提示词。可用占位符: {max_nodes}</p>
+                            <label class="block text-xs font-medium text-gray-700 dark:text-gray-300 mb-1">{{ _('strategy.system_prompt') }}</label>
+                            <p class="text-xs text-gray-500 dark:text-gray-400 mb-2">{{ _('strategy.depgraph_prompt_desc') }}</p>
                             <textarea name="depgraph_system_prompt" rows="10"
                                       class="w-full px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-sm font-mono focus:ring-2 focus:ring-pink-500 focus:border-transparent outline-none resize-y">{{ dg.get('system_prompt', '') }}</textarea>
                         </div>
                         <div>
-                            <label class="block text-xs font-medium text-gray-700 dark:text-gray-300 mb-1">用户消息模板</label>
-                            <p class="text-xs text-gray-500 dark:text-gray-400 mb-2">可用占位符: {title}, {file_count}, {import_context}</p>
+                            <label class="block text-xs font-medium text-gray-700 dark:text-gray-300 mb-1">{{ _('strategy.user_message_template') }}</label>
+                            <p class="text-xs text-gray-500 dark:text-gray-400 mb-2">{{ _('strategy.user_template_desc') }}</p>
                             <textarea name="depgraph_user_template" rows="10"
                                       class="w-full px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-sm font-mono focus:ring-2 focus:ring-pink-500 focus:border-transparent outline-none resize-y">{{ dg.get('user_template', '') }}</textarea>
                         </div>
@@ -469,7 +469,7 @@
 
                     <div class="mt-6 pt-4 border-t border-gray-200 dark:border-gray-700">
                         <button type="submit" class="px-4 py-2 bg-pink-500 text-white rounded-lg text-sm font-medium hover:bg-pink-600 transition-colors">
-                            保存依赖图配置
+                            {{ _('strategy.save_depgraph') }}
                         </button>
                     </div>
                 </form>

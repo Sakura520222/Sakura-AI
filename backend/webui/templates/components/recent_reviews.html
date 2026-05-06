@@ -41,7 +41,7 @@
                 <!-- PR 信息 -->
                 <div class="flex-1 min-w-0">
                     <p class="text-sm font-medium truncate">{{ r.repo_owner }}/{{ r.repo_name }} <span class="text-gray-400">#{{ r.pr_id }}</span></p>
-                    <p class="text-xs text-gray-500 dark:text-gray-400 truncate mt-0.5">{{ r.title or '无标题' }}</p>
+                    <p class="text-xs text-gray-500 dark:text-gray-400 truncate mt-0.5">{{ r.title or _('common.no_title') }}</p>
                 </div>
 
                 <!-- 评分 -->

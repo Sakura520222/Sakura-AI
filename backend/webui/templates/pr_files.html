@@ -18,8 +18,8 @@
     <!-- PR 基本信息 -->
     <div class="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 shadow-sm p-4">
         <div class="flex items-center gap-3">
-            <h1 class="text-lg font-bold truncate">{{ review.title or '无标题' }}</h1>
-            <span class="text-sm text-gray-400 flex-shrink-0">{{ review.file_count or 0 }} 文件 · {{ review.line_count or 0 }} 行</span>
+            <h1 class="text-lg font-bold truncate">{{ review.title or _('common.no_title') }}</h1>
+            <span class="text-sm text-gray-400 flex-shrink-0">{{ review.file_count or 0 }} {{ _('common.files_unit') }} · {{ review.line_count or 0 }} {{ _('common.lines_unit') }}</span>
         </div>
     </div>
 
@@ -38,7 +38,7 @@
                             <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/>
                             <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/>
                         </svg>
-                        <p class="mt-2">加载中...</p>
+                        <p class="mt-2">{{ _('common.loading') }}</p>
                     </div>
                 </div>
             </div>
@@ -83,7 +83,7 @@ function loadFileComments(filePath, btn) {
 
     // 加载评论
     const panel = document.getElementById('file-comments-panel');
-    panel.innerHTML = '<div class="text-center py-8 text-gray-400"><svg class="w-8 h-8 mx-auto animate-spin" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg><p class="mt-2">加载中...</p></div>';
+    panel.innerHTML = '<div class="text-center py-8 text-gray-400"><svg class="w-8 h-8 mx-auto animate-spin" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg><p class="mt-2">' + _t('loading') + '</p></div>';
 
     const params = new URLSearchParams({ file_path: filePath });
     fetch('/webui/pr/' + REVIEW_ID + '/files/comment-fragment?' + params.toString(), {

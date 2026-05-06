@@ -43,10 +43,10 @@
                     <th class="text-left px-4 py-3 font-medium text-gray-500 dark:text-gray-400">PR</th>
                     <th class="text-left px-4 py-3 font-medium text-gray-500 dark:text-gray-400 hidden md:table-cell">{{ _('pr.repo') }}</th>
                     <th class="text-left px-4 py-3 font-medium text-gray-500 dark:text-gray-400">{{ _('common.status') }}</th>
-                    <th class="text-left px-4 py-3 font-medium text-gray-500 dark:text-gray-400 hidden lg:table-cell">创建时间</th>
-                    <th class="text-left px-4 py-3 font-medium text-gray-500 dark:text-gray-400 hidden lg:table-cell">完成时间</th>
-                    <th class="text-left px-4 py-3 font-medium text-gray-500 dark:text-gray-400 hidden xl:table-cell">耗时</th>
-                    <th class="text-left px-4 py-3 font-medium text-gray-500 dark:text-gray-400 hidden xl:table-cell">错误信息</th>
+                    <th class="text-left px-4 py-3 font-medium text-gray-500 dark:text-gray-400 hidden lg:table-cell">{{ _('common.created_at') }}</th>
+                    <th class="text-left px-4 py-3 font-medium text-gray-500 dark:text-gray-400 hidden lg:table-cell">{{ _('common.updated_at') }}</th>
+                    <th class="text-left px-4 py-3 font-medium text-gray-500 dark:text-gray-400 hidden xl:table-cell">{{ _('queue.avg_duration') }}</th>
+                    <th class="text-left px-4 py-3 font-medium text-gray-500 dark:text-gray-400 hidden xl:table-cell">{{ _('common.error') }}</th>
                 </tr>
             </thead>
             <tbody class="divide-y divide-gray-200 dark:divide-gray-700">
@@ -109,7 +109,7 @@
             {% if page > 1 %}
             <a href="#" onclick="loadQueuePage({{ page - 1 }}); return false;"
                class="px-3 py-1.5 rounded-lg text-sm border border-gray-300 dark:border-gray-600 hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors">
-                上一页
+                {{ _('common.prev_page') }}
             </a>
             {% endif %}
 
@@ -129,7 +129,7 @@
             {% if page < total_pages %}
             <a href="#" onclick="loadQueuePage({{ page + 1 }}); return false;"
                class="px-3 py-1.5 rounded-lg text-sm border border-gray-300 dark:border-gray-600 hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors">
-                下一页
+                {{ _('common.next_page') }}
             </a>
             {% endif %}
         </div>
@@ -141,7 +141,7 @@
         <svg class="w-12 h-12 mx-auto text-gray-300 dark:text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/>
         </svg>
-        <p class="mt-4 text-gray-500 dark:text-gray-400">没有找到匹配的审查记录</p>
+        <p class="mt-4 text-gray-500 dark:text-gray-400">{{ _('common.no_matching', type=_('log.title')) }}</p>
     </div>
     {% endif %}
 </div>

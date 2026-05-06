@@ -333,7 +333,9 @@ async def logout(request: Request, csrf_token: str = Form(...)):
         raise HTTPException(status_code=403, detail="CSRF 验证失败")
 
     logger.info("WebUI 用户登出")
-    response = toast_redirect("/webui/auth/login", "toast.logged_out", lang=detect_language())
+    response = toast_redirect(
+        "/webui/auth/login", "toast.logged_out", lang=detect_language()
+    )
     response.delete_cookie("webui_token")
     return response
 

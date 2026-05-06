@@ -21,7 +21,7 @@
                     {{ review.repo_owner }}/{{ review.repo_name }}
                     <span class="text-gray-400 font-normal">#{{ review.pr_id }}</span>
                 </h1>
-                <p class="mt-2 text-gray-700 dark:text-gray-300">{{ review.title or '无标题' }}</p>
+                <p class="mt-2 text-gray-700 dark:text-gray-300">{{ review.title or _('common.no_title') }}</p>
                 <div class="mt-3 flex flex-wrap gap-2 text-sm text-gray-500 dark:text-gray-400">
                     {% if review.author %}
                     <span class="flex items-center gap-1">

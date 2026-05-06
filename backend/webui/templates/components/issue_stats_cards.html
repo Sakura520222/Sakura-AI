@@ -1,19 +1,19 @@
 <!-- Issue 统计卡片 -->
 <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
     <div class="glass rounded-2xl border border-sakura-200/50 dark:border-sakura-800/30 p-4 card-hover">
-        <p class="text-xs text-gray-500 dark:text-gray-400">{{ _('issue.summary') }}</p>
+        <p class="text-xs text-gray-500 dark:text-gray-400">{{ _('issue.total_analyses') }}</p>
         <p class="text-2xl font-bold text-gray-900 dark:text-gray-100">{{ stats.total }}</p>
     </div>
     <div class="glass rounded-2xl border border-sakura-200/50 dark:border-sakura-800/30 p-4 card-hover">
-        <p class="text-xs text-gray-500 dark:text-gray-400">Critical {{ _('issue.priority') }}</p>
+        <p class="text-xs text-gray-500 dark:text-gray-400">{{ _('issue.critical_count') }}</p>
         <p class="text-2xl font-bold text-red-600 dark:text-red-400">{{ stats.by_priority.get('critical', 0) }}</p>
     </div>
     <div class="glass rounded-2xl border border-sakura-200/50 dark:border-sakura-800/30 p-4 card-hover">
-        <p class="text-xs text-gray-500 dark:text-gray-400">Bug {{ _('issue.category') }}</p>
+        <p class="text-xs text-gray-500 dark:text-gray-400">{{ _('issue.bug_count') }}</p>
         <p class="text-2xl font-bold text-orange-600 dark:text-orange-400">{{ stats.by_category.get('bug', 0) }}</p>
     </div>
     <div class="glass rounded-2xl border border-sakura-200/50 dark:border-sakura-800/30 p-4 card-hover">
-        <p class="text-xs text-gray-500 dark:text-gray-400">Token</p>
+        <p class="text-xs text-gray-500 dark:text-gray-400">{{ _('dashboard.total_tokens') }}</p>
         <p class="text-2xl font-bold text-gray-900 dark:text-gray-100">{{ "{:,}".format(stats.total_prompt_tokens + stats.total_completion_tokens) }}</p>
     </div>
 </div>
