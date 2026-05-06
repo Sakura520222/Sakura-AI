@@ -723,7 +723,7 @@ strategy:
   ignored_patterns: "忽略的文件模式"
   ignored_patterns_desc: "这些文件不影响评分决策，每行一个 glob 模式"
   comment_templates: "评论模板"
-  template_variables: "可用变量"
+  template_variables: "可用变量："
   approve_template: "批准模板"
   request_changes_template: "请求变更模板"
   comment_template: "评论模板"

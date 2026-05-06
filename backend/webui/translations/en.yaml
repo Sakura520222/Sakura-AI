@@ -723,7 +723,7 @@ strategy:
   ignored_patterns: "Ignored file patterns"
   ignored_patterns_desc: "These files do not affect scoring decisions, one glob pattern per line"
   comment_templates: "Comment Templates"
-  template_variables: "Available variables"
+  template_variables: "Available variables:"
   approve_template: "Approve Template"
   request_changes_template: "Request Changes Template"
   comment_template: "Comment Template"
