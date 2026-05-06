@@ -2322,8 +2322,8 @@ Issue 分析详情。
   "success": true,
   "message": "ok",
   "data": {
-    "version": "2.9.1",
-    "build_date": "2026-04-17"
+    "version": "2.9.2",
+    "build_date": "2026-05-06"
   }
 }
 ```

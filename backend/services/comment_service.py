@@ -92,15 +92,10 @@ class CommentService:
         """
         try:
             # 检查是否有行内评论
+            # NOTE: 行内评论开关检查已移至 review_worker._make_and_submit_decision()
+            # 此方法当前未被 review_worker 调用（worker 走 submit_review_with_inline_comments 路径）
+            # 保留此方法供未来可能的调用者使用
             inline_comments = review_result.get("inline_comments", [])
-
-            # 行内评论开关检查（关闭时清空，保留 AI 输出但跳过提交）
-            if not get_settings().enable_inline_comments:
-                if inline_comments:
-                    logger.info(
-                        f"行内评论功能已关闭，跳过 {len(inline_comments)} 条行内评论"
-                    )
-                inline_comments = []
 
             if pr:
                 try:
