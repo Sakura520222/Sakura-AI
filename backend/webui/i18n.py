@@ -15,6 +15,7 @@ Usage:
 
 from pathlib import Path
 from typing import Any, Optional
+import threading
 
 import yaml
 from loguru import logger
@@ -34,32 +35,35 @@ class I18n:
 
     def __init__(self, translations_dir: Path = _TRANSLATIONS_DIR):
         self._translations_dir = translations_dir
-        self._translations: dict[str, dict[str, Any]] = {}
+        self._translations: dict[str, dict[str, str]] = {}
         self._loaded = False
+        self._lock = threading.Lock()
 
     def _ensure_loaded(self):
         """延迟加载翻译文件 / Lazy-load translation files"""
         if self._loaded:
             return
-
-        for lang in SUPPORTED_LANGUAGES:
-            filepath = self._translations_dir / f"{lang}.yaml"
-            if filepath.exists():
-                try:
-                    with open(filepath, "r", encoding="utf-8") as f:
-                        data = yaml.safe_load(f)
-                        if data:
-                            self._translations[lang] = self._flatten(data)
-                            logger.debug(
-                                f"Loaded {len(self._translations[lang])} "
-                                f"translation keys for {lang}"
-                            )
-                except Exception as e:
-                    logger.error(f"Failed to load translations for {lang}: {e}")
+        with self._lock:
+            if self._loaded:
+                return
+            for lang in SUPPORTED_LANGUAGES:
+                filepath = self._translations_dir / f"{lang}.yaml"
+                if filepath.exists():
+                    try:
+                        with open(filepath, "r", encoding="utf-8") as f:
+                            data = yaml.safe_load(f)
+                            if data:
+                                self._translations[lang] = self._flatten(data)
+                                logger.debug(
+                                    f"Loaded {len(self._translations[lang])} "
+                                    f"translation keys for {lang}"
+                                )
+                    except Exception as e:
+                        logger.error(f"Failed to load translations for {lang}: {e}")
+                        self._translations[lang] = {}
+                else:
+                    logger.warning(f"Translation file not found: {filepath}")
                     self._translations[lang] = {}
-            else:
-                logger.warning(f"Translation file not found: {filepath}")
-                self._translations[lang] = {}
 
         self._loaded = True
 
@@ -140,7 +144,7 @@ def _(key: str, **kwargs: Any) -> str:
 
     注意：在模板中使用时，语言由模板上下文中的 `lang` 变量决定。
     此函数依赖请求上下文，通过 Jinja2 Environment 的 globals 注入时
-    需要配合 `_make_translation_func` 使用。
+    # 需要配合 `make_translation_func` 使用。
 
     Args:
         key: 翻译键
@@ -173,7 +177,7 @@ def make_translation_func(lang: str = DEFAULT_LANGUAGE):
 def detect_language(user_prefs: Optional[dict] = None) -> str:
     """检测应使用的语言 / Detect which language to use
 
-    优先级：用户偏好 > 系统默认 > 硬编码默认值
+    优先级：用户偏好 > 动态配置缓存 > Settings 环境变量 > 硬编码默认值
 
     Args:
         user_prefs: 用户偏好字典（包含 language 字段）
@@ -186,7 +190,19 @@ def detect_language(user_prefs: Optional[dict] = None) -> str:
         if lang in SUPPORTED_LANGUAGES:
             return lang
 
-    # 读取系统默认语言
+    # 读取动态配置缓存（由异步请求填充，同步读取无 I/O）
+    try:
+        import time as _time
+        from backend.core.config import _dynamic_config_cache
+        cached = _dynamic_config_cache.get("default_language")
+        if cached is not None:
+            value, expire_time = cached
+            if _time.time() < expire_time and value in SUPPORTED_LANGUAGES:
+                return value
+    except Exception:
+        pass
+
+    # 回退到 Settings 环境变量
     try:
         from backend.core.config import get_settings
         settings = get_settings()
