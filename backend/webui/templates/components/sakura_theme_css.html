@@ -1,0 +1,35 @@
+/* === 樱花主题共享样式 — 与 base.html <style> 同步维护 === */
+body { font-family: 'Inter', system-ui, -apple-system, 'Segoe UI', sans-serif; }
+.sakura-gradient-bg {
+    background: linear-gradient(135deg, #fdf2f8 0%, #fce7f3 30%, #f5f0ff 60%, #ede9fe 100%);
+}
+.dark .sakura-gradient-bg {
+    background: linear-gradient(135deg, #1a0a14 0%, #1e1028 30%, #18102a 60%, #150d26 100%);
+}
+.glass {
+    background: rgba(255, 255, 255, 0.78);
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
+}
+@supports not (backdrop-filter: blur(1px)) {
+    .glass { background: rgba(255, 255, 255, 0.95); }
+}
+.dark .glass {
+    background: rgba(30, 16, 40, 0.78);
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
+}
+@supports not (backdrop-filter: blur(1px)) {
+    .dark .glass { background: rgba(30, 16, 40, 0.95); }
+}
+/* Logo 柔和浮动动画（替代 bounce，更温和） */
+@keyframes sakura-float {
+    0%, 100% { transform: translateY(0); }
+    50% { transform: translateY(-8px); }
+}
+.sakura-logo-float {
+    animation: sakura-float 4s ease-in-out infinite;
+}
+@media (prefers-reduced-motion: reduce) {
+    .sakura-logo-float { animation: none; }
+}
