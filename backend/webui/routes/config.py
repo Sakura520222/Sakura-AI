@@ -597,9 +597,9 @@ async def general_config_page(
     )
 
     settings = get_settings()
-    from backend.webui.i18n import i18n as _i18n
+    from backend.webui.i18n import i18n as _i18n, detect_language as _detect_language
 
-    lang = _i18n.detect_language(user_prefs)
+    lang = _detect_language(user_prefs)
     dynamic_groups = []
     for group_id, group_data in DYNAMIC_CONFIG_GROUPS.items():
         items = []
