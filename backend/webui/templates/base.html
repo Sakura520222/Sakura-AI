@@ -213,33 +213,36 @@
             background: linear-gradient(135deg, #1a0a14 0%, #1e1028 30%, #18102a 60%, #150d26 100%);
         }
         /* 玻璃态效果 */
+        /* NOTE: 背景不透明度 0.78 确保 backdrop-filter 不支持时仍有足够可读性 */
         .glass {
-            background: rgba(255, 255, 255, 0.7);
+            background: rgba(255, 255, 255, 0.78);
             backdrop-filter: blur(12px);
             -webkit-backdrop-filter: blur(12px);
+        }
+        @supports not (backdrop-filter: blur(1px)) {
+            .glass { background: rgba(255, 255, 255, 0.95); }
         }
         .dark .glass {
-            background: rgba(30, 16, 40, 0.7);
+            background: rgba(30, 16, 40, 0.78);
             backdrop-filter: blur(12px);
             -webkit-backdrop-filter: blur(12px);
         }
-        /* 全局卡片样式覆盖 - 樱花主题 */
-        main > div > .bg-white.dark\:bg-gray-800,
-        main .bg-white.dark\:bg-gray-800.rounded-xl {
-            background: rgba(255, 255, 255, 0.7);
+        @supports not (backdrop-filter: blur(1px)) {
+            .dark .glass { background: rgba(30, 16, 40, 0.95); }
+        }
+        /* TODO: 临时兼容层 - 将旧 bg-white.dark:bg-gray-800 卡片自动应用玻璃态。
+           长期方案：逐步迁移各模板直接使用 .glass 类，迁移完成后删除此规则。 */
+        main .bg-white.dark\:bg-gray-800 {
+            background: rgba(255, 255, 255, 0.78);
             backdrop-filter: blur(12px);
             -webkit-backdrop-filter: blur(12px);
             border-color: rgba(251, 207, 232, 0.5);
             border-radius: 1rem;
         }
-        .dark main > div > .bg-white.dark\:bg-gray-800,
-        .dark main .bg-white.dark\:bg-gray-800.rounded-xl {
-            background: rgba(30, 16, 40, 0.7);
+        .dark main .bg-white.dark\:bg-gray-800 {
+            background: rgba(30, 16, 40, 0.78);
             border-color: rgba(131, 24, 67, 0.3);
         }
-        /* 全局按钮主题覆盖 */
-        .bg-pink-600:not(.dark .bg-pink-600),
-        button.bg-pink-600 { background: linear-gradient(135deg, #ec4899, #db2777); }
         /* 页面标题渐变覆盖 */
         .page-title-gradient {
             background: linear-gradient(135deg, #be185d, #7c3aed);
@@ -355,8 +358,8 @@
                 </button>
                 <button @click="confirm()"
                         :disabled="loading"
-                        :class="loading ? 'opacity-50 cursor-not-allowed' : 'hover:bg-sakura-600'"
-                        class="px-4 py-2 rounded-xl text-sm font-medium bg-gradient-to-r from-sakura-500 to-sakura-600 text-white transition-colors shadow-md shadow-sakura-500/25">
+                        :class="loading ? 'opacity-50 cursor-not-allowed' : 'hover:bg-red-600'"
+                        class="px-4 py-2 rounded-xl text-sm font-medium bg-red-500 text-white transition-colors shadow-md shadow-red-500/25">
                     <span x-show="!loading" x-text="confirmText"></span>
                     <span x-show="loading" class="flex items-center gap-2">
                         <svg class="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg>

@@ -31,30 +31,15 @@
         if (localStorage.getItem('theme') === 'dark') document.documentElement.classList.add('dark');
     </script>
     <style>
-        body { font-family: 'Inter', system-ui, -apple-system, 'Segoe UI', sans-serif; }
-        .sakura-gradient-bg {
-            background: linear-gradient(135deg, #fdf2f8 0%, #fce7f3 30%, #f5f0ff 60%, #ede9fe 100%);
-        }
-        .dark .sakura-gradient-bg {
-            background: linear-gradient(135deg, #1a0a14 0%, #1e1028 30%, #18102a 60%, #150d26 100%);
-        }
-        .glass {
-            background: rgba(255, 255, 255, 0.7);
-            backdrop-filter: blur(12px);
-            -webkit-backdrop-filter: blur(12px);
-        }
-        .dark .glass {
-            background: rgba(30, 16, 40, 0.7);
-            backdrop-filter: blur(12px);
-            -webkit-backdrop-filter: blur(12px);
-        }
+        /* 樱花主题样式 — 共享自 components/sakura_theme_css.html */
+        {% include "components/sakura_theme_css.html" %}
     </style>
 </head>
 <body class="sakura-gradient-bg flex items-center justify-center min-h-screen font-sans">
     <div class="w-full max-w-md px-4">
         <!-- Logo -->
         <div class="text-center mb-8">
-            <span class="text-6xl inline-block animate-bounce" style="animation-duration: 3s">🌸</span>
+            <span class="text-6xl inline-block sakura-logo-float">🌸</span>
             <h1 class="mt-4 text-3xl font-extrabold bg-gradient-to-r from-sakura-600 to-purple-600 dark:from-sakura-400 dark:to-purple-400 bg-clip-text text-transparent">Sakura AI Reviewer</h1>
             <p class="mt-2 text-gray-500 dark:text-gray-400 text-sm">GitHub PR 智能审查平台</p>
         </div>
