@@ -231,7 +231,10 @@
             .dark .glass { background: rgba(30, 16, 40, 0.95); }
         }
         /* TODO: 临时兼容层 - 将旧 bg-white.dark:bg-gray-800 卡片自动应用玻璃态。
-           长期方案：逐步迁移各模板直接使用 .glass 类，迁移完成后删除此规则。 */
+           长期方案：逐步迁移各模板直接使用 .glass 类，迁移完成后删除此规则。
+           覆盖范围: issues, pr_list, pr_detail, pr_files, settings, scan_detail,
+           scans, action_logs, queue, users, user_detail, repos, config_general,
+           config_labels, config_strategies, setup_wizard, billing 等 17+ 页面模板。 */
         main .bg-white.dark\:bg-gray-800 {
             background: rgba(255, 255, 255, 0.78);
             backdrop-filter: blur(12px);
@@ -239,9 +242,15 @@
             border-color: rgba(251, 207, 232, 0.5);
             border-radius: 1rem;
         }
+        @supports not (backdrop-filter: blur(1px)) {
+            main .bg-white.dark\:bg-gray-800 { background: rgba(255, 255, 255, 0.95); }
+        }
         .dark main .bg-white.dark\:bg-gray-800 {
             background: rgba(30, 16, 40, 0.78);
             border-color: rgba(131, 24, 67, 0.3);
+        }
+        @supports not (backdrop-filter: blur(1px)) {
+            .dark main .bg-white.dark\:bg-gray-800 { background: rgba(30, 16, 40, 0.95); }
         }
         /* 页面标题渐变覆盖 */
         .page-title-gradient {
@@ -353,7 +362,7 @@
             <p x-show="warning" x-text="warning" class="mt-3 text-xs text-center text-red-600 dark:text-red-400 font-medium"></p>
             <div class="mt-6 flex gap-3 justify-center">
                 <button @click="cancel()"
-                        class="px-4 py-2 rounded-xl text-sm font-medium border border-gray-300 dark:border-gray-600 glass text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-600 transition-colors">
+                        class="px-4 py-2 rounded-xl text-sm font-medium border border-gray-300 dark:border-gray-600 bg-white/80 dark:bg-gray-700/80 text-gray-700 dark:text-gray-300 hover:bg-white dark:hover:bg-gray-600 transition-colors">
                     取消
                 </button>
                 <button @click="confirm()"

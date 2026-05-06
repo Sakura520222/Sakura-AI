@@ -1,11 +1,20 @@
-/* === 樱花主题共享样式 — 与 base.html <style> 同步维护 === */
+/* === 樱花主题 - 独立页面样式 (login / register) === */
+/* 公共样式 (.sakura-gradient-bg, .glass, .dark .glass) 由 base.html 定义，
+   此处仅包含独立页面（不继承 base.html）所需的补充样式。
+   若独立页面需要更新公共样式，应同步修改 base.html 中的对应规则。 */
+
+/* 字体 — 与 base.html tailwind.config fontFamily 保持一致 */
 body { font-family: 'Inter', system-ui, -apple-system, 'Segoe UI', sans-serif; }
+
+/* 渐变背景 — 复制自 base.html .sakura-gradient-bg */
 .sakura-gradient-bg {
     background: linear-gradient(135deg, #fdf2f8 0%, #fce7f3 30%, #f5f0ff 60%, #ede9fe 100%);
 }
 .dark .sakura-gradient-bg {
     background: linear-gradient(135deg, #1a0a14 0%, #1e1028 30%, #18102a 60%, #150d26 100%);
 }
+
+/* 玻璃态效果 — 复制自 base.html .glass（含 @supports 回退） */
 .glass {
     background: rgba(255, 255, 255, 0.78);
     backdrop-filter: blur(12px);
@@ -22,7 +31,10 @@ body { font-family: 'Inter', system-ui, -apple-system, 'Segoe UI', sans-serif; }
 @supports not (backdrop-filter: blur(1px)) {
     .dark .glass { background: rgba(30, 16, 40, 0.95); }
 }
-/* Logo 柔和浮动动画（替代 bounce，更温和） */
+
+/* 以下为独立页面专属样式，不属于 base.html 公共样式 */
+
+/* Logo 柔和浮动动画 */
 @keyframes sakura-float {
     0%, 100% { transform: translateY(0); }
     50% { transform: translateY(-8px); }
