@@ -5,13 +5,13 @@
 {% block content %}
 <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
     <div class="mb-8">
-        <h1 class="text-2xl font-bold text-gray-900 dark:text-white">套餐中心</h1>
+        <h1 class="text-2xl font-bold bg-gradient-to-r from-sakura-700 to-purple-700 dark:from-sakura-400 dark:to-purple-400 bg-clip-text text-transparent">套餐中心</h1>
         <p class="mt-1 text-sm text-gray-500 dark:text-gray-400">查看配额、兑换码充值、管理订阅</p>
     </div>
 
     <!-- 当前配额概览 -->
     {% if db_user %}
-    <div class="mb-8 bg-white dark:bg-gray-800 rounded-lg shadow p-6">
+    <div class="mb-8 glass rounded-2xl border border-sakura-200/50 dark:border-sakura-800/30 shadow-sm p-6">
         <h2 class="text-lg font-semibold text-gray-900 dark:text-white mb-4">当前配额</h2>
         <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
             <div>
@@ -29,7 +29,7 @@
                         </span>
                     </div>
                     <div class="w-full bg-gray-200 dark:bg-gray-700 rounded-full h-2">
-                        <div class="h-2 rounded-full {{ 'bg-red-500' if used >= quota else 'bg-pink-500' }}"
+                        <div class="h-2 rounded-full {{ 'bg-red-500' if used >= quota else 'bg-gradient-to-r from-sakura-400 to-sakura-500' }}"
                              style="width: {{ percentage(used, quota) }}%"></div>
                     </div>
                     {% endfor %}
