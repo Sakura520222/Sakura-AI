@@ -62,7 +62,7 @@
             </div>
             {% endfor %}
             {% if comments|length > 5 %}
-            <a href="/webui/pr/{{ review.id }}" class="text-sm text-pink-600 dark:text-pink-400 hover:underline">查看全部 {{ comments|length }} 条评论</a>
+            <a href="/webui/pr/{{ review.id }}" class="text-sm text-pink-600 dark:text-pink-400 hover:underline">{{ _('common.view_all') }} {{ comments|length }} {{ _('pr.inline_comments') }}</a>
             {% endif %}
         </div>
     </div>
@@ -70,6 +70,6 @@
 
     <!-- 无内容提示 -->
     {% if not review.review_summary and not comments %}
-    <p class="text-sm text-gray-400">暂无审查详情</p>
+    <p class="text-sm text-gray-400">{{ _('common.no_data') }}</p>
     {% endif %}
 </div>

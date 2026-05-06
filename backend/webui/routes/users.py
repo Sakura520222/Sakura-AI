@@ -257,7 +257,6 @@ async def user_detail_page(
         target_user=target_user,
         usage_logs=usage_logs,
     )
-    )
 
 
 @router.post("/{user_id}/role")

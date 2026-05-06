@@ -7,7 +7,7 @@
     <!-- 面包屑 -->
     <div>
         <nav class="flex items-center gap-2 text-sm text-gray-500 dark:text-gray-400">
-            <a href="/webui/users/" class="hover:text-pink-600 dark:hover:text-pink-400">用户管理</a>
+            <a href="/webui/users/" class="hover:text-pink-600 dark:hover:text-pink-400">{{ _('user.title') }}</a>
             <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/></svg>
             <span class="text-gray-900 dark:text-gray-100">{{ target_user.github_username or target_user.telegram_id }}</span>
         </nav>

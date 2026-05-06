@@ -1,12 +1,12 @@
 {% extends "base.html" %}
 
-{% block title %}全局配置 - Sakura AI Reviewer{% endblock %}
+{% block title %}{{ _('config.general_title') }} - Sakura AI Reviewer{% endblock %}
 
 {% block content %}
 <div x-data="{ activeTab: 'basic' }" class="space-y-4">
     <!-- 页面标题 -->
     <div>
-        <h1 class="text-2xl font-bold">全局配置</h1>
+        <h1 class="text-2xl font-bold">{{ _('config.general_title') }}</h1>
         <p class="mt-1 text-sm text-gray-500 dark:text-gray-400">管理应用运行参数，修改后即时生效</p>
     </div>
 

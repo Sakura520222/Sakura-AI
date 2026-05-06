@@ -6,9 +6,9 @@
 <div class="space-y-6">
     <!-- 面包屑导航 -->
     <nav class="flex items-center gap-2 text-sm text-gray-500 dark:text-gray-400">
-        <a href="/webui/" class="hover:text-pink-600 dark:hover:text-pink-400">仪表盘</a>
+        <a href="/webui/" class="hover:text-pink-600 dark:hover:text-pink-400">{{ _('nav.dashboard') }}</a>
         <span>/</span>
-        <a href="/webui/pr/" class="hover:text-pink-600 dark:hover:text-pink-400">PR 审查</a>
+        <a href="/webui/pr/" class="hover:text-pink-600 dark:hover:text-pink-400">{{ _('nav.pr_reviews') }}</a>
         <span>/</span>
         <span class="text-gray-900 dark:text-white">{{ review.repo_owner }}/{{ review.repo_name }} #{{ review.pr_id }}</span>
     </nav>
@@ -31,10 +31,10 @@
                     {% endif %}
                     <span class="flex items-center gap-1">
                         <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"/></svg>
-                        {{ review.strategy }} 策略
+                        {{ review.strategy }} {{ _('pr.review_strategy') }}
                     </span>
                     {% if review.file_count %}
-                    <span>{{ review.file_count }} 文件</span>
+                    <span>{{ review.file_count }} {{ _('pr.changed_files') }}</span>
                     {% endif %}
                     {% if review.line_count %}
                     <span>{{ review.line_count }} 行</span>
@@ -48,31 +48,31 @@
                 {% if review.status == "completed" and review.decision == "approve" %}
                 <span class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-sm font-medium bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-400">
                     <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/></svg>
-                    通过
+                    {{ _('pr.approved') }}
                 </span>
                 {% elif review.status == "completed" and review.decision == "request_changes" %}
                 <span class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-sm font-medium bg-yellow-100 dark:bg-yellow-900/30 text-yellow-700 dark:text-yellow-400">
                     <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01"/></svg>
-                    需修改
+                    {{ _('pr.changes_requested') }}
                 </span>
                 {% elif review.status == "completed" and review.decision == "comment" %}
                 <span class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-sm font-medium bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-400">
                     <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 12h.01M12 12h.01M16 12h.01"/></svg>
-                    评论
+                    {{ _('pr.commented') }}
                 </span>
                 {% elif review.status == "reviewing" %}
                 <span class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-sm font-medium bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-400">
                     <svg class="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg>
-                    审查中
+                    {{ _('common.processing') }}
                 </span>
                 {% elif review.status == "failed" %}
                 <span class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-sm font-medium bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-400">
                     <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
-                    失败
+                    {{ _('common.error') }}
                 </span>
                 {% else %}
                 <span class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-sm font-medium bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-400">
-                    待处理
+                    {{ _('common.pending') }}
                 </span>
                 {% endif %}
 
@@ -93,17 +93,17 @@
             <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/>
             </svg>
-            文件审查
+            {{ _('pr.view_files') }}
         </a>
 
         <!-- 时间信息 -->
         <div class="mt-4 pt-4 border-t border-gray-200 dark:border-gray-700 flex flex-wrap gap-4 text-xs text-gray-500 dark:text-gray-400">
-            <span>创建时间: {{ created_at_str }}</span>
+            <span>{{ _('common.created_at') }}: {{ created_at_str }}</span>
             {% if completed_at_str %}
-            <span>完成时间: {{ completed_at_str }}</span>
+            <span>{{ _('common.updated_at') }}: {{ completed_at_str }}</span>
             {% endif %}
             {% if review.branch %}
-            <span>分支: {{ review.branch }}</span>
+            <span>{{ _('pr.branch') }}: {{ review.branch }}</span>
             {% endif %}
         </div>
     </div>
@@ -115,7 +115,7 @@
             <svg class="w-5 h-5 text-cyan-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"/>
             </svg>
-            Token 消耗
+            Token {{ _('common.description') }}
         </h2>
         <div class="grid grid-cols-3 gap-4">
             <div>

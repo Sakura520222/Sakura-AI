@@ -37,6 +37,10 @@ common:
   updated_at: "Updated At"
   no_data: "No data available"
   coming_soon: "Coming soon"
+  total: "Total"
+  items: "items"
+  page: "Page"
+  page_of: "of"
   view_all: "View All"
   more: "More"
   success: "Success"
@@ -45,6 +49,10 @@ common:
   info: "Info"
   are_you_sure: "Are you sure you want to proceed?"
   confirm_action: "Confirm Action"
+  or: "or"
+  pending: "Pending"
+  processing: "Processing"
+  cache: "Cache & Queue"
 
 # ========== Auth ==========
 auth:
@@ -92,6 +100,7 @@ dashboard:
   approved: "Approved"
   changes_requested: "Changes Requested"
   commented: "Commented"
+  processing: "Reviewing"
   this_month: "This Month"
   this_week: "This Week"
   today: "Today"
@@ -123,6 +132,10 @@ pr:
   no_inline_comments: "No inline comments"
   view_files: "View Files"
   view_detail: "View Detail"
+  approved: "Approved"
+  changes_requested: "Changes Requested"
+  commented: "Commented"
+  processing: "Reviewing"
 
 # ========== Issue Analysis ==========
 issue:

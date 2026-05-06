@@ -1,13 +1,13 @@
 {% extends "base.html" %}
 
-{% block title %}审查策略配置 - Sakura AI Reviewer{% endblock %}
+{% block title %}{{ _('config.strategies_title') }} - Sakura AI Reviewer{% endblock %}
 
 {% block content %}
 <div class="space-y-4" x-data="{ activeTab: '{{ active_tab }}' }">
     <!-- 页面标题 -->
     <div class="flex items-center justify-between">
         <div>
-            <h1 class="text-2xl font-bold">审查策略配置</h1>
+            <h1 class="text-2xl font-bold">{{ _('config.strategies_title') }}</h1>
             <p class="mt-1 text-sm text-gray-500 dark:text-gray-400">管理 strategies.yaml 中的审查策略和参数</p>
         </div>
     </div>

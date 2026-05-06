@@ -1,6 +1,6 @@
 {% extends "base.html" %}
 
-{% block title %}扫描详情 - {{ scan.repo_name }} - Sakura AI Reviewer{% endblock %}
+{% block title %}{{ _('scan.detail') }} - {{ scan.repo_name }} - Sakura AI Reviewer{% endblock %}
 
 {% block content %}
 <div class="space-y-6">
@@ -9,7 +9,7 @@
         <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7"/>
         </svg>
-        返回扫描列表
+        {{ _('common.back') }} {{ _('scan.title') }}
     </a>
 
     <!-- 扫描概览 -->

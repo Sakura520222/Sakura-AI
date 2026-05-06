@@ -1,18 +1,18 @@
 {% extends "base.html" %}
 
-{% block title %}文件审查 #{{ review.pr_id }} - Sakura AI Reviewer{% endblock %}
+{% block title %}{{ _('pr.files') }} #{{ review.pr_id }} - Sakura AI Reviewer{% endblock %}
 
 {% block content %}
 <div class="space-y-4">
     <!-- 面包屑导航 -->
     <nav class="flex items-center gap-2 text-sm text-gray-500 dark:text-gray-400">
-        <a href="/webui/" class="hover:text-pink-600 dark:hover:text-pink-400">仪表盘</a>
+        <a href="/webui/" class="hover:text-pink-600 dark:hover:text-pink-400">{{ _('nav.dashboard') }}</a>
         <span>/</span>
-        <a href="/webui/pr/" class="hover:text-pink-600 dark:hover:text-pink-400">PR 审查</a>
+        <a href="/webui/pr/" class="hover:text-pink-600 dark:hover:text-pink-400">{{ _('nav.pr_reviews') }}</a>
         <span>/</span>
         <a href="/webui/pr/{{ review.id }}" class="hover:text-pink-600 dark:hover:text-pink-400">{{ review.repo_owner }}/{{ review.repo_name }} #{{ review.pr_id }}</a>
         <span>/</span>
-        <span class="text-gray-900 dark:text-white">文件审查</span>
+        <span class="text-gray-900 dark:text-white">{{ _('pr.files') }}</span>
     </nav>
 
     <!-- PR 基本信息 -->
@@ -29,7 +29,7 @@
         <div class="lg:col-span-4">
             <div class="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 shadow-sm overflow-hidden">
                 <div class="px-4 py-3 border-b border-gray-200 dark:border-gray-700">
-                    <h2 class="text-sm font-semibold text-gray-700 dark:text-gray-300">文件列表</h2>
+                    <h2 class="text-sm font-semibold text-gray-700 dark:text-gray-300">{{ _('pr.files') }}</h2>
                 </div>
                 <div id="file-list-container" class="max-h-[calc(100vh-280px)] overflow-y-auto"
                      hx-get="/webui/pr/{{ review.id }}/files/file-fragment" hx-trigger="load" hx-swap="innerHTML">
@@ -51,7 +51,7 @@
                     <svg class="w-12 h-12 mx-auto" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/>
                     </svg>
-                    <p class="mt-4">点击左侧文件查看审查评论</p>
+                    <p class="mt-4">{{ _('pr.inline_comments') }}</p>
                 </div>
             </div>
         </div>
@@ -63,7 +63,7 @@
             <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7"/>
             </svg>
-            返回 PR 详情
+            {{ _('common.back') }} {{ _('pr.detail') }}
         </a>
     </div>
 </div>
