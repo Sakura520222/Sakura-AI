@@ -109,7 +109,7 @@ async def redeem_code(
         )
 
 
-# ========== Admin: Plan Management ==========
+# ========== 管理员：套餐管理 ==========
 
 
 @router.get("/admin/plans")
@@ -178,7 +178,7 @@ async def admin_create_plan(
         return toast_redirect(
             "/webui/billing/admin/plans", "toast.plan_created", lang=detect_language()
         )
-    except Exception as e:
+    except PaymentError as e:
         await db.rollback()
         return toast_redirect(
             "/webui/billing/admin/plans",
@@ -186,6 +186,15 @@ async def admin_create_plan(
             "error",
             lang=detect_language(),
             error=str(e),
+        )
+    except Exception as e:
+        await db.rollback()
+        logger.error(f"Failed to create plan: {e}")
+        return toast_redirect(
+            "/webui/billing/admin/plans",
+            "toast.save_failed",
+            "error",
+            lang=detect_language(),
         )
 
 
@@ -299,7 +308,7 @@ async def admin_generate_codes(
         )
 
 
-# ========== Admin: Manual Grant ==========
+# ========== 管理员：手动充值 ==========
 
 
 @router.post("/admin/grant")
