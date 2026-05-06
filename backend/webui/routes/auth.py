@@ -21,6 +21,7 @@ from backend.webui.deps import (
     toast_redirect,
     render_template,
 )
+from backend.webui.i18n import detect_language
 from backend.core.config import get_settings
 from backend.core.redis import get_async_redis
 
@@ -129,7 +130,7 @@ async def login_page(request: Request):
     # 已登录则跳转仪表盘
     token = request.cookies.get("webui_token")
     if token and decode_access_token(token):
-        return toast_redirect("/webui/", "Auto-logged in")
+        return toast_redirect("/webui/", "toast.auto_logged_in", lang=detect_language())
 
     settings = get_settings()
     has_oauth = bool(settings.github_oauth_client_id)
@@ -332,7 +333,7 @@ async def logout(request: Request, csrf_token: str = Form(...)):
         raise HTTPException(status_code=403, detail="CSRF 验证失败")
 
     logger.info("WebUI 用户登出")
-    response = toast_redirect("/webui/auth/login", "Logged out")
+    response = toast_redirect("/webui/auth/login", "toast.logged_out", lang=detect_language())
     response.delete_cookie("webui_token")
     return response
 

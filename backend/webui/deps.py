@@ -234,14 +234,29 @@ def toast_redirect(
     message: str = "操作成功",
     toast_type: str = "success",
     status_code: int = 302,
+    lang: str = "",
+    **fmt_kwargs: Any,
 ) -> RedirectResponse:
     """创建带 toast 通知的 redirect 响应
 
     通过 query params 传递 toast 信息，供前端 JS 拾取并显示。
+
+    Args:
+        url: 重定向目标 URL
+        message: toast 消息文本，当 lang 非空时视为翻译键
+        toast_type: toast 类型（success/error）
+        status_code: HTTP 状态码
+        lang: 语言代码，非空时将 message 作为翻译键处理
+        **fmt_kwargs: 翻译键的格式化参数（如 order_no="123"）
     """
     from urllib.parse import urlencode
 
-    params = {"_toast": message, "_toast_type": toast_type}
+    display_message = message
+    if lang:
+        from backend.webui.i18n import i18n as _i18n
+        display_message = _i18n.t(message, lang=lang, **fmt_kwargs)
+
+    params = {"_toast": display_message, "_toast_type": toast_type}
     separator = "&" if "?" in url else "?"
     return RedirectResponse(
         url=f"{url}{separator}{urlencode(params)}",

@@ -1073,6 +1073,20 @@ def invalidate_dynamic_config_cache(keys: list[str] | None = None):
             _dynamic_config_cache.pop(k, None)
 
 
+def get_cached_config(key: str) -> Optional[str]:
+    """从动态配置缓存中同步读取值（无 I/O）
+
+    用于 i18n 等同步上下文中读取运行时配置。
+    返回 None 表示缓存未命中或已过期。
+    """
+    cached = _dynamic_config_cache.get(key)
+    if cached is not None:
+        value, expire_time = cached
+        if time.time() < expire_time:
+            return value
+    return None
+
+
 # 核心配置键（Setup Wizard 写入、运行时从 DB 加载）
 # 与 setup_service._ENV_TO_SETTINGS_KEY 的 values 集合对应，新增配置需同步更新两处
 CORE_CONFIG_KEYS = frozenset(

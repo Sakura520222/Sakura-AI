@@ -17,7 +17,7 @@
             <option value="pending" {% if status == 'pending' %}selected{% endif %}>{{ _('common.pending') }}</option>
             <option value="reviewing" {% if status == 'reviewing' %}selected{% endif %}>{{ _('common.processing') }}</option>
             <option value="completed" {% if status == 'completed' %}selected{% endif %}>{{ _('scan.completed') }}</option>
-            <option value="failed" {% if status == 'failed' %}selected{% endif %}>{{ _('common.error') }}</option>
+            <option value="failed" {% if status == 'failed' %}selected{% endif %}>{{ _('queue.failed') }}</option>
         </select>
 
         <!-- 决策过滤 -->
