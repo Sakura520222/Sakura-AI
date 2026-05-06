@@ -82,14 +82,14 @@ async def redeem_code(
     """兑换码兑换"""
     code = code.strip().upper()
     if not code:
-        return toast_redirect("/webui/billing/", "请输入兑换码", "error")
+        return toast_redirect("/webui/billing/", "Please enter a redemption code", "error")
 
     svc = PaymentService(db)
     try:
         order = await svc.redeem_code(user["user_id"], code)
         await db.commit()
         logger.info(f"User {user['sub']} redeemed code {code}, order {order.order_no}")
-        return toast_redirect("/webui/billing/", f"兑换成功！订单号: {order.order_no}")
+        return toast_redirect("/webui/billing/", f"Redeemed! Order: {order.order_no}")
     except PaymentError as e:
         await db.rollback()
         return toast_redirect("/webui/billing/", str(e), "error")
@@ -161,7 +161,7 @@ async def admin_create_plan(
             sort_order=sort_order,
         )
         await db.commit()
-        return toast_redirect("/webui/billing/admin/plans", "套餐创建成功")
+        return toast_redirect("/webui/billing/admin/plans", "Plan created successfully")
     except Exception as e:
         await db.rollback()
         return toast_redirect("/webui/billing/admin/plans", str(e), "error")
@@ -179,11 +179,11 @@ async def admin_toggle_plan(
     svc = PaymentService(db)
     plan = await svc.get_plan(plan_id)
     if not plan:
-        return toast_redirect("/webui/billing/admin/plans", "套餐不存在", "error")
+        return toast_redirect("/webui/billing/admin/plans", "Plan not found", "error")
     plan.is_active = not plan.is_active
     await db.commit()
-    status = "启用" if plan.is_active else "禁用"
-    return toast_redirect("/webui/billing/admin/plans", f"套餐已{status}")
+    status = "enabled" if plan.is_active else "disabled"
+    return toast_redirect("/webui/billing/admin/plans", f"Plan {status}")
 
 
 # ========== 管理员：兑换码管理 ==========
@@ -233,7 +233,7 @@ async def admin_generate_codes(
     """批量生成兑换码"""
     if count < 1 or count > 100:
         return toast_redirect(
-            "/webui/billing/admin/codes", "生成数量应在 1-100 之间", "error"
+            "/webui/billing/admin/codes", "Count must be between 1-100", "error"
         )
 
     svc = PaymentService(db)
@@ -248,7 +248,7 @@ async def admin_generate_codes(
         await db.commit()
         logger.info(f"Admin {user['sub']} generated {count} codes for plan {plan_id}")
         return toast_redirect(
-            "/webui/billing/admin/codes", f"成功生成 {len(codes)} 个兑换码"
+            "/webui/billing/admin/codes", f"Generated {len(codes)} codes"
         )
     except PaymentError as e:
         await db.rollback()
@@ -278,7 +278,7 @@ async def admin_grant(
         await db.commit()
         logger.info(f"Admin {user['sub']} granted plan {plan_id} to user {user_id}")
         return toast_redirect(
-            f"/webui/users/{user_id}", f"充值成功，订单号: {order.order_no}"
+            f"/webui/users/{user_id}", f"Recharge successful, order: {order.order_no}"
         )
     except PaymentError as e:
         await db.rollback()

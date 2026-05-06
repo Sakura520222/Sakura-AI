@@ -7,11 +7,11 @@
     <div class="mb-8 flex items-center justify-between">
         <div>
             <h1 class="text-2xl font-bold text-gray-900 dark:text-white">{{ _('billing.admin_codes') }}</h1>
-            <p class="mt-1 text-sm text-gray-500 dark:text-gray-400">批量生成和管理兑换码</p>
+            <p class="mt-1 text-sm text-gray-500 dark:text-gray-400">{{ _('billing.batch_generate') }}</p>
         </div>
         <button onclick="document.getElementById('generate-modal').classList.remove('hidden')"
                 class="px-4 py-2 bg-pink-600 hover:bg-pink-700 text-white font-medium rounded-lg transition-colors">
-            生成兑换码
+            {{ _('billing.generate_code') }}
         </button>
     </div>
 
@@ -20,12 +20,12 @@
         <table class="min-w-full divide-y divide-gray-200 dark:divide-gray-700">
             <thead class="bg-gray-50 dark:bg-gray-700">
                 <tr>
-                    <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase">兑换码</th>
-                    <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase">套餐</th>
-                    <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase">批次</th>
-                    <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase">使用</th>
-                    <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase">状态</th>
-                    <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase">过期时间</th>
+                    <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase">{{ _('billing.redeem_code') }}</th>
+                    <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase">{{ _('billing.plan_type') }}</th>
+                    <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase">{{ _('billing.batch_name') }}</th>
+                    <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase">{{ _('common.status') }}</th>
+                    <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase">{{ _('common.status') }}</th>
+                    <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase">{{ _('billing.duration_days') }}</th>
                 </tr>
             </thead>
             <tbody class="bg-white dark:bg-gray-800 divide-y divide-gray-200 dark:divide-gray-700">
@@ -50,14 +50,14 @@
                         </span>
                     </td>
                     <td class="px-6 py-4 text-sm text-gray-500 dark:text-gray-400">
-                        {{ code.expires_at.strftime('%Y-%m-%d %H:%M') if code.expires_at else '永不过期' }}
+                        {{ code.expires_at.strftime('%Y-%m-%d %H:%M') if code.expires_at else _('billing.never_expire') }}
                     </td>
                 </tr>
                 {% endfor %}
                 {% if not codes %}
                 <tr>
                     <td colspan="6" class="px-6 py-12 text-center text-gray-500 dark:text-gray-400">
-                        暂无兑换码，点击上方按钮生成
+                        {{ _('billing.no_plans') }}
                     </td>
                 </tr>
                 {% endif %}
@@ -71,7 +71,7 @@
     <div class="absolute inset-0 bg-black/50" onclick="this.parentElement.classList.add('hidden')"></div>
     <div class="relative bg-white dark:bg-gray-800 rounded-lg shadow-xl max-w-md w-full mx-4">
         <div class="px-6 py-4 border-b border-gray-200 dark:border-gray-700 flex items-center justify-between">
-            <h3 class="text-lg font-semibold text-gray-900 dark:text-white">生成兑换码</h3>
+            <h3 class="text-lg font-semibold text-gray-900 dark:text-white">{{ _('billing.generate_code') }}</h3>
             <button onclick="this.closest('#generate-modal').classList.add('hidden')"
                     class="text-gray-400 hover:text-gray-600 dark:hover:text-gray-300">&times;</button>
         </div>
@@ -79,7 +79,7 @@
             <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
 
             <div>
-                <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">选择套餐</label>
+                <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">{{ _('billing.select_plan') }}</label>
                 <select name="plan_id" required
                         class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg
                                bg-white dark:bg-gray-700 text-gray-900 dark:text-white">
@@ -90,21 +90,21 @@
             </div>
 
             <div>
-                <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">生成数量（1-100）</label>
+                <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">{{ _('billing.generate_count') }}</label>
                 <input type="number" name="count" value="10" min="1" max="100" required
                        class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg
                               bg-white dark:bg-gray-700 text-gray-900 dark:text-white">
             </div>
 
             <div>
-                <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">批次名称</label>
-                <input type="text" name="batch_name" placeholder="可选"
+                <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">{{ _('billing.batch_name') }}</label>
+                <input type="text" name="batch_name" placeholder="{{ _('billing.code_placeholder') }}"
                        class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg
                               bg-white dark:bg-gray-700 text-gray-900 dark:text-white">
             </div>
 
             <div>
-                <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">每个码最大使用次数</label>
+                <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">{{ _('billing.max_uses') }}</label>
                 <input type="number" name="max_uses" value="1" min="1" required
                        class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg
                               bg-white dark:bg-gray-700 text-gray-900 dark:text-white">
@@ -115,12 +115,12 @@
                         onclick="this.closest('#generate-modal').classList.add('hidden')"
                         class="px-4 py-2 text-gray-700 dark:text-gray-300 bg-gray-100 dark:bg-gray-700 rounded-lg
                                hover:bg-gray-200 dark:hover:bg-gray-600">
-                    取消
+                    {{ _('common.cancel') }}
                 </button>
                 <button type="submit"
                         class="px-4 py-2 bg-pink-600 hover:bg-pink-700 text-white font-medium rounded-lg
                                transition-colors">
-                    生成
+                    {{ _('common.submit') }}
                 </button>
             </div>
         </form>

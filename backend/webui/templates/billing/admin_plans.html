@@ -7,11 +7,11 @@
     <div class="mb-8 flex items-center justify-between">
         <div>
             <h1 class="text-2xl font-bold text-gray-900 dark:text-white">{{ _('billing.admin_plans') }}</h1>
-            <p class="mt-1 text-sm text-gray-500 dark:text-gray-400">创建和管理付费套餐计划</p>
+            <p class="mt-1 text-sm text-gray-500 dark:text-gray-400">{{ _('billing.create_plan') }}</p>
         </div>
         <button onclick="document.getElementById('create-plan-modal').classList.remove('hidden')"
                 class="px-4 py-2 bg-pink-600 hover:bg-pink-700 text-white font-medium rounded-lg transition-colors">
-            创建套餐
+            {{ _('billing.create_plan') }}
         </button>
     </div>
 
@@ -21,12 +21,12 @@
             <thead class="bg-gray-50 dark:bg-gray-700">
                 <tr>
                     <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase">ID</th>
-                    <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase">名称</th>
-                    <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase">类型</th>
-                    <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase">价格</th>
-                    <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase">配额内容</th>
-                    <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase">状态</th>
-                    <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase">操作</th>
+                    <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase">{{ _('common.name') }}</th>
+                    <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase">{{ _('billing.plan_type') }}</th>
+                    <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase">{{ _('billing.amount') }}</th>
+                    <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase">{{ _('billing.quota_limit') }}</th>
+                    <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase">{{ _('common.status') }}</th>
+                    <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase">{{ _('common.actions') }}</th>
                 </tr>
             </thead>
             <tbody class="bg-white dark:bg-gray-800 divide-y divide-gray-200 dark:divide-gray-700">
@@ -37,7 +37,7 @@
                     <td class="px-6 py-4">
                         <span class="text-xs px-2 py-1 rounded-full
                                      {{ 'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400' if plan.plan_type == 'subscription' else 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400' }}">
-                            {{ '订阅' if plan.plan_type == 'subscription' else '一次性' }}
+                            {{ _('billing.subscription') if plan.plan_type == 'subscription' else _('billing.one_time') }}
                         </span>
                     </td>
                     <td class="px-6 py-4 text-sm text-gray-900 dark:text-white">¥{{ "%.2f"|format(plan.price_cents / 100) }}</td>
@@ -48,7 +48,7 @@
                     <td class="px-6 py-4">
                         <span class="text-xs px-2 py-1 rounded-full
                                      {{ 'bg-green-100 text-green-700' if plan.is_active else 'bg-red-100 text-red-700' }}">
-                            {{ '启用' if plan.is_active else '禁用' }}
+                            {{ _('common.enabled') if plan.is_active else _('common.disabled') }}
                         </span>
                     </td>
                     <td class="px-6 py-4">
@@ -56,7 +56,7 @@
                             <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
                             <button type="submit"
                                     class="text-sm {{ 'text-red-600 hover:text-red-800' if plan.is_active else 'text-green-600 hover:text-green-800' }}">
-                                {{ '禁用' if plan.is_active else '启用' }}
+                                {{ _('common.disabled') if plan.is_active else _('common.enabled') }}
                             </button>
                         </form>
                     </td>
@@ -65,7 +65,7 @@
                 {% if not plans %}
                 <tr>
                     <td colspan="7" class="px-6 py-12 text-center text-gray-500 dark:text-gray-400">
-                        暂无套餐，点击上方按钮创建
+                        {{ _('billing.no_plans') }}
                     </td>
                 </tr>
                 {% endif %}
@@ -79,7 +79,7 @@
     <div class="absolute inset-0 bg-black/50" onclick="this.parentElement.classList.add('hidden')"></div>
     <div class="relative bg-white dark:bg-gray-800 rounded-lg shadow-xl max-w-2xl w-full mx-4 max-h-[90vh] overflow-y-auto">
         <div class="px-6 py-4 border-b border-gray-200 dark:border-gray-700 flex items-center justify-between">
-            <h3 class="text-lg font-semibold text-gray-900 dark:text-white">创建套餐</h3>
+            <h3 class="text-lg font-semibold text-gray-900 dark:text-white">{{ _('billing.create_plan') }}</h3>
             <button onclick="this.closest('#create-plan-modal').classList.add('hidden')"
                     class="text-gray-400 hover:text-gray-600 dark:hover:text-gray-300">&times;</button>
         </div>
@@ -88,31 +88,31 @@
 
             <div class="grid grid-cols-2 gap-4">
                 <div>
-                    <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">套餐名称</label>
+                    <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">{{ _('billing.plan_name') }}</label>
                     <input type="text" name="name" required
                            class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg
                                   bg-white dark:bg-gray-700 text-gray-900 dark:text-white">
                 </div>
                 <div>
-                    <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">类型</label>
+                    <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">{{ _('billing.plan_type') }}</label>
                     <select name="plan_type" required
                             class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg
                                    bg-white dark:bg-gray-700 text-gray-900 dark:text-white">
-                        <option value="one_time">一次性</option>
-                        <option value="subscription">订阅</option>
+                        <option value="one_time">{{ _('billing.one_time') }}</option>
+                        <option value="subscription">{{ _('billing.subscription') }}</option>
                     </select>
                 </div>
             </div>
 
             <div class="grid grid-cols-2 gap-4">
                 <div>
-                    <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">价格（分）</label>
+                    <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">{{ _('billing.price_cents') }}</label>
                     <input type="number" name="price_cents" value="0" min="0"
                            class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg
                                   bg-white dark:bg-gray-700 text-gray-900 dark:text-white">
                 </div>
                 <div>
-                    <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">订阅天数</label>
+                    <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">{{ _('billing.subscription_days') }}</label>
                     <input type="number" name="duration_days" placeholder="订阅类型填写"
                            class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg
                                   bg-white dark:bg-gray-700 text-gray-900 dark:text-white">
@@ -120,28 +120,28 @@
             </div>
 
             <fieldset class="border border-gray-200 dark:border-gray-700 rounded-lg p-4">
-                <legend class="text-sm font-medium text-gray-700 dark:text-gray-300 px-2">PR 审查配额</legend>
+                <legend class="text-sm font-medium text-gray-700 dark:text-gray-300 px-2">{{ _('billing.pr_review_quota') }}</legend>
                 <div class="grid grid-cols-4 gap-3">
                     <div>
-                        <label class="block text-xs text-gray-500 dark:text-gray-400 mb-1">一次性奖励</label>
+                        <label class="block text-xs text-gray-500 dark:text-gray-400 mb-1">{{ _('billing.one_time_bonus') }}</label>
                         <input type="number" name="pr_quota_bonus" value="0" min="0"
                                class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg
                                       bg-white dark:bg-gray-700 text-gray-900 dark:text-white text-sm">
                     </div>
                     <div>
-                        <label class="block text-xs text-gray-500 dark:text-gray-400 mb-1">每日+</label>
+                        <label class="block text-xs text-gray-500 dark:text-gray-400 mb-1">{{ _('billing.daily_add') }}</label>
                         <input type="number" name="pr_daily_add" value="0" min="0"
                                class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg
                                       bg-white dark:bg-gray-700 text-gray-900 dark:text-white text-sm">
                     </div>
                     <div>
-                        <label class="block text-xs text-gray-500 dark:text-gray-400 mb-1">每周+</label>
+                        <label class="block text-xs text-gray-500 dark:text-gray-400 mb-1">{{ _('billing.weekly_add') }}</label>
                         <input type="number" name="pr_weekly_add" value="0" min="0"
                                class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg
                                       bg-white dark:bg-gray-700 text-gray-900 dark:text-white text-sm">
                     </div>
                     <div>
-                        <label class="block text-xs text-gray-500 dark:text-gray-400 mb-1">每月+</label>
+                        <label class="block text-xs text-gray-500 dark:text-gray-400 mb-1">{{ _('billing.monthly_add') }}</label>
                         <input type="number" name="pr_monthly_add" value="0" min="0"
                                class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg
                                       bg-white dark:bg-gray-700 text-gray-900 dark:text-white text-sm">
@@ -150,28 +150,28 @@
             </fieldset>
 
             <fieldset class="border border-gray-200 dark:border-gray-700 rounded-lg p-4">
-                <legend class="text-sm font-medium text-gray-700 dark:text-gray-300 px-2">Issue 分析配额</legend>
+                <legend class="text-sm font-medium text-gray-700 dark:text-gray-300 px-2">{{ _('billing.issue_analysis_quota') }}</legend>
                 <div class="grid grid-cols-4 gap-3">
                     <div>
-                        <label class="block text-xs text-gray-500 dark:text-gray-400 mb-1">一次性奖励</label>
+                        <label class="block text-xs text-gray-500 dark:text-gray-400 mb-1">{{ _('billing.one_time_bonus') }}</label>
                         <input type="number" name="issue_quota_bonus" value="0" min="0"
                                class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg
                                       bg-white dark:bg-gray-700 text-gray-900 dark:text-white text-sm">
                     </div>
                     <div>
-                        <label class="block text-xs text-gray-500 dark:text-gray-400 mb-1">每日+</label>
+                        <label class="block text-xs text-gray-500 dark:text-gray-400 mb-1">{{ _('billing.daily_add') }}</label>
                         <input type="number" name="issue_daily_add" value="0" min="0"
                                class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg
                                       bg-white dark:bg-gray-700 text-gray-900 dark:text-white text-sm">
                     </div>
                     <div>
-                        <label class="block text-xs text-gray-500 dark:text-gray-400 mb-1">每周+</label>
+                        <label class="block text-xs text-gray-500 dark:text-gray-400 mb-1">{{ _('billing.weekly_add') }}</label>
                         <input type="number" name="issue_weekly_add" value="0" min="0"
                                class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg
                                       bg-white dark:bg-gray-700 text-gray-900 dark:text-white text-sm">
                     </div>
                     <div>
-                        <label class="block text-xs text-gray-500 dark:text-gray-400 mb-1">每月+</label>
+                        <label class="block text-xs text-gray-500 dark:text-gray-400 mb-1">{{ _('billing.monthly_add') }}</label>
                         <input type="number" name="issue_monthly_add" value="0" min="0"
                                class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg
                                       bg-white dark:bg-gray-700 text-gray-900 dark:text-white text-sm">
@@ -180,14 +180,14 @@
             </fieldset>
 
             <div>
-                <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">描述</label>
+                <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">{{ _('common.description') }}</label>
                 <textarea name="description" rows="2"
                           class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg
                                  bg-white dark:bg-gray-700 text-gray-900 dark:text-white"></textarea>
             </div>
 
             <div>
-                <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">排序</label>
+                <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">{{ _('billing.sort_order') }}</label>
                 <input type="number" name="sort_order" value="0" min="0"
                        class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg
                               bg-white dark:bg-gray-700 text-gray-900 dark:text-white">
@@ -198,12 +198,12 @@
                         onclick="this.closest('#create-plan-modal').classList.add('hidden')"
                         class="px-4 py-2 text-gray-700 dark:text-gray-300 bg-gray-100 dark:bg-gray-700 rounded-lg
                                hover:bg-gray-200 dark:hover:bg-gray-600">
-                    取消
+                    {{ _('common.cancel') }}
                 </button>
                 <button type="submit"
                         class="px-4 py-2 bg-pink-600 hover:bg-pink-700 text-white font-medium rounded-lg
                                transition-colors">
-                    创建
+                    {{ _('common.submit') }}
                 </button>
             </div>
         </form>

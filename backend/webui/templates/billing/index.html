@@ -6,21 +6,21 @@
 <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
     <div class="mb-8">
         <h1 class="text-2xl font-bold bg-gradient-to-r from-sakura-700 to-purple-700 dark:from-sakura-400 dark:to-purple-400 bg-clip-text text-transparent">{{ _('billing.title') }}</h1>
-        <p class="mt-1 text-sm text-gray-500 dark:text-gray-400">查看配额、兑换码充值、管理订阅</p>
+        <p class="mt-1 text-sm text-gray-500 dark:text-gray-400">{{ _('billing.current_quota') }}, {{ _('billing.redeem_code') }}</p>
     </div>
 
     <!-- 当前配额概览 -->
     {% if db_user %}
     <div class="mb-8 glass rounded-2xl border border-sakura-200/50 dark:border-sakura-800/30 shadow-sm p-6">
-        <h2 class="text-lg font-semibold text-gray-900 dark:text-white mb-4">当前配额</h2>
+        <h2 class="text-lg font-semibold text-gray-900 dark:text-white mb-4">{{ _('billing.current_quota') }}</h2>
         <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
             <div>
-                <h3 class="text-sm font-medium text-gray-500 dark:text-gray-400 mb-3">PR 审查配额</h3>
+                <h3 class="text-sm font-medium text-gray-500 dark:text-gray-400 mb-3">{{ _('billing.pr_quota') }}</h3>
                 <div class="space-y-2">
                     {% for label, quota, used in [
-                        ("每日", db_user.daily_quota, db_user.daily_used),
-                        ("每周", db_user.weekly_quota, db_user.weekly_used),
-                        ("每月", db_user.monthly_quota, db_user.monthly_used)
+                        (_('billing.daily'), db_user.daily_quota, db_user.daily_used),
+                        (_('billing.weekly'), db_user.weekly_quota, db_user.weekly_used),
+                        (_('billing.monthly'), db_user.monthly_quota, db_user.monthly_used)
                     ] %}
                     <div class="flex items-center justify-between">
                         <span class="text-sm text-gray-700 dark:text-gray-300">{{ label }}</span>
@@ -36,12 +36,12 @@
                 </div>
             </div>
             <div>
-                <h3 class="text-sm font-medium text-gray-500 dark:text-gray-400 mb-3">Issue 分析配额</h3>
+                <h3 class="text-sm font-medium text-gray-500 dark:text-gray-400 mb-3">{{ _('billing.issue_quota') }}</h3>
                 <div class="space-y-2">
                     {% for label, quota, used in [
-                        ("每日", db_user.issue_daily_quota, db_user.issue_daily_used),
-                        ("每周", db_user.issue_weekly_quota, db_user.issue_weekly_used),
-                        ("每月", db_user.issue_monthly_quota, db_user.issue_monthly_used)
+                        (_('billing.daily'), db_user.issue_daily_quota, db_user.issue_daily_used),
+                        (_('billing.weekly'), db_user.issue_weekly_quota, db_user.issue_weekly_used),
+                        (_('billing.monthly'), db_user.issue_monthly_quota, db_user.issue_monthly_used)
                     ] %}
                     <div class="flex items-center justify-between">
                         <span class="text-sm text-gray-700 dark:text-gray-300">{{ label }}</span>
@@ -62,18 +62,18 @@
 
     <!-- 兑换码 -->
     <div class="mb-8 bg-white dark:bg-gray-800 rounded-lg shadow p-6">
-        <h2 class="text-lg font-semibold text-gray-900 dark:text-white mb-4">兑换码充值</h2>
+        <h2 class="text-lg font-semibold text-gray-900 dark:text-white mb-4">{{ _('billing.redeem_title') }}</h2>
         <form action="/webui/billing/redeem" method="POST" class="flex gap-3">
             <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
             <input type="text" name="code" required
                    class="flex-1 px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-lg
                           bg-white dark:bg-gray-700 text-gray-900 dark:text-white
                           focus:ring-2 focus:ring-pink-500 focus:border-transparent"
-                   placeholder="请输入兑换码">
+                   placeholder="{{ _('billing.input_code') }}">
             <button type="submit"
                     class="px-6 py-2 bg-pink-600 hover:bg-pink-700 text-white font-medium rounded-lg
                            transition-colors duration-200">
-                兑换
+                {{ _('billing.redeem') }}
             </button>
         </form>
     </div>
@@ -81,7 +81,7 @@
     <!-- 可用套餐 -->
     {% if plans %}
     <div class="mb-8">
-        <h2 class="text-lg font-semibold text-gray-900 dark:text-white mb-4">可用套餐</h2>
+        <h2 class="text-lg font-semibold text-gray-900 dark:text-white mb-4">{{ _('billing.available_plans') }}</h2>
         <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
             {% for plan in plans %}
             <div class="bg-white dark:bg-gray-800 rounded-lg shadow p-6 border border-gray-200 dark:border-gray-700">
@@ -89,7 +89,7 @@
                     <h3 class="text-lg font-semibold text-gray-900 dark:text-white">{{ plan.name }}</h3>
                     <span class="text-xs px-2 py-1 rounded-full
                                  {{ 'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400' if plan.plan_type == 'subscription' else 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400' }}">
-                        {{ '订阅' if plan.plan_type == 'subscription' else '一次性' }}
+                        {{ _('billing.subscription') if plan.plan_type == 'subscription' else _('billing.one_time') }}
                     </span>
                 </div>
                 <div class="text-2xl font-bold text-pink-600 dark:text-pink-400 mb-4">
@@ -100,31 +100,31 @@
                 {% endif %}
                 <ul class="space-y-1 text-sm text-gray-700 dark:text-gray-300">
                     {% if plan.pr_quota_bonus > 0 %}
-                    <li>+{{ plan.pr_quota_bonus }} PR 审查次数（一次性）</li>
+                    <li>+{{ plan.pr_quota_bonus }} {{ _('billing.pr_quota') }}（{{ _('billing.one_time') }}）</li>
                     {% endif %}
                     {% if plan.pr_daily_add > 0 %}
-                    <li>每日 PR 配额 +{{ plan.pr_daily_add }}</li>
+                    <li>{{ _('billing.daily') }} {{ _('billing.pr_quota') }} +{{ plan.pr_daily_add }}</li>
                     {% endif %}
                     {% if plan.pr_weekly_add > 0 %}
-                    <li>每周 PR 配额 +{{ plan.pr_weekly_add }}</li>
+                    <li>{{ _('billing.weekly') }} {{ _('billing.pr_quota') }} +{{ plan.pr_weekly_add }}</li>
                     {% endif %}
                     {% if plan.pr_monthly_add > 0 %}
-                    <li>每月 PR 配额 +{{ plan.pr_monthly_add }}</li>
+                    <li>{{ _('billing.monthly') }} {{ _('billing.pr_quota') }} +{{ plan.pr_monthly_add }}</li>
                     {% endif %}
                     {% if plan.issue_quota_bonus > 0 %}
-                    <li>+{{ plan.issue_quota_bonus }} Issue 分析次数（一次性）</li>
+                    <li>+{{ plan.issue_quota_bonus }} {{ _('billing.issue_quota') }}（{{ _('billing.one_time') }}）</li>
                     {% endif %}
                     {% if plan.issue_daily_add > 0 %}
-                    <li>每日 Issue 配额 +{{ plan.issue_daily_add }}</li>
+                    <li>{{ _('billing.daily') }} {{ _('billing.issue_quota') }} +{{ plan.issue_daily_add }}</li>
                     {% endif %}
                     {% if plan.issue_weekly_add > 0 %}
-                    <li>每周 Issue 配额 +{{ plan.issue_weekly_add }}</li>
+                    <li>{{ _('billing.weekly') }} {{ _('billing.issue_quota') }} +{{ plan.issue_weekly_add }}</li>
                     {% endif %}
                     {% if plan.issue_monthly_add > 0 %}
-                    <li>每月 Issue 配额 +{{ plan.issue_monthly_add }}</li>
+                    <li>{{ _('billing.monthly') }} {{ _('billing.issue_quota') }} +{{ plan.issue_monthly_add }}</li>
                     {% endif %}
                     {% if plan.plan_type == 'subscription' and plan.duration_days %}
-                    <li>有效期 {{ plan.duration_days }} 天</li>
+                    <li>{{ _('billing.duration_days') }} {{ plan.duration_days }}</li>
                     {% endif %}
                 </ul>
             </div>
@@ -136,18 +136,18 @@
     <!-- 订单历史 -->
     <div class="bg-white dark:bg-gray-800 rounded-lg shadow">
         <div class="px-6 py-4 border-b border-gray-200 dark:border-gray-700">
-            <h2 class="text-lg font-semibold text-gray-900 dark:text-white">订单记录</h2>
+            <h2 class="text-lg font-semibold text-gray-900 dark:text-white">{{ _('billing.order_history') }}</h2>
         </div>
         {% if orders %}
         <div class="overflow-x-auto">
             <table class="min-w-full divide-y divide-gray-200 dark:divide-gray-700">
                 <thead class="bg-gray-50 dark:bg-gray-700">
                     <tr>
-                        <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase">订单号</th>
-                        <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase">套餐</th>
-                        <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase">金额</th>
-                        <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase">状态</th>
-                        <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase">时间</th>
+                        <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase">{{ _('billing.order_no') }}</th>
+                        <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase">{{ _('billing.plan_type') }}</th>
+                        <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase">{{ _('billing.amount') }}</th>
+                        <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase">{{ _('common.status') }}</th>
+                        <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase">{{ _('billing.time') }}</th>
                     </tr>
                 </thead>
                 <tbody class="bg-white dark:bg-gray-800 divide-y divide-gray-200 dark:divide-gray-700">
@@ -158,7 +158,7 @@
                             {{ order.plan.name if order.plan else '-' }}
                         </td>
                         <td class="px-6 py-4 text-sm text-gray-700 dark:text-gray-300">
-                            {% if order.amount_cents == 0 %}免费{% else %}¥{{ "%.2f"|format(order.amount_cents / 100) }}{% endif %}
+                            {% if order.amount_cents == 0 %}{{ _('billing.free') }}{% else %}¥{{ "%.2f"|format(order.amount_cents / 100) }}{% endif %}
                         </td>
                         <td class="px-6 py-4">
                             <span class="text-xs px-2 py-1 rounded-full
@@ -178,7 +178,7 @@
         </div>
         {% else %}
         <div class="px-6 py-12 text-center text-gray-500 dark:text-gray-400">
-            暂无订单记录
+            {{ _('billing.no_orders') }}
         </div>
         {% endif %}
     </div>
