@@ -23,7 +23,7 @@
         <select name="status" class="px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-sm">
             <option value="">{{ _('common.all') }} {{ _('common.status') }}</option>
             <option value="completed" {% if status == 'completed' %}selected{% endif %}>{{ _('scan.completed') }}</option>
-            <option value="failed" {% if status == 'failed' %}selected{% endif %}>{{ _('common.error') }}</option>
+            <option value="failed" {% if status == 'failed' %}selected{% endif %}>{{ _('queue.failed') }}</option>
             <option value="analyzing" {% if status == 'analyzing' %}selected{% endif %}>{{ _('common.processing') }}</option>
             <option value="pending" {% if status == 'pending' %}selected{% endif %}>{{ _('common.pending') }}</option>
         </select>

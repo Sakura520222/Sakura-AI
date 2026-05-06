@@ -192,15 +192,12 @@ def detect_language(user_prefs: Optional[dict] = None) -> str:
 
     # 读取动态配置缓存（由异步请求填充，同步读取无 I/O）
     try:
-        import time as _time
-        from backend.core.config import _dynamic_config_cache
-        cached = _dynamic_config_cache.get("default_language")
-        if cached is not None:
-            value, expire_time = cached
-            if _time.time() < expire_time and value in SUPPORTED_LANGUAGES:
-                return value
-    except Exception:
-        pass
+        from backend.core.config import get_cached_config
+        cached_value = get_cached_config("default_language")
+        if cached_value is not None and cached_value in SUPPORTED_LANGUAGES:
+            return cached_value
+    except Exception as e:
+        logger.debug(f"Failed to read cached default_language: {e}")
 
     # 回退到 Settings 环境变量
     try:
@@ -208,7 +205,7 @@ def detect_language(user_prefs: Optional[dict] = None) -> str:
         settings = get_settings()
         if settings.default_language in SUPPORTED_LANGUAGES:
             return settings.default_language
-    except Exception:
-        pass
+    except Exception as e:
+        logger.debug(f"Failed to read default_language from settings: {e}")
 
     return DEFAULT_LANGUAGE
