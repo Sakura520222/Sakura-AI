@@ -1288,10 +1288,9 @@ async def submit_review_task(pr_info: Dict[str, Any]) -> str:
     worker = get_worker()
     task_key = ReviewWorker._make_task_key(pr_info)
 
-    # Register cancel event BEFORE asyncio.create_task, so that a closed
-    # webhook arriving before the coroutine starts executing can still cancel it.
-    # force_new ensures a clean event even if a previous task's event is stale.
-    worker._register_task(task_key, force_new=True)
+    # Cancel event was already registered in webhook handler immediately
+    # after action validation, before any async operations.
+    # This ensures cancel_task works even during slow webhook processing.
 
     # 在生产环境中，这里应该提交到Celery队列
     # 为了简化，我们直接异步执行
