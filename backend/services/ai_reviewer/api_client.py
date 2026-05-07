@@ -78,6 +78,50 @@ class AIApiClient:
         """
         self.client = AsyncOpenAI(base_url=base_url, api_key=api_key)
 
+    @staticmethod
+    def _estimate_prompt_tokens(messages: List[Dict[str, Any]]) -> int:
+        """快速估算消息列表的 token 数量
+
+        使用启发式方法：
+        - 纯 ASCII 内容：len(content) // 4
+        - 含 CJK 字符的内容：len(content) // 2（CJK 字符通常 1 个字符 ≈ 1-2 个 token）
+
+        Args:
+            messages: 消息列表
+
+        Returns:
+            估算的 token 数
+        """
+        import re
+
+        # 匹配 CJK 字符的正则
+        _cjk_pattern = re.compile(
+            r"[\u4e00-\u9fff\u3400-\u4dbf\u3000-\u303f\uff00-\uffef"
+            r"\u2e80-\u2eff\u31c0-\u31ef\u3200-\u32ff]"
+        )
+
+        estimated = 0
+        for msg in messages:
+            content = msg.get("content", "") or ""
+            if content:
+                # 统计 CJK 字符比例
+                cjk_count = len(_cjk_pattern.findall(content))
+                total_chars = len(content)
+                cjk_ratio = cjk_count / max(total_chars, 1)
+
+                # CJK 占比高时用更保守的系数
+                if cjk_ratio > 0.1:
+                    estimated += total_chars // 2
+                else:
+                    estimated += total_chars // 4
+
+            # 估算 tool_calls 的 token
+            for tc in msg.get("tool_calls", []) or []:
+                if hasattr(tc, "function") and tc.function:
+                    estimated += len(tc.function.name + str(tc.arguments)) // 4
+
+        return estimated
+
     async def call_with_retry(
         self,
         messages: List[Dict[str, Any]],
@@ -203,18 +247,7 @@ class AIApiClient:
                     # 从 kwargs 中获取 model 和 messages 用于估算 token
                     messages = kwargs.get("messages", [])
                     model = kwargs.get("model", "unknown")
-                    estimated_tokens = 0
-                    try:
-                        for msg in messages:
-                            content = msg.get("content", "") or ""
-                            estimated_tokens += len(content) // 4
-                            for tc in msg.get("tool_calls", []) or []:
-                                func = tc.function
-                                estimated_tokens += (
-                                    len(func.name + str(func.arguments)) // 4
-                                )
-                    except Exception:
-                        logger.error("token 估算时出错，使用默认值 0")
+                    estimated_tokens = self._estimate_prompt_tokens(messages)
                     logger.error(
                         "AI调用失败 [{}]，Prompt 超长 (估算 ~{} tokens, 模型: {}) "
                         "(总耗时 {:.1f}s): {}",

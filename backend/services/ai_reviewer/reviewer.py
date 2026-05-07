@@ -102,8 +102,7 @@ class AIReviewer:
             fetch_url_tool = FetchUrlToolHandler()
 
         # PR diff 工具（按需查看文件 diff，用于 prompt 精简模式）
-        self.diff_tool = DiffToolHandler()
-
+        # 注意：每次精简模式会创建临时 DiffToolHandler 实例，避免并发安全问题
         self.tool_handler = ToolHandler(
             file_tool,
             search_tool,
@@ -112,7 +111,7 @@ class AIReviewer:
             search_files_tool,
             sakura_tool,
             fetch_url_tool,
-            diff_tool=self.diff_tool,
+            diff_tool=None,
         )
         self.tool_manager = ToolManager()
 
@@ -233,8 +232,13 @@ class AIReviewer:
             )
             tracker.accumulate(response)
 
+            # 防御性检查：确保响应有效
+            if not response.choices:
+                logger.error("AI 返回空 choices")
+                raise Exception("AI 返回空响应")
+
             # 检查是否有工具调用
-            tool_calls = response.choices[0].message.tool_calls
+            tool_calls = response.choices[0].message.tool_calls or []
 
             if not tool_calls:
                 # AI完成了审查，返回结果
@@ -488,12 +492,19 @@ class AIReviewer:
                     raise
             else:
                 # 首次调用超长：切换到精简模式（移除 diff，通过工具按需查看）
+                # 每次创建临时 DiffToolHandler 实例，避免并发安全问题
+                compact_diff_tool = DiffToolHandler()
+                original_diff_tool = self.tool_handler.diff_tool
                 try:
+                    self.tool_handler.diff_tool = compact_diff_tool
                     logger.info(
                         "📦 首次 prompt 超长，切换到精简模式（diff 通过工具按需查看）..."
                     )
-                    # 将文件 diff 数据注入 DiffToolHandler
-                    self.diff_tool.set_files_data(context.get("files", []))
+                    # 将文件 diff 数据注入临时 DiffToolHandler
+                    compact_diff_tool.set_files_data(context.get("files", []))
+                    if not compact_diff_tool._files_data:
+                        logger.warning("精简模式降级：无文件 diff 数据可用，放弃重试")
+                        raise
                     # 精简模式下动态添加 COMPACT_TOOLS（get_file_diff, list_changed_files）
                     compact_enabled_tools = list(enabled_tools)
                     for tool_name in COMPACT_TOOLS:
@@ -511,6 +522,14 @@ class AIReviewer:
                     compact_tokens = self.context_compressor.estimate_messages_tokens(
                         compact_messages
                     )
+                    # 降级检查：精简模式是否真的显著减少了 token
+                    if compact_tokens >= e.estimated_tokens * 0.8:
+                        logger.warning(
+                            "精简模式未能显著减少 token ({} → {})，放弃重试",
+                            e.estimated_tokens,
+                            compact_tokens,
+                        )
+                        raise
                     logger.info(
                         "✅ 精简模式 prompt 构建 ({} → {} tokens)，进入工具循环...",
                         e.estimated_tokens,
@@ -535,7 +554,9 @@ class AIReviewer:
                     )
                     raise
                 finally:
-                    self.diff_tool.clear()
+                    # 确保清理临时 diff 数据并恢复原始 diff_tool
+                    compact_diff_tool.clear()
+                    self.tool_handler.diff_tool = original_diff_tool
         except Exception as e:
             logger.error("AI审查（带工具）时出错: {}", str(e), exc_info=True)
             raise
