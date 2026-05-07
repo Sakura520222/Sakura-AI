@@ -3,6 +3,7 @@
 from fastapi import APIRouter, Request, HTTPException, Header
 from fastapi.responses import JSONResponse
 from typing import Dict, Any
+import asyncio
 import re
 from loguru import logger
 
@@ -231,6 +232,38 @@ async def handle_pull_request_event(payload: Dict[str, Any]) -> JSONResponse:
                         author=github_username,
                         chat_ids=start_chat_ids,
                     )
+
+        # Synchronize event: immediately dismiss stale bot reviews
+        # to prevent old APPROVE from being exploited while the review
+        # task is waiting in the queue (security: close the vulnerability window)
+        if action == "synchronize":
+            try:
+                github_app = GitHubAppClient()
+                bot_name = github_app.get_bot_username(
+                    pr_info["repo_owner"], pr_info["repo_name"]
+                )
+                if bot_name:
+                    dismissed = await asyncio.to_thread(
+                        github_app.dismiss_bot_reviews,
+                        pr_info["repo_owner"],
+                        pr_info["repo_name"],
+                        pr_info["pr_number"],
+                        bot_name,
+                    )
+                    if dismissed > 0:
+                        logger.info(
+                            f"[webhook] synchronize 事件：已立即撤回 {dismissed} 条旧 Review "
+                            f"({pr_info['repo_full_name']}#{pr_info['pr_number']})"
+                        )
+                    else:
+                        logger.debug(
+                            f"[webhook] synchronize 事件：无旧 Review 需撤回 "
+                            f"({pr_info['repo_full_name']}#{pr_info['pr_number']})"
+                        )
+            except Exception as e:
+                logger.warning(
+                    f"[webhook] synchronize 事件 dismiss 旧 Review 失败（不影响后续审查）: {e}"
+                )
 
         # 提交审查任务到队列
         task_id = await submit_review_task(pr_info)
