@@ -37,7 +37,7 @@ def _get_telegram_deep_link() -> str | None:
     return None
 
 
-APP_VERSION = "2.9.2"
+APP_VERSION = "2.9.3"
 
 _OAUTH_STATE_TTL = 600  # state 有效期 10 分钟
 _OAUTH_STATE_KEY_PREFIX = "oauth:state:"
