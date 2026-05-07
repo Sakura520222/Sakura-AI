@@ -674,6 +674,33 @@ class IssueService:
         }
 
 
+    @staticmethod
+    async def _safe_db_delete(
+        db: AsyncSession,
+        model,
+        filters: list,
+        label: str,
+    ) -> int:
+        """安全执行 DELETE 操作，失败时仅记录 warning 不抛出异常
+
+        Args:
+            db: 数据库会话
+            model: SQLAlchemy 模型类
+            filters: WHERE 条件列表
+            label: 操作描述（用于日志）
+
+        Returns:
+            受影响的行数，失败时返回 0
+        """
+        try:
+            db_result = await db.execute(
+                delete(model).where(and_(*filters))
+            )
+            return db_result.rowcount
+        except Exception as e:
+            logger.warning(f"删除 {label} 记录失败: {e}")
+            return 0
+
     async def delete_issue_data(
         self,
         repo_owner: str,
@@ -688,6 +715,9 @@ class IssueService:
         - IssueAnalysis 分析记录
         - PRIssueLink 关联记录
         - IssueAnalysisQueue 排队记录
+
+        幂等: 是 — 重复调用结果相同，删除不存在的记录返回 0 行受影响。
+        非原子操作: 各步骤独立执行，失败步骤仅记录 warning 不回滚已成功的步骤。
 
         Args:
             repo_owner: 仓库所有者
@@ -707,6 +737,7 @@ class IssueService:
 
         # Full repo name for DB queries / 数据库查询用的完整仓库名
         full_repo_name = f"{repo_owner}/{repo_name}"
+        issue_label = f"{full_repo_name}#{issue_number}"
 
         # 1. Remove from ChromaDB vector index / 从 ChromaDB 向量索引中删除
         try:
@@ -716,58 +747,29 @@ class IssueService:
                 )
             )
         except Exception as e:
-            logger.warning(
-                f"删除 issue 向量失败 {repo_owner}/{repo_name}#{issue_number}: {e}"
-            )
+            logger.warning(f"删除 issue 向量失败 {issue_label}: {e}")
 
-        # 2. Delete IssueAnalysis records / 删除 IssueAnalysis 分析记录
-        try:
-            analysis_result = await db.execute(
-                delete(IssueAnalysis).where(
-                    and_(
-                        IssueAnalysis.repo_name == full_repo_name,
-                        IssueAnalysis.issue_number == issue_number,
-                    )
-                )
-            )
-            result["analysis_deleted"] = analysis_result.rowcount
-        except Exception as e:
-            logger.warning(f"删除 IssueAnalysis 记录失败: {e}")
+        # 2-4. Delete DB records / 删除数据库记录
+        db_filters = [
+            (IssueAnalysis, [IssueAnalysis.repo_name == full_repo_name, IssueAnalysis.issue_number == issue_number], "IssueAnalysis"),
+            (PRIssueLink, [PRIssueLink.repo_name == full_repo_name, PRIssueLink.issue_number == issue_number], "PRIssueLink"),
+            (IssueAnalysisQueue, [IssueAnalysisQueue.repo_name == full_repo_name, IssueAnalysisQueue.issue_number == issue_number], "IssueAnalysisQueue"),
+        ]
+        result_keys = ["analysis_deleted", "links_deleted", "queue_deleted"]
 
-        # 3. Delete PRIssueLink records / 删除 PRIssueLink 关联记录
-        try:
-            links_result = await db.execute(
-                delete(PRIssueLink).where(
-                    and_(
-                        PRIssueLink.repo_name == full_repo_name,
-                        PRIssueLink.issue_number == issue_number,
-                    )
-                )
-            )
-            result["links_deleted"] = links_result.rowcount
-        except Exception as e:
-            logger.warning(f"删除 PRIssueLink 记录失败: {e}")
-
-        # 4. Delete IssueAnalysisQueue records / 删除 IssueAnalysisQueue 排队记录
-        try:
-            queue_result = await db.execute(
-                delete(IssueAnalysisQueue).where(
-                    and_(
-                        IssueAnalysisQueue.repo_name == full_repo_name,
-                        IssueAnalysisQueue.issue_number == issue_number,
-                    )
-                )
-            )
-            result["queue_deleted"] = queue_result.rowcount
-        except Exception as e:
-            logger.warning(f"删除 IssueAnalysisQueue 记录失败: {e}")
+        for (model, filters, label), key in zip(db_filters, result_keys):
+            result[key] = await self._safe_db_delete(db, model, filters, label)
 
         await db.commit()
 
-        logger.info(
-            f"已清理已删除 Issue 数据 "
-            f"{repo_owner}/{repo_name}#{issue_number}: {result}"
-        )
+        # Check partial failure for observability / 检查部分失败以便排查
+        db_failures = [k for k, v in result.items() if k.endswith("_deleted") and isinstance(v, int) and v == 0]
+        if result["vector_deleted"] and db_failures:
+            logger.warning(
+                f"向量索引已删除但数据库清理可能不完整 {issue_label}: {result}"
+            )
+
+        logger.info(f"已清理已删除 Issue 数据 {issue_label}: {result}")
         return result
 
 
