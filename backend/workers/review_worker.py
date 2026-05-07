@@ -1006,21 +1006,35 @@ class ReviewWorker:
             )
 
             if is_synchronize and bot_username:
+                # Synchronize event: dismiss old reviews before submitting new one
+                # to prevent stale APPROVE from being exploited after new commits
+                dismissed = await asyncio.to_thread(
+                    self.github_app.dismiss_bot_reviews,
+                    pr_info["repo_owner"],
+                    pr_info["repo_name"],
+                    pr_info["pr_number"],
+                    bot_username,
+                )
+
                 if is_incremental:
-                    # 增量审查：跳过幂等检查，保留旧 review
+                    # Incremental review: old reviews already dismissed above,
+                    # skip idempotency check to allow new review submission
                     enable_idempotency = False
-                    logger.info("增量审查模式，跳过幂等性检查")
-                else:
-                    # 全量审查回退（force push 等）：撤回旧 review
-                    dismissed = await asyncio.to_thread(
-                        self.github_app.dismiss_bot_reviews,
-                        pr_info["repo_owner"],
-                        pr_info["repo_name"],
-                        pr_info["pr_number"],
-                        bot_username,
-                    )
                     if dismissed > 0:
-                        logger.info(f"已撤回 {dismissed} 条旧Review，将提交全量审查")
+                        logger.info(
+                            f"[{task_id}] 增量审查模式，已撤回 {dismissed} 条旧 Review，将提交新审查"
+                        )
+                    else:
+                        logger.debug(
+                            f"[{task_id}] 增量审查模式，无旧 Review 需撤回"
+                        )
+                    logger.info(f"[{task_id}] 增量审查模式，跳过幂等性检查")
+                else:
+                    # Full review fallback (force push etc.): old reviews already dismissed above
+                    if dismissed > 0:
+                        logger.info(
+                            f"[{task_id}] 已撤回 {dismissed} 条旧 Review，将提交全量审查"
+                        )
 
             # 使用 submit_review_with_inline_comments 方法（带重试机制）
             max_retries = 1  # 失败后重试1次
