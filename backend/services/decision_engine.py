@@ -4,7 +4,8 @@ from typing import Dict, Any, Tuple
 from loguru import logger
 
 from backend.models.database import ReviewDecision
-from backend.core.config import get_strategy_config
+from backend.core.config import get_settings, get_strategy_config
+from backend.core.language_utils import output_text
 
 
 class DecisionEngine:
@@ -172,7 +173,10 @@ class DecisionEngine:
             (最终决策, 决策理由)
         """
         if ai_decision == "request_changes":
-            reason = ai_reason or "AI 建议驳回，存在需要修复的问题"
+            reason = ai_reason or output_text(
+                "AI 建议驳回，存在需要修复的问题",
+                "AI suggests changes, issues need fixing",
+            )
             return (ReviewDecision.REQUEST_CHANGES, reason)
 
         if ai_decision == "approve":
@@ -183,18 +187,29 @@ class DecisionEngine:
                 )
                 return (
                     ReviewDecision.REQUEST_CHANGES,
-                    f"AI 建议通过，但发现 {critical_count} 个严重问题必须修复",
+                    output_text(
+                        f"AI 建议通过，但发现 {critical_count} 个严重问题必须修复",
+                        f"AI approved but found {critical_count} critical issues that must be fixed",
+                    ),
                 )
-            reason = ai_reason or "代码质量良好，符合合并标准"
+            reason = ai_reason or output_text(
+                "代码质量良好，符合合并标准",
+                "Code quality is good, meets merge standards",
+            )
             return (ReviewDecision.APPROVE, reason)
 
         if ai_decision == "comment":
-            reason = ai_reason or "建议人工复审"
+            reason = ai_reason or output_text(
+                "建议人工复审", "Manual review recommended"
+            )
             return (ReviewDecision.COMMENT, reason)
 
         # 未知决策类型，fallback
         logger.warning(f"未知的 AI 决策类型: {ai_decision}")
-        return (ReviewDecision.COMMENT, ai_reason or "未知的 AI 决策类型")
+        return (
+            ReviewDecision.COMMENT,
+            ai_reason or output_text("未知的 AI 决策类型", "Unknown AI decision type"),
+        )
 
     def _rule_based_decision(
         self,
@@ -222,7 +237,10 @@ class DecisionEngine:
         if critical_count > 0 and policy.get("block_on_critical", True):
             return (
                 ReviewDecision.REQUEST_CHANGES,
-                f"发现 {critical_count} 个严重问题必须修复后才能合并",
+                output_text(
+                    f"发现 {critical_count} 个严重问题必须修复后才能合并",
+                    f"Found {critical_count} critical issues that must be fixed before merging",
+                ),
             )
 
         # 规则2: 低分阻断
@@ -230,7 +248,10 @@ class DecisionEngine:
         if score < block_threshold:
             return (
                 ReviewDecision.REQUEST_CHANGES,
-                f"代码质量评分 ({score}/10) 低于最低要求 ({block_threshold}/10)",
+                output_text(
+                    f"代码质量评分 ({score}/10) 低于最低要求 ({block_threshold}/10)",
+                    f"Code quality score ({score}/10) is below the minimum requirement ({block_threshold}/10)",
+                ),
             )
 
         # 规则3: 高分批准
@@ -238,12 +259,21 @@ class DecisionEngine:
         max_major = policy.get("max_major_issues", 1)
 
         if score >= approve_threshold and major_count <= max_major:
-            return (ReviewDecision.APPROVE, "代码质量优秀，符合合并标准")
+            return (
+                ReviewDecision.APPROVE,
+                output_text(
+                    "代码质量优秀，符合合并标准",
+                    "Excellent code quality, meets merge standards",
+                ),
+            )
 
         # 规则4: 中间状态 - 中立评论
         return (
             ReviewDecision.COMMENT,
-            f"代码质量评分 ({score}/10) 处于中间状态，建议人工复审",
+            output_text(
+                f"代码质量评分 ({score}/10) 处于中间状态，建议人工复审",
+                f"Code quality score ({score}/10) is in the middle range, manual review recommended",
+            ),
         )
 
     def format_review_body(
@@ -269,13 +299,20 @@ class DecisionEngine:
             格式化后的评论内容
         """
         try:
-            # 获取模板
-            templates = self.policy.get("review_templates", {})
+            # 根据 output_language 选择模板 / Select template based on output_language
+            output_lang = get_settings().output_language
+            if output_lang == "en":
+                templates = self.policy.get("review_templates_en", {})
+            else:
+                templates = self.policy.get("review_templates", {})
 
             template_key = decision.value
-            template = templates.get(
-                template_key, "{summary}\n\n评分: {score}/10\n\n决策: {decision_reason}"
+            fallback_template = (
+                "{summary}\n\nScore: {score}/10\n\nDecision: {decision_reason}"
+                if output_lang == "en"
+                else "{summary}\n\n评分: {score}/10\n\n决策: {decision_reason}"
             )
+            template = templates.get(template_key, fallback_template)
 
             # 准备变量（改进评分显示逻辑）
             score = review_result.get("overall_score")
@@ -286,10 +323,18 @@ class DecisionEngine:
                 extracted = score_extractor.extract_score(review_result)
                 score = extracted if extracted is not None else "N/A"
 
-            summary = review_result.get("summary", "暂无摘要")
+            no_summary_text = (
+                "No summary available" if output_lang == "en" else "暂无摘要"
+            )
+            view_detail_text = (
+                "View detailed review report"
+                if output_lang == "en"
+                else "查看详细审查报告"
+            )
+            summary = review_result.get("summary", no_summary_text)
             if summary.strip():
                 summary = (
-                    f"<details><summary>📋 查看详细审查报告</summary>\n\n"
+                    f"<details><summary>📋 {view_detail_text}</summary>\n\n"
                     f"{summary}\n\n"
                     f"</details>"
                 )

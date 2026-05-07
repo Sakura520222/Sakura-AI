@@ -1,16 +1,16 @@
 <!-- 顶部导航栏 -->
-<nav class="fixed top-0 left-0 right-0 z-50 h-16 bg-white dark:bg-gray-800 border-b border-gray-200 dark:border-gray-700 px-4 lg:px-6 flex items-center justify-between shadow-sm">
+<nav class="fixed top-0 left-0 right-0 z-50 h-16 glass border-b border-sakura-200/50 dark:border-sakura-800/30 px-4 lg:px-6 flex items-center justify-between shadow-sm shadow-sakura-200/30 dark:shadow-sakura-950/30">
     <!-- 左侧：Logo + 标题 -->
     <div class="flex items-center gap-3">
         <!-- 移动端菜单按钮 -->
-        <button id="sidebar-toggle" class="lg:hidden p-2 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-700">
+        <button id="sidebar-toggle" class="lg:hidden p-2 rounded-xl hover:bg-sakura-50 dark:hover:bg-sakura-900/20 transition-colors" aria-label="{{ _('nav.toggle_sidebar') }}">
             <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16M4 18h16"/>
             </svg>
         </button>
-        <a href="/webui/" class="flex items-center gap-2">
-            <span class="text-xl">🌸</span>
-            <span class="font-semibold text-lg hidden sm:inline">Sakura AI Reviewer</span>
+        <a href="/webui/" class="flex items-center gap-2 group">
+            <span class="text-2xl transition-transform duration-300 group-hover:scale-110">🌸</span>
+            <span class="font-bold text-lg hidden sm:inline bg-gradient-to-r from-sakura-600 to-sakura-800 dark:from-sakura-400 dark:to-sakura-300 bg-clip-text text-transparent">Sakura AI Reviewer</span>
         </a>
     </div>
 
@@ -18,14 +18,15 @@
     <div class="flex items-center gap-2">
         <!-- 主题切换按钮 -->
         <button @click="theme = theme === 'light' ? 'dark' : 'light'"
-                class="p-2 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors"
-                :title="theme === 'light' ? '切换到暗色模式' : '切换到亮色模式'">
+                class="p-2 rounded-xl hover:bg-sakura-50 dark:hover:bg-sakura-900/20 transition-colors"
+                :title="theme === 'light' ? '{{ _('nav.toggle_dark') }}' : '{{ _('nav.toggle_light') }}'"
+                :aria-label="theme === 'light' ? '{{ _('nav.toggle_dark') }}' : '{{ _('nav.toggle_light') }}'">
             <!-- 太阳图标（亮色模式显示） -->
-            <svg x-show="theme === 'light'" class="w-5 h-5 text-yellow-500" fill="currentColor" viewBox="0 0 20 20">
+            <svg x-show="theme === 'light'" class="w-5 h-5 text-sakura-500" fill="currentColor" viewBox="0 0 20 20">
                 <path fill-rule="evenodd" d="M10 2a1 1 0 011 1v1a1 1 0 11-2 0V3a1 1 0 011-1zm4 8a4 4 0 11-8 0 4 4 0 018 0zm-.464 4.95l.707.707a1 1 0 001.414-1.414l-.707-.707a1 1 0 00-1.414 1.414zm2.12-10.607a1 1 0 010 1.414l-.706.707a1 1 0 11-1.414-1.414l.707-.707a1 1 0 011.414 0zM17 11a1 1 0 100-2h-1a1 1 0 100 2h1zm-7 4a1 1 0 011 1v1a1 1 0 11-2 0v-1a1 1 0 011-1zM5.05 6.464A1 1 0 106.465 5.05l-.708-.707a1 1 0 00-1.414 1.414l.707.707zm1.414 8.486l-.707.707a1 1 0 01-1.414-1.414l.707-.707a1 1 0 011.414 1.414zM4 11a1 1 0 100-2H3a1 1 0 000 2h1z" clip-rule="evenodd"/>
             </svg>
             <!-- 月亮图标（暗色模式显示） -->
-            <svg x-show="theme === 'dark'" x-cloak class="w-5 h-5 text-blue-400" fill="currentColor" viewBox="0 0 20 20">
+            <svg x-show="theme === 'dark'" x-cloak class="w-5 h-5 text-sakura-400" fill="currentColor" viewBox="0 0 20 20">
                 <path d="M17.293 13.293A8 8 0 016.707 2.707a8.001 8.001 0 1010.586 10.586z"/>
             </svg>
         </button>
@@ -35,24 +36,24 @@
             {% if current_user.get('avatar_url') %}
             <img src="{{ current_user.avatar_url }}"
                  alt="{{ current_user.sub }}"
-                 class="w-8 h-8 rounded-full border border-gray-200 dark:border-gray-600"
+                 class="w-8 h-8 rounded-full border-2 border-sakura-200 dark:border-sakura-700"
                  onerror="this.style.display='none'; this.nextElementSibling.style.display='flex';">
-            <div class="w-8 h-8 rounded-full bg-pink-100 dark:bg-pink-900/30 items-center justify-center text-sm font-medium text-pink-600 dark:text-pink-400" style="display:none;">
+            <div class="w-8 h-8 rounded-full bg-gradient-to-br from-sakura-400 to-sakura-600 items-center justify-center text-sm font-medium text-white" style="display:none;">
                 {{ current_user.sub[0]|upper }}
             </div>
             {% else %}
-            <div class="w-8 h-8 rounded-full bg-pink-100 dark:bg-pink-900/30 flex items-center justify-center text-sm font-medium text-pink-600 dark:text-pink-400">
+            <div class="w-8 h-8 rounded-full bg-gradient-to-br from-sakura-400 to-sakura-600 flex items-center justify-center text-sm font-medium text-white">
                 {{ current_user.sub[0]|upper }}
             </div>
             {% endif %}
-            <span class="hidden sm:inline text-sm">{{ current_user.sub }}</span>
+            <span class="hidden sm:inline text-sm font-medium">{{ current_user.sub }}</span>
         </div>
 
         <!-- 登出 -->
         <form method="POST" action="/webui/auth/logout" class="ml-1"
-              data-confirm="确定要退出登录吗？">
+              data-confirm="{{ _('auth.logout_confirm') }}">
             <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-            <button type="submit" class="p-2 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors" title="退出登录">
+            <button type="submit" class="p-2 rounded-xl hover:bg-sakura-50 dark:hover:bg-sakura-900/20 transition-colors" title="{{ _('auth.logout') }}" aria-label="{{ _('auth.logout') }}">
                 <svg class="w-5 h-5 text-gray-500 dark:text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1"/>
                 </svg>

@@ -6,7 +6,7 @@
 <div class="space-y-6">
     <!-- 面包屑 -->
     <div class="flex items-center gap-2 text-sm text-gray-500 dark:text-gray-400">
-        <a href="/webui/issues/" class="hover:text-pink-600 dark:hover:text-pink-400">Issue 分析</a>
+        <a href="/webui/issues/" class="hover:text-pink-600 dark:hover:text-pink-400">{{ _('issue.title') }}</a>
         <span>/</span>
         <span class="text-gray-900 dark:text-gray-100">#{{ analysis.issue_number }}</span>
     </div>
@@ -15,7 +15,7 @@
     <div class="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 p-6">
         <div class="flex items-start justify-between">
             <div class="flex-1">
-                <h1 class="text-xl font-bold">{{ analysis.title or '无标题' }}</h1>
+                <h1 class="text-xl font-bold">{{ analysis.title or _('common.no_title') }}</h1>
                 <p class="mt-1 text-sm text-gray-500 dark:text-gray-400">
                     {{ analysis.repo_owner }}/{{ analysis.repo_name }} · #{{ analysis.issue_number }} ·
                     {% if analysis.author %}{{ analysis.author }} · {% endif %}
@@ -39,13 +39,13 @@
                 {% endif %}
                 {% if analysis.status %}
                 {% if analysis.status == 'completed' %}
-                <span class="px-3 py-1 rounded-full text-xs font-medium bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-400">已完成</span>
+                <span class="px-3 py-1 rounded-full text-xs font-medium bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-400">{{ _('issue.completed_status') }}</span>
                 {% elif analysis.status == 'failed' %}
-                <span class="px-3 py-1 rounded-full text-xs font-medium bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-400">失败</span>
+                <span class="px-3 py-1 rounded-full text-xs font-medium bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-400">{{ _('issue.failed_status') }}</span>
                 {% elif analysis.status == 'analyzing' %}
-                <span class="px-3 py-1 rounded-full text-xs font-medium bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-400">分析中</span>
+                <span class="px-3 py-1 rounded-full text-xs font-medium bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-400">{{ _('issue.analyzing_status') }}</span>
                 {% else %}
-                <span class="px-3 py-1 rounded-full text-xs font-medium bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-400">待处理</span>
+                <span class="px-3 py-1 rounded-full text-xs font-medium bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-400">{{ _('issue.pending_status') }}</span>
                 {% endif %}
                 {% endif %}
             </div>
@@ -56,20 +56,20 @@
     <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
         <!-- 摘要和可行性 -->
         <div class="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 p-6">
-            <h3 class="text-base font-medium mb-3">AI 摘要</h3>
-            <div data-markdown class="prose dark:prose-invert max-w-none text-sm text-gray-700 dark:text-gray-300">{{ analysis.summary or '暂无摘要' }}</div>
+            <h3 class="text-base font-medium mb-3">{{ _('issue.ai_summary') }}</h3>
+            <div data-markdown class="prose dark:prose-invert max-w-none text-sm text-gray-700 dark:text-gray-300">{{ analysis.summary or _('issue.no_summary') }}</div>
         </div>
 
         <div class="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 p-6">
-            <h3 class="text-base font-medium mb-3">可行性评估</h3>
-            <div data-markdown class="prose dark:prose-invert max-w-none text-sm text-gray-700 dark:text-gray-300">{{ analysis.feasibility or '暂无评估' }}</div>
+            <h3 class="text-base font-medium mb-3">{{ _('issue.feasibility') }}</h3>
+            <div data-markdown class="prose dark:prose-invert max-w-none text-sm text-gray-700 dark:text-gray-300">{{ analysis.feasibility or _('issue.no_feasibility') }}</div>
         </div>
     </div>
 
     <!-- 建议标签和建议指派人 -->
     <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
         <div class="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 p-6">
-            <h3 class="text-base font-medium mb-3">建议标签</h3>
+            <h3 class="text-base font-medium mb-3">{{ _('issue.suggested_labels') }}</h3>
             {% if suggested_labels %}
             <div class="flex flex-wrap gap-2">
                 {% for label in suggested_labels %}
@@ -80,12 +80,12 @@
                 {% endfor %}
             </div>
             {% else %}
-            <p class="text-sm text-gray-400">无建议标签</p>
+            <p class="text-sm text-gray-400">{{ _('issue.no_suggested_labels') }}</p>
             {% endif %}
         </div>
 
         <div class="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 p-6">
-            <h3 class="text-base font-medium mb-3">建议指派人</h3>
+            <h3 class="text-base font-medium mb-3">{{ _('issue.suggested_assignees') }}</h3>
             {% if suggested_assignees %}
             <div class="space-y-2">
                 {% for assignee in suggested_assignees %}
@@ -98,25 +98,25 @@
                 {% endfor %}
             </div>
             {% else %}
-            <p class="text-sm text-gray-400">无建议指派人</p>
+            <p class="text-sm text-gray-400">{{ _('issue.no_suggested_assignees') }}</p>
             {% endif %}
         </div>
     </div>
 
     <!-- Token 消耗和成本 -->
     <div class="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 p-6">
-        <h3 class="text-base font-medium mb-3">Token 消耗</h3>
+        <h3 class="text-base font-medium mb-3">{{ _('issue.token_usage') }}</h3>
         <div class="grid grid-cols-3 gap-4">
             <div>
-                <p class="text-xs text-gray-500 dark:text-gray-400">输入 Token</p>
+                <p class="text-xs text-gray-500 dark:text-gray-400">{{ _('issue.input_token') }}</p>
                 <p class="text-lg font-bold">{{ analysis.prompt_tokens or 0 }}</p>
             </div>
             <div>
-                <p class="text-xs text-gray-500 dark:text-gray-400">输出 Token</p>
+                <p class="text-xs text-gray-500 dark:text-gray-400">{{ _('issue.output_token') }}</p>
                 <p class="text-lg font-bold">{{ analysis.completion_tokens or 0 }}</p>
             </div>
             <div>
-                <p class="text-xs text-gray-500 dark:text-gray-400">预估成本</p>
+                <p class="text-xs text-gray-500 dark:text-gray-400">{{ _('issue.estimated_cost') }}</p>
                 <p class="text-lg font-bold">{{ (analysis.estimated_cost or 0) / 100 | round(2) }}</p>
             </div>
         </div>
@@ -125,7 +125,7 @@
     <!-- 相关 PR -->
     {% if related_prs %}
     <div class="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 p-6">
-        <h3 class="text-base font-medium mb-3">相关 PR</h3>
+        <h3 class="text-base font-medium mb-3">{{ _('issue.related_pr') }}</h3>
         <div class="space-y-2">
             {% for pr in related_prs %}
             <div class="flex items-center gap-2 text-sm">
@@ -142,7 +142,7 @@
     {% if analysis.duplicate_of %}
     <div class="bg-yellow-50 dark:bg-yellow-900/20 rounded-xl border border-yellow-200 dark:border-yellow-800 p-4">
         <p class="text-sm text-yellow-800 dark:text-yellow-200">
-            <span class="font-medium">可能重复：</span>与 #{{ analysis.duplicate_of }} 重复
+            <span class="font-medium">{{ _('issue.duplicate_detected') }}：</span>{{ _('issue.duplicate_of', id=analysis.duplicate_of) }}
         </p>
     </div>
     {% endif %}
@@ -150,7 +150,7 @@
     <!-- 错误信息 -->
     {% if analysis.error_message %}
     <div class="bg-red-50 dark:bg-red-900/20 rounded-xl border border-red-200 dark:border-red-800 p-4">
-        <h3 class="text-sm font-medium text-red-800 dark:text-red-200 mb-1">错误信息</h3>
+        <h3 class="text-sm font-medium text-red-800 dark:text-red-200 mb-1">{{ _('issue.error_info') }}</h3>
         <p class="text-sm text-red-600 dark:text-red-400 whitespace-pre-wrap">{{ analysis.error_message }}</p>
     </div>
     {% endif %}
@@ -159,7 +159,7 @@
     <div class="flex gap-3">
         <button onclick="reanalyze({{ analysis.id }})"
                 class="px-4 py-2 rounded-lg text-sm font-medium bg-pink-500 text-white hover:bg-pink-600 transition-colors">
-            重新分析
+            {{ _('common.reanalyze') }}
         </button>
     </div>
 </div>
@@ -177,12 +177,12 @@ function reanalyze(id) {
     .then(r => r.json())
     .then(data => {
         if (data.success) {
-            showToast('success', '已提交重新分析任务');
+            showToast('success', _t('common.reanalyze_submitted'));
         } else {
-            showToast('error', data.message || '重新分析失败');
+            showToast('error', data.message || _t('common.reanalyze_failed'));
         }
     })
-    .catch(err => showToast('error', '请求失败'));
+    .catch(err => showToast('error', _t('common.request_failed')));
 }
 </script>
 {% endblock %}

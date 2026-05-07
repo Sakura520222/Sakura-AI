@@ -11,7 +11,7 @@ from typing import Any, Dict
 
 from loguru import logger
 
-from backend.core.config import get_strategy_config
+from backend.core.config import get_settings, get_strategy_config
 from backend.services.ai_reviewer.api_client import AIApiClient
 from backend.services.pr_analyzer import PRAnalysis
 
@@ -142,6 +142,18 @@ class PRSummaryService:
                 "以下是该 PR 之前的 AI 总结，请在此基础上整合新的变更信息，"
                 "生成一份完整的更新总结（保留之前的重要内容，补充新变更）：\n\n"
                 f"{previous_summary}"
+            )
+
+        # 注入输出语言指令 / Inject output language directive
+        output_lang = get_settings().output_language
+        if output_lang:
+            language_names = {
+                "zh-CN": "中文 (Simplified Chinese)",
+                "en": "English",
+            }
+            lang_display = language_names.get(output_lang, output_lang)
+            system_prompt += (
+                f"\n\n**Important**: You MUST write the summary in {lang_display}."
             )
 
         return system_prompt, user_message

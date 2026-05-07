@@ -1,13 +1,13 @@
 {% extends "base.html" %}
 
-{% block title %}Issue 分析 - Sakura AI Reviewer{% endblock %}
+{% block title %}{{ _('issue.title') }} - Sakura AI Reviewer{% endblock %}
 
 {% block content %}
 <div class="space-y-4">
     <!-- 页面标题 -->
     <div>
-        <h1 class="text-2xl font-bold">Issue 分析</h1>
-        <p class="mt-1 text-sm text-gray-500 dark:text-gray-400">管理和查看所有 Issue 智能分析记录</p>
+        <h1 class="text-2xl font-bold">{{ _('issue.title') }}</h1>
+        <p class="mt-1 text-sm text-gray-500 dark:text-gray-400">{{ _('issue.list') }}</p>
     </div>
 
     <!-- 统计卡片 -->
@@ -27,7 +27,7 @@
                 <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/>
                 <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/>
             </svg>
-            <p class="mt-2">加载中...</p>
+            <p class="mt-2">{{ _('common.loading') }}</p>
         </div>
     </div>
 </div>

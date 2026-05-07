@@ -4,7 +4,7 @@
 
 [English](README_EN.md) | **中文**
 
-[![Version](https://img.shields.io/badge/Version-2.9.2-blue.svg)](https://github.com/Sakura520222/Sakura-AI-Reviewer/releases)
+[![Version](https://img.shields.io/badge/Version-2.9.3-blue.svg)](https://github.com/Sakura520222/Sakura-AI-Reviewer/releases)
 [![Python](https://img.shields.io/badge/Python-3.11+-blue.svg)](https://www.python.org/)
 [![FastAPI](https://img.shields.io/badge/FastAPI-Latest-green.svg)](https://fastapi.tiangolo.com/)
 [![License](https://img.shields.io/badge/License-AGPLv3-yellow.svg)](LICENSE)
@@ -258,6 +258,7 @@ WebUI：`https://your-domain.com/webui/`
 - **Git 信息工具**：`config/strategies.yaml` 中 `context_enhancement.git_tools`，配置默认分支和提交返回数量
 - **项目记忆系统**：WebUI 配置管理中 `sakura_memory_enabled` 启用记忆系统，`sakura_reflection_enabled` 启用审查后反思，`sakura_consolidation_interval` 合并触发的反思轮数（默认 5），`sakura_auto_init` 自动初始化 `.sakura/` 目录
 - **模型上下文**：WebUI 配置管理中配置上下文窗口、自动压缩等，详见 [模型上下文管理](docs/MODEL_CONTEXT_FEATURE.md)
+- **国际化（i18n）**：WebUI 支持中英文界面切换（个人设置页面），AI 输出语言可通过环境变量 `OUTPUT_LANGUAGE` 配置（`zh-CN` 或 `en`），评论模板自动匹配对应语言
 
 ---
 

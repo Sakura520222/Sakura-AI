@@ -10,6 +10,28 @@
     <script>
         tailwind.config = {
             darkMode: 'class',
+            theme: {
+                extend: {
+                    colors: {
+                        sakura: {
+                            50: '#fdf2f8',
+                            100: '#fce7f3',
+                            200: '#fbcfe8',
+                            300: '#f9a8d4',
+                            400: '#f472b6',
+                            500: '#ec4899',
+                            600: '#db2777',
+                            700: '#be185d',
+                            800: '#9d174d',
+                            900: '#831843',
+                            950: '#500724',
+                        },
+                    },
+                    fontFamily: {
+                        sans: ['"Inter"', 'system-ui', '-apple-system', '"Segoe UI"', 'sans-serif'],
+                    },
+                },
+            },
         }
     </script>
     <!-- HTMX -->
@@ -23,6 +45,56 @@
     <link id="hljs-dark" rel="stylesheet" href="https://cdn.jsdelivr.net/gh/highlightjs/cdn-release/build/styles/github-dark.min.css" disabled>
     <script>if(localStorage.getItem('theme')==='dark'){document.getElementById('hljs-light').disabled=true;document.getElementById('hljs-dark').disabled=false}</script>
     <script src="https://cdn.jsdelivr.net/gh/highlightjs/cdn-release/build/highlight.min.js"></script>
+    <!-- i18n: 注入 JS 翻译对象 -->
+    <script>
+    var I18n = {
+        lang: '{{ lang | default("zh-CN") }}',
+        t: function(key, fallback) {
+            return fallback || key;
+        }
+    };
+    // 常用 JS 翻译字符串 / Common JS translation strings
+    var _js_i18n = {
+        'zh-CN': {
+            'confirm_action': '确认操作',
+            'are_you_sure': '确定要执行此操作吗？',
+            'confirm': '确认',
+            'cancel': '取消',
+            'processing': '处理中...',
+            'success': '操作成功',
+            'error': '操作失败',
+            'repo_exists': '仓库已存在于白名单中',
+            'invalid_format': '仓库名称格式不正确，请使用 owner/repo 格式',
+            'validation_error': '参数验证失败，请检查输入值',
+            'save_failed': '保存失败，请稍后重试',
+            'invalid_config': '配置验证失败，请检查输入内容',
+            'permission_denied': '文件权限不足',
+            'retry': '操作失败，请重试',
+            'loading': '加载中...',
+        },
+        'en': {
+            'confirm_action': 'Confirm Action',
+            'are_you_sure': 'Are you sure you want to proceed?',
+            'confirm': 'Confirm',
+            'cancel': 'Cancel',
+            'processing': 'Processing...',
+            'success': 'Success',
+            'error': 'Error',
+            'repo_exists': 'Repository already in whitelist',
+            'invalid_format': 'Invalid repository name format, use owner/repo',
+            'validation_error': 'Validation error, please check your input',
+            'save_failed': 'Save failed, please try again later',
+            'invalid_config': 'Configuration validation failed',
+            'permission_denied': 'Permission denied',
+            'retry': 'Operation failed, please retry',
+            'loading': 'Loading...',
+        }
+    };
+    function _t(key) {
+        var lang = I18n.lang || 'zh-CN';
+        return (_js_i18n[lang] && _js_i18n[lang][key]) || (_js_i18n['zh-CN'] && _js_i18n['zh-CN'][key]) || key;
+    }
+    </script>
     <script>
     document.addEventListener('alpine:init', () => {
         Alpine.data('toastManager', () => ({
@@ -40,20 +112,20 @@
                 if (msg) {
                     this.show(msg, type);
                 } else if (params.has('saved')) {
-                    this.show('操作成功', 'success');
+                    this.show(_t('success'), 'success');
                 } else {
                     var error = params.get('error');
                     if (error) {
                         var messages = {
-                            'already_exists': '仓库已存在于白名单中',
-                            'invalid_format': '仓库名称格式不正确，请使用 owner/repo 格式',
-                            'validation': '参数验证失败，请检查输入值',
-                            'save_failed': '保存失败，请稍后重试',
-                            'invalid_config': '配置验证失败，请检查输入内容',
-                            'permission_denied': '文件权限不足',
-                            '1': '操作失败，请重试',
+                            'already_exists': _t('repo_exists'),
+                            'invalid_format': _t('invalid_format'),
+                            'validation': _t('validation_error'),
+                            'save_failed': _t('save_failed'),
+                            'invalid_config': _t('invalid_config'),
+                            'permission_denied': _t('permission_denied'),
+                            '1': _t('retry'),
                         };
-                        this.show(messages[error] || '操作失败，请重试', 'error');
+                        this.show(messages[error] || _t('retry'), 'error');
                     }
                 }
                 // 清理 URL 中的 toast 参数
@@ -96,17 +168,19 @@
 
         Alpine.data('confirmDialog', () => ({
             active: false,
-            title: '确认操作',
-            message: '确定要执行此操作吗？',
+            title: _t('confirm_action'),
+            message: _t('are_you_sure'),
             warning: '',
-            confirmText: '确认',
+            confirmText: _t('confirm'),
+            cancelText: _t('cancel'),
+            processingText: _t('processing'),
             loading: false,
             _callback: null,
             ask(options) {
-                this.title = options.title || '确认操作';
-                this.message = options.message || '确定要执行此操作吗？';
+                this.title = options.title || _t('confirm_action');
+                this.message = options.message || _t('are_you_sure');
                 this.warning = options.warning || '';
-                this.confirmText = options.confirmText || '确认';
+                this.confirmText = options.confirmText || _t('confirm');
                 this.loading = false;
                 this.active = true;
                 this._callback = options.onConfirm || null;
@@ -132,21 +206,136 @@
         }));
     });
     </script>
+    <!-- Google Fonts: Inter -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
     <!-- Chart.js 按需加载（仅仪表盘页面动态引入） -->
     <style>
         [x-cloak] { display: none !important; }
-        /* 自定义滚动条 */
-        ::-webkit-scrollbar { width: 6px; }
+        /* 自定义滚动条 - 樱花风格 */
+        ::-webkit-scrollbar { width: 6px; height: 6px; }
         ::-webkit-scrollbar-track { background: transparent; }
-        ::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 3px; }
-        .dark ::-webkit-scrollbar-thumb { background: #475569; }
+        ::-webkit-scrollbar-thumb { background: linear-gradient(180deg, #f9a8d4, #f472b6); border-radius: 3px; }
+        ::-webkit-scrollbar-thumb:hover { background: linear-gradient(180deg, #f472b6, #ec4899); }
+        .dark ::-webkit-scrollbar-thumb { background: linear-gradient(180deg, #9d174d, #831843); }
+        .dark ::-webkit-scrollbar-thumb:hover { background: linear-gradient(180deg, #831843, #500724); }
         /* highlight.js 与 Tailwind prose 兼容 */
         .prose pre { --tw-prose-pre-bg: transparent; padding: 0; }
         .prose pre code.hljs { background: transparent; padding: 0; }
+        /* 樱花飘落动画 */
+        @keyframes sakura-fall {
+            0% { transform: translateY(-10vh) translateX(0) rotate(0deg); opacity: 1; }
+            50% { transform: translateY(50vh) translateX(30px) rotate(180deg); opacity: 0.8; }
+            100% { transform: translateY(110vh) translateX(-20px) rotate(360deg); opacity: 0; }
+        }
+        @keyframes sakura-fall-alt {
+            0% { transform: translateY(-10vh) translateX(0) rotate(45deg); opacity: 0.8; }
+            50% { transform: translateY(50vh) translateX(-40px) rotate(225deg); opacity: 0.6; }
+            100% { transform: translateY(110vh) translateX(25px) rotate(405deg); opacity: 0; }
+        }
+        .sakura-petal {
+            position: fixed;
+            pointer-events: none;
+            z-index: 0;
+            animation: sakura-fall 12s linear infinite;
+            opacity: 0.6;
+        }
+        .sakura-petal:nth-child(even) { animation: sakura-fall-alt 15s linear infinite; }
+        .sakura-petal:nth-child(3n) { animation-duration: 18s; animation-delay: -3s; }
+        @media (prefers-reduced-motion: reduce) {
+            .sakura-petal { animation: none; display: none; }
+        }
+        /* 卡片悬浮效果 */
+        .card-hover {
+            transition: transform 0.2s ease, box-shadow 0.2s ease;
+        }
+        .card-hover:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 8px 25px -5px rgba(236, 72, 153, 0.15), 0 4px 10px -5px rgba(236, 72, 153, 0.1);
+        }
+        .dark .card-hover:hover {
+            box-shadow: 0 8px 25px -5px rgba(236, 72, 153, 0.2), 0 4px 10px -5px rgba(236, 72, 153, 0.15);
+        }
+        /* 樱花渐变背景 */
+        .sakura-gradient-bg {
+            background: linear-gradient(135deg, #fdf2f8 0%, #fce7f3 30%, #f5f0ff 60%, #ede9fe 100%);
+        }
+        .dark .sakura-gradient-bg {
+            background: linear-gradient(135deg, #1a0a14 0%, #1e1028 30%, #18102a 60%, #150d26 100%);
+        }
+        /* 玻璃态效果 */
+        /* NOTE: 背景不透明度 0.78 确保 backdrop-filter 不支持时仍有足够可读性 */
+        .glass {
+            background: rgba(255, 255, 255, 0.78);
+            backdrop-filter: blur(12px);
+            -webkit-backdrop-filter: blur(12px);
+        }
+        @supports not (backdrop-filter: blur(1px)) {
+            .glass { background: rgba(255, 255, 255, 0.95); }
+        }
+        .dark .glass {
+            background: rgba(30, 16, 40, 0.78);
+            backdrop-filter: blur(12px);
+            -webkit-backdrop-filter: blur(12px);
+        }
+        @supports not (backdrop-filter: blur(1px)) {
+            .dark .glass { background: rgba(30, 16, 40, 0.95); }
+        }
+        /* TODO: 临时兼容层 - 将旧 bg-white.dark:bg-gray-800 卡片自动应用玻璃态。
+           长期方案：逐步迁移各模板直接使用 .glass 类，迁移完成后删除此规则。
+           覆盖范围: issues, pr_list, pr_detail, pr_files, settings, scan_detail,
+           scans, action_logs, queue, users, user_detail, repos, config_general,
+           config_labels, config_strategies, setup_wizard, billing 等 17+ 页面模板。 */
+        main .bg-white.dark\:bg-gray-800 {
+            background: rgba(255, 255, 255, 0.78);
+            backdrop-filter: blur(12px);
+            -webkit-backdrop-filter: blur(12px);
+            border-color: rgba(251, 207, 232, 0.5);
+            border-radius: 1rem;
+        }
+        @supports not (backdrop-filter: blur(1px)) {
+            main .bg-white.dark\:bg-gray-800 { background: rgba(255, 255, 255, 0.95); }
+        }
+        .dark main .bg-white.dark\:bg-gray-800 {
+            background: rgba(30, 16, 40, 0.78);
+            border-color: rgba(131, 24, 67, 0.3);
+        }
+        @supports not (backdrop-filter: blur(1px)) {
+            .dark main .bg-white.dark\:bg-gray-800 { background: rgba(30, 16, 40, 0.95); }
+        }
+        /* 页面标题渐变覆盖 */
+        .page-title-gradient {
+            background: linear-gradient(135deg, #be185d, #7c3aed);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+        }
+        .dark .page-title-gradient {
+            background: linear-gradient(135deg, #f9a8d4, #c4b5fd);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+        }
+        /* 全局表单输入框覆盖 - 樱花风格 */
+        input:focus, select:focus, textarea:focus {
+            --tw-ring-color: rgba(236, 72, 153, 0.5) !important;
+            border-color: #f9a8d4 !important;
+        }
+        /* 全局分割线 */
+        main .divide-gray-200 > :not([hidden]) ~ :not([hidden]),
+        main .dark .divide-gray-700 > :not([hidden]) ~ :not([hidden]) {
+            border-color: rgba(251, 207, 232, 0.3);
+        }
+        /* 按钮樱花悬浮效果 */
+        button:focus-visible, a:focus-visible {
+            outline: 2px solid rgba(236, 72, 153, 0.5);
+            outline-offset: 2px;
+        }
     </style>
     {% block extra_head %}{% endblock %}
 </head>
-<body class="bg-gray-50 dark:bg-gray-900 text-gray-900 dark:text-gray-100 min-h-screen"
+<body class="sakura-gradient-bg text-gray-900 dark:text-gray-100 min-h-screen font-sans"
       x-data="{ theme: localStorage.getItem('theme') || 'light' }"
       x-init="$watch('theme', val => {
           document.documentElement.classList.toggle('dark', val === 'dark');
@@ -160,6 +349,16 @@
           }).catch(() => {});
       }); document.documentElement.classList.toggle('dark', theme === 'dark');">
 
+    <!-- 樱花飘落装饰 -->
+    <div class="sakura-petals" aria-hidden="true">
+        <span class="sakura-petal text-xs" style="left:10%;animation-delay:0s">🌸</span>
+        <span class="sakura-petal text-sm" style="left:25%;animation-delay:-2s">🌸</span>
+        <span class="sakura-petal text-xs" style="left:45%;animation-delay:-5s">🌸</span>
+        <span class="sakura-petal text-sm" style="left:65%;animation-delay:-7s">🌸</span>
+        <span class="sakura-petal text-xs" style="left:80%;animation-delay:-10s">🌸</span>
+        <span class="sakura-petal text-xs" style="left:92%;animation-delay:-4s">🌸</span>
+    </div>
+
     <!-- Toast 通知容器 -->
     <div x-data="toastManager()"
          class="fixed top-4 right-4 z-[100] space-y-2 pointer-events-none" aria-live="polite">
@@ -171,7 +370,7 @@
                  x-transition:leave-start="opacity-100 translate-x-0"
                  x-transition:leave-end="opacity-0 translate-x-8"
                  :class="toast.borderClass"
-                 class="pointer-events-auto max-w-sm w-full rounded-lg shadow-lg border bg-white dark:bg-gray-800 text-sm flex items-start gap-3 p-4">
+                 class="pointer-events-auto max-w-sm w-full rounded-xl shadow-lg border glass text-sm flex items-start gap-3 p-4">
                 <div x-html="toast.icon"></div>
                 <p class="flex-1 text-gray-800 dark:text-gray-200" x-text="toast.message"></p>
                 <button @click="dismiss(toast.id)" class="text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 shrink-0">
@@ -204,7 +403,7 @@
              x-transition:leave="transition ease-in duration-150"
              x-transition:leave-start="opacity-100 scale-100"
              x-transition:leave-end="opacity-0 scale-95"
-             class="relative bg-white dark:bg-gray-800 rounded-xl shadow-xl border border-gray-200 dark:border-gray-700 max-w-md w-full mx-4 p-6">
+             class="relative glass rounded-2xl shadow-2xl border border-sakura-200 dark:border-sakura-800/50 max-w-md w-full mx-4 p-6">
             <div class="flex items-center justify-center w-12 h-12 mx-auto mb-4 rounded-full bg-red-100 dark:bg-red-900/30">
                 <svg class="w-6 h-6 text-red-600 dark:text-red-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-2.5L13.732 4c-.77-.833-1.964-.833-2.732 0L4.082 16.5c-.77.833.192 2.5 1.732 2.5z"/>
@@ -215,17 +414,17 @@
             <p x-show="warning" x-text="warning" class="mt-3 text-xs text-center text-red-600 dark:text-red-400 font-medium"></p>
             <div class="mt-6 flex gap-3 justify-center">
                 <button @click="cancel()"
-                        class="px-4 py-2 rounded-lg text-sm font-medium border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-600 transition-colors">
-                    取消
+                        class="px-4 py-2 rounded-xl text-sm font-medium border border-gray-300 dark:border-gray-600 bg-white/80 dark:bg-gray-700/80 text-gray-700 dark:text-gray-300 hover:bg-white dark:hover:bg-gray-600 transition-colors"
+                        x-text="cancelText">
                 </button>
                 <button @click="confirm()"
                         :disabled="loading"
                         :class="loading ? 'opacity-50 cursor-not-allowed' : 'hover:bg-red-600'"
-                        class="px-4 py-2 rounded-lg text-sm font-medium bg-red-500 text-white transition-colors">
+                        class="px-4 py-2 rounded-xl text-sm font-medium bg-red-500 text-white transition-colors shadow-md shadow-red-500/25">
                     <span x-show="!loading" x-text="confirmText"></span>
                     <span x-show="loading" class="flex items-center gap-2">
                         <svg class="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg>
-                        处理中...
+                        <span x-text="processingText"></span>
                     </span>
                 </button>
             </div>
@@ -241,7 +440,7 @@
         {% include "components/sidebar.html" %}
 
         <!-- 页面内容 -->
-        <main class="flex-1 ml-0 lg:ml-64 p-6 min-h-[calc(100vh-4rem)]">
+        <main class="flex-1 ml-0 lg:ml-64 p-6 min-h-[calc(100vh-4rem)] relative z-10">
             {% block content %}{% endblock %}
         </main>
     </div>
@@ -313,11 +512,11 @@
     /* === 通用列表分页 & 过滤 === */
 
     function getLoadingHTML() {
-        return '<div class="text-center py-8 text-gray-400"><svg class="w-8 h-8 mx-auto animate-spin" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg><p class="mt-2">加载中...</p></div>';
+        return '<div class="text-center py-8 text-gray-400"><svg class="w-8 h-8 mx-auto animate-spin" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg><p class="mt-2">' + _t('loading') + '</p></div>';
     }
 
     function getErrorHTML(msg) {
-        return '<div class="p-12 text-center text-red-600 dark:text-red-400"><svg class="w-12 h-12 mx-auto" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/></svg><p class="mt-4">' + (msg || '加载失败，请稍后重试') + '</p></div>';
+        return '<div class="p-12 text-center text-red-600 dark:text-red-400"><svg class="w-12 h-12 mx-auto" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/></svg><p class="mt-4">' + (msg || _t('error')) + '</p></div>';
     }
 
     var _currentListRequest = null;

@@ -183,6 +183,7 @@ class PromptBuilder:
         base_prompt: str,
         context: Dict[str, Any],
         include_tools: bool = False,
+        output_language: str = "",
     ) -> str:
         """构建系统提示词
 
@@ -190,12 +191,24 @@ class PromptBuilder:
             base_prompt: 基础提示词
             context: 审查上下文
             include_tools: 是否包含工具说明
+            output_language: AI 输出语言（为空时不注入语言指令）
 
         Returns:
             构建好的系统提示词
         """
+        result = base_prompt
+
+        # 注入输出语言指令 / Inject output language directive
+        if output_language:
+            language_names = {
+                "zh-CN": "中文 (Simplified Chinese)",
+                "en": "English",
+            }
+            lang_display = language_names.get(output_language, output_language)
+            result += f"\n\n## Output Language\n**Important**: You MUST write all your review comments, summaries, and analysis in {lang_display}."
+
         if not include_tools:
-            return base_prompt
+            return result
 
         tools_instruction = """
 
@@ -332,7 +345,7 @@ class PromptBuilder:
 ```
 """
 
-        return base_prompt + tools_instruction
+        return result + tools_instruction
 
     def build_label_recommendation_message(
         self,

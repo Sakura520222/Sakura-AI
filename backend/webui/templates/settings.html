@@ -1,13 +1,13 @@
 {% extends "base.html" %}
 
-{% block title %}个人设置 - Sakura AI Reviewer{% endblock %}
+{% block title %}{{ _('settings.title') }} - Sakura AI Reviewer{% endblock %}
 
 {% block content %}
 <div class="space-y-6">
     <!-- 页面标题 -->
     <div>
-        <h1 class="text-2xl font-bold">个人设置</h1>
-        <p class="mt-1 text-sm text-gray-500 dark:text-gray-400">自定义您的 WebUI 偏好</p>
+        <h1 class="text-2xl font-bold">{{ _('settings.title') }}</h1>
+        <p class="mt-1 text-sm text-gray-500 dark:text-gray-400">{{ _('settings.description') }}</p>
     </div>
 
     <!-- 设置表单 -->
@@ -16,15 +16,25 @@
             <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
 
             <div class="space-y-6">
+                <!-- 界面语言 / Language -->
+                <div>
+                    <h3 class="text-base font-medium">{{ _('settings.language') }}</h3>
+                    <p class="text-sm text-gray-500 dark:text-gray-400 mt-1">{{ _('settings.language_desc') }}</p>
+                    <select name="language" class="mt-2 px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-sm focus:ring-2 focus:ring-pink-500 focus:border-transparent outline-none">
+                        <option value="zh-CN" {% if language == 'zh-CN' %}selected{% endif %}>{{ _('settings.languages.zh-CN') }}</option>
+                        <option value="en" {% if language == 'en' %}selected{% endif %}>{{ _('settings.languages.en') }}</option>
+                    </select>
+                </div>
+
                 <!-- 每页显示条数 -->
                 <div>
-                    <h3 class="text-base font-medium">列表显示</h3>
-                    <p class="text-sm text-gray-500 dark:text-gray-400 mt-1">设置列表页面每页显示的条目数</p>
+                    <h3 class="text-base font-medium">{{ _('settings.items_per_page') }}</h3>
+                    <p class="text-sm text-gray-500 dark:text-gray-400 mt-1">{{ _('settings.items_per_page_desc') }}</p>
                     <select name="items_per_page" class="mt-2 px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-sm focus:ring-2 focus:ring-pink-500 focus:border-transparent outline-none">
-                        <option value="10" {% if items_per_page == 10 %}selected{% endif %}>10 条/页</option>
-                        <option value="20" {% if items_per_page == 20 %}selected{% endif %}>20 条/页</option>
-                        <option value="50" {% if items_per_page == 50 %}selected{% endif %}>50 条/页</option>
-                        <option value="100" {% if items_per_page == 100 %}selected{% endif %}>100 条/页</option>
+                        <option value="10" {% if items_per_page == 10 %}selected{% endif %}>10 {{ _('settings.items_per_page_unit') }}</option>
+                        <option value="20" {% if items_per_page == 20 %}selected{% endif %}>20 {{ _('settings.items_per_page_unit') }}</option>
+                        <option value="50" {% if items_per_page == 50 %}selected{% endif %}>50 {{ _('settings.items_per_page_unit') }}</option>
+                        <option value="100" {% if items_per_page == 100 %}selected{% endif %}>100 {{ _('settings.items_per_page_unit') }}</option>
                     </select>
                 </div>
             </div>
@@ -32,7 +42,7 @@
             <!-- 保存按钮 -->
             <div class="mt-8 pt-6 border-t border-gray-200 dark:border-gray-700">
                 <button type="submit" class="px-4 py-2 bg-pink-500 text-white rounded-lg text-sm font-medium hover:bg-pink-600 transition-colors">
-                    保存设置
+                    {{ _('common.save') }}
                 </button>
             </div>
         </form>

@@ -22,6 +22,7 @@ from backend.webui.deps import (
     get_csrf_serializer,
     require_csrf_header,
     get_user_preferences,
+    render_template,
 )
 from backend.webui.helpers.admin_log import log_admin_action
 
@@ -361,17 +362,15 @@ async def repo_list_page(
         installations = []
         error_message = "获取仓库列表失败，请检查 GitHub App 配置或稍后重试"
 
-    return templates.TemplateResponse(
+    return render_template(
         "repos.html",
-        {
-            "request": request,
-            "current_user": user,
-            "csrf_token": get_csrf_serializer().dumps({}),
-            "active_page": "repos",
-            "user_prefs": user_prefs,
-            "installations": installations,
-            "error_message": error_message,
-        },
+        request,
+        user_prefs=user_prefs,
+        current_user=user,
+        csrf_token=get_csrf_serializer().dumps({}),
+        active_page="repos",
+        installations=installations,
+        error_message=error_message,
     )
 
 

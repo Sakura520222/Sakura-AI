@@ -1,13 +1,13 @@
 {% extends "base.html" %}
 
-{% block title %}PR 审查 - Sakura AI Reviewer{% endblock %}
+{% block title %}{{ _('pr.title') }} - Sakura AI Reviewer{% endblock %}
 
 {% block content %}
 <div class="space-y-4">
     <!-- 页面标题 -->
     <div>
-        <h1 class="text-2xl font-bold">PR 审查</h1>
-        <p class="mt-1 text-sm text-gray-500 dark:text-gray-400">管理和查看所有 PR 审查记录</p>
+        <h1 class="text-2xl font-bold">{{ _('pr.title') }}</h1>
+        <p class="mt-1 text-sm text-gray-500 dark:text-gray-400">{{ _('pr.list') }}</p>
     </div>
 
     <!-- PR 列表（通过 HTMX 加载） -->
@@ -17,7 +17,7 @@
                 <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/>
                 <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/>
             </svg>
-            <p class="mt-2">加载中...</p>
+            <p class="mt-2">{{ _('common.loading') }}</p>
         </div>
     </div>
 </div>

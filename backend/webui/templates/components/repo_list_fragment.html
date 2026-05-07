@@ -8,7 +8,7 @@
         </svg>
         <h3 class="text-sm font-semibold">{{ inst.account_login }}</h3>
         <span class="text-xs text-gray-400 dark:text-gray-500 bg-gray-200 dark:bg-gray-700 px-2 py-0.5 rounded">{{ inst.account_type }}</span>
-        <span class="text-xs text-gray-400 dark:text-gray-500 ml-auto">{{ inst.repos | length }} 个仓库</span>
+        <span class="text-xs text-gray-400 dark:text-gray-500 ml-auto">{{ inst.repos | length }} {{ _('repo.title') }}</span>
     </div>
 
     <!-- 仓库列表 -->
@@ -27,7 +27,7 @@
                     </a>
                     {% if repo.private %}
                     <span class="inline-flex items-center px-1.5 py-0.5 rounded text-xs bg-yellow-100 dark:bg-yellow-900/30 text-yellow-700 dark:text-yellow-400 flex-shrink-0">
-                        私有
+                        {{ _('common.private') }}
                     </span>
                     {% endif %}
                 </div>
@@ -53,23 +53,23 @@
                 <button type="button" onclick='triggerIndex(this, {{ repo.full_name | tojson }}, "docs", {{ csrf_token | tojson }})'
                         class="px-3 py-1.5 rounded-lg text-xs border border-blue-300 dark:border-blue-800
                                text-blue-600 dark:text-blue-400 hover:bg-blue-50 dark:hover:bg-blue-900/20 transition-colors">
-                    索引文档
+                    {{ _('common.index_docs') }}
                 </button>
                 <button type="button" onclick='triggerIndex(this, {{ repo.full_name | tojson }}, "code", {{ csrf_token | tojson }})'
                         class="px-3 py-1.5 rounded-lg text-xs border border-purple-300 dark:border-purple-800
                                text-purple-600 dark:text-purple-400 hover:bg-purple-50 dark:hover:bg-purple-900/20 transition-colors">
-                    索引代码
+                    {{ _('common.index_code') }}
                 </button>
                 <button type="button" onclick='triggerIndex(this, {{ repo.full_name | tojson }}, "issues", {{ csrf_token | tojson }})'
                         class="px-3 py-1.5 rounded-lg text-xs border border-green-300 dark:border-green-800
                                text-green-600 dark:text-green-400 hover:bg-green-50 dark:hover:bg-green-900/20 transition-colors">
-                    索引 Issues
+                    {{ _('common.index_issues') }}
                 </button>
                 {% if current_user and current_user.role == 'super_admin' %}
                 <button type="button" onclick='triggerScan(this, {{ repo.full_name | tojson }}, {{ csrf_token | tojson }})'
                         class="px-3 py-1.5 rounded-lg text-xs border border-pink-300 dark:border-pink-800
                                text-pink-600 dark:text-pink-400 hover:bg-pink-50 dark:hover:bg-pink-900/20 transition-colors">
-                    扫描仓库
+                    {{ _('scan.trigger_scan') }}
                 </button>
                 {% endif %}
             </div>
