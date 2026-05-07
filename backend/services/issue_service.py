@@ -684,6 +684,8 @@ class IssueService:
         """安全执行 DELETE 操作，失败时仅记录 warning 不抛出异常
 
         幂等: 是 — 对不存在的记录 DELETE 返回 0 行受影响。
+        使用 savepoint (begin_nested) 隔离每次删除，失败时仅回滚当前 savepoint，
+        不影响前序已成功的操作。
 
         Args:
             db: 数据库会话
@@ -695,13 +697,13 @@ class IssueService:
             受影响的行数；异常时返回 -1（用于区分"不存在"和"执行失败"）
         """
         try:
-            db_result = await db.execute(
-                delete(model).where(and_(*filters))
-            )
-            return db_result.rowcount
+            async with db.begin_nested():  # savepoint: 失败时仅回滚当前操作
+                db_result = await db.execute(
+                    delete(model).where(and_(*filters))
+                )
+                return db_result.rowcount
         except Exception as e:
             logger.warning(f"删除 {label} 记录失败: {e}")
-            await db.rollback()  # 显式回滚以恢复 session 可用状态
             return -1
 
     async def delete_issue_data(
@@ -720,7 +722,7 @@ class IssueService:
         - IssueAnalysisQueue 排队记录
 
         幂等: 是 — 重复调用结果相同，删除不存在的记录返回 0 行受影响。
-        非原子操作: 各步骤独立执行，失败步骤仅记录 warning 不回滚已成功的步骤。
+        使用 savepoint 隔离每次 DB 删除，单步失败不影响前序已成功的步骤。
 
         Args:
             repo_owner: 仓库所有者
@@ -761,8 +763,8 @@ class IssueService:
         result_keys = ["analysis_deleted", "links_deleted", "queue_deleted"]
 
         for (model, filters, label), key in zip(db_filters, result_keys):
-            # 注意：_safe_db_delete 内部捕获异常后会显式 rollback 恢复 session 状态，
-            # 后续的 execute 调用不受前序失败影响。
+            # 每次删除使用 savepoint 隔离，单步失败仅回滚当前 savepoint，
+            # 前序已成功的删除不受影响，最终 commit 会提交所有成功的操作。
             result[key] = await self._safe_db_delete(db, model, filters, label)
 
         await db.commit()

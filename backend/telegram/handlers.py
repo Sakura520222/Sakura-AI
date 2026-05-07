@@ -673,7 +673,7 @@ async def cmd_review(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # 8. 提交审查任务（异步执行）
         from backend.workers.review_worker import submit_review_task
 
-        task_id = await submit_review_task(pr_info)
+        task_key = await submit_review_task(pr_info)
 
         # 9. 发送确认消息
         if old_review_deleted:
@@ -696,14 +696,14 @@ async def cmd_review(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"📋 PR: {pr_info['repo_full_name']}#{pr_info['pr_number']}\n"
             f"👤 作者: {pr_info['author']}\n"
             f"📝 标题: {pr_info['title'][:50]}{'...' if len(pr_info['title']) > 50 else ''}\n"
-            f"🆔 任务ID: `{task_id}`\n\n"
+            f"🆔 任务标识: `{task_key}`\n\n"
             f"⏳ 审查完成后将通过Telegram通知您",
             parse_mode="Markdown",
         )
 
         logger.info(
             f"手动审查任务已提交: {pr_info['repo_full_name']}#{pr_info['pr_number']}, "
-            f"task_id={task_id}, triggered_by={telegram_id}"
+            f"task_key={task_key}, triggered_by={telegram_id}"
         )
 
     except ValueError as e:

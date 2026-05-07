@@ -548,7 +548,7 @@ async def handle_issue_comment_event(payload: Dict[str, Any]) -> JSONResponse:
                 )
 
         # 提交全量审查任务
-        task_id = await submit_review_task(pr_info)
+        task_key = await submit_review_task(pr_info)
 
         # 回复确认评论
         try:
@@ -571,7 +571,7 @@ async def handle_issue_comment_event(payload: Dict[str, Any]) -> JSONResponse:
 
         logger.info(
             f"/full-review 已触发: {repo_full_name}#{pr_number}, "
-            f"task_id={task_id}, triggered_by={commenter_login}"
+            f"task_key={task_key}, triggered_by={commenter_login}"
         )
 
         return JSONResponse(
@@ -581,7 +581,7 @@ async def handle_issue_comment_event(payload: Dict[str, Any]) -> JSONResponse:
                 "pr": f"{repo_full_name}#{pr_number}",
                 "deleted_comments": deleted_result,
                 "dismissed_reviews": dismissed_reviews,
-                "task_id": task_id,
+                "task_key": task_key,
             }
         )
 
