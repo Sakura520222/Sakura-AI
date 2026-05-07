@@ -111,6 +111,30 @@ async def handle_pull_request_event(payload: Dict[str, Any]) -> JSONResponse:
 
         action = pr_info["action"]
 
+        # Handle PR closed/merged event: cancel any active review task
+        if action == "closed":
+            task_key = (
+                f"{pr_info.get('repo_full_name', '')}#{pr_info.get('pr_number', '')}"
+            )
+            try:
+                from backend.workers.review_worker import get_worker
+
+                worker = get_worker()
+                cancelled = worker.cancel_task(task_key)
+                if cancelled:
+                    logger.info(
+                        f"[webhook] PR closed event: 已取消审查任务 {task_key}"
+                    )
+                else:
+                    logger.debug(
+                        f"[webhook] PR closed event: 无活跃审查任务 {task_key}"
+                    )
+            except Exception as e:
+                logger.warning(f"[webhook] 取消审查任务失败: {e}")
+            return JSONResponse(
+                content={"status": "accepted", "action": "cancelled", "task": task_key}
+            )
+
         # 只处理以下动作
         supported_actions = ["opened", "synchronize", "reopened"]
         if action not in supported_actions:
