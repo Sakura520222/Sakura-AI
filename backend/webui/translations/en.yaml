@@ -241,6 +241,7 @@ issue:
     low: "Low"
   completed_status: "Completed"
   failed_status: "Failed"
+  cancelled_status: "Cancelled"
   analyzing_status: "Analyzing"
   pending_status: "Pending"
   reanalyze: "Re-analyze"

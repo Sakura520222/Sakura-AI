@@ -27,6 +27,7 @@
             <option value="reviewing" {% if status == 'reviewing' %}selected{% endif %}>{{ _('common.processing') }}</option>
             <option value="completed" {% if status == 'completed' %}selected{% endif %}>{{ _('scan.completed') }}</option>
             <option value="failed" {% if status == 'failed' %}selected{% endif %}>{{ _('queue.failed') }}</option>
+            <option value="cancelled" {% if status == 'cancelled' %}selected{% endif %}>{{ _('pr.cancelled_status') }}</option>
         </select>
 
         <!-- 日期范围 -->
