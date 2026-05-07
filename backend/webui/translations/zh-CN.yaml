@@ -207,6 +207,7 @@ pr:
   changes_requested: "需修改"
   commented: "评论"
   processing: "审查中"
+  cancelled_status: "已取消"
 
 # ========== Issue 分析 / Issue Analysis ==========
 issue:
