@@ -38,6 +38,11 @@ class DiffToolHandler:
         """清除缓存的文件数据"""
         self._files_data.clear()
 
+    @property
+    def has_data(self) -> bool:
+        """是否已有文件 diff 数据缓存"""
+        return bool(self._files_data)
+
     async def get_file_diff(
         self,
         file_path: str,

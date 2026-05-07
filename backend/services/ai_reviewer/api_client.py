@@ -5,6 +5,7 @@
 
 import asyncio
 import random
+import re
 import time
 from typing import Any, Dict, List, Optional
 
@@ -20,7 +21,6 @@ from .constants import (
     TOTAL_TIMEOUT,
 )
 
-# 判断 BadRequestError 是否为上下文超长的关键词列表
 # Context overflow keywords for detecting prompt-too-long errors
 CONTEXT_OVERFLOW_KEYWORDS = [
     "context_length",
@@ -30,6 +30,16 @@ CONTEXT_OVERFLOW_KEYWORDS = [
     "too many tokens",
     "token limit",
 ]
+
+# CJK 字符正则（用于 token 估算时判断中文等字符比例）
+_CJK_PATTERN = re.compile(
+    r"[\u4e00-\u9fff\u3400-\u4dbf\u3000-\u303f\uff00-\uffef"
+    r"\u2e80-\u2eff\u31c0-\u31ef\u3200-\u32ff]"
+)
+
+
+class AIEmptyResponseError(Exception):
+    """AI 返回空响应时抛出的异常"""
 
 
 class PromptTooLongError(Exception):
@@ -92,20 +102,12 @@ class AIApiClient:
         Returns:
             估算的 token 数
         """
-        import re
-
-        # 匹配 CJK 字符的正则
-        _cjk_pattern = re.compile(
-            r"[\u4e00-\u9fff\u3400-\u4dbf\u3000-\u303f\uff00-\uffef"
-            r"\u2e80-\u2eff\u31c0-\u31ef\u3200-\u32ff]"
-        )
-
         estimated = 0
         for msg in messages:
             content = msg.get("content", "") or ""
             if content:
                 # 统计 CJK 字符比例
-                cjk_count = len(_cjk_pattern.findall(content))
+                cjk_count = len(_CJK_PATTERN.findall(content))
                 total_chars = len(content)
                 cjk_ratio = cjk_count / max(total_chars, 1)
 
