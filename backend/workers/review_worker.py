@@ -1006,19 +1006,26 @@ class ReviewWorker:
             )
 
             if is_synchronize and bot_username:
+                # Synchronize event: dismiss old reviews before submitting new one
+                # to prevent stale APPROVE from being exploited after new commits
+                dismissed = await asyncio.to_thread(
+                    self.github_app.dismiss_bot_reviews,
+                    pr_info["repo_owner"],
+                    pr_info["repo_name"],
+                    pr_info["pr_number"],
+                    bot_username,
+                )
+
                 if is_incremental:
-                    # 增量审查：跳过幂等检查，保留旧 review
+                    # Incremental review: dismiss old reviews + skip idempotency check
                     enable_idempotency = False
+                    if dismissed > 0:
+                        logger.info(
+                            f"增量审查模式，已撤回 {dismissed} 条旧 Review，将提交新审查"
+                        )
                     logger.info("增量审查模式，跳过幂等性检查")
                 else:
-                    # 全量审查回退（force push 等）：撤回旧 review
-                    dismissed = await asyncio.to_thread(
-                        self.github_app.dismiss_bot_reviews,
-                        pr_info["repo_owner"],
-                        pr_info["repo_name"],
-                        pr_info["pr_number"],
-                        bot_username,
-                    )
+                    # Full review fallback (force push etc.): dismiss old reviews
                     if dismissed > 0:
                         logger.info(f"已撤回 {dismissed} 条旧Review，将提交全量审查")
 
