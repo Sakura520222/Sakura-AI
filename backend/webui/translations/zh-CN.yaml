@@ -21,6 +21,7 @@ common:
   import: "导入"
   add: "添加"
   back: "返回"
+  period: "。"
   next: "下一步"
   previous: "上一步"
   submit: "提交"

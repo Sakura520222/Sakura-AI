@@ -154,10 +154,6 @@ class DecisionEngine:
             # 出错时默认为COMMENT，避免阻断
             return (ReviewDecision.COMMENT, f"决策过程出现异常: {str(e)}")
 
-    def _t(self, zh: str, en: str) -> str:
-        """根据 output_language 返回对应文本"""
-        return output_text(zh, en)
-
     def _apply_ai_decision(
         self,
         ai_decision: str,
@@ -177,7 +173,7 @@ class DecisionEngine:
             (最终决策, 决策理由)
         """
         if ai_decision == "request_changes":
-            reason = ai_reason or self._t(
+            reason = ai_reason or output_text(
                 "AI 建议驳回，存在需要修复的问题",
                 "AI suggests changes, issues need fixing",
             )
@@ -191,26 +187,28 @@ class DecisionEngine:
                 )
                 return (
                     ReviewDecision.REQUEST_CHANGES,
-                    self._t(
+                    output_text(
                         f"AI 建议通过，但发现 {critical_count} 个严重问题必须修复",
                         f"AI approved but found {critical_count} critical issues that must be fixed",
                     ),
                 )
-            reason = ai_reason or self._t(
+            reason = ai_reason or output_text(
                 "代码质量良好，符合合并标准",
                 "Code quality is good, meets merge standards",
             )
             return (ReviewDecision.APPROVE, reason)
 
         if ai_decision == "comment":
-            reason = ai_reason or self._t("建议人工复审", "Manual review recommended")
+            reason = ai_reason or output_text(
+                "建议人工复审", "Manual review recommended"
+            )
             return (ReviewDecision.COMMENT, reason)
 
         # 未知决策类型，fallback
         logger.warning(f"未知的 AI 决策类型: {ai_decision}")
         return (
             ReviewDecision.COMMENT,
-            ai_reason or self._t("未知的 AI 决策类型", "Unknown AI decision type"),
+            ai_reason or output_text("未知的 AI 决策类型", "Unknown AI decision type"),
         )
 
     def _rule_based_decision(
@@ -239,7 +237,7 @@ class DecisionEngine:
         if critical_count > 0 and policy.get("block_on_critical", True):
             return (
                 ReviewDecision.REQUEST_CHANGES,
-                self._t(
+                output_text(
                     f"发现 {critical_count} 个严重问题必须修复后才能合并",
                     f"Found {critical_count} critical issues that must be fixed before merging",
                 ),
@@ -250,7 +248,7 @@ class DecisionEngine:
         if score < block_threshold:
             return (
                 ReviewDecision.REQUEST_CHANGES,
-                self._t(
+                output_text(
                     f"代码质量评分 ({score}/10) 低于最低要求 ({block_threshold}/10)",
                     f"Code quality score ({score}/10) is below the minimum requirement ({block_threshold}/10)",
                 ),
@@ -263,7 +261,7 @@ class DecisionEngine:
         if score >= approve_threshold and major_count <= max_major:
             return (
                 ReviewDecision.APPROVE,
-                self._t(
+                output_text(
                     "代码质量优秀，符合合并标准",
                     "Excellent code quality, meets merge standards",
                 ),
@@ -272,7 +270,7 @@ class DecisionEngine:
         # 规则4: 中间状态 - 中立评论
         return (
             ReviewDecision.COMMENT,
-            self._t(
+            output_text(
                 f"代码质量评分 ({score}/10) 处于中间状态，建议人工复审",
                 f"Code quality score ({score}/10) is in the middle range, manual review recommended",
             ),

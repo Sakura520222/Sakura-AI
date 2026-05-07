@@ -21,6 +21,7 @@ common:
   import: "Import"
   add: "Add"
   back: "Back"
+  period: "."
   next: "Next"
   previous: "Previous"
   submit: "Submit"
