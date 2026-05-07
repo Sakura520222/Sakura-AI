@@ -207,6 +207,7 @@ pr:
   changes_requested: "Changes Requested"
   commented: "Commented"
   processing: "Reviewing"
+  cancelled_status: "Cancelled"
 
 # ========== Issue Analysis ==========
 issue:
@@ -241,6 +242,7 @@ issue:
     low: "Low"
   completed_status: "Completed"
   failed_status: "Failed"
+  cancelled_status: "Cancelled"
   analyzing_status: "Analyzing"
   pending_status: "Pending"
   reanalyze: "Re-analyze"

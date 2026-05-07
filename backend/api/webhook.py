@@ -111,11 +111,42 @@ async def handle_pull_request_event(payload: Dict[str, Any]) -> JSONResponse:
 
         action = pr_info["action"]
 
+        # Handle PR closed/merged event: cancel any active review task
+        if action == "closed":
+            # Lazy import to avoid webhook ↔ worker circular dependency
+            from backend.workers.review_worker import ReviewWorker, get_worker
+
+            task_key = ReviewWorker._make_task_key(pr_info)
+            try:
+                worker = get_worker()
+                cancelled = worker.cancel_task(task_key)
+                if cancelled:
+                    logger.info(
+                        f"[webhook] PR closed event: 已取消审查任务 {task_key}"
+                    )
+                else:
+                    logger.debug(
+                        f"[webhook] PR closed event: 无活跃审查任务 {task_key}"
+                    )
+            except Exception as e:
+                logger.warning(f"[webhook] 取消审查任务失败: {e}")
+            return JSONResponse(
+                content={"status": "accepted", "action": "cancelled", "task": task_key}
+            )
+
         # 只处理以下动作
         supported_actions = ["opened", "synchronize", "reopened"]
         if action not in supported_actions:
             logger.info(f"忽略PR动作: {action}")
             return JSONResponse(content={"status": "ignored", "action": action})
+
+        # Register cancel event IMMEDIATELY after action validation,
+        # before any async operations (quota check, Telegram, dismiss, etc.)
+        # so that a closed webhook arriving during those operations can cancel the task.
+        from backend.workers.review_worker import ReviewWorker, get_worker
+
+        task_key = ReviewWorker._make_task_key(pr_info)
+        get_worker()._register_task(task_key, force_new=True)
 
         # 过滤 Bot 自身创建的 PR（如 sakura-memory 系统创建的 PR）
         bot_username = settings.bot_username
