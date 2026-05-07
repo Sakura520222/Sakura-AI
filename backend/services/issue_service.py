@@ -683,6 +683,8 @@ class IssueService:
     ) -> int:
         """安全执行 DELETE 操作，失败时仅记录 warning 不抛出异常
 
+        幂等: 是 — 对不存在的记录 DELETE 返回 0 行受影响。
+
         Args:
             db: 数据库会话
             model: SQLAlchemy 模型类
@@ -758,6 +760,9 @@ class IssueService:
         result_keys = ["analysis_deleted", "links_deleted", "queue_deleted"]
 
         for (model, filters, label), key in zip(db_filters, result_keys):
+            # 注意：_safe_db_delete 内部捕获异常后 session 可能进入 inactive 状态，
+            # 但由于使用了独立查询且不依赖前序结果，后续操作不受影响。
+            # 每次删除操作使用独立的 execute 调用，SQLAlchemy 异步 session 会自动恢复。
             result[key] = await self._safe_db_delete(db, model, filters, label)
 
         await db.commit()

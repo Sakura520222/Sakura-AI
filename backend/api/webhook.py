@@ -297,11 +297,11 @@ async def handle_pull_request_event(payload: Dict[str, Any]) -> JSONResponse:
                 )
 
         # 提交审查任务到队列
-        task_id = await submit_review_task(pr_info)
+        task_key = await submit_review_task(pr_info)
 
         logger.info(
             f"已提交审查任务: {pr_info['repo_full_name']}#{pr_info['pr_number']}, "
-            f"任务ID: {task_id}"
+            f"任务标识: {task_key}"
         )
 
         return JSONResponse(
@@ -310,7 +310,7 @@ async def handle_pull_request_event(payload: Dict[str, Any]) -> JSONResponse:
                 "message": "审查任务已提交",
                 "pr": f"{pr_info['repo_full_name']}#{pr_info['pr_number']}",
                 "action": action,
-                "task_id": task_id,
+                "task_id": task_key,
             }
         )
 
