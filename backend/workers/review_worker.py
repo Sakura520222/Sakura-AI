@@ -128,6 +128,8 @@ class ReviewWorker:
         self._background_tasks: set = set()
         # Cancel signal management: task_key -> asyncio.Event
         # Shared by all tasks for the same PR (owner/repo#pr_number)
+        # Thread-safety: dict operations are atomic under GIL; asyncio.Event
+        # is signal-only (set/check), safe for concurrent async coroutines.
         self._cancel_events: Dict[str, asyncio.Event] = {}
 
     @staticmethod
@@ -138,11 +140,16 @@ class ReviewWorker:
     def _register_task(self, task_key: str) -> asyncio.Event:
         """Register a review task and return its cancel event.
 
-        Multiple tasks for the same PR share the same cancel event.
+        If an existing event is already set (stale from a cancelled task),
+        create a fresh one so the new task doesn't inherit the cancelled state.
         """
-        if task_key not in self._cancel_events:
-            self._cancel_events[task_key] = asyncio.Event()
-        return self._cancel_events[task_key]
+        existing = self._cancel_events.get(task_key)
+        if existing and not existing.is_set():
+            return existing
+        # Always create a fresh event (covers: no existing, or stale set event)
+        event = asyncio.Event()
+        self._cancel_events[task_key] = event
+        return event
 
     def _unregister_task(self, task_key: str):
         """Remove cancel event after task completes or fails"""
@@ -202,6 +209,8 @@ class ReviewWorker:
                 # Cancel checkpoint: before code indexing
                 if self._check_cancelled(task_key):
                     logger.info(f"[{task_id}] 任务已被取消，跳过代码索引: {task_key}")
+                    if review_id:
+                        await self._update_review_status(review_id, PRStatus.CANCELLED)
                     return task_id
 
                 # 2.5 代码索引（在 AI 审查前完成，确保 search_code_context 工具可用）
@@ -305,6 +314,10 @@ class ReviewWorker:
                     logger.info(
                         f"[{task_id}] 任务已被取消，跳过 PR 总结和 AI 审查: {task_key}"
                     )
+                    if review_obj:
+                        await self.comment_service.delete_placeholder_comment(review_obj)
+                    if review_id:
+                        await self._update_review_status(review_id, PRStatus.CANCELLED)
                     return task_id
 
                 # 4.5 PR 变更总结（如果启用）
@@ -1245,7 +1258,11 @@ def get_worker() -> ReviewWorker:
 
 
 async def submit_review_task(pr_info: Dict[str, Any]) -> str:
-    """提交审查任务（从Webhook调用）"""
+    """提交审查任务（从Webhook调用）
+
+    Returns:
+        str: Task key in format "owner/repo#pr_number", used for cancellation.
+    """
     worker = get_worker()
     task_key = ReviewWorker._make_task_key(pr_info)
 
