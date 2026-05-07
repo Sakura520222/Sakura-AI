@@ -126,11 +126,54 @@ class ReviewWorker:
         self.ai_reviewer = AIReviewer()
         self.comment_service = CommentService()
         self._background_tasks: set = set()
+        # Cancel signal management: task_key -> asyncio.Event
+        # Shared by all tasks for the same PR (owner/repo#pr_number)
+        self._cancel_events: Dict[str, asyncio.Event] = {}
+
+    @staticmethod
+    def _make_task_key(pr_info: Dict[str, Any]) -> str:
+        """Generate unique task key: owner/repo#pr_number"""
+        return f"{pr_info['repo_full_name']}#{pr_info['pr_number']}"
+
+    def _register_task(self, task_key: str) -> asyncio.Event:
+        """Register a review task and return its cancel event.
+
+        Multiple tasks for the same PR share the same cancel event.
+        """
+        if task_key not in self._cancel_events:
+            self._cancel_events[task_key] = asyncio.Event()
+        return self._cancel_events[task_key]
+
+    def _unregister_task(self, task_key: str):
+        """Remove cancel event after task completes or fails"""
+        self._cancel_events.pop(task_key, None)
+
+    def cancel_task(self, task_key: str) -> bool:
+        """Signal cancellation for a PR's review task(s). Called from webhook.
+
+        Returns True if there was an active task to cancel.
+        """
+        event = self._cancel_events.get(task_key)
+        if event and not event.is_set():
+            event.set()
+            logger.info(f"[cancel] 已设置取消信号: {task_key}")
+            return True
+        return False
+
+    def _check_cancelled(self, task_key: str) -> bool:
+        """Check if cancellation has been signaled for this task"""
+        event = self._cancel_events.get(task_key)
+        return event is not None and event.is_set()
 
     async def process_review_task(self, pr_info: Dict[str, Any]) -> str:
         """处理审查任务"""
         task_id = str(uuid.uuid4())
+        task_key = self._make_task_key(pr_info)
         review_obj = None  # 用于保存 GitHub Review 对象
+        review_id = None  # 用于保存数据库审查记录 ID
+
+        # Register cancel event for this PR
+        self._register_task(task_key)
 
         # 获取并发信号量，限制同时运行的审查任务数
         semaphore = await _get_review_semaphore()
@@ -140,6 +183,13 @@ class ReviewWorker:
                     f"[{task_id}] 开始处理审查任务: {pr_info['repo_full_name']}#{pr_info['pr_number']}"
                 )
 
+                # Check if already cancelled (e.g. PR closed while queued)
+                if self._check_cancelled(task_key):
+                    logger.info(
+                        f"[{task_id}] 任务已被取消（PR 已关闭/合并），跳过审查: {task_key}"
+                    )
+                    return task_id
+
                 # 1. 分析PR
                 analysis = await self.analyzer.analyze_pr(pr_info)
 
@@ -147,6 +197,11 @@ class ReviewWorker:
                 if analysis.should_skip:
                     logger.info(f"[{task_id}] 跳过审查: {analysis.skip_reason}")
                     await self._save_skip_record(analysis, pr_info)
+                    return task_id
+
+                # Cancel checkpoint: before code indexing
+                if self._check_cancelled(task_key):
+                    logger.info(f"[{task_id}] 任务已被取消，跳过代码索引: {task_key}")
                     return task_id
 
                 # 2.5 代码索引（在 AI 审查前完成，确保 search_code_context 工具可用）
@@ -244,6 +299,13 @@ class ReviewWorker:
                     client.get_repo, pr_info["repo_full_name"]
                 )
                 pr = await asyncio.to_thread(repo.get_pull, pr_info["pr_number"])
+
+                # Cancel checkpoint: before PR summary and AI review (most important)
+                if self._check_cancelled(task_key):
+                    logger.info(
+                        f"[{task_id}] 任务已被取消，跳过 PR 总结和 AI 审查: {task_key}"
+                    )
+                    return task_id
 
                 # 4.5 PR 变更总结（如果启用）
                 pr_summary_text = None
@@ -498,6 +560,19 @@ class ReviewWorker:
                             exc_info=True,
                         )
 
+                # Cancel checkpoint: before AI review (critical — most expensive step)
+                if self._check_cancelled(task_key):
+                    logger.info(
+                        f"[{task_id}] 任务已被取消，跳过 AI 审查: {task_key}"
+                    )
+                    # Clean up placeholder comment
+                    if review_obj:
+                        await self.comment_service.delete_placeholder_comment(review_obj)
+                    # Update database status to cancelled
+                    if review_id:
+                        await self._update_review_status(review_id, PRStatus.CANCELLED)
+                    return task_id
+
                 # 7. 并行执行AI审查和标签推荐
                 await self._update_review_status(review_id, PRStatus.REVIEWING)
 
@@ -713,6 +788,9 @@ class ReviewWorker:
                 except Exception as save_error:
                     logger.error(f"保存错误记录失败: {save_error}")
                 raise
+            finally:
+                # Always unregister task to clean up cancel event
+                self._unregister_task(task_key)
 
     async def _create_review_record(
         self, analysis: PRAnalysis, pr_info: Dict[str, Any], task_id: str
@@ -1169,13 +1247,17 @@ def get_worker() -> ReviewWorker:
 async def submit_review_task(pr_info: Dict[str, Any]) -> str:
     """提交审查任务（从Webhook调用）"""
     worker = get_worker()
+    task_key = ReviewWorker._make_task_key(pr_info)
+
+    # If a previous task for the same PR is still running, cancel it first
+    worker.cancel_task(task_key)
 
     # 在生产环境中，这里应该提交到Celery队列
     # 为了简化，我们直接异步执行
     asyncio.create_task(worker.process_review_task(pr_info))
 
-    # 返回任务ID（简化版，实际应该在提交到队列后返回）
-    return str(uuid.uuid4())
+    # 返回任务标识（owner/repo#pr_number），可用于取消
+    return task_key
 
 
 async def process_review_task_sync(pr_info: Dict[str, Any]) -> str:
