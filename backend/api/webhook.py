@@ -3,6 +3,7 @@
 from fastapi import APIRouter, Request, HTTPException, Header
 from fastapi.responses import JSONResponse
 from typing import Dict, Any
+import asyncio
 import re
 from loguru import logger
 
@@ -110,11 +111,42 @@ async def handle_pull_request_event(payload: Dict[str, Any]) -> JSONResponse:
 
         action = pr_info["action"]
 
+        # Handle PR closed/merged event: cancel any active review task
+        if action == "closed":
+            # Lazy import to avoid webhook ↔ worker circular dependency
+            from backend.workers.review_worker import ReviewWorker, get_worker
+
+            task_key = ReviewWorker._make_task_key(pr_info)
+            try:
+                worker = get_worker()
+                cancelled = worker.cancel_task(task_key)
+                if cancelled:
+                    logger.info(
+                        f"[webhook] PR closed event: 已取消审查任务 {task_key}"
+                    )
+                else:
+                    logger.debug(
+                        f"[webhook] PR closed event: 无活跃审查任务 {task_key}"
+                    )
+            except Exception as e:
+                logger.warning(f"[webhook] 取消审查任务失败: {e}")
+            return JSONResponse(
+                content={"status": "accepted", "action": "cancelled", "task": task_key}
+            )
+
         # 只处理以下动作
         supported_actions = ["opened", "synchronize", "reopened"]
         if action not in supported_actions:
             logger.info(f"忽略PR动作: {action}")
             return JSONResponse(content={"status": "ignored", "action": action})
+
+        # Register cancel event IMMEDIATELY after action validation,
+        # before any async operations (quota check, Telegram, dismiss, etc.)
+        # so that a closed webhook arriving during those operations can cancel the task.
+        from backend.workers.review_worker import ReviewWorker, get_worker
+
+        task_key = ReviewWorker._make_task_key(pr_info)
+        get_worker()._register_task(task_key, force_new=True)
 
         # 过滤 Bot 自身创建的 PR（如 sakura-memory 系统创建的 PR）
         bot_username = settings.bot_username
@@ -232,12 +264,44 @@ async def handle_pull_request_event(payload: Dict[str, Any]) -> JSONResponse:
                         chat_ids=start_chat_ids,
                     )
 
+        # Synchronize event: immediately dismiss stale bot reviews
+        # to prevent old APPROVE from being exploited while the review
+        # task is waiting in the queue (security: close the vulnerability window)
+        if action == "synchronize":
+            try:
+                github_app = GitHubAppClient()
+                bot_name = github_app.get_bot_username(
+                    pr_info["repo_owner"], pr_info["repo_name"]
+                )
+                if bot_name:
+                    dismissed = await asyncio.to_thread(
+                        github_app.dismiss_bot_reviews,
+                        pr_info["repo_owner"],
+                        pr_info["repo_name"],
+                        pr_info["pr_number"],
+                        bot_name,
+                    )
+                    if dismissed > 0:
+                        logger.info(
+                            f"[webhook] synchronize 事件：已立即撤回 {dismissed} 条旧 Review "
+                            f"({pr_info['repo_full_name']}#{pr_info['pr_number']})"
+                        )
+                    else:
+                        logger.debug(
+                            f"[webhook] synchronize 事件：无旧 Review 需撤回 "
+                            f"({pr_info['repo_full_name']}#{pr_info['pr_number']})"
+                        )
+            except Exception as e:
+                logger.warning(
+                    f"[webhook] synchronize 事件 dismiss 旧 Review 失败（不影响后续审查）: {e}"
+                )
+
         # 提交审查任务到队列
-        task_id = await submit_review_task(pr_info)
+        task_key = await submit_review_task(pr_info)
 
         logger.info(
             f"已提交审查任务: {pr_info['repo_full_name']}#{pr_info['pr_number']}, "
-            f"任务ID: {task_id}"
+            f"任务标识: {task_key}"
         )
 
         return JSONResponse(
@@ -246,7 +310,7 @@ async def handle_pull_request_event(payload: Dict[str, Any]) -> JSONResponse:
                 "message": "审查任务已提交",
                 "pr": f"{pr_info['repo_full_name']}#{pr_info['pr_number']}",
                 "action": action,
-                "task_id": task_id,
+                "task_key": task_key,
             }
         )
 
@@ -484,7 +548,7 @@ async def handle_issue_comment_event(payload: Dict[str, Any]) -> JSONResponse:
                 )
 
         # 提交全量审查任务
-        task_id = await submit_review_task(pr_info)
+        task_key = await submit_review_task(pr_info)
 
         # 回复确认评论
         try:
@@ -507,7 +571,7 @@ async def handle_issue_comment_event(payload: Dict[str, Any]) -> JSONResponse:
 
         logger.info(
             f"/full-review 已触发: {repo_full_name}#{pr_number}, "
-            f"task_id={task_id}, triggered_by={commenter_login}"
+            f"task_key={task_key}, triggered_by={commenter_login}"
         )
 
         return JSONResponse(
@@ -517,7 +581,7 @@ async def handle_issue_comment_event(payload: Dict[str, Any]) -> JSONResponse:
                 "pr": f"{repo_full_name}#{pr_number}",
                 "deleted_comments": deleted_result,
                 "dismissed_reviews": dismissed_reviews,
-                "task_id": task_id,
+                "task_key": task_key,
             }
         )
 
@@ -683,7 +747,7 @@ async def handle_issue_event(payload: Dict[str, Any]) -> JSONResponse:
         action = issue_info["action"]
 
         # 只处理以下动作
-        supported_actions = ["opened", "edited", "reopened", "closed"]
+        supported_actions = ["opened", "edited", "reopened", "closed", "deleted"]
         if action not in supported_actions:
             logger.info(f"忽略 Issue 动作: {action}")
             return JSONResponse(content={"status": "ignored", "action": action})
@@ -704,6 +768,31 @@ async def handle_issue_event(payload: Dict[str, Any]) -> JSONResponse:
                 return JSONResponse(
                     content={"status": "ignored", "reason": "bot edited event"}
                 )
+
+        # deleted 事件：清理数据库记录和向量索引 / deleted event: clean up DB and vector index
+        if action == "deleted":
+            repo_owner = issue_info["repo_owner"]
+            repo_name = issue_info["repo_name"]
+            issue_number = issue_info["issue_number"]
+            logger.info(
+                f"处理 Issue 删除事件: {repo_owner}/{repo_name}#{issue_number}"
+            )
+
+            # 延迟导入避免循环依赖 / lazy import to avoid circular dependency
+            from backend.services.issue_service import issue_service
+
+            async with get_async_session() as session:
+                cleanup_result = await issue_service.delete_issue_data(
+                    repo_owner, repo_name, issue_number, session
+                )
+
+            return JSONResponse(
+                content={
+                    "status": "accepted",
+                    "action": "deleted",
+                    "cleanup": cleanup_result,
+                }
+            )
 
         # 语义关联 Issue 向量同步（独立于 issue 分析，仓库级别）
         if (

@@ -31,6 +31,7 @@ class PRStatus(str, enum.Enum):
     REVIEWING = "reviewing"
     COMPLETED = "completed"
     FAILED = "failed"
+    CANCELLED = "cancelled"
 
 
 class ReviewDecision(str, enum.Enum):
