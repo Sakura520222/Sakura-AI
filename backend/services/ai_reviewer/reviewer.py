@@ -4,6 +4,7 @@
 保持与原 ai_reviewer.py 中 AIReviewer 类相同的公共接口。
 """
 
+import json
 from typing import Any, Dict, List
 
 from loguru import logger
@@ -11,19 +12,22 @@ from loguru import logger
 from backend.core.config import get_settings, get_strategy_config
 from backend.core.model_context import get_model_context_manager
 
-from .api_client import AIApiClient
+from .api_client import AIApiClient, AIEmptyResponseError, PromptTooLongError
 from .batch_processor import BatchProcessor
 from .compression import ContextCompressor
 from .constants import (
+    COMPACT_TOOLS,
     MAX_FILES_PER_BATCH,
     MAX_LINES_PER_BATCH,
     MAX_TOOL_ITERATIONS,
+    TOOL_NAME_TO_DEFINITION,
 )
 from .label_recommender import LabelRecommender
 from .prompt_builder import PromptBuilder
 from .result_parser import ReviewResultParser
 from .token_tracker import TokenTracker
 from .tools import (
+    DiffToolHandler,
     FileToolHandler,
     GitToolHandler,
     SakuraToolHandler,
@@ -96,6 +100,9 @@ class AIReviewer:
             )
 
             fetch_url_tool = FetchUrlToolHandler()
+
+        # PR diff 工具（按需查看文件 diff，用于 prompt 精简模式）
+        # 注意：每次精简模式会创建临时 DiffToolHandler 实例，避免并发安全问题
         self.tool_handler = ToolHandler(
             file_tool,
             search_tool,
@@ -104,6 +111,7 @@ class AIReviewer:
             search_files_tool,
             sakura_tool,
             fetch_url_tool,
+            diff_tool=None,
         )
         self.tool_manager = ToolManager()
 
@@ -175,6 +183,183 @@ class AIReviewer:
             logger.error(f"AI审查时出错: {e}", exc_info=True)
             raise
 
+    async def _run_tool_loop(
+        self,
+        messages: List[Dict[str, Any]],
+        system_prompt: str,
+        strategy: str,
+        enabled_tools: List[Any],
+        repo: Any,
+        pr: Any,
+        tracker: TokenTracker,
+        context: Dict[str, Any],
+    ) -> Dict[str, Any]:
+        """执行多轮工具调用循环
+
+        独立抽取的方法，供 review_pr_with_tools 和精简模式共用。
+
+        Args:
+            messages: 初始消息列表 [system, user, ...]
+            system_prompt: 系统提示词
+            strategy: 审查策略
+            enabled_tools: 启用的工具列表
+            repo: GitHub仓库对象
+            pr: GitHub PR对象
+            tracker: TokenTracker
+            context: 审查上下文
+
+        Returns:
+            审查结果字典
+        """
+        settings = get_settings()
+        max_iterations = (
+            get_strategy_config()
+            .get_context_enhancement_config()
+            .get("max_tool_iterations", MAX_TOOL_ITERATIONS)
+        )
+        iteration = 0
+
+        while iteration < max_iterations:
+            iteration += 1
+
+            # 调用AI API
+            response = await self.api_client.call_with_retry(
+                model=settings.openai_model,
+                messages=messages,
+                tools=enabled_tools,
+                tool_choice="auto",
+                temperature=settings.openai_temperature,
+            )
+            tracker.accumulate(response)
+
+            # 防御性检查：确保响应有效
+            if not response.choices:
+                logger.error("AI 返回空 choices")
+                raise AIEmptyResponseError("AI 返回空响应")
+
+            # 检查是否有工具调用
+            tool_calls = response.choices[0].message.tool_calls or []
+
+            if not tool_calls:
+                # AI完成了审查，返回结果
+                review_text = response.choices[0].message.content or ""
+                result = self.result_parser.parse_review_result(review_text, strategy)
+                result["token_usage"] = tracker.to_dict()
+                logger.info(
+                    "AI审查完成（使用了{}轮对话），策略: {}",
+                    iteration,
+                    strategy,
+                )
+                return result
+
+            # 处理工具调用
+            assistant_message = response.choices[0].message
+            assistant_msg_dict = {
+                "role": "assistant",
+                "content": assistant_message.content,
+                "tool_calls": tool_calls,
+            }
+
+            # DeepSeek-R1 特有：必须包含 reasoning_content
+            strategy_config = get_strategy_config()
+            if (
+                hasattr(assistant_message, "reasoning_content")
+                and assistant_message.reasoning_content
+                and strategy_config.is_model_supports_reasoning_content(
+                    settings.openai_model
+                )
+            ):
+                assistant_msg_dict["reasoning_content"] = (
+                    assistant_message.reasoning_content
+                )
+
+            messages.append(assistant_msg_dict)
+
+            # 执行每个工具调用
+            for tool_call in tool_calls:
+                try:
+                    result = await self.tool_handler.handle_tool_call(
+                        tool_call, repo, pr
+                    )
+                    messages.append(
+                        {
+                            "role": "tool",
+                            "tool_call_id": tool_call.id,
+                            "content": json.dumps(result, ensure_ascii=False),
+                        }
+                    )
+                    logger.info(
+                        "执行工具 {}: {}",
+                        tool_call.function.name,
+                        tool_call.function.arguments,
+                    )
+                except Exception as e:
+                    logger.error("执行工具 {} 失败: {}", tool_call.function.name, e)
+                    messages.append(
+                        {
+                            "role": "tool",
+                            "tool_call_id": tool_call.id,
+                            "content": json.dumps({"error": str(e)}),
+                        }
+                    )
+
+            # 检查上下文是否超限，触发压缩
+            if self.enable_compression:
+                current_tokens = self.context_compressor.estimate_messages_tokens(
+                    messages
+                )
+                safe_context = self.model_context_mgr.calculate_safe_context(
+                    settings.openai_model, settings.context_safety_threshold
+                )
+                threshold_tokens = int(safe_context * self.compression_threshold)
+
+                if current_tokens > threshold_tokens:
+                    current_k = current_tokens / 1000
+                    threshold_k = threshold_tokens / 1000
+                    logger.warning(
+                        "🚨 上下文超限: {:.1f}K tokens > {:.1f}K tokens "
+                        "(阈值 {}%)，启动压缩...",
+                        current_k,
+                        threshold_k,
+                        self.compression_threshold * 100,
+                    )
+
+                    messages = (
+                        await self.context_compressor.compress_conversation_history(
+                            messages,
+                            system_prompt,
+                            threshold_tokens,
+                            tracker=tracker,
+                        )
+                    )
+
+                    logger.info("✅ 压缩完成，继续审查...")
+
+        # 达到最大迭代次数，引导 AI 基于已有信息交付最终审查结果
+        logger.warning(
+            "达到最大工具调用次数 ({})，引导 AI 交付最终审查结果",
+            max_iterations,
+        )
+        messages.append(
+            {
+                "role": "user",
+                "content": (
+                    "已达到最大工具调用次数，请基于你当前已掌握的所有信息，"
+                    "立即返回最终的代码审查结果。"
+                ),
+            }
+        )
+        last_response = await self.api_client.call_with_retry(
+            model=settings.openai_model,
+            messages=messages,
+            temperature=settings.openai_temperature,
+        )
+        tracker.accumulate(last_response)
+        review_text = last_response.choices[0].message.content or ""
+        result = self.result_parser.parse_review_result(review_text, strategy)
+        result["token_usage"] = tracker.to_dict()
+        return result
+
     async def review_pr_with_tools(
         self, context: Dict[str, Any], strategy: str, repo: Any, pr: Any
     ) -> Dict[str, Any]:
@@ -192,7 +377,7 @@ class AIReviewer:
         if self.tool_handler.fetch_url_tool:
             await self.tool_handler.fetch_url_tool.reset_session()
         try:
-            logger.info(f"开始AI审查（带工具支持），策略: {strategy}")
+            logger.info("开始AI审查（带工具支持），策略: {}", strategy)
 
             settings = get_settings()
             strategy_config_data = get_strategy_config().get_strategy(strategy)
@@ -232,148 +417,148 @@ class AIReviewer:
                     repo_full_name
                 )
 
-            # 多轮对话循环
-            max_iterations = (
-                get_strategy_config()
-                .get_context_enhancement_config()
-                .get("max_tool_iterations", MAX_TOOL_ITERATIONS)
+            return await self._run_tool_loop(
+                messages=messages,
+                system_prompt=system_prompt,
+                strategy=strategy,
+                enabled_tools=enabled_tools,
+                repo=repo,
+                pr=pr,
+                tracker=tracker,
+                context=context,
             )
-            iteration = 0
 
-            while iteration < max_iterations:
-                iteration += 1
+        except PromptTooLongError as e:
+            # Prompt 超长
+            logger.warning(
+                "🚨 Prompt 超出模型上下文限制 (估算 ~{} tokens, 模型: {})",
+                e.estimated_tokens,
+                e.model,
+            )
 
-                # 调用AI API
-                response = await self.api_client.call_with_retry(
-                    model=settings.openai_model,
-                    messages=messages,
-                    tools=enabled_tools,
-                    tool_choice="auto",
-                    temperature=settings.openai_temperature,
-                )
-                tracker.accumulate(response)
+            # 判断是首次调用超长还是多轮对话超长
+            # 首次调用只有 [system, user] 两条消息，无工具调用历史
+            has_tool_history = any(
+                msg.get("role") == "tool" or msg.get("tool_calls") for msg in messages
+            )
 
-                # 检查是否有工具调用
-                tool_calls = response.choices[0].message.tool_calls
-
-                if not tool_calls:
-                    # AI完成了审查，返回结果
-                    review_text = response.choices[0].message.content
-                    result = self.result_parser.parse_review_result(
-                        review_text, strategy
-                    )
-                    result["token_usage"] = tracker.to_dict()
-                    logger.info(
-                        f"AI审查完成（使用了{iteration}轮对话），策略: {strategy}"
-                    )
-                    return result
-
-                # 处理工具调用
-                assistant_message = response.choices[0].message
-                assistant_msg_dict = {
-                    "role": "assistant",
-                    "content": assistant_message.content,
-                    "tool_calls": tool_calls,
-                }
-
-                # DeepSeek-R1 特有：必须包含 reasoning_content
-                strategy_config = get_strategy_config()
-                if (
-                    hasattr(assistant_message, "reasoning_content")
-                    and assistant_message.reasoning_content
-                    and strategy_config.is_model_supports_reasoning_content(
-                        settings.openai_model
-                    )
-                ):
-                    assistant_msg_dict["reasoning_content"] = (
-                        assistant_message.reasoning_content
-                    )
-
-                messages.append(assistant_msg_dict)
-
-                # 执行每个工具调用
-                import json
-
-                for tool_call in tool_calls:
-                    try:
-                        result = await self.tool_handler.handle_tool_call(
-                            tool_call, repo, pr
-                        )
-                        messages.append(
-                            {
-                                "role": "tool",
-                                "tool_call_id": tool_call.id,
-                                "content": json.dumps(result, ensure_ascii=False),
-                            }
-                        )
-                        logger.info(
-                            f"执行工具 {tool_call.function.name}: {tool_call.function.arguments}"
-                        )
-                    except Exception as e:
-                        logger.error(f"执行工具 {tool_call.function.name} 失败: {e}")
-                        messages.append(
-                            {
-                                "role": "tool",
-                                "tool_call_id": tool_call.id,
-                                "content": json.dumps({"error": str(e)}),
-                            }
-                        )
-
-                # 检查上下文是否超限，触发压缩
+            if has_tool_history:
+                # 多轮对话：压缩对话历史
                 if self.enable_compression:
-                    current_tokens = self.context_compressor.estimate_messages_tokens(
-                        messages
-                    )
-                    safe_context = self.model_context_mgr.calculate_safe_context(
-                        settings.openai_model, settings.context_safety_threshold
-                    )
-                    threshold_tokens = int(safe_context * self.compression_threshold)
-
-                    if current_tokens > threshold_tokens:
-                        current_k = current_tokens / 1000
-                        threshold_k = threshold_tokens / 1000
-                        logger.warning(
-                            f"🚨 上下文超限: {current_k:.1f}K tokens > {threshold_k:.1f}K tokens "
-                            f"(阈值 {self.compression_threshold * 100}%)，启动压缩..."
+                    try:
+                        safe_context = self.model_context_mgr.calculate_safe_context(
+                            get_settings().openai_model,
+                            get_settings().context_safety_threshold,
                         )
-
+                        target_tokens = int(safe_context * self.compression_threshold)
                         messages = (
                             await self.context_compressor.compress_conversation_history(
                                 messages,
                                 system_prompt,
-                                threshold_tokens,
+                                target_tokens,
                                 tracker=tracker,
                             )
                         )
-
-                        logger.info("✅ 压缩完成，继续审查...")
-
-            # 达到最大迭代次数，引导 AI 基于已有信息交付最终审查结果
-            logger.warning(
-                f"达到最大工具调用次数 ({max_iterations})，引导 AI 交付最终审查结果"
-            )
-            messages.append(
-                {
-                    "role": "user",
-                    "content": (
-                        "已达到最大工具调用次数，请基于你当前已掌握的所有信息，"
-                        "立即返回最终的代码审查结果。"
-                    ),
-                }
-            )
-            last_response = await self.api_client.call_with_retry(
-                model=settings.openai_model,
-                messages=messages,
-                temperature=settings.openai_temperature,
-            )
-            tracker.accumulate(last_response)
-            review_text = last_response.choices[0].message.content
-            result = self.result_parser.parse_review_result(review_text, strategy)
-            result["token_usage"] = tracker.to_dict()
-            return result
-
+                        compressed_tokens = (
+                            self.context_compressor.estimate_messages_tokens(messages)
+                        )
+                        logger.info(
+                            "✅ 对话历史压缩完成 ({} → {} tokens)，继续工具循环...",
+                            e.estimated_tokens,
+                            compressed_tokens,
+                        )
+                        return await self._run_tool_loop(
+                            messages=messages,
+                            system_prompt=system_prompt,
+                            strategy=strategy,
+                            enabled_tools=enabled_tools,
+                            repo=repo,
+                            pr=pr,
+                            tracker=tracker,
+                            context=context,
+                        )
+                    except Exception as compress_err:
+                        logger.error(
+                            "对话历史压缩后重试仍失败: {}",
+                            str(compress_err),
+                            exc_info=True,
+                        )
+                        raise
+                else:
+                    logger.error(
+                        "🚨 多轮对话超限但压缩未启用 (估算 ~{} tokens)",
+                        e.estimated_tokens,
+                    )
+                    raise
+            else:
+                # 首次调用超长：切换到精简模式（移除 diff，通过工具按需查看）
+                # 每次创建临时 DiffToolHandler 实例，避免并发安全问题
+                compact_diff_tool = DiffToolHandler()
+                original_diff_tool = self.tool_handler.diff_tool
+                try:
+                    self.tool_handler.diff_tool = compact_diff_tool
+                    logger.info(
+                        "📦 首次 prompt 超长，切换到精简模式（diff 通过工具按需查看）..."
+                    )
+                    # 将文件 diff 数据注入临时 DiffToolHandler
+                    compact_diff_tool.set_files_data(context.get("files", []))
+                    if not compact_diff_tool.has_data:
+                        logger.warning("精简模式降级：无文件 diff 数据可用，放弃重试")
+                        raise
+                    # 精简模式下动态添加 COMPACT_TOOLS（get_file_diff, list_changed_files）
+                    compact_enabled_tools = list(enabled_tools)
+                    for tool_name in COMPACT_TOOLS:
+                        tool_def = TOOL_NAME_TO_DEFINITION.get(tool_name)
+                        if tool_def and tool_def not in compact_enabled_tools:
+                            compact_enabled_tools.append(tool_def)
+                    # 用精简模式重建 user_message（不含 diff）
+                    compact_user_message = self.prompt_builder.build_user_message(
+                        context, strategy, include_tools=True, compact=True
+                    )
+                    compact_messages = [
+                        {"role": "system", "content": system_prompt},
+                        {"role": "user", "content": compact_user_message},
+                    ]
+                    compact_tokens = self.context_compressor.estimate_messages_tokens(
+                        compact_messages
+                    )
+                    # 降级检查：精简模式是否真的显著减少了 token
+                    if compact_tokens >= e.estimated_tokens * 0.8:
+                        logger.warning(
+                            "精简模式未能显著减少 token ({} → {})，放弃重试",
+                            e.estimated_tokens,
+                            compact_tokens,
+                        )
+                        raise
+                    logger.info(
+                        "✅ 精简模式 prompt 构建 ({} → {} tokens)，进入工具循环...",
+                        e.estimated_tokens,
+                        compact_tokens,
+                    )
+                    # 进入完整的多轮工具循环（AI 可通过 get_file_diff 按需查看 diff）
+                    return await self._run_tool_loop(
+                        messages=compact_messages,
+                        system_prompt=system_prompt,
+                        strategy=strategy,
+                        enabled_tools=compact_enabled_tools,
+                        repo=repo,
+                        pr=pr,
+                        tracker=tracker,
+                        context=context,
+                    )
+                except Exception as compact_err:
+                    logger.error(
+                        "精简模式重试仍失败: {}",
+                        str(compact_err),
+                        exc_info=True,
+                    )
+                    raise
+                finally:
+                    # 确保清理临时 diff 数据并恢复原始 diff_tool
+                    compact_diff_tool.clear()
+                    self.tool_handler.diff_tool = original_diff_tool
         except Exception as e:
-            logger.error(f"AI审查（带工具）时出错: {e}", exc_info=True)
+            logger.error("AI审查（带工具）时出错: {}", str(e), exc_info=True)
             raise
 
     async def review_pr_with_tools_batched(

@@ -5,10 +5,12 @@
 
 import asyncio
 import random
+import re
 import time
 from typing import Any, Dict, List, Optional
 
 from openai import AsyncOpenAI
+from openai import BadRequestError as OpenAIBadRequestError
 from loguru import logger
 
 from .constants import (
@@ -18,6 +20,53 @@ from .constants import (
     MAX_RETRIES,
     TOTAL_TIMEOUT,
 )
+
+# Context overflow keywords for detecting prompt-too-long errors
+CONTEXT_OVERFLOW_KEYWORDS = [
+    "context_length",
+    "maximum context length",
+    "context window",
+    "reduce the length",
+    "too many tokens",
+    "token limit",
+]
+
+# CJK 字符正则（用于 token 估算时判断中文等字符比例）
+_CJK_PATTERN = re.compile(
+    r"[\u4e00-\u9fff\u3400-\u4dbf\u3000-\u303f\uff00-\uffef"
+    r"\u2e80-\u2eff\u31c0-\u31ef\u3200-\u32ff]"
+)
+
+
+class AIEmptyResponseError(Exception):
+    """AI 返回空响应时抛出的异常"""
+
+
+class PromptTooLongError(Exception):
+    """Prompt 超出模型最大上下文长度时抛出的异常
+
+    Attributes:
+        estimated_tokens: 估算的 prompt token 数
+        model: 使用的模型名称
+        original_error: 原始 BadRequestError
+        user_message: 面向用户的友好提示信息
+    """
+
+    def __init__(
+        self,
+        message: str,
+        estimated_tokens: int = 0,
+        model: str = "",
+        original_error: Exception | None = None,
+    ):
+        super().__init__(message)
+        self.estimated_tokens = estimated_tokens
+        self.model = model
+        self.original_error = original_error
+        self.user_message = (
+            f"审查内容超出模型上下文长度限制（模型: {model}，估算 ~{estimated_tokens} tokens），"
+            "已尝试自动精简或压缩。"
+        )
 
 
 class AIApiClient:
@@ -38,6 +87,42 @@ class AIApiClient:
             api_key: API密钥
         """
         self.client = AsyncOpenAI(base_url=base_url, api_key=api_key)
+
+    @staticmethod
+    def _estimate_prompt_tokens(messages: List[Dict[str, Any]]) -> int:
+        """快速估算消息列表的 token 数量
+
+        使用启发式方法：
+        - 纯 ASCII 内容：len(content) // 4
+        - 含 CJK 字符的内容：len(content) // 2（CJK 字符通常 1 个字符 ≈ 1-2 个 token）
+
+        Args:
+            messages: 消息列表
+
+        Returns:
+            估算的 token 数
+        """
+        estimated = 0
+        for msg in messages:
+            content = msg.get("content", "") or ""
+            if content:
+                # 统计 CJK 字符比例
+                cjk_count = len(_CJK_PATTERN.findall(content))
+                total_chars = len(content)
+                cjk_ratio = cjk_count / max(total_chars, 1)
+
+                # CJK 占比高时用更保守的系数
+                if cjk_ratio > 0.1:
+                    estimated += total_chars // 2
+                else:
+                    estimated += total_chars // 4
+
+            # 估算 tool_calls 的 token
+            for tc in msg.get("tool_calls", []) or []:
+                if hasattr(tc, "function") and tc.function:
+                    estimated += len(tc.function.name + str(tc.arguments)) // 4
+
+        return estimated
 
     async def call_with_retry(
         self,
@@ -144,18 +229,62 @@ class AIApiClient:
 
             except Exception as e:
                 error_type = type(e).__name__
+
+                # BadRequestError（如 prompt 超长）不应重试，包装为 PromptTooLongError
+                if isinstance(e, OpenAIBadRequestError):
+                    error_str = str(e).lower()
+                    # 仅对上下文超长类错误包装为 PromptTooLongError，
+                    # 避免误判其他 BadRequestError（如 schema 验证错误）
+                    is_context_overflow = any(
+                        kw in error_str for kw in CONTEXT_OVERFLOW_KEYWORDS
+                    )
+                    if not is_context_overflow:
+                        # 非超长的 BadRequestError，直接抛出原始错误
+                        logger.error(
+                            "AI调用 BadRequestError（非上下文超长）: {}", str(e)
+                        )
+                        raise
+
+                    total_time = time.monotonic() - start_time
+                    # 从 kwargs 中获取 model 和 messages 用于估算 token
+                    messages = kwargs.get("messages", [])
+                    model = kwargs.get("model", "unknown")
+                    estimated_tokens = self._estimate_prompt_tokens(messages)
+                    logger.error(
+                        "AI调用失败 [{}]，Prompt 超长 (估算 ~{} tokens, 模型: {}) "
+                        "(总耗时 {:.1f}s): {}",
+                        error_type,
+                        estimated_tokens,
+                        model,
+                        total_time,
+                        str(e),
+                    )
+                    raise PromptTooLongError(
+                        f"Prompt exceeds max length (估算 ~{estimated_tokens} tokens, 模型: {model}): {e}",
+                        estimated_tokens=estimated_tokens,
+                        model=model,
+                        original_error=e,
+                    ) from e
+
                 if attempt < MAX_RETRIES - 1:
                     delay = self._calculate_delay(attempt)
                     logger.warning(
-                        f"AI调用失败 [{error_type}]: {e}，{delay:.1f}秒后重试 "
-                        f"({attempt + 1}/{MAX_RETRIES}, 已耗时 {elapsed:.1f}s)"
+                        "AI调用失败 [{}]: {}，{:.1f}秒后重试 ({}/{}, 已耗时 {:.1f}s)",
+                        error_type,
+                        str(e),
+                        delay,
+                        attempt + 1,
+                        MAX_RETRIES,
+                        elapsed,
                     )
                     await asyncio.sleep(delay)
                 else:
                     total_time = time.monotonic() - start_time
                     logger.error(
-                        f"AI调用失败 [{error_type}]，已达最大重试次数 "
-                        f"(总耗时 {total_time:.1f}s): {e}"
+                        "AI调用失败 [{}]，已达最大重试次数 (总耗时 {:.1f}s): {}",
+                        error_type,
+                        total_time,
+                        str(e),
                     )
                     raise
 

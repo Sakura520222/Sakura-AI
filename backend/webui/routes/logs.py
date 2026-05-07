@@ -72,7 +72,7 @@ async def logs_list_fragment(
 
     # 搜索过滤
     search_filter = build_review_search_filter(search)
-    if search_filter:
+    if search_filter is not None:
         query = query.where(search_filter)
         count_query = count_query.where(search_filter)
 
