@@ -75,7 +75,7 @@ CODE_INDEX_TOOLS = ["search_code_context"]
 WEB_SEARCH_TOOLS = ["search_web", "fetch_url"]
 SAKURA_TOOLS = ["read_sakura_docs", "list_sakura_directory"]
 
-ALL_TOOLS = BASE_TOOLS + COMPACT_TOOLS + RAG_TOOLS + CODE_INDEX_TOOLS + WEB_SEARCH_TOOLS + SAKURA_TOOLS
+ALL_TOOLS = BASE_TOOLS + RAG_TOOLS + CODE_INDEX_TOOLS + WEB_SEARCH_TOOLS + SAKURA_TOOLS
 
 # =============================================================================
 # 上下文压缩配置

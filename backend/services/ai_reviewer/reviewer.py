@@ -353,6 +353,8 @@ class AIReviewer:
         tracker.accumulate(last_response)
         review_text = last_response.choices[0].message.content or ""
         result = self.result_parser.parse_review_result(review_text, strategy)
+        result["token_usage"] = tracker.to_dict()
+        return result
 
     async def review_pr_with_tools(
         self, context: Dict[str, Any], strategy: str, repo: Any, pr: Any

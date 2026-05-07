@@ -20,6 +20,17 @@ from .constants import (
     TOTAL_TIMEOUT,
 )
 
+# 判断 BadRequestError 是否为上下文超长的关键词列表
+# Context overflow keywords for detecting prompt-too-long errors
+CONTEXT_OVERFLOW_KEYWORDS = [
+    "context_length",
+    "maximum context length",
+    "context window",
+    "reduce the length",
+    "too many tokens",
+    "token limit",
+]
+
 
 class PromptTooLongError(Exception):
     """Prompt 超出模型最大上下文长度时抛出的异常
@@ -178,16 +189,8 @@ class AIApiClient:
                     error_str = str(e).lower()
                     # 仅对上下文超长类错误包装为 PromptTooLongError，
                     # 避免误判其他 BadRequestError（如 schema 验证错误）
-                    context_overflow_keywords = [
-                        "context_length",
-                        "maximum context length",
-                        "context window",
-                        "reduce the length",
-                        "too many tokens",
-                        "token limit",
-                    ]
                     is_context_overflow = any(
-                        kw in error_str for kw in context_overflow_keywords
+                        kw in error_str for kw in CONTEXT_OVERFLOW_KEYWORDS
                     )
                     if not is_context_overflow:
                         # 非超长的 BadRequestError，直接抛出原始错误
