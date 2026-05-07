@@ -310,7 +310,7 @@ async def handle_pull_request_event(payload: Dict[str, Any]) -> JSONResponse:
                 "message": "审查任务已提交",
                 "pr": f"{pr_info['repo_full_name']}#{pr_info['pr_number']}",
                 "action": action,
-                "task_id": task_key,
+                "task_key": task_key,
             }
         )
 
