@@ -5,6 +5,7 @@ from loguru import logger
 
 from backend.models.database import ReviewDecision
 from backend.core.config import get_settings, get_strategy_config
+from backend.core.language_utils import output_text
 
 
 class DecisionEngine:
@@ -155,8 +156,7 @@ class DecisionEngine:
 
     def _t(self, zh: str, en: str) -> str:
         """根据 output_language 返回对应文本"""
-        output_lang = get_settings().output_language
-        return en if output_lang == "en" else zh
+        return output_text(zh, en)
 
     def _apply_ai_decision(
         self,

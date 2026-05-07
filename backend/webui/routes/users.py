@@ -249,12 +249,12 @@ async def add_user(
             "auto_super_admin": auto_super_admin,
         },
     )
-    msg = f"用户 {github_username} 已成功添加"
-    if auto_super_admin:
-        msg += "（已自动提升为超级管理员）"
+    msg_key = (
+        "toast.user_added_auto_super_admin" if auto_super_admin else "toast.user_added"
+    )
     return toast_redirect(
         "/webui/users/",
-        "toast.user_added",
+        msg_key,
         lang=detect_language(),
         github_username=github_username,
     )

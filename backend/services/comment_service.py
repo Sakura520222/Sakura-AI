@@ -5,6 +5,7 @@ from typing import Dict, Any, Optional
 from loguru import logger
 
 from backend.core.config import get_settings, get_strategy_config
+from backend.core.language_utils import output_text
 from backend.services.label_service import label_service
 
 
@@ -16,8 +17,7 @@ class CommentService:
 
     def _t(self, zh: str, en: str) -> str:
         """根据 output_language 返回对应文本"""
-        output_lang = get_settings().output_language
-        return en if output_lang == "en" else zh
+        return output_text(zh, en)
 
     async def create_placeholder_comment(self, pr: Any, strategy: str) -> Any:
         """创建占位评论（使用 Issue Comment）
