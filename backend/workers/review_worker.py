@@ -207,7 +207,7 @@ class ReviewWorker:
 
     async def process_review_task(self, pr_info: Dict[str, Any]) -> str:
         """处理审查任务"""
-        task_id = str(uuid.uuid4())[:8]
+        task_id = str(uuid.uuid4())[:8]  # 日志追踪用短 ID，碰撞概率约 1/43亿，不用于持久化唯一键
         task_key = self._make_task_key(pr_info)
         review_obj = None  # 用于保存 GitHub Review 对象
         review_id = None  # 用于保存数据库审查记录 ID
@@ -240,9 +240,10 @@ class ReviewWorker:
                     return task_id
 
                 # Cancel checkpoint: before code indexing
+                # Note: review_id is still None here (_create_review_record runs later)
                 if self._check_cancelled(task_key):
                     return await self._cancel_and_cleanup(
-                        task_id, task_key, None, review_id, "跳过代码索引"
+                        task_id, task_key, None, None, "跳过代码索引"
                     )
 
                 # 2.5 代码索引（在 AI 审查前完成，确保 search_code_context 工具可用）
