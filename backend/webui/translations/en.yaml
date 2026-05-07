@@ -21,6 +21,7 @@ common:
   import: "Import"
   add: "Add"
   back: "Back"
+  period: "."
   next: "Next"
   previous: "Previous"
   submit: "Submit"
@@ -538,6 +539,8 @@ settings:
   description: "Customize your WebUI preferences"
   save_success: "Settings saved"
   save_error: "Failed to save settings"
+  language_desc: "Select your preferred interface language"
+  items_per_page_desc: "Set the number of items displayed per page"
   languages:
     zh-CN: "简体中文"
     en: "English"
@@ -675,6 +678,13 @@ register:
   input_token: "Enter verification token"
   register_success: "Registration successful"
   register_failed: "Registration failed"
+  account_not_registered: "Your GitHub account"
+  account_not_registered_suffix: "is not registered in the system."
+  click_to_register: "Click the button above to open the Bot in Telegram,"
+  send_command_to_register: "then send /sign {github_username} to complete registration."
+  contact_admin: "Please contact the admin to configure the Telegram Bot,"
+  or_register_via_bot: "or send /sign {github_username} via the Telegram Bot to register."
+  after_register: "After registration, "
 
 # ========== Toast Messages ==========
 toast:
@@ -731,6 +741,7 @@ toast:
   user_delete_failed: "User deletion failed"
   payment_error: "Payment error: {error}"
   user_added: "User {github_username} added successfully"
+  user_added_auto_super_admin: "User {github_username} added successfully (auto-promoted to super admin)"
   user_role_changed: "User role changed to {role}"
   user_quota_updated: "User quota updated"
   issue_quota_updated: "Issue quota updated"

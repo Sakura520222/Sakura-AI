@@ -55,7 +55,7 @@
                 </div>
                 <h2 class="text-lg font-semibold text-gray-900 dark:text-white">{{ _('register.telegram_register') }}</h2>
                 <p class="mt-2 text-sm text-gray-500 dark:text-gray-400">
-                    你的 GitHub 账号 <span class="font-medium text-gray-700 dark:text-gray-300">@{{ github_username }}</span> 尚未在系统中注册。
+                    {{ _('register.account_not_registered') }} <span class="font-medium text-gray-700 dark:text-gray-300">@{{ github_username }}</span> {{ _('register.account_not_registered_suffix') }}
                 </p>
             </div>
 
@@ -71,16 +71,16 @@
 
             <div class="mt-4 text-center">
                 <p class="text-xs text-gray-400 dark:text-gray-500 leading-relaxed">
-                    点击上方按钮将在 Telegram 中打开 Bot，<br>
-                    发送 <code class="px-1 py-0.5 bg-gray-100 dark:bg-gray-700 rounded text-xs">/sign {{ github_username }}</code> 即可完成注册。
+                    {{ _('register.click_to_register') }}<br>
+                    {{ _('register.send_command_to_register', github_username=github_username) }}
                 </p>
             </div>
             {% else %}
             <!-- Bot 未配置时的降级提示 -->
             <div class="text-center py-4">
                 <p class="text-sm text-gray-500 dark:text-gray-400">
-                    请联系管理员配置 Telegram Bot 后重试，<br>
-                    或通过 Telegram Bot 发送 <code class="px-1 py-0.5 bg-gray-100 dark:bg-gray-700 rounded text-xs">/sign {{ github_username }}</code> 完成注册。
+                    {{ _('register.contact_admin') }}<br>
+                    {{ _('register.or_register_via_bot', github_username=github_username) }}
                 </p>
             </div>
             {% endif %}
@@ -88,7 +88,7 @@
             <!-- 注册完成后提示 -->
             <div class="mt-6 pt-4 border-t border-gray-100 dark:border-gray-700">
                 <p class="text-center text-xs text-gray-400 dark:text-gray-500">
-                    注册完成后，<a href="/webui/auth/login" class="text-blue-500 hover:text-blue-600 dark:text-blue-400">{{ _('common.back') }}</a> {{ _('auth.login') }}。
+                    {{ _('register.after_register') }}<a href="/webui/auth/login" class="text-blue-500 hover:text-blue-600 dark:text-blue-400">{{ _('common.back') }}</a> {{ _('auth.login') }}{{ _('common.period') }}
                 </p>
             </div>
         </div>

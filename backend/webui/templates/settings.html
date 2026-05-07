@@ -19,7 +19,7 @@
                 <!-- 界面语言 / Language -->
                 <div>
                     <h3 class="text-base font-medium">{{ _('settings.language') }}</h3>
-                    <p class="text-sm text-gray-500 dark:text-gray-400 mt-1">Select your preferred interface language</p>
+                    <p class="text-sm text-gray-500 dark:text-gray-400 mt-1">{{ _('settings.language_desc') }}</p>
                     <select name="language" class="mt-2 px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-sm focus:ring-2 focus:ring-pink-500 focus:border-transparent outline-none">
                         <option value="zh-CN" {% if language == 'zh-CN' %}selected{% endif %}>{{ _('settings.languages.zh-CN') }}</option>
                         <option value="en" {% if language == 'en' %}selected{% endif %}>{{ _('settings.languages.en') }}</option>
@@ -29,7 +29,7 @@
                 <!-- 每页显示条数 -->
                 <div>
                     <h3 class="text-base font-medium">{{ _('settings.items_per_page') }}</h3>
-                    <p class="text-sm text-gray-500 dark:text-gray-400 mt-1">Set the number of items displayed per page</p>
+                    <p class="text-sm text-gray-500 dark:text-gray-400 mt-1">{{ _('settings.items_per_page_desc') }}</p>
                     <select name="items_per_page" class="mt-2 px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-sm focus:ring-2 focus:ring-pink-500 focus:border-transparent outline-none">
                         <option value="10" {% if items_per_page == 10 %}selected{% endif %}>10 {{ _('settings.items_per_page_unit') }}</option>
                         <option value="20" {% if items_per_page == 20 %}selected{% endif %}>20 {{ _('settings.items_per_page_unit') }}</option>

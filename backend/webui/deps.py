@@ -256,6 +256,29 @@ def toast_redirect(
         from backend.webui.i18n import i18n as _i18n
 
         display_message = _i18n.t(message, lang=lang, **fmt_kwargs)
+    elif message.startswith(
+        (
+            "toast.",
+            "error.",
+            "register.",
+            "common.",
+            "config.",
+            "settings.",
+            "user.",
+            "billing.",
+            "scan.",
+            "queue.",
+            "issue.",
+            "pr.",
+            "auth.",
+            "wizard.",
+        )
+    ):
+        # Temporary fallback: auto-translate known translation key prefixes
+        # TODO: Remove once all callers explicitly pass lang parameter
+        from backend.webui.i18n import i18n as _i18n
+
+        display_message = _i18n.t(message, **fmt_kwargs)
 
     params = {"_toast": display_message, "_toast_type": toast_type}
     separator = "&" if "?" in url else "?"

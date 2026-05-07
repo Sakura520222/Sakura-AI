@@ -14,11 +14,6 @@ class CommentService:
     def __init__(self):
         pass
 
-    def _t(self, zh: str, en: str) -> str:
-        """根据 output_language 返回对应文本"""
-        output_lang = get_settings().output_language
-        return en if output_lang == "en" else zh
-
     async def create_placeholder_comment(self, pr: Any, strategy: str) -> Any:
         """创建占位评论（使用 Issue Comment）
 
