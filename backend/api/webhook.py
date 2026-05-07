@@ -140,6 +140,14 @@ async def handle_pull_request_event(payload: Dict[str, Any]) -> JSONResponse:
             logger.info(f"忽略PR动作: {action}")
             return JSONResponse(content={"status": "ignored", "action": action})
 
+        # Register cancel event IMMEDIATELY after action validation,
+        # before any async operations (quota check, Telegram, dismiss, etc.)
+        # so that a closed webhook arriving during those operations can cancel the task.
+        from backend.workers.review_worker import ReviewWorker, get_worker
+
+        task_key = ReviewWorker._make_task_key(pr_info)
+        get_worker()._register_task(task_key, force_new=True)
+
         # 过滤 Bot 自身创建的 PR（如 sakura-memory 系统创建的 PR）
         bot_username = settings.bot_username
         sender = pr_info.get("sender", "")
