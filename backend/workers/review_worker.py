@@ -1025,6 +1025,10 @@ class ReviewWorker:
                         logger.info(
                             f"[{task_id}] 已撤回 {dismissed} 条旧 Review，将提交全量审查"
                         )
+                    else:
+                        logger.debug(
+                            f"[{task_id}] 全量审查模式，无旧 Review 需撤回"
+                        )
 
             # 使用 submit_review_with_inline_comments 方法（带重试机制）
             max_retries = 1  # 失败后重试1次
