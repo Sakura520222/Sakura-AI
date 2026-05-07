@@ -714,6 +714,7 @@ async def handle_issue_event(payload: Dict[str, Any]) -> JSONResponse:
                 f"处理 Issue 删除事件: {repo_owner}/{repo_name}#{issue_number}"
             )
 
+            # 延迟导入避免循环依赖 / lazy import to avoid circular dependency
             from backend.services.issue_service import issue_service
 
             async with get_async_session() as session:
