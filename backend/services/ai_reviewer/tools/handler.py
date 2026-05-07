@@ -25,6 +25,7 @@ class ToolHandler:
         search_files_tool=None,
         sakura_tool=None,
         fetch_url_tool=None,
+        diff_tool=None,
     ):
         """初始化工具处理器
 
@@ -36,6 +37,7 @@ class ToolHandler:
             search_files_tool: 跨文件搜索工具处理器（可选）
             sakura_tool: .sakura/ 文档工具处理器（可选）
             fetch_url_tool: URL 抓取工具处理器（可选）
+            diff_tool: PR diff 工具处理器（可选）
         """
         self.file_tool = file_tool
         self.search_tool = search_tool
@@ -44,6 +46,7 @@ class ToolHandler:
         self.search_files_tool = search_files_tool
         self.sakura_tool = sakura_tool
         self.fetch_url_tool = fetch_url_tool
+        self.diff_tool = diff_tool
 
     async def handle_tool_call(
         self, tool_call: Any, repo: Any, pr: Any
@@ -63,8 +66,11 @@ class ToolHandler:
 
         try:
             if function_name == "read_file":
+                file_path = arguments.get("file_path")
+                if not file_path:
+                    return {"error": "缺少必填参数: file_path"}
                 return await self.file_tool.read_file(
-                    file_path=arguments["file_path"],
+                    file_path=file_path,
                     repo=repo,
                     pr=pr,
                     start_line=arguments.get("start_line"),
@@ -73,9 +79,10 @@ class ToolHandler:
                     context_lines=arguments.get("context_lines"),
                 )
             elif function_name == "list_directory":
-                return await self.file_tool.list_directory(
-                    arguments["directory"], repo, pr
-                )
+                directory = arguments.get("directory")
+                if not directory:
+                    return {"error": "缺少必填参数: directory"}
+                return await self.file_tool.list_directory(directory, repo, pr)
             elif function_name == "search_project_docs":
                 return await self.search_tool.search_project_docs(
                     arguments.get("query", ""),
@@ -109,8 +116,11 @@ class ToolHandler:
             elif function_name == "search_in_files":
                 if not self.search_files_tool:
                     return {"error": "跨文件搜索工具未启用"}
+                keyword = arguments.get("keyword")
+                if not keyword:
+                    return {"error": "缺少必填参数: keyword"}
                 return await self.search_files_tool.search_in_files(
-                    keyword=arguments["keyword"],
+                    keyword=keyword,
                     repo=repo,
                     pr=pr,
                     file_extension=arguments.get("file_extension"),
@@ -151,6 +161,19 @@ class ToolHandler:
                     repo=repo,
                     pr=pr,
                 )
+            elif function_name == "get_file_diff":
+                if not self.diff_tool:
+                    return {"error": "PR diff 工具未启用"}
+                file_path = arguments.get("file_path")
+                if not file_path:
+                    return {"error": "缺少必填参数: file_path"}
+                return await self.diff_tool.get_file_diff(
+                    file_path=file_path,
+                )
+            elif function_name == "list_changed_files":
+                if not self.diff_tool:
+                    return {"error": "PR diff 工具未启用"}
+                return await self.diff_tool.list_changed_files()
             else:
                 return {"error": f"未知工具: {function_name}"}
 
