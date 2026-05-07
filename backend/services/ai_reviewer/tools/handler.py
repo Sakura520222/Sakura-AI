@@ -25,6 +25,7 @@ class ToolHandler:
         search_files_tool=None,
         sakura_tool=None,
         fetch_url_tool=None,
+        diff_tool=None,
     ):
         """初始化工具处理器
 
@@ -36,6 +37,7 @@ class ToolHandler:
             search_files_tool: 跨文件搜索工具处理器（可选）
             sakura_tool: .sakura/ 文档工具处理器（可选）
             fetch_url_tool: URL 抓取工具处理器（可选）
+            diff_tool: PR diff 工具处理器（可选）
         """
         self.file_tool = file_tool
         self.search_tool = search_tool
@@ -44,6 +46,7 @@ class ToolHandler:
         self.search_files_tool = search_files_tool
         self.sakura_tool = sakura_tool
         self.fetch_url_tool = fetch_url_tool
+        self.diff_tool = diff_tool
 
     async def handle_tool_call(
         self, tool_call: Any, repo: Any, pr: Any
@@ -151,6 +154,16 @@ class ToolHandler:
                     repo=repo,
                     pr=pr,
                 )
+            elif function_name == "get_file_diff":
+                if not self.diff_tool:
+                    return {"error": "PR diff 工具未启用"}
+                return await self.diff_tool.get_file_diff(
+                    file_path=arguments["file_path"],
+                )
+            elif function_name == "list_changed_files":
+                if not self.diff_tool:
+                    return {"error": "PR diff 工具未启用"}
+                return await self.diff_tool.list_changed_files()
             else:
                 return {"error": f"未知工具: {function_name}"}
 

@@ -3,6 +3,7 @@
 导出工具相关的类。
 """
 
+from .diff_tool import DiffToolHandler
 from .file_tool import FileToolHandler
 from .git_tool import GitToolHandler
 from .handler import ToolHandler
@@ -12,6 +13,7 @@ from .search_files_tool import SearchFilesToolHandler
 from .search_tool import SearchToolHandler
 
 __all__ = [
+    "DiffToolHandler",
     "FileToolHandler",
     "SearchToolHandler",
     "ToolHandler",
