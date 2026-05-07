@@ -4,6 +4,7 @@
 保持与原 ai_reviewer.py 中 AIReviewer 类相同的公共接口。
 """
 
+import json
 from typing import Any, Dict, List
 
 from loguru import logger
@@ -15,9 +16,11 @@ from .api_client import AIApiClient, PromptTooLongError
 from .batch_processor import BatchProcessor
 from .compression import ContextCompressor
 from .constants import (
+    COMPACT_TOOLS,
     MAX_FILES_PER_BATCH,
     MAX_LINES_PER_BATCH,
     MAX_TOOL_ITERATIONS,
+    TOOL_NAME_TO_DEFINITION,
 )
 from .label_recommender import LabelRecommender
 from .prompt_builder import PromptBuilder
@@ -209,8 +212,6 @@ class AIReviewer:
         Returns:
             审查结果字典
         """
-        import json
-
         settings = get_settings()
         max_iterations = (
             get_strategy_config()
@@ -237,7 +238,7 @@ class AIReviewer:
 
             if not tool_calls:
                 # AI完成了审查，返回结果
-                review_text = response.choices[0].message.content
+                review_text = response.choices[0].message.content or ""
                 result = self.result_parser.parse_review_result(review_text, strategy)
                 result["token_usage"] = tracker.to_dict()
                 logger.info(
@@ -350,10 +351,8 @@ class AIReviewer:
             temperature=settings.openai_temperature,
         )
         tracker.accumulate(last_response)
-        review_text = last_response.choices[0].message.content
+        review_text = last_response.choices[0].message.content or ""
         result = self.result_parser.parse_review_result(review_text, strategy)
-        result["token_usage"] = tracker.to_dict()
-        return result
 
     async def review_pr_with_tools(
         self, context: Dict[str, Any], strategy: str, repo: Any, pr: Any
@@ -466,7 +465,7 @@ class AIReviewer:
                             messages=messages,
                             system_prompt=system_prompt,
                             strategy=strategy,
-                            enabled_tools=enabled_tools if enabled_tools else [],
+                            enabled_tools=enabled_tools,
                             repo=repo,
                             pr=pr,
                             tracker=tracker,
@@ -493,6 +492,12 @@ class AIReviewer:
                     )
                     # 将文件 diff 数据注入 DiffToolHandler
                     self.diff_tool.set_files_data(context.get("files", []))
+                    # 精简模式下动态添加 COMPACT_TOOLS（get_file_diff, list_changed_files）
+                    compact_enabled_tools = list(enabled_tools)
+                    for tool_name in COMPACT_TOOLS:
+                        tool_def = TOOL_NAME_TO_DEFINITION.get(tool_name)
+                        if tool_def and tool_def not in compact_enabled_tools:
+                            compact_enabled_tools.append(tool_def)
                     # 用精简模式重建 user_message（不含 diff）
                     compact_user_message = self.prompt_builder.build_user_message(
                         context, strategy, include_tools=True, compact=True
@@ -514,7 +519,7 @@ class AIReviewer:
                         messages=compact_messages,
                         system_prompt=system_prompt,
                         strategy=strategy,
-                        enabled_tools=enabled_tools if enabled_tools else [],
+                        enabled_tools=compact_enabled_tools,
                         repo=repo,
                         pr=pr,
                         tracker=tracker,

@@ -4,7 +4,7 @@
 改为提供此工具让 AI 按需查看特定文件的 diff。
 """
 
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List
 
 from loguru import logger
 
@@ -41,13 +41,11 @@ class DiffToolHandler:
     async def get_file_diff(
         self,
         file_path: str,
-        context_lines: Optional[int] = None,
     ) -> Dict[str, Any]:
         """获取 PR 中指定文件的 diff 内容
 
         Args:
             file_path: 文件路径（相对于项目根目录）
-            context_lines: 返回的上下文行数（未使用，保留兼容性）
 
         Returns:
             文件 diff 信息字典

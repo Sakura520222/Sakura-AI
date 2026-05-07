@@ -66,8 +66,11 @@ class ToolHandler:
 
         try:
             if function_name == "read_file":
+                file_path = arguments.get("file_path")
+                if not file_path:
+                    return {"error": "缺少必填参数: file_path"}
                 return await self.file_tool.read_file(
-                    file_path=arguments["file_path"],
+                    file_path=file_path,
                     repo=repo,
                     pr=pr,
                     start_line=arguments.get("start_line"),
@@ -76,8 +79,11 @@ class ToolHandler:
                     context_lines=arguments.get("context_lines"),
                 )
             elif function_name == "list_directory":
+                directory = arguments.get("directory")
+                if not directory:
+                    return {"error": "缺少必填参数: directory"}
                 return await self.file_tool.list_directory(
-                    arguments["directory"], repo, pr
+                    directory, repo, pr
                 )
             elif function_name == "search_project_docs":
                 return await self.search_tool.search_project_docs(
@@ -112,8 +118,11 @@ class ToolHandler:
             elif function_name == "search_in_files":
                 if not self.search_files_tool:
                     return {"error": "跨文件搜索工具未启用"}
+                keyword = arguments.get("keyword")
+                if not keyword:
+                    return {"error": "缺少必填参数: keyword"}
                 return await self.search_files_tool.search_in_files(
-                    keyword=arguments["keyword"],
+                    keyword=keyword,
                     repo=repo,
                     pr=pr,
                     file_extension=arguments.get("file_extension"),
@@ -157,8 +166,11 @@ class ToolHandler:
             elif function_name == "get_file_diff":
                 if not self.diff_tool:
                     return {"error": "PR diff 工具未启用"}
+                file_path = arguments.get("file_path")
+                if not file_path:
+                    return {"error": "缺少必填参数: file_path"}
                 return await self.diff_tool.get_file_diff(
-                    file_path=arguments["file_path"],
+                    file_path=file_path,
                 )
             elif function_name == "list_changed_files":
                 if not self.diff_tool:
