@@ -137,7 +137,7 @@ class ReviewWorker:
         """Generate unique task key: owner/repo#pr_number"""
         return f"{pr_info['repo_full_name']}#{pr_info['pr_number']}"
 
-    def _register_task(self, task_key: str) -> asyncio.Event:
+    def _register_task(self, task_key: str, force_new: bool = False) -> asyncio.Event:
         """Register a review task and return its cancel event.
 
         Idempotent: multiple registrations for the same task_key share the same
@@ -145,7 +145,17 @@ class ReviewWorker:
 
         If an existing event is already set (stale from a cancelled task),
         create a fresh one so the new task doesn't inherit the cancelled state.
+
+        Args:
+            task_key: Unique key for the PR (owner/repo#pr_number)
+            force_new: If True, always create a fresh event (used by
+                       submit_review_task to ensure a clean state before
+                       the coroutine starts executing).
         """
+        if force_new:
+            event = asyncio.Event()
+            self._cancel_events[task_key] = event
+            return event
         existing = self._cancel_events.get(task_key)
         if existing and not existing.is_set():
             return existing
@@ -202,8 +212,8 @@ class ReviewWorker:
         review_obj = None  # 用于保存 GitHub Review 对象
         review_id = None  # 用于保存数据库审查记录 ID
 
-        # Register cancel event for this PR
-        self._register_task(task_key)
+        # Cancel event was already registered in submit_review_task
+        # before asyncio.create_task, so cancel_task works immediately
 
         # 获取并发信号量，限制同时运行的审查任务数
         semaphore = await _get_review_semaphore()
@@ -1278,8 +1288,10 @@ async def submit_review_task(pr_info: Dict[str, Any]) -> str:
     worker = get_worker()
     task_key = ReviewWorker._make_task_key(pr_info)
 
-    # If a previous task for the same PR is still running, cancel it first
-    worker.cancel_task(task_key)
+    # Register cancel event BEFORE asyncio.create_task, so that a closed
+    # webhook arriving before the coroutine starts executing can still cancel it.
+    # force_new ensures a clean event even if a previous task's event is stale.
+    worker._register_task(task_key, force_new=True)
 
     # 在生产环境中，这里应该提交到Celery队列
     # 为了简化，我们直接异步执行
