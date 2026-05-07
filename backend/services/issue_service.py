@@ -690,7 +690,7 @@ class IssueService:
             label: 操作描述（用于日志）
 
         Returns:
-            受影响的行数，失败时返回 0
+            受影响的行数；异常时返回 -1（用于区分"不存在"和"执行失败"）
         """
         try:
             db_result = await db.execute(
@@ -699,7 +699,7 @@ class IssueService:
             return db_result.rowcount
         except Exception as e:
             logger.warning(f"删除 {label} 记录失败: {e}")
-            return 0
+            return -1
 
     async def delete_issue_data(
         self,
@@ -763,10 +763,10 @@ class IssueService:
         await db.commit()
 
         # Check partial failure for observability / 检查部分失败以便排查
-        db_failures = [k for k, v in result.items() if k.endswith("_deleted") and isinstance(v, int) and v == 0]
-        if result["vector_deleted"] and db_failures:
+        db_errors = [k for k, v in result.items() if isinstance(v, int) and v < 0]
+        if result["vector_deleted"] and db_errors:
             logger.warning(
-                f"向量索引已删除但数据库清理可能不完整 {issue_label}: {result}"
+                f"向量索引已删除但数据库清理部分失败 {issue_label}: {result}"
             )
 
         logger.info(f"已清理已删除 Issue 数据 {issue_label}: {result}")
