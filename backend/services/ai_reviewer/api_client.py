@@ -9,6 +9,7 @@ import time
 from typing import Any, Dict, List, Optional
 
 from openai import AsyncOpenAI
+from openai import BadRequestError as OpenAIBadRequestError
 from loguru import logger
 
 from .constants import (
@@ -27,6 +28,7 @@ class PromptTooLongError(Exception):
         estimated_tokens: 估算的 prompt token 数
         model: 使用的模型名称
         original_error: 原始 BadRequestError
+        user_message: 面向用户的友好提示信息
     """
 
     def __init__(
@@ -40,6 +42,10 @@ class PromptTooLongError(Exception):
         self.estimated_tokens = estimated_tokens
         self.model = model
         self.original_error = original_error
+        self.user_message = (
+            f"审查内容超出模型上下文长度限制（模型: {model}，估算 ~{estimated_tokens} tokens），"
+            "已尝试自动精简或压缩。"
+        )
 
 
 class AIApiClient:
@@ -168,7 +174,28 @@ class AIApiClient:
                 error_type = type(e).__name__
 
                 # BadRequestError（如 prompt 超长）不应重试，包装为 PromptTooLongError
-                if error_type == "BadRequestError":
+                if isinstance(e, OpenAIBadRequestError):
+                    error_str = str(e).lower()
+                    # 仅对上下文超长类错误包装为 PromptTooLongError，
+                    # 避免误判其他 BadRequestError（如 schema 验证错误）
+                    context_overflow_keywords = [
+                        "context_length",
+                        "maximum context length",
+                        "context window",
+                        "reduce the length",
+                        "too many tokens",
+                        "token limit",
+                    ]
+                    is_context_overflow = any(
+                        kw in error_str for kw in context_overflow_keywords
+                    )
+                    if not is_context_overflow:
+                        # 非超长的 BadRequestError，直接抛出原始错误
+                        logger.error(
+                            "AI调用 BadRequestError（非上下文超长）: {}", str(e)
+                        )
+                        raise
+
                     total_time = time.monotonic() - start_time
                     # 从 kwargs 中获取 model 和 messages 用于估算 token
                     messages = kwargs.get("messages", [])
@@ -184,7 +211,7 @@ class AIApiClient:
                                     len(func.name + str(func.arguments)) // 4
                                 )
                     except Exception:
-                        pass
+                        logger.error("token 估算时出错，使用默认值 0")
                     logger.error(
                         "AI调用失败 [{}]，Prompt 超长 (估算 ~{} tokens, 模型: {}) "
                         "(总耗时 {:.1f}s): {}",

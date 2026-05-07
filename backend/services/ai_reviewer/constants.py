@@ -67,15 +67,15 @@ BASE_TOOLS = [
     "search_in_files",
     "get_git_info",
     "list_commits",
-    "get_file_diff",
-    "list_changed_files",
 ]
+# 精简模式专用工具（prompt 超长时按需添加）
+COMPACT_TOOLS = ["get_file_diff", "list_changed_files"]
 RAG_TOOLS = ["search_project_docs"]
 CODE_INDEX_TOOLS = ["search_code_context"]
 WEB_SEARCH_TOOLS = ["search_web", "fetch_url"]
 SAKURA_TOOLS = ["read_sakura_docs", "list_sakura_directory"]
 
-ALL_TOOLS = BASE_TOOLS + RAG_TOOLS + CODE_INDEX_TOOLS + WEB_SEARCH_TOOLS + SAKURA_TOOLS
+ALL_TOOLS = BASE_TOOLS + COMPACT_TOOLS + RAG_TOOLS + CODE_INDEX_TOOLS + WEB_SEARCH_TOOLS + SAKURA_TOOLS
 
 # =============================================================================
 # 上下文压缩配置
