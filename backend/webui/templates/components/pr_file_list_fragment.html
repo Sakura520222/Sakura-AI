@@ -25,7 +25,7 @@
             {% if f.file_path %}
             <code class="text-sm text-gray-700 dark:text-gray-300 truncate block">{{ f.file_path }}</code>
             {% else %}
-            <span class="text-sm text-purple-600 dark:text-purple-400 font-medium">总体评论</span>
+            <span class="text-sm text-purple-600 dark:text-purple-400 font-medium">{{ _('pr.overall') }}</span>
             {% endif %}
         </div>
 
@@ -38,6 +38,6 @@
 </div>
 {% else %}
 <div class="p-6 text-center text-gray-400 dark:text-gray-500 text-sm">
-    该 PR 暂无审查评论
+    {{ _('pr.no_inline_comments') }}
 </div>
 {% endif %}

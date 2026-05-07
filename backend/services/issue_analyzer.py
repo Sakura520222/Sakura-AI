@@ -84,7 +84,19 @@ class IssueAnalyzer:
                 f"duplicate_of 字段只能指向其他 Issue 的编号，不能设置为 {issue_number}。"
             )
 
-        return base_prompt + labels_section + repo_section + issue_section
+        result = base_prompt + labels_section + repo_section + issue_section
+
+        # 注入输出语言指令 / Inject output language directive
+        output_lang = get_settings().output_language
+        if output_lang:
+            language_names = {
+                "zh-CN": "中文 (Simplified Chinese)",
+                "en": "English",
+            }
+            lang_display = language_names.get(output_lang, output_lang)
+            result += f"\n\n## Output Language\n**Important**: You MUST write all analysis, summaries, and comments in {lang_display}."
+
+        return result
 
     def _build_user_message(
         self,

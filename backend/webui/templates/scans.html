@@ -1,21 +1,21 @@
 {% extends "base.html" %}
 
-{% block title %}仓库扫描 - Sakura AI Reviewer{% endblock %}
+{% block title %}{{ _('scan.title') }} - Sakura AI Reviewer{% endblock %}
 
 {% block content %}
 <div class="space-y-4">
     <!-- 页面标题 -->
     <div class="flex items-center justify-between">
         <div>
-            <h1 class="text-2xl font-bold">仓库扫描</h1>
-            <p class="mt-1 text-sm text-gray-500 dark:text-gray-400">查看仓库定时扫描记录和问题发现</p>
+            <h1 class="text-2xl font-bold">{{ _('scan.title') }}</h1>
+            <p class="mt-1 text-sm text-gray-500 dark:text-gray-400">{{ _('scan.description') }}</p>
         </div>
         <button onclick="triggerScan()"
                 class="inline-flex items-center gap-2 px-4 py-2 bg-pink-500 hover:bg-pink-600 text-white text-sm font-medium rounded-lg transition-colors">
             <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/>
             </svg>
-            立即扫描
+            {{ _('scan.trigger_scan') }}
         </button>
     </div>
 
@@ -36,7 +36,7 @@
                 <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/>
                 <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/>
             </svg>
-            <p class="mt-2">加载中...</p>
+            <p class="mt-2"><script>document.write(_t('loading'))</script></p>
         </div>
     </div>
 </div>
@@ -49,7 +49,7 @@ var loadPage = function(n) { loadListPage('scan-list-container', '/webui/scans/l
 initFilterForm('scan-filter-form', 'scan-list-container', '/webui/scans/list-fragment');
 
 function triggerScan() {
-    if (!confirm('确认对所有候选仓库触发扫描？')) return;
+    if (!confirm('{{ _('scan.confirm_trigger') }}')) return;
     fetch('/webui/scans/trigger', {
         method: 'POST',
         headers: {'Content-Type': 'application/json', 'X-CSRF-Token': '{{ csrf_token }}'}

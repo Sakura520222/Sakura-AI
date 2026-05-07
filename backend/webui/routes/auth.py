@@ -19,7 +19,9 @@ from backend.webui.deps import (
     validate_csrf_token,
     get_csrf_serializer,
     toast_redirect,
+    render_template,
 )
+from backend.webui.i18n import detect_language
 from backend.core.config import get_settings
 from backend.core.redis import get_async_redis
 
@@ -128,22 +130,20 @@ async def login_page(request: Request):
     # 已登录则跳转仪表盘
     token = request.cookies.get("webui_token")
     if token and decode_access_token(token):
-        return toast_redirect("/webui/", "已自动登录")
+        return toast_redirect("/webui/", "toast.auto_logged_in", lang=detect_language())
 
     settings = get_settings()
     has_oauth = bool(settings.github_oauth_client_id)
     telegram_deep_link = _get_telegram_deep_link()
 
-    return templates.TemplateResponse(
+    return render_template(
         "login.html",
-        {
-            "request": request,
-            "csrf_token": get_csrf_serializer().dumps({}),
-            "error": None,
-            "app_version": APP_VERSION,
-            "has_oauth": has_oauth,
-            "telegram_deep_link": telegram_deep_link,
-        },
+        request,
+        csrf_token=get_csrf_serializer().dumps({}),
+        error=None,
+        app_version=APP_VERSION,
+        has_oauth=has_oauth,
+        telegram_deep_link=telegram_deep_link,
     )
 
 
@@ -290,15 +290,12 @@ async def github_callback(
     if not user:
         logger.info(f"GitHub OAuth: 用户 {github_username} 未在系统中注册")
         deep_link = _get_telegram_deep_link()
-        return templates.TemplateResponse(
+        return render_template(
             "register.html",
-            {
-                "request": request,
-                "csrf_token": get_csrf_serializer().dumps({}),
-                "github_username": github_username,
-                "deep_link": deep_link,
-                "app_version": APP_VERSION,
-            },
+            request,
+            github_username=github_username,
+            deep_link=deep_link,
+            app_version=APP_VERSION,
             status_code=403,
         )
 
@@ -336,7 +333,9 @@ async def logout(request: Request, csrf_token: str = Form(...)):
         raise HTTPException(status_code=403, detail="CSRF 验证失败")
 
     logger.info("WebUI 用户登出")
-    response = toast_redirect("/webui/auth/login", "已退出登录")
+    response = toast_redirect(
+        "/webui/auth/login", "toast.logged_out", lang=detect_language()
+    )
     response.delete_cookie("webui_token")
     return response
 

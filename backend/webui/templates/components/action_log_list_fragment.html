@@ -4,34 +4,34 @@
         <!-- 操作类型 -->
         <select name="action"
                 class="px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-sm focus:ring-2 focus:ring-pink-500 focus:border-transparent outline-none">
-            <option value="">全部操作</option>
-            <optgroup label="用户管理">
-                <option value="user_role" {% if action == 'user_role' %}selected{% endif %}>修改角色</option>
-                <option value="user_quota" {% if action == 'user_quota' %}selected{% endif %}>修改配额</option>
-                <option value="user_toggle" {% if action == 'user_toggle' %}selected{% endif %}>启用/禁用用户</option>
+            <option value="">{{ _('common.all') }} {{ _('common.actions') }}</option>
+            <optgroup label="{{ _('user.title') }}">
+                <option value="user_role" {% if action == 'user_role' %}selected{% endif %}>{{ _('user.save_role') }}</option>
+                <option value="user_quota" {% if action == 'user_quota' %}selected{% endif %}>{{ _('user.quota') }}</option>
+                <option value="user_toggle" {% if action == 'user_toggle' %}selected{% endif %}>{{ _('user.enable') }}/{{ _('user.disable') }}</option>
             </optgroup>
-            <optgroup label="仓库管理">
-                <option value="repo_add" {% if action == 'repo_add' %}selected{% endif %}>添加仓库</option>
-                <option value="repo_toggle" {% if action == 'repo_toggle' %}selected{% endif %}>启用/禁用仓库</option>
-                <option value="repo_remove" {% if action == 'repo_remove' %}selected{% endif %}>删除仓库</option>
+            <optgroup label="{{ _('repo.title') }}">
+                <option value="repo_add" {% if action == 'repo_add' %}selected{% endif %}>{{ _('common.add') }}</option>
+                <option value="repo_toggle" {% if action == 'repo_toggle' %}selected{% endif %}>{{ _('common.enabled') }}/{{ _('common.disabled') }}</option>
+                <option value="repo_remove" {% if action == 'repo_remove' %}selected{% endif %}>{{ _('common.delete') }}</option>
             </optgroup>
-            <optgroup label="配置管理">
-                <option value="config_save" {% if action == 'config_save' %}selected{% endif %}>保存配置</option>
+            <optgroup label="{{ _('config.title') }}">
+                <option value="config_save" {% if action == 'config_save' %}selected{% endif %}>{{ _('common.save') }}</option>
             </optgroup>
         </select>
 
         <!-- 日期范围 -->
         <input type="date" name="start_date" value="{{ start_date }}"
                class="px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-sm focus:ring-2 focus:ring-pink-500 focus:border-transparent outline-none"
-               placeholder="开始日期">
+               placeholder="{{ _('common.start_date') }}">
         <input type="date" name="end_date" value="{{ end_date }}"
                class="px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-sm focus:ring-2 focus:ring-pink-500 focus:border-transparent outline-none"
-               placeholder="结束日期">
+               placeholder="{{ _('common.end_date') }}">
 
         <!-- 搜索按钮 -->
         <button type="submit"
                 class="px-4 py-2 bg-pink-500 text-white rounded-lg text-sm font-medium hover:bg-pink-600 transition-colors">
-            搜索
+            {{ _('common.search') }}
         </button>
     </form>
 </div>
@@ -43,11 +43,11 @@
         <table class="w-full">
             <thead class="bg-gray-50 dark:bg-gray-700/50">
                 <tr>
-                    <th class="px-5 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">时间</th>
-                    <th class="px-5 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">操作人</th>
-                    <th class="px-5 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">操作类型</th>
-                    <th class="px-5 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">目标</th>
-                    <th class="px-5 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">详情</th>
+                    <th class="px-5 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">{{ _('billing.time') }}</th>
+                    <th class="px-5 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">{{ _('action_log.user') }}</th>
+                    <th class="px-5 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">{{ _('action_log.action') }}</th>
+                    <th class="px-5 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">{{ _('action_log.target') }}</th>
+                    <th class="px-5 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">{{ _('action_log.detail') }}</th>
                 </tr>
             </thead>
             <tbody class="divide-y divide-gray-200 dark:divide-gray-700">
@@ -57,7 +57,7 @@
                         {{ log.created_at.strftime('%Y-%m-%d %H:%M:%S') if log.created_at else '-' }}
                     </td>
                     <td class="px-5 py-3 text-sm">
-                        {{ admin_name or ('ID:' ~ log.admin_id) if log.admin_id else '已删除用户' }}
+                        {{ admin_name or ('ID:' ~ log.admin_id) if log.admin_id else _('billing.deleted_user') }}
                     </td>
                     <td class="px-5 py-3">
                         <span class="inline-flex items-center px-2.5 py-1 rounded-full text-xs font-medium
@@ -90,13 +90,13 @@
     {% if total_pages > 1 %}
     <div class="px-5 py-3 border-t border-gray-200 dark:border-gray-700 flex items-center justify-between">
         <p class="text-sm text-gray-500 dark:text-gray-400">
-            共 {{ total }} 条，第 {{ page }}/{{ total_pages }} 页
+            {{ _('common.total') }} {{ total }} {{ _('common.items') }}, {{ _('common.page') }} {{ page }}/{{ total_pages }}
         </p>
         <div class="flex gap-1">
             {% if page > 1 %}
             <a href="#" onclick="loadActionLogPage({{ page - 1 }}); return false;"
                class="px-3 py-1.5 rounded-lg text-sm border border-gray-300 dark:border-gray-600 hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors">
-                上一页
+                {{ _('billing.prev_page') }}
             </a>
             {% endif %}
 
@@ -126,7 +126,7 @@
             {% if page < total_pages %}
             <a href="#" onclick="loadActionLogPage({{ page + 1 }}); return false;"
                class="px-3 py-1.5 rounded-lg text-sm border border-gray-300 dark:border-gray-600 hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors">
-                下一页
+                {{ _('billing.next_page') }}
             </a>
             {% endif %}
         </div>
@@ -138,7 +138,7 @@
         <svg class="w-12 h-12 mx-auto text-gray-300 dark:text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2"/>
         </svg>
-        <p class="mt-4 text-gray-500 dark:text-gray-400">没有找到匹配的操作记录</p>
+        <p class="mt-4 text-gray-500 dark:text-gray-400">{{ _('action_log.no_logs') }}</p>
     </div>
     {% endif %}
 </div>

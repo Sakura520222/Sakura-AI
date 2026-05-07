@@ -17,6 +17,7 @@ from backend.webui.deps import (
     paginate,
     build_review_search_filter,
     get_active_repos,
+    render_template,
 )
 
 logger = logging.getLogger(__name__)
@@ -32,15 +33,13 @@ async def queue_page(
     user_prefs: dict = Depends(get_user_preferences),
 ):
     """审查队列监控页面（管理员专用）"""
-    return templates.TemplateResponse(
+    return render_template(
         "queue.html",
-        {
-            "request": request,
-            "current_user": user,
-            "csrf_token": get_csrf_serializer().dumps({}),
-            "active_page": "queue",
-            "user_prefs": user_prefs,
-        },
+        request,
+        user_prefs=user_prefs,
+        current_user=user,
+        csrf_token=get_csrf_serializer().dumps({}),
+        active_page="queue",
     )
 
 

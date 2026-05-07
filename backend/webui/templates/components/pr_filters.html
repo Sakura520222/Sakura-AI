@@ -6,43 +6,43 @@
             <svg class="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/>
             </svg>
-            <input type="text" name="search" value="{{ search }}" placeholder="搜索 PR 标题、仓库或作者..."
+            <input type="text" name="search" value="{{ search }}" placeholder="{{ _('common.search') }}..."
                    class="w-full pl-10 pr-4 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-sm focus:ring-2 focus:ring-pink-500 focus:border-transparent outline-none">
         </div>
 
         <!-- 状态过滤 -->
         <select name="status"
                 class="px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-sm focus:ring-2 focus:ring-pink-500 focus:border-transparent outline-none">
-            <option value="" {% if not status %}selected{% endif %}>全部状态</option>
-            <option value="pending" {% if status == 'pending' %}selected{% endif %}>待处理</option>
-            <option value="reviewing" {% if status == 'reviewing' %}selected{% endif %}>审查中</option>
-            <option value="completed" {% if status == 'completed' %}selected{% endif %}>已完成</option>
-            <option value="failed" {% if status == 'failed' %}selected{% endif %}>失败</option>
+            <option value="" {% if not status %}selected{% endif %}>{{ _('common.all') }} {{ _('common.status') }}</option>
+            <option value="pending" {% if status == 'pending' %}selected{% endif %}>{{ _('common.pending') }}</option>
+            <option value="reviewing" {% if status == 'reviewing' %}selected{% endif %}>{{ _('common.processing') }}</option>
+            <option value="completed" {% if status == 'completed' %}selected{% endif %}>{{ _('scan.completed') }}</option>
+            <option value="failed" {% if status == 'failed' %}selected{% endif %}>{{ _('queue.failed') }}</option>
         </select>
 
         <!-- 决策过滤 -->
         <select name="decision"
                 class="px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-sm focus:ring-2 focus:ring-pink-500 focus:border-transparent outline-none">
-            <option value="" {% if not decision %}selected{% endif %}>全部决策</option>
-            <option value="approve" {% if decision == 'approve' %}selected{% endif %}>通过</option>
-            <option value="request_changes" {% if decision == 'request_changes' %}selected{% endif %}>需修改</option>
-            <option value="comment" {% if decision == 'comment' %}selected{% endif %}>评论</option>
+            <option value="" {% if not decision %}selected{% endif %}>{{ _('common.all') }} {{ _('pr.review_status') }}</option>
+            <option value="approve" {% if decision == 'approve' %}selected{% endif %}>{{ _('pr.approved') }}</option>
+            <option value="request_changes" {% if decision == 'request_changes' %}selected{% endif %}>{{ _('pr.changes_requested') }}</option>
+            <option value="comment" {% if decision == 'comment' %}selected{% endif %}>{{ _('pr.commented') }}</option>
         </select>
 
         <!-- 搜索按钮 -->
         <button type="submit"
                 class="px-4 py-2 bg-pink-500 text-white rounded-lg text-sm font-medium hover:bg-pink-600 transition-colors">
-            搜索
+            {{ _('common.search') }}
         </button>
 
         <!-- 导出 CSV -->
         <button type="button" onclick="exportCSV()"
                 class="px-4 py-2 border border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-300 rounded-lg text-sm font-medium hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors whitespace-nowrap"
-                title="导出当前筛选条件下的审查记录（最多 1000 条）">
+                title="{{ _('common.export') }} CSV">
             <svg class="w-4 h-4 inline-block -mt-0.5 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/>
             </svg>
-            导出 CSV
+            {{ _('common.export') }} CSV
         </button>
     </form>
 </div>

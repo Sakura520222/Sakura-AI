@@ -20,6 +20,7 @@ from backend.models.database import PRReview
 from backend.models.database import WebUIConfig
 from backend.webui.auth import decode_access_token
 from backend.services.payment_service import is_payment_enabled
+from backend.webui.i18n import make_translation_func, SUPPORTED_LANGUAGES
 
 
 # ========== 模板引擎 ==========
@@ -31,6 +32,8 @@ def get_templates() -> Jinja2Templates:
     # get_settings() returns the cached singleton updated in place by dynamic config.
     templates.env.globals["settings"] = get_settings()
     templates.env.filters["format_duration"] = _format_duration_filter
+    # i18n: 注入默认翻译函数（实际语言由模板上下文中的 _ 覆盖）
+    templates.env.globals["_"] = make_translation_func("zh-CN")
     return templates
 
 
@@ -53,6 +56,36 @@ def _format_duration_filter(seconds) -> str:
         return f"{minutes}m {remaining_seconds}s"
     hours, remaining_minutes = divmod(minutes, 60)
     return f"{hours}h {remaining_minutes}m"
+
+
+def render_template(
+    template_name: str,
+    request: Request,
+    user_prefs: Optional[dict] = None,
+    **context: Any,
+):
+    """渲染模板并自动注入 i18n 翻译函数
+
+    所有路由应使用此函数代替直接调用 templates.TemplateResponse，
+    以确保模板中的 _() 函数绑定到正确的语言。
+
+    Args:
+        template_name: 模板文件名
+        request: FastAPI Request 对象
+        user_prefs: 用户偏好（包含 language 字段）
+        **context: 传递给模板的额外上下文变量
+    """
+    from backend.webui.i18n import detect_language
+
+    lang = detect_language(user_prefs)
+    context["_"] = make_translation_func(lang)
+    context["lang"] = lang
+    context["supported_languages"] = SUPPORTED_LANGUAGES
+    context["request"] = request
+    if user_prefs:
+        context["user_prefs"] = user_prefs
+
+    return get_templates().TemplateResponse(template_name, context)
 
 
 def build_review_search_filter(search: str):
@@ -175,8 +208,10 @@ def error_page(
     user_prefs: dict | None = None,
 ) -> HTMLResponse:
     """渲染统一的错误页面"""
-    templates = get_templates()
-    return templates.TemplateResponse(
+    from backend.webui.i18n import detect_language
+
+    lang = detect_language(user_prefs)
+    return get_templates().TemplateResponse(
         "error.html",
         {
             "request": request,
@@ -186,6 +221,9 @@ def error_page(
             "current_user": user,
             "csrf_token": get_csrf_serializer().dumps({}),
             "user_prefs": user_prefs or {"language": "zh-CN", "items_per_page": 20},
+            "_": make_translation_func(lang),
+            "lang": lang,
+            "supported_languages": SUPPORTED_LANGUAGES,
         },
         status_code=status_code,
     )
@@ -193,17 +231,33 @@ def error_page(
 
 def toast_redirect(
     url: str,
-    message: str = "操作成功",
+    message: str = "toast.success",
     toast_type: str = "success",
     status_code: int = 302,
+    lang: str = "",
+    **fmt_kwargs: Any,
 ) -> RedirectResponse:
     """创建带 toast 通知的 redirect 响应
 
     通过 query params 传递 toast 信息，供前端 JS 拾取并显示。
+
+    Args:
+        url: 重定向目标 URL
+        message: toast 消息文本，当 lang 非空时视为翻译键
+        toast_type: toast 类型（success/error）
+        status_code: HTTP 状态码
+        lang: 语言代码，非空时将 message 作为翻译键处理
+        **fmt_kwargs: 翻译键的格式化参数（如 order_no="123"）
     """
     from urllib.parse import urlencode
 
-    params = {"_toast": message, "_toast_type": toast_type}
+    display_message = message
+    if lang:
+        from backend.webui.i18n import i18n as _i18n
+
+        display_message = _i18n.t(message, lang=lang, **fmt_kwargs)
+
+    params = {"_toast": display_message, "_toast_type": toast_type}
     separator = "&" if "?" in url else "?"
     return RedirectResponse(
         url=f"{url}{separator}{urlencode(params)}",

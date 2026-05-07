@@ -29,8 +29,10 @@ from backend.webui.deps import (
     require_csrf,
     get_user_preferences,
     toast_redirect,
+    render_template,
 )
 from backend.webui.helpers.admin_log import log_admin_action
+from backend.webui.i18n import detect_language
 
 # 基础配置项（非动态配置），用于 WebUI 配置页面分组展示及 Settings 即时更新
 _BASIC_CONFIG_KEYS = frozenset(
@@ -138,22 +140,20 @@ async def strategies_page(
     config_data = get_strategy_config().config
     tab = request.query_params.get("tab", "strategies")
 
-    return templates.TemplateResponse(
+    return render_template(
         "config_strategies.html",
-        {
-            "request": request,
-            "current_user": user,
-            "csrf_token": get_csrf_serializer().dumps({}),
-            "active_page": "config_strategies",
-            "user_prefs": user_prefs,
-            "strategies": config_data.get("strategies", {}),
-            "file_filters": config_data.get("file_filters", {}),
-            "batch": config_data.get("batch", {}),
-            "context_enhancement": config_data.get("context_enhancement", {}),
-            "review_policy": config_data.get("review_policy", {}),
-            "pr_dependency_graph": config_data.get("pr_dependency_graph", {}),
-            "active_tab": tab,
-        },
+        request,
+        user_prefs=user_prefs,
+        current_user=user,
+        csrf_token=get_csrf_serializer().dumps({}),
+        active_page="config_strategies",
+        strategies=config_data.get("strategies", {}),
+        file_filters=config_data.get("file_filters", {}),
+        batch=config_data.get("batch", {}),
+        context_enhancement=config_data.get("context_enhancement", {}),
+        review_policy=config_data.get("review_policy", {}),
+        pr_dependency_graph=config_data.get("pr_dependency_graph", {}),
+        active_tab=tab,
     )
 
 
@@ -303,22 +303,34 @@ async def save_strategies_section(
     except (ValueError, yaml.YAMLError) as e:
         logger.error(f"配置验证失败: {e}")
         return toast_redirect(
-            f"/webui/config/strategies?tab={section}", f"配置验证失败: {e}", "error"
+            f"/webui/config/strategies?tab={section}",
+            "toast.config_validation_failed",
+            "error",
+            lang=detect_language(),
+            error=str(e),
         )
     except PermissionError as e:
         logger.error(f"文件权限不足: {e}")
         return toast_redirect(
-            f"/webui/config/strategies?tab={section}", "文件权限不足", "error"
+            f"/webui/config/strategies?tab={section}",
+            "toast.file_permission_denied",
+            "error",
+            lang=detect_language(),
         )
     except Exception as e:
         logger.error(f"策略配置保存异常: {e}", exc_info=True)
         return toast_redirect(
-            f"/webui/config/strategies?tab={section}", "保存失败，请稍后重试", "error"
+            f"/webui/config/strategies?tab={section}",
+            "toast.save_failed",
+            "error",
+            lang=detect_language(),
         )
 
     return toast_redirect(
         f"/webui/config/strategies?tab={section}",
-        f"策略配置 [{section}] 已保存并即时生效",
+        "toast.strategy_saved",
+        lang=detect_language(),
+        section=section,
     )
 
 
@@ -333,18 +345,16 @@ async def labels_page(
 ):
     """渲染标签配置页"""
     label_config = get_label_config()
-    return templates.TemplateResponse(
+    return render_template(
         "config_labels.html",
-        {
-            "request": request,
-            "current_user": user,
-            "csrf_token": get_csrf_serializer().dumps({}),
-            "active_page": "config_labels",
-            "user_prefs": user_prefs,
-            "labels": label_config.get_labels(),
-            "recommendation": label_config.get_recommendation_settings(),
-            "conflict_rules": label_config.get_conflict_rules(),
-        },
+        request,
+        user_prefs=user_prefs,
+        current_user=user,
+        csrf_token=get_csrf_serializer().dumps({}),
+        active_page="config_labels",
+        labels=label_config.get_labels(),
+        recommendation=label_config.get_recommendation_settings(),
+        conflict_rules=label_config.get_conflict_rules(),
     )
 
 
@@ -399,12 +409,25 @@ async def save_labels_definitions(
 
     except ValueError as e:
         logger.warning(f"标签验证失败: {e}")
-        return toast_redirect("/webui/config/labels", f"标签验证失败: {e}", "error")
+        return toast_redirect(
+            "/webui/config/labels",
+            "toast.label_validation_failed",
+            "error",
+            lang=detect_language(),
+            error=str(e),
+        )
     except Exception as e:
         logger.error(f"标签定义保存失败: {e}")
-        return toast_redirect("/webui/config/labels", "保存失败，请稍后重试", "error")
+        return toast_redirect(
+            "/webui/config/labels", "toast.save_failed", "error", lang=detect_language()
+        )
 
-    return toast_redirect("/webui/config/labels", f"标签定义已更新（{len(labels)} 个）")
+    return toast_redirect(
+        "/webui/config/labels",
+        "toast.labels_saved",
+        lang=detect_language(),
+        count=len(labels),
+    )
 
 
 # ========== POST: 保存推荐设置 ==========
@@ -443,12 +466,22 @@ async def save_recommendation_settings(
 
     except (ValueError, yaml.YAMLError) as e:
         logger.error(f"推荐设置验证失败: {e}")
-        return toast_redirect("/webui/config/labels", f"推荐设置验证失败: {e}", "error")
+        return toast_redirect(
+            "/webui/config/labels",
+            "toast.label_settings_validation_failed",
+            "error",
+            lang=detect_language(),
+            error=str(e),
+        )
     except Exception as e:
         logger.error(f"标签推荐设置保存失败: {e}", exc_info=True)
-        return toast_redirect("/webui/config/labels", "保存失败，请稍后重试", "error")
+        return toast_redirect(
+            "/webui/config/labels", "toast.save_failed", "error", lang=detect_language()
+        )
 
-    return toast_redirect("/webui/config/labels", "标签推荐设置已更新")
+    return toast_redirect(
+        "/webui/config/labels", "toast.label_settings_saved", lang=detect_language()
+    )
 
 
 # ========== POST: 保存标签冲突规则 ==========
@@ -504,14 +537,24 @@ async def save_conflict_rules(
 
     except ValueError as e:
         logger.warning(f"冲突规则验证失败: {e}")
-        return toast_redirect("/webui/config/labels", f"冲突规则验证失败: {e}", "error")
+        return toast_redirect(
+            "/webui/config/labels",
+            "toast.conflict_rules_validation_failed",
+            "error",
+            lang=detect_language(),
+            error=str(e),
+        )
     except Exception as e:
         logger.error(f"冲突规则保存失败: {e}", exc_info=True)
-        return toast_redirect("/webui/config/labels", "保存失败，请稍后重试", "error")
+        return toast_redirect(
+            "/webui/config/labels", "toast.save_failed", "error", lang=detect_language()
+        )
 
     return toast_redirect(
         "/webui/config/labels",
-        f"标签冲突规则已更新（{len(conflict_rules)} 条）",
+        "toast.conflict_rules_saved",
+        lang=detect_language(),
+        count=len(conflict_rules),
     )
 
 
@@ -554,6 +597,9 @@ async def general_config_page(
     )
 
     settings = get_settings()
+    from backend.webui.i18n import i18n as _i18n, detect_language as _detect_language
+
+    lang = _detect_language(user_prefs)
     dynamic_groups = []
     for group_id, group_data in DYNAMIC_CONFIG_GROUPS.items():
         items = []
@@ -567,18 +613,50 @@ async def general_config_page(
                 mask_sensitive_value(value) if (is_sensitive and value) else value
             )
 
+            # Translate select options via i18n
+            raw_options = DYNAMIC_CONFIG_SELECT_OPTIONS.get(key, [])
+            translated_options = []
+            for opt in raw_options:
+                opt_key = f"config.option.{key}_{opt['value']}"
+                opt_label = _i18n.t(opt_key, lang=lang)
+                # Fallback to original label if key not found
+                translated_options.append(
+                    {
+                        "value": opt["value"],
+                        "label": opt_label if opt_key != opt_label else opt["label"],
+                    }
+                )
+
             items.append(
                 {
                     "key": key,
-                    "label": DYNAMIC_CONFIG_LABELS.get(key, key),
-                    "description": group_data.get("descriptions", {}).get(key, ""),
+                    "label": (
+                        translated_label
+                        if (
+                            translated_label := _i18n.t(
+                                f"config.label.{key}", lang=lang
+                            )
+                        )
+                        != f"config.label.{key}"
+                        else DYNAMIC_CONFIG_LABELS.get(key, key)
+                    ),
+                    "description": (
+                        ""
+                        if not group_data.get("descriptions", {}).get(key)
+                        else (
+                            translated
+                            if (translated := _i18n.t(f"config.desc.{key}", lang=lang))
+                            != f"config.desc.{key}"
+                            else group_data["descriptions"][key]
+                        )
+                    ),
                     "input_type": input_type,
                     "value": display_value,
                     "default": mask_sensitive_value(default_val)
                     if (is_sensitive and default_val)
                     else default_val,
                     "sensitive": is_sensitive,
-                    "select_options": DYNAMIC_CONFIG_SELECT_OPTIONS.get(key, []),
+                    "select_options": translated_options,
                     "min_val": DYNAMIC_CONFIG_RANGES.get(key, (None, None))[0],
                     "max_val": DYNAMIC_CONFIG_RANGES.get(key, (None, None))[1],
                 }
@@ -586,7 +664,16 @@ async def general_config_page(
         dynamic_groups.append(
             {
                 "id": group_id,
-                "label": group_data["label"],
+                "label": (
+                    translated_group
+                    if (
+                        translated_group := _i18n.t(
+                            f"config.group.{group_id}", lang=lang
+                        )
+                    )
+                    != f"config.group.{group_id}"
+                    else group_data["label"]
+                ),
                 "icon": group_data.get("icon", ""),
                 "fields": items,
             }
@@ -597,18 +684,16 @@ async def general_config_page(
 
     from backend.webui.routes.auth import APP_VERSION
 
-    return templates.TemplateResponse(
+    return render_template(
         "config_general.html",
-        {
-            "request": request,
-            "current_user": user,
-            "csrf_token": get_csrf_serializer().dumps({}),
-            "active_page": "config_general",
-            "user_prefs": user_prefs,
-            "configs": basic_configs,
-            "dynamic_groups": dynamic_groups,
-            "app_version": APP_VERSION,
-        },
+        request,
+        user_prefs=user_prefs,
+        current_user=user,
+        csrf_token=get_csrf_serializer().dumps({}),
+        active_page="config_general",
+        configs=basic_configs,
+        dynamic_groups=dynamic_groups,
+        app_version=APP_VERSION,
     )
 
 
@@ -633,7 +718,10 @@ async def save_general_config(
             val = int(raw)
             if not 1 <= val <= 100:
                 return toast_redirect(
-                    "/webui/config/general", "参数验证失败，请检查输入值", "error"
+                    "/webui/config/general",
+                    "toast.invalid_param",
+                    "error",
+                    lang=detect_language(),
                 )
             result = await db.execute(
                 select(AppConfig).where(AppConfig.key_name == "max_concurrent_reviews")
@@ -652,7 +740,10 @@ async def save_general_config(
             val = int(raw)
             if not 10 <= val <= 3600:
                 return toast_redirect(
-                    "/webui/config/general", "参数验证失败，请检查输入值", "error"
+                    "/webui/config/general",
+                    "toast.invalid_param",
+                    "error",
+                    lang=detect_language(),
                 )
             result = await db.execute(
                 select(AppConfig).where(AppConfig.key_name == "review_timeout_seconds")
@@ -706,14 +797,16 @@ async def save_general_config(
             except ValueError:
                 return toast_redirect(
                     "/webui/config/general",
-                    "AI 工具调用迭代次数必须是有效整数",
+                    "toast.ai_tool_iterations_invalid",
                     "error",
+                    lang=detect_language(),
                 )
             if not 1 <= val <= 150:
                 return toast_redirect(
                     "/webui/config/general",
-                    "AI 工具调用迭代次数须在 1-150 之间",
+                    "toast.ai_tool_iterations_range",
                     "error",
+                    lang=detect_language(),
                 )
             result = await db.execute(
                 select(AppConfig).where(
@@ -750,8 +843,9 @@ async def save_general_config(
                 if not 1 <= val_i <= 10:
                     return toast_redirect(
                         "/webui/config/general",
-                        "Web 搜索最大结果数须在 1-10 之间",
+                        "toast.web_search_max_results_range",
                         "error",
+                        lang=detect_language(),
                     )
                 val = str(val_i)
             elif key == "web_search_max_content_length":
@@ -759,21 +853,28 @@ async def save_general_config(
                 if not 100 <= val_i <= 5000:
                     return toast_redirect(
                         "/webui/config/general",
-                        "结果截断长度须在 100-5000 之间",
+                        "toast.result_truncation_range",
                         "error",
+                        lang=detect_language(),
                     )
                 val = str(val_i)
             elif key == "web_search_timeout":
                 val_i = int(val)
                 if not 5 <= val_i <= 60:
                     return toast_redirect(
-                        "/webui/config/general", "搜索超时须在 5-60 秒之间", "error"
+                        "/webui/config/general",
+                        "toast.search_timeout_range",
+                        "error",
+                        lang=detect_language(),
                     )
                 val = str(val_i)
             elif key == "web_search_provider":
                 if val not in ("duckduckgo", "tavily"):
                     return toast_redirect(
-                        "/webui/config/general", "不支持的搜索提供商", "error"
+                        "/webui/config/general",
+                        "toast.unsupported_search_provider",
+                        "error",
+                        lang=detect_language(),
                     )
             # API key 无需特殊验证
 
@@ -832,14 +933,20 @@ async def save_general_config(
                     except ValueError:
                         return toast_redirect(
                             "/webui/config/general",
-                            f"{key} 必须是有效数值",
+                            "toast.numeric_required",
                             "error",
+                            lang=detect_language(),
+                            key=key,
                         )
                     if not (min_v <= num_val <= max_v):
                         return toast_redirect(
                             "/webui/config/general",
-                            f"{key} 值须在 {min_v}-{max_v} 之间",
+                            "toast.value_range",
                             "error",
+                            lang=detect_language(),
+                            key=key,
+                            min_v=min_v,
+                            max_v=max_v,
                         )
 
                 if key in DYNAMIC_CONFIG_SELECT_OPTIONS:
@@ -849,8 +956,10 @@ async def save_general_config(
                     if val not in valid_values:
                         return toast_redirect(
                             "/webui/config/general",
-                            f"{key} 值无效",
+                            "toast.value_invalid",
                             "error",
+                            lang=detect_language(),
+                            key=key,
                         )
 
                 # 保存
@@ -884,7 +993,9 @@ async def save_general_config(
 
         if not changed:
             return toast_redirect(
-                "/webui/config/general", "全局配置已保存（部分配置需重启后生效）"
+                "/webui/config/general",
+                "toast.config_saved_restart",
+                lang=detect_language(),
             )
 
         await db.commit()
@@ -916,12 +1027,22 @@ async def save_general_config(
         await log_admin_action(
             db, user["user_id"], "config_save", "global", None, log_changed
         )
-        return toast_redirect("/webui/config/general", "全局配置已保存并即时生效")
+        return toast_redirect(
+            "/webui/config/general", "toast.config_saved_live", lang=detect_language()
+        )
 
     except ValueError:
         return toast_redirect(
-            "/webui/config/general", "参数验证失败，请检查输入值", "error"
+            "/webui/config/general",
+            "toast.invalid_param",
+            "error",
+            lang=detect_language(),
         )
     except Exception as e:
         logger.error(f"全局配置保存失败: {e}", exc_info=True)
-        return toast_redirect("/webui/config/general", "保存失败，请稍后重试", "error")
+        return toast_redirect(
+            "/webui/config/general",
+            "toast.save_failed",
+            "error",
+            lang=detect_language(),
+        )
