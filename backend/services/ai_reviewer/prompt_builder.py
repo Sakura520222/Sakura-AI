@@ -28,6 +28,7 @@ class PromptBuilder:
         context: Dict[str, Any],
         strategy: str,
         include_tools: bool = False,
+        compact: bool = False,
     ) -> str:
         """构建用户消息
 
@@ -35,6 +36,7 @@ class PromptBuilder:
             context: 审查上下文
             strategy: 审查策略名称
             include_tools: 是否包含工具说明
+            compact: 是否使用精简模式（不包含 diff，由 AI 通过工具按需查看）
 
         Returns:
             构建好的用户消息
@@ -85,25 +87,45 @@ class PromptBuilder:
         # 添加文件信息
         files = context.get("files", [])
         if files:
-            message_parts.append("## 代码变更")
-            message_parts.append(
-                "**注意**：下方的 diff 中已标注行号（基于 patch 的行号），创建行内评论时请使用这些行号！\n"
-            )
-
-            for i, file in enumerate(files, 1):
-                message_parts.append(f"\n### {i}. {file['path']}")
-                message_parts.append(f"- 状态: {file['status']}")
+            if compact:
+                # 精简模式：只列文件元信息，不包含 diff
+                message_parts.append("## 代码变更（精简模式）")
                 message_parts.append(
-                    f"- 变更: +{file.get('additions', 0)} -{file.get('deletions', 0)}"
+                    "由于 PR 变更量较大，代码 diff 已从 prompt 中移除以节省上下文空间。\n"
+                    "**请使用以下工具按需查看代码变更：**\n"
+                    "- `get_file_diff(file_path)`: 获取指定文件的完整 diff\n"
+                    "- `list_changed_files()`: 列出所有变更文件概览\n"
+                    "- `read_file(file_path)`: 读取文件的完整内容\n\n"
+                    "**建议审查流程**：先阅读下方文件列表，对感兴趣的文件调用 `get_file_diff` 查看详细变更。\n"
+                )
+                for i, file in enumerate(files, 1):
+                    message_parts.append(
+                        f"{i}. `{file['path']}` - {file['status']} "
+                        f"(+{file.get('additions', 0)} -{file.get('deletions', 0)})"
+                    )
+            else:
+                # 标准模式：包含完整 diff
+                message_parts.append("## 代码变更")
+                message_parts.append(
+                    "**注意**：下方的 diff 中已标注行号（基于 patch 的行号），创建行内评论时请使用这些行号！\n"
                 )
 
-                # 添加patch（带行号标注）
-                if file.get("patch"):
-                    patch = file["patch"]
-                    patch_with_line_numbers = self.annotate_patch_with_line_numbers(
-                        patch, file["path"], context
+                for i, file in enumerate(files, 1):
+                    message_parts.append(f"\n### {i}. {file['path']}")
+                    message_parts.append(f"- 状态: {file['status']}")
+                    message_parts.append(
+                        f"- 变更: +{file.get('additions', 0)} -{file.get('deletions', 0)}"
                     )
-                    message_parts.append(f"\n```diff\n{patch_with_line_numbers}\n```")
+
+                    # 添加patch（带行号标注）
+                    if file.get("patch"):
+                        patch = file["patch"]
+                        patch_with_line_numbers = self.annotate_patch_with_line_numbers(
+                            patch, file["path"], context
+                        )
+                        message_parts.append(
+                            f"\n```diff\n{patch_with_line_numbers}\n```"
+                        )
 
         # 添加剩余文件信息
         if context.get("remaining_files"):
@@ -171,6 +193,8 @@ class PromptBuilder:
 - `list_commits`: 查看提交历史记录
 - `read_sakura_docs`: 读取项目 .sakura/ 目录中的指导文档
 - `list_sakura_directory`: 列出 .sakura/ 目录的结构
+- `get_file_diff`: 获取 PR 中指定文件的完整 diff
+- `list_changed_files`: 列出 PR 中所有变更文件概览
 
 请根据需要使用工具查看相关文件。
 """
@@ -268,9 +292,20 @@ class PromptBuilder:
    - 使用场景：了解项目 .sakura/ 目录中有哪些指导文档
    - 参数：subdirectory（可选，子目录路径）
 
+11. **get_file_diff**: 获取 PR 中指定文件的完整 diff（代码变更内容）
+   - 使用场景：当 prompt 中没有包含某文件的 diff 时，使用此工具获取该文件的完整变更
+   - 参数：file_path（必填，文件路径）
+   - **注意**：仅在精简模式（prompt 中不含 diff）时需要使用
+
+12. **list_changed_files**: 列出 PR 中所有变更文件的概览
+   - 使用场景：快速了解 PR 的整体变更范围（路径、状态、增删行数）
+   - 参数：无
+   - **注意**：与 list_directory 不同，此工具只列出 PR 中有变更的文件
+
 ## 使用建议
 
 - 优先审查PR中变更的文件
+- **如果 prompt 处于精简模式（无 diff），请先对关键文件调用 `get_file_diff` 查看变更**
 - 审查前建议先使用 search_project_docs 检索项目相关的编码规范和架构准则
 - 当需要理解依赖关系时，使用 read_file 查看相关文件
 - 当需要了解模块结构时，使用 list_directory 查看目录
