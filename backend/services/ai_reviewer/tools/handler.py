@@ -82,9 +82,7 @@ class ToolHandler:
                 directory = arguments.get("directory")
                 if not directory:
                     return {"error": "缺少必填参数: directory"}
-                return await self.file_tool.list_directory(
-                    directory, repo, pr
-                )
+                return await self.file_tool.list_directory(directory, repo, pr)
             elif function_name == "search_project_docs":
                 return await self.search_tool.search_project_docs(
                     arguments.get("query", ""),
