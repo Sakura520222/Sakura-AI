@@ -1017,17 +1017,24 @@ class ReviewWorker:
                 )
 
                 if is_incremental:
-                    # Incremental review: dismiss old reviews + skip idempotency check
+                    # Incremental review: old reviews already dismissed above,
+                    # skip idempotency check to allow new review submission
                     enable_idempotency = False
                     if dismissed > 0:
                         logger.info(
-                            f"增量审查模式，已撤回 {dismissed} 条旧 Review，将提交新审查"
+                            f"[{task_id}] 增量审查模式，已撤回 {dismissed} 条旧 Review，将提交新审查"
                         )
-                    logger.info("增量审查模式，跳过幂等性检查")
+                    else:
+                        logger.debug(
+                            f"[{task_id}] 增量审查模式，无旧 Review 需撤回"
+                        )
+                    logger.info(f"[{task_id}] 增量审查模式，跳过幂等性检查")
                 else:
-                    # Full review fallback (force push etc.): dismiss old reviews
+                    # Full review fallback (force push etc.): old reviews already dismissed above
                     if dismissed > 0:
-                        logger.info(f"已撤回 {dismissed} 条旧Review，将提交全量审查")
+                        logger.info(
+                            f"[{task_id}] 已撤回 {dismissed} 条旧 Review，将提交全量审查"
+                        )
 
             # 使用 submit_review_with_inline_comments 方法（带重试机制）
             max_retries = 1  # 失败后重试1次
