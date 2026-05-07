@@ -538,6 +538,8 @@ settings:
   description: "自定义您的 WebUI 偏好"
   save_success: "设置已保存"
   save_error: "设置保存失败"
+  language_desc: "选择您偏好的界面语言"
+  items_per_page_desc: "设置每页显示的条目数量"
   languages:
     zh-CN: "简体中文"
     en: "English"
@@ -675,6 +677,13 @@ register:
   input_token: "请输入验证 Token"
   register_success: "注册成功"
   register_failed: "注册失败"
+  account_not_registered: "你的 GitHub 账号"
+  account_not_registered_suffix: "尚未在系统中注册。"
+  click_to_register: "点击上方按钮将在 Telegram 中打开 Bot，"
+  send_command_to_register: "发送 /sign {github_username} 即可完成注册。"
+  contact_admin: "请联系管理员配置 Telegram Bot 后重试，"
+  or_register_via_bot: "或通过 Telegram Bot 发送 /sign {github_username} 完成注册。"
+  after_register: "注册完成后，"
 
 # ========== Toast 消息 / Toast Messages ==========
 toast:
@@ -731,6 +740,7 @@ toast:
   user_delete_failed: "用户删除失败"
   payment_error: "支付错误: {error}"
   user_added: "用户 {github_username} 已成功添加"
+  user_added_auto_super_admin: "用户 {github_username} 已成功添加（已自动提升为超级管理员）"
   user_role_changed: "用户角色已更改为 {role}"
   user_quota_updated: "用户配额已更新"
   issue_quota_updated: "Issue 配额已更新"
