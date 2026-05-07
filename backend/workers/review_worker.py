@@ -175,9 +175,29 @@ class ReviewWorker:
         event = self._cancel_events.get(task_key)
         return event is not None and event.is_set()
 
+    async def _cancel_and_cleanup(
+        self,
+        task_id: str,
+        task_key: str,
+        review_obj,
+        review_id: Optional[int],
+        reason: str,
+    ):
+        """Common cleanup for all cancel checkpoints.
+
+        Deletes placeholder comment and updates DB status to CANCELLED.
+        Safe to call when review_obj/review_id are None (early checkpoints).
+        """
+        logger.info(f"[{task_id}] 任务已被取消，{reason}: {task_key}")
+        if review_obj:
+            await self.comment_service.delete_placeholder_comment(review_obj)
+        if review_id:
+            await self._update_review_status(review_id, PRStatus.CANCELLED)
+        return task_id
+
     async def process_review_task(self, pr_info: Dict[str, Any]) -> str:
         """处理审查任务"""
-        task_id = str(uuid.uuid4())
+        task_id = str(uuid.uuid4())[:8]
         task_key = self._make_task_key(pr_info)
         review_obj = None  # 用于保存 GitHub Review 对象
         review_id = None  # 用于保存数据库审查记录 ID
@@ -196,10 +216,9 @@ class ReviewWorker:
                 # Check if already cancelled (e.g. PR closed while queued)
                 # Note: review_id is None at this point, no DB record to update
                 if self._check_cancelled(task_key):
-                    logger.info(
-                        f"[{task_id}] 任务已被取消（PR 已关闭/合并），跳过审查: {task_key}"
+                    return await self._cancel_and_cleanup(
+                        task_id, task_key, None, None, "PR 已关闭/合并，跳过审查"
                     )
-                    return task_id
 
                 # 1. 分析PR
                 analysis = await self.analyzer.analyze_pr(pr_info)
@@ -212,10 +231,9 @@ class ReviewWorker:
 
                 # Cancel checkpoint: before code indexing
                 if self._check_cancelled(task_key):
-                    logger.info(f"[{task_id}] 任务已被取消，跳过代码索引: {task_key}")
-                    if review_id:
-                        await self._update_review_status(review_id, PRStatus.CANCELLED)
-                    return task_id
+                    return await self._cancel_and_cleanup(
+                        task_id, task_key, None, review_id, "跳过代码索引"
+                    )
 
                 # 2.5 代码索引（在 AI 审查前完成，确保 search_code_context 工具可用）
                 if settings.auto_index_pr_changes and settings.enable_code_index:
@@ -313,16 +331,12 @@ class ReviewWorker:
                 )
                 pr = await asyncio.to_thread(repo.get_pull, pr_info["pr_number"])
 
-                # Cancel checkpoint: before PR summary and AI review (most important)
+                # Cancel checkpoint: before PR summary and AI review
                 if self._check_cancelled(task_key):
-                    logger.info(
-                        f"[{task_id}] 任务已被取消，跳过 PR 总结和 AI 审查: {task_key}"
+                    return await self._cancel_and_cleanup(
+                        task_id, task_key, review_obj, review_id,
+                        "跳过 PR 总结和 AI 审查",
                     )
-                    if review_obj:
-                        await self.comment_service.delete_placeholder_comment(review_obj)
-                    if review_id:
-                        await self._update_review_status(review_id, PRStatus.CANCELLED)
-                    return task_id
 
                 # 4.5 PR 变更总结（如果启用）
                 pr_summary_text = None
@@ -579,16 +593,9 @@ class ReviewWorker:
 
                 # Cancel checkpoint: before AI review (critical — most expensive step)
                 if self._check_cancelled(task_key):
-                    logger.info(
-                        f"[{task_id}] 任务已被取消，跳过 AI 审查: {task_key}"
+                    return await self._cancel_and_cleanup(
+                        task_id, task_key, review_obj, review_id, "跳过 AI 审查"
                     )
-                    # Clean up placeholder comment
-                    if review_obj:
-                        await self.comment_service.delete_placeholder_comment(review_obj)
-                    # Update database status to cancelled
-                    if review_id:
-                        await self._update_review_status(review_id, PRStatus.CANCELLED)
-                    return task_id
 
                 # 7. 并行执行AI审查和标签推荐
                 await self._update_review_status(review_id, PRStatus.REVIEWING)
@@ -1265,12 +1272,11 @@ async def submit_review_task(pr_info: Dict[str, Any]) -> str:
     """提交审查任务（从Webhook调用）
 
     Returns:
-        str: Task identifier combining task_key and short UUID for traceability,
-             format: "owner/repo#pr_number (task: uuid[:8])"
+        str: Task key in format "owner/repo#pr_number", used for cancellation.
+             The internal task_id (short UUID) is logged by process_review_task.
     """
     worker = get_worker()
     task_key = ReviewWorker._make_task_key(pr_info)
-    short_id = str(uuid.uuid4())[:8]
 
     # If a previous task for the same PR is still running, cancel it first
     worker.cancel_task(task_key)
@@ -1279,8 +1285,8 @@ async def submit_review_task(pr_info: Dict[str, Any]) -> str:
     # 为了简化，我们直接异步执行
     asyncio.create_task(worker.process_review_task(pr_info))
 
-    # 返回任务标识（含 task_key 用于取消 + short UUID 用于日志追踪）
-    return f"{task_key} (task: {short_id})"
+    # 返回任务标识（owner/repo#pr_number），可用于取消
+    return task_key
 
 
 async def process_review_task_sync(pr_info: Dict[str, Any]) -> str:
