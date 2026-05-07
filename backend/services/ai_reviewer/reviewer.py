@@ -12,7 +12,7 @@ from loguru import logger
 from backend.core.config import get_settings, get_strategy_config
 from backend.core.model_context import get_model_context_manager
 
-from .api_client import AIApiClient, PromptTooLongError
+from .api_client import AIApiClient, AIEmptyResponseError, PromptTooLongError
 from .batch_processor import BatchProcessor
 from .compression import ContextCompressor
 from .constants import (
@@ -235,7 +235,7 @@ class AIReviewer:
             # 防御性检查：确保响应有效
             if not response.choices:
                 logger.error("AI 返回空 choices")
-                raise Exception("AI 返回空响应")
+                raise AIEmptyResponseError("AI 返回空响应")
 
             # 检查是否有工具调用
             tool_calls = response.choices[0].message.tool_calls or []
@@ -502,7 +502,7 @@ class AIReviewer:
                     )
                     # 将文件 diff 数据注入临时 DiffToolHandler
                     compact_diff_tool.set_files_data(context.get("files", []))
-                    if not compact_diff_tool._files_data:
+                    if not compact_diff_tool.has_data:
                         logger.warning("精简模式降级：无文件 diff 数据可用，放弃重试")
                         raise
                     # 精简模式下动态添加 COMPACT_TOOLS（get_file_diff, list_changed_files）
