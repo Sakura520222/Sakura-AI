@@ -683,7 +683,7 @@ async def handle_issue_event(payload: Dict[str, Any]) -> JSONResponse:
         action = issue_info["action"]
 
         # 只处理以下动作
-        supported_actions = ["opened", "edited", "reopened", "closed"]
+        supported_actions = ["opened", "edited", "reopened", "closed", "deleted"]
         if action not in supported_actions:
             logger.info(f"忽略 Issue 动作: {action}")
             return JSONResponse(content={"status": "ignored", "action": action})
@@ -704,6 +704,30 @@ async def handle_issue_event(payload: Dict[str, Any]) -> JSONResponse:
                 return JSONResponse(
                     content={"status": "ignored", "reason": "bot edited event"}
                 )
+
+        # deleted 事件：清理数据库记录和向量索引 / deleted event: clean up DB and vector index
+        if action == "deleted":
+            repo_owner = issue_info["repo_owner"]
+            repo_name = issue_info["repo_name"]
+            issue_number = issue_info["issue_number"]
+            logger.info(
+                f"处理 Issue 删除事件: {repo_owner}/{repo_name}#{issue_number}"
+            )
+
+            from backend.services.issue_service import issue_service
+
+            async with get_async_session() as session:
+                cleanup_result = await issue_service.delete_issue_data(
+                    repo_owner, repo_name, issue_number, session
+                )
+
+            return JSONResponse(
+                content={
+                    "status": "accepted",
+                    "action": "deleted",
+                    "cleanup": cleanup_result,
+                }
+            )
 
         # 语义关联 Issue 向量同步（独立于 issue 分析，仓库级别）
         if (

@@ -6,11 +6,16 @@ import math
 import threading
 from typing import Dict, Any, List, Optional, Tuple
 from datetime import datetime
-from sqlalchemy import select, func, desc, and_
+from sqlalchemy import select, func, desc, and_, delete
 from sqlalchemy.ext.asyncio import AsyncSession
 from loguru import logger
 
-from backend.models.database import IssueAnalysis, IssueAnalysisStatus
+from backend.models.database import (
+    IssueAnalysis,
+    IssueAnalysisQueue,
+    IssueAnalysisStatus,
+    PRIssueLink,
+)
 from backend.core.github_app import GitHubAppClient
 from backend.core.config import get_settings, get_strategy_config
 
@@ -667,6 +672,103 @@ class IssueService:
             "by_category": category_stats,
             "by_priority": priority_stats,
         }
+
+
+    async def delete_issue_data(
+        self,
+        repo_owner: str,
+        repo_name: str,
+        issue_number: int,
+        db: AsyncSession,
+    ) -> Dict[str, Any]:
+        """删除 Issue 相关的所有数据库记录和向量索引
+
+        当 GitHub Issue 被删除时调用，清理:
+        - ChromaDB 向量索引
+        - IssueAnalysis 分析记录
+        - PRIssueLink 关联记录
+        - IssueAnalysisQueue 排队记录
+
+        Args:
+            repo_owner: 仓库所有者
+            repo_name: 仓库名称
+            issue_number: Issue 编号
+            db: 数据库会话
+
+        Returns:
+            清理结果字典
+        """
+        result = {
+            "vector_deleted": False,
+            "analysis_deleted": 0,
+            "links_deleted": 0,
+            "queue_deleted": 0,
+        }
+
+        # Full repo name for DB queries / 数据库查询用的完整仓库名
+        full_repo_name = f"{repo_owner}/{repo_name}"
+
+        # 1. Remove from ChromaDB vector index / 从 ChromaDB 向量索引中删除
+        try:
+            result["vector_deleted"] = (
+                await self.issue_embedding_service.remove_issue(
+                    repo_owner, repo_name, issue_number
+                )
+            )
+        except Exception as e:
+            logger.warning(
+                f"删除 issue 向量失败 {repo_owner}/{repo_name}#{issue_number}: {e}"
+            )
+
+        # 2. Delete IssueAnalysis records / 删除 IssueAnalysis 分析记录
+        try:
+            analysis_result = await db.execute(
+                delete(IssueAnalysis).where(
+                    and_(
+                        IssueAnalysis.repo_name == full_repo_name,
+                        IssueAnalysis.issue_number == issue_number,
+                    )
+                )
+            )
+            result["analysis_deleted"] = analysis_result.rowcount
+        except Exception as e:
+            logger.warning(f"删除 IssueAnalysis 记录失败: {e}")
+
+        # 3. Delete PRIssueLink records / 删除 PRIssueLink 关联记录
+        try:
+            links_result = await db.execute(
+                delete(PRIssueLink).where(
+                    and_(
+                        PRIssueLink.repo_name == full_repo_name,
+                        PRIssueLink.issue_number == issue_number,
+                    )
+                )
+            )
+            result["links_deleted"] = links_result.rowcount
+        except Exception as e:
+            logger.warning(f"删除 PRIssueLink 记录失败: {e}")
+
+        # 4. Delete IssueAnalysisQueue records / 删除 IssueAnalysisQueue 排队记录
+        try:
+            queue_result = await db.execute(
+                delete(IssueAnalysisQueue).where(
+                    and_(
+                        IssueAnalysisQueue.repo_name == full_repo_name,
+                        IssueAnalysisQueue.issue_number == issue_number,
+                    )
+                )
+            )
+            result["queue_deleted"] = queue_result.rowcount
+        except Exception as e:
+            logger.warning(f"删除 IssueAnalysisQueue 记录失败: {e}")
+
+        await db.commit()
+
+        logger.info(
+            f"已清理已删除 Issue 数据 "
+            f"{repo_owner}/{repo_name}#{issue_number}: {result}"
+        )
+        return result
 
 
 # 全局单例
