@@ -67,6 +67,8 @@ BASE_TOOLS = [
     "search_in_files",
     "get_git_info",
     "list_commits",
+    "get_file_diff",
+    "list_changed_files",
 ]
 RAG_TOOLS = ["search_project_docs"]
 CODE_INDEX_TOOLS = ["search_code_context"]
@@ -445,6 +447,43 @@ ALL_TOOL_DEFINITIONS = [
     LIST_SAKURA_DIRECTORY_TOOL,
 ]
 
+GET_FILE_DIFF_TOOL = {
+    "type": "function",
+    "function": {
+        "name": "get_file_diff",
+        "description": (
+            "获取当前 PR 中指定文件的完整 diff（代码变更内容）。"
+            "当 prompt 中没有包含某文件的 diff 时，使用此工具获取。"
+            "返回的内容包含完整的增删行信息（+/- 前缀）。"
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "file_path": {
+                    "type": "string",
+                    "description": "要查看 diff 的文件路径（相对于项目根目录）",
+                },
+            },
+            "required": ["file_path"],
+        },
+    },
+}
+
+LIST_CHANGED_FILES_TOOL = {
+    "type": "function",
+    "function": {
+        "name": "list_changed_files",
+        "description": (
+            "列出当前 PR 中所有变更文件的概览，包括路径、状态、变更行数。"
+            "用于在审查前了解整体变更范围。"
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {},
+        },
+    },
+}
+
 # 工具名称到定义的映射
 TOOL_NAME_TO_DEFINITION = {
     "read_file": READ_FILE_TOOL,
@@ -458,4 +497,6 @@ TOOL_NAME_TO_DEFINITION = {
     "list_commits": LIST_COMMITS_TOOL,
     "read_sakura_docs": READ_SAKURA_DOCS_TOOL,
     "list_sakura_directory": LIST_SAKURA_DIRECTORY_TOOL,
+    "get_file_diff": GET_FILE_DIFF_TOOL,
+    "list_changed_files": LIST_CHANGED_FILES_TOOL,
 }
