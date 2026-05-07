@@ -140,6 +140,9 @@ class ReviewWorker:
     def _register_task(self, task_key: str) -> asyncio.Event:
         """Register a review task and return its cancel event.
 
+        Idempotent: multiple registrations for the same task_key share the same
+        event — any cancellation signal affects all of them.
+
         If an existing event is already set (stale from a cancelled task),
         create a fresh one so the new task doesn't inherit the cancelled state.
         """
@@ -191,6 +194,7 @@ class ReviewWorker:
                 )
 
                 # Check if already cancelled (e.g. PR closed while queued)
+                # Note: review_id is None at this point, no DB record to update
                 if self._check_cancelled(task_key):
                     logger.info(
                         f"[{task_id}] 任务已被取消（PR 已关闭/合并），跳过审查: {task_key}"
@@ -850,7 +854,7 @@ class ReviewWorker:
                 record = await session.get(PRReview, review_id)
                 if record:
                     record.status = status
-                    if status == PRStatus.COMPLETED:
+                    if status in (PRStatus.COMPLETED, PRStatus.CANCELLED):
                         record.completed_at = datetime.utcnow()
                     if overall_score is not None:
                         record.overall_score = overall_score
@@ -1261,10 +1265,12 @@ async def submit_review_task(pr_info: Dict[str, Any]) -> str:
     """提交审查任务（从Webhook调用）
 
     Returns:
-        str: Task key in format "owner/repo#pr_number", used for cancellation.
+        str: Task identifier combining task_key and short UUID for traceability,
+             format: "owner/repo#pr_number (task: uuid[:8])"
     """
     worker = get_worker()
     task_key = ReviewWorker._make_task_key(pr_info)
+    short_id = str(uuid.uuid4())[:8]
 
     # If a previous task for the same PR is still running, cancel it first
     worker.cancel_task(task_key)
@@ -1273,8 +1279,8 @@ async def submit_review_task(pr_info: Dict[str, Any]) -> str:
     # 为了简化，我们直接异步执行
     asyncio.create_task(worker.process_review_task(pr_info))
 
-    # 返回任务标识（owner/repo#pr_number），可用于取消
-    return task_key
+    # 返回任务标识（含 task_key 用于取消 + short UUID 用于日志追踪）
+    return f"{task_key} (task: {short_id})"
 
 
 async def process_review_task_sync(pr_info: Dict[str, Any]) -> str:

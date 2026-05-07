@@ -241,6 +241,7 @@ issue:
     low: "低"
   completed_status: "已完成"
   failed_status: "失败"
+  cancelled_status: "已取消"
   analyzing_status: "分析中"
   pending_status: "待处理"
   reanalyze: "重新分析"
