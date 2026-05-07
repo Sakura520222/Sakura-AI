@@ -113,10 +113,11 @@ async def handle_pull_request_event(payload: Dict[str, Any]) -> JSONResponse:
 
         # Handle PR closed/merged event: cancel any active review task
         if action == "closed":
-            task_key = (
-                f"{pr_info.get('repo_full_name', '')}#{pr_info.get('pr_number', '')}"
-            )
+            from backend.workers.review_worker import ReviewWorker
+
+            task_key = ReviewWorker._make_task_key(pr_info)
             try:
+                # Lazy import to avoid webhook ↔ worker circular dependency
                 from backend.workers.review_worker import get_worker
 
                 worker = get_worker()
