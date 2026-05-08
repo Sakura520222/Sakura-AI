@@ -12,6 +12,7 @@ from backend.models.telegram_models import TelegramUser, QuotaUsageLog
 from backend.webui.deps import get_db, paginate
 from backend.webui.helpers.admin_log import log_admin_action
 from backend.core.config import get_settings
+from backend.services.quota_service import QuotaService
 
 from backend.api.v1.deps import require_api_admin, require_api_super_admin
 from backend.api.v1.schemas import (
@@ -194,6 +195,8 @@ async def get_user(
     target = result.scalar_one_or_none()
     if not target:
         return error_response("用户不存在", status_code=404)
+
+    await QuotaService(db).reset_user_quotas_if_expired(target)
 
     data = UserResponse.model_validate(target, from_attributes=True).model_dump(
         mode="json"

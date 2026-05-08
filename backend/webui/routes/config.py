@@ -15,6 +15,8 @@ from backend.models.database import AppConfig
 from loguru import logger
 
 from backend.core.config import (
+    get_dynamic_config,
+    invalidate_dynamic_config_cache,
     get_strategy_config,
     reload_strategy_config,
     get_label_config,
@@ -139,6 +141,8 @@ async def strategies_page(
     """渲染审查策略配置页"""
     config_data = get_strategy_config().config
     tab = request.query_params.get("tab", "strategies")
+    pr_dependency_graph = dict(config_data.get("pr_dependency_graph", {}))
+    pr_dependency_graph["mode"] = await get_dynamic_config("pr_dependency_graph_mode")
 
     return render_template(
         "config_strategies.html",
@@ -152,7 +156,7 @@ async def strategies_page(
         batch=config_data.get("batch", {}),
         context_enhancement=config_data.get("context_enhancement", {}),
         review_policy=config_data.get("review_policy", {}),
-        pr_dependency_graph=config_data.get("pr_dependency_graph", {}),
+        pr_dependency_graph=pr_dependency_graph,
         active_tab=tab,
     )
 
@@ -286,13 +290,36 @@ async def save_strategies_section(
                 }
 
             elif section == "depgraph":
+                depgraph_mode = form.get("pr_dependency_graph_mode", "ai")
+                if depgraph_mode not in {"ai", "static"}:
+                    depgraph_mode = "ai"
+                # mode 是动态配置项，仅写入数据库；YAML 只保存 prompt 模板，避免双写不一致。
                 config["pr_dependency_graph"] = {
                     "system_prompt": form.get("depgraph_system_prompt", ""),
                     "user_template": form.get("depgraph_user_template", ""),
                 }
+                existing = await db.execute(
+                    select(AppConfig).where(
+                        AppConfig.key_name == "pr_dependency_graph_mode"
+                    )
+                )
+                app_config = existing.scalar_one_or_none()
+                if app_config:
+                    app_config.key_value = depgraph_mode
+                else:
+                    db.add(
+                        AppConfig(
+                            key_name="pr_dependency_graph_mode",
+                            key_value=depgraph_mode,
+                            description="PR dependency graph generation mode",
+                        )
+                    )
             else:
                 raise HTTPException(status_code=400, detail=f"未知 section: {section}")
 
+            if section == "depgraph":
+                await db.commit()
+                invalidate_dynamic_config_cache(["pr_dependency_graph_mode"])
             _atomic_yaml_write(STRATEGIES_PATH, config)
             reload_strategy_config()
             logger.info(f"策略配置 [{section}] 已更新, by={user['sub']}")

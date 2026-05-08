@@ -22,6 +22,7 @@ from backend.webui.deps import (
     render_template,
 )
 from backend.core.config import get_settings
+from backend.services.quota_service import QuotaService
 from backend.webui.helpers.admin_log import log_admin_action
 from backend.webui.i18n import detect_language
 
@@ -273,6 +274,8 @@ async def user_detail_page(
     target_user = result.scalar_one_or_none()
     if not target_user:
         return error_page(request, message="用户不存在", user=user)
+
+    await QuotaService(db).reset_user_quotas_if_expired(target_user)
 
     # 查询配额使用历史（最近 20 条）
     logs_result = await db.execute(

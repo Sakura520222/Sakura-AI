@@ -1,65 +1,66 @@
 """PR 依赖图生成模块
 
 分析 PR 变更文件的 import/模块依赖关系，
-通过 AI 生成 Mermaid 依赖图并注入到 PR body 中。
+通过 AI 或静态 import 分析生成 Mermaid 依赖图并注入到 PR body 中。
 使用独立的 HTML 注释标记区域，与 PR Summary 共存。
 """
 
 import asyncio
+from pathlib import PurePosixPath
 import re
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Set
 
 from loguru import logger
 
-from backend.core.config import get_settings, get_strategy_config
+from backend.core.config import get_dynamic_config, get_settings, get_strategy_config
 from backend.services.ai_reviewer.api_client import AIApiClient
 from backend.services.ai_reviewer.pr_summary import PRSummaryService
 from backend.services.pr_analyzer import PRAnalysis, PRFileInfo
 
 
-# 各语言的 import 语句正则模式
-_IMPORT_PATTERNS: Dict[str, List[str]] = {
+# 各语言的 import 语句正则模式；预编译到模块级别，避免每次扫描重复编译。
+_IMPORT_PATTERNS: Dict[str, List[re.Pattern[str]]] = {
     "python": [
-        r"^import\s+([\w.]+)",
-        r"^from\s+([\w.]+)\s+import",
+        re.compile(r"^import\s+([\w.]+)", re.MULTILINE),
+        re.compile(r"^from\s+([\w.]+)\s+import", re.MULTILINE),
     ],
     "javascript": [
-        r"""^import\s+.*?\s+from\s+['"]([^'"]+)['"]""",
-        r"""^(?:import|require)\s*\(?\s*['"]([^'"]+)['"]\)?\s*;?""",
+        re.compile(r"""^import\s+.*?\s+from\s+['"]([^'"]+)['"]""", re.MULTILINE),
+        re.compile(r"""^(?:import|require)\s*\(?\s*['"]([^'"]+)['"]\)?\s*;?""", re.MULTILINE),
     ],
     "typescript": [
-        r"""^import\s+.*?\s+from\s+['"]([^'"]+)['"]""",
-        r"""^(?:import|require)\s*\(?\s*['"]([^'"]+)['"]\)?\s*;?""",
+        re.compile(r"""^import\s+.*?\s+from\s+['"]([^'"]+)['"]""", re.MULTILINE),
+        re.compile(r"""^(?:import|require)\s*\(?\s*['"]([^'"]+)['"]\)?\s*;?""", re.MULTILINE),
     ],
     "go": [
-        r'^import\s+"([\w./\-]+)"\s*$',
-        r'^\t"([\w./\-]+)"',
-        r'^import\s+\w+\s+"([\w./\-]+)"',
+        re.compile(r'^import\s+"([\w./\-]+)"\s*$', re.MULTILINE),
+        re.compile(r'^\t"([\w./\-]+)"', re.MULTILINE),
+        re.compile(r'^import\s+\w+\s+"([\w./\-]+)"', re.MULTILINE),
     ],
     "java": [
-        r"^import\s+([\w.]+)",
+        re.compile(r"^import\s+([\w.]+)", re.MULTILINE),
     ],
     "rust": [
-        r"use\s+([\w:]+)",
+        re.compile(r"use\s+([\w:]+)", re.MULTILINE),
     ],
     "csharp": [
-        r"^using\s+([\w.]+)",
+        re.compile(r"^using\s+([\w.]+)", re.MULTILINE),
     ],
     "cpp": [
-        r'#include\s*[<"]([^>"]+)[>"]',
+        re.compile(r'#include\s*[<"]([^>"]+)[>"]', re.MULTILINE),
     ],
     "ruby": [
-        r"^(?:require|require_relative)\s+['\"]([^'\"]+)['\"]",
+        re.compile(r"^(?:require|require_relative)\s+['\"]([^'\"]+)['\"]", re.MULTILINE),
     ],
     "php": [
-        r"use\s+([\w\\]+)",
-        r"^(?:require|include)(?:_once)?\s+['\"]([^'\"]+)['\"]",
+        re.compile(r"use\s+([\w\\]+)", re.MULTILINE),
+        re.compile(r"^(?:require|include)(?:_once)?\s+['\"]([^'\"]+)['\"]", re.MULTILINE),
     ],
     "swift": [
-        r"^import\s+(\w+)",
+        re.compile(r"^import\s+(\w+)", re.MULTILINE),
     ],
     "kotlin": [
-        r"^import\s+([\w.]+)",
+        re.compile(r"^import\s+([\w.]+)", re.MULTILINE),
     ],
 }
 
@@ -128,7 +129,27 @@ class PRDependencyGraphService:
             logger.info("无法获取任何变更文件内容，跳过依赖图生成")
             return None
 
-        # 提取 import 并构建上下文
+        graph_mode = await self._get_graph_mode()
+        if graph_mode == "static":
+            mermaid_graph = self._generate_static_mermaid(
+                analysis_files,
+                file_contents,
+                max_nodes=settings.pr_dependency_graph_max_nodes,
+            )
+            mermaid_graph = self._validate_mermaid(mermaid_graph)
+            if not mermaid_graph:
+                logger.warning(
+                    "静态依赖图分析未生成有效 Mermaid 图，跳过注入；"
+                    f"候选文件数: {len(analysis_files)}, 可读取文件数: {len(file_contents)}"
+                )
+                return None
+
+            current_body = await asyncio.to_thread(lambda: pr.body or "")
+            await self.update_pr_body_with_graph(pr, mermaid_graph, current_body)
+            logger.info(f"静态 PR 依赖图已生成，长度: {len(mermaid_graph)} 字符")
+            return mermaid_graph
+
+        # AI 模式才需要构建完整 import 上下文，静态模式会直接基于文件内容分析。
         import_context = self._build_import_context(analysis_files, file_contents)
         if not import_context.strip():
             logger.info("变更文件间无 import 依赖关系，跳过依赖图生成")
@@ -205,6 +226,16 @@ class PRDependencyGraphService:
     # ==================== 内部方法 ====================
 
     @staticmethod
+    async def _get_graph_mode() -> str:
+        """读取依赖图生成模式（ai/static）。"""
+        mode = await get_dynamic_config("pr_dependency_graph_mode")
+        mode = str(mode or "ai").strip().lower()
+        if mode not in {"ai", "static"}:
+            logger.warning(f"未知 PR 依赖图模式: {mode}，回退到 ai")
+            return "ai"
+        return mode
+
+    @staticmethod
     def _trim_files(analysis: PRAnalysis, settings: Any) -> List[PRFileInfo]:
         """大型 PR 裁剪：按变更量排序取 top N 文件"""
         files = [f for f in analysis.code_files if f.status != "deleted"]
@@ -256,7 +287,7 @@ class PRDependencyGraphService:
         patterns = _IMPORT_PATTERNS.get(lang, [])
         imports: List[str] = []
         for pattern in patterns:
-            for match in re.finditer(pattern, top_content, re.MULTILINE):
+            for match in pattern.finditer(top_content):
                 imp = match.group(1).strip()
                 if imp and imp not in imports:
                     imports.append(imp)
@@ -296,6 +327,246 @@ class PRDependencyGraphService:
             lines.append("")
 
         return "\n".join(lines)
+
+    def _generate_static_mermaid(
+        self,
+        code_files: List[PRFileInfo],
+        file_contents: Dict[str, str],
+        max_nodes: int,
+    ) -> str:
+        """基于 import 关系静态生成 Mermaid 依赖图。"""
+        available_files = [
+            f for f in code_files if f.path in file_contents and self._get_language(f.path)
+        ]
+        if not available_files:
+            return ""
+
+        normalized_paths = [self._normalize_path(f.path) for f in available_files]
+        path_aliases = dict(
+            zip(
+                normalized_paths,
+                (self._build_file_aliases(f.path) for f in available_files),
+            )
+        )
+        edges: Set[tuple[str, str]] = set()
+
+        for source_file, source_path in zip(available_files, normalized_paths):
+            imports = self._extract_imports(
+                source_file.path, file_contents.get(source_file.path, "")
+            )
+            for imported in imports:
+                target_path = self._resolve_import_to_changed_file(
+                    source_file.path,
+                    imported,
+                    path_aliases,
+                )
+                if target_path and target_path != source_path:
+                    edges.add((source_path, target_path))
+
+        selected_nodes = self._select_static_graph_nodes(
+            list(path_aliases.keys()),
+            edges,
+            max_nodes,
+        )
+        if not selected_nodes:
+            return ""
+
+        selected_node_set = set(selected_nodes)
+        selected_edges = [
+            edge for edge in sorted(edges) if edge[0] in selected_node_set and edge[1] in selected_node_set
+        ]
+
+        node_ids = {path: f"N{i}" for i, path in enumerate(selected_nodes, 1)}
+        lines = ["graph TD"]
+        for path in selected_nodes:
+            lines.append(f'    {node_ids[path]}["{self._escape_mermaid_label(path)}"]')
+
+        for source_path, target_path in selected_edges:
+            lines.append(f"    {node_ids[source_path]} --> {node_ids[target_path]}")
+
+        if edges and len(selected_edges) < len(edges):
+            omitted = len(edges) - len(selected_edges)
+            lines.append(f'    OMITTED["... {omitted} more dependencies omitted"]')
+
+        return "\n".join(lines)
+
+    @staticmethod
+    def _normalize_path(path: str) -> str:
+        """统一文件路径分隔符。"""
+        return PRDependencyGraphService._strip_leading_current_dirs(
+            path.replace("\\", "/")
+        )
+
+    @staticmethod
+    def _strip_leading_current_dirs(value: str) -> str:
+        """仅移除开头的 ./ 片段，不误删合法的 . 或 / 字符。"""
+        normalized = value
+        while normalized.startswith("./"):
+            normalized = normalized[2:]
+        return normalized
+
+    @classmethod
+    def _build_file_aliases(cls, file_path: str) -> Set[str]:
+        """为文件路径生成可匹配 import 字符串的候选别名。"""
+        normalized = cls._normalize_path(file_path)
+        path = PurePosixPath(normalized)
+        without_suffix = str(path.with_suffix("")) if path.suffix else normalized
+        basename = path.stem
+
+        aliases = {normalized, without_suffix, basename}
+        aliases.add(without_suffix.replace("/", "."))
+
+        parts = list(PurePosixPath(without_suffix).parts)
+        for index in range(1, len(parts)):
+            suffix = "/".join(parts[index:])
+            if suffix:
+                aliases.add(suffix)
+                aliases.add(suffix.replace("/", "."))
+
+        if path.stem == "__init__" and len(parts) > 1:
+            package = "/".join(parts[:-1])
+            aliases.add(package)
+            aliases.add(package.replace("/", "."))
+
+        if path.name in {"index.js", "index.jsx", "index.ts", "index.tsx"} and len(parts) > 1:
+            module = "/".join(parts[:-1])
+            aliases.add(module)
+            aliases.add(module.replace("/", "."))
+
+        return {
+            stripped
+            for alias in aliases
+            if (stripped := cls._strip_leading_current_dirs(alias))
+        }
+
+    @classmethod
+    def _normalize_import(cls, source_path: str, import_path: str) -> Set[str]:
+        """将 import 字符串转换为可能的路径/模块名候选。"""
+        raw_import = import_path.strip().strip("'\"")
+        if not raw_import:
+            return set()
+
+        normalized = raw_import.replace("\\", "/")
+        candidates = {
+            cls._strip_leading_current_dirs(normalized),
+            # 仅移除模块风格单点前缀（如 .mymodule），路径式 ./ 会在下一分支解析。
+            normalized.replace("/", ".").removeprefix("."),
+        }
+
+        # 处理 Python 多级相对导入，如 "..utils" 或 "...pkg"。
+        # "./"、"../" 属于 JS/TS/Ruby 等路径式相对导入，交给下一分支解析。
+        if normalized.startswith(".") and not normalized.startswith(("./", "../")):
+            leading_dot_count = len(normalized) - len(normalized.lstrip("."))
+            module_part = normalized[leading_dot_count:]
+            source_parts = list(PurePosixPath(cls._normalize_path(source_path)).parts)
+            package_parts = source_parts[:-1]
+            keep_parts = package_parts[: max(0, len(package_parts) - leading_dot_count + 1)]
+            resolved_parts = keep_parts + ([module_part] if module_part else [])
+            resolved = "/".join(part for part in resolved_parts if part)
+            candidates.add(resolved)
+            candidates.add(resolved.replace("/", "."))
+        elif normalized.startswith("."):
+            source_dir = PurePosixPath(cls._normalize_path(source_path)).parent
+            relative_target = source_dir.joinpath(normalized)
+            resolved_parts: List[str] = []
+            for part in relative_target.parts:
+                if part in {"", "."}:
+                    continue
+                if part == "..":
+                    if resolved_parts:
+                        resolved_parts.pop()
+                    continue
+                resolved_parts.append(part)
+            resolved = "/".join(resolved_parts)
+            candidates.add(resolved)
+            candidates.add(resolved.replace("/", "."))
+        elif normalized.startswith("@/"):
+            # 轻量约定：@/ 映射到仓库常见源码根路径的后缀匹配，
+            # 不解析 tsconfig/jsconfig paths 等项目级 alias 配置。
+            alias_path = normalized[2:]
+            candidates.add(alias_path)
+            candidates.add(alias_path.replace("/", "."))
+
+        expanded = set(candidates)
+        for candidate in candidates:
+            if candidate.endswith(".*"):
+                expanded.add(candidate[:-2])
+            if candidate.endswith("/*"):
+                expanded.add(candidate[:-2])
+        return {
+            candidate
+            for candidate in expanded
+            if candidate and candidate != "/" and candidate.strip(".")
+        }
+
+    @classmethod
+    def _resolve_import_to_changed_file(
+        cls,
+        source_path: str,
+        import_path: str,
+        path_aliases: Dict[str, Set[str]],
+    ) -> str | None:
+        """将 import 解析到变更文件路径。"""
+        import_candidates = cls._normalize_import(source_path, import_path)
+        if not import_candidates:
+            return None
+
+        for target_path, aliases in path_aliases.items():
+            if import_candidates & aliases:
+                return target_path
+
+        for candidate in import_candidates:
+            for target_path, aliases in path_aliases.items():
+                if any(
+                    alias.startswith(f"{candidate}.")
+                    or alias.startswith(f"{candidate}/")
+                    for alias in aliases
+                ):
+                    return target_path
+        return None
+
+    @staticmethod
+    def _select_static_graph_nodes(
+        file_paths: List[str],
+        edges: Set[tuple[str, str]],
+        max_nodes: int,
+    ) -> List[str]:
+        """按依赖关系优先选择静态图节点。"""
+        max_nodes = max(1, max_nodes)
+        if not edges:
+            return file_paths[:max_nodes]
+
+        connected_node_set = {path for edge in edges for path in edge}
+        connected_nodes = [path for path in file_paths if path in connected_node_set]
+        selected = connected_nodes[:max_nodes]
+        if len(selected) < max_nodes:
+            for path in file_paths:
+                if path not in selected:
+                    selected.append(path)
+                    if len(selected) >= max_nodes:
+                        break
+        return selected
+
+    @staticmethod
+    def _escape_mermaid_label(label: str) -> str:
+        """转义 Mermaid 节点 label。"""
+        replacements = {
+            "&": "&amp;",
+            '"': "'",
+            "<": "&lt;",
+            ">": "&gt;",
+            "{": "&#123;",
+            "}": "&#125;",
+            "[": "&#91;",
+            "]": "&#93;",
+            "|": "&#124;",
+            "(": "&#40;",
+            ")": "&#41;",
+            "#": "&#35;",
+            "%": "&#37;",
+        }
+        normalized = label.replace("\\", "/")
+        return "".join(replacements.get(char, char) for char in normalized)
 
     @staticmethod
     def _build_prompts(
