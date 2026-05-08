@@ -390,10 +390,9 @@ class PRDependencyGraphService:
     @staticmethod
     def _normalize_path(path: str) -> str:
         """统一文件路径分隔符。"""
-        normalized = path.replace("\\", "/")
-        while normalized.startswith("./"):
-            normalized = normalized[2:]
-        return normalized
+        return PRDependencyGraphService._strip_leading_current_dirs(
+            path.replace("\\", "/")
+        )
 
     @staticmethod
     def _strip_leading_current_dirs(value: str) -> str:
@@ -450,6 +449,8 @@ class PRDependencyGraphService:
             normalized.replace("/", ".").removeprefix("."),
         }
 
+        # 处理 Python 多级相对导入，如 "..utils" 或 "...pkg"。
+        # "./"、"../" 属于 JS/TS/Ruby 等路径式相对导入，交给下一分支解析。
         if normalized.startswith(".") and not normalized.startswith(("./", "../")):
             leading_dot_count = len(normalized) - len(normalized.lstrip("."))
             module_part = normalized[leading_dot_count:]
@@ -476,6 +477,8 @@ class PRDependencyGraphService:
             candidates.add(resolved)
             candidates.add(resolved.replace("/", "."))
         elif normalized.startswith("@/"):
+            # 轻量约定：@/ 映射到仓库常见源码根路径的后缀匹配，
+            # 不解析 tsconfig/jsconfig paths 等项目级 alias 配置。
             alias_path = normalized[2:]
             candidates.add(alias_path)
             candidates.add(alias_path.replace("/", "."))
