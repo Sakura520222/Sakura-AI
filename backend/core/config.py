@@ -994,6 +994,16 @@ _dynamic_config_cache: OrderedDict[str, tuple[str, float]] = OrderedDict()
 _CACHE_TTL = 60  # 秒
 _MAX_CACHE_SIZE = 200
 
+# ========== 用户级动态配置 / User-scoped dynamic configuration ==========
+
+# 第一阶段仅开放偏好类配置，禁止 API Key、并发、配额等基础设施配置被用户覆盖。
+USER_DYNAMIC_CONFIG_KEYS = frozenset({"output_language"})
+
+_user_dynamic_config_cache: OrderedDict[tuple[int, str], tuple[str, float]] = (
+    OrderedDict()
+)
+_MAX_USER_CONFIG_CACHE_SIZE = 1000
+
 
 def _get_field_type(key: str) -> type:
     """从 Settings 字段定义获取类型"""
@@ -1052,6 +1062,124 @@ async def get_dynamic_config(key: str) -> Any:
     # 3. 回退到 Settings 默认值
     settings = get_settings()
     return getattr(settings, key, None)
+
+
+def validate_user_dynamic_config_value(key: str, value: Any) -> str:
+    """校验并标准化用户级配置值。
+
+    Args:
+        key: 配置键名
+        value: 原始配置值
+
+    Returns:
+        标准化后的字符串值
+
+    Raises:
+        ValueError: 配置键不允许用户覆盖，或值不合法
+    """
+    if key not in USER_DYNAMIC_CONFIG_KEYS:
+        raise ValueError(f"配置项不允许用户覆盖: {key}")
+
+    normalized = "" if value is None else str(value)
+    if key == "output_language":
+        allowed = {option["value"] for option in DYNAMIC_CONFIG_SELECT_OPTIONS[key]}
+        if normalized not in allowed:
+            raise ValueError("output_language 仅允许为空、zh-CN 或 en")
+    return normalized
+
+
+async def get_user_dynamic_config(key: str, user_id: int | None = None) -> Any:
+    """读取用户级动态配置，回退到全局动态配置。
+
+    解析链：UserConfig → AppConfig/get_dynamic_config → Settings 默认值。
+    """
+    if key not in USER_DYNAMIC_CONFIG_KEYS or not user_id:
+        return await get_dynamic_config(key)
+
+    expected_type = _get_field_type(key)
+    cache_key = (int(user_id), key)
+    cached = _user_dynamic_config_cache.get(cache_key)
+    if cached is not None:
+        value, expire_time = cached
+        if time.time() < expire_time:
+            _user_dynamic_config_cache.move_to_end(cache_key)
+            return _cast_config_type(value, expected_type)
+        _user_dynamic_config_cache.pop(cache_key, None)
+
+    db_value = await _read_user_config_from_db(int(user_id), key)
+    if db_value is not None:
+        _user_dynamic_config_cache[cache_key] = (db_value, time.time() + _CACHE_TTL)
+        _evict_user_config_cache()
+        return _cast_config_type(db_value, expected_type)
+
+    return await get_dynamic_config(key)
+
+
+async def get_user_dynamic_config_state(key: str, user_id: int) -> dict[str, Any]:
+    """返回用户配置展示所需的状态信息。"""
+    if key not in USER_DYNAMIC_CONFIG_KEYS:
+        raise ValueError(f"配置项不允许用户覆盖: {key}")
+
+    user_value = await _read_user_config_from_db(user_id, key)
+    global_value = await get_dynamic_config(key)
+    effective_value = (
+        _cast_config_type(user_value, _get_field_type(key))
+        if user_value is not None
+        else global_value
+    )
+    return {
+        "key": key,
+        "label": DYNAMIC_CONFIG_LABELS.get(key, key),
+        "description": DYNAMIC_CONFIG_GROUPS.get("i18n", {})
+        .get("descriptions", {})
+        .get(key, ""),
+        "input_type": get_dynamic_config_input_type(key),
+        "options": DYNAMIC_CONFIG_SELECT_OPTIONS.get(key, []),
+        "user_value": user_value,
+        "global_value": global_value,
+        "effective_value": effective_value,
+        "is_overridden": user_value is not None,
+    }
+
+
+async def _read_user_config_from_db(user_id: int, key: str) -> Optional[str]:
+    """从 UserConfig 表读取用户配置值。"""
+    try:
+        from backend.models.database import UserConfig, async_session
+        from sqlalchemy import select
+
+        async with async_session() as session:
+            result = await session.execute(
+                select(UserConfig.config_value).where(
+                    UserConfig.user_id == user_id,
+                    UserConfig.config_key == key,
+                )
+            )
+            row = result.scalar_one_or_none()
+            if row is not None:
+                return str(row)
+            return None
+    except Exception as e:
+        logger.debug(f"从数据库读取用户配置 [{user_id}:{key}] 失败: {e}")
+        return None
+
+
+def invalidate_user_dynamic_config_cache(
+    user_id: int | None = None, keys: list[str] | None = None
+):
+    """清除用户级动态配置缓存。"""
+    if user_id is None:
+        _user_dynamic_config_cache.clear()
+        return
+
+    if keys is None:
+        for cache_key in list(_user_dynamic_config_cache.keys()):
+            if cache_key[0] == int(user_id):
+                _user_dynamic_config_cache.pop(cache_key, None)
+        return
+
+    for key in keys:
+        _user_dynamic_config_cache.pop((int(user_id), key), None)
 
 
 async def _read_config_from_db(key: str) -> Optional[str]:
@@ -1162,6 +1290,12 @@ def _evict_config_cache():
     """LRU 缓存淘汰"""
     while len(_dynamic_config_cache) > _MAX_CACHE_SIZE:
         _dynamic_config_cache.popitem(last=False)
+
+
+def _evict_user_config_cache():
+    """用户级动态配置 LRU 缓存淘汰。"""
+    while len(_user_dynamic_config_cache) > _MAX_USER_CONFIG_CACHE_SIZE:
+        _user_dynamic_config_cache.popitem(last=False)
 
 
 async def load_dynamic_configs_to_settings():

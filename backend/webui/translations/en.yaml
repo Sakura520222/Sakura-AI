@@ -546,6 +546,14 @@ settings:
   save_error: "Failed to save settings"
   language_desc: "Select your preferred interface language"
   items_per_page_desc: "Set the number of items displayed per page"
+  ai_review_preferences: "AI Review Preferences"
+  ai_review_preferences_desc: "Customize personal preferences for AI-generated review content"
+  output_language: "AI Output Language"
+  output_language_desc: "Only affects PR reviews and Issue analyses triggered by or assigned to you"
+  output_languages:
+    inherit: "Follow global/interface language"
+    zh-CN: "简体中文"
+    en: "English"
   languages:
     zh-CN: "简体中文"
     en: "English"

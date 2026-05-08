@@ -6,7 +6,7 @@ from datetime import datetime, timedelta
 from typing import Dict, Any, List
 from loguru import logger
 
-from backend.core.config import get_settings, get_strategy_config
+from backend.core.config import get_settings, get_strategy_config, get_user_dynamic_config
 from backend.models.database import AppConfig, async_session
 from backend.services.ai_reviewer.api_client import AIApiClient
 from backend.services.ai_reviewer.tools import (
@@ -64,7 +64,11 @@ class IssueAnalyzer:
         self.tools = self.tool_manager.get_all_tools_definitions()
 
     def _build_system_prompt(
-        self, repo_full_name: str, available_labels: List[str], issue_number: int = None
+        self,
+        repo_full_name: str,
+        available_labels: List[str],
+        issue_number: int = None,
+        output_language: str = "",
     ) -> str:
         """构建系统提示词"""
         config = get_strategy_config().get_issue_analysis_config()
@@ -87,7 +91,7 @@ class IssueAnalyzer:
         result = base_prompt + labels_section + repo_section + issue_section
 
         # 注入输出语言指令 / Inject output language directive
-        output_lang = get_settings().output_language
+        output_lang = output_language
         if output_lang:
             language_names = {
                 "zh-CN": "中文 (Simplified Chinese)",
@@ -185,6 +189,9 @@ class IssueAnalyzer:
             await self.tool_handler.fetch_url_tool.reset_session()
 
         settings = get_settings()
+        output_language = await get_user_dynamic_config(
+            "output_language", issue_info.get("user_id")
+        )
 
         repo_full_name = f"{repo_owner}/{repo_name}"
 
@@ -217,7 +224,10 @@ class IssueAnalyzer:
 
         # 构建提示词
         system_prompt = self._build_system_prompt(
-            repo_full_name, available_labels, issue_info.get("issue_number")
+            repo_full_name,
+            available_labels,
+            issue_info.get("issue_number"),
+            output_language=output_language or "",
         )
         user_message = self._build_user_message(
             issue_info, available_labels, collaborators
