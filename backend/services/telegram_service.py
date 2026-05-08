@@ -358,22 +358,13 @@ class TelegramService:
         }
 
     async def list_all_users(self) -> List[TelegramUser]:
-        """列出所有用户，并为展示结果执行惰性配额重置。"""
+        """列出所有用户，并先批量重置过期配额，避免列表页逐用户写入。"""
+        await QuotaService(self.session).reset_all_expired_quotas_atomic()
+
         result = await self.session.execute(
             select(TelegramUser).where(TelegramUser.is_active)
         )
-        users = result.scalars().all()
-
-        quota_service = QuotaService(self.session)
-        changed = False
-        for user in users:
-            changed = await quota_service.reset_user_quotas_if_expired(
-                user, commit=False
-            ) or changed
-        if changed:
-            await self.session.commit()
-
-        return users
+        return result.scalars().all()
 
     async def list_all_repos(self) -> List[RepoSubscription]:
         """列出所有仓库"""

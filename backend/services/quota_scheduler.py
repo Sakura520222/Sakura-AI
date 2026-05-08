@@ -52,6 +52,7 @@ class QuotaResetScheduler:
     async def _run_quota_reset(self):
         """定时批量重置入口。"""
         try:
+            # 延迟导入避免模块初始化时数据库会话工厂尚未完成引导，造成循环依赖。
             from backend.models.database import async_session
             from backend.services.quota_service import QuotaService
 
