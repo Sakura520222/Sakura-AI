@@ -44,6 +44,10 @@ Sakura AI Reviewer 是一款基于大语言模型的智能 GitHub 代码审查�
 - **静态分析降级模式**：正则提取 import + 路径别名解析，必须记录失败日志
 - **委托模式重构规范**：重构为委托后须注释行为等价性，调用方变量名须与语义匹配
 - **批量返回值语义强化**：批量重置函数返回 `ResetResult` 对象而非 `rowcount` 累加
+- **副作用函数命名必须明确**：若函数在特定参数下会修改状态，函数名或参数名必须显式提示
+- **外部写入失败后须记录可恢复警告**：DB 已提交但外部文件写入失败时，必须记录 error 日志并说明不一致风险
+- **并发触发配额重置必须加锁或幂等**：多个请求同时调用重置函数可能导致重复更新，应使用分布式锁或行锁
+- **批量 UPDATE 必须在一个事务中原子执行**：循环执行多条 UPDATE 必须使用 `begin_nested()` 或单条 CASE WHEN 语句
 
 ## 3. 已知问题和注意事项
 
@@ -106,6 +110,7 @@ Sakura AI Reviewer 是一款基于大语言模型的智能 GitHub 代码审查�
 - **定时任务注册必须验证启动钩子**：新增 `scheduler.add_job` 须确认在 `startup_event` 或 `lifespan` 中调用
 - **批量重置函数返回语义须明确**：返回 `ResetResult(affected_users, affected_fields)` 而非 `rowcount` 累加
 - **列表页 N+1 量化阈值**：用户量 <500 且操作轻量可允许，但须注释性能假设
+- **只读接口中禁止嵌入写操作**：包括批量写，例外需注释用户量上限和操作开销评估
 
 ## 4. 审查中发现的重要模式
 
@@ -243,6 +248,11 @@ Sakura AI Reviewer 是一款基于大语言模型的智能 GitHub 代码审查�
 - **定时任务注册验证（major）**：新增调度器必须验证启动钩子
 - **批量重置返回值语义（major）**：须返回结构化对象
 - **列表页 N+1 量化阈值（minor）**：须注释性能假设
+- **副作用函数命名必须明确（major）**
+- **外部写入失败可恢复告警（major）**
+- **并发配额重置加锁或幂等（major）**
+- **批量 UPDATE 原子执行（major）**
+- **只读接口禁止嵌入写操作（major）**
 
 ### suggestion 疲劳归档协议
 - 第 1 轮未修复：评估降级
@@ -275,5 +285,5 @@ Sakura AI Reviewer 是一款基于大语言模型的智能 GitHub 代码审查�
 
 ## 仓库信息
 - 仓库名: Sakura520222/Sakura-AI-Reviewer
-- 语言统计: Python: 1574852, HTML: 466437, Shell: 4194, Dockerfile: 862, url: https://api.github.com/repos/Sakura520222/Sakura-AI-Reviewer/languages
-- 累计反思次数: 160
+- 语言统计: Python: 1605404, HTML: 467450, Shell: 4194, Dockerfile: 862
+- 累计反思次数: 163
