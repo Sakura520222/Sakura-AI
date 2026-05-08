@@ -38,7 +38,7 @@
 - **Web Search Enhancement**: Supports DuckDuckGo / Tavily, allowing AI to actively search the internet to assist review decisions
 - **Repository-level Knowledge Base (RAG)**: Vector semantic retrieval of project documentation, providing normative context for AI reviews
 - **PR Code Auto-indexing**: Syntax-aware chunking + semantic search, enabling AI to precisely locate relevant code
-- 🧠 **Project Memory System**: Self-reflection and knowledge accumulation based on `.sakura/` directory, AI reviews get smarter about your project over time
+- 🧠 **Project Memory System**: Self-reflection and knowledge accumulation based on `.sakura/` directory, AI reviews get smarter about your project over time. See [Project Memory Guide](docs/SAKURA_MEMORY_GUIDE.md) (Chinese)
 
 ### Repository Scanning
 
@@ -257,7 +257,7 @@ All configuration follows this priority: **Database app_config (WebUI) > Setting
 - **Web Search Tool**: `web_search_provider` in WebUI configuration (`duckduckgo` free or `tavily` premium)
 - **Cross-file Search**: `context_enhancement.search_in_files` in `config/strategies.yaml` — configure GitHub Search API priority, context lines, max results, etc.
 - **Git Info Tool**: `context_enhancement.git_tools` in `config/strategies.yaml` — configure default branch and commit return counts
-- **Project Memory System**: `sakura_memory_enabled` to enable memory system, `sakura_reflection_enabled` to enable post-review reflection, `sakura_consolidation_interval` for consolidation trigger threshold (default 5), `sakura_auto_init` to auto-initialize `.sakura/` directory — all in WebUI configuration
+- **Project Memory System**: `sakura_memory_enabled` to enable memory system, `sakura_reflection_enabled` to enable post-review reflection, `sakura_consolidation_interval` for consolidation trigger threshold (default 5), `sakura_auto_init` to auto-initialize `.sakura/` directory — all in WebUI configuration. Users can place custom docs in `.sakura/rules/`, `.sakura/docs/`, `.sakura/plans/`. See [Project Memory Guide](docs/SAKURA_MEMORY_GUIDE.md) (Chinese)
 - **Model Context**: Configure context window, auto-compression in WebUI configuration, see [Model Context Management](docs/MODEL_CONTEXT_FEATURE.md)
 - **Internationalization (i18n)**: WebUI supports Chinese/English interface switching (Settings page). AI output language can be configured via `OUTPUT_LANGUAGE` environment variable (`zh-CN` or `en`). Comment templates automatically match the selected language.
 
@@ -353,6 +353,7 @@ Sakura-AI-Reviewer/
 | [Quota System Guide](docs/QUOTA_SYSTEM_GUIDE.md)               | PR/Issue quota usage tracking and auto-reset mechanism |
 | [API v1 Reference](docs/api-v1-reference.md)                   | RESTful API documentation (mobile integration)  |
 | [WebUI Design Document](docs/plans/2026-03-27-webui-design.md) | WebUI design specification                      |
+| [Project Memory Guide](docs/SAKURA_MEMORY_GUIDE.md) | .sakura/ directory structure, lifecycle, configuration (Chinese) |
 | [Project Memory System Design](docs/plans/2026-04-20-sakura-memory-design.md) | .sakura/ memory system architecture & config |
 | [Agents Project Guide](AGENTS.md)                              | Project conventions for automation agents and contributors |
 
