@@ -88,14 +88,6 @@ async def user_list_fragment(
     users, total, total_pages, page = await paginate(
         db, query, count_query, page, per_page
     )
-    quota_service = QuotaService(db)
-    changed = False
-    for target_user in users:
-        changed = await quota_service.reset_user_quotas_if_expired(
-            target_user, commit=False
-        ) or changed
-    if changed:
-        await db.commit()
 
     return templates.TemplateResponse(
         "components/user_list_fragment.html",

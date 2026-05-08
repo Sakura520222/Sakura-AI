@@ -74,14 +74,6 @@ async def list_users(
     users, total, total_pages, page = await paginate(
         db, query, count_query, page, per_page
     )
-    quota_service = QuotaService(db)
-    changed = False
-    for target in users:
-        changed = await quota_service.reset_user_quotas_if_expired(
-            target, commit=False
-        ) or changed
-    if changed:
-        await db.commit()
 
     items = [
         UserResponse.model_validate(u, from_attributes=True).model_dump(mode="json")
