@@ -3,8 +3,9 @@
 import asyncio
 from pathlib import Path
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Request
 from pydantic import BaseModel
+from sqlalchemy import select
 from loguru import logger
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -24,6 +25,7 @@ from backend.api.v1.schemas import (
     ConfigLabelsUpdateRequest,
     ConfigLabelRecommendationUpdateRequest,
 )
+from backend.api.v1.deps import limiter
 from backend.core.setup_service import setup_service
 
 router = APIRouter(prefix="/config", tags=["Config"])
@@ -60,15 +62,15 @@ async def get_ai_providers(user: dict = Depends(require_api_super_admin)):
 
 
 @router.post("/ai-providers/{provider}/models")
+@limiter.limit("10/minute")
 async def get_ai_provider_models(
+    request: Request,
     provider: str,
     body: AIModelsRequest,
     db: AsyncSession = Depends(get_db),
     user: dict = Depends(require_api_super_admin),
 ):
     """按厂商获取模型列表。若未传 API Key，则尝试使用数据库中保存的真实 Key。"""
-    from sqlalchemy import select
-
     api_key = (body.api_key or "").strip()
     api_base = (body.api_base or "").strip()
     if not api_key:

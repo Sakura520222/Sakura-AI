@@ -99,20 +99,18 @@ def list_ai_providers(include_summary_follow: bool = False) -> list[dict[str, An
     """List configured AI providers for API/UI use."""
     providers = [provider.to_public_dict() for provider in AI_PROVIDERS.values()]
     if include_summary_follow:
-        providers.insert(
-            0,
-            {
-                "id": "",
-                "label": "跟随主模型 / Follow main model",
-                "base_url": "",
-                "default_model": "",
-                "models_endpoint": "models",
-                "model_detail_endpoint": "models/{model}",
-                "supports_model_list": False,
-                "supports_context_window": False,
-                "notes": "",
-            },
+        summary_follow = AIProvider(
+            id="",
+            label="跟随主模型 / Follow main model",
+            base_url="",
+            default_model="",
+            models_endpoint="models",
+            model_detail_endpoint="models/{model}",
+            supports_model_list=False,
+            supports_context_window=False,
+            notes="",
         )
+        providers.insert(0, summary_follow.to_public_dict())
     return providers
 
 
@@ -134,24 +132,32 @@ def get_provider_select_options(include_summary_follow: bool = False) -> list[di
     return options
 
 
-def build_models_url(provider_id: str | None, api_base: str | None = None) -> str:
-    """Build a provider model-list URL."""
+def _build_base_url(provider_id: str | None, api_base: str | None = None) -> tuple[AIProvider, str]:
+    """Return (provider, base_url_with_trailing_slash) for URL building."""
     provider = get_ai_provider(provider_id)
     base_url = (api_base or provider.base_url or "https://api.openai.com/v1").strip()
     if not base_url.endswith("/"):
         base_url += "/"
-    return f"{base_url}{provider.models_endpoint.lstrip('/')}"
+    return provider, base_url
+
+
+def build_models_url(provider_id: str | None, api_base: str | None = None) -> str:
+    """Build a provider model-list URL."""
+    provider, base_url = _build_base_url(provider_id, api_base)
+    endpoint = provider.models_endpoint
+    if endpoint.startswith("/"):
+        endpoint = endpoint[1:]
+    return f"{base_url}{endpoint}"
 
 
 def build_model_detail_url(
     provider_id: str | None, model: str, api_base: str | None = None
 ) -> str:
     """Build a provider model-detail URL."""
-    provider = get_ai_provider(provider_id)
-    base_url = (api_base or provider.base_url or "https://api.openai.com/v1").strip()
-    if not base_url.endswith("/"):
-        base_url += "/"
-    endpoint = provider.model_detail_endpoint.format(model=model).lstrip("/")
+    provider, base_url = _build_base_url(provider_id, api_base)
+    endpoint = provider.model_detail_endpoint.format(model=model)
+    if endpoint.startswith("/"):
+        endpoint = endpoint[1:]
     return f"{base_url}{endpoint}"
 
 

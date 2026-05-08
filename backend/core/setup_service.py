@@ -241,15 +241,20 @@ class SetupService:
         except httpx.ConnectError:
             return {
                 "success": False,
-                "message": f"无法连接到 {models_url}，请检查 API Base URL",
+                "message": "无法连接到 API 服务，请检查 API Base URL",
             }
         except Exception as e:
-            return {"success": False, "message": f"验证异常: {e}"}
+            logger.debug(f"AI API 测试异常: {e}")
+            return {"success": False, "message": "验证异常，请稍后重试"}
 
     async def fetch_provider_models(
         self, provider: str, api_key: str, api_base: str = ""
     ) -> dict[str, Any]:
-        """按厂商获取模型列表。"""
+        """按厂商获取模型列表。
+
+        内部委托 :meth:`test_ai_api` 并传入空 model，返回值结构与其一致：
+        ``{success, message, provider, ...}``，成功时 ``models`` 字段包含模型 ID 列表。
+        """
         return await self.test_ai_api(api_key, api_base, provider=provider)
 
     async def fetch_model_context_window(

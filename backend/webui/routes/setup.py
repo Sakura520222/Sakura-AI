@@ -7,6 +7,7 @@
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse, RedirectResponse
 from loguru import logger
+from pydantic import BaseModel
 
 from backend.core.bootstrap import (
     is_bootstrap_mode,
@@ -108,18 +109,23 @@ async def get_ai_providers(request: Request):
     )
 
 
+class AIModelsBody(BaseModel):
+    """AI 模型列表请求体。"""
+
+    provider: str = "custom"
+    api_key: str = ""
+    api_base: str = ""
+
+
 @router.post("/api/ai-models")
-async def get_ai_models(request: Request):
+async def get_ai_models(request: Request, body: AIModelsBody):
     """按厂商获取模型列表。"""
     if not is_bootstrap_mode():
         return JSONResponse(
             {"success": False, "message": "Setup 已完成"}, status_code=403
         )
-    body = await request.json()
     result = await setup_service.fetch_provider_models(
-        body.get("provider", "custom"),
-        body.get("api_key", ""),
-        body.get("api_base", ""),
+        body.provider, body.api_key, body.api_base
     )
     return JSONResponse(result)
 
