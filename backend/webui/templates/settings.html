@@ -37,6 +37,19 @@
                         <option value="100" {% if items_per_page == 100 %}selected{% endif %}>100 {{ _('settings.items_per_page_unit') }}</option>
                     </select>
                 </div>
+
+                <!-- AI 审查偏好 / AI Review Preferences -->
+                <div class="pt-6 border-t border-gray-200 dark:border-gray-700">
+                    <h3 class="text-base font-medium">{{ _('settings.ai_review_preferences') }}</h3>
+                    <p class="text-sm text-gray-500 dark:text-gray-400 mt-1">{{ _('settings.ai_review_preferences_desc') }}</p>
+                    <label class="block mt-4 text-sm font-medium text-gray-700 dark:text-gray-300">{{ _('settings.output_language') }}</label>
+                    <p class="text-sm text-gray-500 dark:text-gray-400 mt-1">{{ _('settings.output_language_desc') }}</p>
+                    <select name="output_language" class="mt-2 px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-sm focus:ring-2 focus:ring-pink-500 focus:border-transparent outline-none">
+                        <option value="" {% if output_language == '' %}selected{% endif %}>{{ _('settings.output_languages.inherit') }}</option>
+                        <option value="zh-CN" {% if output_language == 'zh-CN' %}selected{% endif %}>{{ _('settings.output_languages.zh-CN') }}</option>
+                        <option value="en" {% if output_language == 'en' %}selected{% endif %}>{{ _('settings.output_languages.en') }}</option>
+                    </select>
+                </div>
             </div>
 
             <!-- 保存按钮 -->

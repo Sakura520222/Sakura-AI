@@ -8,6 +8,7 @@ from loguru import logger
 import uuid
 
 from backend.core.config import get_settings, get_strategy_config
+from backend.core.config import get_user_dynamic_config
 from backend.core.github_app import GitHubAppClient
 from backend.services.pr_analyzer import PRAnalyzer, PRAnalysis
 from backend.services.ai_reviewer import AIReviewer
@@ -392,14 +393,20 @@ class ReviewWorker:
                             f"[{task_id}] PR 依赖图生成失败（不影响审查）: {e}"
                         )
 
+                output_language = await get_user_dynamic_config(
+                    "output_language", pr_info.get("user_id")
+                )
+
                 # 5. 【第一阶段】创建占位评论
                 logger.info(f"[{task_id}] 创建占位评论...")
                 review_obj = await self.comment_service.create_placeholder_comment(
-                    pr, analysis.strategy
+                    pr, analysis.strategy, output_language=output_language
                 )
 
                 # 6. 准备审查上下文
                 context = await self.analyzer.prepare_review_context(analysis, pr)
+                context["user_id"] = pr_info.get("user_id")
+                context["output_language"] = output_language
 
                 # 6.1 注入 PR 变更总结到审查上下文
                 if pr_summary_text:
@@ -749,6 +756,7 @@ class ReviewWorker:
                     pr,
                     analysis,
                     label_results,
+                    output_language=output_language,
                 )
 
                 # 11. 更新状态为完成
@@ -811,7 +819,12 @@ class ReviewWorker:
                 if review_obj:
                     try:
                         await self.comment_service.update_review_with_error(
-                            review_obj, str(e), pr
+                            review_obj,
+                            str(e),
+                            pr,
+                            output_language=await get_user_dynamic_config(
+                                "output_language", pr_info.get("user_id")
+                            ),
                         )
                         logger.info(f"[{task_id}] 已更新占位评论为错误状态")
                     except Exception as update_error:
@@ -1024,6 +1037,7 @@ class ReviewWorker:
         pr: Any,
         analysis: PRAnalysis,
         label_results: Optional[Dict[str, Any]] = None,
+        output_language: str | None = None,
     ) -> tuple[Optional[ReviewDecision], Optional[str]]:
         """做出审查决定并提交到GitHub（包含行内评论）
 
@@ -1065,6 +1079,7 @@ class ReviewWorker:
                 decision_reason=decision_reason,
                 label_results=label_results,
                 strategy_name=strategy_name,
+                output_language=output_language,
             )
 
             # 5. 获取行内评论

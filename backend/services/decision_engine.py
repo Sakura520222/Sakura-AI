@@ -284,6 +284,7 @@ class DecisionEngine:
         label_results: Dict[str, Any] = None,
         strategy_name: str = "代码审查",
         template_vars: Dict[str, Any] = None,
+        output_language: str | None = None,
     ) -> str:
         """格式化审查评论内容
 
@@ -300,7 +301,7 @@ class DecisionEngine:
         """
         try:
             # 根据 output_language 选择模板 / Select template based on output_language
-            output_lang = get_settings().output_language
+            output_lang = output_language if output_language is not None else get_settings().output_language
             if output_lang == "en":
                 templates = self.policy.get("review_templates_en", {})
             else:

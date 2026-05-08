@@ -14,7 +14,9 @@ class CommentService:
     def __init__(self):
         pass
 
-    async def create_placeholder_comment(self, pr: Any, strategy: str) -> Any:
+    async def create_placeholder_comment(
+        self, pr: Any, strategy: str, output_language: str | None = None
+    ) -> Any:
         """创建占位评论（使用 Issue Comment）
 
         使用 Issue Comment 而不是 PR Review，因为 COMMENT 类型的 review 无法被 dismiss。
@@ -32,7 +34,7 @@ class CommentService:
             strategy_name = strategy_info.get("name", "代码审查")
 
             # 构建占位消息（多语言）
-            if get_settings().output_language == "en":
+            if (output_language if output_language is not None else get_settings().output_language) == "en":
                 placeholder_body = f"""# 🔄 Reviewing...
 
 **Sakura AI** is analyzing this PR using **{strategy_name}** strategy, please wait...
@@ -185,7 +187,11 @@ class CommentService:
             raise
 
     async def update_review_with_error(
-        self, comment: Any, error_message: str, pr: Any = None
+        self,
+        comment: Any,
+        error_message: str,
+        pr: Any = None,
+        output_language: str | None = None,
     ):
         """将占位评论更新为错误消息
 
@@ -197,7 +203,7 @@ class CommentService:
             pr: GitHub PR 对象
         """
         try:
-            if get_settings().output_language == "en":
+            if (output_language if output_language is not None else get_settings().output_language) == "en":
                 error_body = f"""# ❌ Review Failed
 
 Sorry, Sakura encountered an error during review:
@@ -283,10 +289,11 @@ Please check system logs or contact the administrator.
         review_result: Dict[str, Any],
         strategy: str,
         label_results: Optional[Dict[str, Any]] = None,
+        output_language: str | None = None,
     ) -> str:
         """格式化评论内容"""
         lines = []
-        is_en = get_settings().output_language == "en"
+        is_en = (output_language if output_language is not None else get_settings().output_language) == "en"
 
         # 添加标题
         strategy_info = get_strategy_config().get_strategy(strategy)

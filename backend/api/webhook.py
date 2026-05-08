@@ -218,6 +218,7 @@ async def handle_pull_request_event(payload: Dict[str, Any]) -> JSONResponse:
                 return JSONResponse(
                     content={"status": "skipped", "reason": "unregistered repo owner"}
                 )
+            pr_info["user_id"] = user.id
 
             # 2. 检查并消耗配额
             allowed, reason = await service.check_and_consume_quota(
@@ -466,6 +467,23 @@ async def handle_issue_comment_event(payload: Dict[str, Any]) -> JSONResponse:
                 "draft": pr.draft,
                 "merged": pr.merged,
             }
+
+            try:
+                async with get_async_session() as session:
+                    svc = TelegramService(session)
+                    trigger_user = await svc.get_user_by_github_username(
+                        commenter_login
+                    )
+                    if trigger_user:
+                        pr_info["user_id"] = trigger_user.id
+                    else:
+                        author_user = await svc.get_user_by_github_username(
+                            pr.user.login
+                        )
+                        if author_user:
+                            pr_info["user_id"] = author_user.id
+            except Exception as e:
+                logger.warning(f"解析 /full-review 用户配置上下文失败: {e}")
         except Exception as e:
             logger.error(f"获取PR信息失败: {e}", exc_info=True)
             return JSONResponse(
@@ -870,6 +888,7 @@ async def handle_issue_event(payload: Dict[str, Any]) -> JSONResponse:
                 return JSONResponse(
                     content={"status": "skipped", "reason": "unregistered repo owner"}
                 )
+            issue_info["user_id"] = user.id
 
             # Issue 配额检查
             allowed, reason = await service.check_and_consume_issue_quota(
@@ -957,6 +976,7 @@ async def handle_issue_analyze_command(payload: Dict[str, Any]) -> JSONResponse:
                 return JSONResponse(
                     content={"status": "skipped", "reason": "unregistered user"}
                 )
+            issue_info["user_id"] = user.id
 
             allowed, reason = await service.check_and_consume_issue_quota(
                 github_username=commenter,
