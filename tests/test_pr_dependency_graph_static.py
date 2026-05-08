@@ -62,6 +62,40 @@ def test_static_mermaid_links_relative_typescript_imports(service):
     assert "N1 --> N2" in graph
 
 
+def test_static_mermaid_links_python_parent_relative_imports(service):
+    files = [
+        make_file("pkg/features/views.py"),
+        make_file("pkg/utils/helper.py"),
+    ]
+    contents = {
+        "pkg/features/views.py": "from ..utils import helper\n",
+        "pkg/utils/helper.py": "def run():\n    pass\n",
+    }
+
+    graph = service._generate_static_mermaid(files, contents, max_nodes=25)
+
+    assert 'N1["pkg/features/views.py"]' in graph
+    assert 'N2["pkg/utils/helper.py"]' in graph
+    assert "N1 --> N2" in graph
+
+
+def test_static_mermaid_links_at_alias_imports(service):
+    files = [
+        make_file("src/pages/Home.tsx"),
+        make_file("src/components/Header.tsx"),
+    ]
+    contents = {
+        "src/pages/Home.tsx": "import Header from '@/components/Header';\n",
+        "src/components/Header.tsx": "export default function Header() { return null; }\n",
+    }
+
+    graph = service._generate_static_mermaid(files, contents, max_nodes=25)
+
+    assert 'N1["src/pages/Home.tsx"]' in graph
+    assert 'N2["src/components/Header.tsx"]' in graph
+    assert "N1 --> N2" in graph
+
+
 def test_static_mermaid_generates_nodes_without_edges(service):
     files = [make_file("src/a.py"), make_file("src/b.py")]
     contents = {
@@ -93,6 +127,27 @@ def test_static_mermaid_respects_max_nodes(service):
 
     assert graph.count('["src/') == 2
     assert "OMITTED" in graph
+
+
+def test_normalize_path_only_removes_leading_current_dir_segments():
+    assert PRDependencyGraphService._normalize_path("./test.") == "test."
+    assert PRDependencyGraphService._normalize_path("mymodule/./config.py") == (
+        "mymodule/./config.py"
+    )
+    assert PRDependencyGraphService._normalize_path(".hidden/config.py") == (
+        ".hidden/config.py"
+    )
+
+
+def test_escape_mermaid_label_handles_special_characters(service):
+    files = [make_file('src/components/<Widget>{v1}".tsx')]
+    contents = {'src/components/<Widget>{v1}".tsx': "export const widget = null;\n"}
+
+    graph = service._generate_static_mermaid(files, contents, max_nodes=25)
+
+    assert "&lt;Widget&gt;" in graph
+    assert "&#123;v1&#125;'" in graph
+    assert '".tsx' not in graph
 
 
 def test_dependency_graph_mode_dynamic_config_registered():
