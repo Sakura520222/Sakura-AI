@@ -80,6 +80,9 @@ def test_static_mermaid_links_python_parent_relative_imports(service):
 
 
 def test_static_mermaid_links_at_alias_imports(service):
+    # Static mode treats @/ as a source-root suffix convention. It does not read
+    # tsconfig/jsconfig paths, so this resolves because components/Header is a
+    # suffix alias of src/components/Header.tsx.
     files = [
         make_file("src/pages/Home.tsx"),
         make_file("src/components/Header.tsx"),
