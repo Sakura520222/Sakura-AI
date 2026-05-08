@@ -22,6 +22,7 @@ class QuotaResetScheduler:
             from apscheduler.schedulers.asyncio import AsyncIOScheduler
             from apscheduler.triggers.cron import CronTrigger
 
+            # 配额统计按 UTC 自然日/周/月结算，避免部署机器本地时区影响重置时间。
             self._scheduler = AsyncIOScheduler(
                 timezone="UTC",
                 job_defaults={"coalesce": True, "max_instances": 1},
@@ -60,6 +61,6 @@ class QuotaResetScheduler:
 
             async with async_session() as session:
                 reset_count = await QuotaService(session).reset_all_expired_quotas_atomic()
-            logger.info(f"✅ 定时配额重置完成，更新字段次数: {reset_count}")
+            logger.info(f"✅ 定时配额重置完成，字段维度更新次数: {reset_count}")
         except Exception as e:
             logger.error(f"❌ 定时配额重置异常: {e}", exc_info=True)
