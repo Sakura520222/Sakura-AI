@@ -46,6 +46,7 @@ async def lifespan(app: FastAPI):
     telegram_task = None
     redis_listener_task = None
     scan_scheduler = None
+    quota_reset_scheduler = None
 
     if not is_bootstrap_mode():
         # 正常模式：完整启动所有服务
@@ -127,6 +128,15 @@ async def lifespan(app: FastAPI):
                 scan_scheduler.start()
             except Exception as e:
                 logger.error(f"❌ 仓库扫描调度器启动失败: {e}")
+
+            # 启动配额重置调度器
+            try:
+                from backend.services.quota_scheduler import QuotaResetScheduler
+
+                quota_reset_scheduler = QuotaResetScheduler()
+                quota_reset_scheduler.start()
+            except Exception as e:
+                logger.error(f"❌ 配额重置调度器启动失败: {e}")
     else:
         logger.warning("🔧 Bootstrap 模式：仅 Setup Wizard 可用")
         logger.info("请访问 /setup 完成初始配置")
@@ -172,6 +182,10 @@ async def lifespan(app: FastAPI):
     # 停止仓库扫描调度器
     if scan_scheduler:
         scan_scheduler.stop()
+
+    # 停止配额重置调度器
+    if quota_reset_scheduler:
+        quota_reset_scheduler.stop()
 
 
 # 创建FastAPI应用
