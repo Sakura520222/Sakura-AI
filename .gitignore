@@ -73,3 +73,4 @@ deploy.py
 .deploy_state.json
 .claude/
 CLAUDE.md
+node_modules/
