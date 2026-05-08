@@ -56,6 +56,20 @@ CREATE TABLE IF NOT EXISTS app_config (
     INDEX idx_key_name (key_name)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
+-- 创建用户级配置表
+CREATE TABLE IF NOT EXISTS user_configs (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    user_id INT NOT NULL,
+    config_key VARCHAR(100) NOT NULL,
+    config_value TEXT,
+    description VARCHAR(255),
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP NOT NULL,
+    UNIQUE KEY uq_user_config_key (user_id, config_key),
+    INDEX idx_user_id (user_id),
+    INDEX idx_config_key (config_key)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
 -- 创建审查队列表
 CREATE TABLE IF NOT EXISTS review_queue (
     id INT AUTO_INCREMENT PRIMARY KEY,

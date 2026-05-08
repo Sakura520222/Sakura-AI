@@ -14,6 +14,16 @@ class CommentService:
     def __init__(self):
         pass
 
+    @staticmethod
+    def _is_english(output_language: str | None = None) -> bool:
+        """判断当前输出语言是否为英文。"""
+        effective_language = (
+            output_language
+            if output_language is not None
+            else get_settings().output_language
+        )
+        return effective_language == "en"
+
     async def create_placeholder_comment(
         self, pr: Any, strategy: str, output_language: str | None = None
     ) -> Any:
@@ -34,7 +44,7 @@ class CommentService:
             strategy_name = strategy_info.get("name", "代码审查")
 
             # 构建占位消息（多语言）
-            if (output_language if output_language is not None else get_settings().output_language) == "en":
+            if self._is_english(output_language):
                 placeholder_body = f"""# 🔄 Reviewing...
 
 **Sakura AI** is analyzing this PR using **{strategy_name}** strategy, please wait...
@@ -88,6 +98,7 @@ class CommentService:
         pr: Any = None,
         label_results: Optional[Dict[str, Any]] = None,
         analysis: Any = None,
+        output_language: str | None = None,
     ):
         """更新已有的审查评论
 
@@ -101,6 +112,7 @@ class CommentService:
             pr: GitHub PR 对象
             label_results: 标签应用结果（可选）
             analysis: PR 分析结果（包含 diff 安全区）
+            output_language: 输出语言（可选，None 时使用全局配置）
         """
         try:
             # 检查是否有行内评论
@@ -117,7 +129,10 @@ class CommentService:
 
                     # 2. 构建整体评论内容
                     review_body = self._format_comment(
-                        review_result, strategy, label_results
+                        review_result,
+                        strategy,
+                        label_results,
+                        output_language=output_language,
                     )
 
                     # 3. 根据是否有行内评论选择不同的创建方式
@@ -172,7 +187,10 @@ class CommentService:
                     )
                     # 降级方案：创建新的普通评论
                     review_body = self._format_comment(
-                        review_result, strategy, label_results
+                        review_result,
+                        strategy,
+                        label_results,
+                        output_language=output_language,
                     )
                     await asyncio.to_thread(
                         pr.create_issue_comment,
@@ -203,7 +221,7 @@ class CommentService:
             pr: GitHub PR 对象
         """
         try:
-            if (output_language if output_language is not None else get_settings().output_language) == "en":
+            if self._is_english(output_language):
                 error_body = f"""# ❌ Review Failed
 
 Sorry, Sakura encountered an error during review:
@@ -259,7 +277,11 @@ Please check system logs or contact the administrator.
             # 如果更新失败，尝试记录日志但不中断流程
 
     async def post_review_comment(
-        self, pr: Any, review_result: Dict[str, Any], strategy: str
+        self,
+        pr: Any,
+        review_result: Dict[str, Any],
+        strategy: str,
+        output_language: str | None = None,
     ):
         """发布审查评论到PR（使用create_review一次性发布）
 
@@ -267,7 +289,9 @@ Please check system logs or contact the administrator.
         """
         try:
             # 构建评论内容
-            comment_body = self._format_comment(review_result, strategy)
+            comment_body = self._format_comment(
+                review_result, strategy, output_language=output_language
+            )
 
             # 使用 create_review 一次性发布所有评论
             # 这样可以避免触发 GitHub API 频率限制
@@ -293,7 +317,7 @@ Please check system logs or contact the administrator.
     ) -> str:
         """格式化评论内容"""
         lines = []
-        is_en = (output_language if output_language is not None else get_settings().output_language) == "en"
+        is_en = self._is_english(output_language)
 
         # 添加标题
         strategy_info = get_strategy_config().get_strategy(strategy)

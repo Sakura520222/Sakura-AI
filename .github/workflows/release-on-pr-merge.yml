@@ -120,24 +120,24 @@ jobs:
       - name: 读取当前版本
         id: read_version
         run: |
-          # 读取 backend/main.py 中的当前版本号
-          if [ -f backend/main.py ]; then
+          # 读取 backend/__init__.py 中的当前版本号（Python 代码版本号单一来源）
+          if [ -f backend/__init__.py ]; then
             CURRENT_VERSION=$(
-              sed -n 's/.*version="\([0-9.]*\)".*/\1/p' backend/main.py | head -n 1
+              sed -n 's/^__version__[[:space:]]*=[[:space:]]*"\([0-9.]*\)".*/\1/p' backend/__init__.py | head -n 1
             )
 
             # 如果未能解析出版本号则直接失败，避免创建错误 tag（如 v）
             if [ -z "$CURRENT_VERSION" ]; then
-              echo "无法从 backend/main.py 解析版本号，请检查 version 定义格式是否正确。" >&2
+              echo "无法从 backend/__init__.py 解析版本号，请检查 __version__ 定义格式是否正确。" >&2
               exit 1
             fi
           else
-            echo "❌ 错误: backend/main.py 文件不存在"
+            echo "❌ 错误: backend/__init__.py 文件不存在"
             exit 1
           fi
 
           echo "current_version=$CURRENT_VERSION" >> "$GITHUB_OUTPUT"
-          echo "backend/main.py 当前版本: $CURRENT_VERSION"
+          echo "backend/__init__.py 当前版本: $CURRENT_VERSION"
 
           # 获取今天日期
           TODAY=$(date +'%Y-%m-%d')
@@ -419,7 +419,12 @@ jobs:
       
       - name: 验证项目结构
         run: |
-          # 验证后端主文件
+          # 验证后端版本文件和主文件
+          if [ ! -f "backend/__init__.py" ]; then
+            echo "❌ 错误: backend/__init__.py 文件不存在"
+            exit 1
+          fi
+
           if [ ! -f "backend/main.py" ]; then
             echo "❌ 错误: backend/main.py 文件不存在"
             exit 1

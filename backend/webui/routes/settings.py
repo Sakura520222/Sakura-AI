@@ -36,8 +36,9 @@ async def settings_page(
     user_prefs: dict = Depends(get_user_preferences),
 ):
     """渲染个人设置页面"""
+    user_id = int(user["user_id"])
     output_language_config = await get_user_dynamic_config_state(
-        "output_language", int(user["user_id"])
+        "output_language", user_id
     )
     return render_template(
         "settings.html",
@@ -66,6 +67,8 @@ async def save_settings(
     output_language: str = Form(default=""),
 ):
     """保存个人设置"""
+    user_id = int(user["user_id"])
+
     # 验证参数范围
     if items_per_page not in (10, 20, 50, 100):
         return toast_redirect(
@@ -93,7 +96,7 @@ async def save_settings(
 
     # Upsert 配置
     result = await db.execute(
-        select(WebUIConfig).where(WebUIConfig.user_id == user["user_id"])
+        select(WebUIConfig).where(WebUIConfig.user_id == user_id)
     )
     config = result.scalar_one_or_none()
     if config:
@@ -101,7 +104,7 @@ async def save_settings(
         config.language = language
     else:
         config = WebUIConfig(
-            user_id=user["user_id"],
+            user_id=user_id,
             items_per_page=items_per_page,
             language=language,
         )
@@ -109,7 +112,7 @@ async def save_settings(
 
     result = await db.execute(
         select(UserConfig).where(
-            UserConfig.user_id == user["user_id"],
+            UserConfig.user_id == user_id,
             UserConfig.config_key == "output_language",
         )
     )
@@ -120,7 +123,7 @@ async def save_settings(
     else:
         db.add(
             UserConfig(
-                user_id=user["user_id"],
+                user_id=user_id,
                 config_key="output_language",
                 config_value=normalized_output_language,
                 description="AI 输出语言",
@@ -128,8 +131,8 @@ async def save_settings(
         )
     await db.commit()
 
-    invalidate_user_prefs_cache(user["user_id"])
-    invalidate_user_dynamic_config_cache(user["user_id"], ["output_language"])
+    invalidate_user_prefs_cache(user_id)
+    invalidate_user_dynamic_config_cache(user_id, ["output_language"])
 
     logger.info(
         f"WebUI 设置已更新: user={user['sub']}, items_per_page={items_per_page}, "
