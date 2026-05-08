@@ -338,14 +338,16 @@ class PRDependencyGraphService:
         if not available_files:
             return ""
 
-        path_aliases = {
-            self._normalize_path(f.path): self._build_file_aliases(f.path)
-            for f in available_files
-        }
+        normalized_paths = [self._normalize_path(f.path) for f in available_files]
+        path_aliases = dict(
+            zip(
+                normalized_paths,
+                (self._build_file_aliases(f.path) for f in available_files),
+            )
+        )
         edges: Set[tuple[str, str]] = set()
 
-        for source_file in available_files:
-            source_path = self._normalize_path(source_file.path)
+        for source_file, source_path in zip(available_files, normalized_paths):
             imports = self._extract_imports(
                 source_file.path, file_contents.get(source_file.path, "")
             )
@@ -359,7 +361,7 @@ class PRDependencyGraphService:
                     edges.add((source_path, target_path))
 
         selected_nodes = self._select_static_graph_nodes(
-            [self._normalize_path(f.path) for f in available_files],
+            list(path_aliases.keys()),
             edges,
             max_nodes,
         )
@@ -388,7 +390,18 @@ class PRDependencyGraphService:
     @staticmethod
     def _normalize_path(path: str) -> str:
         """统一文件路径分隔符。"""
-        return path.replace("\\", "/").lstrip("./")
+        normalized = path.replace("\\", "/")
+        while normalized.startswith("./"):
+            normalized = normalized[2:]
+        return normalized
+
+    @staticmethod
+    def _strip_leading_current_dirs(value: str) -> str:
+        """仅移除开头的 ./ 片段，不误删合法的 . 或 / 字符。"""
+        normalized = value
+        while normalized.startswith("./"):
+            normalized = normalized[2:]
+        return normalized
 
     @classmethod
     def _build_file_aliases(cls, file_path: str) -> Set[str]:
@@ -418,7 +431,11 @@ class PRDependencyGraphService:
             aliases.add(module)
             aliases.add(module.replace("/", "."))
 
-        return {alias.strip("./") for alias in aliases if alias.strip("./")}
+        return {
+            stripped
+            for alias in aliases
+            if (stripped := cls._strip_leading_current_dirs(alias))
+        }
 
     @classmethod
     def _normalize_import(cls, source_path: str, import_path: str) -> Set[str]:
@@ -428,9 +445,22 @@ class PRDependencyGraphService:
             return set()
 
         normalized = raw_import.replace("\\", "/")
-        candidates = {normalized.strip("./"), normalized.replace("/", ".").strip(".")}
+        candidates = {
+            cls._strip_leading_current_dirs(normalized),
+            normalized.replace("/", ".").removeprefix("."),
+        }
 
-        if normalized.startswith("."):
+        if normalized.startswith(".") and not normalized.startswith(("./", "../")):
+            leading_dot_count = len(normalized) - len(normalized.lstrip("."))
+            module_part = normalized[leading_dot_count:]
+            source_parts = list(PurePosixPath(cls._normalize_path(source_path)).parts)
+            package_parts = source_parts[:-1]
+            keep_parts = package_parts[: max(0, len(package_parts) - leading_dot_count + 1)]
+            resolved_parts = keep_parts + ([module_part] if module_part else [])
+            resolved = "/".join(part for part in resolved_parts if part)
+            candidates.add(resolved)
+            candidates.add(resolved.replace("/", "."))
+        elif normalized.startswith("."):
             source_dir = PurePosixPath(cls._normalize_path(source_path)).parent
             relative_target = source_dir.joinpath(normalized)
             resolved_parts: List[str] = []
@@ -476,7 +506,11 @@ class PRDependencyGraphService:
 
         for candidate in import_candidates:
             for target_path, aliases in path_aliases.items():
-                if any(alias.startswith(f"{candidate}.") for alias in aliases):
+                if any(
+                    alias.startswith(f"{candidate}.")
+                    or alias.startswith(f"{candidate}/")
+                    for alias in aliases
+                ):
                     return target_path
         return None
 
@@ -491,7 +525,8 @@ class PRDependencyGraphService:
         if not edges:
             return file_paths[:max_nodes]
 
-        connected_nodes = sorted({path for edge in edges for path in edge})
+        connected_node_set = {path for edge in edges for path in edge}
+        connected_nodes = [path for path in file_paths if path in connected_node_set]
         selected = connected_nodes[:max_nodes]
         if len(selected) < max_nodes:
             for path in file_paths:
@@ -504,7 +539,17 @@ class PRDependencyGraphService:
     @staticmethod
     def _escape_mermaid_label(label: str) -> str:
         """转义 Mermaid 节点 label。"""
-        return label.replace("\\", "/").replace('"', "'")
+        return (
+            label.replace("\\", "/")
+            .replace("&", "&amp;")
+            .replace('"', "'")
+            .replace("<", "&lt;")
+            .replace(">", "&gt;")
+            .replace("{", "&#123;")
+            .replace("}", "&#125;")
+            .replace("[", "&#91;")
+            .replace("]", "&#93;")
+        )
 
     @staticmethod
     def _build_prompts(
