@@ -25,8 +25,10 @@ class TestConnectionRequest(BaseModel):
     app_id: Optional[str] = None
     private_key: Optional[str] = None
     # openai
+    provider: Optional[str] = None
     api_key: Optional[str] = None
     api_base: Optional[str] = None
+    model: Optional[str] = None
     # telegram
     bot_token: Optional[str] = None
 
@@ -45,9 +47,11 @@ class CompleteSetupRequest(BaseModel):
     GITHUB_APP_ID: Optional[str] = None
     GITHUB_PRIVATE_KEY: Optional[str] = None
     GITHUB_WEBHOOK_SECRET: Optional[str] = None
+    AI_PROVIDER: Optional[str] = None
     OPENAI_API_KEY: Optional[str] = None
     OPENAI_API_BASE: Optional[str] = None
     OPENAI_MODEL: Optional[str] = None
+    SUMMARY_PROVIDER: Optional[str] = None
     TELEGRAM_BOT_TOKEN: Optional[str] = None
     APP_DOMAIN: Optional[str] = None
     APP_PORT: Optional[str] = None
@@ -138,14 +142,41 @@ async def test_connection(request: Request, body: TestConnectionRequest):
             body.app_id or "", body.private_key or ""
         )
     elif body.type == "openai":
-        result = await setup_service.test_openai_api(
-            body.api_key or "", body.api_base or ""
+        result = await setup_service.test_ai_api(
+            body.api_key or "",
+            body.api_base or "",
+            body.provider or "custom",
+            body.model or "",
         )
     elif body.type == "telegram":
         result = await setup_service.test_telegram_bot(body.bot_token or "")
     else:
         return error_response(f"不支持的测试类型: {body.type}", status_code=400)
 
+    return success_response(data=result)
+
+
+@router.get("/ai-providers")
+async def get_ai_providers():
+    """获取内置 AI 厂商列表。"""
+    bootstrap_error = _check_bootstrap()
+    if bootstrap_error:
+        return bootstrap_error
+    return success_response(data={"providers": setup_service.list_ai_providers()})
+
+
+@router.post("/ai-providers/{provider}/models")
+@limiter.limit("10/minute")
+async def get_ai_provider_models(
+    request: Request, provider: str, body: TestConnectionRequest
+):
+    """按厂商获取模型列表。"""
+    bootstrap_error = _check_bootstrap()
+    if bootstrap_error:
+        return bootstrap_error
+    result = await setup_service.fetch_provider_models(
+        provider, body.api_key or "", body.api_base or ""
+    )
     return success_response(data=result)
 
 

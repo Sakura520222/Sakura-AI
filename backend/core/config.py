@@ -11,6 +11,8 @@ import yaml
 from pathlib import Path
 from loguru import logger
 
+from backend.core.ai_providers import get_provider_select_options
+
 
 class Settings(BaseSettings):
     """应用配置"""
@@ -26,7 +28,8 @@ class Settings(BaseSettings):
     github_private_key: Optional[str] = None
     github_webhook_secret: Optional[str] = None
 
-    # OpenAI配置
+    # OpenAI 兼容 AI 配置
+    ai_provider: str = "openai"
     openai_api_base: str = "https://api.openai.com/v1"
     openai_api_key: Optional[str] = None
     openai_model: str = "gpt-4"
@@ -34,6 +37,7 @@ class Settings(BaseSettings):
     openai_max_tokens: int = 4000
 
     # 辅助模型配置（摘要、压缩等轻量任务，未设置时回退到主模型）
+    summary_provider: str = ""  # 为空时跟随 ai_provider
     summary_model: str = ""  # 为空时使用 openai_model
     summary_api_base: str = ""  # 为空时使用 openai_api_base
     summary_api_key: str = ""  # 为空时使用 openai_api_key
@@ -528,6 +532,7 @@ DYNAMIC_CONFIG_GROUPS: OrderedDict[str, dict] = OrderedDict(
                 "label": "AI 模型配置",
                 "icon": "cpu",
                 "keys": [
+                    "ai_provider",
                     "openai_api_base",
                     "openai_api_key",
                     "openai_model",
@@ -540,11 +545,13 @@ DYNAMIC_CONFIG_GROUPS: OrderedDict[str, dict] = OrderedDict(
                 "label": "辅助模型配置",
                 "icon": "zap",
                 "descriptions": {
+                    "summary_provider": "辅助模型厂商，留空则跟随主模型",
                     "summary_model": "用于摘要生成、上下文压缩等轻量任务，留空则使用主模型",
                     "summary_api_base": "辅助模型的 API 地址，留空则使用主模型地址",
                     "summary_api_key": "辅助模型的 API Key，留空则使用主模型 Key",
                 },
                 "keys": [
+                    "summary_provider",
                     "summary_model",
                     "summary_api_base",
                     "summary_api_key",
@@ -832,6 +839,8 @@ DYNAMIC_CONFIG_SENSITIVE_KEYS = frozenset(
 
 # 选择类字段的选项
 DYNAMIC_CONFIG_SELECT_OPTIONS: dict[str, list[dict]] = {
+    "ai_provider": get_provider_select_options(),
+    "summary_provider": get_provider_select_options(include_summary_follow=True),
     "embedding_provider": [
         {"value": "siliconflow", "label": "SiliconFlow"},
         {"value": "openai", "label": "OpenAI"},
@@ -890,9 +899,11 @@ DYNAMIC_CONFIG_RANGES: dict[str, tuple[float, float]] = {
 
 # 字段中文标签
 DYNAMIC_CONFIG_LABELS: dict[str, str] = {
+    "ai_provider": "AI 厂商",
     "openai_api_base": "API Base URL",
     "openai_api_key": "API Key",
     "openai_model": "模型名称",
+    "summary_provider": "辅助模型厂商",
     "summary_model": "辅助模型名称",
     "summary_api_base": "辅助模型 API 地址",
     "summary_api_key": "辅助模型 API Key",
@@ -1232,6 +1243,7 @@ CORE_CONFIG_KEYS = frozenset(
         "github_app_id",
         "github_private_key",
         "github_webhook_secret",
+        "ai_provider",
         "openai_api_key",
         "openai_api_base",
         "openai_model",
@@ -1245,6 +1257,7 @@ CORE_CONFIG_KEYS = frozenset(
         "github_oauth_client_secret",
         "github_oauth_redirect_uri",
         "database_url",
+        "summary_provider",
     }
 )
 

@@ -3,7 +3,7 @@
 {% block title %}{{ _('config.general_title') }} - Sakura AI Reviewer{% endblock %}
 
 {% block content %}
-<div x-data="{ activeTab: 'basic' }" class="space-y-4">
+<div x-data="configGeneral()" x-init="init()" class="space-y-4">
     <!-- 页面标题 -->
     <div>
         <h1 class="text-2xl font-bold">{{ _('config.general_title') }}</h1>
@@ -193,6 +193,7 @@
 
                             {% elif item.input_type == 'select' %}
                             <select name="{{ item.key }}"
+                                    {% if item.key in ('ai_provider', 'summary_provider') %}@change="onProviderChange('{{ item.key }}', $event.target.value)"{% endif %}
                                     class="w-48 px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-sm focus:ring-2 focus:ring-pink-500 focus:border-transparent outline-none">
                                 {% for opt in item.select_options %}
                                 <option value="{{ opt.value }}" {% if item.value == opt.value %}selected{% endif %}>{{ opt.label }}</option>
@@ -223,11 +224,30 @@
                                    class="w-32 px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-sm text-right focus:ring-2 focus:ring-pink-500 focus:border-transparent outline-none">
 
                             {% else %}
-                            <input type="text"
-                                   name="{{ item.key }}"
-                                   value="{{ item.value }}"
-                                   {% if item.placeholder %}placeholder="{{ item.placeholder }}"{% endif %}
-                                   class="w-64 px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-sm focus:ring-2 focus:ring-pink-500 focus:border-transparent outline-none">
+                            <div class="flex items-center gap-2">
+                                <template x-if="modelOptions['{{ item.key }}'] && modelOptions['{{ item.key }}'].length > 0">
+                                    <select name="{{ item.key }}"
+                                            class="w-64 px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-sm focus:ring-2 focus:ring-pink-500 focus:border-transparent outline-none">
+                                        <template x-for="m in modelOptions['{{ item.key }}']" :key="m">
+                                            <option :value="m" x-text="m" :selected="m === '{{ item.value }}'"></option>
+                                        </template>
+                                    </select>
+                                </template>
+                                <template x-if="!modelOptions['{{ item.key }}'] || modelOptions['{{ item.key }}'].length === 0">
+                                    <input type="text"
+                                           name="{{ item.key }}"
+                                           value="{{ item.value }}"
+                                           {% if item.placeholder %}placeholder="{{ item.placeholder }}"{% endif %}
+                                           class="w-64 px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-sm focus:ring-2 focus:ring-pink-500 focus:border-transparent outline-none">
+                                </template>
+                                {% if item.key in ('openai_model', 'summary_model') %}
+                                <button type="button"
+                                        @click="fetchModels('{{ item.key }}')"
+                                        class="px-3 py-2 text-xs font-medium rounded-lg border border-gray-300 dark:border-gray-600 hover:bg-gray-50 dark:hover:bg-gray-700 text-gray-700 dark:text-gray-300 whitespace-nowrap">
+                                    获取模型
+                                </button>
+                                {% endif %}
+                            </div>
                             {% endif %}
                         </div>
                     </div>
@@ -253,4 +273,59 @@
 <style>
     [x-cloak] { display: none !important; }
 </style>
+<script>
+function configGeneral() {
+    return {
+        activeTab: 'basic',
+        providers: [],
+        modelOptions: {},
+        async init() {
+            try {
+                const resp = await fetch('/api/v1/config/ai-providers');
+                const data = await resp.json();
+                if (data.success && data.data?.providers) {
+                    this.providers = data.data.providers;
+                }
+            } catch (e) {
+                this.providers = [];
+            }
+        },
+        onProviderChange(key, providerId) {
+            const provider = this.providers.find(p => p.id === providerId);
+            if (!provider) return;
+            const baseInputName = key === 'ai_provider' ? 'openai_api_base' : 'summary_api_base';
+            const modelInputName = key === 'ai_provider' ? 'openai_model' : 'summary_model';
+            const baseInput = document.querySelector(`[name="${baseInputName}"]`);
+            const modelInput = document.querySelector(`[name="${modelInputName}"]`);
+            if (baseInput && provider.base_url) baseInput.value = provider.base_url;
+            if (modelInput && provider.default_model) modelInput.value = provider.default_model;
+            this.modelOptions[modelInputName] = [];
+        },
+        async fetchModels(modelKey) {
+            const providerKey = modelKey === 'openai_model' ? 'ai_provider' : 'summary_provider';
+            const apiKeyKey = modelKey === 'openai_model' ? 'openai_api_key' : 'summary_api_key';
+            const baseKey = modelKey === 'openai_model' ? 'openai_api_base' : 'summary_api_base';
+            const provider = document.querySelector(`[name="${providerKey}"]`)?.value || 'custom';
+            const apiKey = document.querySelector(`[name="${apiKeyKey}"]`)?.value || '';
+            const apiBase = document.querySelector(`[name="${baseKey}"]`)?.value || '';
+            try {
+                const resp = await fetch(`/api/v1/config/ai-providers/${encodeURIComponent(provider || 'custom')}/models`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ api_key: apiKey, api_base: apiBase }),
+                });
+                const data = await resp.json();
+                const result = data.data || data;
+                if (result.success && result.models) {
+                    this.modelOptions[modelKey] = result.models;
+                } else {
+                    alert(result.message || data.error || '获取模型列表失败');
+                }
+            } catch (e) {
+                alert('获取模型列表失败: ' + e.message);
+            }
+        },
+    }
+}
+</script>
 {% endblock %}
