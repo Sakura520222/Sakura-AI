@@ -141,12 +141,17 @@ def _build_base_url(provider_id: str | None, api_base: str | None = None) -> tup
     return provider, base_url
 
 
+def _strip_endpoint_prefix(endpoint: str) -> str:
+    """Remove one leading slash from provider endpoints."""
+    if endpoint.startswith("/"):
+        return endpoint[1:]
+    return endpoint
+
+
 def build_models_url(provider_id: str | None, api_base: str | None = None) -> str:
     """Build a provider model-list URL."""
     provider, base_url = _build_base_url(provider_id, api_base)
-    endpoint = provider.models_endpoint
-    if endpoint.startswith("/"):
-        endpoint = endpoint[1:]
+    endpoint = _strip_endpoint_prefix(provider.models_endpoint)
     return f"{base_url}{endpoint}"
 
 
@@ -155,9 +160,7 @@ def build_model_detail_url(
 ) -> str:
     """Build a provider model-detail URL."""
     provider, base_url = _build_base_url(provider_id, api_base)
-    endpoint = provider.model_detail_endpoint.format(model=model)
-    if endpoint.startswith("/"):
-        endpoint = endpoint[1:]
+    endpoint = _strip_endpoint_prefix(provider.model_detail_endpoint.format(model=model))
     return f"{base_url}{endpoint}"
 
 

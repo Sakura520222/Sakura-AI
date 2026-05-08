@@ -1,4 +1,5 @@
 from backend.core.ai_providers import (
+    AI_PROVIDERS,
     AIProvider,
     build_model_detail_url,
     build_models_url,
@@ -89,8 +90,17 @@ def test_build_model_detail_url():
 
 def test_build_models_url_strips_leading_slash():
     """Ensure models_endpoint starting with '/' is handled correctly."""
-    url = build_models_url("openai")
-    assert url == "https://api.openai.com/v1/models"
+    AI_PROVIDERS["slash-test"] = AIProvider(
+        id="slash-test",
+        label="Slash Test",
+        base_url="https://example.com/v1",
+        default_model="test-model",
+        models_endpoint="/models",
+    )
+    try:
+        assert build_models_url("slash-test") == "https://example.com/v1/models"
+    finally:
+        AI_PROVIDERS.pop("slash-test", None)
 
 
 def test_ai_provider_frozen_and_to_public_dict():

@@ -94,8 +94,6 @@ async def get_general_config(
     user: dict = Depends(require_api_super_admin),
 ):
     """获取全局配置"""
-    from sqlalchemy import select
-
     result = await db.execute(select(AppConfig).order_by(AppConfig.key_name))
     configs = {}
     for row in result.scalars().all():
