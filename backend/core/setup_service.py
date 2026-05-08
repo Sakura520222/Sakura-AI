@@ -13,6 +13,14 @@ from loguru import logger
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import create_async_engine
 
+from backend.core.ai_providers import (
+    build_model_detail_url,
+    build_models_url,
+    extract_context_window_k,
+    get_ai_provider,
+    list_ai_providers,
+    normalize_model_list_response,
+)
 from backend.core.bootstrap import (
     mark_setup_completed,
 )
@@ -23,9 +31,11 @@ _ENV_TO_SETTINGS_KEY: dict[str, str] = {
     "GITHUB_APP_ID": "github_app_id",
     "GITHUB_PRIVATE_KEY": "github_private_key",
     "GITHUB_WEBHOOK_SECRET": "github_webhook_secret",
+    "AI_PROVIDER": "ai_provider",
     "OPENAI_API_KEY": "openai_api_key",
     "OPENAI_API_BASE": "openai_api_base",
     "OPENAI_MODEL": "openai_model",
+    "SUMMARY_PROVIDER": "summary_provider",
     "TELEGRAM_BOT_TOKEN": "telegram_bot_token",
     "WEBUI_SECRET_KEY": "webui_secret_key",
     "APP_DOMAIN": "app_domain",
@@ -56,6 +66,7 @@ ENV_FIELD_GROUPS = {
     "database": ["DATABASE_URL", "REDIS_URL"],
     "github": ["GITHUB_APP_ID", "GITHUB_PRIVATE_KEY", "GITHUB_WEBHOOK_SECRET"],
     "ai": [
+        "AI_PROVIDER",
         "OPENAI_API_KEY",
         "OPENAI_API_BASE",
         "OPENAI_MODEL",
@@ -177,34 +188,48 @@ class SetupService:
                 error_msg = error_msg.replace(private_key, "***")
             return {"success": False, "message": f"验证异常: {error_msg}"}
 
+    def list_ai_providers(self) -> list[dict[str, Any]]:
+        """获取内置 AI 厂商列表。"""
+        return list_ai_providers()
+
     async def test_openai_api(self, api_key: str, api_base: str) -> dict[str, Any]:
-        """测试 OpenAI API Key"""
+        """测试 OpenAI API Key（兼容旧调用）。"""
+        return await self.test_ai_api(api_key, api_base, provider="custom")
+
+    async def test_ai_api(
+        self, api_key: str, api_base: str = "", provider: str = "custom", model: str = ""
+    ) -> dict[str, Any]:
+        """测试 OpenAI 兼容 AI API Key，并返回可用模型。"""
         if not api_key:
             return {"success": False, "message": "API Key 不能为空"}
 
-        base_url = api_base or "https://api.openai.com/v1"
-        if not base_url.endswith("/"):
-            base_url += "/"
+        provider_meta = get_ai_provider(provider)
+        models_url = build_models_url(provider, api_base)
 
         try:
             async with httpx.AsyncClient() as client:
                 resp = await client.get(
-                    f"{base_url}models",
+                    models_url,
                     headers={"Authorization": f"Bearer {api_key}"},
                     timeout=15,
                 )
                 if resp.status_code == 200:
                     data = resp.json()
-                    raw_models = data.get("data", [])
-                    model_count = len(raw_models)
-                    # 提取模型 ID 列表（用于前端选择）
-                    model_ids = sorted(
-                        [m.get("id", "") for m in raw_models if m.get("id")]
-                    )
+                    model_ids = normalize_model_list_response(data)
+                    model_count = len(model_ids)
+                    context_window_k = None
+                    selected_model = model or provider_meta.default_model
+                    if selected_model and provider_meta.supports_context_window:
+                        context_window_k = await self.fetch_model_context_window(
+                            selected_model, api_key, api_base, provider
+                        )
                     return {
                         "success": True,
                         "message": f"API Key 有效，可用模型: {model_count} 个",
                         "models": model_ids,
+                        "provider": provider_meta.to_public_dict(),
+                        "default_model": provider_meta.default_model,
+                        "context_window_k": context_window_k,
                     }
                 elif resp.status_code == 401:
                     return {"success": False, "message": "API Key 无效"}
@@ -216,10 +241,39 @@ class SetupService:
         except httpx.ConnectError:
             return {
                 "success": False,
-                "message": f"无法连接到 {base_url}，请检查 API Base URL",
+                "message": f"无法连接到 {models_url}，请检查 API Base URL",
             }
         except Exception as e:
             return {"success": False, "message": f"验证异常: {e}"}
+
+    async def fetch_provider_models(
+        self, provider: str, api_key: str, api_base: str = ""
+    ) -> dict[str, Any]:
+        """按厂商获取模型列表。"""
+        return await self.test_ai_api(api_key, api_base, provider=provider)
+
+    async def fetch_model_context_window(
+        self, model: str, api_key: str, api_base: str = "", provider: str = "custom"
+    ) -> int | None:
+        """尝试从模型详情端点获取上下文窗口大小（K tokens）。"""
+        if not model or not api_key:
+            return None
+        provider_meta = get_ai_provider(provider)
+        if not provider_meta.supports_context_window:
+            return None
+        try:
+            async with httpx.AsyncClient() as client:
+                resp = await client.get(
+                    build_model_detail_url(provider, model, api_base),
+                    headers={"Authorization": f"Bearer {api_key}"},
+                    timeout=10,
+                )
+            if resp.status_code != 200:
+                return None
+            return extract_context_window_k(resp.json())
+        except Exception as e:
+            logger.debug(f"获取模型上下文窗口失败: provider={provider}, model={model}, err={e}")
+            return None
 
     async def test_telegram_bot(self, bot_token: str) -> dict[str, Any]:
         """测试 Telegram Bot Token"""
