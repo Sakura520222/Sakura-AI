@@ -1,7 +1,7 @@
 """配置管理模块"""
 
 from collections import OrderedDict
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Literal, Optional, get_origin
 
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -273,6 +273,7 @@ class Settings(BaseSettings):
 
     # ========== PR 依赖图配置 ==========
     enable_pr_dependency_graph: bool = False  # 是否启用 PR 依赖图生成
+    pr_dependency_graph_mode: Literal["ai", "static"] = "ai"  # 依赖图生成模式
     pr_dependency_graph_max_nodes: int = 25  # 依赖图最大节点数
     pr_dependency_graph_max_files: int = 50  # 参与分析的最大文件数
 
@@ -657,6 +658,7 @@ DYNAMIC_CONFIG_GROUPS: OrderedDict[str, dict] = OrderedDict(
                 "icon": "git-branch",
                 "keys": [
                     "enable_pr_dependency_graph",
+                    "pr_dependency_graph_mode",
                     "pr_dependency_graph_max_nodes",
                     "pr_dependency_graph_max_files",
                 ],
@@ -849,6 +851,10 @@ DYNAMIC_CONFIG_SELECT_OPTIONS: dict[str, list[dict]] = {
         {"value": "zh-CN", "label": "简体中文"},
         {"value": "en", "label": "English"},
     ],
+    "pr_dependency_graph_mode": [
+        {"value": "ai", "label": "AI 生成（使用 LLM 分析）"},
+        {"value": "static", "label": "静态分析（正则提取 import）"},
+    ],
 }
 
 # 数值范围限制
@@ -919,6 +925,7 @@ DYNAMIC_CONFIG_LABELS: dict[str, str] = {
     "incremental_history_max_reviews": "历史审查轮数上限",
     "incremental_history_summary_max_tokens": "摘要生成最大 Token",
     "enable_pr_dependency_graph": "启用 PR 依赖图",
+    "pr_dependency_graph_mode": "PR 依赖图模式",
     "pr_dependency_graph_max_nodes": "依赖图最大节点数",
     "pr_dependency_graph_max_files": "分析文件数上限",
     "enable_semantic_issue_linking": "启用语义 Issue 关联",
@@ -994,6 +1001,8 @@ def _get_field_type(key: str) -> type:
     if field_info is None:
         return str
     ann = field_info.annotation
+    if get_origin(ann) is Literal:
+        return str
     # 处理 Optional[X] 等
     if hasattr(ann, "__origin__"):
         return ann.__args__[0] if ann.__args__ else str
