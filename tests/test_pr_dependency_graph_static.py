@@ -99,6 +99,45 @@ def test_static_mermaid_links_at_alias_imports(service):
     assert "N1 --> N2" in graph
 
 
+def test_static_mermaid_links_go_imports(service):
+    files = [
+        make_file("cmd/app/main.go"),
+        make_file("internal/config/config.go"),
+    ]
+    contents = {
+        "cmd/app/main.go": 'package main\n\nimport "internal/config"\n',
+        "internal/config/config.go": "package config\n",
+    }
+
+    graph = service._generate_static_mermaid(files, contents, max_nodes=25)
+
+    assert 'N1["cmd/app/main.go"]' in graph
+    assert 'N2["internal/config/config.go"]' in graph
+    assert "N1 --> N2" in graph
+
+
+def test_static_mermaid_links_java_imports(service):
+    files = [
+        make_file("src/main/java/com/example/App.java"),
+        make_file("src/main/java/com/example/service/UserService.java"),
+    ]
+    contents = {
+        "src/main/java/com/example/App.java": (
+            "package com.example;\n"
+            "import com.example.service.UserService;\n"
+        ),
+        "src/main/java/com/example/service/UserService.java": (
+            "package com.example.service;\n"
+        ),
+    }
+
+    graph = service._generate_static_mermaid(files, contents, max_nodes=25)
+
+    assert 'N1["src/main/java/com/example/App.java"]' in graph
+    assert 'N2["src/main/java/com/example/service/UserService.java"]' in graph
+    assert "N1 --> N2" in graph
+
+
 def test_static_mermaid_generates_nodes_without_edges(service):
     files = [make_file("src/a.py"), make_file("src/b.py")]
     contents = {

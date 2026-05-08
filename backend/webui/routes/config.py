@@ -293,10 +293,10 @@ async def save_strategies_section(
                 depgraph_mode = form.get("pr_dependency_graph_mode", "ai")
                 if depgraph_mode not in {"ai", "static"}:
                     depgraph_mode = "ai"
+                # mode 是动态配置项，仅写入数据库；YAML 只保存 prompt 模板，避免双写不一致。
                 config["pr_dependency_graph"] = {
                     "system_prompt": form.get("depgraph_system_prompt", ""),
                     "user_template": form.get("depgraph_user_template", ""),
-                    "mode": depgraph_mode,
                 }
                 existing = await db.execute(
                     select(AppConfig).where(
@@ -317,11 +317,11 @@ async def save_strategies_section(
             else:
                 raise HTTPException(status_code=400, detail=f"未知 section: {section}")
 
-            _atomic_yaml_write(STRATEGIES_PATH, config)
-            reload_strategy_config()
             if section == "depgraph":
                 await db.commit()
                 invalidate_dynamic_config_cache(["pr_dependency_graph_mode"])
+            _atomic_yaml_write(STRATEGIES_PATH, config)
+            reload_strategy_config()
             logger.info(f"策略配置 [{section}] 已更新, by={user['sub']}")
             await log_admin_action(
                 db, user["user_id"], "config_save", "strategy", section
