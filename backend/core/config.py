@@ -1145,6 +1145,7 @@ async def get_user_dynamic_config_state(key: str, user_id: int) -> dict[str, Any
 async def _read_user_config_from_db(user_id: int, key: str) -> Optional[str]:
     """从 UserConfig 表读取用户配置值。"""
     try:
+        # 延迟导入避免 config ↔ database 初始化阶段循环引用。
         from backend.models.database import UserConfig, async_session
         from sqlalchemy import select
 

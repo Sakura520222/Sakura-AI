@@ -822,9 +822,7 @@ class ReviewWorker:
                             review_obj,
                             str(e),
                             pr,
-                            output_language=await get_user_dynamic_config(
-                                "output_language", pr_info.get("user_id")
-                            ),
+                            output_language=output_language,
                         )
                         logger.info(f"[{task_id}] 已更新占位评论为错误状态")
                     except Exception as update_error:
