@@ -546,6 +546,14 @@ settings:
   save_error: "设置保存失败"
   language_desc: "选择您偏好的界面语言"
   items_per_page_desc: "设置每页显示的条目数量"
+  ai_review_preferences: "AI 审查偏好"
+  ai_review_preferences_desc: "自定义 AI 生成审查内容时使用的个人偏好"
+  output_language: "AI 输出语言"
+  output_language_desc: "仅影响您触发或归属到您的 PR 审查与 Issue 分析输出语言"
+  output_languages:
+    inherit: "跟随全局/界面语言"
+    zh-CN: "简体中文"
+    en: "English"
   languages:
     zh-CN: "简体中文"
     en: "English"

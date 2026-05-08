@@ -16,6 +16,7 @@ from backend.api.v1 import (
     queue,
     scans,
     settings,
+    user_config,
     events,
     billing,
 )
@@ -37,6 +38,7 @@ api_v1_router.include_router(logs.router)
 api_v1_router.include_router(queue.router)
 api_v1_router.include_router(scans.router)
 api_v1_router.include_router(settings.router)
+api_v1_router.include_router(user_config.router)
 api_v1_router.include_router(events.router)
 api_v1_router.include_router(billing.router)
 

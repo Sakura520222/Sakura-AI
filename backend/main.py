@@ -8,6 +8,7 @@ from loguru import logger
 import sys
 import asyncio
 
+from backend import __version__
 from backend.core.config import get_settings
 from backend.core.bootstrap import (
     BootstrapMiddleware,
@@ -192,7 +193,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title="Sakura AI Reviewer",
     description="GitHub AI代码审查机器人",
-    version="2.9.5",
+    version=__version__,
     lifespan=lifespan,
 )
 
@@ -262,7 +263,7 @@ async def root():
     """根路径"""
     return {
         "service": "Sakura AI Reviewer",
-        "version": "2.9.5",
+        "version": "2.9.6",
         "status": "running",
         "docs": "/docs",
     }

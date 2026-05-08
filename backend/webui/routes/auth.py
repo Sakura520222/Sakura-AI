@@ -11,6 +11,7 @@ from fastapi.responses import RedirectResponse, HTMLResponse
 from loguru import logger
 from sqlalchemy import select
 
+from backend import __version__
 from backend.models.telegram_models import TelegramUser
 from backend.models import database as db_module
 from backend.webui.auth import create_access_token, decode_access_token
@@ -37,7 +38,7 @@ def _get_telegram_deep_link() -> str | None:
     return None
 
 
-APP_VERSION = "2.9.5"
+APP_VERSION = __version__
 
 _OAUTH_STATE_TTL = 600  # state 有效期 10 分钟
 _OAUTH_STATE_KEY_PREFIX = "oauth:state:"

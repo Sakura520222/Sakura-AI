@@ -5,7 +5,12 @@ from loguru import logger
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from backend.models.database import WebUIConfig
+from backend.core.config import (
+    get_user_dynamic_config_state,
+    invalidate_user_dynamic_config_cache,
+    validate_user_dynamic_config_value,
+)
+from backend.models.database import UserConfig, WebUIConfig
 from backend.webui.deps import (
     require_auth,
     get_db,
@@ -31,6 +36,10 @@ async def settings_page(
     user_prefs: dict = Depends(get_user_preferences),
 ):
     """渲染个人设置页面"""
+    user_id = int(user["user_id"])
+    output_language_config = await get_user_dynamic_config_state(
+        "output_language", user_id
+    )
     return render_template(
         "settings.html",
         request,
@@ -40,6 +49,10 @@ async def settings_page(
         active_page="settings",
         items_per_page=user_prefs["items_per_page"],
         language=user_prefs["language"],
+        output_language_config=output_language_config,
+        output_language=output_language_config["user_value"]
+        if output_language_config["user_value"] is not None
+        else "",
     )
 
 
@@ -51,8 +64,11 @@ async def save_settings(
     csrf_token: str = Depends(require_csrf),
     items_per_page: int = Form(...),
     language: str = Form(default="zh-CN"),
+    output_language: str = Form(default=""),
 ):
     """保存个人设置"""
+    user_id = int(user["user_id"])
+
     # 验证参数范围
     if items_per_page not in (10, 20, 50, 100):
         return toast_redirect(
@@ -66,9 +82,21 @@ async def save_settings(
     if language not in ("zh-CN", "en"):
         language = "zh-CN"
 
+    try:
+        normalized_output_language = validate_user_dynamic_config_value(
+            "output_language", output_language
+        )
+    except ValueError:
+        return toast_redirect(
+            "/webui/settings/",
+            "toast.invalid_param",
+            "error",
+            lang=detect_language({"language": language}),
+        )
+
     # Upsert 配置
     result = await db.execute(
-        select(WebUIConfig).where(WebUIConfig.user_id == user["user_id"])
+        select(WebUIConfig).where(WebUIConfig.user_id == user_id)
     )
     config = result.scalar_one_or_none()
     if config:
@@ -76,17 +104,39 @@ async def save_settings(
         config.language = language
     else:
         config = WebUIConfig(
-            user_id=user["user_id"],
+            user_id=user_id,
             items_per_page=items_per_page,
             language=language,
         )
         db.add(config)
+
+    result = await db.execute(
+        select(UserConfig).where(
+            UserConfig.user_id == user_id,
+            UserConfig.config_key == "output_language",
+        )
+    )
+    user_config = result.scalar_one_or_none()
+    if user_config:
+        user_config.config_value = normalized_output_language
+        user_config.description = "AI 输出语言"
+    else:
+        db.add(
+            UserConfig(
+                user_id=user_id,
+                config_key="output_language",
+                config_value=normalized_output_language,
+                description="AI 输出语言",
+            )
+        )
     await db.commit()
 
-    invalidate_user_prefs_cache(user["user_id"])
+    invalidate_user_prefs_cache(user_id)
+    invalidate_user_dynamic_config_cache(user_id, ["output_language"])
 
     logger.info(
-        f"WebUI 设置已更新: user={user['sub']}, items_per_page={items_per_page}, language={language}"
+        f"WebUI 设置已更新: user={user['sub']}, items_per_page={items_per_page}, "
+        f"language={language}, output_language={normalized_output_language or 'inherit'}"
     )
     return toast_redirect(
         "/webui/settings/",
