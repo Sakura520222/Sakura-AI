@@ -286,4 +286,4 @@ Sakura AI Reviewer 是一款基于大语言模型的智能 GitHub 代码审查�
 ## 仓库信息
 - 仓库名: Sakura520222/Sakura-AI-Reviewer
 - 语言统计: Python: 1605404, HTML: 467450, Shell: 4194, Dockerfile: 862
-- 累计反思次数: 163
+- 累计反思次数: 166
