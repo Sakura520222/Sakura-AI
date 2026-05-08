@@ -15,7 +15,7 @@ Sakura AI Reviewer 是一款基于大语言模型的智能 GitHub 代码审查�
 
 ## 2. 架构设计与关键决策
 
-- **分层架构**：API 层、服务层、数据访问层分离
+- **分层架构**：API 层、服务层、数据访问层分离，路由层禁止直接操作数据库
 - **服务层职责边界**：`comment_service` 为行内评论渲染唯一入口
 - **集中式结果解析器**：AI 输出清洗收敛于 `result_parser.py`
 - **配置三层穿透**：Settings → yaml_config → 硬编码默认值
@@ -24,7 +24,7 @@ Sakura AI Reviewer 是一款基于大语言模型的智能 GitHub 代码审查�
 - **fire-and-forget 范式**：`create_task` + `add_done_callback(discard)`
 - **工具插件化架构**：统一工具注册与调用
 - **全局异常处理器不得引用业务依赖**：不解析 token、不查数据库
-- **版本号多源硬编码**：main.py、auth.py、init.sql 三处独立，无双向同步
+- **版本号多源硬编码**：main.py、auth.py、init.sql 三处独立，建议单一真实源
 - **配置全链路模式**：新增配置字段须在各层同步添加
 - **服务层薄化演进**：逐步移除配置读取逻辑
 - **i18n 门面模式**：`render_template` 统一注入 `_()` 和 `lang`
@@ -32,7 +32,7 @@ Sakura AI Reviewer 是一款基于大语言模型的智能 GitHub 代码审查�
 - **翻译键前缀约定**：`toast.*`、`settings.*`、`register.*` 语义清晰
 - **工具循环复用**：`_run_tool_loop` 消除重复代码
 - **降级链路闭环**：`BadRequestError` → 移除 diff → 按需工具获取 → 对话压缩
-- **降级梯度设计**：首次超长 → 精简模式（移除 diff + 按需工具）；多轮超长 → 压缩历史
+- **降级梯度设计**：首次超长 → 精简模式；多轮超长 → 压缩历史
 - **服务层自治事务模式**：服务方法内部自行 commit，调用方无需额外提交
 - **尽力而为删除策略**：循环中逐项删除，单项失败不阻断整体
 - **前置 + 兜底设计**：webhook 即时处理 + worker 全量保留
@@ -41,6 +41,7 @@ Sakura AI Reviewer 是一款基于大语言模型的智能 GitHub 代码审查�
 - **返回值语义分离**：`task_key`（业务标识）与 `task_id`（日志追踪 UUID）解耦
 - **惰性重置配额模式**：在读取路径重置过期配额，但需确保所有入口调用
 - **批量操作 savepoint 模式**：循环中使用 `begin_nested()` 替代全局 rollback
+- **静态分析降级模式**：正则提取 import + 路径别名解析，必须记录失败日志
 
 ## 3. 已知问题和注意事项
 
@@ -97,6 +98,9 @@ Sakura AI Reviewer 是一款基于大语言模型的智能 GitHub 代码审查�
 - **清理函数的 None 安全性**：接收可能 None 的对象时须检查内部处理
 - **rollback 后必须验证 session 可用性**：若无 `expunge_all()` 或 `begin()`，标记 warning
 - **配额重置遗漏读取路径**：惰性重置逻辑必须在所有展示入口调用
+- **字符串前缀移除禁止使用 `lstrip`**：必须使用 `removeprefix` 或 `startswith` + 切片
+- **Mermaid 图表生成必须转义所有特殊字符**：`< > { } [ ] |` 等全部转义
+- **路径别名解析须显式声明映射假设**：使用 `@/` 时若无 tsconfig 映射，须注释说明降级策略
 
 ## 4. 审查中发现的重要模式
 
@@ -144,6 +148,10 @@ Sakura AI Reviewer 是一款基于大语言模型的智能 GitHub 代码审查�
 - **webhook 并发去重评估**：串行逻辑前置到 webhook 时须评估重复事件影响
 - **共享取消信号的排队场景**：多任务排队时共享 event 需显式文档化
 - **返回值语义变更的调用方变量名检查**：须检查变量名是否仍保持语义一致
+- **批量 UPDATE 返回值语义必须明确**：若返回 `rowcount` 累加值，必须在函数名或 docstring 中说明
+- **列表页禁止逐个调用写操作**：除非有明确性能评估
+- **新增调度器时区须与项目默认时区对齐或注释差异原因**
+- **惰性重置的所有读取入口须统一审查**：WebUI、API、Telegram 命令、内部服务
 
 ## 5. 团队约定和规范
 
@@ -220,6 +228,11 @@ Sakura AI Reviewer 是一款基于大语言模型的智能 GitHub 代码审查�
 - **新增状态必须检查 SSE 事件发送与接收（major）**
 - **注释不替代显式异常恢复（major）**
 - **rollback 后必须验证 session 可用性（major）**
+- **字符串前缀移除禁止使用 `lstrip`（major）**
+- **Mermaid 转义完整性（major）**
+- **路径别名解析映射声明（major）**
+- **静态分析降级必须记录失败日志（major）**
+- **节点裁剪算法连通性验证（suggestion）**
 
 ### suggestion 疲劳归档协议
 - 第 1 轮未修复：评估降级
@@ -242,6 +255,8 @@ Sakura AI Reviewer 是一款基于大语言模型的智能 GitHub 代码审查�
 - 增量审查必须检查异常日志是否包含敏感信息
 - 新增枚举值必须同步前后端模板、过滤器、i18n 文件
 - 增量审查必须检查新增公共函数是否安全处理了可能的 None/边界值
+- 增量审查必须执行“调用方扫描”步骤，检查未修改文件中对变更函数的调用
+- 增量审查必须检查“假设条件注释验证”：路径别名、降级行为等隐式假设须显式注释
 
 ### 评分补充规范
 - 评分中加入“未解决的历史 major 问题数量”作为扣分项
@@ -249,5 +264,5 @@ Sakura AI Reviewer 是一款基于大语言模型的智能 GitHub 代码审查�
 
 ## 仓库信息
 - 仓库名: Sakura520222/Sakura-AI-Reviewer
-- 语言统计: Python: 1574852, HTML: 466437, Shell: 4194, Dockerfile: 862
-- 累计反思次数: 154
+- 语言统计: Python: 1574852, HTML: 466437, Shell: 4194, Dockerfile: 862, url: https://api.github.com/repos/Sakura520222/Sakura-AI-Reviewer/languages
+- 累计反思次数: 157
