@@ -138,7 +138,10 @@ class PRDependencyGraphService:
             )
             mermaid_graph = self._validate_mermaid(mermaid_graph)
             if not mermaid_graph:
-                logger.info("静态分析未生成有效 Mermaid 图，跳过依赖图注入")
+                logger.warning(
+                    "静态依赖图分析未生成有效 Mermaid 图，跳过注入；"
+                    f"候选文件数: {len(analysis_files)}, 可读取文件数: {len(file_contents)}"
+                )
                 return None
 
             current_body = await asyncio.to_thread(lambda: pr.body or "")

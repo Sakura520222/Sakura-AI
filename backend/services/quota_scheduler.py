@@ -52,7 +52,8 @@ class QuotaResetScheduler:
     async def _run_quota_reset(self):
         """定时批量重置入口。"""
         try:
-            # 延迟导入避免模块初始化时数据库会话工厂尚未完成引导，造成循环依赖。
+            # 延迟导入：main 启动时导入 quota_scheduler，此时 database 可能尚未完成引导；
+            # 运行任务时再取 async_session / QuotaService，避免初始化阶段循环依赖。
             from backend.models.database import async_session
             from backend.services.quota_service import QuotaService
 
@@ -61,7 +62,10 @@ class QuotaResetScheduler:
                 return
 
             async with async_session() as session:
-                reset_count = await QuotaService(session).reset_all_expired_quotas_atomic()
-            logger.info(f"✅ 定时配额重置完成，字段维度更新次数: {reset_count}")
+                result = await QuotaService(session).reset_all_expired_quotas_atomic()
+            logger.info(
+                "✅ 定时配额重置完成，影响用户数: "
+                f"{result.affected_users}, 字段维度影响行数: {result.affected_fields}"
+            )
         except Exception as e:
             logger.error(f"❌ 定时配额重置异常: {e}", exc_info=True)

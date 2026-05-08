@@ -469,7 +469,7 @@ async def cmd_users(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     async with get_async_session() as session:
         service = TelegramService(session)
-        users = await service.list_all_users()
+        users = await service.list_all_users(refresh_expired_quotas=True)
 
         if not users:
             await update.message.reply_text("暂无注册用户")
