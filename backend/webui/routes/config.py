@@ -314,13 +314,14 @@ async def save_strategies_section(
                             description="PR dependency graph generation mode",
                         )
                     )
-                await db.commit()
-                invalidate_dynamic_config_cache(["pr_dependency_graph_mode"])
             else:
                 raise HTTPException(status_code=400, detail=f"未知 section: {section}")
 
             _atomic_yaml_write(STRATEGIES_PATH, config)
             reload_strategy_config()
+            if section == "depgraph":
+                await db.commit()
+                invalidate_dynamic_config_cache(["pr_dependency_graph_mode"])
             logger.info(f"策略配置 [{section}] 已更新, by={user['sub']}")
             await log_admin_action(
                 db, user["user_id"], "config_save", "strategy", section

@@ -18,49 +18,49 @@ from backend.services.ai_reviewer.pr_summary import PRSummaryService
 from backend.services.pr_analyzer import PRAnalysis, PRFileInfo
 
 
-# 各语言的 import 语句正则模式
-_IMPORT_PATTERNS: Dict[str, List[str]] = {
+# 各语言的 import 语句正则模式；预编译到模块级别，避免每次扫描重复编译。
+_IMPORT_PATTERNS: Dict[str, List[re.Pattern[str]]] = {
     "python": [
-        r"^import\s+([\w.]+)",
-        r"^from\s+([\w.]+)\s+import",
+        re.compile(r"^import\s+([\w.]+)", re.MULTILINE),
+        re.compile(r"^from\s+([\w.]+)\s+import", re.MULTILINE),
     ],
     "javascript": [
-        r"""^import\s+.*?\s+from\s+['"]([^'"]+)['"]""",
-        r"""^(?:import|require)\s*\(?\s*['"]([^'"]+)['"]\)?\s*;?""",
+        re.compile(r"""^import\s+.*?\s+from\s+['"]([^'"]+)['"]""", re.MULTILINE),
+        re.compile(r"""^(?:import|require)\s*\(?\s*['"]([^'"]+)['"]\)?\s*;?""", re.MULTILINE),
     ],
     "typescript": [
-        r"""^import\s+.*?\s+from\s+['"]([^'"]+)['"]""",
-        r"""^(?:import|require)\s*\(?\s*['"]([^'"]+)['"]\)?\s*;?""",
+        re.compile(r"""^import\s+.*?\s+from\s+['"]([^'"]+)['"]""", re.MULTILINE),
+        re.compile(r"""^(?:import|require)\s*\(?\s*['"]([^'"]+)['"]\)?\s*;?""", re.MULTILINE),
     ],
     "go": [
-        r'^import\s+"([\w./\-]+)"\s*$',
-        r'^\t"([\w./\-]+)"',
-        r'^import\s+\w+\s+"([\w./\-]+)"',
+        re.compile(r'^import\s+"([\w./\-]+)"\s*$', re.MULTILINE),
+        re.compile(r'^\t"([\w./\-]+)"', re.MULTILINE),
+        re.compile(r'^import\s+\w+\s+"([\w./\-]+)"', re.MULTILINE),
     ],
     "java": [
-        r"^import\s+([\w.]+)",
+        re.compile(r"^import\s+([\w.]+)", re.MULTILINE),
     ],
     "rust": [
-        r"use\s+([\w:]+)",
+        re.compile(r"use\s+([\w:]+)", re.MULTILINE),
     ],
     "csharp": [
-        r"^using\s+([\w.]+)",
+        re.compile(r"^using\s+([\w.]+)", re.MULTILINE),
     ],
     "cpp": [
-        r'#include\s*[<"]([^>"]+)[>"]',
+        re.compile(r'#include\s*[<"]([^>"]+)[>"]', re.MULTILINE),
     ],
     "ruby": [
-        r"^(?:require|require_relative)\s+['\"]([^'\"]+)['\"]",
+        re.compile(r"^(?:require|require_relative)\s+['\"]([^'\"]+)['\"]", re.MULTILINE),
     ],
     "php": [
-        r"use\s+([\w\\]+)",
-        r"^(?:require|include)(?:_once)?\s+['\"]([^'\"]+)['\"]",
+        re.compile(r"use\s+([\w\\]+)", re.MULTILINE),
+        re.compile(r"^(?:require|include)(?:_once)?\s+['\"]([^'\"]+)['\"]", re.MULTILINE),
     ],
     "swift": [
-        r"^import\s+(\w+)",
+        re.compile(r"^import\s+(\w+)", re.MULTILINE),
     ],
     "kotlin": [
-        r"^import\s+([\w.]+)",
+        re.compile(r"^import\s+([\w.]+)", re.MULTILINE),
     ],
 }
 
@@ -129,12 +129,6 @@ class PRDependencyGraphService:
             logger.info("无法获取任何变更文件内容，跳过依赖图生成")
             return None
 
-        # 提取 import 并构建上下文
-        import_context = self._build_import_context(analysis_files, file_contents)
-        if not import_context.strip():
-            logger.info("变更文件间无 import 依赖关系，跳过依赖图生成")
-            return None
-
         graph_mode = await self._get_graph_mode()
         if graph_mode == "static":
             mermaid_graph = self._generate_static_mermaid(
@@ -151,6 +145,12 @@ class PRDependencyGraphService:
             await self.update_pr_body_with_graph(pr, mermaid_graph, current_body)
             logger.info(f"静态 PR 依赖图已生成，长度: {len(mermaid_graph)} 字符")
             return mermaid_graph
+
+        # AI 模式才需要构建完整 import 上下文，静态模式会直接基于文件内容分析。
+        import_context = self._build_import_context(analysis_files, file_contents)
+        if not import_context.strip():
+            logger.info("变更文件间无 import 依赖关系，跳过依赖图生成")
+            return None
 
         # 提取上一次的依赖图（增量更新时用于保持上下文连贯）
         previous_graph = self._extract_previous_graph(pr_info.get("body", ""))
@@ -284,7 +284,7 @@ class PRDependencyGraphService:
         patterns = _IMPORT_PATTERNS.get(lang, [])
         imports: List[str] = []
         for pattern in patterns:
-            for match in re.finditer(pattern, top_content, re.MULTILINE):
+            for match in pattern.finditer(top_content):
                 imp = match.group(1).strip()
                 if imp and imp not in imports:
                     imports.append(imp)
@@ -446,6 +446,7 @@ class PRDependencyGraphService:
         normalized = raw_import.replace("\\", "/")
         candidates = {
             cls._strip_leading_current_dirs(normalized),
+            # 仅移除模块风格单点前缀（如 .mymodule），路径式 ./ 会在下一分支解析。
             normalized.replace("/", ".").removeprefix("."),
         }
 
@@ -489,7 +490,11 @@ class PRDependencyGraphService:
                 expanded.add(candidate[:-2])
             if candidate.endswith("/*"):
                 expanded.add(candidate[:-2])
-        return {candidate for candidate in expanded if candidate}
+        return {
+            candidate
+            for candidate in expanded
+            if candidate and candidate != "/" and candidate.strip(".")
+        }
 
     @classmethod
     def _resolve_import_to_changed_file(
@@ -542,17 +547,23 @@ class PRDependencyGraphService:
     @staticmethod
     def _escape_mermaid_label(label: str) -> str:
         """转义 Mermaid 节点 label。"""
-        return (
-            label.replace("\\", "/")
-            .replace("&", "&amp;")
-            .replace('"', "'")
-            .replace("<", "&lt;")
-            .replace(">", "&gt;")
-            .replace("{", "&#123;")
-            .replace("}", "&#125;")
-            .replace("[", "&#91;")
-            .replace("]", "&#93;")
-        )
+        replacements = {
+            "&": "&amp;",
+            '"': "'",
+            "<": "&lt;",
+            ">": "&gt;",
+            "{": "&#123;",
+            "}": "&#125;",
+            "[": "&#91;",
+            "]": "&#93;",
+            "|": "&#124;",
+            "(": "&#40;",
+            ")": "&#41;",
+            "#": "&#35;",
+            "%": "&#37;",
+        }
+        normalized = label.replace("\\", "/")
+        return "".join(replacements.get(char, char) for char in normalized)
 
     @staticmethod
     def _build_prompts(

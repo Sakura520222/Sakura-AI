@@ -60,15 +60,10 @@ class QuotaService:
             changed = True
 
         last_reset_weekly = getattr(user, fields["last_reset_weekly"])
-        if last_reset_weekly is None:
+        if last_reset_weekly is None or last_reset_weekly < QuotaService._week_start(now):
             setattr(user, fields["weekly_used"], 0)
             setattr(user, fields["last_reset_weekly"], now)
             changed = True
-        elif last_reset_weekly.date() < now.date():
-            if last_reset_weekly < QuotaService._week_start(now):
-                setattr(user, fields["weekly_used"], 0)
-                setattr(user, fields["last_reset_weekly"], now)
-                changed = True
 
         last_reset_monthly = getattr(user, fields["last_reset_monthly"])
         if last_reset_monthly is None:
@@ -124,7 +119,7 @@ class QuotaService:
         return changed
 
     async def reset_all_expired_quotas_atomic(self) -> int:
-        """使用批量 UPDATE 重置过期配额，返回字段维度更新次数。"""
+        """使用批量 UPDATE 重置过期配额，返回所有 UPDATE 语句影响行数之和。"""
         now = self._utcnow()
         today = now.date()
         week_start = self._week_start(now)
@@ -187,5 +182,5 @@ class QuotaService:
 
         if reset_count:
             await self.session.commit()
-        logger.info(f"配额批量原子重置完成，更新字段次数: {reset_count}")
+        logger.info(f"配额批量原子重置完成，SQL 影响行数合计: {reset_count}")
         return reset_count

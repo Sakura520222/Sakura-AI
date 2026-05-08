@@ -143,14 +143,35 @@ def test_normalize_path_only_removes_leading_current_dir_segments():
 
 
 def test_escape_mermaid_label_handles_special_characters(service):
-    files = [make_file('src/components/<Widget>{v1}".tsx')]
-    contents = {'src/components/<Widget>{v1}".tsx': "export const widget = null;\n"}
+    files = [make_file('src/components/<Widget>{v1}|(#%)".tsx')]
+    contents = {'src/components/<Widget>{v1}|(#%)".tsx': "export const widget = null;\n"}
 
     graph = service._generate_static_mermaid(files, contents, max_nodes=25)
 
     assert "&lt;Widget&gt;" in graph
-    assert "&#123;v1&#125;'" in graph
+    assert "&#123;v1&#125;&#124;&#40;&#35;&#37;&#41;'" in graph
     assert '".tsx' not in graph
+
+
+def test_normalize_import_handles_empty_and_dot_edges():
+    assert PRDependencyGraphService._normalize_import("pkg/mod.py", "") == set()
+    assert PRDependencyGraphService._normalize_import("pkg/mod.py", ".") == {"pkg"}
+    assert PRDependencyGraphService._normalize_import("pkg/a/mod.py", "..") == {"pkg"}
+    assert PRDependencyGraphService._normalize_import("src/app.ts", "./") == {"src"}
+
+
+def test_resolve_import_to_changed_file_uses_prefix_match():
+    path_aliases = {
+        "src/components/Button.tsx": PRDependencyGraphService._build_file_aliases(
+            "src/components/Button.tsx"
+        )
+    }
+
+    assert PRDependencyGraphService._resolve_import_to_changed_file(
+        "src/pages/Home.tsx",
+        "components",
+        path_aliases,
+    ) == "src/components/Button.tsx"
 
 
 def test_dependency_graph_mode_dynamic_config_registered():
