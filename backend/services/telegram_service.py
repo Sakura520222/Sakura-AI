@@ -1,6 +1,5 @@
 """Telegram Bot 服务层"""
 
-from datetime import datetime, timedelta
 from typing import Optional, List, Tuple
 from sqlalchemy import select, and_
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -15,6 +14,7 @@ from backend.models.telegram_models import (
 )
 from backend.core.config import get_settings
 from backend.services.payment_service import PaymentService, is_payment_enabled
+from backend.services.quota_service import QuotaService
 
 settings = get_settings()
 
@@ -98,7 +98,9 @@ class TelegramService:
         # 重置过期配额
         if await is_payment_enabled():
             await PaymentService(self.session).expire_due_subscriptions(user.id)
-        await self._reset_expired_quotas(user)
+        await QuotaService(self.session).reset_user_quotas_if_expired(
+            user, include_pr=True, include_issue=False
+        )
 
         # 使用原子UPDATE操作检查并消耗配额
         # 这个操作是原子的：只有当所有配额都未超限时才会执行递增
@@ -151,46 +153,6 @@ class TelegramService:
         await self.session.commit()
         return True, ""
 
-    async def _reset_expired_quotas(self, user: TelegramUser):
-        """重置过期的配额"""
-        now = datetime.utcnow()
-
-        # 每日重置（每天 00:00）
-        if user.last_reset_daily is None or user.last_reset_daily.date() < now.date():
-            user.daily_used = 0
-            user.last_reset_daily = now
-
-        # 每周重置（每周一 00:00）
-        if user.last_reset_weekly is None:
-            user.weekly_used = 0
-            user.last_reset_weekly = now
-        else:
-            # 检查是否跨周
-            if user.last_reset_weekly.date() < now.date():
-                # 获取本周一
-                week_start = now - timedelta(days=now.weekday())
-                week_start = week_start.replace(
-                    hour=0, minute=0, second=0, microsecond=0
-                )
-                if user.last_reset_weekly < week_start:
-                    user.weekly_used = 0
-                    user.last_reset_weekly = now
-
-        # 每月重置（每月1日 00:00）
-        if user.last_reset_monthly is None:
-            user.monthly_used = 0
-            user.last_reset_monthly = now
-        else:
-            # 检查是否跨月
-            if (
-                user.last_reset_monthly.month != now.month
-                or user.last_reset_monthly.year != now.year
-            ):
-                user.monthly_used = 0
-                user.last_reset_monthly = now
-
-        await self.session.commit()
-
     async def check_and_consume_issue_quota(
         self, github_username: str, repo_name: str, issue_number: int
     ):
@@ -208,7 +170,9 @@ class TelegramService:
 
         if await is_payment_enabled():
             await PaymentService(self.session).expire_due_subscriptions(user.id)
-        await self._reset_expired_issue_quotas(user)
+        await QuotaService(self.session).reset_user_quotas_if_expired(
+            user, include_pr=False, include_issue=True
+        )
 
         stmt = (
             update(TelegramUser)
@@ -261,43 +225,6 @@ class TelegramService:
 
         await self.session.commit()
         return True, ""
-
-    async def _reset_expired_issue_quotas(self, user: TelegramUser):
-        """重置过期的 Issue 配额"""
-        now = datetime.utcnow()
-
-        if (
-            user.last_reset_issue_daily is None
-            or user.last_reset_issue_daily.date() < now.date()
-        ):
-            user.issue_daily_used = 0
-            user.last_reset_issue_daily = now
-
-        if user.last_reset_issue_weekly is None:
-            user.issue_weekly_used = 0
-            user.last_reset_issue_weekly = now
-        else:
-            if user.last_reset_issue_weekly.date() < now.date():
-                week_start = now - timedelta(days=now.weekday())
-                week_start = week_start.replace(
-                    hour=0, minute=0, second=0, microsecond=0
-                )
-                if user.last_reset_issue_weekly < week_start:
-                    user.issue_weekly_used = 0
-                    user.last_reset_issue_weekly = now
-
-        if user.last_reset_issue_monthly is None:
-            user.issue_monthly_used = 0
-            user.last_reset_issue_monthly = now
-        else:
-            if (
-                user.last_reset_issue_monthly.month != now.month
-                or user.last_reset_issue_monthly.year != now.year
-            ):
-                user.issue_monthly_used = 0
-                user.last_reset_issue_monthly = now
-
-        await self.session.commit()
 
     async def add_user(
         self,
@@ -406,7 +333,9 @@ class TelegramService:
 
         if await is_payment_enabled():
             await PaymentService(self.session).expire_due_subscriptions(user.id)
-        await self._reset_expired_quotas(user)
+        # 查询配额用于展示时同时重置 PR 和 Issue，避免 Telegram /myquota 显示跨日旧值；
+        # 消耗路径仍只重置对应类型，避免不必要写入。
+        await QuotaService(self.session).reset_user_quotas_if_expired(user)
 
         return {
             "github_username": user.github_username,
@@ -414,14 +343,37 @@ class TelegramService:
             "daily": {"used": user.daily_used, "limit": user.daily_quota},
             "weekly": {"used": user.weekly_used, "limit": user.weekly_quota},
             "monthly": {"used": user.monthly_used, "limit": user.monthly_quota},
+            "issue_daily": {
+                "used": user.issue_daily_used,
+                "limit": user.issue_daily_quota,
+            },
+            "issue_weekly": {
+                "used": user.issue_weekly_used,
+                "limit": user.issue_weekly_quota,
+            },
+            "issue_monthly": {
+                "used": user.issue_monthly_used,
+                "limit": user.issue_monthly_quota,
+            },
         }
 
     async def list_all_users(self) -> List[TelegramUser]:
-        """列出所有用户"""
+        """列出所有用户，并为展示结果执行惰性配额重置。"""
         result = await self.session.execute(
             select(TelegramUser).where(TelegramUser.is_active)
         )
-        return result.scalars().all()
+        users = result.scalars().all()
+
+        quota_service = QuotaService(self.session)
+        changed = False
+        for user in users:
+            changed = await quota_service.reset_user_quotas_if_expired(
+                user, commit=False
+            ) or changed
+        if changed:
+            await self.session.commit()
+
+        return users
 
     async def list_all_repos(self) -> List[RepoSubscription]:
         """列出所有仓库"""

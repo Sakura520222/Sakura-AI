@@ -5,6 +5,7 @@ from loguru import logger
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.services.payment_service import PaymentError, PaymentService
+from backend.services.quota_service import QuotaService
 from backend.webui.deps import (
     require_auth,
     require_super_admin,
@@ -48,6 +49,8 @@ async def billing_index(
     from backend.models.telegram_models import TelegramUser
 
     db_user = await db.get(TelegramUser, user["user_id"])
+    if db_user:
+        await QuotaService(db).reset_user_quotas_if_expired(db_user)
 
     page = _parse_page(request.query_params.get("page"))
     per_page = user_prefs.get("items_per_page", 20)
