@@ -24,7 +24,7 @@
 - **Incremental Review Learning**: AI automatically summarizes historical review records, identifies scoring trends and issue hotspots, continuously improving review quality
 - **Smart Review Approval**: Automatically decides APPROVE / REQUEST_CHANGES / COMMENT based on AI scores
 - **PR Change Summary**: AI auto-generates PR change summaries with incremental updates when the PR is updated
-- **PR Dependency Graph**: AI analyzes import/module dependencies of changed files and generates Mermaid-format visual dependency graphs
+- **PR Dependency Graph**: Supports both AI analysis and static import analysis modes to generate Mermaid-format visual dependency graphs
 - **Token Consumption Tracking**: Real-time tracking of token usage and estimated costs across all AI API calls during review
 - **One-click Revoke**: Admins can use `/revoke` to instantly withdraw all AI comments and reviews
 - **Auxiliary Model Support**: Independently configure lightweight models for summarization, context compression, label recommendation, and other tasks to reduce inference costs
@@ -63,7 +63,7 @@
 - **Dynamic Configuration**: Configuration changes via WebUI take effect immediately without service restart
 - **GitHub App Installation Management**: Automatically handles GitHub App install/uninstall events, syncing repository authorization status
 - **SSE Real-time Push**: Multi-process real-time communication based on Redis Pub/Sub, with instant WebUI data updates
-- **Quota-based Access Control**: Flexible quota-based access management system with user self-registration support
+- **Quota-based Access Control**: Flexible quota-based access management system with user self-registration support and UTC daily/weekly/monthly auto-reset for PR and Issue usage
 - **Paid Quota System**: Plan management, batch redeem code generation and redemption, admin manual grants, supports one-time packages and subscription plans
 - **Admin Action Audit**: Complete operation logs covering configuration changes, user management, and other critical actions
 - **WebUI Dashboard**: Dashboard charts, PR management, user management, configuration management, queue monitoring, action logs, repository scan management, with Markdown content rendering support
@@ -245,7 +245,7 @@ All configuration follows this priority: **Database app_config (WebUI) > Setting
 - **Label Recommendation**: `config/labels.yaml` for PR label recommendation toggle and confidence; Issue labels at `issue_auto_create_labels` / `issue_confidence_threshold` in global config
 - **Review Approval**: `review_policy` in `config/strategies.yaml` for threshold and repository-level overrides
 - **PR Change Summary**: `enable_pr_summary` in WebUI configuration
-- **PR Dependency Graph**: `enable_pr_dependency_graph` / `pr_dependency_graph_max_nodes` / `pr_dependency_graph_max_files` in WebUI configuration
+- **PR Dependency Graph**: `enable_pr_dependency_graph` / `pr_dependency_graph_mode` / `pr_dependency_graph_max_nodes` / `pr_dependency_graph_max_files` in WebUI configuration; `ai` mode uses model-based dependency analysis, while `static` mode uses static import parsing to reduce cost
 - **Token Cost Tracking**: `review_price_per_1k_prompt` / `review_price_per_1k_completion` in WebUI configuration for tracking review token consumption and costs
 - **RAG Knowledge Base**: Configure embedding models (supports BAAI/bge-m3, etc.), reranking models, ChromaDB in WebUI configuration
 - **PR Code Index**: Configure code chunking, supported languages, core directories in WebUI configuration
@@ -349,9 +349,12 @@ Sakura-AI-Reviewer/
 | [Review Approval Feature](docs/APPROVAL_FEATURE_SUMMARY.md)    | Smart review approval system details            |
 | [Manual Review Feature](docs/MANUAL_REVIEW_FEATURE.md)         | Super admin manual review triggering            |
 | [Model Context Management](docs/MODEL_CONTEXT_FEATURE.md)      | AI model context and compression features       |
+| [PR Features Guide](docs/PR_FEATURES_GUIDE.md)                 | PR change summary and dependency graph configuration |
+| [Quota System Guide](docs/QUOTA_SYSTEM_GUIDE.md)               | PR/Issue quota usage tracking and auto-reset mechanism |
 | [API v1 Reference](docs/api-v1-reference.md)                   | RESTful API documentation (mobile integration)  |
 | [WebUI Design Document](docs/plans/2026-03-27-webui-design.md) | WebUI design specification                      |
 | [Project Memory System Design](docs/plans/2026-04-20-sakura-memory-design.md) | .sakura/ memory system architecture & config |
+| [Agents Project Guide](AGENTS.md)                              | Project conventions for automation agents and contributors |
 
 ---
 
