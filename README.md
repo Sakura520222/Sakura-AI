@@ -38,7 +38,7 @@
 - **Web 搜索增强**：支持 DuckDuckGo / Tavily，AI 可主动检索互联网信息辅助审查决策
 - **仓库级知识库（RAG）**：向量语义检索项目文档，为 AI 审查提供规范上下文
 - **PR 代码自动索引**：语法感知分块 + 语义搜索，AI 可精准定位相关代码
-- 🧠 **项目记忆系统**：基于 `.sakura/` 目录的自我反思和知识积累，AI 审查越来越了解你的项目
+- 🧠 **项目记忆系统**：基于 `.sakura/` 目录的自我反思和知识积累，AI 审查越来越了解你的项目。详见 [项目记忆系统使用指南](docs/SAKURA_MEMORY_GUIDE.md)
 
 ### 仓库扫描
 
@@ -256,7 +256,7 @@ WebUI：`https://your-domain.com/webui/`
 - **Web 搜索工具**：WebUI 配置管理中 `web_search_provider`（`duckduckgo` 免费或 `tavily` 高级）
 - **跨文件搜索**：`config/strategies.yaml` 中 `context_enhancement.search_in_files`，配置 GitHub Search API 优先策略、上下文行数、最大结果数等
 - **Git 信息工具**：`config/strategies.yaml` 中 `context_enhancement.git_tools`，配置默认分支和提交返回数量
-- **项目记忆系统**：WebUI 配置管理中 `sakura_memory_enabled` 启用记忆系统，`sakura_reflection_enabled` 启用审查后反思，`sakura_consolidation_interval` 合并触发的反思轮数（默认 5），`sakura_auto_init` 自动初始化 `.sakura/` 目录
+- **项目记忆系统**：WebUI 配置管理中 `sakura_memory_enabled` 启用记忆系统，`sakura_reflection_enabled` 启用审查后反思，`sakura_consolidation_interval` 合并触发的反思轮数（默认 5），`sakura_auto_init` 自动初始化 `.sakura/` 目录。用户可在 `.sakura/rules/`、`.sakura/docs/`、`.sakura/plans/` 下放置自定义文档，详见 [项目记忆系统使用指南](docs/SAKURA_MEMORY_GUIDE.md)
 - **模型上下文**：WebUI 配置管理中配置上下文窗口、自动压缩等，详见 [模型上下文管理](docs/MODEL_CONTEXT_FEATURE.md)
 - **国际化（i18n）**：WebUI 支持中英文界面切换（个人设置页面），AI 输出语言可通过环境变量 `OUTPUT_LANGUAGE` 配置（`zh-CN` 或 `en`），评论模板自动匹配对应语言
 
@@ -352,6 +352,7 @@ Sakura-AI-Reviewer/
 | [配额系统指南](docs/QUOTA_SYSTEM_GUIDE.md)                 | PR/Issue 配额统计与自动重置机制    |
 | [API v1 参考文档](docs/api-v1-reference.md)             | RESTful API 接口文档（移动端对接） |
 | [WebUI 设计文档](docs/plans/2026-03-27-webui-design.md) | WebUI 设计规范              |
+| [项目记忆系统使用指南](docs/SAKURA_MEMORY_GUIDE.md) | .sakura/ 目录结构、生命周期、配置说明 |
 | [项目记忆系统设计](docs/plans/2026-04-20-sakura-memory-design.md) | .sakura/ 记忆系统架构与配置 |
 | [Agents 项目指南](AGENTS.md)                               | 自动化代理与贡献者项目约定         |
 
