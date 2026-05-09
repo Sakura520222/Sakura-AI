@@ -218,6 +218,14 @@ app.include_router(api_v1_router, prefix="/api/v1", tags=["API v1"])
 
 # 限流：注册 slowapi 状态 + 异常处理
 app.state.limiter = limiter
+_WEBUI_RATE_LIMIT_JSON_SUFFIXES = frozenset(
+    {
+        "/passkey/options",
+        "/passkey/verify",
+        "/passkeys/register/options",
+        "/passkeys/register/verify",
+    }
+)
 
 
 @app.exception_handler(RateLimitExceeded)
@@ -232,16 +240,13 @@ async def rate_limit_exception_handler(request: Request, exc: RateLimitExceeded)
                 content={"success": False, "message": message, "data": None},
                 headers={"HX-Redirect": f"{path}?_toast={message}&_toast_type=error"},
             )
-        is_json_endpoint = (
-            path.endswith("/passkey/options")
-            or path.endswith("/passkey/verify")
-            or path.endswith("/passkeys/register/options")
-            or path.endswith("/passkeys/register/verify")
+        is_json_endpoint = any(
+            path.endswith(suffix) for suffix in _WEBUI_RATE_LIMIT_JSON_SUFFIXES
         )
         if is_json_endpoint or "application/json" in request.headers.get("accept", ""):
             return JSONResponse(
                 status_code=429,
-                content={"success": False, "message": "操作过于频繁，请稍后再试", "data": None},
+                content={"success": False, "message": message, "data": None},
             )
         referer = request.headers.get("referer")
         redirect_url = referer if referer and referer.startswith(str(request.base_url)) else "/webui/"
