@@ -48,6 +48,11 @@ router = APIRouter(prefix="/settings", tags=["WebUI Settings"])
 templates = get_templates()
 
 
+def _request_origin(request: Request) -> str:
+    """获取当前请求 Origin，用于 WebAuthn RP 配置推导。"""
+    return request.headers.get("origin") or f"{request.url.scheme}://{request.url.netloc}"
+
+
 @router.get("/")
 async def settings_page(
     request: Request,
@@ -369,6 +374,7 @@ async def regenerate_recovery_codes(
 
 @router.post("/passkeys/register/options")
 async def passkey_register_options(
+    request: Request,
     db: AsyncSession = Depends(get_db),
     user: dict = Depends(require_auth),
 ):
@@ -379,7 +385,7 @@ async def passkey_register_options(
     if not db_user:
         raise HTTPException(status_code=401, detail="未登录")
     try:
-        data = await begin_registration(db, db_user)
+        data = await begin_registration(db, db_user, _request_origin(request))
     except WebAuthnError as exc:
         return JSONResponse(
             status_code=400,
