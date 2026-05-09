@@ -123,6 +123,32 @@ class Settings(BaseSettings):
         "",
         description="TOTP Secret 加密密钥；为空时从 WEBUI_SECRET_KEY 派生",
     )
+    passkeys_enabled: bool = Field(
+        True,
+        description="是否允许用户注册和使用通行密钥（Passkeys/WebAuthn）",
+    )
+    passkeys_rp_id: str = Field(
+        "",
+        description="WebAuthn Relying Party ID；为空时使用 app_domain",
+    )
+    passkeys_rp_name: str = Field(
+        "Sakura AI Reviewer",
+        description="WebAuthn Relying Party 显示名称",
+    )
+    passkeys_origin: str = Field(
+        "",
+        description="WebAuthn 允许的 Origin；为空时根据 app_domain/app_port 推导",
+    )
+    passkeys_challenge_ttl_seconds: int = Field(
+        300,
+        ge=60,
+        le=900,
+        description="WebAuthn challenge 有效期（秒）",
+    )
+    passkeys_authentication_rate_limit: str = Field(
+        "10/minute",
+        description="Passkey 认证接口限流规则",
+    )
 
     # GitHub OAuth 配置
     # 获取步骤：GitHub → Settings → Developer settings → OAuth Apps → New OAuth App

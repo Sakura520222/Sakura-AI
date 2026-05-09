@@ -46,6 +46,7 @@ python-jose[cryptography]>=3.3.0
 itsdangerous>=2.1.0
 pyotp>=2.9.0
 qrcode[pil]>=7.4.2
+webauthn>=2.5.2
 
 # GitHub签名验证 (hmac 和 hashlib 是 Python 内置模块，无需安装)
 

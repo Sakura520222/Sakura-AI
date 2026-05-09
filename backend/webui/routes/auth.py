@@ -6,8 +6,8 @@ import time
 from urllib.parse import urlencode
 
 import httpx
-from fastapi import APIRouter, Request, Form, HTTPException, Query, Header
-from fastapi.responses import RedirectResponse, HTMLResponse
+from fastapi import APIRouter, Request, Form, HTTPException, Query, Header, Body
+from fastapi.responses import RedirectResponse, HTMLResponse, JSONResponse
 from loguru import logger
 from sqlalchemy import select
 
@@ -19,6 +19,11 @@ from backend.services.two_factor_service import (
     TwoFactorReplayError,
     consume_recovery_code,
     verify_user_totp,
+)
+from backend.services.webauthn_service import (
+    WebAuthnError,
+    begin_authentication,
+    finish_authentication,
 )
 from backend.webui.auth import (
     create_access_token,
@@ -460,6 +465,72 @@ async def verify_two_factor(
     )
     logger.info("WebUI 二次验证成功: user={}", payload.get("sub"))
     response = RedirectResponse(url="/webui/", status_code=302)
+    _set_webui_token_cookie(response, jwt_token)
+    response.delete_cookie(MFA_PENDING_COOKIE_NAME)
+    return response
+
+
+@router.post("/2fa/passkey/options")
+async def two_factor_passkey_options(request: Request):
+    """创建登录二次验证 Passkey options。"""
+    token = request.cookies.get(MFA_PENDING_COOKIE_NAME)
+    payload = decode_access_token(token) if token else None
+    if not is_mfa_pending_payload(payload):
+        return JSONResponse(
+            status_code=401,
+            content={"success": False, "message": "登录已过期", "data": None},
+        )
+
+    async with db_module.async_session() as session:
+        try:
+            data = await begin_authentication(session, int(payload["user_id"]))
+        except WebAuthnError as exc:
+            return JSONResponse(
+                status_code=400,
+                content={"success": False, "message": str(exc), "data": None},
+            )
+    return {"success": True, "message": "ok", "data": data}
+
+
+@router.post("/2fa/passkey/verify")
+async def two_factor_passkey_verify(request: Request, body: dict = Body(...)):
+    """验证登录二次验证 Passkey 并签发正式 Cookie。"""
+    token = request.cookies.get(MFA_PENDING_COOKIE_NAME)
+    payload = decode_access_token(token) if token else None
+    if not is_mfa_pending_payload(payload):
+        return JSONResponse(
+            status_code=401,
+            content={"success": False, "message": "登录已过期", "data": None},
+        )
+
+    try:
+        async with db_module.async_session() as session:
+            await finish_authentication(
+                session,
+                body.get("challenge_id", ""),
+                body.get("credential", {}),
+                int(payload["user_id"]),
+            )
+            await session.commit()
+    except Exception as exc:
+        logger.warning("Passkey 登录验证失败: user_id={}, error={}", payload.get("user_id"), exc)
+        return JSONResponse(
+            status_code=400,
+            content={"success": False, "message": "Passkey 验证失败", "data": None},
+        )
+
+    jwt_token = create_access_token(
+        {
+            "sub": payload.get("sub"),
+            "role": payload.get("role"),
+            "user_id": payload.get("user_id"),
+            "github_id": payload.get("github_id"),
+            "avatar_url": payload.get("avatar_url"),
+        }
+    )
+    response = JSONResponse(
+        content={"success": True, "message": "ok", "data": {"redirect": "/webui/"}}
+    )
     _set_webui_token_cookie(response, jwt_token)
     response.delete_cookie(MFA_PENDING_COOKIE_NAME)
     return response

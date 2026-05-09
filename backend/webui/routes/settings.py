@@ -2,9 +2,10 @@
 
 from datetime import datetime
 
-from fastapi import APIRouter, Request, Depends, Form
+from fastapi import APIRouter, Request, Depends, Form, Body, HTTPException
+from fastapi.responses import JSONResponse
 from loguru import logger
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.core.config import (
@@ -13,7 +14,7 @@ from backend.core.config import (
     validate_user_dynamic_config_value,
 )
 from backend.models.database import UserConfig, WebUIConfig
-from backend.models.telegram_models import TelegramUser
+from backend.models.telegram_models import TelegramUser, UserWebAuthnCredential
 from backend.services.two_factor_service import (
     TwoFactorError,
     TwoFactorReplayError,
@@ -24,6 +25,11 @@ from backend.services.two_factor_service import (
     replace_recovery_codes,
     verify_totp_secret,
     verify_user_totp,
+)
+from backend.services.webauthn_service import (
+    WebAuthnError,
+    begin_registration,
+    finish_registration,
 )
 from backend.webui.deps import (
     require_auth,
@@ -57,6 +63,7 @@ async def settings_page(
     result = await db.execute(select(TelegramUser).where(TelegramUser.id == user_id))
     db_user = result.scalar_one_or_none()
     recovery_code_count = await count_unused_recovery_codes(db, user_id) if db_user else 0
+    passkeys = await _get_user_passkeys(db, user_id)
     return render_template(
         "settings.html",
         request,
@@ -75,7 +82,19 @@ async def settings_page(
         recovery_code_count=recovery_code_count,
         totp_setup=None,
         recovery_codes=None,
+        passkeys=passkeys,
     )
+
+
+async def _get_user_passkeys(
+    db: AsyncSession, user_id: int
+) -> list[UserWebAuthnCredential]:
+    result = await db.execute(
+        select(UserWebAuthnCredential)
+        .where(UserWebAuthnCredential.user_id == user_id)
+        .order_by(UserWebAuthnCredential.created_at.desc())
+    )
+    return list(result.scalars().all())
 
 
 @router.post("/")
@@ -201,6 +220,7 @@ async def start_two_factor_setup(
         recovery_code_count=await count_unused_recovery_codes(db, user_id),
         totp_setup=setup,
         recovery_codes=None,
+        passkeys=await _get_user_passkeys(db, user_id),
     )
 
 
@@ -251,6 +271,7 @@ async def enable_two_factor(
         recovery_code_count=len(recovery_codes),
         totp_setup=None,
         recovery_codes=recovery_codes,
+        passkeys=await _get_user_passkeys(db, user_id),
     )
 
 
@@ -342,7 +363,82 @@ async def regenerate_recovery_codes(
         recovery_code_count=len(recovery_codes),
         totp_setup=None,
         recovery_codes=recovery_codes,
+        passkeys=await _get_user_passkeys(db, user_id),
     )
+
+
+@router.post("/passkeys/register/options")
+async def passkey_register_options(
+    db: AsyncSession = Depends(get_db),
+    user: dict = Depends(require_auth),
+):
+    """创建 Passkey 注册 options。"""
+    user_id = int(user["user_id"])
+    result = await db.execute(select(TelegramUser).where(TelegramUser.id == user_id))
+    db_user = result.scalar_one_or_none()
+    if not db_user:
+        raise HTTPException(status_code=401, detail="未登录")
+    try:
+        data = await begin_registration(db, db_user)
+    except WebAuthnError as exc:
+        return JSONResponse(
+            status_code=400,
+            content={"success": False, "message": str(exc), "data": None},
+        )
+    return {"success": True, "message": "ok", "data": data}
+
+
+@router.post("/passkeys/register/verify")
+async def passkey_register_verify(
+    db: AsyncSession = Depends(get_db),
+    user: dict = Depends(require_auth),
+    body: dict = Body(...),
+):
+    """验证并保存 Passkey 注册结果。"""
+    user_id = int(user["user_id"])
+    result = await db.execute(select(TelegramUser).where(TelegramUser.id == user_id))
+    db_user = result.scalar_one_or_none()
+    if not db_user:
+        raise HTTPException(status_code=401, detail="未登录")
+    try:
+        credential = await finish_registration(
+            db,
+            db_user,
+            body.get("challenge_id", ""),
+            body.get("credential", {}),
+            body.get("device_name") or "Passkey",
+        )
+        await db.commit()
+    except Exception as exc:
+        await db.rollback()
+        logger.warning("Passkey 注册失败: user_id={}, error={}", user_id, exc)
+        return JSONResponse(
+            status_code=400,
+            content={"success": False, "message": "Passkey 注册失败", "data": None},
+        )
+    return {
+        "success": True,
+        "message": "ok",
+        "data": {"id": credential.id, "device_name": credential.device_name},
+    }
+
+
+@router.post("/passkeys/{credential_id}/delete")
+async def passkey_delete(
+    credential_id: int,
+    db: AsyncSession = Depends(get_db),
+    user: dict = Depends(require_auth),
+    csrf_token: str = Depends(require_csrf),
+):
+    """删除当前用户的 Passkey。"""
+    await db.execute(
+        delete(UserWebAuthnCredential).where(
+            UserWebAuthnCredential.id == credential_id,
+            UserWebAuthnCredential.user_id == int(user["user_id"]),
+        )
+    )
+    await db.commit()
+    return toast_redirect("/webui/settings/", "toast.passkey_deleted")
 
 
 @router.get("/about")

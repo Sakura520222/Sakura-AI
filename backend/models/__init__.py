@@ -14,7 +14,7 @@ from backend.models.database import (
     Base,
 )
 from backend.models.admin_action_log import AdminActionLog
-from backend.models.telegram_models import UserRecoveryCode
+from backend.models.telegram_models import UserRecoveryCode, UserWebAuthnCredential
 from backend.models.scan_models import (
     RepoScan,
     ScanFinding,
@@ -47,6 +47,7 @@ __all__ = [
     "ReviewQueue",
     "AdminActionLog",
     "UserRecoveryCode",
+    "UserWebAuthnCredential",
     "Plan",
     "PlanType",
     "Order",

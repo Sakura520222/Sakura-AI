@@ -63,11 +63,87 @@
                     {{ _('auth.verify') }}
                 </button>
             </form>
+
+            <div class="relative my-6">
+                <div class="absolute inset-0 flex items-center">
+                    <div class="w-full border-t border-gray-200 dark:border-gray-700"></div>
+                </div>
+                <div class="relative flex justify-center text-xs">
+                    <span class="px-2 bg-white dark:bg-gray-800 text-gray-400">{{ _('common.or') }}</span>
+                </div>
+            </div>
+
+            <button type="button" id="passkey-login-btn" class="w-full py-3 px-4 bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 text-gray-800 dark:text-gray-100 font-medium rounded-xl transition-all hover:bg-gray-50 dark:hover:bg-gray-700">
+                {{ _('auth.verify_with_passkey') }}
+            </button>
+            <p id="passkey-error" class="hidden mt-3 text-sm text-red-600 dark:text-red-400"></p>
         </div>
 
         <p class="mt-6 text-center text-xs text-gray-400 dark:text-gray-500">
             Sakura AI Reviewer v{{ app_version }}
         </p>
     </div>
+    <script>
+    function base64urlToBuffer(value) {
+        const padding = '='.repeat((4 - value.length % 4) % 4);
+        const base64 = (value + padding).replace(/-/g, '+').replace(/_/g, '/');
+        const raw = atob(base64);
+        const buffer = new ArrayBuffer(raw.length);
+        const view = new Uint8Array(buffer);
+        for (let i = 0; i < raw.length; i++) view[i] = raw.charCodeAt(i);
+        return buffer;
+    }
+    function bufferToBase64url(buffer) {
+        const bytes = new Uint8Array(buffer);
+        let binary = '';
+        for (const byte of bytes) binary += String.fromCharCode(byte);
+        return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/g, '');
+    }
+    function publicKeyCredentialToJSON(credential) {
+        return {
+            id: credential.id,
+            rawId: bufferToBase64url(credential.rawId),
+            type: credential.type,
+            response: {
+                authenticatorData: bufferToBase64url(credential.response.authenticatorData),
+                clientDataJSON: bufferToBase64url(credential.response.clientDataJSON),
+                signature: bufferToBase64url(credential.response.signature),
+                userHandle: credential.response.userHandle ? bufferToBase64url(credential.response.userHandle) : null,
+            },
+        };
+    }
+    document.getElementById('passkey-login-btn').addEventListener('click', async function() {
+        const errorEl = document.getElementById('passkey-error');
+        errorEl.classList.add('hidden');
+        if (!window.PublicKeyCredential) {
+            errorEl.textContent = '{{ _('auth.passkey_not_supported') }}';
+            errorEl.classList.remove('hidden');
+            return;
+        }
+        try {
+            const optionsResp = await fetch('/webui/auth/2fa/passkey/options', { method: 'POST' });
+            const optionsJson = await optionsResp.json();
+            if (!optionsJson.success) throw new Error(optionsJson.message || 'Passkey options failed');
+            const data = optionsJson.data;
+            const publicKey = data.public_key;
+            publicKey.challenge = base64urlToBuffer(publicKey.challenge);
+            if (publicKey.allowCredentials) {
+                publicKey.allowCredentials = publicKey.allowCredentials.map((item) => ({ ...item, id: base64urlToBuffer(item.id) }));
+            }
+            const assertion = await navigator.credentials.get({ publicKey });
+            const verifyResp = await fetch('/webui/auth/2fa/passkey/verify', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ challenge_id: data.challenge_id, credential: publicKeyCredentialToJSON(assertion) }),
+            });
+            const verifyJson = await verifyResp.json();
+            if (!verifyJson.success) throw new Error(verifyJson.message || 'Passkey verify failed');
+            window.location.href = verifyJson.data.redirect || '/webui/';
+        } catch (error) {
+            errorEl.textContent = error.message || '{{ _('auth.passkey_failed') }}';
+            errorEl.classList.remove('hidden');
+        }
+    });
+    </script>
 </body>
 </html>
