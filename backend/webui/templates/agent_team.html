@@ -41,6 +41,9 @@
             {% for item in config_items %}
             <div>
                 <label class="block text-sm font-medium mb-1" for="{{ item.key }}">{{ item.label }}</label>
+                {% if item.description %}
+                <p class="text-xs text-gray-500 dark:text-gray-400 mb-1">{{ item.description }}</p>
+                {% endif %}
                 {% if item.input_type == 'boolean' %}
                 <label class="inline-flex items-center gap-2 text-sm">
                     <input type="checkbox" id="{{ item.key }}" name="{{ item.key }}" value="true" {% if item.value == 'True' or item.value == 'true' %}checked{% endif %}
