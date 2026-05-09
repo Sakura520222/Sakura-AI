@@ -371,6 +371,9 @@ class QueueStatsResponse(BaseModel):
 # ========== 配置模型 ==========
 
 
+UserConfigValue = str | int | bool | None
+
+
 class ConfigGeneralResponse(BaseModel):
     """通用配置响应"""
 
@@ -388,7 +391,7 @@ class UserConfigUpdateRequest(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    configs: dict[str, Any]
+    configs: dict[str, UserConfigValue]
 
 
 class ConfigStrategiesResponse(BaseModel):

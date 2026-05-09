@@ -42,7 +42,7 @@ async def update_user_config(
 ):
     """更新当前用户的配置覆盖。"""
     configs = body.configs
-    if not configs:
+    if len(configs) == 0:
         return error_response("配置内容不能为空")
 
     user_id = int(user["user_id"])

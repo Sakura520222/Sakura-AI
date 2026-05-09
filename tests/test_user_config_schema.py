@@ -15,3 +15,10 @@ def test_user_config_update_requires_configs_wrapper():
     )
 
     assert request.configs == {"output_language": "en"}
+
+
+def test_user_config_update_rejects_non_scalar_values():
+    with pytest.raises(ValidationError):
+        UserConfigUpdateRequest.model_validate(
+            {"configs": {"output_language": ["zh-CN", "en"]}}
+        )
