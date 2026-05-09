@@ -8,6 +8,8 @@ from slowapi import Limiter
 from slowapi.util import get_remote_address
 
 from backend.webui.auth import decode_access_token, is_access_token_payload
+from backend.webui.deps import user_requires_mfa_enrollment
+from backend.models import database as db_module
 
 # 限流器：按客户端 IP 限流（config_filename="" 跳过 .env 读取，避免 Windows GBK 编码问题）
 limiter = Limiter(key_func=get_remote_address, config_filename="")
@@ -67,7 +69,11 @@ async def get_api_current_user(
 
 async def require_api_auth(request: Request) -> dict:
     """需要登录的 API 路由依赖"""
-    return await get_api_current_user(request)
+    user = await get_api_current_user(request)
+    async with db_module.async_session() as session:
+        if await user_requires_mfa_enrollment(int(user["user_id"]), session):
+            raise HTTPException(status_code=428, detail="MFA enrollment required")
+    return user
 
 
 async def require_api_admin(request: Request) -> dict:

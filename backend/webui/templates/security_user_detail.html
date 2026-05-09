@@ -12,7 +12,7 @@
         <a href="/webui/security/" class="text-sm text-pink-600 dark:text-pink-400 hover:underline">{{ _('common.back') }}</a>
     </div>
 
-    <div class="grid gap-4 md:grid-cols-4">
+    <div class="grid gap-4 md:grid-cols-5">
         <div class="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 p-5">
             <p class="text-sm text-gray-500">{{ _('settings.two_factor_auth') }}</p>
             <p class="mt-2 text-lg font-semibold">{{ _('common.enabled') if target_user.totp_enabled else _('common.disabled') }}</p>
@@ -28,6 +28,28 @@
         <div class="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 p-5">
             <p class="text-sm text-gray-500">{{ _('security.last_event') }}</p>
             <p class="mt-2 text-sm font-semibold">{{ summary.last_security_event_at or '-' }}</p>
+        </div>
+        <div class="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 p-5">
+            <p class="text-sm text-gray-500">{{ _('security.mfa_requirement') }}</p>
+            <p class="mt-2 text-lg font-semibold">{{ _('security.required') if target_user.mfa_required else _('security.not_required') }}</p>
+        </div>
+    </div>
+
+    <div class="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 shadow-sm p-6">
+        <h2 class="text-base font-semibold">{{ _('security.mfa_requirement') }}</h2>
+        <p class="mt-1 text-sm text-gray-500 dark:text-gray-400">{{ _('security.mfa_requirement_desc') }}</p>
+        <div class="mt-4 flex flex-wrap gap-3">
+            {% if target_user.mfa_required %}
+            <form method="POST" action="/webui/security/users/{{ target_user.id }}/mfa/unrequire">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                <button type="submit" class="px-4 py-2 bg-gray-700 text-white rounded-lg text-sm font-medium hover:bg-gray-800">{{ _('security.unrequire_mfa') }}</button>
+            </form>
+            {% else %}
+            <form method="POST" action="/webui/security/users/{{ target_user.id }}/mfa/require">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                <button type="submit" class="px-4 py-2 bg-pink-500 text-white rounded-lg text-sm font-medium hover:bg-pink-600">{{ _('security.require_mfa') }}</button>
+            </form>
+            {% endif %}
         </div>
     </div>
 

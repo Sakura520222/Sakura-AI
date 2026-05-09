@@ -80,6 +80,7 @@ class TelegramUser(Base):
     is_active = Column(Boolean, default=True, nullable=False)
 
     # 两步验证 / Two-factor authentication
+    mfa_required = Column(Boolean, default=False, nullable=False)
     totp_enabled = Column(Boolean, default=False, nullable=False)
     totp_secret_encrypted = Column(Text, nullable=True)
     totp_enabled_at = Column(TIMESTAMP, nullable=True)

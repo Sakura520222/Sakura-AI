@@ -104,6 +104,18 @@ async def reset_user_totp(session: AsyncSession, target_user: TelegramUser) -> N
     )
 
 
+def user_has_mfa_enabled(user: TelegramUser, passkey_count: int = 0) -> bool:
+    """Return whether a user has at least one MFA method enabled."""
+    return bool(user.totp_enabled or passkey_count > 0)
+
+
+async def set_user_mfa_required(
+    session: AsyncSession, target_user: TelegramUser, required: bool
+) -> None:
+    """Set whether a user must enroll MFA before using normal WebUI/API features."""
+    target_user.mfa_required = required
+
+
 async def delete_user_passkey(
     session: AsyncSession, target_user_id: int, credential_id: int
 ) -> int:
