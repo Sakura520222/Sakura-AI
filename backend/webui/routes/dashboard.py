@@ -136,8 +136,8 @@ async def _check_github_app_installed(github_username: str) -> Optional[bool]:
             try:
                 r = await get_async_redis()
                 await r.setex(cache_key, _APP_INSTALL_CACHE_TTL_UNKNOWN, "unknown")
-            except Exception:
-                pass
+            except Exception as e:
+                logger.debug(f"Redis 缓存写入 unknown 状态失败: {e}")
             return None
 
         # 写入 Redis 缓存（已安装 30 分钟，未安装 60 秒）
@@ -147,8 +147,8 @@ async def _check_github_app_installed(github_username: str) -> Optional[bool]:
                 _APP_INSTALL_CACHE_TTL if installed else _APP_INSTALL_CACHE_TTL_NEGATIVE
             )
             await r.setex(cache_key, ttl, "1" if installed else "0")
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug(f"Redis 写入安装状态缓存失败: {e}")
 
         return installed
     except Exception as e:
