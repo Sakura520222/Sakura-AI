@@ -1,5 +1,7 @@
 """WebUI 个人设置路由"""
 
+from datetime import datetime
+
 from fastapi import APIRouter, Request, Depends, Form
 from loguru import logger
 from sqlalchemy import select
@@ -11,6 +13,18 @@ from backend.core.config import (
     validate_user_dynamic_config_value,
 )
 from backend.models.database import UserConfig, WebUIConfig
+from backend.models.telegram_models import TelegramUser
+from backend.services.two_factor_service import (
+    TwoFactorError,
+    TwoFactorReplayError,
+    count_unused_recovery_codes,
+    create_totp_setup,
+    disable_totp,
+    encrypt_totp_secret,
+    replace_recovery_codes,
+    verify_totp_secret,
+    verify_user_totp,
+)
 from backend.webui.deps import (
     require_auth,
     get_db,
@@ -40,6 +54,9 @@ async def settings_page(
     output_language_config = await get_user_dynamic_config_state(
         "output_language", user_id
     )
+    result = await db.execute(select(TelegramUser).where(TelegramUser.id == user_id))
+    db_user = result.scalar_one_or_none()
+    recovery_code_count = await count_unused_recovery_codes(db, user_id) if db_user else 0
     return render_template(
         "settings.html",
         request,
@@ -53,6 +70,11 @@ async def settings_page(
         output_language=output_language_config["user_value"]
         if output_language_config["user_value"] is not None
         else "",
+        two_factor_enabled=bool(db_user and db_user.totp_enabled),
+        two_factor_allowed=True,
+        recovery_code_count=recovery_code_count,
+        totp_setup=None,
+        recovery_codes=None,
     )
 
 
@@ -142,6 +164,184 @@ async def save_settings(
         "/webui/settings/",
         "toast.settings_saved",
         lang=detect_language({"language": language}),
+    )
+
+
+@router.post("/2fa/setup")
+async def start_two_factor_setup(
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    user: dict = Depends(require_auth),
+    csrf_token: str = Depends(require_csrf),
+    user_prefs: dict = Depends(get_user_preferences),
+):
+    """开始 TOTP 设置，展示二维码。"""
+    user_id = int(user["user_id"])
+    result = await db.execute(select(TelegramUser).where(TelegramUser.id == user_id))
+    db_user = result.scalar_one_or_none()
+    if not db_user:
+        return toast_redirect("/webui/settings/", "toast.login_required", "error")
+
+    setup = create_totp_setup(db_user)
+    return render_template(
+        "settings.html",
+        request,
+        user_prefs=user_prefs,
+        current_user=user,
+        csrf_token=get_csrf_serializer().dumps({}),
+        active_page="settings",
+        items_per_page=user_prefs["items_per_page"],
+        language=user_prefs["language"],
+        output_language_config=await get_user_dynamic_config_state(
+            "output_language", user_id
+        ),
+        output_language="",
+        two_factor_enabled=bool(db_user.totp_enabled),
+        two_factor_allowed=True,
+        recovery_code_count=await count_unused_recovery_codes(db, user_id),
+        totp_setup=setup,
+        recovery_codes=None,
+    )
+
+
+@router.post("/2fa/enable")
+async def enable_two_factor(
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    user: dict = Depends(require_auth),
+    csrf_token: str = Depends(require_csrf),
+    secret: str = Form(...),
+    code: str = Form(...),
+    user_prefs: dict = Depends(get_user_preferences),
+):
+    """确认验证码并启用 TOTP。"""
+    user_id = int(user["user_id"])
+    used_step = verify_totp_secret(secret, code)
+    if used_step is None:
+        return toast_redirect("/webui/settings/", "toast.two_factor_invalid", "error")
+
+    result = await db.execute(select(TelegramUser).where(TelegramUser.id == user_id))
+    db_user = result.scalar_one_or_none()
+    if not db_user:
+        return toast_redirect("/webui/settings/", "toast.login_required", "error")
+
+    db_user.totp_enabled = True
+    db_user.totp_secret_encrypted = encrypt_totp_secret(secret)
+    db_user.totp_enabled_at = datetime.utcnow()
+    db_user.totp_last_used_step = used_step
+    recovery_codes = await replace_recovery_codes(db, user_id)
+    await db.commit()
+
+    logger.info("TOTP 已启用: user={}", user["sub"])
+    return render_template(
+        "settings.html",
+        request,
+        user_prefs=user_prefs,
+        current_user=user,
+        csrf_token=get_csrf_serializer().dumps({}),
+        active_page="settings",
+        items_per_page=user_prefs["items_per_page"],
+        language=user_prefs["language"],
+        output_language_config=await get_user_dynamic_config_state(
+            "output_language", user_id
+        ),
+        output_language="",
+        two_factor_enabled=True,
+        two_factor_allowed=True,
+        recovery_code_count=len(recovery_codes),
+        totp_setup=None,
+        recovery_codes=recovery_codes,
+    )
+
+
+@router.post("/2fa/disable")
+async def disable_two_factor_route(
+    db: AsyncSession = Depends(get_db),
+    user: dict = Depends(require_auth),
+    csrf_token: str = Depends(require_csrf),
+    code: str = Form(...),
+):
+    """使用当前验证码或恢复码禁用 TOTP。"""
+    user_id = int(user["user_id"])
+    result = await db.execute(select(TelegramUser).where(TelegramUser.id == user_id))
+    db_user = result.scalar_one_or_none()
+    if not db_user or not db_user.totp_enabled:
+        return toast_redirect("/webui/settings/", "toast.two_factor_not_enabled", "error")
+
+    verified = False
+    try:
+        used_step = verify_user_totp(db_user, code)
+        if used_step is not None:
+            db_user.totp_last_used_step = used_step
+            verified = True
+    except (TwoFactorError, TwoFactorReplayError):
+        verified = False
+
+    if not verified:
+        verified = await replace_or_consume_disable_recovery_code(db, user_id, code)
+    if not verified:
+        await db.rollback()
+        return toast_redirect("/webui/settings/", "toast.two_factor_invalid", "error")
+
+    await disable_totp(db, db_user)
+    await db.commit()
+    return toast_redirect("/webui/settings/", "toast.two_factor_disabled")
+
+
+async def replace_or_consume_disable_recovery_code(
+    db: AsyncSession, user_id: int, code: str
+) -> bool:
+    """延迟导入以避免设置路由暴露恢复码实现细节。"""
+    from backend.services.two_factor_service import consume_recovery_code
+
+    return await consume_recovery_code(db, user_id, code)
+
+
+@router.post("/2fa/recovery-codes/regenerate")
+async def regenerate_recovery_codes(
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    user: dict = Depends(require_auth),
+    csrf_token: str = Depends(require_csrf),
+    code: str = Form(...),
+    user_prefs: dict = Depends(get_user_preferences),
+):
+    """验证当前 TOTP 后重新生成恢复码。"""
+    user_id = int(user["user_id"])
+    result = await db.execute(select(TelegramUser).where(TelegramUser.id == user_id))
+    db_user = result.scalar_one_or_none()
+    if not db_user or not db_user.totp_enabled:
+        return toast_redirect("/webui/settings/", "toast.two_factor_not_enabled", "error")
+
+    try:
+        used_step = verify_user_totp(db_user, code)
+    except TwoFactorError:
+        used_step = None
+    if used_step is None:
+        return toast_redirect("/webui/settings/", "toast.two_factor_invalid", "error")
+
+    db_user.totp_last_used_step = used_step
+    recovery_codes = await replace_recovery_codes(db, user_id)
+    await db.commit()
+
+    return render_template(
+        "settings.html",
+        request,
+        user_prefs=user_prefs,
+        current_user=user,
+        csrf_token=get_csrf_serializer().dumps({}),
+        active_page="settings",
+        items_per_page=user_prefs["items_per_page"],
+        language=user_prefs["language"],
+        output_language_config=await get_user_dynamic_config_state(
+            "output_language", user_id
+        ),
+        output_language="",
+        two_factor_enabled=True,
+        two_factor_allowed=True,
+        recovery_code_count=len(recovery_codes),
+        totp_setup=None,
+        recovery_codes=recovery_codes,
     )
 
 

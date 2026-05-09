@@ -18,7 +18,7 @@ from backend.core.config import get_settings
 from backend.models import database as db_module
 from backend.models.database import PRReview
 from backend.models.database import WebUIConfig
-from backend.webui.auth import decode_access_token
+from backend.webui.auth import decode_access_token, is_access_token_payload
 from backend.services.payment_service import is_payment_enabled
 from backend.webui.i18n import make_translation_func, SUPPORTED_LANGUAGES
 
@@ -302,7 +302,7 @@ async def get_current_user(request: Request) -> dict:
         raise HTTPException(status_code=401, detail="未登录")
 
     payload = decode_access_token(token)
-    if not payload:
+    if not is_access_token_payload(payload):
         raise HTTPException(status_code=401, detail="登录已过期")
 
     # 校验必要字段
@@ -353,6 +353,8 @@ async def get_user_preferences(request: Request, db: AsyncSession = Depends(get_
         return {"language": "zh-CN", "items_per_page": 20}
 
     payload = decode_access_token(token)
+    if not is_access_token_payload(payload):
+        return {"language": "zh-CN", "items_per_page": 20}
     user_id = payload.get("user_id") if payload else None
     if not user_id:
         return {"language": "zh-CN", "items_per_page": 20}

@@ -14,7 +14,18 @@ from sqlalchemy import select
 from backend import __version__
 from backend.models.telegram_models import TelegramUser
 from backend.models import database as db_module
-from backend.webui.auth import create_access_token, decode_access_token
+from backend.services.two_factor_service import (
+    TwoFactorError,
+    TwoFactorReplayError,
+    consume_recovery_code,
+    verify_user_totp,
+)
+from backend.webui.auth import (
+    create_access_token,
+    create_mfa_pending_token,
+    decode_access_token,
+    is_mfa_pending_payload,
+)
 from backend.webui.deps import (
     get_templates,
     validate_csrf_token,
@@ -44,6 +55,7 @@ _OAUTH_STATE_TTL = 600  # state 有效期 10 分钟
 _OAUTH_STATE_KEY_PREFIX = "oauth:state:"
 _oauth_states_fallback: dict[str, dict] = {}  # Redis 故障时的内存回退
 _MAX_FALLBACK_STATES = 1000
+MFA_PENDING_COOKIE_NAME = "webui_mfa_token"
 
 
 def _cleanup_expired_states():
@@ -75,6 +87,48 @@ def _oauth_error(
             "telegram_deep_link": telegram_deep_link,
         },
         status_code=status_code,
+    )
+
+
+def _build_login_token_payload(
+    user: TelegramUser,
+    github_username: str,
+    github_id: int | None,
+    avatar_url: str,
+) -> dict:
+    """构建 WebUI/API 登录 JWT payload。"""
+    return {
+        "sub": github_username,
+        "role": user.role,
+        "user_id": user.id,
+        "github_id": github_id,
+        "avatar_url": avatar_url,
+    }
+
+
+def _set_webui_token_cookie(response: RedirectResponse, token: str):
+    """写入正式 WebUI 登录 Cookie。"""
+    settings = get_settings()
+    response.set_cookie(
+        "webui_token",
+        token,
+        httponly=True,
+        secure=settings.webui_cookie_secure,
+        max_age=86400,
+        samesite="lax",
+    )
+
+
+def _set_mfa_pending_cookie(response: RedirectResponse, token: str):
+    """写入等待二次验证的临时 Cookie。"""
+    settings = get_settings()
+    response.set_cookie(
+        MFA_PENDING_COOKIE_NAME,
+        token,
+        httponly=True,
+        secure=settings.webui_cookie_secure,
+        max_age=settings.two_factor_pending_token_expire_minutes * 60,
+        samesite="lax",
     )
 
 
@@ -300,30 +354,114 @@ async def github_callback(
             status_code=403,
         )
 
-    # 创建 JWT
-    token_data = {
-        "sub": github_username,
-        "role": user.role,
-        "user_id": user.id,
-        "github_id": github_id,
-        "avatar_url": avatar_url,
-    }
-    jwt_token = create_access_token(token_data)
+    token_data = _build_login_token_payload(user, github_username, github_id, avatar_url)
 
     # 登录成功，删除已使用的 state
     await _delete_oauth_state(state)
 
+    if user.totp_enabled:
+        mfa_token = create_mfa_pending_token(token_data)
+        logger.info(f"GitHub OAuth 需要二次验证: {github_username} (role={user.role})")
+        response = RedirectResponse(url="/webui/auth/2fa", status_code=302)
+        _set_mfa_pending_cookie(response, mfa_token)
+        response.delete_cookie("webui_token")
+        return response
+
+    jwt_token = create_access_token(token_data)
+
     logger.info(f"GitHub OAuth 登录成功: {github_username} (role={user.role})")
 
     response = RedirectResponse(url=redirect_target, status_code=302)
-    response.set_cookie(
-        "webui_token",
-        jwt_token,
-        httponly=True,
-        secure=settings.webui_cookie_secure,
-        max_age=86400,  # 24小时
-        samesite="lax",
+    _set_webui_token_cookie(response, jwt_token)
+    return response
+
+
+@router.get("/2fa")
+async def two_factor_page(request: Request):
+    """渲染登录二次验证页面。"""
+    token = request.cookies.get(MFA_PENDING_COOKIE_NAME)
+    payload = decode_access_token(token) if token else None
+    if not is_mfa_pending_payload(payload):
+        return toast_redirect("/webui/auth/login", "toast.login_required", "error")
+
+    return render_template(
+        "two_factor_verify.html",
+        request,
+        csrf_token=get_csrf_serializer().dumps({}),
+        error=None,
+        app_version=APP_VERSION,
+        github_username=payload.get("sub", ""),
     )
+
+
+@router.post("/2fa")
+async def verify_two_factor(
+    request: Request,
+    code: str = Form(...),
+    csrf_token: str = Form(...),
+):
+    """验证 TOTP 或恢复码并签发正式登录 Cookie。"""
+    if not validate_csrf_token(csrf_token):
+        raise HTTPException(status_code=403, detail="CSRF 验证失败")
+
+    token = request.cookies.get(MFA_PENDING_COOKIE_NAME)
+    payload = decode_access_token(token) if token else None
+    if not is_mfa_pending_payload(payload):
+        return toast_redirect("/webui/auth/login", "toast.login_required", "error")
+
+    user_id = payload.get("user_id")
+    async with db_module.async_session() as session:
+        result = await session.execute(
+            select(TelegramUser).where(
+                TelegramUser.id == user_id,
+                TelegramUser.is_active,
+            )
+        )
+        user = result.scalar_one_or_none()
+        if not user or not user.totp_enabled:
+            return toast_redirect("/webui/auth/login", "toast.login_required", "error")
+
+        verified = False
+        try:
+            used_step = verify_user_totp(user, code)
+            if used_step is not None:
+                user.totp_last_used_step = used_step
+                verified = True
+        except TwoFactorReplayError:
+            logger.warning("TOTP 重放尝试: user_id={}", user_id)
+        except TwoFactorError as exc:
+            logger.warning("TOTP 验证失败: user_id={}, error={}", user_id, exc)
+
+        if not verified:
+            verified = await consume_recovery_code(session, int(user_id), code)
+
+        if not verified:
+            await session.rollback()
+            return render_template(
+                "two_factor_verify.html",
+                request,
+                csrf_token=get_csrf_serializer().dumps({}),
+                error="验证码或恢复码无效",
+                app_version=APP_VERSION,
+                github_username=payload.get("sub", ""),
+                status_code=400,
+            )
+
+        await session.commit()
+
+    jwt_token = create_access_token(
+        {
+            "sub": payload.get("sub"),
+            "role": payload.get("role"),
+            "user_id": payload.get("user_id"),
+            "github_id": payload.get("github_id"),
+            "avatar_url": payload.get("avatar_url"),
+        }
+    )
+    logger.info("WebUI 二次验证成功: user={}", payload.get("sub"))
+    response = RedirectResponse(url="/webui/", status_code=302)
+    _set_webui_token_cookie(response, jwt_token)
+    response.delete_cookie(MFA_PENDING_COOKIE_NAME)
     return response
 
 
@@ -338,6 +476,7 @@ async def logout(request: Request, csrf_token: str = Form(...)):
         "/webui/auth/login", "toast.logged_out", lang=detect_language()
     )
     response.delete_cookie("webui_token")
+    response.delete_cookie(MFA_PENDING_COOKIE_NAME)
     return response
 
 
