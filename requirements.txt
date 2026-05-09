@@ -5,7 +5,7 @@ python-multipart==0.0.6
 
 # GitHub集成
 PyGithub>=2.9.1
-cryptography==41.0.7
+cryptography>=44.0.2
 
 # AI集成
 openai==1.10.0

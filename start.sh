@@ -61,7 +61,7 @@ elif [[ ! -f "$SAVED_HASH_FILE" ]]; then
     echo "📦 首次部署，需要构建镜像"
     NEED_BUILD=true
 elif [[ "$CURRENT_HASH" != "$(cat "$SAVED_HASH_FILE")" ]]; then
-    echo "📦 检测到依赖变更，将在容器内安装新依赖"
+    echo "📦 检测到依赖变更，将使用临时容器安装新依赖"
     NEED_PIP_INSTALL=true
 else
     echo "✅ 依赖未变更，跳过构建"
@@ -77,34 +77,35 @@ if $NEED_BUILD; then
     $COMPOSE up -d --build
     echo "$CURRENT_HASH" > "$SAVED_HASH_FILE"
     echo "✅ 镜像构建完成，依赖哈希已更新"
+elif $NEED_PIP_INSTALL; then
+    echo "📦 在临时容器内安装新依赖..."
+    TEMP_CONTAINER="sakura-ai-reviewer-pip-${CURRENT_HASH:0:8}"
+    IMAGE_TAG="sakura-ai-reviewer:pip-${CURRENT_HASH:0:8}"
+    docker rm -f "$TEMP_CONTAINER" >/dev/null 2>&1 || true
+    if ! docker run --name "$TEMP_CONTAINER" \
+        -v "$(pwd)/requirements.txt:/app/requirements.txt:ro" \
+        sakura-ai-reviewer:latest \
+        sh -c "pip install -r /app/requirements.txt"; then
+        echo "⚠️  临时容器 pip install 失败，自动回退到重建镜像..."
+        docker rm -f "$TEMP_CONTAINER" >/dev/null 2>&1 || true
+        $COMPOSE up -d --build
+        echo "$CURRENT_HASH" > "$SAVED_HASH_FILE"
+        echo "✅ 镜像重建完成，依赖哈希已更新"
+    else
+        echo "💾 将依赖写入镜像 $IMAGE_TAG ..."
+        docker commit \
+            --change 'CMD ["uvicorn", "backend.main:app", "--host", "0.0.0.0", "--port", "8000"]' \
+            "$TEMP_CONTAINER" "$IMAGE_TAG"
+        docker tag "$IMAGE_TAG" sakura-ai-reviewer:latest
+        docker rm -f "$TEMP_CONTAINER" >/dev/null 2>&1 || true
+        echo "$CURRENT_HASH" > "$SAVED_HASH_FILE"
+        echo "🔧 启动服务（已更新依赖镜像）..."
+        $COMPOSE up -d
+        echo "✅ 依赖安装完成，镜像已更新"
+    fi
 else
     echo "🔧 启动服务（无构建）..."
     $COMPOSE up -d
-fi
-
-# 依赖变更时在容器内安装（比重建快）
-if $NEED_PIP_INSTALL; then
-    echo "📦 在容器内安装新依赖..."
-    # 等待容器启动完成
-    for i in $(seq 1 15); do
-        if $COMPOSE exec -T web python -c "print('ok')" &>/dev/null; then
-            break
-        fi
-        sleep 1
-    done
-    if ! $COMPOSE exec -T web pip install -r /app/requirements.txt; then
-        echo "❌ pip install 失败，请尝试 ./start.sh --rebuild"
-        exit 1
-    fi
-    # docker commit 将容器当前状态（含新安装的包）写入镜像，后续 down/up 不会丢失
-    IMAGE_TAG="sakura-ai-reviewer:pip-${CURRENT_HASH:0:8}"
-    echo "💾 将依赖写入镜像 $IMAGE_TAG ..."
-    docker commit sakura-ai-reviewer "$IMAGE_TAG"
-    docker tag "$IMAGE_TAG" sakura-ai-reviewer:latest
-    echo "$CURRENT_HASH" > "$SAVED_HASH_FILE"
-    echo "🔄 重启容器以加载新依赖..."
-    $COMPOSE restart web
-    echo "✅ 依赖安装完成，镜像已更新"
 fi
 
 # 轮询等待服务就绪
