@@ -8,8 +8,7 @@ from loguru import logger
 from backend.models.agent_team_models import AgentTeamTaskStatus
 from backend.models.database import async_session
 from backend.services.agent_team.ai_client import load_agent_team_ai_config
-from backend.services.agent_team.shell_executor import AgentTeamShellExecutor
-from backend.services.agent_team.workspace_service import AgentTeamWorkspaceService
+from backend.services.agent_team.git_workspace_service import AgentTeamGitWorkspaceService
 
 
 class AgentTeamWorker:
@@ -18,7 +17,7 @@ class AgentTeamWorker:
     async def process_task(self, task_id: int) -> int:
         """处理 Agent 专家团队任务。
 
-        当前阶段仅完成状态流转与专用 AI 配置校验，为后续两角色执行器预留入口。
+        当前阶段完成专用 AI 配置校验、仓库 clone/fetch 和 Agent 分支准备，为后续两角色执行器预留入口。
         """
         config = await load_agent_team_ai_config()
         config.validate()
@@ -35,26 +34,32 @@ class AgentTeamWorker:
             if not task:
                 raise ValueError(f"AgentTeamTask 不存在: {task_id}")
 
-            workspace_service = AgentTeamWorkspaceService()
-            workspace = workspace_service.ensure_workspace(
-                task.repo_owner,
-                task.repo_name,
-            )
-            executor = AgentTeamShellExecutor(workspace, workspace_service)
-            probe = await executor.run(
-                "python --version",
-                timeout_seconds=min(config.timeout_seconds, 60),
-            )
-
-            task.status = AgentTeamTaskStatus.WAITING_HUMAN.value
-            task.current_phase = "workspace_ready"
+            task.status = AgentTeamTaskStatus.CLONING.value
+            task.current_phase = "preparing_git_workspace"
             task.started_at = task.started_at or datetime.utcnow()
             task.ai_config_snapshot = json.dumps(
                 config.safe_snapshot(), ensure_ascii=False
             )
+            await session.commit()
+
+            git_workspace_service = AgentTeamGitWorkspaceService()
+            workspace_info = await git_workspace_service.prepare_workspace(
+                task.repo_owner,
+                task.repo_name,
+                task.source_issue_number,
+                task.source_id,
+            )
+
+            task.status = AgentTeamTaskStatus.WAITING_HUMAN.value
+            task.current_phase = "git_workspace_ready"
+            task.working_branch = workspace_info.branch_name
+            task.base_branch = workspace_info.default_branch
+            task.base_commit_sha = workspace_info.commit_sha
+            task.workspace_path = str(workspace_info.workspace)
             task.error_message = (
-                "Agent 专家团队工作区已初始化，代码修改执行将在后续阶段启用。"
-                f" workspace={workspace}; python_probe={probe.stdout.strip() or probe.stderr.strip()}"
+                "Agent 专家团队 Git 工作区已准备完成，代码修改执行将在后续阶段启用。"
+                f" workspace={workspace_info.workspace}; branch={workspace_info.branch_name}; "
+                f"base={workspace_info.default_branch}; sha={workspace_info.commit_sha}"
             )
             await session.commit()
 

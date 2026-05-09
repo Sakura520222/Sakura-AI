@@ -42,7 +42,7 @@ fi
 echo "✅ 环境检查完成"
 
 # 创建必要目录
-mkdir -p logs .deploy
+mkdir -p logs .deploy workplace
 
 # 依赖变更检测
 SAVED_HASH_FILE=".deploy/requirements.hash"

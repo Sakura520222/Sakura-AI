@@ -8,6 +8,8 @@ import re
 import sys
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Sequence
+from urllib.parse import urlsplit
 
 from backend.services.agent_team.workspace_service import (
     AgentTeamWorkspaceService,
@@ -97,6 +99,51 @@ class AgentTeamShellExecutor:
                 timed_out=True,
             )
 
+    async def run_args(
+        self,
+        args: Sequence[str],
+        cwd: str | Path = ".",
+        timeout_seconds: int = 600,
+    ) -> ShellCommandResult:
+        """以 argv 形式在工作区内执行命令，优先用于 Git 等结构化命令。"""
+        if not args:
+            raise WorkspaceSecurityError("Shell 命令不能为空")
+        safe_cwd = self.workspace_service.resolve_inside_workspace(self.workspace, cwd)
+        for arg in args:
+            self._validate_command_arg(arg)
+        env = self._build_env()
+
+        process = await asyncio.create_subprocess_exec(
+            *args,
+            cwd=str(safe_cwd),
+            env=env,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        command_display = " ".join(self._mask_sensitive_arg(arg) for arg in args)
+        try:
+            stdout, stderr = await asyncio.wait_for(
+                process.communicate(), timeout=timeout_seconds
+            )
+            return ShellCommandResult(
+                command=command_display,
+                cwd=str(safe_cwd),
+                returncode=process.returncode or 0,
+                stdout=stdout.decode("utf-8", errors="replace"),
+                stderr=stderr.decode("utf-8", errors="replace"),
+            )
+        except asyncio.TimeoutError:
+            process.kill()
+            stdout, stderr = await process.communicate()
+            return ShellCommandResult(
+                command=command_display,
+                cwd=str(safe_cwd),
+                returncode=-1,
+                stdout=stdout.decode("utf-8", errors="replace"),
+                stderr=stderr.decode("utf-8", errors="replace"),
+                timed_out=True,
+            )
+
     def _validate_command(self, command: str) -> None:
         if not command or not command.strip():
             raise WorkspaceSecurityError("Shell 命令不能为空")
@@ -111,6 +158,29 @@ class AgentTeamShellExecutor:
             # Git Bash 风格的 /c/... 路径也按绝对路径处理；常见命令参数如 /? 会被拒绝，
             # 这是为了优先保证不能引用宿主机绝对路径。
             self.workspace_service.resolve_inside_workspace(self.workspace, match.group(0))
+
+    def _validate_command_arg(self, arg: str) -> None:
+        if not arg:
+            raise WorkspaceSecurityError("Shell 命令参数不能为空")
+        if self._is_url(arg):
+            return
+        lowered = arg.lower()
+        for token in _FORBIDDEN_TOKENS:
+            if token.lower() in lowered:
+                raise WorkspaceSecurityError(f"Shell 命令包含禁止的路径片段: {token}")
+        for match in _WINDOWS_ABS_RE.finditer(arg):
+            self.workspace_service.resolve_inside_workspace(self.workspace, match.group(0))
+        for match in _POSIX_ABS_RE.finditer(arg):
+            self.workspace_service.resolve_inside_workspace(self.workspace, match.group(0))
+
+    def _is_url(self, value: str) -> bool:
+        parsed = urlsplit(value)
+        return parsed.scheme in {"http", "https", "ssh", "git"} and bool(parsed.netloc)
+
+    def _mask_sensitive_arg(self, value: str) -> str:
+        if "x-access-token:" in value:
+            return re.sub(r"x-access-token:[^@]+@", "x-access-token:***@", value)
+        return value
 
     def _build_env(self) -> dict[str, str]:
         env = os.environ.copy()

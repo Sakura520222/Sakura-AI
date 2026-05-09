@@ -57,6 +57,28 @@ async def test_shell_executor_uses_workspace_and_python_env(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_shell_executor_run_args_allows_https_url(tmp_path):
+    service = AgentTeamWorkspaceService(tmp_path)
+    workspace = service.ensure_workspace("owner", "repo")
+    executor = AgentTeamShellExecutor(workspace, service)
+
+    result = await executor.run_args(["git", "--version"])
+
+    assert result.returncode == 0
+    assert result.command == "git --version"
+
+
+def test_shell_executor_masks_access_token(tmp_path):
+    service = AgentTeamWorkspaceService(tmp_path)
+    workspace = service.ensure_workspace("owner", "repo")
+    executor = AgentTeamShellExecutor(workspace, service)
+
+    masked = executor._mask_sensitive_arg("https://x-access-token:secret@github.com/owner/repo.git")
+
+    assert masked == "https://x-access-token:***@github.com/owner/repo.git"
+
+
+@pytest.mark.asyncio
 async def test_shell_executor_blocks_parent_escape(tmp_path):
     service = AgentTeamWorkspaceService(tmp_path / "workplace")
     workspace = service.ensure_workspace("owner", "repo")
