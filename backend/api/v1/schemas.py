@@ -3,7 +3,7 @@
 from datetime import datetime
 from typing import Any, Generic, Optional, TypeVar
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 T = TypeVar("T")
 
@@ -371,6 +371,9 @@ class QueueStatsResponse(BaseModel):
 # ========== 配置模型 ==========
 
 
+UserConfigValue = str | int | bool | None
+
+
 class ConfigGeneralResponse(BaseModel):
     """通用配置响应"""
 
@@ -381,6 +384,14 @@ class ConfigGeneralUpdateRequest(BaseModel):
     """更新通用配置请求"""
 
     configs: dict[str, str]
+
+
+class UserConfigUpdateRequest(BaseModel):
+    """更新用户级配置请求。"""
+
+    model_config = ConfigDict(extra="forbid")
+
+    configs: dict[str, UserConfigValue]
 
 
 class ConfigStrategiesResponse(BaseModel):

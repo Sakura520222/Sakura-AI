@@ -133,8 +133,7 @@ async def pop_challenge(challenge_id: str) -> tuple[bytes, dict] | None:
     value = None
     try:
         redis = await get_async_redis()
-        value = await redis.get(key)
-        await redis.delete(key)
+        value = await redis.execute_command("GETDEL", key)
         if value:
             payload = json.loads(value)
             return b64url_decode(payload["challenge"]), payload.get("context", {})

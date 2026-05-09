@@ -301,7 +301,7 @@ async def root():
     """根路径"""
     return {
         "service": "Sakura AI Reviewer",
-        "version": "2.9.6",
+        "version": __version__,
         "status": "running",
         "docs": "/docs",
     }
