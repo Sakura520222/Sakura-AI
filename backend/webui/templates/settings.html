@@ -228,7 +228,11 @@ document.getElementById('register-passkey-btn').addEventListener('click', async 
         return;
     }
     try {
-        const optionsResp = await fetch('/webui/settings/passkeys/register/options', { method: 'POST' });
+        const csrfToken = '{{ csrf_token }}';
+        const optionsResp = await fetch('/webui/settings/passkeys/register/options', {
+            method: 'POST',
+            headers: { 'X-CSRF-Token': csrfToken },
+        });
         const optionsJson = await optionsResp.json();
         if (optionsResp.status === 429) throw new Error(localizePasskeyMessage(optionsJson.message, '{{ _("toast.rate_limit_exceeded") }}'));
         if (!optionsJson.success) throw new Error(localizePasskeyMessage(optionsJson.message, 'Passkey options failed'));
@@ -242,7 +246,7 @@ document.getElementById('register-passkey-btn').addEventListener('click', async 
         const credential = await navigator.credentials.create({ publicKey });
         const verifyResp = await fetch('/webui/settings/passkeys/register/verify', {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
+            headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': csrfToken },
             body: JSON.stringify({
                 challenge_id: data.challenge_id,
                 credential: registrationCredentialToJSON(credential),
