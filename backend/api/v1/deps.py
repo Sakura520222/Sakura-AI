@@ -7,7 +7,7 @@ from fastapi import Request, HTTPException, Header
 from slowapi import Limiter
 from slowapi.util import get_remote_address
 
-from backend.webui.auth import decode_access_token
+from backend.webui.auth import decode_access_token, is_access_token_payload
 
 # 限流器：按客户端 IP 限流（config_filename="" 跳过 .env 读取，避免 Windows GBK 编码问题）
 limiter = Limiter(key_func=get_remote_address, config_filename="")
@@ -49,7 +49,7 @@ async def get_api_current_user(
         raise HTTPException(status_code=401, detail="未提供认证凭证")
 
     payload = decode_access_token(token)
-    if not payload:
+    if not is_access_token_payload(payload):
         raise HTTPException(status_code=401, detail="凭证无效或已过期")
 
     user_id = payload.get("user_id")

@@ -1,0 +1,73 @@
+<!DOCTYPE html>
+<html lang="zh-CN" class="light">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{{ _('auth.two_factor_title') }} - Sakura AI Reviewer</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        tailwind.config = {
+            darkMode: 'class',
+            theme: {
+                extend: {
+                    colors: {
+                        sakura: {
+                            50: '#fdf2f8', 100: '#fce7f3', 200: '#fbcfe8', 300: '#f9a8d4',
+                            400: '#f472b6', 500: '#ec4899', 600: '#db2777', 700: '#be185d',
+                            800: '#9d174d', 900: '#831843', 950: '#500724',
+                        },
+                    },
+                    fontFamily: {
+                        sans: ['"Inter"', 'system-ui', '-apple-system', '"Segoe UI"', 'sans-serif'],
+                    },
+                },
+            },
+        }
+    </script>
+    <script>
+        if (localStorage.getItem('theme') === 'dark') document.documentElement.classList.add('dark');
+    </script>
+    <style>
+        {% include "components/sakura_theme_css.html" %}
+    </style>
+</head>
+<body class="sakura-gradient-bg flex items-center justify-center min-h-screen font-sans">
+    <div class="w-full max-w-md px-4">
+        <div class="text-center mb-8">
+            <span class="text-6xl inline-block sakura-logo-float">🔐</span>
+            <h1 class="mt-4 text-3xl font-extrabold bg-gradient-to-r from-sakura-600 to-purple-600 dark:from-sakura-400 dark:to-purple-400 bg-clip-text text-transparent">{{ _('auth.two_factor_title') }}</h1>
+            <p class="mt-2 text-gray-500 dark:text-gray-400 text-sm">{{ _('auth.two_factor_subtitle') }}</p>
+        </div>
+
+        <div class="glass rounded-2xl shadow-xl shadow-sakura-200/30 dark:shadow-sakura-950/30 p-8 border border-sakura-200/50 dark:border-sakura-800/30">
+            {% if error %}
+            <div class="mb-4 p-3 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg text-red-700 dark:text-red-400 text-sm">
+                {{ error }}
+            </div>
+            {% endif %}
+
+            <p class="mb-5 text-sm text-gray-600 dark:text-gray-300">
+                {{ _('auth.two_factor_hint') }} <span class="font-medium">{{ github_username }}</span>
+            </p>
+
+            <form method="POST" class="space-y-4">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                <div>
+                    <label for="code" class="block text-sm font-medium text-gray-700 dark:text-gray-300">{{ _('auth.two_factor_code') }}</label>
+                    <input id="code" name="code" type="text" inputmode="numeric" autocomplete="one-time-code" required autofocus
+                           class="mt-2 w-full px-4 py-3 rounded-xl border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 focus:ring-2 focus:ring-sakura-500 focus:border-transparent outline-none tracking-widest text-center"
+                           placeholder="123456">
+                    <p class="mt-2 text-xs text-gray-500 dark:text-gray-400">{{ _('auth.two_factor_recovery_hint') }}</p>
+                </div>
+                <button type="submit" class="w-full py-3 px-4 bg-gradient-to-r from-sakura-500 to-purple-600 hover:from-sakura-600 hover:to-purple-700 text-white font-medium rounded-xl transition-all shadow-lg shadow-sakura-500/25">
+                    {{ _('auth.verify') }}
+                </button>
+            </form>
+        </div>
+
+        <p class="mt-6 text-center text-xs text-gray-400 dark:text-gray-500">
+            Sakura AI Reviewer v{{ app_version }}
+        </p>
+    </div>
+</body>
+</html>

@@ -84,6 +84,46 @@ class Settings(BaseSettings):
         description="Cookie Secure 属性，HTTPS 环境必须设为 True",
     )
 
+    # 多因素认证配置 / Multi-factor authentication configuration
+    two_factor_enabled: bool = Field(
+        True,
+        description="是否允许用户启用两步验证",
+    )
+    two_factor_issuer: str = Field(
+        "Sakura AI Reviewer",
+        description="TOTP 认证器中显示的发行方名称",
+    )
+    two_factor_pending_token_expire_minutes: int = Field(
+        10,
+        ge=1,
+        le=60,
+        description="OAuth 后等待二次验证的临时 Token 有效期（分钟）",
+    )
+    two_factor_verify_rate_limit: str = Field(
+        "5/minute",
+        description="二次验证接口限流规则",
+    )
+    two_factor_setup_rate_limit: str = Field(
+        "10/minute",
+        description="二次验证设置接口限流规则",
+    )
+    two_factor_recovery_code_count: int = Field(
+        10,
+        ge=4,
+        le=20,
+        description="生成的恢复码数量",
+    )
+    two_factor_recovery_code_length: int = Field(
+        10,
+        ge=8,
+        le=32,
+        description="恢复码随机字符长度",
+    )
+    two_factor_encryption_key: str = Field(
+        "",
+        description="TOTP Secret 加密密钥；为空时从 WEBUI_SECRET_KEY 派生",
+    )
+
     # GitHub OAuth 配置
     # 获取步骤：GitHub → Settings → Developer settings → OAuth Apps → New OAuth App
     github_oauth_client_id: str = Field(
