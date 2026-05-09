@@ -180,6 +180,51 @@ class GitHubAppClient:
                 )
         return result
 
+    def check_user_installed(self, username: str) -> Optional[bool]:
+        """轻量检查指定用户/组织是否安装 GitHub App（不拉取仓库列表）
+
+        Returns:
+            True: 已安装, False: 未安装, None: 无法检测
+        """
+        if not username:
+            return False
+
+        if not self.integration:
+            logger.warning("GitHub Integration 未初始化，尝试重新初始化...")
+            self._init_integration()
+            if not self.integration:
+                logger.error("重新初始化 GitHub Integration 仍然失败，无法检查安装状态")
+                return None
+
+        target_username = username.lower()
+        try:
+            installations = list(self.integration.get_installations())
+            logger.debug(
+                f"轻量检查 GitHub App 安装状态，共 {len(installations)} 个 installation"
+            )
+
+            for inst in installations:
+                account_login = ""
+                raw = getattr(inst, "raw_data", None) or getattr(inst, "_rawData", {})
+                account_info = raw.get("account", {}) if isinstance(raw, dict) else {}
+                if isinstance(account_info, dict):
+                    account_login = account_info.get("login", "") or ""
+
+                if not account_login:
+                    html_url = getattr(inst, "html_url", "") or ""
+                    if "/organizations/" in html_url:
+                        parts = html_url.split("/organizations/")
+                        if len(parts) > 1:
+                            account_login = parts[1].split("/")[0]
+
+                if account_login.lower() == target_username:
+                    return True
+
+            return False
+        except Exception as e:
+            logger.warning(f"轻量检查 GitHub App 安装状态失败: {e}", exc_info=True)
+            return None
+
     def get_installation_client(
         self, repo_owner: str, repo_name: str
     ) -> Optional[Github]:
