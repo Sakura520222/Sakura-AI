@@ -9,6 +9,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+DEFAULT_DEV_CONFIG_PATH = ".sakura/dev/connection.json"
+
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
@@ -18,7 +20,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--port", type=int, default=8000, help="Bind port")
     parser.add_argument(
         "--config-path",
-        default=".sakura/dev/connection.json",
+        default=DEFAULT_DEV_CONFIG_PATH,
         help="Isolated connection config path for local setup debugging",
     )
     parser.add_argument(
@@ -78,8 +80,13 @@ def main() -> int:
     config_path.parent.mkdir(parents=True, exist_ok=True)
 
     env = os.environ.copy()
+    # SAKURA_ENV enables local runtime conveniences such as localhost CORS.
     env.setdefault("SAKURA_ENV", "development")
+    # SAKURA_DEV_BOOTSTRAP identifies first-run setup debugging and also skips
+    # background tasks if the generic skip flag is not explicitly set.
     env.setdefault("SAKURA_DEV_BOOTSTRAP", "1")
+    # SAKURA_SKIP_BACKGROUND_TASKS is a broader switch that can be reused by CI
+    # or other local runners without implying Setup Wizard debugging.
     env.setdefault("SAKURA_SKIP_BACKGROUND_TASKS", "1")
     env.setdefault("SAKURA_CONNECTION_CONFIG_PATH", str(config_path))
     env.setdefault("APP_DOMAIN", "localhost")
@@ -107,6 +114,7 @@ def main() -> int:
     print("Sakura AI Reviewer 本地 Setup Wizard 调试模式")
     print(f"访问地址: http://{args.host}:{args.port}/setup")
     print(f"连接配置: {config_path}")
+    print("安全提示: dev 配置可能包含数据库凭证，默认路径 .sakura/dev/ 已加入 .gitignore")
     print(f"Python: {server_python}")
     print("后台任务: 已跳过")
     print("")

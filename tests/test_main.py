@@ -53,6 +53,16 @@ def test_get_allowed_origins_includes_local_development_origins():
     assert "http://127.0.0.1:9000" in origins
 
 
+def test_get_allowed_origins_production_excludes_localhost():
+    settings = Settings(app_domain="example.com", app_port=9000)
+
+    origins = _get_allowed_origins(settings)
+
+    assert "https://example.com" in origins
+    assert "http://localhost:9000" not in origins
+    assert "http://127.0.0.1:9000" not in origins
+
+
 def test_background_tasks_can_be_skipped_for_local_development():
     settings = Settings(sakura_skip_background_tasks=True)
 
