@@ -14,6 +14,7 @@ from backend.services.security_admin_service import (
     get_user_security_summary,
     reset_user_mfa,
     reset_user_totp,
+    set_user_mfa_required,
 )
 from backend.services.security_audit_service import record_security_event
 from backend.webui.deps import (
@@ -107,6 +108,60 @@ async def reset_totp_route(
     await db.commit()
     return toast_redirect(
         f"/webui/security/users/{target_user_id}", "toast.security_totp_reset"
+    )
+
+
+@router.post("/users/{target_user_id}/mfa/require")
+async def require_mfa_route(
+    request: Request,
+    target_user_id: int,
+    db: AsyncSession = Depends(get_db),
+    user: dict = Depends(require_super_admin),
+    csrf_token: str = Depends(require_csrf),
+):
+    """Require target user to enroll at least one MFA method."""
+    target_user = await _get_target_user(db, target_user_id)
+    if not target_user:
+        return toast_redirect("/webui/security/", "toast.user_not_found", "error")
+    await set_user_mfa_required(db, target_user, True)
+    await record_security_event(
+        db,
+        "super_admin_require_mfa",
+        "success",
+        actor_user_id=int(user["user_id"]),
+        target_user_id=target_user_id,
+        request=request,
+    )
+    await db.commit()
+    return toast_redirect(
+        f"/webui/security/users/{target_user_id}", "toast.security_mfa_required"
+    )
+
+
+@router.post("/users/{target_user_id}/mfa/unrequire")
+async def unrequire_mfa_route(
+    request: Request,
+    target_user_id: int,
+    db: AsyncSession = Depends(get_db),
+    user: dict = Depends(require_super_admin),
+    csrf_token: str = Depends(require_csrf),
+):
+    """Remove forced MFA enrollment requirement for target user."""
+    target_user = await _get_target_user(db, target_user_id)
+    if not target_user:
+        return toast_redirect("/webui/security/", "toast.user_not_found", "error")
+    await set_user_mfa_required(db, target_user, False)
+    await record_security_event(
+        db,
+        "super_admin_unrequire_mfa",
+        "success",
+        actor_user_id=int(user["user_id"]),
+        target_user_id=target_user_id,
+        request=request,
+    )
+    await db.commit()
+    return toast_redirect(
+        f"/webui/security/users/{target_user_id}", "toast.security_mfa_unrequired"
     )
 
 

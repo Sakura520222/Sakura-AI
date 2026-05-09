@@ -22,6 +22,7 @@
                         <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">{{ _('settings.two_factor_auth') }}</th>
                         <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">{{ _('settings.recovery_codes') }}</th>
                         <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">{{ _('settings.passkeys') }}</th>
+                        <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">{{ _('security.mfa_requirement') }}</th>
                         <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">{{ _('security.last_event') }}</th>
                         <th class="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase">{{ _('common.actions') }}</th>
                     </tr>
@@ -40,13 +41,20 @@
                         </td>
                         <td class="px-6 py-4 text-sm">{{ item.recovery_code_count }}</td>
                         <td class="px-6 py-4 text-sm">{{ item.passkey_count }}</td>
+                        <td class="px-6 py-4 text-sm">
+                            {% if item.user.mfa_required %}
+                            <span class="text-orange-600 dark:text-orange-400">{{ _('security.required') }}</span>
+                            {% else %}
+                            <span class="text-gray-500">{{ _('security.not_required') }}</span>
+                            {% endif %}
+                        </td>
                         <td class="px-6 py-4 text-sm text-gray-500">{{ item.last_security_event_at or '-' }}</td>
                         <td class="px-6 py-4 text-right text-sm">
                             <a href="/webui/security/users/{{ item.user.id }}" class="text-pink-600 dark:text-pink-400 hover:underline">{{ _('common.more') }}</a>
                         </td>
                     </tr>
                     {% else %}
-                    <tr><td colspan="7" class="px-6 py-8 text-center text-gray-500">{{ _('common.no_data') }}</td></tr>
+                    <tr><td colspan="8" class="px-6 py-8 text-center text-gray-500">{{ _('common.no_data') }}</td></tr>
                     {% endfor %}
                 </tbody>
             </table>

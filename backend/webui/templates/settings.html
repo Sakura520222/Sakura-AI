@@ -66,6 +66,13 @@
         <h3 class="text-base font-medium">{{ _('settings.security') }}</h3>
         <p class="text-sm text-gray-500 dark:text-gray-400 mt-1">{{ _('settings.security_desc') }}</p>
 
+        {% if mfa_enrollment_required %}
+        <div class="mt-4 rounded-xl border border-orange-200 dark:border-orange-800 bg-orange-50 dark:bg-orange-900/20 p-4">
+            <h4 class="text-sm font-semibold text-orange-800 dark:text-orange-200">{{ _('settings.mfa_required_title') }}</h4>
+            <p class="mt-1 text-sm text-orange-700 dark:text-orange-300">{{ _('settings.mfa_required_desc') }}</p>
+        </div>
+        {% endif %}
+
         <div class="mt-4 rounded-xl border border-gray-200 dark:border-gray-700 p-4 bg-gray-50 dark:bg-gray-900/40">
             <div class="flex items-start justify-between gap-4">
                 <div>

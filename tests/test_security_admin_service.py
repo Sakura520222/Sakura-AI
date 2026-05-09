@@ -3,7 +3,7 @@
 import asyncio
 
 from backend.models.telegram_models import TelegramUser, UserWebAuthnCredential
-from backend.services.security_admin_service import reset_user_totp
+from backend.services.security_admin_service import reset_user_totp, set_user_mfa_required
 from backend.services.security_audit_service import sanitize_detail
 
 
@@ -51,8 +51,25 @@ def test_reset_user_totp_disables_totp_and_removes_recovery_codes():
     assert len(session.statements) == 1
 
 
+def test_set_user_mfa_required_updates_policy_flag():
+    session = DummySession()
+    user = TelegramUser(id=1, telegram_id=1001, github_username="alice")
+    user.mfa_required = False
+
+    asyncio.run(set_user_mfa_required(session, user, True))
+
+    assert user.mfa_required is True
+
+
 def test_webauthn_credential_has_hash_column_for_unique_index():
     columns = UserWebAuthnCredential.__table__.columns
 
     assert "credential_id_hash" in columns
     assert columns["credential_id_hash"].unique is True
+
+
+def test_telegram_user_has_mfa_required_column():
+    columns = TelegramUser.__table__.columns
+
+    assert "mfa_required" in columns
+    assert columns["mfa_required"].nullable is False

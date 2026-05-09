@@ -41,6 +41,7 @@ from backend.webui.deps import (
     toast_redirect,
     invalidate_user_prefs_cache,
     render_template,
+    user_requires_mfa_enrollment,
 )
 from backend.webui.i18n import detect_language
 
@@ -69,6 +70,9 @@ async def settings_page(
     db_user = result.scalar_one_or_none()
     recovery_code_count = await count_unused_recovery_codes(db, user_id) if db_user else 0
     passkeys = await _get_user_passkeys(db, user_id)
+    mfa_enrollment_required = (
+        await user_requires_mfa_enrollment(user_id, db) if db_user else False
+    )
     return render_template(
         "settings.html",
         request,
@@ -88,6 +92,7 @@ async def settings_page(
         totp_setup=None,
         recovery_codes=None,
         passkeys=passkeys,
+        mfa_enrollment_required=mfa_enrollment_required,
     )
 
 
@@ -226,6 +231,7 @@ async def start_two_factor_setup(
         totp_setup=setup,
         recovery_codes=None,
         passkeys=await _get_user_passkeys(db, user_id),
+        mfa_enrollment_required=await user_requires_mfa_enrollment(user_id, db),
     )
 
 
@@ -254,6 +260,8 @@ async def enable_two_factor(
     db_user.totp_secret_encrypted = encrypt_totp_secret(secret)
     db_user.totp_enabled_at = datetime.utcnow()
     db_user.totp_last_used_step = used_step
+    if db_user.mfa_required:
+        db_user.mfa_required = False
     recovery_codes = await replace_recovery_codes(db, user_id)
     await db.commit()
 
@@ -277,6 +285,7 @@ async def enable_two_factor(
         totp_setup=None,
         recovery_codes=recovery_codes,
         passkeys=await _get_user_passkeys(db, user_id),
+        mfa_enrollment_required=False,
     )
 
 
@@ -369,6 +378,7 @@ async def regenerate_recovery_codes(
         totp_setup=None,
         recovery_codes=recovery_codes,
         passkeys=await _get_user_passkeys(db, user_id),
+        mfa_enrollment_required=False,
     )
 
 
@@ -414,6 +424,8 @@ async def passkey_register_verify(
             body.get("credential", {}),
             body.get("device_name") or "Passkey",
         )
+        if db_user.mfa_required:
+            db_user.mfa_required = False
         await db.commit()
     except Exception as exc:
         await db.rollback()

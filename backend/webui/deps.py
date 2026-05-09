@@ -152,6 +152,54 @@ async def get_db() -> AsyncSession:
         yield session
 
 
+def _is_mfa_enrollment_path(path: str) -> bool:
+    """Return whether a WebUI path is allowed while forced MFA enrollment is pending."""
+    allowed_exact = {
+        "/webui/settings/",
+        "/webui/auth/logout",
+    }
+    allowed_prefixes = (
+        "/webui/settings/2fa/",
+        "/webui/settings/passkeys/",
+        "/webui/auth/",
+        "/webui/static/",
+    )
+    return path in allowed_exact or any(path.startswith(prefix) for prefix in allowed_prefixes)
+
+
+async def user_requires_mfa_enrollment(user_id: int, db: AsyncSession) -> bool:
+    """Check whether user must enroll MFA before accessing normal features."""
+    from sqlalchemy import func
+
+    from backend.models.telegram_models import TelegramUser, UserWebAuthnCredential
+
+    result = await db.execute(select(TelegramUser).where(TelegramUser.id == user_id))
+    db_user = result.scalar_one_or_none()
+    if not db_user or not db_user.mfa_required:
+        return False
+    if db_user.totp_enabled:
+        return False
+    passkey_count = await db.scalar(
+        select(func.count(UserWebAuthnCredential.id)).where(
+            UserWebAuthnCredential.user_id == user_id
+        )
+    )
+    return int(passkey_count or 0) == 0
+
+
+async def enforce_mfa_enrollment(request: Request, user: dict, db: AsyncSession) -> None:
+    """Block normal WebUI/API access until required MFA enrollment is completed."""
+    user_id = int(user["user_id"])
+    if not await user_requires_mfa_enrollment(user_id, db):
+        return
+    path = request.url.path
+    if path.startswith("/webui"):
+        if _is_mfa_enrollment_path(path):
+            return
+        raise HTTPException(status_code=428, detail="mfa_enrollment_required")
+    raise HTTPException(status_code=428, detail="MFA enrollment required")
+
+
 # ========== CSRF 保护 ==========
 _csrf_serializer: Optional[URLSafeTimedSerializer] = None
 
@@ -321,12 +369,15 @@ async def get_current_user(request: Request) -> dict:
 
 async def require_auth(request: Request) -> dict:
     """需要登录的页面路由依赖"""
-    return await get_current_user(request)
+    user = await get_current_user(request)
+    async for db in get_db():
+        await enforce_mfa_enrollment(request, user, db)
+    return user
 
 
 async def require_admin(request: Request) -> dict:
     """需要管理员权限的路由依赖"""
-    user = await get_current_user(request)
+    user = await require_auth(request)
     if user["role"] not in ("admin", "super_admin"):
         raise HTTPException(status_code=403, detail="权限不足")
     return user
@@ -334,7 +385,7 @@ async def require_admin(request: Request) -> dict:
 
 async def require_super_admin(request: Request) -> dict:
     """需要超级管理员权限的路由依赖"""
-    user = await get_current_user(request)
+    user = await require_auth(request)
     if user["role"] != "super_admin":
         raise HTTPException(status_code=403, detail="权限不足")
     return user
