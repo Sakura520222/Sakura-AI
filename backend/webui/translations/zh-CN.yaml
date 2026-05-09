@@ -145,6 +145,7 @@ nav:
   action_logs: "操作日志"
   review_queue: "审查队列"
   user_management: "用户管理"
+  security_management: "安全管理"
   installed_repos: "已安装仓库"
   review_strategies: "审查策略"
   label_config: "标签配置"
@@ -616,6 +617,20 @@ settings:
     zh-CN: "简体中文"
     en: "English"
 
+# ========== 安全管理 / Security Management ==========
+security:
+  title: "安全管理"
+  description: "仅超级管理员可见，用于查看用户 MFA 状态和执行安全重置。"
+  user_mfa_status: "用户 MFA 状态"
+  user_detail: "用户安全详情"
+  recent_events: "最近安全事件"
+  last_event: "最近事件"
+  danger_zone: "危险操作"
+  danger_zone_desc: "这些操作会重置用户的登录二次验证方式，请谨慎执行。"
+  reset_totp: "重置 TOTP"
+  delete_all_passkeys: "删除全部通行密钥"
+  reset_all_mfa: "重置全部 MFA"
+
 # ========== 设置向导 / Setup Wizard ==========
 wizard:
   title: "初始配置向导"
@@ -785,6 +800,11 @@ toast:
   two_factor_disabled: "两步验证已禁用"
   two_factor_not_enabled: "两步验证尚未启用"
   passkey_deleted: "通行密钥已删除"
+  user_not_found: "用户不存在"
+  security_totp_reset: "用户 TOTP 已重置"
+  security_passkeys_deleted: "用户通行密钥已全部删除"
+  security_passkey_deleted: "用户通行密钥已删除"
+  security_mfa_reset: "用户 MFA 已全部重置"
   invalid_param: "参数值无效"
   code_required: "请输入兑换码"
   redeem_success: "兑换成功！订单号: {order_no}"

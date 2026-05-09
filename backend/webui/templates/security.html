@@ -1,0 +1,78 @@
+{% extends "base.html" %}
+
+{% block title %}{{ _('security.title') }} - Sakura AI Reviewer{% endblock %}
+
+{% block content %}
+<div class="space-y-6">
+    <div>
+        <h1 class="text-2xl font-bold">{{ _('security.title') }}</h1>
+        <p class="mt-1 text-sm text-gray-500 dark:text-gray-400">{{ _('security.description') }}</p>
+    </div>
+
+    <div class="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 shadow-sm overflow-hidden">
+        <div class="px-6 py-4 border-b border-gray-200 dark:border-gray-700">
+            <h2 class="text-base font-semibold">{{ _('security.user_mfa_status') }}</h2>
+        </div>
+        <div class="overflow-x-auto">
+            <table class="min-w-full divide-y divide-gray-200 dark:divide-gray-700">
+                <thead class="bg-gray-50 dark:bg-gray-900/40">
+                    <tr>
+                        <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">{{ _('user.github_username') }}</th>
+                        <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">{{ _('user.role') }}</th>
+                        <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">{{ _('settings.two_factor_auth') }}</th>
+                        <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">{{ _('settings.recovery_codes') }}</th>
+                        <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">{{ _('settings.passkeys') }}</th>
+                        <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">{{ _('security.last_event') }}</th>
+                        <th class="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase">{{ _('common.actions') }}</th>
+                    </tr>
+                </thead>
+                <tbody class="divide-y divide-gray-200 dark:divide-gray-700">
+                    {% for item in summaries %}
+                    <tr class="hover:bg-gray-50 dark:hover:bg-gray-900/30">
+                        <td class="px-6 py-4 text-sm font-medium">{{ item.user.github_username or '-' }}</td>
+                        <td class="px-6 py-4 text-sm">{{ item.user.role }}</td>
+                        <td class="px-6 py-4 text-sm">
+                            {% if item.user.totp_enabled %}
+                            <span class="text-green-600 dark:text-green-400">{{ _('common.enabled') }}</span>
+                            {% else %}
+                            <span class="text-gray-500">{{ _('common.disabled') }}</span>
+                            {% endif %}
+                        </td>
+                        <td class="px-6 py-4 text-sm">{{ item.recovery_code_count }}</td>
+                        <td class="px-6 py-4 text-sm">{{ item.passkey_count }}</td>
+                        <td class="px-6 py-4 text-sm text-gray-500">{{ item.last_security_event_at or '-' }}</td>
+                        <td class="px-6 py-4 text-right text-sm">
+                            <a href="/webui/security/users/{{ item.user.id }}" class="text-pink-600 dark:text-pink-400 hover:underline">{{ _('common.more') }}</a>
+                        </td>
+                    </tr>
+                    {% else %}
+                    <tr><td colspan="7" class="px-6 py-8 text-center text-gray-500">{{ _('common.no_data') }}</td></tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+
+    <div class="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 shadow-sm overflow-hidden">
+        <div class="px-6 py-4 border-b border-gray-200 dark:border-gray-700">
+            <h2 class="text-base font-semibold">{{ _('security.recent_events') }}</h2>
+        </div>
+        <div class="divide-y divide-gray-200 dark:divide-gray-700">
+            {% for event in recent_events %}
+            <div class="px-6 py-4 text-sm">
+                <div class="flex items-center justify-between gap-4">
+                    <div>
+                        <span class="font-medium">{{ event.event_type }}</span>
+                        <span class="ml-2 text-gray-500">{{ event.event_result }}</span>
+                    </div>
+                    <span class="text-xs text-gray-500">{{ event.created_at }}</span>
+                </div>
+                <p class="mt-1 text-xs text-gray-500">target={{ event.target_user_id or '-' }} actor={{ event.actor_user_id or '-' }} ip={{ event.ip_address or '-' }}</p>
+            </div>
+            {% else %}
+            <div class="px-6 py-8 text-center text-gray-500">{{ _('common.no_data') }}</div>
+            {% endfor %}
+        </div>
+    </div>
+</div>
+{% endblock %}
