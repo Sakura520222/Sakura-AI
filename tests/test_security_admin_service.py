@@ -1,6 +1,6 @@
 """Security management service tests."""
 
-import asyncio
+import pytest
 
 from backend.models.telegram_models import TelegramUser, UserWebAuthnCredential
 from backend.services.security_admin_service import (
@@ -56,7 +56,8 @@ def test_sanitize_detail_removes_sensitive_values():
     assert "Laptop" in detail
 
 
-def test_reset_user_totp_disables_totp_and_removes_recovery_codes():
+@pytest.mark.asyncio
+async def test_reset_user_totp_disables_totp_and_removes_recovery_codes():
     session = DummySession()
     user = TelegramUser(id=1, telegram_id=1001, github_username="alice")
     user.totp_enabled = True
@@ -64,7 +65,7 @@ def test_reset_user_totp_disables_totp_and_removes_recovery_codes():
     user.totp_enabled_at = object()
     user.totp_last_used_step = 123
 
-    asyncio.run(reset_user_totp(session, user))
+    await reset_user_totp(session, user)
 
     assert user.totp_enabled is False
     assert user.totp_secret_encrypted is None
@@ -73,35 +74,38 @@ def test_reset_user_totp_disables_totp_and_removes_recovery_codes():
     assert len(session.statements) == 1
 
 
-def test_set_user_mfa_required_updates_policy_flag():
+@pytest.mark.asyncio
+async def test_set_user_mfa_required_updates_policy_flag():
     session = DummySession()
     user = TelegramUser(id=1, telegram_id=1001, github_username="alice")
     user.mfa_required = False
 
-    asyncio.run(set_user_mfa_required(session, user, True))
+    await set_user_mfa_required(session, user, True)
 
     assert user.mfa_required is True
 
 
-def test_set_global_mfa_required_creates_app_config():
+@pytest.mark.asyncio
+async def test_set_global_mfa_required_creates_app_config():
     session = DummySession()
 
-    asyncio.run(set_global_mfa_required(session, True))
+    await set_global_mfa_required(session, True)
 
     assert len(session.added) == 1
     assert session.added[0].key_name == GLOBAL_MFA_REQUIRED_CONFIG_KEY
     assert session.added[0].key_value == "true"
 
 
-def test_user_has_any_mfa_method_accepts_totp_or_passkey():
+@pytest.mark.asyncio
+async def test_user_has_any_mfa_method_accepts_totp_or_passkey():
     user = TelegramUser(id=1, telegram_id=1001, github_username="alice")
     user.totp_enabled = True
 
-    assert asyncio.run(user_has_any_mfa_method(DummySession(0), user)) is True
+    assert await user_has_any_mfa_method(DummySession(0), user) is True
 
     user.totp_enabled = False
-    assert asyncio.run(user_has_any_mfa_method(DummySession(1), user)) is True
-    assert asyncio.run(user_has_any_mfa_method(DummySession(0), user)) is False
+    assert await user_has_any_mfa_method(DummySession(1), user) is True
+    assert await user_has_any_mfa_method(DummySession(0), user) is False
 
 
 def test_webauthn_credential_has_hash_column_for_unique_index():

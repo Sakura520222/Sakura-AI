@@ -36,12 +36,14 @@ from backend.webui.deps import (
     get_templates,
     validate_csrf_token,
     get_csrf_serializer,
+    request_origin,
     toast_redirect,
     render_template,
 )
 from backend.webui.i18n import detect_language
 from backend.core.config import get_settings
 from backend.core.redis import get_async_redis
+from backend.core.rate_limit import limiter
 
 router = APIRouter(prefix="/auth", tags=["WebUI Auth"])
 templates = get_templates()
@@ -62,11 +64,6 @@ _OAUTH_STATE_KEY_PREFIX = "oauth:state:"
 _oauth_states_fallback: dict[str, dict] = {}  # Redis 故障时的内存回退
 _MAX_FALLBACK_STATES = 1000
 MFA_PENDING_COOKIE_NAME = "webui_mfa_token"
-
-
-def _request_origin(request: Request) -> str:
-    """获取当前请求 Origin，用于 WebAuthn RP 配置推导。"""
-    return request.headers.get("origin") or f"{request.url.scheme}://{request.url.netloc}"
 
 
 def _cleanup_expired_states():
@@ -421,6 +418,7 @@ async def two_factor_page(request: Request):
 
 
 @router.post("/2fa")
+@limiter.limit(lambda: get_settings().two_factor_verify_rate_limit)
 async def verify_two_factor(
     request: Request,
     code: str = Form(...),
@@ -518,7 +516,7 @@ async def two_factor_passkey_options(request: Request):
     async with db_module.async_session() as session:
         try:
             data = await begin_authentication(
-                session, int(payload["user_id"]), _request_origin(request)
+                session, int(payload["user_id"]), request_origin(request)
             )
         except WebAuthnError as exc:
             return JSONResponse(
@@ -529,6 +527,7 @@ async def two_factor_passkey_options(request: Request):
 
 
 @router.post("/2fa/passkey/verify")
+@limiter.limit(lambda: get_settings().passkeys_authentication_rate_limit)
 async def two_factor_passkey_verify(request: Request, body: dict = Body(...)):
     """验证登录二次验证 Passkey 并签发正式 Cookie。"""
     token = request.cookies.get(MFA_PENDING_COOKIE_NAME)

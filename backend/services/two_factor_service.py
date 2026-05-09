@@ -10,7 +10,7 @@ import secrets
 import string
 import time
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timezone
 
 import pyotp
 import qrcode
@@ -202,7 +202,7 @@ async def consume_recovery_code(
     recovery_code = result.scalar_one_or_none()
     if not recovery_code:
         return False
-    recovery_code.used_at = datetime.utcnow()
+    recovery_code.used_at = datetime.now(timezone.utc)
     return True
 
 

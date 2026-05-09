@@ -4,15 +4,13 @@
 """
 
 from fastapi import Request, HTTPException, Header
-from slowapi import Limiter
-from slowapi.util import get_remote_address
-
 from backend.webui.auth import decode_access_token, is_access_token_payload
 from backend.webui.deps import user_requires_mfa_enrollment
 from backend.models import database as db_module
+from backend.core.rate_limit import limiter as _limiter
 
-# 限流器：按客户端 IP 限流（config_filename="" 跳过 .env 读取，避免 Windows GBK 编码问题）
-limiter = Limiter(key_func=get_remote_address, config_filename="")
+# Backward-compatible export for API modules importing limiter from this module.
+limiter = _limiter
 
 
 async def get_api_current_user(

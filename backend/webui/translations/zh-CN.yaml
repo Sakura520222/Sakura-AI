@@ -644,6 +644,10 @@ security:
   reset_totp: "重置 TOTP"
   delete_all_passkeys: "删除全部通行密钥"
   reset_all_mfa: "重置全部 MFA"
+  confirm_reset_totp: "确定要重置该用户的 TOTP 和恢复码吗？"
+  confirm_delete_all_passkeys: "确定要删除该用户的全部通行密钥吗？"
+  confirm_delete_passkey: "确定要删除这个通行密钥吗？"
+  confirm_reset_all_mfa: "确定要重置该用户的全部 MFA 吗？此操作不可撤销。"
 
 # ========== 设置向导 / Setup Wizard ==========
 wizard:
@@ -811,6 +815,7 @@ toast:
   logged_out: "已退出登录"
   settings_saved: "设置已保存"
   two_factor_invalid: "验证码或恢复码无效"
+  two_factor_setup_expired: "两步验证设置已过期，请重新开始"
   two_factor_disabled: "两步验证已禁用"
   two_factor_not_enabled: "两步验证尚未启用"
   passkey_deleted: "通行密钥已删除"
