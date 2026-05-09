@@ -82,6 +82,17 @@
             {{ _('nav.user_management') }}
         </a>
 
+        {% if current_user.role == 'super_admin' %}
+        <a href="/webui/security/"
+           class="sidebar-link flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium transition-all duration-200
+                  {% if active_page == 'security' %}bg-gradient-to-r from-sakura-500 to-sakura-600 text-white shadow-md shadow-sakura-500/25{% else %}text-gray-700 dark:text-gray-300 hover:bg-sakura-50 dark:hover:bg-sakura-900/20 hover:text-sakura-700 dark:hover:text-sakura-400{% endif %}">
+            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 11c1.657 0 3-1.343 3-3S13.657 5 12 5 9 6.343 9 8s1.343 3 3 3zm0 0c-3.314 0-6 2.015-6 4.5V18h12v-2.5c0-2.485-2.686-4.5-6-4.5z"/>
+            </svg>
+            {{ _('nav.security_management') }}
+        </a>
+        {% endif %}
+
         <a href="/webui/repos/"
            class="sidebar-link flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium transition-all duration-200
                   {% if active_page == 'repos' %}bg-gradient-to-r from-sakura-500 to-sakura-600 text-white shadow-md shadow-sakura-500/25{% else %}text-gray-700 dark:text-gray-300 hover:bg-sakura-50 dark:hover:bg-sakura-900/20 hover:text-sakura-700 dark:hover:text-sakura-400{% endif %}">

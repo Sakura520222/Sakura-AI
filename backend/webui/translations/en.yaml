@@ -145,6 +145,7 @@ nav:
   action_logs: "Action Logs"
   review_queue: "Review Queue"
   user_management: "User Management"
+  security_management: "Security Management"
   installed_repos: "Installed Repos"
   review_strategies: "Review Strategies"
   label_config: "Label Config"
@@ -616,6 +617,20 @@ settings:
     zh-CN: "简体中文"
     en: "English"
 
+# ========== Security Management ==========
+security:
+  title: "Security Management"
+  description: "Visible to super admins only. Review user MFA status and perform security resets."
+  user_mfa_status: "User MFA Status"
+  user_detail: "User Security Detail"
+  recent_events: "Recent Security Events"
+  last_event: "Last Event"
+  danger_zone: "Danger Zone"
+  danger_zone_desc: "These actions reset user multi-factor authentication methods. Use with caution."
+  reset_totp: "Reset TOTP"
+  delete_all_passkeys: "Delete All Passkeys"
+  reset_all_mfa: "Reset All MFA"
+
 # ========== Setup Wizard ==========
 wizard:
   title: "Setup Wizard"
@@ -785,6 +800,11 @@ toast:
   two_factor_disabled: "Two-factor authentication disabled"
   two_factor_not_enabled: "Two-factor authentication is not enabled"
   passkey_deleted: "Passkey deleted"
+  user_not_found: "User not found"
+  security_totp_reset: "User TOTP reset"
+  security_passkeys_deleted: "All user passkeys deleted"
+  security_passkey_deleted: "User passkey deleted"
+  security_mfa_reset: "All user MFA reset"
   invalid_param: "Invalid parameter value"
   code_required: "Please enter a redemption code"
   redeem_success: "Redeemed! Order: {order_no}"
