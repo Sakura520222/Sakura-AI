@@ -5,6 +5,8 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
+from backend.core.config import get_settings
+
 
 _SAFE_SEGMENT_RE = re.compile(r"^[A-Za-z0-9_.-]+$")
 
@@ -20,7 +22,9 @@ class AgentTeamWorkspaceService:
     所有路径访问必须限制在对应仓库工作区内。
     """
 
-    def __init__(self, base_dir: str | Path = "workplace"):
+    def __init__(self, base_dir: str | Path | None = None):
+        if base_dir is None:
+            base_dir = get_settings().agent_team_workspace_root or "./workplace"
         self.base_dir = Path(base_dir).resolve()
 
     def get_workspace_path(self, repo_owner: str, repo_name: str) -> Path:

@@ -13,6 +13,7 @@ services:
       - ../config:/app/config  # 存放 connection.json 和策略/标签配置
       - ../backend:/app/backend  # 开发模式：挂载 backend 代码目录
       - ../requirements.txt:/app/requirements.txt  # 挂载依赖文件，支持热更新
+      - ../workplace:/app/workplace  # Agent 专家团队独立工作区
       - chroma_data:/app/data/chroma  # ChromaDB 向量数据库持久化
     healthcheck:
       test: ["CMD", "python", "-c", "import requests; requests.get('http://localhost:8000/health')"]
@@ -34,6 +35,7 @@ services:
     volumes:
       - ../logs:/app/logs
       - ../config:/app/config
+      - ../workplace:/app/workplace  # Agent 专家团队独立工作区
       - chroma_data:/app/data/chroma  # ChromaDB 向量数据库持久化
     profiles:
       - with-worker

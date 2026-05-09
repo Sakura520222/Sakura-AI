@@ -57,6 +57,7 @@ def test_agent_team_config_includes_required_dedicated_ai_keys():
         "agent_team_model",
         "agent_team_review_model",
         "agent_team_enabled",
+        "agent_team_workspace_root",
     }
 
     assert required.issubset(set(AGENT_TEAM_CONFIG_KEYS))

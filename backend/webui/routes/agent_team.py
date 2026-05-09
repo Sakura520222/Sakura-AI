@@ -40,6 +40,7 @@ router = APIRouter(prefix="/agent-team", tags=["WebUI Agent Team"])
 
 AGENT_TEAM_CONFIG_KEYS = [
     "agent_team_enabled",
+    "agent_team_workspace_root",
     "agent_team_repo_allowlist",
     "agent_team_model_provider",
     "agent_team_api_base",
