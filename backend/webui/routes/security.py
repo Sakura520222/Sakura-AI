@@ -12,8 +12,10 @@ from backend.services.security_admin_service import (
     get_user_passkeys,
     get_user_security_summaries,
     get_user_security_summary,
+    is_global_mfa_required,
     reset_user_mfa,
     reset_user_totp,
+    set_global_mfa_required,
     set_user_mfa_required,
 )
 from backend.services.security_audit_service import record_security_event
@@ -43,6 +45,7 @@ async def security_dashboard(
     """Super-admin security management dashboard."""
     summaries = await get_user_security_summaries(db)
     recent_events = await get_recent_security_events(db, limit=30)
+    global_mfa_required = await is_global_mfa_required(db)
     return render_template(
         "security.html",
         request,
@@ -52,7 +55,48 @@ async def security_dashboard(
         active_page="security",
         summaries=summaries,
         recent_events=recent_events,
+        global_mfa_required=global_mfa_required,
     )
+
+
+@router.post("/global-mfa/enable")
+async def enable_global_mfa_route(
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    user: dict = Depends(require_super_admin),
+    csrf_token: str = Depends(require_csrf),
+):
+    """Require all users to enroll at least one MFA method."""
+    await set_global_mfa_required(db, True)
+    await record_security_event(
+        db,
+        "super_admin_enable_global_mfa",
+        "success",
+        actor_user_id=int(user["user_id"]),
+        request=request,
+    )
+    await db.commit()
+    return toast_redirect("/webui/security/", "toast.security_global_mfa_enabled")
+
+
+@router.post("/global-mfa/disable")
+async def disable_global_mfa_route(
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    user: dict = Depends(require_super_admin),
+    csrf_token: str = Depends(require_csrf),
+):
+    """Disable global MFA enrollment requirement."""
+    await set_global_mfa_required(db, False)
+    await record_security_event(
+        db,
+        "super_admin_disable_global_mfa",
+        "success",
+        actor_user_id=int(user["user_id"]),
+        request=request,
+    )
+    await db.commit()
+    return toast_redirect("/webui/security/", "toast.security_global_mfa_disabled")
 
 
 @router.get("/users/{target_user_id}")

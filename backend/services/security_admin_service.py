@@ -7,12 +7,15 @@ from dataclasses import dataclass
 from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from backend.models.database import AppConfig
 from backend.models.security_models import SecurityEventLog
 from backend.models.telegram_models import (
     TelegramUser,
     UserRecoveryCode,
     UserWebAuthnCredential,
 )
+
+GLOBAL_MFA_REQUIRED_CONFIG_KEY = "security_global_mfa_required"
 
 
 @dataclass(frozen=True)
@@ -91,6 +94,35 @@ async def get_recent_security_events(
         query = query.where(SecurityEventLog.target_user_id == user_id)
     result = await session.execute(query)
     return list(result.scalars().all())
+
+
+async def is_global_mfa_required(session: AsyncSession) -> bool:
+    """Return whether all users are required to enroll MFA."""
+    value = await session.scalar(
+        select(AppConfig.key_value).where(
+            AppConfig.key_name == GLOBAL_MFA_REQUIRED_CONFIG_KEY
+        )
+    )
+    return str(value).lower() in {"1", "true", "yes", "on"}
+
+
+async def set_global_mfa_required(session: AsyncSession, required: bool) -> None:
+    """Set global MFA enrollment requirement."""
+    result = await session.execute(
+        select(AppConfig).where(AppConfig.key_name == GLOBAL_MFA_REQUIRED_CONFIG_KEY)
+    )
+    config = result.scalar_one_or_none()
+    value = "true" if required else "false"
+    if config:
+        config.key_value = value
+    else:
+        session.add(
+            AppConfig(
+                key_name=GLOBAL_MFA_REQUIRED_CONFIG_KEY,
+                key_value=value,
+                description="Require all users to enroll at least one MFA method",
+            )
+        )
 
 
 async def reset_user_totp(session: AsyncSession, target_user: TelegramUser) -> None:
