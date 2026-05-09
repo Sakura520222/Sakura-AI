@@ -63,6 +63,11 @@ _MAX_FALLBACK_STATES = 1000
 MFA_PENDING_COOKIE_NAME = "webui_mfa_token"
 
 
+def _request_origin(request: Request) -> str:
+    """获取当前请求 Origin，用于 WebAuthn RP 配置推导。"""
+    return request.headers.get("origin") or f"{request.url.scheme}://{request.url.netloc}"
+
+
 def _cleanup_expired_states():
     """清理过期的 OAuth state"""
     now = time.time()
@@ -483,7 +488,9 @@ async def two_factor_passkey_options(request: Request):
 
     async with db_module.async_session() as session:
         try:
-            data = await begin_authentication(session, int(payload["user_id"]))
+            data = await begin_authentication(
+                session, int(payload["user_id"]), _request_origin(request)
+            )
         except WebAuthnError as exc:
             return JSONResponse(
                 status_code=400,

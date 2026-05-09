@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import base64
+import hashlib
 import json
 import time
 from dataclasses import dataclass
@@ -59,6 +60,11 @@ def b64url_decode(value: str) -> bytes:
     return base64.urlsafe_b64decode((value + padding).encode("ascii"))
 
 
+def credential_id_hash(credential_id: str) -> str:
+    """Return a fixed-length hash for indexing WebAuthn credential IDs."""
+    return hashlib.sha256(credential_id.encode("utf-8")).hexdigest()
+
+
 def _cleanup_fallback_challenges() -> None:
     now = time.time()
     expired = [
@@ -70,20 +76,23 @@ def _cleanup_fallback_challenges() -> None:
         _webauthn_challenge_fallback.pop(key, None)
 
 
-def get_rp_config() -> WebAuthnRpConfig:
+def get_rp_config(request_origin: str | None = None) -> WebAuthnRpConfig:
     """Resolve RP ID and Origin from settings."""
     settings = get_settings()
-    app_domain = settings.app_domain or "localhost"
-    rp_id = settings.passkeys_rp_id or app_domain.split(":", 1)[0]
-    if settings.passkeys_origin:
-        origin = settings.passkeys_origin.rstrip("/")
-    else:
-        scheme = "http" if rp_id in ("localhost", "127.0.0.1") else "https"
+    configured_origin = settings.passkeys_origin.rstrip("/") if settings.passkeys_origin else ""
+    origin = configured_origin or (request_origin.rstrip("/") if request_origin else "")
+    if not origin:
+        app_domain = settings.app_domain or "localhost"
+        scheme = "http" if app_domain.split(":", 1)[0] in ("localhost", "127.0.0.1") else "https"
         port = f":{settings.app_port}" if settings.app_port else ""
         origin = f"{scheme}://{app_domain}{port}".rstrip("/")
+
+    if settings.passkeys_origin:
+        origin = settings.passkeys_origin.rstrip("/")
     parsed = urlparse(origin)
     if not parsed.scheme or not parsed.netloc:
         raise WebAuthnError("Invalid passkeys_origin configuration")
+    rp_id = settings.passkeys_rp_id or parsed.hostname or "localhost"
     return WebAuthnRpConfig(rp_id=rp_id, rp_name=settings.passkeys_rp_name, origin=origin)
 
 
@@ -151,9 +160,10 @@ def _display_name(user: TelegramUser) -> str:
 async def begin_registration(
     session: AsyncSession,
     user: TelegramUser,
+    request_origin: str | None = None,
 ) -> dict:
     """Create WebAuthn registration options."""
-    rp = get_rp_config()
+    rp = get_rp_config(request_origin)
     result = await session.execute(
         select(UserWebAuthnCredential).where(UserWebAuthnCredential.user_id == user.id)
     )
@@ -176,7 +186,12 @@ async def begin_registration(
     await save_challenge(
         challenge_id,
         options.challenge,
-        {"type": "registration", "user_id": user.id},
+        {
+            "type": "registration",
+            "user_id": user.id,
+            "rp_id": rp.rp_id,
+            "origin": rp.origin,
+        },
     )
     return {
         "challenge_id": challenge_id,
@@ -201,7 +216,11 @@ async def finish_registration(
     if context.get("type") != "registration" or int(context.get("user_id")) != user.id:
         raise WebAuthnError("Registration challenge context mismatch")
 
-    rp = get_rp_config()
+    rp = WebAuthnRpConfig(
+        rp_id=context.get("rp_id") or get_rp_config().rp_id,
+        rp_name=get_settings().passkeys_rp_name,
+        origin=context.get("origin") or get_rp_config().origin,
+    )
     verification = verify_registration_response(
         credential=credential,
         expected_challenge=challenge,
@@ -212,6 +231,7 @@ async def finish_registration(
     db_credential = UserWebAuthnCredential(
         user_id=user.id,
         credential_id=b64url_encode(verification.credential_id),
+        credential_id_hash=credential_id_hash(b64url_encode(verification.credential_id)),
         public_key=b64url_encode(verification.credential_public_key),
         sign_count=verification.sign_count,
         transports=",".join(credential.get("response", {}).get("transports", []) or []),
@@ -227,9 +247,10 @@ async def finish_registration(
 async def begin_authentication(
     session: AsyncSession,
     user_id: int | None = None,
+    request_origin: str | None = None,
 ) -> dict:
     """Create WebAuthn authentication options."""
-    rp = get_rp_config()
+    rp = get_rp_config(request_origin)
     query = select(UserWebAuthnCredential)
     if user_id is not None:
         query = query.where(UserWebAuthnCredential.user_id == user_id)
@@ -246,7 +267,12 @@ async def begin_authentication(
     await save_challenge(
         challenge_id,
         options.challenge,
-        {"type": "authentication", "user_id": user_id},
+        {
+            "type": "authentication",
+            "user_id": user_id,
+            "rp_id": rp.rp_id,
+            "origin": rp.origin,
+        },
     )
     return {
         "challenge_id": challenge_id,
@@ -279,7 +305,7 @@ async def finish_authentication(
         raise WebAuthnError("Missing credential id")
     result = await session.execute(
         select(UserWebAuthnCredential).where(
-            UserWebAuthnCredential.credential_id == credential_id
+            UserWebAuthnCredential.credential_id_hash == credential_id_hash(credential_id)
         )
     )
     db_credential = result.scalar_one_or_none()
@@ -288,7 +314,11 @@ async def finish_authentication(
     if expected_user_id is not None and db_credential.user_id != expected_user_id:
         raise WebAuthnError("Passkey does not belong to this user")
 
-    rp = get_rp_config()
+    rp = WebAuthnRpConfig(
+        rp_id=context.get("rp_id") or get_rp_config().rp_id,
+        rp_name=get_settings().passkeys_rp_name,
+        origin=context.get("origin") or get_rp_config().origin,
+    )
     verification = verify_authentication_response(
         credential=credential,
         expected_challenge=challenge,

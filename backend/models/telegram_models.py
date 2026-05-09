@@ -127,7 +127,8 @@ class UserWebAuthnCredential(Base):
     user_id = Column(
         Integer, ForeignKey("telegram_users.id", ondelete="CASCADE"), nullable=False
     )
-    credential_id = Column(String(1024), nullable=False, unique=True, index=True)
+    credential_id = Column(String(1024), nullable=False)
+    credential_id_hash = Column(String(64), nullable=True, unique=True, index=True)
     public_key = Column(Text, nullable=False)
     sign_count = Column(BigInteger, default=0, nullable=False)
     transports = Column(String(255), nullable=True)
