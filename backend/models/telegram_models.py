@@ -84,6 +84,7 @@ class TelegramUser(Base):
     totp_enabled = Column(Boolean, default=False, nullable=False)
     totp_secret_encrypted = Column(Text, nullable=True)
     totp_enabled_at = Column(TIMESTAMP, nullable=True)
+    # TOTP time step is floor(unix_time / 30); signed MySQL BIGINT covers far beyond real-world timestamps.
     totp_last_used_step = Column(BigInteger, nullable=True)
 
     # 时间戳

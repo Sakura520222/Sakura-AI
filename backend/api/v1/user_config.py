@@ -7,6 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.api.v1.deps import require_api_auth
 from backend.api.v1.responses import error_response, success_response
+from backend.api.v1.schemas import UserConfigUpdateRequest
 from backend.core.config import (
     DYNAMIC_CONFIG_LABELS,
     DYNAMIC_CONFIG_SELECT_OPTIONS,
@@ -35,13 +36,13 @@ async def get_user_config(
 
 @router.patch("")
 async def update_user_config(
-    body: dict,
+    body: UserConfigUpdateRequest,
     user: dict = Depends(require_api_auth),
     db: AsyncSession = Depends(get_db),
 ):
     """更新当前用户的配置覆盖。"""
-    configs = body.get("configs", body)
-    if not isinstance(configs, dict) or not configs:
+    configs = body.configs
+    if not configs:
         return error_response("配置内容不能为空")
 
     user_id = int(user["user_id"])

@@ -43,6 +43,7 @@ def sanitize_detail(detail: dict[str, Any] | None) -> str | None:
 def _request_ip(request: Request | None) -> str | None:
     if not request:
         return None
+    # Trusts X-Forwarded-For only when the app is deployed behind a trusted reverse proxy.
     forwarded_for = request.headers.get("x-forwarded-for")
     if forwarded_for:
         return forwarded_for.split(",", 1)[0].strip()[:100]
