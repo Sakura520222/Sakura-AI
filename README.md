@@ -61,7 +61,10 @@
 
 - **首次部署引导（Setup Wizard）**：首次启动自动检测配置状态，分步引导完成 GitHub App、数据库、AI 模型、RAG 等配置，支持断点续配
 - **动态配置管理**：通过 WebUI 修改配置即时生效，无需重启服务
+- **用户级配置覆盖**：普通用户可在个人设置或 API 中覆盖允许的偏好配置（当前支持 AI 输出语言），按 UserConfig → AppConfig → Settings 默认值逐级回退
+- **AI Provider 注册表**：内置 OpenAI、DeepSeek、Qwen、Z.ai、Doubao、SiliconFlow、Gemini、Anthropic 兼容与自定义 OpenAI 兼容厂商，支持自动获取模型列表和上下文窗口信息
 - **GitHub App 安装管理**：自动处理 GitHub App 安装/卸载事件，同步仓库授权状态
+- **安全中心与多因素认证**：支持 TOTP、恢复码、Passkeys/WebAuthn、全局/单用户强制 MFA、管理员重置 MFA 与安全事件审计
 - **SSE 实时推送**：基于 Redis Pub/Sub 的多进程实时通信，WebUI 数据即时更新
 - **配额制访问控制**：基于配额的灵活访问管理体系，支持用户自注册，并按 UTC 日/周/月自动重置 PR 与 Issue 用量
 - **付费配额系统**：套餐计划管理、兑换码批量生成与兑换、管理员手动充值，支持一次性包和订阅模式
@@ -222,7 +225,7 @@ WebUI：`https://your-domain.com/webui/`
 
 ### WebUI 管理
 
-访问 `https://your-domain.com/webui/`，使用 GitHub 账号登录（需先在 Telegram Bot 中注册）。支持仪表盘图表、PR 管理、用户管理、动态配置管理、审查队列监控、操作日志等功能。配置修改即时生效，无需重启服务。
+访问 `https://your-domain.com/webui/`，使用 GitHub 账号登录（需先在 Telegram Bot 中注册）。支持仪表盘图表、PR 管理、用户管理、动态配置管理、审查队列监控、操作日志、安全中心、个人 MFA/Passkey 设置等功能。配置修改即时生效，无需重启服务。
 
 ### Telegram Bot
 
@@ -232,12 +235,13 @@ WebUI：`https://your-domain.com/webui/`
 
 ## ⚙️ 配置说明
 
-所有配置遵循优先级：**数据库 app_config（WebUI 管理） > Settings 默认值**，YAML 配置文件（`config/strategies.yaml`、`config/labels.yaml`）管理审查策略和标签定义。
+所有全局配置遵循优先级：**数据库 app_config（WebUI 管理） > Settings 默认值**，用户级偏好配置遵循 **UserConfig > app_config > Settings 默认值**。YAML 配置文件（`config/strategies.yaml`、`config/labels.yaml`）管理审查策略和标签定义。
 
 > **动态配置**：通过 WebUI 的配置管理页面修改的配置项即时生效，无需重启服务。支持 AI 模型、辅助模型、RAG、Web 搜索、代码索引等多个配置分组。
 
-- **AI 模型**：WebUI 配置管理中设置 API 地址、API Key 和模型名称
+- **AI 模型**：WebUI 配置管理中选择内置 AI Provider（OpenAI、DeepSeek、Qwen、Z.ai、Doubao、SiliconFlow、Gemini、Anthropic 兼容、自定义 OpenAI 兼容），设置 API 地址、API Key 和模型名称，并可自动拉取模型列表与上下文窗口信息
 - **辅助模型**：WebUI 配置管理中设置 `summary_model`、`summary_api_base`、`summary_api_key`，用于摘要生成、上下文压缩、标签推荐等轻量任务，留空则自动回退到主模型
+- **安全与 MFA**：WebUI 安全中心可开启全局 MFA 要求、为单个用户强制 MFA、重置 TOTP/恢复码、删除 Passkeys，并记录安全审计事件；用户可在个人设置中启用 TOTP、生成恢复码、注册 Passkeys/WebAuthn
 - **审查策略**：编辑 `config/strategies.yaml`，支持快速/标准/深度/大PR 四种策略
 - **文件过滤**：在 `config/strategies.yaml` 中配置跳过的文件扩展名和路径
 - **AI 工具**：WebUI 配置管理中 `enable_ai_tools` / `max_tool_iterations`
@@ -258,7 +262,7 @@ WebUI：`https://your-domain.com/webui/`
 - **Git 信息工具**：`config/strategies.yaml` 中 `context_enhancement.git_tools`，配置默认分支和提交返回数量
 - **项目记忆系统**：WebUI 配置管理中 `sakura_memory_enabled` 启用记忆系统，`sakura_reflection_enabled` 启用审查后反思，`sakura_consolidation_interval` 合并触发的反思轮数（默认 5），`sakura_auto_init` 自动初始化 `.sakura/` 目录。用户可在 `.sakura/rules/`、`.sakura/docs/`、`.sakura/plans/` 下放置自定义文档，详见 [项目记忆系统使用指南](docs/SAKURA_MEMORY_GUIDE.md)
 - **模型上下文**：WebUI 配置管理中配置上下文窗口、自动压缩等，详见 [模型上下文管理](docs/MODEL_CONTEXT_FEATURE.md)
-- **国际化（i18n）**：WebUI 支持中英文界面切换（个人设置页面），AI 输出语言可通过环境变量 `OUTPUT_LANGUAGE` 配置（`zh-CN` 或 `en`），评论模板自动匹配对应语言
+- **国际化（i18n）**：WebUI 支持中英文界面切换（个人设置页面），AI 输出语言可通过全局配置 `OUTPUT_LANGUAGE` 或用户级配置覆盖（`output_language`，`zh-CN` / `en` / 跟随全局）控制，评论模板自动匹配对应语言
 
 ---
 
@@ -303,8 +307,8 @@ python run_ruff.py
 Sakura-AI-Reviewer/
 ├── backend/
 │   ├── api/               # API 路由（webhook、health、v1）
-│   │   └── v1/            #   RESTful API v1（移动端对接）
-│   ├── core/              # 核心配置、动态配置管理
+│   │   └── v1/            #   RESTful API v1（移动端对接，含 user_config/billing）
+│   ├── core/              # 核心配置、动态配置管理、AI Provider 注册表
 │   ├── models/            # 数据模型（SQLAlchemy）
 │   ├── services/          # 业务逻辑
 │   │   ├── ai_reviewer/   # AI 审查引擎
@@ -322,9 +326,13 @@ Sakura-AI-Reviewer/
 │   │   ├── scan_prompt_builder.py # 仓库扫描 Prompt 构建
 │   │   ├── scan_report_service.py # 扫描报告服务
 │   │   ├── scan_scheduler.py      # 扫描调度器
-│   │   └── history_context_service.py  # 增量审查历史
+│   │   ├── history_context_service.py  # 增量审查历史
 │   │   ├── sakura_memory_service.py    # .sakura/ 项目记忆服务
 │   │   ├── github_write_service.py     # GitHub 写操作服务（.sakura/ 写入）
+│   │   ├── two_factor_service.py       # TOTP 与恢复码服务
+│   │   ├── webauthn_service.py         # Passkeys/WebAuthn 服务
+│   │   ├── security_admin_service.py   # 安全中心管理服务
+│   │   └── security_audit_service.py   # 安全审计服务
 │   ├── webui/             # WebUI 管理界面
 │   │   ├── routes/        #   路由（dashboard, config, users, ...）
 │   │   ├── templates/     #   Jinja2 模板
@@ -350,6 +358,7 @@ Sakura-AI-Reviewer/
 | [模型上下文管理](docs/MODEL_CONTEXT_FEATURE.md)            | AI 模型上下文和压缩功能           |
 | [PR 功能指南](docs/PR_FEATURES_GUIDE.md)                   | PR 变更总结与依赖图配置说明        |
 | [配额系统指南](docs/QUOTA_SYSTEM_GUIDE.md)                 | PR/Issue 配额统计与自动重置机制    |
+| [安全与 MFA 指南](docs/SECURITY_MFA_GUIDE.md)              | TOTP、恢复码、Passkeys/WebAuthn 与安全中心 |
 | [API v1 参考文档](docs/api-v1-reference.md)             | RESTful API 接口文档（移动端对接） |
 | [WebUI 设计文档](docs/plans/2026-03-27-webui-design.md) | WebUI 设计规范              |
 | [项目记忆系统使用指南](docs/SAKURA_MEMORY_GUIDE.md) | .sakura/ 目录结构、生命周期、配置说明 |

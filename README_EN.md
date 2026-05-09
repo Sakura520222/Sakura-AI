@@ -61,7 +61,10 @@
 
 - **Setup Wizard**: Automatically detects configuration status on first launch, guides you through GitHub App, database, AI model, and RAG setup step by step, with resume support
 - **Dynamic Configuration**: Configuration changes via WebUI take effect immediately without service restart
+- **Per-user Config Overrides**: Users can override allowed preference settings in WebUI or API (currently AI output language), with fallback order UserConfig → AppConfig → Settings defaults
+- **AI Provider Registry**: Built-in OpenAI, DeepSeek, Qwen, Z.ai, Doubao, SiliconFlow, Gemini, Anthropic-compatible, and custom OpenAI-compatible providers, with automatic model list and context window discovery
 - **GitHub App Installation Management**: Automatically handles GitHub App install/uninstall events, syncing repository authorization status
+- **Security Center & MFA**: Supports TOTP, recovery codes, Passkeys/WebAuthn, global/per-user MFA enforcement, admin MFA reset, and security event audit logs
 - **SSE Real-time Push**: Multi-process real-time communication based on Redis Pub/Sub, with instant WebUI data updates
 - **Quota-based Access Control**: Flexible quota-based access management system with user self-registration support and UTC daily/weekly/monthly auto-reset for PR and Issue usage
 - **Paid Quota System**: Plan management, batch redeem code generation and redemption, admin manual grants, supports one-time packages and subscription plans
@@ -223,7 +226,7 @@ Create a PR in a repository with the App installed, and the AI will automaticall
 
 ### WebUI Management
 
-Visit `https://your-domain.com/webui/` and log in with your GitHub account (requires prior registration via Telegram Bot). Features include dashboard charts, PR management, user management, dynamic configuration, review queue monitoring, action logs, and more. Configuration changes take effect immediately without service restart.
+Visit `https://your-domain.com/webui/` and log in with your GitHub account (requires prior registration via Telegram Bot). Features include dashboard charts, PR management, user management, dynamic configuration, review queue monitoring, action logs, Security Center, and personal MFA/Passkey settings. Configuration changes take effect immediately without service restart.
 
 ### Telegram Bot
 
@@ -233,12 +236,13 @@ Provides real-time notifications (review started/completed), quota management, p
 
 ## ⚙️ Configuration
 
-All configuration follows this priority: **Database app_config (WebUI) > Settings defaults**. YAML config files (`config/strategies.yaml`, `config/labels.yaml`) manage review strategies and label definitions.
+Global configuration follows this priority: **Database app_config (WebUI) > Settings defaults**. Per-user preference configuration follows **UserConfig > app_config > Settings defaults**. YAML config files (`config/strategies.yaml`, `config/labels.yaml`) manage review strategies and label definitions.
 
 > **Dynamic Configuration**: Changes made via the WebUI configuration page take effect immediately without service restart. Supports multiple configuration groups including AI models, auxiliary models, RAG, web search, code indexing, and more.
 
-- **AI Model**: Set API URL, API Key, and model name in WebUI configuration
+- **AI Model**: Select a built-in AI Provider in WebUI configuration (OpenAI, DeepSeek, Qwen, Z.ai, Doubao, SiliconFlow, Gemini, Anthropic-compatible, or custom OpenAI-compatible), set API URL/API Key/model name, and optionally auto-fetch model lists and context window metadata
 - **Auxiliary Model**: Set `summary_model`, `summary_api_base`, `summary_api_key` in WebUI configuration for lightweight tasks like summarization, context compression, and label recommendation; auto-falls back to main model if left empty
+- **Security & MFA**: The WebUI Security Center can enforce MFA globally or per user, reset TOTP/recovery codes, delete Passkeys, and record security audit events; users can enable TOTP, generate recovery codes, and register Passkeys/WebAuthn in personal settings
 - **Review Strategy**: Edit `config/strategies.yaml`, supports quick/standard/deep/large-PR four strategies
 - **File Filtering**: Configure skipped file extensions and paths in `config/strategies.yaml`
 - **AI Tools**: `enable_ai_tools` / `max_tool_iterations` in WebUI configuration
@@ -259,7 +263,7 @@ All configuration follows this priority: **Database app_config (WebUI) > Setting
 - **Git Info Tool**: `context_enhancement.git_tools` in `config/strategies.yaml` — configure default branch and commit return counts
 - **Project Memory System**: `sakura_memory_enabled` to enable memory system, `sakura_reflection_enabled` to enable post-review reflection, `sakura_consolidation_interval` for consolidation trigger threshold (default 5), `sakura_auto_init` to auto-initialize `.sakura/` directory — all in WebUI configuration. Users can place custom docs in `.sakura/rules/`, `.sakura/docs/`, `.sakura/plans/`. See [Project Memory Guide](docs/SAKURA_MEMORY_GUIDE.md) (Chinese)
 - **Model Context**: Configure context window, auto-compression in WebUI configuration, see [Model Context Management](docs/MODEL_CONTEXT_FEATURE.md)
-- **Internationalization (i18n)**: WebUI supports Chinese/English interface switching (Settings page). AI output language can be configured via `OUTPUT_LANGUAGE` environment variable (`zh-CN` or `en`). Comment templates automatically match the selected language.
+- **Internationalization (i18n)**: WebUI supports Chinese/English interface switching (Settings page). AI output language can be controlled globally via `OUTPUT_LANGUAGE` or overridden per user through `output_language` (`zh-CN` / `en` / follow global). Comment templates automatically match the selected language.
 
 ---
 
@@ -304,8 +308,8 @@ python run_ruff.py
 Sakura-AI-Reviewer/
 ├── backend/
 │   ├── api/               # API routes (webhook, health, v1)
-│   │   └── v1/            #   RESTful API v1 (mobile integration)
-│   ├── core/              # Core config, dynamic configuration
+│   │   └── v1/            #   RESTful API v1 (mobile integration, including user_config/billing)
+│   ├── core/              # Core config, dynamic configuration, AI provider registry
 │   ├── models/            # Data models (SQLAlchemy)
 │   ├── services/          # Business logic
 │   │   ├── ai_reviewer/   # AI review engine
@@ -323,9 +327,13 @@ Sakura-AI-Reviewer/
 │   │   ├── scan_prompt_builder.py # Repository scan prompt builder
 │   │   ├── scan_report_service.py # Scan report service
 │   │   ├── scan_scheduler.py      # Scan scheduler
-│   │   └── history_context_service.py  # Incremental review history
+│   │   ├── history_context_service.py  # Incremental review history
 │   │   ├── sakura_memory_service.py    # .sakura/ project memory service
 │   │   ├── github_write_service.py     # GitHub write operations service (.sakura/ writes)
+│   │   ├── two_factor_service.py       # TOTP and recovery code service
+│   │   ├── webauthn_service.py         # Passkeys/WebAuthn service
+│   │   ├── security_admin_service.py   # Security Center admin service
+│   │   └── security_audit_service.py   # Security audit service
 │   ├── webui/             # WebUI management interface
 │   │   ├── routes/        #   Routes (dashboard, config, users, ...)
 │   │   ├── templates/     #   Jinja2 templates
@@ -351,6 +359,7 @@ Sakura-AI-Reviewer/
 | [Model Context Management](docs/MODEL_CONTEXT_FEATURE.md)      | AI model context and compression features       |
 | [PR Features Guide](docs/PR_FEATURES_GUIDE.md)                 | PR change summary and dependency graph configuration |
 | [Quota System Guide](docs/QUOTA_SYSTEM_GUIDE.md)               | PR/Issue quota usage tracking and auto-reset mechanism |
+| [Security & MFA Guide](docs/SECURITY_MFA_GUIDE.md)             | TOTP, recovery codes, Passkeys/WebAuthn, and Security Center |
 | [API v1 Reference](docs/api-v1-reference.md)                   | RESTful API documentation (mobile integration)  |
 | [WebUI Design Document](docs/plans/2026-03-27-webui-design.md) | WebUI design specification                      |
 | [Project Memory Guide](docs/SAKURA_MEMORY_GUIDE.md) | .sakura/ directory structure, lifecycle, configuration (Chinese) |
