@@ -431,6 +431,29 @@ class Settings(BaseSettings):
     sakura_issue_reflection_model: str = ""  # Issue 反思使用的模型，为空时使用审查模型
     sakura_use_summary_model: bool = False  # 反思/合并任务使用辅助模型凭据以降低成本
 
+    # ========== Agent 专家团队模式配置 ==========
+    agent_team_enabled: bool = False  # 是否启用 Agent 专家团队模式（super_admin 手动使用）
+    agent_team_repo_allowlist: str = ""  # 允许使用的仓库列表，逗号分隔 owner/repo
+    agent_team_model_provider: str = "openai"  # Agent 专用 AI 厂商
+    agent_team_api_base: str = ""  # Agent 专用 API Base，不默认依赖主 AI
+    agent_team_api_key: str = ""  # Agent 专用 API Key
+    agent_team_model: str = ""  # 全栈专家模型
+    agent_team_review_model: str = ""  # 专业审查模型
+    agent_team_summary_model: str = ""  # 摘要/反思辅助模型
+    agent_team_temperature: float = 0.2
+    agent_team_max_tokens: int = 8192
+    agent_team_timeout_seconds: int = 600
+    agent_team_max_concurrent: int = 1
+    agent_team_min_priority: str = "high"
+    agent_team_feasibility_keywords: str = "容易,简单,明确,低风险,可快速修复"
+    agent_team_max_iterations_per_task: int = 3
+    agent_team_max_runtime_minutes: int = 60
+    agent_team_draft_pr: bool = True
+    agent_team_max_files_changed: int = 8
+    agent_team_max_lines_changed: int = 500
+    agent_team_run_tests: bool = True
+    agent_team_test_command_allowlist: str = "pytest -q,python run_ruff.py --check"
+
 
 class StrategyConfig:
     """审查策略配置"""
@@ -850,6 +873,45 @@ DYNAMIC_CONFIG_GROUPS: OrderedDict[str, dict] = OrderedDict(
             },
         ),
         (
+            "agent_team",
+            {
+                "label": "Agent 专家团队",
+                "icon": "bot",
+                "descriptions": {
+                    "agent_team_enabled": "启用后，超级管理员可手动使用 Agent 专家团队模式；当前版本不自动定时执行",
+                    "agent_team_repo_allowlist": "允许 Agent 操作的仓库列表，逗号分隔 owner/repo；为空时仅允许候选预览",
+                    "agent_team_api_base": "Agent 专家团队专用 API Base，不建议依赖主 AI 配置",
+                    "agent_team_api_key": "Agent 专家团队专用 API Key，保存后脱敏显示",
+                    "agent_team_model": "全栈专家使用的模型",
+                    "agent_team_review_model": "专业审查使用的模型",
+                    "agent_team_test_command_allowlist": "允许执行的验证命令白名单，逗号分隔",
+                },
+                "keys": [
+                    "agent_team_enabled",
+                    "agent_team_repo_allowlist",
+                    "agent_team_model_provider",
+                    "agent_team_api_base",
+                    "agent_team_api_key",
+                    "agent_team_model",
+                    "agent_team_review_model",
+                    "agent_team_summary_model",
+                    "agent_team_temperature",
+                    "agent_team_max_tokens",
+                    "agent_team_timeout_seconds",
+                    "agent_team_max_concurrent",
+                    "agent_team_min_priority",
+                    "agent_team_feasibility_keywords",
+                    "agent_team_max_iterations_per_task",
+                    "agent_team_max_runtime_minutes",
+                    "agent_team_draft_pr",
+                    "agent_team_max_files_changed",
+                    "agent_team_max_lines_changed",
+                    "agent_team_run_tests",
+                    "agent_team_test_command_allowlist",
+                ],
+            },
+        ),
+        (
             "fetch_url",
             {
                 "label": "URL 抓取配置",
@@ -917,6 +979,7 @@ DYNAMIC_CONFIG_SENSITIVE_KEYS = frozenset(
         "webui_secret_key",
         "github_oauth_client_secret",
         "telegram_bot_token",
+        "agent_team_api_key",
     }
 )
 
@@ -946,6 +1009,13 @@ DYNAMIC_CONFIG_SELECT_OPTIONS: dict[str, list[dict]] = {
     "pr_dependency_graph_mode": [
         {"value": "ai", "label": "AI 生成（使用 LLM 分析）"},
         {"value": "static", "label": "静态分析（正则提取 import）"},
+    ],
+    "agent_team_model_provider": get_provider_select_options(),
+    "agent_team_min_priority": [
+        {"value": "critical", "label": "Critical"},
+        {"value": "high", "label": "High"},
+        {"value": "medium", "label": "Medium"},
+        {"value": "low", "label": "Low"},
     ],
 }
 
@@ -978,6 +1048,15 @@ DYNAMIC_CONFIG_RANGES: dict[str, tuple[float, float]] = {
     "sakura_consolidation_interval": (1, 50),
     "sakura_max_memory_chars": (500, 10000),
     "sakura_max_sakura_chars": (1000, 20000),
+    # Agent 专家团队
+    "agent_team_temperature": (0.0, 2.0),
+    "agent_team_max_tokens": (1024, 200000),
+    "agent_team_timeout_seconds": (60, 7200),
+    "agent_team_max_concurrent": (1, 5),
+    "agent_team_max_iterations_per_task": (1, 10),
+    "agent_team_max_runtime_minutes": (5, 720),
+    "agent_team_max_files_changed": (1, 100),
+    "agent_team_max_lines_changed": (1, 10000),
 }
 
 # 字段中文标签
@@ -1081,6 +1160,28 @@ DYNAMIC_CONFIG_LABELS: dict[str, str] = {
     "fetch_url_force_https": "强制 HTTPS",
     # Issue 标题改写
     "issue_auto_rewrite_title": "自动改写 Issue 标题",
+    # Agent 专家团队
+    "agent_team_enabled": "启用 Agent 专家团队",
+    "agent_team_repo_allowlist": "仓库白名单",
+    "agent_team_model_provider": "Agent AI 厂商",
+    "agent_team_api_base": "Agent API Base",
+    "agent_team_api_key": "Agent API Key",
+    "agent_team_model": "全栈专家模型",
+    "agent_team_review_model": "专业审查模型",
+    "agent_team_summary_model": "摘要/反思模型",
+    "agent_team_temperature": "温度参数",
+    "agent_team_max_tokens": "最大 Tokens",
+    "agent_team_timeout_seconds": "任务超时（秒）",
+    "agent_team_max_concurrent": "最大并发任务数",
+    "agent_team_min_priority": "最低 Issue 优先级",
+    "agent_team_feasibility_keywords": "可行性关键词",
+    "agent_team_max_iterations_per_task": "单任务最大迭代轮数",
+    "agent_team_max_runtime_minutes": "单任务最长运行时间（分钟）",
+    "agent_team_draft_pr": "创建 Draft PR",
+    "agent_team_max_files_changed": "最大修改文件数",
+    "agent_team_max_lines_changed": "最大修改行数",
+    "agent_team_run_tests": "自动运行验证命令",
+    "agent_team_test_command_allowlist": "验证命令白名单",
 }
 
 # 内存 TTL 缓存（进程级，多 Worker 部署时各进程独立，配置变更仅当前进程可见）

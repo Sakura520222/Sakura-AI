@@ -512,6 +512,9 @@ async def create_tables_async():
 def _append_dynamic_config_defaults(default_configs: list) -> None:
     """向 default_configs 列表追加动态配置默认值"""
     try:
+        # Ensure plugin-style model modules are imported before Base.metadata.create_all.
+        import backend.models.agent_team_models  # noqa: F401
+
         from backend.core.config import (
             DYNAMIC_CONFIG_GROUPS,
             DYNAMIC_CONFIG_LABELS,

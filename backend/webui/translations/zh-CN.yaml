@@ -142,6 +142,7 @@ nav:
   issue_analysis: "Issue 分析"
   review_logs: "审查日志"
   repo_scans: "仓库扫描"
+  agent_team: "Agent 专家团队"
   action_logs: "操作日志"
   review_queue: "审查队列"
   user_management: "用户管理"
@@ -156,6 +157,23 @@ nav:
   personal_settings: "个人设置"
   about: "关于"
   service_running: "服务运行中"
+
+# ========== Agent 专家团队 / Agent Team ==========
+agent_team:
+  title: "Agent 专家团队"
+  description: "超级管理员专用：手动筛选高价值 Issue/扫描发现，使用专用 AI 和两角色 Agent 创建并迭代 PR。"
+  dedicated_ai_config: "专用 AI 配置"
+  preview_candidates: "预览候选任务"
+  candidates: "候选任务"
+  no_candidates: "暂无符合条件的候选任务"
+  create_task: "创建任务"
+  task_created: "Agent 任务已创建"
+  tasks: "Agent 任务"
+  no_tasks: "暂无 Agent 任务"
+  stats_total: "总任务"
+  stats_active: "进行中"
+  stats_completed: "已完成"
+  stats_failed: "失败"
 
 # ========== 仪表盘 / Dashboard ==========
 dashboard:
