@@ -967,7 +967,10 @@ async def _auto_migrate():
         # 记录迁移版本
         version = datetime.utcnow().strftime("%Y%m%d%H%M%S")
         await conn.execute(
-            text("INSERT INTO schema_migrations (version) VALUES (:v)"),
+            text(
+                "INSERT INTO schema_migrations (version, applied_at) "
+                "VALUES (:v, CURRENT_TIMESTAMP)"
+            ),
             {"v": version},
         )
         _logger.info("[auto-migrate] 迁移完成, version={}", version)
