@@ -8,14 +8,16 @@ from backend.services.security_admin_service import (
     reset_user_totp,
     set_global_mfa_required,
     set_user_mfa_required,
+    user_has_any_mfa_method,
 )
 from backend.services.security_audit_service import sanitize_detail
 
 
 class DummySession:
-    def __init__(self):
+    def __init__(self, scalar_value=None):
         self.statements = []
         self.added = []
+        self.scalar_value = scalar_value
 
     async def execute(self, statement):
         self.statements.append(statement)
@@ -29,6 +31,10 @@ class DummySession:
 
     def add(self, item):
         self.added.append(item)
+
+    async def scalar(self, statement):
+        self.statements.append(statement)
+        return self.scalar_value
 
 
 def test_sanitize_detail_removes_sensitive_values():
@@ -85,6 +91,17 @@ def test_set_global_mfa_required_creates_app_config():
     assert len(session.added) == 1
     assert session.added[0].key_name == GLOBAL_MFA_REQUIRED_CONFIG_KEY
     assert session.added[0].key_value == "true"
+
+
+def test_user_has_any_mfa_method_accepts_totp_or_passkey():
+    user = TelegramUser(id=1, telegram_id=1001, github_username="alice")
+    user.totp_enabled = True
+
+    assert asyncio.run(user_has_any_mfa_method(DummySession(0), user)) is True
+
+    user.totp_enabled = False
+    assert asyncio.run(user_has_any_mfa_method(DummySession(1), user)) is True
+    assert asyncio.run(user_has_any_mfa_method(DummySession(0), user)) is False
 
 
 def test_webauthn_credential_has_hash_column_for_unique_index():

@@ -50,6 +50,7 @@
                 {{ _('auth.two_factor_hint') }} <span class="font-medium">{{ github_username }}</span>
             </p>
 
+            {% if totp_enabled %}
             <form method="POST" class="space-y-4">
                 <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
                 <div>
@@ -63,6 +64,7 @@
                     {{ _('auth.verify') }}
                 </button>
             </form>
+            {% endif %}
 
             <div class="relative my-6">
                 <div class="absolute inset-0 flex items-center">
