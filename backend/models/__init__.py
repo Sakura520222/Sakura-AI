@@ -4,6 +4,7 @@ from backend.models.database import (
     PRReview,
     ReviewComment,
     AppConfig,
+    UserConfig,
     ReviewQueue,
     init_database,
     init_async_db,
@@ -13,6 +14,8 @@ from backend.models.database import (
     Base,
 )
 from backend.models.admin_action_log import AdminActionLog
+from backend.models.telegram_models import UserRecoveryCode, UserWebAuthnCredential
+from backend.models.security_models import SecurityEventLog
 from backend.models.scan_models import (
     RepoScan,
     ScanFinding,
@@ -41,8 +44,12 @@ __all__ = [
     "PRReview",
     "ReviewComment",
     "AppConfig",
+    "UserConfig",
     "ReviewQueue",
     "AdminActionLog",
+    "UserRecoveryCode",
+    "UserWebAuthnCredential",
+    "SecurityEventLog",
     "Plan",
     "PlanType",
     "Order",

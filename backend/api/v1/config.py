@@ -3,7 +3,9 @@
 import asyncio
 from pathlib import Path
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Request
+from pydantic import BaseModel
+from sqlalchemy import select
 from loguru import logger
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -23,6 +25,8 @@ from backend.api.v1.schemas import (
     ConfigLabelsUpdateRequest,
     ConfigLabelRecommendationUpdateRequest,
 )
+from backend.api.v1.deps import limiter
+from backend.core.setup_service import setup_service
 
 router = APIRouter(prefix="/config", tags=["Config"])
 
@@ -32,6 +36,13 @@ _config_lock = asyncio.Lock()
 _CONFIG_DIR = Path(__file__).resolve().parent.parent.parent / "config"
 _STRATEGIES_PATH = _CONFIG_DIR / "strategies.yaml"
 _LABELS_PATH = _CONFIG_DIR / "labels.yaml"
+
+
+class AIModelsRequest(BaseModel):
+    """AI 模型列表请求。"""
+
+    api_key: str | None = None
+    api_base: str | None = None
 
 
 def _mask_sensitive(value: str, key: str) -> str:
@@ -44,14 +55,45 @@ def _mask_sensitive(value: str, key: str) -> str:
     return value
 
 
+@router.get("/ai-providers")
+async def get_ai_providers(user: dict = Depends(require_api_super_admin)):
+    """获取内置 AI 厂商列表。"""
+    return success_response(data={"providers": setup_service.list_ai_providers()})
+
+
+@router.post("/ai-providers/{provider}/models")
+@limiter.limit("10/minute")
+async def get_ai_provider_models(
+    request: Request,
+    provider: str,
+    body: AIModelsRequest,
+    db: AsyncSession = Depends(get_db),
+    user: dict = Depends(require_api_super_admin),
+):
+    """按厂商获取模型列表。若未传 API Key，则尝试使用数据库中保存的真实 Key。"""
+    api_key = (body.api_key or "").strip()
+    api_base = (body.api_base or "").strip()
+    if not api_key:
+        result = await db.execute(
+            select(AppConfig.key_value).where(AppConfig.key_name == "openai_api_key")
+        )
+        api_key = result.scalar_one_or_none() or ""
+    if not api_base:
+        result = await db.execute(
+            select(AppConfig.key_value).where(AppConfig.key_name == "openai_api_base")
+        )
+        api_base = result.scalar_one_or_none() or ""
+
+    result = await setup_service.fetch_provider_models(provider, api_key, api_base)
+    return success_response(data=result)
+
+
 @router.get("/general")
 async def get_general_config(
     db: AsyncSession = Depends(get_db),
     user: dict = Depends(require_api_super_admin),
 ):
     """获取全局配置"""
-    from sqlalchemy import select
-
     result = await db.execute(select(AppConfig).order_by(AppConfig.key_name))
     configs = {}
     for row in result.scalars().all():

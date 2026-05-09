@@ -75,6 +75,7 @@ async def _fetch_recent_reviews(
 
 _APP_INSTALL_CACHE_TTL = 1800  # 30 分钟（已安装）
 _APP_INSTALL_CACHE_TTL_NEGATIVE = 60  # 60 秒（未安装，便于安装后快速刷新）
+_APP_INSTALL_CACHE_TTL_UNKNOWN = 30  # 30 秒（无法检测，避免 Integration 异常时反复请求）
 
 # GitHub App slug 缓存（不变量，启动后获取一次即可）
 _app_slug_cache: str | None = None
@@ -118,6 +119,8 @@ async def _check_github_app_installed(github_username: str) -> Optional[bool]:
         cache_key = f"github_app_installed:{github_username.lower()}"
         cached = await r.get(cache_key)
         if cached is not None:
+            if cached == "unknown":
+                return None
             return cached == "1"
     except Exception as e:
         logger.debug(f"Redis 读取安装状态缓存失败: {e}")
@@ -125,14 +128,17 @@ async def _check_github_app_installed(github_username: str) -> Optional[bool]:
     # 查询 GitHub App installations
     try:
         github_app = GitHubAppClient()
-        installations = await asyncio.to_thread(
-            github_app.get_all_installations_with_repos
+        installed = await asyncio.to_thread(
+            github_app.check_user_installed, github_username
         )
 
-        installed = any(
-            inst.get("account_login", "").lower() == github_username.lower()
-            for inst in installations
-        )
+        if installed is None:
+            try:
+                r = await get_async_redis()
+                await r.setex(cache_key, _APP_INSTALL_CACHE_TTL_UNKNOWN, "unknown")
+            except Exception as e:
+                logger.debug(f"Redis 缓存写入 unknown 状态失败: {e}")
+            return None
 
         # 写入 Redis 缓存（已安装 30 分钟，未安装 60 秒）
         try:
@@ -141,8 +147,8 @@ async def _check_github_app_installed(github_username: str) -> Optional[bool]:
                 _APP_INSTALL_CACHE_TTL if installed else _APP_INSTALL_CACHE_TTL_NEGATIVE
             )
             await r.setex(cache_key, ttl, "1" if installed else "0")
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug(f"Redis 写入安装状态缓存失败: {e}")
 
         return installed
     except Exception as e:

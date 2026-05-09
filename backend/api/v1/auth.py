@@ -10,13 +10,27 @@ from sqlalchemy import select
 
 from backend.models.telegram_models import TelegramUser
 from backend.models import database as db_module
-from backend.webui.auth import create_access_token
+from backend.services.two_factor_service import (
+    TwoFactorError,
+    TwoFactorReplayError,
+    consume_recovery_code,
+    verify_user_totp,
+)
+from backend.services.security_admin_service import user_has_any_mfa_method
+from backend.webui.auth import (
+    create_access_token,
+    create_mfa_pending_token,
+    decode_access_token,
+    is_mfa_pending_payload,
+)
 from backend.core.config import get_settings
 
 from backend.api.v1.deps import require_api_auth, get_api_current_user
 from backend.api.v1.schemas import (
     OAuthAuthorizeResponse,
     OAuthCallbackRequest,
+    MfaRequiredResponse,
+    MfaVerifyRequest,
     TokenResponse,
     UserInfoResponse,
 )
@@ -31,6 +45,22 @@ from backend.webui.routes.auth import (
 )
 
 router = APIRouter(prefix="/auth", tags=["Auth"])
+
+
+def _build_user_info_response(
+    github_username: str,
+    role: str,
+    user_id: int,
+    github_id: int | None,
+    avatar_url: str | None,
+) -> UserInfoResponse:
+    return UserInfoResponse(
+        sub=github_username,
+        role=role,
+        user_id=user_id,
+        github_id=github_id,
+        avatar_url=avatar_url,
+    )
 
 
 @router.get("/github")
@@ -185,6 +215,7 @@ async def github_callback(request: Request, body: OAuthCallbackRequest):
             )
         )
         user = result.scalar_one_or_none()
+        has_mfa_method = await user_has_any_mfa_method(session, user) if user else False
 
     if not user:
         await _delete_oauth_state(body.state)
@@ -193,7 +224,6 @@ async def github_callback(request: Request, body: OAuthCallbackRequest):
             status_code=403,
         )
 
-    # 创建 JWT
     token_payload = {
         "sub": github_username,
         "role": user.role,
@@ -201,6 +231,23 @@ async def github_callback(request: Request, body: OAuthCallbackRequest):
         "github_id": github_id,
         "avatar_url": avatar_url,
     }
+
+    user_info = _build_user_info_response(
+        github_username, user.role, user.id, github_id, avatar_url
+    )
+
+    if has_mfa_method:
+        mfa_token = create_mfa_pending_token(token_payload)
+        await _delete_oauth_state(body.state)
+        logger.info(f"API OAuth 需要二次验证: {github_username} (role={user.role})")
+        return success_response(
+            data=MfaRequiredResponse(
+                mfa_token=mfa_token,
+                user=user_info,
+            ).model_dump(mode="json"),
+            message="mfa_required",
+        )
+
     jwt_token = create_access_token(token_payload)
 
     # 登录成功，删除已使用的 state
@@ -210,12 +257,73 @@ async def github_callback(request: Request, body: OAuthCallbackRequest):
     return success_response(
         data=TokenResponse(
             access_token=jwt_token,
-            user=UserInfoResponse(
-                sub=github_username,
-                role=user.role,
-                user_id=user.id,
-                github_id=github_id,
-                avatar_url=avatar_url,
+            user=user_info,
+        ).model_dump(mode="json")
+    )
+
+
+@router.post("/2fa/verify")
+@limiter.limit("5/minute")
+async def verify_two_factor(request: Request, body: MfaVerifyRequest):
+    """验证移动端/API 二次验证码或恢复码，并签发正式 Token。"""
+    payload = decode_access_token(body.mfa_token)
+    if not is_mfa_pending_payload(payload):
+        return error_response("无效或已过期的二次验证凭证", status_code=401)
+
+    user_id = payload.get("user_id")
+    async with db_module.async_session() as session:
+        result = await session.execute(
+            select(TelegramUser).where(
+                TelegramUser.id == user_id,
+                TelegramUser.is_active,
+            )
+        )
+        user = result.scalar_one_or_none()
+        if not user or not await user_has_any_mfa_method(session, user):
+            return error_response("用户未启用二次验证", status_code=400)
+
+        if not user.totp_enabled:
+            return error_response("请使用通行密钥完成验证", status_code=400)
+
+        verified = False
+        try:
+            used_step = verify_user_totp(user, body.code)
+            if used_step is not None:
+                user.totp_last_used_step = used_step
+                verified = True
+        except TwoFactorReplayError:
+            logger.warning("API TOTP 重放尝试: user_id={}", user_id)
+        except TwoFactorError as exc:
+            logger.warning("API TOTP 验证失败: user_id={}, error={}", user_id, exc)
+
+        if not verified:
+            verified = await consume_recovery_code(session, int(user_id), body.code)
+
+        if not verified:
+            await session.rollback()
+            return error_response("验证码或恢复码无效", status_code=400)
+
+        await session.commit()
+
+    token_payload = {
+        "sub": payload.get("sub"),
+        "role": payload.get("role"),
+        "user_id": payload.get("user_id"),
+        "github_id": payload.get("github_id"),
+        "avatar_url": payload.get("avatar_url"),
+    }
+    jwt_token = create_access_token(token_payload)
+    logger.info("API 二次验证成功: user={}", payload.get("sub"))
+
+    return success_response(
+        data=TokenResponse(
+            access_token=jwt_token,
+            user=_build_user_info_response(
+                payload.get("sub") or "",
+                payload.get("role") or "user",
+                int(payload.get("user_id")),
+                payload.get("github_id"),
+                payload.get("avatar_url"),
             ),
         ).model_dump(mode="json")
     )

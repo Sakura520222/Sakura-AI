@@ -15,7 +15,7 @@ from typing import Any, Dict, List
 
 from loguru import logger
 
-from backend.core.config import get_settings, get_strategy_config
+from backend.core.config import get_settings, get_strategy_config, get_user_dynamic_config
 from backend.services.ai_reviewer.constants import (
     BATCH_CONCURRENCY,
     BATCH_JITTER_SECONDS,
@@ -197,7 +197,15 @@ class BatchProcessor:
         """
         settings = get_settings()
         strategy_config_data = get_strategy_config().get_strategy(strategy)
-        system_prompt = strategy_config_data.get("prompt", "")
+        output_lang = await get_user_dynamic_config(
+            "output_language", context.get("user_id")
+        )
+        system_prompt = self.prompt_builder.build_system_prompt(
+            strategy_config_data.get("prompt", ""),
+            context,
+            include_tools=False,
+            output_language=output_lang or "",
+        )
         tracker = TokenTracker()
 
         # 构建用户消息
@@ -248,12 +256,14 @@ class BatchProcessor:
         settings = get_settings()
         strategy_config_data = get_strategy_config().get_strategy(strategy)
         # 获取 AI 输出语言配置 / Get AI output language config
-        output_lang = settings.output_language or ""
+        output_lang = await get_user_dynamic_config(
+            "output_language", context.get("user_id")
+        )
         system_prompt = self.prompt_builder.build_system_prompt(
             strategy_config_data.get("prompt", ""),
             context,
             include_tools=True,
-            output_language=output_lang,
+            output_language=output_lang or "",
         )
         tracker = TokenTracker()
 

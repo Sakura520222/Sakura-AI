@@ -8,6 +8,7 @@ from loguru import logger
 import sys
 import asyncio
 
+from backend import __version__
 from backend.core.config import get_settings
 from backend.core.bootstrap import (
     BootstrapMiddleware,
@@ -17,7 +18,7 @@ from backend.core.bootstrap import (
 from backend.webui.routes.setup import router as setup_router
 from backend.api import webhook
 from backend.webui.routes import webui_router
-from backend.webui.deps import error_page
+from backend.webui.deps import error_page, toast_redirect
 from backend.webui.auth import decode_access_token
 from backend.api.v1 import api_v1_router
 from backend.api.v1.deps import limiter
@@ -192,7 +193,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title="Sakura AI Reviewer",
     description="GitHub AI代码审查机器人",
-    version="2.9.5",
+    version=__version__,
     lifespan=lifespan,
 )
 
@@ -217,7 +218,40 @@ app.include_router(api_v1_router, prefix="/api/v1", tags=["API v1"])
 
 # 限流：注册 slowapi 状态 + 异常处理
 app.state.limiter = limiter
-app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+_WEBUI_RATE_LIMIT_JSON_SUFFIXES = frozenset(
+    {
+        "/passkey/options",
+        "/passkey/verify",
+        "/passkeys/register/options",
+        "/passkeys/register/verify",
+    }
+)
+
+
+@app.exception_handler(RateLimitExceeded)
+async def rate_limit_exception_handler(request: Request, exc: RateLimitExceeded):
+    """Return WebUI-friendly rate limit feedback instead of raw JSON pages."""
+    path = request.url.path
+    if path.startswith("/webui"):
+        message = "toast.rate_limit_exceeded"
+        if request.headers.get("hx-request") == "true":
+            return JSONResponse(
+                status_code=429,
+                content={"success": False, "message": message, "data": None},
+                headers={"HX-Redirect": f"{path}?_toast={message}&_toast_type=error"},
+            )
+        is_json_endpoint = any(
+            path.endswith(suffix) for suffix in _WEBUI_RATE_LIMIT_JSON_SUFFIXES
+        )
+        if is_json_endpoint or "application/json" in request.headers.get("accept", ""):
+            return JSONResponse(
+                status_code=429,
+                content={"success": False, "message": message, "data": None},
+            )
+        referer = request.headers.get("referer")
+        redirect_url = referer if referer and referer.startswith(str(request.base_url)) else "/webui/"
+        return toast_redirect(redirect_url, message, "error", status_code=303)
+    return await _rate_limit_exceeded_handler(request, exc)
 
 
 # WebUI 认证异常处理：页面路由 401 时重定向到登录页
@@ -246,6 +280,11 @@ def _get_webui_error_user(request: Request) -> dict | None:
 async def auth_exception_handler(request: Request, exc: HTTPException):
     if exc.status_code == 401 and request.url.path.startswith("/webui"):
         return RedirectResponse(url="/webui/auth/login", status_code=302)
+    if exc.status_code == 428 and request.url.path.startswith("/webui"):
+        return RedirectResponse(
+            url="/webui/settings/?_toast=MFA%20enrollment%20required&_toast_type=error",
+            status_code=302,
+        )
     if request.url.path.startswith("/webui"):
         return error_page(
             request,
@@ -262,7 +301,7 @@ async def root():
     """根路径"""
     return {
         "service": "Sakura AI Reviewer",
-        "version": "2.9.5",
+        "version": __version__,
         "status": "running",
         "docs": "/docs",
     }

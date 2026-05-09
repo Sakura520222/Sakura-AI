@@ -1,0 +1,112 @@
+{% extends "base.html" %}
+
+{% block title %}{{ _('security.user_detail') }} - Sakura AI Reviewer{% endblock %}
+
+{% block content %}
+<div class="space-y-6">
+    <div class="flex items-center justify-between gap-4">
+        <div>
+            <h1 class="text-2xl font-bold">{{ _('security.user_detail') }}</h1>
+            <p class="mt-1 text-sm text-gray-500 dark:text-gray-400">{{ target_user.github_username or target_user.telegram_id }}</p>
+        </div>
+        <a href="/webui/security/" class="text-sm text-pink-600 dark:text-pink-400 hover:underline">{{ _('common.back') }}</a>
+    </div>
+
+    <div class="grid gap-4 md:grid-cols-5">
+        <div class="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 p-5">
+            <p class="text-sm text-gray-500">{{ _('settings.two_factor_auth') }}</p>
+            <p class="mt-2 text-lg font-semibold">{{ _('common.enabled') if target_user.totp_enabled else _('common.disabled') }}</p>
+        </div>
+        <div class="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 p-5">
+            <p class="text-sm text-gray-500">{{ _('settings.recovery_codes') }}</p>
+            <p class="mt-2 text-lg font-semibold">{{ summary.recovery_code_count }}</p>
+        </div>
+        <div class="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 p-5">
+            <p class="text-sm text-gray-500">{{ _('settings.passkeys') }}</p>
+            <p class="mt-2 text-lg font-semibold">{{ summary.passkey_count }}</p>
+        </div>
+        <div class="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 p-5">
+            <p class="text-sm text-gray-500">{{ _('security.last_event') }}</p>
+            <p class="mt-2 text-sm font-semibold">{{ summary.last_security_event_at or '-' }}</p>
+        </div>
+        <div class="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 p-5">
+            <p class="text-sm text-gray-500">{{ _('security.mfa_requirement') }}</p>
+            <p class="mt-2 text-lg font-semibold">{{ _('security.required') if target_user.mfa_required else _('security.not_required') }}</p>
+        </div>
+    </div>
+
+    <div class="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 shadow-sm p-6">
+        <h2 class="text-base font-semibold">{{ _('security.mfa_requirement') }}</h2>
+        <p class="mt-1 text-sm text-gray-500 dark:text-gray-400">{{ _('security.mfa_requirement_desc') }}</p>
+        <div class="mt-4 flex flex-wrap gap-3">
+            {% if target_user.mfa_required %}
+            <form method="POST" action="/webui/security/users/{{ target_user.id }}/mfa/unrequire">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                <button type="submit" class="px-4 py-2 bg-gray-700 text-white rounded-lg text-sm font-medium hover:bg-gray-800">{{ _('security.unrequire_mfa') }}</button>
+            </form>
+            {% else %}
+            <form method="POST" action="/webui/security/users/{{ target_user.id }}/mfa/require">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                <button type="submit" class="px-4 py-2 bg-pink-500 text-white rounded-lg text-sm font-medium hover:bg-pink-600">{{ _('security.require_mfa') }}</button>
+            </form>
+            {% endif %}
+        </div>
+    </div>
+
+    <div class="bg-white dark:bg-gray-800 rounded-xl border border-red-200 dark:border-red-800 shadow-sm p-6">
+        <h2 class="text-base font-semibold text-red-700 dark:text-red-300">{{ _('security.danger_zone') }}</h2>
+        <p class="mt-1 text-sm text-gray-500 dark:text-gray-400">{{ _('security.danger_zone_desc') }}</p>
+        <div class="mt-4 flex flex-wrap gap-3">
+            <form method="POST" action="/webui/security/users/{{ target_user.id }}/totp/reset" onsubmit="return confirm('{{ _('security.confirm_reset_totp') }}')">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                <button type="submit" class="px-4 py-2 bg-orange-500 text-white rounded-lg text-sm font-medium hover:bg-orange-600">{{ _('security.reset_totp') }}</button>
+            </form>
+            <form method="POST" action="/webui/security/users/{{ target_user.id }}/passkeys/delete-all" onsubmit="return confirm('{{ _('security.confirm_delete_all_passkeys') }}')">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                <button type="submit" class="px-4 py-2 bg-orange-500 text-white rounded-lg text-sm font-medium hover:bg-orange-600">{{ _('security.delete_all_passkeys') }}</button>
+            </form>
+            <form method="POST" action="/webui/security/users/{{ target_user.id }}/mfa/reset" onsubmit="return confirm('{{ _('security.confirm_reset_all_mfa') }}')">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                <button type="submit" class="px-4 py-2 bg-red-500 text-white rounded-lg text-sm font-medium hover:bg-red-600">{{ _('security.reset_all_mfa') }}</button>
+            </form>
+        </div>
+    </div>
+
+    <div class="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 shadow-sm overflow-hidden">
+        <div class="px-6 py-4 border-b border-gray-200 dark:border-gray-700"><h2 class="text-base font-semibold">{{ _('settings.passkeys') }}</h2></div>
+        <div class="divide-y divide-gray-200 dark:divide-gray-700">
+            {% for passkey in passkeys %}
+            <div class="px-6 py-4 flex items-center justify-between gap-4">
+                <div>
+                    <p class="text-sm font-medium">{{ passkey.device_name or _('settings.passkey_default_name') }}</p>
+                    <p class="text-xs text-gray-500">{{ _('common.created_at') }}: {{ passkey.created_at }}{% if passkey.last_used_at %} · {{ _('settings.last_used_at') }}: {{ passkey.last_used_at }}{% endif %}</p>
+                </div>
+                <form method="POST" action="/webui/security/users/{{ target_user.id }}/passkeys/{{ passkey.id }}/delete" onsubmit="return confirm('{{ _('security.confirm_delete_passkey') }}')">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                    <button type="submit" class="px-3 py-1.5 text-sm text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20 rounded-lg">{{ _('common.delete') }}</button>
+                </form>
+            </div>
+            {% else %}
+            <div class="px-6 py-8 text-center text-gray-500">{{ _('settings.no_passkeys') }}</div>
+            {% endfor %}
+        </div>
+    </div>
+
+    <div class="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 shadow-sm overflow-hidden">
+        <div class="px-6 py-4 border-b border-gray-200 dark:border-gray-700"><h2 class="text-base font-semibold">{{ _('security.recent_events') }}</h2></div>
+        <div class="divide-y divide-gray-200 dark:divide-gray-700">
+            {% for event in events %}
+            <div class="px-6 py-4 text-sm">
+                <div class="flex items-center justify-between gap-4">
+                    <div><span class="font-medium">{{ event.event_type }}</span><span class="ml-2 text-gray-500">{{ event.event_result }}</span></div>
+                    <span class="text-xs text-gray-500">{{ event.created_at }}</span>
+                </div>
+                <p class="mt-1 text-xs text-gray-500">actor={{ event.actor_user_id or '-' }} ip={{ event.ip_address or '-' }}</p>
+            </div>
+            {% else %}
+            <div class="px-6 py-8 text-center text-gray-500">{{ _('common.no_data') }}</div>
+            {% endfor %}
+        </div>
+    </div>
+</div>
+{% endblock %}

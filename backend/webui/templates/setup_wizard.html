@@ -239,9 +239,22 @@
                 <div class="space-y-5">
                     <div>
                         <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+                            AI 厂商 <span class="text-red-500">*</span>
+                        </label>
+                        <p class="text-xs text-gray-500 dark:text-gray-400 mb-2">选择内置厂商会自动填充 API Base URL 和默认模型；自定义厂商请手动填写。</p>
+                        <select x-model="form.ai_provider" @change="onProviderChange()"
+                                class="w-full px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-sm text-gray-900 dark:text-white focus:ring-2 focus:ring-pink-500 focus:border-transparent outline-none">
+                            <template x-for="p in aiProviders" :key="p.id">
+                                <option :value="p.id" x-text="p.label"></option>
+                            </template>
+                        </select>
+                    </div>
+
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
                             AI API Key <span class="text-red-500">*</span>
                         </label>
-                        <p class="text-xs text-gray-500 dark:text-gray-400 mb-2">支持 OpenAI、DeepSeek、SiliconFlow 等兼容 API 的 Key</p>
+                        <p class="text-xs text-gray-500 dark:text-gray-400 mb-2">填写所选厂商的 API Key</p>
                         <input type="password" x-model="form.openai_api_key"
                                placeholder="sk-..."
                                class="w-full px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-sm text-gray-900 dark:text-white focus:ring-2 focus:ring-pink-500 focus:border-transparent outline-none">
@@ -251,7 +264,7 @@
                         <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
                             API Base URL
                         </label>
-                        <p class="text-xs text-gray-500 dark:text-gray-400 mb-2">如使用非 OpenAI 的兼容 API，修改此项</p>
+                        <p class="text-xs text-gray-500 dark:text-gray-400 mb-2">选择厂商后自动填充，可按需覆盖</p>
                         <input type="text" x-model="form.openai_api_base"
                                class="w-full px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-sm text-gray-900 dark:text-white focus:ring-2 focus:ring-pink-500 focus:border-transparent outline-none">
                     </div>
@@ -280,7 +293,7 @@
                     <button @click="testConnection('openai')"
                             :disabled="!form.openai_api_key || testing"
                             class="px-4 py-2 text-sm font-medium rounded-lg border border-gray-300 dark:border-gray-600 hover:bg-gray-50 dark:hover:bg-gray-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors text-gray-700 dark:text-gray-300">
-                        <span x-show="!testing">测试 AI API</span>
+                        <span x-show="!testing">测试 AI API 并获取模型</span>
                         <span x-show="testing" class="flex items-center gap-2">
                             <span class="pulse-dot">●</span> 测试中...
                         </span>
@@ -559,9 +572,10 @@ function setupWizard() {
             github_app_id: '',
             github_private_key: '',
             github_webhook_secret: '',
+            ai_provider: 'openai',
             openai_api_key: '',
             openai_api_base: 'https://api.openai.com/v1',
-            openai_model: 'gpt-4',
+            openai_model: 'gpt-4o-mini',
             embedding_api_key: '',
             embedding_base_url: 'https://api.siliconflow.cn/v1',
             embedding_model: 'BAAI/bge-m3',
@@ -577,6 +591,10 @@ function setupWizard() {
             github_oauth_redirect_uri: '',
             bot_username: '',
         },
+        aiProviders: [
+            { id: 'openai', label: 'OpenAI', base_url: 'https://api.openai.com/v1', default_model: 'gpt-4o-mini' },
+            { id: 'custom', label: 'Custom OpenAI Compatible', base_url: '', default_model: '' },
+        ],
         testResults: {},
         _availableModels: [],
         testing: false,
@@ -607,7 +625,30 @@ function setupWizard() {
             this.form.github_oauth_redirect_uri = `${proto}://${domain}/webui/auth/callback`;
         },
 
+        onProviderChange() {
+            const provider = this.aiProviders.find(p => p.id === this.form.ai_provider);
+            this._availableModels = [];
+            this.testResults.openai = null;
+            if (!provider) return;
+            if (provider.base_url) {
+                this.form.openai_api_base = provider.base_url;
+            }
+            if (provider.default_model) {
+                this.form.openai_model = provider.default_model;
+            }
+        },
+
         async init() {
+            try {
+                const providerResp = await fetch('/setup/api/ai-providers');
+                const providerData = await providerResp.json();
+                if (providerData.success && providerData.providers) {
+                    this.aiProviders = providerData.providers;
+                    this.onProviderChange();
+                }
+            } catch (e) {
+                // 使用内置前端兜底厂商列表
+            }
             // 从服务端获取已保存的步骤状态
             try {
                 const resp = await fetch('/setup/api/state');
@@ -673,8 +714,10 @@ function setupWizard() {
                         body.private_key = this.form.github_private_key;
                         break;
                     case 'openai':
+                        body.provider = this.form.ai_provider;
                         body.api_key = this.form.openai_api_key;
                         body.api_base = this.form.openai_api_base;
+                        body.model = this.form.openai_model;
                         break;
                     case 'telegram':
                         body.token = this.form.telegram_bot_token;
@@ -694,6 +737,10 @@ function setupWizard() {
                 // OpenAI 测试成功时保存可用模型列表
                 if (type === 'openai' && this.testResults[type]?.success && this.testResults[type]?.models) {
                     this._availableModels = this.testResults[type].models;
+                    if (this._availableModels.length > 0 && !this._availableModels.includes(this.form.openai_model)) {
+                        const defaultModel = this.testResults[type]?.default_model;
+                        this.form.openai_model = (defaultModel && this._availableModels.includes(defaultModel)) ? defaultModel : this._availableModels[0];
+                    }
                 }
             } catch (e) {
                 this.testResults[type] = { success: false, message: '请求失败: ' + e.message };
@@ -761,6 +808,7 @@ function setupWizard() {
                     if (this.form.github_webhook_secret) map.GITHUB_WEBHOOK_SECRET = this.form.github_webhook_secret;
                     break;
                 case 3:
+                    if (this.form.ai_provider) map.AI_PROVIDER = this.form.ai_provider;
                     if (this.form.openai_api_key) map.OPENAI_API_KEY = this.form.openai_api_key;
                     if (this.form.openai_api_base) map.OPENAI_API_BASE = this.form.openai_api_base;
                     if (this.form.openai_model) map.OPENAI_MODEL = this.form.openai_model;
@@ -784,6 +832,7 @@ function setupWizard() {
             if (this.form.github_private_key) map.GITHUB_PRIVATE_KEY = this.form.github_private_key;
             if (this.form.github_webhook_secret) map.GITHUB_WEBHOOK_SECRET = this.form.github_webhook_secret;
             if (this.form.bot_username) map.BOT_USERNAME = this.form.bot_username;
+            if (this.form.ai_provider) map.AI_PROVIDER = this.form.ai_provider;
             if (this.form.openai_api_key) map.OPENAI_API_KEY = this.form.openai_api_key;
             if (this.form.openai_api_base) map.OPENAI_API_BASE = this.form.openai_api_base;
             if (this.form.openai_model) map.OPENAI_MODEL = this.form.openai_model;

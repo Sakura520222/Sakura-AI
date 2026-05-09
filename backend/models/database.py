@@ -10,6 +10,7 @@ from sqlalchemy import (
     Text,
     TIMESTAMP,
     ForeignKey,
+    UniqueConstraint,
     text,
 )
 from sqlalchemy.ext.declarative import declarative_base
@@ -221,6 +222,29 @@ class AppConfig(Base):
 
     def __repr__(self):
         return f"<AppConfig(key={self.key_name})>"
+
+
+class UserConfig(Base):
+    """用户级业务配置表 / User-scoped business configuration."""
+
+    __tablename__ = "user_configs"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    user_id = Column(Integer, nullable=False, index=True)
+    config_key = Column(String(100), nullable=False, index=True)
+    config_value = Column(Text, nullable=True)
+    description = Column(String(255), nullable=True)
+    created_at = Column(TIMESTAMP, default=datetime.utcnow, nullable=False)
+    updated_at = Column(
+        TIMESTAMP, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False
+    )
+
+    __table_args__ = (
+        UniqueConstraint("user_id", "config_key", name="uq_user_config_key"),
+    )
+
+    def __repr__(self):
+        return f"<UserConfig(user_id={self.user_id}, key={self.config_key})>"
 
 
 class ReviewQueue(Base):
@@ -522,7 +546,7 @@ async def insert_default_configs_async():
         raise RuntimeError("异步会话工厂未初始化,请先调用 init_async_db()")
 
     default_configs = [
-        AppConfig(key_name="app_version", key_value="2.9.5", description="应用版本号"),
+        AppConfig(key_name="app_version", key_value="2.9.6", description="应用版本号"),
         AppConfig(
             key_name="max_concurrent_reviews",
             key_value="5",
@@ -641,7 +665,7 @@ def init_database(database_url: str):
 
             default_configs = [
                 AppConfig(
-                    key_name="app_version", key_value="2.9.5", description="应用版本号"
+                    key_name="app_version", key_value="2.9.6", description="应用版本号"
                 ),
                 AppConfig(
                     key_name="max_concurrent_reviews",
@@ -943,7 +967,10 @@ async def _auto_migrate():
         # 记录迁移版本
         version = datetime.utcnow().strftime("%Y%m%d%H%M%S")
         await conn.execute(
-            text("INSERT INTO schema_migrations (version) VALUES (:v)"),
+            text(
+                "INSERT INTO schema_migrations (version, applied_at) "
+                "VALUES (:v, CURRENT_TIMESTAMP)"
+            ),
             {"v": version},
         )
         _logger.info("[auto-migrate] 迁移完成, version={}", version)

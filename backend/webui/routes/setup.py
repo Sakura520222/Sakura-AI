@@ -7,6 +7,7 @@
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse, RedirectResponse
 from loguru import logger
+from pydantic import BaseModel
 
 from backend.core.bootstrap import (
     is_bootstrap_mode,
@@ -82,8 +83,11 @@ async def test_connection(request: Request):
             body.get("app_id", ""), body.get("private_key", "")
         )
     elif test_type == "openai":
-        return await setup_service.test_openai_api(
-            body.get("api_key", ""), body.get("api_base", "")
+        return await setup_service.test_ai_api(
+            body.get("api_key", ""),
+            body.get("api_base", ""),
+            body.get("provider", "custom"),
+            body.get("model", ""),
         )
     elif test_type == "telegram":
         return await setup_service.test_telegram_bot(body.get("token", ""))
@@ -91,6 +95,39 @@ async def test_connection(request: Request):
         return JSONResponse(
             {"success": False, "message": f"未知的测试类型: {test_type}"}
         )
+
+
+@router.get("/api/ai-providers")
+async def get_ai_providers(request: Request):
+    """返回内置 AI 厂商列表。"""
+    if not is_bootstrap_mode():
+        return JSONResponse(
+            {"success": False, "message": "Setup 已完成"}, status_code=403
+        )
+    return JSONResponse(
+        {"success": True, "providers": setup_service.list_ai_providers()}
+    )
+
+
+class AIModelsBody(BaseModel):
+    """AI 模型列表请求体。"""
+
+    provider: str = "custom"
+    api_key: str = ""
+    api_base: str = ""
+
+
+@router.post("/api/ai-models")
+async def get_ai_models(request: Request, body: AIModelsBody):
+    """按厂商获取模型列表。"""
+    if not is_bootstrap_mode():
+        return JSONResponse(
+            {"success": False, "message": "Setup 已完成"}, status_code=403
+        )
+    result = await setup_service.fetch_provider_models(
+        body.provider, body.api_key, body.api_base
+    )
+    return JSONResponse(result)
 
 
 @router.post("/api/save-step")
