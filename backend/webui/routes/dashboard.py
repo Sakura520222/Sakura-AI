@@ -125,14 +125,12 @@ async def _check_github_app_installed(github_username: str) -> Optional[bool]:
     # 查询 GitHub App installations
     try:
         github_app = GitHubAppClient()
-        installations = await asyncio.to_thread(
-            github_app.get_all_installations_with_repos
+        installed = await asyncio.to_thread(
+            github_app.check_user_installed, github_username
         )
 
-        installed = any(
-            inst.get("account_login", "").lower() == github_username.lower()
-            for inst in installations
-        )
+        if installed is None:
+            return None
 
         # 写入 Redis 缓存（已安装 30 分钟，未安装 60 秒）
         try:
