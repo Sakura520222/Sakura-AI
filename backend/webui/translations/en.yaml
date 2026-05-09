@@ -644,6 +644,10 @@ security:
   reset_totp: "Reset TOTP"
   delete_all_passkeys: "Delete All Passkeys"
   reset_all_mfa: "Reset All MFA"
+  confirm_reset_totp: "Reset this user's TOTP and recovery codes?"
+  confirm_delete_all_passkeys: "Delete all passkeys for this user?"
+  confirm_delete_passkey: "Delete this passkey?"
+  confirm_reset_all_mfa: "Reset all MFA methods for this user? This cannot be undone."
 
 # ========== Setup Wizard ==========
 wizard:
@@ -811,6 +815,7 @@ toast:
   logged_out: "Logged out"
   settings_saved: "Settings saved"
   two_factor_invalid: "Invalid verification or recovery code"
+  two_factor_setup_expired: "Two-factor setup expired, please start again"
   two_factor_disabled: "Two-factor authentication disabled"
   two_factor_not_enabled: "Two-factor authentication is not enabled"
   passkey_deleted: "Passkey deleted"

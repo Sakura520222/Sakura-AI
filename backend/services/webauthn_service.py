@@ -7,7 +7,7 @@ import hashlib
 import json
 import time
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timezone
 from urllib.parse import urlparse
 
 from loguru import logger
@@ -79,16 +79,18 @@ def _cleanup_fallback_challenges() -> None:
 def get_rp_config(request_origin: str | None = None) -> WebAuthnRpConfig:
     """Resolve RP ID and Origin from settings."""
     settings = get_settings()
-    configured_origin = settings.passkeys_origin.rstrip("/") if settings.passkeys_origin else ""
-    origin = configured_origin or (request_origin.rstrip("/") if request_origin else "")
+    if settings.passkeys_origin:
+        origin = settings.passkeys_origin.rstrip("/")
+    elif request_origin:
+        origin = request_origin.rstrip("/")
+    else:
+        origin = ""
     if not origin:
         app_domain = settings.app_domain or "localhost"
         scheme = "http" if app_domain.split(":", 1)[0] in ("localhost", "127.0.0.1") else "https"
         port = f":{settings.app_port}" if settings.app_port else ""
         origin = f"{scheme}://{app_domain}{port}".rstrip("/")
 
-    if settings.passkeys_origin:
-        origin = settings.passkeys_origin.rstrip("/")
     parsed = urlparse(origin)
     if not parsed.scheme or not parsed.netloc:
         raise WebAuthnError("Invalid passkeys_origin configuration")
@@ -329,6 +331,6 @@ async def finish_authentication(
         require_user_verification=False,
     )
     db_credential.sign_count = verification.new_sign_count
-    db_credential.last_used_at = datetime.utcnow()
+    db_credential.last_used_at = datetime.now(timezone.utc)
     await session.flush()
     return db_credential

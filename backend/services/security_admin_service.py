@@ -36,10 +36,43 @@ async def get_user_security_summaries(
         select(TelegramUser).order_by(TelegramUser.role, TelegramUser.github_username)
     )
     users = list(users_result.scalars().all())
-    summaries: list[UserSecuritySummary] = []
-    for user in users:
-        summaries.append(await get_user_security_summary(session, user))
-    return summaries
+    if not users:
+        return []
+
+    user_ids = [user.id for user in users]
+    recovery_rows = await session.execute(
+        select(UserRecoveryCode.user_id, func.count(UserRecoveryCode.id))
+        .where(
+            UserRecoveryCode.user_id.in_(user_ids),
+            UserRecoveryCode.used_at.is_(None),
+        )
+        .group_by(UserRecoveryCode.user_id)
+    )
+    recovery_counts = {user_id: int(count or 0) for user_id, count in recovery_rows.all()}
+
+    passkey_rows = await session.execute(
+        select(UserWebAuthnCredential.user_id, func.count(UserWebAuthnCredential.id))
+        .where(UserWebAuthnCredential.user_id.in_(user_ids))
+        .group_by(UserWebAuthnCredential.user_id)
+    )
+    passkey_counts = {user_id: int(count or 0) for user_id, count in passkey_rows.all()}
+
+    event_rows = await session.execute(
+        select(SecurityEventLog.target_user_id, func.max(SecurityEventLog.created_at))
+        .where(SecurityEventLog.target_user_id.in_(user_ids))
+        .group_by(SecurityEventLog.target_user_id)
+    )
+    last_event_at = {user_id: value for user_id, value in event_rows.all()}
+
+    return [
+        UserSecuritySummary(
+            user=user,
+            recovery_code_count=recovery_counts.get(user.id, 0),
+            passkey_count=passkey_counts.get(user.id, 0),
+            last_security_event_at=last_event_at.get(user.id),
+        )
+        for user in users
+    ]
 
 
 async def get_user_security_summary(

@@ -1,6 +1,6 @@
 """WebUI 个人设置路由"""
 
-from datetime import datetime
+from datetime import datetime, timezone
 
 from fastapi import APIRouter, Request, Depends, Form, Body, HTTPException
 from fastapi.responses import JSONResponse
@@ -13,11 +13,13 @@ from backend.core.config import (
     invalidate_user_dynamic_config_cache,
     validate_user_dynamic_config_value,
 )
+from backend.core.redis import get_async_redis
 from backend.models.database import UserConfig, WebUIConfig
 from backend.models.telegram_models import TelegramUser, UserWebAuthnCredential
 from backend.services.two_factor_service import (
     TwoFactorError,
     TwoFactorReplayError,
+    consume_recovery_code,
     count_unused_recovery_codes,
     create_totp_setup,
     disable_totp,
@@ -36,6 +38,7 @@ from backend.webui.deps import (
     get_db,
     get_templates,
     get_csrf_serializer,
+    request_origin,
     require_csrf,
     get_user_preferences,
     toast_redirect,
@@ -44,14 +47,78 @@ from backend.webui.deps import (
     user_requires_mfa_enrollment,
 )
 from backend.webui.i18n import detect_language
+from backend.core.config import get_settings
+from backend.core.rate_limit import limiter
 
 router = APIRouter(prefix="/settings", tags=["WebUI Settings"])
 templates = get_templates()
+_TOTP_SETUP_KEY_PREFIX = "totp:setup:"
+_totp_setup_fallback: dict[int, str] = {}
 
 
-def _request_origin(request: Request) -> str:
-    """获取当前请求 Origin，用于 WebAuthn RP 配置推导。"""
-    return request.headers.get("origin") or f"{request.url.scheme}://{request.url.netloc}"
+async def _save_totp_setup_secret(user_id: int, secret: str) -> None:
+    settings = get_settings()
+    key = f"{_TOTP_SETUP_KEY_PREFIX}{user_id}"
+    try:
+        redis = await get_async_redis()
+        await redis.setex(key, settings.two_factor_pending_token_expire_minutes * 60, secret)
+        return
+    except Exception as exc:
+        logger.warning("Redis 存储 TOTP setup secret 失败，使用内存回退: {}", exc)
+    _totp_setup_fallback[user_id] = secret
+
+
+async def _pop_totp_setup_secret(user_id: int) -> str | None:
+    key = f"{_TOTP_SETUP_KEY_PREFIX}{user_id}"
+    try:
+        redis = await get_async_redis()
+        value = await redis.get(key)
+        await redis.delete(key)
+        if value:
+            return value.decode("utf-8") if isinstance(value, bytes) else str(value)
+    except Exception as exc:
+        logger.warning("Redis 读取 TOTP setup secret 失败，尝试内存回退: {}", exc)
+    return _totp_setup_fallback.pop(user_id, None)
+
+
+async def _render_settings_page(
+    request: Request,
+    db: AsyncSession,
+    user: dict,
+    user_prefs: dict,
+    **overrides,
+):
+    """Render settings page with shared context."""
+    user_id = int(user["user_id"])
+    result = await db.execute(select(TelegramUser).where(TelegramUser.id == user_id))
+    db_user = result.scalar_one_or_none()
+    output_language_config = await get_user_dynamic_config_state(
+        "output_language", user_id
+    )
+    context = {
+        "user_prefs": user_prefs,
+        "current_user": user,
+        "csrf_token": get_csrf_serializer().dumps({}),
+        "active_page": "settings",
+        "items_per_page": user_prefs["items_per_page"],
+        "language": user_prefs["language"],
+        "output_language_config": output_language_config,
+        "output_language": output_language_config["user_value"]
+        if output_language_config["user_value"] is not None
+        else "",
+        "two_factor_enabled": bool(db_user and db_user.totp_enabled),
+        "recovery_code_count": await count_unused_recovery_codes(db, user_id)
+        if db_user
+        else 0,
+        "totp_setup": None,
+        "recovery_codes": None,
+        "passkeys": await _get_user_passkeys(db, user_id),
+        "mfa_enrollment_required": await user_requires_mfa_enrollment(user_id, db)
+        if db_user
+        else False,
+    }
+    context.update(overrides)
+    return render_template("settings.html", request, **context)
 
 
 @router.get("/")
@@ -62,38 +129,7 @@ async def settings_page(
     user_prefs: dict = Depends(get_user_preferences),
 ):
     """渲染个人设置页面"""
-    user_id = int(user["user_id"])
-    output_language_config = await get_user_dynamic_config_state(
-        "output_language", user_id
-    )
-    result = await db.execute(select(TelegramUser).where(TelegramUser.id == user_id))
-    db_user = result.scalar_one_or_none()
-    recovery_code_count = await count_unused_recovery_codes(db, user_id) if db_user else 0
-    passkeys = await _get_user_passkeys(db, user_id)
-    mfa_enrollment_required = (
-        await user_requires_mfa_enrollment(user_id, db) if db_user else False
-    )
-    return render_template(
-        "settings.html",
-        request,
-        user_prefs=user_prefs,
-        current_user=user,
-        csrf_token=get_csrf_serializer().dumps({}),
-        active_page="settings",
-        items_per_page=user_prefs["items_per_page"],
-        language=user_prefs["language"],
-        output_language_config=output_language_config,
-        output_language=output_language_config["user_value"]
-        if output_language_config["user_value"] is not None
-        else "",
-        two_factor_enabled=bool(db_user and db_user.totp_enabled),
-        two_factor_allowed=True,
-        recovery_code_count=recovery_code_count,
-        totp_setup=None,
-        recovery_codes=None,
-        passkeys=passkeys,
-        mfa_enrollment_required=mfa_enrollment_required,
-    )
+    return await _render_settings_page(request, db, user, user_prefs)
 
 
 async def _get_user_passkeys(
@@ -197,6 +233,7 @@ async def save_settings(
 
 
 @router.post("/2fa/setup")
+@limiter.limit(lambda: get_settings().two_factor_setup_rate_limit)
 async def start_two_factor_setup(
     request: Request,
     db: AsyncSession = Depends(get_db),
@@ -212,41 +249,31 @@ async def start_two_factor_setup(
         return toast_redirect("/webui/settings/", "toast.login_required", "error")
 
     setup = create_totp_setup(db_user)
-    return render_template(
-        "settings.html",
+    await _save_totp_setup_secret(user_id, setup.secret)
+    return await _render_settings_page(
         request,
-        user_prefs=user_prefs,
-        current_user=user,
-        csrf_token=get_csrf_serializer().dumps({}),
-        active_page="settings",
-        items_per_page=user_prefs["items_per_page"],
-        language=user_prefs["language"],
-        output_language_config=await get_user_dynamic_config_state(
-            "output_language", user_id
-        ),
-        output_language="",
-        two_factor_enabled=bool(db_user.totp_enabled),
-        two_factor_allowed=True,
-        recovery_code_count=await count_unused_recovery_codes(db, user_id),
+        db,
+        user,
+        user_prefs,
         totp_setup=setup,
-        recovery_codes=None,
-        passkeys=await _get_user_passkeys(db, user_id),
-        mfa_enrollment_required=await user_requires_mfa_enrollment(user_id, db),
     )
 
 
 @router.post("/2fa/enable")
+@limiter.limit(lambda: get_settings().two_factor_setup_rate_limit)
 async def enable_two_factor(
     request: Request,
     db: AsyncSession = Depends(get_db),
     user: dict = Depends(require_auth),
     csrf_token: str = Depends(require_csrf),
-    secret: str = Form(...),
     code: str = Form(...),
     user_prefs: dict = Depends(get_user_preferences),
 ):
     """确认验证码并启用 TOTP。"""
     user_id = int(user["user_id"])
+    secret = await _pop_totp_setup_secret(user_id)
+    if not secret:
+        return toast_redirect("/webui/settings/", "toast.two_factor_setup_expired", "error")
     used_step = verify_totp_secret(secret, code)
     if used_step is None:
         return toast_redirect("/webui/settings/", "toast.two_factor_invalid", "error")
@@ -258,7 +285,7 @@ async def enable_two_factor(
 
     db_user.totp_enabled = True
     db_user.totp_secret_encrypted = encrypt_totp_secret(secret)
-    db_user.totp_enabled_at = datetime.utcnow()
+    db_user.totp_enabled_at = datetime.now(timezone.utc)
     db_user.totp_last_used_step = used_step
     if db_user.mfa_required:
         db_user.mfa_required = False
@@ -266,31 +293,22 @@ async def enable_two_factor(
     await db.commit()
 
     logger.info("TOTP 已启用: user={}", user["sub"])
-    return render_template(
-        "settings.html",
+    return await _render_settings_page(
         request,
-        user_prefs=user_prefs,
-        current_user=user,
-        csrf_token=get_csrf_serializer().dumps({}),
-        active_page="settings",
-        items_per_page=user_prefs["items_per_page"],
-        language=user_prefs["language"],
-        output_language_config=await get_user_dynamic_config_state(
-            "output_language", user_id
-        ),
-        output_language="",
+        db,
+        user,
+        user_prefs,
         two_factor_enabled=True,
-        two_factor_allowed=True,
         recovery_code_count=len(recovery_codes),
-        totp_setup=None,
         recovery_codes=recovery_codes,
-        passkeys=await _get_user_passkeys(db, user_id),
         mfa_enrollment_required=False,
     )
 
 
 @router.post("/2fa/disable")
+@limiter.limit(lambda: get_settings().two_factor_verify_rate_limit)
 async def disable_two_factor_route(
+    request: Request,
     db: AsyncSession = Depends(get_db),
     user: dict = Depends(require_auth),
     csrf_token: str = Depends(require_csrf),
@@ -313,7 +331,7 @@ async def disable_two_factor_route(
         verified = False
 
     if not verified:
-        verified = await replace_or_consume_disable_recovery_code(db, user_id, code)
+        verified = await consume_recovery_code(db, user_id, code)
     if not verified:
         await db.rollback()
         return toast_redirect("/webui/settings/", "toast.two_factor_invalid", "error")
@@ -323,16 +341,8 @@ async def disable_two_factor_route(
     return toast_redirect("/webui/settings/", "toast.two_factor_disabled")
 
 
-async def replace_or_consume_disable_recovery_code(
-    db: AsyncSession, user_id: int, code: str
-) -> bool:
-    """延迟导入以避免设置路由暴露恢复码实现细节。"""
-    from backend.services.two_factor_service import consume_recovery_code
-
-    return await consume_recovery_code(db, user_id, code)
-
-
 @router.post("/2fa/recovery-codes/regenerate")
+@limiter.limit(lambda: get_settings().two_factor_verify_rate_limit)
 async def regenerate_recovery_codes(
     request: Request,
     db: AsyncSession = Depends(get_db),
@@ -359,25 +369,14 @@ async def regenerate_recovery_codes(
     recovery_codes = await replace_recovery_codes(db, user_id)
     await db.commit()
 
-    return render_template(
-        "settings.html",
+    return await _render_settings_page(
         request,
-        user_prefs=user_prefs,
-        current_user=user,
-        csrf_token=get_csrf_serializer().dumps({}),
-        active_page="settings",
-        items_per_page=user_prefs["items_per_page"],
-        language=user_prefs["language"],
-        output_language_config=await get_user_dynamic_config_state(
-            "output_language", user_id
-        ),
-        output_language="",
+        db,
+        user,
+        user_prefs,
         two_factor_enabled=True,
-        two_factor_allowed=True,
         recovery_code_count=len(recovery_codes),
-        totp_setup=None,
         recovery_codes=recovery_codes,
-        passkeys=await _get_user_passkeys(db, user_id),
         mfa_enrollment_required=False,
     )
 
@@ -395,7 +394,7 @@ async def passkey_register_options(
     if not db_user:
         raise HTTPException(status_code=401, detail="未登录")
     try:
-        data = await begin_registration(db, db_user, _request_origin(request))
+        data = await begin_registration(db, db_user, request_origin(request))
     except WebAuthnError as exc:
         return JSONResponse(
             status_code=400,

@@ -152,6 +152,11 @@ async def get_db() -> AsyncSession:
         yield session
 
 
+def request_origin(request: Request) -> str:
+    """Return request Origin, falling back to scheme + host."""
+    return request.headers.get("origin") or f"{request.url.scheme}://{request.url.netloc}"
+
+
 def _is_mfa_enrollment_path(path: str) -> bool:
     """Return whether a WebUI path is allowed while forced MFA enrollment is pending."""
     allowed_exact = {
