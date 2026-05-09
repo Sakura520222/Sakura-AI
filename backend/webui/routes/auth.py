@@ -25,6 +25,7 @@ from backend.services.webauthn_service import (
     begin_authentication,
     finish_authentication,
 )
+from backend.services.security_admin_service import user_has_any_mfa_method
 from backend.webui.auth import (
     create_access_token,
     create_mfa_pending_token,
@@ -351,6 +352,7 @@ async def github_callback(
             )
         )
         user = result.scalar_one_or_none()
+        has_mfa_method = await user_has_any_mfa_method(session, user) if user else False
 
     if not user:
         logger.info(f"GitHub OAuth: 用户 {github_username} 未在系统中注册")
@@ -369,7 +371,7 @@ async def github_callback(
     # 登录成功，删除已使用的 state
     await _delete_oauth_state(state)
 
-    if user.totp_enabled:
+    if has_mfa_method:
         mfa_token = create_mfa_pending_token(token_data)
         logger.info(f"GitHub OAuth 需要二次验证: {github_username} (role={user.role})")
         response = RedirectResponse(url="/webui/auth/2fa", status_code=302)
@@ -394,6 +396,19 @@ async def two_factor_page(request: Request):
     if not is_mfa_pending_payload(payload):
         return toast_redirect("/webui/auth/login", "toast.login_required", "error")
 
+    user_id = payload.get("user_id")
+    async with db_module.async_session() as session:
+        result = await session.execute(
+            select(TelegramUser).where(
+                TelegramUser.id == user_id,
+                TelegramUser.is_active,
+            )
+        )
+        user = result.scalar_one_or_none()
+        if not user or not await user_has_any_mfa_method(session, user):
+            return toast_redirect("/webui/auth/login", "toast.login_required", "error")
+        totp_enabled = bool(user.totp_enabled)
+
     return render_template(
         "two_factor_verify.html",
         request,
@@ -401,6 +416,7 @@ async def two_factor_page(request: Request):
         error=None,
         app_version=APP_VERSION,
         github_username=payload.get("sub", ""),
+        totp_enabled=totp_enabled,
     )
 
 
@@ -428,8 +444,20 @@ async def verify_two_factor(
             )
         )
         user = result.scalar_one_or_none()
-        if not user or not user.totp_enabled:
+        if not user or not await user_has_any_mfa_method(session, user):
             return toast_redirect("/webui/auth/login", "toast.login_required", "error")
+
+        if not user.totp_enabled:
+            return render_template(
+                "two_factor_verify.html",
+                request,
+                csrf_token=get_csrf_serializer().dumps({}),
+                error="请使用通行密钥完成验证",
+                app_version=APP_VERSION,
+                github_username=payload.get("sub", ""),
+                totp_enabled=False,
+                status_code=400,
+            )
 
         verified = False
         try:
@@ -454,6 +482,7 @@ async def verify_two_factor(
                 error="验证码或恢复码无效",
                 app_version=APP_VERSION,
                 github_username=payload.get("sub", ""),
+                totp_enabled=True,
                 status_code=400,
             )
 

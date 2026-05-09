@@ -16,6 +16,7 @@ from backend.services.two_factor_service import (
     consume_recovery_code,
     verify_user_totp,
 )
+from backend.services.security_admin_service import user_has_any_mfa_method
 from backend.webui.auth import (
     create_access_token,
     create_mfa_pending_token,
@@ -214,6 +215,7 @@ async def github_callback(request: Request, body: OAuthCallbackRequest):
             )
         )
         user = result.scalar_one_or_none()
+        has_mfa_method = await user_has_any_mfa_method(session, user) if user else False
 
     if not user:
         await _delete_oauth_state(body.state)
@@ -234,7 +236,7 @@ async def github_callback(request: Request, body: OAuthCallbackRequest):
         github_username, user.role, user.id, github_id, avatar_url
     )
 
-    if user.totp_enabled:
+    if has_mfa_method:
         mfa_token = create_mfa_pending_token(token_payload)
         await _delete_oauth_state(body.state)
         logger.info(f"API OAuth 需要二次验证: {github_username} (role={user.role})")
@@ -277,8 +279,11 @@ async def verify_two_factor(request: Request, body: MfaVerifyRequest):
             )
         )
         user = result.scalar_one_or_none()
-        if not user or not user.totp_enabled:
+        if not user or not await user_has_any_mfa_method(session, user):
             return error_response("用户未启用二次验证", status_code=400)
+
+        if not user.totp_enabled:
+            return error_response("请使用通行密钥完成验证", status_code=400)
 
         verified = False
         try:

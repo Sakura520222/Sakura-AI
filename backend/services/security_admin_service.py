@@ -148,6 +148,18 @@ async def set_user_mfa_required(
     target_user.mfa_required = required
 
 
+async def user_has_any_mfa_method(session: AsyncSession, user: TelegramUser) -> bool:
+    """Return whether a user can complete MFA with TOTP or at least one passkey."""
+    if user.totp_enabled:
+        return True
+    passkey_count = await session.scalar(
+        select(func.count(UserWebAuthnCredential.id)).where(
+            UserWebAuthnCredential.user_id == user.id
+        )
+    )
+    return int(passkey_count or 0) > 0
+
+
 async def delete_user_passkey(
     session: AsyncSession, target_user_id: int, credential_id: int
 ) -> int:
