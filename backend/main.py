@@ -9,7 +9,7 @@ import sys
 import asyncio
 
 from backend import __version__
-from backend.core.config import get_settings
+from backend.core.config import Settings, get_settings
 from backend.core.bootstrap import (
     BootstrapMiddleware,
     is_bootstrap_mode,
@@ -38,7 +38,7 @@ logger.add("logs/app.log", rotation="500 MB", retention="10 days", level="DEBUG"
 settings = get_settings()
 
 
-def _get_allowed_origins(app_settings) -> list[str]:
+def _get_allowed_origins(app_settings: Settings) -> list[str]:
     """构造 CORS origin 列表。开发模式下放行本地调试地址。"""
     origins = {f"https://{app_settings.app_domain}"}
     if app_settings.is_development:
@@ -54,7 +54,7 @@ def _get_allowed_origins(app_settings) -> list[str]:
     return sorted(origins)
 
 
-def _should_start_background_tasks(app_settings) -> bool:
+def _should_start_background_tasks(app_settings: Settings) -> bool:
     """本地调试 Setup Wizard 时可关闭有外部副作用的后台任务。"""
     return not (
         app_settings.sakura_skip_background_tasks or app_settings.sakura_dev_bootstrap

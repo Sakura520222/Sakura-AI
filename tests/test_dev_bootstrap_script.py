@@ -1,6 +1,20 @@
 """Local dev bootstrap script tests."""
 
-from scripts.dev_bootstrap import find_server_python
+from scripts.dev_bootstrap import find_server_python, resolve_config_path
+
+
+def test_resolve_config_path_relative(tmp_path):
+    result = resolve_config_path(tmp_path, "sub/file.json")
+
+    assert result == tmp_path / "sub" / "file.json"
+
+
+def test_resolve_config_path_absolute(tmp_path):
+    abs_path = tmp_path / "abs" / "config.json"
+
+    result = resolve_config_path(tmp_path, str(abs_path))
+
+    assert result == abs_path
 
 
 def test_find_server_python_prefers_repo_venv_on_windows(monkeypatch, tmp_path):

@@ -63,6 +63,7 @@ htmlcov/
 
 # Config (contains sensitive database credentials)
 config/connection.json
+.sakura/dev/
 
 # Temporary files
 *.tmp
