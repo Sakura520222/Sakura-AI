@@ -72,7 +72,8 @@ async def agent_team_page(
     user_prefs: dict = Depends(get_user_preferences),
 ):
     """Agent 专家团队独立页面。"""
-    config_items = await _load_config_items(db)
+    lang = detect_language(user_prefs)
+    config_items = await _load_config_items(db, lang=lang)
     stats = await _load_stats(db)
     return render_template(
         "agent_team.html",
@@ -275,7 +276,9 @@ async def create_task_from_candidate(
     return JSONResponse({"success": True, "task_id": task.id})
 
 
-async def _load_config_items(db: AsyncSession) -> list[dict]:
+async def _load_config_items(db: AsyncSession, lang: str = "zh-CN") -> list[dict]:
+    from backend.webui.i18n import i18n as _i18n
+
     result = await db.execute(select(AppConfig).where(AppConfig.key_name.in_(AGENT_TEAM_CONFIG_KEYS)))
     config_map = {cfg.key_name: cfg.key_value for cfg in result.scalars().all()}
     settings = get_settings()
@@ -284,15 +287,40 @@ async def _load_config_items(db: AsyncSession) -> list[dict]:
         value = config_map.get(key, str(getattr(settings, key, "")))
         default_val = str(getattr(settings, key, ""))
         is_sensitive = key in DYNAMIC_CONFIG_SENSITIVE_KEYS
+
+        # 翻译标签 / Translate label
+        label_key = f"config.label.{key}"
+        translated_label = _i18n.t(label_key, lang=lang)
+        label = translated_label if translated_label != label_key else key
+
+        # 翻译描述 / Translate description
+        desc_key = f"config.desc.{key}"
+        translated_desc = _i18n.t(desc_key, lang=lang)
+        description = translated_desc if translated_desc != desc_key else ""
+
+        # 翻译 select options / Translate select options
+        raw_options = DYNAMIC_CONFIG_SELECT_OPTIONS.get(key, [])
+        translated_options = []
+        for opt in raw_options:
+            opt_key = f"config.option.{key}_{opt['value']}"
+            opt_label = _i18n.t(opt_key, lang=lang)
+            translated_options.append(
+                {
+                    "value": opt["value"],
+                    "label": opt_label if opt_key != opt_label else opt["label"],
+                }
+            )
+
         items.append(
             {
                 "key": key,
-                "label": key,
+                "label": label,
+                "description": description,
                 "input_type": get_dynamic_config_input_type(key),
                 "value": mask_sensitive_value(value) if is_sensitive and value else value,
                 "default": mask_sensitive_value(default_val) if is_sensitive and default_val else default_val,
                 "sensitive": is_sensitive,
-                "select_options": DYNAMIC_CONFIG_SELECT_OPTIONS.get(key, []),
+                "select_options": translated_options,
                 "min_val": DYNAMIC_CONFIG_RANGES.get(key, (None, None))[0],
                 "max_val": DYNAMIC_CONFIG_RANGES.get(key, (None, None))[1],
             }
