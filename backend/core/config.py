@@ -62,6 +62,18 @@ class Settings(BaseSettings):
     app_domain: str = "localhost"
     app_port: int = 8000
     log_level: str = "INFO"
+    sakura_env: str = Field(
+        "production",
+        description="运行环境标识（production / development）",
+    )
+    sakura_dev_bootstrap: bool = Field(
+        False,
+        description="是否启用本地 Setup Wizard 调试模式",
+    )
+    sakura_skip_background_tasks: bool = Field(
+        False,
+        description="是否跳过 Telegram、SSE、扫描、配额等后台任务",
+    )
 
     # 审查策略配置
     max_file_count: int = 100
@@ -209,6 +221,11 @@ class Settings(BaseSettings):
             if getattr(self, field_name, None) is None:
                 missing.append(field_name)
         return missing
+
+    @property
+    def is_development(self) -> bool:
+        """是否为本地开发环境"""
+        return self.sakura_env.lower() in {"dev", "development", "local"}
 
     @property
     def webhook_url(self) -> str:

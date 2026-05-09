@@ -296,6 +296,18 @@ python -m backend.main
 
 > First launch will enter Bootstrap mode. Visit `http://localhost:8000/setup` to complete configuration via Setup Wizard.
 
+To debug the first-run deployment / Setup Wizard flow locally, start with an isolated dev config:
+
+```bash
+py scripts/dev_bootstrap.py
+```
+
+The script uses `.sakura/dev/connection.json`, so it will not overwrite the production `config/connection.json`, and it skips Telegram, SSE, scan, and quota background tasks. To restart from step 0:
+
+```bash
+py scripts/dev_bootstrap.py --reset
+```
+
 ### Code Linting
 
 ```bash
