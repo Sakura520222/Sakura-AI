@@ -28,6 +28,7 @@ Sakura AI Reviewer 是一款基于大语言模型的智能 GitHub 代码审查�
 - **权限策略单一真实源**：所有角色判断调用策略函数，禁止硬编码
 - **内存回退字典必须实现大小/TTL 限制**（参照 OAuth state 的 `_MAX_FALLBACK_*`）
 - **安全操作必须记录审计日志**（2FA 验证/绑定/重置失败等）
+- **Redis 命令版本依赖必须检测或文档化**：新增命令（如 `GETDEL`）须标注最低版本或启动时检测降级
 
 ## 3. 已知问题和注意事项
 
@@ -46,6 +47,8 @@ Sakura AI Reviewer 是一款基于大语言模型的智能 GitHub 代码审查�
 - **新增 DB 模型的 datetime 字段必须使用 `datetime.now(timezone.utc)`**，禁止 `datetime.utcnow`
 - **模块级可变字典作为 fallback 必须注释线程/协程安全假设**
 - **使用 `X-Forwarded-For` 必须同时说明受信代理假设**
+- **降级路径（如内存 fallback）必须记录 warning 日志**
+- **新增联合类型时必须扫描所有序列化/反序列化边界**
 
 ## 4. 审查中发现的重要模式
 
@@ -69,6 +72,7 @@ Sakura AI Reviewer 是一款基于大语言模型的智能 GitHub 代码审查�
 - **全局异常处理器中的前端逻辑**：限流返回需要前后端约定 message 语义
 - **Jinja2 模板中的 JS 片段去重**：公共 JS 函数必须抽取到共享模板
 - **限流 suffix 集合与路由定义的一致性**：建议 CI 扫描
+- **版本检测 + fallback + 集成测试**：作为原子操作类 PR 的固定审查三件套
 
 ## 5. 团队约定和规范
 
@@ -96,6 +100,9 @@ Sakura AI Reviewer 是一款基于大语言模型的智能 GitHub 代码审查�
 - **新增 DB 模型的 datetime 字段必须使用 `datetime.now(timezone.utc)`**（major）
 - **公共 JS 函数必须抽取到共享模板**（两个及以上模板出现相同定义时，major）
 - **非 429 错误 fallback 字符串必须国际化**（major）
+- **新增环境变量时必须明确其与现有 flag 的语义关系**（major）
+- **独立公共函数必须具有直接单元测试，不依赖间接覆盖**（minor）
+- **“仅警告不阻断”的兼容性检测，必须在 PR 描述中列出受影响的下游调用及 fallback 状态**（major）
 
 ### suggestion 疲劳归档协议
 - 第 1 轮未修复：评估降级 | 第 2 轮未修复：强制降级 | 第 3 轮未修复：强制归档
@@ -112,6 +119,7 @@ Sakura AI Reviewer 是一款基于大语言模型的智能 GitHub 代码审查�
 - 增量审查必须输出“历史未解决问题清单并升温”
 - 增量审查必须明确标注“本次未处理的建议问题”
 - **“分阶段实现”PR 必须列出未完成项并创建后续 issue**，否则视为不完整
+- **增量审查必须输出“未直接测试但依赖的调用链”**
 
 ### 常量与配置规范
 - **常量定义位置与语义保持一致**：模块级常量不得定义在函数内部（如 `lifespan` 内）
@@ -123,3 +131,8 @@ Sakura AI Reviewer 是一款基于大语言模型的智能 GitHub 代码审查�
 
 ### 前端 i18n 规范
 - **前端 i18n 映射函数必须支持动态翻译表**：禁止使用 `if key === 'toast.xxx' return translation` 硬编码扩展，应使用对象映射（如 `i18nMap[key] || key`）
+
+### 仓库信息
+- 仓库名: Sakura520222/Sakura-AI-Reviewer
+- 语言统计: Python: 1731565, HTML: 515737, Shell: 4534, Dockerfile: 962, url: https://api.github.com/repos/Sakura520222/Sakura-AI-Reviewer/languages
+- 累计反思次数: 186
