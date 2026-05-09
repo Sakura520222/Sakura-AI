@@ -207,6 +207,7 @@ class GitHubAppClient:
                 f"轻量检查 GitHub App 安装状态，共 {len(installations)} 个 installation"
             )
 
+            checked_accounts = []
             for inst in installations:
                 account_login = ""
                 raw = getattr(inst, "raw_data", None) or getattr(inst, "_rawData", {})
@@ -224,9 +225,16 @@ class GitHubAppClient:
                         if len(parts) > 1:
                             account_login = parts[1].split("/")[0]
 
+                if account_login:
+                    checked_accounts.append(account_login)
+
                 if account_login.lower() == target_username:
                     return True
 
+            logger.debug(
+                f"未匹配到 GitHub App installation: username={username}, "
+                f"checked_accounts={checked_accounts}"
+            )
             return False
         except Exception as e:
             logger.warning(f"轻量检查 GitHub App 安装状态失败: {e}", exc_info=True)
