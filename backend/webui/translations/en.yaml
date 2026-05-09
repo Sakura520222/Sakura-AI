@@ -800,6 +800,7 @@ toast:
   updated: "Updated"
   created: "Created"
   loading: "Loading..."
+  rate_limit_exceeded: "Too many requests. Please try again later."
   confirm_delete: "Are you sure you want to delete?"
   no_permission: "Permission denied"
   repo_exists: "Repository already in whitelist"

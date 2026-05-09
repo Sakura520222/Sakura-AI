@@ -214,18 +214,24 @@ function registrationCredentialToJSON(credential) {
         },
     };
 }
+function localizePasskeyMessage(message, fallback) {
+    if (!message) return fallback;
+    if (message === 'toast.rate_limit_exceeded') return '{{ _("toast.rate_limit_exceeded") }}';
+    return message;
+}
 document.getElementById('register-passkey-btn').addEventListener('click', async function() {
     const errorEl = document.getElementById('passkey-settings-error');
     errorEl.classList.add('hidden');
     if (!window.PublicKeyCredential) {
-        errorEl.textContent = '{{ _('auth.passkey_not_supported') }}';
+        errorEl.textContent = '{{ _("auth.passkey_not_supported") }}';
         errorEl.classList.remove('hidden');
         return;
     }
     try {
         const optionsResp = await fetch('/webui/settings/passkeys/register/options', { method: 'POST' });
         const optionsJson = await optionsResp.json();
-        if (!optionsJson.success) throw new Error(optionsJson.message || 'Passkey options failed');
+        if (optionsResp.status === 429) throw new Error(localizePasskeyMessage(optionsJson.message, '{{ _("toast.rate_limit_exceeded") }}'));
+        if (!optionsJson.success) throw new Error(localizePasskeyMessage(optionsJson.message, 'Passkey options failed'));
         const data = optionsJson.data;
         const publicKey = data.public_key;
         publicKey.challenge = base64urlToBuffer(publicKey.challenge);
@@ -240,14 +246,15 @@ document.getElementById('register-passkey-btn').addEventListener('click', async 
             body: JSON.stringify({
                 challenge_id: data.challenge_id,
                 credential: registrationCredentialToJSON(credential),
-                device_name: '{{ _('settings.passkey_default_name') }}',
+                device_name: '{{ _("settings.passkey_default_name") }}',
             }),
         });
         const verifyJson = await verifyResp.json();
-        if (!verifyJson.success) throw new Error(verifyJson.message || 'Passkey registration failed');
+        if (verifyResp.status === 429) throw new Error(localizePasskeyMessage(verifyJson.message, '{{ _("toast.rate_limit_exceeded") }}'));
+        if (!verifyJson.success) throw new Error(localizePasskeyMessage(verifyJson.message, 'Passkey registration failed'));
         window.location.reload();
     } catch (error) {
-        errorEl.textContent = error.message || '{{ _('auth.passkey_failed') }}';
+        errorEl.textContent = error.message || '{{ _("auth.passkey_failed") }}';
         errorEl.classList.remove('hidden');
     }
 });
