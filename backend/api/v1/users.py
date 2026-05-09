@@ -13,6 +13,7 @@ from backend.webui.deps import get_db, paginate
 from backend.webui.helpers.admin_log import log_admin_action
 from backend.core.config import get_settings
 from backend.services.quota_service import QuotaService
+from backend.services.user_role_policy import can_toggle_user_status, can_update_user_role
 
 from backend.api.v1.deps import require_api_admin, require_api_super_admin
 from backend.api.v1.schemas import (
@@ -240,10 +241,8 @@ async def update_user_role(
         return error_response("用户不存在", status_code=404)
 
     # 权限保护
-    if target.role in ("admin", "super_admin") and user["role"] != "super_admin":
+    if not can_update_user_role(user["role"], target.role, body.role):
         return error_response("权限不足，无法修改此用户的角色", status_code=403)
-    if body.role == "super_admin" and user["role"] != "super_admin":
-        return error_response("权限不足，无法设置为超级管理员", status_code=403)
 
     old_role = target.role
     target.role = body.role
@@ -355,7 +354,7 @@ async def toggle_user_status(
     if not target:
         return error_response("用户不存在", status_code=404)
 
-    if target.role in ("admin", "super_admin") and user["role"] != "super_admin":
+    if not can_toggle_user_status(user["role"], target.role):
         return error_response("权限不足，无法修改此用户状态", status_code=403)
 
     target.is_active = not target.is_active
