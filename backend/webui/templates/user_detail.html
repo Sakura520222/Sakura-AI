@@ -123,8 +123,10 @@
                     <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
                     <select name="role" class="w-full px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-sm mb-3 focus:ring-2 focus:ring-pink-500 focus:border-transparent outline-none">
                         <option value="user" {% if target_user.role == 'user' %}selected{% endif %}>{{ _('user.roles.user') }}</option>
+                        {% if current_user.role == 'super_admin' %}
                         <option value="admin" {% if target_user.role == 'admin' %}selected{% endif %}>{{ _('user.roles.admin') }}</option>
                         <option value="super_admin" {% if target_user.role == 'super_admin' %}selected{% endif %}>{{ _('user.roles.super_admin') }}</option>
+                        {% endif %}
                     </select>
                     <button type="submit" class="w-full px-4 py-2 bg-pink-500 text-white rounded-lg text-sm font-medium hover:bg-pink-600 transition-colors">
                         {{ _('user.save_role') }}

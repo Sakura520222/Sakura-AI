@@ -23,6 +23,7 @@ from backend.webui.deps import (
 )
 from backend.core.config import get_settings
 from backend.services.quota_service import QuotaService
+from backend.services.user_role_policy import can_update_user_role
 from backend.webui.helpers.admin_log import log_admin_action
 from backend.webui.i18n import detect_language
 
@@ -321,19 +322,11 @@ async def update_user_role(
     if not target_user:
         return error_page(request, message="用户不存在", user=user)
 
-    # 权限保护：不允许修改同级别或更高级别的用户
-    if target_user.role in ("admin", "super_admin") and user["role"] != "super_admin":
+    # 权限保护：只有超级管理员可授予或修改管理员级别角色
+    if not can_update_user_role(user["role"], target_user.role, role):
         return toast_redirect(
             f"/webui/users/{user_id}",
             "toast.permission_denied_role",
-            "error",
-            lang=detect_language(),
-        )
-    # 不允许设置比自己当前角色更高的权限
-    if role == "super_admin" and user["role"] != "super_admin":
-        return toast_redirect(
-            f"/webui/users/{user_id}",
-            "toast.permission_denied_super_admin",
             "error",
             lang=detect_language(),
         )
