@@ -3,16 +3,32 @@
 import asyncio
 
 from backend.models.telegram_models import TelegramUser, UserWebAuthnCredential
-from backend.services.security_admin_service import reset_user_totp, set_user_mfa_required
+from backend.services.security_admin_service import (
+    GLOBAL_MFA_REQUIRED_CONFIG_KEY,
+    reset_user_totp,
+    set_global_mfa_required,
+    set_user_mfa_required,
+)
 from backend.services.security_audit_service import sanitize_detail
 
 
 class DummySession:
     def __init__(self):
         self.statements = []
+        self.added = []
 
     async def execute(self, statement):
         self.statements.append(statement)
+
+        class Result:
+            @staticmethod
+            def scalar_one_or_none():
+                return None
+
+        return Result()
+
+    def add(self, item):
+        self.added.append(item)
 
 
 def test_sanitize_detail_removes_sensitive_values():
@@ -59,6 +75,16 @@ def test_set_user_mfa_required_updates_policy_flag():
     asyncio.run(set_user_mfa_required(session, user, True))
 
     assert user.mfa_required is True
+
+
+def test_set_global_mfa_required_creates_app_config():
+    session = DummySession()
+
+    asyncio.run(set_global_mfa_required(session, True))
+
+    assert len(session.added) == 1
+    assert session.added[0].key_name == GLOBAL_MFA_REQUIRED_CONFIG_KEY
+    assert session.added[0].key_value == "true"
 
 
 def test_webauthn_credential_has_hash_column_for_unique_index():

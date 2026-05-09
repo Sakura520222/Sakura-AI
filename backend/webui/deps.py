@@ -172,10 +172,14 @@ async def user_requires_mfa_enrollment(user_id: int, db: AsyncSession) -> bool:
     from sqlalchemy import func
 
     from backend.models.telegram_models import TelegramUser, UserWebAuthnCredential
+    from backend.services.security_admin_service import is_global_mfa_required
 
     result = await db.execute(select(TelegramUser).where(TelegramUser.id == user_id))
     db_user = result.scalar_one_or_none()
-    if not db_user or not db_user.mfa_required:
+    if not db_user:
+        return False
+    mfa_required = bool(db_user.mfa_required) or await is_global_mfa_required(db)
+    if not mfa_required:
         return False
     if db_user.totp_enabled:
         return False
