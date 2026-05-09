@@ -8,6 +8,8 @@ from loguru import logger
 from backend.models.agent_team_models import AgentTeamTaskStatus
 from backend.models.database import async_session
 from backend.services.agent_team.ai_client import load_agent_team_ai_config
+from backend.services.agent_team.shell_executor import AgentTeamShellExecutor
+from backend.services.agent_team.workspace_service import AgentTeamWorkspaceService
 
 
 class AgentTeamWorker:
@@ -33,13 +35,27 @@ class AgentTeamWorker:
             if not task:
                 raise ValueError(f"AgentTeamTask 不存在: {task_id}")
 
+            workspace_service = AgentTeamWorkspaceService()
+            workspace = workspace_service.ensure_workspace(
+                task.repo_owner,
+                task.repo_name,
+            )
+            executor = AgentTeamShellExecutor(workspace, workspace_service)
+            probe = await executor.run(
+                "python --version",
+                timeout_seconds=min(config.timeout_seconds, 60),
+            )
+
             task.status = AgentTeamTaskStatus.WAITING_HUMAN.value
-            task.current_phase = "bootstrap"
+            task.current_phase = "workspace_ready"
             task.started_at = task.started_at or datetime.utcnow()
             task.ai_config_snapshot = json.dumps(
                 config.safe_snapshot(), ensure_ascii=False
             )
-            task.error_message = "Agent 专家团队执行器骨架已创建，代码修改执行将在后续阶段启用。"
+            task.error_message = (
+                "Agent 专家团队工作区已初始化，代码修改执行将在后续阶段启用。"
+                f" workspace={workspace}; python_probe={probe.stdout.strip() or probe.stderr.strip()}"
+            )
             await session.commit()
 
         logger.info("Agent 专家团队任务已进入等待人工状态: {}", task_id)
