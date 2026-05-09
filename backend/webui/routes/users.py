@@ -23,7 +23,7 @@ from backend.webui.deps import (
 )
 from backend.core.config import get_settings
 from backend.services.quota_service import QuotaService
-from backend.services.user_role_policy import can_update_user_role
+from backend.services.user_role_policy import can_toggle_user_status, can_update_user_role
 from backend.webui.helpers.admin_log import log_admin_action
 from backend.webui.i18n import detect_language
 
@@ -490,7 +490,7 @@ async def toggle_user_status(
             "error",
             lang=detect_language(),
         )
-    if target_user.role in ("admin", "super_admin") and user["role"] != "super_admin":
+    if not can_toggle_user_status(user["role"], target_user.role):
         return toast_redirect(
             "/webui/users/",
             "toast.permission_denied_user",
