@@ -40,6 +40,7 @@ from backend.webui.deps import (
     get_csrf_serializer,
     request_origin,
     require_csrf,
+    require_csrf_header,
     get_user_preferences,
     toast_redirect,
     invalidate_user_prefs_cache,
@@ -54,6 +55,7 @@ router = APIRouter(prefix="/settings", tags=["WebUI Settings"])
 templates = get_templates()
 _TOTP_SETUP_KEY_PREFIX = "totp:setup:"
 _MAX_TOTP_SETUP_FALLBACK = 1000
+# 仅作为 Redis 不可用时的单进程 asyncio 回退；多进程或多线程部署不共享该状态。
 _totp_setup_fallback: dict[int, tuple[str, datetime]] = {}
 
 
@@ -418,6 +420,7 @@ async def passkey_register_options(
     request: Request,
     db: AsyncSession = Depends(get_db),
     user: dict = Depends(require_auth),
+    csrf_token: str = Depends(require_csrf_header),
 ):
     """创建 Passkey 注册 options。"""
     user_id = int(user["user_id"])
@@ -441,6 +444,7 @@ async def passkey_register_verify(
     request: Request,
     db: AsyncSession = Depends(get_db),
     user: dict = Depends(require_auth),
+    csrf_token: str = Depends(require_csrf_header),
     body: dict = Body(...),
 ):
     """验证并保存 Passkey 注册结果。"""

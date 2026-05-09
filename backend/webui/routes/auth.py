@@ -6,7 +6,7 @@ import time
 from urllib.parse import urlencode
 
 import httpx
-from fastapi import APIRouter, Request, Form, HTTPException, Query, Header, Body
+from fastapi import APIRouter, Request, Depends, Form, HTTPException, Query, Header, Body
 from fastapi.responses import RedirectResponse, HTMLResponse, JSONResponse
 from loguru import logger
 from sqlalchemy import select
@@ -36,6 +36,7 @@ from backend.webui.deps import (
     get_templates,
     validate_csrf_token,
     get_csrf_serializer,
+    require_csrf_header,
     request_origin,
     toast_redirect,
     render_template,
@@ -503,7 +504,10 @@ async def verify_two_factor(
 
 
 @router.post("/2fa/passkey/options")
-async def two_factor_passkey_options(request: Request):
+async def two_factor_passkey_options(
+    request: Request,
+    csrf_token: str = Depends(require_csrf_header),
+):
     """创建登录二次验证 Passkey options。"""
     token = request.cookies.get(MFA_PENDING_COOKIE_NAME)
     payload = decode_access_token(token) if token else None
@@ -528,7 +532,11 @@ async def two_factor_passkey_options(request: Request):
 
 @router.post("/2fa/passkey/verify")
 @limiter.limit(lambda: get_settings().passkeys_authentication_rate_limit)
-async def two_factor_passkey_verify(request: Request, body: dict = Body(...)):
+async def two_factor_passkey_verify(
+    request: Request,
+    csrf_token: str = Depends(require_csrf_header),
+    body: dict = Body(...),
+):
     """验证登录二次验证 Passkey 并签发正式 Cookie。"""
     token = request.cookies.get(MFA_PENDING_COOKIE_NAME)
     payload = decode_access_token(token) if token else None

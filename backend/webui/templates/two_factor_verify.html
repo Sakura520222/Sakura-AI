@@ -114,7 +114,11 @@
             return;
         }
         try {
-            const optionsResp = await fetch('/webui/auth/2fa/passkey/options', { method: 'POST' });
+            const csrfToken = '{{ csrf_token }}';
+            const optionsResp = await fetch('/webui/auth/2fa/passkey/options', {
+                method: 'POST',
+                headers: { 'X-CSRF-Token': csrfToken },
+            });
             const optionsJson = await optionsResp.json();
             if (optionsResp.status === 429) throw new Error(localizePasskeyMessage(optionsJson.message, '{{ _("toast.rate_limit_exceeded") }}'));
             if (!optionsJson.success) throw new Error(localizePasskeyMessage(optionsJson.message, 'Passkey options failed'));
@@ -127,7 +131,7 @@
             const assertion = await navigator.credentials.get({ publicKey });
             const verifyResp = await fetch('/webui/auth/2fa/passkey/verify', {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
+                headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': csrfToken },
                 body: JSON.stringify({ challenge_id: data.challenge_id, credential: publicKeyCredentialToJSON(assertion) }),
             });
             const verifyJson = await verifyResp.json();
