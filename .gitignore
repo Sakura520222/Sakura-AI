@@ -75,3 +75,4 @@ deploy.py
 .claude/
 CLAUDE.md
 node_modules/
+workplace/
