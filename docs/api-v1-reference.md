@@ -2417,4 +2417,4 @@ val sseSource = EventSource.Factory.create(request, eventListener)
 
 ---
 
-> 文档版本：v1.1 | 最后更新：2026-04-19 | 端点总数：66
+> 文档版本：v1.1 | 最后更新：2026-05-09 | 端点总数：66
