@@ -27,16 +27,25 @@ _cache_ts: float = 0
 _CACHE_TTL = 5.0  # 秒
 
 
+def get_connection_config_path() -> Path:
+    """获取当前使用的连接配置路径，支持本地开发脚本隔离配置。"""
+    override = os.getenv("SAKURA_CONNECTION_CONFIG_PATH", "").strip()
+    if override:
+        return Path(override)
+    return CONNECTION_CONFIG_PATH
+
+
 def read_connection_config() -> dict:
     """读取 config/connection.json
 
     Returns:
         连接配置字典，文件不存在时返回空字典
     """
-    if not CONNECTION_CONFIG_PATH.exists():
+    config_path = get_connection_config_path()
+    if not config_path.exists():
         return {}
     try:
-        text = CONNECTION_CONFIG_PATH.read_text(encoding="utf-8")
+        text = config_path.read_text(encoding="utf-8")
         return json.loads(text)
     except (json.JSONDecodeError, OSError) as e:
         logger.warning(f"读取连接配置失败: {e}")
@@ -61,14 +70,15 @@ def write_connection_config(
         config["completed_at"] = datetime.now(timezone.utc).isoformat()
 
     # 确保 config 目录存在
-    CONNECTION_CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
-    CONNECTION_CONFIG_PATH.write_text(
+    config_path = get_connection_config_path()
+    config_path.parent.mkdir(parents=True, exist_ok=True)
+    config_path.write_text(
         json.dumps(config, indent=2, ensure_ascii=False),
         encoding="utf-8",
     )
     # 限制文件权限为仅所有者可读写（包含数据库凭证等敏感信息）
     try:
-        os.chmod(CONNECTION_CONFIG_PATH, 0o600)
+        os.chmod(config_path, 0o600)
     except OSError:
         logger.debug("无法设置 connection.json 文件权限（Windows 可忽略）")
     clear_bootstrap_cache()
@@ -93,7 +103,8 @@ def check_setup_state() -> SetupState:
     - completed: 文件存在且 setup_completed == True
     - in_progress: 文件存在但 setup_completed != True
     """
-    if not CONNECTION_CONFIG_PATH.exists():
+    config_path = get_connection_config_path()
+    if not config_path.exists():
         return "not_configured"
 
     config = read_connection_config()

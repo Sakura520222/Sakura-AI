@@ -295,6 +295,18 @@ python -m backend.main
 
 > 首次启动将进入 Bootstrap 模式，访问 `http://localhost:8000/setup` 通过 Setup Wizard 完成配置。
 
+如果只想在本地调试首次部署/Setup Wizard 流程，使用独立的 dev 配置文件启动：
+
+```bash
+py scripts/dev_bootstrap.py
+```
+
+该脚本会使用 `.sakura/dev/connection.json`，不会覆盖正式的 `config/connection.json`，并会跳过 Telegram、SSE、扫描、配额等后台任务。需要重新从第 0 步调试时：
+
+```bash
+py scripts/dev_bootstrap.py --reset
+```
+
 ### 代码检查
 
 ```bash

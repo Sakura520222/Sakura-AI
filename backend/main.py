@@ -38,6 +38,29 @@ logger.add("logs/app.log", rotation="500 MB", retention="10 days", level="DEBUG"
 settings = get_settings()
 
 
+def _get_allowed_origins(app_settings) -> list[str]:
+    """构造 CORS origin 列表。开发模式下放行本地调试地址。"""
+    origins = {f"https://{app_settings.app_domain}"}
+    if app_settings.is_development:
+        port = app_settings.app_port
+        origins.update(
+            {
+                f"http://localhost:{port}",
+                f"http://127.0.0.1:{port}",
+                f"https://localhost:{port}",
+                f"https://127.0.0.1:{port}",
+            }
+        )
+    return sorted(origins)
+
+
+def _should_start_background_tasks(app_settings) -> bool:
+    """本地调试 Setup Wizard 时可关闭有外部副作用的后台任务。"""
+    return not (
+        app_settings.sakura_skip_background_tasks or app_settings.sakura_dev_bootstrap
+    )
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """应用生命周期管理"""
@@ -105,39 +128,42 @@ async def lifespan(app: FastAPI):
                     f"⚠️ 以下配置项未设置: {', '.join(missing)}，部分功能可能不可用"
                 )
 
-            # 启动 Telegram Bot（后台任务）
-            try:
-                telegram_task = asyncio.create_task(start_telegram_bot())
-                logger.info("✅ Telegram Bot 已启动")
-            except Exception as e:
-                logger.error(f"❌ Telegram Bot 启动失败: {e}")
+            if _should_start_background_tasks(settings):
+                # 启动 Telegram Bot（后台任务）
+                try:
+                    telegram_task = asyncio.create_task(start_telegram_bot())
+                    logger.info("✅ Telegram Bot 已启动")
+                except Exception as e:
+                    logger.error(f"❌ Telegram Bot 启动失败: {e}")
 
-            # 启动 Redis Pub/Sub 监听（SSE 多进程支持）
-            try:
-                from backend.webui.sse import start_redis_listener
+                # 启动 Redis Pub/Sub 监听（SSE 多进程支持）
+                try:
+                    from backend.webui.sse import start_redis_listener
 
-                redis_listener_task = asyncio.create_task(start_redis_listener())
-                logger.info("✅ SSE Redis Pub/Sub 监听已启动")
-            except Exception as e:
-                logger.error(f"❌ SSE Redis Pub/Sub 监听启动失败: {e}")
+                    redis_listener_task = asyncio.create_task(start_redis_listener())
+                    logger.info("✅ SSE Redis Pub/Sub 监听已启动")
+                except Exception as e:
+                    logger.error(f"❌ SSE Redis Pub/Sub 监听启动失败: {e}")
 
-            # 启动仓库扫描调度器
-            try:
-                from backend.services.scan_scheduler import ScanScheduler
+                # 启动仓库扫描调度器
+                try:
+                    from backend.services.scan_scheduler import ScanScheduler
 
-                scan_scheduler = ScanScheduler()
-                scan_scheduler.start()
-            except Exception as e:
-                logger.error(f"❌ 仓库扫描调度器启动失败: {e}")
+                    scan_scheduler = ScanScheduler()
+                    scan_scheduler.start()
+                except Exception as e:
+                    logger.error(f"❌ 仓库扫描调度器启动失败: {e}")
 
-            # 启动配额重置调度器
-            try:
-                from backend.services.quota_scheduler import QuotaResetScheduler
+                # 启动配额重置调度器
+                try:
+                    from backend.services.quota_scheduler import QuotaResetScheduler
 
-                quota_reset_scheduler = QuotaResetScheduler()
-                quota_reset_scheduler.start()
-            except Exception as e:
-                logger.error(f"❌ 配额重置调度器启动失败: {e}")
+                    quota_reset_scheduler = QuotaResetScheduler()
+                    quota_reset_scheduler.start()
+                except Exception as e:
+                    logger.error(f"❌ 配额重置调度器启动失败: {e}")
+            else:
+                logger.warning("🧪 本地开发模式：已跳过后台任务启动")
     else:
         logger.warning("🔧 Bootstrap 模式：仅 Setup Wizard 可用")
         logger.info("请访问 /setup 完成初始配置")
@@ -198,10 +224,9 @@ app = FastAPI(
 )
 
 # 配置CORS
-_allowed_origins = [f"https://{settings.app_domain}"]
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=_allowed_origins,
+    allow_origins=_get_allowed_origins(settings),
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
