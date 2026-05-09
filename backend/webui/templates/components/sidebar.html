@@ -49,6 +49,18 @@
         </a>
         {% endif %}
 
+        {% if current_user and current_user.role == 'super_admin' %}
+        <a href="/webui/agent-team/"
+           class="sidebar-link flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium transition-all duration-200
+                  {% if active_page == 'agent_team' %}bg-gradient-to-r from-sakura-500 to-sakura-600 text-white shadow-md shadow-sakura-500/25{% else %}text-gray-700 dark:text-gray-300 hover:bg-sakura-50 dark:hover:bg-sakura-900/20 hover:text-sakura-700 dark:hover:text-sakura-400{% endif %}">
+            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9.75 3a.75.75 0 01.75.75V5h3V3.75a.75.75 0 011.5 0V5h.75A2.25 2.25 0 0118 7.25v8.5A2.25 2.25 0 0115.75 18h-7.5A2.25 2.25 0 016 15.75v-8.5A2.25 2.25 0 018.25 5H9V3.75A.75.75 0 019.75 3zM8.25 6.5a.75.75 0 00-.75.75v8.5c0 .414.336.75.75.75h7.5a.75.75 0 00.75-.75v-8.5a.75.75 0 00-.75-.75h-7.5z"/>
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 10h.01M12 10h.01M15 10h.01M9 13h6"/>
+            </svg>
+            {{ _('nav.agent_team') }}
+        </a>
+        {% endif %}
+
         {% if current_user and (current_user.role == 'admin' or current_user.role == 'super_admin') %}
         <a href="/webui/logs/actions/"
            class="sidebar-link flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium transition-all duration-200
