@@ -53,7 +53,32 @@ from backend.core.rate_limit import limiter
 router = APIRouter(prefix="/settings", tags=["WebUI Settings"])
 templates = get_templates()
 _TOTP_SETUP_KEY_PREFIX = "totp:setup:"
-_totp_setup_fallback: dict[int, str] = {}
+_MAX_TOTP_SETUP_FALLBACK = 1000
+_totp_setup_fallback: dict[int, tuple[str, datetime]] = {}
+
+
+def _cleanup_totp_setup_fallback(now: datetime | None = None) -> None:
+    """Prune expired and excessive in-memory TOTP setup secrets."""
+    settings = get_settings()
+    now = now or datetime.now(timezone.utc)
+    ttl_seconds = settings.two_factor_pending_token_expire_minutes * 60
+    expired_user_ids = [
+        user_id
+        for user_id, (_, created_at) in _totp_setup_fallback.items()
+        if (now - created_at).total_seconds() > ttl_seconds
+    ]
+    for user_id in expired_user_ids:
+        _totp_setup_fallback.pop(user_id, None)
+
+    overflow = len(_totp_setup_fallback) - _MAX_TOTP_SETUP_FALLBACK
+    if overflow <= 0:
+        return
+    oldest_user_ids = sorted(
+        _totp_setup_fallback,
+        key=lambda user_id: _totp_setup_fallback[user_id][1],
+    )[:overflow]
+    for user_id in oldest_user_ids:
+        _totp_setup_fallback.pop(user_id, None)
 
 
 async def _save_totp_setup_secret(user_id: int, secret: str) -> None:
@@ -65,20 +90,22 @@ async def _save_totp_setup_secret(user_id: int, secret: str) -> None:
         return
     except Exception as exc:
         logger.warning("Redis 存储 TOTP setup secret 失败，使用内存回退: {}", exc)
-    _totp_setup_fallback[user_id] = secret
+    _cleanup_totp_setup_fallback()
+    _totp_setup_fallback[user_id] = (secret, datetime.now(timezone.utc))
 
 
 async def _pop_totp_setup_secret(user_id: int) -> str | None:
     key = f"{_TOTP_SETUP_KEY_PREFIX}{user_id}"
     try:
         redis = await get_async_redis()
-        value = await redis.get(key)
-        await redis.delete(key)
+        value = await redis.execute_command("GETDEL", key)
         if value:
             return value.decode("utf-8") if isinstance(value, bytes) else str(value)
     except Exception as exc:
         logger.warning("Redis 读取 TOTP setup secret 失败，尝试内存回退: {}", exc)
-    return _totp_setup_fallback.pop(user_id, None)
+    _cleanup_totp_setup_fallback()
+    fallback = _totp_setup_fallback.pop(user_id, None)
+    return fallback[0] if fallback else None
 
 
 async def _render_settings_page(
@@ -106,17 +133,21 @@ async def _render_settings_page(
         "output_language": output_language_config["user_value"]
         if output_language_config["user_value"] is not None
         else "",
-        "two_factor_enabled": bool(db_user and db_user.totp_enabled),
-        "recovery_code_count": await count_unused_recovery_codes(db, user_id)
-        if db_user
-        else 0,
         "totp_setup": None,
         "recovery_codes": None,
-        "passkeys": await _get_user_passkeys(db, user_id),
-        "mfa_enrollment_required": await user_requires_mfa_enrollment(user_id, db)
-        if db_user
-        else False,
     }
+    if "two_factor_enabled" not in overrides:
+        context["two_factor_enabled"] = bool(db_user and db_user.totp_enabled)
+    if "recovery_code_count" not in overrides:
+        context["recovery_code_count"] = (
+            await count_unused_recovery_codes(db, user_id) if db_user else 0
+        )
+    if "passkeys" not in overrides:
+        context["passkeys"] = await _get_user_passkeys(db, user_id)
+    if "mfa_enrollment_required" not in overrides:
+        context["mfa_enrollment_required"] = (
+            await user_requires_mfa_enrollment(user_id, db) if db_user else False
+        )
     context.update(overrides)
     return render_template("settings.html", request, **context)
 
@@ -382,6 +413,7 @@ async def regenerate_recovery_codes(
 
 
 @router.post("/passkeys/register/options")
+@limiter.limit(lambda: get_settings().two_factor_setup_rate_limit)
 async def passkey_register_options(
     request: Request,
     db: AsyncSession = Depends(get_db),
@@ -404,7 +436,9 @@ async def passkey_register_options(
 
 
 @router.post("/passkeys/register/verify")
+@limiter.limit(lambda: get_settings().two_factor_setup_rate_limit)
 async def passkey_register_verify(
+    request: Request,
     db: AsyncSession = Depends(get_db),
     user: dict = Depends(require_auth),
     body: dict = Body(...),
@@ -441,7 +475,9 @@ async def passkey_register_verify(
 
 
 @router.post("/passkeys/{credential_id}/delete")
+@limiter.limit(lambda: get_settings().two_factor_verify_rate_limit)
 async def passkey_delete(
+    request: Request,
     credential_id: int,
     db: AsyncSession = Depends(get_db),
     user: dict = Depends(require_auth),
@@ -465,7 +501,6 @@ async def about_page(
     user_prefs: dict = Depends(get_user_preferences),
 ):
     """关于页面"""
-    from datetime import datetime
     from backend.webui.routes.auth import APP_VERSION
 
     return render_template(
@@ -476,5 +511,5 @@ async def about_page(
         csrf_token=get_csrf_serializer().dumps({}),
         active_page="about",
         app_version=APP_VERSION,
-        build_date=datetime.utcnow().strftime("%Y-%m-%d"),
+        build_date=datetime.now(timezone.utc).strftime("%Y-%m-%d"),
     )
