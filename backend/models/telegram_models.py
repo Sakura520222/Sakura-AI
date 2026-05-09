@@ -118,6 +118,30 @@ class UserRecoveryCode(Base):
         return f"<UserRecoveryCode(user_id={self.user_id}, used={self.used_at is not None})>"
 
 
+class UserWebAuthnCredential(Base):
+    """用户 WebAuthn/Passkey 凭据表。"""
+
+    __tablename__ = "user_webauthn_credentials"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    user_id = Column(
+        Integer, ForeignKey("telegram_users.id", ondelete="CASCADE"), nullable=False
+    )
+    credential_id = Column(String(1024), nullable=False, unique=True, index=True)
+    public_key = Column(Text, nullable=False)
+    sign_count = Column(BigInteger, default=0, nullable=False)
+    transports = Column(String(255), nullable=True)
+    device_name = Column(String(100), nullable=True)
+    backed_up = Column(Boolean, default=False, nullable=False)
+    created_at = Column(TIMESTAMP, default=datetime.utcnow, nullable=False)
+    last_used_at = Column(TIMESTAMP, nullable=True)
+
+    user = relationship("TelegramUser", foreign_keys=[user_id])
+
+    def __repr__(self):
+        return f"<UserWebAuthnCredential(user_id={self.user_id}, device={self.device_name})>"
+
+
 class RepoSubscription(Base):
     """仓库订阅表（白名单）"""
 

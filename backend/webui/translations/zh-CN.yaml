@@ -128,6 +128,9 @@ auth:
   two_factor_code: "验证码或恢复码"
   two_factor_recovery_hint: "也可以输入一个未使用的恢复码。"
   verify: "验证"
+  verify_with_passkey: "使用通行密钥验证"
+  passkey_not_supported: "当前浏览器不支持通行密钥。"
+  passkey_failed: "通行密钥验证失败"
 
 # ========== 导航 / Navigation ==========
 nav:
@@ -603,6 +606,12 @@ settings:
   regenerate: "重新生成"
   disable_two_factor: "禁用两步验证"
   disable_two_factor_desc: "需要输入当前验证码或恢复码确认操作。"
+  passkeys: "通行密钥（Passkeys）"
+  passkeys_desc: "使用设备生物识别、PIN 或安全密钥完成二次验证。"
+  add_passkey: "添加通行密钥"
+  no_passkeys: "暂无通行密钥。"
+  passkey_default_name: "通行密钥"
+  last_used_at: "上次使用"
   languages:
     zh-CN: "简体中文"
     en: "English"
@@ -775,6 +784,7 @@ toast:
   two_factor_invalid: "验证码或恢复码无效"
   two_factor_disabled: "两步验证已禁用"
   two_factor_not_enabled: "两步验证尚未启用"
+  passkey_deleted: "通行密钥已删除"
   invalid_param: "参数值无效"
   code_required: "请输入兑换码"
   redeem_success: "兑换成功！订单号: {order_no}"

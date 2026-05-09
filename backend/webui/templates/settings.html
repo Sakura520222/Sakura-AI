@@ -154,6 +154,110 @@
                         </div>
                         {% endif %}
         </div>
+
+        <div class="mt-4 rounded-xl border border-gray-200 dark:border-gray-700 p-4 bg-gray-50 dark:bg-gray-900/40">
+            <div class="flex flex-col md:flex-row md:items-start md:justify-between gap-4">
+                <div>
+                    <h4 class="text-sm font-semibold">{{ _('settings.passkeys') }}</h4>
+                    <p class="mt-1 text-sm text-gray-500 dark:text-gray-400">{{ _('settings.passkeys_desc') }}</p>
+                </div>
+                <button type="button" id="register-passkey-btn" class="px-4 py-2 bg-pink-500 text-white rounded-lg text-sm font-medium hover:bg-pink-600 transition-colors">
+                    {{ _('settings.add_passkey') }}
+                </button>
+            </div>
+            <p id="passkey-settings-error" class="hidden mt-3 text-sm text-red-600 dark:text-red-400"></p>
+
+            <div class="mt-4 space-y-2">
+                {% if passkeys %}
+                    {% for passkey in passkeys %}
+                    <div class="flex items-center justify-between gap-4 rounded-lg bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 px-4 py-3">
+                        <div>
+                            <p class="text-sm font-medium">{{ passkey.device_name or _('settings.passkey_default_name') }}</p>
+                            <p class="text-xs text-gray-500 dark:text-gray-400">
+                                {{ _('common.created_at') }}: {{ passkey.created_at }}
+                                {% if passkey.last_used_at %} · {{ _('settings.last_used_at') }}: {{ passkey.last_used_at }}{% endif %}
+                            </p>
+                        </div>
+                        <form method="POST" action="/webui/settings/passkeys/{{ passkey.id }}/delete">
+                            <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                            <button type="submit" class="px-3 py-1.5 text-sm text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20 rounded-lg transition-colors">
+                                {{ _('common.delete') }}
+                            </button>
+                        </form>
+                    </div>
+                    {% endfor %}
+                {% else %}
+                    <p class="text-sm text-gray-500 dark:text-gray-400">{{ _('settings.no_passkeys') }}</p>
+                {% endif %}
+            </div>
+        </div>
     </div>
 </div>
+
+<script>
+function base64urlToBuffer(value) {
+    const padding = '='.repeat((4 - value.length % 4) % 4);
+    const base64 = (value + padding).replace(/-/g, '+').replace(/_/g, '/');
+    const raw = atob(base64);
+    const buffer = new ArrayBuffer(raw.length);
+    const view = new Uint8Array(buffer);
+    for (let i = 0; i < raw.length; i++) view[i] = raw.charCodeAt(i);
+    return buffer;
+}
+function bufferToBase64url(buffer) {
+    const bytes = new Uint8Array(buffer);
+    let binary = '';
+    for (const byte of bytes) binary += String.fromCharCode(byte);
+    return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/g, '');
+}
+function registrationCredentialToJSON(credential) {
+    return {
+        id: credential.id,
+        rawId: bufferToBase64url(credential.rawId),
+        type: credential.type,
+        response: {
+            attestationObject: bufferToBase64url(credential.response.attestationObject),
+            clientDataJSON: bufferToBase64url(credential.response.clientDataJSON),
+            transports: credential.response.getTransports ? credential.response.getTransports() : [],
+        },
+    };
+}
+document.getElementById('register-passkey-btn').addEventListener('click', async function() {
+    const errorEl = document.getElementById('passkey-settings-error');
+    errorEl.classList.add('hidden');
+    if (!window.PublicKeyCredential) {
+        errorEl.textContent = '{{ _('auth.passkey_not_supported') }}';
+        errorEl.classList.remove('hidden');
+        return;
+    }
+    try {
+        const optionsResp = await fetch('/webui/settings/passkeys/register/options', { method: 'POST' });
+        const optionsJson = await optionsResp.json();
+        if (!optionsJson.success) throw new Error(optionsJson.message || 'Passkey options failed');
+        const data = optionsJson.data;
+        const publicKey = data.public_key;
+        publicKey.challenge = base64urlToBuffer(publicKey.challenge);
+        publicKey.user.id = base64urlToBuffer(publicKey.user.id);
+        if (publicKey.excludeCredentials) {
+            publicKey.excludeCredentials = publicKey.excludeCredentials.map((item) => ({ ...item, id: base64urlToBuffer(item.id) }));
+        }
+        const credential = await navigator.credentials.create({ publicKey });
+        const verifyResp = await fetch('/webui/settings/passkeys/register/verify', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                challenge_id: data.challenge_id,
+                credential: registrationCredentialToJSON(credential),
+                device_name: '{{ _('settings.passkey_default_name') }}',
+            }),
+        });
+        const verifyJson = await verifyResp.json();
+        if (!verifyJson.success) throw new Error(verifyJson.message || 'Passkey registration failed');
+        window.location.reload();
+    } catch (error) {
+        errorEl.textContent = error.message || '{{ _('auth.passkey_failed') }}';
+        errorEl.classList.remove('hidden');
+    }
+});
+</script>
 {% endblock %}
