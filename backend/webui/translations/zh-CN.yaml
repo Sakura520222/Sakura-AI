@@ -800,6 +800,7 @@ toast:
   updated: "已更新"
   created: "已创建"
   loading: "加载中..."
+  rate_limit_exceeded: "操作过于频繁，请稍后再试"
   confirm_delete: "确定要删除吗？"
   no_permission: "权限不足"
   repo_exists: "仓库已存在于白名单中"
