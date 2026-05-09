@@ -9,8 +9,10 @@ from sqlalchemy import (
     TIMESTAMP,
     ForeignKey,
     Boolean,
+    Text,
     UniqueConstraint,
 )
+from sqlalchemy.orm import relationship
 import enum
 
 from backend.models.database import Base
@@ -77,6 +79,13 @@ class TelegramUser(Base):
     # 状态
     is_active = Column(Boolean, default=True, nullable=False)
 
+    # 两步验证 / Two-factor authentication
+    mfa_required = Column(Boolean, default=False, nullable=False)
+    totp_enabled = Column(Boolean, default=False, nullable=False)
+    totp_secret_encrypted = Column(Text, nullable=True)
+    totp_enabled_at = Column(TIMESTAMP, nullable=True)
+    totp_last_used_step = Column(BigInteger, nullable=True)
+
     # 时间戳
     created_at = Column(TIMESTAMP, default=datetime.utcnow, nullable=False)
     updated_at = Column(
@@ -85,6 +94,54 @@ class TelegramUser(Base):
 
     def __repr__(self):
         return f"<TelegramUser(telegram_id={self.telegram_id}, github_username={self.github_username}, role={self.role})>"
+
+
+class UserRecoveryCode(Base):
+    """用户两步验证恢复码表 / User 2FA recovery codes."""
+
+    __tablename__ = "user_recovery_codes"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    user_id = Column(
+        Integer, ForeignKey("telegram_users.id", ondelete="CASCADE"), nullable=False
+    )
+    code_hash = Column(String(128), nullable=False, index=True)
+    used_at = Column(TIMESTAMP, nullable=True)
+    created_at = Column(TIMESTAMP, default=datetime.utcnow, nullable=False)
+
+    user = relationship("TelegramUser", foreign_keys=[user_id])
+
+    __table_args__ = (
+        UniqueConstraint("user_id", "code_hash", name="uq_user_recovery_code"),
+    )
+
+    def __repr__(self):
+        return f"<UserRecoveryCode(user_id={self.user_id}, used={self.used_at is not None})>"
+
+
+class UserWebAuthnCredential(Base):
+    """用户 WebAuthn/Passkey 凭据表。"""
+
+    __tablename__ = "user_webauthn_credentials"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    user_id = Column(
+        Integer, ForeignKey("telegram_users.id", ondelete="CASCADE"), nullable=False
+    )
+    credential_id = Column(String(1024), nullable=False)
+    credential_id_hash = Column(String(64), nullable=True, unique=True, index=True)
+    public_key = Column(Text, nullable=False)
+    sign_count = Column(BigInteger, default=0, nullable=False)
+    transports = Column(String(255), nullable=True)
+    device_name = Column(String(100), nullable=True)
+    backed_up = Column(Boolean, default=False, nullable=False)
+    created_at = Column(TIMESTAMP, default=datetime.utcnow, nullable=False)
+    last_used_at = Column(TIMESTAMP, nullable=True)
+
+    user = relationship("TelegramUser", foreign_keys=[user_id])
+
+    def __repr__(self):
+        return f"<UserWebAuthnCredential(user_id={self.user_id}, device={self.device_name})>"
 
 
 class RepoSubscription(Base):

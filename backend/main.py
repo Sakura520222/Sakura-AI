@@ -247,6 +247,11 @@ def _get_webui_error_user(request: Request) -> dict | None:
 async def auth_exception_handler(request: Request, exc: HTTPException):
     if exc.status_code == 401 and request.url.path.startswith("/webui"):
         return RedirectResponse(url="/webui/auth/login", status_code=302)
+    if exc.status_code == 428 and request.url.path.startswith("/webui"):
+        return RedirectResponse(
+            url="/webui/settings/?_toast=MFA%20enrollment%20required&_toast_type=error",
+            status_code=302,
+        )
     if request.url.path.startswith("/webui"):
         return error_page(
             request,

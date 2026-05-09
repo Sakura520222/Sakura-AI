@@ -84,6 +84,72 @@ class Settings(BaseSettings):
         description="Cookie Secure 属性，HTTPS 环境必须设为 True",
     )
 
+    # 多因素认证配置 / Multi-factor authentication configuration
+    two_factor_enabled: bool = Field(
+        True,
+        description="是否允许用户启用两步验证",
+    )
+    two_factor_issuer: str = Field(
+        "Sakura AI Reviewer",
+        description="TOTP 认证器中显示的发行方名称",
+    )
+    two_factor_pending_token_expire_minutes: int = Field(
+        10,
+        ge=1,
+        le=60,
+        description="OAuth 后等待二次验证的临时 Token 有效期（分钟）",
+    )
+    two_factor_verify_rate_limit: str = Field(
+        "5/minute",
+        description="二次验证接口限流规则",
+    )
+    two_factor_setup_rate_limit: str = Field(
+        "10/minute",
+        description="二次验证设置接口限流规则",
+    )
+    two_factor_recovery_code_count: int = Field(
+        10,
+        ge=4,
+        le=20,
+        description="生成的恢复码数量",
+    )
+    two_factor_recovery_code_length: int = Field(
+        10,
+        ge=8,
+        le=32,
+        description="恢复码随机字符长度",
+    )
+    two_factor_encryption_key: str = Field(
+        "",
+        description="TOTP Secret 加密密钥；为空时从 WEBUI_SECRET_KEY 派生",
+    )
+    passkeys_enabled: bool = Field(
+        True,
+        description="是否允许用户注册和使用通行密钥（Passkeys/WebAuthn）",
+    )
+    passkeys_rp_id: str = Field(
+        "",
+        description="WebAuthn Relying Party ID；为空时使用 app_domain",
+    )
+    passkeys_rp_name: str = Field(
+        "Sakura AI Reviewer",
+        description="WebAuthn Relying Party 显示名称",
+    )
+    passkeys_origin: str = Field(
+        "",
+        description="WebAuthn 允许的 Origin；为空时根据 app_domain/app_port 推导",
+    )
+    passkeys_challenge_ttl_seconds: int = Field(
+        300,
+        ge=60,
+        le=900,
+        description="WebAuthn challenge 有效期（秒）",
+    )
+    passkeys_authentication_rate_limit: str = Field(
+        "10/minute",
+        description="Passkey 认证接口限流规则",
+    )
+
     # GitHub OAuth 配置
     # 获取步骤：GitHub → Settings → Developer settings → OAuth Apps → New OAuth App
     github_oauth_client_id: str = Field(

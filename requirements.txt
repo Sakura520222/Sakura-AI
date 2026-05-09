@@ -5,7 +5,7 @@ python-multipart==0.0.6
 
 # GitHub集成
 PyGithub>=2.9.1
-cryptography==41.0.7
+cryptography>=44.0.2
 
 # AI集成
 openai==1.10.0
@@ -44,6 +44,9 @@ python-slugify>=8.0.0  # Collection 名称 slugify
 jinja2>=3.1.2
 python-jose[cryptography]>=3.3.0
 itsdangerous>=2.1.0
+pyotp>=2.9.0
+qrcode[pil]>=7.4.2
+webauthn>=2.5.2
 
 # GitHub签名验证 (hmac 和 hashlib 是 Python 内置模块，无需安装)
 

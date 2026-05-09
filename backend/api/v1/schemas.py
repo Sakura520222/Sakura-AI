@@ -63,6 +63,22 @@ class TokenResponse(BaseModel):
     user: "UserInfoResponse"
 
 
+class MfaRequiredResponse(BaseModel):
+    """需要二次验证的 OAuth 响应"""
+
+    mfa_required: bool = True
+    mfa_token: str
+    methods: list[str] = Field(default_factory=lambda: ["totp", "recovery_code"])
+    user: "UserInfoResponse"
+
+
+class MfaVerifyRequest(BaseModel):
+    """二次验证请求"""
+
+    mfa_token: str
+    code: str
+
+
 class UserInfoResponse(BaseModel):
     """用户信息响应"""
 
