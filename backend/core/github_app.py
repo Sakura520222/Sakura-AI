@@ -180,11 +180,15 @@ class GitHubAppClient:
                 )
         return result
 
-    def check_user_installed(self, username: str) -> Optional[bool]:
+    def check_user_installed(self, username: Optional[str]) -> Optional[bool]:
         """轻量检查指定用户/组织是否安装 GitHub App（不拉取仓库列表）
 
+        Args:
+            username: GitHub 用户名或组织名。空值/None 返回 False。
+
         Returns:
-            True: 已安装, False: 未安装, None: 无法检测
+            True: 已安装, False: 未安装,
+            None: 无法检测（如 Integration 未初始化、API 异常）
         """
         if not username:
             return False
@@ -210,6 +214,9 @@ class GitHubAppClient:
                 if isinstance(account_info, dict):
                     account_login = account_info.get("login", "") or ""
 
+                # 个人用户 installation 的 html_url 通常是
+                # https://github.com/settings/installations/ID，不包含用户名；为保持轻量
+                # 检查，这里不通过 get_repos() 回退提取 owner，仅依赖 raw_data.account.login。
                 if not account_login:
                     html_url = getattr(inst, "html_url", "") or ""
                     if "/organizations/" in html_url:
