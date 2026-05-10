@@ -100,6 +100,39 @@ class AgentTeamGitWorkspaceService:
         result = await self._run_checked(executor, "git diff --stat && git status --short", "diff summary")
         return result.stdout.strip()
 
+    async def get_changed_file_stats(self, workspace: str | Path) -> dict[str, dict]:
+        """读取当前工作区未提交变更的逐文件行数统计。"""
+        executor = AgentTeamShellExecutor(workspace, self.workspace_service)
+        numstat = await self._run_checked_args(executor, ["git", "diff", "--numstat", "HEAD"], "diff numstat")
+        status = await self._run_checked_args(executor, ["git", "status", "--short"], "status short")
+        return self.parse_changed_file_stats(numstat.stdout, status.stdout)
+
+    @staticmethod
+    def parse_changed_file_stats(numstat_output: str, status_output: str) -> dict[str, dict]:
+        """解析 git numstat 和 status 输出为 UI 可展示的变更统计。"""
+        stats: dict[str, dict] = {}
+        for line in numstat_output.splitlines():
+            parts = line.split("\t")
+            if len(parts) < 3:
+                continue
+            additions_raw, deletions_raw, file_path = parts[0], parts[1], parts[2]
+            normalized_path = _normalize_git_path(file_path)
+            stats[normalized_path] = {
+                "additions": _parse_numstat_count(additions_raw),
+                "deletions": _parse_numstat_count(deletions_raw),
+                "change_type": "modify",
+            }
+
+        for line in status_output.splitlines():
+            if len(line) < 4:
+                continue
+            status_code = line[:2]
+            raw_path = line[3:].strip()
+            file_path = _normalize_git_path(raw_path.split(" -> ")[-1])
+            item = stats.setdefault(file_path, {"additions": 0, "deletions": 0})
+            item["change_type"] = _map_git_status_to_change_type(status_code)
+        return stats
+
     async def _get_repo_info(
         self, repo_owner: str, repo_name: str, repo_full_name: str
     ) -> tuple[str, str]:
@@ -154,3 +187,34 @@ class AgentTeamGitWorkspaceService:
     def _quote(self, value: str) -> str:
         safe = value.replace("'", "'\"'\"'")
         return f"'{safe}'"
+
+
+def _parse_numstat_count(value: str) -> int:
+    """解析 git numstat 行数；二进制文件用 '-'，按 0 处理。"""
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return 0
+
+
+def _normalize_git_path(value: str) -> str:
+    """归一化 Git 输出路径，兼容 ./ 前缀和 Windows 分隔符。"""
+    normalized = value.strip().replace("\\", "/")
+    while "//" in normalized:
+        normalized = normalized.replace("//", "/")
+    while normalized.startswith("./"):
+        normalized = normalized[2:]
+    return normalized
+
+
+def _map_git_status_to_change_type(status_code: str) -> str:
+    """将 git status --short 状态映射为展示用变更类型。"""
+    if "R" in status_code:
+        return "rename"
+    if "A" in status_code or "?" in status_code:
+        return "add"
+    if "D" in status_code:
+        return "delete"
+    if "M" in status_code:
+        return "modify"
+    return "change"
