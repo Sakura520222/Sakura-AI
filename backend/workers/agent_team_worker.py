@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import json
 from datetime import datetime
+from pathlib import Path
 
 from loguru import logger
 
@@ -102,6 +103,7 @@ class AgentTeamWorker:
                 fullstack_result=outcome.fullstack_result,
                 review_result=outcome.review_result,
                 modified_files=outcome.modified_files,
+                workspace=workspace,
             )
 
             await self._update_task(
@@ -268,7 +270,9 @@ class AgentTeamWorker:
         fullstack_result=None,
         review_result=None,
         modified_files: list[str] | None = None,
+        workspace: str | Path | None = None,
     ) -> None:
+        patch_stats = await self._collect_patch_file_stats(workspace) if workspace else {}
         async with async_session() as session:
             iteration = AgentTeamIteration(
                 task_id=task_id,
@@ -294,16 +298,32 @@ class AgentTeamWorker:
             session.add(iteration)
             await session.flush()
 
-            # 保存 patch 文件记录
-            for file_path in modified_files or []:
+            # 保存 patch 文件记录。AI 可能返回 ./path 或 Windows 分隔符，需归一化匹配 Git 统计；
+            # 如果 AI 没有返回文件列表但 Git 有变更，也回落到 Git 真实变更集合。
+            tracked_files = _merge_modified_files(modified_files or [], patch_stats)
+            for file_path in tracked_files:
+                stats = patch_stats.get(file_path, {})
                 patch = AgentTeamPatchFile(
                     iteration_id=iteration.id,
                     file_path=file_path,
-                    change_type="modify",
+                    change_type=stats.get("change_type", "modify"),
+                    additions=stats.get("additions", 0),
+                    deletions=stats.get("deletions", 0),
                 )
                 session.add(patch)
 
             await session.commit()
+
+    async def _collect_patch_file_stats(self, workspace: str | Path | None) -> dict[str, dict]:
+        """读取工作区未提交变更的逐文件行数统计。"""
+        if workspace is None:
+            return {}
+        try:
+            git_service = AgentTeamGitWorkspaceService()
+            return await git_service.get_changed_file_stats(workspace)
+        except Exception as exc:
+            logger.debug("读取 Agent 变更文件统计失败，使用默认 0: {}", exc)
+            return {}
 
     async def _load_sakura_memory(self, repo_owner: str, repo_name: str) -> str:
         try:
@@ -333,6 +353,22 @@ class AgentTeamWorker:
                     f"审查分数: {outcome.review_result.score}/10 ({outcome.review_result.verdict})"
                 )
         return "\n".join(parts)
+
+
+def _normalize_modified_file_path(file_path: str) -> str:
+    normalized = str(file_path).strip().replace("\\", "/")
+    while "//" in normalized:
+        normalized = normalized.replace("//", "/")
+    while normalized.startswith("./"):
+        normalized = normalized[2:]
+    return normalized
+
+
+def _merge_modified_files(modified_files: list[str], patch_stats: dict[str, dict]) -> list[str]:
+    """合并 AI 追踪文件和 Git 真实变更文件，优先保证 UI 有真实变更可展示。"""
+    merged = {_normalize_modified_file_path(path) for path in modified_files if path}
+    merged.update(patch_stats.keys())
+    return sorted(merged)
 
 
 _worker: AgentTeamWorker | None = None
