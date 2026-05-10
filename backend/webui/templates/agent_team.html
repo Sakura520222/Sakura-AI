@@ -86,6 +86,13 @@
 {% block extra_scripts %}
 {{ super() }}
 <script>
+function refreshAgentTaskList() {
+    const target = document.getElementById('agent-task-list');
+    if (target && window.htmx) {
+        htmx.trigger(target, 'load');
+    }
+}
+
 function previewCandidates() {
     fetch('/webui/agent-team/candidates', {
         method: 'POST',
@@ -127,7 +134,7 @@ function createAgentTask(btn, sourceType, sourceId) {
             btn.classList.add('bg-green-500');
             btn.textContent = '✓';
             btn.disabled = true;
-            htmx.trigger('agent-task-list', 'load');
+            refreshAgentTaskList();
             // 刷新候选列表，移除已创建的候选项
             previewCandidates();
         } else {

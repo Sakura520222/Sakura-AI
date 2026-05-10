@@ -42,6 +42,13 @@
 </div>
 
 <script>
+function refreshAgentTaskList() {
+    const target = document.getElementById('agent-task-list');
+    if (target && window.htmx) {
+        htmx.trigger(target, 'load');
+    }
+}
+
 function retryTask(taskId) {
     fetch(`/webui/agent-team/tasks/${taskId}/retry`, {
         method: 'POST',
@@ -53,7 +60,7 @@ function retryTask(taskId) {
     }).then(data => {
         if (data.success) {
             window.dispatchEvent(new CustomEvent('show-toast', {detail: {message: '{{ _('agent_team.task_retried') }}', type: 'success'}}));
-            htmx.trigger('agent-task-list', 'load');
+            refreshAgentTaskList();
         } else {
             window.dispatchEvent(new CustomEvent('show-toast', {detail: {message: data.message || '{{ _('agent_team.request_failed') }}', type: 'error'}}));
         }
@@ -72,7 +79,7 @@ function cancelTask(taskId) {
     }).then(data => {
         if (data.success) {
             window.dispatchEvent(new CustomEvent('show-toast', {detail: {message: '{{ _('agent_team.task_cancelled') }}', type: 'success'}}));
-            htmx.trigger('agent-task-list', 'load');
+            refreshAgentTaskList();
         } else {
             window.dispatchEvent(new CustomEvent('show-toast', {detail: {message: data.message || '{{ _('agent_team.request_failed') }}', type: 'error'}}));
         }
