@@ -5,8 +5,9 @@ from datetime import datetime
 
 from fastapi import APIRouter, BackgroundTasks, Depends, Form, Request
 from fastapi.responses import JSONResponse
-from sqlalchemy import desc, func, select
+from sqlalchemy import desc, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
 from backend.core.config import (
     DYNAMIC_CONFIG_RANGES,
@@ -19,7 +20,7 @@ from backend.core.config import (
     mask_sensitive_value,
     update_settings_field,
 )
-from backend.models.agent_team_models import AgentTeamTask, AgentTeamTaskStatus
+from backend.models.agent_team_models import AgentTeamIteration, AgentTeamTask, AgentTeamTaskStatus
 from backend.models.database import AppConfig
 from backend.services.agent_team.ai_client import load_agent_team_ai_config
 from backend.services.agent_team.candidate_service import (
@@ -66,6 +67,66 @@ AGENT_TEAM_CONFIG_KEYS = [
     "agent_team_test_command_allowlist",
 ]
 
+AGENT_TEAM_ACTIVE_STATUSES = [
+    AgentTeamTaskStatus.QUEUED.value,
+    AgentTeamTaskStatus.PLANNING.value,
+    AgentTeamTaskStatus.CLONING.value,
+    AgentTeamTaskStatus.EDITING.value,
+    AgentTeamTaskStatus.SELF_REVIEWING.value,
+    AgentTeamTaskStatus.VALIDATING.value,
+    AgentTeamTaskStatus.PUSHING.value,
+    AgentTeamTaskStatus.PR_OPENED.value,
+    AgentTeamTaskStatus.EXTERNAL_REVIEWING.value,
+    AgentTeamTaskStatus.ITERATING.value,
+    AgentTeamTaskStatus.WAITING_HUMAN.value,
+]
+
+AGENT_TEAM_CONFIG_GROUPS = [
+    {
+        "key": "basic",
+        "title_key": "agent_team.config_group_basic",
+        "description_key": "agent_team.config_group_basic_desc",
+        "keys": [
+            "agent_team_enabled",
+            "agent_team_workspace_root",
+            "agent_team_repo_allowlist",
+        ],
+    },
+    {
+        "key": "ai",
+        "title_key": "agent_team.config_group_ai",
+        "description_key": "agent_team.config_group_ai_desc",
+        "keys": [
+            "agent_team_model_provider",
+            "agent_team_api_base",
+            "agent_team_api_key",
+            "agent_team_model",
+            "agent_team_review_model",
+            "agent_team_summary_model",
+            "agent_team_temperature",
+            "agent_team_max_tokens",
+            "agent_team_timeout_seconds",
+        ],
+    },
+    {
+        "key": "guardrails",
+        "title_key": "agent_team.config_group_guardrails",
+        "description_key": "agent_team.config_group_guardrails_desc",
+        "keys": [
+            "agent_team_max_concurrent",
+            "agent_team_min_priority",
+            "agent_team_feasibility_keywords",
+            "agent_team_max_iterations_per_task",
+            "agent_team_max_runtime_minutes",
+            "agent_team_draft_pr",
+            "agent_team_max_files_changed",
+            "agent_team_max_lines_changed",
+            "agent_team_run_tests",
+            "agent_team_test_command_allowlist",
+        ],
+    },
+]
+
 
 @router.get("/")
 async def agent_team_page(
@@ -78,6 +139,7 @@ async def agent_team_page(
     lang = detect_language(user_prefs)
     config_items = await _load_config_items(db, lang=lang)
     stats = await _load_stats(db)
+    config_groups = _group_config_items(config_items, lang=lang)
     return render_template(
         "agent_team.html",
         request,
@@ -86,7 +148,9 @@ async def agent_team_page(
         csrf_token=get_csrf_serializer().dumps({}),
         active_page="agent_team",
         config_items=config_items,
+        config_groups=config_groups,
         stats=stats,
+        status_options=[status.value for status in AgentTeamTaskStatus],
     )
 
 
@@ -98,12 +162,41 @@ async def task_list_fragment(
     user_prefs: dict = Depends(get_user_preferences),
     page: int = 1,
     per_page: int | None = None,
+    status: str | None = None,
+    source_type: str | None = None,
+    q: str | None = None,
+    sort: str = "newest",
 ):
     """任务列表片段。"""
     if per_page is None:
         per_page = user_prefs["items_per_page"]
-    query = select(AgentTeamTask).order_by(desc(AgentTeamTask.created_at))
-    count_query = select(func.count(AgentTeamTask.id))
+    filters = []
+    if status and status != "all":
+        if status == "active":
+            filters.append(AgentTeamTask.status.in_(AGENT_TEAM_ACTIVE_STATUSES))
+        else:
+            filters.append(AgentTeamTask.status == status)
+    if source_type and source_type != "all":
+        filters.append(AgentTeamTask.source_type == source_type)
+    if q:
+        keyword = f"%{q.strip()}%"
+        filters.append(
+            or_(
+                AgentTeamTask.title.ilike(keyword),
+                AgentTeamTask.repo_full_name.ilike(keyword),
+                AgentTeamTask.summary.ilike(keyword),
+                AgentTeamTask.branch_name.ilike(keyword),
+            )
+        )
+
+    order_by = desc(AgentTeamTask.created_at)
+    if sort == "score":
+        order_by = desc(AgentTeamTask.candidate_score)
+    elif sort == "updated":
+        order_by = desc(AgentTeamTask.updated_at)
+
+    query = select(AgentTeamTask).where(*filters).order_by(order_by)
+    count_query = select(func.count(AgentTeamTask.id)).where(*filters)
     tasks, total, total_pages, page = await paginate(db, query, count_query, page, per_page)
     return render_template(
         "components/agent_team_task_list_fragment.html",
@@ -116,6 +209,47 @@ async def task_list_fragment(
         total_pages=total_pages,
         total=total,
         per_page=per_page,
+        status=status or "all",
+        source_type=source_type or "all",
+        q=q or "",
+        sort=sort,
+    )
+
+
+@router.get("/tasks/{task_id}/detail-fragment")
+async def task_detail_fragment(
+    task_id: int,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    user: dict = Depends(require_super_admin),
+    user_prefs: dict = Depends(get_user_preferences),
+):
+    """任务详情片段。"""
+    result = await db.execute(
+        select(AgentTeamTask)
+        .where(AgentTeamTask.id == task_id)
+        .options(
+            selectinload(AgentTeamTask.iterations).selectinload(AgentTeamIteration.patch_files),
+            selectinload(AgentTeamTask.feedback),
+        )
+    )
+    task = result.scalar_one_or_none()
+    if task is None:
+        return JSONResponse({"success": False, "message": "任务不存在"}, status_code=404)
+
+    # selectinload 不支持在当前 SQLAlchemy 版本中稳定地继续链式排序，模板侧按序展示即可。
+    task.iterations.sort(key=lambda item: item.iteration_number)
+    task.feedback.sort(key=lambda item: item.created_at, reverse=True)
+    for iteration in task.iterations:
+        iteration.patch_files.sort(key=lambda item: item.file_path)
+
+    return render_template(
+        "components/agent_team_task_detail_fragment.html",
+        request,
+        user_prefs=user_prefs,
+        current_user=user,
+        csrf_token=get_csrf_serializer().dumps({}),
+        task=task,
     )
 
 
@@ -437,24 +571,43 @@ async def _load_config_items(db: AsyncSession, lang: str = "zh-CN") -> list[dict
     return items
 
 
+def _group_config_items(config_items: list[dict], lang: str = "zh-CN") -> list[dict]:
+    """按界面分组组织 Agent Team 配置项。"""
+    from backend.webui.i18n import i18n as _i18n
+
+    item_map = {item["key"]: item for item in config_items}
+    groups = []
+    used_keys = set()
+    for group in AGENT_TEAM_CONFIG_GROUPS:
+        group_items = [item_map[key] for key in group["keys"] if key in item_map]
+        used_keys.update(item["key"] for item in group_items)
+        groups.append(
+            {
+                "key": group["key"],
+                "title": _i18n.t(group["title_key"], lang=lang),
+                "description": _i18n.t(group["description_key"], lang=lang),
+                "items": group_items,
+            }
+        )
+
+    remaining = [item for item in config_items if item["key"] not in used_keys]
+    if remaining:
+        groups.append(
+            {
+                "key": "advanced",
+                "title": _i18n.t("agent_team.config_group_advanced", lang=lang),
+                "description": _i18n.t("agent_team.config_group_advanced_desc", lang=lang),
+                "items": remaining,
+            }
+        )
+    return groups
+
+
 async def _load_stats(db: AsyncSession) -> dict:
     total = await db.scalar(select(func.count(AgentTeamTask.id)))
     active = await db.scalar(
         select(func.count(AgentTeamTask.id)).where(
-            AgentTeamTask.status.in_(
-                [
-                    "queued",
-                    "planning",
-                    "cloning",
-                    "editing",
-                    "self_reviewing",
-                    "validating",
-                    "pushing",
-                    "pr_opened",
-                    "external_reviewing",
-                    "iterating",
-                ]
-            )
+            AgentTeamTask.status.in_(AGENT_TEAM_ACTIVE_STATUSES)
         )
     )
     completed = await db.scalar(
@@ -463,9 +616,19 @@ async def _load_stats(db: AsyncSession) -> dict:
     failed = await db.scalar(
         select(func.count(AgentTeamTask.id)).where(AgentTeamTask.status == "failed")
     )
+    queued = await db.scalar(select(func.count(AgentTeamTask.id)).where(AgentTeamTask.status == "queued"))
+    waiting_human = await db.scalar(
+        select(func.count(AgentTeamTask.id)).where(AgentTeamTask.status == "waiting_human")
+    )
+    status_rows = await db.execute(
+        select(AgentTeamTask.status, func.count(AgentTeamTask.id)).group_by(AgentTeamTask.status)
+    )
     return {
         "total": total or 0,
         "active": active or 0,
         "completed": completed or 0,
         "failed": failed or 0,
+        "queued": queued or 0,
+        "waiting_human": waiting_human or 0,
+        "status_counts": {status: count for status, count in status_rows.all()},
     }

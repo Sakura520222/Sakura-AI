@@ -1,0 +1,104 @@
+<div class="text-left space-y-5">
+    <div class="flex items-start justify-between gap-3">
+        <div class="min-w-0">
+            <div class="flex flex-wrap items-center gap-2">
+                <span class="inline-flex px-2.5 py-1 rounded-full text-xs font-semibold
+                    {% if task.status == 'completed' %}bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-300
+                    {% elif task.status == 'failed' %}bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-300
+                    {% elif task.status == 'waiting_human' %}bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-300
+                    {% else %}bg-sakura-100 text-sakura-700 dark:bg-sakura-900/30 dark:text-sakura-300{% endif %}">
+                    {{ _('agent_team.status_' ~ task.status) }}
+                </span>
+                <span class="text-xs text-gray-500">#{{ task.id }}</span>
+            </div>
+            <h3 class="mt-3 text-lg font-bold text-gray-900 dark:text-gray-100 line-clamp-3">{{ task.title }}</h3>
+            <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">{{ task.repo_full_name }} · {{ _('agent_team.source_' ~ task.source_type) }}</p>
+        </div>
+        {% if task.pr_url %}
+        <a href="{{ task.pr_url }}" target="_blank" class="shrink-0 px-3 py-1.5 rounded-xl bg-gray-900 dark:bg-white text-white dark:text-gray-900 text-xs font-semibold">{{ _('agent_team.open_pr') }}</a>
+        {% endif %}
+    </div>
+
+    <div class="grid grid-cols-2 gap-2 text-xs">
+        <div class="rounded-xl bg-gray-50 dark:bg-gray-900/50 p-3"><div class="text-gray-400">{{ _('agent_team.branch') }}</div><div class="mt-1 font-semibold break-all">{{ task.branch_name or '-' }}</div></div>
+        <div class="rounded-xl bg-gray-50 dark:bg-gray-900/50 p-3"><div class="text-gray-400">{{ _('agent_team.current_phase') }}</div><div class="mt-1 font-semibold">{{ task.current_phase or '-' }}</div></div>
+        <div class="rounded-xl bg-gray-50 dark:bg-gray-900/50 p-3"><div class="text-gray-400">{{ _('agent_team.started_at') }}</div><div class="mt-1 font-semibold">{{ task.started_at.strftime('%Y-%m-%d %H:%M') if task.started_at else '-' }}</div></div>
+        <div class="rounded-xl bg-gray-50 dark:bg-gray-900/50 p-3"><div class="text-gray-400">{{ _('agent_team.completed_at') }}</div><div class="mt-1 font-semibold">{{ task.completed_at.strftime('%Y-%m-%d %H:%M') if task.completed_at else '-' }}</div></div>
+    </div>
+
+    {% if task.summary %}
+    <section>
+        <h4 class="text-sm font-bold mb-2">{{ _('agent_team.summary') }}</h4>
+        <p class="text-sm text-gray-600 dark:text-gray-300 leading-6 rounded-xl bg-gray-50 dark:bg-gray-900/50 p-3">{{ task.summary }}</p>
+    </section>
+    {% endif %}
+
+    {% if task.error_message %}
+    <section>
+        <h4 class="text-sm font-bold mb-2 text-red-600 dark:text-red-400">{{ _('agent_team.error_message') }}</h4>
+        <pre class="text-xs whitespace-pre-wrap rounded-xl bg-red-50 dark:bg-red-900/20 text-red-700 dark:text-red-300 p-3 max-h-56 overflow-auto">{{ task.error_message }}</pre>
+    </section>
+    {% endif %}
+
+    <section>
+        <h4 class="text-sm font-bold mb-3">{{ _('agent_team.iteration_records') }}</h4>
+        {% if task.iterations %}
+        <div class="space-y-3">
+            {% for iteration in task.iterations %}
+            <details class="rounded-2xl border border-gray-200 dark:border-gray-700 overflow-hidden" {% if loop.last %}open{% endif %}>
+                <summary class="cursor-pointer px-4 py-3 bg-gray-50 dark:bg-gray-900/50 text-sm font-semibold">
+                    {{ _('agent_team.iteration') }} {{ iteration.iteration_number }} · {{ iteration.decision or '-' }}
+                </summary>
+                <div class="p-4 space-y-4 text-sm">
+                    {% if iteration.fullstack_plan %}<div><div class="font-semibold mb-1">{{ _('agent_team.fullstack_plan') }}</div><pre class="whitespace-pre-wrap text-xs bg-gray-50 dark:bg-gray-900/50 rounded-xl p-3 max-h-52 overflow-auto">{{ iteration.fullstack_plan }}</pre></div>{% endif %}
+                    {% if iteration.fullstack_result %}<div><div class="font-semibold mb-1">{{ _('agent_team.fullstack_result') }}</div><pre class="whitespace-pre-wrap text-xs bg-gray-50 dark:bg-gray-900/50 rounded-xl p-3 max-h-52 overflow-auto">{{ iteration.fullstack_result }}</pre></div>{% endif %}
+                    {% if iteration.professional_review %}<div><div class="font-semibold mb-1">{{ _('agent_team.professional_review') }}</div><pre class="whitespace-pre-wrap text-xs bg-gray-50 dark:bg-gray-900/50 rounded-xl p-3 max-h-52 overflow-auto">{{ iteration.professional_review }}</pre></div>{% endif %}
+                    {% if iteration.test_command or iteration.test_output %}
+                    <div>
+                        <div class="font-semibold mb-1">{{ _('agent_team.test_result') }} · {% if iteration.test_passed %}{{ _('agent_team.passed') }}{% else %}{{ _('agent_team.not_passed') }}{% endif %}</div>
+                        {% if iteration.test_command %}<code class="block text-xs rounded-lg bg-gray-100 dark:bg-gray-900 p-2 mb-2">{{ iteration.test_command }}</code>{% endif %}
+                        {% if iteration.test_output %}<pre class="whitespace-pre-wrap text-xs bg-gray-50 dark:bg-gray-900/50 rounded-xl p-3 max-h-52 overflow-auto">{{ iteration.test_output }}</pre>{% endif %}
+                    </div>
+                    {% endif %}
+                    {% if iteration.patch_files %}
+                    <div>
+                        <div class="font-semibold mb-2">{{ _('agent_team.changed_files') }}</div>
+                        <div class="space-y-2">
+                            {% for file in iteration.patch_files %}
+                            <div class="rounded-xl border border-gray-200 dark:border-gray-700 p-3 text-xs">
+                                <div class="font-semibold break-all">{{ file.file_path }}</div>
+                                <div class="mt-1 text-gray-500">{{ file.change_type or '-' }} · +{{ file.additions or 0 }} / -{{ file.deletions or 0 }} · {{ file.risk_level or '-' }}</div>
+                                {% if file.diff_summary %}<p class="mt-2 text-gray-600 dark:text-gray-300">{{ file.diff_summary }}</p>{% endif %}
+                            </div>
+                            {% endfor %}
+                        </div>
+                    </div>
+                    {% endif %}
+                </div>
+            </details>
+            {% endfor %}
+        </div>
+        {% else %}
+        <div class="rounded-xl border border-dashed border-gray-300 dark:border-gray-600 p-5 text-center text-sm text-gray-500">{{ _('agent_team.no_iterations') }}</div>
+        {% endif %}
+    </section>
+
+    <section>
+        <h4 class="text-sm font-bold mb-3">{{ _('agent_team.feedback') }}</h4>
+        {% if task.feedback %}
+        <div class="space-y-2">
+            {% for item in task.feedback %}
+            <div class="rounded-xl border border-gray-200 dark:border-gray-700 p-3 text-sm">
+                <div class="flex items-center justify-between gap-2 text-xs text-gray-500">
+                    <span>{{ item.source }}{% if item.author %} · {{ item.author }}{% endif %}</span>
+                    <span>{{ item.created_at.strftime('%Y-%m-%d %H:%M') if item.created_at else '-' }}</span>
+                </div>
+                <p class="mt-2 text-gray-700 dark:text-gray-300 whitespace-pre-wrap">{{ item.content }}</p>
+            </div>
+            {% endfor %}
+        </div>
+        {% else %}
+        <div class="rounded-xl border border-dashed border-gray-300 dark:border-gray-600 p-5 text-center text-sm text-gray-500">{{ _('agent_team.no_feedback') }}</div>
+        {% endif %}
+    </section>
+</div>
