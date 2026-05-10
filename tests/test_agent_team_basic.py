@@ -3,7 +3,11 @@
 import pytest
 
 from backend.services.agent_team.ai_client import AgentTeamAIConfig
-from backend.webui.routes.agent_team import AGENT_TEAM_CONFIG_KEYS
+from backend.webui.routes.agent_team import (
+    AGENT_TEAM_ACTIVE_STATUSES,
+    AGENT_TEAM_CONFIG_KEYS,
+    _group_config_items,
+)
 
 
 def test_agent_team_ai_config_requires_dedicated_values():
@@ -61,3 +65,19 @@ def test_agent_team_config_includes_required_dedicated_ai_keys():
     }
 
     assert required.issubset(set(AGENT_TEAM_CONFIG_KEYS))
+
+
+def test_agent_team_active_statuses_include_waiting_human():
+    assert "queued" in AGENT_TEAM_ACTIVE_STATUSES
+    assert "waiting_human" in AGENT_TEAM_ACTIVE_STATUSES
+    assert "completed" not in AGENT_TEAM_ACTIVE_STATUSES
+
+
+def test_agent_team_config_grouping_preserves_all_items():
+    config_items = [{"key": key} for key in AGENT_TEAM_CONFIG_KEYS]
+
+    groups = _group_config_items(config_items, lang="zh-CN")
+    grouped_keys = [item["key"] for group in groups for item in group["items"]]
+
+    assert grouped_keys == AGENT_TEAM_CONFIG_KEYS
+    assert [group["key"] for group in groups] == ["basic", "ai", "guardrails"]
