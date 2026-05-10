@@ -121,12 +121,17 @@ def get_ai_provider(provider_id: str | None) -> AIProvider:
     return AI_PROVIDERS.get(provider_id.lower().strip(), AI_PROVIDERS["custom"])
 
 
-def get_provider_select_options(include_summary_follow: bool = False) -> list[dict[str, str]]:
+def get_provider_select_options(
+    include_summary_follow: bool = False,
+    include_main_ai: bool = False,
+) -> list[dict[str, str]]:
     """Return options for dynamic config select fields."""
     options = [
         {"value": provider.id, "label": provider.label}
         for provider in AI_PROVIDERS.values()
     ]
+    if include_main_ai:
+        options.insert(0, {"value": "main", "label": "复用主 AI / Use main AI"})
     if include_summary_follow:
         options.insert(0, {"value": "", "label": "跟随主模型"})
     return options

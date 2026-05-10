@@ -1,8 +1,10 @@
 """Agent 专家团队模式基础测试"""
 
+from types import SimpleNamespace
+
 import pytest
 
-from backend.services.agent_team.ai_client import AgentTeamAIConfig
+from backend.services.agent_team.ai_client import AgentTeamAIConfig, load_agent_team_ai_config
 from backend.services.agent_team.candidate_service import AgentCandidate, _parse_ai_filter_response, candidates_to_dicts
 from backend.webui.routes.agent_team import (
     AGENT_TEAM_ACTIVE_STATUSES,
@@ -28,10 +30,107 @@ def test_agent_team_ai_config_requires_dedicated_values():
         config.validate()
 
     message = str(exc.value)
-    assert "agent_team_api_base" in message
-    assert "agent_team_api_key" in message
-    assert "agent_team_model" in message
-    assert "agent_team_review_model" in message
+    assert "agent_team_api_base 或 openai_api_base" in message
+    assert "agent_team_api_key 或 openai_api_key" in message
+    assert "agent_team_model 或 openai_model" in message
+    assert "agent_team_review_model 或 agent_team_model/openai_model" in message
+
+
+@pytest.mark.asyncio
+async def test_load_agent_team_ai_config_uses_main_ai_when_selected(monkeypatch):
+    async def fake_get_dynamic_config(key: str):
+        values = {
+            "agent_team_model_provider": "main",
+            "agent_team_api_base": "",
+            "agent_team_api_key": "",
+            "agent_team_model": "",
+            "agent_team_review_model": "",
+            "agent_team_summary_model": "",
+            "ai_provider": "deepseek",
+            "openai_api_base": "https://main.example/v1",
+            "openai_api_key": "main-key",
+            "openai_model": "main-model",
+            "summary_model": "summary-model",
+            "agent_team_temperature": 0.25,
+            "agent_team_max_tokens": 4096,
+            "agent_team_timeout_seconds": 300,
+        }
+        return values.get(key)
+
+    monkeypatch.setattr("backend.services.agent_team.ai_client.get_dynamic_config", fake_get_dynamic_config)
+    monkeypatch.setattr(
+        "backend.services.agent_team.ai_client.get_settings",
+        lambda: SimpleNamespace(
+            ai_provider="openai",
+            openai_api_base="https://settings.example/v1",
+            openai_api_key="settings-key",
+            openai_model="settings-model",
+            summary_model="settings-summary-model",
+        ),
+    )
+
+    config = await load_agent_team_ai_config()
+
+    assert config.provider == "deepseek"
+    assert config.api_base == "https://main.example/v1"
+    assert config.api_key == "main-key"
+    assert config.model == "main-model"
+    assert config.review_model == "main-model"
+    assert config.summary_model == "summary-model"
+    assert config.temperature == 0.25
+    assert config.max_tokens == 4096
+    assert config.timeout_seconds == 300
+
+
+@pytest.mark.asyncio
+async def test_load_agent_team_ai_config_uses_independent_agent_values(monkeypatch):
+    async def fake_get_dynamic_config(key: str):
+        values = {
+            "agent_team_model_provider": "qwen",
+            "agent_team_api_base": "https://agent.example/v1",
+            "agent_team_api_key": "agent-key",
+            "agent_team_model": "agent-model",
+            "agent_team_review_model": "agent-review-model",
+            "agent_team_summary_model": "agent-summary-model",
+            "ai_provider": "deepseek",
+            "openai_api_base": "https://main.example/v1",
+            "openai_api_key": "main-key",
+            "openai_model": "main-model",
+            "summary_model": "summary-model",
+            "agent_team_temperature": 0.2,
+            "agent_team_max_tokens": 8192,
+            "agent_team_timeout_seconds": 600,
+        }
+        return values.get(key)
+
+    monkeypatch.setattr("backend.services.agent_team.ai_client.get_dynamic_config", fake_get_dynamic_config)
+    monkeypatch.setattr(
+        "backend.services.agent_team.ai_client.get_settings",
+        lambda: SimpleNamespace(
+            ai_provider="openai",
+            openai_api_base="https://settings.example/v1",
+            openai_api_key="settings-key",
+            openai_model="settings-model",
+            summary_model="settings-summary-model",
+        ),
+    )
+
+    config = await load_agent_team_ai_config()
+
+    assert config.provider == "qwen"
+    assert config.api_base == "https://agent.example/v1"
+    assert config.api_key == "agent-key"
+    assert config.model == "agent-model"
+    assert config.review_model == "agent-review-model"
+    assert config.summary_model == "agent-summary-model"
+
+
+def test_agent_team_provider_options_include_main_ai_choice():
+    from backend.core.config import DYNAMIC_CONFIG_SELECT_OPTIONS
+
+    options = DYNAMIC_CONFIG_SELECT_OPTIONS["agent_team_model_provider"]
+
+    assert options[0]["value"] == "main"
 
 
 def test_agent_team_ai_config_safe_snapshot_masks_key():
