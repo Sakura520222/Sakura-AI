@@ -126,7 +126,7 @@ class FullStackExpertAgent:
         """执行全栈专家任务，AI 自主调用工具直到完成。"""
         client, config = await create_agent_team_client()
         ctx = self._build_context()
-        tool_schemas = get_tool_definitions("fullstack")
+        tool_schemas = get_tool_definitions("fullstack", provider=config.provider)
 
         messages: list[dict[str, Any]] = [
             {"role": "system", "content": FULLSTACK_SYSTEM_PROMPT},

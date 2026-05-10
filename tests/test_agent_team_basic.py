@@ -133,6 +133,12 @@ def test_agent_team_provider_options_include_main_ai_choice():
     assert options[0]["value"] == "main"
 
 
+def test_agent_team_max_tokens_range_is_provider_safe():
+    from backend.core.config import DYNAMIC_CONFIG_RANGES
+
+    assert DYNAMIC_CONFIG_RANGES["agent_team_max_tokens"] == (1024, 8192)
+
+
 def test_agent_team_ai_config_safe_snapshot_masks_key():
     config = AgentTeamAIConfig(
         provider="openai",

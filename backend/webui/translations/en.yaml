@@ -688,7 +688,7 @@ config:
     agent_team_review_model: "Model used by the professional reviewer role for code review and iteration; defaults to full-stack model for independent providers"
     agent_team_summary_model: "Summary and reflection auxiliary model; defaults to reviewer or full-stack model for independent providers"
     agent_team_temperature: "AI temperature, lower = more deterministic, higher = more creative"
-    agent_team_max_tokens: "Maximum tokens per AI call"
+    agent_team_max_tokens: "Maximum output tokens per Agent AI call (4096-8192 recommended; overly large values may be rejected by providers)"
     agent_team_timeout_seconds: "Max runtime per task, auto-terminates when exceeded"
     agent_team_max_concurrent: "Maximum number of concurrent tasks"
     agent_team_min_priority: "Minimum Issue priority requirement for candidate tasks"

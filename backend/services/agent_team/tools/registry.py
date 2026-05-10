@@ -89,13 +89,38 @@ def _sanitize_schema(schema: dict[str, Any]) -> dict[str, Any]:
     return schema
 
 
-def get_tool_definitions(role: str = "fullstack") -> list[dict[str, Any]]:
+def _zai_compatible_schema(schema: dict[str, Any]) -> dict[str, Any]:
+    """转换为 Z.ai/GLM 更稳定接受的工具 schema。
+
+    GLM 的 OpenAI 兼容接口对 function calling JSON Schema 较严格，
+    可选参数容易触发 1210 参数错误。这里将所有 properties 都放入
+    required，并禁止额外属性；工具实现本身已有默认值兜底。
+    """
+    schema = _sanitize_schema(schema)
+    params = schema.get("function", {}).get("parameters", {})
+    properties = params.get("properties", {})
+    if properties:
+        params["required"] = list(properties.keys())
+    params["additionalProperties"] = False
+    for prop in properties.values():
+        if prop.get("type") == "object":
+            prop.setdefault("additionalProperties", False)
+    return schema
+
+
+def get_tool_definitions(
+    role: str = "fullstack",
+    provider: str | None = None,
+) -> list[dict[str, Any]]:
     """获取指定角色的工具 schema 列表（用于 function calling）。
 
     Args:
         role: "fullstack" 或 "reviewer"
+        provider: AI 厂商 ID，用于应用厂商兼容转换
     """
     tools = FULLSTACK_TOOL_INSTANCES if role == "fullstack" else REVIEWER_TOOL_INSTANCES
+    if (provider or "").lower() == "zai":
+        return [_zai_compatible_schema(t.get_schema()) for t in tools]
     return [_sanitize_schema(t.get_schema()) for t in tools]
 
 
