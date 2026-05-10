@@ -151,7 +151,7 @@ async def save_agent_team_config(
                     "toast.numeric_required",
                     "error",
                     lang=detect_language(),
-                    key=key,
+                    field_key=key,
                 )
             if not (min_v <= num_val <= max_v):
                 return toast_redirect(
@@ -159,7 +159,7 @@ async def save_agent_team_config(
                     "toast.value_range",
                     "error",
                     lang=detect_language(),
-                    key=key,
+                    field_key=key,
                     min_v=min_v,
                     max_v=max_v,
                 )
@@ -172,7 +172,7 @@ async def save_agent_team_config(
                     "toast.value_invalid",
                     "error",
                     lang=detect_language(),
-                    key=key,
+                    field_key=key,
                 )
 
         result = await db.execute(select(AppConfig).where(AppConfig.key_name == key))
