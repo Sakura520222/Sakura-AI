@@ -12,6 +12,7 @@ from dataclasses import dataclass
 
 from loguru import logger
 
+from backend.core.config import settings
 from backend.services.agent_team.shell_executor import AgentTeamShellExecutor
 from backend.services.agent_team.workspace_service import AgentTeamWorkspaceService
 
@@ -45,6 +46,13 @@ class AgentTeamPRService:
     ) -> str:
         """将工作区变更 commit 并 push，返回 commit SHA。"""
         executor = AgentTeamShellExecutor(workspace, self.workspace_service)
+
+        # 确保有 git user identity（容器环境可能缺少全局配置）
+        bot_name = settings.bot_username or "Sakura Agent"
+        await executor.run(f'git config user.name "{bot_name}[bot]"')
+        await executor.run(
+            f'git config user.email "{bot_name}[bot]+noreply@users.noreply.github.com"'
+        )
 
         # git add 所有修改
         await executor.run("git add -A")

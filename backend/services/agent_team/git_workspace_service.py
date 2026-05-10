@@ -50,7 +50,7 @@ class AgentTeamGitWorkspaceService:
         if not (workspace / ".git").exists():
             await self._run_checked_args(
                 executor,
-                ["git", "clone", "--depth", "1", "--branch", default_branch, clone_url, "."],
+                ["git", "clone", "--branch", default_branch, clone_url, "."],
                 "clone repository",
             )
         else:
