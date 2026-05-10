@@ -3,7 +3,7 @@
 import json
 from datetime import datetime
 
-from fastapi import APIRouter, Depends, Form, Request
+from fastapi import APIRouter, BackgroundTasks, Depends, Form, Request
 from fastapi.responses import JSONResponse
 from sqlalchemy import desc, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -241,6 +241,7 @@ async def preview_candidates(
 
 @router.post("/tasks/create")
 async def create_task_from_candidate(
+    background_tasks: BackgroundTasks,
     db: AsyncSession = Depends(get_db),
     user: dict = Depends(require_super_admin),
     csrf_token: str = Depends(require_csrf),
@@ -288,12 +289,17 @@ async def create_task_from_candidate(
         str(task.id),
         {"source_type": source_type, "source_id": source_id},
     )
+
+    # 提交给后台 worker 执行，避免阻塞 HTTP 请求导致前端/反代超时
+    background_tasks.add_task(_run_agent_task_background, task.id)
+
     return JSONResponse({"success": True, "task_id": task.id})
 
 
 @router.post("/tasks/{task_id}/retry")
 async def retry_task(
     task_id: int,
+    background_tasks: BackgroundTasks,
     db: AsyncSession = Depends(get_db),
     user: dict = Depends(require_super_admin),
     csrf_token: str = Depends(require_csrf),
@@ -327,13 +333,8 @@ async def retry_task(
     task.ai_config_snapshot = json.dumps(config.safe_snapshot(), ensure_ascii=False)
     await db.commit()
 
-    # 提交给 worker 执行
-    try:
-        from backend.workers.agent_team_worker import submit_agent_team_task
-
-        await submit_agent_team_task(task_id)
-    except Exception:
-        pass  # worker 可能是异步的，不需要等结果
+    # 提交给后台 worker 执行，避免阻塞 HTTP 请求导致前端/反代超时
+    background_tasks.add_task(_run_agent_task_background, task_id)
 
     await log_admin_action(
         db, user["user_id"], "agent_team_task_retry", "agent_team_task", str(task_id), {"old_status": task.status}
@@ -370,6 +371,18 @@ async def cancel_task(
         db, user["user_id"], "agent_team_task_cancel", "agent_team_task", str(task_id), {"old_status": old_status}
     )
     return JSONResponse({"success": True, "task_id": task_id})
+
+
+async def _run_agent_task_background(task_id: int) -> None:
+    """后台执行 Agent 任务，避免阻塞 WebUI 请求。"""
+    try:
+        from backend.workers.agent_team_worker import submit_agent_team_task
+
+        await submit_agent_team_task(task_id)
+    except Exception as exc:
+        from loguru import logger
+
+        logger.error("Agent 后台任务提交失败: task_id={}, error={}", task_id, exc, exc_info=True)
 
 
 async def _load_config_items(db: AsyncSession, lang: str = "zh-CN") -> list[dict]:
