@@ -212,6 +212,17 @@ def test_get_tool_definitions():
     assert "replace_lines" in names
 
 
+def test_get_tool_definitions_zai_requires_all_properties():
+    schemas = get_tool_definitions("fullstack", provider="zai")
+
+    for schema in schemas:
+        params = schema["function"]["parameters"]
+        properties = params.get("properties", {})
+        assert params.get("additionalProperties") is False
+        if properties:
+            assert set(params["required"]) == set(properties)
+
+
 def test_tool_registry_by_name():
     assert "edit_file" in tool_registry
     assert "submit_review" in tool_registry

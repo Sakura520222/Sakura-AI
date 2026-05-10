@@ -688,7 +688,7 @@ config:
     agent_team_review_model: "专业审查角色使用的模型，负责代码审查和迭代；选择独立厂商时可填写，默认复用全栈专家模型"
     agent_team_summary_model: "摘要和反思辅助模型；选择独立厂商时可填写，默认复用专业审查或全栈专家模型"
     agent_team_temperature: "AI 生成温度参数，越低越确定性，越高越创造性"
-    agent_team_max_tokens: "每次 AI 调用的最大 Token 数"
+    agent_team_max_tokens: "每次 Agent AI 调用的最大输出 Token 数（建议 4096-8192，过大可能被模型接口拒绝）"
     agent_team_timeout_seconds: "单个任务的最大运行时间，超时后自动终止"
     agent_team_max_concurrent: "同时运行的最大任务数"
     agent_team_min_priority: "候选任务的最低 Issue 优先级要求"

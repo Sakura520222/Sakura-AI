@@ -115,7 +115,7 @@ class ProfessionalReviewAgent:
         """执行审查，AI 自主调用工具直到提交审查。"""
         client, config = await create_agent_team_client()
         ctx = self._build_context()
-        tool_schemas = get_tool_definitions("reviewer")
+        tool_schemas = get_tool_definitions("reviewer", provider=config.provider)
 
         messages: list[dict[str, Any]] = [
             {"role": "system", "content": REVIEWER_SYSTEM_PROMPT},

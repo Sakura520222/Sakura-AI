@@ -1054,7 +1054,7 @@ DYNAMIC_CONFIG_RANGES: dict[str, tuple[float, float]] = {
     "sakura_max_sakura_chars": (1000, 20000),
     # Agent 专家团队
     "agent_team_temperature": (0.0, 2.0),
-    "agent_team_max_tokens": (1024, 200000),
+    "agent_team_max_tokens": (1024, 8192),
     "agent_team_timeout_seconds": (60, 7200),
     "agent_team_max_concurrent": (1, 5),
     "agent_team_max_iterations_per_task": (1, 10),
