@@ -1,7 +1,7 @@
 <!-- 侧边栏 -->
 <aside id="sidebar"
-       class="fixed top-16 left-0 bottom-0 w-64 glass border-r border-sakura-200/50 dark:border-sakura-800/30 z-40 transform -translate-x-full lg:translate-x-0 transition-transform duration-300 ease-in-out">
-    <nav class="p-4 space-y-1">
+         class="fixed top-16 left-0 bottom-0 w-64 glass border-r border-sakura-200/50 dark:border-sakura-800/30 z-40 transform -translate-x-full lg:translate-x-0 transition-transform duration-300 ease-in-out overflow-y-auto overscroll-contain">
+     <nav class="p-4 pb-6 space-y-1">
         <a href="/webui/"
            class="sidebar-link flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium transition-all duration-200
                   {% if active_page == 'dashboard' %}bg-gradient-to-r from-sakura-500 to-sakura-600 text-white shadow-md shadow-sakura-500/25{% else %}text-gray-700 dark:text-gray-300 hover:bg-sakura-50 dark:hover:bg-sakura-900/20 hover:text-sakura-700 dark:hover:text-sakura-400{% endif %}">
