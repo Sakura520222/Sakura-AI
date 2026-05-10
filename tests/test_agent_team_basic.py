@@ -3,6 +3,7 @@
 import pytest
 
 from backend.services.agent_team.ai_client import AgentTeamAIConfig
+from backend.services.agent_team.candidate_service import AgentCandidate, _parse_ai_filter_response, candidates_to_dicts
 from backend.webui.routes.agent_team import (
     AGENT_TEAM_ACTIVE_STATUSES,
     AGENT_TEAM_CONFIG_KEYS,
@@ -81,3 +82,61 @@ def test_agent_team_config_grouping_preserves_all_items():
 
     assert grouped_keys == AGENT_TEAM_CONFIG_KEYS
     assert [group["key"] for group in groups] == ["basic", "ai", "guardrails"]
+
+
+def test_agent_candidate_dict_includes_ai_filter_reason():
+    candidate = AgentCandidate(
+        source_type="issue_analysis",
+        source_id=1,
+        source_issue_number=10,
+        repo_full_name="owner/repo",
+        repo_owner="owner",
+        repo_name="repo",
+        title="Fix bug",
+        summary="Small bug",
+        priority="high",
+        candidate_score=88,
+        filter_reason="符合低风险快速修复要求",
+    )
+
+    data = candidates_to_dicts([candidate])[0]
+
+    assert data["filter_reason"] == "符合低风险快速修复要求"
+
+
+def test_parse_ai_filter_response_normalizes_values():
+    response = """
+    ```json
+    [
+      {"source_id": "1", "selected": true, "score": 120, "priority": "urgent", "reason": "Good fit"},
+      {"source_id": 2, "selected": "false", "score": -5, "priority": "low", "reason": "Skip"}
+    ]
+    ```
+    """
+
+    items = _parse_ai_filter_response(response)
+
+    assert items[0] == {
+        "source_id": 1,
+        "selected": True,
+        "score": 100,
+        "priority": "medium",
+        "reason": "Good fit",
+    }
+    assert items[1]["selected"] is False
+    assert items[1]["score"] == 0
+    assert items[1]["priority"] == "low"
+
+
+def test_parse_ai_filter_response_accepts_wrapped_results():
+    items = _parse_ai_filter_response('{"results": [{"source_id": 7, "score": 90, "priority": "high"}]}')
+
+    assert items == [
+        {
+            "source_id": 7,
+            "selected": True,
+            "score": 90,
+            "priority": "high",
+            "reason": "",
+        }
+    ]

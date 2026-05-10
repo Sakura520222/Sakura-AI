@@ -382,17 +382,27 @@ async def preview_candidates(
     db: AsyncSession = Depends(get_db),
     user: dict = Depends(require_super_admin),
     csrf_token: str = Depends(require_csrf),
+    ai_filter_requirement: str = Form(""),
 ):
     """手动预览候选任务。"""
     service = AgentTeamCandidateService()
-    candidates = await service.collect_candidates(db)
+    try:
+        candidates = await service.collect_candidates(db, ai_filter_requirement=ai_filter_requirement)
+    except ValueError as exc:
+        return JSONResponse({"success": False, "message": str(exc)}, status_code=200)
+    except Exception as exc:
+        return JSONResponse({"success": False, "message": f"AI 筛选候选失败: {exc}"}, status_code=200)
     await log_admin_action(
         db,
         user["user_id"],
         "agent_team_preview_candidates",
         "agent_team",
         None,
-        {"count": len(candidates)},
+        {
+            "count": len(candidates),
+            "ai_filter": bool(ai_filter_requirement.strip()),
+            "requirement": ai_filter_requirement.strip()[:300],
+        },
     )
     return JSONResponse({"success": True, "candidates": candidates_to_dicts(candidates)})
 
@@ -405,6 +415,7 @@ async def create_task_from_candidate(
     csrf_token: str = Depends(require_csrf),
     source_type: str = Form(...),
     source_id: int = Form(...),
+    ai_filter_requirement: str = Form(""),
 ):
     """从候选来源创建 Agent 任务。"""
     try:
@@ -421,7 +432,7 @@ async def create_task_from_candidate(
             status_code=200,
         )
     service = AgentTeamCandidateService()
-    candidates = await service.collect_candidates(db, limit=100)
+    candidates = await service.collect_candidates(db, limit=100, ai_filter_requirement=ai_filter_requirement)
     candidate = next(
         (
             item
