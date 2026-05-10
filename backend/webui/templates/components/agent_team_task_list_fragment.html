@@ -67,6 +67,9 @@
                         {% elif task.status not in ('completed', 'pr_opened') %}
                         <button onclick="cancelTask({{ task.id }})" class="px-3 py-2 text-xs font-semibold rounded-xl bg-gray-400 hover:bg-gray-500 text-white transition-colors">{{ _('agent_team.cancel') }}</button>
                         {% endif %}
+                        {% if task.status not in ('queued', 'planning', 'cloning', 'editing', 'self_reviewing', 'validating', 'pushing', 'external_reviewing', 'iterating') %}
+                        <button onclick="deleteTask({{ task.id }})" class="px-3 py-2 text-xs font-semibold rounded-xl bg-red-50 dark:bg-red-900/20 text-red-700 dark:text-red-300 border border-red-200 dark:border-red-800/60 hover:bg-red-100 dark:hover:bg-red-900/30 transition-colors">{{ _('agent_team.delete') }}</button>
+                        {% endif %}
                     </div>
                 </div>
             </article>
@@ -116,5 +119,29 @@ function cancelTask(taskId) {
         window.dispatchEvent(new CustomEvent('show-toast', {detail: {message: data.success ? '{{ _('agent_team.task_cancelled') }}' : (data.message || '{{ _('agent_team.request_failed') }}'), type: data.success ? 'success' : 'error'}}));
         if (data.success) refreshAgentTaskList();
     }).catch(() => window.dispatchEvent(new CustomEvent('show-toast', {detail: {message: '{{ _('agent_team.request_failed') }}', type: 'error'}})));
+}
+function deleteTask(taskId) {
+    var dialogEl = document.querySelector('[x-data="confirmDialog()"]');
+    var ask = dialogEl && window.Alpine ? Alpine.$data(dialogEl).ask.bind(Alpine.$data(dialogEl)) : null;
+    var confirmPromise = ask ? ask({
+        message: '{{ _('agent_team.confirm_delete') }}',
+        warning: '{{ _('agent_team.delete_warning') }}',
+        confirmText: '{{ _('agent_team.delete') }}'
+    }) : Promise.resolve(window.confirm('{{ _('agent_team.confirm_delete') }}'));
+    confirmPromise.then(function(confirmed) {
+        if (!confirmed) return;
+        fetch(`/webui/agent-team/tasks/${taskId}/delete`, {
+            method: 'POST',
+            headers: {'Content-Type': 'application/x-www-form-urlencoded'},
+            body: new URLSearchParams({csrf_token: '{{ csrf_token }}'})
+        }).then(r => r.json()).then(data => {
+            window.dispatchEvent(new CustomEvent('show-toast', {detail: {message: data.success ? '{{ _('agent_team.task_deleted') }}' : (data.message || '{{ _('agent_team.request_failed') }}'), type: data.success ? 'success' : 'error'}}));
+            if (data.success) {
+                var detail = document.getElementById('agent-task-detail');
+                if (detail) detail.innerHTML = '<div class="p-6 text-center text-gray-500 dark:text-gray-400">{{ _('agent_team.select_task_hint') }}</div>';
+                refreshAgentTaskList();
+            }
+        }).catch(() => window.dispatchEvent(new CustomEvent('show-toast', {detail: {message: '{{ _('agent_team.request_failed') }}', type: 'error'}})));
+    });
 }
 </script>

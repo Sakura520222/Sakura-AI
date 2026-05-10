@@ -507,6 +507,51 @@ async def cancel_task(
     return JSONResponse({"success": True, "task_id": task_id})
 
 
+@router.post("/tasks/{task_id}/delete")
+async def delete_task(
+    task_id: int,
+    db: AsyncSession = Depends(get_db),
+    user: dict = Depends(require_super_admin),
+    csrf_token: str = Depends(require_csrf),
+):
+    """删除任务及其迭代/反馈/变更文件记录。"""
+    result = await db.execute(select(AgentTeamTask).where(AgentTeamTask.id == task_id))
+    task = result.scalar_one_or_none()
+    if task is None:
+        return JSONResponse({"success": False, "message": "任务不存在"}, status_code=404)
+
+    protected_statuses = set(AGENT_TEAM_ACTIVE_STATUSES) - {
+        AgentTeamTaskStatus.PR_OPENED.value,
+        AgentTeamTaskStatus.WAITING_HUMAN.value,
+    }
+    if task.status in protected_statuses:
+        return JSONResponse(
+            {"success": False, "message": f"当前状态 {task.status} 仍在运行，请先取消或等待完成后再删除"},
+            status_code=200,
+        )
+
+    log_payload = {
+        "task_id": task.id,
+        "title": task.title,
+        "repo_full_name": task.repo_full_name,
+        "source_type": task.source_type,
+        "source_id": task.source_id,
+        "status": task.status,
+    }
+    await db.delete(task)
+    await db.commit()
+
+    await log_admin_action(
+        db,
+        user["user_id"],
+        "agent_team_task_delete",
+        "agent_team_task",
+        str(task_id),
+        log_payload,
+    )
+    return JSONResponse({"success": True, "task_id": task_id})
+
+
 async def _run_agent_task_background(task_id: int) -> None:
     """后台执行 Agent 任务，避免阻塞 WebUI 请求。"""
     try:
