@@ -1058,8 +1058,8 @@ DYNAMIC_CONFIG_RANGES: dict[str, tuple[float, float]] = {
     "agent_team_max_concurrent": (1, 5),
     "agent_team_max_iterations_per_task": (1, 10),
     "agent_team_max_runtime_minutes": (5, 720),
-    "agent_team_max_files_changed": (1, 100),
-    "agent_team_max_lines_changed": (1, 10000),
+    "agent_team_max_files_changed": (1, 1000),
+    "agent_team_max_lines_changed": (1, 100000),
 }
 
 # 字段中文标签
