@@ -45,6 +45,33 @@ def test_resolve_inside_workspace_blocks_escape(tmp_path):
         service.resolve_inside_workspace(workspace, "../other")
 
 
+def test_list_workspaces_returns_workspace_stats(tmp_path):
+    service = AgentTeamWorkspaceService(tmp_path / "workplace")
+    workspace = service.ensure_workspace("owner", "repo")
+    (workspace / ".git").mkdir()
+    (workspace / "main.py").write_text("print('hello')\n", encoding="utf-8")
+
+    workspaces = service.list_workspaces()
+
+    assert len(workspaces) == 1
+    assert workspaces[0].repo_owner == "owner"
+    assert workspaces[0].repo_name == "repo"
+    assert workspaces[0].file_count == 1
+    assert workspaces[0].total_size_bytes > 0
+    assert workspaces[0].has_git is True
+
+
+def test_delete_workspace_removes_repository_directory(tmp_path):
+    service = AgentTeamWorkspaceService(tmp_path / "workplace")
+    workspace = service.ensure_workspace("owner", "repo")
+    (workspace / "main.py").write_text("print('hello')\n", encoding="utf-8")
+
+    deleted_path = service.delete_workspace("owner", "repo")
+
+    assert deleted_path == workspace
+    assert not workspace.exists()
+
+
 @pytest.mark.asyncio
 async def test_shell_executor_uses_workspace_and_python_env(tmp_path):
     service = AgentTeamWorkspaceService(tmp_path / "workplace")
