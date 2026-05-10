@@ -27,6 +27,7 @@ from backend.services.agent_team.candidate_service import (
     AgentTeamCandidateService,
     candidates_to_dicts,
 )
+from backend.services.agent_team.workspace_service import AgentTeamWorkspaceService
 from backend.webui.deps import (
     get_csrf_serializer,
     get_db,
@@ -150,6 +151,7 @@ async def agent_team_page(
         config_items=config_items,
         config_groups=config_groups,
         stats=stats,
+        workspace_summary=_load_workspace_summary(),
         status_options=[status.value for status in AgentTeamTaskStatus],
     )
 
@@ -213,6 +215,28 @@ async def task_list_fragment(
         source_type=source_type or "all",
         q=q or "",
         sort=sort,
+    )
+
+
+@router.get("/workspaces-fragment")
+async def workspace_list_fragment(
+    request: Request,
+    user: dict = Depends(require_super_admin),
+    user_prefs: dict = Depends(get_user_preferences),
+):
+    """工作区列表片段。"""
+    service = AgentTeamWorkspaceService()
+    workspaces = [_workspace_info_to_dict(info) for info in service.list_workspaces()]
+    return render_template(
+        "components/agent_team_workspace_list_fragment.html",
+        request,
+        user_prefs=user_prefs,
+        current_user=user,
+        csrf_token=get_csrf_serializer().dumps({}),
+        workspace_root=str(service.base_dir),
+        workspaces=workspaces,
+        total_size=sum(item["total_size_bytes"] for item in workspaces),
+        total_size_label=_format_bytes(sum(item["total_size_bytes"] for item in workspaces)),
     )
 
 
@@ -552,6 +576,45 @@ async def delete_task(
     return JSONResponse({"success": True, "task_id": task_id})
 
 
+@router.post("/workspaces/delete")
+async def delete_workspace(
+    db: AsyncSession = Depends(get_db),
+    user: dict = Depends(require_super_admin),
+    csrf_token: str = Depends(require_csrf),
+    repo_owner: str = Form(...),
+    repo_name: str = Form(...),
+):
+    """删除 Agent 仓库工作区目录。"""
+    active_count = await db.scalar(
+        select(func.count(AgentTeamTask.id)).where(
+            AgentTeamTask.repo_owner == repo_owner,
+            AgentTeamTask.repo_name == repo_name,
+            AgentTeamTask.status.in_(AGENT_TEAM_ACTIVE_STATUSES),
+        )
+    )
+    if active_count:
+        return JSONResponse(
+            {"success": False, "message": "该仓库存在进行中的 Agent 任务，请先取消或等待完成后再删除工作区"},
+            status_code=200,
+        )
+
+    service = AgentTeamWorkspaceService()
+    try:
+        workspace = service.delete_workspace(repo_owner, repo_name)
+    except ValueError as exc:
+        return JSONResponse({"success": False, "message": str(exc)}, status_code=400)
+
+    await log_admin_action(
+        db,
+        user["user_id"],
+        "agent_team_workspace_delete",
+        "agent_team_workspace",
+        f"{repo_owner}/{repo_name}",
+        {"repo_owner": repo_owner, "repo_name": repo_name, "path": str(workspace)},
+    )
+    return JSONResponse({"success": True, "repo_owner": repo_owner, "repo_name": repo_name})
+
+
 async def _run_agent_task_background(task_id: int) -> None:
     """后台执行 Agent 任务，避免阻塞 WebUI 请求。"""
     try:
@@ -677,3 +740,41 @@ async def _load_stats(db: AsyncSession) -> dict:
         "waiting_human": waiting_human or 0,
         "status_counts": {status: count for status, count in status_rows.all()},
     }
+
+
+def _load_workspace_summary() -> dict:
+    """读取工作区摘要，用于页面顶部快捷展示。"""
+    service = AgentTeamWorkspaceService()
+    workspaces = service.list_workspaces()
+    return {
+        "root": str(service.base_dir),
+        "count": len(workspaces),
+        "total_size_bytes": sum(item.total_size_bytes for item in workspaces),
+        "total_size_label": _format_bytes(sum(item.total_size_bytes for item in workspaces)),
+    }
+
+
+def _workspace_info_to_dict(info) -> dict:
+    """将工作区信息转换为模板友好结构。"""
+    return {
+        "repo_owner": info.repo_owner,
+        "repo_name": info.repo_name,
+        "repo_full_name": f"{info.repo_owner}/{info.repo_name}",
+        "path": str(info.path),
+        "exists": info.exists,
+        "file_count": info.file_count,
+        "total_size_bytes": info.total_size_bytes,
+        "size_label": _format_bytes(info.total_size_bytes),
+        "modified_at": datetime.fromtimestamp(info.modified_at) if info.modified_at else None,
+        "has_git": info.has_git,
+    }
+
+
+def _format_bytes(value: int) -> str:
+    """格式化字节数。"""
+    size = float(value or 0)
+    for unit in ["B", "KB", "MB", "GB"]:
+        if size < 1024 or unit == "GB":
+            return f"{size:.1f} {unit}" if unit != "B" else f"{int(size)} B"
+        size /= 1024
+    return f"{size:.1f} GB"
