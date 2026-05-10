@@ -6,16 +6,31 @@
     {% if tasks %}
     <div class="divide-y divide-gray-200 dark:divide-gray-700">
         {% for task in tasks %}
-        <div class="p-5">
+        <div class="p-5" id="task-{{ task.id }}">
             <div class="flex items-start justify-between gap-4">
-                <div>
+                <div class="flex-1 min-w-0">
                     <div class="font-medium text-gray-900 dark:text-gray-100">{{ task.title }}</div>
                     <div class="mt-1 text-xs text-gray-500">{{ task.repo_full_name }} · {{ task.source_type }} · {{ task.created_at }}</div>
                     {% if task.summary %}<p class="mt-2 text-sm text-gray-600 dark:text-gray-300 line-clamp-2">{{ task.summary }}</p>{% endif %}
+                    {% if task.error_message %}<p class="mt-2 text-sm text-red-500 line-clamp-2">{{ task.error_message }}</p>{% endif %}
                 </div>
-                <div class="text-right">
-                    <span class="inline-flex px-2 py-1 rounded-full text-xs bg-sakura-100 text-sakura-700 dark:bg-sakura-900/30 dark:text-sakura-300">{{ task.status }}</span>
+                <div class="text-right shrink-0">
+                    <span class="inline-flex px-2 py-1 rounded-full text-xs
+                        {% if task.status == 'completed' %}bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-300
+                        {% elif task.status == 'failed' %}bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-300
+                        {% elif task.status == 'cancelled' or task.status == 'abandoned' %}bg-gray-100 text-gray-500 dark:bg-gray-700 dark:text-gray-400
+                        {% else %}bg-sakura-100 text-sakura-700 dark:bg-sakura-900/30 dark:text-sakura-300{% endif %}">{{ task.status }}</span>
                     <div class="mt-2 text-xs text-gray-500">score {{ task.candidate_score }}</div>
+                    <div class="mt-2 flex gap-1.5 justify-end">
+                        {% if task.status in ('failed', 'cancelled', 'abandoned') %}
+                        <button onclick="retryTask({{ task.id }})" class="px-2.5 py-1 text-xs font-medium rounded-lg bg-red-500 hover:bg-red-600 text-white transition-colors">{{ _('agent_team.retry') }}</button>
+                        {% elif task.status == 'queued' %}
+                        <button onclick="retryTask({{ task.id }})" class="px-2.5 py-1 text-xs font-medium rounded-lg bg-amber-500 hover:bg-amber-600 text-white transition-colors">{{ _('agent_team.retry') }}</button>
+                        <button onclick="cancelTask({{ task.id }})" class="px-2.5 py-1 text-xs font-medium rounded-lg bg-gray-400 hover:bg-gray-500 text-white transition-colors">{{ _('agent_team.cancel') }}</button>
+                        {% elif task.status not in ('completed', 'pr_opened') %}
+                        <button onclick="cancelTask({{ task.id }})" class="px-2.5 py-1 text-xs font-medium rounded-lg bg-gray-400 hover:bg-gray-500 text-white transition-colors">{{ _('agent_team.cancel') }}</button>
+                        {% endif %}
+                    </div>
                 </div>
             </div>
         </div>
@@ -25,3 +40,44 @@
     <div class="p-8 text-center text-gray-500">{{ _('agent_team.no_tasks') }}</div>
     {% endif %}
 </div>
+
+<script>
+function retryTask(taskId) {
+    fetch(`/webui/agent-team/tasks/${taskId}/retry`, {
+        method: 'POST',
+        headers: {'Content-Type': 'application/x-www-form-urlencoded'},
+        body: new URLSearchParams({csrf_token: '{{ csrf_token }}'})
+    }).then(r => {
+        if (!r.ok) return r.text().then(t => { throw new Error(t); });
+        return r.json();
+    }).then(data => {
+        if (data.success) {
+            window.dispatchEvent(new CustomEvent('show-toast', {detail: {message: '{{ _('agent_team.task_retried') }}', type: 'success'}}));
+            htmx.trigger('agent-task-list', 'load');
+        } else {
+            window.dispatchEvent(new CustomEvent('show-toast', {detail: {message: data.message || '{{ _('agent_team.request_failed') }}', type: 'error'}}));
+        }
+    }).catch(() => {
+        window.dispatchEvent(new CustomEvent('show-toast', {detail: {message: '{{ _('agent_team.request_failed') }}', type: 'error'}}));
+    });
+}
+function cancelTask(taskId) {
+    fetch(`/webui/agent-team/tasks/${taskId}/cancel`, {
+        method: 'POST',
+        headers: {'Content-Type': 'application/x-www-form-urlencoded'},
+        body: new URLSearchParams({csrf_token: '{{ csrf_token }}'})
+    }).then(r => {
+        if (!r.ok) return r.text().then(t => { throw new Error(t); });
+        return r.json();
+    }).then(data => {
+        if (data.success) {
+            window.dispatchEvent(new CustomEvent('show-toast', {detail: {message: '{{ _('agent_team.task_cancelled') }}', type: 'success'}}));
+            htmx.trigger('agent-task-list', 'load');
+        } else {
+            window.dispatchEvent(new CustomEvent('show-toast', {detail: {message: data.message || '{{ _('agent_team.request_failed') }}', type: 'error'}}));
+        }
+    }).catch(() => {
+        window.dispatchEvent(new CustomEvent('show-toast', {detail: {message: '{{ _('agent_team.request_failed') }}', type: 'error'}}));
+    });
+}
+</script>

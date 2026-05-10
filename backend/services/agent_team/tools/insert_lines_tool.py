@@ -138,6 +138,7 @@ class InsertLinesTool(BaseTool):
                 "lines_inserted": len(insert_lines_list),
                 "size": len(result_content),
                 "diff": diff,
+                "_modified_file": file_path,
             },
         )
 

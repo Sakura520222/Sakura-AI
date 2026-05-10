@@ -150,6 +150,7 @@ class ReplaceLinesTool(BaseTool):
                 "lines_replaced": replaced_count,
                 "size": len(result_content),
                 "diff": diff,
+                "_modified_file": file_path,
             },
         )
 

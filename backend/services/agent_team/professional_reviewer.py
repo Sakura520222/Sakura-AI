@@ -188,15 +188,19 @@ class ProfessionalReviewAgent:
                     verdict = output.get("verdict", "reject")
                     score = int(output.get("score", 0))
                     findings = []
-                    for f in output.get("findings", []):
-                        findings.append(
-                            ReviewFinding(
-                                severity=f.get("severity", "minor"),
-                                file=f.get("file", ""),
-                                message=f.get("message", ""),
-                                suggestion=f.get("suggestion", ""),
+                    raw_findings = output.get("findings", [])
+                    if isinstance(raw_findings, list):
+                        for f in raw_findings:
+                            if not isinstance(f, dict):
+                                continue
+                            findings.append(
+                                ReviewFinding(
+                                    severity=f.get("severity", "minor"),
+                                    file=f.get("file", ""),
+                                    message=f.get("message", ""),
+                                    suggestion=f.get("suggestion", ""),
+                                )
                             )
-                        )
                     return ReviewResult(
                         verdict=verdict,
                         score=score,

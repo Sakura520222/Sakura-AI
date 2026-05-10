@@ -162,6 +162,7 @@ class FullStackExpertAgent:
                 return FullStackResult(
                     success=False,
                     summary="AI 返回空响应",
+                    modified_files=sorted(ctx.modified_files),
                     error="empty_response",
                 )
 
@@ -180,9 +181,11 @@ class FullStackExpertAgent:
 
             # 无工具调用 → AI 以纯文本完成
             if not message.tool_calls:
+                tracked = sorted(ctx.modified_files)
                 return FullStackResult(
                     success=True,
                     summary=message.content or "任务完成（无工具调用）",
+                    modified_files=tracked,
                     tool_calls_count=tool_calls_count,
                 )
 
@@ -197,10 +200,16 @@ class FullStackExpertAgent:
                 # 终止工具 → 直接返回
                 if result.is_terminal:
                     output = result.output
+                    # 合并 AI 提供的文件列表和实际追踪的修改
+                    ai_files = output.get("modified_files", [])
+                    if isinstance(ai_files, list):
+                        merged = set(ai_files) | ctx.modified_files
+                    else:
+                        merged = ctx.modified_files
                     return FullStackResult(
                         success=True,
                         summary=output.get("summary", ""),
-                        modified_files=output.get("modified_files", []),
+                        modified_files=sorted(merged),
                         risk_level=output.get("risk_level", "medium"),
                         test_result=output.get("test_result", ""),
                         tool_calls_count=tool_calls_count,
@@ -218,6 +227,7 @@ class FullStackExpertAgent:
         return FullStackResult(
             success=False,
             summary=f"达到最大工具调用轮次 ({self.MAX_TOOL_ROUNDS})",
+            modified_files=sorted(ctx.modified_files),
             tool_calls_count=tool_calls_count,
             error="max_rounds_reached",
         )

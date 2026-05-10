@@ -1,5 +1,8 @@
 """WebUI Agent 专家团队路由（超级管理员专用）"""
 
+import json
+from datetime import datetime
+
 from fastapi import APIRouter, Depends, Form, Request
 from fastapi.responses import JSONResponse
 from sqlalchemy import desc, func, select
@@ -16,7 +19,7 @@ from backend.core.config import (
     mask_sensitive_value,
     update_settings_field,
 )
-from backend.models.agent_team_models import AgentTeamTask
+from backend.models.agent_team_models import AgentTeamTask, AgentTeamTaskStatus
 from backend.models.database import AppConfig
 from backend.services.agent_team.ai_client import load_agent_team_ai_config
 from backend.services.agent_team.candidate_service import (
@@ -107,6 +110,7 @@ async def task_list_fragment(
         request,
         user_prefs=user_prefs,
         current_user=user,
+        csrf_token=get_csrf_serializer().dumps({}),
         tasks=tasks,
         page=page,
         total_pages=total_pages,
@@ -244,8 +248,19 @@ async def create_task_from_candidate(
     source_id: int = Form(...),
 ):
     """从候选来源创建 Agent 任务。"""
-    config = await load_agent_team_ai_config()
-    config.validate()
+    try:
+        config = await load_agent_team_ai_config()
+        config.validate()
+    except ValueError as e:
+        return JSONResponse(
+            {"success": False, "message": str(e)},
+            status_code=200,
+        )
+    except Exception as e:
+        return JSONResponse(
+            {"success": False, "message": f"AI 配置加载失败: {e}"},
+            status_code=200,
+        )
     service = AgentTeamCandidateService()
     candidates = await service.collect_candidates(db, limit=100)
     candidate = next(
@@ -274,6 +289,87 @@ async def create_task_from_candidate(
         {"source_type": source_type, "source_id": source_id},
     )
     return JSONResponse({"success": True, "task_id": task.id})
+
+
+@router.post("/tasks/{task_id}/retry")
+async def retry_task(
+    task_id: int,
+    db: AsyncSession = Depends(get_db),
+    user: dict = Depends(require_super_admin),
+    csrf_token: str = Depends(require_csrf),
+):
+    """重试失败或卡住的任务。"""
+    result = await db.execute(select(AgentTeamTask).where(AgentTeamTask.id == task_id))
+    task = result.scalar_one_or_none()
+    if task is None:
+        return JSONResponse({"success": False, "message": "任务不存在"}, status_code=404)
+
+    retryable_statuses = {"failed", "cancelled", "abandoned", "queued"}
+    if task.status not in retryable_statuses:
+        return JSONResponse(
+            {"success": False, "message": f"当前状态 {task.status} 不可重试，仅支持 {'/'.join(sorted(retryable_statuses))}"},
+            status_code=200,
+        )
+
+    try:
+        config = await load_agent_team_ai_config()
+        config.validate()
+    except ValueError as e:
+        return JSONResponse({"success": False, "message": str(e)}, status_code=200)
+    except Exception as e:
+        return JSONResponse({"success": False, "message": f"AI 配置加载失败: {e}"}, status_code=200)
+
+    task.status = AgentTeamTaskStatus.QUEUED.value
+    task.current_phase = None
+    task.started_at = None
+    task.completed_at = None
+    task.error_message = None
+    task.ai_config_snapshot = json.dumps(config.safe_snapshot(), ensure_ascii=False)
+    await db.commit()
+
+    # 提交给 worker 执行
+    try:
+        from backend.workers.agent_team_worker import submit_agent_team_task
+
+        await submit_agent_team_task(task_id)
+    except Exception:
+        pass  # worker 可能是异步的，不需要等结果
+
+    await log_admin_action(
+        db, user["user_id"], "agent_team_task_retry", "agent_team_task", str(task_id), {"old_status": task.status}
+    )
+    return JSONResponse({"success": True, "task_id": task_id})
+
+
+@router.post("/tasks/{task_id}/cancel")
+async def cancel_task(
+    task_id: int,
+    db: AsyncSession = Depends(get_db),
+    user: dict = Depends(require_super_admin),
+    csrf_token: str = Depends(require_csrf),
+):
+    """取消任务。"""
+    result = await db.execute(select(AgentTeamTask).where(AgentTeamTask.id == task_id))
+    task = result.scalar_one_or_none()
+    if task is None:
+        return JSONResponse({"success": False, "message": "任务不存在"}, status_code=404)
+
+    cancellable = {"queued", "planning", "cloning", "editing", "self_reviewing", "validating", "iterating"}
+    if task.status not in cancellable:
+        return JSONResponse(
+            {"success": False, "message": f"当前状态 {task.status} 不可取消"},
+            status_code=200,
+        )
+
+    old_status = task.status
+    task.status = AgentTeamTaskStatus.CANCELLED.value
+    task.completed_at = datetime.utcnow()
+    await db.commit()
+
+    await log_admin_action(
+        db, user["user_id"], "agent_team_task_cancel", "agent_team_task", str(task_id), {"old_status": old_status}
+    )
+    return JSONResponse({"success": True, "task_id": task_id})
 
 
 async def _load_config_items(db: AsyncSession, lang: str = "zh-CN") -> list[dict]:
