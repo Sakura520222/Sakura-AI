@@ -1159,6 +1159,15 @@ class ReviewWorker:
             # 使用 submit_review_with_inline_comments 方法（带重试机制）
             max_retries = 1  # 失败后重试1次
             success = False
+            review_event = decision.value.upper()  # APPROVE, REQUEST_CHANGES, COMMENT
+            author = pr_info.get("author", "")
+            bot_names = {bot_username, f"{bot_username}[bot]"} if bot_username else set()
+            if review_event == "APPROVE" and author in bot_names:
+                logger.info(
+                    f"[{task_id}] Bot 自身创建的 PR 不能 APPROVE，降级为 COMMENT: "
+                    f"author={author}"
+                )
+                review_event = "COMMENT"
 
             for attempt in range(max_retries + 1):
                 success = await asyncio.to_thread(
@@ -1166,7 +1175,7 @@ class ReviewWorker:
                     repo_owner=pr_info["repo_owner"],
                     repo_name=pr_info["repo_name"],
                     pr_number=pr_info["pr_number"],
-                    event=decision.value.upper(),  # APPROVE, REQUEST_CHANGES, COMMENT
+                    event=review_event,
                     body=review_body,
                     inline_comments=inline_comments,
                     bot_username=bot_username,
@@ -1191,7 +1200,7 @@ class ReviewWorker:
                     repo_owner=pr_info["repo_owner"],
                     repo_name=pr_info["repo_name"],
                     pr_number=pr_info["pr_number"],
-                    event=decision.value.upper(),
+                    event=review_event,
                     body=review_body,
                     bot_username=bot_username,
                     enable_idempotency_check=enable_idempotency,
@@ -1204,12 +1213,12 @@ class ReviewWorker:
             if success:
                 if inline_comments:
                     logger.info(
-                        f"[{task_id}] ✅ 成功提交Review到GitHub: {decision.value} "
+                        f"[{task_id}] ✅ 成功提交Review到GitHub: {review_event.lower()} "
                         f"(含{len(inline_comments)}条行内评论)"
                     )
                 else:
                     logger.info(
-                        f"[{task_id}] ✅ 成功提交Review到GitHub: {decision.value} "
+                        f"[{task_id}] ✅ 成功提交Review到GitHub: {review_event.lower()} "
                         f"(无行内评论)"
                     )
             else:
