@@ -212,6 +212,7 @@ class ReviewWorker:
         task_key = self._make_task_key(pr_info)
         review_obj = None  # 用于保存 GitHub Review 对象
         review_id = None  # 用于保存数据库审查记录 ID
+        output_language = None  # 用户级输出语言；异常路径会复用该值
 
         # Cancel event was already registered in submit_review_task
         # before asyncio.create_task, so cancel_task works immediately
