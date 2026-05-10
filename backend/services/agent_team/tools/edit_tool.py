@@ -171,6 +171,7 @@ class EditTool(BaseTool):
                 "replacements": replacements,
                 "size": len(new_content),
                 "diff": diff,
+                "_modified_file": file_path,
             },
         )
 

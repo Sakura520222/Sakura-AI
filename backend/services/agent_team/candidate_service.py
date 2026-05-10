@@ -81,7 +81,10 @@ class AgentTeamCandidateService:
         keywords = await self._load_feasibility_keywords()
 
         existing_subquery = select(AgentTeamTask.source_id).where(
-            AgentTeamTask.source_type == AgentTeamSourceType.ISSUE_ANALYSIS.value
+            AgentTeamTask.source_type == AgentTeamSourceType.ISSUE_ANALYSIS.value,
+            AgentTeamTask.status.notin_(
+                [AgentTeamTaskStatus.FAILED.value, AgentTeamTaskStatus.CANCELLED.value, AgentTeamTaskStatus.ABANDONED.value]
+            ),
         )
         stmt = (
             select(IssueAnalysis)
@@ -128,7 +131,10 @@ class AgentTeamCandidateService:
         self, db: AsyncSession, allowlist: set[str], limit: int
     ) -> list[AgentCandidate]:
         existing_subquery = select(AgentTeamTask.source_id).where(
-            AgentTeamTask.source_type == AgentTeamSourceType.SCAN_FINDING.value
+            AgentTeamTask.source_type == AgentTeamSourceType.SCAN_FINDING.value,
+            AgentTeamTask.status.notin_(
+                [AgentTeamTaskStatus.FAILED.value, AgentTeamTaskStatus.CANCELLED.value, AgentTeamTaskStatus.ABANDONED.value]
+            ),
         )
         stmt = (
             select(ScanFinding, RepoScan)

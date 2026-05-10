@@ -65,6 +65,30 @@ def get_reviewer_tools() -> list[BaseTool]:
     return list(REVIEWER_TOOL_INSTANCES)
 
 
+def _sanitize_schema(schema: dict[str, Any]) -> dict[str, Any]:
+    """清理工具 schema，确保兼容各 AI 厂商。
+
+    某些厂商（如智谱 GLM）对 function calling schema 有更严格的要求：
+    - 不接受空 required 数组
+    - 不接受 properties 中的 default 值
+    """
+    import copy
+
+    schema = copy.deepcopy(schema)
+    fn = schema.get("function", {})
+    params = fn.get("parameters", {})
+
+    # 移除空 required 数组
+    if "required" in params and not params["required"]:
+        del params["required"]
+
+    # 移除 properties 中的 default 值
+    for prop in params.get("properties", {}).values():
+        prop.pop("default", None)
+
+    return schema
+
+
 def get_tool_definitions(role: str = "fullstack") -> list[dict[str, Any]]:
     """获取指定角色的工具 schema 列表（用于 function calling）。
 
@@ -72,7 +96,7 @@ def get_tool_definitions(role: str = "fullstack") -> list[dict[str, Any]]:
         role: "fullstack" 或 "reviewer"
     """
     tools = FULLSTACK_TOOL_INSTANCES if role == "fullstack" else REVIEWER_TOOL_INSTANCES
-    return [t.get_schema() for t in tools]
+    return [_sanitize_schema(t.get_schema()) for t in tools]
 
 
 def create_executor(role: str = "fullstack") -> ToolExecutor:

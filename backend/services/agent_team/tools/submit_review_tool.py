@@ -75,6 +75,15 @@ class SubmitReviewTool(BaseTool):
         summary = args.get("summary", "")
         logger.info("SubmitReviewTool: verdict={}, score={}", verdict, score)
 
+        # 防御性类型检查：AI 提供商可能忽略 schema 类型约束
+        raw_findings = args.get("findings", [])
+        findings = raw_findings if isinstance(raw_findings, list) else []
+
+        raw_suggestions = args.get("improvement_suggestions", [])
+        improvement_suggestions = (
+            raw_suggestions if isinstance(raw_suggestions, list) else []
+        )
+
         return ToolResult(
             success=True,
             output={
@@ -82,7 +91,7 @@ class SubmitReviewTool(BaseTool):
                 "verdict": verdict,
                 "score": score,
                 "summary": summary,
-                "findings": args.get("findings", []),
-                "improvement_suggestions": args.get("improvement_suggestions", []),
+                "findings": findings,
+                "improvement_suggestions": improvement_suggestions,
             },
         )

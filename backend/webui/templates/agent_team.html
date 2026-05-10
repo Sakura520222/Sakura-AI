@@ -103,19 +103,46 @@ function previewCandidates() {
         data.candidates.forEach(c => {
             const row = document.createElement('div');
             row.className = 'p-4 rounded-lg border border-gray-200 dark:border-gray-700';
-            row.innerHTML = `<div class="flex justify-between gap-3"><div><div class="font-medium">${c.title}</div><div class="text-xs text-gray-500 mt-1">${c.repo_full_name} · ${c.source_type} · score ${c.candidate_score}</div><div class="text-sm text-gray-600 dark:text-gray-300 mt-2">${(c.summary || '').slice(0, 240)}</div></div><button class="shrink-0 px-3 py-1.5 text-sm bg-sakura-500 text-white rounded-lg" onclick="createAgentTask('${c.source_type}', ${c.source_id})">{{ _('agent_team.create_task') }}</button></div>`;
+            row.innerHTML = `<div class="flex justify-between gap-3"><div><div class="font-medium">${c.title}</div><div class="text-xs text-gray-500 mt-1">${c.repo_full_name} · ${c.source_type} · score ${c.candidate_score}</div><div class="text-sm text-gray-600 dark:text-gray-300 mt-2">${(c.summary || '').slice(0, 240)}</div></div><button class="shrink-0 px-3 py-1.5 text-sm bg-sakura-500 text-white rounded-lg" onclick="createAgentTask(this, '${c.source_type}', ${c.source_id})">{{ _('agent_team.create_task') }}</button></div>`;
             list.appendChild(row);
         });
     });
 }
-function createAgentTask(sourceType, sourceId) {
+function createAgentTask(btn, sourceType, sourceId) {
+    btn.disabled = true;
+    btn.classList.remove('bg-sakura-500');
+    btn.classList.add('bg-gray-400');
+    btn.textContent = '...';
     fetch('/webui/agent-team/tasks/create', {
         method: 'POST',
         headers: {'Content-Type': 'application/x-www-form-urlencoded'},
         body: new URLSearchParams({csrf_token: '{{ csrf_token }}', source_type: sourceType, source_id: sourceId})
-    }).then(r => r.json()).then(data => {
-        window.dispatchEvent(new CustomEvent('show-toast', {detail: {message: data.success ? '{{ _('agent_team.task_created') }}' : data.message, type: data.success ? 'success' : 'error'}}));
-        if (data.success) htmx.trigger('agent-task-list', 'load');
+    }).then(r => {
+        if (!r.ok) return r.text().then(t => { throw new Error(t); });
+        return r.json();
+    }).then(data => {
+        if (data.success) {
+            window.dispatchEvent(new CustomEvent('show-toast', {detail: {message: '{{ _('agent_team.task_created') }}', type: 'success'}}));
+            btn.classList.remove('bg-gray-400');
+            btn.classList.add('bg-green-500');
+            btn.textContent = '✓';
+            btn.disabled = true;
+            htmx.trigger('agent-task-list', 'load');
+            // 刷新候选列表，移除已创建的候选项
+            previewCandidates();
+        } else {
+            window.dispatchEvent(new CustomEvent('show-toast', {detail: {message: data.message || '{{ _('agent_team.request_failed') }}', type: 'error'}}));
+            btn.disabled = false;
+            btn.classList.remove('bg-gray-400');
+            btn.classList.add('bg-red-500', 'hover:bg-red-600');
+            btn.textContent = '{{ _('agent_team.retry') }}';
+        }
+    }).catch(err => {
+        window.dispatchEvent(new CustomEvent('show-toast', {detail: {message: '{{ _('agent_team.request_failed') }}', type: 'error'}}));
+        btn.disabled = false;
+        btn.classList.remove('bg-gray-400');
+        btn.classList.add('bg-red-500', 'hover:bg-red-600');
+        btn.textContent = '{{ _('agent_team.retry') }}';
     });
 }
 </script>

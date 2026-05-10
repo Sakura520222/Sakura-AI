@@ -114,6 +114,7 @@ class WriteTool(BaseTool):
                 "size": len(content),
                 "created": created,
                 "diff": diff,
+                "_modified_file": file_path,
             },
         )
 

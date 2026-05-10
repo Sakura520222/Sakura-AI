@@ -6,8 +6,10 @@
 from __future__ import annotations
 
 import json
+import os
 import time
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any, Protocol, runtime_checkable
 
 from loguru import logger
@@ -46,6 +48,18 @@ class ToolContext:
     # 文件读状态缓存：path → {content, mtime}
     read_file_state: dict[str, dict[str, Any]] = field(default_factory=dict)
     extra: dict[str, Any] = field(default_factory=dict)
+    # 写操作追踪：记录被修改的文件路径（相对于 workspace）
+    modified_files: set[str] = field(default_factory=set)
+
+    def track_modified_file(self, file_path: str) -> None:
+        """记录被修改的文件路径。"""
+        ws = str(Path(self.workspace).resolve())
+        resolved = str(Path(file_path).resolve())
+        if resolved.startswith(ws):
+            rel = os.path.relpath(resolved, ws).replace("\\", "/")
+        else:
+            rel = file_path.replace("\\", "/")
+        self.modified_files.add(rel)
 
 
 # ── 工具协议 ──────────────────────────────────────────
@@ -172,6 +186,12 @@ class ToolExecutor:
         duration_ms = int((time.time() - start_time) * 1000)
         status = "成功" if result.success else f"失败({result.error[:50]})"
         logger.debug("工具 {} {} ({}ms)", function_name, status, duration_ms)
+
+        # 6. 追踪修改的文件（写操作工具成功时自动记录）
+        if result.success and not tool.is_read_only():
+            tracked = result.output.get("_modified_file")
+            if tracked and isinstance(tracked, str):
+                ctx.track_modified_file(tracked)
 
         return result
 
