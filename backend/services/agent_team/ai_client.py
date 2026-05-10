@@ -3,7 +3,7 @@
 from dataclasses import dataclass
 from typing import Any
 
-from backend.core.config import get_dynamic_config
+from backend.core.config import get_dynamic_config, get_settings
 from backend.services.ai_reviewer.api_client import AIApiClient
 
 
@@ -22,18 +22,18 @@ class AgentTeamAIConfig:
     timeout_seconds: int
 
     def validate(self) -> None:
-        """验证执行所需的专用 AI 配置。"""
+        """验证执行所需的 Agent AI 配置。"""
         missing = []
         if not self.api_base:
-            missing.append("agent_team_api_base")
+            missing.append("agent_team_api_base 或 openai_api_base")
         if not self.api_key:
-            missing.append("agent_team_api_key")
+            missing.append("agent_team_api_key 或 openai_api_key")
         if not self.model:
-            missing.append("agent_team_model")
+            missing.append("agent_team_model 或 openai_model")
         if not self.review_model:
-            missing.append("agent_team_review_model")
+            missing.append("agent_team_review_model 或 agent_team_model/openai_model")
         if missing:
-            raise ValueError("Agent 专家团队专用 AI 配置不完整: " + ", ".join(missing))
+            raise ValueError("Agent 专家团队 AI 配置不完整: " + ", ".join(missing))
 
     def safe_snapshot(self) -> dict[str, Any]:
         """返回可持久化的脱敏配置快照。"""
@@ -51,14 +51,42 @@ class AgentTeamAIConfig:
 
 
 async def load_agent_team_ai_config() -> AgentTeamAIConfig:
-    """从动态配置加载 Agent 专家团队专用 AI 配置。"""
+    """从动态配置加载 Agent 专家团队 AI 配置。
+
+    选择“复用主 AI”时使用主 AI/辅助模型配置；否则使用 Agent 独立配置。
+    """
+    settings = get_settings()
+
+    selected_provider = str(await get_dynamic_config("agent_team_model_provider") or "main")
+    use_main_ai = selected_provider == "main"
+
+    if use_main_ai:
+        provider = str(await get_dynamic_config("ai_provider") or settings.ai_provider or "openai")
+        api_base = str(await get_dynamic_config("openai_api_base") or settings.openai_api_base or "")
+        api_key = str(await get_dynamic_config("openai_api_key") or settings.openai_api_key or "")
+        model = str(await get_dynamic_config("openai_model") or settings.openai_model or "")
+        review_model = model
+        summary_model = str(
+            await get_dynamic_config("summary_model")
+            or settings.summary_model
+            or review_model
+            or model
+        )
+    else:
+        provider = selected_provider
+        api_base = str(await get_dynamic_config("agent_team_api_base") or "")
+        api_key = str(await get_dynamic_config("agent_team_api_key") or "")
+        model = str(await get_dynamic_config("agent_team_model") or "")
+        review_model = str(await get_dynamic_config("agent_team_review_model") or model)
+        summary_model = str(await get_dynamic_config("agent_team_summary_model") or review_model or model)
+
     return AgentTeamAIConfig(
-        provider=str(await get_dynamic_config("agent_team_model_provider") or "openai"),
-        api_base=str(await get_dynamic_config("agent_team_api_base") or ""),
-        api_key=str(await get_dynamic_config("agent_team_api_key") or ""),
-        model=str(await get_dynamic_config("agent_team_model") or ""),
-        review_model=str(await get_dynamic_config("agent_team_review_model") or ""),
-        summary_model=str(await get_dynamic_config("agent_team_summary_model") or ""),
+        provider=provider,
+        api_base=api_base,
+        api_key=api_key,
+        model=model,
+        review_model=review_model,
+        summary_model=summary_model,
         temperature=float(await get_dynamic_config("agent_team_temperature") or 0.2),
         max_tokens=int(await get_dynamic_config("agent_team_max_tokens") or 8192),
         timeout_seconds=int(await get_dynamic_config("agent_team_timeout_seconds") or 600),

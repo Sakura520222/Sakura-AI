@@ -435,12 +435,12 @@ class Settings(BaseSettings):
     agent_team_enabled: bool = False  # 是否启用 Agent 专家团队模式（super_admin 手动使用）
     agent_team_workspace_root: str = "./workplace"  # Agent 独立工作区根目录
     agent_team_repo_allowlist: str = ""  # 允许使用的仓库列表，逗号分隔 owner/repo
-    agent_team_model_provider: str = "openai"  # Agent 专用 AI 厂商
-    agent_team_api_base: str = ""  # Agent 专用 API Base，不默认依赖主 AI
-    agent_team_api_key: str = ""  # Agent 专用 API Key
-    agent_team_model: str = ""  # 全栈专家模型
-    agent_team_review_model: str = ""  # 专业审查模型
-    agent_team_summary_model: str = ""  # 摘要/反思辅助模型
+    agent_team_model_provider: str = "main"  # Agent AI 厂商，main 表示复用主 AI
+    agent_team_api_base: str = ""  # Agent API Base，选择复用主 AI 时使用主 AI
+    agent_team_api_key: str = ""  # Agent API Key，选择复用主 AI 时使用主 AI
+    agent_team_model: str = ""  # 全栈专家模型，选择复用主 AI 时使用主模型
+    agent_team_review_model: str = ""  # 专业审查模型，选择复用主 AI 时使用主模型
+    agent_team_summary_model: str = ""  # 摘要/反思辅助模型，选择复用主 AI 时使用辅助/主模型
     agent_team_temperature: float = 0.2
     agent_team_max_tokens: int = 8192
     agent_team_timeout_seconds: int = 600
@@ -882,10 +882,11 @@ DYNAMIC_CONFIG_GROUPS: OrderedDict[str, dict] = OrderedDict(
                     "agent_team_enabled": "启用后，超级管理员可手动使用 Agent 专家团队模式；当前版本不自动定时执行",
                     "agent_team_workspace_root": "Agent 独立工作区根目录，本地默认 ./workplace，Docker 推荐 /app/workplace",
                     "agent_team_repo_allowlist": "允许 Agent 操作的仓库列表，逗号分隔 owner/repo；为空时仅允许候选预览",
-                    "agent_team_api_base": "Agent 专家团队专用 API Base，不建议依赖主 AI 配置",
-                    "agent_team_api_key": "Agent 专家团队专用 API Key，保存后脱敏显示",
-                    "agent_team_model": "全栈专家使用的模型",
-                    "agent_team_review_model": "专业审查使用的模型",
+                    "agent_team_model_provider": "Agent 专家团队 AI 厂商；选择“复用主 AI”时使用主 AI 配置",
+                    "agent_team_api_base": "Agent 专家团队 API Base；选择独立厂商时填写",
+                    "agent_team_api_key": "Agent 专家团队 API Key；选择独立厂商时填写，保存后脱敏显示",
+                    "agent_team_model": "全栈专家使用的模型；选择独立厂商时填写",
+                    "agent_team_review_model": "专业审查使用的模型；选择独立厂商时可填写，默认复用全栈专家模型",
                     "agent_team_test_command_allowlist": "允许执行的验证命令白名单，逗号分隔",
                 },
                 "keys": [
@@ -1013,7 +1014,7 @@ DYNAMIC_CONFIG_SELECT_OPTIONS: dict[str, list[dict]] = {
         {"value": "ai", "label": "AI 生成（使用 LLM 分析）"},
         {"value": "static", "label": "静态分析（正则提取 import）"},
     ],
-    "agent_team_model_provider": get_provider_select_options(),
+    "agent_team_model_provider": get_provider_select_options(include_main_ai=True),
     "agent_team_min_priority": [
         {"value": "critical", "label": "Critical"},
         {"value": "high", "label": "High"},
