@@ -948,9 +948,9 @@ toast:
   result_truncation_range: "结果截断长度须在 100-5000 之间"
   search_timeout_range: "搜索超时须在 5-60 秒之间"
   unsupported_search_provider: "不支持的搜索提供商"
-  numeric_required: "{key} 必须是有效数值"
-  value_range: "{key} 值须在 {min_v}-{max_v} 之间"
-  value_invalid: "{key} 值无效"
+  numeric_required: "{field_key} 必须是有效数值"
+  value_range: "{field_key} 值须在 {min_v}-{max_v} 之间"
+  value_invalid: "{field_key} 值无效"
 
 # ========== 评论模板 / Comment Templates ==========
 comment:

@@ -948,9 +948,9 @@ toast:
   result_truncation_range: "Result truncation length must be between 100-5000"
   search_timeout_range: "Search timeout must be between 5-60 seconds"
   unsupported_search_provider: "Unsupported search provider"
-  numeric_required: "{key} must be a valid number"
-  value_range: "{key} must be between {min_v}-{max_v}"
-  value_invalid: "{key} value is invalid"
+  numeric_required: "{field_key} must be a valid number"
+  value_range: "{field_key} must be between {min_v}-{max_v}"
+  value_invalid: "{field_key} value is invalid"
 
 # ========== Comment Templates ==========
 comment:
