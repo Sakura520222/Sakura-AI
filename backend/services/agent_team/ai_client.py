@@ -60,10 +60,14 @@ class AgentTeamAIConfig:
         return self.safe_snapshot()
 
     def __setstate__(self, state: dict[str, Any]) -> None:
-        """从脱敏 pickle 状态重建对象，明文 API Key 不会恢复。"""
+        """从脱敏 pickle 状态重建对象。
+
+        state 来自 safe_snapshot()，不含明文 api_key；这里有意使用
+        object.__setattr__ 恢复 frozen dataclass，并始终将 api_key 置空。
+        """
         object.__setattr__(self, "provider", state.get("provider", ""))
         object.__setattr__(self, "api_base", state.get("api_base", ""))
-        object.__setattr__(self, "api_key", state.get("api_key", ""))
+        object.__setattr__(self, "api_key", "")
         object.__setattr__(self, "model", state.get("model", ""))
         object.__setattr__(self, "review_model", state.get("review_model", ""))
         object.__setattr__(self, "summary_model", state.get("summary_model", ""))
