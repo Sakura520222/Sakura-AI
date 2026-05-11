@@ -5,6 +5,7 @@ import re
 from dataclasses import dataclass
 from typing import Any, Iterable
 
+from openai import BadRequestError
 from sqlalchemy import and_, desc, not_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -212,7 +213,7 @@ class AgentTeamCandidateService:
     async def _filter_issue_candidates_with_ai(self, requirement: str, analyses: list[IssueAnalysis]) -> list[dict[str, Any]]:
         """调用 AI 判断 Issue 是否满足自然语言筛选要求。"""
         client, config = await create_agent_team_client()
-        model = config.summary_model or config.review_model or config.model
+        model = _select_ai_filter_model(config.model, config.review_model, config.summary_model)
         issue_items = [_issue_analysis_to_filter_item(analysis) for analysis in analyses]
         messages = [
             {
@@ -236,13 +237,21 @@ class AgentTeamCandidateService:
                 ),
             },
         ]
-        response = await client.call_with_retry(
-            messages=messages,
-            model=model,
-            temperature=0.1,
-            max_tokens=min(config.max_tokens, 4096),
-            timeout=config.timeout_seconds,
-        )
+        try:
+            response = await client.call_with_retry(
+                messages=messages,
+                model=model,
+                temperature=0.1,
+                max_tokens=min(config.max_tokens, 4096),
+                timeout=config.timeout_seconds,
+            )
+        except BadRequestError as exc:
+            if _is_model_not_found_error(exc):
+                raise ValueError(
+                    f"AI 筛选使用的模型不存在：{model}。请在 Agent 专家团队配置中检查全栈专家模型/专业审查模型，"
+                    "或在使用主 AI 时检查全局模型名称。"
+                ) from exc
+            raise
         if not response.choices:
             return []
         content = response.choices[0].message.content or ""
@@ -400,6 +409,21 @@ def _normalize_priority(value: Any, default: str) -> str:
         return priority
     fallback = str(default or "medium").strip().lower()
     return fallback if fallback in _VALID_PRIORITIES else "medium"
+
+
+def _select_ai_filter_model(model: str, review_model: str, summary_model: str) -> str:
+    """选择 AI 筛选模型。
+
+    筛选候选需要稳定遵循 JSON 输出，优先使用主执行模型，避免摘要模型配置为
+    低成本/别名模型但实际供应商不支持时导致“模型不存在”。
+    """
+    return (model or review_model or summary_model or "").strip()
+
+
+def _is_model_not_found_error(exc: BadRequestError) -> bool:
+    """判断 BadRequestError 是否属于模型不存在/不可用。"""
+    text = str(exc)
+    return "模型不存在" in text or "model" in text.lower() and "not" in text.lower() and "exist" in text.lower()
 
 
 def _truncate_text(value: str, limit: int = _AI_FILTER_TEXT_LIMIT) -> str:

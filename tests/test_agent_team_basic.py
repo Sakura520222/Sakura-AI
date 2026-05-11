@@ -5,7 +5,12 @@ from types import SimpleNamespace
 import pytest
 
 from backend.services.agent_team.ai_client import AgentTeamAIConfig, load_agent_team_ai_config
-from backend.services.agent_team.candidate_service import AgentCandidate, _parse_ai_filter_response, candidates_to_dicts
+from backend.services.agent_team.candidate_service import (
+    AgentCandidate,
+    _parse_ai_filter_response,
+    _select_ai_filter_model,
+    candidates_to_dicts,
+)
 from backend.webui.routes.agent_team import (
     AGENT_TEAM_ACTIVE_STATUSES,
     AGENT_TEAM_CONFIG_KEYS,
@@ -245,3 +250,17 @@ def test_parse_ai_filter_response_accepts_wrapped_results():
             "reason": "",
         }
     ]
+
+
+def test_ai_filter_model_prefers_main_agent_model():
+    model = _select_ai_filter_model(
+        model="deepseek-chat",
+        review_model="review-model",
+        summary_model="invalid-summary-alias",
+    )
+
+    assert model == "deepseek-chat"
+
+
+def test_ai_filter_model_falls_back_when_main_empty():
+    assert _select_ai_filter_model("", "review-model", "summary-model") == "review-model"
