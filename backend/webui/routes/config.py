@@ -15,6 +15,7 @@ from backend.models.database import AppConfig
 from loguru import logger
 
 from backend.core.config import (
+    BASIC_CONFIG_KEYS,
     get_dynamic_config,
     invalidate_dynamic_config_cache,
     get_strategy_config,
@@ -37,19 +38,7 @@ from backend.webui.helpers.admin_log import log_admin_action
 from backend.webui.i18n import detect_language
 
 # 基础配置项（非动态配置），用于 WebUI 配置页面分组展示及 Settings 即时更新
-_BASIC_CONFIG_KEYS = frozenset(
-    {
-        "max_concurrent_reviews",
-        "review_timeout_seconds",
-        "enable_auto_review",
-        "web_search_enabled",
-        "web_search_provider",
-        "web_search_api_key",
-        "web_search_max_results",
-        "web_search_max_content_length",
-        "web_search_timeout",
-    }
-)
+_BASIC_CONFIG_KEYS = BASIC_CONFIG_KEYS
 
 router = APIRouter(prefix="/config", tags=["WebUI Config"])
 templates = get_templates()
