@@ -10,6 +10,7 @@ import pytest
 from backend.models.agent_skill_models import AgentSkill
 from backend.services.agent_team.skill_service import (
     AgentSkillService,
+    _decode_zip_filename,
     normalize_skill_slug,
     parse_github_skill_url,
     raw_url_from_github_blob,
@@ -368,3 +369,85 @@ async def test_use_skill_tool_rejects_disabled_skill(tmp_path):
 
     assert not result.success
     assert "未启用或不存在" in result.error
+
+
+# ---------------------------------------------------------------------------
+# _decode_zip_filename 单元测试
+# ---------------------------------------------------------------------------
+
+
+def test_decode_zip_filename_ascii_unchanged():
+    """ASCII 文件名应原样返回。"""
+    assert _decode_zip_filename("SKILL.md") == "SKILL.md"
+    assert _decode_zip_filename("templates/helper.py") == "templates/helper.py"
+
+
+def test_decode_zip_filename_gbk_recovery():
+    """模拟 CP437 误编码的 GBK 文件名应被修复。"""
+    original = "中文模板.py"
+    # 模拟：Windows 资源管理器用 GBK 编码存储，Python 按 CP437 解码产生的乱码
+    garbled = original.encode("gbk").decode("cp437", errors="replace")
+    # 确认 garbled 确实是乱码
+    assert garbled != original
+    # 修复后应恢复原文
+    assert _decode_zip_filename(garbled) == original
+
+
+def test_decode_zip_filename_utf8_passthrough():
+    """已正确解码的 UTF-8 文件名应保持不变。"""
+    name = "模板文件.md"
+    assert _decode_zip_filename(name) == name
+
+
+# ---------------------------------------------------------------------------
+# ZIP 中文文件名集成测试
+# ---------------------------------------------------------------------------
+
+
+def _build_zip_raw(files: dict[str, bytes]) -> bytes:
+    """构建 ZIP，value 为原始字节（不做编码转换）。"""
+
+    class _EncodedFile(io.BytesIO):
+        """带文件名编码控制的 ZIP 文件。"""
+
+        pass
+
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+        for name_bytes, content in files.items():
+            zf.writestr(name_bytes, content)
+    return buf.getvalue()
+
+
+@pytest.mark.asyncio
+async def test_install_from_zip_chinese_filenames(tmp_path):
+    """ZIP 内中文文件名应正确还原。"""
+    db = MagicMock()
+    scalar_result = MagicMock()
+    scalar_result.scalar_one_or_none.return_value = None
+    db.execute = AsyncMock(return_value=scalar_result)
+    db.commit = AsyncMock()
+    db.refresh = AsyncMock()
+    db.add = MagicMock()
+
+    # 用标准 _build_zip（UTF-8 文件名，带 language flag）
+    zip_bytes = _build_zip({
+        "SKILL.md": "---\nname: 中文技能\n---\n# 中文技能测试",
+        "模板/入口.py": "# 入口文件",
+        "配置/说明.txt": "这是一个说明文件",
+    })
+
+    service = AgentSkillService(root=tmp_path)
+    await service.install_from_upload(
+        db,
+        content=zip_bytes,
+        filename="chinese.zip",
+        name="中文技能",
+        created_by="admin",
+    )
+
+    # 中文名称 normalize 后中文被移除，fallback 为 "skill"
+    skill_dir = tmp_path / "skill"
+    assert (skill_dir / "SKILL.md").exists()
+    assert (skill_dir / "模板" / "入口.py").exists()
+    assert (skill_dir / "配置" / "说明.txt").read_text(encoding="utf-8") == "这是一个说明文件"
