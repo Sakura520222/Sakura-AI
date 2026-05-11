@@ -1,0 +1,379 @@
+{% extends "base.html" %}
+
+{% block title %}{{ _('agent_team.title') }} - Sakura AI Reviewer{% endblock %}
+
+{% block content %}
+<div class="space-y-6" x-data="agentTeamPage()" x-init="init()">
+    <section class="relative overflow-hidden rounded-3xl border border-sakura-200/70 dark:border-sakura-800/40 bg-white/70 dark:bg-gray-900/60 shadow-xl shadow-sakura-500/10">
+        <div class="absolute inset-0 bg-gradient-to-br from-sakura-100/80 via-purple-100/60 to-white/40 dark:from-sakura-950/40 dark:via-purple-950/30 dark:to-gray-900/40"></div>
+        <div class="relative p-6 lg:p-8">
+            <div class="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-6">
+                <div class="max-w-3xl">
+                    <div class="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-white/70 dark:bg-gray-800/70 border border-sakura-200/70 dark:border-sakura-700/40 text-xs font-medium text-sakura-700 dark:text-sakura-300 mb-4">
+                        <span class="w-2 h-2 rounded-full {% if stats.active %}bg-green-500 animate-pulse{% else %}bg-gray-400{% endif %}"></span>
+                        {{ _('agent_team.super_admin_console') }}
+                    </div>
+                    <h1 class="text-3xl lg:text-4xl font-extrabold bg-gradient-to-r from-sakura-700 via-pink-600 to-purple-700 dark:from-sakura-300 dark:via-pink-300 dark:to-purple-300 bg-clip-text text-transparent">
+                        {{ _('agent_team.title') }}
+                    </h1>
+                    <p class="mt-3 text-sm lg:text-base text-gray-600 dark:text-gray-300 leading-7">{{ _('agent_team.description') }}</p>
+                    <div class="mt-5 grid grid-cols-1 sm:grid-cols-3 gap-3 text-sm">
+                        <div class="rounded-2xl bg-white/65 dark:bg-gray-800/65 border border-white/60 dark:border-gray-700/70 p-3">
+                            <div class="text-gray-500 dark:text-gray-400">{{ _('agent_team.queue_pressure') }}</div>
+                            <div class="mt-1 text-lg font-bold text-gray-900 dark:text-gray-100">{{ stats.queued }}</div>
+                        </div>
+                        <div class="rounded-2xl bg-white/65 dark:bg-gray-800/65 border border-white/60 dark:border-gray-700/70 p-3">
+                            <div class="text-gray-500 dark:text-gray-400">{{ _('agent_team.waiting_human') }}</div>
+                            <div class="mt-1 text-lg font-bold text-gray-900 dark:text-gray-100">{{ stats.waiting_human }}</div>
+                        </div>
+                        <div class="rounded-2xl bg-white/65 dark:bg-gray-800/65 border border-white/60 dark:border-gray-700/70 p-3">
+                            <div class="text-gray-500 dark:text-gray-400">{{ _('agent_team.success_rate') }}</div>
+                            <div class="mt-1 text-lg font-bold text-gray-900 dark:text-gray-100">
+                                {% if stats.total %}{{ ((stats.completed / stats.total) * 100)|round(1) }}%{% else %}-{% endif %}
+                            </div>
+                        </div>
+                        <div class="rounded-2xl bg-white/65 dark:bg-gray-800/65 border border-white/60 dark:border-gray-700/70 p-3">
+                            <div class="text-gray-500 dark:text-gray-400">{{ _('agent_team.workspace_count') }}</div>
+                            <div class="mt-1 text-lg font-bold text-gray-900 dark:text-gray-100">{{ workspace_summary.count }}</div>
+                        </div>
+                    </div>
+                </div>
+                <div class="flex flex-col sm:flex-row lg:flex-col gap-3 lg:min-w-56">
+                    <button @click="activeTab = 'candidates'; previewCandidates()" class="inline-flex items-center justify-center gap-2 px-5 py-3 bg-sakura-500 hover:bg-sakura-600 text-white text-sm font-semibold rounded-2xl transition-all shadow-lg shadow-sakura-500/25">
+                        {{ _('agent_team.preview_candidates') }}
+                    </button>
+                    <button @click="activeTab = 'tasks'; refreshAgentTaskList()" class="inline-flex items-center justify-center gap-2 px-5 py-3 bg-white/80 dark:bg-gray-800/80 hover:bg-white dark:hover:bg-gray-700 border border-sakura-200 dark:border-sakura-800/50 text-sm font-semibold rounded-2xl transition-all">
+                        {{ _('agent_team.refresh_tasks') }}
+                    </button>
+                    <button @click="activeTab = 'workspaces'; refreshWorkspaces()" class="inline-flex items-center justify-center gap-2 px-5 py-3 bg-white/80 dark:bg-gray-800/80 hover:bg-white dark:hover:bg-gray-700 border border-purple-200 dark:border-purple-800/50 text-sm font-semibold rounded-2xl transition-all">
+                        {{ _('agent_team.manage_workspaces') }}
+                    </button>
+                    <button @click="activeTab = 'config'" class="inline-flex items-center justify-center gap-2 px-5 py-3 bg-purple-500 hover:bg-purple-600 text-white text-sm font-semibold rounded-2xl transition-all shadow-lg shadow-purple-500/20">
+                        {{ _('agent_team.open_config') }}
+                    </button>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <section class="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4">
+        {% set stat_cards = [
+            ('stats_total', stats.total, 'from-gray-700 to-gray-900', 'bg-gray-100 text-gray-700 dark:bg-gray-700 dark:text-gray-200'),
+            ('stats_active', stats.active, 'from-sakura-500 to-pink-600', 'bg-sakura-100 text-sakura-700 dark:bg-sakura-900/30 dark:text-sakura-300'),
+            ('stats_completed', stats.completed, 'from-emerald-500 to-green-600', 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-300'),
+            ('stats_failed', stats.failed, 'from-red-500 to-rose-600', 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-300')
+        ] %}
+        {% for key, value, gradient, badge_class in stat_cards %}
+        <div class="card-hover bg-white dark:bg-gray-800 rounded-2xl border border-gray-200 dark:border-gray-700 p-5 overflow-hidden relative">
+            <div class="absolute -right-8 -top-8 w-24 h-24 rounded-full bg-gradient-to-br {{ gradient }} opacity-10"></div>
+            <div class="relative flex items-center justify-between">
+                <div>
+                    <div class="text-sm text-gray-500 dark:text-gray-400">{{ _('agent_team.' ~ key) }}</div>
+                    <div class="mt-2 text-3xl font-extrabold text-gray-900 dark:text-gray-100">{{ value }}</div>
+                </div>
+                <div class="w-12 h-12 rounded-2xl {{ badge_class }} flex items-center justify-center font-bold">{{ loop.index }}</div>
+            </div>
+        </div>
+        {% endfor %}
+    </section>
+
+    <div class="bg-white dark:bg-gray-800 rounded-2xl border border-gray-200 dark:border-gray-700 p-2 flex flex-wrap gap-2">
+        <button @click="activeTab = 'tasks'" :class="activeTab === 'tasks' ? 'bg-sakura-500 text-white shadow-md shadow-sakura-500/25' : 'text-gray-600 dark:text-gray-300 hover:bg-sakura-50 dark:hover:bg-sakura-900/20'" class="px-4 py-2 rounded-xl text-sm font-semibold transition-all">{{ _('agent_team.tab_tasks') }}</button>
+        <button @click="activeTab = 'candidates'" :class="activeTab === 'candidates' ? 'bg-sakura-500 text-white shadow-md shadow-sakura-500/25' : 'text-gray-600 dark:text-gray-300 hover:bg-sakura-50 dark:hover:bg-sakura-900/20'" class="px-4 py-2 rounded-xl text-sm font-semibold transition-all">{{ _('agent_team.tab_candidates') }}</button>
+        <button @click="activeTab = 'workspaces'; refreshWorkspaces()" :class="activeTab === 'workspaces' ? 'bg-sakura-500 text-white shadow-md shadow-sakura-500/25' : 'text-gray-600 dark:text-gray-300 hover:bg-sakura-50 dark:hover:bg-sakura-900/20'" class="px-4 py-2 rounded-xl text-sm font-semibold transition-all">{{ _('agent_team.tab_workspaces') }}</button>
+        <button @click="activeTab = 'config'" :class="activeTab === 'config' ? 'bg-sakura-500 text-white shadow-md shadow-sakura-500/25' : 'text-gray-600 dark:text-gray-300 hover:bg-sakura-50 dark:hover:bg-sakura-900/20'" class="px-4 py-2 rounded-xl text-sm font-semibold transition-all">{{ _('agent_team.tab_config') }}</button>
+    </div>
+
+    <section x-show="activeTab === 'tasks'" x-cloak class="grid grid-cols-1 2xl:grid-cols-[minmax(0,1fr)_460px] gap-5">
+        <div class="space-y-4">
+            <div class="bg-white dark:bg-gray-800 rounded-2xl border border-gray-200 dark:border-gray-700 p-4">
+                <div class="grid grid-cols-1 md:grid-cols-4 gap-3">
+                    <div>
+                        <label class="block text-xs font-medium text-gray-500 dark:text-gray-400 mb-1">{{ _('agent_team.filter_status') }}</label>
+                        <select x-model="filters.status" @change="loadAgentTaskPage(1)" class="w-full rounded-xl border-gray-300 dark:border-gray-600 dark:bg-gray-900 text-sm">
+                            <option value="all">{{ _('agent_team.filter_all') }}</option>
+                            <option value="active">{{ _('agent_team.stats_active') }}</option>
+                            {% for opt in status_options %}<option value="{{ opt }}">{{ _('agent_team.status_' ~ opt) }}</option>{% endfor %}
+                        </select>
+                    </div>
+                    <div>
+                        <label class="block text-xs font-medium text-gray-500 dark:text-gray-400 mb-1">{{ _('agent_team.filter_source') }}</label>
+                        <select x-model="filters.source_type" @change="loadAgentTaskPage(1)" class="w-full rounded-xl border-gray-300 dark:border-gray-600 dark:bg-gray-900 text-sm">
+                            <option value="all">{{ _('agent_team.filter_all') }}</option>
+                            <option value="issue_analysis">{{ _('agent_team.source_issue_analysis') }}</option>
+                            <option value="scan_finding">{{ _('agent_team.source_scan_finding') }}</option>
+                            <option value="scan_report_issue">{{ _('agent_team.source_scan_report_issue') }}</option>
+                        </select>
+                    </div>
+                    <div>
+                        <label class="block text-xs font-medium text-gray-500 dark:text-gray-400 mb-1">{{ _('agent_team.filter_keyword') }}</label>
+                        <input x-model.debounce.500ms="filters.q" @input.debounce.600ms="loadAgentTaskPage(1)" type="search" placeholder="{{ _('agent_team.search_placeholder') }}" class="w-full rounded-xl border-gray-300 dark:border-gray-600 dark:bg-gray-900 text-sm">
+                    </div>
+                    <div>
+                        <label class="block text-xs font-medium text-gray-500 dark:text-gray-400 mb-1">{{ _('agent_team.sort_by') }}</label>
+                        <select x-model="filters.sort" @change="loadAgentTaskPage(1)" class="w-full rounded-xl border-gray-300 dark:border-gray-600 dark:bg-gray-900 text-sm">
+                            <option value="newest">{{ _('agent_team.sort_newest') }}</option>
+                            <option value="updated">{{ _('agent_team.sort_updated') }}</option>
+                            <option value="score">{{ _('agent_team.sort_score') }}</option>
+                        </select>
+                    </div>
+                </div>
+            </div>
+            <div id="agent-task-list" hx-get="/webui/agent-team/list-fragment" hx-trigger="load" hx-swap="innerHTML">
+                <div class="text-center py-8 text-gray-400">{{ _('common.loading') }}</div>
+            </div>
+        </div>
+        <aside id="agent-task-detail" class="bg-white dark:bg-gray-800 rounded-2xl border border-gray-200 dark:border-gray-700 min-h-96 p-6 text-center text-gray-500 dark:text-gray-400">
+            <svg class="w-12 h-12 mx-auto text-sakura-300 dark:text-sakura-700" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/></svg>
+            <p class="mt-3 text-sm">{{ _('agent_team.select_task_hint') }}</p>
+        </aside>
+    </section>
+
+    <section x-show="activeTab === 'workspaces'" x-cloak class="bg-white dark:bg-gray-800 rounded-2xl border border-gray-200 dark:border-gray-700 p-5">
+        <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 mb-5">
+            <div>
+                <h2 class="text-lg font-bold">{{ _('agent_team.workspace_management') }}</h2>
+                <p class="text-sm text-gray-500 dark:text-gray-400 mt-1">{{ _('agent_team.workspace_management_desc') }}</p>
+            </div>
+            <button @click="refreshWorkspaces()" class="px-4 py-2 bg-sakura-500 hover:bg-sakura-600 text-white rounded-xl text-sm font-semibold">{{ _('common.refresh') }}</button>
+        </div>
+        <div id="agent-workspace-list" hx-get="/webui/agent-team/workspaces-fragment" hx-trigger="load" hx-swap="innerHTML">
+            <div class="text-center py-8 text-gray-400">{{ _('common.loading') }}</div>
+        </div>
+    </section>
+
+    <section x-show="activeTab === 'candidates'" x-cloak class="bg-white dark:bg-gray-800 rounded-2xl border border-gray-200 dark:border-gray-700 p-5">
+        <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 mb-5">
+            <div>
+                <h2 class="text-lg font-bold">{{ _('agent_team.candidates') }}</h2>
+                <p class="text-sm text-gray-500 dark:text-gray-400 mt-1">{{ _('agent_team.candidates_desc') }}</p>
+            </div>
+            <div class="flex flex-wrap gap-2">
+                <button @click="candidateFilterRequirement = ''; previewCandidates()" class="px-4 py-2 bg-white dark:bg-gray-900 hover:bg-gray-50 dark:hover:bg-gray-700 border border-gray-200 dark:border-gray-700 rounded-xl text-sm font-semibold">{{ _('agent_team.preview_candidates') }}</button>
+                <button @click="previewCandidates()" class="px-4 py-2 bg-sakura-500 hover:bg-sakura-600 text-white rounded-xl text-sm font-semibold">{{ _('agent_team.ai_filter_candidates') }}</button>
+            </div>
+        </div>
+        <div class="mb-5 rounded-2xl border border-sakura-100 dark:border-sakura-900/40 bg-sakura-50/60 dark:bg-sakura-950/20 p-4">
+            <label for="agent-candidate-ai-filter" class="block text-sm font-semibold text-gray-900 dark:text-gray-100">{{ _('agent_team.ai_filter_requirement') }}</label>
+            <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">{{ _('agent_team.ai_filter_desc') }}</p>
+            <textarea id="agent-candidate-ai-filter" x-model="candidateFilterRequirement" rows="3" class="mt-3 w-full rounded-xl border-gray-300 dark:border-gray-600 dark:bg-gray-900 text-sm" placeholder="{{ _('agent_team.ai_filter_requirement_placeholder') }}"></textarea>
+        </div>
+        <div id="candidate-results">
+            <div class="p-10 text-center text-gray-500 dark:text-gray-400 border border-dashed border-gray-300 dark:border-gray-600 rounded-2xl">{{ _('agent_team.candidates_empty_hint') }}</div>
+        </div>
+    </section>
+
+    <section x-show="activeTab === 'config'" x-cloak class="bg-white dark:bg-gray-800 rounded-2xl border border-gray-200 dark:border-gray-700 p-5">
+        <div class="mb-5">
+            <h2 class="text-lg font-bold">{{ _('agent_team.dedicated_ai_config') }}</h2>
+            <p class="text-sm text-gray-500 dark:text-gray-400 mt-1">{{ _('agent_team.config_center_desc') }}</p>
+        </div>
+        <form method="post" action="/webui/agent-team/config/save" class="space-y-4">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+            {% for group in config_groups %}
+            <details class="rounded-2xl border border-gray-200 dark:border-gray-700 overflow-hidden" {% if loop.first %}open{% endif %}>
+                <summary class="cursor-pointer select-none px-5 py-4 bg-gray-50/80 dark:bg-gray-900/50 hover:bg-sakura-50 dark:hover:bg-sakura-900/20 transition-colors">
+                    <span class="font-semibold">{{ group.title }}</span>
+                    <span class="block mt-1 text-xs text-gray-500 dark:text-gray-400">{{ group.description }}</span>
+                </summary>
+                <div class="p-5 grid grid-cols-1 lg:grid-cols-2 gap-4">
+                    {% for item in group['items'] %}
+                    <div class="rounded-xl border border-gray-100 dark:border-gray-700/70 p-4 bg-white/50 dark:bg-gray-900/30">
+                        <label class="block text-sm font-semibold mb-1" for="{{ item.key }}">{{ item.label }}</label>
+                        {% if item.description %}<p class="text-xs text-gray-500 dark:text-gray-400 mb-2 leading-5">{{ item.description }}</p>{% endif %}
+                        {% if item.input_type == 'boolean' %}
+                        <label class="inline-flex items-center gap-3 text-sm cursor-pointer">
+                            <input type="checkbox" id="{{ item.key }}" name="{{ item.key }}" value="true" {% if item.value == 'True' or item.value == 'true' %}checked{% endif %} class="sr-only peer">
+                            <span class="relative w-11 h-6 bg-gray-200 peer-focus:ring-2 peer-focus:ring-sakura-300 dark:peer-focus:ring-sakura-800 rounded-full peer dark:bg-gray-700 peer-checked:after:translate-x-5 peer-checked:after:border-white after:content-[''] after:absolute after:top-0.5 after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-sakura-500"></span>
+                            <span>{{ _('common.enabled') }}</span>
+                        </label>
+                        {% elif item.input_type == 'select' %}
+                        <select id="{{ item.key }}" name="{{ item.key }}" class="w-full rounded-xl border-gray-300 dark:border-gray-600 dark:bg-gray-900 text-sm">
+                            {% for opt in item.select_options %}<option value="{{ opt.value }}" {% if opt.value == item.value %}selected{% endif %}>{{ opt.label }}</option>{% endfor %}
+                        </select>
+                        {% else %}
+                        <input id="{{ item.key }}" name="{{ item.key }}" type="{{ 'password' if item.input_type == 'password' else item.input_type }}" value="{{ '' if item.sensitive else item.value }}" placeholder="{{ item.value if item.sensitive else '' }}" {% if item.sensitive %}oninput="document.getElementById('{{ item.key }}_changed').value='true'"{% endif %} class="w-full rounded-xl border-gray-300 dark:border-gray-600 dark:bg-gray-900 text-sm">
+                        {% if item.sensitive %}<input type="hidden" id="{{ item.key }}_changed" name="{{ item.key }}_changed" value="false">{% endif %}
+                        {% if item.min_val is not none and item.max_val is not none %}<p class="mt-1 text-xs text-gray-400">{{ _('agent_team.range_hint') }} {{ item.min_val }} - {{ item.max_val }}</p>{% endif %}
+                        {% endif %}
+                    </div>
+                    {% endfor %}
+                </div>
+            </details>
+            {% endfor %}
+            <div class="flex justify-end pt-2">
+                <button type="submit" class="px-5 py-2.5 bg-sakura-500 hover:bg-sakura-600 text-white rounded-xl text-sm font-semibold shadow-lg shadow-sakura-500/20">{{ _('common.save_config') }}</button>
+            </div>
+        </form>
+    </section>
+</div>
+{% endblock %}
+
+{% block extra_scripts %}
+{{ super() }}
+<script>
+function agentTeamPage() {
+    return {
+        activeTab: 'tasks',
+        filters: {status: 'all', source_type: 'all', q: '', sort: 'newest'},
+        candidateFilterRequirement: '',
+        init() {
+            window.agentTeamState = this;
+            setInterval(() => {
+                if (this.activeTab === 'tasks' && !document.hidden) this.refreshAgentTaskList(false);
+            }, 15000);
+        },
+        buildTaskUrl(page) {
+            const params = new URLSearchParams({page: page || 1, status: this.filters.status, source_type: this.filters.source_type, q: this.filters.q || '', sort: this.filters.sort});
+            return '/webui/agent-team/list-fragment?' + params.toString();
+        },
+        loadAgentTaskPage(page) {
+            const target = document.getElementById('agent-task-list');
+            if (!target) return;
+            target.innerHTML = getLoadingHTML();
+            fetch(this.buildTaskUrl(page), {headers: {'HX-Request': 'true'}})
+                .then(r => r.text())
+                .then(html => { target.innerHTML = html; })
+                .catch(() => { target.innerHTML = getErrorHTML('{{ _('agent_team.request_failed') }}'); });
+        },
+        refreshAgentTaskList(showLoading = true) {
+            if (showLoading) this.loadAgentTaskPage(1);
+            else this.loadAgentTaskPage(document.getElementById('agent-task-list')?.dataset.page || 1);
+        },
+        refreshWorkspaces() { refreshWorkspaces(); },
+        previewCandidates() { previewCandidates(); }
+    }
+}
+function refreshAgentTaskList() { window.agentTeamState?.refreshAgentTaskList(); }
+function loadAgentTaskPage(page) { window.agentTeamState?.loadAgentTaskPage(page); }
+function refreshWorkspaces() {
+    const target = document.getElementById('agent-workspace-list');
+    if (!target) return;
+    target.innerHTML = getLoadingHTML();
+    fetch('/webui/agent-team/workspaces-fragment', {headers: {'HX-Request': 'true'}})
+        .then(r => { if (!r.ok) throw new Error('failed'); return r.text(); })
+        .then(html => { target.innerHTML = html; })
+        .catch(() => { target.innerHTML = getErrorHTML('{{ _('agent_team.request_failed') }}'); });
+}
+function deleteWorkspace(repoOwner, repoName) {
+    const message = '{{ _('agent_team.confirm_delete_workspace') }}\n\n{{ _('agent_team.delete_workspace_warning') }}';
+    const runDelete = () => {
+        fetch('/webui/agent-team/workspaces/delete', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/x-www-form-urlencoded'},
+            body: new URLSearchParams({csrf_token: '{{ csrf_token }}', repo_owner: repoOwner, repo_name: repoName})
+        }).then(r => r.json()).then(data => {
+            if (data.success) {
+                window.dispatchEvent(new CustomEvent('show-toast', {detail: {message: '{{ _('agent_team.workspace_deleted') }}', type: 'success'}}));
+                refreshWorkspaces();
+            } else {
+                window.dispatchEvent(new CustomEvent('show-toast', {detail: {message: data.message || '{{ _('agent_team.request_failed') }}', type: 'error'}}));
+            }
+        }).catch(() => {
+            window.dispatchEvent(new CustomEvent('show-toast', {detail: {message: '{{ _('agent_team.request_failed') }}', type: 'error'}}));
+        });
+    };
+    if (window.confirmDialog && typeof window.confirmDialog.ask === 'function') {
+        window.confirmDialog.ask({title: '{{ _('agent_team.delete_workspace') }}', message, confirmText: '{{ _('agent_team.delete_workspace') }}', type: 'danger'}).then(ok => { if (ok) runDelete(); });
+    } else if (window.confirm(message)) {
+        runDelete();
+    }
+}
+function loadTaskDetail(taskId) {
+    const target = document.getElementById('agent-task-detail');
+    if (!target) return;
+    target.innerHTML = getLoadingHTML();
+    fetch(`/webui/agent-team/tasks/${taskId}/detail-fragment`, {headers: {'HX-Request': 'true'}})
+        .then(r => { if (!r.ok) throw new Error('failed'); return r.text(); })
+        .then(html => { target.innerHTML = html; })
+        .catch(() => { target.innerHTML = getErrorHTML('{{ _('agent_team.request_failed') }}'); });
+}
+function makeText(tag, className, text) {
+    const el = document.createElement(tag);
+    if (className) el.className = className;
+    el.textContent = text || '';
+    return el;
+}
+function previewCandidates() {
+    const box = document.getElementById('candidate-results');
+    const requirement = window.agentTeamState?.candidateFilterRequirement || '';
+    box.innerHTML = getLoadingHTML();
+    fetch('/webui/agent-team/candidates', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/x-www-form-urlencoded'},
+        body: new URLSearchParams({csrf_token: '{{ csrf_token }}', ai_filter_requirement: requirement})
+    }).then(r => r.json()).then(data => {
+        box.innerHTML = '';
+        if (!data.success) {
+            box.appendChild(makeText('div', 'p-10 text-center text-red-500 dark:text-red-400 border border-dashed border-red-300 dark:border-red-700 rounded-2xl', data.message || '{{ _('agent_team.request_failed') }}'));
+            return;
+        }
+        if (!data.candidates || data.candidates.length === 0) {
+            box.appendChild(makeText('div', 'p-10 text-center text-gray-500 dark:text-gray-400 border border-dashed border-gray-300 dark:border-gray-600 rounded-2xl', '{{ _('agent_team.no_candidates') }}'));
+            return;
+        }
+        const grid = document.createElement('div');
+        grid.className = 'grid grid-cols-1 xl:grid-cols-2 gap-4';
+        data.candidates.forEach(c => {
+            const card = document.createElement('article');
+            card.className = 'card-hover rounded-2xl border border-gray-200 dark:border-gray-700 p-5 bg-white/70 dark:bg-gray-900/40';
+            const head = document.createElement('div');
+            head.className = 'flex items-start justify-between gap-4';
+            const info = document.createElement('div');
+            info.className = 'min-w-0';
+            info.appendChild(makeText('h3', 'font-bold text-gray-900 dark:text-gray-100 line-clamp-2', c.title));
+            info.appendChild(makeText('p', 'mt-1 text-xs text-gray-500 dark:text-gray-400', `${c.repo_full_name || '-'} · ${c.source_type || '-'} · score ${c.candidate_score || 0}`));
+            const score = makeText('div', 'shrink-0 w-14 h-14 rounded-2xl bg-sakura-100 dark:bg-sakura-900/30 text-sakura-700 dark:text-sakura-300 flex items-center justify-center text-xl font-extrabold', c.candidate_score || 0);
+            head.appendChild(info); head.appendChild(score); card.appendChild(head);
+            card.appendChild(makeText('p', 'mt-4 text-sm text-gray-600 dark:text-gray-300 line-clamp-4', (c.summary || '{{ _('agent_team.no_summary') }}').slice(0, 360)));
+            if (c.filter_reason) {
+                const reason = document.createElement('div');
+                reason.className = 'mt-4 rounded-xl bg-sakura-50 dark:bg-sakura-950/30 border border-sakura-100 dark:border-sakura-900/40 p-3';
+                reason.appendChild(makeText('div', 'text-xs font-semibold text-sakura-700 dark:text-sakura-300', '{{ _('agent_team.ai_filter_reason') }}'));
+                reason.appendChild(makeText('p', 'mt-1 text-sm text-gray-600 dark:text-gray-300 line-clamp-3', c.filter_reason));
+                card.appendChild(reason);
+            }
+            const foot = document.createElement('div');
+            foot.className = 'mt-5 flex justify-end';
+            const btn = document.createElement('button');
+            btn.className = 'px-4 py-2 text-sm font-semibold bg-sakura-500 hover:bg-sakura-600 text-white rounded-xl transition-colors';
+            btn.textContent = '{{ _('agent_team.create_task') }}';
+            btn.onclick = () => createAgentTask(btn, c.source_type, c.source_id, requirement);
+            foot.appendChild(btn); card.appendChild(foot); grid.appendChild(card);
+        });
+        box.appendChild(grid);
+    }).catch(() => {
+        box.innerHTML = getErrorHTML('{{ _('agent_team.request_failed') }}');
+    });
+}
+function createAgentTask(btn, sourceType, sourceId, requirement = '') {
+    btn.disabled = true;
+    btn.classList.add('opacity-60', 'cursor-not-allowed');
+    btn.textContent = '...';
+    fetch('/webui/agent-team/tasks/create', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/x-www-form-urlencoded'},
+        body: new URLSearchParams({csrf_token: '{{ csrf_token }}', source_type: sourceType, source_id: sourceId, ai_filter_requirement: requirement})
+    }).then(r => r.json()).then(data => {
+        if (data.success) {
+            window.dispatchEvent(new CustomEvent('show-toast', {detail: {message: '{{ _('agent_team.task_created') }}', type: 'success'}}));
+            btn.textContent = '✓';
+            btn.classList.remove('bg-sakura-500', 'hover:bg-sakura-600');
+            btn.classList.add('bg-green-500');
+            refreshAgentTaskList();
+            previewCandidates();
+        } else {
+            window.dispatchEvent(new CustomEvent('show-toast', {detail: {message: data.message || '{{ _('agent_team.request_failed') }}', type: 'error'}}));
+            btn.disabled = false;
+            btn.classList.remove('opacity-60', 'cursor-not-allowed');
+            btn.textContent = '{{ _('agent_team.retry') }}';
+        }
+    }).catch(() => {
+        window.dispatchEvent(new CustomEvent('show-toast', {detail: {message: '{{ _('agent_team.request_failed') }}', type: 'error'}}));
+        btn.disabled = false;
+        btn.classList.remove('opacity-60', 'cursor-not-allowed');
+        btn.textContent = '{{ _('agent_team.retry') }}';
+    });
+}
+</script>
+{% endblock %}

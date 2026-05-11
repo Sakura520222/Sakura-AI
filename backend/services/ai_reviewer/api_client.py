@@ -256,8 +256,19 @@ class AIApiClient:
                     is_context_overflow = self._is_context_overflow_error(e)
                     if not is_context_overflow:
                         # 非超长的 BadRequestError，直接抛出原始错误
+                        tool_names = [
+                            tool.get("function", {}).get("name", "")
+                            for tool in kwargs.get("tools", []) or []
+                        ]
                         logger.error(
-                            "AI调用 BadRequestError（非上下文超长）: {}", str(e)
+                            "AI调用 BadRequestError（非上下文超长）: {} | model={} tools={} "
+                            "tool_choice={} max_tokens={} temperature={}",
+                            str(e),
+                            kwargs.get("model"),
+                            tool_names,
+                            kwargs.get("tool_choice"),
+                            kwargs.get("max_tokens"),
+                            kwargs.get("temperature"),
                         )
                         raise
 
