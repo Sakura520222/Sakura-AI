@@ -23,9 +23,7 @@ from .api_client import AIApiClient
 from .batch_processor import BatchProcessor
 from .compression import ContextCompressor
 from .constants import (
-    DEFAULT_API_TIMEOUT,
     DEFAULT_MAX_TOKENS,
-    MAX_RETRIES,
     MAX_FILE_SIZE_BYTES,
     MAX_FILE_LINES,
     DEFAULT_CONTEXT_LINES,
@@ -56,9 +54,7 @@ __all__ = [
     "FileToolHandler",
     "SearchToolHandler",
     # 常量
-    "DEFAULT_API_TIMEOUT",
     "DEFAULT_MAX_TOKENS",
-    "MAX_RETRIES",
     "MAX_FILE_SIZE_BYTES",
     "MAX_FILE_LINES",
     "DEFAULT_CONTEXT_LINES",

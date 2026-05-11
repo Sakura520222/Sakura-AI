@@ -79,6 +79,17 @@ def _get_config_lock(path: str) -> asyncio.Lock:
     return lock
 
 
+def _parse_positive_int_config(raw: object) -> int:
+    """解析正整数配置值"""
+    try:
+        value = int(str(raw).strip())
+    except (TypeError, ValueError) as exc:
+        raise ValueError("invalid integer config value") from exc
+    if value < 1:
+        raise ValueError("integer config value must be positive")
+    return value
+
+
 def _atomic_yaml_write(path: Path, full_config: dict):
     """原子写入 YAML 配置文件
 
@@ -770,14 +781,7 @@ async def save_general_config(
         # max_concurrent_reviews
         raw = form.get("max_concurrent_reviews")
         if raw is not None:
-            val = int(raw)
-            if val < 1:
-                return toast_redirect(
-                    "/webui/config/general",
-                    "toast.invalid_param",
-                    "error",
-                    lang=detect_language(),
-                )
+            val = _parse_positive_int_config(raw)
             result = await db.execute(
                 select(AppConfig).where(AppConfig.key_name == "max_concurrent_reviews")
             )
@@ -800,14 +804,7 @@ async def save_general_config(
         # review_timeout_seconds
         raw = form.get("review_timeout_seconds")
         if raw is not None:
-            val = int(raw)
-            if val < 1:
-                return toast_redirect(
-                    "/webui/config/general",
-                    "toast.invalid_param",
-                    "error",
-                    lang=detect_language(),
-                )
+            val = _parse_positive_int_config(raw)
             result = await db.execute(
                 select(AppConfig).where(AppConfig.key_name == "review_timeout_seconds")
             )
