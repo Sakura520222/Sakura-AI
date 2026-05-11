@@ -68,6 +68,14 @@
 - **新建正整数解析函数必须记录warning日志**：当使用默认值替代非法输入时，记录`logger.warning`及原始值，标minor
 - **无上限校验的消费方防御必须验证**：若函数未提供max_value，审查必须检查调用方是否有隐式上限（如Semaphore、数据库连接池限制），标major
 - **配置解析函数必须显式处理None输入**：禁止`str(None).strip()`隐式转换，应`if raw is None: raise ValueError`，标major
+- **配置默认值必须唯一声明于config.py**：禁止双源默认值，标major
+- **docstring中描述的“白名单/黑名单”必须与代码常量一致**：功能语义完全相反时升为major，标major
+- **重构删除内联校验时，必须输出“旧约束 vs 新逻辑对比表”**，标major
+- **新增异步任务提交方式时必须评估任务丢失风险**：BackgroundTasks不适合长时间任务，应说明理由，标major
+- **工具循环或后台worker的取消接口必须同时实现状态变更和中断信号**，标major
+- **Shell命令白名单禁止前缀匹配**：必须解析第一个token精确匹配并拒绝shell元字符，标major
+- **测试中修改全局缓存必须使用fixture或finally确保清理**，仅依赖monkeypatch不足，标major
+- **新增用户级配置必须同步检查SSE、WebUI、日志、异步任务是否使用该配置**，标major
 
 ## 近期审查模式总结
 
@@ -175,4 +183,4 @@
 
 ## 仓库信息
 - 仓库名: Sakura520222/Sakura-AI-Reviewer
-- 累计反思次数: 201
+- 累计反思次数: 207
