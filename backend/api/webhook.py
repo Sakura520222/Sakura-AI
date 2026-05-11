@@ -16,7 +16,7 @@ from backend.core.github_app import (
 from backend.workers.review_worker import submit_review_task
 from backend.services.telegram_service import TelegramService
 from backend.telegram.notifications import get_notification_sender
-from backend.core.config import get_settings
+from backend.core.config import get_settings, get_dynamic_config
 
 settings = get_settings()
 
@@ -864,7 +864,7 @@ async def handle_issue_event(payload: Dict[str, Any]) -> JSONResponse:
             )
 
         # 检查功能是否启用
-        if not settings.enable_issue_analysis:
+        if not await get_dynamic_config("enable_issue_analysis"):
             logger.info("Issue 分析功能未启用")
             return JSONResponse(
                 content={"status": "skipped", "reason": "feature disabled"}
@@ -962,7 +962,7 @@ async def handle_issue_analyze_command(payload: Dict[str, Any]) -> JSONResponse:
             )
 
         # 检查功能是否启用
-        if not settings.enable_issue_analysis:
+        if not await get_dynamic_config("enable_issue_analysis"):
             return JSONResponse(
                 content={"status": "skipped", "reason": "feature disabled"}
             )

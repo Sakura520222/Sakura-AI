@@ -46,6 +46,11 @@
                         class="whitespace-nowrap px-4 py-3 text-sm font-medium border-b-2 transition-colors">
                     {{ _('strategy.dep_graph') }}
                 </button>
+                <button @click="activeTab = 'issue_analysis'"
+                        :class="activeTab === 'issue_analysis' ? 'border-pink-500 text-pink-600 dark:text-pink-400' : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300 dark:text-gray-400 dark:hover:text-gray-300'"
+                        class="whitespace-nowrap px-4 py-3 text-sm font-medium border-b-2 transition-colors">
+                    {{ _('strategy.issue_analysis') }}
+                </button>
             </nav>
         </div>
 
@@ -482,6 +487,139 @@
                         </button>
                     </div>
                 </form>
+            </div>
+
+            <!-- ======== Tab: Issue 分析 ======== -->
+            <div x-show="activeTab === 'issue_analysis'" x-cloak>
+                <form method="POST" action="/webui/config/strategies/save">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                    <input type="hidden" name="section" value="issue_analysis">
+
+                    <div class="bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-lg p-3 mb-6">
+                        <p class="text-sm text-blue-700 dark:text-blue-300">{{ _('strategy.issue_config_hint') }}</p>
+                    </div>
+
+                    {% set ia = issue_analysis %}
+                    <div class="space-y-6">
+
+                        <!-- 系统提示词 -->
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">{{ _('strategy.system_prompt') }}</label>
+                            <p class="text-xs text-gray-500 dark:text-gray-400 mb-2">{{ _('strategy.issue_system_prompt_desc') }}</p>
+                            <textarea name="issue_system_prompt" rows="12"
+                                      class="w-full px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-sm font-mono focus:ring-2 focus:ring-pink-500 focus:border-transparent outline-none resize-y">{{ ia.get('system_prompt', '') }}</textarea>
+                        </div>
+
+                        <!-- 分类定义 -->
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">{{ _('strategy.issue_categories') }}</label>
+                            <p class="text-xs text-gray-500 dark:text-gray-400 mb-2">{{ _('strategy.issue_categories_desc') }}</p>
+                            <div id="categories-container" class="space-y-2">
+                                {% for cat in ia.get('categories', []) %}
+                                <div class="flex items-start gap-2 category-row">
+                                    <input type="text" name="cat_name" value="{{ cat.get('name', '') }}" placeholder="name"
+                                           class="w-28 px-2 py-1.5 rounded border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-sm focus:ring-2 focus:ring-pink-500 outline-none">
+                                    <input type="text" name="cat_desc" value="{{ cat.get('description', '') }}" placeholder="description"
+                                           class="flex-1 px-2 py-1.5 rounded border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-sm focus:ring-2 focus:ring-pink-500 outline-none">
+                                    <input type="text" name="cat_keywords" value="{{ cat.get('keywords', []) | join(', ') }}" placeholder="keywords (comma separated)"
+                                           class="flex-1 px-2 py-1.5 rounded border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-sm focus:ring-2 focus:ring-pink-500 outline-none">
+                                    <button type="button" onclick="this.closest('.category-row').remove()"
+                                            class="px-2 py-1.5 text-red-500 hover:text-red-700 text-sm font-medium">✕</button>
+                                </div>
+                                {% endfor %}
+                            </div>
+                            <button type="button" onclick="addCategoryRow()"
+                                    class="mt-2 px-3 py-1.5 text-sm text-pink-600 hover:text-pink-800 dark:text-pink-400 dark:hover:text-pink-300 border border-dashed border-pink-300 dark:border-pink-600 rounded-lg hover:bg-pink-50 dark:hover:bg-pink-900/20 transition-colors">
+                                + {{ _('strategy.add_category') }}
+                            </button>
+                        </div>
+
+                        <!-- 优先级规则 -->
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">{{ _('strategy.issue_priority_rules') }}</label>
+                            <p class="text-xs text-gray-500 dark:text-gray-400 mb-2">{{ _('strategy.issue_priority_rules_desc') }}</p>
+                            {% set pr_rules = ia.get('priority_rules', {}) %}
+                            <div class="space-y-2">
+                                {% for pkey in ['critical', 'high', 'medium', 'low'] %}
+                                <div class="flex items-center gap-2">
+                                    <span class="w-20 text-xs font-medium text-gray-600 dark:text-gray-400 capitalize">{{ pkey }}</span>
+                                    <input type="text" name="priority_{{ pkey }}" value="{{ pr_rules.get(pkey, {}).get('keywords', []) | join(', ') }}"
+                                           class="flex-1 px-2 py-1.5 rounded border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-sm focus:ring-2 focus:ring-pink-500 outline-none"
+                                           placeholder="keywords (comma separated)">
+                                </div>
+                                {% endfor %}
+                            </div>
+                        </div>
+
+                        <!-- 关联关键词 -->
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">{{ _('strategy.issue_reference_keywords') }}</label>
+                            <p class="text-xs text-gray-500 dark:text-gray-400 mb-2">{{ _('strategy.issue_reference_keywords_desc') }}</p>
+                            <input type="text" name="issue_reference_keywords"
+                                   value="{{ ia.get('issue_reference_keywords', []) | join(', ') }}"
+                                   class="w-full px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-sm focus:ring-2 focus:ring-pink-500 focus:border-transparent outline-none">
+                        </div>
+
+                        <!-- 最大关联 Issue -->
+                        <div>
+                            <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">{{ _('strategy.issue_max_linked') }}</label>
+                            <input type="number" name="max_linked_issues_in_prompt" min="1" max="20"
+                                   value="{{ ia.get('max_linked_issues_in_prompt', 5) }}"
+                                   class="w-32 px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-sm focus:ring-2 focus:ring-pink-500 focus:border-transparent outline-none">
+                        </div>
+
+                        <div class="border-t border-gray-200 dark:border-gray-700"></div>
+
+                        <!-- 评论模板（中文） -->
+                        <div>
+                            <label class="block text-sm font-medium text-green-700 dark:text-green-400 mb-1">{{ _('strategy.issue_comment_template_zh') }}</label>
+                            <p class="text-xs text-gray-500 dark:text-gray-400 mb-2">
+                                {{ _('strategy.issue_template_variables') }}<code class="px-1 py-0.5 bg-gray-100 dark:bg-gray-700 rounded text-xs">{category}</code>
+                                <code class="px-1 py-0.5 bg-gray-100 dark:bg-gray-700 rounded text-xs">{priority}</code>
+                                <code class="px-1 py-0.5 bg-gray-100 dark:bg-gray-700 rounded text-xs">{feasibility}</code>
+                                <code class="px-1 py-0.5 bg-gray-100 dark:bg-gray-700 rounded text-xs">{summary}</code>
+                                <code class="px-1 py-0.5 bg-gray-100 dark:bg-gray-700 rounded text-xs">{labels}</code>
+                                <code class="px-1 py-0.5 bg-gray-100 dark:bg-gray-700 rounded text-xs">{assignees}</code>
+                                <code class="px-1 py-0.5 bg-gray-100 dark:bg-gray-700 rounded text-xs">{related_info}</code>
+                                <code class="px-1 py-0.5 bg-gray-100 dark:bg-gray-700 rounded text-xs">{suggested_title_section}</code>
+                            </p>
+                            <textarea name="issue_comment_template" rows="12"
+                                      class="w-full px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-sm font-mono focus:ring-2 focus:ring-pink-500 focus:border-transparent outline-none resize-y">{{ ia.get('comment_template', '') }}</textarea>
+                        </div>
+
+                        <!-- 评论模板（英文） -->
+                        <div>
+                            <label class="block text-sm font-medium text-blue-700 dark:text-blue-400 mb-1">{{ _('strategy.issue_comment_template_en') }}</label>
+                            <textarea name="issue_comment_template_en" rows="12"
+                                      class="w-full px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-sm font-mono focus:ring-2 focus:ring-pink-500 focus:border-transparent outline-none resize-y">{{ ia.get('comment_template_en', '') }}</textarea>
+                        </div>
+                    </div>
+
+                    <div class="mt-6 pt-4 border-t border-gray-200 dark:border-gray-700">
+                        <button type="submit" class="px-4 py-2 bg-pink-500 text-white rounded-lg text-sm font-medium hover:bg-pink-600 transition-colors">
+                            {{ _('strategy.save_issue_analysis') }}
+                        </button>
+                    </div>
+                </form>
+
+                <script>
+                function addCategoryRow() {
+                    const container = document.getElementById('categories-container');
+                    const row = document.createElement('div');
+                    row.className = 'flex items-start gap-2 category-row';
+                    row.innerHTML = `
+                        <input type="text" name="cat_name" value="" placeholder="name"
+                               class="w-28 px-2 py-1.5 rounded border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-sm focus:ring-2 focus:ring-pink-500 outline-none">
+                        <input type="text" name="cat_desc" value="" placeholder="description"
+                               class="flex-1 px-2 py-1.5 rounded border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-sm focus:ring-2 focus:ring-pink-500 outline-none">
+                        <input type="text" name="cat_keywords" value="" placeholder="keywords (comma separated)"
+                               class="flex-1 px-2 py-1.5 rounded border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-sm focus:ring-2 focus:ring-pink-500 outline-none">
+                        <button type="button" onclick="this.closest('.category-row').remove()"
+                                class="px-2 py-1.5 text-red-500 hover:text-red-700 text-sm font-medium">✕</button>
+                    `;
+                    container.appendChild(row);
+                }
+                </script>
             </div>
 
         </div>

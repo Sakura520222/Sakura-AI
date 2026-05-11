@@ -767,15 +767,41 @@ DYNAMIC_CONFIG_GROUPS: OrderedDict[str, dict] = OrderedDict(
             },
         ),
         (
-            "issue_rewrite",
+            "issue_analysis",
             {
-                "label": "Issue 标题改写",
-                "icon": "pen-line",
+                "label": "Issue 分析配置",
+                "icon": "check-circle",
                 "descriptions": {
-                    "issue_auto_rewrite_title": "开启后，AI 分析 Issue 时会生成规范化标题并自动修改（默认关闭）",
+                    "enable_issue_analysis": "启用后，系统将自动分析新创建的 Issue",
+                    "issue_auto_comment": "分析完成后自动在 Issue 下发布分析报告评论",
+                    "issue_confidence_threshold": "标签置信度阈值（0-1），AI 建议标签的置信度达到此值才会自动应用",
+                    "issue_auto_create_labels": "自动创建仓库中不存在的推荐标签",
+                    "issue_auto_assign": "根据 AI 建议自动指派 Issue 负责人",
+                    "issue_auto_rewrite_title": "AI 生成规范化标题并自动修改 Issue 标题（默认关闭）",
+                    "issue_assignee_confidence_threshold": "指派人置信度阈值（0-1），达到此值才会自动指派",
+                    "issue_auto_assign_max": "单个 Issue 最多自动指派的人数",
+                    "issue_detect_duplicates": "启用后自动检测重复 Issue",
+                    "issue_suggest_assignees": "AI 分析时推荐合适的指派人",
+                    "issue_suggest_milestones": "AI 分析时推荐合适的里程碑",
+                    "issue_max_tool_iterations": "AI 工具调用最大迭代次数，控制分析深度",
+                    "issue_max_files_per_analysis": "单次分析最多读取的文件数",
+                    "issue_max_directory_depth": "目录浏览的最大深度",
                 },
                 "keys": [
+                    "enable_issue_analysis",
+                    "issue_auto_comment",
+                    "issue_confidence_threshold",
+                    "issue_auto_create_labels",
+                    "issue_auto_assign",
                     "issue_auto_rewrite_title",
+                    "issue_assignee_confidence_threshold",
+                    "issue_auto_assign_max",
+                    "issue_detect_duplicates",
+                    "issue_suggest_assignees",
+                    "issue_suggest_milestones",
+                    "issue_max_tool_iterations",
+                    "issue_max_files_per_analysis",
+                    "issue_max_directory_depth",
                 ],
             },
         ),
@@ -978,6 +1004,10 @@ DYNAMIC_CONFIG_RANGES: dict[str, tuple[float, float]] = {
     "sakura_consolidation_interval": (1, 50),
     "sakura_max_memory_chars": (500, 10000),
     "sakura_max_sakura_chars": (1000, 20000),
+    # Issue 分析
+    "issue_confidence_threshold": (0.0, 1.0),
+    "issue_assignee_confidence_threshold": (0.0, 1.0),
+    "issue_auto_assign_max": (1, 10),
 }
 
 # 字段中文标签
@@ -1079,8 +1109,21 @@ DYNAMIC_CONFIG_LABELS: dict[str, str] = {
     "fetch_url_domain_policy": "域名过滤策略",
     "fetch_url_domain_list": "域名列表",
     "fetch_url_force_https": "强制 HTTPS",
-    # Issue 标题改写
+    # Issue 分析配置
+    "enable_issue_analysis": "启用 Issue 分析",
+    "issue_auto_comment": "自动发布分析评论",
+    "issue_confidence_threshold": "标签置信度阈值",
+    "issue_auto_create_labels": "自动创建标签",
+    "issue_auto_assign": "自动指派负责人",
     "issue_auto_rewrite_title": "自动改写 Issue 标题",
+    "issue_assignee_confidence_threshold": "指派人置信度阈值",
+    "issue_auto_assign_max": "最大指派人数",
+    "issue_detect_duplicates": "检测重复 Issue",
+    "issue_suggest_assignees": "推荐指派人",
+    "issue_suggest_milestones": "推荐里程碑",
+    "issue_max_tool_iterations": "工具最大迭代次数",
+    "issue_max_files_per_analysis": "单次分析最大文件数",
+    "issue_max_directory_depth": "目录最大深度",
 }
 
 # 内存 TTL 缓存（进程级，多 Worker 部署时各进程独立，配置变更仅当前进程可见）

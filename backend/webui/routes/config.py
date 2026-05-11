@@ -42,9 +42,6 @@ _BASIC_CONFIG_KEYS = frozenset(
         "max_concurrent_reviews",
         "review_timeout_seconds",
         "enable_auto_review",
-        "issue_auto_create_labels",
-        "issue_auto_assign",
-        "issue_max_tool_iterations",
         "web_search_enabled",
         "web_search_provider",
         "web_search_api_key",
@@ -157,6 +154,7 @@ async def strategies_page(
         context_enhancement=config_data.get("context_enhancement", {}),
         review_policy=config_data.get("review_policy", {}),
         pr_dependency_graph=pr_dependency_graph,
+        issue_analysis=config_data.get("issue_analysis", {}),
         active_tab=tab,
     )
 
@@ -314,6 +312,50 @@ async def save_strategies_section(
                             description="PR dependency graph generation mode",
                         )
                     )
+
+            elif section == "issue_analysis":
+                # 解析分类定义
+                cat_names = form.getlist("cat_name")
+                cat_descs = form.getlist("cat_desc")
+                cat_keywords_raw = form.getlist("cat_keywords")
+                categories = []
+                for name, desc, kw_raw in zip(cat_names, cat_descs, cat_keywords_raw):
+                    name = name.strip()
+                    if not name:
+                        continue
+                    keywords = [k.strip() for k in kw_raw.split(",") if k.strip()]
+                    categories.append(
+                        {"name": name, "description": desc.strip(), "keywords": keywords}
+                    )
+                if not categories:
+                    raise ValueError("至少需要定义一个 Issue 分类")
+
+                # 解析优先级规则
+                priority_rules = {}
+                for pkey in ("critical", "high", "medium", "low"):
+                    kw_raw = form.get(f"priority_{pkey}", "")
+                    keywords = [k.strip() for k in kw_raw.split(",") if k.strip()]
+                    priority_rules[pkey] = {"keywords": keywords}
+
+                # 解析关联关键词
+                ref_kw_raw = form.get("issue_reference_keywords", "")
+                ref_keywords = [k.strip() for k in ref_kw_raw.split(",") if k.strip()]
+
+                raw_linked = form.get("max_linked_issues_in_prompt", "5")
+                try:
+                    max_linked = int(raw_linked)
+                except (ValueError, TypeError):
+                    raise ValueError("关联 Issue 数量上限必须是有效整数")
+
+                config["issue_analysis"] = {
+                    "categories": categories,
+                    "priority_rules": priority_rules,
+                    "issue_reference_keywords": ref_keywords,
+                    "max_linked_issues_in_prompt": max_linked,
+                    "system_prompt": form.get("issue_system_prompt", ""),
+                    "comment_template": form.get("issue_comment_template", ""),
+                    "comment_template_en": form.get("issue_comment_template_en", ""),
+                }
             else:
                 raise HTTPException(status_code=400, detail=f"未知 section: {section}")
 
@@ -793,60 +835,6 @@ async def save_general_config(
         if cfg and cfg.key_value != val:
             changed["enable_auto_review"] = {"old": cfg.key_value, "new": val}
             cfg.key_value = val
-
-        # issue_auto_create_labels (checkbox)
-        raw = form.get("issue_auto_create_labels")
-        val = "true" if raw == "true" else "false"
-        result = await db.execute(
-            select(AppConfig).where(AppConfig.key_name == "issue_auto_create_labels")
-        )
-        cfg = result.scalar_one_or_none()
-        if cfg and cfg.key_value != val:
-            changed["issue_auto_create_labels"] = {"old": cfg.key_value, "new": val}
-            cfg.key_value = val
-
-        # issue_auto_assign (checkbox)
-        raw = form.get("issue_auto_assign")
-        val = "true" if raw == "true" else "false"
-        result = await db.execute(
-            select(AppConfig).where(AppConfig.key_name == "issue_auto_assign")
-        )
-        cfg = result.scalar_one_or_none()
-        if cfg and cfg.key_value != val:
-            changed["issue_auto_assign"] = {"old": cfg.key_value, "new": val}
-            cfg.key_value = val
-
-        # issue_max_tool_iterations
-        raw = form.get("issue_max_tool_iterations")
-        if raw is not None:
-            try:
-                val = int(raw)
-            except ValueError:
-                return toast_redirect(
-                    "/webui/config/general",
-                    "toast.ai_tool_iterations_invalid",
-                    "error",
-                    lang=detect_language(),
-                )
-            if not 1 <= val <= 150:
-                return toast_redirect(
-                    "/webui/config/general",
-                    "toast.ai_tool_iterations_range",
-                    "error",
-                    lang=detect_language(),
-                )
-            result = await db.execute(
-                select(AppConfig).where(
-                    AppConfig.key_name == "issue_max_tool_iterations"
-                )
-            )
-            cfg = result.scalar_one_or_none()
-            if cfg and cfg.key_value != str(val):
-                changed["issue_max_tool_iterations"] = {
-                    "old": cfg.key_value,
-                    "new": str(val),
-                }
-                cfg.key_value = str(val)
 
         # ========== Web 搜索配置 ==========
         web_search_keys = [
