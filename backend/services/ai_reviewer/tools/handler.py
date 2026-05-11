@@ -178,5 +178,5 @@ class ToolHandler:
                 return {"error": f"未知工具: {function_name}"}
 
         except Exception as e:
-            logger.error(f"执行工具 {function_name} 失败: {e}", exc_info=True)
+            logger.error("执行工具 {} 失败: {}", function_name, str(e), exc_info=True)
             return {"error": f"工具执行失败: {str(e)}"}

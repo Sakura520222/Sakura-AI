@@ -261,7 +261,11 @@ class ReviewWorker:
                         )
                         logger.info(f"[{task_id}] 代码索引完成")
                     except Exception as e:
-                        logger.warning(f"[{task_id}] 代码索引失败（将继续审查）: {e}")
+                        logger.warning(
+                            "[{}] 代码索引失败（将继续审查）: {}",
+                            task_id,
+                            str(e),
+                        )
 
                 # 2.6 文档索引（如果启用 RAG 且仓库尚未索引过文档）
                 if settings.enable_rag:
@@ -371,7 +375,9 @@ class ReviewWorker:
                         pr_summary_text = summary
                         logger.info(f"[{task_id}] PR 变更总结已更新")
                     except Exception as e:
-                        logger.warning(f"[{task_id}] PR 变更总结生成失败: {e}")
+                        logger.warning(
+                            "[{}] PR 变更总结生成失败: {}", task_id, str(e)
+                        )
 
                 # 4.6 PR 依赖图生成（如果启用）
                 if settings.enable_pr_dependency_graph:
@@ -500,7 +506,11 @@ class ReviewWorker:
                                 f"[{task_id}] 关联了 {len(issue_contents)} 个 Issue 到审查上下文"
                             )
                     except Exception as e:
-                        logger.warning(f"[{task_id}] Issue 关联失败（不影响审查）: {e}")
+                        logger.warning(
+                            "[{}] Issue 关联失败（不影响审查）: {}",
+                            task_id,
+                            str(e),
+                        )
 
                 # 6.6 语义 Issue 关联（如果启用）
                 if (
@@ -715,7 +725,9 @@ class ReviewWorker:
 
                         except Exception as label_error:
                             logger.warning(
-                                f"[{task_id}] 标签推荐失败（不影响审查）: {label_error}"
+                                "[{}] 标签推荐失败（不影响审查）: {}",
+                                task_id,
+                                str(label_error),
                             )
                             return None
 
@@ -730,14 +742,16 @@ class ReviewWorker:
                     # 8. 保存审查结果
                     await self._save_review_results(review_id, review_result, analysis)
                 else:
-                    logger.error(f"[{task_id}] AI审查失败: {review_result}")
+                    logger.error("[{}] AI审查失败: {}", task_id, str(review_result))
                     raise review_result
 
                 # 获取标签推荐结果
                 label_results = None
                 if enable_label_recommendation and len(results) > 1:
                     if isinstance(results[1], Exception):
-                        logger.warning(f"[{task_id}] 标签推荐任务异常: {results[1]}")
+                        logger.warning(
+                            "[{}] 标签推荐任务异常: {}", task_id, str(results[1])
+                        )
                     else:
                         label_results = results[1]
 
@@ -800,7 +814,9 @@ class ReviewWorker:
                         logger.info(f"[{task_id}] 已触发 .sakura/ 反思任务")
                 except Exception as e:
                     logger.warning(
-                        f"[{task_id}] 触发 .sakura/ 反思失败（不影响审查）: {e}"
+                        "[{}] 触发 .sakura/ 反思失败（不影响审查）: {}",
+                        task_id,
+                        str(e),
                     )
 
                 # 12. 发送Telegram审查完成通知
@@ -813,7 +829,12 @@ class ReviewWorker:
                 return task_id
 
             except Exception as e:
-                logger.error(f"[{task_id}] 处理审查任务时出错: {e}", exc_info=True)
+                logger.error(
+                    "[{}] 处理审查任务时出错: {}",
+                    task_id,
+                    str(e),
+                    exc_info=True,
+                )
 
                 # 【错误处理】更新占位评论为错误消息
                 if review_obj:
@@ -826,13 +847,17 @@ class ReviewWorker:
                         )
                         logger.info(f"[{task_id}] 已更新占位评论为错误状态")
                     except Exception as update_error:
-                        logger.error(f"[{task_id}] 更新错误消息失败: {update_error}")
+                        logger.error(
+                            "[{}] 更新错误消息失败: {}",
+                            task_id,
+                            str(update_error),
+                        )
 
                 # 保存错误信息到数据库
                 try:
                     await self._save_error_record(pr_info, str(e), task_id)
                 except Exception as save_error:
-                    logger.error(f"保存错误记录失败: {save_error}")
+                    logger.error("保存错误记录失败: {}", str(save_error))
                 raise
             finally:
                 # Always unregister task to clean up cancel event
@@ -907,7 +932,7 @@ class ReviewWorker:
                 },
             )
         except Exception as e:
-            logger.warning(f"发布 SSE 事件失败（不影响主流程）: {e}")
+            logger.warning("发布 SSE 事件失败（不影响主流程）: {}", str(e))
 
     async def _save_review_results(
         self, review_id: int, review_result: Dict[str, Any], analysis: PRAnalysis
@@ -1220,7 +1245,9 @@ class ReviewWorker:
             return decision, decision_reason
 
         except Exception as e:
-            logger.error(f"[{task_id}] 决策引擎执行失败: {e}", exc_info=True)
+            logger.error(
+                "[{}] 决策引擎执行失败: {}", task_id, str(e), exc_info=True
+            )
             # 出错时返回None，不影响审查完成
             return None, f"决策过程异常: {str(e)}"
 
@@ -1277,7 +1304,7 @@ class ReviewWorker:
             )
 
         except Exception as e:
-            logger.error(f"发送Telegram通知失败: {e}", exc_info=True)
+            logger.error("发送Telegram通知失败: {}", str(e), exc_info=True)
 
 
 # 全局Worker实例
