@@ -16,11 +16,7 @@ from loguru import logger
 from backend.core.config import get_settings
 
 from .constants import (
-    DEFAULT_API_TIMEOUT,
     DEFAULT_MAX_TOKENS,
-    INITIAL_DELAY,
-    MAX_RETRIES,
-    TOTAL_TIMEOUT,
 )
 
 # Context overflow keywords for detecting prompt-too-long errors
@@ -182,11 +178,7 @@ class AIApiClient:
             api_kwargs["tool_choice"] = tool_choice
 
         # 设置默认值
-        api_timeout = timeout or getattr(
-            settings,
-            "ai_api_timeout_seconds",
-            DEFAULT_API_TIMEOUT,
-        )
+        api_timeout = timeout or settings.ai_api_timeout_seconds
         api_kwargs.setdefault("timeout", api_timeout)
         api_kwargs.setdefault("max_tokens", max_tokens or DEFAULT_MAX_TOKENS)
 
@@ -209,12 +201,8 @@ class AIApiClient:
             Exception: 重试失败或超时
         """
         settings = get_settings()
-        max_retries = getattr(settings, "ai_api_max_retries", MAX_RETRIES)
-        total_timeout = getattr(
-            settings,
-            "ai_api_total_timeout_seconds",
-            TOTAL_TIMEOUT,
-        )
+        max_retries = settings.ai_api_max_retries
+        total_timeout = settings.ai_api_total_timeout_seconds
         start_time = time.monotonic()
 
         for attempt in range(max_retries):
@@ -351,11 +339,7 @@ class AIApiClient:
             延迟秒数
         """
         settings = get_settings()
-        initial_delay = getattr(
-            settings,
-            "ai_api_initial_retry_delay_seconds",
-            INITIAL_DELAY,
-        )
+        initial_delay = settings.ai_api_initial_retry_delay_seconds
         if attempt < 3:
             delay = initial_delay * (2**attempt)  # 1s, 2s, 4s
         else:
