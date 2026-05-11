@@ -31,14 +31,8 @@ _PRIVATE_NETWORKS = [
     ipaddress.ip_network("fc00::/7"),
 ]
 
-_MAX_REDIRECTS = 3
 _ALLOWED_SCHEMES = frozenset({"http", "https"})
-_ALLOWED_CONTENT_TYPES = frozenset(
-    {
-        "text/html",
-        "application/xhtml+xml",
-    }
-)
+_DEFAULT_ALLOWED_CONTENT_TYPES = "text/html,application/xhtml+xml,text/plain"
 
 # Unicode categories used by confusable (homoglyph) characters
 _CONFUSABLE_CATEGORIES = frozenset({"Mn", "Cf", "Co"})
@@ -96,6 +90,8 @@ class FetchUrlToolHandler:
         "fetch_url_domain_policy",
         "fetch_url_domain_list",
         "fetch_url_force_https",
+        "fetch_url_allowed_content_types",
+        "fetch_url_max_redirects",
     ]
 
     _CONFIG_CACHE_TTL = 60
@@ -109,6 +105,10 @@ class FetchUrlToolHandler:
         self._domain_policy: str = settings.fetch_url_domain_policy
         self._domain_list: str = settings.fetch_url_domain_list
         self._force_https: bool = settings.fetch_url_force_https
+        self._allowed_content_types: frozenset[str] = self._parse_content_types(
+            settings.fetch_url_allowed_content_types
+        )
+        self._max_redirects: int = settings.fetch_url_max_redirects
         self._last_config_load: float = 0.0
         self._session_call_count: int = 0
         self._session_lock = asyncio.Lock()
@@ -158,6 +158,12 @@ class FetchUrlToolHandler:
                 self._domain_list = config_values["fetch_url_domain_list"]
             if config_values.get("fetch_url_force_https") is not None:
                 self._force_https = config_values["fetch_url_force_https"] == "true"
+            if config_values.get("fetch_url_allowed_content_types") is not None:
+                self._allowed_content_types = self._parse_content_types(
+                    config_values["fetch_url_allowed_content_types"]
+                )
+            if config_values.get("fetch_url_max_redirects") is not None:
+                self._max_redirects = int(config_values["fetch_url_max_redirects"])
 
             self._last_config_load = time.time()
 
@@ -359,17 +365,28 @@ class FetchUrlToolHandler:
         return urlunparse(parsed._replace(query="&".join(redacted)))
 
     @staticmethod
-    def _check_content_type(content_type: str | None) -> None:
+    def _parse_content_types(value: str | None) -> frozenset[str]:
+        content_types = {
+            item.strip().lower() for item in (value or "").split(",") if item.strip()
+        }
+        if not content_types:
+            content_types = {
+                item.strip().lower()
+                for item in _DEFAULT_ALLOWED_CONTENT_TYPES.split(",")
+            }
+        return frozenset(content_types)
+
+    def _check_content_type(self, content_type: str | None) -> None:
         """Strict Content-Type whitelist — reject non-HTML responses"""
         if not content_type:
             raise ValueError("响应缺少 Content-Type 头，拒绝处理")
 
         # Extract MIME type (ignore parameters like charset)
         mime = content_type.split(";")[0].strip().lower()
-        if mime not in _ALLOWED_CONTENT_TYPES:
+        if mime not in self._allowed_content_types:
             raise ValueError(
                 f"不允许的 Content-Type: {mime}，仅支持 "
-                f"{', '.join(_ALLOWED_CONTENT_TYPES)}"
+                f"{', '.join(sorted(self._allowed_content_types))}"
             )
 
     @staticmethod
@@ -555,7 +572,7 @@ class FetchUrlToolHandler:
                     current_url,
                     headers={
                         "User-Agent": "Sakura-AI-Reviewer/1.0",
-                        "Accept": "text/html,application/xhtml+xml",
+                        "Accept": ",".join(sorted(self._allowed_content_types)),
                     },
                 )
 
@@ -574,8 +591,10 @@ class FetchUrlToolHandler:
                         )
 
                     redirect_count += 1
-                    if redirect_count > _MAX_REDIRECTS:
-                        raise ValueError(f"重定向次数超过限制 ({_MAX_REDIRECTS})")
+                    if redirect_count > self._max_redirects:
+                        raise ValueError(
+                            f"重定向次数超过限制 ({self._max_redirects})"
+                        )
 
                     location = response.headers.get("location", "")
                     if not location:

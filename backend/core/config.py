@@ -365,6 +365,10 @@ class Settings(BaseSettings):
     fetch_url_domain_policy: str = "off"  # 域名过滤策略：off / blacklist / whitelist
     fetch_url_domain_list: str = ""  # 域名列表（逗号分隔）
     fetch_url_force_https: bool = False  # 强制仅允许 HTTPS 协议
+    fetch_url_allowed_content_types: str = (
+        "text/html,application/xhtml+xml,text/plain"
+    )  # 允许抓取的 Content-Type（逗号分隔）
+    fetch_url_max_redirects: int = 3  # 最大重定向次数
 
     # ========== 支付配置 ==========
     payment_enabled: bool = False  # 是否启用付费配额系统
@@ -1012,6 +1016,8 @@ DYNAMIC_CONFIG_GROUPS: OrderedDict[str, dict] = OrderedDict(
                     "fetch_url_domain_policy": "域名过滤策略：off（仅 IP 拦截）/ blacklist（黑名单）/ whitelist（白名单）",
                     "fetch_url_domain_list": "域名列表（逗号分隔），根据策略用作黑名单或白名单，支持 * 通配符",
                     "fetch_url_force_https": "强制仅允许 HTTPS 协议，拒绝 HTTP 明文传输",
+                    "fetch_url_allowed_content_types": "允许抓取的 Content-Type，多个 MIME 类型用逗号分隔",
+                    "fetch_url_max_redirects": "单次抓取允许跟随的最大重定向次数",
                 },
                 "keys": [
                     "fetch_url_enabled",
@@ -1022,6 +1028,8 @@ DYNAMIC_CONFIG_GROUPS: OrderedDict[str, dict] = OrderedDict(
                     "fetch_url_domain_policy",
                     "fetch_url_domain_list",
                     "fetch_url_force_https",
+                    "fetch_url_allowed_content_types",
+                    "fetch_url_max_redirects",
                 ],
             },
         ),
@@ -1241,6 +1249,8 @@ DYNAMIC_CONFIG_LABELS: dict[str, str] = {
     "fetch_url_domain_policy": "域名过滤策略",
     "fetch_url_domain_list": "域名列表",
     "fetch_url_force_https": "强制 HTTPS",
+    "fetch_url_allowed_content_types": "允许的 Content-Type",
+    "fetch_url_max_redirects": "最大重定向次数",
     # Issue 分析配置
     "enable_issue_analysis": "启用 Issue 分析",
     "issue_auto_comment": "自动发布分析评论",

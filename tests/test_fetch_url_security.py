@@ -178,27 +178,40 @@ class TestSSRFCheck:
 
 
 class TestContentType:
+    def setup_method(self):
+        self.handler = FetchUrlToolHandler()
+
     def test_html_allowed(self):
-        FetchUrlToolHandler._check_content_type("text/html; charset=utf-8")
+        self.handler._check_content_type("text/html; charset=utf-8")
 
     def test_xhtml_allowed(self):
-        FetchUrlToolHandler._check_content_type("application/xhtml+xml")
+        self.handler._check_content_type("application/xhtml+xml")
+
+    def test_plain_text_allowed_by_default(self):
+        self.handler._check_content_type("text/plain")
 
     def test_missing_rejected(self):
         with pytest.raises(ValueError, match="缺少 Content-Type"):
-            FetchUrlToolHandler._check_content_type(None)
+            self.handler._check_content_type(None)
 
     def test_octet_stream_rejected(self):
         with pytest.raises(ValueError, match="不允许的 Content-Type"):
-            FetchUrlToolHandler._check_content_type("application/octet-stream")
+            self.handler._check_content_type("application/octet-stream")
 
     def test_json_rejected(self):
         with pytest.raises(ValueError, match="不允许的 Content-Type"):
-            FetchUrlToolHandler._check_content_type("application/json")
+            self.handler._check_content_type("application/json")
 
-    def test_plain_text_rejected(self):
+    def test_plain_text_can_be_rejected_by_custom_config(self):
+        self.handler._allowed_content_types = frozenset({"text/html"})
         with pytest.raises(ValueError, match="不允许的 Content-Type"):
-            FetchUrlToolHandler._check_content_type("text/plain")
+            self.handler._check_content_type("text/plain")
+
+    def test_empty_content_type_config_falls_back_to_defaults(self):
+        content_types = FetchUrlToolHandler._parse_content_types("")
+
+        assert "text/plain" in content_types
+        assert "text/html" in content_types
 
 
 # ── 域名策略 ────────────────────────────────────────────────────
