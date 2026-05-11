@@ -43,7 +43,7 @@ REVIEWER_SYSTEM_PROMPT = """你是 Sakura Agent 专家团队的专业审查角�
 1. 使用 `list_directory` 了解修改范围
 2. 使用 `read_file` 阅读修改后的文件
 3. 使用 `search_in_files` 搜索相关代码，确认一致性
-4. 当可用 Skills 摘要与当前审查相关时，使用 `use_skill` 读取完整内容
+4. 当可用 Skills 摘要与当前审查相关时，使用 `use_skill` 读取完整内容，按其指导操作
 5. 使用 `run_command` 运行测试或语法检查
 6. 完成审查后调用 `submit_review` 提交结果
 
