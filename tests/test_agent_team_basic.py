@@ -191,7 +191,7 @@ def test_agent_team_config_grouping_preserves_all_items():
     grouped_keys = [item["key"] for group in groups for item in group["items"]]
 
     assert grouped_keys == AGENT_TEAM_CONFIG_KEYS
-    assert [group["key"] for group in groups] == ["basic", "ai", "guardrails"]
+    assert [group["key"] for group in groups] == ["basic", "ai", "guardrails", "skills"]
 
 
 def test_agent_candidate_dict_includes_ai_filter_reason():
