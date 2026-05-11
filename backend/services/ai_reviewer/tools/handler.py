@@ -48,6 +48,19 @@ class ToolHandler:
         self.fetch_url_tool = fetch_url_tool
         self.diff_tool = diff_tool
 
+    def with_diff_tool(self, diff_tool) -> "ToolHandler":
+        """创建启用指定 PR diff 工具的新处理器"""
+        return self.__class__(
+            self.file_tool,
+            self.search_tool,
+            self.web_search_tool,
+            self.git_tool,
+            self.search_files_tool,
+            self.sakura_tool,
+            self.fetch_url_tool,
+            diff_tool=diff_tool,
+        )
+
     async def handle_tool_call(
         self, tool_call: Any, repo: Any, pr: Any
     ) -> Dict[str, Any]:

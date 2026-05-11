@@ -1,10 +1,15 @@
 import pytest
 
 from backend.services.ai_reviewer.api_client import AIApiClient
+from backend.services.ai_reviewer.compact_diff import (
+    extend_with_compact_tools,
+    should_use_compact_prompt,
+)
 from backend.services.ai_reviewer.constants import COMPACT_TOOLS
 from backend.services.ai_reviewer.prompt_builder import PromptBuilder
 from backend.services.ai_reviewer.reviewer import AIReviewer
 from backend.services.ai_reviewer.token_tracker import TokenTracker
+from backend.services.ai_reviewer.tools import ToolHandler
 from backend.services.ai_reviewer.tools.diff_tool import DiffToolHandler
 
 
@@ -84,27 +89,32 @@ async def test_diff_tool_lists_and_returns_file_diff():
     assert binary_info["info"] == "该文件没有 diff 内容（可能是二进制文件或仅有元数据变更）"
 
 
-def test_ai_reviewer_extends_compact_tools_without_duplicates(monkeypatch):
-    reviewer = AIReviewer.__new__(AIReviewer)
-
+def test_extend_compact_tools_without_duplicates():
     base_tools = [
         {"type": "function", "function": {"name": "read_file"}},
         {"type": "function", "function": {"name": "get_file_diff"}},
     ]
 
-    extended_tools = reviewer._extend_with_compact_tools(base_tools)
+    extended_tools = extend_with_compact_tools(base_tools)
     tool_names = [tool["function"]["name"] for tool in extended_tools]
 
     assert tool_names.count("get_file_diff") == 1
     assert "list_changed_files" in tool_names
 
 
-def test_ai_reviewer_should_use_compact_prompt_when_over_budget(review_context):
-    reviewer = AIReviewer.__new__(AIReviewer)
-    reviewer._get_initial_prompt_budget = lambda _messages: (101, 100)
+def test_should_use_compact_prompt_when_over_budget(review_context):
+    class ModelContextManager:
+        def estimate_tokens(self, _content):
+            return 101
 
-    should_compact, current_tokens, threshold_tokens = reviewer._should_use_compact_prompt(
-        [{"role": "user", "content": "large prompt"}], review_context
+        def calculate_safe_context(self, _model, _threshold):
+            return 100
+
+    should_compact, current_tokens, threshold_tokens = should_use_compact_prompt(
+        [{"role": "user", "content": "large prompt"}],
+        review_context,
+        compression_threshold=1.0,
+        model_context_mgr=ModelContextManager(),
     )
 
     assert should_compact is True
@@ -131,11 +141,7 @@ async def test_compact_diff_review_uses_compact_messages_and_tools(monkeypatch, 
         return {"summary": "ok", "comments": [], "inline_comments": []}
 
     monkeypatch.setattr(reviewer, "_run_tool_loop", fake_run_tool_loop)
-    monkeypatch.setattr(
-        reviewer,
-        "_build_tool_handler_with_diff",
-        lambda diff_tool: type("Handler", (), {"diff_tool": diff_tool})(),
-    )
+    reviewer.tool_handler = ToolHandler(file_tool=None, search_tool=None)
 
     result = await reviewer._run_compact_diff_review(
         context=review_context,

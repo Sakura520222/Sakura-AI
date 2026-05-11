@@ -18,13 +18,16 @@ from backend.core.model_context import get_model_context_manager
 
 from .api_client import AIApiClient, AIEmptyResponseError, PromptTooLongError
 from .batch_processor import BatchProcessor
+from .compact_diff import (
+    build_tool_handler_with_diff,
+    extend_with_compact_tools,
+    should_use_compact_prompt,
+)
 from .compression import ContextCompressor
 from .constants import (
-    COMPACT_TOOLS,
     MAX_FILES_PER_BATCH,
     MAX_LINES_PER_BATCH,
     MAX_TOOL_ITERATIONS,
-    TOOL_NAME_TO_DEFINITION,
 )
 from .label_recommender import LabelRecommender
 from .prompt_builder import PromptBuilder
@@ -195,63 +198,6 @@ class AIReviewer:
             logger.error("AI审查时出错: {}", str(e), exc_info=True)
             raise
 
-    def _get_initial_prompt_budget(
-        self, messages: List[Dict[str, Any]]
-    ) -> tuple[int, int]:
-        """计算初始 prompt 的估算 token 与主动精简阈值"""
-        settings = get_settings()
-        current_tokens = self.context_compressor.estimate_messages_tokens(messages)
-        safe_context = self.model_context_mgr.calculate_safe_context(
-            settings.openai_model, settings.context_safety_threshold
-        )
-        threshold_tokens = int(safe_context * self.compression_threshold)
-        return current_tokens, threshold_tokens
-
-    def _should_use_compact_prompt(
-        self, messages: List[Dict[str, Any]], context: Dict[str, Any]
-    ) -> tuple[bool, int, int]:
-        """判断初始 prompt 是否应主动切换到 diff 工具精简模式"""
-        current_tokens, threshold_tokens = self._get_initial_prompt_budget(messages)
-        has_files = bool(context.get("files"))
-        should_compact = (
-            has_files and threshold_tokens > 0 and current_tokens > threshold_tokens
-        )
-        return should_compact, current_tokens, threshold_tokens
-
-    def _extend_with_compact_tools(
-        self, enabled_tools: List[Dict[str, Any]]
-    ) -> List[Dict[str, Any]]:
-        """为精简模式追加 PR diff 工具定义"""
-        compact_enabled_tools = list(enabled_tools)
-        enabled_names = {
-            tool.get("function", {}).get("name")
-            for tool in compact_enabled_tools
-            if isinstance(tool, dict)
-        }
-
-        for tool_name in COMPACT_TOOLS:
-            if tool_name in enabled_names:
-                continue
-            tool_def = TOOL_NAME_TO_DEFINITION.get(tool_name)
-            if tool_def:
-                compact_enabled_tools.append(tool_def)
-                enabled_names.add(tool_name)
-
-        return compact_enabled_tools
-
-    def _build_tool_handler_with_diff(self, diff_tool: DiffToolHandler) -> ToolHandler:
-        """基于现有工具处理器创建启用 PR diff 工具的临时处理器"""
-        return ToolHandler(
-            self.tool_handler.file_tool,
-            self.tool_handler.search_tool,
-            self.tool_handler.web_search_tool,
-            self.tool_handler.git_tool,
-            self.tool_handler.search_files_tool,
-            self.tool_handler.sakura_tool,
-            self.tool_handler.fetch_url_tool,
-            diff_tool=diff_tool,
-        )
-
     async def _run_compact_diff_review(
         self,
         *,
@@ -271,7 +217,7 @@ class AIReviewer:
         if not compact_diff_tool.has_data:
             raise RuntimeError("精简模式不可用：没有 PR 文件 diff 数据")
 
-        compact_enabled_tools = self._extend_with_compact_tools(enabled_tools)
+        compact_enabled_tools = extend_with_compact_tools(enabled_tools)
         compact_user_message = self.prompt_builder.build_user_message(
             context, strategy, include_tools=True, compact=True
         )
@@ -289,7 +235,9 @@ class AIReviewer:
             compact_tokens,
         )
 
-        compact_tool_handler = self._build_tool_handler_with_diff(compact_diff_tool)
+        compact_tool_handler = build_tool_handler_with_diff(
+            self.tool_handler, compact_diff_tool
+        )
         try:
             return await self._run_tool_loop(
                 messages=compact_messages,
@@ -500,6 +448,7 @@ class AIReviewer:
         """
         if self.tool_handler.fetch_url_tool:
             await self.tool_handler.fetch_url_tool.reset_session()
+        should_compact = False
         try:
             logger.info("开始AI审查（带工具支持），策略: {}", strategy)
 
@@ -543,7 +492,12 @@ class AIReviewer:
                 )
 
             should_compact, prompt_tokens, threshold_tokens = (
-                self._should_use_compact_prompt(messages, context)
+                should_use_compact_prompt(
+                    messages,
+                    context,
+                    compression_threshold=self.compression_threshold,
+                    model_context_mgr=self.model_context_mgr,
+                )
             )
             if should_compact:
                 logger.warning(
@@ -582,7 +536,7 @@ class AIReviewer:
                 e.model,
             )
 
-            if locals().get("should_compact"):
+            if should_compact:
                 raise
 
             has_tool_history = any(
