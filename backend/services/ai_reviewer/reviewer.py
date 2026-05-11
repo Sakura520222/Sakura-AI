@@ -539,6 +539,7 @@ class AIReviewer:
             if should_compact:
                 raise
 
+            # 到达这里时主动精简路径尚未运行，messages 仍是初始 system/user 消息。
             has_tool_history = any(
                 msg.get("role") == "tool" or msg.get("tool_calls") for msg in messages
             )

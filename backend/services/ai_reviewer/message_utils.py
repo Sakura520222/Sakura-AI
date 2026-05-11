@@ -9,7 +9,10 @@ def estimate_messages_tokens(
     messages: List[Dict[str, Any]],
     model_context_mgr: Optional[Any] = None,
 ) -> int:
-    """估算模型消息列表的 token 用量"""
+    """估算模型消息列表的 token 用量。
+
+    消息本身应为字典；其中 tool_calls 兼容 OpenAI SDK 对象和字典两种结构。
+    """
     model_context_mgr = model_context_mgr or get_model_context_manager()
     total_tokens = 0
 

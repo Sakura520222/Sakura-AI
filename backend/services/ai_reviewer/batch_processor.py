@@ -303,9 +303,8 @@ class BatchProcessor:
         )
         enabled_tools = await tool_manager.get_enabled_tools(repo_full_name)
 
-        original_messages = messages
         should_compact, prompt_tokens, threshold_tokens = should_use_compact_prompt(
-            original_messages, context
+            messages, context
         )
         active_tool_handler = tool_handler
         compact_diff_tool = None
@@ -340,11 +339,7 @@ class BatchProcessor:
                 if compact_diff_tool is not None:
                     compact_diff_tool.clear()
         except PromptTooLongError as e:
-            has_tool_history = any(
-                msg.get("role") == "tool" or msg.get("tool_calls")
-                for msg in original_messages
-            )
-            if has_tool_history or should_compact:
+            if should_compact:
                 raise
 
             logger.warning(
