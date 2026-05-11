@@ -105,6 +105,9 @@ class FullStackExpertAgent:
         self.workspace = self.workspace_service.resolve_inside_workspace(workspace)
         self.tool_executor = create_executor("fullstack")
         self.file_state = ReadFileState()
+        self.messages: list[dict[str, Any]] = [
+            {"role": "system", "content": FULLSTACK_SYSTEM_PROMPT}
+        ]
 
     def _build_context(self) -> ToolContext:
         return ToolContext(
@@ -128,8 +131,7 @@ class FullStackExpertAgent:
         ctx = self._build_context()
         tool_schemas = get_tool_definitions("fullstack", provider=config.provider)
 
-        messages: list[dict[str, Any]] = [
-            {"role": "system", "content": FULLSTACK_SYSTEM_PROMPT},
+        self.messages.append(
             {
                 "role": "user",
                 "content": self._build_user_message(
@@ -140,8 +142,8 @@ class FullStackExpertAgent:
                     sakura_memory=sakura_memory,
                     feedback=feedback,
                 ),
-            },
-        ]
+            }
+        )
 
         tool_calls_count = 0
 
@@ -149,7 +151,7 @@ class FullStackExpertAgent:
             logger.debug("全栈专家工具调用第 {} 轮", round_num)
 
             response = await client.call_with_retry(
-                messages=messages,
+                messages=self.messages,
                 model=config.model,
                 temperature=config.temperature,
                 max_tokens=config.max_tokens,
@@ -177,7 +179,7 @@ class FullStackExpertAgent:
                 assistant_msg["tool_calls"] = [
                     _tool_call_to_dict(tc) for tc in message.tool_calls
                 ]
-            messages.append(assistant_msg)
+            self.messages.append(assistant_msg)
 
             # 无工具调用 → AI 以纯文本完成
             if not message.tool_calls:
@@ -190,38 +192,44 @@ class FullStackExpertAgent:
                 )
 
             # 逐个执行工具调用
+            terminal_output: dict[str, Any] | None = None
             for tool_call in message.tool_calls:
                 tool_calls_count += 1
                 fn_name = tool_call.function.name
                 logger.info("全栈专家调用工具: {} (round={})", fn_name, round_num)
 
-                result = await self.tool_executor.execute_tool_call(tool_call, ctx)
-
-                # 终止工具 → 直接返回
-                if result.is_terminal:
-                    output = result.output
-                    # 合并 AI 提供的文件列表和实际追踪的修改
-                    ai_files = output.get("modified_files", [])
-                    if isinstance(ai_files, list):
-                        merged = set(ai_files) | ctx.modified_files
-                    else:
-                        merged = ctx.modified_files
-                    return FullStackResult(
+                if terminal_output is None:
+                    result = await self.tool_executor.execute_tool_call(tool_call, ctx)
+                else:
+                    result = ToolResult(
                         success=True,
-                        summary=output.get("summary", ""),
-                        modified_files=sorted(merged),
-                        risk_level=output.get("risk_level", "medium"),
-                        test_result=output.get("test_result", ""),
-                        tool_calls_count=tool_calls_count,
+                        output={"skipped": True, "reason": "terminal_tool_already_called"},
                     )
-
-                # 工具结果加入历史
-                messages.append(
+                self.messages.append(
                     {
                         "role": "tool",
                         "tool_call_id": tool_call.id,
                         "content": _serialize_tool_result(result),
                     }
+                )
+
+                # 终止工具 → 直接返回
+                if result.is_terminal:
+                    terminal_output = result.output
+
+            if terminal_output is not None:
+                ai_files = terminal_output.get("modified_files", [])
+                if isinstance(ai_files, list):
+                    merged = set(ai_files) | ctx.modified_files
+                else:
+                    merged = ctx.modified_files
+                return FullStackResult(
+                    success=True,
+                    summary=terminal_output.get("summary", ""),
+                    modified_files=sorted(merged),
+                    risk_level=terminal_output.get("risk_level", "medium"),
+                    test_result=terminal_output.get("test_result", ""),
+                    tool_calls_count=tool_calls_count,
                 )
 
         return FullStackResult(
