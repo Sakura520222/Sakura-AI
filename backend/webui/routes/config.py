@@ -42,9 +42,6 @@ _BASIC_CONFIG_KEYS = frozenset(
         "max_concurrent_reviews",
         "review_timeout_seconds",
         "enable_auto_review",
-        "issue_auto_create_labels",
-        "issue_auto_assign",
-        "issue_max_tool_iterations",
         "web_search_enabled",
         "web_search_provider",
         "web_search_api_key",
@@ -836,60 +833,6 @@ async def save_general_config(
         if cfg and cfg.key_value != val:
             changed["enable_auto_review"] = {"old": cfg.key_value, "new": val}
             cfg.key_value = val
-
-        # issue_auto_create_labels (checkbox)
-        raw = form.get("issue_auto_create_labels")
-        val = "true" if raw == "true" else "false"
-        result = await db.execute(
-            select(AppConfig).where(AppConfig.key_name == "issue_auto_create_labels")
-        )
-        cfg = result.scalar_one_or_none()
-        if cfg and cfg.key_value != val:
-            changed["issue_auto_create_labels"] = {"old": cfg.key_value, "new": val}
-            cfg.key_value = val
-
-        # issue_auto_assign (checkbox)
-        raw = form.get("issue_auto_assign")
-        val = "true" if raw == "true" else "false"
-        result = await db.execute(
-            select(AppConfig).where(AppConfig.key_name == "issue_auto_assign")
-        )
-        cfg = result.scalar_one_or_none()
-        if cfg and cfg.key_value != val:
-            changed["issue_auto_assign"] = {"old": cfg.key_value, "new": val}
-            cfg.key_value = val
-
-        # issue_max_tool_iterations
-        raw = form.get("issue_max_tool_iterations")
-        if raw is not None:
-            try:
-                val = int(raw)
-            except ValueError:
-                return toast_redirect(
-                    "/webui/config/general",
-                    "toast.ai_tool_iterations_invalid",
-                    "error",
-                    lang=detect_language(),
-                )
-            if not 1 <= val <= 150:
-                return toast_redirect(
-                    "/webui/config/general",
-                    "toast.ai_tool_iterations_range",
-                    "error",
-                    lang=detect_language(),
-                )
-            result = await db.execute(
-                select(AppConfig).where(
-                    AppConfig.key_name == "issue_max_tool_iterations"
-                )
-            )
-            cfg = result.scalar_one_or_none()
-            if cfg and cfg.key_value != str(val):
-                changed["issue_max_tool_iterations"] = {
-                    "old": cfg.key_value,
-                    "new": str(val),
-                }
-                cfg.key_value = str(val)
 
         # ========== Web 搜索配置 ==========
         web_search_keys = [
