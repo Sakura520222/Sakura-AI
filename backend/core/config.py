@@ -75,6 +75,20 @@ class Settings(BaseSettings):
         description="是否跳过 Telegram、SSE、扫描、配额等后台任务",
     )
 
+    # 基础审查任务配置
+    max_concurrent_reviews: int = Field(
+        5,
+        description="最大并发审查数量",
+    )
+    review_timeout_seconds: int = Field(
+        300,
+        description="单次审查任务超时时间（秒）",
+    )
+    enable_auto_review: bool = Field(
+        True,
+        description="是否启用自动审查",
+    )
+
     # 审查策略配置
     max_file_count: int = 100
     max_line_count: int = 10000
@@ -1387,6 +1401,21 @@ CORE_CONFIG_KEYS = frozenset(
     }
 )
 
+# WebUI 基础配置键（存储在 AppConfig 中，也需要加载到 Settings 单例）
+BASIC_CONFIG_KEYS = frozenset(
+    {
+        "max_concurrent_reviews",
+        "review_timeout_seconds",
+        "enable_auto_review",
+        "web_search_enabled",
+        "web_search_provider",
+        "web_search_api_key",
+        "web_search_max_results",
+        "web_search_max_content_length",
+        "web_search_timeout",
+    }
+)
+
 
 def get_all_dynamic_config_keys() -> list[str]:
     """获取所有动态配置键名"""
@@ -1399,9 +1428,10 @@ def get_all_dynamic_config_keys() -> list[str]:
 def get_all_db_config_keys() -> list[str]:
     """获取所有应从 DB 加载的配置键（动态配置 + 核心配置）"""
     keys = get_all_dynamic_config_keys()
-    for key in CORE_CONFIG_KEYS:
-        if key not in keys:
-            keys.append(key)
+    for key_group in (CORE_CONFIG_KEYS, BASIC_CONFIG_KEYS):
+        for key in key_group:
+            if key not in keys:
+                keys.append(key)
     return keys
 
 
