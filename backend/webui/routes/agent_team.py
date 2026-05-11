@@ -67,6 +67,8 @@ AGENT_TEAM_CONFIG_KEYS = [
     "agent_team_max_lines_changed",
     "agent_team_run_tests",
     "agent_team_test_command_allowlist",
+    "agent_team_skills_enabled",
+    "agent_team_skills_root",
 ]
 
 AGENT_TEAM_ACTIVE_STATUSES = [
@@ -125,6 +127,15 @@ AGENT_TEAM_CONFIG_GROUPS = [
             "agent_team_max_lines_changed",
             "agent_team_run_tests",
             "agent_team_test_command_allowlist",
+        ],
+    },
+    {
+        "key": "skills",
+        "title_key": "agent_team.config_group_skills",
+        "description_key": "agent_team.config_group_skills_desc",
+        "keys": [
+            "agent_team_skills_enabled",
+            "agent_team_skills_root",
         ],
     },
 ]

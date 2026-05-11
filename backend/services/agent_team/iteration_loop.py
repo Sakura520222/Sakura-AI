@@ -57,6 +57,8 @@ class IterationLoopService:
         source_issue_number: int | None = None,
         max_iterations: int = 3,
         sakura_memory: str = "",
+        skills_summary: str = "",
+        skills_context: dict[str, Any] | None = None,
     ) -> IterationOutcome:
         """运行迭代循环。"""
         expert = FullStackExpertAgent(self.workspace, self.workspace_service)
@@ -80,6 +82,8 @@ class IterationLoopService:
                 source_type=source_type,
                 source_issue_number=source_issue_number,
                 sakura_memory=sakura_memory,
+                skills_summary=skills_summary,
+                skills_context=skills_context,
                 feedback=feedback,
             )
             total_tool_calls += fs_result.tool_calls_count
@@ -114,6 +118,8 @@ class IterationLoopService:
                 task_summary=task_summary,
                 modified_files=fs_result.modified_files,
                 fullstack_summary=fs_result.summary,
+                skills_summary=skills_summary,
+                skills_context=skills_context,
             )
             total_tool_calls += rev_result.tool_calls_count
 

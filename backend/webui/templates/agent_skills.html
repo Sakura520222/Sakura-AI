@@ -1,0 +1,66 @@
+{% extends "base.html" %}
+
+{% block title %}{{ _('agent_skills.title') }} - Sakura AI Reviewer{% endblock %}
+
+{% block content %}
+<div class="space-y-6">
+    <section class="relative overflow-hidden rounded-3xl border border-sakura-200/70 dark:border-sakura-800/40 bg-white/70 dark:bg-gray-900/60 shadow-xl shadow-sakura-500/10">
+        <div class="absolute inset-0 bg-gradient-to-br from-sakura-100/80 via-purple-100/60 to-white/40 dark:from-sakura-950/40 dark:via-purple-950/30 dark:to-gray-900/40"></div>
+        <div class="relative p-6 lg:p-8">
+            <div class="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-white/70 dark:bg-gray-800/70 border border-sakura-200/70 dark:border-sakura-700/40 text-xs font-medium text-sakura-700 dark:text-sakura-300 mb-4">
+                {{ _('agent_skills.super_admin_console') }}
+            </div>
+            <h1 class="text-3xl lg:text-4xl font-extrabold bg-gradient-to-r from-sakura-700 via-pink-600 to-purple-700 dark:from-sakura-300 dark:via-pink-300 dark:to-purple-300 bg-clip-text text-transparent">
+                {{ _('agent_skills.title') }}
+            </h1>
+            <p class="mt-3 max-w-3xl text-sm lg:text-base text-gray-600 dark:text-gray-300 leading-7">{{ _('agent_skills.description') }}</p>
+            <div class="mt-5 rounded-2xl bg-white/65 dark:bg-gray-800/65 border border-white/60 dark:border-gray-700/70 p-4 text-sm text-gray-600 dark:text-gray-300">
+                <span class="font-semibold text-gray-900 dark:text-gray-100">{{ _('agent_skills.root_path') }}:</span>
+                <code class="ml-2 text-xs break-all">{{ skills_root }}</code>
+            </div>
+        </div>
+    </section>
+
+    <section class="grid grid-cols-1 xl:grid-cols-2 gap-5">
+        <div class="bg-white dark:bg-gray-800 rounded-2xl border border-gray-200 dark:border-gray-700 p-5">
+            <h2 class="text-lg font-bold text-gray-900 dark:text-gray-100">{{ _('agent_skills.install_github') }}</h2>
+            <p class="mt-1 text-sm text-gray-500 dark:text-gray-400">{{ _('agent_skills.install_github_desc') }}</p>
+            <form method="post" action="/webui/agent-skills/install-github" class="mt-4 space-y-4">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                <input name="github_url" type="url" required placeholder="https://github.com/owner/repo/blob/main/path/SKILL.md" class="w-full rounded-xl border-gray-300 dark:border-gray-600 dark:bg-gray-900 text-sm">
+                <button type="submit" class="inline-flex items-center justify-center px-5 py-2.5 rounded-xl bg-sakura-500 hover:bg-sakura-600 text-white text-sm font-semibold shadow-lg shadow-sakura-500/20">
+                    {{ _('agent_skills.install') }}
+                </button>
+            </form>
+        </div>
+
+        <div class="bg-white dark:bg-gray-800 rounded-2xl border border-gray-200 dark:border-gray-700 p-5">
+            <h2 class="text-lg font-bold text-gray-900 dark:text-gray-100">{{ _('agent_skills.upload_skill') }}</h2>
+            <p class="mt-1 text-sm text-gray-500 dark:text-gray-400">{{ _('agent_skills.upload_skill_desc') }}</p>
+            <form method="post" action="/webui/agent-skills/upload" enctype="multipart/form-data" class="mt-4 space-y-4">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                <input name="name" type="text" placeholder="{{ _('agent_skills.name_placeholder') }}" class="w-full rounded-xl border-gray-300 dark:border-gray-600 dark:bg-gray-900 text-sm">
+                <input name="skill_file" type="file" accept=".md,text/markdown,text/plain" required class="block w-full text-sm text-gray-600 dark:text-gray-300 file:mr-4 file:rounded-xl file:border-0 file:bg-sakura-50 file:px-4 file:py-2 file:text-sm file:font-semibold file:text-sakura-700 hover:file:bg-sakura-100 dark:file:bg-sakura-900/30 dark:file:text-sakura-300">
+                <button type="submit" class="inline-flex items-center justify-center px-5 py-2.5 rounded-xl bg-purple-500 hover:bg-purple-600 text-white text-sm font-semibold shadow-lg shadow-purple-500/20">
+                    {{ _('agent_skills.upload') }}
+                </button>
+            </form>
+        </div>
+    </section>
+
+    <section class="bg-white dark:bg-gray-800 rounded-2xl border border-gray-200 dark:border-gray-700 p-5">
+        <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 mb-5">
+            <div>
+                <h2 class="text-lg font-bold text-gray-900 dark:text-gray-100">{{ _('agent_skills.installed_skills') }}</h2>
+                <p class="text-sm text-gray-500 dark:text-gray-400 mt-1">{{ _('agent_skills.installed_skills_desc') }}</p>
+            </div>
+            <button hx-get="/webui/agent-skills/list-fragment" hx-target="#agent-skills-list" hx-swap="innerHTML" class="px-4 py-2 bg-sakura-500 hover:bg-sakura-600 text-white rounded-xl text-sm font-semibold">
+                {{ _('common.refresh') }}
+            </button>
+        </div>
+        <div id="agent-skills-list" hx-get="/webui/agent-skills/list-fragment" hx-trigger="load" hx-swap="innerHTML">
+            {% include "components/agent_skills_list_fragment.html" %}
+        </div>
+    </section>
+</div>
+{% endblock %}

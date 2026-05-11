@@ -454,6 +454,8 @@ class Settings(BaseSettings):
     agent_team_max_lines_changed: int = 500
     agent_team_run_tests: bool = True
     agent_team_test_command_allowlist: str = "pytest -q,python run_ruff.py --check"
+    agent_team_skills_enabled: bool = False
+    agent_team_skills_root: str = "./Skills"
 
 
 class StrategyConfig:
@@ -888,6 +890,8 @@ DYNAMIC_CONFIG_GROUPS: OrderedDict[str, dict] = OrderedDict(
                     "agent_team_model": "全栈专家使用的模型；选择独立厂商时填写",
                     "agent_team_review_model": "专业审查使用的模型；选择独立厂商时可填写，默认复用全栈专家模型",
                     "agent_team_test_command_allowlist": "允许执行的验证命令白名单，逗号分隔",
+                    "agent_team_skills_enabled": "启用后，Agent 可按需加载已安装 Skills 的完整内容",
+                    "agent_team_skills_root": "Agent Skills 本地存储根目录，默认 ./Skills",
                 },
                 "keys": [
                     "agent_team_enabled",
@@ -912,6 +916,8 @@ DYNAMIC_CONFIG_GROUPS: OrderedDict[str, dict] = OrderedDict(
                     "agent_team_max_lines_changed",
                     "agent_team_run_tests",
                     "agent_team_test_command_allowlist",
+                    "agent_team_skills_enabled",
+                    "agent_team_skills_root",
                 ],
             },
         ),
@@ -1187,6 +1193,8 @@ DYNAMIC_CONFIG_LABELS: dict[str, str] = {
     "agent_team_max_lines_changed": "最大修改行数",
     "agent_team_run_tests": "自动运行验证命令",
     "agent_team_test_command_allowlist": "验证命令白名单",
+    "agent_team_skills_enabled": "启用 Agent Skills",
+    "agent_team_skills_root": "Skills 根目录",
 }
 
 # 内存 TTL 缓存（进程级，多 Worker 部署时各进程独立，配置变更仅当前进程可见）
