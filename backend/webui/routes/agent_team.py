@@ -14,6 +14,7 @@ from backend.core.config import (
     DYNAMIC_CONFIG_SENSITIVE_KEYS,
     DYNAMIC_CONFIG_SELECT_OPTIONS,
     get_all_dynamic_config_keys,
+    get_dynamic_config,
     get_dynamic_config_input_type,
     get_settings,
     invalidate_dynamic_config_cache,
@@ -496,6 +497,7 @@ async def retry_task(
 
     task.status = AgentTeamTaskStatus.QUEUED.value
     task.current_phase = None
+    task.max_iterations = await _load_agent_team_max_iterations()
     task.started_at = None
     task.completed_at = None
     task.error_message = None
@@ -509,6 +511,17 @@ async def retry_task(
         db, user["user_id"], "agent_team_task_retry", "agent_team_task", str(task_id), {"old_status": task.status}
     )
     return JSONResponse({"success": True, "task_id": task_id})
+
+
+async def _load_agent_team_max_iterations() -> int:
+    """读取 Agent Team 当前配置的单任务最大迭代轮数。"""
+    fallback = get_settings().agent_team_max_iterations_per_task
+    raw_value = await get_dynamic_config("agent_team_max_iterations_per_task")
+    try:
+        value = int(raw_value if raw_value is not None else fallback)
+    except (TypeError, ValueError):
+        value = fallback
+    return max(1, value)
 
 
 @router.post("/tasks/{task_id}/cancel")

@@ -9,7 +9,7 @@ from openai import BadRequestError
 from sqlalchemy import and_, desc, not_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from backend.core.config import get_dynamic_config
+from backend.core.config import get_dynamic_config, get_settings
 from backend.models.agent_team_models import AgentTeamSourceType, AgentTeamTask, AgentTeamTaskStatus
 from backend.models.database import IssueAnalysis, IssueAnalysisStatus
 from backend.models.scan_models import RepoScan, ScanFinding
@@ -69,6 +69,7 @@ class AgentTeamCandidateService:
         ai_config_snapshot: dict | None = None,
     ) -> AgentTeamTask:
         """将候选项转为 AgentTeamTask。"""
+        max_iterations = await self._load_max_iterations_per_task()
         task = AgentTeamTask(
             source_type=candidate.source_type,
             source_id=candidate.source_id,
@@ -81,6 +82,7 @@ class AgentTeamCandidateService:
             priority=candidate.priority,
             candidate_score=candidate.candidate_score,
             status=AgentTeamTaskStatus.QUEUED.value,
+            max_iterations=max_iterations,
             started_by=started_by,
             ai_config_snapshot=json.dumps(ai_config_snapshot or {}, ensure_ascii=False),
         )
@@ -88,6 +90,16 @@ class AgentTeamCandidateService:
         await db.commit()
         await db.refresh(task)
         return task
+
+    async def _load_max_iterations_per_task(self) -> int:
+        """读取 Agent 单任务最大迭代轮数"""
+        fallback = get_settings().agent_team_max_iterations_per_task
+        raw_value = await get_dynamic_config("agent_team_max_iterations_per_task")
+        try:
+            value = int(raw_value if raw_value is not None else fallback)
+        except (TypeError, ValueError):
+            value = fallback
+        return max(1, value)
 
     async def _collect_issue_candidates(
         self, db: AsyncSession, allowlist: set[str], limit: int

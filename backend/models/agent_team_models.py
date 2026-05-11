@@ -9,6 +9,9 @@ from sqlalchemy.orm import relationship
 from backend.models.database import Base
 
 
+DEFAULT_AGENT_TEAM_MAX_ITERATIONS = 3
+
+
 class AgentTeamTaskStatus(str, enum.Enum):
     """Agent 专家团队任务状态"""
 
@@ -79,7 +82,7 @@ class AgentTeamTask(Base):
     pr_url = Column(String(500), nullable=True)
 
     iteration_count = Column(Integer, default=0, nullable=False)
-    max_iterations = Column(Integer, default=3, nullable=False)
+    max_iterations = Column(Integer, default=DEFAULT_AGENT_TEAM_MAX_ITERATIONS, nullable=False)
     started_by = Column(String(100), nullable=True)
     locked_by = Column(String(100), nullable=True)
     ai_config_snapshot = Column(Text, nullable=True)
