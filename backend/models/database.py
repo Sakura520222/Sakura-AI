@@ -555,12 +555,12 @@ async def insert_default_configs_async():
         AppConfig(
             key_name="review_timeout_seconds",
             key_value="300",
-            description="审查超时时间（秒）",
+            description="审查任务整体超时时间（秒）",
         ),
         AppConfig(
             key_name="enable_auto_review",
             key_value="true",
-            description="是否启用自动审查",
+            description="是否启用 Webhook 自动审查",
         ),
         AppConfig(
             key_name="web_search_enabled",
@@ -675,12 +675,12 @@ def init_database(database_url: str):
                 AppConfig(
                     key_name="review_timeout_seconds",
                     key_value="300",
-                    description="审查超时时间（秒）",
+                    description="审查任务整体超时时间（秒）",
                 ),
                 AppConfig(
                     key_name="enable_auto_review",
                     key_value="true",
-                    description="是否启用自动审查",
+                    description="是否启用 Webhook 自动审查",
                 ),
                 AppConfig(
                     key_name="web_search_enabled",

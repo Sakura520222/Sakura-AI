@@ -82,11 +82,29 @@ class Settings(BaseSettings):
     )
     review_timeout_seconds: int = Field(
         300,
-        description="单次审查任务超时时间（秒）",
+        description="审查任务整体超时时间（秒）",
     )
     enable_auto_review: bool = Field(
         True,
-        description="是否启用自动审查",
+        description="是否启用 Webhook 自动审查",
+    )
+
+    # AI API 调用配置
+    ai_api_timeout_seconds: float = Field(
+        120.0,
+        description="AI API 单次请求超时时间（秒）",
+    )
+    ai_api_max_retries: int = Field(
+        5,
+        description="AI API 最大重试次数",
+    )
+    ai_api_initial_retry_delay_seconds: float = Field(
+        1.0,
+        description="AI API 初始重试延迟（秒）",
+    )
+    ai_api_total_timeout_seconds: float = Field(
+        900.0,
+        description="AI API 重试总超时时间（秒）",
     )
 
     # 审查策略配置
@@ -637,6 +655,25 @@ DYNAMIC_CONFIG_GROUPS: OrderedDict[str, dict] = OrderedDict(
             },
         ),
         (
+            "ai_api",
+            {
+                "label": "AI API 调用配置",
+                "icon": "clock",
+                "descriptions": {
+                    "ai_api_timeout_seconds": "传递给 OpenAI 兼容 SDK 的单次请求超时时间，不等同于审查任务整体超时",
+                    "ai_api_max_retries": "单次 AI 调用失败或空响应时允许的最大尝试次数",
+                    "ai_api_initial_retry_delay_seconds": "首次重试前的基础延迟，后续按指数退避增加",
+                    "ai_api_total_timeout_seconds": "一次 AI 调用重试循环允许的最长总耗时",
+                },
+                "keys": [
+                    "ai_api_timeout_seconds",
+                    "ai_api_max_retries",
+                    "ai_api_initial_retry_delay_seconds",
+                    "ai_api_total_timeout_seconds",
+                ],
+            },
+        ),
+        (
             "summary_model",
             {
                 "label": "辅助模型配置",
@@ -1030,6 +1067,10 @@ DYNAMIC_CONFIG_LABELS: dict[str, str] = {
     "openai_api_base": "API Base URL",
     "openai_api_key": "API Key",
     "openai_model": "模型名称",
+    "ai_api_timeout_seconds": "AI API 请求超时（秒）",
+    "ai_api_max_retries": "AI API 最大重试次数",
+    "ai_api_initial_retry_delay_seconds": "AI API 初始重试延迟（秒）",
+    "ai_api_total_timeout_seconds": "AI API 重试总超时（秒）",
     "summary_provider": "辅助模型厂商",
     "summary_model": "辅助模型名称",
     "summary_api_base": "辅助模型 API 地址",
@@ -1426,7 +1467,7 @@ def get_all_dynamic_config_keys() -> list[str]:
 
 
 def get_all_db_config_keys() -> list[str]:
-    """获取所有应从 DB 加载的配置键（动态配置 + 核心配置）"""
+    """获取所有应从 DB 加载的配置键（动态配置 + 核心配置 + 基础配置）"""
     keys = get_all_dynamic_config_keys()
     for key_group in (CORE_CONFIG_KEYS, BASIC_CONFIG_KEYS):
         for key in key_group:
@@ -1471,7 +1512,7 @@ def _evict_user_config_cache():
 async def load_dynamic_configs_to_settings():
     """从数据库加载全部配置到 Settings 单例
 
-    启动时调用一次，覆盖所有已迁移到 DB 的配置项（动态配置 + 核心配置）。
+    启动时调用一次，覆盖所有已迁移到 DB 的配置项（动态配置 + 核心配置 + 基础配置）。
     让所有使用 settings.xxx 的服务直接拿到 DB 中的值。
     """
     settings = get_settings()

@@ -13,6 +13,8 @@ from openai import AsyncOpenAI
 from openai import BadRequestError as OpenAIBadRequestError
 from loguru import logger
 
+from backend.core.config import get_settings
+
 from .constants import (
     DEFAULT_API_TIMEOUT,
     DEFAULT_MAX_TOKENS,
@@ -148,10 +150,7 @@ class AIApiClient:
     ) -> Any:
         """带重试机制的AI API调用
 
-        重试策略：
-        - 前3次：快速重试（1s, 2s, 4s）
-        - 后续次数：慢速重试（8s, 16s, 32s...）
-        - 总超时：15分钟
+        重试策略由 Settings 中的 AI API 调用配置控制。
 
         Args:
             messages: 消息列表
@@ -159,7 +158,7 @@ class AIApiClient:
             temperature: 温度参数
             tools: 工具定义列表
             tool_choice: 工具选择策略
-            timeout: 单次调用超时（默认使用 DEFAULT_API_TIMEOUT）
+            timeout: 单次调用超时（默认使用 Settings 中的 AI API 请求超时）
             max_tokens: 最大输出token数（默认使用 DEFAULT_MAX_TOKENS）
             **kwargs: 其他API参数
 
@@ -169,6 +168,8 @@ class AIApiClient:
         Raises:
             Exception: 重试失败或超时
         """
+        settings = get_settings()
+
         # 准备API参数
         api_kwargs = {
             "model": model,
@@ -181,7 +182,12 @@ class AIApiClient:
             api_kwargs["tool_choice"] = tool_choice
 
         # 设置默认值
-        api_kwargs.setdefault("timeout", timeout or DEFAULT_API_TIMEOUT)
+        api_timeout = timeout or getattr(
+            settings,
+            "ai_api_timeout_seconds",
+            DEFAULT_API_TIMEOUT,
+        )
+        api_kwargs.setdefault("timeout", api_timeout)
         api_kwargs.setdefault("max_tokens", max_tokens or DEFAULT_MAX_TOKENS)
 
         # 合并额外参数
@@ -202,18 +208,25 @@ class AIApiClient:
         Raises:
             Exception: 重试失败或超时
         """
+        settings = get_settings()
+        max_retries = getattr(settings, "ai_api_max_retries", MAX_RETRIES)
+        total_timeout = getattr(
+            settings,
+            "ai_api_total_timeout_seconds",
+            TOTAL_TIMEOUT,
+        )
         start_time = time.monotonic()
 
-        for attempt in range(MAX_RETRIES):
+        for attempt in range(max_retries):
             # 检查总超时
             elapsed = time.monotonic() - start_time
-            if elapsed > TOTAL_TIMEOUT:
+            if elapsed > total_timeout:
                 logger.error(
                     "重试总超时（已耗时 {:.1f}秒 > {}秒），放弃重试",
                     elapsed,
-                    TOTAL_TIMEOUT,
+                    total_timeout,
                 )
-                raise Exception(f"AI调用失败：重试总超时（{TOTAL_TIMEOUT}秒）")
+                raise Exception(f"AI调用失败：重试总超时（{total_timeout}秒）")
 
             try:
                 # 调用AI API
@@ -221,13 +234,13 @@ class AIApiClient:
 
                 # 检查空响应
                 if not self._is_valid_response(response):
-                    if attempt < MAX_RETRIES - 1:
+                    if attempt < max_retries - 1:
                         delay = self._calculate_delay(attempt)
                         logger.warning(
                             "AI返回空响应，{:.1f}秒后重试 ({}/{}, 已耗时 {:.1f}s)",
                             delay,
                             attempt + 1,
-                            MAX_RETRIES,
+                            max_retries,
                             elapsed,
                         )
                         await asyncio.sleep(delay)
@@ -281,7 +294,7 @@ class AIApiClient:
                         original_error=e,
                     ) from e
 
-                if attempt < MAX_RETRIES - 1:
+                if attempt < max_retries - 1:
                     delay = self._calculate_delay(attempt)
                     logger.warning(
                         "AI调用失败 [{}]: {}，{:.1f}秒后重试 ({}/{}, 已耗时 {:.1f}s)",
@@ -289,7 +302,7 @@ class AIApiClient:
                         str(e),
                         delay,
                         attempt + 1,
-                        MAX_RETRIES,
+                        max_retries,
                         elapsed,
                     )
                     await asyncio.sleep(delay)
@@ -326,8 +339,8 @@ class AIApiClient:
         """计算重试延迟时间
 
         使用混合退避策略：
-        - 前3次：快速退避 (1s, 2s, 4s)
-        - 后续：慢速退避 (8s, 16s, 32s...)
+        - 前3次：基于初始延迟快速退避
+        - 后续：基于初始延迟继续慢速退避
 
         添加随机抖动（±20%）避免惊群效应。
 
@@ -337,10 +350,16 @@ class AIApiClient:
         Returns:
             延迟秒数
         """
+        settings = get_settings()
+        initial_delay = getattr(
+            settings,
+            "ai_api_initial_retry_delay_seconds",
+            INITIAL_DELAY,
+        )
         if attempt < 3:
-            delay = INITIAL_DELAY * (2**attempt)  # 1s, 2s, 4s
+            delay = initial_delay * (2**attempt)  # 1s, 2s, 4s
         else:
-            delay = 8 * (2 ** (attempt - 3))  # 8s, 16s...
+            delay = initial_delay * 8 * (2 ** (attempt - 3))  # 8s, 16s...
 
         # 添加随机抖动（±20%）
         jitter = random.uniform(0.8, 1.2)

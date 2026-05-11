@@ -140,6 +140,14 @@ async def handle_pull_request_event(payload: Dict[str, Any]) -> JSONResponse:
             logger.info(f"忽略PR动作: {action}")
             return JSONResponse(content={"status": "ignored", "action": action})
 
+        if not get_settings().enable_auto_review:
+            logger.info(
+                f"自动审查已关闭，跳过PR: {pr_info['repo_full_name']}#{pr_info['pr_number']}"
+            )
+            return JSONResponse(
+                content={"status": "skipped", "reason": "auto review disabled"}
+            )
+
         # Register cancel event IMMEDIATELY after action validation,
         # before any async operations (quota check, Telegram, dismiss, etc.)
         # so that a closed webhook arriving during those operations can cancel the task.
