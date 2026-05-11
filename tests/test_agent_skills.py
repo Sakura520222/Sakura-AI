@@ -11,6 +11,7 @@ from backend.models.agent_skill_models import AgentSkill
 from backend.services.agent_team.skill_service import (
     AgentSkillService,
     _decode_zip_filename,
+    _safe_skill_relative_path,
     normalize_skill_slug,
     parse_github_skill_url,
     raw_url_from_github_blob,
@@ -65,6 +66,13 @@ def test_raw_url_from_github_blob():
 )
 def test_normalize_skill_slug(value, expected):
     assert normalize_skill_slug(value) == expected
+
+
+def test_safe_skill_relative_path_allows_python_package_init():
+    assert _safe_skill_relative_path("package/__init__.py") == Path("package/__init__.py")
+    assert _safe_skill_relative_path(".env") is None
+    assert _safe_skill_relative_path("package/__pycache__/cache.pyc") is None
+    assert _safe_skill_relative_path("__init__.py/evil.py") is None
 
 
 def test_extract_metadata_from_frontmatter():

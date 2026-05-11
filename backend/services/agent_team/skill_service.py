@@ -54,13 +54,17 @@ def _safe_skill_relative_path(path: str | Path) -> Path | None:
         return None
 
     parts: list[str] = []
-    for part in candidate.parts:
+    candidate_parts = candidate.parts
+    for index, part in enumerate(candidate_parts):
         if part in {"", "."}:
             continue
         if part == ".." or ":" in part or "\x00" in part:
             return None
         if part.startswith(".") or part.startswith("__"):
-            return None
+            # 拒绝隐藏文件和双下划线私有文件，避免安装敏感/缓存文件；
+            # 但允许 Python 包 Skill 必需的 __init__.py。
+            if part != "__init__.py" or index != len(candidate_parts) - 1:
+                return None
         parts.append(part)
 
     if not parts:

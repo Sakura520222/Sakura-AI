@@ -12,9 +12,11 @@ import json
 
 import pytest
 
+from backend.services.agent_team.tool_executor import AgentToolExecutor
 from backend.services.agent_team.tools.base import ToolContext, ToolExecutor, ToolResult
 from backend.services.agent_team.tools.file_state import ReadFileState
 from backend.services.agent_team.tools.file_utils import find_actual_string, make_unified_diff
+from backend.services.agent_team.tools.grep_tool import MAX_GREP_KEYWORD_LENGTH
 from backend.services.agent_team.tools.registry import (
     create_executor,
     get_fullstack_tools,
@@ -407,11 +409,41 @@ async def test_search_in_files_rejects_long_keyword(tmp_path):
     executor = create_executor("fullstack")
 
     result = await executor.execute_raw(
-        "search_in_files", {"keyword": "x" * 201}, ctx
+        "search_in_files", {"keyword": "x" * (MAX_GREP_KEYWORD_LENGTH + 1)}, ctx
     )
 
     assert not result.success
-    assert "200" in result.error
+    assert str(MAX_GREP_KEYWORD_LENGTH) in result.error
+
+
+@pytest.mark.asyncio
+async def test_legacy_search_in_files_rejects_long_keyword(tmp_path):
+    workspace, ctx = _setup_workspace(tmp_path)
+    executor = AgentToolExecutor(workspace, ctx.workspace_service)
+
+    result = await executor._handle_search_in_files(
+        {"keyword": "x" * (MAX_GREP_KEYWORD_LENGTH + 1)}
+    )
+
+    assert str(MAX_GREP_KEYWORD_LENGTH) in result["error"]
+
+
+@pytest.mark.asyncio
+async def test_legacy_search_in_files_reuses_grep_tool(tmp_path):
+    workspace, ctx = _setup_workspace(tmp_path)
+    (ctx.workspace_service.resolve_inside_workspace(workspace) / "demo.py").write_text(
+        "needle = 1\n",
+        encoding="utf-8",
+    )
+    executor = AgentToolExecutor(workspace, ctx.workspace_service)
+
+    result = await executor._handle_search_in_files(
+        {"keyword": "needle", "file_extension": ".py"}
+    )
+
+    assert result["keyword"] == "needle"
+    assert result["total"] >= 1
+    assert any("demo.py" in match for match in result["matches"])
 
 
 # ── ToolExecutor 完整流程 ─────────────────────────────

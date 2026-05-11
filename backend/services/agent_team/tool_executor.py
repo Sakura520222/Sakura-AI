@@ -13,6 +13,8 @@ from loguru import logger
 
 from backend.services.agent_team.file_tools import AgentTeamFileTools
 from backend.services.agent_team.shell_executor import AgentTeamShellExecutor
+from backend.services.agent_team.tools.base import ToolContext
+from backend.services.agent_team.tools.grep_tool import GrepTool, MAX_GREP_KEYWORD_LENGTH
 from backend.services.agent_team.tools.shell_tool import is_agent_command_allowed
 from backend.services.agent_team.workspace_service import AgentTeamWorkspaceService
 
@@ -209,31 +211,29 @@ class AgentToolExecutor:
         keyword = args.get("keyword", "")
         if not keyword:
             return {"error": "缺少 keyword 参数"}
+        if len(keyword) > MAX_GREP_KEYWORD_LENGTH:
+            return {"error": f"keyword 不能超过 {MAX_GREP_KEYWORD_LENGTH} 个字符"}
 
-        # 使用 grep 命令搜索
-        file_ext = args.get("file_extension", "")
-        if file_ext:
-            cmd = f"grep -rn --include='*{file_ext}' {repr(keyword)} ."
-        else:
-            cmd = f"grep -rn {repr(keyword)} ."
-
-        result = await self.executor.run(cmd, timeout_seconds=30)
-        output = result.stdout.strip()
-        if not output:
-            return {"matches": [], "total": 0, "keyword": keyword}
-
-        # 限制输出行数
-        lines = output.split("\n")
-        max_lines = 50
-        truncated = len(lines) > max_lines
-        lines = lines[:max_lines]
-
-        return {
-            "matches": lines,
-            "total": len(output.split("\n")),
+        # 旧工具执行器复用新 GrepTool，避免维护另一套 shell grep 路径与校验逻辑。
+        tool = GrepTool()
+        tool_args = {
             "keyword": keyword,
-            "truncated": truncated,
+            "file_extension": args.get("file_extension", ""),
+            "output_mode": args.get("output_mode", "content"),
+            "case_insensitive": args.get("case_insensitive", False),
         }
+        ctx = ToolContext(
+            workspace=str(self.workspace),
+            workspace_service=self.workspace_service,
+            extra={},
+        )
+        error = tool.validate_input(tool_args, ctx)
+        if error:
+            return {"error": error}
+        result = await tool.execute(tool_args, ctx)
+        if not result.success:
+            return {"error": result.error}
+        return result.output
 
     async def _handle_run_command(self, args: dict) -> dict:
         command = args.get("command", "")
