@@ -31,7 +31,7 @@ RUN pip install -r requirements.txt
 COPY . .
 
 # 创建运行时目录
-RUN mkdir -p logs workplace
+RUN mkdir -p logs workplace Skills
 
 # 暴露端口
 EXPOSE 8000
