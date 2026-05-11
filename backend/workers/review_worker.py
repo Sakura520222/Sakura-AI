@@ -1335,7 +1335,7 @@ async def submit_review_task(pr_info: Dict[str, Any]) -> str:
 
     # 在生产环境中，这里应该提交到Celery队列
     # 为了简化，我们直接异步执行
-    asyncio.create_task(worker.process_review_task(pr_info))
+    asyncio.create_task(_run_review_task_with_timeout(worker, pr_info, task_key))
 
     # 返回任务标识（owner/repo#pr_number），可用于取消
     return task_key
@@ -1344,4 +1344,37 @@ async def submit_review_task(pr_info: Dict[str, Any]) -> str:
 async def process_review_task_sync(pr_info: Dict[str, Any]) -> str:
     """同步处理审查任务（用于Celery Worker）"""
     worker = get_worker()
-    return await worker.process_review_task(pr_info)
+    task_key = ReviewWorker._make_task_key(pr_info)
+    worker._register_task(task_key, force_new=True)
+    return await _run_review_task_with_timeout(worker, pr_info, task_key)
+
+
+async def _run_review_task_with_timeout(
+    worker: ReviewWorker,
+    pr_info: Dict[str, Any],
+    task_key: str,
+) -> str:
+    """按配置限制单个审查任务的整体执行时间"""
+    timeout_seconds = get_settings().review_timeout_seconds
+    try:
+        return await asyncio.wait_for(
+            worker.process_review_task(pr_info),
+            timeout=timeout_seconds,
+        )
+    except TimeoutError as exc:
+        worker.cancel_task(task_key)
+        task_id = "timeout"
+        message = f"审查任务超时（{timeout_seconds}秒）"
+        logger.error(
+            "{}: {}",
+            message,
+            task_key,
+        )
+        try:
+            await worker._save_error_record(pr_info, message, task_id)
+        except Exception as save_error:
+            logger.error(
+                "保存超时错误记录失败: {}",
+                str(save_error),
+            )
+        raise RuntimeError(f"{message}: {task_key}") from exc

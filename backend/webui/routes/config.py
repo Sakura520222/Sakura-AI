@@ -15,6 +15,7 @@ from backend.models.database import AppConfig
 from loguru import logger
 
 from backend.core.config import (
+    BASIC_CONFIG_KEYS,
     get_dynamic_config,
     invalidate_dynamic_config_cache,
     get_strategy_config,
@@ -35,21 +36,6 @@ from backend.webui.deps import (
 )
 from backend.webui.helpers.admin_log import log_admin_action
 from backend.webui.i18n import detect_language
-
-# 基础配置项（非动态配置），用于 WebUI 配置页面分组展示及 Settings 即时更新
-_BASIC_CONFIG_KEYS = frozenset(
-    {
-        "max_concurrent_reviews",
-        "review_timeout_seconds",
-        "enable_auto_review",
-        "web_search_enabled",
-        "web_search_provider",
-        "web_search_api_key",
-        "web_search_max_results",
-        "web_search_max_content_length",
-        "web_search_timeout",
-    }
-)
 
 router = APIRouter(prefix="/config", tags=["WebUI Config"])
 templates = get_templates()
@@ -91,6 +77,17 @@ def _get_config_lock(path: str) -> asyncio.Lock:
         _config_locks.clear()
         _config_locks.update(cleaned)
     return lock
+
+
+def _parse_positive_int_config(raw: object) -> int:
+    """解析正整数配置值"""
+    try:
+        value = int(str(raw).strip())
+    except (TypeError, ValueError) as exc:
+        raise ValueError("invalid integer config value") from exc
+    if value < 1:
+        raise ValueError("integer config value must be positive")
+    return value
 
 
 def _atomic_yaml_write(path: Path, full_config: dict):
@@ -749,7 +746,7 @@ async def general_config_page(
         )
 
     # 基础配置项（非动态配置）
-    basic_configs = [c for c in configs if c.key_name in _BASIC_CONFIG_KEYS]
+    basic_configs = [c for c in configs if c.key_name in BASIC_CONFIG_KEYS]
 
     from backend.webui.routes.auth import APP_VERSION
 
@@ -784,19 +781,20 @@ async def save_general_config(
         # max_concurrent_reviews
         raw = form.get("max_concurrent_reviews")
         if raw is not None:
-            val = int(raw)
-            if not 1 <= val <= 100:
-                return toast_redirect(
-                    "/webui/config/general",
-                    "toast.invalid_param",
-                    "error",
-                    lang=detect_language(),
-                )
+            val = _parse_positive_int_config(raw)
             result = await db.execute(
                 select(AppConfig).where(AppConfig.key_name == "max_concurrent_reviews")
             )
             cfg = result.scalar_one_or_none()
-            if cfg and cfg.key_value != str(val):
+            if cfg is None:
+                cfg = AppConfig(
+                    key_name="max_concurrent_reviews",
+                    key_value=str(val),
+                    description="最大并发审查数量",
+                )
+                db.add(cfg)
+                changed["max_concurrent_reviews"] = {"old": "(无)", "new": str(val)}
+            elif cfg.key_value != str(val):
                 changed["max_concurrent_reviews"] = {
                     "old": cfg.key_value,
                     "new": str(val),
@@ -806,19 +804,20 @@ async def save_general_config(
         # review_timeout_seconds
         raw = form.get("review_timeout_seconds")
         if raw is not None:
-            val = int(raw)
-            if not 10 <= val <= 3600:
-                return toast_redirect(
-                    "/webui/config/general",
-                    "toast.invalid_param",
-                    "error",
-                    lang=detect_language(),
-                )
+            val = _parse_positive_int_config(raw)
             result = await db.execute(
                 select(AppConfig).where(AppConfig.key_name == "review_timeout_seconds")
             )
             cfg = result.scalar_one_or_none()
-            if cfg and cfg.key_value != str(val):
+            if cfg is None:
+                cfg = AppConfig(
+                    key_name="review_timeout_seconds",
+                    key_value=str(val),
+                    description="审查任务整体超时时间（秒）",
+                )
+                db.add(cfg)
+                changed["review_timeout_seconds"] = {"old": "(无)", "new": str(val)}
+            elif cfg.key_value != str(val):
                 changed["review_timeout_seconds"] = {
                     "old": cfg.key_value,
                     "new": str(val),
@@ -832,7 +831,15 @@ async def save_general_config(
             select(AppConfig).where(AppConfig.key_name == "enable_auto_review")
         )
         cfg = result.scalar_one_or_none()
-        if cfg and cfg.key_value != val:
+        if cfg is None:
+            cfg = AppConfig(
+                key_name="enable_auto_review",
+                key_value=val,
+                description="是否启用 Webhook 自动审查",
+            )
+            db.add(cfg)
+            changed["enable_auto_review"] = {"old": "(无)", "new": val}
+        elif cfg.key_value != val:
             changed["enable_auto_review"] = {"old": cfg.key_value, "new": val}
             cfg.key_value = val
 
@@ -1027,7 +1034,7 @@ async def save_general_config(
 
         # 即时更新 Settings 单例，无需重启
         for key, change in changed.items():
-            if key in all_dynamic_keys or key in _BASIC_CONFIG_KEYS:
+            if key in all_dynamic_keys or key in BASIC_CONFIG_KEYS:
                 update_settings_field(key, change.get("raw_new", change["new"]))
 
         logger.info(f"全局配置已更新, by={user['sub']}, changed={list(changed.keys())}")
