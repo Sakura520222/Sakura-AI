@@ -771,6 +771,13 @@ async def save_general_config(
         raw = form.get("max_concurrent_reviews")
         if raw is not None:
             val = int(raw)
+            if val < 1:
+                return toast_redirect(
+                    "/webui/config/general",
+                    "toast.invalid_param",
+                    "error",
+                    lang=detect_language(),
+                )
             result = await db.execute(
                 select(AppConfig).where(AppConfig.key_name == "max_concurrent_reviews")
             )
@@ -794,6 +801,13 @@ async def save_general_config(
         raw = form.get("review_timeout_seconds")
         if raw is not None:
             val = int(raw)
+            if val < 1:
+                return toast_redirect(
+                    "/webui/config/general",
+                    "toast.invalid_param",
+                    "error",
+                    lang=detect_language(),
+                )
             result = await db.execute(
                 select(AppConfig).where(AppConfig.key_name == "review_timeout_seconds")
             )
