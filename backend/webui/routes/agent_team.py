@@ -1,7 +1,7 @@
 """WebUI Agent 专家团队路由（超级管理员专用）"""
 
 import json
-from datetime import datetime
+from datetime import datetime, timezone
 
 from fastapi import APIRouter, BackgroundTasks, Depends, Form, Request
 from fastapi.responses import JSONResponse
@@ -506,6 +506,7 @@ async def retry_task(
     except Exception as e:
         return JSONResponse({"success": False, "message": f"AI 配置加载失败: {e}"}, status_code=200)
 
+    old_status = task.status
     task.status = AgentTeamTaskStatus.QUEUED.value
     task.current_phase = None
     task.max_iterations = await _load_agent_team_max_iterations()
@@ -519,7 +520,7 @@ async def retry_task(
     background_tasks.add_task(_run_agent_task_background, task_id)
 
     await log_admin_action(
-        db, user["user_id"], "agent_team_task_retry", "agent_team_task", str(task_id), {"old_status": task.status}
+        db, user["user_id"], "agent_team_task_retry", "agent_team_task", str(task_id), {"old_status": old_status}
     )
     return JSONResponse({"success": True, "task_id": task_id})
 
@@ -557,7 +558,7 @@ async def cancel_task(
 
     old_status = task.status
     task.status = AgentTeamTaskStatus.CANCELLED.value
-    task.completed_at = datetime.utcnow()
+    task.completed_at = datetime.now(timezone.utc)
     await db.commit()
 
     await log_admin_action(
@@ -800,7 +801,9 @@ def _workspace_info_to_dict(info) -> dict:
         "file_count": info.file_count,
         "total_size_bytes": info.total_size_bytes,
         "size_label": _format_bytes(info.total_size_bytes),
-        "modified_at": datetime.fromtimestamp(info.modified_at) if info.modified_at else None,
+        "modified_at": datetime.fromtimestamp(info.modified_at, tz=timezone.utc)
+        if info.modified_at
+        else None,
         "has_git": info.has_git,
     }
 

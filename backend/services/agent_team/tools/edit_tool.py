@@ -7,6 +7,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from pathlib import Path
 from typing import Any
 
@@ -104,13 +105,15 @@ class EditTool(BaseTool):
         # stale 检查
         file_state = ctx.extra.get("file_state")
         if isinstance(file_state, ReadFileState):
-            stale_error = file_state.check_not_stale(resolved)
+            stale_error = await asyncio.to_thread(file_state.check_not_stale, resolved)
             if stale_error:
                 return ToolResult(success=False, error=stale_error)
 
         # 读取并检测编码/行尾
         try:
-            content, encoding, line_ending = read_text_with_metadata(resolved)
+            content, encoding, line_ending = await asyncio.to_thread(
+                read_text_with_metadata, resolved
+            )
         except Exception as exc:
             return ToolResult(success=False, error=f"读取文件失败: {exc}")
 
@@ -149,14 +152,14 @@ class EditTool(BaseTool):
             replacements = 1
 
         # 写入保留编码/行尾
-        write_text_preserving(resolved, new_content, encoding, line_ending)
+        await asyncio.to_thread(write_text_preserving, resolved, new_content, encoding, line_ending)
 
         # 更新 file_state
         if isinstance(file_state, ReadFileState):
             file_state.set(
                 resolved,
                 content=new_content,
-                mtime=resolved.stat().st_mtime,
+                mtime=await asyncio.to_thread(lambda: resolved.stat().st_mtime),
             )
 
         # 生成 diff

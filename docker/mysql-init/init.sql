@@ -117,3 +117,126 @@ CREATE TABLE IF NOT EXISTS sakura_memory_states (
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP NOT NULL,
     INDEX idx_repo_full_name (repo_full_name)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- 创建 Agent 专家团队任务表
+CREATE TABLE IF NOT EXISTS agent_team_tasks (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    source_type VARCHAR(50) NOT NULL,
+    source_id INT NULL,
+    source_issue_number BIGINT NULL,
+    repo_full_name VARCHAR(255) NOT NULL,
+    repo_owner VARCHAR(100) NOT NULL,
+    repo_name VARCHAR(255) NOT NULL,
+    title VARCHAR(500) NOT NULL,
+    summary TEXT,
+    priority VARCHAR(50),
+    candidate_score INT NOT NULL DEFAULT 0,
+    status VARCHAR(50) NOT NULL DEFAULT 'candidate',
+    current_phase VARCHAR(50),
+    branch_name VARCHAR(255),
+    pr_number BIGINT,
+    pr_url VARCHAR(500),
+    iteration_count INT NOT NULL DEFAULT 0,
+    max_iterations INT NOT NULL DEFAULT 3,
+    started_by VARCHAR(100),
+    locked_by VARCHAR(100),
+    ai_config_snapshot TEXT,
+    prompt_tokens INT DEFAULT 0,
+    completion_tokens INT DEFAULT 0,
+    estimated_cost INT DEFAULT 0,
+    error_message TEXT,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP NOT NULL,
+    started_at TIMESTAMP NULL,
+    completed_at TIMESTAMP NULL,
+    INDEX idx_agent_team_tasks_source_type (source_type),
+    INDEX idx_agent_team_tasks_source_id (source_id),
+    INDEX idx_agent_team_tasks_source_issue_number (source_issue_number),
+    INDEX idx_agent_team_tasks_repo_full_name (repo_full_name),
+    INDEX idx_agent_team_tasks_priority (priority),
+    INDEX idx_agent_team_tasks_candidate_score (candidate_score),
+    INDEX idx_agent_team_tasks_status (status),
+    INDEX idx_agent_team_tasks_pr_number (pr_number),
+    INDEX idx_agent_team_tasks_created_at (created_at)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- 创建 Agent 专家团队迭代记录表
+CREATE TABLE IF NOT EXISTS agent_team_iterations (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    task_id INT NOT NULL,
+    iteration_number INT NOT NULL,
+    fullstack_plan TEXT,
+    fullstack_result TEXT,
+    professional_review TEXT,
+    review_passed INT NOT NULL DEFAULT 0,
+    test_command TEXT,
+    test_output TEXT,
+    test_passed INT NOT NULL DEFAULT 0,
+    diff_summary TEXT,
+    decision VARCHAR(50),
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL,
+    completed_at TIMESTAMP NULL,
+    FOREIGN KEY (task_id) REFERENCES agent_team_tasks(id) ON DELETE CASCADE,
+    INDEX idx_agent_team_iterations_task_id (task_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- 创建 Agent 修改文件记录表
+CREATE TABLE IF NOT EXISTS agent_team_patch_files (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    iteration_id INT NOT NULL,
+    file_path VARCHAR(512) NOT NULL,
+    change_type VARCHAR(50),
+    additions INT DEFAULT 0,
+    deletions INT DEFAULT 0,
+    diff_summary TEXT,
+    risk_level VARCHAR(50),
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL,
+    FOREIGN KEY (iteration_id) REFERENCES agent_team_iterations(id) ON DELETE CASCADE,
+    INDEX idx_agent_team_patch_files_iteration_id (iteration_id),
+    INDEX idx_agent_team_patch_files_file_path (file_path)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- 创建 Agent 任务反馈记录表
+CREATE TABLE IF NOT EXISTS agent_team_feedback (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    task_id INT NOT NULL,
+    source VARCHAR(50) NOT NULL,
+    external_id VARCHAR(255),
+    author VARCHAR(100),
+    content TEXT NOT NULL,
+    resolved INT NOT NULL DEFAULT 0,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL,
+    FOREIGN KEY (task_id) REFERENCES agent_team_tasks(id) ON DELETE CASCADE,
+    INDEX idx_agent_team_feedback_task_id (task_id),
+    INDEX idx_agent_team_feedback_source (source)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- 创建 Agent Skills 元数据表
+CREATE TABLE IF NOT EXISTS agent_skills (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    name VARCHAR(255) NOT NULL,
+    slug VARCHAR(120) UNIQUE NOT NULL,
+    description TEXT,
+    when_to_use TEXT,
+    version VARCHAR(100),
+    source_type VARCHAR(50) NOT NULL DEFAULT 'upload',
+    source_url TEXT,
+    source_ref VARCHAR(255),
+    source_path TEXT,
+    install_path TEXT NOT NULL,
+    enabled INT NOT NULL DEFAULT 1,
+    content_hash VARCHAR(64) NOT NULL,
+    file_count INT NOT NULL DEFAULT 1,
+    allowed_tools TEXT,
+    arguments TEXT,
+    requires TEXT,
+    created_by VARCHAR(100),
+    error_message TEXT,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP NOT NULL,
+    INDEX idx_agent_skills_slug (slug),
+    INDEX idx_agent_skills_source_type (source_type),
+    INDEX idx_agent_skills_enabled (enabled),
+    INDEX idx_agent_skills_content_hash (content_hash),
+    INDEX idx_agent_skills_created_at (created_at)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;

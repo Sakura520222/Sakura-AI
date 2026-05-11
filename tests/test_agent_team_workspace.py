@@ -8,6 +8,8 @@ from backend.services.agent_team.workspace_service import (
     AgentTeamWorkspaceService,
     WorkspaceSecurityError,
 )
+from backend.services.agent_team.tools.base import ToolContext
+from backend.services.agent_team.tools.shell_tool import ShellTool, is_agent_command_allowed
 from backend.workers.agent_team_worker import _merge_modified_files
 
 
@@ -163,3 +165,39 @@ async def test_shell_executor_blocks_parent_escape(tmp_path):
 
     with pytest.raises(WorkspaceSecurityError):
         await executor.run("python -c \"open('../evil.txt','w').write('x')\"")
+
+
+@pytest.mark.asyncio
+async def test_agent_command_allowlist(monkeypatch):
+    async def fake_get_dynamic_config(key: str):
+        assert key == "agent_team_test_command_allowlist"
+        return "pytest -q,python run_ruff.py --check"
+
+    monkeypatch.setattr(
+        "backend.services.agent_team.tools.shell_tool.get_dynamic_config",
+        fake_get_dynamic_config,
+    )
+
+    assert await is_agent_command_allowed("pytest -q")
+    assert await is_agent_command_allowed("pytest -q tests/test_main.py")
+    assert not await is_agent_command_allowed("git status")
+
+
+@pytest.mark.asyncio
+async def test_shell_tool_rejects_command_not_in_allowlist(tmp_path, monkeypatch):
+    async def fake_get_dynamic_config(key: str):
+        assert key == "agent_team_test_command_allowlist"
+        return "pytest -q"
+
+    monkeypatch.setattr(
+        "backend.services.agent_team.tools.shell_tool.get_dynamic_config",
+        fake_get_dynamic_config,
+    )
+    service = AgentTeamWorkspaceService(tmp_path / "workplace")
+    workspace = service.ensure_workspace("owner", "repo")
+    ctx = ToolContext(workspace=str(workspace), workspace_service=service)
+
+    result = await ShellTool().execute({"command": "git status"}, ctx)
+
+    assert not result.success
+    assert "白名单" in result.error

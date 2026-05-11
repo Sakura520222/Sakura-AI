@@ -13,6 +13,7 @@ from loguru import logger
 
 from backend.services.agent_team.file_tools import AgentTeamFileTools
 from backend.services.agent_team.shell_executor import AgentTeamShellExecutor
+from backend.services.agent_team.tools.shell_tool import is_agent_command_allowed
 from backend.services.agent_team.workspace_service import AgentTeamWorkspaceService
 
 
@@ -66,7 +67,7 @@ class AgentToolExecutor:
         if not file_path:
             return {"error": "缺少 file_path 参数"}
 
-        result = self.file_tools.read_file(file_path)
+        result = await self.file_tools.read_file_async(file_path)
         if not result.exists:
             return {"error": f"文件不存在: {file_path}"}
 
@@ -101,7 +102,7 @@ class AgentToolExecutor:
         directory = args.get("directory", ".")
         recursive = args.get("recursive", False)
 
-        entries = self.file_tools.list_files(directory, recursive=recursive)
+        entries = await self.file_tools.list_files_async(directory, recursive=recursive)
         items = []
         for entry in entries:
             prefix = "📁" if entry.is_dir else "📄"
@@ -119,7 +120,7 @@ class AgentToolExecutor:
         if not file_path:
             return {"error": "缺少 file_path 参数"}
 
-        result = self.file_tools.write_file(file_path, content)
+        result = await self.file_tools.write_file_async(file_path, content)
         logger.info("Agent 写入文件: {} ({} bytes, created={})", file_path, result.size, result.created)
         return {
             "success": True,
@@ -138,7 +139,7 @@ class AgentToolExecutor:
         if not old_text:
             return {"error": "缺少 old_text 参数"}
         try:
-            result = self.file_tools.edit_file(
+            result = await self.file_tools.edit_file_async(
                 file_path, old_text, new_text, replace_all=replace_all
             )
             logger.info(
@@ -163,7 +164,7 @@ class AgentToolExecutor:
         if start_line is None or end_line is None:
             return {"error": "缺少 start_line 或 end_line 参数"}
         try:
-            result = self.file_tools.replace_lines(
+            result = await self.file_tools.replace_lines_async(
                 file_path, int(start_line), int(end_line), new_content
             )
             logger.info(
@@ -188,7 +189,7 @@ class AgentToolExecutor:
         if after_line is None:
             return {"error": "缺少 after_line 参数"}
         try:
-            result = self.file_tools.insert_lines(
+            result = await self.file_tools.insert_lines_async(
                 file_path, int(after_line), content
             )
             logger.info(
@@ -238,6 +239,8 @@ class AgentToolExecutor:
         command = args.get("command", "")
         if not command:
             return {"error": "缺少 command 参数"}
+        if not await is_agent_command_allowed(command):
+            return {"error": "命令不在 Agent 验证命令白名单中"}
 
         result = await self.executor.run(command, timeout_seconds=120)
         return {

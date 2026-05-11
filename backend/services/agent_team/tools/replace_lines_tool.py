@@ -6,6 +6,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from pathlib import Path
 from typing import Any
 
@@ -97,13 +98,15 @@ class ReplaceLinesTool(BaseTool):
         # stale 检查
         file_state = ctx.extra.get("file_state")
         if isinstance(file_state, ReadFileState):
-            stale_error = file_state.check_not_stale(resolved)
+            stale_error = await asyncio.to_thread(file_state.check_not_stale, resolved)
             if stale_error:
                 return ToolResult(success=False, error=stale_error)
 
         # 读取
         try:
-            content, encoding, line_ending = read_text_with_metadata(resolved)
+            content, encoding, line_ending = await asyncio.to_thread(
+                read_text_with_metadata, resolved
+            )
         except Exception as exc:
             return ToolResult(success=False, error=f"读取文件失败: {exc}")
 
@@ -125,14 +128,14 @@ class ReplaceLinesTool(BaseTool):
         result_content = "\n".join(result_lines)
 
         # 写入
-        write_text_preserving(resolved, result_content, encoding, line_ending)
+        await asyncio.to_thread(write_text_preserving, resolved, result_content, encoding, line_ending)
 
         # 更新 file_state
         if isinstance(file_state, ReadFileState):
             file_state.set(
                 resolved,
                 content=result_content,
-                mtime=resolved.stat().st_mtime,
+                mtime=await asyncio.to_thread(lambda: resolved.stat().st_mtime),
             )
 
         replaced_count = safe_end - start_line + 1

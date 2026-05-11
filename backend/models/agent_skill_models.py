@@ -2,11 +2,16 @@
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timezone
 
 from sqlalchemy import Column, Integer, String, Text, TIMESTAMP
 
 from backend.models.database import Base
+
+
+def utc_now() -> datetime:
+    """返回带 UTC 时区的当前时间。"""
+    return datetime.now(timezone.utc)
 
 
 class AgentSkill(Base):
@@ -33,9 +38,9 @@ class AgentSkill(Base):
     requires = Column(Text, nullable=True, comment="Skill 运行前置条件描述")
     created_by = Column(String(100), nullable=True)
     error_message = Column(Text, nullable=True)
-    created_at = Column(TIMESTAMP, default=datetime.utcnow, nullable=False, index=True)
+    created_at = Column(TIMESTAMP, default=utc_now, nullable=False, index=True)
     updated_at = Column(
-        TIMESTAMP, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False
+        TIMESTAMP, default=utc_now, onupdate=utc_now, nullable=False
     )
 
     def __repr__(self) -> str:

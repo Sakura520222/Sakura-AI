@@ -6,6 +6,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from pathlib import Path
 from typing import Any
 
@@ -84,7 +85,9 @@ class ReadTool(BaseTool):
             return ToolResult(success=False, error=f"路径是目录，不是文件: {file_path}")
 
         try:
-            content, _encoding, _line_ending = read_text_with_metadata(resolved)
+            content, _encoding, _line_ending = await asyncio.to_thread(
+                read_text_with_metadata, resolved
+            )
         except Exception as exc:
             return ToolResult(success=False, error=f"读取文件失败: {exc}")
 
@@ -106,7 +109,7 @@ class ReadTool(BaseTool):
         # 更新文件状态缓存
         file_state = ctx.extra.get("file_state")
         if isinstance(file_state, ReadFileState):
-            mtime = resolved.stat().st_mtime
+            mtime = await asyncio.to_thread(lambda: resolved.stat().st_mtime)
             file_state.set(
                 resolved,
                 content=content,

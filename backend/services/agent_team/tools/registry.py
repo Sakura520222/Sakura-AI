@@ -92,8 +92,8 @@ def _sanitize_schema(schema: dict[str, Any]) -> dict[str, Any]:
     return schema
 
 
-def _zai_compatible_schema(schema: dict[str, Any]) -> dict[str, Any]:
-    """转换为 Z.ai/GLM 更稳定接受的工具 schema。
+def _glm_compatible_schema(schema: dict[str, Any]) -> dict[str, Any]:
+    """转换为 GLM OpenAI 兼容接口更稳定接受的工具 schema。
 
     GLM 的 OpenAI 兼容接口对 function calling JSON Schema 较严格，
     可选参数容易触发 1210 参数错误。这里将所有 properties 都放入
@@ -123,7 +123,7 @@ def get_tool_definitions(
     """
     tools = FULLSTACK_TOOL_INSTANCES if role == "fullstack" else REVIEWER_TOOL_INSTANCES
     if (provider or "").lower() == "zai":
-        return [_zai_compatible_schema(t.get_schema()) for t in tools]
+        return [_glm_compatible_schema(t.get_schema()) for t in tools]
     return [_sanitize_schema(t.get_schema()) for t in tools]
 
 

@@ -6,6 +6,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -130,6 +131,66 @@ class AgentTeamFileTools:
                     )
                 )
         return entries
+
+    async def read_file_async(self, relative_path: str) -> FileReadResult:
+        """异步包装：读取工作区内文件。"""
+        return await asyncio.to_thread(self.read_file, relative_path)
+
+    async def write_file_async(self, relative_path: str, content: str) -> FileWriteResult:
+        """异步包装：写入工作区内文件。"""
+        return await asyncio.to_thread(self.write_file, relative_path, content)
+
+    async def list_files_async(
+        self, relative_dir: str = ".", recursive: bool = False
+    ) -> list[FileEntry]:
+        """异步包装：列举工作区内目录。"""
+        return await asyncio.to_thread(self.list_files, relative_dir, recursive)
+
+    async def edit_file_async(
+        self,
+        relative_path: str,
+        old_text: str,
+        new_text: str,
+        replace_all: bool = False,
+    ) -> FileEditResult:
+        """异步包装：精确字符串替换。"""
+        return await asyncio.to_thread(
+            self.edit_file,
+            relative_path,
+            old_text,
+            new_text,
+            replace_all,
+        )
+
+    async def replace_lines_async(
+        self,
+        relative_path: str,
+        start_line: int,
+        end_line: int,
+        new_content: str,
+    ) -> FileEditResult:
+        """异步包装：按行号范围替换。"""
+        return await asyncio.to_thread(
+            self.replace_lines,
+            relative_path,
+            start_line,
+            end_line,
+            new_content,
+        )
+
+    async def insert_lines_async(
+        self,
+        relative_path: str,
+        after_line: int,
+        content: str,
+    ) -> FileEditResult:
+        """异步包装：在指定行号之后插入。"""
+        return await asyncio.to_thread(
+            self.insert_lines,
+            relative_path,
+            after_line,
+            content,
+        )
 
     def edit_file(
         self,

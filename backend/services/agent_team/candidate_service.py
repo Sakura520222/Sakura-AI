@@ -435,7 +435,10 @@ def _select_ai_filter_model(model: str, review_model: str, summary_model: str) -
 def _is_model_not_found_error(exc: BadRequestError) -> bool:
     """判断 BadRequestError 是否属于模型不存在/不可用。"""
     text = str(exc)
-    return "模型不存在" in text or "model" in text.lower() and "not" in text.lower() and "exist" in text.lower()
+    text_lower = text.lower()
+    return ("模型不存在" in text) or (
+        "model" in text_lower and "not" in text_lower and "exist" in text_lower
+    )
 
 
 def _truncate_text(value: str, limit: int = _AI_FILTER_TEXT_LIMIT) -> str:

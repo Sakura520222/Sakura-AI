@@ -2,12 +2,19 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import re
 from pathlib import Path
 from typing import Any
 
-from backend.services.agent_team.skill_service import normalize_skill_slug
+from backend.services.agent_team.skill_service import (
+    SKILL_FILE_NAME,
+    _list_safe_skill_files,
+    _resolve_within,
+    _safe_skill_relative_path,
+    normalize_skill_slug,
+)
 from backend.services.agent_team.tools.base import BaseTool, ToolContext, ToolResult
 
 # Skill 内容中的变量占位符：$ARGUMENTS, $arg_name, ${arg_name}
@@ -92,22 +99,39 @@ class UseSkillTool(BaseTool):
         skills_root_value = ctx.extra.get("skills_root")
         skills_root = Path(str(skills_root_value)).resolve() if skills_root_value else None
 
-        skill_dir = install_path.parent if install_path.name.upper() == "SKILL.MD" else install_path
-        if not skill_dir.is_dir():
-            return ToolResult(success=False, error=f"Skill 目录不存在: {slug}")
-        if skills_root and skills_root not in skill_dir.parents:
+        try:
+            if skills_root:
+                install_path = _resolve_within(skills_root, install_path)
+            skill_dir = (
+                install_path.parent
+                if install_path.name.upper() == SKILL_FILE_NAME.upper()
+                else install_path
+            )
+            if skills_root:
+                skill_dir = _resolve_within(skills_root, skill_dir)
+            else:
+                skill_dir = skill_dir.resolve()
+        except ValueError:
             return ToolResult(success=False, error="Skill 目录不在 Skills 根目录内")
 
-        if args.get("list_files"):
-            return self._list_files(slug, skill_dir, entry)
+        if not skill_dir.is_dir():
+            return ToolResult(success=False, error=f"Skill 目录不存在: {slug}")
 
-        target_file = str(args.get("file") or "").strip() or "SKILL.md"
-        target_path = (skill_dir / target_file).resolve()
-        if skill_dir not in target_path.parents and target_path.parent != skill_dir:
+        if args.get("list_files"):
+            return await asyncio.to_thread(self._list_files, slug, skill_dir, entry)
+
+        target_file = str(args.get("file") or "").strip() or SKILL_FILE_NAME
+        safe_target = _safe_skill_relative_path(target_file)
+        if safe_target is None:
+            return ToolResult(success=False, error="文件路径不在 Skill 目录内")
+        try:
+            target_path = _resolve_within(skill_dir, skill_dir / safe_target)
+        except ValueError:
             return ToolResult(success=False, error="文件路径不在 Skill 目录内")
         if not target_path.is_file():
             return ToolResult(success=False, error=f"文件不存在: {slug}/{target_file}")
 
+        target_file = safe_target.as_posix()
         cache_key = f"{slug}:{target_file}"
         cache = ctx.extra.setdefault("skills_cache", {})
         if cache_key in cache:
@@ -115,7 +139,7 @@ class UseSkillTool(BaseTool):
             cached["cached"] = True
             return ToolResult(success=True, output=cached)
 
-        content = target_path.read_text(encoding="utf-8")
+        content = await asyncio.to_thread(target_path.read_text, encoding="utf-8")
 
         # 参数替换
         args_str = str(args.get("args") or "").strip()
@@ -164,11 +188,7 @@ class UseSkillTool(BaseTool):
     def _list_files(
         slug: str, skill_dir: Path, entry: dict[str, Any]
     ) -> ToolResult:
-        files = sorted(
-            str(f.relative_to(skill_dir))
-            for f in skill_dir.rglob("*")
-            if f.is_file() and not f.name.startswith(".")
-        )
+        files = _list_safe_skill_files(skill_dir)
         return ToolResult(
             success=True,
             output={

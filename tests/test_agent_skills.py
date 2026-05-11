@@ -87,6 +87,20 @@ def test_extract_metadata_from_frontmatter():
     assert metadata["version"] == "1.0.0"
 
 
+def test_extract_metadata_from_crlf_frontmatter():
+    service = AgentSkillService()
+    metadata = service._extract_metadata(
+        "---\r\n"
+        "name: CRLF Skill\r\n"
+        "description: Windows line endings.\r\n"
+        "---\r\n"
+        "# Body\r\n"
+    )
+
+    assert metadata["name"] == "CRLF Skill"
+    assert metadata["description"] == "Windows line endings."
+
+
 @pytest.mark.asyncio
 async def test_write_and_load_skill_content(tmp_path):
     service = AgentSkillService(root=tmp_path)
@@ -128,6 +142,18 @@ async def test_load_skill_content_specific_file(tmp_path):
     loaded = await service.load_skill_content("target-skill", file="helper.py")
     assert loaded["file"] == "helper.py"
     assert "def help" in loaded["content"]
+
+
+@pytest.mark.asyncio
+async def test_load_skill_content_rejects_path_traversal(tmp_path):
+    service = AgentSkillService(root=tmp_path)
+    skill_dir = tmp_path / "target-skill"
+    skill_dir.mkdir()
+    (skill_dir / "SKILL.md").write_text("# Main", encoding="utf-8")
+    (tmp_path / "outside.txt").write_text("secret", encoding="utf-8")
+
+    with pytest.raises(ValueError):
+        await service.load_skill_content("target-skill", file="../outside.txt")
 
 
 @pytest.mark.asyncio
@@ -262,6 +288,35 @@ async def test_install_from_zip_strips_top_level_dir(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_install_from_zip_rejects_path_traversal(tmp_path):
+    db = MagicMock()
+    scalar_result = MagicMock()
+    scalar_result.scalar_one_or_none.return_value = None
+    db.execute = AsyncMock(return_value=scalar_result)
+    db.commit = AsyncMock()
+    db.refresh = AsyncMock()
+    db.add = MagicMock()
+
+    zip_bytes = _build_zip({
+        "SKILL.md": "---\nname: Safe Skill\n---\n# Safe",
+        "../evil.txt": "owned",
+        "templates/helper.py": "pass",
+    })
+
+    service = AgentSkillService(root=tmp_path)
+    await service.install_from_upload(
+        db,
+        content=zip_bytes,
+        filename="safe.zip",
+        name="Safe Skill",
+        created_by="admin",
+    )
+
+    assert not (tmp_path / "evil.txt").exists()
+    assert (tmp_path / "safe-skill" / "templates" / "helper.py").exists()
+
+
+@pytest.mark.asyncio
 async def test_use_skill_tool_reads_and_caches(tmp_path):
     skill_dir = tmp_path / "algodocs-automation"
     skill_dir.mkdir()
@@ -325,6 +380,35 @@ async def test_use_skill_tool_reads_additional_file(tmp_path):
     assert result.success
     assert result.output["file"] == "helper.py"
     assert "def help" in result.output["content"]
+
+
+@pytest.mark.asyncio
+async def test_use_skill_tool_rejects_path_traversal_file(tmp_path):
+    skill_dir = tmp_path / "safe-skill"
+    skill_dir.mkdir()
+    (skill_dir / "SKILL.md").write_text("# Safe", encoding="utf-8")
+    (tmp_path / "outside.txt").write_text("secret", encoding="utf-8")
+    ctx = ToolContext(
+        workspace=str(tmp_path),
+        workspace_service=AgentTeamWorkspaceService(tmp_path),
+        extra={
+            "skills_root": str(tmp_path),
+            "skills_index": {
+                "safe-skill": {
+                    "name": "Safe",
+                    "install_path": str(skill_dir / "SKILL.md"),
+                }
+            },
+            "skills_cache": {},
+        },
+    )
+
+    result = await UseSkillTool().execute(
+        {"slug": "safe-skill", "file": "../outside.txt"}, ctx
+    )
+
+    assert not result.success
+    assert "Skill 目录内" in result.error
 
 
 @pytest.mark.asyncio

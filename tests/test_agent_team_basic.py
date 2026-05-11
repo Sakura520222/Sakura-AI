@@ -165,6 +165,62 @@ def test_agent_team_ai_config_safe_snapshot_masks_key():
     assert snapshot["review_model"] == "review-model"
 
 
+def test_agent_team_ai_config_safe_dict_and_getstate_mask_key():
+    config = AgentTeamAIConfig(
+        provider="openai",
+        api_base="https://example.test/v1",
+        api_key="secret-key",
+        model="fullstack-model",
+        review_model="review-model",
+        summary_model="summary-model",
+        temperature=0.2,
+        max_tokens=8192,
+        timeout_seconds=600,
+    )
+
+    assert "secret-key" not in str(config.as_safe_dict())
+    assert "secret-key" not in str(config.__getstate__())
+    assert config.as_safe_dict()["api_key_set"] is True
+
+
+@pytest.mark.asyncio
+async def test_load_agent_team_ai_config_preserves_explicit_zero_values(monkeypatch):
+    async def fake_get_dynamic_config(key: str):
+        values = {
+            "agent_team_model_provider": "qwen",
+            "agent_team_api_base": "https://agent.example/v1",
+            "agent_team_api_key": "agent-key",
+            "agent_team_model": "agent-model",
+            "agent_team_review_model": "",
+            "agent_team_summary_model": "",
+            "agent_team_temperature": 0,
+            "agent_team_max_tokens": 0,
+            "agent_team_timeout_seconds": 0,
+        }
+        return values.get(key)
+
+    monkeypatch.setattr("backend.services.agent_team.ai_client.get_dynamic_config", fake_get_dynamic_config)
+    monkeypatch.setattr(
+        "backend.services.agent_team.ai_client.get_settings",
+        lambda: SimpleNamespace(
+            ai_provider="openai",
+            openai_api_base="https://settings.example/v1",
+            openai_api_key="settings-key",
+            openai_model="settings-model",
+            summary_model="settings-summary-model",
+            agent_team_test_command_allowlist="pytest -q",
+        ),
+    )
+
+    config = await load_agent_team_ai_config()
+
+    assert config.temperature == 0
+    assert config.max_tokens == 0
+    assert config.timeout_seconds == 0
+    assert config.review_model == "agent-model"
+    assert config.summary_model == "agent-model"
+
+
 def test_agent_team_config_includes_required_dedicated_ai_keys():
     required = {
         "agent_team_api_base",

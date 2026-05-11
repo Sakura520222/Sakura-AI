@@ -15,6 +15,7 @@ from backend.services.agent_team.tools.base import BaseTool, ToolContext, ToolRe
 
 # VCS 目录排除
 VCS_EXCLUDES = {".git", ".svn", ".hg", ".bzr", "__pycache__", "node_modules"}
+MAX_GREP_KEYWORD_LENGTH = 500
 
 
 class GrepTool(BaseTool):
@@ -69,8 +70,11 @@ class GrepTool(BaseTool):
         return True
 
     def validate_input(self, args: dict[str, Any], ctx: ToolContext) -> str | None:
-        if not args.get("keyword"):
+        keyword = str(args.get("keyword") or "")
+        if not keyword:
             return "缺少 keyword 参数"
+        if len(keyword) > MAX_GREP_KEYWORD_LENGTH:
+            return f"keyword 不能超过 {MAX_GREP_KEYWORD_LENGTH} 个字符"
         return None
 
     async def execute(self, args: dict[str, Any], ctx: ToolContext) -> ToolResult:
@@ -163,7 +167,11 @@ class GrepTool(BaseTool):
                 continue
 
             try:
-                text = file_path.read_text(encoding="utf-8", errors="replace")
+                text = await asyncio.to_thread(
+                    file_path.read_text,
+                    encoding="utf-8",
+                    errors="replace",
+                )
                 rel = str(file_path.relative_to(workspace))
                 for i, line in enumerate(text.split("\n"), start=1):
                     if pattern and pattern.search(line) or keyword in line:
