@@ -167,7 +167,7 @@ class IssueWorker:
                         logger.warning(f"[{task_id}] 使用 AI 摘要更新向量失败: {e}")
 
                     # 6. 重复检测（优先使用 AI 摘要）
-                    if settings.issue_detect_duplicates:
+                    if await get_dynamic_config("issue_detect_duplicates"):
                         try:
                             summary = analysis_result.get("summary", "")
                             duplicates = await issue_service.detect_duplicates(
@@ -214,7 +214,7 @@ class IssueWorker:
                         logger.warning(f"发布 SSE 事件失败（不影响主流程）: {e}")
 
                     # 8. 自动评论
-                    if settings.issue_auto_comment:
+                    if await get_dynamic_config("issue_auto_comment"):
                         try:
                             success = await issue_service.post_analysis_comment(
                                 repo_owner,
