@@ -177,8 +177,7 @@ class PromptBuilder:
 
         # 添加工具说明（如果需要）
         if include_tools:
-            message_parts.append(
-                """
+            tools_text = """
 
 ## 可用工具
 
@@ -193,12 +192,16 @@ class PromptBuilder:
 - `list_commits`: 查看提交历史记录
 - `read_sakura_docs`: 读取项目 .sakura/ 目录中的指导文档
 - `list_sakura_directory`: 列出 .sakura/ 目录的结构
-- `get_file_diff`: 获取 PR 中指定文件的完整 diff
+"""
+            if compact:
+                tools_text += """- `get_file_diff`: 获取 PR 中指定文件的完整 diff
 - `list_changed_files`: 列出 PR 中所有变更文件概览
+"""
+            tools_text += """
 
 请根据需要使用工具查看相关文件。
 """
-            )
+            message_parts.append(tools_text)
 
         return "\n".join(message_parts)
 
@@ -292,20 +295,9 @@ class PromptBuilder:
    - 使用场景：了解项目 .sakura/ 目录中有哪些指导文档
    - 参数：subdirectory（可选，子目录路径）
 
-11. **get_file_diff**: 获取 PR 中指定文件的完整 diff（代码变更内容）
-   - 使用场景：当 prompt 中没有包含某文件的 diff 时，使用此工具获取该文件的完整变更
-   - 参数：file_path（必填，文件路径）
-   - **注意**：仅在精简模式（prompt 中不含 diff）时需要使用
-
-12. **list_changed_files**: 列出 PR 中所有变更文件的概览
-   - 使用场景：快速了解 PR 的整体变更范围（路径、状态、增删行数）
-   - 参数：无
-   - **注意**：与 list_directory 不同，此工具只列出 PR 中有变更的文件
-
 ## 使用建议
 
 - 优先审查PR中变更的文件
-- **如果 prompt 处于精简模式（无 diff），请先对关键文件调用 `get_file_diff` 查看变更**
 - 审查前建议先使用 search_project_docs 检索项目相关的编码规范和架构准则
 - 当需要理解依赖关系时，使用 read_file 查看相关文件
 - 当需要了解模块结构时，使用 list_directory 查看目录
