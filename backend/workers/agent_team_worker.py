@@ -330,15 +330,42 @@ class AgentTeamWorker:
             return {}
 
     async def _load_sakura_memory(self, repo_owner: str, repo_name: str) -> str:
+        """加载仓库对应的 Sakura 记忆上下文。"""
+        repo_full_name = f"{repo_owner}/{repo_name}"
         try:
+            from backend.core.github_app import GitHubAppClient
             from backend.services.sakura_memory_service import SakuraMemoryService
 
+            github_app = GitHubAppClient()
+            client = github_app.get_repo_client(repo_owner, repo_name)
+            if not client:
+                logger.info("Agent 未注入 Sakura 记忆: 无法获取 GitHub 客户端 ({})", repo_full_name)
+                return ""
+
+            repo = client.get_repo(repo_full_name)
             service = SakuraMemoryService()
-            context = await service.get_sakura_context(repo_owner, repo_name)
-            if context:
-                return str(context)
+            context = await service.get_sakura_context(
+                repo=repo,
+                repo_full_name=repo_full_name,
+            )
+            if not context:
+                logger.info("Agent 未注入 Sakura 记忆: 仓库无可用上下文 ({})", repo_full_name)
+                return ""
+
+            parts = []
+            if context.get("sakura_md"):
+                parts.append(f"### SAKURA.md\n{context['sakura_md']}")
+            if context.get("memory_md"):
+                parts.append(f"### memory.md\n{context['memory_md']}")
+
+            logger.info(
+                "Agent 已注入 Sakura 记忆: repo={}, files={}",
+                repo_full_name,
+                ", ".join(context.keys()),
+            )
+            return "\n\n".join(parts)
         except Exception as e:
-            logger.debug("加载 Sakura 记忆失败 (非致命): {}", e)
+            logger.info("Agent 加载 Sakura 记忆失败: repo={}, error={}", repo_full_name, e)
         return ""
 
     async def _get_config(self, key: str) -> str | None:
