@@ -341,9 +341,11 @@ async def save_strategies_section(
                 ref_kw_raw = form.get("issue_reference_keywords", "")
                 ref_keywords = [k.strip() for k in ref_kw_raw.split(",") if k.strip()]
 
-                max_linked = int(form.get("max_linked_issues_in_prompt", 5))
-                if not 1 <= max_linked <= 20:
-                    raise ValueError("关联 Issue 数量上限须在 1-20 之间")
+                raw_linked = form.get("max_linked_issues_in_prompt", "5")
+                try:
+                    max_linked = int(raw_linked)
+                except (ValueError, TypeError):
+                    raise ValueError("关联 Issue 数量上限必须是有效整数")
 
                 config["issue_analysis"] = {
                     "categories": categories,

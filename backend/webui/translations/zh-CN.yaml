@@ -1028,3 +1028,4 @@ strategy:
   issue_comment_template_en: "自动评论模板（英文）"
   issue_template_variables: "可用模板变量："
   save_issue_analysis: "保存 Issue 分析配置"
+  issue_config_hint: "此页面管理分析提示词、分类、优先级和评论模板。功能开关（启用分析、自动评论等）请在「全局配置 → Issue 分析配置」中管理。"
