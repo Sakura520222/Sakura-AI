@@ -35,6 +35,7 @@ def test_agent_skills_translations_exist():
         "nav.agent_skills",
         "agent_skills.title",
         "agent_skills.install_github",
+        "agent_skills.files",
         "agent_team.config_group_skills",
         "config.label.agent_team_skills_enabled",
         "config.desc.agent_team_skills_root",

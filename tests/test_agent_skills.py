@@ -1,5 +1,7 @@
 """Agent Skills 功能测试。"""
 
+import io
+import zipfile
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock
 
@@ -95,7 +97,36 @@ async def test_write_and_load_skill_content(tmp_path):
     loaded = await service.load_skill_content("example-skill")
     assert loaded["slug"] == "example-skill"
     assert loaded["content"] == "# Example\n\nBody"
+    assert loaded["file"] == "SKILL.md"
     assert len(loaded["content_hash"]) == 64
+
+
+@pytest.mark.asyncio
+async def test_list_skill_files(tmp_path):
+    service = AgentSkillService(root=tmp_path)
+    skill_dir = tmp_path / "multi-file-skill"
+    skill_dir.mkdir()
+    (skill_dir / "SKILL.md").write_text("# Multi", encoding="utf-8")
+    (skill_dir / "template.py").write_text("pass", encoding="utf-8")
+    (skill_dir / "config.yaml").write_text("key: value", encoding="utf-8")
+
+    files = await service.list_skill_files("multi-file-skill")
+    assert "SKILL.md" in files
+    assert "template.py" in files
+    assert "config.yaml" in files
+
+
+@pytest.mark.asyncio
+async def test_load_skill_content_specific_file(tmp_path):
+    service = AgentSkillService(root=tmp_path)
+    skill_dir = tmp_path / "target-skill"
+    skill_dir.mkdir()
+    (skill_dir / "SKILL.md").write_text("# Main", encoding="utf-8")
+    (skill_dir / "helper.py").write_text("def help(): pass", encoding="utf-8")
+
+    loaded = await service.load_skill_content("target-skill", file="helper.py")
+    assert loaded["file"] == "helper.py"
+    assert "def help" in loaded["content"]
 
 
 @pytest.mark.asyncio
@@ -120,6 +151,47 @@ async def test_build_enabled_skills_summary():
     assert "`algodocs-automation`" in summary
     assert "Generate API documentation." in summary
     assert "use_skill" in summary
+
+
+def _build_zip(files: dict[str, str]) -> bytes:
+    """构建包含指定文件的 ZIP 字节。"""
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+        for name, content in files.items():
+            zf.writestr(name, content)
+    return buf.getvalue()
+
+
+@pytest.mark.asyncio
+async def test_install_from_zip(tmp_path):
+    db = MagicMock()
+    scalar_result = MagicMock()
+    scalar_result.scalar_one_or_none.return_value = None
+    db.execute = AsyncMock(return_value=scalar_result)
+    db.commit = AsyncMock()
+    db.refresh = AsyncMock()
+    db.add = MagicMock()
+
+    zip_bytes = _build_zip({
+        "SKILL.md": "---\nname: ZIP Skill\ndescription: From ZIP.\n---\n# ZIP Skill\nBody.",
+        "template.py": "def template(): pass",
+        "config.yaml": "version: 1.0",
+    })
+
+    service = AgentSkillService(root=tmp_path)
+    await service.install_from_upload(
+        db,
+        content=zip_bytes,
+        filename="skill.zip",
+        name="ZIP Skill",
+        created_by="admin",
+    )
+
+    skill_dir = tmp_path / "zip-skill"
+    assert skill_dir.is_dir()
+    assert (skill_dir / "SKILL.md").read_text().startswith("---")
+    assert (skill_dir / "template.py").exists()
+    assert (skill_dir / "config.yaml").exists()
 
 
 @pytest.mark.asyncio
@@ -158,6 +230,64 @@ async def test_use_skill_tool_reads_and_caches(tmp_path):
     assert first.output["cached"] is False
     assert second.success
     assert second.output["cached"] is True
+
+
+@pytest.mark.asyncio
+async def test_use_skill_tool_reads_additional_file(tmp_path):
+    skill_dir = tmp_path / "multi-skill"
+    skill_dir.mkdir()
+    (skill_dir / "SKILL.md").write_text("# Multi", encoding="utf-8")
+    (skill_dir / "helper.py").write_text("def help(): pass", encoding="utf-8")
+    ctx = ToolContext(
+        workspace=str(tmp_path),
+        workspace_service=AgentTeamWorkspaceService(tmp_path),
+        extra={
+            "skills_root": str(tmp_path),
+            "skills_index": {
+                "multi-skill": {
+                    "name": "Multi",
+                    "install_path": str(skill_dir / "SKILL.md"),
+                }
+            },
+            "skills_cache": {},
+        },
+    )
+
+    tool = UseSkillTool()
+    result = await tool.execute({"slug": "multi-skill", "file": "helper.py"}, ctx)
+    assert result.success
+    assert result.output["file"] == "helper.py"
+    assert "def help" in result.output["content"]
+
+
+@pytest.mark.asyncio
+async def test_use_skill_tool_list_files(tmp_path):
+    skill_dir = tmp_path / "list-skill"
+    skill_dir.mkdir()
+    (skill_dir / "SKILL.md").write_text("# List", encoding="utf-8")
+    (skill_dir / "extra.py").write_text("pass", encoding="utf-8")
+    ctx = ToolContext(
+        workspace=str(tmp_path),
+        workspace_service=AgentTeamWorkspaceService(tmp_path),
+        extra={
+            "skills_root": str(tmp_path),
+            "skills_index": {
+                "list-skill": {
+                    "name": "List",
+                    "install_path": str(skill_dir / "SKILL.md"),
+                }
+            },
+            "skills_cache": {},
+        },
+    )
+
+    tool = UseSkillTool()
+    result = await tool.execute({"slug": "list-skill", "list_files": True}, ctx)
+    assert result.success
+    assert "SKILL.md" in result.output["files"]
+    assert "extra.py" in result.output["files"]
+    assert result.output["file_count"] == 2
+    assert result.output["has_attachments"] is True
 
 
 @pytest.mark.asyncio
