@@ -6,6 +6,8 @@ from typing import Any
 from backend.core.config import get_dynamic_config, get_settings
 from backend.services.ai_reviewer.api_client import AIApiClient
 
+_UNCONFIGURED_MODEL_VALUE = ""
+
 
 @dataclass(frozen=True)
 class AgentTeamAIConfig:
@@ -57,6 +59,18 @@ class AgentTeamAIConfig:
         """pickle 等隐式序列化时仅暴露脱敏快照。"""
         return self.safe_snapshot()
 
+    def __setstate__(self, state: dict[str, Any]) -> None:
+        """从脱敏 pickle 状态重建对象，明文 API Key 不会恢复。"""
+        object.__setattr__(self, "provider", state.get("provider", ""))
+        object.__setattr__(self, "api_base", state.get("api_base", ""))
+        object.__setattr__(self, "api_key", state.get("api_key", ""))
+        object.__setattr__(self, "model", state.get("model", ""))
+        object.__setattr__(self, "review_model", state.get("review_model", ""))
+        object.__setattr__(self, "summary_model", state.get("summary_model", ""))
+        object.__setattr__(self, "temperature", state.get("temperature", 0.0))
+        object.__setattr__(self, "max_tokens", state.get("max_tokens", 0))
+        object.__setattr__(self, "timeout_seconds", state.get("timeout_seconds", 0))
+
 
 def _value_or(value: Any, default: Any) -> Any:
     """仅在值为 None 时使用默认值，保留显式 0/False/空字符串。"""
@@ -69,6 +83,11 @@ async def _config_value(key: str, default: Any = "") -> Any:
 
 def _settings_value(settings: Any, key: str, default: Any = "") -> Any:
     return _value_or(getattr(settings, key, None), default)
+
+
+def _model_or_fallback(value: Any, fallback: str) -> str:
+    """将空字符串视为未配置，并使用更明确的模型 fallback。"""
+    return str(fallback if value == _UNCONFIGURED_MODEL_VALUE else value)
 
 
 async def load_agent_team_ai_config() -> AgentTeamAIConfig:
@@ -92,16 +111,16 @@ async def load_agent_team_ai_config() -> AgentTeamAIConfig:
         model = str(await _config_value("openai_model", _settings_value(settings, "openai_model", "")))
         review_model = model
         summary_value = await _config_value("summary_model", _settings_value(settings, "summary_model", ""))
-        summary_model = str(summary_value if summary_value != "" else review_model or model)
+        summary_model = _model_or_fallback(summary_value, review_model or model)
     else:
         provider = selected_provider
         api_base = str(await _config_value("agent_team_api_base", ""))
         api_key = str(await _config_value("agent_team_api_key", ""))
         model = str(await _config_value("agent_team_model", ""))
         review_value = await _config_value("agent_team_review_model", "")
-        review_model = str(review_value if review_value != "" else model)
+        review_model = _model_or_fallback(review_value, model)
         summary_value = await _config_value("agent_team_summary_model", "")
-        summary_model = str(summary_value if summary_value != "" else review_model or model)
+        summary_model = _model_or_fallback(summary_value, review_model or model)
 
     temperature = await _config_value("agent_team_temperature", 0.2)
     max_tokens = await _config_value("agent_team_max_tokens", 8192)

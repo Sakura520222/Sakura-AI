@@ -1,5 +1,6 @@
 """Agent 专家团队模式基础测试"""
 
+import pickle
 from types import SimpleNamespace
 
 import pytest
@@ -141,7 +142,7 @@ def test_agent_team_provider_options_include_main_ai_choice():
 def test_agent_team_max_tokens_range_is_provider_safe():
     from backend.core.config import DYNAMIC_CONFIG_RANGES
 
-    assert DYNAMIC_CONFIG_RANGES["agent_team_max_tokens"] == (1024, 8192)
+    assert DYNAMIC_CONFIG_RANGES["agent_team_max_tokens"] == (1024, 32768)
 
 
 def test_agent_team_ai_config_safe_snapshot_masks_key():
@@ -181,6 +182,29 @@ def test_agent_team_ai_config_safe_dict_and_getstate_mask_key():
     assert "secret-key" not in str(config.as_safe_dict())
     assert "secret-key" not in str(config.__getstate__())
     assert config.as_safe_dict()["api_key_set"] is True
+
+
+def test_agent_team_ai_config_pickle_roundtrip_masks_key():
+    config = AgentTeamAIConfig(
+        provider="openai",
+        api_base="https://example.test/v1",
+        api_key="secret-key",
+        model="fullstack-model",
+        review_model="review-model",
+        summary_model="summary-model",
+        temperature=0.2,
+        max_tokens=8192,
+        timeout_seconds=600,
+    )
+
+    restored = pickle.loads(pickle.dumps(config))
+
+    assert restored.api_key == ""
+    assert restored.provider == "openai"
+    assert restored.model == "fullstack-model"
+    assert restored.review_model == "review-model"
+    assert restored.summary_model == "summary-model"
+    assert "secret-key" not in str(restored.safe_snapshot())
 
 
 @pytest.mark.asyncio

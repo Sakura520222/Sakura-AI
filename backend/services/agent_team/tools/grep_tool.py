@@ -174,7 +174,7 @@ class GrepTool(BaseTool):
                 )
                 rel = str(file_path.relative_to(workspace))
                 for i, line in enumerate(text.split("\n"), start=1):
-                    if pattern and pattern.search(line) or keyword in line:
+                    if (pattern and pattern.search(line)) or (keyword in line):
                         matches.append(f"{rel}:{i}:{line.strip()}")
             except (OSError, UnicodeDecodeError):
                 continue

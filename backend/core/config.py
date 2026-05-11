@@ -1084,7 +1084,7 @@ DYNAMIC_CONFIG_RANGES: dict[str, tuple[float, float]] = {
     "sakura_consolidation_interval": (1, 50),
     "sakura_max_memory_chars": (500, 10000),
     "sakura_max_sakura_chars": (1000, 20000),
-    "agent_team_max_tokens": (1024, 8192),
+    "agent_team_max_tokens": (1024, 32768),
 }
 
 # 字段中文标签

@@ -46,14 +46,13 @@ class ShellTool(BaseTool):
             "name": "run_command",
             "description": (
                 "在工作区内执行 shell 命令（如运行测试、检查语法、构建等）。"
-                "命令在项目根目录执行，不允许跳出工作区。"
+                "命令在项目根目录执行，不允许跳出工作区，且必须匹配配置的白名单。"
                 "\n\n常用命令："
                 "\n- 运行测试: pytest -q 或 python -m pytest tests/ -q"
                 "\n- 语法检查: python -m py_compile file.py"
                 "\n- 类型检查: mypy file.py"
                 "\n- Lint: ruff check file.py"
                 "\n- 查看文件: cat / head / tail"
-                "\n- Git 操作: git status / git diff / git log"
             ),
             "parameters": {
                 "type": "object",
