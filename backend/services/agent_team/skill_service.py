@@ -26,6 +26,32 @@ SKILL_FILE_NAME = "SKILL.md"
 _SLUG_PATTERN = re.compile(r"[^a-z0-9_-]+")
 _GITHUB_API = "https://api.github.com"
 
+# 中文 Windows 常见 ZIP 文件名编码
+_ZIP_FILENAME_ENCODINGS = ("utf-8", "gbk", "gb2312", "big5", "cp932", "cp949")
+_ZIP_CONTENT_ENCODINGS = ("utf-8-sig", "utf-8", "gbk", "latin-1")
+
+
+def _decode_zip_filename(raw_name: str) -> str:
+    """修复 ZIP 文件名编码问题。
+
+    Python zipfile 默认使用 CP437 解码文件名，而许多中文 Windows 工具（资源管理器、
+    7-Zip 等）用 GBK 编码存储文件名且不设置 UTF-8 标志。此函数尝试检测并修正编码。
+    """
+    if raw_name.isascii():
+        return raw_name
+    try:
+        raw_bytes = raw_name.encode("cp437")
+    except UnicodeEncodeError:
+        return raw_name
+    for enc in _ZIP_FILENAME_ENCODINGS:
+        try:
+            decoded = raw_bytes.decode(enc)
+            if decoded != raw_name:
+                return decoded
+        except (UnicodeDecodeError, UnicodeEncodeError):
+            continue
+    return raw_name
+
 
 @dataclass(frozen=True)
 class GitHubSkillSource:
@@ -190,7 +216,8 @@ class AgentSkillService:
             for info in zf.infolist():
                 if info.is_dir():
                     continue
-                rel = info.filename
+                # 修复中文文件名编码
+                rel = _decode_zip_filename(info.filename)
                 if strip_prefix and rel.startswith(strip_prefix):
                     rel = rel[len(strip_prefix):]
                 if not rel:
@@ -198,10 +225,20 @@ class AgentSkillService:
                 basename = Path(rel).name
                 if basename.startswith(".") or basename.startswith("__"):
                     continue
-                raw = zf.read(info)
-                if len(raw) > MAX_SKILL_BYTES:
+                raw_bytes = zf.read(info)
+                if len(raw_bytes) > MAX_SKILL_BYTES:
                     raise ValueError(f"文件 {basename} 超过 {MAX_SKILL_BYTES // 1024}KB")
-                extracted[rel] = raw.decode("utf-8-sig").replace("\r\n", "\n")
+                # 文件内容尝试多种编码
+                file_text: str | None = None
+                for enc in _ZIP_CONTENT_ENCODINGS:
+                    try:
+                        file_text = raw_bytes.decode(enc).replace("\r\n", "\n")
+                        break
+                    except UnicodeDecodeError:
+                        continue
+                if file_text is None:
+                    file_text = raw_bytes.decode("utf-8", errors="replace").replace("\r\n", "\n")
+                extracted[rel] = file_text
 
         skill_text = extracted.get(SKILL_FILE_NAME)
         if not skill_text or not skill_text.strip():
