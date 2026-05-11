@@ -862,33 +862,12 @@ async def save_general_config(
                 val = "true" if val == "true" else "false"
             elif key == "web_search_max_results":
                 val_i = int(val)
-                if not 1 <= val_i <= 10:
-                    return toast_redirect(
-                        "/webui/config/general",
-                        "toast.web_search_max_results_range",
-                        "error",
-                        lang=detect_language(),
-                    )
                 val = str(val_i)
             elif key == "web_search_max_content_length":
                 val_i = int(val)
-                if not 100 <= val_i <= 5000:
-                    return toast_redirect(
-                        "/webui/config/general",
-                        "toast.result_truncation_range",
-                        "error",
-                        lang=detect_language(),
-                    )
                 val = str(val_i)
             elif key == "web_search_timeout":
                 val_i = int(val)
-                if not 5 <= val_i <= 60:
-                    return toast_redirect(
-                        "/webui/config/general",
-                        "toast.search_timeout_range",
-                        "error",
-                        lang=detect_language(),
-                    )
                 val = str(val_i)
             elif key == "web_search_provider":
                 if val not in ("duckduckgo", "tavily"):

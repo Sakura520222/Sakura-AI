@@ -122,8 +122,18 @@ class AIApiClient:
 
             # 估算 tool_calls 的 token
             for tc in msg.get("tool_calls", []) or []:
-                if hasattr(tc, "function") and tc.function:
-                    estimated += len(tc.function.name + str(tc.arguments)) // 4
+                function = getattr(tc, "function", None)
+                if function is None and isinstance(tc, dict):
+                    function = tc.get("function")
+
+                if isinstance(function, dict):
+                    function_name = function.get("name", "")
+                    function_arguments = function.get("arguments", "")
+                else:
+                    function_name = getattr(function, "name", "")
+                    function_arguments = getattr(function, "arguments", "")
+
+                estimated += len(str(function_name) + str(function_arguments)) // 4
 
         return estimated
 
