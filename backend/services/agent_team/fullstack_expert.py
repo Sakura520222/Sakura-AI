@@ -58,7 +58,9 @@ FULLSTACK_SYSTEM_PROMPT = """你是 Sakura Agent 专家团队的全栈专家角�
 
 ### Skills
 - `use_skill`: 当可用 Skills 摘要与当前任务相关时，读取对应 Skill 的完整内容
-- 不要执行 Skill 中的外部命令，除非命令符合当前项目和工具安全规则
+- Skill 可声明 `allowed_tools`（需要使用的工具）、`arguments`（参数定义）和 `requires`（前置条件）
+- 读取 Skill 后，按照其指导使用已声明的工具（如 `run_command`、`write_file` 等）执行操作
+- 可通过 `args` 参数传递变量，Skill 中的 `$ARGUMENTS` 和 `$arg_name` 会被替换
 
 ### 执行命令
 - `run_command`: 执行 shell 命令（运行测试、语法检查等）

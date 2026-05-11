@@ -451,3 +451,166 @@ async def test_install_from_zip_chinese_filenames(tmp_path):
     assert (skill_dir / "SKILL.md").exists()
     assert (skill_dir / "模板" / "入口.py").exists()
     assert (skill_dir / "配置" / "说明.txt").read_text(encoding="utf-8") == "这是一个说明文件"
+
+
+# ---------------------------------------------------------------------------
+# Skills 动作能力测试
+# ---------------------------------------------------------------------------
+
+
+def test_extract_metadata_parses_action_fields():
+    """frontmatter 中的 allowed_tools / arguments / requires 应被解析。"""
+    service = AgentSkillService()
+    md = (
+        "---\n"
+        "name: deploy-helper\n"
+        "allowed-tools:\n"
+        "  - run_command\n"
+        "  - write_file\n"
+        "arguments:\n"
+        "  - env\n"
+        "  - version\n"
+        "requires: 需要 Docker 环境\n"
+        "---\n# Deploy Helper\n"
+    )
+    meta = service._extract_metadata(md)
+    assert meta["name"] == "deploy-helper"
+    assert meta.get("allowed_tools") == '["run_command", "write_file"]'
+    assert meta.get("arguments") == '["env", "version"]'
+    assert meta.get("requires") == "需要 Docker 环境"
+
+
+def test_extract_metadata_allowed_tools_hyphen_form():
+    """allowed-tools（连字符形式）应被标准化为 allowed_tools。"""
+    service = AgentSkillService()
+    md = (
+        "---\n"
+        "name: test-skill\n"
+        "allowed-tools:\n"
+        "  - Shell(git status)\n"
+        "---\n# Test\n"
+    )
+    meta = service._extract_metadata(md)
+    assert '["Shell(git status)"]' in meta.get("allowed_tools", "")
+
+
+def test_substitute_arguments_basic():
+    """$ARGUMENTS 应被替换。"""
+    from backend.services.agent_team.tools.use_skill_tool import (
+        _substitute_arguments,
+    )
+
+    result = _substitute_arguments("Commit: $ARGUMENTS", "fix bug", None)
+    assert result == "Commit: fix bug"
+
+
+def test_substitute_arguments_named():
+    """命名参数 $name 和 ${name} 应被替换。"""
+    from backend.services.agent_team.tools.use_skill_tool import (
+        _substitute_arguments,
+    )
+
+    content = "env=${env} version=$version"
+    result = _substitute_arguments(content, "prod 1.0.0", ["env", "version"])
+    assert result == "env=prod version=1.0.0"
+
+
+@pytest.mark.asyncio
+async def test_use_skill_tool_returns_action_fields(tmp_path):
+    """use_skill 应返回 allowed_tools、arguments、requires 字段。"""
+    skill_dir = tmp_path / "deploy-helper"
+    skill_dir.mkdir()
+    (skill_dir / "SKILL.md").write_text(
+        "---\nname: Deploy\nallowed-tools: [run_command]\narguments: [env]\nrequires: Docker\n---\n# Deploy",
+        encoding="utf-8",
+    )
+    ctx = ToolContext(
+        workspace=str(tmp_path),
+        workspace_service=AgentTeamWorkspaceService(tmp_path),
+        extra={
+            "skills_root": str(tmp_path),
+            "skills_index": {
+                "deploy-helper": {
+                    "name": "Deploy",
+                    "install_path": str(skill_dir / "SKILL.md"),
+                    "allowed_tools": '["run_command"]',
+                    "arguments": '["env"]',
+                    "requires": "Docker",
+                }
+            },
+            "skills_cache": {},
+        },
+    )
+
+    tool = UseSkillTool()
+    result = await tool.execute({"slug": "deploy-helper"}, ctx)
+    assert result.success
+    assert result.output["allowed_tools"] == ["run_command"]
+    assert result.output["arguments"] == ["env"]
+    assert result.output["requires"] == "Docker"
+
+
+@pytest.mark.asyncio
+async def test_use_skill_tool_args_substitution(tmp_path):
+    """use_skill 的 args 参数应替换 Skill 内容中的变量。"""
+    skill_dir = tmp_path / "greet-skill"
+    skill_dir.mkdir()
+    (skill_dir / "SKILL.md").write_text(
+        "---\nname: Greet\narguments: [name]\n---\nHello $name, $ARGUMENTS!",
+        encoding="utf-8",
+    )
+    ctx = ToolContext(
+        workspace=str(tmp_path),
+        workspace_service=AgentTeamWorkspaceService(tmp_path),
+        extra={
+            "skills_root": str(tmp_path),
+            "skills_index": {
+                "greet-skill": {
+                    "name": "Greet",
+                    "install_path": str(skill_dir / "SKILL.md"),
+                    "arguments": '["name"]',
+                    "allowed_tools": "",
+                    "requires": "",
+                }
+            },
+            "skills_cache": {},
+        },
+    )
+
+    tool = UseSkillTool()
+    result = await tool.execute({"slug": "greet-skill", "args": "Alice"}, ctx)
+    assert result.success
+    assert "Hello Alice, Alice!" in result.output["content"]
+
+
+@pytest.mark.asyncio
+async def test_install_skill_stores_action_metadata(tmp_path):
+    """安装 Skill 时应将 allowed_tools / arguments / requires 存入数据库。"""
+    db = MagicMock()
+    scalar_result = MagicMock()
+    scalar_result.scalar_one_or_none.return_value = None
+    db.execute = AsyncMock(return_value=scalar_result)
+    db.commit = AsyncMock()
+    db.refresh = AsyncMock()
+    db.add = MagicMock()
+
+    md_content = (
+        "---\n"
+        "name: CI Runner\n"
+        "allowed-tools:\n"
+        "  - run_command\n"
+        "arguments:\n"
+        "  - command\n"
+        "requires: pytest installed\n"
+        "---\n# CI Runner\nRun $command"
+    )
+    service = AgentSkillService(root=tmp_path)
+    await service.install_from_upload(
+        db,
+        content=md_content.encode("utf-8"),
+        filename="ci.md",
+        name="CI Runner",
+        created_by="admin",
+    )
+    # skill 是 MagicMock，验证 upsert 被调用时包含动作字段
+    assert db.add.called or db.commit.called

@@ -182,6 +182,9 @@ class AgentSkillService:
             content=text,
             created_by=created_by,
             file_count=1,
+            allowed_tools=metadata.get("allowed_tools", ""),
+            arguments=metadata.get("arguments", ""),
+            requires=metadata.get("requires", ""),
         )
         logger.info("Agent Skill 已通过上传安装: slug={}, path={}", slug, install_path)
         return skill
@@ -279,6 +282,9 @@ class AgentSkillService:
             content=skill_text,
             created_by=created_by,
             file_count=len(extracted),
+            allowed_tools=metadata.get("allowed_tools", ""),
+            arguments=metadata.get("arguments", ""),
+            requires=metadata.get("requires", ""),
         )
         logger.info(
             "Agent Skill 已通过 ZIP 上传安装: slug={}, files={}", slug, len(extracted)
@@ -347,6 +353,9 @@ class AgentSkillService:
             content=text,
             created_by=created_by,
             file_count=len(dir_files),
+            allowed_tools=metadata.get("allowed_tools", ""),
+            arguments=metadata.get("arguments", ""),
+            requires=metadata.get("requires", ""),
         )
         logger.info(
             "Agent Skill 已通过 GitHub 安装: slug={}, files={}, source={}",
@@ -447,6 +456,8 @@ class AgentSkillService:
         lines = [
             "## 可用 Skills",
             "需要使用某个 Skill 时，调用 `use_skill` 并传入 skill slug 读取完整内容。",
+            "Skill 可声明需要使用的工具（allowed_tools）、参数（arguments）和前置条件（requires）。",
+            "读取 Skill 后，按照其指导使用对应的工具执行操作。",
         ]
         for skill in skills:
             lines.append(f"- `{skill.slug}`: {skill.name}")
@@ -454,6 +465,27 @@ class AgentSkillService:
                 lines.append(f"  - description: {skill.description.strip()[:500]}")
             if skill.when_to_use:
                 lines.append(f"  - when_to_use: {skill.when_to_use.strip()[:500]}")
+            # 展示动作能力信息
+            if skill.arguments:
+                import json as _json
+
+                try:
+                    arg_names = _json.loads(skill.arguments)
+                    if arg_names:
+                        lines.append(f"  - arguments: {', '.join(str(a) for a in arg_names)}")
+                except (ValueError, TypeError):
+                    pass
+            if skill.allowed_tools:
+                import json as _json
+
+                try:
+                    tools = _json.loads(skill.allowed_tools)
+                    if tools:
+                        lines.append(f"  - tools: {', '.join(str(t) for t in tools)}")
+                except (ValueError, TypeError):
+                    pass
+            if skill.requires:
+                lines.append(f"  - requires: {skill.requires.strip()[:200]}")
         return "\n".join(lines)
 
     async def snapshot_enabled_skills(self, db: AsyncSession) -> list[dict[str, str | int]]:
@@ -472,6 +504,9 @@ class AgentSkillService:
                 "source_path": skill.source_path or "",
                 "install_path": skill.install_path,
                 "content_hash": skill.content_hash,
+                "allowed_tools": skill.allowed_tools or "",
+                "arguments": skill.arguments or "",
+                "requires": skill.requires or "",
             }
             for skill in skills
         ]
@@ -558,6 +593,9 @@ class AgentSkillService:
         content: str,
         created_by: str,
         file_count: int = 1,
+        allowed_tools: str = "",
+        arguments: str = "",
+        requires: str = "",
     ) -> AgentSkill:
         content_hash = hashlib.sha256(content.encode("utf-8")).hexdigest()
         result = await db.execute(select(AgentSkill).where(AgentSkill.slug == slug))
@@ -578,6 +616,9 @@ class AgentSkillService:
         skill.enabled = 1
         skill.content_hash = content_hash
         skill.file_count = file_count
+        skill.allowed_tools = allowed_tools or None
+        skill.arguments = arguments or None
+        skill.requires = requires or None
         skill.error_message = None
         await db.commit()
         await db.refresh(skill)
@@ -596,6 +637,12 @@ class AgentSkillService:
             raise ValueError("SKILL.md 内容不能为空")
         return text.replace("\r\n", "\n").replace("\r", "\n")
 
+    # 需要从 frontmatter 提取的标量字段
+    _META_STRING_KEYS = ("name", "slug", "description", "when_to_use", "version", "requires")
+
+    # 需要从 frontmatter 提取的列表字段（存为 JSON 字符串）
+    _META_LIST_KEYS = ("allowed-tools", "allowed_tools", "arguments", "argument-hint")
+
     def _extract_metadata(self, content: str) -> dict[str, str]:
         frontmatter = self._extract_frontmatter(content)
         metadata: dict[str, str] = {}
@@ -603,10 +650,31 @@ class AgentSkillService:
             try:
                 parsed = yaml.safe_load(frontmatter) or {}
                 if isinstance(parsed, dict):
-                    for key in ("name", "slug", "description", "when_to_use", "version"):
+                    for key in self._META_STRING_KEYS:
                         value = parsed.get(key)
                         if value is not None:
                             metadata[key] = str(value).strip()
+                    # 列表字段序列化为 JSON 字符串存储
+                    import json
+
+                    for key in self._META_LIST_KEYS:
+                        value = parsed.get(key)
+                        if value is not None:
+                            if isinstance(value, list):
+                                metadata[key] = json.dumps(
+                                    value, ensure_ascii=False
+                                )
+                            else:
+                                metadata[key] = json.dumps(
+                                    [str(value).strip()], ensure_ascii=False
+                                )
+                    # 标准化：allowed-tools → allowed_tools
+                    if "allowed-tools" in metadata and "allowed_tools" not in metadata:
+                        metadata["allowed_tools"] = metadata.pop("allowed-tools")
+                    else:
+                        metadata.pop("allowed-tools", None)
+                    if "argument-hint" in metadata:
+                        metadata["argument_hint"] = metadata.pop("argument-hint")
             except yaml.YAMLError as exc:
                 logger.debug("解析 Skill frontmatter 失败: {}", exc)
 
