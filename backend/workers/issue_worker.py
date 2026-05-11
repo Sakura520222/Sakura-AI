@@ -12,7 +12,6 @@ from backend.models.database import (
     async_session,
     IssueAnalysis,
     IssueAnalysisStatus,
-    AppConfig,
 )
 from sqlalchemy import select, and_
 from backend.services.issue_analyzer import IssueAnalyzer
@@ -228,25 +227,8 @@ class IssueWorker:
                         except Exception as e:
                             logger.warning(f"[{task_id}] 发布评论失败: {e}")
 
-                    # 10. 应用建议标签（优先从 DB 读取配置）
-                    issue_auto_create_labels = settings.issue_auto_create_labels
-                    try:
-                        if async_session is not None:
-                            async with async_session() as session:
-                                result = await session.execute(
-                                    select(AppConfig).where(
-                                        AppConfig.key_name == "issue_auto_create_labels"
-                                    )
-                                )
-                                cfg = result.scalar_one_or_none()
-                                if cfg:
-                                    issue_auto_create_labels = cfg.key_value == "true"
-                    except Exception as e:
-                        logger.warning(
-                            f"[{task_id}] 读取 DB 配置 issue_auto_create_labels 失败，使用默认值: {e}"
-                        )
-
-                    if issue_auto_create_labels:
+                    # 10. 应用建议标签
+                    if await get_dynamic_config("issue_auto_create_labels"):
                         try:
                             labels_data = json.loads(
                                 analysis_record.suggested_labels or "[]"
@@ -275,25 +257,8 @@ class IssueWorker:
                         except Exception as e:
                             logger.warning(f"[{task_id}] 应用标签失败: {e}")
 
-                    # 10.5 应用建议指派人（优先从 DB 读取配置）
-                    issue_auto_assign = settings.issue_auto_assign
-                    try:
-                        if async_session is not None:
-                            async with async_session() as session:
-                                cfg_result = await session.execute(
-                                    select(AppConfig).where(
-                                        AppConfig.key_name == "issue_auto_assign"
-                                    )
-                                )
-                                cfg = cfg_result.scalar_one_or_none()
-                                if cfg:
-                                    issue_auto_assign = cfg.key_value == "true"
-                    except Exception as e:
-                        logger.warning(
-                            f"[{task_id}] 读取 DB 配置 issue_auto_assign 失败，使用默认值: {e}"
-                        )
-
-                    if issue_auto_assign:
+                    # 10.5 应用建议指派人
+                    if await get_dynamic_config("issue_auto_assign"):
                         try:
                             assignees_data = json.loads(
                                 analysis_record.suggested_assignees or "[]"

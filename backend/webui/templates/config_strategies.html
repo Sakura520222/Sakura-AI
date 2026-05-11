@@ -495,6 +495,10 @@
                     <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
                     <input type="hidden" name="section" value="issue_analysis">
 
+                    <div class="bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-lg p-3 mb-6">
+                        <p class="text-sm text-blue-700 dark:text-blue-300">{{ _('strategy.issue_config_hint') }}</p>
+                    </div>
+
                     {% set ia = issue_analysis %}
                     <div class="space-y-6">
 
