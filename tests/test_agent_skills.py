@@ -195,6 +195,72 @@ async def test_install_from_zip(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_install_from_zip_preserves_subdirs(tmp_path):
+    """ZIP 内的子目录结构应被完整保留。"""
+    db = MagicMock()
+    scalar_result = MagicMock()
+    scalar_result.scalar_one_or_none.return_value = None
+    db.execute = AsyncMock(return_value=scalar_result)
+    db.commit = AsyncMock()
+    db.refresh = AsyncMock()
+    db.add = MagicMock()
+
+    zip_bytes = _build_zip({
+        "SKILL.md": "---\nname: SubDir Skill\n---\n# SubDir",
+        "templates/entry.py": "# entry template",
+        "templates/utils/helper.py": "def util(): pass",
+        "data/config.json": '{"key": "val"}',
+    })
+
+    service = AgentSkillService(root=tmp_path)
+    await service.install_from_upload(
+        db,
+        content=zip_bytes,
+        filename="subdir.zip",
+        name="SubDir Skill",
+        created_by="admin",
+    )
+
+    skill_dir = tmp_path / "subdir-skill"
+    assert (skill_dir / "SKILL.md").exists()
+    assert (skill_dir / "templates" / "entry.py").exists()
+    assert (skill_dir / "templates" / "utils" / "helper.py").exists()
+    assert (skill_dir / "data" / "config.json").read_text() == '{"key": "val"}'
+
+
+@pytest.mark.asyncio
+async def test_install_from_zip_strips_top_level_dir(tmp_path):
+    """GitHub 下载的 ZIP 通常有 <repo>-<ref>/ 顶层目录，应被剥离。"""
+    db = MagicMock()
+    scalar_result = MagicMock()
+    scalar_result.scalar_one_or_none.return_value = None
+    db.execute = AsyncMock(return_value=scalar_result)
+    db.commit = AsyncMock()
+    db.refresh = AsyncMock()
+    db.add = MagicMock()
+
+    zip_bytes = _build_zip({
+        "my-skill-main/SKILL.md": "---\nname: GH Skill\n---\n# GH",
+        "my-skill-main/examples/demo.py": "print('demo')",
+    })
+
+    service = AgentSkillService(root=tmp_path)
+    await service.install_from_upload(
+        db,
+        content=zip_bytes,
+        filename="gh-skill.zip",
+        name="GH Skill",
+        created_by="admin",
+    )
+
+    skill_dir = tmp_path / "gh-skill"
+    assert (skill_dir / "SKILL.md").exists()
+    assert (skill_dir / "examples" / "demo.py").exists()
+    # 不应保留顶层目录
+    assert not (skill_dir / "my-skill-main").exists()
+
+
+@pytest.mark.asyncio
 async def test_use_skill_tool_reads_and_caches(tmp_path):
     skill_dir = tmp_path / "algodocs-automation"
     skill_dir.mkdir()

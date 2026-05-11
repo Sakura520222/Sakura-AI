@@ -173,20 +173,44 @@ class AgentSkillService:
 
         extracted: dict[str, str] = {}
         with zipfile.ZipFile(io.BytesIO(content)) as zf:
+            # 检测并剥离 ZIP 的顶层目录（如 GitHub 下载的 <repo>-<ref>/ 前缀）
+            # ZIP 内路径始终使用正斜杠，不使用 os.path / pathlib
+            names = [n for n in zf.namelist() if not n.endswith("/")]
+            strip_prefix = ""
+            if names:
+                top_dirs = set()
+                for n in names:
+                    parts = n.split("/")
+                    if len(parts) > 1:
+                        top_dirs.add(parts[0])
+                # 所有文件共享同一个顶层目录时，剥离该前缀
+                if len(top_dirs) == 1:
+                    strip_prefix = top_dirs.pop() + "/"
+
             for info in zf.infolist():
                 if info.is_dir():
                     continue
-                basename = Path(info.filename).name
+                rel = info.filename
+                if strip_prefix and rel.startswith(strip_prefix):
+                    rel = rel[len(strip_prefix):]
+                if not rel:
+                    continue
+                basename = Path(rel).name
                 if basename.startswith(".") or basename.startswith("__"):
                     continue
                 raw = zf.read(info)
                 if len(raw) > MAX_SKILL_BYTES:
                     raise ValueError(f"文件 {basename} 超过 {MAX_SKILL_BYTES // 1024}KB")
-                extracted[basename] = raw.decode("utf-8-sig").replace("\r\n", "\n")
+                extracted[rel] = raw.decode("utf-8-sig").replace("\r\n", "\n")
 
         skill_text = extracted.get(SKILL_FILE_NAME)
         if not skill_text or not skill_text.strip():
-            raise ValueError("ZIP 中缺少 SKILL.md 或内容为空")
+            # 也尝试在根目录下的子目录中查找 SKILL.md
+            for k, v in extracted.items():
+                if Path(k).name == SKILL_FILE_NAME and not skill_text:
+                    skill_text = v
+            if not skill_text or not skill_text.strip():
+                raise ValueError("ZIP 中缺少 SKILL.md 或内容为空")
 
         metadata = self._extract_metadata(skill_text)
         skill_name = name.strip() or metadata.get("name") or "Uploaded Skill"
@@ -194,10 +218,12 @@ class AgentSkillService:
         root = await self.resolve_root()
         skill_dir = await self._ensure_skill_dir(root, slug)
 
-        for fname, fcontent in extracted.items():
-            target = (skill_dir / fname).resolve()
-            if skill_dir not in target.parents and target != skill_dir / fname:
+        for rel_path, fcontent in extracted.items():
+            target = (skill_dir / rel_path).resolve()
+            # 路径遍历保护：目标必须在 skill_dir 内
+            if not str(target).startswith(str(skill_dir)):
                 continue
+            target.parent.mkdir(parents=True, exist_ok=True)
             target.write_text(fcontent, encoding="utf-8", newline="\n")
 
         install_path = str((skill_dir / SKILL_FILE_NAME).resolve())
