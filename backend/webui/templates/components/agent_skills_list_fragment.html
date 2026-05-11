@@ -19,6 +19,9 @@
                     {% if skill.description %}<p class="mt-2 text-sm text-gray-500 dark:text-gray-400 max-w-xl">{{ skill.description }}</p>{% endif %}
                     {% if skill.when_to_use %}<p class="mt-1 text-xs text-gray-400 dark:text-gray-500 max-w-xl">{{ skill.when_to_use }}</p>{% endif %}
                     <div class="mt-2 text-xs text-gray-400 dark:text-gray-500 break-all">{{ skill.content_hash[:12] }}</div>
+                    {% if skill.file_count and skill.file_count > 1 %}
+                    <span class="inline-flex mt-1 rounded-full px-2 py-0.5 text-xs font-medium bg-purple-50 text-purple-600 dark:bg-purple-900/20 dark:text-purple-300">{{ skill.file_count }} {{ _('agent_skills.files') }}</span>
+                    {% endif %}
                 </td>
                 <td class="px-4 py-4 text-sm text-gray-600 dark:text-gray-300">
                     <span class="inline-flex rounded-full px-2 py-1 text-xs font-medium bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-200">{{ skill.source_type }}</span>

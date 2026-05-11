@@ -291,8 +291,8 @@ agent_skills:
   root_path: "Skills Root"
   install_github: "Install from GitHub URL"
   install_github_desc: "Supports github.com blob/SKILL.md links and raw.githubusercontent.com SKILL.md links."
-  upload_skill: "Upload SKILL.md"
-  upload_skill_desc: "Upload a local Markdown Skill file and optionally provide a display name."
+  upload_skill: "Upload SKILL.md or ZIP"
+  upload_skill_desc: "Upload a single SKILL.md file, or a ZIP containing SKILL.md plus additional files. Optionally provide a display name."
   install: "Install Skill"
   upload: "Upload and Install"
   name_placeholder: "Display name (optional, defaults to file title or frontmatter)"
@@ -308,7 +308,8 @@ agent_skills:
   disable: "Disable"
   confirm_delete: "Delete this Skill? Local files will also be removed."
   no_skills: "No Skills yet"
-  no_skills_desc: "Upload SKILL.md or install one from a GitHub URL."
+  no_skills_desc: "Upload SKILL.md or a ZIP archive, or install one from a GitHub URL."
+  files: "files"
 
 # ========== Dashboard ==========
 dashboard:

@@ -72,9 +72,18 @@ async def upload_skill(
     skill_file: UploadFile = File(...),
     name: str = Form(""),
 ):
-    """上传 SKILL.md 并安装 Skill。"""
+    """上传 SKILL.md 或 ZIP 压缩包并安装 Skill。"""
     lang = detect_language(user_prefs)
-    if not skill_file.filename or not skill_file.filename.lower().endswith(".md"):
+    if not skill_file.filename:
+        return toast_redirect(
+            "/webui/agent-skills/",
+            "toast.agent_skill_invalid_file",
+            "error",
+            lang=lang,
+        )
+
+    lower_name = skill_file.filename.lower()
+    if not (lower_name.endswith(".md") or lower_name.endswith(".zip")):
         return toast_redirect(
             "/webui/agent-skills/",
             "toast.agent_skill_invalid_file",
@@ -87,6 +96,7 @@ async def upload_skill(
         skill = await AgentSkillService().install_from_upload(
             db,
             content=content,
+            filename=skill_file.filename,
             name=name,
             created_by=str(user.get("user_id", "")),
         )

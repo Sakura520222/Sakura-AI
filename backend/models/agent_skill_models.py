@@ -27,6 +27,7 @@ class AgentSkill(Base):
     install_path = Column(Text, nullable=False)
     enabled = Column(Integer, default=1, nullable=False, index=True)
     content_hash = Column(String(64), nullable=False, index=True)
+    file_count = Column(Integer, default=1, nullable=False)
     created_by = Column(String(100), nullable=True)
     error_message = Column(Text, nullable=True)
     created_at = Column(TIMESTAMP, default=datetime.utcnow, nullable=False, index=True)
