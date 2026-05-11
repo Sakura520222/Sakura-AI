@@ -1008,9 +1008,6 @@ DYNAMIC_CONFIG_RANGES: dict[str, tuple[float, float]] = {
     "issue_confidence_threshold": (0.0, 1.0),
     "issue_assignee_confidence_threshold": (0.0, 1.0),
     "issue_auto_assign_max": (1, 10),
-    "issue_max_tool_iterations": (1, 100),
-    "issue_max_files_per_analysis": (1, 50),
-    "issue_max_directory_depth": (1, 10),
 }
 
 # 字段中文标签
