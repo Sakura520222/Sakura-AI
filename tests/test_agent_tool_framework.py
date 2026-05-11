@@ -401,6 +401,19 @@ async def test_submit_review(tmp_path):
     assert result.output["verdict"] == "pass"
 
 
+@pytest.mark.asyncio
+async def test_search_in_files_rejects_long_keyword(tmp_path):
+    _, ctx = _setup_workspace(tmp_path)
+    executor = create_executor("fullstack")
+
+    result = await executor.execute_raw(
+        "search_in_files", {"keyword": "x" * 201}, ctx
+    )
+
+    assert not result.success
+    assert "200" in result.error
+
+
 # ── ToolExecutor 完整流程 ─────────────────────────────
 
 

@@ -2,13 +2,14 @@
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import io
 import re
 import shutil
 import zipfile
 from dataclasses import dataclass
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from urllib.parse import unquote, urlparse
 
 import httpx
@@ -29,6 +30,42 @@ _GITHUB_API = "https://api.github.com"
 # 中文 Windows 常见 ZIP 文件名编码
 _ZIP_FILENAME_ENCODINGS = ("utf-8", "gbk", "gb2312", "big5", "cp932", "cp949")
 _ZIP_CONTENT_ENCODINGS = ("utf-8-sig", "utf-8", "gbk", "latin-1")
+
+
+def _resolve_within(parent: Path, child: str | Path) -> Path:
+    """解析 child 并确保它位于 parent 内。"""
+    parent_resolved = Path(parent).resolve()
+    child_resolved = Path(child).resolve()
+    try:
+        child_resolved.relative_to(parent_resolved)
+    except ValueError as exc:
+        raise ValueError(f"路径不在允许目录内: {child_resolved}") from exc
+    return child_resolved
+
+
+def _safe_skill_relative_path(path: str | Path) -> Path | None:
+    """将 Skill 内部文件路径规范化为安全相对路径。"""
+    raw = str(path or "").replace("\\", "/").strip()
+    if not raw:
+        return None
+
+    candidate = PurePosixPath(raw)
+    if candidate.is_absolute():
+        return None
+
+    parts: list[str] = []
+    for part in candidate.parts:
+        if part in {"", "."}:
+            continue
+        if part == ".." or ":" in part or "\x00" in part:
+            return None
+        if part.startswith(".") or part.startswith("__"):
+            return None
+        parts.append(part)
+
+    if not parts:
+        return None
+    return Path(*parts)
 
 
 def _decode_zip_filename(raw_name: str) -> str:
@@ -131,6 +168,21 @@ def _split_github_ref_and_path(parts: list[str]) -> tuple[str, str]:
     return ref, path
 
 
+def _list_safe_skill_files(skill_dir: Path) -> list[str]:
+    """列出 Skill 目录内文件，忽略隐藏文件和越界符号链接。"""
+    base = skill_dir.resolve()
+    files: list[str] = []
+    for file_path in base.rglob("*"):
+        if not file_path.is_file() or file_path.name.startswith("."):
+            continue
+        try:
+            resolved = _resolve_within(base, file_path)
+        except ValueError:
+            continue
+        files.append(resolved.relative_to(base).as_posix())
+    return sorted(files)
+
+
 class AgentSkillService:
     """Agent Skills 服务。"""
 
@@ -146,7 +198,7 @@ class AgentSkillService:
             root_value = Path(str(configured or get_settings().agent_team_skills_root))
         root = root_value if root_value.is_absolute() else Path.cwd() / root_value
         root = root.resolve()
-        root.mkdir(parents=True, exist_ok=True)
+        await asyncio.to_thread(root.mkdir, parents=True, exist_ok=True)
         return root
 
     async def install_from_upload(
@@ -204,7 +256,7 @@ class AgentSkillService:
         with zipfile.ZipFile(io.BytesIO(content)) as zf:
             # 检测并剥离 ZIP 的顶层目录（如 GitHub 下载的 <repo>-<ref>/ 前缀）
             # ZIP 内路径始终使用正斜杠，不使用 os.path / pathlib
-            names = [n for n in zf.namelist() if not n.endswith("/")]
+            names = [_decode_zip_filename(n) for n in zf.namelist() if not n.endswith("/")]
             strip_prefix = ""
             if names:
                 top_dirs = set()
@@ -221,13 +273,15 @@ class AgentSkillService:
                     continue
                 # 修复中文文件名编码
                 rel = _decode_zip_filename(info.filename)
-                if strip_prefix and rel.startswith(strip_prefix):
-                    rel = rel[len(strip_prefix):]
+                rel_for_prefix = rel.replace("\\", "/")
+                if strip_prefix and rel_for_prefix.startswith(strip_prefix):
+                    rel = rel_for_prefix[len(strip_prefix):]
                 if not rel:
                     continue
-                basename = Path(rel).name
-                if basename.startswith(".") or basename.startswith("__"):
+                safe_rel = _safe_skill_relative_path(rel)
+                if safe_rel is None:
                     continue
+                basename = safe_rel.name
                 raw_bytes = zf.read(info)
                 if len(raw_bytes) > MAX_SKILL_BYTES:
                     raise ValueError(f"文件 {basename} 超过 {MAX_SKILL_BYTES // 1024}KB")
@@ -241,7 +295,7 @@ class AgentSkillService:
                         continue
                 if file_text is None:
                     file_text = raw_bytes.decode("utf-8", errors="replace").replace("\r\n", "\n")
-                extracted[rel] = file_text
+                extracted[safe_rel.as_posix()] = file_text
 
         skill_text = extracted.get(SKILL_FILE_NAME)
         if not skill_text or not skill_text.strip():
@@ -259,12 +313,12 @@ class AgentSkillService:
         skill_dir = await self._ensure_skill_dir(root, slug)
 
         for rel_path, fcontent in extracted.items():
-            target = (skill_dir / rel_path).resolve()
-            # 路径遍历保护：目标必须在 skill_dir 内
-            if not str(target).startswith(str(skill_dir)):
+            safe_rel = _safe_skill_relative_path(rel_path)
+            if safe_rel is None:
                 continue
-            target.parent.mkdir(parents=True, exist_ok=True)
-            target.write_text(fcontent, encoding="utf-8", newline="\n")
+            target = _resolve_within(skill_dir, skill_dir / safe_rel)
+            await asyncio.to_thread(target.parent.mkdir, parents=True, exist_ok=True)
+            await asyncio.to_thread(target.write_text, fcontent, encoding="utf-8", newline="\n")
 
         install_path = str((skill_dir / SKILL_FILE_NAME).resolve())
         skill = await self._upsert_skill(
@@ -322,6 +376,9 @@ class AgentSkillService:
         skill_dir = await self._ensure_skill_dir(root, slug)
 
         for fname, fcontent in dir_files.items():
+            safe_rel = _safe_skill_relative_path(fname)
+            if safe_rel is None:
+                continue
             if fname.lower() == SKILL_FILE_NAME.lower():
                 decoded = text
             else:
@@ -329,13 +386,12 @@ class AgentSkillService:
                     decoded = fcontent.decode("utf-8-sig").replace("\r\n", "\n")
                 except UnicodeDecodeError:
                     continue
-            target = (skill_dir / fname).resolve()
-            if skill_dir not in target.parents and target != skill_dir / fname:
-                continue
+            target = _resolve_within(skill_dir, skill_dir / safe_rel)
+            await asyncio.to_thread(target.parent.mkdir, parents=True, exist_ok=True)
             if isinstance(decoded, str):
-                target.write_text(decoded, encoding="utf-8", newline="\n")
+                await asyncio.to_thread(target.write_text, decoded, encoding="utf-8", newline="\n")
             else:
-                target.write_bytes(fcontent)
+                await asyncio.to_thread(target.write_bytes, fcontent)
 
         install_path = str((skill_dir / SKILL_FILE_NAME).resolve())
         skill = await self._upsert_skill(
@@ -436,14 +492,17 @@ class AgentSkillService:
     async def delete_skill(self, db: AsyncSession, skill_id: int) -> AgentSkill:
         """删除 Skill 元数据及本地目录。"""
         skill = await self._get_skill(db, skill_id)
-        skill_dir = Path(skill.install_path).parent.resolve()
         root = await self.resolve_root()
-        if skill_dir == root or root not in skill_dir.parents:
+        try:
+            skill_dir = _resolve_within(root, Path(skill.install_path).parent)
+        except ValueError as exc:
+            raise ValueError("Skill 安装路径不在 Skills 根目录内") from exc
+        if skill_dir == root:
             raise ValueError("Skill 安装路径不在 Skills 根目录内")
 
         await db.delete(skill)
         await db.commit()
-        shutil.rmtree(skill_dir, ignore_errors=True)
+        await asyncio.to_thread(shutil.rmtree, skill_dir, ignore_errors=True)
         logger.info("Agent Skill 已删除: slug={}, path={}", skill.slug, skill_dir)
         return skill
 
@@ -516,18 +575,23 @@ class AgentSkillService:
         normalized = normalize_skill_slug(slug)
         root = await self.resolve_root()
         target_name = file.strip() if file else SKILL_FILE_NAME
-        skill_dir = (root / normalized).resolve()
-        if root not in skill_dir.parents and skill_dir != root / normalized:
+        try:
+            skill_dir = _resolve_within(root, root / normalized)
+        except ValueError:
             raise ValueError("Skill 路径不在 Skills 根目录内")
-        skill_path = (skill_dir / target_name).resolve()
-        if skill_dir not in skill_path.parents and skill_path != skill_dir / target_name:
+        safe_target = _safe_skill_relative_path(target_name)
+        if safe_target is None:
+            raise ValueError("文件路径不在 Skill 目录内")
+        try:
+            skill_path = _resolve_within(skill_dir, skill_dir / safe_target)
+        except ValueError:
             raise ValueError("文件路径不在 Skill 目录内")
         if not skill_path.is_file():
             raise FileNotFoundError(f"文件不存在: {normalized}/{target_name}")
-        content = skill_path.read_text(encoding="utf-8")
+        content = await asyncio.to_thread(skill_path.read_text, encoding="utf-8")
         return {
             "slug": normalized,
-            "file": target_name,
+            "file": safe_target.as_posix(),
             "path": str(skill_path),
             "content": content,
             "content_hash": hashlib.sha256(content.encode("utf-8")).hexdigest(),
@@ -537,14 +601,13 @@ class AgentSkillService:
         """列出技能目录中的所有文件（相对路径）。"""
         normalized = normalize_skill_slug(slug)
         root = await self.resolve_root()
-        skill_dir = (root / normalized).resolve()
+        try:
+            skill_dir = _resolve_within(root, root / normalized)
+        except ValueError:
+            return []
         if not skill_dir.is_dir():
             return []
-        return sorted(
-            str(f.relative_to(skill_dir))
-            for f in skill_dir.rglob("*")
-            if f.is_file() and not f.name.startswith(".")
-        )
+        return await asyncio.to_thread(_list_safe_skill_files, skill_dir)
 
     async def _enabled_skills(self, db: AsyncSession) -> list[AgentSkill]:
         result = await db.execute(
@@ -565,15 +628,16 @@ class AgentSkillService:
         root = await self.resolve_root()
         skill_dir = await self._ensure_skill_dir(root, slug)
         skill_path = skill_dir / SKILL_FILE_NAME
-        skill_path.write_text(content, encoding="utf-8", newline="\n")
+        await asyncio.to_thread(skill_path.write_text, content, encoding="utf-8", newline="\n")
         return str(skill_path.resolve())
 
     async def _ensure_skill_dir(self, root: Path, slug: str) -> Path:
         """创建并返回技能目录，校验安全边界。"""
-        skill_dir = (root / normalize_skill_slug(slug)).resolve()
-        if root not in skill_dir.parents:
+        try:
+            skill_dir = _resolve_within(root, root / normalize_skill_slug(slug))
+        except ValueError:
             raise ValueError("Skill 安装目录不在 Skills 根目录内")
-        skill_dir.mkdir(parents=True, exist_ok=True)
+        await asyncio.to_thread(skill_dir.mkdir, parents=True, exist_ok=True)
         return skill_dir
 
     async def _upsert_skill(
@@ -689,12 +753,13 @@ class AgentSkillService:
         return metadata
 
     def _extract_frontmatter(self, content: str) -> str:
-        if not content.startswith("---\n"):
+        normalized = content.replace("\r\n", "\n").replace("\r", "\n")
+        if not normalized.startswith("---\n"):
             return ""
-        end = content.find("\n---", 4)
+        end = normalized.find("\n---", 4)
         if end <= 0:
             return ""
-        return content[4:end]
+        return normalized[4:end]
 
     def _extract_first_heading(self, content: str) -> str:
         for line in content.splitlines():

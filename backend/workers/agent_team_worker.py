@@ -11,7 +11,7 @@
 from __future__ import annotations
 
 import json
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 
 from loguru import logger
@@ -28,6 +28,11 @@ from backend.services.agent_team.ai_client import load_agent_team_ai_config
 from backend.services.agent_team.git_workspace_service import AgentTeamGitWorkspaceService
 from backend.services.agent_team.iteration_loop import IterationLoopService
 from backend.services.agent_team.pr_service import AgentTeamPRService
+
+
+def _utc_now() -> datetime:
+    """返回带 UTC 时区的当前时间。"""
+    return datetime.now(timezone.utc)
 
 
 class AgentTeamWorker:
@@ -50,7 +55,7 @@ class AgentTeamWorker:
                 task_id,
                 status=AgentTeamTaskStatus.CLONING.value,
                 current_phase="cloning",
-                started_at=datetime.utcnow(),
+                started_at=_utc_now(),
                 ai_config_snapshot=json.dumps(ai_config_snapshot, ensure_ascii=False),
             )
 
@@ -208,7 +213,7 @@ class AgentTeamWorker:
                     task_id,
                     status=AgentTeamTaskStatus.COMPLETED.value,
                     current_phase="completed",
-                    completed_at=datetime.utcnow(),
+                    completed_at=_utc_now(),
                     error_message=None,
                 )
 
@@ -270,7 +275,7 @@ class AgentTeamWorker:
             for key, value in kwargs.items():
                 if hasattr(task, key):
                     setattr(task, key, value)
-            task.updated_at = datetime.utcnow()
+            task.updated_at = _utc_now()
             await session.commit()
 
     async def _save_iteration(
@@ -303,7 +308,7 @@ class AgentTeamWorker:
                 review_passed=1 if (review_result and review_result.passed) else 0,
                 decision=review_result.verdict if review_result else None,
                 diff_summary="\n".join(modified_files or []),
-                completed_at=datetime.utcnow(),
+                completed_at=_utc_now(),
             )
             session.add(iteration)
             await session.flush()

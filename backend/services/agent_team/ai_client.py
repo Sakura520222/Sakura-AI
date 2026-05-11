@@ -1,6 +1,6 @@
 """Agent 专家团队专用 AI 配置与客户端工厂"""
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 from backend.core.config import get_dynamic_config, get_settings
@@ -13,7 +13,7 @@ class AgentTeamAIConfig:
 
     provider: str
     api_base: str
-    api_key: str
+    api_key: str = field(repr=False)
     model: str
     review_model: str
     summary_model: str
@@ -49,6 +49,27 @@ class AgentTeamAIConfig:
             "timeout_seconds": self.timeout_seconds,
         }
 
+    def as_safe_dict(self) -> dict[str, Any]:
+        """返回安全字典，避免调用方误把明文 api_key 序列化。"""
+        return self.safe_snapshot()
+
+    def __getstate__(self) -> dict[str, Any]:
+        """pickle 等隐式序列化时仅暴露脱敏快照。"""
+        return self.safe_snapshot()
+
+
+def _value_or(value: Any, default: Any) -> Any:
+    """仅在值为 None 时使用默认值，保留显式 0/False/空字符串。"""
+    return default if value is None else value
+
+
+async def _config_value(key: str, default: Any = "") -> Any:
+    return _value_or(await get_dynamic_config(key), default)
+
+
+def _settings_value(settings: Any, key: str, default: Any = "") -> Any:
+    return _value_or(getattr(settings, key, None), default)
+
 
 async def load_agent_team_ai_config() -> AgentTeamAIConfig:
     """从动态配置加载 Agent 专家团队 AI 配置。
@@ -57,28 +78,34 @@ async def load_agent_team_ai_config() -> AgentTeamAIConfig:
     """
     settings = get_settings()
 
-    selected_provider = str(await get_dynamic_config("agent_team_model_provider") or "main")
+    selected_provider = str(await _config_value("agent_team_model_provider", "main"))
     use_main_ai = selected_provider == "main"
 
     if use_main_ai:
-        provider = str(await get_dynamic_config("ai_provider") or settings.ai_provider or "openai")
-        api_base = str(await get_dynamic_config("openai_api_base") or settings.openai_api_base or "")
-        api_key = str(await get_dynamic_config("openai_api_key") or settings.openai_api_key or "")
-        model = str(await get_dynamic_config("openai_model") or settings.openai_model or "")
-        review_model = model
-        summary_model = str(
-            await get_dynamic_config("summary_model")
-            or settings.summary_model
-            or review_model
-            or model
+        provider = str(await _config_value("ai_provider", _settings_value(settings, "ai_provider", "openai")))
+        api_base = str(
+            await _config_value("openai_api_base", _settings_value(settings, "openai_api_base", ""))
         )
+        api_key = str(
+            await _config_value("openai_api_key", _settings_value(settings, "openai_api_key", ""))
+        )
+        model = str(await _config_value("openai_model", _settings_value(settings, "openai_model", "")))
+        review_model = model
+        summary_value = await _config_value("summary_model", _settings_value(settings, "summary_model", ""))
+        summary_model = str(summary_value if summary_value != "" else review_model or model)
     else:
         provider = selected_provider
-        api_base = str(await get_dynamic_config("agent_team_api_base") or "")
-        api_key = str(await get_dynamic_config("agent_team_api_key") or "")
-        model = str(await get_dynamic_config("agent_team_model") or "")
-        review_model = str(await get_dynamic_config("agent_team_review_model") or model)
-        summary_model = str(await get_dynamic_config("agent_team_summary_model") or review_model or model)
+        api_base = str(await _config_value("agent_team_api_base", ""))
+        api_key = str(await _config_value("agent_team_api_key", ""))
+        model = str(await _config_value("agent_team_model", ""))
+        review_value = await _config_value("agent_team_review_model", "")
+        review_model = str(review_value if review_value != "" else model)
+        summary_value = await _config_value("agent_team_summary_model", "")
+        summary_model = str(summary_value if summary_value != "" else review_model or model)
+
+    temperature = await _config_value("agent_team_temperature", 0.2)
+    max_tokens = await _config_value("agent_team_max_tokens", 8192)
+    timeout_seconds = await _config_value("agent_team_timeout_seconds", 600)
 
     return AgentTeamAIConfig(
         provider=provider,
@@ -87,9 +114,9 @@ async def load_agent_team_ai_config() -> AgentTeamAIConfig:
         model=model,
         review_model=review_model,
         summary_model=summary_model,
-        temperature=float(await get_dynamic_config("agent_team_temperature") or 0.2),
-        max_tokens=int(await get_dynamic_config("agent_team_max_tokens") or 8192),
-        timeout_seconds=int(await get_dynamic_config("agent_team_timeout_seconds") or 600),
+        temperature=float(temperature),
+        max_tokens=int(max_tokens),
+        timeout_seconds=int(timeout_seconds),
     )
 
 

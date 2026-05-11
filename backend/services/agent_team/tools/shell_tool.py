@@ -10,8 +10,29 @@ from typing import Any
 
 from loguru import logger
 
+from backend.core.config import get_dynamic_config, get_settings
 from backend.services.agent_team.shell_executor import AgentTeamShellExecutor
 from backend.services.agent_team.tools.base import BaseTool, ToolContext, ToolResult
+
+
+async def is_agent_command_allowed(command: str) -> bool:
+    """检查 Agent 可执行命令是否在配置白名单内。"""
+    raw = await get_dynamic_config("agent_team_test_command_allowlist")
+    if raw is None:
+        raw = get_settings().agent_team_test_command_allowlist
+
+    allowlist = [item.strip() for item in str(raw or "").split(",") if item.strip()]
+    if not allowlist:
+        return False
+
+    normalized_command = " ".join(command.strip().split())
+    for allowed in allowlist:
+        normalized_allowed = " ".join(allowed.split())
+        if normalized_command == normalized_allowed:
+            return True
+        if normalized_command.startswith(normalized_allowed + " "):
+            return True
+    return False
 
 
 class ShellTool(BaseTool):
@@ -63,6 +84,9 @@ class ShellTool(BaseTool):
     async def execute(self, args: dict[str, Any], ctx: ToolContext) -> ToolResult:
         command = args["command"]
         timeout = min(int(args.get("timeout", 120)), 600)  # 最大 600 秒
+
+        if not await is_agent_command_allowed(command):
+            return ToolResult(success=False, error="命令不在 Agent 验证命令白名单中")
 
         executor = AgentTeamShellExecutor(ctx.workspace, ctx.workspace_service)
 

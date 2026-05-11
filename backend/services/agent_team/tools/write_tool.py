@@ -6,6 +6,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from pathlib import Path
 from typing import Any
 
@@ -76,34 +77,43 @@ class WriteTool(BaseTool):
             # stale 检查
             file_state = ctx.extra.get("file_state")
             if isinstance(file_state, ReadFileState):
-                stale_error = file_state.check_not_stale(resolved)
+                stale_error = await asyncio.to_thread(file_state.check_not_stale, resolved)
                 if stale_error:
                     return ToolResult(success=False, error=stale_error)
 
-            old_content, encoding, line_ending = read_text_with_metadata(resolved)
+            old_content, encoding, line_ending = await asyncio.to_thread(
+                read_text_with_metadata, resolved
+            )
         else:
             encoding = "utf-8"
             line_ending = "\n"
 
         # 创建父目录
-        resolved.parent.mkdir(parents=True, exist_ok=True)
+        await asyncio.to_thread(resolved.parent.mkdir, parents=True, exist_ok=True)
 
         # 写入
-        write_text_preserving(resolved, content.replace("\r\n", "\n"), encoding, line_ending)
+        normalized_content = content.replace("\r\n", "\n")
+        await asyncio.to_thread(
+            write_text_preserving,
+            resolved,
+            normalized_content,
+            encoding,
+            line_ending,
+        )
 
         # 更新 file_state
         file_state = ctx.extra.get("file_state")
         if isinstance(file_state, ReadFileState):
             file_state.set(
                 resolved,
-                content=content.replace("\r\n", "\n"),
-                mtime=resolved.stat().st_mtime,
+                content=normalized_content,
+                mtime=await asyncio.to_thread(lambda: resolved.stat().st_mtime),
             )
 
         # diff
         diff = ""
         if old_content:
-            diff = make_unified_diff(file_path, old_content, content.replace("\r\n", "\n"))
+            diff = make_unified_diff(file_path, old_content, normalized_content)
 
         logger.info("WriteTool: {} ({} bytes, created={})", file_path, len(content), created)
 

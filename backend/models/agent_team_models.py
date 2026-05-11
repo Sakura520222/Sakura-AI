@@ -1,7 +1,7 @@
 """Agent 专家团队模式数据模型"""
 
 import enum
-from datetime import datetime
+from datetime import datetime, timezone
 
 from sqlalchemy import BigInteger, Column, ForeignKey, Integer, String, Text, TIMESTAMP
 from sqlalchemy.orm import relationship
@@ -10,6 +10,11 @@ from backend.models.database import Base
 
 
 DEFAULT_AGENT_TEAM_MAX_ITERATIONS = 3
+
+
+def utc_now() -> datetime:
+    """返回带 UTC 时区的当前时间。"""
+    return datetime.now(timezone.utc)
 
 
 class AgentTeamTaskStatus(str, enum.Enum):
@@ -92,9 +97,9 @@ class AgentTeamTask(Base):
     estimated_cost = Column(Integer, default=0)
     error_message = Column(Text, nullable=True)
 
-    created_at = Column(TIMESTAMP, default=datetime.utcnow, nullable=False, index=True)
+    created_at = Column(TIMESTAMP, default=utc_now, nullable=False, index=True)
     updated_at = Column(
-        TIMESTAMP, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False
+        TIMESTAMP, default=utc_now, onupdate=utc_now, nullable=False
     )
     started_at = Column(TIMESTAMP, nullable=True)
     completed_at = Column(TIMESTAMP, nullable=True)
@@ -132,7 +137,7 @@ class AgentTeamIteration(Base):
     test_passed = Column(Integer, default=0, nullable=False)
     diff_summary = Column(Text, nullable=True)
     decision = Column(String(50), nullable=True)
-    created_at = Column(TIMESTAMP, default=datetime.utcnow, nullable=False)
+    created_at = Column(TIMESTAMP, default=utc_now, nullable=False)
     completed_at = Column(TIMESTAMP, nullable=True)
 
     task = relationship("AgentTeamTask", back_populates="iterations")
@@ -160,7 +165,7 @@ class AgentTeamPatchFile(Base):
     deletions = Column(Integer, default=0)
     diff_summary = Column(Text, nullable=True)
     risk_level = Column(String(50), nullable=True)
-    created_at = Column(TIMESTAMP, default=datetime.utcnow, nullable=False)
+    created_at = Column(TIMESTAMP, default=utc_now, nullable=False)
 
     iteration = relationship("AgentTeamIteration", back_populates="patch_files")
 
@@ -181,6 +186,6 @@ class AgentTeamFeedback(Base):
     author = Column(String(100), nullable=True)
     content = Column(Text, nullable=False)
     resolved = Column(Integer, default=0, nullable=False)
-    created_at = Column(TIMESTAMP, default=datetime.utcnow, nullable=False)
+    created_at = Column(TIMESTAMP, default=utc_now, nullable=False)
 
     task = relationship("AgentTeamTask", back_populates="feedback")
