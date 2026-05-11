@@ -40,6 +40,10 @@ class AgentTeamWorker:
 
         try:
             task = await self._load_task(task_id)
+            skills_summary, skills_context, skills_snapshot = await self._load_skills_context()
+            ai_config_snapshot = config.safe_snapshot()
+            if skills_snapshot:
+                ai_config_snapshot["skills"] = skills_snapshot
 
             # ── Phase 1: CLONING ──
             await self._update_task(
@@ -47,7 +51,7 @@ class AgentTeamWorker:
                 status=AgentTeamTaskStatus.CLONING.value,
                 current_phase="cloning",
                 started_at=datetime.utcnow(),
-                ai_config_snapshot=json.dumps(config.safe_snapshot(), ensure_ascii=False),
+                ai_config_snapshot=json.dumps(ai_config_snapshot, ensure_ascii=False),
             )
 
             git_service = AgentTeamGitWorkspaceService()
@@ -90,6 +94,8 @@ class AgentTeamWorker:
                 source_issue_number=task.source_issue_number,
                 max_iterations=max_iterations,
                 sakura_memory=sakura_memory,
+                skills_summary=skills_summary,
+                skills_context=skills_context,
             )
 
             logger.info(
@@ -367,6 +373,39 @@ class AgentTeamWorker:
         except Exception as e:
             logger.info("Agent 加载 Sakura 记忆失败: repo={}, error={}", repo_full_name, e)
         return ""
+
+    async def _load_skills_context(self) -> tuple[str, dict, list[dict]]:
+        """加载已启用的 Agent Skills 上下文。"""
+        enabled = await self._resolve_bool_config(
+            "agent_team_skills_enabled",
+            get_settings().agent_team_skills_enabled,
+        )
+        if not enabled:
+            logger.info("Agent Skills 未启用")
+            return "", {}, []
+
+        try:
+            from backend.services.agent_team.skill_service import AgentSkillService
+
+            service = AgentSkillService()
+            async with async_session() as session:
+                summary = await service.build_enabled_skills_summary(session)
+                snapshot = await service.snapshot_enabled_skills(session)
+            if not snapshot:
+                logger.info("Agent Skills 已启用但无可用 Skill")
+                return "", {}, []
+
+            root = await service.resolve_root()
+            context = {
+                "skills_root": str(root),
+                "skills_index": {skill["slug"]: skill for skill in snapshot},
+                "skills_cache": {},
+            }
+            logger.info("Agent 已加载 Skills: count={}", len(snapshot))
+            return summary, context, snapshot
+        except Exception as exc:
+            logger.info("Agent Skills 加载失败: {}", exc)
+            return "", {}, []
 
     async def _get_config(self, key: str) -> str | None:
         from backend.core.config import get_dynamic_config

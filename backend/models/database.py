@@ -498,6 +498,8 @@ async def create_tables_async():
         raise RuntimeError("异步数据库引擎未初始化,请先调用 init_async_db()")
 
     try:
+        _ensure_model_modules_imported()
+
         # 在异步上下文中创建表
         async with async_engine.begin() as conn:
             await conn.run_sync(Base.metadata.create_all)
@@ -509,11 +511,16 @@ async def create_tables_async():
         raise
 
 
+def _ensure_model_modules_imported() -> None:
+    """导入独立模型模块，确保 metadata 已注册。"""
+    import backend.models.agent_skill_models  # noqa: F401
+    import backend.models.agent_team_models  # noqa: F401
+
+
 def _append_dynamic_config_defaults(default_configs: list) -> None:
     """向 default_configs 列表追加动态配置默认值"""
     try:
-        # Ensure plugin-style model modules are imported before Base.metadata.create_all.
-        import backend.models.agent_team_models  # noqa: F401
+        _ensure_model_modules_imported()
 
         from backend.core.config import (
             DYNAMIC_CONFIG_GROUPS,
@@ -651,6 +658,8 @@ def init_database(database_url: str):
     try:
         # 创建数据库引擎
         engine = create_engine(database_url, echo=False)
+
+        _ensure_model_modules_imported()
 
         # 创建所有表
         Base.metadata.create_all(engine)
@@ -922,6 +931,8 @@ async def _auto_migrate():
 
     if async_engine is None:
         return
+
+    _ensure_model_modules_imported()
 
     async with async_engine.begin() as conn:
         # 确保 schema_migrations 表存在

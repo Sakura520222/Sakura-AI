@@ -1,0 +1,63 @@
+{% if skills %}
+<div class="overflow-x-auto">
+    <table class="min-w-full divide-y divide-gray-200 dark:divide-gray-700">
+        <thead>
+            <tr class="text-left text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">
+                <th class="px-4 py-3">{{ _('agent_skills.skill') }}</th>
+                <th class="px-4 py-3">{{ _('agent_skills.source') }}</th>
+                <th class="px-4 py-3">{{ _('agent_skills.status') }}</th>
+                <th class="px-4 py-3">{{ _('agent_skills.updated_at') }}</th>
+                <th class="px-4 py-3 text-right">{{ _('common.actions') }}</th>
+            </tr>
+        </thead>
+        <tbody class="divide-y divide-gray-100 dark:divide-gray-700">
+            {% for skill in skills %}
+            <tr class="align-top">
+                <td class="px-4 py-4">
+                    <div class="font-semibold text-gray-900 dark:text-gray-100">{{ skill.name }}</div>
+                    <code class="mt-1 block text-xs text-sakura-600 dark:text-sakura-300">{{ skill.slug }}</code>
+                    {% if skill.description %}<p class="mt-2 text-sm text-gray-500 dark:text-gray-400 max-w-xl">{{ skill.description }}</p>{% endif %}
+                    {% if skill.when_to_use %}<p class="mt-1 text-xs text-gray-400 dark:text-gray-500 max-w-xl">{{ skill.when_to_use }}</p>{% endif %}
+                    <div class="mt-2 text-xs text-gray-400 dark:text-gray-500 break-all">{{ skill.content_hash[:12] }}</div>
+                </td>
+                <td class="px-4 py-4 text-sm text-gray-600 dark:text-gray-300">
+                    <span class="inline-flex rounded-full px-2 py-1 text-xs font-medium bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-200">{{ skill.source_type }}</span>
+                    {% if skill.source_url %}<div class="mt-2 max-w-xs truncate"><a href="{{ skill.source_url }}" target="_blank" rel="noopener noreferrer" class="text-sakura-600 dark:text-sakura-300 hover:underline">{{ skill.source_url }}</a></div>{% endif %}
+                    {% if skill.source_ref %}<div class="mt-1 text-xs text-gray-400">{{ skill.source_ref }}</div>{% endif %}
+                </td>
+                <td class="px-4 py-4">
+                    {% if skill.enabled %}
+                    <span class="inline-flex rounded-full px-2.5 py-1 text-xs font-semibold bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-300">{{ _('agent_skills.enabled') }}</span>
+                    {% else %}
+                    <span class="inline-flex rounded-full px-2.5 py-1 text-xs font-semibold bg-gray-100 text-gray-600 dark:bg-gray-700 dark:text-gray-300">{{ _('agent_skills.disabled') }}</span>
+                    {% endif %}
+                </td>
+                <td class="px-4 py-4 text-sm text-gray-500 dark:text-gray-400">{{ skill.updated_at }}</td>
+                <td class="px-4 py-4">
+                    <div class="flex justify-end gap-2">
+                        <form method="post" action="/webui/agent-skills/{{ skill.id }}/toggle">
+                            <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                            <input type="hidden" name="enabled" value="{% if skill.enabled %}0{% else %}1{% endif %}">
+                            <button type="submit" class="px-3 py-1.5 rounded-lg text-xs font-semibold border border-gray-200 dark:border-gray-600 hover:bg-gray-50 dark:hover:bg-gray-700">
+                                {% if skill.enabled %}{{ _('agent_skills.disable') }}{% else %}{{ _('agent_skills.enable') }}{% endif %}
+                            </button>
+                        </form>
+                        <form method="post" action="/webui/agent-skills/{{ skill.id }}/delete" onsubmit="return confirm('{{ _('agent_skills.confirm_delete') }}');">
+                            <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                            <button type="submit" class="px-3 py-1.5 rounded-lg text-xs font-semibold bg-red-50 text-red-600 hover:bg-red-100 dark:bg-red-900/20 dark:text-red-300 dark:hover:bg-red-900/30">
+                                {{ _('common.delete') }}
+                            </button>
+                        </form>
+                    </div>
+                </td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
+{% else %}
+<div class="rounded-2xl border border-dashed border-gray-300 dark:border-gray-700 p-8 text-center text-gray-500 dark:text-gray-400">
+    <div class="text-base font-semibold text-gray-700 dark:text-gray-200">{{ _('agent_skills.no_skills') }}</div>
+    <p class="mt-2 text-sm">{{ _('agent_skills.no_skills_desc') }}</p>
+</div>
+{% endif %}

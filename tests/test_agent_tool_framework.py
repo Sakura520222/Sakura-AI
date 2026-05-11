@@ -191,7 +191,7 @@ def test_registry_has_all_fullstack_tools():
     expected = {
         "read_file", "list_directory", "glob", "search_in_files",
         "write_file", "edit_file", "replace_lines", "insert_lines",
-        "run_command", "finish_task",
+        "run_command", "use_skill", "finish_task",
     }
     assert expected == names
 
@@ -199,6 +199,7 @@ def test_registry_has_all_fullstack_tools():
 def test_registry_has_all_reviewer_tools():
     tools = get_reviewer_tools()
     names = {t.name for t in tools}
+    assert "use_skill" in names
     assert "submit_review" in names
     assert "write_file" not in names
     assert "edit_file" not in names
@@ -206,10 +207,11 @@ def test_registry_has_all_reviewer_tools():
 
 def test_get_tool_definitions():
     schemas = get_tool_definitions("fullstack")
-    assert len(schemas) == 10
+    assert len(schemas) == 11
     names = {s["function"]["name"] for s in schemas}
     assert "edit_file" in names
     assert "replace_lines" in names
+    assert "use_skill" in names
 
 
 def test_get_tool_definitions_zai_requires_all_properties():

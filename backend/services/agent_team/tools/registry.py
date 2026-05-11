@@ -21,6 +21,7 @@ from backend.services.agent_team.tools.read_tool import ReadTool
 from backend.services.agent_team.tools.replace_lines_tool import ReplaceLinesTool
 from backend.services.agent_team.tools.shell_tool import ShellTool
 from backend.services.agent_team.tools.submit_review_tool import SubmitReviewTool
+from backend.services.agent_team.tools.use_skill_tool import UseSkillTool
 from backend.services.agent_team.tools.write_tool import WriteTool
 
 
@@ -32,6 +33,7 @@ FULLSTACK_TOOL_INSTANCES: list[BaseTool] = [
     ListDirectoryTool(),
     GlobTool(),
     GrepTool(),
+    UseSkillTool(),
     WriteTool(),
     EditTool(),
     ReplaceLinesTool(),
@@ -46,6 +48,7 @@ REVIEWER_TOOL_INSTANCES: list[BaseTool] = [
     ListDirectoryTool(),
     GlobTool(),
     GrepTool(),
+    UseSkillTool(),
     ShellTool(),
     SubmitReviewTool(),
 ]

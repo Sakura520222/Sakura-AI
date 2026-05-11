@@ -6,6 +6,7 @@
 - glob: 按模式查找文件
 - search_in_files: 搜索关联代码
 - run_command: 运行测试或检查
+- use_skill: 按需读取已启用 Skill 的完整说明
 - submit_review: 提交审查结果
 
 AI 自主决定审查哪些文件、运行什么检查，完成后调用 submit_review。
@@ -42,8 +43,9 @@ REVIEWER_SYSTEM_PROMPT = """你是 Sakura Agent 专家团队的专业审查角�
 1. 使用 `list_directory` 了解修改范围
 2. 使用 `read_file` 阅读修改后的文件
 3. 使用 `search_in_files` 搜索相关代码，确认一致性
-4. 使用 `run_command` 运行测试或语法检查
-5. 完成审查后调用 `submit_review` 提交结果
+4. 当可用 Skills 摘要与当前审查相关时，使用 `use_skill` 读取完整内容
+5. 使用 `run_command` 运行测试或语法检查
+6. 完成审查后调用 `submit_review` 提交结果
 
 ## 判定标准
 - `pass`: 所有 critical/major 问题已解决，可以提交 PR (score >= 7)
@@ -99,12 +101,15 @@ class ProfessionalReviewAgent:
             {"role": "system", "content": REVIEWER_SYSTEM_PROMPT}
         ]
 
-    def _build_context(self) -> ToolContext:
+    def _build_context(self, skills_context: dict[str, Any] | None = None) -> ToolContext:
+        extra: dict[str, Any] = {"file_state": self.file_state}
+        if skills_context:
+            extra.update(skills_context)
         return ToolContext(
             workspace=str(self.workspace),
             workspace_service=self.workspace_service,
             read_file_state={},
-            extra={"file_state": self.file_state},
+            extra=extra,
         )
 
     async def review(
@@ -114,10 +119,12 @@ class ProfessionalReviewAgent:
         modified_files: list[str],
         fullstack_summary: str = "",
         feedback_context: str = "",
+        skills_summary: str = "",
+        skills_context: dict[str, Any] | None = None,
     ) -> ReviewResult:
         """执行审查，AI 自主调用工具直到提交审查。"""
         client, config = await create_agent_team_client()
-        ctx = self._build_context()
+        ctx = self._build_context(skills_context)
         tool_schemas = get_tool_definitions("reviewer", provider=config.provider)
 
         self.messages.append(
@@ -129,6 +136,7 @@ class ProfessionalReviewAgent:
                     modified_files=modified_files,
                     fullstack_summary=fullstack_summary,
                     feedback_context=feedback_context,
+                    skills_summary=skills_summary,
                 ),
             }
         )
@@ -245,6 +253,7 @@ class ProfessionalReviewAgent:
         modified_files: list[str],
         fullstack_summary: str,
         feedback_context: str,
+        skills_summary: str,
     ) -> str:
         parts = [f"## 任务\n标题: {task_title}\n描述: {task_summary}\n"]
         if fullstack_summary:
@@ -255,6 +264,8 @@ class ProfessionalReviewAgent:
             parts.append("\n请逐一审查以上修改的文件，确认代码质量。\n")
         if feedback_context:
             parts.append(f"\n## 上下文\n{feedback_context}\n")
+        if skills_summary:
+            parts.append(f"\n{skills_summary}\n")
         return "\n".join(parts)
 
 
