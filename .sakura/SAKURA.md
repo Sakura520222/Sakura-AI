@@ -55,6 +55,12 @@ Sakura AI Reviewer 是一款基于大语言模型的智能 GitHub 代码审查�
 - **禁止路由层裸写 `int(request.form.get(...))`**：必须统一封装 `ConfigService.get_int` 并记录 warn
 - **配置降级路径必须有 warning 日志**（minor）
 - **None 输入边界检查**：`str(None).strip()` 应改为显式 None 检查
+- **配置默认值必须唯一声明于 `config.py`**（major）
+- **docstring 中描述的白名单/黑名单必须与代码常量一致**（major）
+- **重构删除内联校验时，必须输出“旧约束 vs 新逻辑对比表”**（major）
+- **Shell 命令白名单匹配禁止使用前缀匹配**（major）
+- **BackgroundTasks 不适合长时间运行任务**（major）
+- **测试中修改全局缓存必须使用 fixture 或 finally 确保清理**（major）
 
 ## 4. 审查中发现的重要模式
 
@@ -77,6 +83,8 @@ Sakura AI Reviewer 是一款基于大语言模型的智能 GitHub 代码审查�
 - **配置迁移的“半衰期”问题**：常量和 Settings 默认值长期共存
 - **消费方隐式上限验证**：无上限配置须检查调用方物理上限（如 Semaphore）
 - **配置解析函数必须记录 warning 日志**（配置降级时）
+- **任务取消的完整链路**：接口完整而实现半截是常见风险点
+- **异步测试的副作用隔离**：`lru_cache` 或模块级 dict 会跨测试污染
 
 ## 5. 团队约定和规范
 
@@ -104,6 +112,12 @@ Sakura AI Reviewer 是一款基于大语言模型的智能 GitHub 代码审查�
 - **类型转换与范围校验必须原子化**（major）：推荐 `ConfigService.get_int`
 - **无上限校验的消费方防御必须验证**（major）
 - **配置迁移 PR 必须对比新旧默认值**（major）
+- **配置默认值唯一源**（major）
+- **docstring 与代码常量一致性**（major）
+- **重构删除校验须输出对比表**（major）
+- **Shell 命令白名单精确匹配**（major）
+- **BackgroundTasks 长任务风险评估**（major）
+- **测试缓存清理必须异常安全**（major）
 
 ### suggestion 疲劳归档协议
 第 1 轮未修复：评估降级 | 第 2 轮未修复：强制降级 | 第 3 轮未修复：强制归档
@@ -119,6 +133,7 @@ Sakura AI Reviewer 是一款基于大语言模型的智能 GitHub 代码审查�
 - **增量审查必须扫描被删除符号的导出链**（major）
 - **重试次数配置下限至少为 1，设为 0 须记录 warning**（minor）
 - **观察点必须有后续行动**：不得仅列出不创建 issue
+- **新增配置字段检查表**：唯一性、默认值兼容性、所有读取路径的 None 处理、写入路径与缓存失效成对、日志/监控影响
 
 ### 常量与配置规范
 - **常量定义位置与语义保持一致**
@@ -132,7 +147,10 @@ Sakura AI Reviewer 是一款基于大语言模型的智能 GitHub 代码审查�
 ### 前端 i18n 规范
 - **前端 i18n 映射函数必须使用对象映射**，禁止硬编码 `if key === ...`
 
+### 测试规范
+- **异步测试中修改全局缓存必须使用 fixture 或 finally 确保清理**（major）
+
 ## 仓库信息
 - 仓库名: Sakura520222/Sakura-AI-Reviewer
 - 语言统计: Python: 1731565, HTML: 515737, Shell: 4534, Dockerfile: 962
-- 累计反思次数: 201
+- 累计反思次数: 204
