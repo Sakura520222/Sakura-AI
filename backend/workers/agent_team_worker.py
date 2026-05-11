@@ -16,6 +16,7 @@ from pathlib import Path
 
 from loguru import logger
 
+from backend.core.config import get_settings
 from backend.models.agent_team_models import (
     AgentTeamIteration,
     AgentTeamPatchFile,
@@ -76,7 +77,9 @@ class AgentTeamWorker:
                 current_phase="editing",
             )
 
-            max_iterations = task.max_iterations or 3
+            max_iterations = await self._resolve_max_iterations(task.max_iterations)
+            if task.max_iterations != max_iterations:
+                await self._update_task(task_id, max_iterations=max_iterations)
             sakura_memory = await self._load_sakura_memory(repo_owner, repo_name)
 
             loop_service = IterationLoopService(workspace)
@@ -160,8 +163,9 @@ class AgentTeamWorker:
                     current_phase="creating_pr",
                 )
 
-                is_draft = bool(
-                    await self._get_config("agent_team_draft_pr") or True
+                is_draft = await self._resolve_bool_config(
+                    "agent_team_draft_pr",
+                    get_settings().agent_team_draft_pr,
                 )
                 pr_body = pr_service.build_pr_body(
                     task_title=task.title,
@@ -341,6 +345,26 @@ class AgentTeamWorker:
         from backend.core.config import get_dynamic_config
 
         return await get_dynamic_config(key)
+
+    async def _resolve_max_iterations(self, task_max_iterations: int | None) -> int:
+        """解析任务最大迭代轮数。"""
+        configured = await self._get_config("agent_team_max_iterations_per_task")
+        fallback = get_settings().agent_team_max_iterations_per_task
+        raw_value = configured if configured is not None else task_max_iterations or fallback
+        try:
+            value = int(raw_value)
+        except (TypeError, ValueError):
+            value = fallback
+        return max(1, value)
+
+    async def _resolve_bool_config(self, key: str, fallback: bool) -> bool:
+        """读取布尔动态配置，保留显式 False。"""
+        value = await self._get_config(key)
+        if value is None:
+            return fallback
+        if isinstance(value, bool):
+            return value
+        return str(value).strip().lower() in {"1", "true", "yes", "on", "启用", "是"}
 
     def _build_commit_message(self, task, outcome) -> str:
         parts = [f"feat(agent): {task.title}"]
