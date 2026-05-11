@@ -29,6 +29,11 @@ CONTEXT_OVERFLOW_KEYWORDS = [
     "reduce the length",
     "too many tokens",
     "token limit",
+    "prompt exceeds max length",
+    "exceeds max length",
+    "prompt too long",
+    "input is too long",
+    "input exceeds",
 ]
 
 # CJK 字符正则（用于 token 估算时判断中文等字符比例）
@@ -124,6 +129,12 @@ class AIApiClient:
 
         return estimated
 
+    @staticmethod
+    def _is_context_overflow_error(error: Exception) -> bool:
+        """判断 BadRequestError 是否属于上下文超长错误"""
+        error_str = str(error).lower()
+        return any(kw in error_str for kw in CONTEXT_OVERFLOW_KEYWORDS)
+
     async def call_with_retry(
         self,
         messages: List[Dict[str, Any]],
@@ -198,7 +209,9 @@ class AIApiClient:
             elapsed = time.monotonic() - start_time
             if elapsed > TOTAL_TIMEOUT:
                 logger.error(
-                    f"重试总超时（已耗时 {elapsed:.1f}秒 > {TOTAL_TIMEOUT}秒），放弃重试"
+                    "重试总超时（已耗时 {:.1f}秒 > {}秒），放弃重试",
+                    elapsed,
+                    TOTAL_TIMEOUT,
                 )
                 raise Exception(f"AI调用失败：重试总超时（{TOTAL_TIMEOUT}秒）")
 
@@ -211,8 +224,11 @@ class AIApiClient:
                     if attempt < MAX_RETRIES - 1:
                         delay = self._calculate_delay(attempt)
                         logger.warning(
-                            f"AI返回空响应，{delay:.1f}秒后重试 "
-                            f"({attempt + 1}/{MAX_RETRIES}, 已耗时 {elapsed:.1f}s)"
+                            "AI返回空响应，{:.1f}秒后重试 ({}/{}, 已耗时 {:.1f}s)",
+                            delay,
+                            attempt + 1,
+                            MAX_RETRIES,
+                            elapsed,
                         )
                         await asyncio.sleep(delay)
                         continue
@@ -223,7 +239,9 @@ class AIApiClient:
                 # 成功返回
                 total_time = time.monotonic() - start_time
                 logger.info(
-                    f"✅ AI调用成功（耗时 {total_time:.1f}秒，重试 {attempt} 次）"
+                    "✅ AI调用成功（耗时 {:.1f}秒，重试 {} 次）",
+                    total_time,
+                    attempt,
                 )
                 return response
 
@@ -232,12 +250,9 @@ class AIApiClient:
 
                 # BadRequestError（如 prompt 超长）不应重试，包装为 PromptTooLongError
                 if isinstance(e, OpenAIBadRequestError):
-                    error_str = str(e).lower()
                     # 仅对上下文超长类错误包装为 PromptTooLongError，
                     # 避免误判其他 BadRequestError（如 schema 验证错误）
-                    is_context_overflow = any(
-                        kw in error_str for kw in CONTEXT_OVERFLOW_KEYWORDS
-                    )
+                    is_context_overflow = self._is_context_overflow_error(e)
                     if not is_context_overflow:
                         # 非超长的 BadRequestError，直接抛出原始错误
                         logger.error(
@@ -260,7 +275,7 @@ class AIApiClient:
                         str(e),
                     )
                     raise PromptTooLongError(
-                        f"Prompt exceeds max length (估算 ~{estimated_tokens} tokens, 模型: {model}): {e}",
+                        f"Prompt exceeds max length (估算 ~{estimated_tokens} tokens, 模型: {model})",
                         estimated_tokens=estimated_tokens,
                         model=model,
                         original_error=e,

@@ -16,6 +16,12 @@ from typing import Any, Dict, List
 from loguru import logger
 
 from backend.core.config import get_settings, get_strategy_config, get_user_dynamic_config
+from backend.services.ai_reviewer.api_client import PromptTooLongError
+from backend.services.ai_reviewer.compact_diff import (
+    build_tool_handler_with_diff,
+    extend_with_compact_tools,
+    should_use_compact_prompt,
+)
 from backend.services.ai_reviewer.constants import (
     BATCH_CONCURRENCY,
     BATCH_JITTER_SECONDS,
@@ -26,6 +32,7 @@ from backend.services.ai_reviewer.constants import (
     SUMMARY_TIMEOUT,
 )
 from backend.services.ai_reviewer.token_tracker import TokenTracker
+from backend.services.ai_reviewer.tools import DiffToolHandler, ToolHandler
 
 
 class BatchProcessor:
@@ -90,8 +97,11 @@ class BatchProcessor:
             batches.append(current_batch)
 
         logger.info(
-            f"文件分批完成: {len(files)} 个文件 → {len(batches)} 个批次 "
-            f"(每批最多 {max_files} 文件 / {max_lines} 行)"
+            "文件分批完成: {} 个文件 → {} 个批次 (每批最多 {} 文件 / {} 行)",
+            len(files),
+            len(batches),
+            max_files,
+            max_lines,
         )
 
         return batches
@@ -128,8 +138,11 @@ class BatchProcessor:
         """
         try:
             logger.info(
-                f"开始审查批次 {batch_idx + 1}/{total_batches} "
-                f"({len(batch_files)} 个文件, 工具: {use_tools})"
+                "开始审查批次 {}/{} ({} 个文件, 工具: {})",
+                batch_idx + 1,
+                total_batches,
+                len(batch_files),
+                use_tools,
             )
 
             # 构建批次上下文（只包含该批次的文件）
@@ -153,15 +166,22 @@ class BatchProcessor:
                 result = await self._review_standard(batch_context, strategy)
 
             logger.info(
-                f"批次 {batch_idx + 1}/{total_batches} 审查完成: "
-                f"{len(result.get('comments', []))} 条评论, "
-                f"{len(result.get('inline_comments', []))} 条行内评论"
+                "批次 {}/{} 审查完成: {} 条评论, {} 条行内评论",
+                batch_idx + 1,
+                total_batches,
+                len(result.get("comments", [])),
+                len(result.get("inline_comments", [])),
             )
 
             return result
 
         except Exception as e:
-            logger.error(f"批次 {batch_idx + 1}/{total_batches} 审查失败: {e}")
+            logger.error(
+                "批次 {}/{} 审查失败: {}",
+                batch_idx + 1,
+                total_batches,
+                str(e),
+            )
             # 返回一个空结果，避免中断整个审查流程
             return self._empty_batch_result(batch_idx + 1, str(e))
 
@@ -253,7 +273,6 @@ class BatchProcessor:
         Returns:
             审查结果
         """
-        settings = get_settings()
         strategy_config_data = get_strategy_config().get_strategy(strategy)
         # 获取 AI 输出语言配置 / Get AI output language config
         output_lang = await get_user_dynamic_config(
@@ -284,14 +303,128 @@ class BatchProcessor:
         )
         enabled_tools = await tool_manager.get_enabled_tools(repo_full_name)
 
-        # 多轮对话循环
+        should_compact, prompt_tokens, threshold_tokens = should_use_compact_prompt(
+            messages, context
+        )
+        active_tool_handler = tool_handler
+        compact_diff_tool = None
+        if should_compact:
+            logger.warning(
+                "📦 批次 prompt 估算 {} tokens，超过主动精简阈值 {} tokens，切换到 diff 工具模式",
+                prompt_tokens,
+                threshold_tokens,
+            )
+            (
+                messages,
+                enabled_tools,
+                active_tool_handler,
+                compact_diff_tool,
+            ) = self._prepare_compact_review(
+                context, strategy, system_prompt, enabled_tools, tool_handler
+            )
+
+        try:
+            try:
+                return await self._run_tool_loop(
+                    messages,
+                    system_prompt,
+                    strategy,
+                    enabled_tools,
+                    repo,
+                    pr,
+                    active_tool_handler,
+                    tracker,
+                )
+            finally:
+                if compact_diff_tool is not None:
+                    compact_diff_tool.clear()
+        except PromptTooLongError as e:
+            if should_compact:
+                raise
+
+            logger.warning(
+                "📦 批次首次 prompt 超长 (估算 ~{} tokens, 模型: {})，切换到 diff 工具模式",
+                e.estimated_tokens,
+                e.model,
+            )
+            (
+                compact_messages,
+                compact_enabled_tools,
+                compact_tool_handler,
+                compact_diff_tool,
+            ) = self._prepare_compact_review(
+                context, strategy, system_prompt, enabled_tools, tool_handler
+            )
+            try:
+                return await self._run_tool_loop(
+                    compact_messages,
+                    system_prompt,
+                    strategy,
+                    compact_enabled_tools,
+                    repo,
+                    pr,
+                    compact_tool_handler,
+                    tracker,
+                )
+            finally:
+                compact_diff_tool.clear()
+
+    def _prepare_compact_review(
+        self,
+        context: Dict[str, Any],
+        strategy: str,
+        system_prompt: str,
+        enabled_tools: List[Dict[str, Any]],
+        tool_handler: ToolHandler,
+    ) -> tuple[
+        List[Dict[str, Any]],
+        List[Dict[str, Any]],
+        ToolHandler,
+        DiffToolHandler,
+    ]:
+        """构造批次精简审查上下文"""
+        compact_diff_tool = DiffToolHandler()
+        compact_diff_tool.set_files_data(context.get("files", []))
+        if not compact_diff_tool.has_data:
+            raise RuntimeError("批次精简模式不可用：没有 PR 文件 diff 数据")
+
+        compact_user_message = self.prompt_builder.build_user_message(
+            context, strategy, include_tools=True, compact=True
+        )
+        compact_messages = [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": compact_user_message},
+        ]
+        compact_enabled_tools = extend_with_compact_tools(enabled_tools)
+        compact_tool_handler = build_tool_handler_with_diff(
+            tool_handler, compact_diff_tool
+        )
+        return (
+            compact_messages,
+            compact_enabled_tools,
+            compact_tool_handler,
+            compact_diff_tool,
+        )
+
+    async def _run_tool_loop(
+        self,
+        messages: List[Dict[str, Any]],
+        system_prompt: str,
+        strategy: str,
+        enabled_tools: List[Dict[str, Any]],
+        repo: Any,
+        pr: Any,
+        tool_handler,
+        tracker: TokenTracker,
+    ) -> Dict[str, Any]:
+        """执行批次工具调用循环"""
+        settings = get_settings()
         max_iterations = (
             get_strategy_config()
             .get_context_enhancement_config()
             .get("max_tool_iterations", MAX_TOOL_ITERATIONS)
         )
         iteration = 0
-
         while iteration < max_iterations:
             iteration += 1
 
@@ -311,7 +444,9 @@ class BatchProcessor:
             if not tool_calls:
                 # AI完成了审查，返回结果
                 review_text = response.choices[0].message.content
-                result = self.result_parser.parse_review_result(review_text, strategy)
+                result = self.result_parser.parse_review_result(
+                    review_text, strategy
+                )
                 result["token_usage"] = tracker.to_dict()
                 return result
 
@@ -350,10 +485,16 @@ class BatchProcessor:
                         }
                     )
                     logger.info(
-                        f"执行工具 {tool_call.function.name}: {tool_call.function.arguments}"
+                        "执行工具 {}: {}",
+                        tool_call.function.name,
+                        tool_call.function.arguments,
                     )
                 except Exception as e:
-                    logger.error(f"执行工具 {tool_call.function.name} 失败: {e}")
+                    logger.error(
+                        "执行工具 {} 失败: {}",
+                        tool_call.function.name,
+                        str(e),
+                    )
                     messages.append(
                         {
                             "role": "tool",
@@ -364,7 +505,8 @@ class BatchProcessor:
 
         # 达到最大迭代次数，引导 AI 基于已有信息交付最终审查结果
         logger.warning(
-            f"达到最大工具调用次数 ({max_iterations})，引导 AI 交付最终审查结果"
+            "达到最大工具调用次数 ({})，引导 AI 交付最终审查结果",
+            max_iterations,
         )
         messages.append(
             {
@@ -440,7 +582,7 @@ class BatchProcessor:
             return_exceptions=True,
         )
 
-        logger.info(f"✅ 所有批次审查完成：{len(batches)} 个批次结果已收集")
+        logger.info("✅ 所有批次审查完成：{} 个批次结果已收集", len(batches))
         return batch_results
 
     async def ai_reduce_results(
@@ -466,7 +608,7 @@ class BatchProcessor:
             valid_results = []
             for idx, result in enumerate(batch_results):
                 if isinstance(result, Exception):
-                    logger.warning(f"批次 {idx + 1} 失败: {result}")
+                    logger.warning("批次 {} 失败: {}", idx + 1, str(result))
                     continue
                 valid_results.append(result)
 
@@ -505,7 +647,7 @@ class BatchProcessor:
 
             # 5. 解析AI总结结果
             summary_text = response.choices[0].message.content.strip()
-            logger.info(f"✅ AI总结完成，响应长度: {len(summary_text)} 字符")
+            logger.info("✅ AI总结完成，响应长度: {} 字符", len(summary_text))
 
             # 6. 解析JSON并构建最终结果
             final_result = self._build_final_result_from_summary(
@@ -515,12 +657,12 @@ class BatchProcessor:
             return final_result
 
         except json.JSONDecodeError as e:
-            logger.error(f"AI总结JSON解析失败: {e}")
+            logger.error("AI总结JSON解析失败: {}", str(e))
             logger.warning("回退到机械合并模式")
             return self.merge_batch_results(batch_results, strategy)
 
         except Exception as e:
-            logger.error(f"AI智能总结失败: {e}", exc_info=True)
+            logger.error("AI智能总结失败: {}", str(e), exc_info=True)
             logger.warning("回退到机械合并模式")
             return self.merge_batch_results(batch_results, strategy)
 
