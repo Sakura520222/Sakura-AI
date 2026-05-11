@@ -16,18 +16,20 @@ from typing import Any, Dict, List
 from loguru import logger
 
 from backend.core.config import get_settings, get_strategy_config, get_user_dynamic_config
-from backend.core.model_context import get_model_context_manager
 from backend.services.ai_reviewer.api_client import PromptTooLongError
+from backend.services.ai_reviewer.compact_diff import (
+    build_tool_handler_with_diff,
+    extend_with_compact_tools,
+    should_use_compact_prompt,
+)
 from backend.services.ai_reviewer.constants import (
     BATCH_CONCURRENCY,
     BATCH_JITTER_SECONDS,
-    COMPACT_TOOLS,
     MAX_FILES_PER_BATCH,
     MAX_LINES_PER_BATCH,
     MAX_TOOL_ITERATIONS,
     SUMMARY_MAX_TOKENS,
     SUMMARY_TIMEOUT,
-    TOOL_NAME_TO_DEFINITION,
 )
 from backend.services.ai_reviewer.token_tracker import TokenTracker
 from backend.services.ai_reviewer.tools import DiffToolHandler, ToolHandler
@@ -53,7 +55,6 @@ class BatchProcessor:
         self.api_client = api_client
         self.prompt_builder = prompt_builder
         self.result_parser = result_parser
-        self.model_context_mgr = get_model_context_manager()
 
     def split_files_into_batches(
         self,
@@ -104,77 +105,6 @@ class BatchProcessor:
         )
 
         return batches
-
-    def _estimate_messages_tokens(self, messages: List[Dict[str, Any]]) -> int:
-        """估算消息列表 token 数"""
-        total_tokens = 0
-        for message in messages:
-            content = message.get("content", "")
-            if content:
-                total_tokens += self.model_context_mgr.estimate_tokens(content)
-
-            tool_calls = message.get("tool_calls")
-            if tool_calls:
-                for tool_call in tool_calls:
-                    function = tool_call.function
-                    total_tokens += self.model_context_mgr.estimate_tokens(
-                        function.name + str(function.arguments)
-                    )
-        return total_tokens
-
-    def _should_use_compact_prompt(
-        self, messages: List[Dict[str, Any]], context: Dict[str, Any]
-    ) -> tuple[bool, int, int]:
-        """判断批次初始 prompt 是否应切换为 diff 工具精简模式"""
-        settings = get_settings()
-        current_tokens = self._estimate_messages_tokens(messages)
-        safe_context = self.model_context_mgr.calculate_safe_context(
-            settings.openai_model, settings.context_safety_threshold
-        )
-        threshold_tokens = int(
-            safe_context * settings.context_compression_threshold
-        )
-        should_compact = (
-            bool(context.get("files"))
-            and threshold_tokens > 0
-            and current_tokens > threshold_tokens
-        )
-        return should_compact, current_tokens, threshold_tokens
-
-    def _extend_with_compact_tools(
-        self, enabled_tools: List[Dict[str, Any]]
-    ) -> List[Dict[str, Any]]:
-        """为精简模式追加 PR diff 工具定义"""
-        compact_enabled_tools = list(enabled_tools)
-        enabled_names = {
-            tool.get("function", {}).get("name")
-            for tool in compact_enabled_tools
-            if isinstance(tool, dict)
-        }
-        for tool_name in COMPACT_TOOLS:
-            if tool_name in enabled_names:
-                continue
-            tool_def = TOOL_NAME_TO_DEFINITION.get(tool_name)
-            if tool_def:
-                compact_enabled_tools.append(tool_def)
-                enabled_names.add(tool_name)
-        return compact_enabled_tools
-
-    @staticmethod
-    def _build_tool_handler_with_diff(tool_handler, diff_tool: DiffToolHandler):
-        """基于批次工具处理器创建启用 PR diff 工具的临时处理器"""
-        compact_tool_handler = ToolHandler(
-            tool_handler.file_tool,
-            tool_handler.search_tool,
-            tool_handler.web_search_tool,
-            tool_handler.git_tool,
-            tool_handler.search_files_tool,
-            tool_handler.sakura_tool,
-            tool_handler.fetch_url_tool,
-            diff_tool=diff_tool,
-        )
-        compact_tool_handler._compact_diff_tool = diff_tool
-        return compact_tool_handler
 
     async def review_batch(
         self,
@@ -373,38 +303,46 @@ class BatchProcessor:
         )
         enabled_tools = await tool_manager.get_enabled_tools(repo_full_name)
 
-        should_compact, prompt_tokens, threshold_tokens = (
-            self._should_use_compact_prompt(messages, context)
+        original_messages = messages
+        should_compact, prompt_tokens, threshold_tokens = should_use_compact_prompt(
+            original_messages, context
         )
         active_tool_handler = tool_handler
+        compact_diff_tool = None
         if should_compact:
             logger.warning(
                 "📦 批次 prompt 估算 {} tokens，超过主动精简阈值 {} tokens，切换到 diff 工具模式",
                 prompt_tokens,
                 threshold_tokens,
             )
-            messages, enabled_tools, active_tool_handler = self._prepare_compact_review(
-                context,
-                strategy,
-                system_prompt,
+            (
+                messages,
                 enabled_tools,
-                tool_handler,
+                active_tool_handler,
+                compact_diff_tool,
+            ) = self._prepare_compact_review(
+                context, strategy, system_prompt, enabled_tools, tool_handler
             )
 
         try:
-            return await self._run_tool_loop(
-                messages,
-                system_prompt,
-                strategy,
-                enabled_tools,
-                repo,
-                pr,
-                active_tool_handler,
-                tracker,
-            )
+            try:
+                return await self._run_tool_loop(
+                    messages,
+                    system_prompt,
+                    strategy,
+                    enabled_tools,
+                    repo,
+                    pr,
+                    active_tool_handler,
+                    tracker,
+                )
+            finally:
+                if compact_diff_tool is not None:
+                    compact_diff_tool.clear()
         except PromptTooLongError as e:
             has_tool_history = any(
-                msg.get("role") == "tool" or msg.get("tool_calls") for msg in messages
+                msg.get("role") == "tool" or msg.get("tool_calls")
+                for msg in original_messages
             )
             if has_tool_history or should_compact:
                 raise
@@ -414,23 +352,27 @@ class BatchProcessor:
                 e.estimated_tokens,
                 e.model,
             )
-            messages, enabled_tools, active_tool_handler = self._prepare_compact_review(
-                context,
-                strategy,
-                system_prompt,
-                enabled_tools,
-                tool_handler,
+            (
+                compact_messages,
+                compact_enabled_tools,
+                compact_tool_handler,
+                compact_diff_tool,
+            ) = self._prepare_compact_review(
+                context, strategy, system_prompt, enabled_tools, tool_handler
             )
-            return await self._run_tool_loop(
-                messages,
-                system_prompt,
-                strategy,
-                enabled_tools,
-                repo,
-                pr,
-                active_tool_handler,
-                tracker,
-            )
+            try:
+                return await self._run_tool_loop(
+                    compact_messages,
+                    system_prompt,
+                    strategy,
+                    compact_enabled_tools,
+                    repo,
+                    pr,
+                    compact_tool_handler,
+                    tracker,
+                )
+            finally:
+                compact_diff_tool.clear()
 
     def _prepare_compact_review(
         self,
@@ -438,8 +380,13 @@ class BatchProcessor:
         strategy: str,
         system_prompt: str,
         enabled_tools: List[Dict[str, Any]],
-        tool_handler,
-    ):
+        tool_handler: ToolHandler,
+    ) -> tuple[
+        List[Dict[str, Any]],
+        List[Dict[str, Any]],
+        ToolHandler,
+        DiffToolHandler,
+    ]:
         """构造批次精简审查上下文"""
         compact_diff_tool = DiffToolHandler()
         compact_diff_tool.set_files_data(context.get("files", []))
@@ -453,11 +400,16 @@ class BatchProcessor:
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": compact_user_message},
         ]
-        compact_enabled_tools = self._extend_with_compact_tools(enabled_tools)
-        compact_tool_handler = self._build_tool_handler_with_diff(
+        compact_enabled_tools = extend_with_compact_tools(enabled_tools)
+        compact_tool_handler = build_tool_handler_with_diff(
             tool_handler, compact_diff_tool
         )
-        return compact_messages, compact_enabled_tools, compact_tool_handler
+        return (
+            compact_messages,
+            compact_enabled_tools,
+            compact_tool_handler,
+            compact_diff_tool,
+        )
 
     async def _run_tool_loop(
         self,
@@ -478,88 +430,83 @@ class BatchProcessor:
             .get("max_tool_iterations", MAX_TOOL_ITERATIONS)
         )
         iteration = 0
-        try:
-            while iteration < max_iterations:
-                iteration += 1
+        while iteration < max_iterations:
+            iteration += 1
 
-                # 调用AI API
-                response = await self.api_client.call_with_retry(
-                    model=settings.openai_model,
-                    messages=messages,
-                    tools=enabled_tools,
-                    tool_choice="auto",
-                    temperature=settings.openai_temperature,
+            # 调用AI API
+            response = await self.api_client.call_with_retry(
+                model=settings.openai_model,
+                messages=messages,
+                tools=enabled_tools,
+                tool_choice="auto",
+                temperature=settings.openai_temperature,
+            )
+            tracker.accumulate(response)
+
+            # 检查是否有工具调用
+            tool_calls = response.choices[0].message.tool_calls
+
+            if not tool_calls:
+                # AI完成了审查，返回结果
+                review_text = response.choices[0].message.content
+                result = self.result_parser.parse_review_result(
+                    review_text, strategy
                 )
-                tracker.accumulate(response)
+                result["token_usage"] = tracker.to_dict()
+                return result
 
-                # 检查是否有工具调用
-                tool_calls = response.choices[0].message.tool_calls
+            # 处理工具调用
+            assistant_message = response.choices[0].message
+            assistant_msg_dict = {
+                "role": "assistant",
+                "content": assistant_message.content,
+                "tool_calls": tool_calls,
+            }
 
-                if not tool_calls:
-                    # AI完成了审查，返回结果
-                    review_text = response.choices[0].message.content
-                    result = self.result_parser.parse_review_result(
-                        review_text, strategy
+            # DeepSeek-R1 特有：必须包含 reasoning_content
+            strategy_config = get_strategy_config()
+            if (
+                hasattr(assistant_message, "reasoning_content")
+                and assistant_message.reasoning_content
+                and strategy_config.is_model_supports_reasoning_content(
+                    settings.openai_model
+                )
+            ):
+                assistant_msg_dict["reasoning_content"] = (
+                    assistant_message.reasoning_content
+                )
+
+            messages.append(assistant_msg_dict)
+
+            # 执行每个工具调用
+            for tool_call in tool_calls:
+                try:
+                    result = await tool_handler.handle_tool_call(tool_call, repo, pr)
+                    messages.append(
+                        {
+                            "role": "tool",
+                            "tool_call_id": tool_call.id,
+                            "content": json.dumps(result, ensure_ascii=False),
+                        }
                     )
-                    result["token_usage"] = tracker.to_dict()
-                    return result
-
-                # 处理工具调用
-                assistant_message = response.choices[0].message
-                assistant_msg_dict = {
-                    "role": "assistant",
-                    "content": assistant_message.content,
-                    "tool_calls": tool_calls,
-                }
-
-                # DeepSeek-R1 特有：必须包含 reasoning_content
-                strategy_config = get_strategy_config()
-                if (
-                    hasattr(assistant_message, "reasoning_content")
-                    and assistant_message.reasoning_content
-                    and strategy_config.is_model_supports_reasoning_content(
-                        settings.openai_model
+                    logger.info(
+                        "执行工具 {}: {}",
+                        tool_call.function.name,
+                        tool_call.function.arguments,
                     )
-                ):
-                    assistant_msg_dict["reasoning_content"] = (
-                        assistant_message.reasoning_content
+                except Exception as e:
+                    logger.error(
+                        "执行工具 {} 失败: {}",
+                        tool_call.function.name,
+                        str(e),
                     )
-
-                messages.append(assistant_msg_dict)
-
-                # 执行每个工具调用
-                for tool_call in tool_calls:
-                    try:
-                        result = await tool_handler.handle_tool_call(tool_call, repo, pr)
-                        messages.append(
-                            {
-                                "role": "tool",
-                                "tool_call_id": tool_call.id,
-                                "content": json.dumps(result, ensure_ascii=False),
-                            }
-                        )
-                        logger.info(
-                            "执行工具 {}: {}",
-                            tool_call.function.name,
-                            tool_call.function.arguments,
-                        )
-                    except Exception as e:
-                        logger.error(
-                            "执行工具 {} 失败: {}",
-                            tool_call.function.name,
-                            str(e),
-                        )
-                        messages.append(
-                            {
-                                "role": "tool",
-                                "tool_call_id": tool_call.id,
-                                "content": json.dumps({"error": str(e)}),
-                            }
-                        )
-        finally:
-            compact_diff_tool = getattr(tool_handler, "_compact_diff_tool", None)
-            if compact_diff_tool is not None:
-                compact_diff_tool.clear()
+                    messages.append(
+                        {
+                            "role": "tool",
+                            "tool_call_id": tool_call.id,
+                            "content": json.dumps({"error": str(e)}),
+                        }
+                    )
 
         # 达到最大迭代次数，引导 AI 基于已有信息交付最终审查结果
         logger.warning(
