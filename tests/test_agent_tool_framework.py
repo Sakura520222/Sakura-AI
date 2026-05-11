@@ -417,6 +417,25 @@ async def test_search_in_files_rejects_long_keyword(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_search_in_files_invalid_regex_case_insensitive_fallback(tmp_path):
+    workspace, ctx = _setup_workspace(tmp_path)
+    (ctx.workspace_service.resolve_inside_workspace(workspace) / "demo.py").write_text(
+        "FOO[BAR\n",
+        encoding="utf-8",
+    )
+    executor = create_executor("fullstack")
+
+    result = await executor.execute_raw(
+        "search_in_files",
+        {"keyword": "foo[bar", "case_insensitive": True, "output_mode": "content"},
+        ctx,
+    )
+
+    assert result.success
+    assert any("FOO[BAR" in match for match in result.output["matches"])
+
+
+@pytest.mark.asyncio
 async def test_legacy_search_in_files_rejects_long_keyword(tmp_path):
     workspace, ctx = _setup_workspace(tmp_path)
     executor = AgentToolExecutor(workspace, ctx.workspace_service)

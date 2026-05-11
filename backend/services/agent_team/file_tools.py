@@ -9,6 +9,7 @@ from __future__ import annotations
 import asyncio
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any, Callable
 
 from backend.services.agent_team.workspace_service import (
     AgentTeamWorkspaceService,
@@ -16,7 +17,7 @@ from backend.services.agent_team.workspace_service import (
 )
 
 
-async def _async_call(fn, *args, **kwargs):
+async def _run_sync(fn: Callable[..., Any], *args: Any, **kwargs: Any) -> Any:
     """在线程池中运行同步文件操作，避免阻塞事件循环。"""
     return await asyncio.to_thread(fn, *args, **kwargs)
 
@@ -139,17 +140,17 @@ class AgentTeamFileTools:
 
     async def read_file_async(self, relative_path: str) -> FileReadResult:
         """异步包装：读取工作区内文件。"""
-        return await _async_call(self.read_file, relative_path)
+        return await _run_sync(self.read_file, relative_path)
 
     async def write_file_async(self, relative_path: str, content: str) -> FileWriteResult:
         """异步包装：写入工作区内文件。"""
-        return await _async_call(self.write_file, relative_path, content)
+        return await _run_sync(self.write_file, relative_path, content)
 
     async def list_files_async(
         self, relative_dir: str = ".", recursive: bool = False
     ) -> list[FileEntry]:
         """异步包装：列举工作区内目录。"""
-        return await _async_call(self.list_files, relative_dir, recursive)
+        return await _run_sync(self.list_files, relative_dir, recursive)
 
     async def edit_file_async(
         self,
@@ -159,7 +160,7 @@ class AgentTeamFileTools:
         replace_all: bool = False,
     ) -> FileEditResult:
         """异步包装：精确字符串替换。"""
-        return await _async_call(
+        return await _run_sync(
             self.edit_file,
             relative_path,
             old_text,
@@ -175,7 +176,7 @@ class AgentTeamFileTools:
         new_content: str,
     ) -> FileEditResult:
         """异步包装：按行号范围替换。"""
-        return await _async_call(
+        return await _run_sync(
             self.replace_lines,
             relative_path,
             start_line,
@@ -190,7 +191,7 @@ class AgentTeamFileTools:
         content: str,
     ) -> FileEditResult:
         """异步包装：在指定行号之后插入。"""
-        return await _async_call(
+        return await _run_sync(
             self.insert_lines,
             relative_path,
             after_line,

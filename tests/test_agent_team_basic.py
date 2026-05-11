@@ -207,6 +207,15 @@ def test_agent_team_ai_config_pickle_roundtrip_masks_key():
     assert "secret-key" not in str(restored.safe_snapshot())
 
 
+def test_agent_team_ai_config_setstate_ignores_api_key():
+    config = AgentTeamAIConfig.__new__(AgentTeamAIConfig)
+
+    config.__setstate__({"provider": "openai", "api_key": "leaked-key"})
+
+    assert config.provider == "openai"
+    assert config.api_key == ""
+
+
 @pytest.mark.asyncio
 async def test_load_agent_team_ai_config_preserves_explicit_zero_values(monkeypatch):
     async def fake_get_dynamic_config(key: str):
