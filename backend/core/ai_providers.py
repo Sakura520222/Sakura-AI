@@ -121,18 +121,25 @@ def get_ai_provider(provider_id: str | None) -> AIProvider:
     return AI_PROVIDERS.get(provider_id.lower().strip(), AI_PROVIDERS["custom"])
 
 
-def get_provider_select_options(include_summary_follow: bool = False) -> list[dict[str, str]]:
+def get_provider_select_options(
+    include_summary_follow: bool = False,
+    include_main_ai: bool = False,
+) -> list[dict[str, str]]:
     """Return options for dynamic config select fields."""
     options = [
         {"value": provider.id, "label": provider.label}
         for provider in AI_PROVIDERS.values()
     ]
+    if include_main_ai:
+        options.insert(0, {"value": "main", "label": "复用主 AI / Use main AI"})
     if include_summary_follow:
         options.insert(0, {"value": "", "label": "跟随主模型"})
     return options
 
 
-def _build_base_url(provider_id: str | None, api_base: str | None = None) -> tuple[AIProvider, str]:
+def _build_base_url(
+    provider_id: str | None, api_base: str | None = None
+) -> tuple[AIProvider, str]:
     """Return (provider, base_url_with_trailing_slash) for URL building."""
     provider = get_ai_provider(provider_id)
     base_url = (api_base or provider.base_url or "https://api.openai.com/v1").strip()
@@ -160,7 +167,9 @@ def build_model_detail_url(
 ) -> str:
     """Build a provider model-detail URL."""
     provider, base_url = _build_base_url(provider_id, api_base)
-    endpoint = _strip_endpoint_prefix(provider.model_detail_endpoint.format(model=model))
+    endpoint = _strip_endpoint_prefix(
+        provider.model_detail_endpoint.format(model=model)
+    )
     return f"{base_url}{endpoint}"
 
 
@@ -168,7 +177,9 @@ def normalize_model_list_response(payload: Any) -> list[str]:
     """Normalize common OpenAI-compatible model list payloads to model IDs."""
     raw_models: Any
     if isinstance(payload, dict):
-        raw_models = payload.get("data") or payload.get("models") or payload.get("items") or []
+        raw_models = (
+            payload.get("data") or payload.get("models") or payload.get("items") or []
+        )
     elif isinstance(payload, list):
         raw_models = payload
     else:

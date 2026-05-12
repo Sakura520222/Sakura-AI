@@ -4,7 +4,7 @@
 
 **English** | [中文](README.md)
 
-[![Version](https://img.shields.io/badge/Version-2.9.6-blue.svg)](https://github.com/Sakura520222/Sakura-AI-Reviewer/releases)
+[![Version](https://img.shields.io/badge/Version-2.10.0-blue.svg)](https://github.com/Sakura520222/Sakura-AI-Reviewer/releases)
 [![Python](https://img.shields.io/badge/Python-3.11+-blue.svg)](https://www.python.org/)
 [![FastAPI](https://img.shields.io/badge/FastAPI-Latest-green.svg)](https://fastapi.tiangolo.com/)
 [![License](https://img.shields.io/badge/License-AGPLv3-yellow.svg)](LICENSE)
@@ -20,6 +20,7 @@
 - **AI Reasoning Mode**: Leverages AI reasoning for in-depth code analysis, proactively invoking tools to inspect project structure and arbitrary files
 - **Cross-file Dependency Understanding**: Understands complex inter-module dependencies through multi-turn dialogue with a "global view"
 - **Adaptive Review Strategy**: Automatically selects quick/standard/deep review mode based on PR size
+- **Large PR Compact Review**: Automatically switches to compact diff mode when the initial diff approaches the context threshold; AI inspects changes on demand through `get_file_diff` / `list_changed_files`
 - **Structured Review Reports**: Overall score + categorized issues (🔴Critical / 🟡Important / 💡Suggestion) + `<details>` collapsible sections
 - **Incremental Review Learning**: AI automatically summarizes historical review records, identifies scoring trends and issue hotspots, continuously improving review quality
 - **Smart Review Approval**: Automatically decides APPROVE / REQUEST_CHANGES / COMMENT based on AI scores
@@ -29,6 +30,7 @@
 - **One-click Revoke**: Admins can use `/revoke` to instantly withdraw all AI comments and reviews
 - **Auxiliary Model Support**: Independently configure lightweight models for summarization, context compression, label recommendation, and other tasks to reduce inference costs
 - **Inline Comments Toggle**: Control whether inline comments are posted on PR diffs via WebUI config `enable_inline_comments`, reducing review noise
+- **Controlled Auto Review**: Use WebUI config `enable_auto_review` to control whether PR opened/synchronize/reopened events enqueue reviews automatically while keeping command and manual triggers available
 
 ### AI Tools & Knowledge Base
 
@@ -57,10 +59,20 @@
 - **PR-Issue Linking**: Automatically parses issue references and injects context to enhance review precision
 - **Semantic Issue Linking**: Discovers and links related issues based on vector semantic similarity
 
+### Agent Expert Team
+
+- **Super-admin Manual Launch**: Select candidate tasks from Issue analysis and repository scan findings, then start automated fix workflows on demand
+- **Two-agent Collaboration**: A full-stack expert plans and edits code, while a professional reviewer performs pre-push quality review
+- **Isolated Git Workspaces**: Clone/fetch/checkout dedicated branches under `agent_team_workspace_root` without polluting the service runtime directory
+- **Controlled Tool Execution**: File operations, search, and shell validation commands are scoped to the workspace; validation commands are controlled by an allowlist
+- **Agent Skills**: Install skills from uploaded files, ZIP packages, or GitHub `SKILL.md`; agents can load full skill instructions on demand
+- **PR Creation Loop**: Supports normal or Draft PR creation, then iterates through existing Sakura PR Review and human review feedback; PRs are never merged automatically
+
 ### Management & Operations
 
 - **Setup Wizard**: Automatically detects configuration status on first launch, guides you through GitHub App, database, AI model, and RAG setup step by step, with resume support
 - **Dynamic Configuration**: Configuration changes via WebUI take effect immediately without service restart
+- **AI API Timeout Control**: `ai_api_timeout_seconds` controls per-request timeout, and `ai_api_total_timeout_seconds` controls the total retry-loop duration for one AI call
 - **Per-user Config Overrides**: Users can override allowed preference settings in WebUI or API (currently AI output language), with fallback order UserConfig → AppConfig → Settings defaults
 - **AI Provider Registry**: Built-in OpenAI, DeepSeek, Qwen, Z.ai, Doubao, SiliconFlow, Gemini, Anthropic-compatible, and custom OpenAI-compatible providers, with automatic model list and context window discovery
 - **GitHub App Installation Management**: Automatically handles GitHub App install/uninstall events, syncing repository authorization status
@@ -69,7 +81,7 @@
 - **Quota-based Access Control**: Flexible quota-based access management system with user self-registration support and UTC daily/weekly/monthly auto-reset for PR and Issue usage
 - **Paid Quota System**: Plan management, batch redeem code generation and redemption, admin manual grants, supports one-time packages and subscription plans
 - **Admin Action Audit**: Complete operation logs covering configuration changes, user management, and other critical actions
-- **WebUI Dashboard**: Dashboard charts, PR management, user management, configuration management, queue monitoring, action logs, repository scan management, with Markdown content rendering support
+- **WebUI Dashboard**: Dashboard charts, PR management, user management, configuration management, queue monitoring, action logs, repository scan management, Agent Expert Team, and Agent Skills, with Markdown content rendering support
 - **Telegram Bot**: Real-time notifications, interactive button menus, three-tier permission system (super admin / admin / user), quota management
 - **GitHub OAuth Login**: Integrated with Telegram user system, light/dark theme switching
 
@@ -242,6 +254,8 @@ Global configuration follows this priority: **Database app_config (WebUI) > Sett
 
 - **AI Model**: Select a built-in AI Provider in WebUI configuration (OpenAI, DeepSeek, Qwen, Z.ai, Doubao, SiliconFlow, Gemini, Anthropic-compatible, or custom OpenAI-compatible), set API URL/API Key/model name, and optionally auto-fetch model lists and context window metadata
 - **Auxiliary Model**: Set `summary_model`, `summary_api_base`, `summary_api_key` in WebUI configuration for lightweight tasks like summarization, context compression, and label recommendation; auto-falls back to main model if left empty
+- **PR Auto Review**: `enable_auto_review` in WebUI configuration controls whether PR webhook events automatically trigger reviews; command and manual triggers remain available when disabled
+- **AI API Timeout**: `ai_api_timeout_seconds` controls the per-request timeout, and `ai_api_total_timeout_seconds` controls the maximum total duration of one AI call retry loop
 - **Security & MFA**: The WebUI Security Center can enforce MFA globally or per user, reset TOTP/recovery codes, delete Passkeys, and record security audit events; users can enable TOTP, generate recovery codes, and register Passkeys/WebAuthn in personal settings
 - **Review Strategy**: Edit `config/strategies.yaml`, supports quick/standard/deep/large-PR four strategies
 - **File Filtering**: Configure skipped file extensions and paths in `config/strategies.yaml`
@@ -250,6 +264,7 @@ Global configuration follows this priority: **Database app_config (WebUI) > Sett
 - **Review Approval**: `review_policy` in `config/strategies.yaml` for threshold and repository-level overrides
 - **PR Change Summary**: `enable_pr_summary` in WebUI configuration
 - **PR Dependency Graph**: `enable_pr_dependency_graph` / `pr_dependency_graph_mode` / `pr_dependency_graph_max_nodes` / `pr_dependency_graph_max_files` in WebUI configuration; `ai` mode uses model-based dependency analysis, while `static` mode uses static import parsing to reduce cost
+- **Large PR Context Management**: `model_context_window` / `context_safety_threshold` / `enable_context_compression` / `context_compression_threshold` / `context_compression_keep_rounds` in WebUI configuration; when the initial diff is too large, review automatically uses compact diff tool mode
 - **Token Cost Tracking**: `review_price_per_1k_prompt` / `review_price_per_1k_completion` in WebUI configuration for tracking review token consumption and costs
 - **RAG Knowledge Base**: Configure embedding models (supports BAAI/bge-m3, etc.), reranking models, ChromaDB in WebUI configuration
 - **PR Code Index**: Configure code chunking, supported languages, core directories in WebUI configuration
@@ -263,6 +278,8 @@ Global configuration follows this priority: **Database app_config (WebUI) > Sett
 - **Git Info Tool**: `context_enhancement.git_tools` in `config/strategies.yaml` — configure default branch and commit return counts
 - **Project Memory System**: `sakura_memory_enabled` to enable memory system, `sakura_reflection_enabled` to enable post-review reflection, `sakura_consolidation_interval` for consolidation trigger threshold (default 5), `sakura_auto_init` to auto-initialize `.sakura/` directory — all in WebUI configuration. Users can place custom docs in `.sakura/rules/`, `.sakura/docs/`, `.sakura/plans/`. See [Project Memory Guide](docs/SAKURA_MEMORY_GUIDE.md) (Chinese)
 - **Model Context**: Configure context window, auto-compression in WebUI configuration, see [Model Context Management](docs/MODEL_CONTEXT_FEATURE.md)
+- **Agent Expert Team**: Configure `agent_team_enabled`, `agent_team_workspace_root`, `agent_team_repo_allowlist`, `agent_team_model_provider`, and other `agent_team_*` model/guardrail settings on the WebUI Agent Team page; `agent_team_model_provider=main` reuses the main AI configuration, while independent Agent AI configuration is also supported
+- **Agent Skills**: Install and toggle Skills on the WebUI Agent Skills page; `agent_team_skills_enabled` controls whether agents may load skills, and `agent_team_skills_root` configures the local storage root
 - **Internationalization (i18n)**: WebUI supports Chinese/English interface switching (Settings page). AI output language can be controlled globally via `OUTPUT_LANGUAGE` or overridden per user through `output_language` (`zh-CN` / `en` / follow global). Comment templates automatically match the selected language.
 
 ---
@@ -296,6 +313,18 @@ python -m backend.main
 
 > First launch will enter Bootstrap mode. Visit `http://localhost:8000/setup` to complete configuration via Setup Wizard.
 
+To debug the first-run deployment / Setup Wizard flow locally, start with an isolated dev config:
+
+```bash
+py scripts/dev_bootstrap.py
+```
+
+The script uses `.sakura/dev/connection.json`, so it will not overwrite the production `config/connection.json`, and it skips Telegram, SSE, scan, and quota background tasks. To restart from step 0:
+
+```bash
+py scripts/dev_bootstrap.py --reset
+```
+
 ### Code Linting
 
 ```bash
@@ -312,6 +341,7 @@ Sakura-AI-Reviewer/
 │   ├── core/              # Core config, dynamic configuration, AI provider registry
 │   ├── models/            # Data models (SQLAlchemy)
 │   ├── services/          # Business logic
+│   │   ├── agent_team/    # Agent Expert Team, controlled workspace tools, PR creation, and Skills
 │   │   ├── ai_reviewer/   # AI review engine
 │   │   │   ├── tools/     #   AI tools (file reading, cross-file search, git info, web search, sakura memory)
 │   │   │   └── compression/ # Context compression
@@ -364,6 +394,9 @@ Sakura-AI-Reviewer/
 | [WebUI Design Document](docs/plans/2026-03-27-webui-design.md) | WebUI design specification                      |
 | [Project Memory Guide](docs/SAKURA_MEMORY_GUIDE.md) | .sakura/ directory structure, lifecycle, configuration (Chinese) |
 | [Project Memory System Design](docs/plans/2026-04-20-sakura-memory-design.md) | .sakura/ memory system architecture & config |
+| [Agent Expert Team Mode](docs/plans/agent_expert_team_mode.md) | Agent automated fixes, controlled workspaces, and PR creation flow |
+| [Agent Skills Implementation](docs/agent-skills-python-implementation.md) | Skill installation, indexing, toggling, and tool integration |
+| [Agent File Tools Implementation](docs/agent-file-tools-python-implementation.md) | Agent workspace file tools, security boundaries, and implementation details |
 | [Agents Project Guide](AGENTS.md)                              | Project conventions for automation agents and contributors |
 
 ---

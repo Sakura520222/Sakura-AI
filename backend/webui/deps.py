@@ -154,7 +154,9 @@ async def get_db() -> AsyncSession:
 
 def request_origin(request: Request) -> str:
     """Return request Origin, falling back to scheme + host."""
-    return request.headers.get("origin") or f"{request.url.scheme}://{request.url.netloc}"
+    return (
+        request.headers.get("origin") or f"{request.url.scheme}://{request.url.netloc}"
+    )
 
 
 def _is_mfa_enrollment_path(path: str) -> bool:
@@ -169,7 +171,9 @@ def _is_mfa_enrollment_path(path: str) -> bool:
         "/webui/auth/",
         "/webui/static/",
     )
-    return path in allowed_exact or any(path.startswith(prefix) for prefix in allowed_prefixes)
+    return path in allowed_exact or any(
+        path.startswith(prefix) for prefix in allowed_prefixes
+    )
 
 
 async def user_requires_mfa_enrollment(user_id: int, db: AsyncSession) -> bool:
@@ -196,7 +200,9 @@ async def user_requires_mfa_enrollment(user_id: int, db: AsyncSession) -> bool:
     return int(passkey_count or 0) == 0
 
 
-async def enforce_mfa_enrollment(request: Request, user: dict, db: AsyncSession) -> None:
+async def enforce_mfa_enrollment(
+    request: Request, user: dict, db: AsyncSession
+) -> None:
     """Block normal WebUI/API access until required MFA enrollment is completed."""
     user_id = int(user["user_id"])
     if not await user_requires_mfa_enrollment(user_id, db):

@@ -18,13 +18,16 @@ from backend.core.model_context import get_model_context_manager
 
 from .api_client import AIApiClient, AIEmptyResponseError, PromptTooLongError
 from .batch_processor import BatchProcessor
+from .compact_diff import (
+    build_tool_handler_with_diff,
+    extend_with_compact_tools,
+    should_use_compact_prompt,
+)
 from .compression import ContextCompressor
 from .constants import (
-    COMPACT_TOOLS,
     MAX_FILES_PER_BATCH,
     MAX_LINES_PER_BATCH,
     MAX_TOOL_ITERATIONS,
-    TOOL_NAME_TO_DEFINITION,
 )
 from .label_recommender import LabelRecommender
 from .prompt_builder import PromptBuilder
@@ -152,7 +155,7 @@ class AIReviewer:
             审查结果字典
         """
         try:
-            logger.info(f"开始AI审查，策略: {strategy}")
+            logger.info("开始AI审查，策略: {}", strategy)
 
             settings = get_settings()
             strategy_config_data = get_strategy_config().get_strategy(strategy)
@@ -188,12 +191,67 @@ class AIReviewer:
             result = self.result_parser.parse_review_result(review_text, strategy)
             result["token_usage"] = tracker.to_dict()
 
-            logger.info(f"AI审查完成，策略: {strategy}")
+            logger.info("AI审查完成，策略: {}", strategy)
             return result
 
         except Exception as e:
-            logger.error(f"AI审查时出错: {e}", exc_info=True)
+            logger.error("AI审查时出错: {}", str(e), exc_info=True)
             raise
+
+    async def _run_compact_diff_review(
+        self,
+        *,
+        context: Dict[str, Any],
+        strategy: str,
+        system_prompt: str,
+        enabled_tools: List[Dict[str, Any]],
+        repo: Any,
+        pr: Any,
+        tracker: TokenTracker,
+        original_tokens: int,
+        reason: str,
+    ) -> Dict[str, Any]:
+        """使用精简 prompt 与 PR diff 工具执行审查"""
+        compact_diff_tool = DiffToolHandler()
+        compact_diff_tool.set_files_data(context.get("files", []))
+        if not compact_diff_tool.has_data:
+            raise RuntimeError("精简模式不可用：没有 PR 文件 diff 数据")
+
+        compact_enabled_tools = extend_with_compact_tools(enabled_tools)
+        compact_user_message = self.prompt_builder.build_user_message(
+            context, strategy, include_tools=True, compact=True
+        )
+        compact_messages = [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": compact_user_message},
+        ]
+        compact_tokens = self.context_compressor.estimate_messages_tokens(
+            compact_messages
+        )
+        logger.info(
+            "✅ 启用精简 diff prompt (原因: {}, {} → {} tokens)，进入工具循环...",
+            reason,
+            original_tokens,
+            compact_tokens,
+        )
+
+        compact_tool_handler = build_tool_handler_with_diff(
+            self.tool_handler, compact_diff_tool
+        )
+        try:
+            return await self._run_tool_loop(
+                messages=compact_messages,
+                system_prompt=system_prompt,
+                strategy=strategy,
+                enabled_tools=compact_enabled_tools,
+                repo=repo,
+                pr=pr,
+                tracker=tracker,
+                context=context,
+                tool_handler=compact_tool_handler,
+            )
+        finally:
+            compact_diff_tool.clear()
 
     async def _run_tool_loop(
         self,
@@ -205,6 +263,7 @@ class AIReviewer:
         pr: Any,
         tracker: TokenTracker,
         context: Dict[str, Any],
+        tool_handler: ToolHandler | None = None,
     ) -> Dict[str, Any]:
         """执行多轮工具调用循环
 
@@ -224,6 +283,7 @@ class AIReviewer:
             审查结果字典
         """
         settings = get_settings()
+        active_tool_handler = tool_handler or self.tool_handler
         max_iterations = (
             get_strategy_config()
             .get_context_enhancement_config()
@@ -290,7 +350,7 @@ class AIReviewer:
             # 执行每个工具调用
             for tool_call in tool_calls:
                 try:
-                    result = await self.tool_handler.handle_tool_call(
+                    result = await active_tool_handler.handle_tool_call(
                         tool_call, repo, pr
                     )
                     messages.append(
@@ -306,7 +366,9 @@ class AIReviewer:
                         tool_call.function.arguments,
                     )
                 except Exception as e:
-                    logger.error("执行工具 {} 失败: {}", tool_call.function.name, e)
+                    logger.error(
+                        "执行工具 {} 失败: {}", tool_call.function.name, str(e)
+                    )
                     messages.append(
                         {
                             "role": "tool",
@@ -388,6 +450,7 @@ class AIReviewer:
         """
         if self.tool_handler.fetch_url_tool:
             await self.tool_handler.fetch_url_tool.reset_session()
+        should_compact = False
         try:
             logger.info("开始AI审查（带工具支持），策略: {}", strategy)
 
@@ -430,6 +493,30 @@ class AIReviewer:
                     repo_full_name
                 )
 
+            should_compact, prompt_tokens, threshold_tokens = should_use_compact_prompt(
+                messages,
+                context,
+                compression_threshold=self.compression_threshold,
+                model_context_mgr=self.model_context_mgr,
+            )
+            if should_compact:
+                logger.warning(
+                    "📦 初始 prompt 估算 {} tokens，超过主动精简阈值 {} tokens，切换到 diff 工具模式",
+                    prompt_tokens,
+                    threshold_tokens,
+                )
+                return await self._run_compact_diff_review(
+                    context=context,
+                    strategy=strategy,
+                    system_prompt=system_prompt,
+                    enabled_tools=enabled_tools,
+                    repo=repo,
+                    pr=pr,
+                    tracker=tracker,
+                    original_tokens=prompt_tokens,
+                    reason="prompt_budget",
+                )
+
             return await self._run_tool_loop(
                 messages=messages,
                 system_prompt=system_prompt,
@@ -449,39 +536,33 @@ class AIReviewer:
                 e.model,
             )
 
-            # 判断是首次调用超长还是多轮对话超长
-            # 首次调用只有 [system, user] 两条消息，无工具调用历史
+            if should_compact:
+                raise
+
+            # 到达这里时主动精简路径尚未运行，但 messages 可能已被工具循环追加过 assistant/tool 消息。
             has_tool_history = any(
                 msg.get("role") == "tool" or msg.get("tool_calls") for msg in messages
             )
-
             if has_tool_history:
-                # 多轮对话：压缩对话历史
                 if self.enable_compression:
                     try:
+                        settings = get_settings()
                         safe_context = self.model_context_mgr.calculate_safe_context(
-                            get_settings().openai_model,
-                            get_settings().context_safety_threshold,
+                            settings.openai_model, settings.context_safety_threshold
                         )
-                        target_tokens = int(safe_context * self.compression_threshold)
-                        messages = (
+                        threshold_tokens = int(
+                            safe_context * self.compression_threshold
+                        )
+                        compressed_messages = (
                             await self.context_compressor.compress_conversation_history(
                                 messages,
                                 system_prompt,
-                                target_tokens,
+                                threshold_tokens,
                                 tracker=tracker,
                             )
                         )
-                        compressed_tokens = (
-                            self.context_compressor.estimate_messages_tokens(messages)
-                        )
-                        logger.info(
-                            "✅ 对话历史压缩完成 ({} → {} tokens)，继续工具循环...",
-                            e.estimated_tokens,
-                            compressed_tokens,
-                        )
                         return await self._run_tool_loop(
-                            messages=messages,
+                            messages=compressed_messages,
                             system_prompt=system_prompt,
                             strategy=strategy,
                             enabled_tools=enabled_tools,
@@ -490,86 +571,31 @@ class AIReviewer:
                             tracker=tracker,
                             context=context,
                         )
-                    except Exception as compress_err:
+                    except Exception as compression_error:
                         logger.error(
-                            "对话历史压缩后重试仍失败: {}",
-                            str(compress_err),
+                            "压缩对话历史后重试失败: {}",
+                            str(compression_error),
                             exc_info=True,
                         )
                         raise
-                else:
-                    logger.error(
-                        "🚨 多轮对话超限但压缩未启用 (估算 ~{} tokens)",
-                        e.estimated_tokens,
-                    )
-                    raise
-            else:
-                # 首次调用超长：切换到精简模式（移除 diff，通过工具按需查看）
-                # 每次创建临时 DiffToolHandler 实例，避免并发安全问题
-                compact_diff_tool = DiffToolHandler()
-                original_diff_tool = self.tool_handler.diff_tool
-                try:
-                    self.tool_handler.diff_tool = compact_diff_tool
-                    logger.info(
-                        "📦 首次 prompt 超长，切换到精简模式（diff 通过工具按需查看）..."
-                    )
-                    # 将文件 diff 数据注入临时 DiffToolHandler
-                    compact_diff_tool.set_files_data(context.get("files", []))
-                    if not compact_diff_tool.has_data:
-                        logger.warning("精简模式降级：无文件 diff 数据可用，放弃重试")
-                        raise
-                    # 精简模式下动态添加 COMPACT_TOOLS（get_file_diff, list_changed_files）
-                    compact_enabled_tools = list(enabled_tools)
-                    for tool_name in COMPACT_TOOLS:
-                        tool_def = TOOL_NAME_TO_DEFINITION.get(tool_name)
-                        if tool_def and tool_def not in compact_enabled_tools:
-                            compact_enabled_tools.append(tool_def)
-                    # 用精简模式重建 user_message（不含 diff）
-                    compact_user_message = self.prompt_builder.build_user_message(
-                        context, strategy, include_tools=True, compact=True
-                    )
-                    compact_messages = [
-                        {"role": "system", "content": system_prompt},
-                        {"role": "user", "content": compact_user_message},
-                    ]
-                    compact_tokens = self.context_compressor.estimate_messages_tokens(
-                        compact_messages
-                    )
-                    # 降级检查：精简模式是否真的显著减少了 token
-                    if compact_tokens >= e.estimated_tokens * 0.8:
-                        logger.warning(
-                            "精简模式未能显著减少 token ({} → {})，放弃重试",
-                            e.estimated_tokens,
-                            compact_tokens,
-                        )
-                        raise
-                    logger.info(
-                        "✅ 精简模式 prompt 构建 ({} → {} tokens)，进入工具循环...",
-                        e.estimated_tokens,
-                        compact_tokens,
-                    )
-                    # 进入完整的多轮工具循环（AI 可通过 get_file_diff 按需查看 diff）
-                    return await self._run_tool_loop(
-                        messages=compact_messages,
-                        system_prompt=system_prompt,
-                        strategy=strategy,
-                        enabled_tools=compact_enabled_tools,
-                        repo=repo,
-                        pr=pr,
-                        tracker=tracker,
-                        context=context,
-                    )
-                except Exception as compact_err:
-                    logger.error(
-                        "精简模式重试仍失败: {}",
-                        str(compact_err),
-                        exc_info=True,
-                    )
-                    raise
-                finally:
-                    # 确保清理临时 diff 数据并恢复原始 diff_tool
-                    compact_diff_tool.clear()
-                    self.tool_handler.diff_tool = original_diff_tool
+
+                logger.error(
+                    "🚨 多轮对话超限但压缩未启用 (估算 ~{} tokens)",
+                    e.estimated_tokens,
+                )
+                raise
+
+            return await self._run_compact_diff_review(
+                context=context,
+                strategy=strategy,
+                system_prompt=system_prompt,
+                enabled_tools=enabled_tools,
+                repo=repo,
+                pr=pr,
+                tracker=tracker,
+                original_tokens=e.estimated_tokens,
+                reason="provider_prompt_too_long",
+            )
         except Exception as e:
             logger.error("AI审查（带工具）时出错: {}", str(e), exc_info=True)
             raise
@@ -607,7 +633,8 @@ class AIReviewer:
             if len(files) <= max_files_per_batch:
                 # 小PR，直接审查（使用AI工具）
                 logger.info(
-                    f"PR规模较小 ({len(files)} 个文件)，使用标准审查模式（启用AI工具）"
+                    "PR规模较小 ({} 个文件)，使用标准审查模式（启用AI工具）",
+                    len(files),
                 )
                 return await self.review_pr_with_tools(context, strategy, repo, pr)
 
@@ -621,13 +648,13 @@ class AIReviewer:
 
             if enable_tools_in_batch:
                 logger.info(
-                    f"🚨 PR规模较大 ({len(files)} 个文件)，启用分批审查模式 "
-                    f"（启用AI工具，依赖自动上下文压缩）"
+                    "🚨 PR规模较大 ({} 个文件)，启用分批审查模式（启用AI工具，依赖自动上下文压缩）",
+                    len(files),
                 )
             else:
                 logger.warning(
-                    f"🚨 PR规模较大 ({len(files)} 个文件)，启用分批审查模式 "
-                    f"（禁用AI工具，仅基于patch审查）"
+                    "🚨 PR规模较大 ({} 个文件)，启用分批审查模式（禁用AI工具，仅基于patch审查）",
+                    len(files),
                 )
 
             # 将文件分批
@@ -636,7 +663,8 @@ class AIReviewer:
             )
 
             logger.info(
-                f"🚀 启动MapReduce模式：{len(batches)} 个批次并行审查（并发限制: 2）"
+                "🚀 启动MapReduce模式：{} 个批次并行审查（并发限制: 2）",
+                len(batches),
             )
 
             # Map阶段：并行审查各批次
@@ -685,21 +713,23 @@ class AIReviewer:
             merged_result["token_usage"] = final_tracker.to_dict()
 
             logger.debug(
-                f"分批审查 token 合并完成: "
-                f"{final_tracker.prompt_tokens}+{final_tracker.completion_tokens} "
-                f"({final_tracker.api_call_count}次API调用)"
+                "分批审查 token 合并完成: {}+{} ({}次API调用)",
+                final_tracker.prompt_tokens,
+                final_tracker.completion_tokens,
+                final_tracker.api_call_count,
             )
 
             logger.info(
-                f"分批审查完成: {len(batches)} 个批次, "
-                f"{len(merged_result.get('comments', []))} 条整体评论, "
-                f"{len(merged_result.get('inline_comments', []))} 条行内评论"
+                "分批审查完成: {} 个批次, {} 条整体评论, {} 条行内评论",
+                len(batches),
+                len(merged_result.get("comments", [])),
+                len(merged_result.get("inline_comments", [])),
             )
 
             return merged_result
 
         except Exception as e:
-            logger.error(f"分批审查失败: {str(e)}", exc_info=True)
+            logger.error("分批审查失败: {}", str(e), exc_info=True)
             raise
 
     async def review_file(
@@ -746,7 +776,7 @@ class AIReviewer:
             return {"file_path": file_path, "review": review_text}
 
         except Exception as e:
-            logger.error(f"审查文件 {file_path} 时出错: {e}")
+            logger.error("审查文件 {} 时出错: {}", file_path, str(e))
             return {"file_path": file_path, "review": f"审查失败: {str(e)}"}
 
     async def recommend_labels(

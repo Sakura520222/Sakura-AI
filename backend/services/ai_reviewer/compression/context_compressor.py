@@ -19,6 +19,7 @@ if TYPE_CHECKING:
 from backend.core.config import get_strategy_config
 from backend.core.model_context import get_model_context_manager
 from backend.services.ai_reviewer.constants import DEFAULT_COMPRESSION_KEEP_ROUNDS
+from backend.services.ai_reviewer.message_utils import estimate_messages_tokens
 
 
 class ContextCompressor:
@@ -245,23 +246,7 @@ class ContextCompressor:
         Returns:
             估算的 token 数量
         """
-        total_tokens = 0
-
-        for message in messages:
-            content = message.get("content", "")
-            if content:
-                total_tokens += self.model_context_mgr.estimate_tokens(content)
-
-            # 估算 tool_calls 的 token
-            tool_calls = message.get("tool_calls")
-            if tool_calls:
-                for tool_call in tool_calls:
-                    function = tool_call.function
-                    total_tokens += self.model_context_mgr.estimate_tokens(
-                        function.name + str(function.arguments)
-                    )
-
-        return total_tokens
+        return estimate_messages_tokens(messages, self.model_context_mgr)
 
     def _find_tool_result_in_history(
         self, messages: List[Dict], tool_call_id: str

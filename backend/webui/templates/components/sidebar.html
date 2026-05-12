@@ -1,7 +1,7 @@
 <!-- 侧边栏 -->
 <aside id="sidebar"
-       class="fixed top-16 left-0 bottom-0 w-64 glass border-r border-sakura-200/50 dark:border-sakura-800/30 z-40 transform -translate-x-full lg:translate-x-0 transition-transform duration-300 ease-in-out">
-    <nav class="p-4 space-y-1">
+         class="fixed top-16 left-0 bottom-0 w-64 glass border-r border-sakura-200/50 dark:border-sakura-800/30 z-40 transform -translate-x-full lg:translate-x-0 transition-transform duration-300 ease-in-out overflow-y-auto overscroll-contain">
+     <nav class="p-4 pb-6 space-y-1">
         <a href="/webui/"
            class="sidebar-link flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium transition-all duration-200
                   {% if active_page == 'dashboard' %}bg-gradient-to-r from-sakura-500 to-sakura-600 text-white shadow-md shadow-sakura-500/25{% else %}text-gray-700 dark:text-gray-300 hover:bg-sakura-50 dark:hover:bg-sakura-900/20 hover:text-sakura-700 dark:hover:text-sakura-400{% endif %}">
@@ -46,6 +46,26 @@
                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z"/>
             </svg>
             {{ _('nav.repo_scans') }}
+        </a>
+        {% endif %}
+
+        {% if current_user and current_user.role == 'super_admin' %}
+        <a href="/webui/agent-team/"
+           class="sidebar-link flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium transition-all duration-200
+                  {% if active_page == 'agent_team' %}bg-gradient-to-r from-sakura-500 to-sakura-600 text-white shadow-md shadow-sakura-500/25{% else %}text-gray-700 dark:text-gray-300 hover:bg-sakura-50 dark:hover:bg-sakura-900/20 hover:text-sakura-700 dark:hover:text-sakura-400{% endif %}">
+            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9.75 3a.75.75 0 01.75.75V5h3V3.75a.75.75 0 011.5 0V5h.75A2.25 2.25 0 0118 7.25v8.5A2.25 2.25 0 0115.75 18h-7.5A2.25 2.25 0 016 15.75v-8.5A2.25 2.25 0 018.25 5H9V3.75A.75.75 0 019.75 3zM8.25 6.5a.75.75 0 00-.75.75v8.5c0 .414.336.75.75.75h7.5a.75.75 0 00.75-.75v-8.5a.75.75 0 00-.75-.75h-7.5z"/>
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 10h.01M12 10h.01M15 10h.01M9 13h6"/>
+            </svg>
+            {{ _('nav.agent_team') }}
+        </a>
+        <a href="/webui/agent-skills/"
+           class="sidebar-link flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium transition-all duration-200
+                  {% if active_page == 'agent_skills' %}bg-gradient-to-r from-sakura-500 to-sakura-600 text-white shadow-md shadow-sakura-500/25{% else %}text-gray-700 dark:text-gray-300 hover:bg-sakura-50 dark:hover:bg-sakura-900/20 hover:text-sakura-700 dark:hover:text-sakura-400{% endif %}">
+            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.746 0 3.332.477 4.5 1.253v13C19.832 18.477 18.246 18 16.5 18c-1.746 0-3.332.477-4.5 1.253"/>
+            </svg>
+            {{ _('nav.agent_skills') }}
         </a>
         {% endif %}
 

@@ -23,7 +23,10 @@ from backend.webui.deps import (
 )
 from backend.core.config import get_settings
 from backend.services.quota_service import QuotaService
-from backend.services.user_role_policy import can_toggle_user_status, can_update_user_role
+from backend.services.user_role_policy import (
+    can_toggle_user_status,
+    can_update_user_role,
+)
 from backend.webui.helpers.admin_log import log_admin_action
 from backend.webui.i18n import detect_language
 

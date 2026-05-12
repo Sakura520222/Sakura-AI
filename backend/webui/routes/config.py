@@ -15,6 +15,8 @@ from backend.models.database import AppConfig
 from loguru import logger
 
 from backend.core.config import (
+    BASIC_CONFIG_KEYS,
+    DYNAMIC_CONFIG_RANGES,
     get_dynamic_config,
     invalidate_dynamic_config_cache,
     get_strategy_config,
@@ -35,24 +37,6 @@ from backend.webui.deps import (
 )
 from backend.webui.helpers.admin_log import log_admin_action
 from backend.webui.i18n import detect_language
-
-# 基础配置项（非动态配置），用于 WebUI 配置页面分组展示及 Settings 即时更新
-_BASIC_CONFIG_KEYS = frozenset(
-    {
-        "max_concurrent_reviews",
-        "review_timeout_seconds",
-        "enable_auto_review",
-        "issue_auto_create_labels",
-        "issue_auto_assign",
-        "issue_max_tool_iterations",
-        "web_search_enabled",
-        "web_search_provider",
-        "web_search_api_key",
-        "web_search_max_results",
-        "web_search_max_content_length",
-        "web_search_timeout",
-    }
-)
 
 router = APIRouter(prefix="/config", tags=["WebUI Config"])
 templates = get_templates()
@@ -94,6 +78,17 @@ def _get_config_lock(path: str) -> asyncio.Lock:
         _config_locks.clear()
         _config_locks.update(cleaned)
     return lock
+
+
+def _parse_positive_int_config(raw: object) -> int:
+    """解析正整数配置值"""
+    try:
+        value = int(str(raw).strip())
+    except (TypeError, ValueError) as exc:
+        raise ValueError("invalid integer config value") from exc
+    if value < 1:
+        raise ValueError("integer config value must be positive")
+    return value
 
 
 def _atomic_yaml_write(path: Path, full_config: dict):
@@ -157,6 +152,7 @@ async def strategies_page(
         context_enhancement=config_data.get("context_enhancement", {}),
         review_policy=config_data.get("review_policy", {}),
         pr_dependency_graph=pr_dependency_graph,
+        issue_analysis=config_data.get("issue_analysis", {}),
         active_tab=tab,
     )
 
@@ -314,6 +310,54 @@ async def save_strategies_section(
                             description="PR dependency graph generation mode",
                         )
                     )
+
+            elif section == "issue_analysis":
+                # 解析分类定义
+                cat_names = form.getlist("cat_name")
+                cat_descs = form.getlist("cat_desc")
+                cat_keywords_raw = form.getlist("cat_keywords")
+                categories = []
+                for name, desc, kw_raw in zip(cat_names, cat_descs, cat_keywords_raw):
+                    name = name.strip()
+                    if not name:
+                        continue
+                    keywords = [k.strip() for k in kw_raw.split(",") if k.strip()]
+                    categories.append(
+                        {
+                            "name": name,
+                            "description": desc.strip(),
+                            "keywords": keywords,
+                        }
+                    )
+                if not categories:
+                    raise ValueError("至少需要定义一个 Issue 分类")
+
+                # 解析优先级规则
+                priority_rules = {}
+                for pkey in ("critical", "high", "medium", "low"):
+                    kw_raw = form.get(f"priority_{pkey}", "")
+                    keywords = [k.strip() for k in kw_raw.split(",") if k.strip()]
+                    priority_rules[pkey] = {"keywords": keywords}
+
+                # 解析关联关键词
+                ref_kw_raw = form.get("issue_reference_keywords", "")
+                ref_keywords = [k.strip() for k in ref_kw_raw.split(",") if k.strip()]
+
+                raw_linked = form.get("max_linked_issues_in_prompt", "5")
+                try:
+                    max_linked = int(raw_linked)
+                except (ValueError, TypeError):
+                    raise ValueError("关联 Issue 数量上限必须是有效整数")
+
+                config["issue_analysis"] = {
+                    "categories": categories,
+                    "priority_rules": priority_rules,
+                    "issue_reference_keywords": ref_keywords,
+                    "max_linked_issues_in_prompt": max_linked,
+                    "system_prompt": form.get("issue_system_prompt", ""),
+                    "comment_template": form.get("issue_comment_template", ""),
+                    "comment_template_en": form.get("issue_comment_template_en", ""),
+                }
             else:
                 raise HTTPException(status_code=400, detail=f"未知 section: {section}")
 
@@ -707,7 +751,7 @@ async def general_config_page(
         )
 
     # 基础配置项（非动态配置）
-    basic_configs = [c for c in configs if c.key_name in _BASIC_CONFIG_KEYS]
+    basic_configs = [c for c in configs if c.key_name in BASIC_CONFIG_KEYS]
 
     from backend.webui.routes.auth import APP_VERSION
 
@@ -742,19 +786,20 @@ async def save_general_config(
         # max_concurrent_reviews
         raw = form.get("max_concurrent_reviews")
         if raw is not None:
-            val = int(raw)
-            if not 1 <= val <= 100:
-                return toast_redirect(
-                    "/webui/config/general",
-                    "toast.invalid_param",
-                    "error",
-                    lang=detect_language(),
-                )
+            val = _parse_positive_int_config(raw)
             result = await db.execute(
                 select(AppConfig).where(AppConfig.key_name == "max_concurrent_reviews")
             )
             cfg = result.scalar_one_or_none()
-            if cfg and cfg.key_value != str(val):
+            if cfg is None:
+                cfg = AppConfig(
+                    key_name="max_concurrent_reviews",
+                    key_value=str(val),
+                    description="最大并发审查数量",
+                )
+                db.add(cfg)
+                changed["max_concurrent_reviews"] = {"old": "(无)", "new": str(val)}
+            elif cfg.key_value != str(val):
                 changed["max_concurrent_reviews"] = {
                     "old": cfg.key_value,
                     "new": str(val),
@@ -764,19 +809,20 @@ async def save_general_config(
         # review_timeout_seconds
         raw = form.get("review_timeout_seconds")
         if raw is not None:
-            val = int(raw)
-            if not 10 <= val <= 3600:
-                return toast_redirect(
-                    "/webui/config/general",
-                    "toast.invalid_param",
-                    "error",
-                    lang=detect_language(),
-                )
+            val = _parse_positive_int_config(raw)
             result = await db.execute(
                 select(AppConfig).where(AppConfig.key_name == "review_timeout_seconds")
             )
             cfg = result.scalar_one_or_none()
-            if cfg and cfg.key_value != str(val):
+            if cfg is None:
+                cfg = AppConfig(
+                    key_name="review_timeout_seconds",
+                    key_value=str(val),
+                    description="审查任务整体超时时间（秒）",
+                )
+                db.add(cfg)
+                changed["review_timeout_seconds"] = {"old": "(无)", "new": str(val)}
+            elif cfg.key_value != str(val):
                 changed["review_timeout_seconds"] = {
                     "old": cfg.key_value,
                     "new": str(val),
@@ -790,63 +836,17 @@ async def save_general_config(
             select(AppConfig).where(AppConfig.key_name == "enable_auto_review")
         )
         cfg = result.scalar_one_or_none()
-        if cfg and cfg.key_value != val:
+        if cfg is None:
+            cfg = AppConfig(
+                key_name="enable_auto_review",
+                key_value=val,
+                description="是否启用 Webhook 自动审查",
+            )
+            db.add(cfg)
+            changed["enable_auto_review"] = {"old": "(无)", "new": val}
+        elif cfg.key_value != val:
             changed["enable_auto_review"] = {"old": cfg.key_value, "new": val}
             cfg.key_value = val
-
-        # issue_auto_create_labels (checkbox)
-        raw = form.get("issue_auto_create_labels")
-        val = "true" if raw == "true" else "false"
-        result = await db.execute(
-            select(AppConfig).where(AppConfig.key_name == "issue_auto_create_labels")
-        )
-        cfg = result.scalar_one_or_none()
-        if cfg and cfg.key_value != val:
-            changed["issue_auto_create_labels"] = {"old": cfg.key_value, "new": val}
-            cfg.key_value = val
-
-        # issue_auto_assign (checkbox)
-        raw = form.get("issue_auto_assign")
-        val = "true" if raw == "true" else "false"
-        result = await db.execute(
-            select(AppConfig).where(AppConfig.key_name == "issue_auto_assign")
-        )
-        cfg = result.scalar_one_or_none()
-        if cfg and cfg.key_value != val:
-            changed["issue_auto_assign"] = {"old": cfg.key_value, "new": val}
-            cfg.key_value = val
-
-        # issue_max_tool_iterations
-        raw = form.get("issue_max_tool_iterations")
-        if raw is not None:
-            try:
-                val = int(raw)
-            except ValueError:
-                return toast_redirect(
-                    "/webui/config/general",
-                    "toast.ai_tool_iterations_invalid",
-                    "error",
-                    lang=detect_language(),
-                )
-            if not 1 <= val <= 150:
-                return toast_redirect(
-                    "/webui/config/general",
-                    "toast.ai_tool_iterations_range",
-                    "error",
-                    lang=detect_language(),
-                )
-            result = await db.execute(
-                select(AppConfig).where(
-                    AppConfig.key_name == "issue_max_tool_iterations"
-                )
-            )
-            cfg = result.scalar_one_or_none()
-            if cfg and cfg.key_value != str(val):
-                changed["issue_max_tool_iterations"] = {
-                    "old": cfg.key_value,
-                    "new": str(val),
-                }
-                cfg.key_value = str(val)
 
         # ========== Web 搜索配置 ==========
         web_search_keys = [
@@ -865,34 +865,32 @@ async def save_general_config(
             # 验证
             if key == "web_search_enabled":
                 val = "true" if val == "true" else "false"
-            elif key == "web_search_max_results":
-                val_i = int(val)
-                if not 1 <= val_i <= 10:
+            elif key in {
+                "web_search_max_results",
+                "web_search_max_content_length",
+                "web_search_timeout",
+            }:
+                try:
+                    val_i = int(val)
+                except ValueError:
                     return toast_redirect(
                         "/webui/config/general",
-                        "toast.web_search_max_results_range",
+                        "toast.numeric_required",
                         "error",
                         lang=detect_language(),
+                        field_key=key,
                     )
-                val = str(val_i)
-            elif key == "web_search_max_content_length":
-                val_i = int(val)
-                if not 100 <= val_i <= 5000:
+
+                min_v, max_v = DYNAMIC_CONFIG_RANGES[key]
+                if not (min_v <= val_i <= max_v):
                     return toast_redirect(
                         "/webui/config/general",
-                        "toast.result_truncation_range",
+                        "toast.value_range",
                         "error",
                         lang=detect_language(),
-                    )
-                val = str(val_i)
-            elif key == "web_search_timeout":
-                val_i = int(val)
-                if not 5 <= val_i <= 60:
-                    return toast_redirect(
-                        "/webui/config/general",
-                        "toast.search_timeout_range",
-                        "error",
-                        lang=detect_language(),
+                        field_key=key,
+                        min_v=min_v,
+                        max_v=max_v,
                     )
                 val = str(val_i)
             elif key == "web_search_provider":
@@ -924,7 +922,6 @@ async def save_general_config(
         from backend.core.config import (
             DYNAMIC_CONFIG_GROUPS,
             DYNAMIC_CONFIG_SENSITIVE_KEYS,
-            DYNAMIC_CONFIG_RANGES,
             DYNAMIC_CONFIG_SELECT_OPTIONS,
             mask_sensitive_value as _mask,
         )
@@ -963,7 +960,7 @@ async def save_general_config(
                             "toast.numeric_required",
                             "error",
                             lang=detect_language(),
-                            key=key,
+                            field_key=key,
                         )
                     if not (min_v <= num_val <= max_v):
                         return toast_redirect(
@@ -971,7 +968,7 @@ async def save_general_config(
                             "toast.value_range",
                             "error",
                             lang=detect_language(),
-                            key=key,
+                            field_key=key,
                             min_v=min_v,
                             max_v=max_v,
                         )
@@ -986,7 +983,7 @@ async def save_general_config(
                             "toast.value_invalid",
                             "error",
                             lang=detect_language(),
-                            key=key,
+                            field_key=key,
                         )
 
                 # 保存
@@ -1039,7 +1036,7 @@ async def save_general_config(
 
         # 即时更新 Settings 单例，无需重启
         for key, change in changed.items():
-            if key in all_dynamic_keys or key in _BASIC_CONFIG_KEYS:
+            if key in all_dynamic_keys or key in BASIC_CONFIG_KEYS:
                 update_settings_field(key, change.get("raw_new", change["new"]))
 
         logger.info(f"全局配置已更新, by={user['sub']}, changed={list(changed.keys())}")

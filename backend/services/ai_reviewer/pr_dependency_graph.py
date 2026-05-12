@@ -26,11 +26,15 @@ _IMPORT_PATTERNS: Dict[str, List[re.Pattern[str]]] = {
     ],
     "javascript": [
         re.compile(r"""^import\s+.*?\s+from\s+['"]([^'"]+)['"]""", re.MULTILINE),
-        re.compile(r"""^(?:import|require)\s*\(?\s*['"]([^'"]+)['"]\)?\s*;?""", re.MULTILINE),
+        re.compile(
+            r"""^(?:import|require)\s*\(?\s*['"]([^'"]+)['"]\)?\s*;?""", re.MULTILINE
+        ),
     ],
     "typescript": [
         re.compile(r"""^import\s+.*?\s+from\s+['"]([^'"]+)['"]""", re.MULTILINE),
-        re.compile(r"""^(?:import|require)\s*\(?\s*['"]([^'"]+)['"]\)?\s*;?""", re.MULTILINE),
+        re.compile(
+            r"""^(?:import|require)\s*\(?\s*['"]([^'"]+)['"]\)?\s*;?""", re.MULTILINE
+        ),
     ],
     "go": [
         re.compile(r'^import\s+"([\w./\-]+)"\s*$', re.MULTILINE),
@@ -50,11 +54,15 @@ _IMPORT_PATTERNS: Dict[str, List[re.Pattern[str]]] = {
         re.compile(r'#include\s*[<"]([^>"]+)[>"]', re.MULTILINE),
     ],
     "ruby": [
-        re.compile(r"^(?:require|require_relative)\s+['\"]([^'\"]+)['\"]", re.MULTILINE),
+        re.compile(
+            r"^(?:require|require_relative)\s+['\"]([^'\"]+)['\"]", re.MULTILINE
+        ),
     ],
     "php": [
         re.compile(r"use\s+([\w\\]+)", re.MULTILINE),
-        re.compile(r"^(?:require|include)(?:_once)?\s+['\"]([^'\"]+)['\"]", re.MULTILINE),
+        re.compile(
+            r"^(?:require|include)(?:_once)?\s+['\"]([^'\"]+)['\"]", re.MULTILINE
+        ),
     ],
     "swift": [
         re.compile(r"^import\s+(\w+)", re.MULTILINE),
@@ -336,7 +344,9 @@ class PRDependencyGraphService:
     ) -> str:
         """基于 import 关系静态生成 Mermaid 依赖图。"""
         available_files = [
-            f for f in code_files if f.path in file_contents and self._get_language(f.path)
+            f
+            for f in code_files
+            if f.path in file_contents and self._get_language(f.path)
         ]
         if not available_files:
             return ""
@@ -373,7 +383,9 @@ class PRDependencyGraphService:
 
         selected_node_set = set(selected_nodes)
         selected_edges = [
-            edge for edge in sorted(edges) if edge[0] in selected_node_set and edge[1] in selected_node_set
+            edge
+            for edge in sorted(edges)
+            if edge[0] in selected_node_set and edge[1] in selected_node_set
         ]
 
         node_ids = {path: f"N{i}" for i, path in enumerate(selected_nodes, 1)}
@@ -428,7 +440,10 @@ class PRDependencyGraphService:
             aliases.add(package)
             aliases.add(package.replace("/", "."))
 
-        if path.name in {"index.js", "index.jsx", "index.ts", "index.tsx"} and len(parts) > 1:
+        if (
+            path.name in {"index.js", "index.jsx", "index.ts", "index.tsx"}
+            and len(parts) > 1
+        ):
             module = "/".join(parts[:-1])
             aliases.add(module)
             aliases.add(module.replace("/", "."))
@@ -460,7 +475,9 @@ class PRDependencyGraphService:
             module_part = normalized[leading_dot_count:]
             source_parts = list(PurePosixPath(cls._normalize_path(source_path)).parts)
             package_parts = source_parts[:-1]
-            keep_parts = package_parts[: max(0, len(package_parts) - leading_dot_count + 1)]
+            keep_parts = package_parts[
+                : max(0, len(package_parts) - leading_dot_count + 1)
+            ]
             resolved_parts = keep_parts + ([module_part] if module_part else [])
             resolved = "/".join(part for part in resolved_parts if part)
             candidates.add(resolved)

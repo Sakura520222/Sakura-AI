@@ -208,10 +208,13 @@ class ReviewWorker:
 
     async def process_review_task(self, pr_info: Dict[str, Any]) -> str:
         """处理审查任务"""
-        task_id = str(uuid.uuid4())[:8]  # 日志追踪用短 ID，碰撞概率约 1/43亿，不用于持久化唯一键
+        task_id = str(uuid.uuid4())[
+            :8
+        ]  # 日志追踪用短 ID，碰撞概率约 1/43亿，不用于持久化唯一键
         task_key = self._make_task_key(pr_info)
         review_obj = None  # 用于保存 GitHub Review 对象
         review_id = None  # 用于保存数据库审查记录 ID
+        output_language = None  # 用户级输出语言；异常路径会复用该值
 
         # Cancel event was already registered in submit_review_task
         # before asyncio.create_task, so cancel_task works immediately
@@ -261,7 +264,11 @@ class ReviewWorker:
                         )
                         logger.info(f"[{task_id}] 代码索引完成")
                     except Exception as e:
-                        logger.warning(f"[{task_id}] 代码索引失败（将继续审查）: {e}")
+                        logger.warning(
+                            "[{}] 代码索引失败（将继续审查）: {}",
+                            task_id,
+                            str(e),
+                        )
 
                 # 2.6 文档索引（如果启用 RAG 且仓库尚未索引过文档）
                 if settings.enable_rag:
@@ -346,7 +353,10 @@ class ReviewWorker:
                 # Cancel checkpoint: before PR summary and AI review
                 if self._check_cancelled(task_key):
                     return await self._cancel_and_cleanup(
-                        task_id, task_key, review_obj, review_id,
+                        task_id,
+                        task_key,
+                        review_obj,
+                        review_id,
                         "跳过 PR 总结和 AI 审查",
                     )
 
@@ -371,7 +381,7 @@ class ReviewWorker:
                         pr_summary_text = summary
                         logger.info(f"[{task_id}] PR 变更总结已更新")
                     except Exception as e:
-                        logger.warning(f"[{task_id}] PR 变更总结生成失败: {e}")
+                        logger.warning("[{}] PR 变更总结生成失败: {}", task_id, str(e))
 
                 # 4.6 PR 依赖图生成（如果启用）
                 if settings.enable_pr_dependency_graph:
@@ -500,7 +510,11 @@ class ReviewWorker:
                                 f"[{task_id}] 关联了 {len(issue_contents)} 个 Issue 到审查上下文"
                             )
                     except Exception as e:
-                        logger.warning(f"[{task_id}] Issue 关联失败（不影响审查）: {e}")
+                        logger.warning(
+                            "[{}] Issue 关联失败（不影响审查）: {}",
+                            task_id,
+                            str(e),
+                        )
 
                 # 6.6 语义 Issue 关联（如果启用）
                 if (
@@ -715,7 +729,9 @@ class ReviewWorker:
 
                         except Exception as label_error:
                             logger.warning(
-                                f"[{task_id}] 标签推荐失败（不影响审查）: {label_error}"
+                                "[{}] 标签推荐失败（不影响审查）: {}",
+                                task_id,
+                                str(label_error),
                             )
                             return None
 
@@ -730,14 +746,16 @@ class ReviewWorker:
                     # 8. 保存审查结果
                     await self._save_review_results(review_id, review_result, analysis)
                 else:
-                    logger.error(f"[{task_id}] AI审查失败: {review_result}")
+                    logger.error("[{}] AI审查失败: {}", task_id, str(review_result))
                     raise review_result
 
                 # 获取标签推荐结果
                 label_results = None
                 if enable_label_recommendation and len(results) > 1:
                     if isinstance(results[1], Exception):
-                        logger.warning(f"[{task_id}] 标签推荐任务异常: {results[1]}")
+                        logger.warning(
+                            "[{}] 标签推荐任务异常: {}", task_id, str(results[1])
+                        )
                     else:
                         label_results = results[1]
 
@@ -800,7 +818,9 @@ class ReviewWorker:
                         logger.info(f"[{task_id}] 已触发 .sakura/ 反思任务")
                 except Exception as e:
                     logger.warning(
-                        f"[{task_id}] 触发 .sakura/ 反思失败（不影响审查）: {e}"
+                        "[{}] 触发 .sakura/ 反思失败（不影响审查）: {}",
+                        task_id,
+                        str(e),
                     )
 
                 # 12. 发送Telegram审查完成通知
@@ -813,7 +833,12 @@ class ReviewWorker:
                 return task_id
 
             except Exception as e:
-                logger.error(f"[{task_id}] 处理审查任务时出错: {e}", exc_info=True)
+                logger.error(
+                    "[{}] 处理审查任务时出错: {}",
+                    task_id,
+                    str(e),
+                    exc_info=True,
+                )
 
                 # 【错误处理】更新占位评论为错误消息
                 if review_obj:
@@ -826,13 +851,17 @@ class ReviewWorker:
                         )
                         logger.info(f"[{task_id}] 已更新占位评论为错误状态")
                     except Exception as update_error:
-                        logger.error(f"[{task_id}] 更新错误消息失败: {update_error}")
+                        logger.error(
+                            "[{}] 更新错误消息失败: {}",
+                            task_id,
+                            str(update_error),
+                        )
 
                 # 保存错误信息到数据库
                 try:
                     await self._save_error_record(pr_info, str(e), task_id)
                 except Exception as save_error:
-                    logger.error(f"保存错误记录失败: {save_error}")
+                    logger.error("保存错误记录失败: {}", str(save_error))
                 raise
             finally:
                 # Always unregister task to clean up cancel event
@@ -907,7 +936,7 @@ class ReviewWorker:
                 },
             )
         except Exception as e:
-            logger.warning(f"发布 SSE 事件失败（不影响主流程）: {e}")
+            logger.warning("发布 SSE 事件失败（不影响主流程）: {}", str(e))
 
     async def _save_review_results(
         self, review_id: int, review_result: Dict[str, Any], analysis: PRAnalysis
@@ -1152,13 +1181,22 @@ class ReviewWorker:
                             f"[{task_id}] 已撤回 {dismissed} 条旧 Review，将提交全量审查"
                         )
                     else:
-                        logger.debug(
-                            f"[{task_id}] 全量审查模式，无旧 Review 需撤回"
-                        )
+                        logger.debug(f"[{task_id}] 全量审查模式，无旧 Review 需撤回")
 
             # 使用 submit_review_with_inline_comments 方法（带重试机制）
             max_retries = 1  # 失败后重试1次
             success = False
+            review_event = decision.value.upper()  # APPROVE, REQUEST_CHANGES, COMMENT
+            author = pr_info.get("author", "")
+            bot_names = (
+                {bot_username, f"{bot_username}[bot]"} if bot_username else set()
+            )
+            if review_event == "APPROVE" and author in bot_names:
+                logger.info(
+                    f"[{task_id}] Bot 自身创建的 PR 不能 APPROVE，降级为 COMMENT: "
+                    f"author={author}"
+                )
+                review_event = "COMMENT"
 
             for attempt in range(max_retries + 1):
                 success = await asyncio.to_thread(
@@ -1166,7 +1204,7 @@ class ReviewWorker:
                     repo_owner=pr_info["repo_owner"],
                     repo_name=pr_info["repo_name"],
                     pr_number=pr_info["pr_number"],
-                    event=decision.value.upper(),  # APPROVE, REQUEST_CHANGES, COMMENT
+                    event=review_event,
                     body=review_body,
                     inline_comments=inline_comments,
                     bot_username=bot_username,
@@ -1191,7 +1229,7 @@ class ReviewWorker:
                     repo_owner=pr_info["repo_owner"],
                     repo_name=pr_info["repo_name"],
                     pr_number=pr_info["pr_number"],
-                    event=decision.value.upper(),
+                    event=review_event,
                     body=review_body,
                     bot_username=bot_username,
                     enable_idempotency_check=enable_idempotency,
@@ -1204,12 +1242,12 @@ class ReviewWorker:
             if success:
                 if inline_comments:
                     logger.info(
-                        f"[{task_id}] ✅ 成功提交Review到GitHub: {decision.value} "
+                        f"[{task_id}] ✅ 成功提交Review到GitHub: {review_event.lower()} "
                         f"(含{len(inline_comments)}条行内评论)"
                     )
                 else:
                     logger.info(
-                        f"[{task_id}] ✅ 成功提交Review到GitHub: {decision.value} "
+                        f"[{task_id}] ✅ 成功提交Review到GitHub: {review_event.lower()} "
                         f"(无行内评论)"
                     )
             else:
@@ -1220,7 +1258,7 @@ class ReviewWorker:
             return decision, decision_reason
 
         except Exception as e:
-            logger.error(f"[{task_id}] 决策引擎执行失败: {e}", exc_info=True)
+            logger.error("[{}] 决策引擎执行失败: {}", task_id, str(e), exc_info=True)
             # 出错时返回None，不影响审查完成
             return None, f"决策过程异常: {str(e)}"
 
@@ -1277,7 +1315,7 @@ class ReviewWorker:
             )
 
         except Exception as e:
-            logger.error(f"发送Telegram通知失败: {e}", exc_info=True)
+            logger.error("发送Telegram通知失败: {}", str(e), exc_info=True)
 
 
 # 全局Worker实例
@@ -1308,7 +1346,7 @@ async def submit_review_task(pr_info: Dict[str, Any]) -> str:
 
     # 在生产环境中，这里应该提交到Celery队列
     # 为了简化，我们直接异步执行
-    asyncio.create_task(worker.process_review_task(pr_info))
+    asyncio.create_task(_run_review_task_with_timeout(worker, pr_info, task_key))
 
     # 返回任务标识（owner/repo#pr_number），可用于取消
     return task_key
@@ -1317,4 +1355,37 @@ async def submit_review_task(pr_info: Dict[str, Any]) -> str:
 async def process_review_task_sync(pr_info: Dict[str, Any]) -> str:
     """同步处理审查任务（用于Celery Worker）"""
     worker = get_worker()
-    return await worker.process_review_task(pr_info)
+    task_key = ReviewWorker._make_task_key(pr_info)
+    worker._register_task(task_key, force_new=True)
+    return await _run_review_task_with_timeout(worker, pr_info, task_key)
+
+
+async def _run_review_task_with_timeout(
+    worker: ReviewWorker,
+    pr_info: Dict[str, Any],
+    task_key: str,
+) -> str:
+    """按配置限制单个审查任务的整体执行时间"""
+    timeout_seconds = get_settings().review_timeout_seconds
+    try:
+        return await asyncio.wait_for(
+            worker.process_review_task(pr_info),
+            timeout=timeout_seconds,
+        )
+    except TimeoutError as exc:
+        worker.cancel_task(task_key)
+        task_id = "timeout"
+        message = f"审查任务超时（{timeout_seconds}秒）"
+        logger.error(
+            "{}: {}",
+            message,
+            task_key,
+        )
+        try:
+            await worker._save_error_record(pr_info, message, task_id)
+        except Exception as save_error:
+            logger.error(
+                "保存超时错误记录失败: {}",
+                str(save_error),
+            )
+        raise RuntimeError(f"{message}: {task_key}") from exc

@@ -75,7 +75,9 @@ async def _fetch_recent_reviews(
 
 _APP_INSTALL_CACHE_TTL = 1800  # 30 分钟（已安装）
 _APP_INSTALL_CACHE_TTL_NEGATIVE = 60  # 60 秒（未安装，便于安装后快速刷新）
-_APP_INSTALL_CACHE_TTL_UNKNOWN = 30  # 30 秒（无法检测，避免 Integration 异常时反复请求）
+_APP_INSTALL_CACHE_TTL_UNKNOWN = (
+    30  # 30 秒（无法检测，避免 Integration 异常时反复请求）
+)
 
 # GitHub App slug 缓存（不变量，启动后获取一次即可）
 _app_slug_cache: str | None = None

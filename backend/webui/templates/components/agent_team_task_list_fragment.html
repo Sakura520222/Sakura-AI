@@ -1,0 +1,147 @@
+<div class="space-y-4" data-page="{{ page }}">
+    <div class="bg-white dark:bg-gray-800 rounded-2xl border border-gray-200 dark:border-gray-700 overflow-hidden">
+        <div class="px-5 py-4 border-b border-gray-200 dark:border-gray-700 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
+            <div>
+                <h2 class="text-lg font-bold">{{ _('agent_team.tasks') }}</h2>
+                <p class="text-xs text-gray-500 dark:text-gray-400 mt-1">
+                    {{ _('common.total') }} {{ total }} {{ _('common.items') }} · {{ _('agent_team.filter_status') }}: {{ _('agent_team.status_' ~ status) if status not in ('all', 'active') else ( _('agent_team.filter_all') if status == 'all' else _('agent_team.stats_active') ) }}
+                </p>
+            </div>
+            <button onclick="refreshAgentTaskList()" class="px-3 py-1.5 rounded-xl text-xs font-semibold border border-sakura-200 dark:border-sakura-800/50 text-sakura-700 dark:text-sakura-300 hover:bg-sakura-50 dark:hover:bg-sakura-900/20 transition-colors">{{ _('agent_team.refresh_tasks') }}</button>
+        </div>
+
+        {% if tasks %}
+        <div class="divide-y divide-gray-200 dark:divide-gray-700">
+            {% for task in tasks %}
+            <article class="p-5 hover:bg-sakura-50/40 dark:hover:bg-sakura-900/10 transition-colors" id="task-{{ task.id }}">
+                <div class="flex flex-col xl:flex-row xl:items-start xl:justify-between gap-4">
+                    <div class="flex-1 min-w-0">
+                        <div class="flex flex-wrap items-center gap-2">
+                            <span class="inline-flex px-2.5 py-1 rounded-full text-xs font-semibold
+                                {% if task.status == 'completed' %}bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-300
+                                {% elif task.status == 'failed' %}bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-300
+                                {% elif task.status == 'cancelled' or task.status == 'abandoned' %}bg-gray-100 text-gray-500 dark:bg-gray-700 dark:text-gray-400
+                                {% elif task.status == 'waiting_human' %}bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-300
+                                {% else %}bg-sakura-100 text-sakura-700 dark:bg-sakura-900/30 dark:text-sakura-300{% endif %}">
+                                {{ _('agent_team.status_' ~ task.status) }}
+                            </span>
+                            <span class="text-xs text-gray-500 dark:text-gray-400">#{{ task.id }}</span>
+                            {% if task.priority %}<span class="text-xs px-2 py-0.5 rounded-full bg-purple-100 text-purple-700 dark:bg-purple-900/30 dark:text-purple-300">{{ task.priority }}</span>{% endif %}
+                            <span class="text-xs px-2 py-0.5 rounded-full bg-gray-100 text-gray-600 dark:bg-gray-700 dark:text-gray-300">score {{ task.candidate_score }}</span>
+                        </div>
+                        <h3 class="mt-3 font-bold text-gray-900 dark:text-gray-100 line-clamp-2">{{ task.title }}</h3>
+                        <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
+                            {{ task.repo_full_name }} · {{ _('agent_team.source_' ~ task.source_type) }} · {{ task.created_at.strftime('%Y-%m-%d %H:%M') if task.created_at else '-' }}
+                        </p>
+                        {% if task.summary %}<p class="mt-3 text-sm text-gray-600 dark:text-gray-300 line-clamp-2">{{ task.summary }}</p>{% endif %}
+                        {% if task.error_message %}<p class="mt-3 text-sm text-red-600 dark:text-red-400 line-clamp-2">{{ task.error_message }}</p>{% endif %}
+                        <div class="mt-4 grid grid-cols-2 md:grid-cols-4 gap-2 text-xs">
+                            <div class="rounded-xl bg-gray-50 dark:bg-gray-900/50 p-2">
+                                <div class="text-gray-400">{{ _('agent_team.current_phase') }}</div>
+                                <div class="mt-1 font-semibold truncate">{{ task.current_phase or '-' }}</div>
+                            </div>
+                            <div class="rounded-xl bg-gray-50 dark:bg-gray-900/50 p-2">
+                                <div class="text-gray-400">{{ _('agent_team.iterations') }}</div>
+                                <div class="mt-1 font-semibold">{{ task.iteration_count }}/{{ task.max_iterations }}</div>
+                            </div>
+                            <div class="rounded-xl bg-gray-50 dark:bg-gray-900/50 p-2">
+                                <div class="text-gray-400">{{ _('agent_team.tokens') }}</div>
+                                <div class="mt-1 font-semibold">{{ (task.prompt_tokens or 0) + (task.completion_tokens or 0) }}</div>
+                            </div>
+                            <div class="rounded-xl bg-gray-50 dark:bg-gray-900/50 p-2">
+                                <div class="text-gray-400">{{ _('agent_team.cost') }}</div>
+                                <div class="mt-1 font-semibold">{{ '%.2f'|format((task.estimated_cost or 0) / 100) }}</div>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="xl:w-52 shrink-0 flex xl:flex-col gap-2 xl:items-stretch flex-wrap">
+                        {% if task.pr_url %}
+                        <a href="{{ task.pr_url }}" target="_blank" class="px-3 py-2 text-xs font-semibold rounded-xl bg-gray-900 dark:bg-white text-white dark:text-gray-900 text-center hover:opacity-90 transition-opacity">{{ _('agent_team.open_pr') }}</a>
+                        {% endif %}
+                        <button onclick="loadTaskDetail({{ task.id }})" class="px-3 py-2 text-xs font-semibold rounded-xl bg-sakura-500 hover:bg-sakura-600 text-white transition-colors">{{ _('agent_team.view_detail') }}</button>
+                        {% if task.status in ('failed', 'cancelled', 'abandoned') %}
+                        <button onclick="retryTask({{ task.id }})" class="px-3 py-2 text-xs font-semibold rounded-xl bg-red-500 hover:bg-red-600 text-white transition-colors">{{ _('agent_team.retry') }}</button>
+                        {% elif task.status == 'queued' %}
+                        <button onclick="retryTask({{ task.id }})" class="px-3 py-2 text-xs font-semibold rounded-xl bg-amber-500 hover:bg-amber-600 text-white transition-colors">{{ _('agent_team.retry') }}</button>
+                        <button onclick="cancelTask({{ task.id }})" class="px-3 py-2 text-xs font-semibold rounded-xl bg-gray-400 hover:bg-gray-500 text-white transition-colors">{{ _('agent_team.cancel') }}</button>
+                        {% elif task.status not in ('completed', 'pr_opened') %}
+                        <button onclick="cancelTask({{ task.id }})" class="px-3 py-2 text-xs font-semibold rounded-xl bg-gray-400 hover:bg-gray-500 text-white transition-colors">{{ _('agent_team.cancel') }}</button>
+                        {% endif %}
+                        {% if task.status not in ('queued', 'planning', 'cloning', 'editing', 'self_reviewing', 'validating', 'pushing', 'external_reviewing', 'iterating') %}
+                        <button onclick="deleteTask({{ task.id }})" class="px-3 py-2 text-xs font-semibold rounded-xl bg-red-50 dark:bg-red-900/20 text-red-700 dark:text-red-300 border border-red-200 dark:border-red-800/60 hover:bg-red-100 dark:hover:bg-red-900/30 transition-colors">{{ _('agent_team.delete') }}</button>
+                        {% endif %}
+                    </div>
+                </div>
+            </article>
+            {% endfor %}
+        </div>
+        {% else %}
+        <div class="p-12 text-center text-gray-500 dark:text-gray-400">
+            <svg class="w-12 h-12 mx-auto text-gray-300 dark:text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/></svg>
+            <p class="mt-4">{{ _('agent_team.no_tasks') }}</p>
+        </div>
+        {% endif %}
+
+        {% if total_pages > 1 %}
+        <div class="px-5 py-3 border-t border-gray-200 dark:border-gray-700 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+            <p class="text-sm text-gray-500 dark:text-gray-400">{{ _('common.page') }} {{ page }}/{{ total_pages }}</p>
+            <div class="flex flex-wrap gap-1">
+                {% if page > 1 %}<a href="#" onclick="loadAgentTaskPage({{ page - 1 }}); return false;" class="px-3 py-1.5 rounded-lg text-sm border border-gray-300 dark:border-gray-600 hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors">{{ _('common.prev_page') }}</a>{% endif %}
+                {% for p in range(1, total_pages + 1) %}
+                    {% if p == page %}<span class="px-3 py-1.5 rounded-lg text-sm bg-sakura-500 text-white">{{ p }}</span>
+                    {% elif p <= 3 or p >= total_pages - 2 or (p >= page - 1 and p <= page + 1) %}<a href="#" onclick="loadAgentTaskPage({{ p }}); return false;" class="px-3 py-1.5 rounded-lg text-sm border border-gray-300 dark:border-gray-600 hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors">{{ p }}</a>
+                    {% elif p == 4 or p == total_pages - 3 %}<span class="px-2 py-1.5 text-gray-400">...</span>{% endif %}
+                {% endfor %}
+                {% if page < total_pages %}<a href="#" onclick="loadAgentTaskPage({{ page + 1 }}); return false;" class="px-3 py-1.5 rounded-lg text-sm border border-gray-300 dark:border-gray-600 hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors">{{ _('common.next_page') }}</a>{% endif %}
+            </div>
+        </div>
+        {% endif %}
+    </div>
+</div>
+
+<script>
+function retryTask(taskId) {
+    fetch(`/webui/agent-team/tasks/${taskId}/retry`, {
+        method: 'POST',
+        headers: {'Content-Type': 'application/x-www-form-urlencoded'},
+        body: new URLSearchParams({csrf_token: '{{ csrf_token }}'})
+    }).then(r => r.json()).then(data => {
+        window.dispatchEvent(new CustomEvent('show-toast', {detail: {message: data.success ? '{{ _('agent_team.task_retried') }}' : (data.message || '{{ _('agent_team.request_failed') }}'), type: data.success ? 'success' : 'error'}}));
+        if (data.success) refreshAgentTaskList();
+    }).catch(() => window.dispatchEvent(new CustomEvent('show-toast', {detail: {message: '{{ _('agent_team.request_failed') }}', type: 'error'}})));
+}
+function cancelTask(taskId) {
+    fetch(`/webui/agent-team/tasks/${taskId}/cancel`, {
+        method: 'POST',
+        headers: {'Content-Type': 'application/x-www-form-urlencoded'},
+        body: new URLSearchParams({csrf_token: '{{ csrf_token }}'})
+    }).then(r => r.json()).then(data => {
+        window.dispatchEvent(new CustomEvent('show-toast', {detail: {message: data.success ? '{{ _('agent_team.task_cancelled') }}' : (data.message || '{{ _('agent_team.request_failed') }}'), type: data.success ? 'success' : 'error'}}));
+        if (data.success) refreshAgentTaskList();
+    }).catch(() => window.dispatchEvent(new CustomEvent('show-toast', {detail: {message: '{{ _('agent_team.request_failed') }}', type: 'error'}})));
+}
+function deleteTask(taskId) {
+    var dialogEl = document.querySelector('[x-data="confirmDialog()"]');
+    var ask = dialogEl && window.Alpine ? Alpine.$data(dialogEl).ask.bind(Alpine.$data(dialogEl)) : null;
+    var confirmPromise = ask ? ask({
+        message: '{{ _('agent_team.confirm_delete') }}',
+        warning: '{{ _('agent_team.delete_warning') }}',
+        confirmText: '{{ _('agent_team.delete') }}'
+    }) : Promise.resolve(window.confirm('{{ _('agent_team.confirm_delete') }}'));
+    confirmPromise.then(function(confirmed) {
+        if (!confirmed) return;
+        fetch(`/webui/agent-team/tasks/${taskId}/delete`, {
+            method: 'POST',
+            headers: {'Content-Type': 'application/x-www-form-urlencoded'},
+            body: new URLSearchParams({csrf_token: '{{ csrf_token }}'})
+        }).then(r => r.json()).then(data => {
+            window.dispatchEvent(new CustomEvent('show-toast', {detail: {message: data.success ? '{{ _('agent_team.task_deleted') }}' : (data.message || '{{ _('agent_team.request_failed') }}'), type: data.success ? 'success' : 'error'}}));
+            if (data.success) {
+                var detail = document.getElementById('agent-task-detail');
+                if (detail) detail.innerHTML = '<div class="p-6 text-center text-gray-500 dark:text-gray-400">{{ _('agent_team.select_task_hint') }}</div>';
+                refreshAgentTaskList();
+            }
+        }).catch(() => window.dispatchEvent(new CustomEvent('show-toast', {detail: {message: '{{ _('agent_team.request_failed') }}', type: 'error'}})));
+    });
+}
+</script>

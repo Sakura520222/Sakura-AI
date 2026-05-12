@@ -13,6 +13,8 @@ from loguru import logger
 
 from backend.core.ai_providers import get_provider_select_options
 
+DEFAULT_FETCH_URL_ALLOWED_CONTENT_TYPES = "text/html,application/xhtml+xml,text/plain"
+
 
 class Settings(BaseSettings):
     """应用配置"""
@@ -62,6 +64,50 @@ class Settings(BaseSettings):
     app_domain: str = "localhost"
     app_port: int = 8000
     log_level: str = "INFO"
+    sakura_env: str = Field(
+        "production",
+        description="运行环境标识（production / development）",
+    )
+    sakura_dev_bootstrap: bool = Field(
+        False,
+        description="是否启用本地 Setup Wizard 调试模式",
+    )
+    sakura_skip_background_tasks: bool = Field(
+        False,
+        description="是否跳过 Telegram、SSE、扫描、配额等后台任务",
+    )
+
+    # 基础审查任务配置
+    max_concurrent_reviews: int = Field(
+        5,
+        description="最大并发审查数量",
+    )
+    review_timeout_seconds: int = Field(
+        300,
+        description="审查任务整体超时时间（秒）",
+    )
+    enable_auto_review: bool = Field(
+        True,
+        description="是否启用 Webhook 自动审查",
+    )
+
+    # AI API 调用配置
+    ai_api_timeout_seconds: float = Field(
+        120.0,
+        description="AI API 单次请求超时时间（秒）",
+    )
+    ai_api_max_retries: int = Field(
+        5,
+        description="AI API 最大重试次数",
+    )
+    ai_api_initial_retry_delay_seconds: float = Field(
+        1.0,
+        description="AI API 初始重试延迟（秒）",
+    )
+    ai_api_total_timeout_seconds: float = Field(
+        900.0,
+        description="AI API 重试总超时时间（秒）",
+    )
 
     # 审查策略配置
     max_file_count: int = 100
@@ -211,6 +257,11 @@ class Settings(BaseSettings):
         return missing
 
     @property
+    def is_development(self) -> bool:
+        """是否为本地开发环境"""
+        return self.sakura_env.lower() in {"dev", "development", "local"}
+
+    @property
     def webhook_url(self) -> str:
         """获取完整的Webhook URL"""
         return f"https://{self.app_domain}{self.webhook_path}"
@@ -316,6 +367,10 @@ class Settings(BaseSettings):
     fetch_url_domain_policy: str = "off"  # 域名过滤策略：off / blacklist / whitelist
     fetch_url_domain_list: str = ""  # 域名列表（逗号分隔）
     fetch_url_force_https: bool = False  # 强制仅允许 HTTPS 协议
+    fetch_url_allowed_content_types: str = (
+        DEFAULT_FETCH_URL_ALLOWED_CONTENT_TYPES  # 允许抓取的 Content-Type（逗号分隔）
+    )
+    fetch_url_max_redirects: int = 3  # 最大重定向次数
 
     # ========== 支付配置 ==========
     payment_enabled: bool = False  # 是否启用付费配额系统
@@ -413,6 +468,36 @@ class Settings(BaseSettings):
     sakura_issue_reflection_enabled: bool = True  # 是否启用 Issue 分析后反思
     sakura_issue_reflection_model: str = ""  # Issue 反思使用的模型，为空时使用审查模型
     sakura_use_summary_model: bool = False  # 反思/合并任务使用辅助模型凭据以降低成本
+
+    # ========== Agent 专家团队模式配置 ==========
+    agent_team_enabled: bool = (
+        False  # 是否启用 Agent 专家团队模式（super_admin 手动使用）
+    )
+    agent_team_workspace_root: str = "./workplace"  # Agent 独立工作区根目录
+    agent_team_repo_allowlist: str = ""  # 允许使用的仓库列表，逗号分隔 owner/repo
+    agent_team_model_provider: str = "main"  # Agent AI 厂商，main 表示复用主 AI
+    agent_team_api_base: str = ""  # Agent API Base，选择复用主 AI 时使用主 AI
+    agent_team_api_key: str = ""  # Agent API Key，选择复用主 AI 时使用主 AI
+    agent_team_model: str = ""  # 全栈专家模型，选择复用主 AI 时使用主模型
+    agent_team_review_model: str = ""  # 专业审查模型，选择复用主 AI 时使用主模型
+    agent_team_summary_model: str = (
+        ""  # 摘要/反思辅助模型，选择复用主 AI 时使用辅助/主模型
+    )
+    agent_team_temperature: float = 0.2
+    agent_team_max_tokens: int = 8192
+    agent_team_timeout_seconds: int = 600
+    agent_team_max_concurrent: int = 1
+    agent_team_min_priority: str = "high"
+    agent_team_feasibility_keywords: str = "容易,简单,明确,低风险,可快速修复"
+    agent_team_max_iterations_per_task: int = 3
+    agent_team_max_runtime_minutes: int = 60
+    agent_team_draft_pr: bool = True
+    agent_team_max_files_changed: int = 8
+    agent_team_max_lines_changed: int = 500
+    agent_team_run_tests: bool = True
+    agent_team_test_command_allowlist: str = "pytest -q,python run_ruff.py --check"
+    agent_team_skills_enabled: bool = False
+    agent_team_skills_root: str = "./Skills"
 
 
 class StrategyConfig:
@@ -606,6 +691,25 @@ DYNAMIC_CONFIG_GROUPS: OrderedDict[str, dict] = OrderedDict(
             },
         ),
         (
+            "ai_api",
+            {
+                "label": "AI API 调用配置",
+                "icon": "clock",
+                "descriptions": {
+                    "ai_api_timeout_seconds": "传递给 OpenAI 兼容 SDK 的单次请求超时时间，不等同于审查任务整体超时",
+                    "ai_api_max_retries": "单次 AI 调用失败或空响应时允许的最大尝试次数",
+                    "ai_api_initial_retry_delay_seconds": "首次重试前的基础延迟，后续按指数退避增加",
+                    "ai_api_total_timeout_seconds": "一次 AI 调用重试循环允许的最长总耗时",
+                },
+                "keys": [
+                    "ai_api_timeout_seconds",
+                    "ai_api_max_retries",
+                    "ai_api_initial_retry_delay_seconds",
+                    "ai_api_total_timeout_seconds",
+                ],
+            },
+        ),
+        (
             "summary_model",
             {
                 "label": "辅助模型配置",
@@ -750,15 +854,41 @@ DYNAMIC_CONFIG_GROUPS: OrderedDict[str, dict] = OrderedDict(
             },
         ),
         (
-            "issue_rewrite",
+            "issue_analysis",
             {
-                "label": "Issue 标题改写",
-                "icon": "pen-line",
+                "label": "Issue 分析配置",
+                "icon": "check-circle",
                 "descriptions": {
-                    "issue_auto_rewrite_title": "开启后，AI 分析 Issue 时会生成规范化标题并自动修改（默认关闭）",
+                    "enable_issue_analysis": "启用后，系统将自动分析新创建的 Issue",
+                    "issue_auto_comment": "分析完成后自动在 Issue 下发布分析报告评论",
+                    "issue_confidence_threshold": "标签置信度阈值（0-1），AI 建议标签的置信度达到此值才会自动应用",
+                    "issue_auto_create_labels": "自动创建仓库中不存在的推荐标签",
+                    "issue_auto_assign": "根据 AI 建议自动指派 Issue 负责人",
+                    "issue_auto_rewrite_title": "AI 生成规范化标题并自动修改 Issue 标题（默认关闭）",
+                    "issue_assignee_confidence_threshold": "指派人置信度阈值（0-1），达到此值才会自动指派",
+                    "issue_auto_assign_max": "单个 Issue 最多自动指派的人数",
+                    "issue_detect_duplicates": "启用后自动检测重复 Issue",
+                    "issue_suggest_assignees": "AI 分析时推荐合适的指派人",
+                    "issue_suggest_milestones": "AI 分析时推荐合适的里程碑",
+                    "issue_max_tool_iterations": "AI 工具调用最大迭代次数，控制分析深度",
+                    "issue_max_files_per_analysis": "单次分析最多读取的文件数",
+                    "issue_max_directory_depth": "目录浏览的最大深度",
                 },
                 "keys": [
+                    "enable_issue_analysis",
+                    "issue_auto_comment",
+                    "issue_confidence_threshold",
+                    "issue_auto_create_labels",
+                    "issue_auto_assign",
                     "issue_auto_rewrite_title",
+                    "issue_assignee_confidence_threshold",
+                    "issue_auto_assign_max",
+                    "issue_detect_duplicates",
+                    "issue_suggest_assignees",
+                    "issue_suggest_milestones",
+                    "issue_max_tool_iterations",
+                    "issue_max_files_per_analysis",
+                    "issue_max_directory_depth",
                 ],
             },
         ),
@@ -833,6 +963,52 @@ DYNAMIC_CONFIG_GROUPS: OrderedDict[str, dict] = OrderedDict(
             },
         ),
         (
+            "agent_team",
+            {
+                "label": "Agent 专家团队",
+                "icon": "bot",
+                "descriptions": {
+                    "agent_team_enabled": "启用后，超级管理员可手动使用 Agent 专家团队模式；当前版本不自动定时执行",
+                    "agent_team_workspace_root": "Agent 独立工作区根目录，本地默认 ./workplace，Docker 推荐 /app/workplace",
+                    "agent_team_repo_allowlist": "允许 Agent 操作的仓库列表，逗号分隔 owner/repo；为空时仅允许候选预览",
+                    "agent_team_model_provider": "Agent 专家团队 AI 厂商；选择“复用主 AI”时使用主 AI 配置",
+                    "agent_team_api_base": "Agent 专家团队 API Base；选择独立厂商时填写",
+                    "agent_team_api_key": "Agent 专家团队 API Key；选择独立厂商时填写，保存后脱敏显示",
+                    "agent_team_model": "全栈专家使用的模型；选择独立厂商时填写",
+                    "agent_team_review_model": "专业审查使用的模型；选择独立厂商时可填写，默认复用全栈专家模型",
+                    "agent_team_test_command_allowlist": "允许执行的验证命令白名单，逗号分隔",
+                    "agent_team_skills_enabled": "启用后，Agent 可按需加载已安装 Skills 的完整内容",
+                    "agent_team_skills_root": "Agent Skills 本地存储根目录，默认 ./Skills",
+                },
+                "keys": [
+                    "agent_team_enabled",
+                    "agent_team_workspace_root",
+                    "agent_team_repo_allowlist",
+                    "agent_team_model_provider",
+                    "agent_team_api_base",
+                    "agent_team_api_key",
+                    "agent_team_model",
+                    "agent_team_review_model",
+                    "agent_team_summary_model",
+                    "agent_team_temperature",
+                    "agent_team_max_tokens",
+                    "agent_team_timeout_seconds",
+                    "agent_team_max_concurrent",
+                    "agent_team_min_priority",
+                    "agent_team_feasibility_keywords",
+                    "agent_team_max_iterations_per_task",
+                    "agent_team_max_runtime_minutes",
+                    "agent_team_draft_pr",
+                    "agent_team_max_files_changed",
+                    "agent_team_max_lines_changed",
+                    "agent_team_run_tests",
+                    "agent_team_test_command_allowlist",
+                    "agent_team_skills_enabled",
+                    "agent_team_skills_root",
+                ],
+            },
+        ),
+        (
             "fetch_url",
             {
                 "label": "URL 抓取配置",
@@ -846,6 +1022,8 @@ DYNAMIC_CONFIG_GROUPS: OrderedDict[str, dict] = OrderedDict(
                     "fetch_url_domain_policy": "域名过滤策略：off（仅 IP 拦截）/ blacklist（黑名单）/ whitelist（白名单）",
                     "fetch_url_domain_list": "域名列表（逗号分隔），根据策略用作黑名单或白名单，支持 * 通配符",
                     "fetch_url_force_https": "强制仅允许 HTTPS 协议，拒绝 HTTP 明文传输",
+                    "fetch_url_allowed_content_types": "允许抓取的 Content-Type，多个 MIME 类型用逗号分隔",
+                    "fetch_url_max_redirects": "单次抓取允许跟随的最大重定向次数",
                 },
                 "keys": [
                     "fetch_url_enabled",
@@ -856,6 +1034,8 @@ DYNAMIC_CONFIG_GROUPS: OrderedDict[str, dict] = OrderedDict(
                     "fetch_url_domain_policy",
                     "fetch_url_domain_list",
                     "fetch_url_force_https",
+                    "fetch_url_allowed_content_types",
+                    "fetch_url_max_redirects",
                 ],
             },
         ),
@@ -900,6 +1080,7 @@ DYNAMIC_CONFIG_SENSITIVE_KEYS = frozenset(
         "webui_secret_key",
         "github_oauth_client_secret",
         "telegram_bot_token",
+        "agent_team_api_key",
     }
 )
 
@@ -930,10 +1111,21 @@ DYNAMIC_CONFIG_SELECT_OPTIONS: dict[str, list[dict]] = {
         {"value": "ai", "label": "AI 生成（使用 LLM 分析）"},
         {"value": "static", "label": "静态分析（正则提取 import）"},
     ],
+    "agent_team_model_provider": get_provider_select_options(include_main_ai=True),
+    "agent_team_min_priority": [
+        {"value": "critical", "label": "Critical"},
+        {"value": "high", "label": "High"},
+        {"value": "medium", "label": "Medium"},
+        {"value": "low", "label": "Low"},
+    ],
 }
 
 # 数值范围限制
 DYNAMIC_CONFIG_RANGES: dict[str, tuple[float, float]] = {
+    # Web 搜索基础配置
+    "web_search_max_results": (1, 100),
+    "web_search_max_content_length": (100, 50000),
+    "web_search_timeout": (5, 600),
     "embedding_dimension": (128, 4096),
     "rerank_score_threshold": (0.0, 1.0),
     "code_chunk_size": (100, 5000),
@@ -961,6 +1153,7 @@ DYNAMIC_CONFIG_RANGES: dict[str, tuple[float, float]] = {
     "sakura_consolidation_interval": (1, 50),
     "sakura_max_memory_chars": (500, 10000),
     "sakura_max_sakura_chars": (1000, 20000),
+    "agent_team_max_tokens": (1024, 32768),
 }
 
 # 字段中文标签
@@ -969,6 +1162,10 @@ DYNAMIC_CONFIG_LABELS: dict[str, str] = {
     "openai_api_base": "API Base URL",
     "openai_api_key": "API Key",
     "openai_model": "模型名称",
+    "ai_api_timeout_seconds": "AI API 请求超时（秒）",
+    "ai_api_max_retries": "AI API 最大重试次数",
+    "ai_api_initial_retry_delay_seconds": "AI API 初始重试延迟（秒）",
+    "ai_api_total_timeout_seconds": "AI API 重试总超时（秒）",
     "summary_provider": "辅助模型厂商",
     "summary_model": "辅助模型名称",
     "summary_api_base": "辅助模型 API 地址",
@@ -1062,8 +1259,48 @@ DYNAMIC_CONFIG_LABELS: dict[str, str] = {
     "fetch_url_domain_policy": "域名过滤策略",
     "fetch_url_domain_list": "域名列表",
     "fetch_url_force_https": "强制 HTTPS",
-    # Issue 标题改写
+    "fetch_url_allowed_content_types": "允许的 Content-Type",
+    "fetch_url_max_redirects": "最大重定向次数",
+    # Issue 分析配置
+    "enable_issue_analysis": "启用 Issue 分析",
+    "issue_auto_comment": "自动发布分析评论",
+    "issue_confidence_threshold": "标签置信度阈值",
+    "issue_auto_create_labels": "自动创建标签",
+    "issue_auto_assign": "自动指派负责人",
     "issue_auto_rewrite_title": "自动改写 Issue 标题",
+    "issue_assignee_confidence_threshold": "指派人置信度阈值",
+    "issue_auto_assign_max": "最大指派人数",
+    "issue_detect_duplicates": "检测重复 Issue",
+    "issue_suggest_assignees": "推荐指派人",
+    "issue_suggest_milestones": "推荐里程碑",
+    "issue_max_tool_iterations": "工具最大迭代次数",
+    "issue_max_files_per_analysis": "单次分析最大文件数",
+    "issue_max_directory_depth": "目录最大深度",
+    # Agent 专家团队
+    "agent_team_enabled": "启用 Agent 专家团队",
+    "agent_team_workspace_root": "工作区根目录",
+    "agent_team_repo_allowlist": "仓库白名单",
+    "agent_team_model_provider": "Agent AI 厂商",
+    "agent_team_api_base": "Agent API Base",
+    "agent_team_api_key": "Agent API Key",
+    "agent_team_model": "全栈专家模型",
+    "agent_team_review_model": "专业审查模型",
+    "agent_team_summary_model": "摘要/反思模型",
+    "agent_team_temperature": "温度参数",
+    "agent_team_max_tokens": "最大 Tokens",
+    "agent_team_timeout_seconds": "任务超时（秒）",
+    "agent_team_max_concurrent": "最大并发任务数",
+    "agent_team_min_priority": "最低 Issue 优先级",
+    "agent_team_feasibility_keywords": "可行性关键词",
+    "agent_team_max_iterations_per_task": "单任务最大迭代轮数",
+    "agent_team_max_runtime_minutes": "单任务最长运行时间（分钟）",
+    "agent_team_draft_pr": "创建 Draft PR",
+    "agent_team_max_files_changed": "最大修改文件数",
+    "agent_team_max_lines_changed": "最大修改行数",
+    "agent_team_run_tests": "自动运行验证命令",
+    "agent_team_test_command_allowlist": "验证命令白名单",
+    "agent_team_skills_enabled": "启用 Agent Skills",
+    "agent_team_skills_root": "Skills 根目录",
 }
 
 # 内存 TTL 缓存（进程级，多 Worker 部署时各进程独立，配置变更仅当前进程可见）
@@ -1327,6 +1564,24 @@ CORE_CONFIG_KEYS = frozenset(
     }
 )
 
+# WebUI 基础配置键（存储在 AppConfig 中，也需要加载到 Settings 单例）
+BASIC_CONFIG_KEYS = frozenset(
+    {
+        "max_concurrent_reviews",
+        "review_timeout_seconds",
+        "enable_auto_review",
+        "web_search_enabled",
+        "web_search_provider",
+        "web_search_api_key",
+        "web_search_max_results",
+        "web_search_max_content_length",
+        "web_search_timeout",
+        "issue_auto_create_labels",
+        "issue_auto_assign",
+        "issue_max_tool_iterations",
+    }
+)
+
 
 def get_all_dynamic_config_keys() -> list[str]:
     """获取所有动态配置键名"""
@@ -1337,11 +1592,12 @@ def get_all_dynamic_config_keys() -> list[str]:
 
 
 def get_all_db_config_keys() -> list[str]:
-    """获取所有应从 DB 加载的配置键（动态配置 + 核心配置）"""
+    """获取所有应从 DB 加载的配置键（动态配置 + 核心配置 + 基础配置）"""
     keys = get_all_dynamic_config_keys()
-    for key in CORE_CONFIG_KEYS:
-        if key not in keys:
-            keys.append(key)
+    for key_group in (CORE_CONFIG_KEYS, BASIC_CONFIG_KEYS):
+        for key in key_group:
+            if key not in keys:
+                keys.append(key)
     return keys
 
 
@@ -1381,7 +1637,7 @@ def _evict_user_config_cache():
 async def load_dynamic_configs_to_settings():
     """从数据库加载全部配置到 Settings 单例
 
-    启动时调用一次，覆盖所有已迁移到 DB 的配置项（动态配置 + 核心配置）。
+    启动时调用一次，覆盖所有已迁移到 DB 的配置项（动态配置 + 核心配置 + 基础配置）。
     让所有使用 settings.xxx 的服务直接拿到 DB 中的值。
     """
     settings = get_settings()

@@ -35,6 +35,7 @@ from backend.models.payment_models import (
     PaymentLog,
     PaymentAction,
 )
+from backend.models.agent_skill_models import AgentSkill
 from backend.core.config import get_settings
 import logging
 
@@ -60,6 +61,7 @@ __all__ = [
     "SubscriptionStatus",
     "PaymentLog",
     "PaymentAction",
+    "AgentSkill",
     "RepoScan",
     "ScanFinding",
     "ScanStatus",

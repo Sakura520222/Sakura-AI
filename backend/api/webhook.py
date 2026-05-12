@@ -16,7 +16,7 @@ from backend.core.github_app import (
 from backend.workers.review_worker import submit_review_task
 from backend.services.telegram_service import TelegramService
 from backend.telegram.notifications import get_notification_sender
-from backend.core.config import get_settings
+from backend.core.config import get_settings, get_dynamic_config
 
 settings = get_settings()
 
@@ -121,9 +121,7 @@ async def handle_pull_request_event(payload: Dict[str, Any]) -> JSONResponse:
                 worker = get_worker()
                 cancelled = worker.cancel_task(task_key)
                 if cancelled:
-                    logger.info(
-                        f"[webhook] PR closed event: 已取消审查任务 {task_key}"
-                    )
+                    logger.info(f"[webhook] PR closed event: 已取消审查任务 {task_key}")
                 else:
                     logger.debug(
                         f"[webhook] PR closed event: 无活跃审查任务 {task_key}"
@@ -139,6 +137,14 @@ async def handle_pull_request_event(payload: Dict[str, Any]) -> JSONResponse:
         if action not in supported_actions:
             logger.info(f"忽略PR动作: {action}")
             return JSONResponse(content={"status": "ignored", "action": action})
+
+        if not get_settings().enable_auto_review:
+            logger.info(
+                f"自动审查已关闭，跳过PR: {pr_info['repo_full_name']}#{pr_info['pr_number']}"
+            )
+            return JSONResponse(
+                content={"status": "skipped", "reason": "auto review disabled"}
+            )
 
         # Register cancel event IMMEDIATELY after action validation,
         # before any async operations (quota check, Telegram, dismiss, etc.)
@@ -792,9 +798,7 @@ async def handle_issue_event(payload: Dict[str, Any]) -> JSONResponse:
             repo_owner = issue_info["repo_owner"]
             repo_name = issue_info["repo_name"]
             issue_number = issue_info["issue_number"]
-            logger.info(
-                f"处理 Issue 删除事件: {repo_owner}/{repo_name}#{issue_number}"
-            )
+            logger.info(f"处理 Issue 删除事件: {repo_owner}/{repo_name}#{issue_number}")
 
             # 延迟导入避免循环依赖 / lazy import to avoid circular dependency
             from backend.services.issue_service import issue_service
@@ -864,7 +868,7 @@ async def handle_issue_event(payload: Dict[str, Any]) -> JSONResponse:
             )
 
         # 检查功能是否启用
-        if not settings.enable_issue_analysis:
+        if not await get_dynamic_config("enable_issue_analysis"):
             logger.info("Issue 分析功能未启用")
             return JSONResponse(
                 content={"status": "skipped", "reason": "feature disabled"}
@@ -962,7 +966,7 @@ async def handle_issue_analyze_command(payload: Dict[str, Any]) -> JSONResponse:
             )
 
         # 检查功能是否启用
-        if not settings.enable_issue_analysis:
+        if not await get_dynamic_config("enable_issue_analysis"):
             return JSONResponse(
                 content={"status": "skipped", "reason": "feature disabled"}
             )
