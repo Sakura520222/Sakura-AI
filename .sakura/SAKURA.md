@@ -28,6 +28,7 @@ Sakura AI Reviewer 是一款基于大语言模型的智能 GitHub 代码审查�
 - **权限策略单一真实源**：所有角色判断调用策略函数
 - **内存回退字典必须实现大小/TTL 限制**
 - **安全操作必须记录审计日志**
+- **外部可见链接必须通过统一链接服务生成**（major）
 
 ## 3. 已知问题和注意事项
 
@@ -52,6 +53,8 @@ Sakura AI Reviewer 是一款基于大语言模型的智能 GitHub 代码审查�
 - **延迟导入必须注释原因**（major）
 - **同步函数中使用 `get_running_loop().create_task` 时，无法创建任务必须记录 warning**（major）
 - **`asyncio.create_task` 后台任务需评估服务 shutdown 时的丢失风险**（major）
+- **路由前缀必须使用 `url_for` 或全局常量**（major）
+- **敏感字段脱敏必须覆盖多行文本**（minor）
 
 ## 4. 审查中发现的重要模式
 
@@ -73,6 +76,8 @@ Sakura AI Reviewer 是一款基于大语言模型的智能 GitHub 代码审查�
 - **函数副作用必须在 docstring 中用 `⚠️` 标注**
 - **UI 变更必须检查 JS 事件绑定是否依赖精确 DOM 结构**
 - **模板中内联 SVG 装饰图标必须添加 `aria-hidden="true"`**
+- **路径重构必须输出所有 `http://`/`https://`/`/webui/` 字符串的位置清单**
+- **禁止使用排除法分类请求路径**（应使用显式路由前缀分组）
 
 ## 5. 团队约定和规范
 
@@ -91,6 +96,10 @@ Sakura AI Reviewer 是一款基于大语言模型的智能 GitHub 代码审查�
 - 未修复历史问题必须关联 issue 号（TODO(issue-xxx)）
 - 公开登录端点 CSRF 豁免必须注释安全边界
 - PR 描述与变更文件必须一致
+- **路径前缀重构须全量扫描非路由文件**（major）
+- **新增 WebUI 模块必须包含冒烟测试**（major）
+- **配置保存端点必须原子化**（major）
+- **启动阶段依赖动态配置的操作必须断言配置已加载**（major）
 
 ### suggestion 疲劳归档协议
 第 1 轮未修复：评估降级 | 第 2 轮未修复：强制降级 | 第 3 轮未修复：强制归档
@@ -117,4 +126,4 @@ Sakura AI Reviewer 是一款基于大语言模型的智能 GitHub 代码审查�
 ## 仓库信息
 - 仓库名: Sakura520222/Sakura-AI-Reviewer
 - 语言统计: Python: 2165153, HTML: 593424, Shell: 4551, Dockerfile: 982
-- 累计反思次数: 213
+- 累计反思次数: 216
