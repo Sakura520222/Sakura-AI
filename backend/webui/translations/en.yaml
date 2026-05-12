@@ -1063,6 +1063,8 @@ toast:
   passkey_login_failed: "Passkey login failed. Please try again."
   user_not_found: "User not found or disabled"
   config_saved_restart: "Configuration saved (some changes require restart)"
+  agent_skill_installed: "Skill installed successfully"
+  agent_skill_install_failed: "Skill installation failed"
   config_saved_live: "Configuration saved and applied"
   config_validation_failed: "Configuration validation failed: {error}"
   file_permission_denied: "File permission denied"
