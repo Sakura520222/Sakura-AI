@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING, Optional
 from loguru import logger
 
 from backend.core.config import get_settings
+from backend.webui.deps import get_webui_url
 
 if TYPE_CHECKING:
     from backend.models.scan_models import RepoScan, ScanFinding
@@ -218,7 +219,7 @@ class ScanReportService:
         if link_url:
             lines.append(f"[📎 查看详细报告]({link_url})")
         else:
-            webui_url = f"https://{settings.app_domain}/scans/{scan.id}"
+            webui_url = get_webui_url(f"/scans/{scan.id}")
             lines.append(f"[🌐 WebUI 查看详情]({webui_url})")
 
         return "\n".join(lines)

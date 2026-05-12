@@ -152,12 +152,28 @@ async def get_db() -> AsyncSession:
         yield session
 
 
-def is_webui_path(path: str) -> bool:
-    """Check whether *path* belongs to the WebUI surface (not API/setup/docs).
+async def mark_webui_request(request: Request):
+    """Mark the request as originating from a WebUI route."""
+    request.state.is_webui = True
 
-    When adding new non-WebUI root routes, update the exclusion list.
+
+def is_webui_request(request: Request) -> bool:
+    """Check whether the request belongs to the WebUI surface.
+
+    Relies on the explicit ``mark_webui_request`` dependency attached to
+    ``webui_router``.  Non-WebUI routes (API, setup, docs) never carry this
+    mark, so no exclusion list needs to be maintained.
     """
-    return not path.startswith(("/api/", "/setup", "/docs", "/openapi.json", "/redoc", "/health"))
+    return getattr(request.state, "is_webui", False)
+
+
+def get_webui_url(path: str = "") -> str:
+    """Build an absolute WebUI URL for external consumption (Telegram, GitHub, etc.).
+
+    ``path`` should start with ``/`` (e.g. ``"/scans/42"``).
+    """
+    domain = get_settings().app_domain
+    return f"https://{domain}{path}"
 
 
 def request_origin(request: Request) -> str:
@@ -216,7 +232,7 @@ async def enforce_mfa_enrollment(
     if not await user_requires_mfa_enrollment(user_id, db):
         return
     path = request.url.path
-    if is_webui_path(path):
+    if is_webui_request(request):
         if _is_mfa_enrollment_path(path):
             return
         raise HTTPException(status_code=428, detail="mfa_enrollment_required")
