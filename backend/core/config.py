@@ -195,6 +195,18 @@ class Settings(BaseSettings):
         "10/minute",
         description="Passkey 认证接口限流规则",
     )
+    mfa_lockout_threshold: int = Field(
+        5,
+        ge=3,
+        le=20,
+        description="MFA 验证连续失败锁定阈值（次）",
+    )
+    mfa_lockout_duration_minutes: int = Field(
+        10,
+        ge=1,
+        le=60,
+        description="MFA 验证失败锁定持续时间（分钟）",
+    )
 
     # GitHub OAuth 配置
     # 获取步骤：GitHub → Settings → Developer settings → OAuth Apps → New OAuth App
