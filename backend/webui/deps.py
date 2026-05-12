@@ -152,6 +152,14 @@ async def get_db() -> AsyncSession:
         yield session
 
 
+def _is_webui_path(path: str) -> bool:
+    """Check whether *path* belongs to the WebUI surface (not API/setup/docs).
+
+    When adding new non-WebUI root routes, update the exclusion list.
+    """
+    return not path.startswith(("/api/", "/setup", "/docs", "/openapi.json", "/redoc", "/health"))
+
+
 def request_origin(request: Request) -> str:
     """Return request Origin, falling back to scheme + host."""
     return (
@@ -208,7 +216,7 @@ async def enforce_mfa_enrollment(
     if not await user_requires_mfa_enrollment(user_id, db):
         return
     path = request.url.path
-    if not path.startswith(("/api/", "/setup", "/docs", "/openapi.json", "/redoc", "/health")):
+    if _is_webui_path(path):
         if _is_mfa_enrollment_path(path):
             return
         raise HTTPException(status_code=428, detail="mfa_enrollment_required")
