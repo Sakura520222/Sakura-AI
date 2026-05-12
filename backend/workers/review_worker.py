@@ -208,7 +208,9 @@ class ReviewWorker:
 
     async def process_review_task(self, pr_info: Dict[str, Any]) -> str:
         """处理审查任务"""
-        task_id = str(uuid.uuid4())[:8]  # 日志追踪用短 ID，碰撞概率约 1/43亿，不用于持久化唯一键
+        task_id = str(uuid.uuid4())[
+            :8
+        ]  # 日志追踪用短 ID，碰撞概率约 1/43亿，不用于持久化唯一键
         task_key = self._make_task_key(pr_info)
         review_obj = None  # 用于保存 GitHub Review 对象
         review_id = None  # 用于保存数据库审查记录 ID
@@ -351,7 +353,10 @@ class ReviewWorker:
                 # Cancel checkpoint: before PR summary and AI review
                 if self._check_cancelled(task_key):
                     return await self._cancel_and_cleanup(
-                        task_id, task_key, review_obj, review_id,
+                        task_id,
+                        task_key,
+                        review_obj,
+                        review_id,
                         "跳过 PR 总结和 AI 审查",
                     )
 
@@ -376,9 +381,7 @@ class ReviewWorker:
                         pr_summary_text = summary
                         logger.info(f"[{task_id}] PR 变更总结已更新")
                     except Exception as e:
-                        logger.warning(
-                            "[{}] PR 变更总结生成失败: {}", task_id, str(e)
-                        )
+                        logger.warning("[{}] PR 变更总结生成失败: {}", task_id, str(e))
 
                 # 4.6 PR 依赖图生成（如果启用）
                 if settings.enable_pr_dependency_graph:
@@ -1178,16 +1181,16 @@ class ReviewWorker:
                             f"[{task_id}] 已撤回 {dismissed} 条旧 Review，将提交全量审查"
                         )
                     else:
-                        logger.debug(
-                            f"[{task_id}] 全量审查模式，无旧 Review 需撤回"
-                        )
+                        logger.debug(f"[{task_id}] 全量审查模式，无旧 Review 需撤回")
 
             # 使用 submit_review_with_inline_comments 方法（带重试机制）
             max_retries = 1  # 失败后重试1次
             success = False
             review_event = decision.value.upper()  # APPROVE, REQUEST_CHANGES, COMMENT
             author = pr_info.get("author", "")
-            bot_names = {bot_username, f"{bot_username}[bot]"} if bot_username else set()
+            bot_names = (
+                {bot_username, f"{bot_username}[bot]"} if bot_username else set()
+            )
             if review_event == "APPROVE" and author in bot_names:
                 logger.info(
                     f"[{task_id}] Bot 自身创建的 PR 不能 APPROVE，降级为 COMMENT: "
@@ -1255,9 +1258,7 @@ class ReviewWorker:
             return decision, decision_reason
 
         except Exception as e:
-            logger.error(
-                "[{}] 决策引擎执行失败: {}", task_id, str(e), exc_info=True
-            )
+            logger.error("[{}] 决策引擎执行失败: {}", task_id, str(e), exc_info=True)
             # 出错时返回None，不影响审查完成
             return None, f"决策过程异常: {str(e)}"
 

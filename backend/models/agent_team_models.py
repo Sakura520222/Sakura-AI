@@ -1,20 +1,15 @@
 """Agent 专家团队模式数据模型"""
 
 import enum
-from datetime import datetime, timezone
 
 from sqlalchemy import BigInteger, Column, ForeignKey, Integer, String, Text, TIMESTAMP
 from sqlalchemy.orm import relationship
 
 from backend.models.database import Base
+from backend.models.database import utc_now
 
 
 DEFAULT_AGENT_TEAM_MAX_ITERATIONS = 3
-
-
-def utc_now() -> datetime:
-    """返回带 UTC 时区的当前时间。"""
-    return datetime.now(timezone.utc)
 
 
 class AgentTeamTaskStatus(str, enum.Enum):
@@ -87,7 +82,9 @@ class AgentTeamTask(Base):
     pr_url = Column(String(500), nullable=True)
 
     iteration_count = Column(Integer, default=0, nullable=False)
-    max_iterations = Column(Integer, default=DEFAULT_AGENT_TEAM_MAX_ITERATIONS, nullable=False)
+    max_iterations = Column(
+        Integer, default=DEFAULT_AGENT_TEAM_MAX_ITERATIONS, nullable=False
+    )
     started_by = Column(String(100), nullable=True)
     locked_by = Column(String(100), nullable=True)
     ai_config_snapshot = Column(Text, nullable=True)
@@ -98,9 +95,7 @@ class AgentTeamTask(Base):
     error_message = Column(Text, nullable=True)
 
     created_at = Column(TIMESTAMP, default=utc_now, nullable=False, index=True)
-    updated_at = Column(
-        TIMESTAMP, default=utc_now, onupdate=utc_now, nullable=False
-    )
+    updated_at = Column(TIMESTAMP, default=utc_now, onupdate=utc_now, nullable=False)
     started_at = Column(TIMESTAMP, nullable=True)
     completed_at = Column(TIMESTAMP, nullable=True)
 

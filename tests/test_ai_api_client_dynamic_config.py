@@ -1,5 +1,7 @@
 """AI API client dynamic configuration coverage."""
 
+from types import SimpleNamespace
+
 import pytest
 
 from backend.core.config import get_settings
@@ -43,7 +45,9 @@ async def test_call_with_retry_uses_dynamic_timeout_and_retry(monkeypatch):
         async def fake_sleep(delay):
             sleep_calls.append(delay)
 
-        monkeypatch.setattr("backend.services.ai_reviewer.api_client.asyncio.sleep", fake_sleep)
+        monkeypatch.setattr(
+            "backend.services.ai_reviewer.api_client.asyncio.sleep", fake_sleep
+        )
 
         api_client = AIApiClient("https://example.invalid/v1", "test-key")
         fake_client = _FakeOpenAIClient()
@@ -68,7 +72,9 @@ def test_calculate_delay_uses_dynamic_initial_delay(monkeypatch):
     old_value = settings.ai_api_initial_retry_delay_seconds
     try:
         settings.ai_api_initial_retry_delay_seconds = 2.0
-        monkeypatch.setattr("backend.services.ai_reviewer.api_client.random.uniform", lambda _a, _b: 1.0)
+        monkeypatch.setattr(
+            "backend.services.ai_reviewer.api_client.random.uniform", lambda _a, _b: 1.0
+        )
 
         api_client = AIApiClient("https://example.invalid/v1", "test-key")
 
@@ -77,3 +83,42 @@ def test_calculate_delay_uses_dynamic_initial_delay(monkeypatch):
         assert api_client._calculate_delay(3) == 16.0
     finally:
         settings.ai_api_initial_retry_delay_seconds = old_value
+
+
+def test_estimate_prompt_tokens_supports_sdk_tool_call_objects():
+    tool_call = SimpleNamespace(
+        function=SimpleNamespace(
+            name="fetch_url",
+            arguments='{"url":"https://example.com"}',
+        )
+    )
+
+    tokens = AIApiClient._estimate_prompt_tokens(
+        [
+            {"role": "user", "content": "读取网页"},
+            {"role": "assistant", "content": None, "tool_calls": [tool_call]},
+        ]
+    )
+
+    assert tokens > 0
+
+
+def test_estimate_prompt_tokens_supports_dict_tool_calls():
+    tokens = AIApiClient._estimate_prompt_tokens(
+        [
+            {
+                "role": "assistant",
+                "content": "",
+                "tool_calls": [
+                    {
+                        "function": {
+                            "name": "search_web",
+                            "arguments": '{"query":"动态配置"}',
+                        }
+                    }
+                ],
+            }
+        ]
+    )
+
+    assert tokens > 0

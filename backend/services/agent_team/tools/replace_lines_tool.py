@@ -128,7 +128,9 @@ class ReplaceLinesTool(BaseTool):
         result_content = "\n".join(result_lines)
 
         # 写入
-        await asyncio.to_thread(write_text_preserving, resolved, result_content, encoding, line_ending)
+        await asyncio.to_thread(
+            write_text_preserving, resolved, result_content, encoding, line_ending
+        )
 
         # 更新 file_state
         if isinstance(file_state, ReadFileState):
@@ -143,7 +145,10 @@ class ReplaceLinesTool(BaseTool):
 
         logger.info(
             "ReplaceLinesTool: {} (L{}-L{}, {} 行被替换)",
-            file_path, start_line, safe_end, replaced_count,
+            file_path,
+            start_line,
+            safe_end,
+            replaced_count,
         )
 
         return ToolResult(
@@ -160,6 +165,8 @@ class ReplaceLinesTool(BaseTool):
     @staticmethod
     def _resolve(file_path: str, ctx: ToolContext) -> Path | None:
         try:
-            return ctx.workspace_service.resolve_inside_workspace(ctx.workspace, file_path)
+            return ctx.workspace_service.resolve_inside_workspace(
+                ctx.workspace, file_path
+            )
         except (WorkspaceSecurityError, Exception):
             return None

@@ -4,7 +4,7 @@
 
 [English](README_EN.md) | **中文**
 
-[![Version](https://img.shields.io/badge/Version-2.9.6-blue.svg)](https://github.com/Sakura520222/Sakura-AI-Reviewer/releases)
+[![Version](https://img.shields.io/badge/Version-2.10.0-blue.svg)](https://github.com/Sakura520222/Sakura-AI-Reviewer/releases)
 [![Python](https://img.shields.io/badge/Python-3.11+-blue.svg)](https://www.python.org/)
 [![FastAPI](https://img.shields.io/badge/FastAPI-Latest-green.svg)](https://fastapi.tiangolo.com/)
 [![License](https://img.shields.io/badge/License-AGPLv3-yellow.svg)](LICENSE)
@@ -20,6 +20,7 @@
 - **AI 推理模式**：利用 AI 推理能力进行深度代码分析，主动调用工具查看项目结构和任意文件
 - **跨文件依赖理解**：通过多轮对话理解模块间的复杂依赖关系，具备"全域视野"
 - **自适应审查策略**：根据 PR 规模自动选择快速/标准/深度审查模式
+- **大型 PR 精简审查**：当初始 diff 接近上下文阈值时自动切换 compact diff 模式，AI 通过 `get_file_diff` / `list_changed_files` 按需查看变更
 - **结构化审查报告**：整体评分 + 分类问题（🔴严重/🟡重要/💡优化）+ `<details>` 折叠详情
 - **增量审查学习**：AI 自动总结历史审查记录，识别评分趋势和问题热点，逐步提升审查质量
 - **智能审查批准**：基于 AI 评分自动决策 APPROVE / REQUEST_CHANGES / COMMENT
@@ -29,6 +30,7 @@
 - **一键撤回**：管理员使用 `/revoke` 命令一键撤回所有 AI 评论和 Review
 - **辅助模型支持**：独立配置轻量级模型处理摘要、上下文压缩、标签推荐等任务，降低推理成本
 - **行内评论开关**：通过 WebUI 配置 `enable_inline_comments`，控制是否在 PR diff 上发布行内评论，减少审查噪音
+- **可控自动审查**：通过 WebUI 配置 `enable_auto_review` 控制 PR opened/synchronize/reopened 是否自动入队，保留命令和手动触发路径
 
 ### AI 工具与知识库
 
@@ -57,10 +59,20 @@
 - **PR-Issue 关联**：自动解析 Issue 引用，注入上下文增强审查精度
 - **语义 Issue 关联**：基于向量语义相似度发现并关联相关 Issue
 
+### Agent 专家团队
+
+- **超级管理员手动启动**：从 Issue 分析和仓库扫描发现中筛选候选任务，按需启动自动修复流程
+- **双 Agent 协作**：内置全栈专家负责计划与代码修改，专业审查负责推送前质量复核
+- **独立 Git 工作区**：在 `agent_team_workspace_root` 下 clone/fetch/checkout 专用分支，避免污染服务运行目录
+- **受控工具执行**：文件读写、搜索、shell 验证命令均限制在工作区内，验证命令受白名单控制
+- **Agent Skills**：支持从上传文件、ZIP 或 GitHub `SKILL.md` 安装技能，Agent 可按需加载完整技能说明
+- **PR 创建闭环**：支持创建普通或 Draft PR，并通过现有 Sakura PR 审查与人工审查反馈继续迭代；不会自动合并 PR
+
 ### 管理与运维
 
 - **首次部署引导（Setup Wizard）**：首次启动自动检测配置状态，分步引导完成 GitHub App、数据库、AI 模型、RAG 等配置，支持断点续配
 - **动态配置管理**：通过 WebUI 修改配置即时生效，无需重启服务
+- **AI API 超时治理**：通过 `ai_api_timeout_seconds` 和 `ai_api_total_timeout_seconds` 分别控制单次请求超时与重试循环总耗时
 - **用户级配置覆盖**：普通用户可在个人设置或 API 中覆盖允许的偏好配置（当前支持 AI 输出语言），按 UserConfig → AppConfig → Settings 默认值逐级回退
 - **AI Provider 注册表**：内置 OpenAI、DeepSeek、Qwen、Z.ai、Doubao、SiliconFlow、Gemini、Anthropic 兼容与自定义 OpenAI 兼容厂商，支持自动获取模型列表和上下文窗口信息
 - **GitHub App 安装管理**：自动处理 GitHub App 安装/卸载事件，同步仓库授权状态
@@ -69,7 +81,7 @@
 - **配额制访问控制**：基于配额的灵活访问管理体系，支持用户自注册，并按 UTC 日/周/月自动重置 PR 与 Issue 用量
 - **付费配额系统**：套餐计划管理、兑换码批量生成与兑换、管理员手动充值，支持一次性包和订阅模式
 - **管理员操作审计**：完整的操作日志，覆盖配置变更、用户管理等关键操作
-- **WebUI 管理界面**：仪表盘、PR 管理、用户管理、配置管理、队列监控、操作日志、仓库扫描管理，支持 Markdown 内容渲染
+- **WebUI 管理界面**：仪表盘、PR 管理、用户管理、配置管理、队列监控、操作日志、仓库扫描管理、Agent 专家团队与 Agent Skills，支持 Markdown 内容渲染
 - **Telegram Bot**：实时通知、按钮菜单交互、三级权限体系（超级管理员/管理员/普通用户）、配额管理
 - **GitHub OAuth 登录**：与 Telegram 用户体系打通，明暗主题切换
 
@@ -241,6 +253,8 @@ WebUI：`https://your-domain.com/webui/`
 
 - **AI 模型**：WebUI 配置管理中选择内置 AI Provider（OpenAI、DeepSeek、Qwen、Z.ai、Doubao、SiliconFlow、Gemini、Anthropic 兼容、自定义 OpenAI 兼容），设置 API 地址、API Key 和模型名称，并可自动拉取模型列表与上下文窗口信息
 - **辅助模型**：WebUI 配置管理中设置 `summary_model`、`summary_api_base`、`summary_api_key`，用于摘要生成、上下文压缩、标签推荐等轻量任务，留空则自动回退到主模型
+- **PR 自动审查**：WebUI 配置管理中 `enable_auto_review` 控制 PR webhook 是否自动触发审查；关闭后仍可通过命令或手动入口触发
+- **AI API 超时**：WebUI 配置管理中 `ai_api_timeout_seconds` 控制单次请求超时，`ai_api_total_timeout_seconds` 控制一次 AI 调用重试循环的最长总耗时
 - **安全与 MFA**：WebUI 安全中心可开启全局 MFA 要求、为单个用户强制 MFA、重置 TOTP/恢复码、删除 Passkeys，并记录安全审计事件；用户可在个人设置中启用 TOTP、生成恢复码、注册 Passkeys/WebAuthn
 - **审查策略**：编辑 `config/strategies.yaml`，支持快速/标准/深度/大PR 四种策略
 - **文件过滤**：在 `config/strategies.yaml` 中配置跳过的文件扩展名和路径
@@ -249,6 +263,7 @@ WebUI：`https://your-domain.com/webui/`
 - **审查批准**：`config/strategies.yaml` 中 `review_policy` 配置阈值和仓库级覆盖
 - **PR 变更总结**：WebUI 配置管理中 `enable_pr_summary`
 - **PR 依赖图**：WebUI 配置管理中 `enable_pr_dependency_graph` / `pr_dependency_graph_mode` / `pr_dependency_graph_max_nodes` / `pr_dependency_graph_max_files`；`ai` 模式使用模型分析依赖，`static` 模式使用静态 import 解析降低成本
+- **大型 PR 上下文治理**：WebUI 配置管理中 `model_context_window` / `context_safety_threshold` / `enable_context_compression` / `context_compression_threshold` / `context_compression_keep_rounds`；当初始 diff 过大时会自动使用 compact diff 工具模式
 - **Token 成本追踪**：WebUI 配置管理中 `review_price_per_1k_prompt` / `review_price_per_1k_completion`，追踪审查 Token 消耗与成本
 - **RAG 知识库**：WebUI 配置管理中配置嵌入模型（支持 BAAI/bge-m3 等）、重排序模型、ChromaDB 等
 - **PR 代码索引**：WebUI 配置管理中配置代码分块、支持语言、核心目录等
@@ -262,6 +277,8 @@ WebUI：`https://your-domain.com/webui/`
 - **Git 信息工具**：`config/strategies.yaml` 中 `context_enhancement.git_tools`，配置默认分支和提交返回数量
 - **项目记忆系统**：WebUI 配置管理中 `sakura_memory_enabled` 启用记忆系统，`sakura_reflection_enabled` 启用审查后反思，`sakura_consolidation_interval` 合并触发的反思轮数（默认 5），`sakura_auto_init` 自动初始化 `.sakura/` 目录。用户可在 `.sakura/rules/`、`.sakura/docs/`、`.sakura/plans/` 下放置自定义文档，详见 [项目记忆系统使用指南](docs/SAKURA_MEMORY_GUIDE.md)
 - **模型上下文**：WebUI 配置管理中配置上下文窗口、自动压缩等，详见 [模型上下文管理](docs/MODEL_CONTEXT_FEATURE.md)
+- **Agent 专家团队**：WebUI Agent Team 页面配置 `agent_team_enabled`、`agent_team_workspace_root`、`agent_team_repo_allowlist`、`agent_team_model_provider`、`agent_team_*` 模型与护栏参数；`agent_team_model_provider=main` 时复用主 AI 配置，也可选择独立 Agent AI 配置
+- **Agent Skills**：WebUI Agent Skills 页面安装和启停 Skills；通过 `agent_team_skills_enabled` 控制 Agent 是否可加载技能，通过 `agent_team_skills_root` 配置本地存储根目录
 - **国际化（i18n）**：WebUI 支持中英文界面切换（个人设置页面），AI 输出语言可通过全局配置 `OUTPUT_LANGUAGE` 或用户级配置覆盖（`output_language`，`zh-CN` / `en` / 跟随全局）控制，评论模板自动匹配对应语言
 
 ---
@@ -323,6 +340,7 @@ Sakura-AI-Reviewer/
 │   ├── core/              # 核心配置、动态配置管理、AI Provider 注册表
 │   ├── models/            # 数据模型（SQLAlchemy）
 │   ├── services/          # 业务逻辑
+│   │   ├── agent_team/    # Agent 专家团队、受控工作区工具、PR 创建与 Skills
 │   │   ├── ai_reviewer/   # AI 审查引擎
 │   │   │   ├── tools/     #   AI 工具（文件读取、跨文件搜索、Git 信息、Web 搜索、Sakura 记忆）
 │   │   │   └── compression/ # 上下文压缩
@@ -375,6 +393,9 @@ Sakura-AI-Reviewer/
 | [WebUI 设计文档](docs/plans/2026-03-27-webui-design.md) | WebUI 设计规范              |
 | [项目记忆系统使用指南](docs/SAKURA_MEMORY_GUIDE.md) | .sakura/ 目录结构、生命周期、配置说明 |
 | [项目记忆系统设计](docs/plans/2026-04-20-sakura-memory-design.md) | .sakura/ 记忆系统架构与配置 |
+| [Agent 专家团队模式](docs/plans/agent_expert_team_mode.md) | Agent 自动修复、受控工作区与 PR 创建流程 |
+| [Agent Skills 实现](docs/agent-skills-python-implementation.md) | Skills 安装、索引、启停与工具集成说明 |
+| [Agent 文件工具实现](docs/agent-file-tools-python-implementation.md) | Agent 工作区文件工具、安全边界与实现细节 |
 | [Agents 项目指南](AGENTS.md)                               | 自动化代理与贡献者项目约定         |
 
 ---

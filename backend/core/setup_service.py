@@ -197,7 +197,11 @@ class SetupService:
         return await self.test_ai_api(api_key, api_base, provider="custom")
 
     async def test_ai_api(
-        self, api_key: str, api_base: str = "", provider: str = "custom", model: str = ""
+        self,
+        api_key: str,
+        api_base: str = "",
+        provider: str = "custom",
+        model: str = "",
     ) -> dict[str, Any]:
         """测试 OpenAI 兼容 AI API Key，并返回可用模型。"""
         if not api_key:
@@ -277,7 +281,9 @@ class SetupService:
                 return None
             return extract_context_window_k(resp.json())
         except Exception as e:
-            logger.debug(f"获取模型上下文窗口失败: provider={provider}, model={model}, err={e}")
+            logger.debug(
+                f"获取模型上下文窗口失败: provider={provider}, model={model}, err={e}"
+            )
             return None
 
     async def test_telegram_bot(self, bot_token: str) -> dict[str, Any]:

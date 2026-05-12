@@ -1,8 +1,15 @@
 """Agent Skills WebUI 配置与翻译测试。"""
 
-from backend.core.config import DYNAMIC_CONFIG_LABELS, Settings, get_dynamic_config_input_type
+from backend.core.config import (
+    DYNAMIC_CONFIG_LABELS,
+    Settings,
+    get_dynamic_config_input_type,
+)
 from backend.webui.i18n import i18n
-from backend.webui.routes.agent_team import AGENT_TEAM_CONFIG_GROUPS, AGENT_TEAM_CONFIG_KEYS
+from backend.webui.routes.agent_team import (
+    AGENT_TEAM_CONFIG_GROUPS,
+    AGENT_TEAM_CONFIG_KEYS,
+)
 
 
 def test_agent_skills_dynamic_config_registered():

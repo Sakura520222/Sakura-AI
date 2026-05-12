@@ -14,16 +14,22 @@ from backend.core.config import (
     DYNAMIC_CONFIG_SENSITIVE_KEYS,
     DYNAMIC_CONFIG_SELECT_OPTIONS,
     get_all_dynamic_config_keys,
-    get_dynamic_config,
     get_dynamic_config_input_type,
     get_settings,
     invalidate_dynamic_config_cache,
     mask_sensitive_value,
     update_settings_field,
 )
-from backend.models.agent_team_models import AgentTeamIteration, AgentTeamTask, AgentTeamTaskStatus
+from backend.models.agent_team_models import (
+    AgentTeamIteration,
+    AgentTeamTask,
+    AgentTeamTaskStatus,
+)
 from backend.models.database import AppConfig
-from backend.services.agent_team.ai_client import load_agent_team_ai_config
+from backend.services.agent_team.ai_client import (
+    load_agent_team_ai_config,
+    resolve_agent_team_max_iterations,
+)
 from backend.services.agent_team.candidate_service import (
     AgentTeamCandidateService,
     candidates_to_dicts,
@@ -211,7 +217,9 @@ async def task_list_fragment(
 
     query = select(AgentTeamTask).where(*filters).order_by(order_by)
     count_query = select(func.count(AgentTeamTask.id)).where(*filters)
-    tasks, total, total_pages, page = await paginate(db, query, count_query, page, per_page)
+    tasks, total, total_pages, page = await paginate(
+        db, query, count_query, page, per_page
+    )
     return render_template(
         "components/agent_team_task_list_fragment.html",
         request,
@@ -248,7 +256,9 @@ async def workspace_list_fragment(
         workspace_root=str(service.base_dir),
         workspaces=workspaces,
         total_size=sum(item["total_size_bytes"] for item in workspaces),
-        total_size_label=_format_bytes(sum(item["total_size_bytes"] for item in workspaces)),
+        total_size_label=_format_bytes(
+            sum(item["total_size_bytes"] for item in workspaces)
+        ),
     )
 
 
@@ -265,13 +275,17 @@ async def task_detail_fragment(
         select(AgentTeamTask)
         .where(AgentTeamTask.id == task_id)
         .options(
-            selectinload(AgentTeamTask.iterations).selectinload(AgentTeamIteration.patch_files),
+            selectinload(AgentTeamTask.iterations).selectinload(
+                AgentTeamIteration.patch_files
+            ),
             selectinload(AgentTeamTask.feedback),
         )
     )
     task = result.scalar_one_or_none()
     if task is None:
-        return JSONResponse({"success": False, "message": "任务不存在"}, status_code=404)
+        return JSONResponse(
+            {"success": False, "message": "任务不存在"}, status_code=404
+        )
 
     # selectinload 不支持在当前 SQLAlchemy 版本中稳定地继续链式排序，模板侧按序展示即可。
     task.iterations.sort(key=lambda item: item.iteration_number)
@@ -361,14 +375,18 @@ async def save_agent_team_config(
             }
         elif cfg.key_value != val:
             changed[key] = {
-                "old": mask_sensitive_value(cfg.key_value) if is_sensitive else cfg.key_value,
+                "old": mask_sensitive_value(cfg.key_value)
+                if is_sensitive
+                else cfg.key_value,
                 "new": mask_sensitive_value(val) if is_sensitive else val,
                 "raw_new": val,
             }
             cfg.key_value = val
 
     if not changed:
-        return toast_redirect("/webui/agent-team/", "toast.config_saved_live", lang=detect_language())
+        return toast_redirect(
+            "/webui/agent-team/", "toast.config_saved_live", lang=detect_language()
+        )
 
     await db.commit()
     invalidate_dynamic_config_cache(AGENT_TEAM_CONFIG_KEYS)
@@ -377,7 +395,10 @@ async def save_agent_team_config(
         if key in all_dynamic_keys:
             update_settings_field(key, change.get("raw_new", change["new"]))
 
-    log_changed = {key: {"old": value["old"], "new": value["new"]} for key, value in changed.items()}
+    log_changed = {
+        key: {"old": value["old"], "new": value["new"]}
+        for key, value in changed.items()
+    }
     await log_admin_action(
         db,
         user["user_id"],
@@ -386,7 +407,9 @@ async def save_agent_team_config(
         None,
         log_changed,
     )
-    return toast_redirect("/webui/agent-team/", "toast.config_saved_live", lang=detect_language())
+    return toast_redirect(
+        "/webui/agent-team/", "toast.config_saved_live", lang=detect_language()
+    )
 
 
 @router.post("/candidates")
@@ -399,11 +422,15 @@ async def preview_candidates(
     """手动预览候选任务。"""
     service = AgentTeamCandidateService()
     try:
-        candidates = await service.collect_candidates(db, ai_filter_requirement=ai_filter_requirement)
+        candidates = await service.collect_candidates(
+            db, ai_filter_requirement=ai_filter_requirement
+        )
     except ValueError as exc:
         return JSONResponse({"success": False, "message": str(exc)}, status_code=200)
     except Exception as exc:
-        return JSONResponse({"success": False, "message": f"AI 筛选候选失败: {exc}"}, status_code=200)
+        return JSONResponse(
+            {"success": False, "message": f"AI 筛选候选失败: {exc}"}, status_code=200
+        )
     await log_admin_action(
         db,
         user["user_id"],
@@ -416,7 +443,9 @@ async def preview_candidates(
             "requirement": ai_filter_requirement.strip()[:300],
         },
     )
-    return JSONResponse({"success": True, "candidates": candidates_to_dicts(candidates)})
+    return JSONResponse(
+        {"success": True, "candidates": candidates_to_dicts(candidates)}
+    )
 
 
 @router.post("/tasks/create")
@@ -444,7 +473,9 @@ async def create_task_from_candidate(
             status_code=200,
         )
     service = AgentTeamCandidateService()
-    candidates = await service.collect_candidates(db, limit=100, ai_filter_requirement=ai_filter_requirement)
+    candidates = await service.collect_candidates(
+        db, limit=100, ai_filter_requirement=ai_filter_requirement
+    )
     candidate = next(
         (
             item
@@ -454,7 +485,9 @@ async def create_task_from_candidate(
         None,
     )
     if candidate is None:
-        return JSONResponse({"success": False, "message": "候选任务不存在或已被处理"}, status_code=404)
+        return JSONResponse(
+            {"success": False, "message": "候选任务不存在或已被处理"}, status_code=404
+        )
 
     task = await service.create_task_from_candidate(
         db,
@@ -489,12 +522,17 @@ async def retry_task(
     result = await db.execute(select(AgentTeamTask).where(AgentTeamTask.id == task_id))
     task = result.scalar_one_or_none()
     if task is None:
-        return JSONResponse({"success": False, "message": "任务不存在"}, status_code=404)
+        return JSONResponse(
+            {"success": False, "message": "任务不存在"}, status_code=404
+        )
 
     retryable_statuses = {"failed", "cancelled", "abandoned", "queued"}
     if task.status not in retryable_statuses:
         return JSONResponse(
-            {"success": False, "message": f"当前状态 {task.status} 不可重试，仅支持 {'/'.join(sorted(retryable_statuses))}"},
+            {
+                "success": False,
+                "message": f"当前状态 {task.status} 不可重试，仅支持 {'/'.join(sorted(retryable_statuses))}",
+            },
             status_code=200,
         )
 
@@ -504,12 +542,14 @@ async def retry_task(
     except ValueError as e:
         return JSONResponse({"success": False, "message": str(e)}, status_code=200)
     except Exception as e:
-        return JSONResponse({"success": False, "message": f"AI 配置加载失败: {e}"}, status_code=200)
+        return JSONResponse(
+            {"success": False, "message": f"AI 配置加载失败: {e}"}, status_code=200
+        )
 
     old_status = task.status
     task.status = AgentTeamTaskStatus.QUEUED.value
     task.current_phase = None
-    task.max_iterations = await _load_agent_team_max_iterations()
+    task.max_iterations = await resolve_agent_team_max_iterations()
     task.started_at = None
     task.completed_at = None
     task.error_message = None
@@ -520,20 +560,14 @@ async def retry_task(
     background_tasks.add_task(_run_agent_task_background, task_id)
 
     await log_admin_action(
-        db, user["user_id"], "agent_team_task_retry", "agent_team_task", str(task_id), {"old_status": old_status}
+        db,
+        user["user_id"],
+        "agent_team_task_retry",
+        "agent_team_task",
+        str(task_id),
+        {"old_status": old_status},
     )
     return JSONResponse({"success": True, "task_id": task_id})
-
-
-async def _load_agent_team_max_iterations() -> int:
-    """读取 Agent Team 当前配置的单任务最大迭代轮数。"""
-    fallback = get_settings().agent_team_max_iterations_per_task
-    raw_value = await get_dynamic_config("agent_team_max_iterations_per_task")
-    try:
-        value = int(raw_value if raw_value is not None else fallback)
-    except (TypeError, ValueError):
-        value = fallback
-    return max(1, value)
 
 
 @router.post("/tasks/{task_id}/cancel")
@@ -547,9 +581,19 @@ async def cancel_task(
     result = await db.execute(select(AgentTeamTask).where(AgentTeamTask.id == task_id))
     task = result.scalar_one_or_none()
     if task is None:
-        return JSONResponse({"success": False, "message": "任务不存在"}, status_code=404)
+        return JSONResponse(
+            {"success": False, "message": "任务不存在"}, status_code=404
+        )
 
-    cancellable = {"queued", "planning", "cloning", "editing", "self_reviewing", "validating", "iterating"}
+    cancellable = {
+        "queued",
+        "planning",
+        "cloning",
+        "editing",
+        "self_reviewing",
+        "validating",
+        "iterating",
+    }
     if task.status not in cancellable:
         return JSONResponse(
             {"success": False, "message": f"当前状态 {task.status} 不可取消"},
@@ -561,8 +605,18 @@ async def cancel_task(
     task.completed_at = datetime.now(timezone.utc)
     await db.commit()
 
+    # 向正在运行的 worker 发送取消信号
+    from backend.workers.agent_team_worker import request_task_cancel
+
+    request_task_cancel(task_id)
+
     await log_admin_action(
-        db, user["user_id"], "agent_team_task_cancel", "agent_team_task", str(task_id), {"old_status": old_status}
+        db,
+        user["user_id"],
+        "agent_team_task_cancel",
+        "agent_team_task",
+        str(task_id),
+        {"old_status": old_status},
     )
     return JSONResponse({"success": True, "task_id": task_id})
 
@@ -578,7 +632,9 @@ async def delete_task(
     result = await db.execute(select(AgentTeamTask).where(AgentTeamTask.id == task_id))
     task = result.scalar_one_or_none()
     if task is None:
-        return JSONResponse({"success": False, "message": "任务不存在"}, status_code=404)
+        return JSONResponse(
+            {"success": False, "message": "任务不存在"}, status_code=404
+        )
 
     protected_statuses = set(AGENT_TEAM_ACTIVE_STATUSES) - {
         AgentTeamTaskStatus.PR_OPENED.value,
@@ -586,7 +642,10 @@ async def delete_task(
     }
     if task.status in protected_statuses:
         return JSONResponse(
-            {"success": False, "message": f"当前状态 {task.status} 仍在运行，请先取消或等待完成后再删除"},
+            {
+                "success": False,
+                "message": f"当前状态 {task.status} 仍在运行，请先取消或等待完成后再删除",
+            },
             status_code=200,
         )
 
@@ -630,7 +689,10 @@ async def delete_workspace(
     )
     if active_count:
         return JSONResponse(
-            {"success": False, "message": "该仓库存在进行中的 Agent 任务，请先取消或等待完成后再删除工作区"},
+            {
+                "success": False,
+                "message": "该仓库存在进行中的 Agent 任务，请先取消或等待完成后再删除工作区",
+            },
             status_code=200,
         )
 
@@ -648,7 +710,9 @@ async def delete_workspace(
         f"{repo_owner}/{repo_name}",
         {"repo_owner": repo_owner, "repo_name": repo_name, "path": str(workspace)},
     )
-    return JSONResponse({"success": True, "repo_owner": repo_owner, "repo_name": repo_name})
+    return JSONResponse(
+        {"success": True, "repo_owner": repo_owner, "repo_name": repo_name}
+    )
 
 
 async def _run_agent_task_background(task_id: int) -> None:
@@ -660,13 +724,17 @@ async def _run_agent_task_background(task_id: int) -> None:
     except Exception as exc:
         from loguru import logger
 
-        logger.error("Agent 后台任务提交失败: task_id={}, error={}", task_id, exc, exc_info=True)
+        logger.error(
+            "Agent 后台任务提交失败: task_id={}, error={}", task_id, exc, exc_info=True
+        )
 
 
 async def _load_config_items(db: AsyncSession, lang: str = "zh-CN") -> list[dict]:
     from backend.webui.i18n import i18n as _i18n
 
-    result = await db.execute(select(AppConfig).where(AppConfig.key_name.in_(AGENT_TEAM_CONFIG_KEYS)))
+    result = await db.execute(
+        select(AppConfig).where(AppConfig.key_name.in_(AGENT_TEAM_CONFIG_KEYS))
+    )
     config_map = {cfg.key_name: cfg.key_value for cfg in result.scalars().all()}
     settings = get_settings()
     items = []
@@ -704,8 +772,12 @@ async def _load_config_items(db: AsyncSession, lang: str = "zh-CN") -> list[dict
                 "label": label,
                 "description": description,
                 "input_type": get_dynamic_config_input_type(key),
-                "value": mask_sensitive_value(value) if is_sensitive and value else value,
-                "default": mask_sensitive_value(default_val) if is_sensitive and default_val else default_val,
+                "value": mask_sensitive_value(value)
+                if is_sensitive and value
+                else value,
+                "default": mask_sensitive_value(default_val)
+                if is_sensitive and default_val
+                else default_val,
                 "sensitive": is_sensitive,
                 "select_options": translated_options,
                 "min_val": DYNAMIC_CONFIG_RANGES.get(key, (None, None))[0],
@@ -740,7 +812,9 @@ def _group_config_items(config_items: list[dict], lang: str = "zh-CN") -> list[d
             {
                 "key": "advanced",
                 "title": _i18n.t("agent_team.config_group_advanced", lang=lang),
-                "description": _i18n.t("agent_team.config_group_advanced_desc", lang=lang),
+                "description": _i18n.t(
+                    "agent_team.config_group_advanced_desc", lang=lang
+                ),
                 "items": remaining,
             }
         )
@@ -760,12 +834,18 @@ async def _load_stats(db: AsyncSession) -> dict:
     failed = await db.scalar(
         select(func.count(AgentTeamTask.id)).where(AgentTeamTask.status == "failed")
     )
-    queued = await db.scalar(select(func.count(AgentTeamTask.id)).where(AgentTeamTask.status == "queued"))
+    queued = await db.scalar(
+        select(func.count(AgentTeamTask.id)).where(AgentTeamTask.status == "queued")
+    )
     waiting_human = await db.scalar(
-        select(func.count(AgentTeamTask.id)).where(AgentTeamTask.status == "waiting_human")
+        select(func.count(AgentTeamTask.id)).where(
+            AgentTeamTask.status == "waiting_human"
+        )
     )
     status_rows = await db.execute(
-        select(AgentTeamTask.status, func.count(AgentTeamTask.id)).group_by(AgentTeamTask.status)
+        select(AgentTeamTask.status, func.count(AgentTeamTask.id)).group_by(
+            AgentTeamTask.status
+        )
     )
     return {
         "total": total or 0,
@@ -786,7 +866,9 @@ def _load_workspace_summary() -> dict:
         "root": str(service.base_dir),
         "count": len(workspaces),
         "total_size_bytes": sum(item.total_size_bytes for item in workspaces),
-        "total_size_label": _format_bytes(sum(item.total_size_bytes for item in workspaces)),
+        "total_size_label": _format_bytes(
+            sum(item.total_size_bytes for item in workspaces)
+        ),
     }
 
 

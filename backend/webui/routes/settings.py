@@ -88,7 +88,9 @@ async def _save_totp_setup_secret(user_id: int, secret: str) -> None:
     key = f"{_TOTP_SETUP_KEY_PREFIX}{user_id}"
     try:
         redis = await get_async_redis()
-        await redis.setex(key, settings.two_factor_pending_token_expire_minutes * 60, secret)
+        await redis.setex(
+            key, settings.two_factor_pending_token_expire_minutes * 60, secret
+        )
         return
     except Exception as exc:
         logger.warning("Redis 存储 TOTP setup secret 失败，使用内存回退: {}", exc)
@@ -215,9 +217,7 @@ async def save_settings(
         )
 
     # Upsert 配置
-    result = await db.execute(
-        select(WebUIConfig).where(WebUIConfig.user_id == user_id)
-    )
+    result = await db.execute(select(WebUIConfig).where(WebUIConfig.user_id == user_id))
     config = result.scalar_one_or_none()
     if config:
         config.items_per_page = items_per_page
@@ -306,7 +306,9 @@ async def enable_two_factor(
     user_id = int(user["user_id"])
     secret = await _pop_totp_setup_secret(user_id)
     if not secret:
-        return toast_redirect("/webui/settings/", "toast.two_factor_setup_expired", "error")
+        return toast_redirect(
+            "/webui/settings/", "toast.two_factor_setup_expired", "error"
+        )
     used_step = verify_totp_secret(secret, code)
     if used_step is None:
         return toast_redirect("/webui/settings/", "toast.two_factor_invalid", "error")
@@ -352,7 +354,9 @@ async def disable_two_factor_route(
     result = await db.execute(select(TelegramUser).where(TelegramUser.id == user_id))
     db_user = result.scalar_one_or_none()
     if not db_user or not db_user.totp_enabled:
-        return toast_redirect("/webui/settings/", "toast.two_factor_not_enabled", "error")
+        return toast_redirect(
+            "/webui/settings/", "toast.two_factor_not_enabled", "error"
+        )
 
     verified = False
     try:
@@ -389,7 +393,9 @@ async def regenerate_recovery_codes(
     result = await db.execute(select(TelegramUser).where(TelegramUser.id == user_id))
     db_user = result.scalar_one_or_none()
     if not db_user or not db_user.totp_enabled:
-        return toast_redirect("/webui/settings/", "toast.two_factor_not_enabled", "error")
+        return toast_redirect(
+            "/webui/settings/", "toast.two_factor_not_enabled", "error"
+        )
 
     try:
         used_step = verify_user_totp(db_user, code)

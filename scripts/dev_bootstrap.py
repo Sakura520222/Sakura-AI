@@ -58,8 +58,10 @@ def find_server_python(repo_root: Path, python_arg: str) -> Path:
     if python_arg:
         return Path(python_arg)
 
-    venv_python = repo_root / ".venv" / (
-        "Scripts/python.exe" if os.name == "nt" else "bin/python"
+    venv_python = (
+        repo_root
+        / ".venv"
+        / ("Scripts/python.exe" if os.name == "nt" else "bin/python")
     )
     if venv_python.exists():
         return venv_python
@@ -114,7 +116,9 @@ def main() -> int:
     print("Sakura AI Reviewer 本地 Setup Wizard 调试模式")
     print(f"访问地址: http://{args.host}:{args.port}/setup")
     print(f"连接配置: {config_path}")
-    print("安全提示: dev 配置可能包含数据库凭证，默认路径 .sakura/dev/ 已加入 .gitignore")
+    print(
+        "安全提示: dev 配置可能包含数据库凭证，默认路径 .sakura/dev/ 已加入 .gitignore"
+    )
     print(f"Python: {server_python}")
     print("后台任务: 已跳过")
     print("")

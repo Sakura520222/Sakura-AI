@@ -1,6 +1,6 @@
 """数据库模型定义"""
 
-from datetime import datetime
+from datetime import datetime, timezone
 from sqlalchemy import (
     Boolean,
     Column,
@@ -19,6 +19,12 @@ from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sess
 import enum
 
 Base = declarative_base()
+
+
+def utc_now() -> datetime:
+    """返回带 UTC 时区的当前时间（公共工具函数，供所有模型共享）。"""
+    return datetime.now(timezone.utc)
+
 
 # 异步数据库引擎和会话（将在 init_async_db 中初始化）
 async_engine = None
@@ -556,7 +562,7 @@ async def insert_default_configs_async():
         raise RuntimeError("异步会话工厂未初始化,请先调用 init_async_db()")
 
     default_configs = [
-        AppConfig(key_name="app_version", key_value="2.9.6", description="应用版本号"),
+        AppConfig(key_name="app_version", key_value="2.10.0", description="应用版本号"),
         AppConfig(
             key_name="max_concurrent_reviews",
             key_value="5",
@@ -677,7 +683,7 @@ def init_database(database_url: str):
 
             default_configs = [
                 AppConfig(
-                    key_name="app_version", key_value="2.9.6", description="应用版本号"
+                    key_name="app_version", key_value="2.10.0", description="应用版本号"
                 ),
                 AppConfig(
                     key_name="max_concurrent_reviews",

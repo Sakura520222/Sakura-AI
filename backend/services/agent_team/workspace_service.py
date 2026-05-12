@@ -64,12 +64,18 @@ class AgentTeamWorkspaceService:
 
         workspaces = []
         for owner_dir in self.base_dir.iterdir():
-            if not owner_dir.is_dir() or not self._is_safe_existing_segment(owner_dir.name):
+            if not owner_dir.is_dir() or not self._is_safe_existing_segment(
+                owner_dir.name
+            ):
                 continue
             for repo_dir in owner_dir.iterdir():
-                if not repo_dir.is_dir() or not self._is_safe_existing_segment(repo_dir.name):
+                if not repo_dir.is_dir() or not self._is_safe_existing_segment(
+                    repo_dir.name
+                ):
                     continue
-                workspaces.append(self.get_workspace_info(owner_dir.name, repo_dir.name))
+                workspaces.append(
+                    self.get_workspace_info(owner_dir.name, repo_dir.name)
+                )
         return sorted(workspaces, key=lambda item: item.modified_at or 0, reverse=True)
 
     def get_workspace_info(self, repo_owner: str, repo_name: str) -> AgentWorkspaceInfo:
@@ -125,7 +131,9 @@ class AgentTeamWorkspaceService:
         try:
             resolved.relative_to(self.base_dir)
         except ValueError as exc:
-            raise WorkspaceSecurityError(f"路径不在 Agent 工作区内: {resolved}") from exc
+            raise WorkspaceSecurityError(
+                f"路径不在 Agent 工作区内: {resolved}"
+            ) from exc
         return resolved
 
     def resolve_inside_workspace(
@@ -157,4 +165,6 @@ class AgentTeamWorkspaceService:
 
     def _is_safe_existing_segment(self, value: str) -> bool:
         """判断已存在目录名是否为安全路径片段。"""
-        return bool(value and value not in {".", ".."} and _SAFE_SEGMENT_RE.match(value))
+        return bool(
+            value and value not in {".", ".."} and _SAFE_SEGMENT_RE.match(value)
+        )
