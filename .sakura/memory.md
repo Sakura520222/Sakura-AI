@@ -107,6 +107,11 @@
 - **异步任务调用方式必须统一**：同一模块中fire-and-forget所有位置必须使用create_task，需等待则所有位置使用await，禁止混合语义，标major
 - **函数副作用必须在docstring中明确**：若函数修改外部状态，必须在docstring首部用⚠️标注，标major
 - **asyncio.get_event_loop()禁止使用**：一律改为asyncio.get_running_loop()或直接使用asyncio.create_task()，标major
+- **路径前缀重构须全量扫描非路由文件**：除路由、模板外，必须grep扫描services/、telegram/、tasks/中的硬编码URL，标major
+- **禁止使用排除法分类请求路径**：推荐使用显式路由前缀分组或中间件标记，避免新增路由时遗漏，标major
+- **外部可见链接必须通过统一服务生成**：所有写入issue、邮件、Telegram、报告的URL必须调用LinkService.get_webui_url(path)，标major
+- **启动阶段依赖动态配置的操作必须显式声明配置已加载的标志或断言**，标major
+- **配置加载失败路径必须审查降级行为是否安全**：异常被捕获后配置值是否仍具备合理降级，标major（原minor升级）
 
 ## 近期审查模式总结
 
@@ -192,6 +197,7 @@
 - **增量审查必须输出“本次未修复的历史问题”的issue追踪状态**：不能只说“应创建后续issue”
 - **fire-and-forget的观测性**：`asyncio.create_task`创建的任务若未保存变量，难以追踪，建议封装`safe_create_task`并记录任务ID
 - **fallback路径的测试盲区**：同步fallback中的异步分支难以被单元测试覆盖，应增加集成测试或强制要求fallback路径有同步版本通知
+- **路由前缀硬编码重复出现**：建议引入路由命名+`url_for`或全局前缀常量，防止手写路径字符串导致不一致
 
 ## 需要特别关注的领域
 
@@ -236,7 +242,9 @@
 - **Passkey discoverable flow账户冲突检查**：登录时应检查账户是否已绑定其他凭据，避免账户混淆
 - **异步上下文混合（同步函数中创建异步任务）**：审查时应重点检查是否误用await、是否使用弃用的get_event_loop()、无法获取loop时的降级行为是否可观测
 - **装饰性SVG可访问性**：内联SVG装饰图标必须添加aria-hidden="true"，作为UI变更固定检查项
+- **新增WebUI模块的路径一致性**：检查侧边栏链接+表单action+JS fetch+重定向URL四者是否与注册路由的实际前缀一致
+- **配置保存的原子性**：批量保存配置时，如果任一配置校验失败，必须整体回滚，禁止部分写入
 
 ## 仓库信息
 - 仓库名: Sakura520222/Sakura-AI-Reviewer
-- 累计反思次数: 213
+- 累计反思次数: 216
