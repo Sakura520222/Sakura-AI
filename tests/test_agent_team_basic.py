@@ -5,7 +5,10 @@ from types import SimpleNamespace
 
 import pytest
 
-from backend.services.agent_team.ai_client import AgentTeamAIConfig, load_agent_team_ai_config
+from backend.services.agent_team.ai_client import (
+    AgentTeamAIConfig,
+    load_agent_team_ai_config,
+)
 from backend.services.agent_team.candidate_service import (
     AgentCandidate,
     _parse_ai_filter_response,
@@ -63,7 +66,10 @@ async def test_load_agent_team_ai_config_uses_main_ai_when_selected(monkeypatch)
         }
         return values.get(key)
 
-    monkeypatch.setattr("backend.services.agent_team.ai_client.get_dynamic_config", fake_get_dynamic_config)
+    monkeypatch.setattr(
+        "backend.services.agent_team.ai_client.get_dynamic_config",
+        fake_get_dynamic_config,
+    )
     monkeypatch.setattr(
         "backend.services.agent_team.ai_client.get_settings",
         lambda: SimpleNamespace(
@@ -109,7 +115,10 @@ async def test_load_agent_team_ai_config_uses_independent_agent_values(monkeypat
         }
         return values.get(key)
 
-    monkeypatch.setattr("backend.services.agent_team.ai_client.get_dynamic_config", fake_get_dynamic_config)
+    monkeypatch.setattr(
+        "backend.services.agent_team.ai_client.get_dynamic_config",
+        fake_get_dynamic_config,
+    )
     monkeypatch.setattr(
         "backend.services.agent_team.ai_client.get_settings",
         lambda: SimpleNamespace(
@@ -232,7 +241,10 @@ async def test_load_agent_team_ai_config_preserves_explicit_zero_values(monkeypa
         }
         return values.get(key)
 
-    monkeypatch.setattr("backend.services.agent_team.ai_client.get_dynamic_config", fake_get_dynamic_config)
+    monkeypatch.setattr(
+        "backend.services.agent_team.ai_client.get_dynamic_config",
+        fake_get_dynamic_config,
+    )
     monkeypatch.setattr(
         "backend.services.agent_team.ai_client.get_settings",
         lambda: SimpleNamespace(
@@ -328,7 +340,9 @@ def test_parse_ai_filter_response_normalizes_values():
 
 
 def test_parse_ai_filter_response_accepts_wrapped_results():
-    items = _parse_ai_filter_response('{"results": [{"source_id": 7, "score": 90, "priority": "high"}]}')
+    items = _parse_ai_filter_response(
+        '{"results": [{"source_id": 7, "score": 90, "priority": "high"}]}'
+    )
 
     assert items == [
         {
@@ -352,4 +366,6 @@ def test_ai_filter_model_prefers_main_agent_model():
 
 
 def test_ai_filter_model_falls_back_when_main_empty():
-    assert _select_ai_filter_model("", "review-model", "summary-model") == "review-model"
+    assert (
+        _select_ai_filter_model("", "review-model", "summary-model") == "review-model"
+    )

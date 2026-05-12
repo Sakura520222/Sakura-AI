@@ -86,7 +86,10 @@ async def test_diff_tool_lists_and_returns_file_diff():
     assert changed_files["total_files"] == 2
     assert changed_files["files"][0]["path"] == "backend/example.py"
     assert file_diff["diff"] == SAMPLE_FILES[0]["patch"]
-    assert binary_info["info"] == "该文件没有 diff 内容（可能是二进制文件或仅有元数据变更）"
+    assert (
+        binary_info["info"]
+        == "该文件没有 diff 内容（可能是二进制文件或仅有元数据变更）"
+    )
 
 
 def test_extend_compact_tools_without_duplicates():
@@ -123,7 +126,9 @@ def test_should_use_compact_prompt_when_over_budget(review_context):
 
 
 @pytest.mark.asyncio
-async def test_compact_diff_review_uses_compact_messages_and_tools(monkeypatch, review_context):
+async def test_compact_diff_review_uses_compact_messages_and_tools(
+    monkeypatch, review_context
+):
     reviewer = AIReviewer.__new__(AIReviewer)
     reviewer.prompt_builder = PromptBuilder()
     reviewer.context_compressor = type(

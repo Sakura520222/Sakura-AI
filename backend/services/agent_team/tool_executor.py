@@ -14,13 +14,21 @@ from loguru import logger
 from backend.services.agent_team.file_tools import AgentTeamFileTools
 from backend.services.agent_team.shell_executor import AgentTeamShellExecutor
 from backend.services.agent_team.tools.base import ToolContext
-from backend.services.agent_team.tools.grep_tool import GrepTool, MAX_GREP_KEYWORD_LENGTH
+from backend.services.agent_team.tools.grep_tool import (
+    GrepTool,
+    MAX_GREP_KEYWORD_LENGTH,
+)
 from backend.services.agent_team.tools.shell_tool import is_agent_command_allowed
 from backend.services.agent_team.workspace_service import AgentTeamWorkspaceService
 
 
 class AgentToolExecutor:
-    """执行 Agent 工具调用。"""
+    """执行 Agent 工具调用。
+
+    .. deprecated::
+        旧版工具执行器，使用 handler 字典分发。
+        新代码应使用 ``backend.services.agent_team.tools.base.ToolExecutor``。
+    """
 
     def __init__(
         self,
@@ -86,7 +94,11 @@ class AgentToolExecutor:
             numbered = []
             for i, line in enumerate(selected, start=s + 1):
                 numbered.append(f"{i:>6}  {line}")
-            return {"content": "\n".join(numbered), "path": file_path, "total_lines": len(lines)}
+            return {
+                "content": "\n".join(numbered),
+                "path": file_path,
+                "total_lines": len(lines),
+            }
 
         # 完整内容加行号
         lines = content.split("\n")
@@ -123,7 +135,12 @@ class AgentToolExecutor:
             return {"error": "缺少 file_path 参数"}
 
         result = await self.file_tools.write_file_async(file_path, content)
-        logger.info("Agent 写入文件: {} ({} bytes, created={})", file_path, result.size, result.created)
+        logger.info(
+            "Agent 写入文件: {} ({} bytes, created={})",
+            file_path,
+            result.size,
+            result.created,
+        )
         return {
             "success": True,
             "path": file_path,
@@ -144,9 +161,7 @@ class AgentToolExecutor:
             result = await self.file_tools.edit_file_async(
                 file_path, old_text, new_text, replace_all=replace_all
             )
-            logger.info(
-                "Agent 字符串替换: {} ({} 处)", file_path, result.replacements
-            )
+            logger.info("Agent 字符串替换: {} ({} 处)", file_path, result.replacements)
             return {
                 "success": True,
                 "path": result.path,
@@ -171,7 +186,10 @@ class AgentToolExecutor:
             )
             logger.info(
                 "Agent 行号替换: {} (L{}-L{}, {} 行被替换)",
-                file_path, start_line, end_line, result.replacements,
+                file_path,
+                start_line,
+                end_line,
+                result.replacements,
             )
             return {
                 "success": True,
@@ -196,7 +214,9 @@ class AgentToolExecutor:
             )
             logger.info(
                 "Agent 行号插入: {} (after L{}, {} 行插入)",
-                file_path, after_line, result.replacements,
+                file_path,
+                after_line,
+                result.replacements,
             )
             return {
                 "success": True,

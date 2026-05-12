@@ -19,7 +19,10 @@ def test_verify_totp_secret_returns_step_and_rejects_replay():
     used_step = verify_totp_secret(secret, code)
 
     assert used_step is not None
-    with patch("backend.services.two_factor_service.get_current_totp_step", return_value=used_step):
+    with patch(
+        "backend.services.two_factor_service.get_current_totp_step",
+        return_value=used_step,
+    ):
         try:
             verify_totp_secret(secret, code, last_used_step=used_step)
         except TwoFactorReplayError:

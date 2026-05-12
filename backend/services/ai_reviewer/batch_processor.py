@@ -15,7 +15,11 @@ from typing import Any, Dict, List
 
 from loguru import logger
 
-from backend.core.config import get_settings, get_strategy_config, get_user_dynamic_config
+from backend.core.config import (
+    get_settings,
+    get_strategy_config,
+    get_user_dynamic_config,
+)
 from backend.services.ai_reviewer.api_client import PromptTooLongError
 from backend.services.ai_reviewer.compact_diff import (
     build_tool_handler_with_diff,
@@ -444,9 +448,7 @@ class BatchProcessor:
             if not tool_calls:
                 # AI完成了审查，返回结果
                 review_text = response.choices[0].message.content
-                result = self.result_parser.parse_review_result(
-                    review_text, strategy
-                )
+                result = self.result_parser.parse_review_result(review_text, strategy)
                 result["token_usage"] = tracker.to_dict()
                 return result
 

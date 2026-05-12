@@ -30,9 +30,9 @@ def _substitute_arguments(content: str, args: str, arg_names: list[str] | None) 
     # 按空格拆分参数值
     values = args.split() if args.strip() else []
     mapping = {
-        name: values[i] if i < len(values) else ""
-        for i, name in enumerate(arg_names)
+        name: values[i] if i < len(values) else "" for i, name in enumerate(arg_names)
     }
+
     # 替换 ${name} 和 $name 形式
     def _replacer(m: re.Match) -> str:
         key = m.group(1) or m.group(2)
@@ -97,7 +97,9 @@ class UseSkillTool(BaseTool):
         entry = skills_index[slug]
         install_path = Path(str(entry.get("install_path") or "")).resolve()
         skills_root_value = ctx.extra.get("skills_root")
-        skills_root = Path(str(skills_root_value)).resolve() if skills_root_value else None
+        skills_root = (
+            Path(str(skills_root_value)).resolve() if skills_root_value else None
+        )
 
         try:
             if skills_root:
@@ -185,9 +187,7 @@ class UseSkillTool(BaseTool):
         return []
 
     @staticmethod
-    def _list_files(
-        slug: str, skill_dir: Path, entry: dict[str, Any]
-    ) -> ToolResult:
+    def _list_files(slug: str, skill_dir: Path, entry: dict[str, Any]) -> ToolResult:
         files = _list_safe_skill_files(skill_dir)
         return ToolResult(
             success=True,

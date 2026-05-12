@@ -65,19 +65,20 @@ class AgentTeamPRService:
             return head_result.stdout.strip()
 
         # commit
-        await executor.run_args(
-            ["git", "commit", "-m", commit_message]
-        )
+        await executor.run_args(["git", "commit", "-m", commit_message])
 
         # push
-        await executor.run_args(
-            ["git", "push", "-u", "origin", branch_name]
-        )
+        await executor.run_args(["git", "push", "-u", "origin", branch_name])
 
         # 获取 commit SHA
         head_result = await executor.run_args(["git", "rev-parse", "HEAD"])
         sha = head_result.stdout.strip()
-        logger.info("Agent 推送成功: {}:{} @ {}", repo_owner + "/" + repo_name, branch_name, sha[:8])
+        logger.info(
+            "Agent 推送成功: {}:{} @ {}",
+            repo_owner + "/" + repo_name,
+            branch_name,
+            sha[:8],
+        )
         return sha
 
     async def create_pull_request(

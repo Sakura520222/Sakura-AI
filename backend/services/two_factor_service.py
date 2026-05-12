@@ -179,9 +179,13 @@ async def replace_recovery_codes(
 ) -> list[str]:
     """Replace all active recovery codes and return plaintext codes once."""
     display_codes = codes or generate_recovery_codes()
-    await session.execute(delete(UserRecoveryCode).where(UserRecoveryCode.user_id == user_id))
+    await session.execute(
+        delete(UserRecoveryCode).where(UserRecoveryCode.user_id == user_id)
+    )
     for code in display_codes:
-        session.add(UserRecoveryCode(user_id=user_id, code_hash=hash_recovery_code(code)))
+        session.add(
+            UserRecoveryCode(user_id=user_id, code_hash=hash_recovery_code(code))
+        )
     return display_codes
 
 
@@ -223,5 +227,7 @@ async def disable_totp(session: AsyncSession, user: TelegramUser) -> None:
     user.totp_secret_encrypted = None
     user.totp_enabled_at = None
     user.totp_last_used_step = None
-    await session.execute(delete(UserRecoveryCode).where(UserRecoveryCode.user_id == user.id))
+    await session.execute(
+        delete(UserRecoveryCode).where(UserRecoveryCode.user_id == user.id)
+    )
     logger.info("TOTP disabled for user_id={}", user.id)

@@ -3,11 +3,14 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 
 from backend.core.github_app import GitHubAppClient
-from backend.services.agent_team.shell_executor import AgentTeamShellExecutor, ShellCommandResult
+from backend.services.agent_team.shell_executor import (
+    AgentTeamShellExecutor,
+    ShellCommandResult,
+)
 from backend.services.agent_team.workspace_service import AgentTeamWorkspaceService
 
 
@@ -44,7 +47,9 @@ class AgentTeamGitWorkspaceService:
         """准备仓库工作区并切换到 Agent 分支。"""
         repo_full_name = f"{repo_owner}/{repo_name}"
         workspace = self.workspace_service.ensure_workspace(repo_owner, repo_name)
-        default_branch, clone_url = await self._get_repo_info(repo_owner, repo_name, repo_full_name)
+        default_branch, clone_url = await self._get_repo_info(
+            repo_owner, repo_name, repo_full_name
+        )
         executor = AgentTeamShellExecutor(workspace, self.workspace_service)
 
         if not (workspace / ".git").exists():
@@ -54,8 +59,14 @@ class AgentTeamGitWorkspaceService:
                 "clone repository",
             )
         else:
-            await self._run_checked_args(executor, ["git", "remote", "set-url", "origin", clone_url], "set remote url")
-            await self._run_checked_args(executor, ["git", "fetch", "origin", "--prune"], "fetch repository")
+            await self._run_checked_args(
+                executor,
+                ["git", "remote", "set-url", "origin", clone_url],
+                "set remote url",
+            )
+            await self._run_checked_args(
+                executor, ["git", "fetch", "origin", "--prune"], "fetch repository"
+            )
             await self._run_checked_args(
                 executor,
                 ["git", "checkout", default_branch],
@@ -68,9 +79,13 @@ class AgentTeamGitWorkspaceService:
             )
 
         branch_name = self.make_branch_name(source_issue_number, source_id)
-        await self._run_checked_args(executor, ["git", "checkout", "-B", branch_name], "checkout agent branch")
+        await self._run_checked_args(
+            executor, ["git", "checkout", "-B", branch_name], "checkout agent branch"
+        )
         commit_sha = (
-            await self._run_checked_args(executor, ["git", "rev-parse", "HEAD"], "read commit sha")
+            await self._run_checked_args(
+                executor, ["git", "rev-parse", "HEAD"], "read commit sha"
+            )
         ).stdout.strip()
         return GitWorkspaceInfo(
             workspace=workspace,
@@ -85,7 +100,7 @@ class AgentTeamGitWorkspaceService:
         source_id: int | None = None,
     ) -> str:
         """生成 Agent 分支名。"""
-        timestamp = datetime.utcnow().strftime("%Y%m%d-%H%M%S")
+        timestamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
         if source_issue_number:
             source = f"issue-{source_issue_number}"
         elif source_id:
@@ -97,18 +112,26 @@ class AgentTeamGitWorkspaceService:
     async def get_diff_summary(self, workspace: str | Path) -> str:
         """读取当前工作区 diff 摘要。"""
         executor = AgentTeamShellExecutor(workspace, self.workspace_service)
-        result = await self._run_checked(executor, "git diff --stat && git status --short", "diff summary")
+        result = await self._run_checked(
+            executor, "git diff --stat && git status --short", "diff summary"
+        )
         return result.stdout.strip()
 
     async def get_changed_file_stats(self, workspace: str | Path) -> dict[str, dict]:
         """读取当前工作区未提交变更的逐文件行数统计。"""
         executor = AgentTeamShellExecutor(workspace, self.workspace_service)
-        numstat = await self._run_checked_args(executor, ["git", "diff", "--numstat", "HEAD"], "diff numstat")
-        status = await self._run_checked_args(executor, ["git", "status", "--short"], "status short")
+        numstat = await self._run_checked_args(
+            executor, ["git", "diff", "--numstat", "HEAD"], "diff numstat"
+        )
+        status = await self._run_checked_args(
+            executor, ["git", "status", "--short"], "status short"
+        )
         return self.parse_changed_file_stats(numstat.stdout, status.stdout)
 
     @staticmethod
-    def parse_changed_file_stats(numstat_output: str, status_output: str) -> dict[str, dict]:
+    def parse_changed_file_stats(
+        numstat_output: str, status_output: str
+    ) -> dict[str, dict]:
         """解析 git numstat 和 status 输出为 UI 可展示的变更统计。"""
         stats: dict[str, dict] = {}
         for line in numstat_output.splitlines():
@@ -144,7 +167,9 @@ class AgentTeamGitWorkspaceService:
         clone_url = repo.clone_url
         token = self._get_installation_token(repo_owner, repo_name)
         if token:
-            clone_url = clone_url.replace("https://", f"https://x-access-token:{token}@")
+            clone_url = clone_url.replace(
+                "https://", f"https://x-access-token:{token}@"
+            )
         return default_branch, clone_url
 
     def _get_installation_token(self, repo_owner: str, repo_name: str) -> str:

@@ -45,7 +45,12 @@ class SubmitReviewTool(BaseTool):
                             "properties": {
                                 "severity": {
                                     "type": "string",
-                                    "enum": ["critical", "major", "minor", "suggestion"],
+                                    "enum": [
+                                        "critical",
+                                        "major",
+                                        "minor",
+                                        "suggestion",
+                                    ],
                                 },
                                 "file": {"type": "string"},
                                 "message": {"type": "string"},

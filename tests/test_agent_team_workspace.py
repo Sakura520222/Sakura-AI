@@ -2,14 +2,19 @@
 
 import pytest
 
-from backend.services.agent_team.git_workspace_service import AgentTeamGitWorkspaceService
+from backend.services.agent_team.git_workspace_service import (
+    AgentTeamGitWorkspaceService,
+)
 from backend.services.agent_team.shell_executor import AgentTeamShellExecutor
 from backend.services.agent_team.workspace_service import (
     AgentTeamWorkspaceService,
     WorkspaceSecurityError,
 )
 from backend.services.agent_team.tools.base import ToolContext
-from backend.services.agent_team.tools.shell_tool import ShellTool, is_agent_command_allowed
+from backend.services.agent_team.tools.shell_tool import (
+    ShellTool,
+    is_agent_command_allowed,
+)
 from backend.workers.agent_team_worker import _merge_modified_files
 
 
@@ -18,7 +23,10 @@ def test_workspace_path_shape_and_creation(tmp_path):
 
     workspace = service.ensure_workspace("Sakura520222", "Sakura-AI-Reviewer")
 
-    assert workspace == (tmp_path / "workplace" / "Sakura520222" / "Sakura-AI-Reviewer").resolve()
+    assert (
+        workspace
+        == (tmp_path / "workplace" / "Sakura520222" / "Sakura-AI-Reviewer").resolve()
+    )
     assert workspace.exists()
 
 
@@ -104,7 +112,9 @@ def test_shell_executor_masks_access_token(tmp_path):
     workspace = service.ensure_workspace("owner", "repo")
     executor = AgentTeamShellExecutor(workspace, service)
 
-    masked = executor._mask_sensitive_arg("https://x-access-token:secret@github.com/owner/repo.git")
+    masked = executor._mask_sensitive_arg(
+        "https://x-access-token:secret@github.com/owner/repo.git"
+    )
 
     assert masked == "https://x-access-token:***@github.com/owner/repo.git"
 
@@ -141,7 +151,9 @@ async def test_changed_file_stats_include_staged_changes(tmp_path):
     await executor.run_args(["git", "add", "main.py"])
     await executor.run_args(["git", "commit", "-m", "init"])
 
-    (workspace / "main.py").write_text("print('new')\nprint('more')\n", encoding="utf-8")
+    (workspace / "main.py").write_text(
+        "print('new')\nprint('more')\n", encoding="utf-8"
+    )
     await executor.run_args(["git", "add", "main.py"])
 
     stats = await git_service.get_changed_file_stats(workspace)
@@ -152,7 +164,9 @@ async def test_changed_file_stats_include_staged_changes(tmp_path):
 
 
 def test_merge_modified_files_normalizes_and_includes_git_stats():
-    merged = _merge_modified_files(["./main.py", r"backend\\app.py"], {"docs/new.md": {}})
+    merged = _merge_modified_files(
+        ["./main.py", r"backend\\app.py"], {"docs/new.md": {}}
+    )
 
     assert merged == ["backend/app.py", "docs/new.md", "main.py"]
 

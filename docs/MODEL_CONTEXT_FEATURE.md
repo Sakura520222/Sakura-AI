@@ -1,476 +1,190 @@
-# AI 模型上下文管理功能
+# 模型上下文管理
 
-## 功能概述
+Sakura AI Reviewer 会根据模型上下文窗口、当前 PR 内容和多轮工具调用历史，动态控制发送给 AI 的上下文大小。目标是在不截断关键代码信息的前提下，提升大型 PR 审查的稳定性和成本可控性。
 
-Sakura-AI-Reviewer 现在支持自动获取和管理不同 AI 模型的上下文窗口大小，帮助优化代码审查的性能和准确性。
+## 功能概览
 
-## 主要特性
+- **模型上下文窗口识别**：优先使用 WebUI 动态配置，也可通过 AI Provider 注册表自动获取模型列表和上下文窗口信息。
+- **安全上下文预算**：按 `context_safety_threshold` 预留响应空间、工具调用空间和格式化开销。
+- **大型 PR compact diff**：初始 diff 过大时，只发送文件元信息与增删行统计，AI 通过工具按需读取具体文件 diff。
+- **对话历史自动压缩**：多轮工具调用导致历史接近阈值时，使用独立压缩会话总结历史，再继续审查。
+- **辅助模型回退**：摘要、上下文压缩等轻量任务可使用辅助模型；未配置时回退主模型。
 
-### 1. 自动检测模型上下文
+## 配置优先级
 
-系统会自动识别并获取以下模型的上下文窗口大小：
+全局配置遵循：
 
-- **OpenAI 模型**：GPT-4、GPT-4 Turbo、GPT-4o、GPT-3.5 Turbo 等
-- **DeepSeek 模型**：DeepSeek-Chat、DeepSeek-Coder、DeepSeek-R1、DeepSeek-v3 等
-- **Claude 模型**：Claude 3.5 Sonnet、Claude 3 Opus、Claude 3 Haiku 等
-- **Gemini 模型**：Gemini 2.0 Flash、Gemini 1.5 Pro、Gemini 1.5 Flash 等
-- **其他模型**：Llama、Mistral、Qwen 等
-
-### 2. 多种获取方式
-
-系统按以下优先级获取模型上下文：
-
-1. **用户自定义配置**（优先级最高）
-2. **API 动态获取**（如果启用）
-3. **预定义映射表**（内置支持常见模型）
-4. **默认值**（128K tokens）
-
-### 3. 智能上下文管理
-
-- 自动计算安全的上下文使用量（默认使用 80%）
-- 支持 Token 估算（中英文混合文本）
-- 格式化显示上下文大小（K/M）
-
-## 配置说明
-
-### 环境变量配置
-
-在 `.env` 文件中添加以下配置：
-
-```env
-# 模型上下文配置
-MODEL_CONTEXT_WINDOW=0  # 自定义上下文窗口大小（K tokens），0 表示自动检测
-AUTO_FETCH_MODEL_CONTEXT=true  # 是否自动从 API 获取模型上下文
-CONTEXT_SAFETY_THRESHOLD=0.8  # 上下文安全阈值（0-1），默认使用 80%
+```text
+数据库 app_config（WebUI 动态配置） > Settings 默认值
 ```
 
-### 配置项详解
+用户偏好配置遵循：
 
-#### MODEL_CONTEXT_WINDOW
-
-- **作用**：自定义模型的上下文窗口大小
-- **单位**：K tokens（千 tokens）
-- **默认值**：0（自动检测）
-- **示例**：
-  - `MODEL_CONTEXT_WINDOW=128` 表示 128K tokens
-  - `MODEL_CONTEXT_WINDOW=200` 表示 200K tokens
-
-**使用场景**：
-
-- 当自动检测失败时手动指定
-- 使用自定义模型或私有部署的模型
-- 需要限制上下文使用量以节省成本
-
-#### AUTO_FETCH_MODEL_CONTEXT
-
-- **作用**：是否从 API 动态获取模型信息
-- **默认值**：true
-- **可选值**：true / false
-
-**使用场景**：
-
-- 启用：自动获取最新的模型信息（推荐）
-- 禁用：仅使用预定义映射表，减少 API 调用
-
-#### CONTEXT_SAFETY_THRESHOLD
-
-- **作用**：上下文安全阈值，避免使用全部上下文
-- **默认值**：0.8（使用 80%）
-- **范围**：0.0 - 1.0
-- **建议**：0.7 - 0.9
-
-**使用场景**：
-
-- 预留空间给输出 tokens
-- 避免达到模型硬限制
-- 提高稳定性
-
-## 使用示例
-
-### 示例 1：使用 GPT-4
-
-```env
-OPENAI_MODEL=gpt-4
-MODEL_CONTEXT_WINDOW=0  # 自动检测，结果为 128K
+```text
+UserConfig > app_config > Settings 默认值
 ```
 
-系统会自动识别 GPT-4 的上下文窗口为 128K tokens。
+> 运行时建议通过 WebUI 配置管理调整上下文相关配置。环境变量和 `Settings` 字段主要作为部署默认值或首次初始化默认值，不应作为主要运行时修改方式。
 
-### 示例 2：使用 DeepSeek-R1
+## 主要配置项
 
-```env
-OPENAI_MODEL=deepseek-r1
-MODEL_CONTEXT_WINDOW=0  # 自动检测，结果为 64K
+| 配置项 | 说明 |
+|--------|------|
+| `model_context_window` | 手动指定模型上下文窗口（tokens）。为空或无效时使用模型自动识别结果或默认值 |
+| `auto_fetch_model_context` | 是否尝试从 AI Provider API / 注册表获取模型上下文信息 |
+| `context_safety_threshold` | 安全上下文比例，用于预留输出和工具调用空间 |
+| `enable_context_compression` | 是否启用对话历史自动压缩 |
+| `context_compression_threshold` | 压缩触发阈值：当前历史 tokens 超过安全上下文的该比例时触发 |
+| `context_compression_keep_rounds` | 压缩时保留最近对话轮数的配置项 |
+| `summary_model` / `summary_api_base` / `summary_api_key` | 辅助模型配置，用于摘要、压缩、标签推荐等轻量任务 |
+| `ai_api_timeout_seconds` | AI API 单次 HTTP 请求超时 |
+| `ai_api_total_timeout_seconds` | 一次 AI 调用在重试循环中的总耗时上限 |
+
+## 模型上下文窗口来源
+
+系统按以下顺序确定模型上下文窗口：
+
+1. `model_context_window` 动态配置。
+2. AI Provider 注册表中已知模型或模型列表返回的上下文窗口信息。
+3. 模型名称规则匹配结果。
+4. 默认安全值。
+
+Setup Wizard 和 WebUI 配置页会使用 AI Provider 注册表展示内置厂商元数据，并在厂商支持时自动获取模型列表和上下文窗口。例如 OpenAI 兼容、DeepSeek、Qwen、Z.ai、Doubao、SiliconFlow、Gemini、Anthropic 兼容和自定义 OpenAI 兼容配置。
+
+## 安全上下文预算
+
+安全上下文预算按模型窗口和阈值计算：
+
+```text
+safe_context = model_context_window × context_safety_threshold
 ```
 
-系统会自动识别 DeepSeek-R1 的上下文窗口为 64K tokens。
+该预算用于容纳：
 
-### 示例 3：自定义模型上下文
+- 系统提示词
+- PR 元数据
+- PR diff 或 compact diff 文件列表
+- RAG / 代码索引 / 项目记忆上下文
+- 多轮工具调用历史
+- AI 最终输出空间
 
-```env
-OPENAI_MODEL=custom-model-v1
-MODEL_CONTEXT_WINDOW=256  # 自定义为 256K
-```
+建议保持默认阈值，只有在大型 PR、特殊模型或成本敏感场景下再调整。
 
-当使用自定义模型时，可以手动指定上下文大小。
+## 大型 PR compact diff 模式
 
-### 示例 4：限制上下文使用
+当初始消息接近上下文阈值时，PR 审查会自动切换到 compact diff 模式。
 
-```env
-OPENAI_MODEL=gpt-4
-MODEL_CONTEXT_WINDOW=0  # 自动检测
-CONTEXT_SAFETY_THRESHOLD=0.5  # 只使用 50% 的上下文
-```
+### 行为
 
-即使 GPT-4 支持 128K，系统也只会使用约 64K tokens。
+普通模式会把 PR diff 直接放入初始 prompt。compact diff 模式不会发送完整 diff，而是发送：
 
-## API 使用
+- 变更文件列表
+- 文件状态
+- 增删行数
+- 工具使用说明
 
-### 在代码中使用
+AI 可按需调用：
 
-```python
-from backend.core.model_context import get_model_context_manager
-
-# 获取模型上下文管理器
-context_mgr = get_model_context_manager()
-
-# 获取模型的上下文窗口大小（K tokens）
-context_size = context_mgr.get_context_window("gpt-4")
-print(f"GPT-4 上下文: {context_size}K tokens")
-
-# 计算安全的上下文大小
-safe_context = context_mgr.calculate_safe_context("gpt-4", safety_ratio=0.8)
-print(f"安全上下文: {safe_context}K tokens")
-
-# 估算文本的 token 数量
-text = "这是一段中文文本 This is English text"
-estimated_tokens = context_mgr.estimate_tokens(text)
-print(f"估算 tokens: {estimated_tokens}")
-
-# 格式化显示上下文大小
-formatted = context_mgr.format_context_size(128)
-print(f"格式化: {formatted}")  # 输出: 128K
-```
-
-## 支持的模型列表
-
-### OpenAI 模型
-
-| 模型名称 | 上下文窗口 |
-|---------|-----------|
-| gpt-4 | 128K |
-| gpt-4-turbo | 128K |
-| gpt-4-turbo-preview | 128K |
-| gpt-4o | 128K |
-| gpt-4o-mini | 128K |
-| gpt-3.5-turbo | 16K |
-
-### DeepSeek 模型
-
-| 模型名称 | 上下文窗口 |
-|---------|-----------|
-| deepseek-chat | 128K |
-| deepseek-coder | 128K |
-| deepseek-r1 | 64K |
-| deepseek-v3 | 64K |
-
-### Claude 模型
-
-| 模型名称 | 上下文窗口 |
-|---------|-----------|
-| claude-3-5-sonnet-20241022 | 200K |
-| claude-3-5-sonnet-20240620 | 200K |
-| claude-3-5-haiku-20241022 | 200K |
-| claude-3-opus-20240229 | 200K |
-
-### Gemini 模型
-
-| 模型名称 | 上下文窗口 |
-|---------|-----------|
-| gemini-2.0-flash-exp | 1000K (1M) |
-| gemini-1.5-pro | 1000K (1M) |
-| gemini-1.5-flash | 1000K (1M) |
-
-## 最佳实践
-
-### 1. 使用自动检测
-
-大多数情况下，让系统自动检测模型上下文即可：
-
-```env
-MODEL_CONTEXT_WINDOW=0
-AUTO_FETCH_MODEL_CONTEXT=true
-```
-
-### 2. 设置合理的安全阈值
-
-建议使用 0.7-0.9 的安全阈值：
-
-```env
-CONTEXT_SAFETY_THRESHOLD=0.8  # 推荐值
-```
-
-### 3. 监控上下文使用
-
-查看日志中的上下文使用情况：
-
-```
-INFO: 从预定义表获取模型上下文: gpt-4 = 128K tokens
-INFO: 计算安全上下文: 128K * 0.8 = 102K tokens
-```
-
-### 4. 优化成本
-
-对于大型 PR，可以通过降低安全阈值来节省成本：
-
-```env
-CONTEXT_SAFETY_THRESHOLD=0.6  # 使用更少的上下文
-```
-
-## 故障排查
-
-### 问题 1：无法识别模型
-
-**症状**：日志显示"使用默认值: 128K tokens"
-
-**解决方案**：
-
-1. 检查模型名称是否正确
-2. 手动设置 `MODEL_CONTEXT_WINDOW`
-3. 向预定义列表添加新模型
-
-### 问题 2：API 获取失败
-
-**症状**：日志显示"从 API 获取模型上下文失败"
-
-**解决方案**：
-
-1. 检查网络连接
-2. 检查 API 密钥是否有效
-3. 设置 `AUTO_FETCH_MODEL_CONTEXT=false`
-
-### 问题 3：上下文不足
-
-**症状**：AI 返回不完整的审查结果
-
-**解决方案**：
-
-1. 检查 `CONTEXT_SAFETY_THRESHOLD` 是否过低
-2. 考虑使用上下文更大的模型
-3. 确保已去除 diff 截断限制
-
-## 更新日志
-
-### v1.0.0 (2026-03-10)
-
-- ✅ 实现模型上下文自动检测功能
-- ✅ 支持预定义模型映射表
-- ✅ 支持 API 动态获取
-- ✅ 支持用户自定义配置
-- ✅ 实现 Token 估算功能
-- ✅ 集成到 AI 审查器
-- ✅ 更新配置文件
-
-## 上下文压缩功能
-
-### 功能概述
-
-当审查 PR 时，如果对话历史（包括 AI 的工具调用、响应等）累积超过模型的上下文窗口阈值，系统会自动使用独立会话压缩历史对话，确保审查可以继续进行。
-
-### 工作原理
-
-#### 两个独立会话
-
-1. **会话 1（主审查会话）**：
-   - 持续的对话（user → assistant → tool → assistant → ...）
-   - 执行代码审查和工具调用
-   - 保留对话历史的连贯性
-
-2. **会话 2（压缩专用会话）**：
-   - 完全独立的会话
-   - 专门用于压缩会话 1 的历史消息
-   - 每次压缩都是全新的对话
-   - 压缩完成后关闭，下次压缩再创建新的
-
-#### 压缩触发条件
-
-每次执行工具调用后，系统会检查：
-
-```python
-当前对话历史 tokens > 安全上下文窗口 × 压缩阈值
-```
-
-- **安全上下文窗口**：模型上下文 × 0.8（默认）
-- **压缩阈值**：85%（默认）
-- **触发条件**：当对话历史超过安全上下文的 85% 时
-
-### 压缩策略
-
-#### 保留内容
-
-- ✅ **所有已发现的代码问题**（按严重程度分类）
-- ✅ **所有行内评论的位置和内容**（文件路径:行号）
-- ✅ **重要工具调用的结果**（文件内容、目录结构）
-- ✅ **当前审查的进度**
-
-#### 移除内容
-
-- 🗑️ 重复的对话轮次
-- 🗑️ 冗余的工具调用详情
-- 🗑️ 已处理完成的问题
-
-#### 压缩后格式
-
-压缩后的摘要会保持与原始 PR 审查上下文相同的格式，确保 AI 能够理解并继续审查。
-
-### 配置项
-
-```env
-# 上下文压缩配置
-ENABLE_CONTEXT_COMPRESSION=true  # 是否启用上下文自动压缩
-CONTEXT_COMPRESSION_THRESHOLD=0.85  # 压缩触发阈值（0-1），默认 85%
-CONTEXT_COMPRESSION_KEEP_ROUNDS=2  # 保留最近几轮对话不压缩（预留功能）
-```
-
-### 使用示例
-
-#### 场景 1：小型 PR（不需要压缩）
-
-```
-开始审查 → AI 调用工具 → 审查完成
-（对话历史未超限，无需压缩）
-```
-
-#### 场景 2：中型 PR（触发一次压缩）
-
-```
-开始审查 → AI 调用工具1 → AI 调用工具2 → AI 调用工具3
-→ 检查上下文 → 超限 85%
-→ 触发压缩 → 创建会话 2 → 压缩历史
-→ 替换会话 1 的历史 → 继续审查 → 完成
-```
-
-#### 场景 3：大型 PR（触发多次压缩）
-
-```
-开始审查 → 多轮工具调用 → 压缩 → 继续审查
-→ 再次超限 → 再次压缩 → 继续审查 → 完成
-```
-
-### 日志示例
-
-```
-INFO: 开始AI审查（带工具支持），策略: standard
-INFO: 执行工具 read_file: backend/services/user.py
-INFO: 执行工具 list_directory: backend/services
-...
-WARNING: 🚨 上下文超限: 45000 tokens > 42500 (阈值 85.0%), 启动压缩...
-INFO: 🗜️  开始压缩对话历史，当前大小: 45000 tokens
-INFO: ✅ 压缩完成: 45000 → 12000 tokens
-INFO: ✅ 压缩完成，继续审查...
-INFO: 执行工具 read_file: backend/models/user.py
-...
-INFO: AI审查完成（使用了5轮对话），策略: standard
-```
+- `list_changed_files()`：查看变更文件列表。
+- `get_file_diff(file_path)`：读取指定文件 diff。
+- `read_file(file_path)`：读取仓库文件内容。
 
 ### 优势
 
-1. **自动化**：无需手动干预，自动检测并压缩
-2. **透明性**：通过日志清晰展示压缩过程
-3. **智能保留**：保留关键信息，不影响审查质量
-4. **适用所有策略**：quick、standard、deep、large 都支持
-5. **容错性强**：压缩失败时自动回退到简化模式
+- 避免大型 diff 一次性占满上下文。
+- 让 AI 将 token 用在真正需要审查的文件上。
+- 与多轮工具调用和上下文压缩配合，提升大型 PR 完成率。
 
-### 故障排查
+### 相关实现
 
-#### 问题 1：压缩失败
+- `backend/services/ai_reviewer/compact_diff.py`
+- `backend/services/ai_reviewer/prompt_builder.py`
+- `backend/services/ai_reviewer/constants.py`
 
-**症状**：日志显示"压缩失败，回退到简化模式"
+## 对话历史自动压缩
 
-**解决方案**：
+当审查过程中发生多轮工具调用，对话历史超过阈值时，系统会自动压缩历史上下文。
 
-- 这是正常的容错机制
-- 系统会自动使用简化模式继续审查
-- 检查网络连接和 API 密钥
+### 触发条件
 
-#### 问题 2：频繁压缩
+```text
+当前对话历史 tokens > safe_context × context_compression_threshold
+```
 
-**症状**：每次审查都触发多次压缩
+### 工作方式
 
-**可能原因**：
+1. 主审查会话持续执行代码审查和工具调用。
+2. 触发压缩后，系统创建独立压缩会话。
+3. 压缩会话总结历史中的关键发现、已读文件、行内评论位置和待处理事项。
+4. 主审查会话用压缩摘要替换旧历史，并继续审查。
 
-- PR 规模很大
-- AI 频繁调用工具
-- 压缩阈值设置过低
+### 压缩保留内容
 
-**解决方案**：
+- 已发现的问题及严重程度。
+- 行内评论文件路径、行号和内容。
+- 已阅读的重要文件、目录结构、工具调用结论。
+- 当前审查进度和仍需检查的区域。
 
-- 提高压缩阈值：`CONTEXT_COMPRESSION_THRESHOLD=0.9`
-- 检查是否可以优化工具调用逻辑
+### 压缩移除内容
 
-#### 问题 3：压缩后质量下降
+- 重复对话轮次。
+- 冗余工具调用细节。
+- 已处理完成且不再影响结论的信息。
 
-**症状**：压缩后的审查结果不如之前
+## 故障排查
 
-**可能原因**：
+### 无法识别模型上下文
 
-- 压缩过于激进
-- 丢失了关键信息
+处理建议：
 
-**解决方案**：
+1. 在 WebUI 中检查 AI Provider、API Base、模型名是否正确。
+2. 尝试从配置页重新获取模型列表。
+3. 必要时手动设置 `model_context_window`。
 
-- 降低压缩阈值：`CONTEXT_COMPRESSION_THRESHOLD=0.8`
-- 检查压缩 prompt 是否合理
-- 调整 `CONTEXT_SAFETY_THRESHOLD`
+### 大型 PR 审查仍然失败
 
-### 最佳实践
+处理建议：
 
-1. **保持默认配置**：
+1. 确认 `enable_context_compression` 已启用。
+2. 适当降低 `context_compression_threshold`，让系统更早压缩。
+3. 检查 AI API 请求是否触发 `ai_api_timeout_seconds` 或 `ai_api_total_timeout_seconds`。
+4. 对极大 PR，可考虑拆分 PR 或使用上下文窗口更大的模型。
 
-   ```env
-   ENABLE_CONTEXT_COMPRESSION=true
-   CONTEXT_COMPRESSION_THRESHOLD=0.85
-   ```
+### 频繁压缩导致成本升高
 
-   默认配置适用于大多数场景。
+处理建议：
 
-2. **监控日志**：
-   定期检查压缩日志，了解压缩频率和效果。
+1. 适当提高 `context_compression_threshold`。
+2. 使用辅助模型处理压缩任务。
+3. 检查 PR 是否包含生成文件、锁文件或大体积文件，并在策略配置中过滤。
 
-3. **调整阈值**：
-   - 小型项目：可以提高阈值到 0.9（减少压缩次数）
-   - 大型项目：可以降低阈值到 0.8（更早压缩，更稳定）
+## 最佳实践
 
-4. **结合上下文管理**：
-   - 确保 `MODEL_CONTEXT_WINDOW` 设置正确
-   - 确保 `CONTEXT_SAFETY_THRESHOLD` 合理（0.7-0.9）
+- 优先通过 WebUI 修改配置，避免依赖运行中不可见的环境变量变更。
+- 对常见模型使用 AI Provider 注册表自动识别上下文窗口。
+- 对大型仓库启用 RAG、代码索引和项目记忆，让 AI 按需检索而不是一次性塞入全部上下文。
+- 保持 compact diff 与上下文压缩开启，以兼顾大型 PR 完成率和成本。
+- 为摘要/压缩配置较便宜的辅助模型，主模型专注最终审查质量。
 
 ## 更新日志
 
+### v2.10.0 (2026-05-11)
+
+- ✅ 将文档更新为 WebUI 动态配置优先。
+- ✅ 补充 AI Provider 注册表和模型上下文窗口自动发现说明。
+- ✅ 补充大型 PR compact diff 模式说明。
+- ✅ 补充 AI API 单次请求超时和重试总超时配置说明。
+
 ### v1.1.0 (2026-03-10)
 
-- ✅ 实现上下文自动压缩功能
-- ✅ 支持所有审查策略
-- ✅ 使用两个独立会话（主审查 + 压缩专用）
-- ✅ 智能压缩策略（保留关键信息）
-- ✅ 容错机制（压缩失败回退）
-- ✅ 详细的日志记录
+- ✅ 实现上下文自动压缩功能。
+- ✅ 支持所有审查策略。
+- ✅ 使用主审查会话与压缩专用会话。
+- ✅ 增加压缩失败回退机制。
 
 ### v1.0.0 (2026-03-10)
 
-- ✅ 实现模型上下文自动检测功能
-- ✅ 支持预定义模型映射表
-- ✅ 支持 API 动态获取
-- ✅ 支持用户自定义配置
-- ✅ 实现 Token 估算功能
-- ✅ 集成到 AI 审查器
-- ✅ 更新配置文件
-
-## 未来计划
-
-- [x] 实现上下文自动压缩功能（已完成）
-- [ ] 支持更多模型
-- [ ] 实现实时上下文监控
-- [ ] 添加上下文使用统计
-- [ ] 优化 Token 计算精度
-- [ ] 支持动态调整上下文大小
+- ✅ 实现模型上下文自动检测功能。
+- ✅ 支持预定义模型映射表。
+- ✅ 支持 Token 估算功能。
+- ✅ 集成到 AI 审查器。

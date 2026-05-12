@@ -6,7 +6,11 @@ from datetime import datetime, timedelta
 from typing import Dict, Any, List
 from loguru import logger
 
-from backend.core.config import get_settings, get_strategy_config, get_user_dynamic_config
+from backend.core.config import (
+    get_settings,
+    get_strategy_config,
+    get_user_dynamic_config,
+)
 from backend.models.database import AppConfig, async_session
 from backend.services.ai_reviewer.api_client import AIApiClient
 from backend.services.ai_reviewer.tools import (

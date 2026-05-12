@@ -89,13 +89,17 @@ class GlobTool(BaseTool):
         for match in matches:
             if len(filenames) >= max_results:
                 break
-            rel = match.relative_to(ctx.workspace_service.resolve_inside_workspace(ctx.workspace))
+            rel = match.relative_to(
+                ctx.workspace_service.resolve_inside_workspace(ctx.workspace)
+            )
             filenames.append(str(rel))
 
         duration_ms = int((time.time() - start_time) * 1000)
         truncated = len(matches) > max_results
 
-        logger.debug("GlobTool: {} → {} 文件 ({}ms)", pattern, len(filenames), duration_ms)
+        logger.debug(
+            "GlobTool: {} → {} 文件 ({}ms)", pattern, len(filenames), duration_ms
+        )
 
         return ToolResult(
             success=True,

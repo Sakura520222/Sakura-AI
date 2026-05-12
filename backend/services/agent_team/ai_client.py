@@ -1,5 +1,7 @@
 """Agent 专家团队专用 AI 配置与客户端工厂"""
 
+from __future__ import annotations
+
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -7,6 +9,32 @@ from backend.core.config import get_dynamic_config, get_settings
 from backend.services.ai_reviewer.api_client import AIApiClient
 
 _UNCONFIGURED_MODEL_VALUE = ""
+
+
+async def resolve_agent_team_max_iterations(
+    task_max_iterations: int | None = None,
+) -> int:
+    """读取 Agent 单任务最大迭代轮数（公共辅助函数）。"""
+    fallback = get_settings().agent_team_max_iterations_per_task
+    raw_value = await get_dynamic_config("agent_team_max_iterations_per_task")
+    effective_fallback = (
+        task_max_iterations if task_max_iterations is not None else fallback
+    )
+    try:
+        value = int(raw_value if raw_value is not None else effective_fallback)
+    except (TypeError, ValueError):
+        value = fallback
+    return max(1, value)
+
+
+async def resolve_agent_team_bool_config(key: str, fallback: bool) -> bool:
+    """读取布尔动态配置，保留显式 False（公共辅助函数）。"""
+    value = await get_dynamic_config(key)
+    if value is None:
+        return fallback
+    if isinstance(value, bool):
+        return value
+    return str(value).strip().lower() in {"1", "true", "yes", "on", "启用", "是"}
 
 
 @dataclass(frozen=True)
@@ -105,16 +133,30 @@ async def load_agent_team_ai_config() -> AgentTeamAIConfig:
     use_main_ai = selected_provider == "main"
 
     if use_main_ai:
-        provider = str(await _config_value("ai_provider", _settings_value(settings, "ai_provider", "openai")))
+        provider = str(
+            await _config_value(
+                "ai_provider", _settings_value(settings, "ai_provider", "openai")
+            )
+        )
         api_base = str(
-            await _config_value("openai_api_base", _settings_value(settings, "openai_api_base", ""))
+            await _config_value(
+                "openai_api_base", _settings_value(settings, "openai_api_base", "")
+            )
         )
         api_key = str(
-            await _config_value("openai_api_key", _settings_value(settings, "openai_api_key", ""))
+            await _config_value(
+                "openai_api_key", _settings_value(settings, "openai_api_key", "")
+            )
         )
-        model = str(await _config_value("openai_model", _settings_value(settings, "openai_model", "")))
+        model = str(
+            await _config_value(
+                "openai_model", _settings_value(settings, "openai_model", "")
+            )
+        )
         review_model = model
-        summary_value = await _config_value("summary_model", _settings_value(settings, "summary_model", ""))
+        summary_value = await _config_value(
+            "summary_model", _settings_value(settings, "summary_model", "")
+        )
         summary_model = _model_or_fallback(summary_value, review_model or model)
     else:
         provider = selected_provider
@@ -143,7 +185,9 @@ async def load_agent_team_ai_config() -> AgentTeamAIConfig:
     )
 
 
-async def create_agent_team_client(validate: bool = True) -> tuple[AIApiClient, AgentTeamAIConfig]:
+async def create_agent_team_client(
+    validate: bool = True,
+) -> tuple[AIApiClient, AgentTeamAIConfig]:
     """创建 Agent 专家团队专用 AI 客户端。"""
     config = await load_agent_team_ai_config()
     if validate:

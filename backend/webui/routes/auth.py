@@ -6,7 +6,16 @@ import time
 from urllib.parse import urlencode
 
 import httpx
-from fastapi import APIRouter, Request, Depends, Form, HTTPException, Query, Header, Body
+from fastapi import (
+    APIRouter,
+    Request,
+    Depends,
+    Form,
+    HTTPException,
+    Query,
+    Header,
+    Body,
+)
 from fastapi.responses import RedirectResponse, HTMLResponse, JSONResponse
 from loguru import logger
 from sqlalchemy import select
@@ -364,7 +373,9 @@ async def github_callback(
             status_code=403,
         )
 
-    token_data = _build_login_token_payload(user, github_username, github_id, avatar_url)
+    token_data = _build_login_token_payload(
+        user, github_username, github_id, avatar_url
+    )
 
     # 登录成功，删除已使用的 state
     await _delete_oauth_state(state)
@@ -556,7 +567,9 @@ async def two_factor_passkey_verify(
             )
             await session.commit()
     except Exception as exc:
-        logger.warning("Passkey 登录验证失败: user_id={}, error={}", payload.get("user_id"), exc)
+        logger.warning(
+            "Passkey 登录验证失败: user_id={}, error={}", payload.get("user_id"), exc
+        )
         return JSONResponse(
             status_code=400,
             content={"success": False, "message": "Passkey 验证失败", "data": None},

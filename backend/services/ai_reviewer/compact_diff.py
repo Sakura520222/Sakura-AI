@@ -4,7 +4,10 @@ from typing import Any, Dict, List, Optional
 
 from backend.core.config import get_settings
 from backend.core.model_context import get_model_context_manager
-from backend.services.ai_reviewer.constants import COMPACT_TOOLS, TOOL_NAME_TO_DEFINITION
+from backend.services.ai_reviewer.constants import (
+    COMPACT_TOOLS,
+    TOOL_NAME_TO_DEFINITION,
+)
 from backend.services.ai_reviewer.message_utils import estimate_messages_tokens
 from backend.services.ai_reviewer.tools import DiffToolHandler, ToolHandler
 

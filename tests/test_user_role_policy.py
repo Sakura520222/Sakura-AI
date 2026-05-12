@@ -1,4 +1,7 @@
-from backend.services.user_role_policy import can_toggle_user_status, can_update_user_role
+from backend.services.user_role_policy import (
+    can_toggle_user_status,
+    can_update_user_role,
+)
 
 
 def test_admin_cannot_promote_user_to_admin():

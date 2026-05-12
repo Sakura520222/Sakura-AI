@@ -6,6 +6,7 @@
 
 from __future__ import annotations
 
+import shlex
 from typing import Any
 
 from loguru import logger
@@ -14,9 +15,46 @@ from backend.core.config import get_dynamic_config, get_settings
 from backend.services.agent_team.shell_executor import AgentTeamShellExecutor
 from backend.services.agent_team.tools.base import BaseTool, ToolContext, ToolResult
 
+# Shell 元字符/模式，出现则拒绝执行以防止命令注入
+# 单独的 $ 不拦截，仅拦截 $(...) 和 ${...} 等命令替换模式
+_SHELL_META_CHARS = frozenset({"&&", "||", ";", "|", "`", ">", ">>", "<", "&"})
+_SHELL_SUBST_PATTERNS = ("$('", "$(", "${")
+
+
+def _contains_shell_meta(command: str) -> bool:
+    """检查命令字符串是否包含 Shell 元字符或命令替换模式。"""
+    for meta in _SHELL_META_CHARS:
+        if meta in command:
+            return True
+    # 精细检查命令替换：仅拦截 $(...) 和 ${...}，不拦截普通 $ 变量引用
+    for pattern in _SHELL_SUBST_PATTERNS:
+        if pattern in command:
+            return True
+    return False
+
 
 async def is_agent_command_allowed(command: str) -> bool:
-    """检查 Agent 可执行命令是否在配置白名单内。"""
+    """检查 Agent 可执行命令是否在配置白名单内。
+
+    使用 shlex.split 提取命令首 token 进行精确匹配，并拒绝包含 Shell 元字符的命令。
+    """
+    command = command.strip()
+    if not command:
+        return False
+
+    if _contains_shell_meta(command):
+        return False
+
+    try:
+        tokens = shlex.split(command)
+    except ValueError:
+        return False
+
+    if not tokens:
+        return False
+
+    first_token = tokens[0]
+
     raw = await get_dynamic_config("agent_team_test_command_allowlist")
     if raw is None:
         raw = get_settings().agent_team_test_command_allowlist
@@ -25,12 +63,20 @@ async def is_agent_command_allowed(command: str) -> bool:
     if not allowlist:
         return False
 
-    normalized_command = " ".join(command.strip().split())
     for allowed in allowlist:
-        normalized_allowed = " ".join(allowed.split())
-        if normalized_command == normalized_allowed:
+        allowed_tokens = shlex.split(allowed)
+        if not allowed_tokens:
+            continue
+        allowed_first = allowed_tokens[0]
+        if first_token != allowed_first:
+            continue
+        # 白名单项无参数时，允许任意参数；白名单项有参数时，命令参数必须以白名单参数为前缀
+        if len(allowed_tokens) == 1:
             return True
-        if normalized_command.startswith(normalized_allowed + " "):
+        if (
+            len(tokens) >= len(allowed_tokens)
+            and tokens[: len(allowed_tokens)] == allowed_tokens
+        ):
             return True
     return False
 
@@ -92,7 +138,9 @@ class ShellTool(BaseTool):
         try:
             result = await executor.run(command, timeout_seconds=timeout)
         except Exception as exc:
-            return ToolResult(success=False, error=f"命令执行失败: {type(exc).__name__}: {exc}")
+            return ToolResult(
+                success=False, error=f"命令执行失败: {type(exc).__name__}: {exc}"
+            )
 
         stdout = result.stdout
         stderr = result.stderr
