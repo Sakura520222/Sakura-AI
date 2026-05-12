@@ -75,8 +75,13 @@
                 </div>
             </div>
 
-            <button type="button" id="passkey-login-btn" class="w-full py-3 px-4 bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 text-gray-800 dark:text-gray-100 font-medium rounded-xl transition-all hover:bg-gray-50 dark:hover:bg-gray-700">
-                {{ _('auth.verify_with_passkey') }}
+            <button type="button" id="passkey-login-btn" class="w-full py-3 px-4 bg-gradient-to-r from-sakura-500 to-purple-500 hover:from-sakura-600 hover:to-purple-600 dark:from-sakura-400 dark:to-purple-400 dark:hover:from-sakura-500 dark:hover:to-purple-500 text-white font-medium rounded-xl transition-all shadow-lg shadow-sakura-500/25">
+                <span class="flex items-center justify-center gap-2">
+                    <svg class="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path stroke-linecap="round" stroke-linejoin="round" d="M15.75 5.25a3 3 0 0 1 3 3m3 0a6 6 0 0 1-7.029 5.912c-.563-.097-1.159.026-1.563.43L10.5 17.25H8.25v2.25H6v2.25H2.25v-2.818c0-.597.237-1.17.659-1.591l6.499-6.499c.404-.404.527-1 .43-1.563A6 6 0 1 1 21.75 8.25z"/>
+                    </svg>
+                    {{ _('auth.verify_with_passkey') }}
+                </span>
             </button>
             <p id="passkey-error" class="hidden mt-3 text-sm text-red-600 dark:text-red-400"></p>
         </div>
