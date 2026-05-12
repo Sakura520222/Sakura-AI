@@ -85,13 +85,13 @@ class GrepTool(BaseTool):
 
         workspace_path = Path(ctx.workspace)
 
-        # 尝试使用系统 grep
-        cmd_parts = ["grep", "-rn"]
+        # 尝试使用系统 grep；使用 -F 固定字符串匹配 + -- 分隔以避免 keyword 被解析为选项
+        cmd_parts = ["grep", "-rn", "-F"]
         if case_insensitive:
             cmd_parts.append("-i")
         if file_ext:
             cmd_parts.extend(["--include", f"*{file_ext}"])
-        cmd_parts.extend([keyword, "."])
+        cmd_parts.extend(["--", keyword, "."])
 
         try:
             process = await asyncio.create_subprocess_exec(
@@ -111,7 +111,9 @@ class GrepTool(BaseTool):
 
                 if output_mode == "files_with_matches":
                     # 提取唯一文件名
-                    files = sorted(set(line.split(":")[0] for line in lines if ":" in line))
+                    files = sorted(
+                        set(line.split(":")[0] for line in lines if ":" in line)
+                    )
                     return ToolResult(
                         success=True,
                         output={
@@ -137,7 +139,9 @@ class GrepTool(BaseTool):
             pass
 
         # Python 回退搜索
-        return await self._python_search(keyword, file_ext, output_mode, case_insensitive, workspace_path)
+        return await self._python_search(
+            keyword, file_ext, output_mode, case_insensitive, workspace_path
+        )
 
     async def _python_search(
         self,

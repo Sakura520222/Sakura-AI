@@ -296,5 +296,7 @@ async def reset_mfa_route(
 async def _get_target_user(
     db: AsyncSession, target_user_id: int
 ) -> TelegramUser | None:
-    result = await db.execute(select(TelegramUser).where(TelegramUser.id == target_user_id))
+    result = await db.execute(
+        select(TelegramUser).where(TelegramUser.id == target_user_id)
+    )
     return result.scalar_one_or_none()

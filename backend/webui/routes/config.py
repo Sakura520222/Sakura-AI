@@ -322,7 +322,11 @@ async def save_strategies_section(
                         continue
                     keywords = [k.strip() for k in kw_raw.split(",") if k.strip()]
                     categories.append(
-                        {"name": name, "description": desc.strip(), "keywords": keywords}
+                        {
+                            "name": name,
+                            "description": desc.strip(),
+                            "keywords": keywords,
+                        }
                     )
                 if not categories:
                     raise ValueError("至少需要定义一个 Issue 分类")

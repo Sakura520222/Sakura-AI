@@ -592,9 +592,7 @@ class FetchUrlToolHandler:
 
                     redirect_count += 1
                     if redirect_count > self._max_redirects:
-                        raise ValueError(
-                            f"重定向次数超过限制 ({self._max_redirects})"
-                        )
+                        raise ValueError(f"重定向次数超过限制 ({self._max_redirects})")
 
                     location = response.headers.get("location", "")
                     if not location:

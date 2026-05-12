@@ -142,7 +142,9 @@ class AgentTeamFileTools:
         """异步包装：读取工作区内文件。"""
         return await _run_sync(self.read_file, relative_path)
 
-    async def write_file_async(self, relative_path: str, content: str) -> FileWriteResult:
+    async def write_file_async(
+        self, relative_path: str, content: str
+    ) -> FileWriteResult:
         """异步包装：写入工作区内文件。"""
         return await _run_sync(self.write_file, relative_path, content)
 
@@ -260,7 +262,9 @@ class AgentTeamFileTools:
         if start_line < 1:
             raise ValueError(f"start_line 必须 >= 1，当前: {start_line}")
         if end_line < start_line:
-            raise ValueError(f"end_line ({end_line}) 不能小于 start_line ({start_line})")
+            raise ValueError(
+                f"end_line ({end_line}) 不能小于 start_line ({start_line})"
+            )
 
         content = resolved.read_text(encoding="utf-8")
         lines = content.split("\n")
@@ -336,9 +340,7 @@ class AgentTeamFileTools:
         normalized = relative_path.replace("\\", "/")
         for pattern in self.BLOCKED_PATTERNS:
             if pattern in normalized or normalized.startswith(pattern.rstrip("/")):
-                raise WorkspaceSecurityError(
-                    f"不允许访问的路径: {relative_path}"
-                )
+                raise WorkspaceSecurityError(f"不允许访问的路径: {relative_path}")
 
     def _is_blocked_path(self, relative_path: str) -> bool:
         normalized = relative_path.replace("\\", "/")

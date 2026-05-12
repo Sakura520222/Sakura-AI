@@ -13,7 +13,10 @@ from backend.webui.deps import get_db, paginate
 from backend.webui.helpers.admin_log import log_admin_action
 from backend.core.config import get_settings
 from backend.services.quota_service import QuotaService
-from backend.services.user_role_policy import can_toggle_user_status, can_update_user_role
+from backend.services.user_role_policy import (
+    can_toggle_user_status,
+    can_update_user_role,
+)
 
 from backend.api.v1.deps import require_api_admin, require_api_super_admin
 from backend.api.v1.schemas import (

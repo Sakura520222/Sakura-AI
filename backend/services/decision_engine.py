@@ -301,7 +301,11 @@ class DecisionEngine:
         """
         try:
             # 根据 output_language 选择模板 / Select template based on output_language
-            output_lang = output_language if output_language is not None else get_settings().output_language
+            output_lang = (
+                output_language
+                if output_language is not None
+                else get_settings().output_language
+            )
             if output_lang == "en":
                 templates = self.policy.get("review_templates_en", {})
             else:

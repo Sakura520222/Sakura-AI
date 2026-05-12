@@ -48,7 +48,9 @@ async def get_user_security_summaries(
         )
         .group_by(UserRecoveryCode.user_id)
     )
-    recovery_counts = {user_id: int(count or 0) for user_id, count in recovery_rows.all()}
+    recovery_counts = {
+        user_id: int(count or 0) for user_id, count in recovery_rows.all()
+    }
 
     passkey_rows = await session.execute(
         select(UserWebAuthnCredential.user_id, func.count(UserWebAuthnCredential.id))
@@ -122,7 +124,11 @@ async def get_recent_security_events(
     limit: int = 50,
 ) -> list[SecurityEventLog]:
     """Return recent security events."""
-    query = select(SecurityEventLog).order_by(SecurityEventLog.created_at.desc()).limit(limit)
+    query = (
+        select(SecurityEventLog)
+        .order_by(SecurityEventLog.created_at.desc())
+        .limit(limit)
+    )
     if user_id is not None:
         query = query.where(SecurityEventLog.target_user_id == user_id)
     result = await session.execute(query)

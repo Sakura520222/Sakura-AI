@@ -54,7 +54,9 @@ REVIEWER_TOOL_INSTANCES: list[BaseTool] = [
 ]
 
 # 按名称索引的工具注册表
-tool_registry: dict[str, BaseTool] = {tool.name: tool for tool in FULLSTACK_TOOL_INSTANCES}
+tool_registry: dict[str, BaseTool] = {
+    tool.name: tool for tool in FULLSTACK_TOOL_INSTANCES
+}
 tool_registry.update({tool.name: tool for tool in REVIEWER_TOOL_INSTANCES})
 
 

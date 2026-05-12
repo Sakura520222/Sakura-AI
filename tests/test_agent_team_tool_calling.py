@@ -22,7 +22,10 @@ def test_edit_file_replaces_first_occurrence(tmp_path):
     workspace = service.ensure_workspace("owner", "repo")
     tools = AgentTeamFileTools(workspace, service)
 
-    tools.write_file("test.py", "def hello():\n    return 'hello'\n\ndef hello():\n    return 'world'\n")
+    tools.write_file(
+        "test.py",
+        "def hello():\n    return 'hello'\n\ndef hello():\n    return 'world'\n",
+    )
 
     result = tools.edit_file("test.py", "return 'hello'", "return 'hi'")
 
@@ -273,7 +276,9 @@ def test_insert_lines_out_of_range(tmp_path):
 
 class FakeToolCall:
     def __init__(self, name: str, arguments: dict):
-        self.function = type("F", (), {"name": name, "arguments": json.dumps(arguments)})()
+        self.function = type(
+            "F", (), {"name": name, "arguments": json.dumps(arguments)}
+        )()
         self.id = f"call_{name}"
 
 
@@ -284,16 +289,21 @@ async def test_tool_executor_handles_edit_file(tmp_path):
     executor = AgentToolExecutor(workspace, service)
 
     # 先写文件
-    write_tc = FakeToolCall("write_file", {"file_path": "demo.py", "content": "x = 1\ny = 2\n"})
+    write_tc = FakeToolCall(
+        "write_file", {"file_path": "demo.py", "content": "x = 1\ny = 2\n"}
+    )
     write_result = await executor.execute_tool_call(write_tc)
     assert write_result["success"] is True
 
     # 编辑
-    edit_tc = FakeToolCall("edit_file", {
-        "file_path": "demo.py",
-        "old_text": "x = 1",
-        "new_text": "x = 42",
-    })
+    edit_tc = FakeToolCall(
+        "edit_file",
+        {
+            "file_path": "demo.py",
+            "old_text": "x = 1",
+            "new_text": "x = 42",
+        },
+    )
     edit_result = await executor.execute_tool_call(edit_tc)
     assert edit_result["success"] is True
     assert edit_result["replacements"] == 1
@@ -305,14 +315,19 @@ async def test_tool_executor_edit_file_missing_text(tmp_path):
     workspace = service.ensure_workspace("owner", "repo")
     executor = AgentToolExecutor(workspace, service)
 
-    write_tc = FakeToolCall("write_file", {"file_path": "demo.py", "content": "hello\n"})
+    write_tc = FakeToolCall(
+        "write_file", {"file_path": "demo.py", "content": "hello\n"}
+    )
     await executor.execute_tool_call(write_tc)
 
-    edit_tc = FakeToolCall("edit_file", {
-        "file_path": "demo.py",
-        "old_text": "nonexistent",
-        "new_text": "replacement",
-    })
+    edit_tc = FakeToolCall(
+        "edit_file",
+        {
+            "file_path": "demo.py",
+            "old_text": "nonexistent",
+            "new_text": "replacement",
+        },
+    )
     result = await executor.execute_tool_call(edit_tc)
     assert "error" in result
     assert "未找到" in result["error"]
@@ -336,11 +351,14 @@ async def test_tool_executor_finish_task(tmp_path):
     workspace = service.ensure_workspace("owner", "repo")
     executor = AgentToolExecutor(workspace, service)
 
-    tc = FakeToolCall("finish_task", {
-        "summary": "完成修改",
-        "modified_files": ["a.py", "b.py"],
-        "risk_level": "low",
-    })
+    tc = FakeToolCall(
+        "finish_task",
+        {
+            "summary": "完成修改",
+            "modified_files": ["a.py", "b.py"],
+            "risk_level": "low",
+        },
+    )
     result = await executor.execute_tool_call(tc)
     assert result["_finish"] is True
     assert result["summary"] == "完成修改"
@@ -353,11 +371,14 @@ async def test_tool_executor_submit_review(tmp_path):
     workspace = service.ensure_workspace("owner", "repo")
     executor = AgentToolExecutor(workspace, service)
 
-    tc = FakeToolCall("submit_review", {
-        "verdict": "pass",
-        "score": 8,
-        "summary": "代码质量良好",
-    })
+    tc = FakeToolCall(
+        "submit_review",
+        {
+            "verdict": "pass",
+            "score": 8,
+            "summary": "代码质量良好",
+        },
+    )
     result = await executor.execute_tool_call(tc)
     assert result["_review"] is True
     assert result["verdict"] == "pass"
@@ -370,24 +391,39 @@ async def test_tool_executor_replace_lines(tmp_path):
     workspace = service.ensure_workspace("owner", "repo")
     executor = AgentToolExecutor(workspace, service)
 
-    await executor.execute_tool_call(FakeToolCall("write_file", {
-        "file_path": "demo.py",
-        "content": "a\nb\nc\nd\ne\n",
-    }))
+    await executor.execute_tool_call(
+        FakeToolCall(
+            "write_file",
+            {
+                "file_path": "demo.py",
+                "content": "a\nb\nc\nd\ne\n",
+            },
+        )
+    )
 
-    result = await executor.execute_tool_call(FakeToolCall("replace_lines", {
-        "file_path": "demo.py",
-        "start_line": 2,
-        "end_line": 4,
-        "new_content": "B\nC\nD",
-    }))
+    result = await executor.execute_tool_call(
+        FakeToolCall(
+            "replace_lines",
+            {
+                "file_path": "demo.py",
+                "start_line": 2,
+                "end_line": 4,
+                "new_content": "B\nC\nD",
+            },
+        )
+    )
     assert result["success"] is True
     assert result["lines_replaced"] == 3
 
     # 验证实际内容
-    read_result = await executor.execute_tool_call(FakeToolCall("read_file", {
-        "file_path": "demo.py",
-    }))
+    read_result = await executor.execute_tool_call(
+        FakeToolCall(
+            "read_file",
+            {
+                "file_path": "demo.py",
+            },
+        )
+    )
     assert "B\nC\nD" in read_result["content"] or "B" in read_result["content"]
 
 
@@ -397,17 +433,27 @@ async def test_tool_executor_replace_lines_delete(tmp_path):
     workspace = service.ensure_workspace("owner", "repo")
     executor = AgentToolExecutor(workspace, service)
 
-    await executor.execute_tool_call(FakeToolCall("write_file", {
-        "file_path": "demo.py",
-        "content": "a\nb\nc\nd\n",
-    }))
+    await executor.execute_tool_call(
+        FakeToolCall(
+            "write_file",
+            {
+                "file_path": "demo.py",
+                "content": "a\nb\nc\nd\n",
+            },
+        )
+    )
 
-    result = await executor.execute_tool_call(FakeToolCall("replace_lines", {
-        "file_path": "demo.py",
-        "start_line": 2,
-        "end_line": 3,
-        "new_content": "",
-    }))
+    result = await executor.execute_tool_call(
+        FakeToolCall(
+            "replace_lines",
+            {
+                "file_path": "demo.py",
+                "start_line": 2,
+                "end_line": 3,
+                "new_content": "",
+            },
+        )
+    )
     assert result["success"] is True
 
 
@@ -417,16 +463,26 @@ async def test_tool_executor_insert_lines(tmp_path):
     workspace = service.ensure_workspace("owner", "repo")
     executor = AgentToolExecutor(workspace, service)
 
-    await executor.execute_tool_call(FakeToolCall("write_file", {
-        "file_path": "demo.py",
-        "content": "a\nb\nc\n",
-    }))
+    await executor.execute_tool_call(
+        FakeToolCall(
+            "write_file",
+            {
+                "file_path": "demo.py",
+                "content": "a\nb\nc\n",
+            },
+        )
+    )
 
-    result = await executor.execute_tool_call(FakeToolCall("insert_lines", {
-        "file_path": "demo.py",
-        "after_line": 1,
-        "content": "inserted",
-    }))
+    result = await executor.execute_tool_call(
+        FakeToolCall(
+            "insert_lines",
+            {
+                "file_path": "demo.py",
+                "after_line": 1,
+                "content": "inserted",
+            },
+        )
+    )
     assert result["success"] is True
     assert result["lines_inserted"] == 1
 
@@ -437,16 +493,26 @@ async def test_tool_executor_insert_at_beginning(tmp_path):
     workspace = service.ensure_workspace("owner", "repo")
     executor = AgentToolExecutor(workspace, service)
 
-    await executor.execute_tool_call(FakeToolCall("write_file", {
-        "file_path": "demo.py",
-        "content": "a\nb\n",
-    }))
+    await executor.execute_tool_call(
+        FakeToolCall(
+            "write_file",
+            {
+                "file_path": "demo.py",
+                "content": "a\nb\n",
+            },
+        )
+    )
 
-    result = await executor.execute_tool_call(FakeToolCall("insert_lines", {
-        "file_path": "demo.py",
-        "after_line": 0,
-        "content": "# header",
-    }))
+    result = await executor.execute_tool_call(
+        FakeToolCall(
+            "insert_lines",
+            {
+                "file_path": "demo.py",
+                "after_line": 0,
+                "content": "# header",
+            },
+        )
+    )
     assert result["success"] is True
 
 
@@ -457,15 +523,25 @@ async def test_tool_executor_edit_file_multiple_matches(tmp_path):
     workspace = service.ensure_workspace("owner", "repo")
     executor = AgentToolExecutor(workspace, service)
 
-    await executor.execute_tool_call(FakeToolCall("write_file", {
-        "file_path": "demo.py",
-        "content": "x = 1\nx = 1\n",
-    }))
+    await executor.execute_tool_call(
+        FakeToolCall(
+            "write_file",
+            {
+                "file_path": "demo.py",
+                "content": "x = 1\nx = 1\n",
+            },
+        )
+    )
 
-    result = await executor.execute_tool_call(FakeToolCall("edit_file", {
-        "file_path": "demo.py",
-        "old_text": "x = 1",
-        "new_text": "x = 2",
-    }))
+    result = await executor.execute_tool_call(
+        FakeToolCall(
+            "edit_file",
+            {
+                "file_path": "demo.py",
+                "old_text": "x = 1",
+                "new_text": "x = 2",
+            },
+        )
+    )
     assert "error" in result
     assert "2 处匹配" in result["error"]

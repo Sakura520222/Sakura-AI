@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import io
+import json
 import re
 import shutil
 import zipfile
@@ -137,7 +138,9 @@ def parse_github_skill_url(url: str) -> GitHubSkillSource:
         owner, repo = parts[0], parts[1]
         ref, path = _split_github_ref_and_path(parts[3:])
         raw_url = f"https://raw.githubusercontent.com/{owner}/{repo}/{ref}/{path}"
-        return GitHubSkillSource(owner=owner, repo=repo, ref=ref, path=path, raw_url=raw_url)
+        return GitHubSkillSource(
+            owner=owner, repo=repo, ref=ref, path=path, raw_url=raw_url
+        )
 
     if host == "raw.githubusercontent.com":
         if len(parts) < 4:
@@ -145,7 +148,9 @@ def parse_github_skill_url(url: str) -> GitHubSkillSource:
         owner, repo = parts[0], parts[1]
         ref, path = _split_github_ref_and_path(parts[2:])
         raw_url = f"https://raw.githubusercontent.com/{owner}/{repo}/{ref}/{path}"
-        return GitHubSkillSource(owner=owner, repo=repo, ref=ref, path=path, raw_url=raw_url)
+        return GitHubSkillSource(
+            owner=owner, repo=repo, ref=ref, path=path, raw_url=raw_url
+        )
 
     raise ValueError("仅支持 github.com 或 raw.githubusercontent.com 链接")
 
@@ -254,13 +259,17 @@ class AgentSkillService:
     ) -> AgentSkill:
         """从 ZIP 压缩包安装 Skill。"""
         if len(content) > MAX_SKILL_DIR_BYTES:
-            raise ValueError(f"ZIP 文件不能超过 {MAX_SKILL_DIR_BYTES // (1024 * 1024)}MB")
+            raise ValueError(
+                f"ZIP 文件不能超过 {MAX_SKILL_DIR_BYTES // (1024 * 1024)}MB"
+            )
 
         extracted: dict[str, str] = {}
         with zipfile.ZipFile(io.BytesIO(content)) as zf:
             # 检测并剥离 ZIP 的顶层目录（如 GitHub 下载的 <repo>-<ref>/ 前缀）
             # ZIP 内路径始终使用正斜杠，不使用 os.path / pathlib
-            names = [_decode_zip_filename(n) for n in zf.namelist() if not n.endswith("/")]
+            names = [
+                _decode_zip_filename(n) for n in zf.namelist() if not n.endswith("/")
+            ]
             strip_prefix = ""
             if names:
                 top_dirs = set()
@@ -279,7 +288,7 @@ class AgentSkillService:
                 rel = _decode_zip_filename(info.filename)
                 rel_for_prefix = rel.replace("\\", "/")
                 if strip_prefix and rel_for_prefix.startswith(strip_prefix):
-                    rel = rel_for_prefix[len(strip_prefix):]
+                    rel = rel_for_prefix[len(strip_prefix) :]
                 if not rel:
                     continue
                 safe_rel = _safe_skill_relative_path(rel)
@@ -288,7 +297,9 @@ class AgentSkillService:
                 basename = safe_rel.name
                 raw_bytes = zf.read(info)
                 if len(raw_bytes) > MAX_SKILL_BYTES:
-                    raise ValueError(f"文件 {basename} 超过 {MAX_SKILL_BYTES // 1024}KB")
+                    raise ValueError(
+                        f"文件 {basename} 超过 {MAX_SKILL_BYTES // 1024}KB"
+                    )
                 # 文件内容尝试多种编码
                 file_text: str | None = None
                 for enc in _ZIP_CONTENT_ENCODINGS:
@@ -298,7 +309,9 @@ class AgentSkillService:
                     except UnicodeDecodeError:
                         continue
                 if file_text is None:
-                    file_text = raw_bytes.decode("utf-8", errors="replace").replace("\r\n", "\n")
+                    file_text = raw_bytes.decode("utf-8", errors="replace").replace(
+                        "\r\n", "\n"
+                    )
                 extracted[safe_rel.as_posix()] = file_text
 
         skill_text = extracted.get(SKILL_FILE_NAME)
@@ -322,7 +335,9 @@ class AgentSkillService:
                 continue
             target = _resolve_within(skill_dir, skill_dir / safe_rel)
             await asyncio.to_thread(target.parent.mkdir, parents=True, exist_ok=True)
-            await asyncio.to_thread(target.write_text, fcontent, encoding="utf-8", newline="\n")
+            await asyncio.to_thread(
+                target.write_text, fcontent, encoding="utf-8", newline="\n"
+            )
 
         install_path = str((skill_dir / SKILL_FILE_NAME).resolve())
         skill = await self._upsert_skill(
@@ -393,7 +408,9 @@ class AgentSkillService:
             target = _resolve_within(skill_dir, skill_dir / safe_rel)
             await asyncio.to_thread(target.parent.mkdir, parents=True, exist_ok=True)
             if isinstance(decoded, str):
-                await asyncio.to_thread(target.write_text, decoded, encoding="utf-8", newline="\n")
+                await asyncio.to_thread(
+                    target.write_text, decoded, encoding="utf-8", newline="\n"
+                )
             else:
                 await asyncio.to_thread(target.write_bytes, fcontent)
 
@@ -476,7 +493,9 @@ class AgentSkillService:
 
     async def list_skills(self, db: AsyncSession) -> list[AgentSkill]:
         """列出所有已安装 Skill。"""
-        result = await db.execute(select(AgentSkill).order_by(AgentSkill.updated_at.desc()))
+        result = await db.execute(
+            select(AgentSkill).order_by(AgentSkill.updated_at.desc())
+        )
         return list(result.scalars().all())
 
     async def set_enabled(
@@ -530,19 +549,17 @@ class AgentSkillService:
                 lines.append(f"  - when_to_use: {skill.when_to_use.strip()[:500]}")
             # 展示动作能力信息
             if skill.arguments:
-                import json as _json
-
                 try:
-                    arg_names = _json.loads(skill.arguments)
+                    arg_names = json.loads(skill.arguments)
                     if arg_names:
-                        lines.append(f"  - arguments: {', '.join(str(a) for a in arg_names)}")
+                        lines.append(
+                            f"  - arguments: {', '.join(str(a) for a in arg_names)}"
+                        )
                 except (ValueError, TypeError):
                     pass
             if skill.allowed_tools:
-                import json as _json
-
                 try:
-                    tools = _json.loads(skill.allowed_tools)
+                    tools = json.loads(skill.allowed_tools)
                     if tools:
                         lines.append(f"  - tools: {', '.join(str(t) for t in tools)}")
                 except (ValueError, TypeError):
@@ -551,7 +568,9 @@ class AgentSkillService:
                 lines.append(f"  - requires: {skill.requires.strip()[:200]}")
         return "\n".join(lines)
 
-    async def snapshot_enabled_skills(self, db: AsyncSession) -> list[dict[str, str | int]]:
+    async def snapshot_enabled_skills(
+        self, db: AsyncSession
+    ) -> list[dict[str, str | int]]:
         """返回已启用 Skills 的快照信息。"""
         skills = await self._enabled_skills(db)
         return [
@@ -632,7 +651,9 @@ class AgentSkillService:
         root = await self.resolve_root()
         skill_dir = await self._ensure_skill_dir(root, slug)
         skill_path = skill_dir / SKILL_FILE_NAME
-        await asyncio.to_thread(skill_path.write_text, content, encoding="utf-8", newline="\n")
+        await asyncio.to_thread(
+            skill_path.write_text, content, encoding="utf-8", newline="\n"
+        )
         return str(skill_path.resolve())
 
     async def _ensure_skill_dir(self, root: Path, slug: str) -> Path:
@@ -706,7 +727,14 @@ class AgentSkillService:
         return text.replace("\r\n", "\n").replace("\r", "\n")
 
     # 需要从 frontmatter 提取的标量字段
-    _META_STRING_KEYS = ("name", "slug", "description", "when_to_use", "version", "requires")
+    _META_STRING_KEYS = (
+        "name",
+        "slug",
+        "description",
+        "when_to_use",
+        "version",
+        "requires",
+    )
 
     # 需要从 frontmatter 提取的列表字段（存为 JSON 字符串）
     _META_LIST_KEYS = ("allowed-tools", "allowed_tools", "arguments", "argument-hint")
@@ -723,15 +751,11 @@ class AgentSkillService:
                         if value is not None:
                             metadata[key] = str(value).strip()
                     # 列表字段序列化为 JSON 字符串存储
-                    import json
-
                     for key in self._META_LIST_KEYS:
                         value = parsed.get(key)
                         if value is not None:
                             if isinstance(value, list):
-                                metadata[key] = json.dumps(
-                                    value, ensure_ascii=False
-                                )
+                                metadata[key] = json.dumps(value, ensure_ascii=False)
                             else:
                                 metadata[key] = json.dumps(
                                     [str(value).strip()], ensure_ascii=False

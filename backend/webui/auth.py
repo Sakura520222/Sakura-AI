@@ -26,7 +26,8 @@ def create_mfa_pending_token(
     return _create_token(
         data,
         TOKEN_TYPE_MFA_PENDING,
-        expires_delta or timedelta(minutes=settings.two_factor_pending_token_expire_minutes),
+        expires_delta
+        or timedelta(minutes=settings.two_factor_pending_token_expire_minutes),
     )
 
 
@@ -64,7 +65,10 @@ def decode_access_token(token: str) -> Optional[dict]:
 
 def is_access_token_payload(payload: dict | None) -> bool:
     """判断 payload 是否为正式访问令牌。"""
-    return bool(payload) and payload.get("token_type", TOKEN_TYPE_ACCESS) == TOKEN_TYPE_ACCESS
+    return (
+        bool(payload)
+        and payload.get("token_type", TOKEN_TYPE_ACCESS) == TOKEN_TYPE_ACCESS
+    )
 
 
 def is_mfa_pending_payload(payload: dict | None) -> bool:

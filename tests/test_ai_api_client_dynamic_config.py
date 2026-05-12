@@ -45,7 +45,9 @@ async def test_call_with_retry_uses_dynamic_timeout_and_retry(monkeypatch):
         async def fake_sleep(delay):
             sleep_calls.append(delay)
 
-        monkeypatch.setattr("backend.services.ai_reviewer.api_client.asyncio.sleep", fake_sleep)
+        monkeypatch.setattr(
+            "backend.services.ai_reviewer.api_client.asyncio.sleep", fake_sleep
+        )
 
         api_client = AIApiClient("https://example.invalid/v1", "test-key")
         fake_client = _FakeOpenAIClient()
@@ -70,7 +72,9 @@ def test_calculate_delay_uses_dynamic_initial_delay(monkeypatch):
     old_value = settings.ai_api_initial_retry_delay_seconds
     try:
         settings.ai_api_initial_retry_delay_seconds = 2.0
-        monkeypatch.setattr("backend.services.ai_reviewer.api_client.random.uniform", lambda _a, _b: 1.0)
+        monkeypatch.setattr(
+            "backend.services.ai_reviewer.api_client.random.uniform", lambda _a, _b: 1.0
+        )
 
         api_client = AIApiClient("https://example.invalid/v1", "test-key")
 

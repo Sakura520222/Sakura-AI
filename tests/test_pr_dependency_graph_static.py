@@ -123,8 +123,7 @@ def test_static_mermaid_links_java_imports(service):
     ]
     contents = {
         "src/main/java/com/example/App.java": (
-            "package com.example;\n"
-            "import com.example.service.UserService;\n"
+            "package com.example;\nimport com.example.service.UserService;\n"
         ),
         "src/main/java/com/example/service/UserService.java": (
             "package com.example.service;\n"
@@ -183,7 +182,9 @@ def test_normalize_path_only_removes_leading_current_dir_segments():
 
 def test_escape_mermaid_label_handles_special_characters(service):
     files = [make_file('src/components/<Widget>{v1}|(#%)".tsx')]
-    contents = {'src/components/<Widget>{v1}|(#%)".tsx': "export const widget = null;\n"}
+    contents = {
+        'src/components/<Widget>{v1}|(#%)".tsx': "export const widget = null;\n"
+    }
 
     graph = service._generate_static_mermaid(files, contents, max_nodes=25)
 
@@ -206,15 +207,21 @@ def test_resolve_import_to_changed_file_uses_prefix_match():
         )
     }
 
-    assert PRDependencyGraphService._resolve_import_to_changed_file(
-        "src/pages/Home.tsx",
-        "components",
-        path_aliases,
-    ) == "src/components/Button.tsx"
+    assert (
+        PRDependencyGraphService._resolve_import_to_changed_file(
+            "src/pages/Home.tsx",
+            "components",
+            path_aliases,
+        )
+        == "src/components/Button.tsx"
+    )
 
 
 def test_dependency_graph_mode_dynamic_config_registered():
-    assert "pr_dependency_graph_mode" in DYNAMIC_CONFIG_GROUPS["pr_dependency_graph"]["keys"]
+    assert (
+        "pr_dependency_graph_mode"
+        in DYNAMIC_CONFIG_GROUPS["pr_dependency_graph"]["keys"]
+    )
     assert DYNAMIC_CONFIG_LABELS["pr_dependency_graph_mode"] == "PR 依赖图模式"
     assert DYNAMIC_CONFIG_SELECT_OPTIONS["pr_dependency_graph_mode"] == [
         {"value": "ai", "label": "AI 生成（使用 LLM 分析）"},
