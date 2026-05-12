@@ -1074,6 +1074,10 @@ toast:
   labels_saved: "Labels updated ({count} items)"
   label_settings_saved: "Label recommendation settings updated"
   label_settings_validation_failed: "Recommendation settings validation failed: {error}"
+  conflict_rules_saved: "Conflict rules updated ({count} rules)"
+  numeric_required: "{field_key} must be a valid number"
+  value_range: "{field_key} must be between {min_v}-{max_v}"
+  value_invalid: "{field_key} value is invalid"
 
 # ========== Telegram MFA Notifications ====
 telegram_mfa:
@@ -1089,7 +1093,6 @@ telegram_mfa:
   mfa_required_by_admin: "MFA enrollment required by admin"
   mfa_unrequired_by_admin: "MFA requirement removed"
   footer: "Sakura AI Reviewer Security Notification"
-  conflict_rules_saved: "Conflict rules updated ({count} rules)"
 
 # ========== API Error Messages ==========
 api:
@@ -1131,9 +1134,6 @@ api:
   ai_tool_iterations_invalid: "AI tool iterations must be a valid integer"
   ai_tool_iterations_range: "AI tool iterations must be between 1-150"
   unsupported_search_provider: "Unsupported search provider"
-  numeric_required: "{field_key} must be a valid number"
-  value_range: "{field_key} must be between {min_v}-{max_v}"
-  value_invalid: "{field_key} value is invalid"
 
 # ========== Comment Templates ==========
 comment:
