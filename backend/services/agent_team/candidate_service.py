@@ -9,6 +9,8 @@ from openai import BadRequestError
 from sqlalchemy import and_, desc, not_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from loguru import logger
+
 from backend.core.config import get_dynamic_config
 from backend.models.agent_team_models import (
     AgentTeamSourceType,
@@ -25,6 +27,8 @@ _SEVERITY_SCORE = {"critical": 100, "major": 75, "minor": 35, "suggestion": 15}
 _VALID_PRIORITIES = {"critical", "high", "medium", "low"}
 _AI_FILTER_MAX_ITEMS = 60
 _AI_FILTER_TEXT_LIMIT = 900
+# 候选池单次 GitHub 状态检查最大条目数，避免超出 API 速率限制。
+_MAX_GITHUB_STATE_CHECKS = 30
 
 
 @dataclass(frozen=True)
@@ -64,7 +68,11 @@ class AgentTeamCandidateService:
         candidates: list[AgentCandidate] = []
         candidates.extend(await self._collect_issue_candidates(db, allowlist, limit))
         candidates.extend(await self._collect_scan_candidates(db, allowlist, limit))
+        # 同一 Issue 多条分析记录去重
+        candidates = self._deduplicate_candidates(candidates)
         candidates.sort(key=lambda item: item.candidate_score, reverse=True)
+        # 过滤 GitHub 上已关闭的 Issue
+        candidates = await self._filter_closed_issues(candidates)
         return candidates[:limit]
 
     async def create_task_from_candidate(
@@ -114,15 +122,28 @@ class AgentTeamCandidateService:
         allowed_priorities = self._allowed_priorities(min_priority)
         keywords = await self._load_feasibility_keywords()
 
-        existing_subquery = select(AgentTeamTask.source_id).where(
-            AgentTeamTask.source_type == AgentTeamSourceType.ISSUE_ANALYSIS.value,
-            AgentTeamTask.status.notin_(
-                [
-                    AgentTeamTaskStatus.FAILED.value,
-                    AgentTeamTaskStatus.CANCELLED.value,
-                    AgentTeamTaskStatus.ABANDONED.value,
-                ]
-            ),
+        # 按 source_issue_number + repo 关联去重：同一 Issue 即使有多条分析记录，
+        # 只要已有非终态任务就不再进入候选池。
+        existing_exists = (
+            select(1)
+            .where(
+                and_(
+                    AgentTeamTask.source_type
+                    == AgentTeamSourceType.ISSUE_ANALYSIS.value,
+                    AgentTeamTask.status.notin_(
+                        [
+                            AgentTeamTaskStatus.FAILED.value,
+                            AgentTeamTaskStatus.CANCELLED.value,
+                            AgentTeamTaskStatus.ABANDONED.value,
+                        ]
+                    ),
+                    AgentTeamTask.source_issue_number
+                    == IssueAnalysis.issue_number,
+                    AgentTeamTask.repo_owner == IssueAnalysis.repo_owner,
+                    AgentTeamTask.repo_name == IssueAnalysis.repo_name,
+                )
+            )
+            .exists()
         )
         stmt = (
             select(IssueAnalysis)
@@ -130,7 +151,7 @@ class AgentTeamCandidateService:
                 and_(
                     IssueAnalysis.status == IssueAnalysisStatus.COMPLETED.value,
                     IssueAnalysis.duplicate_of.is_(None),
-                    not_(IssueAnalysis.id.in_(existing_subquery)),
+                    not_(existing_exists),
                 )
             )
             .order_by(desc(IssueAnalysis.completed_at), desc(IssueAnalysis.created_at))
@@ -173,15 +194,26 @@ class AgentTeamCandidateService:
         requirement: str,
     ) -> list[AgentCandidate]:
         """使用 Agent 专用 AI 从已分析 Issue 中按自然语言要求筛选候选。"""
-        existing_subquery = select(AgentTeamTask.source_id).where(
-            AgentTeamTask.source_type == AgentTeamSourceType.ISSUE_ANALYSIS.value,
-            AgentTeamTask.status.notin_(
-                [
-                    AgentTeamTaskStatus.FAILED.value,
-                    AgentTeamTaskStatus.CANCELLED.value,
-                    AgentTeamTaskStatus.ABANDONED.value,
-                ]
-            ),
+        existing_exists = (
+            select(1)
+            .where(
+                and_(
+                    AgentTeamTask.source_type
+                    == AgentTeamSourceType.ISSUE_ANALYSIS.value,
+                    AgentTeamTask.status.notin_(
+                        [
+                            AgentTeamTaskStatus.FAILED.value,
+                            AgentTeamTaskStatus.CANCELLED.value,
+                            AgentTeamTaskStatus.ABANDONED.value,
+                        ]
+                    ),
+                    AgentTeamTask.source_issue_number
+                    == IssueAnalysis.issue_number,
+                    AgentTeamTask.repo_owner == IssueAnalysis.repo_owner,
+                    AgentTeamTask.repo_name == IssueAnalysis.repo_name,
+                )
+            )
+            .exists()
         )
         stmt = (
             select(IssueAnalysis)
@@ -189,7 +221,7 @@ class AgentTeamCandidateService:
                 and_(
                     IssueAnalysis.status == IssueAnalysisStatus.COMPLETED.value,
                     IssueAnalysis.duplicate_of.is_(None),
-                    not_(IssueAnalysis.id.in_(existing_subquery)),
+                    not_(existing_exists),
                 )
             )
             .order_by(desc(IssueAnalysis.completed_at), desc(IssueAnalysis.created_at))
@@ -370,6 +402,82 @@ class AgentTeamCandidateService:
             return "", repo_full_name
         owner, name = repo_full_name.split("/", 1)
         return owner, name
+
+    def _deduplicate_candidates(
+        self, candidates: list[AgentCandidate]
+    ) -> list[AgentCandidate]:
+        """按 (source_issue_number, repo_full_name) 去重，保留分数最高的记录。
+
+        同一个 Issue 可能被多次分析产生多条 IssueAnalysis 记录，
+        导致同一个 GitHub Issue 出现多次候选。此处保留得分最高的一条。
+        """
+        seen: dict[tuple[str | None, str], AgentCandidate] = {}
+        for candidate in candidates:
+            key = (candidate.source_issue_number, candidate.repo_full_name)
+            if key not in seen or candidate.candidate_score > seen[key].candidate_score:
+                seen[key] = candidate
+        return list(seen.values())
+
+    async def _filter_closed_issues(
+        self, candidates: list[AgentCandidate]
+    ) -> list[AgentCandidate]:
+        """通过 GitHub API 过滤已关闭的 Issue 候选。
+
+        仅检查 source_issue_number 不为 None 的条目，
+        且最多检查 _MAX_GITHUB_STATE_CHECKS 条以控制 API 调用量。
+        如果 API 调用失败则保留该候选（fail-open）。
+        """
+        to_check = [
+            c
+            for c in candidates
+            if c.source_issue_number is not None
+        ][:_MAX_GITHUB_STATE_CHECKS]
+        if not to_check:
+            return candidates
+
+        try:
+            from backend.core.github_app import GitHubAppClient
+
+            github_app = GitHubAppClient()
+        except Exception:
+            logger.warning("GitHub App 客户端初始化失败，跳过 Issue 状态检查")
+            return candidates
+
+        closed_keys: set[tuple[str, str, int]] = set()
+        for candidate in to_check:
+            try:
+                issue = github_app.get_issue(
+                    candidate.repo_owner,
+                    candidate.repo_name,
+                    candidate.source_issue_number,
+                )
+                if issue is not None and issue.state == "closed":
+                    closed_keys.add(
+                        (
+                            candidate.repo_owner,
+                            candidate.repo_name,
+                            candidate.source_issue_number,
+                        )
+                    )
+            except Exception:
+                # fail-open：API 异常不阻塞候选收集
+                pass
+
+        if not closed_keys:
+            return candidates
+
+        filtered = [
+            c
+            for c in candidates
+            if (c.repo_owner, c.repo_name, c.source_issue_number) not in closed_keys
+        ]
+        logger.info(
+            "候选池 GitHub 状态过滤：{} 条中 {} 条 Issue 已关闭，保留 {} 条",
+            len(candidates),
+            len(candidates) - len(filtered),
+            len(filtered),
+        )
+        return filtered
 
 
 def candidates_to_dicts(candidates: Iterable[AgentCandidate]) -> list[dict]:

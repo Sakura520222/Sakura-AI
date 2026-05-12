@@ -1072,6 +1072,8 @@ toast:
   labels_saved: "Labels updated ({count} items)"
   label_settings_saved: "Label recommendation settings updated"
   label_settings_validation_failed: "Recommendation settings validation failed: {error}"
+  agent_skill_installed: "Skill [{slug}] installed"
+  agent_skill_install_failed: "Skill install failed: {error}"
 
 # ========== Telegram MFA Notifications ====
 telegram_mfa:
