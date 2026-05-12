@@ -18,7 +18,7 @@ from backend.core.bootstrap import (
 from backend.webui.routes.setup import router as setup_router
 from backend.api import webhook
 from backend.webui.routes import webui_router
-from backend.webui.deps import _is_webui_path, error_page, toast_redirect
+from backend.webui.deps import is_webui_path, error_page, toast_redirect
 from backend.webui.auth import decode_access_token
 from backend.api.v1 import api_v1_router
 from backend.api.v1.deps import limiter
@@ -258,7 +258,7 @@ _WEBUI_RATE_LIMIT_JSON_SUFFIXES = frozenset(
 async def rate_limit_exception_handler(request: Request, exc: RateLimitExceeded):
     """Return WebUI-friendly rate limit feedback instead of raw JSON pages."""
     path = request.url.path
-    if _is_webui_path(path):
+    if is_webui_path(path):
         message = "toast.rate_limit_exceeded"
         if request.headers.get("hx-request") == "true":
             return JSONResponse(
@@ -309,14 +309,14 @@ def _get_webui_error_user(request: Request) -> dict | None:
 @app.exception_handler(HTTPException)
 async def auth_exception_handler(request: Request, exc: HTTPException):
     path = request.url.path
-    if exc.status_code == 401 and _is_webui_path(path):
+    if exc.status_code == 401 and is_webui_path(path):
         return RedirectResponse(url="/auth/login", status_code=302)
-    if exc.status_code == 428 and _is_webui_path(path):
+    if exc.status_code == 428 and is_webui_path(path):
         return RedirectResponse(
             url="/settings/?_toast=MFA%20enrollment%20required&_toast_type=error",
             status_code=302,
         )
-    if _is_webui_path(path):
+    if is_webui_path(path):
         return error_page(
             request,
             status_code=exc.status_code,
