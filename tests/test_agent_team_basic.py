@@ -2,6 +2,7 @@
 
 import pickle
 from types import SimpleNamespace
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -369,3 +370,135 @@ def test_ai_filter_model_falls_back_when_main_empty():
     assert (
         _select_ai_filter_model("", "review-model", "summary-model") == "review-model"
     )
+
+# ── 候选池去重与 GitHub 状态过滤 ────────────────────────
+
+def _make_candidate(
+    issue_number: int = 10,
+    repo: str = "owner/repo",
+    score: int = 50,
+    source_id: int = 1,
+) -> AgentCandidate:
+    owner, name = repo.split("/", 1) if "/" in repo else ("", repo)
+    return AgentCandidate(
+        source_type="issue_analysis",
+        source_id=source_id,
+        source_issue_number=issue_number,
+        repo_full_name=repo,
+        repo_owner=owner,
+        repo_name=name,
+        title=f"Issue #{issue_number}",
+        summary="",
+        priority="medium",
+        candidate_score=score,
+    )
+
+
+def test_deduplicate_candidates_keeps_highest_score():
+    from backend.services.agent_team.candidate_service import AgentTeamCandidateService
+
+    service = AgentTeamCandidateService()
+    candidates = [
+        _make_candidate(issue_number=10, score=50, source_id=1),
+        _make_candidate(issue_number=10, score=80, source_id=2),
+        _make_candidate(issue_number=10, score=60, source_id=3),
+    ]
+
+    result = service._deduplicate_candidates(candidates)
+
+    assert len(result) == 1
+    assert result[0].candidate_score == 80
+    assert result[0].source_id == 2
+
+
+def test_deduplicate_candidates_preserves_different_issues():
+    from backend.services.agent_team.candidate_service import AgentTeamCandidateService
+
+    service = AgentTeamCandidateService()
+    candidates = [
+        _make_candidate(issue_number=10, repo="owner/repo"),
+        _make_candidate(issue_number=11, repo="owner/repo"),
+        _make_candidate(issue_number=10, repo="other/repo"),
+    ]
+
+    result = service._deduplicate_candidates(candidates)
+
+    assert len(result) == 3
+
+
+def test_deduplicate_candidates_handles_none_issue_number():
+    from backend.services.agent_team.candidate_service import AgentTeamCandidateService
+
+    service = AgentTeamCandidateService()
+    candidates = [
+        _make_candidate(issue_number=10),
+        AgentCandidate(
+            source_type="scan_finding",
+            source_id=100,
+            source_issue_number=None,
+            repo_full_name="owner/repo",
+            repo_owner="owner",
+            repo_name="repo",
+            title="Finding",
+            summary="",
+            priority="high",
+            candidate_score=90,
+        ),
+    ]
+
+    result = service._deduplicate_candidates(candidates)
+
+    # None issue_number 不应与有值冲突
+    assert len(result) == 2
+
+
+@pytest.mark.asyncio
+async def test_filter_closed_issues_removes_closed(monkeypatch):
+    from backend.services.agent_team.candidate_service import AgentTeamCandidateService
+
+    service = AgentTeamCandidateService()
+
+    closed_issue = MagicMock()
+    closed_issue.state = "closed"
+    open_issue = MagicMock()
+    open_issue.state = "open"
+
+    mock_app = MagicMock()
+    mock_app.get_issue = MagicMock(side_effect=[closed_issue, open_issue])
+
+    monkeypatch.setattr(
+        "backend.core.github_app.GitHubAppClient",
+        lambda: mock_app,
+    )
+
+    candidates = [
+        _make_candidate(issue_number=10),
+        _make_candidate(issue_number=11),
+    ]
+
+    result = await service._filter_closed_issues(candidates)
+
+    assert len(result) == 1
+    assert result[0].source_issue_number == 11
+
+
+@pytest.mark.asyncio
+async def test_filter_closed_issues_fail_open(monkeypatch):
+    from backend.services.agent_team.candidate_service import AgentTeamCandidateService
+
+    service = AgentTeamCandidateService()
+
+    mock_app = MagicMock()
+    mock_app.get_issue = MagicMock(side_effect=Exception("API error"))
+
+    monkeypatch.setattr(
+        "backend.core.github_app.GitHubAppClient",
+        lambda: mock_app,
+    )
+
+    candidates = [_make_candidate(issue_number=10)]
+
+    result = await service._filter_closed_issues(candidates)
+
+    # API 异常不应阻塞，fail-open
+    assert len(result) == 1
