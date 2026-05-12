@@ -254,11 +254,16 @@ _WEBUI_RATE_LIMIT_JSON_SUFFIXES = frozenset(
 )
 
 
+def _is_webui_path(path: str) -> bool:
+    """Check whether *path* belongs to the WebUI surface (not API/setup/docs)."""
+    return not path.startswith(("/api/", "/setup", "/docs", "/openapi.json", "/redoc", "/health"))
+
+
 @app.exception_handler(RateLimitExceeded)
 async def rate_limit_exception_handler(request: Request, exc: RateLimitExceeded):
     """Return WebUI-friendly rate limit feedback instead of raw JSON pages."""
     path = request.url.path
-    if path.startswith("/webui"):
+    if _is_webui_path(path):
         message = "toast.rate_limit_exceeded"
         if request.headers.get("hx-request") == "true":
             return JSONResponse(
@@ -278,7 +283,7 @@ async def rate_limit_exception_handler(request: Request, exc: RateLimitExceeded)
         redirect_url = (
             referer
             if referer and referer.startswith(str(request.base_url))
-            else "/webui/"
+            else "/"
         )
         return toast_redirect(redirect_url, message, "error", status_code=303)
     return await _rate_limit_exceeded_handler(request, exc)
@@ -308,14 +313,15 @@ def _get_webui_error_user(request: Request) -> dict | None:
 
 @app.exception_handler(HTTPException)
 async def auth_exception_handler(request: Request, exc: HTTPException):
-    if exc.status_code == 401 and request.url.path.startswith("/webui"):
-        return RedirectResponse(url="/webui/auth/login", status_code=302)
-    if exc.status_code == 428 and request.url.path.startswith("/webui"):
+    path = request.url.path
+    if exc.status_code == 401 and _is_webui_path(path):
+        return RedirectResponse(url="/auth/login", status_code=302)
+    if exc.status_code == 428 and _is_webui_path(path):
         return RedirectResponse(
-            url="/webui/settings/?_toast=MFA%20enrollment%20required&_toast_type=error",
+            url="/settings/?_toast=MFA%20enrollment%20required&_toast_type=error",
             status_code=302,
         )
-    if request.url.path.startswith("/webui"):
+    if _is_webui_path(path):
         return error_page(
             request,
             status_code=exc.status_code,
@@ -324,17 +330,6 @@ async def auth_exception_handler(request: Request, exc: HTTPException):
             user=_get_webui_error_user(request),
         )
     return JSONResponse(status_code=exc.status_code, content={"detail": exc.detail})
-
-
-@app.get("/")
-async def root():
-    """根路径"""
-    return {
-        "service": "Sakura AI Reviewer",
-        "version": __version__,
-        "status": "running",
-        "docs": "/docs",
-    }
 
 
 @app.get("/health")

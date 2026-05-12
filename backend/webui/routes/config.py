@@ -374,7 +374,7 @@ async def save_strategies_section(
     except (ValueError, yaml.YAMLError) as e:
         logger.error(f"配置验证失败: {e}")
         return toast_redirect(
-            f"/webui/config/strategies?tab={section}",
+            f"/config/strategies?tab={section}",
             "toast.config_validation_failed",
             "error",
             lang=detect_language(),
@@ -383,7 +383,7 @@ async def save_strategies_section(
     except PermissionError as e:
         logger.error(f"文件权限不足: {e}")
         return toast_redirect(
-            f"/webui/config/strategies?tab={section}",
+            f"/config/strategies?tab={section}",
             "toast.file_permission_denied",
             "error",
             lang=detect_language(),
@@ -391,14 +391,14 @@ async def save_strategies_section(
     except Exception as e:
         logger.error(f"策略配置保存异常: {e}", exc_info=True)
         return toast_redirect(
-            f"/webui/config/strategies?tab={section}",
+            f"/config/strategies?tab={section}",
             "toast.save_failed",
             "error",
             lang=detect_language(),
         )
 
     return toast_redirect(
-        f"/webui/config/strategies?tab={section}",
+        f"/config/strategies?tab={section}",
         "toast.strategy_saved",
         lang=detect_language(),
         section=section,
@@ -481,7 +481,7 @@ async def save_labels_definitions(
     except ValueError as e:
         logger.warning(f"标签验证失败: {e}")
         return toast_redirect(
-            "/webui/config/labels",
+            "/config/labels",
             "toast.label_validation_failed",
             "error",
             lang=detect_language(),
@@ -490,11 +490,11 @@ async def save_labels_definitions(
     except Exception as e:
         logger.error(f"标签定义保存失败: {e}")
         return toast_redirect(
-            "/webui/config/labels", "toast.save_failed", "error", lang=detect_language()
+            "/config/labels", "toast.save_failed", "error", lang=detect_language()
         )
 
     return toast_redirect(
-        "/webui/config/labels",
+        "/config/labels",
         "toast.labels_saved",
         lang=detect_language(),
         count=len(labels),
@@ -538,7 +538,7 @@ async def save_recommendation_settings(
     except (ValueError, yaml.YAMLError) as e:
         logger.error(f"推荐设置验证失败: {e}")
         return toast_redirect(
-            "/webui/config/labels",
+            "/config/labels",
             "toast.label_settings_validation_failed",
             "error",
             lang=detect_language(),
@@ -547,11 +547,11 @@ async def save_recommendation_settings(
     except Exception as e:
         logger.error(f"标签推荐设置保存失败: {e}", exc_info=True)
         return toast_redirect(
-            "/webui/config/labels", "toast.save_failed", "error", lang=detect_language()
+            "/config/labels", "toast.save_failed", "error", lang=detect_language()
         )
 
     return toast_redirect(
-        "/webui/config/labels", "toast.label_settings_saved", lang=detect_language()
+        "/config/labels", "toast.label_settings_saved", lang=detect_language()
     )
 
 
@@ -609,7 +609,7 @@ async def save_conflict_rules(
     except ValueError as e:
         logger.warning(f"冲突规则验证失败: {e}")
         return toast_redirect(
-            "/webui/config/labels",
+            "/config/labels",
             "toast.conflict_rules_validation_failed",
             "error",
             lang=detect_language(),
@@ -618,11 +618,11 @@ async def save_conflict_rules(
     except Exception as e:
         logger.error(f"冲突规则保存失败: {e}", exc_info=True)
         return toast_redirect(
-            "/webui/config/labels", "toast.save_failed", "error", lang=detect_language()
+            "/config/labels", "toast.save_failed", "error", lang=detect_language()
         )
 
     return toast_redirect(
-        "/webui/config/labels",
+        "/config/labels",
         "toast.conflict_rules_saved",
         lang=detect_language(),
         count=len(conflict_rules),
@@ -874,7 +874,7 @@ async def save_general_config(
                     val_i = int(val)
                 except ValueError:
                     return toast_redirect(
-                        "/webui/config/general",
+                        "/config/general",
                         "toast.numeric_required",
                         "error",
                         lang=detect_language(),
@@ -884,7 +884,7 @@ async def save_general_config(
                 min_v, max_v = DYNAMIC_CONFIG_RANGES[key]
                 if not (min_v <= val_i <= max_v):
                     return toast_redirect(
-                        "/webui/config/general",
+                        "/config/general",
                         "toast.value_range",
                         "error",
                         lang=detect_language(),
@@ -896,7 +896,7 @@ async def save_general_config(
             elif key == "web_search_provider":
                 if val not in ("duckduckgo", "tavily"):
                     return toast_redirect(
-                        "/webui/config/general",
+                        "/config/general",
                         "toast.unsupported_search_provider",
                         "error",
                         lang=detect_language(),
@@ -956,7 +956,7 @@ async def save_general_config(
                         num_val = float(val)
                     except ValueError:
                         return toast_redirect(
-                            "/webui/config/general",
+                            "/config/general",
                             "toast.numeric_required",
                             "error",
                             lang=detect_language(),
@@ -964,7 +964,7 @@ async def save_general_config(
                         )
                     if not (min_v <= num_val <= max_v):
                         return toast_redirect(
-                            "/webui/config/general",
+                            "/config/general",
                             "toast.value_range",
                             "error",
                             lang=detect_language(),
@@ -979,7 +979,7 @@ async def save_general_config(
                     ]
                     if val not in valid_values:
                         return toast_redirect(
-                            "/webui/config/general",
+                            "/config/general",
                             "toast.value_invalid",
                             "error",
                             lang=detect_language(),
@@ -1017,7 +1017,7 @@ async def save_general_config(
 
         if not changed:
             return toast_redirect(
-                "/webui/config/general",
+                "/config/general",
                 "toast.config_saved_restart",
                 lang=detect_language(),
             )
@@ -1052,12 +1052,12 @@ async def save_general_config(
             db, user["user_id"], "config_save", "global", None, log_changed
         )
         return toast_redirect(
-            "/webui/config/general", "toast.config_saved_live", lang=detect_language()
+            "/config/general", "toast.config_saved_live", lang=detect_language()
         )
 
     except ValueError:
         return toast_redirect(
-            "/webui/config/general",
+            "/config/general",
             "toast.invalid_param",
             "error",
             lang=detect_language(),
@@ -1065,7 +1065,7 @@ async def save_general_config(
     except Exception as e:
         logger.error(f"全局配置保存失败: {e}", exc_info=True)
         return toast_redirect(
-            "/webui/config/general",
+            "/config/general",
             "toast.save_failed",
             "error",
             lang=detect_language(),

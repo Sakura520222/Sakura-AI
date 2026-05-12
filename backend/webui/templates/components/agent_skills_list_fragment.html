@@ -38,14 +38,14 @@
                 <td class="px-4 py-4 text-sm text-gray-500 dark:text-gray-400">{{ skill.updated_at }}</td>
                 <td class="px-4 py-4">
                     <div class="flex justify-end gap-2">
-                        <form method="post" action="/webui/agent-skills/{{ skill.id }}/toggle">
+                        <form method="post" action="/agent-skills/{{ skill.id }}/toggle">
                             <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
                             <input type="hidden" name="enabled" value="{% if skill.enabled %}0{% else %}1{% endif %}">
                             <button type="submit" class="px-3 py-1.5 rounded-lg text-xs font-semibold border border-gray-200 dark:border-gray-600 hover:bg-gray-50 dark:hover:bg-gray-700">
                                 {% if skill.enabled %}{{ _('agent_skills.disable') }}{% else %}{{ _('agent_skills.enable') }}{% endif %}
                             </button>
                         </form>
-                        <form method="post" action="/webui/agent-skills/{{ skill.id }}/delete" onsubmit="return confirm('{{ _('agent_skills.confirm_delete') }}');">
+                        <form method="post" action="/agent-skills/{{ skill.id }}/delete" onsubmit="return confirm('{{ _('agent_skills.confirm_delete') }}');">
                             <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
                             <button type="submit" class="px-3 py-1.5 rounded-lg text-xs font-semibold bg-red-50 text-red-600 hover:bg-red-100 dark:bg-red-900/20 dark:text-red-300 dark:hover:bg-red-900/30">
                                 {{ _('common.delete') }}

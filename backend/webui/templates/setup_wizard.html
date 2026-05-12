@@ -482,7 +482,7 @@
                         </p>
                         <div class="flex gap-2">
                             <input type="text" x-model="form.github_oauth_redirect_uri"
-                                   placeholder="https://your-domain.com/webui/auth/callback"
+                                   placeholder="https://your-domain.com/auth/callback"
                                    class="flex-1 px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-sm text-gray-900 dark:text-white focus:ring-2 focus:ring-pink-500 focus:border-transparent outline-none">
                             <button @click="generateOAuthCallback()"
                                     :disabled="!form.app_domain"
@@ -622,7 +622,7 @@ function setupWizard() {
             let domain = this.form.app_domain.trim().replace(/^https?:\/\//, '');
             if (!domain) return;
             const proto = domain.startsWith('localhost') ? 'http' : 'https';
-            this.form.github_oauth_redirect_uri = `${proto}://${domain}/webui/auth/callback`;
+            this.form.github_oauth_redirect_uri = `${proto}://${domain}/auth/callback`;
         },
 
         onProviderChange() {
@@ -654,7 +654,7 @@ function setupWizard() {
                 const resp = await fetch('/setup/api/state');
                 const data = await resp.json();
                 if (data.state === 'completed') {
-                    window.location.href = '/webui/';
+                    window.location.href = '/';
                     return;
                 }
                 if (data.current_step > 0) {
@@ -784,7 +784,7 @@ function setupWizard() {
                 try {
                     const resp = await fetch('/health');
                     if (resp.ok) {
-                        window.location.href = '/webui/auth/login';
+                        window.location.href = '/auth/login';
                         return;
                     }
                 } catch (e) {

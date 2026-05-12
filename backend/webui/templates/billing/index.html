@@ -63,7 +63,7 @@
     <!-- 兑换码 -->
     <div class="mb-8 bg-white dark:bg-gray-800 rounded-lg shadow p-6">
         <h2 class="text-lg font-semibold text-gray-900 dark:text-white mb-4">{{ _('billing.redeem_title') }}</h2>
-        <form action="/webui/billing/redeem" method="POST" class="flex gap-3">
+        <form action="/billing/redeem" method="POST" class="flex gap-3">
             <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
             <input type="text" name="code" required
                    class="flex-1 px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-lg

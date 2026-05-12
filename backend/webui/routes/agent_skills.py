@@ -76,7 +76,7 @@ async def upload_skill(
     lang = detect_language(user_prefs)
     if not skill_file.filename:
         return toast_redirect(
-            "/webui/agent-skills/",
+            "/agent-skills/",
             "toast.agent_skill_invalid_file",
             "error",
             lang=lang,
@@ -85,7 +85,7 @@ async def upload_skill(
     lower_name = skill_file.filename.lower()
     if not (lower_name.endswith(".md") or lower_name.endswith(".zip")):
         return toast_redirect(
-            "/webui/agent-skills/",
+            "/agent-skills/",
             "toast.agent_skill_invalid_file",
             "error",
             lang=lang,
@@ -109,14 +109,14 @@ async def upload_skill(
             {"slug": skill.slug, "name": skill.name},
         )
         return toast_redirect(
-            "/webui/agent-skills/",
+            "/agent-skills/",
             "toast.agent_skill_installed",
             lang=lang,
             slug=skill.slug,
         )
     except Exception as exc:
         return toast_redirect(
-            "/webui/agent-skills/",
+            "/agent-skills/",
             "toast.agent_skill_install_failed",
             "error",
             lang=lang,
@@ -149,14 +149,14 @@ async def install_skill_from_github(
             {"slug": skill.slug, "source_url": github_url},
         )
         return toast_redirect(
-            "/webui/agent-skills/",
+            "/agent-skills/",
             "toast.agent_skill_installed",
             lang=lang,
             slug=skill.slug,
         )
     except Exception as exc:
         return toast_redirect(
-            "/webui/agent-skills/",
+            "/agent-skills/",
             "toast.agent_skill_install_failed",
             "error",
             lang=lang,
@@ -187,13 +187,13 @@ async def toggle_skill(
             {"slug": skill.slug, "enabled": is_enabled},
         )
         return toast_redirect(
-            "/webui/agent-skills/",
+            "/agent-skills/",
             "toast.agent_skill_updated",
             lang=lang,
         )
     except Exception as exc:
         return toast_redirect(
-            "/webui/agent-skills/",
+            "/agent-skills/",
             "toast.agent_skill_update_failed",
             "error",
             lang=lang,
@@ -222,13 +222,13 @@ async def delete_skill(
             {"slug": skill.slug, "name": skill.name},
         )
         return toast_redirect(
-            "/webui/agent-skills/",
+            "/agent-skills/",
             "toast.agent_skill_deleted",
             lang=lang,
         )
     except Exception as exc:
         return toast_redirect(
-            "/webui/agent-skills/",
+            "/agent-skills/",
             "toast.agent_skill_delete_failed",
             "error",
             lang=lang,

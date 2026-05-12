@@ -195,7 +195,7 @@ async def save_settings(
     # 验证参数范围
     if items_per_page not in (10, 20, 50, 100):
         return toast_redirect(
-            "/webui/settings/",
+            "/settings/",
             "toast.invalid_param",
             "error",
             lang=detect_language({"language": language}),
@@ -211,7 +211,7 @@ async def save_settings(
         )
     except ValueError:
         return toast_redirect(
-            "/webui/settings/",
+            "/settings/",
             "toast.invalid_param",
             "error",
             lang=detect_language({"language": language}),
@@ -260,7 +260,7 @@ async def save_settings(
         f"language={language}, output_language={normalized_output_language or 'inherit'}"
     )
     return toast_redirect(
-        "/webui/settings/",
+        "/settings/",
         "toast.settings_saved",
         lang=detect_language({"language": language}),
     )
@@ -280,7 +280,7 @@ async def start_two_factor_setup(
     result = await db.execute(select(TelegramUser).where(TelegramUser.id == user_id))
     db_user = result.scalar_one_or_none()
     if not db_user:
-        return toast_redirect("/webui/settings/", "toast.login_required", "error")
+        return toast_redirect("/settings/", "toast.login_required", "error")
 
     setup = create_totp_setup(db_user)
     await _save_totp_setup_secret(user_id, setup.secret)
@@ -308,16 +308,16 @@ async def enable_two_factor(
     secret = await _pop_totp_setup_secret(user_id)
     if not secret:
         return toast_redirect(
-            "/webui/settings/", "toast.two_factor_setup_expired", "error"
+            "/settings/", "toast.two_factor_setup_expired", "error"
         )
     used_step = verify_totp_secret(secret, code)
     if used_step is None:
-        return toast_redirect("/webui/settings/", "toast.two_factor_invalid", "error")
+        return toast_redirect("/settings/", "toast.two_factor_invalid", "error")
 
     result = await db.execute(select(TelegramUser).where(TelegramUser.id == user_id))
     db_user = result.scalar_one_or_none()
     if not db_user:
-        return toast_redirect("/webui/settings/", "toast.login_required", "error")
+        return toast_redirect("/settings/", "toast.login_required", "error")
 
     db_user.totp_enabled = True
     db_user.totp_secret_encrypted = encrypt_totp_secret(secret)
@@ -357,7 +357,7 @@ async def disable_two_factor_route(
     db_user = result.scalar_one_or_none()
     if not db_user or not db_user.totp_enabled:
         return toast_redirect(
-            "/webui/settings/", "toast.two_factor_not_enabled", "error"
+            "/settings/", "toast.two_factor_not_enabled", "error"
         )
 
     verified = False
@@ -373,12 +373,12 @@ async def disable_two_factor_route(
         verified = await consume_recovery_code(db, user_id, code)
     if not verified:
         await db.rollback()
-        return toast_redirect("/webui/settings/", "toast.two_factor_invalid", "error")
+        return toast_redirect("/settings/", "toast.two_factor_invalid", "error")
 
     await disable_totp(db, db_user)
     await db.commit()
     await notify_mfa_event(db, user_id, "totp_disabled")
-    return toast_redirect("/webui/settings/", "toast.two_factor_disabled")
+    return toast_redirect("/settings/", "toast.two_factor_disabled")
 
 
 @router.post("/2fa/recovery-codes/regenerate")
@@ -397,7 +397,7 @@ async def regenerate_recovery_codes(
     db_user = result.scalar_one_or_none()
     if not db_user or not db_user.totp_enabled:
         return toast_redirect(
-            "/webui/settings/", "toast.two_factor_not_enabled", "error"
+            "/settings/", "toast.two_factor_not_enabled", "error"
         )
 
     try:
@@ -405,7 +405,7 @@ async def regenerate_recovery_codes(
     except TwoFactorError:
         used_step = None
     if used_step is None:
-        return toast_redirect("/webui/settings/", "toast.two_factor_invalid", "error")
+        return toast_redirect("/settings/", "toast.two_factor_invalid", "error")
 
     db_user.totp_last_used_step = used_step
     recovery_codes = await replace_recovery_codes(db, user_id)
@@ -507,7 +507,7 @@ async def passkey_delete(
     )
     await db.commit()
     await notify_mfa_event(db, int(user["user_id"]), "passkey_deleted")
-    return toast_redirect("/webui/settings/", "toast.passkey_deleted")
+    return toast_redirect("/settings/", "toast.passkey_deleted")
 
 
 @router.get("/about")

@@ -46,7 +46,7 @@
                 {% for u in users %}
                 <tr class="hover:bg-gray-50 dark:hover:bg-gray-700/50 transition-colors">
                     <td class="py-3 px-5">
-                        <a href="/webui/users/{{ u.id }}" class="flex items-center gap-3 hover:text-pink-600 dark:hover:text-pink-400 transition-colors">
+                        <a href="/users/{{ u.id }}" class="flex items-center gap-3 hover:text-pink-600 dark:hover:text-pink-400 transition-colors">
                             {% if u.github_username %}
                             <img src="https://github.com/{{ u.github_username }}.png"
                                  alt="{{ u.github_username }}"
