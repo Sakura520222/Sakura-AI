@@ -197,7 +197,7 @@ async def cmd_status(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"👥 注册用户: {len(users)} 人\n"
             f"📦 授权仓库: {len(repos)} 个\n"
             f"🤖 AI模型: {settings.openai_model}\n"
-            f"🌐 应用域名: {settings.app_domain}/webui\n"
+            f"🌐 应用域名: {settings.app_domain}/\n"
         )
 
         await update.message.reply_text(text, parse_mode="Markdown")

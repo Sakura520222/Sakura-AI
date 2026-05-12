@@ -218,7 +218,7 @@ class ScanReportService:
         if link_url:
             lines.append(f"[📎 查看详细报告]({link_url})")
         else:
-            webui_url = f"https://{settings.app_domain}/webui/scans/{scan.id}"
+            webui_url = f"https://{settings.app_domain}/scans/{scan.id}"
             lines.append(f"[🌐 WebUI 查看详情]({webui_url})")
 
         return "\n".join(lines)

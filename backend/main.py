@@ -18,7 +18,7 @@ from backend.core.bootstrap import (
 from backend.webui.routes.setup import router as setup_router
 from backend.api import webhook
 from backend.webui.routes import webui_router
-from backend.webui.deps import error_page, toast_redirect
+from backend.webui.deps import _is_webui_path, error_page, toast_redirect
 from backend.webui.auth import decode_access_token
 from backend.api.v1 import api_v1_router
 from backend.api.v1.deps import limiter
@@ -252,11 +252,6 @@ _WEBUI_RATE_LIMIT_JSON_SUFFIXES = frozenset(
         "/passkeys/register/verify",
     }
 )
-
-
-def _is_webui_path(path: str) -> bool:
-    """Check whether *path* belongs to the WebUI surface (not API/setup/docs)."""
-    return not path.startswith(("/api/", "/setup", "/docs", "/openapi.json", "/redoc", "/health"))
 
 
 @app.exception_handler(RateLimitExceeded)

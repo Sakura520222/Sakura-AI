@@ -21,6 +21,8 @@ from backend.webui.routes import (
     agent_skills,
 )
 
+# WebUI routes are mounted at root (no prefix) so the dashboard is served at /.
+# The router prefix is kept as an explicit empty string to document this intent.
 webui_router = APIRouter(prefix="")
 
 webui_router.include_router(auth.router)
