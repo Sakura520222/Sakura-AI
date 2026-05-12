@@ -20,6 +20,7 @@ from backend.webui.routes import (
     security,
     agent_team,
     agent_skills,
+    system_config,
 )
 
 # WebUI routes are mounted at root (no prefix) so the dashboard is served at /.
@@ -46,3 +47,4 @@ webui_router.include_router(billing.router)
 webui_router.include_router(security.router)
 webui_router.include_router(agent_team.router)
 webui_router.include_router(agent_skills.router)
+webui_router.include_router(system_config.router)
