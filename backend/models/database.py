@@ -1,6 +1,6 @@
 """数据库模型定义"""
 
-from datetime import datetime
+from datetime import datetime, timezone
 from sqlalchemy import (
     Boolean,
     Column,
@@ -21,10 +21,8 @@ import enum
 Base = declarative_base()
 
 
-def utc_now():
+def utc_now() -> datetime:
     """返回带 UTC 时区的当前时间（公共工具函数，供所有模型共享）。"""
-    from datetime import datetime, timezone
-
     return datetime.now(timezone.utc)
 
 
