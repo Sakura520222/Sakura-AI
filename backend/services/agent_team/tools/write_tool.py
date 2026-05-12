@@ -72,12 +72,16 @@ class WriteTool(BaseTool):
 
         if resolved.exists():
             if resolved.is_dir():
-                return ToolResult(success=False, error=f"路径是目录，不是文件: {file_path}")
+                return ToolResult(
+                    success=False, error=f"路径是目录，不是文件: {file_path}"
+                )
 
             # stale 检查
             file_state = ctx.extra.get("file_state")
             if isinstance(file_state, ReadFileState):
-                stale_error = await asyncio.to_thread(file_state.check_not_stale, resolved)
+                stale_error = await asyncio.to_thread(
+                    file_state.check_not_stale, resolved
+                )
                 if stale_error:
                     return ToolResult(success=False, error=stale_error)
 
@@ -115,7 +119,9 @@ class WriteTool(BaseTool):
         if old_content:
             diff = make_unified_diff(file_path, old_content, normalized_content)
 
-        logger.info("WriteTool: {} ({} bytes, created={})", file_path, len(content), created)
+        logger.info(
+            "WriteTool: {} ({} bytes, created={})", file_path, len(content), created
+        )
 
         return ToolResult(
             success=True,
@@ -131,6 +137,8 @@ class WriteTool(BaseTool):
     @staticmethod
     def _resolve(file_path: str, ctx: ToolContext) -> Path | None:
         try:
-            return ctx.workspace_service.resolve_inside_workspace(ctx.workspace, file_path)
+            return ctx.workspace_service.resolve_inside_workspace(
+                ctx.workspace, file_path
+            )
         except (WorkspaceSecurityError, Exception):
             return None

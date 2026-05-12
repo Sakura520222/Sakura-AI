@@ -23,7 +23,10 @@ from loguru import logger
 from backend.services.agent_team.ai_client import create_agent_team_client
 from backend.services.agent_team.tools.base import ToolContext, ToolResult
 from backend.services.agent_team.tools.file_state import ReadFileState
-from backend.services.agent_team.tools.registry import create_executor, get_tool_definitions
+from backend.services.agent_team.tools.registry import (
+    create_executor,
+    get_tool_definitions,
+)
 from backend.services.agent_team.workspace_service import AgentTeamWorkspaceService
 
 REVIEWER_SYSTEM_PROMPT = """你是 Sakura Agent 专家团队的专业审查角色。
@@ -101,7 +104,9 @@ class ProfessionalReviewAgent:
             {"role": "system", "content": REVIEWER_SYSTEM_PROMPT}
         ]
 
-    def _build_context(self, skills_context: dict[str, Any] | None = None) -> ToolContext:
+    def _build_context(
+        self, skills_context: dict[str, Any] | None = None
+    ) -> ToolContext:
         extra: dict[str, Any] = {"file_state": self.file_state}
         if skills_context:
             extra.update(skills_context)
@@ -196,7 +201,10 @@ class ProfessionalReviewAgent:
                 else:
                     result = ToolResult(
                         success=True,
-                        output={"skipped": True, "reason": "terminal_tool_already_called"},
+                        output={
+                            "skipped": True,
+                            "reason": "terminal_tool_already_called",
+                        },
                     )
                 self.messages.append(
                     {

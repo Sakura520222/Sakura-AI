@@ -357,7 +357,9 @@ class TelegramService:
             },
         }
 
-    async def list_all_users(self, *, refresh_expired_quotas: bool = False) -> List[TelegramUser]:
+    async def list_all_users(
+        self, *, refresh_expired_quotas: bool = False
+    ) -> List[TelegramUser]:
         """列出所有用户。
 
         refresh_expired_quotas=True 时会执行 6 条批量 UPDATE 刷新过期配额，适合需要

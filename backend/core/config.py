@@ -365,9 +365,7 @@ class Settings(BaseSettings):
     fetch_url_domain_policy: str = "off"  # 域名过滤策略：off / blacklist / whitelist
     fetch_url_domain_list: str = ""  # 域名列表（逗号分隔）
     fetch_url_force_https: bool = False  # 强制仅允许 HTTPS 协议
-    fetch_url_allowed_content_types: str = (
-        "text/html,application/xhtml+xml,text/plain"
-    )  # 允许抓取的 Content-Type（逗号分隔）
+    fetch_url_allowed_content_types: str = "text/html,application/xhtml+xml,text/plain"  # 允许抓取的 Content-Type（逗号分隔）
     fetch_url_max_redirects: int = 3  # 最大重定向次数
 
     # ========== 支付配置 ==========
@@ -468,7 +466,9 @@ class Settings(BaseSettings):
     sakura_use_summary_model: bool = False  # 反思/合并任务使用辅助模型凭据以降低成本
 
     # ========== Agent 专家团队模式配置 ==========
-    agent_team_enabled: bool = False  # 是否启用 Agent 专家团队模式（super_admin 手动使用）
+    agent_team_enabled: bool = (
+        False  # 是否启用 Agent 专家团队模式（super_admin 手动使用）
+    )
     agent_team_workspace_root: str = "./workplace"  # Agent 独立工作区根目录
     agent_team_repo_allowlist: str = ""  # 允许使用的仓库列表，逗号分隔 owner/repo
     agent_team_model_provider: str = "main"  # Agent AI 厂商，main 表示复用主 AI
@@ -476,7 +476,9 @@ class Settings(BaseSettings):
     agent_team_api_key: str = ""  # Agent API Key，选择复用主 AI 时使用主 AI
     agent_team_model: str = ""  # 全栈专家模型，选择复用主 AI 时使用主模型
     agent_team_review_model: str = ""  # 专业审查模型，选择复用主 AI 时使用主模型
-    agent_team_summary_model: str = ""  # 摘要/反思辅助模型，选择复用主 AI 时使用辅助/主模型
+    agent_team_summary_model: str = (
+        ""  # 摘要/反思辅助模型，选择复用主 AI 时使用辅助/主模型
+    )
     agent_team_temperature: float = 0.2
     agent_team_max_tokens: int = 8192
     agent_team_timeout_seconds: int = 600
@@ -1566,6 +1568,9 @@ BASIC_CONFIG_KEYS = frozenset(
         "web_search_max_results",
         "web_search_max_content_length",
         "web_search_timeout",
+        "issue_auto_create_labels",
+        "issue_auto_assign",
+        "issue_max_tool_iterations",
     }
 )
 

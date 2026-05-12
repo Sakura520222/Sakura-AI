@@ -366,7 +366,9 @@ class AIReviewer:
                         tool_call.function.arguments,
                     )
                 except Exception as e:
-                    logger.error("执行工具 {} 失败: {}", tool_call.function.name, str(e))
+                    logger.error(
+                        "执行工具 {} 失败: {}", tool_call.function.name, str(e)
+                    )
                     messages.append(
                         {
                             "role": "tool",
@@ -491,13 +493,11 @@ class AIReviewer:
                     repo_full_name
                 )
 
-            should_compact, prompt_tokens, threshold_tokens = (
-                should_use_compact_prompt(
-                    messages,
-                    context,
-                    compression_threshold=self.compression_threshold,
-                    model_context_mgr=self.model_context_mgr,
-                )
+            should_compact, prompt_tokens, threshold_tokens = should_use_compact_prompt(
+                messages,
+                context,
+                compression_threshold=self.compression_threshold,
+                model_context_mgr=self.model_context_mgr,
             )
             if should_compact:
                 logger.warning(

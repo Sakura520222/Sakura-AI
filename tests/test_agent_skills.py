@@ -69,7 +69,9 @@ def test_normalize_skill_slug(value, expected):
 
 
 def test_safe_skill_relative_path_allows_python_package_init():
-    assert _safe_skill_relative_path("package/__init__.py") == Path("package/__init__.py")
+    assert _safe_skill_relative_path("package/__init__.py") == Path(
+        "package/__init__.py"
+    )
     assert _safe_skill_relative_path(".env") is None
     assert _safe_skill_relative_path("package/__pycache__/cache.pyc") is None
     assert _safe_skill_relative_path("__init__.py/evil.py") is None
@@ -112,7 +114,9 @@ def test_extract_metadata_from_crlf_frontmatter():
 @pytest.mark.asyncio
 async def test_write_and_load_skill_content(tmp_path):
     service = AgentSkillService(root=tmp_path)
-    install_path = await service._write_skill_file("../Example Skill", "# Example\n\nBody")
+    install_path = await service._write_skill_file(
+        "../Example Skill", "# Example\n\nBody"
+    )
 
     assert Path(install_path).name == "SKILL.md"
     assert Path(install_path).parent.name == "example-skill"
@@ -207,11 +211,13 @@ async def test_install_from_zip(tmp_path):
     db.refresh = AsyncMock()
     db.add = MagicMock()
 
-    zip_bytes = _build_zip({
-        "SKILL.md": "---\nname: ZIP Skill\ndescription: From ZIP.\n---\n# ZIP Skill\nBody.",
-        "template.py": "def template(): pass",
-        "config.yaml": "version: 1.0",
-    })
+    zip_bytes = _build_zip(
+        {
+            "SKILL.md": "---\nname: ZIP Skill\ndescription: From ZIP.\n---\n# ZIP Skill\nBody.",
+            "template.py": "def template(): pass",
+            "config.yaml": "version: 1.0",
+        }
+    )
 
     service = AgentSkillService(root=tmp_path)
     await service.install_from_upload(
@@ -240,12 +246,14 @@ async def test_install_from_zip_preserves_subdirs(tmp_path):
     db.refresh = AsyncMock()
     db.add = MagicMock()
 
-    zip_bytes = _build_zip({
-        "SKILL.md": "---\nname: SubDir Skill\n---\n# SubDir",
-        "templates/entry.py": "# entry template",
-        "templates/utils/helper.py": "def util(): pass",
-        "data/config.json": '{"key": "val"}',
-    })
+    zip_bytes = _build_zip(
+        {
+            "SKILL.md": "---\nname: SubDir Skill\n---\n# SubDir",
+            "templates/entry.py": "# entry template",
+            "templates/utils/helper.py": "def util(): pass",
+            "data/config.json": '{"key": "val"}',
+        }
+    )
 
     service = AgentSkillService(root=tmp_path)
     await service.install_from_upload(
@@ -274,10 +282,12 @@ async def test_install_from_zip_strips_top_level_dir(tmp_path):
     db.refresh = AsyncMock()
     db.add = MagicMock()
 
-    zip_bytes = _build_zip({
-        "my-skill-main/SKILL.md": "---\nname: GH Skill\n---\n# GH",
-        "my-skill-main/examples/demo.py": "print('demo')",
-    })
+    zip_bytes = _build_zip(
+        {
+            "my-skill-main/SKILL.md": "---\nname: GH Skill\n---\n# GH",
+            "my-skill-main/examples/demo.py": "print('demo')",
+        }
+    )
 
     service = AgentSkillService(root=tmp_path)
     await service.install_from_upload(
@@ -305,11 +315,13 @@ async def test_install_from_zip_rejects_path_traversal(tmp_path):
     db.refresh = AsyncMock()
     db.add = MagicMock()
 
-    zip_bytes = _build_zip({
-        "SKILL.md": "---\nname: Safe Skill\n---\n# Safe",
-        "../evil.txt": "owned",
-        "templates/helper.py": "pass",
-    })
+    zip_bytes = _build_zip(
+        {
+            "SKILL.md": "---\nname: Safe Skill\n---\n# Safe",
+            "../evil.txt": "owned",
+            "templates/helper.py": "pass",
+        }
+    )
 
     service = AgentSkillService(root=tmp_path)
     await service.install_from_upload(
@@ -523,11 +535,13 @@ async def test_install_from_zip_chinese_filenames(tmp_path):
     db.add = MagicMock()
 
     # 用标准 _build_zip（UTF-8 文件名，带 language flag）
-    zip_bytes = _build_zip({
-        "SKILL.md": "---\nname: 中文技能\n---\n# 中文技能测试",
-        "模板/入口.py": "# 入口文件",
-        "配置/说明.txt": "这是一个说明文件",
-    })
+    zip_bytes = _build_zip(
+        {
+            "SKILL.md": "---\nname: 中文技能\n---\n# 中文技能测试",
+            "模板/入口.py": "# 入口文件",
+            "配置/说明.txt": "这是一个说明文件",
+        }
+    )
 
     service = AgentSkillService(root=tmp_path)
     await service.install_from_upload(
@@ -542,7 +556,9 @@ async def test_install_from_zip_chinese_filenames(tmp_path):
     skill_dir = tmp_path / "skill"
     assert (skill_dir / "SKILL.md").exists()
     assert (skill_dir / "模板" / "入口.py").exists()
-    assert (skill_dir / "配置" / "说明.txt").read_text(encoding="utf-8") == "这是一个说明文件"
+    assert (skill_dir / "配置" / "说明.txt").read_text(
+        encoding="utf-8"
+    ) == "这是一个说明文件"
 
 
 # ---------------------------------------------------------------------------
@@ -575,13 +591,7 @@ def test_extract_metadata_parses_action_fields():
 def test_extract_metadata_allowed_tools_hyphen_form():
     """allowed-tools（连字符形式）应被标准化为 allowed_tools。"""
     service = AgentSkillService()
-    md = (
-        "---\n"
-        "name: test-skill\n"
-        "allowed-tools:\n"
-        "  - Shell(git status)\n"
-        "---\n# Test\n"
-    )
+    md = "---\nname: test-skill\nallowed-tools:\n  - Shell(git status)\n---\n# Test\n"
     meta = service._extract_metadata(md)
     assert '["Shell(git status)"]' in meta.get("allowed_tools", "")
 

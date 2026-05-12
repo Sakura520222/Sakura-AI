@@ -10,8 +10,8 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
-from datetime import datetime, timezone
 from pathlib import Path
 
 from loguru import logger
@@ -22,17 +22,15 @@ from backend.models.agent_team_models import (
     AgentTeamPatchFile,
     AgentTeamTask,
     AgentTeamTaskStatus,
+    utc_now as _utc_now,
 )
 from backend.models.database import async_session
 from backend.services.agent_team.ai_client import load_agent_team_ai_config
-from backend.services.agent_team.git_workspace_service import AgentTeamGitWorkspaceService
+from backend.services.agent_team.git_workspace_service import (
+    AgentTeamGitWorkspaceService,
+)
 from backend.services.agent_team.iteration_loop import IterationLoopService
 from backend.services.agent_team.pr_service import AgentTeamPRService
-
-
-def _utc_now() -> datetime:
-    """返回带 UTC 时区的当前时间。"""
-    return datetime.now(timezone.utc)
 
 
 class AgentTeamWorker:
@@ -43,9 +41,19 @@ class AgentTeamWorker:
         config = await load_agent_team_ai_config()
         config.validate()
 
+        # 注册取消信号
+        cancel_event = _cancel_events.get(task_id)
+        if cancel_event is None:
+            cancel_event = asyncio.Event()
+            _cancel_events[task_id] = cancel_event
+
         try:
             task = await self._load_task(task_id)
-            skills_summary, skills_context, skills_snapshot = await self._load_skills_context()
+            (
+                skills_summary,
+                skills_context,
+                skills_snapshot,
+            ) = await self._load_skills_context()
             ai_config_snapshot = config.safe_snapshot()
             if skills_snapshot:
                 ai_config_snapshot["skills"] = skills_snapshot
@@ -66,6 +74,16 @@ class AgentTeamWorker:
                 task.source_issue_number,
                 task.source_id,
             )
+
+            # 取消检查点
+            if cancel_event.is_set():
+                await self._update_task(
+                    task_id,
+                    status=AgentTeamTaskStatus.CANCELLED.value,
+                    current_phase="cancelled",
+                    error_message="任务在 CLONING 阶段被取消",
+                )
+                return task_id
 
             await self._update_task(
                 task_id,
@@ -128,6 +146,16 @@ class AgentTeamWorker:
 
             # ── Phase 3: VALIDATING ──
             if outcome.success and outcome.modified_files:
+                # 取消检查点
+                if cancel_event.is_set():
+                    await self._update_task(
+                        task_id,
+                        status=AgentTeamTaskStatus.CANCELLED.value,
+                        current_phase="cancelled",
+                        error_message="任务在 VALIDATING 阶段被取消",
+                    )
+                    return task_id
+
                 await self._update_task(
                     task_id,
                     status=AgentTeamTaskStatus.VALIDATING.value,
@@ -181,9 +209,13 @@ class AgentTeamWorker:
                 pr_body = pr_service.build_pr_body(
                     task_title=task.title,
                     task_summary=task.summary or "",
-                    fullstack_analysis=outcome.fullstack_result.summary if outcome.fullstack_result else "",
+                    fullstack_analysis=outcome.fullstack_result.summary
+                    if outcome.fullstack_result
+                    else "",
                     fullstack_plan="",
-                    review_summary=outcome.review_result.summary if outcome.review_result else "",
+                    review_summary=outcome.review_result.summary
+                    if outcome.review_result
+                    else "",
                     iteration_count=outcome.iterations,
                     source_type=task.source_type,
                     source_issue_number=task.source_issue_number,
@@ -238,13 +270,17 @@ class AgentTeamWorker:
                 logger.warning("Agent 任务失败: task_id={}, reason={}", task_id, reason)
 
         except Exception as e:
-            logger.error("Agent 任务异常: task_id={}, error={}", task_id, e, exc_info=True)
+            logger.error(
+                "Agent 任务异常: task_id={}, error={}", task_id, e, exc_info=True
+            )
             await self._update_task(
                 task_id,
                 status=AgentTeamTaskStatus.FAILED.value,
                 current_phase="error",
                 error_message=f"{type(e).__name__}: {e}",
             )
+        finally:
+            _cancel_events.pop(task_id, None)
 
         return task_id
 
@@ -287,7 +323,9 @@ class AgentTeamWorker:
         modified_files: list[str] | None = None,
         workspace: str | Path | None = None,
     ) -> None:
-        patch_stats = await self._collect_patch_file_stats(workspace) if workspace else {}
+        patch_stats = (
+            await self._collect_patch_file_stats(workspace) if workspace else {}
+        )
         async with async_session() as session:
             iteration = AgentTeamIteration(
                 task_id=task_id,
@@ -329,7 +367,9 @@ class AgentTeamWorker:
 
             await session.commit()
 
-    async def _collect_patch_file_stats(self, workspace: str | Path | None) -> dict[str, dict]:
+    async def _collect_patch_file_stats(
+        self, workspace: str | Path | None
+    ) -> dict[str, dict]:
         """读取工作区未提交变更的逐文件行数统计。"""
         if workspace is None:
             return {}
@@ -350,7 +390,10 @@ class AgentTeamWorker:
             github_app = GitHubAppClient()
             client = github_app.get_repo_client(repo_owner, repo_name)
             if not client:
-                logger.info("Agent 未注入 Sakura 记忆: 无法获取 GitHub 客户端 ({})", repo_full_name)
+                logger.info(
+                    "Agent 未注入 Sakura 记忆: 无法获取 GitHub 客户端 ({})",
+                    repo_full_name,
+                )
                 return ""
 
             repo = client.get_repo(repo_full_name)
@@ -360,7 +403,9 @@ class AgentTeamWorker:
                 repo_full_name=repo_full_name,
             )
             if not context:
-                logger.info("Agent 未注入 Sakura 记忆: 仓库无可用上下文 ({})", repo_full_name)
+                logger.info(
+                    "Agent 未注入 Sakura 记忆: 仓库无可用上下文 ({})", repo_full_name
+                )
                 return ""
 
             parts = []
@@ -376,7 +421,9 @@ class AgentTeamWorker:
             )
             return "\n\n".join(parts)
         except Exception as e:
-            logger.info("Agent 加载 Sakura 记忆失败: repo={}, error={}", repo_full_name, e)
+            logger.info(
+                "Agent 加载 Sakura 记忆失败: repo={}, error={}", repo_full_name, e
+            )
         return ""
 
     async def _load_skills_context(self) -> tuple[str, dict, list[dict]]:
@@ -419,23 +466,17 @@ class AgentTeamWorker:
 
     async def _resolve_max_iterations(self, task_max_iterations: int | None) -> int:
         """解析任务最大迭代轮数。"""
-        configured = await self._get_config("agent_team_max_iterations_per_task")
-        fallback = get_settings().agent_team_max_iterations_per_task
-        raw_value = configured if configured is not None else task_max_iterations or fallback
-        try:
-            value = int(raw_value)
-        except (TypeError, ValueError):
-            value = fallback
-        return max(1, value)
+        from backend.services.agent_team.ai_client import (
+            resolve_agent_team_max_iterations,
+        )
+
+        return await resolve_agent_team_max_iterations(task_max_iterations)
 
     async def _resolve_bool_config(self, key: str, fallback: bool) -> bool:
         """读取布尔动态配置，保留显式 False。"""
-        value = await self._get_config(key)
-        if value is None:
-            return fallback
-        if isinstance(value, bool):
-            return value
-        return str(value).strip().lower() in {"1", "true", "yes", "on", "启用", "是"}
+        from backend.services.agent_team.ai_client import resolve_agent_team_bool_config
+
+        return await resolve_agent_team_bool_config(key, fallback)
 
     def _build_commit_message(self, task, outcome) -> str:
         parts = [f"feat(agent): {task.title}"]
@@ -459,7 +500,9 @@ def _normalize_modified_file_path(file_path: str) -> str:
     return normalized
 
 
-def _merge_modified_files(modified_files: list[str], patch_stats: dict[str, dict]) -> list[str]:
+def _merge_modified_files(
+    modified_files: list[str], patch_stats: dict[str, dict]
+) -> list[str]:
     """合并 AI 追踪文件和 Git 真实变更文件，优先保证 UI 有真实变更可展示。"""
     merged = {_normalize_modified_file_path(path) for path in modified_files if path}
     merged.update(patch_stats.keys())
@@ -467,6 +510,9 @@ def _merge_modified_files(modified_files: list[str], patch_stats: dict[str, dict
 
 
 _worker: AgentTeamWorker | None = None
+
+# 任务取消信号：task_id → asyncio.Event，设置时表示任务应尽快停止
+_cancel_events: dict[int, asyncio.Event] = {}
 
 
 def get_worker() -> AgentTeamWorker:
@@ -478,3 +524,19 @@ def get_worker() -> AgentTeamWorker:
 
 async def submit_agent_team_task(task_id: int) -> int:
     return await get_worker().process_task(task_id)
+
+
+def request_task_cancel(task_id: int) -> None:
+    """请求取消指定任务。Worker 在关键阶段会检查此信号。"""
+    event = _cancel_events.get(task_id)
+    if event is None:
+        _cancel_events[task_id] = asyncio.Event()
+        _cancel_events[task_id].set()
+    else:
+        event.set()
+
+
+def is_task_cancel_requested(task_id: int) -> bool:
+    """检查任务是否已被请求取消。"""
+    event = _cancel_events.get(task_id)
+    return event is not None and event.is_set()

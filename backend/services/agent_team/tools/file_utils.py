@@ -38,7 +38,9 @@ def write_text_preserving(
     path: str | Path, content_lf: str, encoding: str, line_ending: str
 ) -> None:
     """写入文件，保留原始编码和行尾风格。"""
-    final = content_lf.replace("\n", line_ending) if line_ending == "\r\n" else content_lf
+    final = (
+        content_lf.replace("\n", line_ending) if line_ending == "\r\n" else content_lf
+    )
     Path(path).write_bytes(final.encode(encoding))
 
 

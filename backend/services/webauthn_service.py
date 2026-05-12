@@ -87,7 +87,11 @@ def get_rp_config(request_origin: str | None = None) -> WebAuthnRpConfig:
         origin = ""
     if not origin:
         app_domain = settings.app_domain or "localhost"
-        scheme = "http" if app_domain.split(":", 1)[0] in ("localhost", "127.0.0.1") else "https"
+        scheme = (
+            "http"
+            if app_domain.split(":", 1)[0] in ("localhost", "127.0.0.1")
+            else "https"
+        )
         port = f":{settings.app_port}" if settings.app_port else ""
         origin = f"{scheme}://{app_domain}{port}".rstrip("/")
 
@@ -95,7 +99,9 @@ def get_rp_config(request_origin: str | None = None) -> WebAuthnRpConfig:
     if not parsed.scheme or not parsed.netloc:
         raise WebAuthnError("Invalid passkeys_origin configuration")
     rp_id = settings.passkeys_rp_id or parsed.hostname or "localhost"
-    return WebAuthnRpConfig(rp_id=rp_id, rp_name=settings.passkeys_rp_name, origin=origin)
+    return WebAuthnRpConfig(
+        rp_id=rp_id, rp_name=settings.passkeys_rp_name, origin=origin
+    )
 
 
 async def save_challenge(challenge_id: str, challenge: bytes, context: dict) -> None:
@@ -146,7 +152,9 @@ async def pop_challenge(challenge_id: str) -> tuple[bytes, dict] | None:
     return None
 
 
-def _credential_descriptor(credential: UserWebAuthnCredential) -> PublicKeyCredentialDescriptor:
+def _credential_descriptor(
+    credential: UserWebAuthnCredential,
+) -> PublicKeyCredentialDescriptor:
     return PublicKeyCredentialDescriptor(id=b64url_decode(credential.credential_id))
 
 
@@ -232,7 +240,9 @@ async def finish_registration(
     db_credential = UserWebAuthnCredential(
         user_id=user.id,
         credential_id=b64url_encode(verification.credential_id),
-        credential_id_hash=credential_id_hash(b64url_encode(verification.credential_id)),
+        credential_id_hash=credential_id_hash(
+            b64url_encode(verification.credential_id)
+        ),
         public_key=b64url_encode(verification.credential_public_key),
         sign_count=verification.sign_count,
         transports=",".join(credential.get("response", {}).get("transports", []) or []),
@@ -241,7 +251,9 @@ async def finish_registration(
     )
     session.add(db_credential)
     await session.flush()
-    logger.info("Passkey registered: user_id={}, credential_id={}", user.id, db_credential.id)
+    logger.info(
+        "Passkey registered: user_id={}, credential_id={}", user.id, db_credential.id
+    )
     return db_credential
 
 
@@ -306,7 +318,8 @@ async def finish_authentication(
         raise WebAuthnError("Missing credential id")
     result = await session.execute(
         select(UserWebAuthnCredential).where(
-            UserWebAuthnCredential.credential_id_hash == credential_id_hash(credential_id)
+            UserWebAuthnCredential.credential_id_hash
+            == credential_id_hash(credential_id)
         )
     )
     db_credential = result.scalar_one_or_none()

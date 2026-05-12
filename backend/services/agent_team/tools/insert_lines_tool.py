@@ -118,7 +118,9 @@ class InsertLinesTool(BaseTool):
         result_lines = lines[:after_line] + insert_lines_list + lines[after_line:]
         result_content = "\n".join(result_lines)
 
-        await asyncio.to_thread(write_text_preserving, resolved, result_content, encoding, line_ending)
+        await asyncio.to_thread(
+            write_text_preserving, resolved, result_content, encoding, line_ending
+        )
 
         if isinstance(file_state, ReadFileState):
             file_state.set(
@@ -131,7 +133,9 @@ class InsertLinesTool(BaseTool):
 
         logger.info(
             "InsertLinesTool: {} (after L{}, {} 行插入)",
-            file_path, after_line, len(insert_lines_list),
+            file_path,
+            after_line,
+            len(insert_lines_list),
         )
 
         return ToolResult(
@@ -148,6 +152,8 @@ class InsertLinesTool(BaseTool):
     @staticmethod
     def _resolve(file_path: str, ctx: ToolContext) -> Path | None:
         try:
-            return ctx.workspace_service.resolve_inside_workspace(ctx.workspace, file_path)
+            return ctx.workspace_service.resolve_inside_workspace(
+                ctx.workspace, file_path
+            )
         except (WorkspaceSecurityError, Exception):
             return None

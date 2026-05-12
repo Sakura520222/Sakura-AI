@@ -121,9 +121,7 @@ async def handle_pull_request_event(payload: Dict[str, Any]) -> JSONResponse:
                 worker = get_worker()
                 cancelled = worker.cancel_task(task_key)
                 if cancelled:
-                    logger.info(
-                        f"[webhook] PR closed event: 已取消审查任务 {task_key}"
-                    )
+                    logger.info(f"[webhook] PR closed event: 已取消审查任务 {task_key}")
                 else:
                     logger.debug(
                         f"[webhook] PR closed event: 无活跃审查任务 {task_key}"
@@ -800,9 +798,7 @@ async def handle_issue_event(payload: Dict[str, Any]) -> JSONResponse:
             repo_owner = issue_info["repo_owner"]
             repo_name = issue_info["repo_name"]
             issue_number = issue_info["issue_number"]
-            logger.info(
-                f"处理 Issue 删除事件: {repo_owner}/{repo_name}#{issue_number}"
-            )
+            logger.info(f"处理 Issue 删除事件: {repo_owner}/{repo_name}#{issue_number}")
 
             # 延迟导入避免循环依赖 / lazy import to avoid circular dependency
             from backend.services.issue_service import issue_service

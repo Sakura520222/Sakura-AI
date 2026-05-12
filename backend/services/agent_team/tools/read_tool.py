@@ -135,6 +135,8 @@ class ReadTool(BaseTool):
     @staticmethod
     def _resolve(file_path: str, ctx: ToolContext) -> Path | None:
         try:
-            return ctx.workspace_service.resolve_inside_workspace(ctx.workspace, file_path)
+            return ctx.workspace_service.resolve_inside_workspace(
+                ctx.workspace, file_path
+            )
         except (WorkspaceSecurityError, Exception):
             return None

@@ -152,7 +152,9 @@ class EditTool(BaseTool):
             replacements = 1
 
         # 写入保留编码/行尾
-        await asyncio.to_thread(write_text_preserving, resolved, new_content, encoding, line_ending)
+        await asyncio.to_thread(
+            write_text_preserving, resolved, new_content, encoding, line_ending
+        )
 
         # 更新 file_state
         if isinstance(file_state, ReadFileState):
@@ -181,6 +183,8 @@ class EditTool(BaseTool):
     @staticmethod
     def _resolve(file_path: str, ctx: ToolContext) -> Path | None:
         try:
-            return ctx.workspace_service.resolve_inside_workspace(ctx.workspace, file_path)
+            return ctx.workspace_service.resolve_inside_workspace(
+                ctx.workspace, file_path
+            )
         except (WorkspaceSecurityError, Exception):
             return None

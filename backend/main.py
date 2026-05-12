@@ -274,7 +274,11 @@ async def rate_limit_exception_handler(request: Request, exc: RateLimitExceeded)
                 content={"success": False, "message": message, "data": None},
             )
         referer = request.headers.get("referer")
-        redirect_url = referer if referer and referer.startswith(str(request.base_url)) else "/webui/"
+        redirect_url = (
+            referer
+            if referer and referer.startswith(str(request.base_url))
+            else "/webui/"
+        )
         return toast_redirect(redirect_url, message, "error", status_code=303)
     return await _rate_limit_exceeded_handler(request, exc)
 

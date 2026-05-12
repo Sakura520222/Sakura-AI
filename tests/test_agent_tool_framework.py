@@ -15,7 +15,10 @@ import pytest
 from backend.services.agent_team.tool_executor import AgentToolExecutor
 from backend.services.agent_team.tools.base import ToolContext, ToolExecutor, ToolResult
 from backend.services.agent_team.tools.file_state import ReadFileState
-from backend.services.agent_team.tools.file_utils import find_actual_string, make_unified_diff
+from backend.services.agent_team.tools.file_utils import (
+    find_actual_string,
+    make_unified_diff,
+)
 from backend.services.agent_team.tools.grep_tool import MAX_GREP_KEYWORD_LENGTH
 from backend.services.agent_team.tools.registry import (
     create_executor,
@@ -41,7 +44,9 @@ def _make_ctx(workspace: str, file_state: ReadFileState | None = None) -> ToolCo
 
 class FakeToolCall:
     def __init__(self, name: str, arguments: dict):
-        self.function = type("F", (), {"name": name, "arguments": json.dumps(arguments)})()
+        self.function = type(
+            "F", (), {"name": name, "arguments": json.dumps(arguments)}
+        )()
         self.id = f"call_{name}"
 
 
@@ -120,6 +125,7 @@ def test_file_state_stale_detection(tmp_path):
 
     # 修改文件
     import time
+
     time.sleep(0.05)
     f.write_text("world\n", encoding="utf-8")
 
@@ -191,9 +197,17 @@ def test_registry_has_all_fullstack_tools():
     tools = get_fullstack_tools()
     names = {t.name for t in tools}
     expected = {
-        "read_file", "list_directory", "glob", "search_in_files",
-        "write_file", "edit_file", "replace_lines", "insert_lines",
-        "run_command", "use_skill", "finish_task",
+        "read_file",
+        "list_directory",
+        "glob",
+        "search_in_files",
+        "write_file",
+        "edit_file",
+        "replace_lines",
+        "insert_lines",
+        "run_command",
+        "use_skill",
+        "finish_task",
     }
     assert expected == names
 
@@ -241,7 +255,9 @@ async def test_read_tool_basic(tmp_path):
     executor = create_executor("fullstack")
 
     # 先写入
-    await executor.execute_raw("write_file", {"file_path": "demo.py", "content": "a\nb\nc\n"}, ctx)
+    await executor.execute_raw(
+        "write_file", {"file_path": "demo.py", "content": "a\nb\nc\n"}, ctx
+    )
 
     result = await executor.execute_raw("read_file", {"file_path": "demo.py"}, ctx)
     assert result.success
@@ -255,7 +271,9 @@ async def test_read_tool_with_range(tmp_path):
     _, ctx = _setup_workspace(tmp_path)
     executor = create_executor("fullstack")
 
-    await executor.execute_raw("write_file", {"file_path": "demo.py", "content": "a\nb\nc\nd\ne\n"}, ctx)
+    await executor.execute_raw(
+        "write_file", {"file_path": "demo.py", "content": "a\nb\nc\nd\ne\n"}, ctx
+    )
 
     result = await executor.execute_raw(
         "read_file", {"file_path": "demo.py", "start_line": 2, "end_line": 4}, ctx
@@ -283,10 +301,14 @@ async def test_edit_tool_basic(tmp_path):
     _, ctx = _setup_workspace(tmp_path)
     executor = create_executor("fullstack")
 
-    await executor.execute_raw("write_file", {"file_path": "demo.py", "content": "x = 1\ny = 2\n"}, ctx)
+    await executor.execute_raw(
+        "write_file", {"file_path": "demo.py", "content": "x = 1\ny = 2\n"}, ctx
+    )
 
     result = await executor.execute_raw(
-        "edit_file", {"file_path": "demo.py", "old_text": "x = 1", "new_text": "x = 42"}, ctx
+        "edit_file",
+        {"file_path": "demo.py", "old_text": "x = 1", "new_text": "x = 42"},
+        ctx,
     )
     assert result.success
     assert result.output["replacements"] == 1
@@ -298,10 +320,14 @@ async def test_edit_tool_multiple_matches(tmp_path):
     _, ctx = _setup_workspace(tmp_path)
     executor = create_executor("fullstack")
 
-    await executor.execute_raw("write_file", {"file_path": "demo.py", "content": "x = 1\nx = 1\n"}, ctx)
+    await executor.execute_raw(
+        "write_file", {"file_path": "demo.py", "content": "x = 1\nx = 1\n"}, ctx
+    )
 
     result = await executor.execute_raw(
-        "edit_file", {"file_path": "demo.py", "old_text": "x = 1", "new_text": "x = 2"}, ctx
+        "edit_file",
+        {"file_path": "demo.py", "old_text": "x = 1", "new_text": "x = 2"},
+        ctx,
     )
     assert not result.success
     assert "2 处匹配" in result.error
@@ -312,7 +338,9 @@ async def test_edit_tool_missing_text(tmp_path):
     _, ctx = _setup_workspace(tmp_path)
     executor = create_executor("fullstack")
 
-    await executor.execute_raw("write_file", {"file_path": "demo.py", "content": "hello\n"}, ctx)
+    await executor.execute_raw(
+        "write_file", {"file_path": "demo.py", "content": "hello\n"}, ctx
+    )
 
     result = await executor.execute_raw(
         "edit_file", {"file_path": "demo.py", "old_text": "xyz", "new_text": "abc"}, ctx
@@ -344,10 +372,14 @@ async def test_replace_lines(tmp_path):
     _, ctx = _setup_workspace(tmp_path)
     executor = create_executor("fullstack")
 
-    await executor.execute_raw("write_file", {"file_path": "demo.py", "content": "a\nb\nc\nd\ne\n"}, ctx)
+    await executor.execute_raw(
+        "write_file", {"file_path": "demo.py", "content": "a\nb\nc\nd\ne\n"}, ctx
+    )
 
     result = await executor.execute_raw(
-        "replace_lines", {"file_path": "demo.py", "start_line": 2, "end_line": 4, "new_content": "B\nC"}, ctx
+        "replace_lines",
+        {"file_path": "demo.py", "start_line": 2, "end_line": 4, "new_content": "B\nC"},
+        ctx,
     )
     assert result.success
     assert result.output["lines_replaced"] == 3
@@ -362,10 +394,14 @@ async def test_insert_lines(tmp_path):
     _, ctx = _setup_workspace(tmp_path)
     executor = create_executor("fullstack")
 
-    await executor.execute_raw("write_file", {"file_path": "demo.py", "content": "a\nb\nc\n"}, ctx)
+    await executor.execute_raw(
+        "write_file", {"file_path": "demo.py", "content": "a\nb\nc\n"}, ctx
+    )
 
     result = await executor.execute_raw(
-        "insert_lines", {"file_path": "demo.py", "after_line": 1, "content": "inserted"}, ctx
+        "insert_lines",
+        {"file_path": "demo.py", "after_line": 1, "content": "inserted"},
+        ctx,
     )
     assert result.success
     assert result.output["lines_inserted"] == 1
@@ -475,7 +511,9 @@ async def test_full_pipeline_with_fake_tool_call(tmp_path):
     executor = create_executor("fullstack")
 
     # 写入
-    tc_write = FakeToolCall("write_file", {"file_path": "demo.py", "content": "x = 1\ny = 2\n"})
+    tc_write = FakeToolCall(
+        "write_file", {"file_path": "demo.py", "content": "x = 1\ny = 2\n"}
+    )
     result = await executor.execute_tool_call(tc_write, ctx)
     assert result.success
 
@@ -486,11 +524,14 @@ async def test_full_pipeline_with_fake_tool_call(tmp_path):
     assert "x = 1" in result.output["content"]
 
     # 编辑
-    tc_edit = FakeToolCall("edit_file", {
-        "file_path": "demo.py",
-        "old_text": "x = 1",
-        "new_text": "x = 42",
-    })
+    tc_edit = FakeToolCall(
+        "edit_file",
+        {
+            "file_path": "demo.py",
+            "old_text": "x = 1",
+            "new_text": "x = 42",
+        },
+    )
     result = await executor.execute_tool_call(tc_edit, ctx)
     assert result.success
     assert result.output["replacements"] == 1

@@ -9,8 +9,12 @@ from openai import BadRequestError
 from sqlalchemy import and_, desc, not_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from backend.core.config import get_dynamic_config, get_settings
-from backend.models.agent_team_models import AgentTeamSourceType, AgentTeamTask, AgentTeamTaskStatus
+from backend.core.config import get_dynamic_config
+from backend.models.agent_team_models import (
+    AgentTeamSourceType,
+    AgentTeamTask,
+    AgentTeamTaskStatus,
+)
 from backend.models.database import IssueAnalysis, IssueAnalysisStatus
 from backend.models.scan_models import RepoScan, ScanFinding
 from backend.services.agent_team.ai_client import create_agent_team_client
@@ -53,7 +57,9 @@ class AgentTeamCandidateService:
         allowlist = await self._load_repo_allowlist()
         requirement = (ai_filter_requirement or "").strip()
         if requirement:
-            return await self._collect_ai_filtered_issue_candidates(db, allowlist, limit, requirement)
+            return await self._collect_ai_filtered_issue_candidates(
+                db, allowlist, limit, requirement
+            )
 
         candidates: list[AgentCandidate] = []
         candidates.extend(await self._collect_issue_candidates(db, allowlist, limit))
@@ -93,25 +99,29 @@ class AgentTeamCandidateService:
 
     async def _load_max_iterations_per_task(self) -> int:
         """读取 Agent 单任务最大迭代轮数"""
-        fallback = get_settings().agent_team_max_iterations_per_task
-        raw_value = await get_dynamic_config("agent_team_max_iterations_per_task")
-        try:
-            value = int(raw_value if raw_value is not None else fallback)
-        except (TypeError, ValueError):
-            value = fallback
-        return max(1, value)
+        from backend.services.agent_team.ai_client import (
+            resolve_agent_team_max_iterations,
+        )
+
+        return await resolve_agent_team_max_iterations()
 
     async def _collect_issue_candidates(
         self, db: AsyncSession, allowlist: set[str], limit: int
     ) -> list[AgentCandidate]:
-        min_priority = str(await get_dynamic_config("agent_team_min_priority") or "high")
+        min_priority = str(
+            await get_dynamic_config("agent_team_min_priority") or "high"
+        )
         allowed_priorities = self._allowed_priorities(min_priority)
         keywords = await self._load_feasibility_keywords()
 
         existing_subquery = select(AgentTeamTask.source_id).where(
             AgentTeamTask.source_type == AgentTeamSourceType.ISSUE_ANALYSIS.value,
             AgentTeamTask.status.notin_(
-                [AgentTeamTaskStatus.FAILED.value, AgentTeamTaskStatus.CANCELLED.value, AgentTeamTaskStatus.ABANDONED.value]
+                [
+                    AgentTeamTaskStatus.FAILED.value,
+                    AgentTeamTaskStatus.CANCELLED.value,
+                    AgentTeamTaskStatus.ABANDONED.value,
+                ]
             ),
         )
         stmt = (
@@ -166,7 +176,11 @@ class AgentTeamCandidateService:
         existing_subquery = select(AgentTeamTask.source_id).where(
             AgentTeamTask.source_type == AgentTeamSourceType.ISSUE_ANALYSIS.value,
             AgentTeamTask.status.notin_(
-                [AgentTeamTaskStatus.FAILED.value, AgentTeamTaskStatus.CANCELLED.value, AgentTeamTaskStatus.ABANDONED.value]
+                [
+                    AgentTeamTaskStatus.FAILED.value,
+                    AgentTeamTaskStatus.CANCELLED.value,
+                    AgentTeamTaskStatus.ABANDONED.value,
+                ]
             ),
         )
         stmt = (
@@ -192,16 +206,24 @@ class AgentTeamCandidateService:
         if not analyses:
             return []
 
-        ai_results = await self._filter_issue_candidates_with_ai(requirement, analyses[:_AI_FILTER_MAX_ITEMS])
-        result_map = {item["source_id"]: item for item in ai_results if item.get("selected")}
+        ai_results = await self._filter_issue_candidates_with_ai(
+            requirement, analyses[:_AI_FILTER_MAX_ITEMS]
+        )
+        result_map = {
+            item["source_id"]: item for item in ai_results if item.get("selected")
+        }
 
         candidates: list[AgentCandidate] = []
         for analysis in analyses:
             ai_item = result_map.get(int(analysis.id))
             if not ai_item:
                 continue
-            priority = _normalize_priority(ai_item.get("priority"), analysis.priority or "medium")
-            score = _normalize_score(ai_item.get("score"), _PRIORITY_SCORE.get(priority, 50))
+            priority = _normalize_priority(
+                ai_item.get("priority"), analysis.priority or "medium"
+            )
+            score = _normalize_score(
+                ai_item.get("score"), _PRIORITY_SCORE.get(priority, 50)
+            )
             repo_full_name = f"{analysis.repo_owner}/{analysis.repo_name}"
             candidates.append(
                 AgentCandidate(
@@ -222,11 +244,17 @@ class AgentTeamCandidateService:
         candidates.sort(key=lambda item: item.candidate_score, reverse=True)
         return candidates[:limit]
 
-    async def _filter_issue_candidates_with_ai(self, requirement: str, analyses: list[IssueAnalysis]) -> list[dict[str, Any]]:
+    async def _filter_issue_candidates_with_ai(
+        self, requirement: str, analyses: list[IssueAnalysis]
+    ) -> list[dict[str, Any]]:
         """调用 AI 判断 Issue 是否满足自然语言筛选要求。"""
         client, config = await create_agent_team_client()
-        model = _select_ai_filter_model(config.model, config.review_model, config.summary_model)
-        issue_items = [_issue_analysis_to_filter_item(analysis) for analysis in analyses]
+        model = _select_ai_filter_model(
+            config.model, config.review_model, config.summary_model
+        )
+        issue_items = [
+            _issue_analysis_to_filter_item(analysis) for analysis in analyses
+        ]
         messages = [
             {
                 "role": "system",
@@ -275,7 +303,11 @@ class AgentTeamCandidateService:
         existing_subquery = select(AgentTeamTask.source_id).where(
             AgentTeamTask.source_type == AgentTeamSourceType.SCAN_FINDING.value,
             AgentTeamTask.status.notin_(
-                [AgentTeamTaskStatus.FAILED.value, AgentTeamTaskStatus.CANCELLED.value, AgentTeamTaskStatus.ABANDONED.value]
+                [
+                    AgentTeamTaskStatus.FAILED.value,
+                    AgentTeamTaskStatus.CANCELLED.value,
+                    AgentTeamTaskStatus.ABANDONED.value,
+                ]
             ),
         )
         stmt = (
@@ -303,7 +335,9 @@ class AgentTeamCandidateService:
                 AgentCandidate(
                     source_type=AgentTeamSourceType.SCAN_FINDING.value,
                     source_id=finding.id,
-                    source_issue_number=int(scan.report_issue_number) if scan.report_issue_number else None,
+                    source_issue_number=int(scan.report_issue_number)
+                    if scan.report_issue_number
+                    else None,
                     repo_full_name=scan.repo_name,
                     repo_owner=repo_owner,
                     repo_name=repo_name,
@@ -325,7 +359,11 @@ class AgentTeamCandidateService:
 
     def _allowed_priorities(self, min_priority: str) -> set[str]:
         threshold = _PRIORITY_ORDER.get(min_priority, _PRIORITY_ORDER["high"])
-        return {priority for priority, order in _PRIORITY_ORDER.items() if order <= threshold}
+        return {
+            priority
+            for priority, order in _PRIORITY_ORDER.items()
+            if order <= threshold
+        }
 
     def _split_repo(self, repo_full_name: str) -> tuple[str, str]:
         if "/" not in repo_full_name:

@@ -671,7 +671,6 @@ class IssueService:
             "by_priority": priority_stats,
         }
 
-
     @staticmethod
     async def _safe_db_delete(
         db: AsyncSession,
@@ -696,9 +695,7 @@ class IssueService:
         """
         try:
             async with db.begin_nested():  # savepoint: 失败时仅回滚当前操作
-                db_result = await db.execute(
-                    delete(model).where(and_(*filters))
-                )
+                db_result = await db.execute(delete(model).where(and_(*filters)))
                 return db_result.rowcount
         except Exception as e:
             logger.warning(f"删除 {label} 记录失败: {e}")
@@ -744,19 +741,38 @@ class IssueService:
 
         # 1. Remove from ChromaDB vector index / 从 ChromaDB 向量索引中删除
         try:
-            result["vector_deleted"] = (
-                await self.issue_embedding_service.remove_issue(
-                    repo_owner, repo_name, issue_number
-                )
+            result["vector_deleted"] = await self.issue_embedding_service.remove_issue(
+                repo_owner, repo_name, issue_number
             )
         except Exception as e:
             logger.warning(f"删除 issue 向量失败 {issue_label}: {e}")
 
         # 2-4. Delete DB records / 删除数据库记录
         db_filters = [
-            (IssueAnalysis, [IssueAnalysis.repo_name == full_repo_name, IssueAnalysis.issue_number == issue_number], "IssueAnalysis"),
-            (PRIssueLink, [PRIssueLink.repo_name == full_repo_name, PRIssueLink.issue_number == issue_number], "PRIssueLink"),
-            (IssueAnalysisQueue, [IssueAnalysisQueue.repo_name == full_repo_name, IssueAnalysisQueue.issue_number == issue_number], "IssueAnalysisQueue"),
+            (
+                IssueAnalysis,
+                [
+                    IssueAnalysis.repo_name == full_repo_name,
+                    IssueAnalysis.issue_number == issue_number,
+                ],
+                "IssueAnalysis",
+            ),
+            (
+                PRIssueLink,
+                [
+                    PRIssueLink.repo_name == full_repo_name,
+                    PRIssueLink.issue_number == issue_number,
+                ],
+                "PRIssueLink",
+            ),
+            (
+                IssueAnalysisQueue,
+                [
+                    IssueAnalysisQueue.repo_name == full_repo_name,
+                    IssueAnalysisQueue.issue_number == issue_number,
+                ],
+                "IssueAnalysisQueue",
+            ),
         ]
         result_keys = ["analysis_deleted", "links_deleted", "queue_deleted"]
 
