@@ -13,6 +13,8 @@ from loguru import logger
 
 from backend.core.ai_providers import get_provider_select_options
 
+DEFAULT_FETCH_URL_ALLOWED_CONTENT_TYPES = "text/html,application/xhtml+xml,text/plain"
+
 
 class Settings(BaseSettings):
     """应用配置"""
@@ -365,7 +367,7 @@ class Settings(BaseSettings):
     fetch_url_domain_policy: str = "off"  # 域名过滤策略：off / blacklist / whitelist
     fetch_url_domain_list: str = ""  # 域名列表（逗号分隔）
     fetch_url_force_https: bool = False  # 强制仅允许 HTTPS 协议
-    fetch_url_allowed_content_types: str = "text/html,application/xhtml+xml,text/plain"  # 允许抓取的 Content-Type（逗号分隔）
+    fetch_url_allowed_content_types: str = DEFAULT_FETCH_URL_ALLOWED_CONTENT_TYPES  # 允许抓取的 Content-Type（逗号分隔）
     fetch_url_max_redirects: int = 3  # 最大重定向次数
 
     # ========== 支付配置 ==========
@@ -1118,6 +1120,10 @@ DYNAMIC_CONFIG_SELECT_OPTIONS: dict[str, list[dict]] = {
 
 # 数值范围限制
 DYNAMIC_CONFIG_RANGES: dict[str, tuple[float, float]] = {
+    # Web 搜索基础配置
+    "web_search_max_results": (1, 100),
+    "web_search_max_content_length": (100, 50000),
+    "web_search_timeout": (5, 600),
     "embedding_dimension": (128, 4096),
     "rerank_score_threshold": (0.0, 1.0),
     "code_chunk_size": (100, 5000),

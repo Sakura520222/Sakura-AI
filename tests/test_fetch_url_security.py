@@ -8,6 +8,7 @@ import socket
 import pytest
 from unittest.mock import patch
 
+from backend.core.config import DEFAULT_FETCH_URL_ALLOWED_CONTENT_TYPES
 from backend.services.ai_reviewer.tools.fetch_url_tool import (
     FetchUrlToolHandler,
     _normalize_ip_octet,
@@ -209,9 +210,12 @@ class TestContentType:
 
     def test_empty_content_type_config_falls_back_to_defaults(self):
         content_types = FetchUrlToolHandler._parse_content_types("")
+        expected_content_types = {
+            item.strip().lower()
+            for item in DEFAULT_FETCH_URL_ALLOWED_CONTENT_TYPES.split(",")
+        }
 
-        assert "text/plain" in content_types
-        assert "text/html" in content_types
+        assert content_types == expected_content_types
 
 
 # ── 域名策略 ────────────────────────────────────────────────────
