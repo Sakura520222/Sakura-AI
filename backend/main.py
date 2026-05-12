@@ -93,16 +93,6 @@ async def lifespan(app: FastAPI):
             # 无法连接数据库，进入 bootstrap 模式引导用户配置
             logger.warning("🔧 因缺少 DATABASE_URL 进入 bootstrap 模式，请访问 /setup")
         else:
-            logger.info(f"📊 日志级别: {settings.log_level}")
-            logger.info(f"🌐 应用域名: {settings.app_domain}")
-            logger.info(f"🤖 OpenAI模型: {settings.openai_model}")
-
-            # 检测默认 JWT 密钥
-            if settings.webui_secret_key == "change-me-in-production":
-                logger.warning(
-                    "⚠️  WebUI JWT 密钥使用默认值！请通过 WebUI 配置页面设置 WEBUI_SECRET_KEY。"
-                )
-
             # 2. 初始化数据库
             try:
                 from backend.models import init_db
@@ -120,6 +110,17 @@ async def lifespan(app: FastAPI):
                 logger.info("✅ 配置已从数据库加载到 Settings")
             except Exception as e:
                 logger.warning(f"⚠️ 加载配置失败: {e}")
+
+            # 打印关键配置（在动态配置加载后，确保显示实际值）
+            logger.info(f"📊 日志级别: {settings.log_level}")
+            logger.info(f"🌐 应用域名: {settings.app_domain}")
+            logger.info(f"🤖 OpenAI模型: {settings.openai_model}")
+
+            # 检测默认 JWT 密钥（必须在动态配置加载后检查）
+            if settings.webui_secret_key == "change-me-in-production":
+                logger.warning(
+                    "⚠️  WebUI JWT 密钥使用默认值！请通过 WebUI 配置页面设置 WEBUI_SECRET_KEY。"
+                )
 
             # 4. 动态配置加载后再次校验必填字段（仅警告，不阻止启动）
             missing = settings.validate_required_fields()
