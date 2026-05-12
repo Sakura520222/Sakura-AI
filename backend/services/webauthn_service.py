@@ -347,7 +347,7 @@ async def finish_authentication(
         expected_origin=rp.origin,
         credential_public_key=b64url_decode(db_credential.public_key),
         credential_current_sign_count=int(db_credential.sign_count or 0),
-        require_user_verification=False,
+        require_user_verification=True,
     )
     db_credential.sign_count = verification.new_sign_count
     db_credential.last_used_at = datetime.now(timezone.utc)

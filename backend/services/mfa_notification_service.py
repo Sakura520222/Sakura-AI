@@ -32,13 +32,13 @@ async def notify_mfa_event(
         result = await session.execute(
             select(TelegramUser.telegram_id).where(TelegramUser.id == user_id)
         )
-        telegram_id = result.scalar_one_or_none()
-        if not telegram_id:
+        chat_id = result.scalar_one_or_none()
+        if not chat_id:
             return
         await sender.send_mfa_event(
             event_type=event_type,
             detail=detail,
-            chat_id=int(telegram_id),
+            chat_id=int(chat_id),
         )
     except Exception as exc:
         logger.warning("Failed to send MFA notification: user_id={}, error={}", user_id, exc)

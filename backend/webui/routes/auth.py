@@ -661,6 +661,12 @@ async def passkey_discover_options(request: Request):
 
     This endpoint does NOT require a prior login. The browser will
     present all passkeys matching the RP ID so the user can pick one.
+
+    Security note — CSRF: Like the GitHub OAuth callback and other login
+    entry-points, this endpoint operates in an unauthenticated context
+    (no session yet).  The issued token is bound to the cookie set in
+    ``/passkey/verify-discover``, so a cross-site request cannot steal
+    the credential.
     """
     async with db_module.async_session() as session:
         try:
@@ -679,7 +685,12 @@ async def passkey_discover_options(request: Request):
 @router.post("/passkey/verify-discover")
 @limiter.limit(lambda: get_settings().passkeys_authentication_rate_limit)
 async def passkey_verify_discover(request: Request, body: dict = Body(...)):
-    """Verify a discoverable passkey assertion and issue a login token."""
+    """Verify a discoverable passkey assertion and issue a login token.
+
+    Security note — CSRF: This is an unauthenticated login endpoint
+    (consistent with the GitHub OAuth callback).  It does not rely on a
+    CSRF token because there is no established session to protect.
+    """
     user_id = 0
     try:
         async with db_module.async_session() as session:

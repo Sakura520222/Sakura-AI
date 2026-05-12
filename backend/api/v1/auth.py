@@ -362,13 +362,13 @@ async def logout(request: Request, user: dict = Depends(get_api_current_user)):
 
 
 @router.post("/2fa/passkey/options")
-@limiter.limit("10/minute")
+@limiter.limit(lambda: get_settings().passkeys_authentication_rate_limit)
 async def api_passkey_options(request: Request, body: dict):
     """创建 API Passkey 认证 options。"""
     mfa_token = body.get("mfa_token")
     payload = decode_access_token(mfa_token) if mfa_token else None
     if not is_mfa_pending_payload(payload):
-        return error_response("无效或已过期的二次验证凭证", status_code=401)
+        return error_response(_i18n.t("api.invalid_mfa_token"), status_code=401)
 
     user_id = int(payload["user_id"])
     try:
@@ -388,13 +388,13 @@ async def api_passkey_options(request: Request, body: dict):
 
 
 @router.post("/2fa/passkey/verify")
-@limiter.limit("10/minute")
+@limiter.limit(lambda: get_settings().passkeys_authentication_rate_limit)
 async def api_passkey_verify(request: Request, body: dict):
     """验证 API Passkey 认证结果并签发正式 Token。"""
     mfa_token = body.get("mfa_token")
     payload = decode_access_token(mfa_token) if mfa_token else None
     if not is_mfa_pending_payload(payload):
-        return error_response("无效或已过期的二次验证凭证", status_code=401)
+        return error_response(_i18n.t("api.invalid_mfa_token"), status_code=401)
 
     user_id = int(payload["user_id"])
     try:
@@ -414,10 +414,15 @@ async def api_passkey_verify(request: Request, body: dict):
                 user_id,
             )
             await session.commit()
+    except AccountLockedError as exc:
+        return error_response(
+            _i18n.t("toast.account_locked", seconds=exc.remaining_seconds),
+            status_code=429,
+        )
     except Exception as exc:
         await record_mfa_failure(user_id)
         logger.warning("API Passkey 验证失败: user_id={}, error={}", user_id, exc)
-        return error_response("Passkey 验证失败", status_code=400)
+        return error_response(_i18n.t("toast.passkey_login_failed"), status_code=400)
 
     await reset_mfa_failures(user_id)
     token_payload = {

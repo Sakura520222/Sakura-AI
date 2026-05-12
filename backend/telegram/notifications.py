@@ -365,6 +365,7 @@ class NotificationSender:
         if not chat_id:
             return
 
+        # Lazy import to avoid circular dependency at module load time
         from backend.webui.i18n import i18n as _i18n
 
         i18n_key = f"telegram_mfa.{event_type}"
