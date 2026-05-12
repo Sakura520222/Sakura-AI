@@ -49,6 +49,9 @@ Sakura AI Reviewer 是一款基于大语言模型的智能 GitHub 代码审查�
 - **新增公共功能模块必须至少有一处调用路径**（major）
 - **WebAuthn challenge 消费失败后必须失效并重新生成**（major）
 - **测试中的 mock datetime 必须显式验证时区参数**（minor）
+- **延迟导入必须注释原因**（major）
+- **同步函数中使用 `get_running_loop().create_task` 时，无法创建任务必须记录 warning**（major）
+- **`asyncio.create_task` 后台任务需评估服务 shutdown 时的丢失风险**（major）
 
 ## 4. 审查中发现的重要模式
 
@@ -66,6 +69,10 @@ Sakura AI Reviewer 是一款基于大语言模型的智能 GitHub 代码审查�
 - **“惰性清理 + 无上限”重复出现**：应统一 TTL LRU 缓存工具类
 - **双路径不一致**：API 与 WebUI 新增功能必须对比限流/CSRF/错误处理
 - **操作顺序审查优先级提高**：Redis + DB 操作必须检查补偿逻辑
+- **异步调用方式必须统一**：同一模块内 fire-and-forget 全部使用 `create_task` 或全部使用 `await`，禁止混合
+- **函数副作用必须在 docstring 中用 `⚠️` 标注**
+- **UI 变更必须检查 JS 事件绑定是否依赖精确 DOM 结构**
+- **模板中内联 SVG 装饰图标必须添加 `aria-hidden="true"`**
 
 ## 5. 团队约定和规范
 
@@ -83,6 +90,7 @@ Sakura AI Reviewer 是一款基于大语言模型的智能 GitHub 代码审查�
 - 测试缓存清理必须异常安全
 - 未修复历史问题必须关联 issue 号（TODO(issue-xxx)）
 - 公开登录端点 CSRF 豁免必须注释安全边界
+- PR 描述与变更文件必须一致
 
 ### suggestion 疲劳归档协议
 第 1 轮未修复：评估降级 | 第 2 轮未修复：强制降级 | 第 3 轮未修复：强制归档
@@ -95,6 +103,7 @@ Sakura AI Reviewer 是一款基于大语言模型的智能 GitHub 代码审查�
 - 观察点必须有后续行动：不得仅列出不创建 issue
 - 新增配置字段检查表：唯一性、默认值兼容性、所有读取路径的 None 处理、写入路径与缓存失效成对
 - 测试断言必须引用生产常量，禁止硬编码
+- 变更模板文件时，必须输出该模板被哪些路由/端点使用的清单
 
 ### 常量与配置规范
 - 常量定义位置与语义保持一致
@@ -104,3 +113,8 @@ Sakura AI Reviewer 是一款基于大语言模型的智能 GitHub 代码审查�
 ### 日志与可观测性
 - 新增异常处理器必须记录 warn 级别日志
 - 配置降级路径必须有 warning 日志
+
+## 仓库信息
+- 仓库名: Sakura520222/Sakura-AI-Reviewer
+- 语言统计: Python: 2165153, HTML: 593424, Shell: 4551, Dockerfile: 982
+- 累计反思次数: 213
