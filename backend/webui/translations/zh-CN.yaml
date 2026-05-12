@@ -1063,6 +1063,8 @@ toast:
   passkey_login_failed: "通行密钥登录失败，请重试"
   user_not_found: "用户不存在或已禁用"
   config_saved_restart: "全局配置已保存（部分配置需重启后生效）"
+  agent_skill_installed: "Skill 安装成功"
+  agent_skill_install_failed: "Skill 安装失败"
   config_saved_live: "全局配置已保存并即时生效"
   config_validation_failed: "配置验证失败: {error}"
   file_permission_denied: "文件权限不足"
