@@ -15,16 +15,20 @@ from backend.core.config import get_dynamic_config, get_settings
 from backend.services.agent_team.shell_executor import AgentTeamShellExecutor
 from backend.services.agent_team.tools.base import BaseTool, ToolContext, ToolResult
 
-# Shell 元字符，出现则拒绝执行以防止命令注入
-_SHELL_META_CHARS = frozenset(
-    {"&&", "||", ";", "|", "$(", "`", ">", ">>", "<", "&", "$"}
-)
+# Shell 元字符/模式，出现则拒绝执行以防止命令注入
+# 单独的 $ 不拦截，仅拦截 $(...) 和 ${...} 等命令替换模式
+_SHELL_META_CHARS = frozenset({"&&", "||", ";", "|", "`", ">", ">>", "<", "&"})
+_SHELL_SUBST_PATTERNS = ("$('", "$(", "${")
 
 
 def _contains_shell_meta(command: str) -> bool:
-    """检查命令字符串是否包含 Shell 元字符。"""
+    """检查命令字符串是否包含 Shell 元字符或命令替换模式。"""
     for meta in _SHELL_META_CHARS:
         if meta in command:
+            return True
+    # 精细检查命令替换：仅拦截 $(...) 和 ${...}，不拦截普通 $ 变量引用
+    for pattern in _SHELL_SUBST_PATTERNS:
+        if pattern in command:
             return True
     return False
 

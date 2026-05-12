@@ -22,9 +22,8 @@ from backend.models.agent_team_models import (
     AgentTeamPatchFile,
     AgentTeamTask,
     AgentTeamTaskStatus,
-    utc_now as _utc_now,
 )
-from backend.models.database import async_session
+from backend.models.database import async_session, utc_now as _utc_now
 from backend.services.agent_team.ai_client import load_agent_team_ai_config
 from backend.services.agent_team.git_workspace_service import (
     AgentTeamGitWorkspaceService,

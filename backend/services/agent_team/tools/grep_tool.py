@@ -151,9 +151,11 @@ class GrepTool(BaseTool):
         case_insensitive: bool,
         workspace: Path,
     ) -> ToolResult:
+        # 使用 re.escape 保持与系统 grep -F（固定字符串匹配）一致的语义
+        escaped_keyword = re.escape(keyword)
         flags = re.IGNORECASE if case_insensitive else 0
         try:
-            pattern = re.compile(keyword, flags)
+            pattern = re.compile(escaped_keyword, flags)
         except re.error:
             pattern = None
 
