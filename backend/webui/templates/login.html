@@ -54,7 +54,7 @@
 
             {% if has_oauth %}
             <!-- GitHub OAuth 登录按钮 -->
-            <a href="/webui/auth/github"
+            <a href="/auth/github"
                class="flex items-center justify-center gap-3 w-full py-3 px-4 bg-gradient-to-r from-gray-800 to-gray-900 dark:from-white dark:to-gray-100 hover:from-gray-700 hover:to-gray-800 dark:hover:from-gray-200 dark:hover:to-gray-100 text-white dark:text-gray-900 font-medium rounded-xl transition-all shadow-lg shadow-gray-800/25 dark:shadow-white/10">
                 <!-- GitHub Logo SVG -->
                 <svg class="w-5 h-5" fill="currentColor" viewBox="0 0 24 24">
@@ -158,7 +158,7 @@
             btn.style.opacity = '0.6';
             try {
                 // 1. 获取 discoverable options
-                const optResp = await fetch('/webui/auth/passkey/discover', {
+                const optResp = await fetch('/auth/passkey/discover', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                 });
@@ -198,7 +198,7 @@
                 };
 
                 // 5. 验证
-                const verifyResp = await fetch('/webui/auth/passkey/verify-discover', {
+                const verifyResp = await fetch('/auth/passkey/verify-discover', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ challenge_id: challengeId, credential }),

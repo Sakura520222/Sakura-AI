@@ -53,7 +53,7 @@
                 {% for r in reviews %}
                 <tr class="hover:bg-gray-50 dark:hover:bg-gray-700/50 transition-colors">
                     <td class="px-4 py-3">
-                        <a href="/webui/pr/{{ r.id }}" class="text-pink-600 dark:text-pink-400 hover:underline">
+                        <a href="/pr/{{ r.id }}" class="text-pink-600 dark:text-pink-400 hover:underline">
                             #{{ r.pr_id }} {{ (r.title or '') | truncate(30) }}
                         </a>
                     </td>

@@ -89,7 +89,7 @@ async def github_authorize(request: Request):
         return error_response("GitHub OAuth 回调地址未配置", status_code=500)
 
     state = secrets.token_urlsafe(32)
-    await _save_oauth_state(state, "/webui/")
+    await _save_oauth_state(state, "/")
 
     params = {
         "client_id": settings.github_oauth_client_id,

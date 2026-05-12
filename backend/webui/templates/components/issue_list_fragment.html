@@ -6,7 +6,7 @@
     {% if analyses %}
     <div class="divide-y divide-gray-200 dark:divide-gray-700">
         {% for a in analyses %}
-        <a href="/webui/issues/{{ a.id }}" class="flex items-center gap-4 px-5 py-3.5 hover:bg-gray-50 dark:hover:bg-gray-700/50 transition-colors">
+        <a href="/issues/{{ a.id }}" class="flex items-center gap-4 px-5 py-3.5 hover:bg-gray-50 dark:hover:bg-gray-700/50 transition-colors">
             <!-- 状态 -->
             <div class="flex-shrink-0">
                 {% if a.status == 'completed' %}

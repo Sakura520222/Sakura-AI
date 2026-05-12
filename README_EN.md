@@ -8,7 +8,7 @@
 [![Python](https://img.shields.io/badge/Python-3.11+-blue.svg)](https://www.python.org/)
 [![FastAPI](https://img.shields.io/badge/FastAPI-Latest-green.svg)](https://fastapi.tiangolo.com/)
 [![License](https://img.shields.io/badge/License-AGPLv3-yellow.svg)](LICENSE)
-[![Live Demo](https://img.shields.io/badge/🌐_Free_Demo-Online-success.svg)](https://pr-bot.firefly520.top/webui)
+[![Live Demo](https://img.shields.io/badge/🌐_Free_Demo-Online-success.svg)](https://pr-bot.firefly520.top/)
 [![Android App](https://img.shields.io/badge/Android_App-🚧_In_Development-orange.svg)](https://github.com/Sakura520222/Sakura-AI-Reviewer-APP)
 
 ---
@@ -176,7 +176,7 @@ cd Sakura-AI-Reviewer
 6. After creation, click **Generate a private key** at the bottom of the App page, download the `.pem` file (paste the full private key content in Setup Wizard)
 7. Click **Install App** on the left sidebar, select the repositories to enable review
 
-> WebUI login requires an additional [OAuth App](https://github.com/settings/developers) with callback URL set to `https://your-domain.com/webui/auth/callback`
+> WebUI login requires an additional [OAuth App](https://github.com/settings/developers) with callback URL set to `https://your-domain.com/auth/callback`
 
 ### 4. Prepare the Database
 
@@ -216,7 +216,7 @@ curl http://your-domain.com:8000/health
 # {"status":"healthy","service":"Sakura AI Reviewer"}
 ```
 
-WebUI: `https://your-domain.com/webui/`
+WebUI: `https://your-domain.com/`
 
 ---
 
@@ -238,7 +238,7 @@ Create a PR in a repository with the App installed, and the AI will automaticall
 
 ### WebUI Management
 
-Visit `https://your-domain.com/webui/` and log in with your GitHub account (requires prior registration via Telegram Bot). Features include dashboard charts, PR management, user management, dynamic configuration, review queue monitoring, action logs, Security Center, and personal MFA/Passkey settings. Configuration changes take effect immediately without service restart.
+Visit `https://your-domain.com/` and log in with your GitHub account (requires prior registration via Telegram Bot). Features include dashboard charts, PR management, user management, dynamic configuration, review queue monitoring, action logs, Security Center, and personal MFA/Passkey settings. Configuration changes take effect immediately without service restart.
 
 ### Telegram Bot
 

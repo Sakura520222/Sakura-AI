@@ -21,7 +21,7 @@ from backend.webui.routes import (
     agent_skills,
 )
 
-webui_router = APIRouter(prefix="/webui")
+webui_router = APIRouter(prefix="")
 
 webui_router.include_router(auth.router)
 webui_router.include_router(dashboard.router)

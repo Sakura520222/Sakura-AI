@@ -162,14 +162,14 @@ def request_origin(request: Request) -> str:
 def _is_mfa_enrollment_path(path: str) -> bool:
     """Return whether a WebUI path is allowed while forced MFA enrollment is pending."""
     allowed_exact = {
-        "/webui/settings/",
-        "/webui/auth/logout",
+        "/settings/",
+        "/auth/logout",
     }
     allowed_prefixes = (
-        "/webui/settings/2fa/",
-        "/webui/settings/passkeys/",
-        "/webui/auth/",
-        "/webui/static/",
+        "/settings/2fa/",
+        "/settings/passkeys/",
+        "/auth/",
+        "/static/",
     )
     return path in allowed_exact or any(
         path.startswith(prefix) for prefix in allowed_prefixes
@@ -208,7 +208,7 @@ async def enforce_mfa_enrollment(
     if not await user_requires_mfa_enrollment(user_id, db):
         return
     path = request.url.path
-    if path.startswith("/webui"):
+    if not path.startswith(("/api/", "/setup", "/docs", "/openapi.json", "/redoc", "/health")):
         if _is_mfa_enrollment_path(path):
             return
         raise HTTPException(status_code=428, detail="mfa_enrollment_required")

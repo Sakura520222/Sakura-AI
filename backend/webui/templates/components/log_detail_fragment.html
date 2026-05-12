@@ -62,7 +62,7 @@
             </div>
             {% endfor %}
             {% if comments|length > 5 %}
-            <a href="/webui/pr/{{ review.id }}" class="text-sm text-pink-600 dark:text-pink-400 hover:underline">{{ _('common.view_all') }} {{ comments|length }} {{ _('pr.inline_comments') }}</a>
+            <a href="/pr/{{ review.id }}" class="text-sm text-pink-600 dark:text-pink-400 hover:underline">{{ _('common.view_all') }} {{ comments|length }} {{ _('pr.inline_comments') }}</a>
             {% endif %}
         </div>
     </div>

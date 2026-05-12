@@ -34,7 +34,7 @@ async function initDashboardCharts() {
         }
     }
 
-    fetch('/webui/api/webui/chart-data')
+    fetch('/api/chart-data')
         .then(function(r) { return r.json(); })
         .then(function(data) {
             var colors = _getThemeColors();

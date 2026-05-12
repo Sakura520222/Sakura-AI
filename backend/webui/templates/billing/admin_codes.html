@@ -74,7 +74,7 @@
             <button onclick="this.closest('#generate-modal').classList.add('hidden')"
                     class="text-gray-400 hover:text-gray-600 dark:hover:text-gray-300">&times;</button>
         </div>
-        <form action="/webui/billing/admin/codes/generate" method="POST" class="px-6 py-4 space-y-4">
+        <form action="/billing/admin/codes/generate" method="POST" class="px-6 py-4 space-y-4">
             <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
 
             <div>

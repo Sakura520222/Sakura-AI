@@ -11,7 +11,7 @@
     </div>
 
     <!-- 日志列表（通过 HTMX 加载） -->
-    <div id="log-list-container" hx-get="/webui/logs/list-fragment" hx-trigger="load" hx-swap="innerHTML">
+    <div id="log-list-container" hx-get="/logs/list-fragment" hx-trigger="load" hx-swap="innerHTML">
         <div class="text-center py-8 text-gray-400">
             <svg class="w-8 h-8 mx-auto animate-spin" fill="none" viewBox="0 0 24 24">
                 <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/>
@@ -26,7 +26,7 @@
 {% block extra_scripts %}
 {{ super() }}
 <script>
-var loadLogPage = function(n) { loadListPage('log-list-container', '/webui/logs/list-fragment', n); };
-initFilterForm('log-filter-form', 'log-list-container', '/webui/logs/list-fragment');
+var loadLogPage = function(n) { loadListPage('log-list-container', '/logs/list-fragment', n); };
+initFilterForm('log-filter-form', 'log-list-container', '/logs/list-fragment');
 </script>
 {% endblock %}

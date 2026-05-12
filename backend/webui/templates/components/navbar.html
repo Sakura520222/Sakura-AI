@@ -8,7 +8,7 @@
                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16M4 18h16"/>
             </svg>
         </button>
-        <a href="/webui/" class="flex items-center gap-2 group">
+        <a href="/" class="flex items-center gap-2 group">
             <span class="text-2xl transition-transform duration-300 group-hover:scale-110">🌸</span>
             <span class="font-bold text-lg hidden sm:inline bg-gradient-to-r from-sakura-600 to-sakura-800 dark:from-sakura-400 dark:to-sakura-300 bg-clip-text text-transparent">Sakura AI Reviewer</span>
         </a>
@@ -50,7 +50,7 @@
         </div>
 
         <!-- 登出 -->
-        <form method="POST" action="/webui/auth/logout" class="ml-1"
+        <form method="POST" action="/auth/logout" class="ml-1"
               data-confirm="{{ _('auth.logout_confirm') }}">
             <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
             <button type="submit" class="p-2 rounded-xl hover:bg-sakura-50 dark:hover:bg-sakura-900/20 transition-colors" title="{{ _('auth.logout') }}" aria-label="{{ _('auth.logout') }}">

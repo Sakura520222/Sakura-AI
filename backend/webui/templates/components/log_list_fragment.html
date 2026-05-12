@@ -7,7 +7,7 @@
         {% for r in reviews %}
         <div id="log-row-{{ r.id }}">
             <div class="flex items-center gap-4 px-5 py-3.5 hover:bg-gray-50 dark:hover:bg-gray-700/50 transition-colors cursor-pointer"
-                 hx-get="/webui/logs/{{ r.id }}/detail-fragment"
+                 hx-get="/logs/{{ r.id }}/detail-fragment"
                  hx-target="#log-detail-{{ r.id }}"
                  hx-swap="innerHTML"
                  hx-on::before-request="document.getElementById('log-detail-{{ r.id }}').classList.remove('hidden')"

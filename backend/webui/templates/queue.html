@@ -11,7 +11,7 @@
     </div>
 
     <!-- 统计卡片 -->
-    <div id="queue-stats-container" hx-get="/webui/queue/stats-fragment" hx-trigger="load" hx-swap="innerHTML">
+    <div id="queue-stats-container" hx-get="/queue/stats-fragment" hx-trigger="load" hx-swap="innerHTML">
         <div class="grid grid-cols-2 md:grid-cols-5 gap-4">
             {% for i in range(5) %}
             <div class="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 shadow-sm p-4 animate-pulse">
@@ -22,7 +22,7 @@
     </div>
 
     <!-- 队列列表 -->
-    <div id="queue-list-container" hx-get="/webui/queue/list-fragment" hx-trigger="load" hx-swap="innerHTML">
+    <div id="queue-list-container" hx-get="/queue/list-fragment" hx-trigger="load" hx-swap="innerHTML">
         <div class="text-center py-8 text-gray-400">
             <svg class="w-8 h-8 mx-auto animate-spin" fill="none" viewBox="0 0 24 24">
                 <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/>
@@ -37,14 +37,14 @@
 {% block extra_scripts %}
 {{ super() }}
 <script>
-var loadQueuePage = function(n) { loadListPage('queue-list-container', '/webui/queue/list-fragment', n); };
-initFilterForm('queue-filter-form', 'queue-list-container', '/webui/queue/list-fragment');
+var loadQueuePage = function(n) { loadListPage('queue-list-container', '/queue/list-fragment', n); };
+initFilterForm('queue-filter-form', 'queue-list-container', '/queue/list-fragment');
 
 // SSE: 审查状态变更时自动刷新
 document.addEventListener('sse:review-status', function() {
     var statsContainer = document.getElementById('queue-stats-container');
     if (statsContainer) {
-        fetch('/webui/queue/stats-fragment', { headers: { 'HX-Request': 'true' } })
+        fetch('/queue/stats-fragment', { headers: { 'HX-Request': 'true' } })
             .then(function(r) { return r.text(); })
             .then(function(html) { statsContainer.innerHTML = html; })
             .catch(function() {});
@@ -52,7 +52,7 @@ document.addEventListener('sse:review-status', function() {
     var listContainer = document.getElementById('queue-list-container');
     if (listContainer) {
         listContainer.innerHTML = getLoadingHTML();
-        fetch('/webui/queue/list-fragment', { headers: { 'HX-Request': 'true' } })
+        fetch('/queue/list-fragment', { headers: { 'HX-Request': 'true' } })
             .then(function(r) { return r.text(); })
             .then(function(html) { listContainer.innerHTML = html; })
             .catch(function() { listContainer.innerHTML = getErrorHTML(); });

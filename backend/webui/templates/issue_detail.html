@@ -6,7 +6,7 @@
 <div class="space-y-6">
     <!-- 面包屑 -->
     <div class="flex items-center gap-2 text-sm text-gray-500 dark:text-gray-400">
-        <a href="/webui/issues/" class="hover:text-pink-600 dark:hover:text-pink-400">{{ _('issue.title') }}</a>
+        <a href="/issues/" class="hover:text-pink-600 dark:hover:text-pink-400">{{ _('issue.title') }}</a>
         <span>/</span>
         <span class="text-gray-900 dark:text-gray-100">#{{ analysis.issue_number }}</span>
     </div>
@@ -169,7 +169,7 @@
 {{ super() }}
 <script>
 function reanalyze(id) {
-    fetch('/webui/issues/' + id + '/reanalyze', {
+    fetch('/issues/' + id + '/reanalyze', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({})

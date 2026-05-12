@@ -182,7 +182,7 @@ async def dashboard_page(
     )
 
 
-@router.get("/api/webui/stats")
+@router.get("/api/stats")
 async def get_stats(
     db: AsyncSession = Depends(get_db),
     user: dict = Depends(require_auth),
@@ -304,7 +304,7 @@ async def get_stats(
     return result
 
 
-@router.get("/api/webui/recent-reviews")
+@router.get("/api/recent-reviews")
 async def get_recent_reviews(
     db: AsyncSession = Depends(get_db),
     user: dict = Depends(require_auth),
@@ -314,7 +314,7 @@ async def get_recent_reviews(
     return [_serialize_review(r) for r in reviews]
 
 
-@router.get("/api/webui/recent-reviews-html")
+@router.get("/api/recent-reviews-html")
 async def get_recent_reviews_html(
     request: Request,
     db: AsyncSession = Depends(get_db),
@@ -331,7 +331,7 @@ async def get_recent_reviews_html(
     )
 
 
-@router.get("/api/webui/chart-data")
+@router.get("/api/chart-data")
 async def get_chart_data(
     db: AsyncSession = Depends(get_db),
     user: dict = Depends(require_auth),
@@ -476,7 +476,7 @@ async def get_chart_data(
     return result
 
 
-@router.post("/api/webui/cache/refresh")
+@router.post("/api/cache/refresh")
 async def refresh_cache(user: dict = Depends(require_auth)):
     """手动刷新仪表盘缓存（仅清除当前用户）"""
     uid = user["user_id"]

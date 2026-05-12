@@ -17,7 +17,7 @@
     </div>
 
     <!-- 用户列表（通过 HTMX 加载） -->
-    <div id="user-list-container" hx-get="/webui/users/list-fragment" hx-trigger="load" hx-swap="innerHTML">
+    <div id="user-list-container" hx-get="/users/list-fragment" hx-trigger="load" hx-swap="innerHTML">
         <div class="text-center py-8 text-gray-400">
             <svg class="w-8 h-8 mx-auto animate-spin" fill="none" viewBox="0 0 24 24">
                 <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/>
@@ -32,7 +32,7 @@
 {% block extra_scripts %}
 {{ super() }}
 <script>
-var loadUserPage = function(n) { loadListPage('user-list-container', '/webui/users/list-fragment', n); };
-initFilterForm('user-filter-form', 'user-list-container', '/webui/users/list-fragment');
+var loadUserPage = function(n) { loadListPage('user-list-container', '/users/list-fragment', n); };
+initFilterForm('user-filter-form', 'user-list-container', '/users/list-fragment');
 </script>
 {% endblock %}

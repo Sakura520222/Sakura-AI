@@ -128,13 +128,13 @@ async def add_user(
     # 角色验证
     if role not in ("user", "admin", "super_admin"):
         return toast_redirect(
-            "/webui/users/", "toast.invalid_role", "error", lang=detect_language()
+            "/users/", "toast.invalid_role", "error", lang=detect_language()
         )
 
     # Telegram ID 验证
     if telegram_id <= 0:
         return toast_redirect(
-            "/webui/users/",
+            "/users/",
             "toast.telegram_id_positive",
             "error",
             lang=detect_language(),
@@ -144,7 +144,7 @@ async def add_user(
     github_username = github_username.strip()
     if not github_username:
         return toast_redirect(
-            "/webui/users/",
+            "/users/",
             "toast.github_username_required",
             "error",
             lang=detect_language(),
@@ -161,7 +161,7 @@ async def add_user(
     ):
         if q < 0:
             return toast_redirect(
-                "/webui/users/",
+                "/users/",
                 "toast.quota_non_negative",
                 "error",
                 lang=detect_language(),
@@ -173,7 +173,7 @@ async def add_user(
     )
     if existing.scalar_one_or_none():
         return toast_redirect(
-            "/webui/users/",
+            "/users/",
             "toast.telegram_id_exists",
             "error",
             lang=detect_language(),
@@ -186,7 +186,7 @@ async def add_user(
     )
     if existing_gh.scalar_one_or_none():
         return toast_redirect(
-            "/webui/users/",
+            "/users/",
             "toast.github_username_used",
             "error",
             lang=detect_language(),
@@ -220,7 +220,7 @@ async def add_user(
         logger.error(f"用户创建失败（数据库冲突）: {e}")
         await db.rollback()
         return toast_redirect(
-            "/webui/users/",
+            "/users/",
             "toast.user_create_failed_duplicate",
             "error",
             lang=detect_language(),
@@ -229,7 +229,7 @@ async def add_user(
         logger.error(f"用户创建失败（未知错误）: {e}")
         await db.rollback()
         return toast_redirect(
-            "/webui/users/", "toast.user_create_failed", "error", lang=detect_language()
+            "/users/", "toast.user_create_failed", "error", lang=detect_language()
         )
 
     logger.info(
@@ -258,7 +258,7 @@ async def add_user(
         "toast.user_added_auto_super_admin" if auto_super_admin else "toast.user_added"
     )
     return toast_redirect(
-        "/webui/users/",
+        "/users/",
         msg_key,
         lang=detect_language(),
         github_username=github_username,
@@ -314,7 +314,7 @@ async def update_user_role(
     """修改用户角色"""
     if role not in ("user", "admin", "super_admin"):
         return toast_redirect(
-            f"/webui/users/{user_id}",
+            f"/users/{user_id}",
             "toast.invalid_role",
             "error",
             lang=detect_language(),
@@ -328,7 +328,7 @@ async def update_user_role(
     # 权限保护：只有超级管理员可授予或修改管理员级别角色
     if not can_update_user_role(user["role"], target_user.role, role):
         return toast_redirect(
-            f"/webui/users/{user_id}",
+            f"/users/{user_id}",
             "toast.permission_denied_role",
             "error",
             lang=detect_language(),
@@ -350,7 +350,7 @@ async def update_user_role(
         {"old_role": old_role, "new_role": role},
     )
     return toast_redirect(
-        f"/webui/users/{user_id}",
+        f"/users/{user_id}",
         "toast.user_role_changed",
         lang=detect_language(),
         role=role,
@@ -371,7 +371,7 @@ async def update_user_quota(
     """修改用户配额"""
     if daily_quota < 0 or weekly_quota < 0 or monthly_quota < 0:
         return toast_redirect(
-            f"/webui/users/{user_id}",
+            f"/users/{user_id}",
             "toast.quota_non_negative",
             "error",
             lang=detect_language(),
@@ -411,7 +411,7 @@ async def update_user_quota(
         },
     )
     return toast_redirect(
-        f"/webui/users/{user_id}", "toast.user_quota_updated", lang=detect_language()
+        f"/users/{user_id}", "toast.user_quota_updated", lang=detect_language()
     )
 
 
@@ -429,7 +429,7 @@ async def update_user_issue_quota(
     """修改用户 Issue 分析配额"""
     if issue_daily_quota < 0 or issue_weekly_quota < 0 or issue_monthly_quota < 0:
         return toast_redirect(
-            f"/webui/users/{user_id}",
+            f"/users/{user_id}",
             "toast.quota_non_negative",
             "error",
             lang=detect_language(),
@@ -467,7 +467,7 @@ async def update_user_issue_quota(
         },
     )
     return toast_redirect(
-        f"/webui/users/{user_id}", "toast.issue_quota_updated", lang=detect_language()
+        f"/users/{user_id}", "toast.issue_quota_updated", lang=detect_language()
     )
 
 
@@ -488,14 +488,14 @@ async def toggle_user_status(
     # 权限保护：不允许修改同级别或更高级别的用户，不允许禁用自己
     if user_id == user["user_id"]:
         return toast_redirect(
-            "/webui/users/",
+            "/users/",
             "toast.cannot_disable_self",
             "error",
             lang=detect_language(),
         )
     if not can_toggle_user_status(user["role"], target_user.role):
         return toast_redirect(
-            "/webui/users/",
+            "/users/",
             "toast.permission_denied_user",
             "error",
             lang=detect_language(),
@@ -517,7 +517,7 @@ async def toggle_user_status(
         {"is_active": target_user.is_active},
     )
     return toast_redirect(
-        "/webui/users/",
+        "/users/",
         "toast.user_status_changed",
         lang=detect_language(),
         username=target_user.github_username,
@@ -536,7 +536,7 @@ async def delete_user(
     """删除用户（仅超级管理员）"""
     if user_id == user["user_id"]:
         return toast_redirect(
-            "/webui/users/", "toast.cannot_delete_self", "error", lang=detect_language()
+            "/users/", "toast.cannot_delete_self", "error", lang=detect_language()
         )
 
     result = await db.execute(select(TelegramUser).where(TelegramUser.id == user_id))
@@ -555,7 +555,7 @@ async def delete_user(
         logger.error(f"用户删除失败: {e}")
         await db.rollback()
         return toast_redirect(
-            f"/webui/users/{user_id}",
+            f"/users/{user_id}",
             "toast.user_delete_failed",
             "error",
             lang=detect_language(),
@@ -577,7 +577,7 @@ async def delete_user(
         },
     )
     return toast_redirect(
-        "/webui/users/",
+        "/users/",
         "toast.user_deleted",
         lang=detect_language(),
         name=github or tg_id,
@@ -597,7 +597,7 @@ async def update_user_info(
     """修改用户基本信息（Telegram ID、GitHub 用户名）"""
     if telegram_id <= 0:
         return toast_redirect(
-            f"/webui/users/{user_id}",
+            f"/users/{user_id}",
             "toast.telegram_id_positive",
             "error",
             lang=detect_language(),
@@ -606,7 +606,7 @@ async def update_user_info(
     github_username = github_username.strip()
     if not github_username:
         return toast_redirect(
-            f"/webui/users/{user_id}",
+            f"/users/{user_id}",
             "toast.github_username_required",
             "error",
             lang=detect_language(),
@@ -625,7 +625,7 @@ async def update_user_info(
     )
     if existing.scalar_one_or_none():
         return toast_redirect(
-            f"/webui/users/{user_id}",
+            f"/users/{user_id}",
             "toast.telegram_id_used",
             "error",
             lang=detect_language(),
@@ -640,7 +640,7 @@ async def update_user_info(
     )
     if existing_gh.scalar_one_or_none():
         return toast_redirect(
-            f"/webui/users/{user_id}",
+            f"/users/{user_id}",
             "toast.github_username_conflict",
             "error",
             lang=detect_language(),
@@ -670,7 +670,7 @@ async def update_user_info(
         },
     )
     return toast_redirect(
-        f"/webui/users/{user_id}", "toast.user_info_updated", lang=detect_language()
+        f"/users/{user_id}", "toast.user_info_updated", lang=detect_language()
     )
 
 
@@ -725,7 +725,7 @@ async def reset_user_quota(
         {"old_used": old_used},
     )
     return toast_redirect(
-        f"/webui/users/{user_id}",
+        f"/users/{user_id}",
         "toast.quota_reset",
         lang=detect_language(),
         username=target_user.github_username,

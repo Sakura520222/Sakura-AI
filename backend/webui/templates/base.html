@@ -342,7 +342,7 @@
           document.getElementById('hljs-light').disabled = val === 'dark';
           document.getElementById('hljs-dark').disabled = val !== 'dark';
           localStorage.setItem('theme', val);
-          fetch('/webui/auth/api/theme', {
+          fetch('/auth/api/theme', {
               method: 'POST',
               headers: { 'Content-Type': 'application/x-www-form-urlencoded', 'X-CSRF-Token': '{{ csrf_token }}' },
               body: 'theme=' + val

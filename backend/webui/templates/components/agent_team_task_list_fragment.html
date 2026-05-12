@@ -101,7 +101,7 @@
 
 <script>
 function retryTask(taskId) {
-    fetch(`/webui/agent-team/tasks/${taskId}/retry`, {
+    fetch(`/agent-team/tasks/${taskId}/retry`, {
         method: 'POST',
         headers: {'Content-Type': 'application/x-www-form-urlencoded'},
         body: new URLSearchParams({csrf_token: '{{ csrf_token }}'})
@@ -111,7 +111,7 @@ function retryTask(taskId) {
     }).catch(() => window.dispatchEvent(new CustomEvent('show-toast', {detail: {message: '{{ _('agent_team.request_failed') }}', type: 'error'}})));
 }
 function cancelTask(taskId) {
-    fetch(`/webui/agent-team/tasks/${taskId}/cancel`, {
+    fetch(`/agent-team/tasks/${taskId}/cancel`, {
         method: 'POST',
         headers: {'Content-Type': 'application/x-www-form-urlencoded'},
         body: new URLSearchParams({csrf_token: '{{ csrf_token }}'})
@@ -130,7 +130,7 @@ function deleteTask(taskId) {
     }) : Promise.resolve(window.confirm('{{ _('agent_team.confirm_delete') }}'));
     confirmPromise.then(function(confirmed) {
         if (!confirmed) return;
-        fetch(`/webui/agent-team/tasks/${taskId}/delete`, {
+        fetch(`/agent-team/tasks/${taskId}/delete`, {
             method: 'POST',
             headers: {'Content-Type': 'application/x-www-form-urlencoded'},
             body: new URLSearchParams({csrf_token: '{{ csrf_token }}'})

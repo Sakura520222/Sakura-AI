@@ -6,7 +6,7 @@
     {% if reviews %}
     <div class="divide-y divide-gray-200 dark:divide-gray-700">
         {% for r in reviews %}
-        <a href="/webui/pr/{{ r.id }}" class="flex items-center gap-4 px-5 py-3.5 hover:bg-gray-50 dark:hover:bg-gray-700/50 transition-colors">
+        <a href="/pr/{{ r.id }}" class="flex items-center gap-4 px-5 py-3.5 hover:bg-gray-50 dark:hover:bg-gray-700/50 transition-colors">
             <!-- 状态 -->
             <div class="flex-shrink-0">
                 {% if r.status == "completed" and r.decision == "approve" %}

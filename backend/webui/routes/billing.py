@@ -87,7 +87,7 @@ async def redeem_code(
     code = code.strip().upper()
     if not code:
         return toast_redirect(
-            "/webui/billing/", "toast.code_required", "error", lang=detect_language()
+            "/billing/", "toast.code_required", "error", lang=detect_language()
         )
 
     svc = PaymentService(db)
@@ -96,7 +96,7 @@ async def redeem_code(
         await db.commit()
         logger.info(f"User {user['sub']} redeemed code {code}, order {order.order_no}")
         return toast_redirect(
-            "/webui/billing/",
+            "/billing/",
             "toast.redeem_success",
             lang=detect_language(),
             order_no=order.order_no,
@@ -104,7 +104,7 @@ async def redeem_code(
     except PaymentError as e:
         await db.rollback()
         return toast_redirect(
-            "/webui/billing/",
+            "/billing/",
             "toast.payment_error",
             "error",
             lang=detect_language(),
@@ -179,12 +179,12 @@ async def admin_create_plan(
         )
         await db.commit()
         return toast_redirect(
-            "/webui/billing/admin/plans", "toast.plan_created", lang=detect_language()
+            "/billing/admin/plans", "toast.plan_created", lang=detect_language()
         )
     except PaymentError as e:
         await db.rollback()
         return toast_redirect(
-            "/webui/billing/admin/plans",
+            "/billing/admin/plans",
             "toast.payment_error",
             "error",
             lang=detect_language(),
@@ -194,7 +194,7 @@ async def admin_create_plan(
         await db.rollback()
         logger.error(f"Failed to create plan: {e}")
         return toast_redirect(
-            "/webui/billing/admin/plans",
+            "/billing/admin/plans",
             "toast.save_failed",
             "error",
             lang=detect_language(),
@@ -214,7 +214,7 @@ async def admin_toggle_plan(
     plan = await svc.get_plan(plan_id)
     if not plan:
         return toast_redirect(
-            "/webui/billing/admin/plans",
+            "/billing/admin/plans",
             "toast.plan_not_found",
             "error",
             lang=detect_language(),
@@ -223,7 +223,7 @@ async def admin_toggle_plan(
     await db.commit()
     status = "enabled" if plan.is_active else "disabled"
     return toast_redirect(
-        "/webui/billing/admin/plans",
+        "/billing/admin/plans",
         "toast.plan_toggled",
         lang=detect_language(),
         status=status,
@@ -277,7 +277,7 @@ async def admin_generate_codes(
     """批量生成兑换码"""
     if count < 1 or count > 100:
         return toast_redirect(
-            "/webui/billing/admin/codes",
+            "/billing/admin/codes",
             "toast.code_count_range",
             "error",
             lang=detect_language(),
@@ -295,7 +295,7 @@ async def admin_generate_codes(
         await db.commit()
         logger.info(f"Admin {user['sub']} generated {count} codes for plan {plan_id}")
         return toast_redirect(
-            "/webui/billing/admin/codes",
+            "/billing/admin/codes",
             "toast.code_generated",
             lang=detect_language(),
             count=len(codes),
@@ -303,7 +303,7 @@ async def admin_generate_codes(
     except PaymentError as e:
         await db.rollback()
         return toast_redirect(
-            "/webui/billing/admin/codes",
+            "/billing/admin/codes",
             "toast.payment_error",
             "error",
             lang=detect_language(),
@@ -334,7 +334,7 @@ async def admin_grant(
         await db.commit()
         logger.info(f"Admin {user['sub']} granted plan {plan_id} to user {user_id}")
         return toast_redirect(
-            f"/webui/users/{user_id}",
+            f"/users/{user_id}",
             "toast.grant_success",
             lang=detect_language(),
             order_no=order.order_no,
@@ -342,7 +342,7 @@ async def admin_grant(
     except PaymentError as e:
         await db.rollback()
         return toast_redirect(
-            f"/webui/users/{user_id}",
+            f"/users/{user_id}",
             "toast.payment_error",
             "error",
             lang=detect_language(),

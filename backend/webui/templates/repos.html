@@ -10,7 +10,7 @@
             <h1 class="text-2xl font-bold">{{ _('repo.title') }}</h1>
             <p class="mt-1 text-sm text-gray-500 dark:text-gray-400">{{ _('repo.installed_at') }}</p>
         </div>
-        <button onclick="loadListPage('repo-list-container', '/webui/repos/list-fragment', 1)"
+        <button onclick="loadListPage('repo-list-container', '/repos/list-fragment', 1)"
                 class="px-4 py-2 text-sm border border-gray-300 dark:border-gray-600 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors">
             <svg class="w-4 h-4 inline mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/>
@@ -46,7 +46,7 @@
 <script>
 // 刷新仓库列表
 function refreshRepoList() {
-    loadListPage('repo-list-container', '/webui/repos/list-fragment', 1);
+    loadListPage('repo-list-container', '/repos/list-fragment', 1);
 }
 
 // 触发索引（文档或代码）
@@ -58,7 +58,7 @@ function triggerIndex(btn, repoName, indexType, csrfToken) {
     btn.textContent = '索引中...';
 
     var encodedName = encodeURIComponent(repoName).replace(/%2F/g, '/');
-    fetch('/webui/repos/' + encodedName + '/index-' + indexType, {
+    fetch('/repos/' + encodedName + '/index-' + indexType, {
         method: 'POST',
         headers: { 'X-CSRF-Token': csrfToken }
     })
@@ -136,7 +136,7 @@ function triggerScan(btn, repoName, csrfToken) {
     btn.textContent = '扫描中...';
 
     var encodedName = encodeURIComponent(repoName).replace(/%2F/g, '/');
-    fetch('/webui/repos/' + encodedName + '/scan', {
+    fetch('/repos/' + encodedName + '/scan', {
         method: 'POST',
         headers: { 'X-CSRF-Token': csrfToken }
     })

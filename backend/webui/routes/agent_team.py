@@ -335,7 +335,7 @@ async def save_agent_team_config(
                 num_val = float(val)
             except ValueError:
                 return toast_redirect(
-                    "/webui/agent-team/",
+                    "/agent-team/",
                     "toast.numeric_required",
                     "error",
                     lang=detect_language(),
@@ -343,7 +343,7 @@ async def save_agent_team_config(
                 )
             if not (min_v <= num_val <= max_v):
                 return toast_redirect(
-                    "/webui/agent-team/",
+                    "/agent-team/",
                     "toast.value_range",
                     "error",
                     lang=detect_language(),
@@ -356,7 +356,7 @@ async def save_agent_team_config(
             valid_values = [opt["value"] for opt in DYNAMIC_CONFIG_SELECT_OPTIONS[key]]
             if val not in valid_values:
                 return toast_redirect(
-                    "/webui/agent-team/",
+                    "/agent-team/",
                     "toast.value_invalid",
                     "error",
                     lang=detect_language(),
@@ -385,7 +385,7 @@ async def save_agent_team_config(
 
     if not changed:
         return toast_redirect(
-            "/webui/agent-team/", "toast.config_saved_live", lang=detect_language()
+            "/agent-team/", "toast.config_saved_live", lang=detect_language()
         )
 
     await db.commit()
@@ -408,7 +408,7 @@ async def save_agent_team_config(
         log_changed,
     )
     return toast_redirect(
-        "/webui/agent-team/", "toast.config_saved_live", lang=detect_language()
+        "/agent-team/", "toast.config_saved_live", lang=detect_language()
     )
 
 

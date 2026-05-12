@@ -14,7 +14,7 @@
     <div class="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 shadow-sm p-6">
         <h2 class="text-lg font-semibold mb-4">AI 标签推荐设置</h2>
 
-        <form method="POST" action="/webui/config/labels/save-settings">
+        <form method="POST" action="/config/labels/save-settings">
             <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
 
             <div class="space-y-4">
@@ -85,7 +85,7 @@
             </button>
         </div>
 
-        <form method="POST" action="/webui/config/labels/save-conflict-rules" id="conflict-form">
+        <form method="POST" action="/config/labels/save-conflict-rules" id="conflict-form">
             <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
 
             <div class="overflow-x-auto">
@@ -163,7 +163,7 @@
             </button>
         </div>
 
-        <form method="POST" action="/webui/config/labels/save-labels" id="labels-form">
+        <form method="POST" action="/config/labels/save-labels" id="labels-form">
             <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
 
             <div class="overflow-x-auto">

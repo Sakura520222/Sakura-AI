@@ -25,12 +25,12 @@
             </div>
             <div class="flex gap-3">
                 {% if global_mfa_required %}
-                <form method="POST" action="/webui/security/global-mfa/disable">
+                <form method="POST" action="/security/global-mfa/disable">
                     <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
                     <button type="submit" class="px-4 py-2 bg-gray-700 text-white rounded-lg text-sm font-medium hover:bg-gray-800">{{ _('security.disable_global_mfa') }}</button>
                 </form>
                 {% else %}
-                <form method="POST" action="/webui/security/global-mfa/enable">
+                <form method="POST" action="/security/global-mfa/enable">
                     <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
                     <button type="submit" class="px-4 py-2 bg-pink-500 text-white rounded-lg text-sm font-medium hover:bg-pink-600">{{ _('security.enable_global_mfa') }}</button>
                 </form>
@@ -80,7 +80,7 @@
                         </td>
                         <td class="px-6 py-4 text-sm text-gray-500">{{ item.last_security_event_at or '-' }}</td>
                         <td class="px-6 py-4 text-right text-sm">
-                            <a href="/webui/security/users/{{ item.user.id }}" class="text-pink-600 dark:text-pink-400 hover:underline">{{ _('common.more') }}</a>
+                            <a href="/security/users/{{ item.user.id }}" class="text-pink-600 dark:text-pink-400 hover:underline">{{ _('common.more') }}</a>
                         </td>
                     </tr>
                     {% else %}
