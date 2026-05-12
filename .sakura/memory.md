@@ -39,8 +39,8 @@
 - **Pydantic schema中禁止dict[str, Any]（除非有充分理由）**：应使用dict[str, Union[基本类型]]或嵌套模型，标minor
 - **新增原子命令必须验证异步客户端兼容性**：审查时需确认async版本的客户端支持该命令，标major
 - **新增联合类型时必须扫描所有序列化/反序列化边界**：确认所有路径均接受该类型子集，标major
-- **独立公共函数必须具有直接单元测试，不依赖间接覆盖**：标minor
-- **“仅警告不阻断”的兼容性检测，必须在PR描述中列出受影响的下游调用及fallback状态**：标major
+- **独立公共函数必须具有直接单元测试，不依赖间接覆盖**，标minor
+- **“仅警告不阻断”的兼容性检测，必须在PR描述中列出受影响的下游调用及fallback状态**，标major
 - **整数配置必须同时校验类型+范围**：任何从用户输入读取的整数配置，必须同时进行类型转换和业务范围校验，标major
 - **配置迁移PR必须输出“迁移完整性检查表”**：列出旧配置名称→新读取方式→所有读取位置是否替换→写入位置是否对齐，标minor
 - **动态配置读取调用方须处理None/非法值**：`get_dynamic_config`返回None或类型不匹配时，必须有降级或显式报错，标major
@@ -97,6 +97,16 @@
 - **禁止在测试中直接替换内置类型（如datetime）模块级属性**，除非有不可替代理由，标minor
 - **工具函数位置强制检查**：datetime/config/redis操作函数必须位于项目约定公共模块，否则标记minor，标minor
 - **未修复历史问题的issue强制关联**：输出“未修复的历史问题”时必须包含#issue-number或TODO(issue-xxx)，标major
+- **UI变更必须检查JS事件绑定是否依赖具体DOM结构**（如outerHTML/innerHTML替换），标minor
+- **模板中内联SVG装饰图标必须添加aria-hidden="true"+focusable="false"**，标suggestion
+- **PR描述与变更文件必须一致**（如描述中提到配置扩展但无对应代码变更），标major
+- **共用模板的UI改动必须标注影响范围**（哪些页面/路由使用该模板），标minor
+- **同步函数中使用get_running_loop().create_task时，必须评估是否可能在无运行循环的线程中调用**，无法创建任务时记录warning日志，标major
+- **asyncio.create_task创建的后台任务必须在服务shutdown时有机会完成**，或在文档中明确说明“允许丢失”，标major
+- **内存降级结构的清理策略必须明确最大条数上限**：若cleanup_expired无法保证上限，必须实现LRU或主动删除earliest，标major
+- **异步任务调用方式必须统一**：同一模块中fire-and-forget所有位置必须使用create_task，需等待则所有位置使用await，禁止混合语义，标major
+- **函数副作用必须在docstring中明确**：若函数修改外部状态，必须在docstring首部用⚠️标注，标major
+- **asyncio.get_event_loop()禁止使用**：一律改为asyncio.get_running_loop()或直接使用asyncio.create_task()，标major
 
 ## 近期审查模式总结
 
@@ -134,6 +144,8 @@
 - **限流+超时成对检查**：每个`@limiter.limit`处必须检查该端点内所有外部I/O是否设置了显式超时
 - **WebAuthn安全一致性**：`begin`和`finish`的验证要求参数必须从同一配置/常量派生
 - **操作顺序审查优先级提高**：凡修改外部存储+DB，必须画出顺序图并检查补偿
+- **增量审查必须输出“本次变更中所有延迟导入及其原因注释”清单**，标minor
+- **变更模板文件时，输出该模板被哪些路由/端点使用的清单**（通过grep render_template获得），标minor
 
 ## 规范建议和经验教训
 
@@ -178,6 +190,8 @@
 - **增量审查的“债务碎片化”**：同一技术债跨越多个PR仍未修复，应触发自动issue创建
 - **内存降级结构统一工具化**：建议提供`TTLLRUCache(maxsize=1000, ttl=300)`类，替换各处手写的`_lock_fallback`
 - **增量审查必须输出“本次未修复的历史问题”的issue追踪状态**：不能只说“应创建后续issue”
+- **fire-and-forget的观测性**：`asyncio.create_task`创建的任务若未保存变量，难以追踪，建议封装`safe_create_task`并记录任务ID
+- **fallback路径的测试盲区**：同步fallback中的异步分支难以被单元测试覆盖，应增加集成测试或强制要求fallback路径有同步版本通知
 
 ## 需要特别关注的领域
 
@@ -220,7 +234,9 @@
 - **grep双路径的re.escape差异**：`re.escape`转义正则元字符但不转义shell元字符，对于固定字符串匹配足够安全
 - **动态配置系统的“写入路径”一致性**：WebUI/CLI/API保存配置时必须调用同一套校验和缓存失效逻辑
 - **Passkey discoverable flow账户冲突检查**：登录时应检查账户是否已绑定其他凭据，避免账户混淆
+- **异步上下文混合（同步函数中创建异步任务）**：审查时应重点检查是否误用await、是否使用弃用的get_event_loop()、无法获取loop时的降级行为是否可观测
+- **装饰性SVG可访问性**：内联SVG装饰图标必须添加aria-hidden="true"，作为UI变更固定检查项
 
 ## 仓库信息
 - 仓库名: Sakura520222/Sakura-AI-Reviewer
-- 累计反思次数: 211
+- 累计反思次数: 213
