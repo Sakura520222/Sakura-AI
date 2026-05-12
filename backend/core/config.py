@@ -1166,6 +1166,12 @@ DYNAMIC_CONFIG_RANGES: dict[str, tuple[float, float]] = {
     "sakura_max_memory_chars": (500, 10000),
     "sakura_max_sakura_chars": (1000, 20000),
     "agent_team_max_tokens": (1024, 32768),
+    # Agent 专家团队 — 只设合理下限，上限不限制
+    "agent_team_max_iterations_per_task": (1, 9999),
+    "agent_team_max_concurrent": (1, 9999),
+    "agent_team_max_runtime_minutes": (1, 9999),
+    "agent_team_max_files_changed": (1, 9999),
+    "agent_team_max_lines_changed": (1, 9999),
 }
 
 # 字段中文标签
