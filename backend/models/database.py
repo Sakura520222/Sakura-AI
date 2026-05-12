@@ -20,6 +20,14 @@ import enum
 
 Base = declarative_base()
 
+
+def utc_now():
+    """返回带 UTC 时区的当前时间（公共工具函数，供所有模型共享）。"""
+    from datetime import datetime, timezone
+
+    return datetime.now(timezone.utc)
+
+
 # 异步数据库引擎和会话（将在 init_async_db 中初始化）
 async_engine = None
 async_session = None

@@ -367,7 +367,9 @@ class Settings(BaseSettings):
     fetch_url_domain_policy: str = "off"  # 域名过滤策略：off / blacklist / whitelist
     fetch_url_domain_list: str = ""  # 域名列表（逗号分隔）
     fetch_url_force_https: bool = False  # 强制仅允许 HTTPS 协议
-    fetch_url_allowed_content_types: str = DEFAULT_FETCH_URL_ALLOWED_CONTENT_TYPES  # 允许抓取的 Content-Type（逗号分隔）
+    fetch_url_allowed_content_types: str = (
+        DEFAULT_FETCH_URL_ALLOWED_CONTENT_TYPES  # 允许抓取的 Content-Type（逗号分隔）
+    )
     fetch_url_max_redirects: int = 3  # 最大重定向次数
 
     # ========== 支付配置 ==========

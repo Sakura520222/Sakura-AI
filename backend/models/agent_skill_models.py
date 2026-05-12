@@ -2,16 +2,11 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
 
 from sqlalchemy import Column, Integer, String, Text, TIMESTAMP
 
 from backend.models.database import Base
-
-
-def utc_now() -> datetime:
-    """返回带 UTC 时区的当前时间。"""
-    return datetime.now(timezone.utc)
+from backend.models.database import utc_now
 
 
 class AgentSkill(Base):

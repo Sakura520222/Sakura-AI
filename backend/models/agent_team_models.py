@@ -1,20 +1,15 @@
 """Agent 专家团队模式数据模型"""
 
 import enum
-from datetime import datetime, timezone
 
 from sqlalchemy import BigInteger, Column, ForeignKey, Integer, String, Text, TIMESTAMP
 from sqlalchemy.orm import relationship
 
 from backend.models.database import Base
+from backend.models.database import utc_now
 
 
 DEFAULT_AGENT_TEAM_MAX_ITERATIONS = 3
-
-
-def utc_now() -> datetime:
-    """返回带 UTC 时区的当前时间。"""
-    return datetime.now(timezone.utc)
 
 
 class AgentTeamTaskStatus(str, enum.Enum):

@@ -3,18 +3,12 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
 from typing import Any
 
 from backend.core.config import get_dynamic_config, get_settings
 from backend.services.ai_reviewer.api_client import AIApiClient
 
 _UNCONFIGURED_MODEL_VALUE = ""
-
-
-def agent_team_utc_now() -> datetime:
-    """返回带 UTC 时区的当前时间（公共工具函数）。"""
-    return datetime.now(timezone.utc)
 
 
 async def resolve_agent_team_max_iterations(
