@@ -18,7 +18,7 @@ import httpx
 from bs4 import BeautifulSoup
 from loguru import logger
 
-from backend.core.config import get_settings
+from backend.core.config import DEFAULT_FETCH_URL_ALLOWED_CONTENT_TYPES, get_settings
 
 _PRIVATE_NETWORKS = [
     ipaddress.ip_network("10.0.0.0/8"),
@@ -32,7 +32,6 @@ _PRIVATE_NETWORKS = [
 ]
 
 _ALLOWED_SCHEMES = frozenset({"http", "https"})
-_DEFAULT_ALLOWED_CONTENT_TYPES = "text/html,application/xhtml+xml,text/plain"
 
 # Unicode categories used by confusable (homoglyph) characters
 _CONFUSABLE_CATEGORIES = frozenset({"Mn", "Cf", "Co"})
@@ -372,12 +371,16 @@ class FetchUrlToolHandler:
         if not content_types:
             content_types = {
                 item.strip().lower()
-                for item in _DEFAULT_ALLOWED_CONTENT_TYPES.split(",")
+                for item in DEFAULT_FETCH_URL_ALLOWED_CONTENT_TYPES.split(",")
             }
         return frozenset(content_types)
 
     def _check_content_type(self, content_type: str | None) -> None:
-        """Strict Content-Type whitelist — reject non-HTML responses"""
+        """Validate response Content-Type against the configured whitelist.
+
+        Defaults to text/html, application/xhtml+xml, and text/plain. Rejects
+        responses whose MIME type is not present in the active whitelist.
+        """
         if not content_type:
             raise ValueError("响应缺少 Content-Type 头，拒绝处理")
 

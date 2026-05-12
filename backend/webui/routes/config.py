@@ -16,6 +16,7 @@ from loguru import logger
 
 from backend.core.config import (
     BASIC_CONFIG_KEYS,
+    DYNAMIC_CONFIG_RANGES,
     get_dynamic_config,
     invalidate_dynamic_config_cache,
     get_strategy_config,
@@ -864,14 +865,33 @@ async def save_general_config(
             # 验证
             if key == "web_search_enabled":
                 val = "true" if val == "true" else "false"
-            elif key == "web_search_max_results":
-                val_i = int(val)
-                val = str(val_i)
-            elif key == "web_search_max_content_length":
-                val_i = int(val)
-                val = str(val_i)
-            elif key == "web_search_timeout":
-                val_i = int(val)
+            elif key in {
+                "web_search_max_results",
+                "web_search_max_content_length",
+                "web_search_timeout",
+            }:
+                try:
+                    val_i = int(val)
+                except ValueError:
+                    return toast_redirect(
+                        "/webui/config/general",
+                        "toast.numeric_required",
+                        "error",
+                        lang=detect_language(),
+                        field_key=key,
+                    )
+
+                min_v, max_v = DYNAMIC_CONFIG_RANGES[key]
+                if not (min_v <= val_i <= max_v):
+                    return toast_redirect(
+                        "/webui/config/general",
+                        "toast.value_range",
+                        "error",
+                        lang=detect_language(),
+                        field_key=key,
+                        min_v=min_v,
+                        max_v=max_v,
+                    )
                 val = str(val_i)
             elif key == "web_search_provider":
                 if val not in ("duckduckgo", "tavily"):
@@ -902,7 +922,6 @@ async def save_general_config(
         from backend.core.config import (
             DYNAMIC_CONFIG_GROUPS,
             DYNAMIC_CONFIG_SENSITIVE_KEYS,
-            DYNAMIC_CONFIG_RANGES,
             DYNAMIC_CONFIG_SELECT_OPTIONS,
             mask_sensitive_value as _mask,
         )
