@@ -28,7 +28,7 @@ class GrepTool(BaseTool):
         "function": {
             "name": "search_in_files",
             "description": (
-                "在工作区内搜索指定文本或正则表达式，返回匹配的文件和行内容。"
+                "在工作区内搜索指定文本（固定字符串匹配），返回匹配的文件和行内容。"
                 "\n\n使用场景："
                 "\n- 搜索函数定义、类定义"
                 "\n- 查找某个变量的使用位置"
@@ -40,7 +40,7 @@ class GrepTool(BaseTool):
                 "properties": {
                     "keyword": {
                         "type": "string",
-                        "description": "搜索关键词或正则表达式",
+                        "description": "搜索关键词（固定字符串匹配）",
                     },
                     "file_extension": {
                         "type": "string",
