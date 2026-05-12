@@ -106,6 +106,7 @@ common:
   manage_params: "Manage app runtime parameters, changes take effect immediately"
   basic_config: "Basic Config"
   max_concurrent_desc: "Max concurrent PR review tasks"
+  max_concurrent_issues_desc: "Max concurrent Issue analysis tasks"
   review_timeout_desc: "Maximum total runtime allowed for one PR review task, from start to finish (seconds)"
   enable_auto_review_desc: "Automatically review new PRs triggered by webhooks; manual commands are unaffected"
   issue_auto_labels_desc: "Auto-apply AI-recommended labels to Issues"

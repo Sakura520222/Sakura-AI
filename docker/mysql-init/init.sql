@@ -100,6 +100,7 @@ INSERT IGNORE INTO app_config (key_name, key_value, description) VALUES
 ('issue_auto_create_labels', 'true', '自动为 Issue 应用 AI 推荐的标签'),
 ('issue_auto_assign', 'true', '自动为 Issue 指派 AI 推荐的负责人'),
 ('issue_max_tool_iterations', '15', 'Issues 分析中 AI 工具调用最大迭代次数'),
+('max_concurrent_issues', '3', '最大并发 Issue 分析数量'),
 ('enable_inline_comments', 'true', '是否启用行内评论');
 
 -- 创建 Sakura 记忆系统状态表

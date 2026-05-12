@@ -1591,6 +1591,7 @@ BASIC_CONFIG_KEYS = frozenset(
         "issue_auto_create_labels",
         "issue_auto_assign",
         "issue_max_tool_iterations",
+        "max_concurrent_issues",
     }
 )
 

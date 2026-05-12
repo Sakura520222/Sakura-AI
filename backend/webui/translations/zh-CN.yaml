@@ -106,6 +106,7 @@ common:
   manage_params: "管理应用运行参数，修改后即时生效"
   basic_config: "基础配置"
   max_concurrent_desc: "同时进行的最大 PR 审查任务数"
+  max_concurrent_issues_desc: "同时进行的最大 Issue 分析任务数"
   review_timeout_desc: "一个 PR 审查任务从开始到结束允许的最长总耗时（秒）"
   enable_auto_review_desc: "是否自动审查 Webhook 触发的新提交 PR，不影响手动指令"
   issue_auto_labels_desc: "是否自动为 Issue 应用 AI 推荐的标签"
