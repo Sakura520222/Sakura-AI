@@ -1088,6 +1088,10 @@ telegram_mfa:
   mfa_unrequired_by_admin: "MFA requirement removed"
   footer: "Sakura AI Reviewer Security Notification"
   conflict_rules_saved: "Conflict rules updated ({count} rules)"
+
+# ========== API Error Messages ==========
+api:
+  invalid_mfa_token: "Invalid or expired MFA token"
   conflict_rules_validation_failed: "Conflict rules validation failed: {error}"
   invalid_role: "Invalid role value"
   telegram_id_positive: "Telegram ID must be a positive integer"

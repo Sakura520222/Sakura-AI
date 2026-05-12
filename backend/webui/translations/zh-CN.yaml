@@ -1088,6 +1088,10 @@ telegram_mfa:
   mfa_unrequired_by_admin: "MFA 要求已取消"
   footer: "Sakura AI Reviewer 安全通知"
   conflict_rules_saved: "标签冲突规则已更新（{count} 条）"
+
+# ========== API 错误消息 / API Error Messages ==========
+api:
+  invalid_mfa_token: "无效或已过期的二次验证凭证"
   conflict_rules_validation_failed: "冲突规则验证失败: {error}"
   invalid_role: "无效的角色值"
   telegram_id_positive: "Telegram ID 必须为正整数"

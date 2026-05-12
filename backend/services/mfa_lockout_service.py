@@ -20,7 +20,10 @@ from backend.core.redis import get_async_redis
 _FAIL_COUNT_PREFIX = "mfa:fail:count:"
 _LOCK_PREFIX = "mfa:lock:"
 
-# In-memory fallback when Redis is unavailable
+# In-memory fallback when Redis is unavailable.
+# NOTE: Not thread-safe; acceptable because the ASGI server runs a single
+# async event-loop thread.  Data is lost on process restart.
+_MAX_FALLBACK_ENTRIES = 1000
 _lock_fallback: dict[int, tuple[int, datetime]] = {}
 _fail_fallback: dict[int, tuple[int, datetime]] = {}
 
@@ -70,13 +73,31 @@ async def record_mfa_failure(user_id: int) -> int:
                 count,
                 lock_ttl,
             )
+            # Fire-and-forget Telegram notification for lockout event
+            await _notify_lockout(user_id)
         return count
     except Exception as exc:
         logger.warning("Redis MFA fail track error, using memory fallback: {}", exc)
         return _record_mfa_failure_fallback(user_id, threshold, lock_ttl)
 
 
+def _cleanup_expired_fallbacks() -> None:
+    """Remove expired entries from both fallback dicts."""
+    now = datetime.now(timezone.utc)
+    lock_ttl = _lock_ttl_seconds()
+    for store in (_fail_fallback, _lock_fallback):
+        expired = [
+            uid
+            for uid, (_, ts) in store.items()
+            if (now - ts).total_seconds() > lock_ttl
+        ]
+        for uid in expired:
+            store.pop(uid, None)
+
+
 def _record_mfa_failure_fallback(user_id: int, threshold: int, lock_ttl: int) -> int:
+    if len(_fail_fallback) > _MAX_FALLBACK_ENTRIES:
+        _cleanup_expired_fallbacks()
     now = datetime.now(timezone.utc)
     count_val, created_at = _fail_fallback.get(user_id, (0, now))
     # If previous entry is older than lock TTL, reset
@@ -91,6 +112,12 @@ def _record_mfa_failure_fallback(user_id: int, threshold: int, lock_ttl: int) ->
         logger.warning(
             "MFA account locked (fallback): user_id={}, failures={}", user_id, count_val
         )
+        # Fire-and-forget Telegram notification (best-effort in fallback)
+        try:
+            import asyncio
+            asyncio.get_event_loop().create_task(_notify_lockout(user_id))
+        except RuntimeError:
+            pass
     return count_val
 
 
@@ -111,6 +138,8 @@ async def check_mfa_lockout(user_id: int) -> None:
 
 
 def _check_mfa_lockout_fallback(user_id: int) -> None:
+    if len(_lock_fallback) > _MAX_FALLBACK_ENTRIES:
+        _cleanup_expired_fallbacks()
     if user_id not in _lock_fallback:
         return
     _, locked_at = _lock_fallback[user_id]
@@ -120,6 +149,22 @@ def _check_mfa_lockout_fallback(user_id: int) -> None:
         raise AccountLockedError(int(remaining))
     # Lock expired, clean up
     _lock_fallback.pop(user_id, None)
+
+
+async def _notify_lockout(user_id: int) -> None:
+    """Send a Telegram notification when MFA lockout is triggered.
+
+    Creates its own short-lived DB session since the lockout service
+    does not receive one from callers.
+    """
+    try:
+        from backend.models import database as db_module
+        from backend.services.mfa_notification_service import notify_mfa_event
+
+        async with db_module.async_session() as session:
+            await notify_mfa_event(session, user_id, "mfa_lockout")
+    except Exception as exc:
+        logger.warning("Failed to send MFA lockout notification: user_id={}, error={}", user_id, exc)
     _fail_fallback.pop(user_id, None)
 
 

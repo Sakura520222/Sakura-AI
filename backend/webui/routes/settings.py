@@ -50,6 +50,7 @@ from backend.webui.deps import (
 from backend.webui.i18n import detect_language
 from backend.core.config import get_settings
 from backend.core.rate_limit import limiter
+from backend.services.mfa_notification_service import notify_mfa_event
 
 router = APIRouter(prefix="/settings", tags=["WebUI Settings"])
 templates = get_templates()
@@ -326,6 +327,7 @@ async def enable_two_factor(
         db_user.mfa_required = False
     recovery_codes = await replace_recovery_codes(db, user_id)
     await db.commit()
+    await notify_mfa_event(db, user_id, "totp_enabled")
 
     logger.info("TOTP 已启用: user={}", user["sub"])
     return await _render_settings_page(
@@ -375,6 +377,7 @@ async def disable_two_factor_route(
 
     await disable_totp(db, db_user)
     await db.commit()
+    await notify_mfa_event(db, user_id, "totp_disabled")
     return toast_redirect("/webui/settings/", "toast.two_factor_disabled")
 
 
@@ -407,6 +410,7 @@ async def regenerate_recovery_codes(
     db_user.totp_last_used_step = used_step
     recovery_codes = await replace_recovery_codes(db, user_id)
     await db.commit()
+    await notify_mfa_event(db, user_id, "recovery_codes_regenerated")
 
     return await _render_settings_page(
         request,
@@ -470,6 +474,7 @@ async def passkey_register_verify(
         if db_user.mfa_required:
             db_user.mfa_required = False
         await db.commit()
+        await notify_mfa_event(db, user_id, "passkey_registered")
     except Exception as exc:
         await db.rollback()
         logger.warning("Passkey 注册失败: user_id={}, error={}", user_id, exc)
@@ -501,6 +506,7 @@ async def passkey_delete(
         )
     )
     await db.commit()
+    await notify_mfa_event(db, int(user["user_id"]), "passkey_deleted")
     return toast_redirect("/webui/settings/", "toast.passkey_deleted")
 
 
