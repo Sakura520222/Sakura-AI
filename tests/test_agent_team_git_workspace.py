@@ -10,7 +10,7 @@ from backend.services.agent_team.git_workspace_service import (
 def test_make_branch_name_for_issue(monkeypatch):
     class FixedDatetime:
         @staticmethod
-        def utcnow():
+        def now(tz=None):
             return datetime(2026, 5, 9, 12, 34, 56)
 
     monkeypatch.setattr(
@@ -30,7 +30,7 @@ def test_make_branch_name_for_issue(monkeypatch):
 def test_make_branch_name_for_source(monkeypatch):
     class FixedDatetime:
         @staticmethod
-        def utcnow():
+        def now(tz=None):
             return datetime(2026, 5, 9, 12, 34, 56)
 
     monkeypatch.setattr(
