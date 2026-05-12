@@ -92,9 +92,9 @@ def test_fetch_url_dynamic_config_fields_support_live_update():
 def test_web_search_configs_have_range_limits_and_fetch_url_configs_do_not():
     from backend.core.config import DYNAMIC_CONFIG_RANGES
 
-    assert DYNAMIC_CONFIG_RANGES["web_search_max_results"] == (1, 10)
-    assert DYNAMIC_CONFIG_RANGES["web_search_max_content_length"] == (100, 5000)
-    assert DYNAMIC_CONFIG_RANGES["web_search_timeout"] == (5, 60)
+    assert DYNAMIC_CONFIG_RANGES["web_search_max_results"] == (1, 100)
+    assert DYNAMIC_CONFIG_RANGES["web_search_max_content_length"] == (100, 50000)
+    assert DYNAMIC_CONFIG_RANGES["web_search_timeout"] == (5, 600)
 
     unrestricted_fetch_url_keys = {
         "fetch_url_timeout",
