@@ -8,6 +8,7 @@ which transport (WebUI / API) the attempt comes from.
 
 from __future__ import annotations
 
+import asyncio
 from datetime import datetime, timezone
 from typing import Any
 
@@ -74,7 +75,7 @@ async def record_mfa_failure(user_id: int) -> int:
                 lock_ttl,
             )
             # Fire-and-forget Telegram notification for lockout event
-            await _notify_lockout(user_id)
+            asyncio.create_task(_notify_lockout(user_id))
         return count
     except Exception as exc:
         logger.warning("Redis MFA fail track error, using memory fallback: {}", exc)
@@ -109,13 +110,14 @@ def _record_mfa_failure_fallback(user_id: int, threshold: int, lock_ttl: int) ->
 
     if count_val >= threshold:
         _lock_fallback[user_id] = (1, now)
+        # Clear the in-memory failure counter since the user is now locked
+        _fail_fallback.pop(user_id, None)
         logger.warning(
             "MFA account locked (fallback): user_id={}, failures={}", user_id, count_val
         )
         # Fire-and-forget Telegram notification (best-effort in fallback)
         try:
-            import asyncio
-            asyncio.get_event_loop().create_task(_notify_lockout(user_id))
+            asyncio.get_running_loop().create_task(_notify_lockout(user_id))
         except RuntimeError:
             pass
     return count_val
@@ -165,7 +167,6 @@ async def _notify_lockout(user_id: int) -> None:
             await notify_mfa_event(session, user_id, "mfa_lockout")
     except Exception as exc:
         logger.warning("Failed to send MFA lockout notification: user_id={}, error={}", user_id, exc)
-    _fail_fallback.pop(user_id, None)
 
 
 async def reset_mfa_failures(user_id: int) -> None:
