@@ -806,29 +806,6 @@ async def save_general_config(
                 }
                 cfg.key_value = str(val)
 
-        # max_concurrent_issues
-        raw = form.get("max_concurrent_issues")
-        if raw is not None:
-            val = _parse_positive_int_config(raw)
-            result = await db.execute(
-                select(AppConfig).where(AppConfig.key_name == "max_concurrent_issues")
-            )
-            cfg = result.scalar_one_or_none()
-            if cfg is None:
-                cfg = AppConfig(
-                    key_name="max_concurrent_issues",
-                    key_value=str(val),
-                    description="最大并发 Issue 分析数量",
-                )
-                db.add(cfg)
-                changed["max_concurrent_issues"] = {"old": "(无)", "new": str(val)}
-            elif cfg.key_value != str(val):
-                changed["max_concurrent_issues"] = {
-                    "old": cfg.key_value,
-                    "new": str(val),
-                }
-                cfg.key_value = str(val)
-
         # review_timeout_seconds
         raw = form.get("review_timeout_seconds")
         if raw is not None:

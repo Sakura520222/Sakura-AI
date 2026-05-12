@@ -20,14 +20,12 @@ from backend.services.issue_service import issue_service
 # Issue 分析并发控制信号量
 _issue_semaphore: asyncio.Semaphore | None = None
 
-DEFAULT_MAX_CONCURRENT_ISSUES = 3
-
 
 async def _get_issue_semaphore() -> asyncio.Semaphore:
     """获取 Issue 分析并发信号量（懒初始化，支持动态更新）"""
     global _issue_semaphore
     if _issue_semaphore is None:
-        max_concurrent = await _load_max_concurrent_from_db()
+        max_concurrent = await _load_max_concurrent()
         _issue_semaphore = asyncio.Semaphore(max_concurrent)
         logger.info(f"Issue 分析并发信号量初始化: 最大 {max_concurrent} 个并发任务")
     return _issue_semaphore
@@ -40,19 +38,13 @@ def reset_issue_semaphore():
     logger.info("Issue 分析并发信号量已重置，下次任务将重新初始化")
 
 
-async def _load_max_concurrent_from_db() -> int:
-    """从数据库读取最大并发 Issue 分析数"""
-    from backend.models.database import AppConfig
-
+async def _load_max_concurrent() -> int:
+    """从动态配置读取最大并发 Issue 分析数"""
     try:
-        async with async_session() as session:
-            result = await session.execute(
-                select(AppConfig).where(AppConfig.key_name == "max_concurrent_issues")
-            )
-            cfg = result.scalar_one_or_none()
-            return int(cfg.key_value) if cfg else DEFAULT_MAX_CONCURRENT_ISSUES
+        val = await get_dynamic_config("max_concurrent_issues")
+        return int(val) if val is not None else get_settings().max_concurrent_issues
     except Exception:
-        return DEFAULT_MAX_CONCURRENT_ISSUES
+        return get_settings().max_concurrent_issues
 
 
 class IssueWorker:
