@@ -12,7 +12,7 @@
         </div>
         <div class="flex items-center gap-2">
             <span class="inline-flex items-center px-2.5 py-1 rounded-full text-xs font-medium bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400">
-                <svg class="w-3.5 h-3.5 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <svg class="w-3.5 h-3.5 mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-2.5L13.732 4c-.77-.833-1.964-.833-2.732 0L4.082 16.5c-.77.833.192 2.5 1.732 2.5z"/>
                 </svg>
                 {{ _('system_config.warning_badge') }}
@@ -23,7 +23,7 @@
     <!-- 安全警告提示 -->
     <div class="bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800/50 rounded-xl p-4">
         <div class="flex items-start gap-3">
-            <svg class="w-5 h-5 text-amber-500 mt-0.5 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <svg class="w-5 h-5 text-amber-500 mt-0.5 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-2.5L13.732 4c-.77-.833-1.964-.833-2.732 0L4.082 16.5c-.77.833.192 2.5 1.732 2.5z"/>
             </svg>
             <div>
@@ -114,13 +114,13 @@
                             <!-- 测试连接按钮（仅数据库和 Redis） -->
                             {% if item.key == 'database_url' %}
                             <button type="button"
-                                    @click="testConnection('database', $refs.db_url_input?.value || document.querySelector('[name=database_url]')?.value)"
+                                    @click="testConnection('database', document.querySelector('[name=database_url]')?.value)"
                                     class="px-3 py-2 text-xs font-medium rounded-lg border border-gray-300 dark:border-gray-600 hover:bg-gray-50 dark:hover:bg-gray-700 text-gray-700 dark:text-gray-300 whitespace-nowrap"
                                     :disabled="testing"
                                     :class="testing ? 'opacity-50 cursor-not-allowed' : ''">
                                 <span x-show="!testing">{{ _('system_config.test_connection') }}</span>
                                 <span x-show="testing" class="flex items-center gap-1">
-                                    <svg class="animate-spin h-3 w-3" fill="none" viewBox="0 0 24 24">
+                                    <svg class="animate-spin h-3 w-3" fill="none" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
                                         <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
                                         <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
                                     </svg>
@@ -129,13 +129,13 @@
                             </button>
                             {% elif item.key == 'redis_url' %}
                             <button type="button"
-                                    @click="testConnection('redis', $refs.redis_url_input?.value || document.querySelector('[name=redis_url]')?.value)"
+                                    @click="testConnection('redis', document.querySelector('[name=redis_url]')?.value)"
                                     class="px-3 py-2 text-xs font-medium rounded-lg border border-gray-300 dark:border-gray-600 hover:bg-gray-50 dark:hover:bg-gray-700 text-gray-700 dark:text-gray-300 whitespace-nowrap"
                                     :disabled="testing"
                                     :class="testing ? 'opacity-50 cursor-not-allowed' : ''">
                                 <span x-show="!testing">{{ _('system_config.test_connection') }}</span>
                                 <span x-show="testing" class="flex items-center gap-1">
-                                    <svg class="animate-spin h-3 w-3" fill="none" viewBox="0 0 24 24">
+                                    <svg class="animate-spin h-3 w-3" fill="none" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
                                         <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
                                         <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
                                     </svg>
@@ -157,7 +157,7 @@
         <!-- 保存按钮 -->
         <div class="flex items-center justify-between mt-4">
             <p class="text-xs text-gray-500 dark:text-gray-400">
-                <svg class="w-4 h-4 inline mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <svg class="w-4 h-4 inline mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/>
                 </svg>
                 {{ _('system_config.save_hint') }}
@@ -192,6 +192,7 @@ function systemConfig() {
         activeTab: 'database',
         testing: false,
         testResult: null,
+        csrfToken: '{{ csrf_token }}',
 
         init() {
             // 默认选中第一个 tab
@@ -209,9 +210,16 @@ function systemConfig() {
             try {
                 const resp = await fetch('/system-config/test-connection', {
                     method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'X-CSRF-Token': this.csrfToken,
+                    },
                     body: JSON.stringify({ type: type, url: url.trim() })
                 });
+                if (!resp.ok) {
+                    this.testResult = { success: false, message: 'HTTP ' + resp.status };
+                    return;
+                }
                 const data = await resp.json();
                 this.testResult = data;
             } catch (e) {
