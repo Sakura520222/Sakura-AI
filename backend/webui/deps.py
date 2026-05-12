@@ -335,6 +335,7 @@ def toast_redirect(
             "pr.",
             "auth.",
             "wizard.",
+            "system_config.",
         )
     ):
         # Temporary fallback: auto-translate known translation key prefixes

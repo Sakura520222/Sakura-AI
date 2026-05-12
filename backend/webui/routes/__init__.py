@@ -19,6 +19,7 @@ from backend.webui.routes import (
     security,
     agent_team,
     agent_skills,
+    system_config,
 )
 
 webui_router = APIRouter(prefix="/webui")
@@ -40,3 +41,4 @@ webui_router.include_router(billing.router)
 webui_router.include_router(security.router)
 webui_router.include_router(agent_team.router)
 webui_router.include_router(agent_skills.router)
+webui_router.include_router(system_config.router)
