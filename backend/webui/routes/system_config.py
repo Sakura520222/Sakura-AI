@@ -199,6 +199,7 @@ async def test_connection(
     test_type = body.get("type", "")
 
     if test_type in ("database", "redis"):
+        # 延迟导入：避免模块级别循环依赖
         from backend.core.setup_service import setup_service
 
         if test_type == "database":

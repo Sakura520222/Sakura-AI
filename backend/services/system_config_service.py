@@ -102,7 +102,7 @@ class SystemConfigService:
             group_id = group_def["id"]
             items = []
             for key in group_def["keys"]:
-                value = config_map.get(key, str(getattr(settings, key, "") or ""))
+                value = config_map.get(key) or str(getattr(settings, key, "") or "")
                 is_sensitive = key in SYSTEM_SENSITIVE_KEYS
                 display_value = (
                     mask_sensitive_value(value) if (is_sensitive and value) else value
@@ -185,15 +185,11 @@ class SystemConfigService:
     def build_audit_log(
         self, changed: dict[str, dict[str, str]]
     ) -> dict[str, dict[str, str]]:
-        """构建脱敏审计日志"""
-        log_changed: dict[str, dict[str, str]] = {}
-        for k, v in changed.items():
-            log_entry = {"old": v["old"], "new": v["new"]}
-            if k in SYSTEM_SENSITIVE_KEYS:
-                log_entry["old"] = mask_sensitive_value(str(log_entry["old"]))
-                log_entry["new"] = mask_sensitive_value(str(log_entry["new"]))
-            log_changed[k] = log_entry
-        return log_changed
+        """构建审计日志
+
+        changed 中的 old/new 已在 save_configs 中脱敏，此处直接透传。
+        """
+        return {k: {"old": v["old"], "new": v["new"]} for k, v in changed.items()}
 
     @staticmethod
     def _mask(value: str, is_sensitive: bool) -> str:
