@@ -29,7 +29,7 @@
 - **禁止在路由层直接构造Redis key**：应封装到Service/Manager层，标major
 - **except Exception:pass必须替换为显式忽略并记录debug日志**，标major
 - **新增配置项若涉及行为变更，必须同步消费逻辑或注释为“预留”**：避免幽灵配置，标major
-- **所有JSON API端点（除公开只读）必须显式使用CSRF依赖或头校验**：标major
+- **所有JSON API端点（除公开只读）必须显式使用CSRF依赖或头校验**，标major
 - **新增DB模型的datetime字段必须使用datetime.now(timezone.utc)**：禁止utcnow，标major
 - **限流/异常响应中禁止硬编码用户可见字符串**：必须使用翻译键或返回结构化键供前端本地化，标major
 - **新增环境变量必须明确与现有flag的语义关系**：避免两个flag通过`or`逻辑重叠，应在文档或注释中说明是独立控制还是聚合控制，标major
@@ -98,7 +98,7 @@
 - **工具函数位置强制检查**：datetime/config/redis操作函数必须位于项目约定公共模块，否则标记minor，标minor
 - **未修复历史问题的issue强制关联**：输出“未修复的历史问题”时必须包含#issue-number或TODO(issue-xxx)，标major
 - **UI变更必须检查JS事件绑定是否依赖具体DOM结构**（如outerHTML/innerHTML替换），标minor
-- **模板中内联SVG装饰图标必须添加aria-hidden="true"+focusable="false"**，标suggestion
+- **模板中内联SVG装饰图标必须添加aria-hidden="true"+focusable="false"**，标suggestion→minor（连续缺失升级）
 - **PR描述与变更文件必须一致**（如描述中提到配置扩展但无对应代码变更），标major
 - **共用模板的UI改动必须标注影响范围**（哪些页面/路由使用该模板），标minor
 - **同步函数中使用get_running_loop().create_task时，必须评估是否可能在无运行循环的线程中调用**，无法创建任务时记录warning日志，标major
@@ -112,6 +112,18 @@
 - **外部可见链接必须通过统一服务生成**：所有写入issue、邮件、Telegram、报告的URL必须调用LinkService.get_webui_url(path)，标major
 - **启动阶段依赖动态配置的操作必须显式声明配置已加载的标志或断言**，标major
 - **配置加载失败路径必须审查降级行为是否安全**：异常被捕获后配置值是否仍具备合理降级，标major（原minor升级）
+- **配置类PR必须输出“对称性三件套”**：写入路径→缓存失效→默认值对比，缺一不可，标major
+- **新增WebUI模块必须检查“四一致”**：侧边栏链接、表单action、JS fetch、重定向URL与路由前缀一致，标major
+- **批量保存配置原子性**：任一配置校验失败必须整体回滚，禁止部分写入，标major
+- **敏感字段禁止传递到模板上下文**：即使未使用，也禁止将未脱敏的raw_value传入render_template，标major
+- **fetch响应状态检查**：所有fetch必须检查!resp.ok，否则应抛出或回退，连续出现升major，标minor→major
+- **新增路由级依赖时，必须检查所有异常处理器是否依赖该state字段**，标major
+- **Depends函数若内部无await，应改为同步函数**，标minor
+- **公共URL生成函数应防御性处理path格式**，标minor
+- **增量审查必须扫描tests/目录中的旧函数/常量引用**，标major
+- **公共函数命名升级时强制补充docstring**（从_private改为public时），标minor
+- **排除法路径判断连续2轮未修复自动阻断+生成issue**，标major
+- **外部链接生成收敛检查**：新增或修改*_service.py中的URL字符串时，强制检查是否应使用LinkService，标major
 
 ## 近期审查模式总结
 
@@ -244,7 +256,13 @@
 - **装饰性SVG可访问性**：内联SVG装饰图标必须添加aria-hidden="true"，作为UI变更固定检查项
 - **新增WebUI模块的路径一致性**：检查侧边栏链接+表单action+JS fetch+重定向URL四者是否与注册路由的实际前缀一致
 - **配置保存的原子性**：批量保存配置时，如果任一配置校验失败，必须整体回滚，禁止部分写入
+- **请求标记与异常处理器的顺序依赖**：如果异常在路由依赖执行前触发，request.state可能尚未注入所需字段
+- **增量审查的“隐性调用链”风险**：跨模块契约变更时应在PR中明确列出
+- **配置系统的“假安全”**：脱敏+审计日志≠安全，还要检查是否有未授权的读取接口
+- **配置类变更必须输出测试覆盖检查**：新增337行代码未检查测试覆盖，尤其外部依赖端点
+- **批量保存事务回滚强制检查**：任一校验失败必须整体回滚，禁止部分写入
+- **配置默认值一致性检查**：新增动态配置key必须与settings.py默认值对比
 
 ## 仓库信息
 - 仓库名: Sakura520222/Sakura-AI-Reviewer
-- 累计反思次数: 216
+- 累计反思次数: 220
