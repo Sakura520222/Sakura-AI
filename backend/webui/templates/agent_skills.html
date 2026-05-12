@@ -25,7 +25,7 @@
         <div class="bg-white dark:bg-gray-800 rounded-2xl border border-gray-200 dark:border-gray-700 p-5">
             <h2 class="text-lg font-bold text-gray-900 dark:text-gray-100">{{ _('agent_skills.install_github') }}</h2>
             <p class="mt-1 text-sm text-gray-500 dark:text-gray-400">{{ _('agent_skills.install_github_desc') }}</p>
-            <form method="post" action="/webui/agent-skills/install-github" class="mt-4 space-y-4">
+            <form method="post" action="/agent-skills/install-github" class="mt-4 space-y-4">
                 <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
                 <input name="github_url" type="url" required placeholder="https://github.com/owner/repo/blob/main/path/SKILL.md" class="w-full rounded-xl border-gray-300 dark:border-gray-600 dark:bg-gray-900 text-sm">
                 <button type="submit" class="inline-flex items-center justify-center px-5 py-2.5 rounded-xl bg-sakura-500 hover:bg-sakura-600 text-white text-sm font-semibold shadow-lg shadow-sakura-500/20">
@@ -37,7 +37,7 @@
         <div class="bg-white dark:bg-gray-800 rounded-2xl border border-gray-200 dark:border-gray-700 p-5">
             <h2 class="text-lg font-bold text-gray-900 dark:text-gray-100">{{ _('agent_skills.upload_skill') }}</h2>
             <p class="mt-1 text-sm text-gray-500 dark:text-gray-400">{{ _('agent_skills.upload_skill_desc') }}</p>
-            <form method="post" action="/webui/agent-skills/upload" enctype="multipart/form-data" class="mt-4 space-y-4">
+            <form method="post" action="/agent-skills/upload" enctype="multipart/form-data" class="mt-4 space-y-4">
                 <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
                 <input name="name" type="text" placeholder="{{ _('agent_skills.name_placeholder') }}" class="w-full rounded-xl border-gray-300 dark:border-gray-600 dark:bg-gray-900 text-sm">
                 <input name="skill_file" type="file" accept=".md,.zip,text/markdown,text/plain,application/zip" required class="block w-full text-sm text-gray-600 dark:text-gray-300 file:mr-4 file:rounded-xl file:border-0 file:bg-sakura-50 file:px-4 file:py-2 file:text-sm file:font-semibold file:text-sakura-700 hover:file:bg-sakura-100 dark:file:bg-sakura-900/30 dark:file:text-sakura-300">
@@ -54,11 +54,11 @@
                 <h2 class="text-lg font-bold text-gray-900 dark:text-gray-100">{{ _('agent_skills.installed_skills') }}</h2>
                 <p class="text-sm text-gray-500 dark:text-gray-400 mt-1">{{ _('agent_skills.installed_skills_desc') }}</p>
             </div>
-            <button hx-get="/webui/agent-skills/list-fragment" hx-target="#agent-skills-list" hx-swap="innerHTML" class="px-4 py-2 bg-sakura-500 hover:bg-sakura-600 text-white rounded-xl text-sm font-semibold">
+            <button hx-get="/agent-skills/list-fragment" hx-target="#agent-skills-list" hx-swap="innerHTML" class="px-4 py-2 bg-sakura-500 hover:bg-sakura-600 text-white rounded-xl text-sm font-semibold">
                 {{ _('common.refresh') }}
             </button>
         </div>
-        <div id="agent-skills-list" hx-get="/webui/agent-skills/list-fragment" hx-trigger="load" hx-swap="innerHTML">
+        <div id="agent-skills-list" hx-get="/agent-skills/list-fragment" hx-trigger="load" hx-swap="innerHTML">
             {% include "components/agent_skills_list_fragment.html" %}
         </div>
     </section>

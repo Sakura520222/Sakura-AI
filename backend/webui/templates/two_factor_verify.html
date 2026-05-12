@@ -120,7 +120,7 @@
         }
         try {
             const csrfToken = '{{ csrf_token }}';
-            const optionsResp = await fetch('/webui/auth/2fa/passkey/options', {
+            const optionsResp = await fetch('/auth/2fa/passkey/options', {
                 method: 'POST',
                 headers: { 'X-CSRF-Token': csrfToken },
             });
@@ -134,7 +134,7 @@
                 publicKey.allowCredentials = publicKey.allowCredentials.map((item) => ({ ...item, id: base64urlToBuffer(item.id) }));
             }
             const assertion = await navigator.credentials.get({ publicKey });
-            const verifyResp = await fetch('/webui/auth/2fa/passkey/verify', {
+            const verifyResp = await fetch('/auth/2fa/passkey/verify', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': csrfToken },
                 body: JSON.stringify({ challenge_id: data.challenge_id, credential: publicKeyCredentialToJSON(assertion) }),
@@ -142,7 +142,7 @@
             const verifyJson = await verifyResp.json();
             if (verifyResp.status === 429) throw new Error(localizePasskeyMessage(verifyJson.message, '{{ _("toast.rate_limit_exceeded") }}'));
             if (!verifyJson.success) throw new Error(localizePasskeyMessage(verifyJson.message, 'Passkey verify failed'));
-            window.location.href = verifyJson.data.redirect || '/webui/';
+            window.location.href = verifyJson.data.redirect || '/';
         } catch (error) {
             errorEl.textContent = error.message || '{{ _("auth.passkey_failed") }}';
             errorEl.classList.remove('hidden');

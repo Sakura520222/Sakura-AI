@@ -6,11 +6,11 @@
 <div class="space-y-4">
     <!-- 面包屑导航 -->
     <nav class="flex items-center gap-2 text-sm text-gray-500 dark:text-gray-400">
-        <a href="/webui/" class="hover:text-pink-600 dark:hover:text-pink-400">{{ _('nav.dashboard') }}</a>
+        <a href="/" class="hover:text-pink-600 dark:hover:text-pink-400">{{ _('nav.dashboard') }}</a>
         <span>/</span>
-        <a href="/webui/pr/" class="hover:text-pink-600 dark:hover:text-pink-400">{{ _('nav.pr_reviews') }}</a>
+        <a href="/pr/" class="hover:text-pink-600 dark:hover:text-pink-400">{{ _('nav.pr_reviews') }}</a>
         <span>/</span>
-        <a href="/webui/pr/{{ review.id }}" class="hover:text-pink-600 dark:hover:text-pink-400">{{ review.repo_owner }}/{{ review.repo_name }} #{{ review.pr_id }}</a>
+        <a href="/pr/{{ review.id }}" class="hover:text-pink-600 dark:hover:text-pink-400">{{ review.repo_owner }}/{{ review.repo_name }} #{{ review.pr_id }}</a>
         <span>/</span>
         <span class="text-gray-900 dark:text-white">{{ _('pr.files') }}</span>
     </nav>
@@ -32,7 +32,7 @@
                     <h2 class="text-sm font-semibold text-gray-700 dark:text-gray-300">{{ _('pr.files') }}</h2>
                 </div>
                 <div id="file-list-container" class="max-h-[calc(100vh-280px)] overflow-y-auto"
-                     hx-get="/webui/pr/{{ review.id }}/files/file-fragment" hx-trigger="load" hx-swap="innerHTML">
+                     hx-get="/pr/{{ review.id }}/files/file-fragment" hx-trigger="load" hx-swap="innerHTML">
                     <div class="text-center py-8 text-gray-400">
                         <svg class="w-8 h-8 mx-auto animate-spin" fill="none" viewBox="0 0 24 24">
                             <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/>
@@ -59,7 +59,7 @@
 
     <!-- 返回按钮 -->
     <div>
-        <a href="/webui/pr/{{ review.id }}" class="inline-flex items-center gap-1 text-sm text-gray-500 dark:text-gray-400 hover:text-pink-600 dark:hover:text-pink-400">
+        <a href="/pr/{{ review.id }}" class="inline-flex items-center gap-1 text-sm text-gray-500 dark:text-gray-400 hover:text-pink-600 dark:hover:text-pink-400">
             <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7"/>
             </svg>
@@ -86,7 +86,7 @@ function loadFileComments(filePath, btn) {
     panel.innerHTML = '<div class="text-center py-8 text-gray-400"><svg class="w-8 h-8 mx-auto animate-spin" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg><p class="mt-2">' + _t('loading') + '</p></div>';
 
     const params = new URLSearchParams({ file_path: filePath });
-    fetch('/webui/pr/' + REVIEW_ID + '/files/comment-fragment?' + params.toString(), {
+    fetch('/pr/' + REVIEW_ID + '/files/comment-fragment?' + params.toString(), {
         headers: { 'HX-Request': 'true' }
     })
     .then(r => r.text())

@@ -11,7 +11,7 @@
     </div>
 
     <!-- 统计卡片 -->
-    <div id="issue-stats-container" hx-get="/webui/issues/stats" hx-trigger="load" hx-swap="innerHTML">
+    <div id="issue-stats-container" hx-get="/issues/stats" hx-trigger="load" hx-swap="innerHTML">
         <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
             <div class="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 p-4">
                 <div class="animate-pulse h-4 bg-gray-200 dark:bg-gray-700 rounded w-20 mb-2"></div>
@@ -21,7 +21,7 @@
     </div>
 
     <!-- Issue 列表（通过 HTMX 加载） -->
-    <div id="issue-list-container" hx-get="/webui/issues/list-fragment" hx-trigger="load" hx-swap="innerHTML">
+    <div id="issue-list-container" hx-get="/issues/list-fragment" hx-trigger="load" hx-swap="innerHTML">
         <div class="text-center py-8 text-gray-400">
             <svg class="w-8 h-8 mx-auto animate-spin" fill="none" viewBox="0 0 24 24">
                 <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/>
@@ -36,7 +36,7 @@
 {% block extra_scripts %}
 {{ super() }}
 <script>
-var loadPage = function(n) { loadListPage('issue-list-container', '/webui/issues/list-fragment', n); };
-initFilterForm('issue-filter-form', 'issue-list-container', '/webui/issues/list-fragment');
+var loadPage = function(n) { loadListPage('issue-list-container', '/issues/list-fragment', n); };
+initFilterForm('issue-filter-form', 'issue-list-container', '/issues/list-fragment');
 </script>
 {% endblock %}

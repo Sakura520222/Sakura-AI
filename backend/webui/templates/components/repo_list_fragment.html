@@ -35,11 +35,11 @@
 
             <!-- 统计 -->
             <div class="flex items-center gap-4 flex-shrink-0 text-xs">
-                <a href="/webui/pr/?search={{ repo.full_name }}"
+                <a href="/pr/?search={{ repo.full_name }}"
                    class="text-gray-500 dark:text-gray-400 hover:text-pink-500 dark:hover:text-pink-400 transition-colors">
                     PR: {{ repo.pr_count }}
                 </a>
-                <a href="/webui/issues/?repo_name={{ repo.full_name }}"
+                <a href="/issues/?repo_name={{ repo.full_name }}"
                    class="text-gray-500 dark:text-gray-400 hover:text-pink-500 dark:hover:text-pink-400 transition-colors">
                     Issue: {{ repo.issue_count }}
                 </a>

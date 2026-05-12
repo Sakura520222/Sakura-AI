@@ -58,7 +58,7 @@
 
             <!-- ======== Tab 1: 审查策略 ======== -->
             <div x-show="activeTab === 'strategies'" x-cloak>
-                <form method="POST" action="/webui/config/strategies/save">
+                <form method="POST" action="/config/strategies/save">
                     <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
                     <input type="hidden" name="section" value="strategies">
 
@@ -124,7 +124,7 @@
 
             <!-- ======== Tab 2: 文件过滤 ======== -->
             <div x-show="activeTab === 'filters'" x-cloak>
-                <form method="POST" action="/webui/config/strategies/save">
+                <form method="POST" action="/config/strategies/save">
                     <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
                     <input type="hidden" name="section" value="file_filters">
 
@@ -159,7 +159,7 @@
 
             <!-- ======== Tab 3: 批处理 ======== -->
             <div x-show="activeTab === 'batch'" x-cloak>
-                <form method="POST" action="/webui/config/strategies/save">
+                <form method="POST" action="/config/strategies/save">
                     <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
                     <input type="hidden" name="section" value="batch">
 
@@ -190,7 +190,7 @@
 
             <!-- ======== Tab 4: 上下文增强 ======== -->
             <div x-show="activeTab === 'context'" x-cloak>
-                <form method="POST" action="/webui/config/strategies/save">
+                <form method="POST" action="/config/strategies/save">
                     <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
                     <input type="hidden" name="section" value="context_enhancement">
 
@@ -349,7 +349,7 @@
 
             <!-- ======== Tab 5: 审查政策 ======== -->
             <div x-show="activeTab === 'policy'" x-cloak>
-                <form method="POST" action="/webui/config/strategies/save">
+                <form method="POST" action="/config/strategies/save">
                     <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
                     <input type="hidden" name="section" value="review_policy">
 
@@ -452,7 +452,7 @@
 
             <!-- ======== Tab: 依赖图 ========= -->
             <div x-show="activeTab === 'depgraph'" x-cloak>
-                <form method="POST" action="/webui/config/strategies/save">
+                <form method="POST" action="/config/strategies/save">
                     <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
                     <input type="hidden" name="section" value="depgraph">
 
@@ -491,7 +491,7 @@
 
             <!-- ======== Tab: Issue 分析 ======== -->
             <div x-show="activeTab === 'issue_analysis'" x-cloak>
-                <form method="POST" action="/webui/config/strategies/save">
+                <form method="POST" action="/config/strategies/save">
                     <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
                     <input type="hidden" name="section" value="issue_analysis">
 

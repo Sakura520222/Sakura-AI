@@ -152,6 +152,30 @@ async def get_db() -> AsyncSession:
         yield session
 
 
+async def mark_webui_request(request: Request):
+    """Mark the request as originating from a WebUI route."""
+    request.state.is_webui = True
+
+
+def is_webui_request(request: Request) -> bool:
+    """Check whether the request belongs to the WebUI surface.
+
+    Relies on the explicit ``mark_webui_request`` dependency attached to
+    ``webui_router``.  Non-WebUI routes (API, setup, docs) never carry this
+    mark, so no exclusion list needs to be maintained.
+    """
+    return getattr(request.state, "is_webui", False)
+
+
+def get_webui_url(path: str = "") -> str:
+    """Build an absolute WebUI URL for external consumption (Telegram, GitHub, etc.).
+
+    ``path`` should start with ``/`` (e.g. ``"/scans/42"``).
+    """
+    domain = get_settings().app_domain
+    return f"https://{domain}{path}"
+
+
 def request_origin(request: Request) -> str:
     """Return request Origin, falling back to scheme + host."""
     return (
@@ -162,14 +186,14 @@ def request_origin(request: Request) -> str:
 def _is_mfa_enrollment_path(path: str) -> bool:
     """Return whether a WebUI path is allowed while forced MFA enrollment is pending."""
     allowed_exact = {
-        "/webui/settings/",
-        "/webui/auth/logout",
+        "/settings/",
+        "/auth/logout",
     }
     allowed_prefixes = (
-        "/webui/settings/2fa/",
-        "/webui/settings/passkeys/",
-        "/webui/auth/",
-        "/webui/static/",
+        "/settings/2fa/",
+        "/settings/passkeys/",
+        "/auth/",
+        "/static/",
     )
     return path in allowed_exact or any(
         path.startswith(prefix) for prefix in allowed_prefixes
@@ -208,7 +232,7 @@ async def enforce_mfa_enrollment(
     if not await user_requires_mfa_enrollment(user_id, db):
         return
     path = request.url.path
-    if path.startswith("/webui"):
+    if is_webui_request(request):
         if _is_mfa_enrollment_path(path):
             return
         raise HTTPException(status_code=428, detail="mfa_enrollment_required")
