@@ -50,12 +50,13 @@
                 <h3 class="text-sm font-semibold text-gray-700 dark:text-gray-300 mb-4">{{ _('common.review_task_config') }}</h3>
                 <div class="space-y-4">
                     {% for config in configs %}
-                    {% if config.key_name in ('max_concurrent_reviews', 'review_timeout_seconds', 'enable_auto_review') %}
+                    {% if config.key_name in ('max_concurrent_reviews', 'max_concurrent_issues', 'review_timeout_seconds', 'enable_auto_review') %}
                     <div class="flex items-center justify-between">
                         <div>
                             <h4 class="text-sm font-medium text-gray-700 dark:text-gray-300">{{ config.description or config.key_name }}</h4>
                             <p class="text-xs text-gray-500 dark:text-gray-400 mt-1">
                                 {% if config.key_name == 'max_concurrent_reviews' %}{{ _('common.max_concurrent_desc') }}
+                                {% elif config.key_name == 'max_concurrent_issues' %}{{ _('common.max_concurrent_issues_desc') }}
                                 {% elif config.key_name == 'review_timeout_seconds' %}{{ _('common.review_timeout_desc') }}
                                 {% elif config.key_name == 'enable_auto_review' %}{{ _('common.enable_auto_review_desc') }}
                                 {% endif %}

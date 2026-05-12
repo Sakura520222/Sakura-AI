@@ -806,6 +806,29 @@ async def save_general_config(
                 }
                 cfg.key_value = str(val)
 
+        # max_concurrent_issues
+        raw = form.get("max_concurrent_issues")
+        if raw is not None:
+            val = _parse_positive_int_config(raw)
+            result = await db.execute(
+                select(AppConfig).where(AppConfig.key_name == "max_concurrent_issues")
+            )
+            cfg = result.scalar_one_or_none()
+            if cfg is None:
+                cfg = AppConfig(
+                    key_name="max_concurrent_issues",
+                    key_value=str(val),
+                    description="最大并发 Issue 分析数量",
+                )
+                db.add(cfg)
+                changed["max_concurrent_issues"] = {"old": "(无)", "new": str(val)}
+            elif cfg.key_value != str(val):
+                changed["max_concurrent_issues"] = {
+                    "old": cfg.key_value,
+                    "new": str(val),
+                }
+                cfg.key_value = str(val)
+
         # review_timeout_seconds
         raw = form.get("review_timeout_seconds")
         if raw is not None:
@@ -1038,6 +1061,17 @@ async def save_general_config(
         for key, change in changed.items():
             if key in all_dynamic_keys or key in BASIC_CONFIG_KEYS:
                 update_settings_field(key, change.get("raw_new", change["new"]))
+
+        # 即时重置信号量，使并发配置立即生效
+        if "max_concurrent_issues" in changed:
+            from backend.workers.issue_worker import reset_issue_semaphore
+
+            reset_issue_semaphore()
+
+        if "max_concurrent_reviews" in changed:
+            from backend.workers.review_worker import reset_review_semaphore
+
+            reset_review_semaphore()
 
         logger.info(f"全局配置已更新, by={user['sub']}, changed={list(changed.keys())}")
         # 构建脱敏日志副本（不包含 raw_new 明文，并对敏感键二次脱敏防御）
