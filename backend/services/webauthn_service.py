@@ -186,8 +186,8 @@ async def begin_registration(
         user_id=_user_handle(user.id),
         timeout=get_settings().passkeys_challenge_ttl_seconds * 1000,
         authenticator_selection=AuthenticatorSelectionCriteria(
-            resident_key=ResidentKeyRequirement.PREFERRED,
-            user_verification=UserVerificationRequirement.PREFERRED,
+            resident_key=ResidentKeyRequirement.REQUIRED,
+            user_verification=UserVerificationRequirement.REQUIRED,
         ),
         exclude_credentials=exclude_credentials,
     )
@@ -262,19 +262,26 @@ async def begin_authentication(
     user_id: int | None = None,
     request_origin: str | None = None,
 ) -> dict:
-    """Create WebAuthn authentication options."""
+    """Create WebAuthn authentication options.
+
+    When *user_id* is ``None`` the options are generated WITHOUT
+    ``allow_credentials``, enabling a **discoverable-credential**
+    (passkey-only) login flow where the browser picks the credential.
+    """
     rp = get_rp_config(request_origin)
-    query = select(UserWebAuthnCredential)
+    allow_credentials = None
     if user_id is not None:
-        query = query.where(UserWebAuthnCredential.user_id == user_id)
-    result = await session.execute(query)
-    credentials = result.scalars().all()
-    allow_credentials = [_credential_descriptor(c) for c in credentials]
+        query = select(UserWebAuthnCredential).where(
+            UserWebAuthnCredential.user_id == user_id
+        )
+        result = await session.execute(query)
+        credentials = result.scalars().all()
+        allow_credentials = [_credential_descriptor(c) for c in credentials]
     options = generate_authentication_options(
         rp_id=rp.rp_id,
         timeout=get_settings().passkeys_challenge_ttl_seconds * 1000,
         allow_credentials=allow_credentials or None,
-        user_verification=UserVerificationRequirement.PREFERRED,
+        user_verification=UserVerificationRequirement.REQUIRED,
     )
     challenge_id = b64url_encode(options.challenge)
     await save_challenge(
@@ -340,7 +347,7 @@ async def finish_authentication(
         expected_origin=rp.origin,
         credential_public_key=b64url_decode(db_credential.public_key),
         credential_current_sign_count=int(db_credential.sign_count or 0),
-        require_user_verification=False,
+        require_user_verification=True,
     )
     db_credential.sign_count = verification.new_sign_count
     db_credential.last_used_at = datetime.now(timezone.utc)

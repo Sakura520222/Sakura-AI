@@ -35,6 +35,12 @@ from backend.services.webauthn_service import (
     finish_authentication,
 )
 from backend.services.security_admin_service import user_has_any_mfa_method
+from backend.services.mfa_lockout_service import (
+    AccountLockedError,
+    check_mfa_lockout,
+    record_mfa_failure,
+    reset_mfa_failures,
+)
 from backend.webui.auth import (
     create_access_token,
     create_mfa_pending_token,
@@ -50,7 +56,7 @@ from backend.webui.deps import (
     toast_redirect,
     render_template,
 )
-from backend.webui.i18n import detect_language
+from backend.webui.i18n import detect_language, i18n as _i18n
 from backend.core.config import get_settings
 from backend.core.redis import get_async_redis
 from backend.core.rate_limit import limiter
@@ -124,7 +130,7 @@ def _build_login_token_payload(
     }
 
 
-def _set_webui_token_cookie(response: RedirectResponse, token: str):
+def _set_webui_token_cookie(response: RedirectResponse | JSONResponse, token: str):
     """写入正式 WebUI 登录 Cookie。"""
     settings = get_settings()
     response.set_cookie(
@@ -457,6 +463,23 @@ async def verify_two_factor(
         if not user or not await user_has_any_mfa_method(session, user):
             return toast_redirect("/webui/auth/login", "toast.login_required", "error")
 
+        # Check lockout before attempting verification
+        try:
+            await check_mfa_lockout(int(user_id))
+        except AccountLockedError as exc:
+            lang = detect_language()
+            locked_msg = _i18n.t("toast.account_locked", lang=lang, seconds=exc.remaining_seconds)
+            return render_template(
+                "two_factor_verify.html",
+                request,
+                csrf_token=get_csrf_serializer().dumps({}),
+                error=locked_msg,
+                app_version=APP_VERSION,
+                github_username=payload.get("sub", ""),
+                totp_enabled=bool(user.totp_enabled),
+                status_code=429,
+            )
+
         if not user.totp_enabled:
             return render_template(
                 "two_factor_verify.html",
@@ -484,6 +507,7 @@ async def verify_two_factor(
             verified = await consume_recovery_code(session, int(user_id), code)
 
         if not verified:
+            await record_mfa_failure(int(user_id))
             await session.rollback()
             return render_template(
                 "two_factor_verify.html",
@@ -496,6 +520,7 @@ async def verify_two_factor(
                 status_code=400,
             )
 
+        await reset_mfa_failures(int(user_id))
         await session.commit()
 
     jwt_token = create_access_token(
@@ -557,23 +582,42 @@ async def two_factor_passkey_verify(
             content={"success": False, "message": "登录已过期", "data": None},
         )
 
+    user_id = int(payload["user_id"])
+
+    # Check lockout before attempting
+    try:
+        await check_mfa_lockout(user_id)
+    except AccountLockedError as exc:
+        locked_msg = _i18n.t("toast.account_locked", seconds=exc.remaining_seconds)
+        return JSONResponse(
+            status_code=429,
+            content={
+                "success": False,
+                "message": locked_msg,
+                "data": None,
+            },
+        )
+
     try:
         async with db_module.async_session() as session:
             await finish_authentication(
                 session,
                 body.get("challenge_id", ""),
                 body.get("credential", {}),
-                int(payload["user_id"]),
+                user_id,
             )
             await session.commit()
     except Exception as exc:
+        await record_mfa_failure(user_id)
         logger.warning(
-            "Passkey 登录验证失败: user_id={}, error={}", payload.get("user_id"), exc
+            "Passkey 登录验证失败: user_id={}, error={}", user_id, exc
         )
         return JSONResponse(
             status_code=400,
             content={"success": False, "message": "Passkey 验证失败", "data": None},
         )
+
+    await reset_mfa_failures(user_id)
 
     jwt_token = create_access_token(
         {
@@ -603,6 +647,113 @@ async def logout(request: Request, csrf_token: str = Form(...)):
         "/webui/auth/login", "toast.logged_out", lang=detect_language()
     )
     response.delete_cookie("webui_token")
+    response.delete_cookie(MFA_PENDING_COOKIE_NAME)
+    return response
+
+
+# ========== Passkey 直接登录（无需先 GitHub OAuth）==========
+
+
+@router.post("/passkey/discover")
+@limiter.limit(lambda: get_settings().passkeys_authentication_rate_limit)
+async def passkey_discover_options(request: Request):
+    """Generate discoverable-credential authentication options.
+
+    This endpoint does NOT require a prior login. The browser will
+    present all passkeys matching the RP ID so the user can pick one.
+
+    Security note — CSRF: Like the GitHub OAuth callback and other login
+    entry-points, this endpoint operates in an unauthenticated context
+    (no session yet).  The issued token is bound to the cookie set in
+    ``/passkey/verify-discover``, so a cross-site request cannot steal
+    the credential.
+    """
+    async with db_module.async_session() as session:
+        try:
+            # user_id=None → no allow_credentials → discoverable flow
+            data = await begin_authentication(
+                session, user_id=None, request_origin=request_origin(request)
+            )
+        except WebAuthnError as exc:
+            return JSONResponse(
+                status_code=400,
+                content={"success": False, "message": str(exc), "data": None},
+            )
+    return {"success": True, "message": "ok", "data": data}
+
+
+@router.post("/passkey/verify-discover")
+@limiter.limit(lambda: get_settings().passkeys_authentication_rate_limit)
+async def passkey_verify_discover(request: Request, body: dict = Body(...)):
+    """Verify a discoverable passkey assertion and issue a login token.
+
+    Security note — CSRF: This is an unauthenticated login endpoint
+    (consistent with the GitHub OAuth callback).  It does not rely on a
+    CSRF token because there is no established session to protect.
+    """
+    user_id = 0
+    try:
+        async with db_module.async_session() as session:
+            # expected_user_id=None → accept any user's credential
+            db_credential = await finish_authentication(
+                session,
+                body.get("challenge_id", ""),
+                body.get("credential", {}),
+                expected_user_id=None,
+            )
+            # Look up the user who owns this credential
+            user_id = db_credential.user_id
+            await check_mfa_lockout(user_id)
+            result = await session.execute(
+                select(TelegramUser).where(
+                    TelegramUser.id == user_id,
+                    TelegramUser.is_active,
+                )
+            )
+            user = result.scalar_one_or_none()
+            if not user:
+                return JSONResponse(
+                    status_code=403,
+                    content={"success": False, "message": "toast.user_not_found", "data": None},
+                )
+            # Build the full token payload
+            # Note: github_id and avatar_url are not available for passkey-only login;
+            # the user can refresh them via a subsequent GitHub OAuth if needed.
+            token_payload = {
+                "sub": user.github_username or "",
+                "role": user.role,
+                "user_id": user.id,
+                "github_id": None,
+                "avatar_url": None,
+            }
+            await reset_mfa_failures(user_id)
+            await session.commit()
+    except AccountLockedError as exc:
+        return JSONResponse(
+            status_code=429,
+            content={
+                "success": False,
+                "message": _i18n.t(
+                    "toast.account_locked", seconds=exc.remaining_seconds
+                ),
+                "data": None,
+            },
+        )
+    except Exception as exc:
+        if user_id:
+            await record_mfa_failure(user_id)
+        logger.warning("Passkey 直接登录失败: error={}", exc)
+        return JSONResponse(
+            status_code=400,
+            content={"success": False, "message": "toast.passkey_login_failed", "data": None},
+        )
+
+    jwt_token = create_access_token(token_payload)
+    logger.info("Passkey 直接登录成功: user={}", token_payload["sub"])
+    response = JSONResponse(
+        content={"success": True, "message": "ok", "data": {"redirect": "/webui/"}}
+    )
+    _set_webui_token_cookie(response, jwt_token)
     response.delete_cookie(MFA_PENDING_COOKIE_NAME)
     return response
 

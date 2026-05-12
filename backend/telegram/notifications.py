@@ -333,6 +333,64 @@ class NotificationSender:
             logger.error(f"发送 Critical Issue 告警失败: {e}")
 
 
+    # ========== MFA 安全通知 ==========
+
+    _EVENT_EMOJIS = {
+        "totp_enabled": "✅",
+        "totp_disabled": "⚠️",
+        "recovery_codes_regenerated": "🔄",
+        "passkey_registered": "🔑",
+        "passkey_deleted": "🗑️",
+        "mfa_reset_by_admin": "🛡️",
+        "totp_reset_by_admin": "🛡️",
+        "passkey_deleted_by_admin": "🛡️",
+        "mfa_lockout": "🔒",
+        "mfa_required_by_admin": "📋",
+        "mfa_unrequired_by_admin": "📋",
+    }
+
+    async def send_mfa_event(
+        self,
+        event_type: str,
+        detail: str = "",
+        chat_id: Optional[int] = None,
+    ):
+        """发送 MFA 安全事件通知给用户。
+
+        Args:
+            event_type: 事件类型（totp_enabled / totp_disabled / passkey_registered 等）
+            detail: 事件详情描述
+            chat_id: 用户 Telegram chat_id
+        """
+        if not chat_id:
+            return
+
+        # Lazy import to avoid circular dependency at module load time
+        from backend.webui.i18n import i18n as _i18n
+
+        i18n_key = f"telegram_mfa.{event_type}"
+        label = _i18n.t(i18n_key)
+        # Fallback: if translation missing, use event_type as-is
+        if label == i18n_key:
+            label = event_type.replace("_", " ").title()
+
+        emoji = self._EVENT_EMOJIS.get(event_type, "🔔")
+        safe_label = escape_markdown(label, version=1)
+        safe_detail = escape_markdown(detail[:300], version=1) if detail else ""
+
+        text = f"{emoji} *{safe_label}*\n"
+        if safe_detail:
+            text += f"\n{safe_detail}\n"
+        footer = _i18n.t("telegram_mfa.footer")
+        text += f"\n_{escape_markdown(footer, version=1)}_"
+
+        try:
+            await self.send_to_targets(text, [chat_id])
+            logger.info(f"MFA 通知已发送: event={event_type}, chat_id={chat_id}")
+        except Exception as exc:
+            logger.error(f"发送 MFA 通知失败: event={event_type}, error={exc}")
+
+
 # 全局通知发送器实例
 _notification_sender: Optional[NotificationSender] = None
 
