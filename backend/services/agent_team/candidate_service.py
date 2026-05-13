@@ -1,5 +1,6 @@
 """Agent 专家团队候选任务筛选服务"""
 
+import asyncio
 import json
 import re
 from dataclasses import dataclass
@@ -61,9 +62,12 @@ class AgentTeamCandidateService:
         allowlist = await self._load_repo_allowlist()
         requirement = (ai_filter_requirement or "").strip()
         if requirement:
-            return await self._collect_ai_filtered_issue_candidates(
+            candidates = await self._collect_ai_filtered_issue_candidates(
                 db, allowlist, limit, requirement
             )
+            candidates = self._deduplicate_candidates(candidates)
+            candidates = await self._filter_closed_issues(candidates)
+            return candidates[:limit]
 
         candidates: list[AgentCandidate] = []
         candidates.extend(await self._collect_issue_candidates(db, allowlist, limit))
@@ -124,27 +128,7 @@ class AgentTeamCandidateService:
 
         # 按 source_issue_number + repo 关联去重：同一 Issue 即使有多条分析记录，
         # 只要已有非终态任务就不再进入候选池。
-        existing_exists = (
-            select(1)
-            .where(
-                and_(
-                    AgentTeamTask.source_type
-                    == AgentTeamSourceType.ISSUE_ANALYSIS.value,
-                    AgentTeamTask.status.notin_(
-                        [
-                            AgentTeamTaskStatus.FAILED.value,
-                            AgentTeamTaskStatus.CANCELLED.value,
-                            AgentTeamTaskStatus.ABANDONED.value,
-                        ]
-                    ),
-                    AgentTeamTask.source_issue_number
-                    == IssueAnalysis.issue_number,
-                    AgentTeamTask.repo_owner == IssueAnalysis.repo_owner,
-                    AgentTeamTask.repo_name == IssueAnalysis.repo_name,
-                )
-            )
-            .exists()
-        )
+        existing_exists = self._build_existing_issue_task_exists()
         stmt = (
             select(IssueAnalysis)
             .where(
@@ -194,27 +178,7 @@ class AgentTeamCandidateService:
         requirement: str,
     ) -> list[AgentCandidate]:
         """使用 Agent 专用 AI 从已分析 Issue 中按自然语言要求筛选候选。"""
-        existing_exists = (
-            select(1)
-            .where(
-                and_(
-                    AgentTeamTask.source_type
-                    == AgentTeamSourceType.ISSUE_ANALYSIS.value,
-                    AgentTeamTask.status.notin_(
-                        [
-                            AgentTeamTaskStatus.FAILED.value,
-                            AgentTeamTaskStatus.CANCELLED.value,
-                            AgentTeamTaskStatus.ABANDONED.value,
-                        ]
-                    ),
-                    AgentTeamTask.source_issue_number
-                    == IssueAnalysis.issue_number,
-                    AgentTeamTask.repo_owner == IssueAnalysis.repo_owner,
-                    AgentTeamTask.repo_name == IssueAnalysis.repo_name,
-                )
-            )
-            .exists()
-        )
+        existing_exists = self._build_existing_issue_task_exists()
         stmt = (
             select(IssueAnalysis)
             .where(
@@ -403,6 +367,34 @@ class AgentTeamCandidateService:
         owner, name = repo_full_name.split("/", 1)
         return owner, name
 
+    @staticmethod
+    def _build_existing_issue_task_exists():
+        """构建判断 IssueAnalysis 是否已有非终态任务的关联子查询。
+
+        用于在候选收集时排除已被 Agent Team 接管（且未结束）的 Issue。
+        """
+        return (
+            select(1)
+            .where(
+                and_(
+                    AgentTeamTask.source_type
+                    == AgentTeamSourceType.ISSUE_ANALYSIS.value,
+                    AgentTeamTask.status.notin_(
+                        [
+                            AgentTeamTaskStatus.FAILED.value,
+                            AgentTeamTaskStatus.CANCELLED.value,
+                            AgentTeamTaskStatus.ABANDONED.value,
+                        ]
+                    ),
+                    AgentTeamTask.source_issue_number
+                    == IssueAnalysis.issue_number,
+                    AgentTeamTask.repo_owner == IssueAnalysis.repo_owner,
+                    AgentTeamTask.repo_name == IssueAnalysis.repo_name,
+                )
+            )
+            .exists()
+        )
+
     def _deduplicate_candidates(
         self, candidates: list[AgentCandidate]
     ) -> list[AgentCandidate]:
@@ -436,6 +428,7 @@ class AgentTeamCandidateService:
             return candidates
 
         try:
+            # 延迟导入：避免在模块加载时触发 GitHub App 配置初始化
             from backend.core.github_app import GitHubAppClient
 
             github_app = GitHubAppClient()
@@ -446,7 +439,8 @@ class AgentTeamCandidateService:
         closed_keys: set[tuple[str, str, int]] = set()
         for candidate in to_check:
             try:
-                issue = github_app.get_issue(
+                issue = await asyncio.to_thread(
+                    github_app.get_issue,
                     candidate.repo_owner,
                     candidate.repo_name,
                     candidate.source_issue_number,
@@ -460,8 +454,13 @@ class AgentTeamCandidateService:
                         )
                     )
             except Exception:
-                # fail-open：API 异常不阻塞候选收集
-                pass
+                logger.debug(
+                    "GitHub Issue 状态检查失败: {}/{}#{}",
+                    candidate.repo_owner,
+                    candidate.repo_name,
+                    candidate.source_issue_number,
+                    exc_info=True,
+                )
 
         if not closed_keys:
             return candidates

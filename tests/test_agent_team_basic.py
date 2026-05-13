@@ -466,6 +466,9 @@ async def test_filter_closed_issues_removes_closed(monkeypatch):
     mock_app = MagicMock()
     mock_app.get_issue = MagicMock(side_effect=[closed_issue, open_issue])
 
+    # monkeypatch 修改模块级属性 GitHubAppClient；延迟导入 `from ... import GitHubAppClient`
+    # 在函数体内执行时，Python 会从已加载的 sys.modules 中查找模块，因此 patch
+    # 模块属性即可影响后续延迟导入的行为。
     monkeypatch.setattr(
         "backend.core.github_app.GitHubAppClient",
         lambda: mock_app,
