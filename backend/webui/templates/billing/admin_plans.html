@@ -64,7 +64,7 @@
             </thead>
             <tbody class="bg-white dark:bg-gray-800 divide-y divide-gray-200 dark:divide-gray-700">
                 {% for plan in plans %}
-                <tr>
+                <tr data-plan='{{ {"id": plan.id, "name": plan.name, "plan_type": plan.plan_type, "price_cents": plan.price_cents, "currency": plan.currency, "duration_days": plan.duration_days or "", "pr_quota_bonus": plan.pr_quota_bonus, "pr_daily_add": plan.pr_daily_add, "pr_weekly_add": plan.pr_weekly_add, "pr_monthly_add": plan.pr_monthly_add, "issue_quota_bonus": plan.issue_quota_bonus, "issue_daily_add": plan.issue_daily_add, "issue_weekly_add": plan.issue_weekly_add, "issue_monthly_add": plan.issue_monthly_add, "description": plan.description or "", "sort_order": plan.sort_order} | tojson }}'>
                     <td class="px-4 py-4">
                         <input type="checkbox" class="plan-checkbox h-4 w-4 rounded border-gray-300 text-pink-600 focus:ring-pink-500"
                                value="{{ plan.id }}" onchange="updateBatchBar()">
@@ -96,9 +96,9 @@
                                 {{ _('common.disabled') if plan.is_active else _('common.enabled') }}
                             </button>
                         </form>
-                        <button onclick="openEditPlanModal({{ plan.id }}, '{{ plan.name|e }}', '{{ plan.plan_type }}', {{ plan.price_cents }}, '{{ plan.currency }}', '{{ plan.duration_days or '' }}', {{ plan.pr_quota_bonus }}, {{ plan.pr_daily_add }}, {{ plan.pr_weekly_add }}, {{ plan.pr_monthly_add }}, {{ plan.issue_quota_bonus }}, {{ plan.issue_daily_add }}, {{ plan.issue_weekly_add }}, {{ plan.issue_monthly_add }}, '{{ plan.description|e }}', {{ plan.sort_order }})"
+                        <button onclick="openEditPlanModal(this.closest('tr').dataset.plan)"
                                 class="text-sm text-blue-600 hover:text-blue-800">{{ _('billing.edit_plan') }}</button>
-                        <button onclick="openDeletePlanModal({{ plan.id }}, '{{ plan.name|e }}')"
+                        <button onclick="openDeletePlanModal({{ plan.id }}, {{ plan.name|tojson|safe }})"
                                 class="text-sm text-red-600 hover:text-red-800">{{ _('billing.delete_plan') }}</button>
                     </td>
                 </tr>
@@ -427,25 +427,23 @@
 </div>
 
 <script>
-function openEditPlanModal(id, name, planType, priceCents, currency, durationDays,
-    prQuotaBonus, prDailyAdd, prWeeklyAdd, prMonthlyAdd,
-    issueQuotaBonus, issueDailyAdd, issueWeeklyAdd, issueMonthlyAdd,
-    description, sortOrder) {
-    document.getElementById('edit-plan-form').action = '/billing/admin/plans/' + id + '/edit';
-    document.getElementById('edit-name').value = name;
-    document.getElementById('edit-plan_type').value = planType;
-    document.getElementById('edit-price_cents').value = priceCents;
-    document.getElementById('edit-duration_days').value = durationDays || '';
-    document.getElementById('edit-pr_quota_bonus').value = prQuotaBonus;
-    document.getElementById('edit-pr_daily_add').value = prDailyAdd;
-    document.getElementById('edit-pr_weekly_add').value = prWeeklyAdd;
-    document.getElementById('edit-pr_monthly_add').value = prMonthlyAdd;
-    document.getElementById('edit-issue_quota_bonus').value = issueQuotaBonus;
-    document.getElementById('edit-issue_daily_add').value = issueDailyAdd;
-    document.getElementById('edit-issue_weekly_add').value = issueWeeklyAdd;
-    document.getElementById('edit-issue_monthly_add').value = issueMonthlyAdd;
-    document.getElementById('edit-description').value = description;
-    document.getElementById('edit-sort_order').value = sortOrder;
+function openEditPlanModal(planJson) {
+    const plan = JSON.parse(planJson);
+    document.getElementById('edit-plan-form').action = '/billing/admin/plans/' + plan.id + '/edit';
+    document.getElementById('edit-name').value = plan.name;
+    document.getElementById('edit-plan_type').value = plan.plan_type;
+    document.getElementById('edit-price_cents').value = plan.price_cents;
+    document.getElementById('edit-duration_days').value = plan.duration_days || '';
+    document.getElementById('edit-pr_quota_bonus').value = plan.pr_quota_bonus;
+    document.getElementById('edit-pr_daily_add').value = plan.pr_daily_add;
+    document.getElementById('edit-pr_weekly_add').value = plan.pr_weekly_add;
+    document.getElementById('edit-pr_monthly_add').value = plan.pr_monthly_add;
+    document.getElementById('edit-issue_quota_bonus').value = plan.issue_quota_bonus;
+    document.getElementById('edit-issue_daily_add').value = plan.issue_daily_add;
+    document.getElementById('edit-issue_weekly_add').value = plan.issue_weekly_add;
+    document.getElementById('edit-issue_monthly_add').value = plan.issue_monthly_add;
+    document.getElementById('edit-description').value = plan.description;
+    document.getElementById('edit-sort_order').value = plan.sort_order;
     document.getElementById('edit-plan-modal').classList.remove('hidden');
 }
 
