@@ -1133,6 +1133,8 @@ toast:
   labels_saved: "标签定义已更新（{count} 个）"
   label_settings_saved: "标签推荐设置已更新"
   label_settings_validation_failed: "推荐设置验证失败: {error}"
+  agent_skill_installed: "Skill [{slug}] 已安装"
+  agent_skill_install_failed: "Skill 安装失败: {error}"
   conflict_rules_saved: "标签冲突规则已更新（{count} 条）"
   numeric_required: "{field_key} 必须是有效数值"
   value_range: "{field_key} 值须在 {min_v}-{max_v} 之间"
