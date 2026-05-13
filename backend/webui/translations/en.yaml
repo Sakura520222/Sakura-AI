@@ -1024,7 +1024,7 @@ system_config:
   test_connection: "Test Connection"
   test_failed: "Test failed: "
   url_required: "Please enter a connection URL first"
-  save_hint: "Keys marked "Restart Required" need a service restart to fully apply. Other changes take effect immediately."
+  save_hint: "Keys marked \"Restart Required\" need a service restart to fully apply. Other changes take effect immediately."
   saved: "System config saved and applied live"
   saved_restart_required: "System config saved. Some changes require a service restart to take effect."
   invalid_db_url: "Invalid database URL. Must start with mysql+aiomysql:// or postgresql+asyncpg://"
