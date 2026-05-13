@@ -498,7 +498,7 @@ async def admin_edit_code(
 
     if not update_data:
         return toast_redirect(
-            "/billing/admin/codes", "toast.plan_updated", lang=detect_language()
+            "/billing/admin/codes", "toast.no_changes", lang=detect_language()
         )
 
     svc = PaymentService(db)

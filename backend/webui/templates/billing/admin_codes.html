@@ -66,7 +66,7 @@
             </thead>
             <tbody class="bg-white dark:bg-gray-800 divide-y divide-gray-200 dark:divide-gray-700">
                 {% for code in codes %}
-                <tr>
+                <tr data-code='{{ {"id": code.id, "status": code.status, "expires_at": code.expires_at.strftime('%Y-%m-%dT%H:%M') if code.expires_at else "", "max_uses": code.max_uses, "plan_id": code.plan_id} | tojson }}' data-delete='{{ {"id": code.id, "code": code.code, "used_count": code.used_count} | tojson }}'>
                     <td class="px-4 py-4">
                         <input type="checkbox" class="code-checkbox h-4 w-4 rounded border-gray-300 text-pink-600 focus:ring-pink-500"
                                value="{{ code.id }}" data-used="{{ code.used_count }}" onchange="updateBatchBar()">
@@ -93,9 +93,9 @@
                         {{ code.expires_at.strftime('%Y-%m-%d %H:%M') if code.expires_at else _('billing.never_expire') }}
                     </td>
                     <td class="px-6 py-4 space-x-2">
-                        <button onclick="openEditCodeModal({{ code.id }}, '{{ code.status }}', '{{ code.expires_at.strftime('%Y-%m-%dT%H:%M') if code.expires_at else '' }}', {{ code.max_uses }}, {{ code.plan_id }})"
+                        <button onclick="openEditCodeModal(this.closest('tr').dataset.code)"
                                 class="text-sm text-blue-600 hover:text-blue-800">{{ _('billing.edit_code') }}</button>
-                        <button onclick="openDeleteCodeModal({{ code.id }}, '{{ code.code }}', {{ code.used_count }})"
+                        <button onclick="openDeleteCodeModal(this.closest('tr').dataset.delete)"
                                 class="text-sm text-red-600 hover:text-red-800">{{ _('billing.delete_code') }}</button>
                     </td>
                 </tr>
@@ -270,21 +270,23 @@
 </div>
 
 <script>
-function openEditCodeModal(id, status, expiresAt, maxUses, planId) {
-    document.getElementById('edit-code-form').action = '/billing/admin/codes/' + id + '/edit';
-    document.getElementById('edit-code-status').value = status;
-    document.getElementById('edit-code-expires').value = expiresAt || '';
-    document.getElementById('edit-code-max-uses').value = maxUses;
-    document.getElementById('edit-code-plan').value = planId;
+function openEditCodeModal(codeJson) {
+    const code = JSON.parse(codeJson);
+    document.getElementById('edit-code-form').action = '/billing/admin/codes/' + code.id + '/edit';
+    document.getElementById('edit-code-status').value = code.status;
+    document.getElementById('edit-code-expires').value = code.expires_at || '';
+    document.getElementById('edit-code-max-uses').value = code.max_uses;
+    document.getElementById('edit-code-plan').value = code.plan_id;
     document.getElementById('edit-code-modal').classList.remove('hidden');
 }
 
-function openDeleteCodeModal(id, codeValue, usedCount) {
-    document.getElementById('delete-code-value').textContent = codeValue;
-    document.getElementById('delete-code-form').action = '/billing/admin/codes/' + id + '/delete';
+function openDeleteCodeModal(deleteJson) {
+    const data = JSON.parse(deleteJson);
+    document.getElementById('delete-code-value').textContent = data.code;
+    document.getElementById('delete-code-form').action = '/billing/admin/codes/' + data.id + '/delete';
     const warning = document.getElementById('delete-code-warning');
     const submitBtn = document.getElementById('delete-code-submit');
-    if (usedCount > 0) {
+    if (data.used_count > 0) {
         warning.classList.remove('hidden');
         submitBtn.disabled = true;
         submitBtn.classList.add('opacity-50', 'cursor-not-allowed');

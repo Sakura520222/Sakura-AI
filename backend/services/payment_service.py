@@ -190,6 +190,8 @@ class PaymentService:
             if plan:
                 plan.is_active = not plan.is_active
                 results.append(plan)
+            else:
+                logger.warning(f"batch_toggle: plan {pid} not found, skipped")
         if results:
             await self.session.flush()
         return results
@@ -340,8 +342,8 @@ class PaymentService:
             try:
                 code = await self.update_redeem_code(cid, **kwargs)
                 results.append(code)
-            except PaymentError:
-                pass  # 跳过无法更新的
+            except PaymentError as e:
+                logger.debug(f"Skipped code {cid}: {e}")
         return results
 
     # ========== 用户兑换/购买 ==========
