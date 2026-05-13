@@ -421,7 +421,7 @@ async def get_user_preferences(request: Request, db: AsyncSession = Depends(get_
     payload = decode_access_token(token)
     if not is_access_token_payload(payload):
         return {"language": "zh-CN", "items_per_page": 20}
-    raw_user_id = payload.get("user_id") if payload else None
+    raw_user_id = payload.get("user_id")
     if not raw_user_id:
         return {"language": "zh-CN", "items_per_page": 20}
 

@@ -1,12 +1,4 @@
-"""端到端语言切换流程测试。
-
-模拟完整流程：
-1. 读取初始偏好 → zh-CN
-2. 保存新语言 → en（模拟 save_settings 的 DB写入 + 缓存失效）
-3. 再次读取偏好 → en
-4. detect_language → en
-5. render_template 使用 en 翻译函数
-"""
+"""语言切换端到端流程测试。"""
 
 from types import SimpleNamespace
 from unittest.mock import patch, MagicMock
@@ -20,36 +12,15 @@ from backend.webui.deps import (
     _USER_PREFS_CACHE,
 )
 from backend.webui.i18n import detect_language, make_translation_func
+from tests.stubs import RequestStub, DbStub
 
 
-# ========== 测试桩 ==========
-
-class RequestStub:
-    """模拟 FastAPI Request。"""
-
-    def __init__(self, token: str | None = "token"):
-        self.cookies = {"webui_token": token} if token else {}
-        self.state = SimpleNamespace()
-
-
-class ResultStub:
-    def __init__(self, value):
-        self.value = value
-
-    def scalar_one_or_none(self):
-        return self.value
-
-
-class DbStub:
-    """模拟 AsyncSession。"""
-
-    def __init__(self, config):
-        self.config = config
-        self.execute_count = 0
-
-    async def execute(self, statement):
-        self.execute_count += 1
-        return ResultStub(self.config)
+@pytest.fixture(autouse=True)
+def _clear_prefs_cache():
+    """确保每个测试前后全局缓存干净。"""
+    _USER_PREFS_CACHE.clear()
+    yield
+    _USER_PREFS_CACHE.clear()
 
 
 # ========== 测试用例 ==========
@@ -58,7 +29,6 @@ class DbStub:
 @pytest.mark.asyncio
 async def test_language_switch_full_flow():
     """模拟完整的语言切换流程：读取 → 保存（缓存失效） → 再读取。"""
-    _USER_PREFS_CACHE.clear()
 
     # 1. 初始状态：用户语言为 zh-CN
     initial_config = SimpleNamespace(language="zh-CN", items_per_page=20)
@@ -92,19 +62,14 @@ async def test_language_switch_full_flow():
     lang = detect_language(prefs_after)
     assert lang == "en", f"预期 en，实际 {lang}"
 
-    # 5. 翻译函数应绑定 en
+    # 翻译函数应绑定 en
     translate = make_translation_func(lang)
-    settings_title = translate("settings.title")
-    assert settings_title == "Settings", f"预期 'Settings'，实际 '{settings_title}'"
-
-    # 清理
-    _USER_PREFS_CACHE.clear()
+    assert translate("settings.title") == "Settings"
 
 
 @pytest.mark.asyncio
 async def test_cache_hit_returns_old_value_after_save_without_invalidation():
     """验证：如果不调用 invalidate，缓存会返回旧值。"""
-    _USER_PREFS_CACHE.clear()
 
     config = SimpleNamespace(language="zh-CN", items_per_page=20)
     db = DbStub(config)
@@ -126,14 +91,10 @@ async def test_cache_hit_returns_old_value_after_save_without_invalidation():
     assert prefs2 == {"language": "zh-CN", "items_per_page": 20}
     assert db.execute_count == 1, "缓存命中，不应再查 DB"
 
-    # 清理
-    _USER_PREFS_CACHE.clear()
-
 
 @pytest.mark.asyncio
 async def test_cache_invalidation_then_read_returns_new_value():
     """验证：失效缓存后再次读取返回新值。"""
-    _USER_PREFS_CACHE.clear()
 
     config = SimpleNamespace(language="zh-CN", items_per_page=20)
     db = DbStub(config)
@@ -151,9 +112,6 @@ async def test_cache_invalidation_then_read_returns_new_value():
         prefs = await get_user_preferences(RequestStub(), db)
 
     assert prefs["language"] == "en"
-
-    # 清理
-    _USER_PREFS_CACHE.clear()
 
 
 def test_detect_language_with_user_prefs():
