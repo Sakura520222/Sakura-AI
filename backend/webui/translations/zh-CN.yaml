@@ -106,6 +106,7 @@ common:
   manage_params: "管理应用运行参数，修改后即时生效"
   basic_config: "基础配置"
   max_concurrent_desc: "同时进行的最大 PR 审查任务数"
+  max_concurrent_issues_desc: "同时进行的最大 Issue 分析任务数"
   review_timeout_desc: "一个 PR 审查任务从开始到结束允许的最长总耗时（秒）"
   enable_auto_review_desc: "是否自动审查 Webhook 触发的新提交 PR，不影响手动指令"
   issue_auto_labels_desc: "是否自动为 Issue 应用 AI 推荐的标签"
@@ -1132,8 +1133,12 @@ toast:
   labels_saved: "标签定义已更新（{count} 个）"
   label_settings_saved: "标签推荐设置已更新"
   label_settings_validation_failed: "推荐设置验证失败: {error}"
+  conflict_rules_saved: "标签冲突规则已更新（{count} 条）"
+  numeric_required: "{field_key} 必须是有效数值"
+  value_range: "{field_key} 值须在 {min_v}-{max_v} 之间"
+  value_invalid: "{field_key} 值无效"
 
-# ========== Telegram MFA 通知 / Telegram MFA Notifications ====
+# ========== Telegram MFA 通知 / Telegram MFA Notifications ===="
 telegram_mfa:
   totp_enabled: "两步验证已启用"
   totp_disabled: "两步验证已禁用"
@@ -1147,7 +1152,6 @@ telegram_mfa:
   mfa_required_by_admin: "已被要求开启 MFA"
   mfa_unrequired_by_admin: "MFA 要求已取消"
   footer: "Sakura AI Reviewer 安全通知"
-  conflict_rules_saved: "标签冲突规则已更新（{count} 条）"
 
 # ========== API 错误消息 / API Error Messages ==========
 api:
@@ -1189,9 +1193,6 @@ api:
   ai_tool_iterations_invalid: "AI 工具调用迭代次数必须是有效整数"
   ai_tool_iterations_range: "AI 工具调用迭代次数须在 1-150 之间"
   unsupported_search_provider: "不支持的搜索提供商"
-  numeric_required: "{field_key} 必须是有效数值"
-  value_range: "{field_key} 值须在 {min_v}-{max_v} 之间"
-  value_invalid: "{field_key} 值无效"
 
 # ========== 评论模板 / Comment Templates ==========
 comment:

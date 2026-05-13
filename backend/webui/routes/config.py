@@ -1039,6 +1039,19 @@ async def save_general_config(
             if key in all_dynamic_keys or key in BASIC_CONFIG_KEYS:
                 update_settings_field(key, change.get("raw_new", change["new"]))
 
+        # 即时重置信号量，使并发配置立即生效
+        if "max_concurrent_issues" in changed:
+            # 延迟导入避免 config ↔ worker 循环引用
+            from backend.workers.issue_worker import reset_issue_semaphore
+
+            reset_issue_semaphore()
+
+        if "max_concurrent_reviews" in changed:
+            # 延迟导入避免 config ↔ worker 循环引用
+            from backend.workers.review_worker import reset_review_semaphore
+
+            reset_review_semaphore()
+
         logger.info(f"全局配置已更新, by={user['sub']}, changed={list(changed.keys())}")
         # 构建脱敏日志副本（不包含 raw_new 明文，并对敏感键二次脱敏防御）
         log_changed = {}
