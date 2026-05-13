@@ -132,7 +132,7 @@ async def admin_plans(
         user_prefs=user_prefs,
         current_user=user,
         csrf_token=get_csrf_serializer().dumps({}),
-        active_page="billing_admin",
+        active_page="billing_admin_plans",
         plans=plans,
     )
 
@@ -254,7 +254,7 @@ async def admin_codes(
         user_prefs=user_prefs,
         current_user=user,
         csrf_token=get_csrf_serializer().dumps({}),
-        active_page="billing_admin",
+        active_page="billing_admin_codes",
         plans=plans,
         codes=codes,
         total=total,
