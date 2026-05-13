@@ -209,7 +209,7 @@ async def login_page(request: Request):
     # 已登录则跳转仪表盘
     token = request.cookies.get("webui_token")
     if token and decode_access_token(token):
-        return toast_redirect("/webui/", "toast.auto_logged_in", lang=detect_language())
+        return toast_redirect("/", "toast.auto_logged_in", lang=detect_language())
 
     settings = get_settings()
     has_oauth = bool(settings.github_oauth_client_id)
@@ -251,7 +251,7 @@ async def github_login(request: Request):
 
     # 生成 state 防止 CSRF
     state = secrets.token_urlsafe(32)
-    await _save_oauth_state(state, "/webui/")
+    await _save_oauth_state(state, "/")
 
     params = {
         "client_id": settings.github_oauth_client_id,
@@ -389,7 +389,7 @@ async def github_callback(
     if has_mfa_method:
         mfa_token = create_mfa_pending_token(token_data)
         logger.info(f"GitHub OAuth 需要二次验证: {github_username} (role={user.role})")
-        response = RedirectResponse(url="/webui/auth/2fa", status_code=302)
+        response = RedirectResponse(url="/auth/2fa", status_code=302)
         _set_mfa_pending_cookie(response, mfa_token)
         response.delete_cookie("webui_token")
         return response
@@ -409,7 +409,7 @@ async def two_factor_page(request: Request):
     token = request.cookies.get(MFA_PENDING_COOKIE_NAME)
     payload = decode_access_token(token) if token else None
     if not is_mfa_pending_payload(payload):
-        return toast_redirect("/webui/auth/login", "toast.login_required", "error")
+        return toast_redirect("/auth/login", "toast.login_required", "error")
 
     user_id = payload.get("user_id")
     async with db_module.async_session() as session:
@@ -421,7 +421,7 @@ async def two_factor_page(request: Request):
         )
         user = result.scalar_one_or_none()
         if not user or not await user_has_any_mfa_method(session, user):
-            return toast_redirect("/webui/auth/login", "toast.login_required", "error")
+            return toast_redirect("/auth/login", "toast.login_required", "error")
         totp_enabled = bool(user.totp_enabled)
 
     return render_template(
@@ -449,7 +449,7 @@ async def verify_two_factor(
     token = request.cookies.get(MFA_PENDING_COOKIE_NAME)
     payload = decode_access_token(token) if token else None
     if not is_mfa_pending_payload(payload):
-        return toast_redirect("/webui/auth/login", "toast.login_required", "error")
+        return toast_redirect("/auth/login", "toast.login_required", "error")
 
     user_id = payload.get("user_id")
     async with db_module.async_session() as session:
@@ -461,7 +461,7 @@ async def verify_two_factor(
         )
         user = result.scalar_one_or_none()
         if not user or not await user_has_any_mfa_method(session, user):
-            return toast_redirect("/webui/auth/login", "toast.login_required", "error")
+            return toast_redirect("/auth/login", "toast.login_required", "error")
 
         # Check lockout before attempting verification
         try:
@@ -533,7 +533,7 @@ async def verify_two_factor(
         }
     )
     logger.info("WebUI 二次验证成功: user={}", payload.get("sub"))
-    response = RedirectResponse(url="/webui/", status_code=302)
+    response = RedirectResponse(url="/", status_code=302)
     _set_webui_token_cookie(response, jwt_token)
     response.delete_cookie(MFA_PENDING_COOKIE_NAME)
     return response
@@ -629,7 +629,7 @@ async def two_factor_passkey_verify(
         }
     )
     response = JSONResponse(
-        content={"success": True, "message": "ok", "data": {"redirect": "/webui/"}}
+        content={"success": True, "message": "ok", "data": {"redirect": "/"}}
     )
     _set_webui_token_cookie(response, jwt_token)
     response.delete_cookie(MFA_PENDING_COOKIE_NAME)
@@ -644,7 +644,7 @@ async def logout(request: Request, csrf_token: str = Form(...)):
 
     logger.info("WebUI 用户登出")
     response = toast_redirect(
-        "/webui/auth/login", "toast.logged_out", lang=detect_language()
+        "/auth/login", "toast.logged_out", lang=detect_language()
     )
     response.delete_cookie("webui_token")
     response.delete_cookie(MFA_PENDING_COOKIE_NAME)
@@ -751,7 +751,7 @@ async def passkey_verify_discover(request: Request, body: dict = Body(...)):
     jwt_token = create_access_token(token_payload)
     logger.info("Passkey 直接登录成功: user={}", token_payload["sub"])
     response = JSONResponse(
-        content={"success": True, "message": "ok", "data": {"redirect": "/webui/"}}
+        content={"success": True, "message": "ok", "data": {"redirect": "/"}}
     )
     _set_webui_token_cookie(response, jwt_token)
     response.delete_cookie(MFA_PENDING_COOKIE_NAME)

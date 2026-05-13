@@ -353,6 +353,7 @@ class Settings(BaseSettings):
     issue_max_tool_iterations: int = 15
     issue_max_files_per_analysis: int = 10
     issue_max_directory_depth: int = 3
+    max_concurrent_issues: int = 3
     issue_price_per_1k_prompt: float = 0.0
     issue_price_per_1k_completion: float = 0.0
 
@@ -885,6 +886,7 @@ DYNAMIC_CONFIG_GROUPS: OrderedDict[str, dict] = OrderedDict(
                     "issue_max_tool_iterations": "AI 工具调用最大迭代次数，控制分析深度",
                     "issue_max_files_per_analysis": "单次分析最多读取的文件数",
                     "issue_max_directory_depth": "目录浏览的最大深度",
+                    "max_concurrent_issues": "同时进行的最大 Issue 分析任务数，超出排队等待",
                 },
                 "keys": [
                     "enable_issue_analysis",
@@ -901,6 +903,7 @@ DYNAMIC_CONFIG_GROUPS: OrderedDict[str, dict] = OrderedDict(
                     "issue_max_tool_iterations",
                     "issue_max_files_per_analysis",
                     "issue_max_directory_depth",
+                    "max_concurrent_issues",
                 ],
             },
         ),
@@ -1166,6 +1169,7 @@ DYNAMIC_CONFIG_RANGES: dict[str, tuple[float, float]] = {
     "sakura_max_memory_chars": (500, 10000),
     "sakura_max_sakura_chars": (1000, 20000),
     "agent_team_max_tokens": (1024, 32768),
+    "max_concurrent_issues": (1, 200),
 }
 
 # 字段中文标签
@@ -1288,6 +1292,7 @@ DYNAMIC_CONFIG_LABELS: dict[str, str] = {
     "issue_max_tool_iterations": "工具最大迭代次数",
     "issue_max_files_per_analysis": "单次分析最大文件数",
     "issue_max_directory_depth": "目录最大深度",
+    "max_concurrent_issues": "最大并发分析数",
     # Agent 专家团队
     "agent_team_enabled": "启用 Agent 专家团队",
     "agent_team_workspace_root": "工作区根目录",
