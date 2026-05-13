@@ -1041,11 +1041,13 @@ async def save_general_config(
 
         # 即时重置信号量，使并发配置立即生效
         if "max_concurrent_issues" in changed:
+            # 延迟导入避免 config ↔ worker 循环引用
             from backend.workers.issue_worker import reset_issue_semaphore
 
             reset_issue_semaphore()
 
         if "max_concurrent_reviews" in changed:
+            # 延迟导入避免 config ↔ worker 循环引用
             from backend.workers.review_worker import reset_review_semaphore
 
             reset_review_semaphore()
