@@ -446,8 +446,13 @@ async def get_user_preferences(request: Request, db: AsyncSession = Depends(get_
     payload = decode_access_token(token)
     if not is_access_token_payload(payload):
         return {"language": "zh-CN", "items_per_page": 20}
-    user_id = payload.get("user_id") if payload else None
-    if not user_id:
+    raw_user_id = payload.get("user_id")
+    if not raw_user_id:
+        return {"language": "zh-CN", "items_per_page": 20}
+
+    try:
+        user_id = int(raw_user_id)
+    except (TypeError, ValueError):
         return {"language": "zh-CN", "items_per_page": 20}
 
     # 检查缓存
