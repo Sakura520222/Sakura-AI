@@ -43,7 +43,8 @@ async def _load_max_concurrent() -> int:
     try:
         val = await get_dynamic_config("max_concurrent_issues")
         return int(val) if val is not None else get_settings().max_concurrent_issues
-    except Exception:
+    except Exception as e:
+        logger.warning(f"读取 max_concurrent_issues 配置失败，使用默认值: {e}")
         return get_settings().max_concurrent_issues
 
 
