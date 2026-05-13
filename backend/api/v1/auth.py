@@ -17,6 +17,17 @@ from backend.services.two_factor_service import (
     verify_user_totp,
 )
 from backend.services.security_admin_service import user_has_any_mfa_method
+from backend.services.mfa_lockout_service import (
+    AccountLockedError,
+    check_mfa_lockout,
+    record_mfa_failure,
+    reset_mfa_failures,
+)
+from backend.services.webauthn_service import (
+    WebAuthnError,
+    begin_authentication,
+    finish_authentication,
+)
 from backend.webui.auth import (
     create_access_token,
     create_mfa_pending_token,
@@ -43,6 +54,8 @@ from backend.webui.routes.auth import (
     _get_oauth_state,
     _delete_oauth_state,
 )
+from backend.webui.deps import request_origin
+from backend.webui.i18n import i18n as _i18n
 
 router = APIRouter(prefix="/auth", tags=["Auth"])
 
@@ -76,7 +89,7 @@ async def github_authorize(request: Request):
         return error_response("GitHub OAuth 回调地址未配置", status_code=500)
 
     state = secrets.token_urlsafe(32)
-    await _save_oauth_state(state, "/webui/")
+    await _save_oauth_state(state, "/")
 
     params = {
         "client_id": settings.github_oauth_client_id,
@@ -282,6 +295,15 @@ async def verify_two_factor(request: Request, body: MfaVerifyRequest):
         if not user or not await user_has_any_mfa_method(session, user):
             return error_response("用户未启用二次验证", status_code=400)
 
+        # Check lockout before attempting
+        try:
+            await check_mfa_lockout(int(user_id))
+        except AccountLockedError as exc:
+            return error_response(
+                _i18n.t("toast.account_locked", seconds=exc.remaining_seconds),
+                status_code=429,
+            )
+
         if not user.totp_enabled:
             return error_response("请使用通行密钥完成验证", status_code=400)
 
@@ -300,9 +322,11 @@ async def verify_two_factor(request: Request, body: MfaVerifyRequest):
             verified = await consume_recovery_code(session, int(user_id), body.code)
 
         if not verified:
+            await record_mfa_failure(int(user_id))
             await session.rollback()
             return error_response("验证码或恢复码无效", status_code=400)
 
+        await reset_mfa_failures(int(user_id))
         await session.commit()
 
     token_payload = {
@@ -335,6 +359,95 @@ async def logout(request: Request, user: dict = Depends(get_api_current_user)):
     """登出（API 模式下客户端自行删除 token）"""
     logger.info(f"API 用户登出: {user.get('sub')}")
     return success_response(message="已退出登录")
+
+
+@router.post("/2fa/passkey/options")
+@limiter.limit(lambda: get_settings().passkeys_authentication_rate_limit)
+async def api_passkey_options(request: Request, body: dict):
+    """创建 API Passkey 认证 options。"""
+    mfa_token = body.get("mfa_token")
+    payload = decode_access_token(mfa_token) if mfa_token else None
+    if not is_mfa_pending_payload(payload):
+        return error_response(_i18n.t("api.invalid_mfa_token"), status_code=401)
+
+    user_id = int(payload["user_id"])
+    try:
+        await check_mfa_lockout(user_id)
+    except AccountLockedError as exc:
+        return error_response(
+            _i18n.t("toast.account_locked", seconds=exc.remaining_seconds),
+            status_code=429,
+        )
+
+    async with db_module.async_session() as session:
+        try:
+            data = await begin_authentication(session, user_id, request_origin(request))
+        except WebAuthnError as exc:
+            return error_response(str(exc), status_code=400)
+    return success_response(data=data)
+
+
+@router.post("/2fa/passkey/verify")
+@limiter.limit(lambda: get_settings().passkeys_authentication_rate_limit)
+async def api_passkey_verify(request: Request, body: dict):
+    """验证 API Passkey 认证结果并签发正式 Token。"""
+    mfa_token = body.get("mfa_token")
+    payload = decode_access_token(mfa_token) if mfa_token else None
+    if not is_mfa_pending_payload(payload):
+        return error_response(_i18n.t("api.invalid_mfa_token"), status_code=401)
+
+    user_id = int(payload["user_id"])
+    try:
+        await check_mfa_lockout(user_id)
+    except AccountLockedError as exc:
+        return error_response(
+            _i18n.t("toast.account_locked", seconds=exc.remaining_seconds),
+            status_code=429,
+        )
+
+    try:
+        async with db_module.async_session() as session:
+            await finish_authentication(
+                session,
+                body.get("challenge_id", ""),
+                body.get("credential", {}),
+                user_id,
+            )
+            await session.commit()
+    except AccountLockedError as exc:
+        return error_response(
+            _i18n.t("toast.account_locked", seconds=exc.remaining_seconds),
+            status_code=429,
+        )
+    except Exception as exc:
+        await record_mfa_failure(user_id)
+        logger.warning("API Passkey 验证失败: user_id={}, error={}", user_id, exc)
+        return error_response(_i18n.t("toast.passkey_login_failed"), status_code=400)
+
+    await reset_mfa_failures(user_id)
+    token_payload = {
+        "sub": payload.get("sub"),
+        "role": payload.get("role"),
+        "user_id": user_id,
+        "github_id": payload.get("github_id"),
+        "avatar_url": payload.get("avatar_url"),
+    }
+    jwt_token = create_access_token(token_payload)
+    logger.info("API Passkey 二次验证成功: user={}", payload.get("sub"))
+
+    user_info = _build_user_info_response(
+        payload.get("sub") or "",
+        payload.get("role") or "user",
+        user_id,
+        payload.get("github_id"),
+        payload.get("avatar_url"),
+    )
+    return success_response(
+        data=TokenResponse(
+            access_token=jwt_token,
+            user=user_info,
+        ).model_dump(mode="json")
+    )
 
 
 @router.get("/me")

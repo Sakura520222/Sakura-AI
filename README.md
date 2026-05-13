@@ -8,7 +8,7 @@
 [![Python](https://img.shields.io/badge/Python-3.11+-blue.svg)](https://www.python.org/)
 [![FastAPI](https://img.shields.io/badge/FastAPI-Latest-green.svg)](https://fastapi.tiangolo.com/)
 [![License](https://img.shields.io/badge/License-AGPLv3-yellow.svg)](LICENSE)
-[![Live Demo](https://img.shields.io/badge/🌐_免费体验-Online-success.svg)](https://pr-bot.firefly520.top/webui)
+[![Live Demo](https://img.shields.io/badge/🌐_免费体验-Online-success.svg)](https://pr-bot.firefly520.top/)
 [![Android App](https://img.shields.io/badge/Android_App-🚧_开发中-orange.svg)](https://github.com/Sakura520222/Sakura-AI-Reviewer-APP)
 
 ---
@@ -175,7 +175,7 @@ cd Sakura-AI-Reviewer
 6. 创建后，在 App 页面底部 **Generate a private key**，下载 `.pem` 文件（Setup Wizard 中需粘贴完整私钥内容）
 7. 点击左侧 **Install App**，选择要启用审查的仓库
 
-> WebUI 登录需额外创建 [OAuth App](https://github.com/settings/developers)，回调地址设为 `https://your-domain.com/webui/auth/callback`
+> WebUI 登录需额外创建 [OAuth App](https://github.com/settings/developers)，回调地址设为 `https://your-domain.com/auth/callback`
 
 ### 4. 准备数据库
 
@@ -215,7 +215,7 @@ curl http://your-domain.com:8000/health
 # {"status":"healthy","service":"Sakura AI Reviewer"}
 ```
 
-WebUI：`https://your-domain.com/webui/`
+WebUI：`https://your-domain.com/`
 
 ---
 
@@ -237,7 +237,7 @@ WebUI：`https://your-domain.com/webui/`
 
 ### WebUI 管理
 
-访问 `https://your-domain.com/webui/`，使用 GitHub 账号登录（需先在 Telegram Bot 中注册）。支持仪表盘图表、PR 管理、用户管理、动态配置管理、审查队列监控、操作日志、安全中心、个人 MFA/Passkey 设置等功能。配置修改即时生效，无需重启服务。
+访问 `https://your-domain.com/`，使用 GitHub 账号登录（需先在 Telegram Bot 中注册）。支持仪表盘图表、PR 管理、用户管理、动态配置管理、审查队列监控、操作日志、安全中心、个人 MFA/Passkey 设置等功能。配置修改即时生效，无需重启服务。
 
 ### Telegram Bot
 

@@ -18,7 +18,7 @@ from backend.core.bootstrap import (
 from backend.webui.routes.setup import router as setup_router
 from backend.api import webhook
 from backend.webui.routes import webui_router
-from backend.webui.deps import error_page, toast_redirect
+from backend.webui.deps import is_webui_request, error_page, toast_redirect
 from backend.webui.auth import decode_access_token
 from backend.api.v1 import api_v1_router
 from backend.api.v1.deps import limiter
@@ -93,16 +93,6 @@ async def lifespan(app: FastAPI):
             # 无法连接数据库，进入 bootstrap 模式引导用户配置
             logger.warning("🔧 因缺少 DATABASE_URL 进入 bootstrap 模式，请访问 /setup")
         else:
-            logger.info(f"📊 日志级别: {settings.log_level}")
-            logger.info(f"🌐 应用域名: {settings.app_domain}")
-            logger.info(f"🤖 OpenAI模型: {settings.openai_model}")
-
-            # 检测默认 JWT 密钥
-            if settings.webui_secret_key == "change-me-in-production":
-                logger.warning(
-                    "⚠️  WebUI JWT 密钥使用默认值！请通过 WebUI 配置页面设置 WEBUI_SECRET_KEY。"
-                )
-
             # 2. 初始化数据库
             try:
                 from backend.models import init_db
@@ -120,6 +110,17 @@ async def lifespan(app: FastAPI):
                 logger.info("✅ 配置已从数据库加载到 Settings")
             except Exception as e:
                 logger.warning(f"⚠️ 加载配置失败: {e}")
+
+            # 打印关键配置（在动态配置加载后，确保显示实际值）
+            logger.info(f"📊 日志级别: {settings.log_level}")
+            logger.info(f"🌐 应用域名: {settings.app_domain}")
+            logger.info(f"🤖 OpenAI模型: {settings.openai_model}")
+
+            # 检测默认 JWT 密钥（必须在动态配置加载后检查）
+            if settings.webui_secret_key == "change-me-in-production":
+                logger.warning(
+                    "⚠️  WebUI JWT 密钥使用默认值！请通过 WebUI 配置页面设置 WEBUI_SECRET_KEY。"
+                )
 
             # 4. 动态配置加载后再次校验必填字段（仅警告，不阻止启动）
             missing = settings.validate_required_fields()
@@ -257,7 +258,7 @@ _WEBUI_RATE_LIMIT_JSON_SUFFIXES = frozenset(
 async def rate_limit_exception_handler(request: Request, exc: RateLimitExceeded):
     """Return WebUI-friendly rate limit feedback instead of raw JSON pages."""
     path = request.url.path
-    if path.startswith("/webui"):
+    if is_webui_request(request):
         message = "toast.rate_limit_exceeded"
         if request.headers.get("hx-request") == "true":
             return JSONResponse(
@@ -277,7 +278,7 @@ async def rate_limit_exception_handler(request: Request, exc: RateLimitExceeded)
         redirect_url = (
             referer
             if referer and referer.startswith(str(request.base_url))
-            else "/webui/"
+            else "/"
         )
         return toast_redirect(redirect_url, message, "error", status_code=303)
     return await _rate_limit_exceeded_handler(request, exc)
@@ -307,14 +308,14 @@ def _get_webui_error_user(request: Request) -> dict | None:
 
 @app.exception_handler(HTTPException)
 async def auth_exception_handler(request: Request, exc: HTTPException):
-    if exc.status_code == 401 and request.url.path.startswith("/webui"):
-        return RedirectResponse(url="/webui/auth/login", status_code=302)
-    if exc.status_code == 428 and request.url.path.startswith("/webui"):
+    if exc.status_code == 401 and is_webui_request(request):
+        return RedirectResponse(url="/auth/login", status_code=302)
+    if exc.status_code == 428 and is_webui_request(request):
         return RedirectResponse(
-            url="/webui/settings/?_toast=MFA%20enrollment%20required&_toast_type=error",
+            url="/settings/?_toast=MFA%20enrollment%20required&_toast_type=error",
             status_code=302,
         )
-    if request.url.path.startswith("/webui"):
+    if is_webui_request(request):
         return error_page(
             request,
             status_code=exc.status_code,
@@ -323,17 +324,6 @@ async def auth_exception_handler(request: Request, exc: HTTPException):
             user=_get_webui_error_user(request),
         )
     return JSONResponse(status_code=exc.status_code, content={"detail": exc.detail})
-
-
-@app.get("/")
-async def root():
-    """根路径"""
-    return {
-        "service": "Sakura AI Reviewer",
-        "version": __version__,
-        "status": "running",
-        "docs": "/docs",
-    }
 
 
 @app.get("/health")

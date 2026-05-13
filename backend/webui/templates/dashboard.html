@@ -52,7 +52,7 @@
     <!-- 最近审查 -->
     <div>
         <h2 class="text-lg font-semibold mb-3">{{ _('dashboard.recent_reviews') }}</h2>
-        <div id="recent-reviews-container" hx-get="/webui/api/webui/recent-reviews-html" hx-trigger="load" hx-swap="innerHTML">
+        <div id="recent-reviews-container" hx-get="/api/recent-reviews-html" hx-trigger="load" hx-swap="innerHTML">
             <div class="text-center py-8 text-gray-400">
                 <svg class="w-8 h-8 mx-auto animate-spin" fill="none" viewBox="0 0 24 24">
                     <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/>
@@ -70,7 +70,7 @@
 <script>
 function dashboardInit() {
     // 加载统计数据
-    fetch('/webui/api/webui/stats')
+    fetch('/api/stats')
         .then(r => r.json())
         .then(data => {
             document.getElementById('stat-total').textContent = data.total;
@@ -99,7 +99,7 @@ document.addEventListener('sse:review-status', function() {
     var container = document.getElementById('recent-reviews-container');
     if (container) {
         container.innerHTML = getLoadingHTML();
-        fetch('/webui/api/webui/recent-reviews-html', { headers: { 'HX-Request': 'true' } })
+        fetch('/api/recent-reviews-html', { headers: { 'HX-Request': 'true' } })
             .then(function(r) { return r.text(); })
             .then(function(html) { container.innerHTML = html; })
             .catch(function() { container.innerHTML = getErrorHTML(); });

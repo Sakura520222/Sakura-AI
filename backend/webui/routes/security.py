@@ -19,6 +19,7 @@ from backend.services.security_admin_service import (
     set_user_mfa_required,
 )
 from backend.services.security_audit_service import record_security_event
+from backend.services.mfa_notification_service import notify_mfa_event
 from backend.webui.deps import (
     error_page,
     get_csrf_serializer,
@@ -76,7 +77,7 @@ async def enable_global_mfa_route(
         request=request,
     )
     await db.commit()
-    return toast_redirect("/webui/security/", "toast.security_global_mfa_enabled")
+    return toast_redirect("/security/", "toast.security_global_mfa_enabled")
 
 
 @router.post("/global-mfa/disable")
@@ -96,7 +97,7 @@ async def disable_global_mfa_route(
         request=request,
     )
     await db.commit()
-    return toast_redirect("/webui/security/", "toast.security_global_mfa_disabled")
+    return toast_redirect("/security/", "toast.security_global_mfa_disabled")
 
 
 @router.get("/users/{target_user_id}")
@@ -139,7 +140,7 @@ async def reset_totp_route(
     """Reset target user's TOTP and recovery codes."""
     target_user = await _get_target_user(db, target_user_id)
     if not target_user:
-        return toast_redirect("/webui/security/", "toast.user_not_found", "error")
+        return toast_redirect("/security/", "toast.user_not_found", "error")
     await reset_user_totp(db, target_user)
     await record_security_event(
         db,
@@ -150,8 +151,9 @@ async def reset_totp_route(
         request=request,
     )
     await db.commit()
+    await notify_mfa_event(db, target_user_id, "totp_reset_by_admin")
     return toast_redirect(
-        f"/webui/security/users/{target_user_id}", "toast.security_totp_reset"
+        f"/security/users/{target_user_id}", "toast.security_totp_reset"
     )
 
 
@@ -166,7 +168,7 @@ async def require_mfa_route(
     """Require target user to enroll at least one MFA method."""
     target_user = await _get_target_user(db, target_user_id)
     if not target_user:
-        return toast_redirect("/webui/security/", "toast.user_not_found", "error")
+        return toast_redirect("/security/", "toast.user_not_found", "error")
     await set_user_mfa_required(db, target_user, True)
     await record_security_event(
         db,
@@ -177,8 +179,9 @@ async def require_mfa_route(
         request=request,
     )
     await db.commit()
+    await notify_mfa_event(db, target_user_id, "mfa_required_by_admin")
     return toast_redirect(
-        f"/webui/security/users/{target_user_id}", "toast.security_mfa_required"
+        f"/security/users/{target_user_id}", "toast.security_mfa_required"
     )
 
 
@@ -193,7 +196,7 @@ async def unrequire_mfa_route(
     """Remove forced MFA enrollment requirement for target user."""
     target_user = await _get_target_user(db, target_user_id)
     if not target_user:
-        return toast_redirect("/webui/security/", "toast.user_not_found", "error")
+        return toast_redirect("/security/", "toast.user_not_found", "error")
     await set_user_mfa_required(db, target_user, False)
     await record_security_event(
         db,
@@ -204,8 +207,9 @@ async def unrequire_mfa_route(
         request=request,
     )
     await db.commit()
+    await notify_mfa_event(db, target_user_id, "mfa_unrequired_by_admin")
     return toast_redirect(
-        f"/webui/security/users/{target_user_id}", "toast.security_mfa_unrequired"
+        f"/security/users/{target_user_id}", "toast.security_mfa_unrequired"
     )
 
 
@@ -220,7 +224,7 @@ async def delete_all_passkeys_route(
     """Delete all target user's passkeys."""
     target_user = await _get_target_user(db, target_user_id)
     if not target_user:
-        return toast_redirect("/webui/security/", "toast.user_not_found", "error")
+        return toast_redirect("/security/", "toast.user_not_found", "error")
     deleted_count = await delete_user_passkeys(db, target_user_id)
     await record_security_event(
         db,
@@ -232,8 +236,9 @@ async def delete_all_passkeys_route(
         detail={"deleted_count": deleted_count},
     )
     await db.commit()
+    await notify_mfa_event(db, target_user_id, "passkey_deleted_by_admin")
     return toast_redirect(
-        f"/webui/security/users/{target_user_id}", "toast.security_passkeys_deleted"
+        f"/security/users/{target_user_id}", "toast.security_passkeys_deleted"
     )
 
 
@@ -249,7 +254,7 @@ async def delete_passkey_route(
     """Delete one target user's passkey."""
     target_user = await _get_target_user(db, target_user_id)
     if not target_user:
-        return toast_redirect("/webui/security/", "toast.user_not_found", "error")
+        return toast_redirect("/security/", "toast.user_not_found", "error")
     deleted_count = await delete_user_passkey(db, target_user_id, credential_id)
     await record_security_event(
         db,
@@ -261,8 +266,9 @@ async def delete_passkey_route(
         detail={"credential_db_id": credential_id},
     )
     await db.commit()
+    await notify_mfa_event(db, target_user_id, "passkey_deleted_by_admin")
     return toast_redirect(
-        f"/webui/security/users/{target_user_id}", "toast.security_passkey_deleted"
+        f"/security/users/{target_user_id}", "toast.security_passkey_deleted"
     )
 
 
@@ -277,7 +283,7 @@ async def reset_mfa_route(
     """Reset all MFA methods for a target user."""
     target_user = await _get_target_user(db, target_user_id)
     if not target_user:
-        return toast_redirect("/webui/security/", "toast.user_not_found", "error")
+        return toast_redirect("/security/", "toast.user_not_found", "error")
     await reset_user_mfa(db, target_user)
     await record_security_event(
         db,
@@ -288,8 +294,9 @@ async def reset_mfa_route(
         request=request,
     )
     await db.commit()
+    await notify_mfa_event(db, target_user_id, "mfa_reset_by_admin")
     return toast_redirect(
-        f"/webui/security/users/{target_user_id}", "toast.security_mfa_reset"
+        f"/security/users/{target_user_id}", "toast.security_mfa_reset"
     )
 
 

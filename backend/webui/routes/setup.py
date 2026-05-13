@@ -26,7 +26,7 @@ templates = get_templates()
 def _check_bootstrap():
     """检查是否处于 bootstrap 模式，已完成后拒绝访问"""
     if not is_bootstrap_mode():
-        return RedirectResponse(url="/webui/", status_code=302)
+        return RedirectResponse(url="/", status_code=302)
     return None
 
 

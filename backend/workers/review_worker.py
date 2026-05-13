@@ -7,7 +7,7 @@ from datetime import datetime
 from loguru import logger
 import uuid
 
-from backend.core.config import get_settings, get_strategy_config
+from backend.core.config import get_settings, get_strategy_config, get_dynamic_config
 from backend.core.config import get_user_dynamic_config
 from backend.core.github_app import GitHubAppClient
 from backend.services.pr_analyzer import PRAnalyzer, PRAnalysis
@@ -34,14 +34,11 @@ settings = get_settings()
 # 审查并发控制信号量
 _review_semaphore: asyncio.Semaphore | None = None
 
-DEFAULT_MAX_CONCURRENT_REVIEWS = 5
-
-
 async def _get_review_semaphore() -> asyncio.Semaphore:
     """获取审查并发信号量（懒初始化，支持动态更新）"""
     global _review_semaphore
     if _review_semaphore is None:
-        max_concurrent = await _load_max_concurrent_from_db()
+        max_concurrent = await _load_max_concurrent()
         _review_semaphore = asyncio.Semaphore(max_concurrent)
         logger.info(f"审查并发信号量初始化: 最大 {max_concurrent} 个并发任务")
     return _review_semaphore
@@ -54,20 +51,14 @@ def reset_review_semaphore():
     logger.info("审查并发信号量已重置，下次任务将重新初始化")
 
 
-async def _load_max_concurrent_from_db() -> int:
-    """从数据库读取最大并发审查数"""
-    from backend.models.database import async_session, AppConfig
-    from sqlalchemy import select
-
+async def _load_max_concurrent() -> int:
+    """从动态配置读取最大并发审查数"""
     try:
-        async with async_session() as session:
-            result = await session.execute(
-                select(AppConfig).where(AppConfig.key_name == "max_concurrent_reviews")
-            )
-            cfg = result.scalar_one_or_none()
-            return int(cfg.key_value) if cfg else DEFAULT_MAX_CONCURRENT_REVIEWS
-    except Exception:
-        return DEFAULT_MAX_CONCURRENT_REVIEWS
+        val = await get_dynamic_config("max_concurrent_reviews")
+        return int(val) if val is not None else get_settings().max_concurrent_reviews
+    except Exception as e:
+        logger.warning(f"读取 max_concurrent_reviews 配置失败，使用默认值: {e}")
+        return get_settings().max_concurrent_reviews
 
 
 def _get_label_rec_setting(key: str, default=None):

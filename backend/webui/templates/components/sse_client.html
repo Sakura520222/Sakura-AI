@@ -14,7 +14,7 @@
             return;
         }
 
-        eventSource = new EventSource('/webui/sse/events');
+        eventSource = new EventSource('/sse/events');
 
         // 审查状态变更
         eventSource.addEventListener('review:status_changed', function(e) {
