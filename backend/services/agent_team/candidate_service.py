@@ -66,6 +66,7 @@ class AgentTeamCandidateService:
                 db, allowlist, limit, requirement
             )
             candidates = self._deduplicate_candidates(candidates)
+            candidates.sort(key=lambda item: item.candidate_score, reverse=True)
             candidates = await self._filter_closed_issues(candidates)
             return candidates[:limit]
 
@@ -368,7 +369,7 @@ class AgentTeamCandidateService:
         return owner, name
 
     @staticmethod
-    def _build_existing_issue_task_exists():
+    def _build_existing_issue_task_exists() -> Any:
         """构建判断 IssueAnalysis 是否已有非终态任务的关联子查询。
 
         用于在候选收集时排除已被 Agent Team 接管（且未结束）的 Issue。
@@ -454,7 +455,7 @@ class AgentTeamCandidateService:
                         )
                     )
             except Exception:
-                logger.debug(
+                logger.warning(
                     "GitHub Issue 状态检查失败: {}/{}#{}",
                     candidate.repo_owner,
                     candidate.repo_name,
