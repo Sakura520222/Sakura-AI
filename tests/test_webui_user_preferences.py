@@ -5,41 +5,31 @@ from types import SimpleNamespace
 import pytest
 
 from backend.webui import deps
+from backend.webui.deps import _USER_PREFS_CACHE
+from tests.stubs import RequestStub, DbStub
 
 
-class RequestStub:
-    def __init__(self, token: str | None = "token"):
-        self.cookies = {"webui_token": token} if token else {}
-
-
-class ResultStub:
-    def __init__(self, value):
-        self.value = value
-
-    def scalar_one_or_none(self):
-        return self.value
-
-
-class DbStub:
-    def __init__(self, config):
-        self.config = config
-        self.execute_count = 0
-
-    async def execute(self, statement):
-        self.execute_count += 1
-        return ResultStub(self.config)
+@pytest.fixture(autouse=True)
+def _clear_prefs_cache():
+    """确保每个测试前后全局缓存干净。"""
+    _USER_PREFS_CACHE.clear()
+    yield
+    _USER_PREFS_CACHE.clear()
 
 
 @pytest.mark.asyncio
 async def test_user_preferences_cache_key_uses_integer_user_id(monkeypatch):
-    deps._USER_PREFS_CACHE.clear()
     monkeypatch.setattr(
         deps,
         "decode_access_token",
         lambda token: {"user_id": "42", "token_type": "access"},
     )
+    monkeypatch.setattr(
+        deps,
+        "is_access_token_payload",
+        lambda payload: True,
+    )
     db = DbStub(SimpleNamespace(language="en", items_per_page=50))
-
     prefs = await deps.get_user_preferences(RequestStub(), db)
 
     assert prefs == {"language": "en", "items_per_page": 50}
