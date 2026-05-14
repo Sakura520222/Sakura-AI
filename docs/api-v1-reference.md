@@ -2544,7 +2544,7 @@ Issue 分析详情。
   "success": true,
   "message": "ok",
   "data": {
-    "version": "2.10.0",
+    "version": "2.10.1",
     "build_date": "2026-05-11"
   }
 }
