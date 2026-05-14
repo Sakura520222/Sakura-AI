@@ -192,9 +192,20 @@ JWT Token 通过 OAuth 登录流程获取，有效期 24 小时（86400 秒）�
 | 75 | POST | `/billing/redeem` | auth | 兑换配额码 |
 | 76 | GET | `/billing/orders` | auth | 获取订单历史 |
 | 77 | POST | `/billing/admin/plans` | super_admin | 创建套餐 |
-| 78 | POST | `/billing/admin/codes/generate` | super_admin | 批量生成兑换码 |
-| 79 | POST | `/billing/admin/grant` | super_admin | 手动为用户充值 |
-| 80 | GET | `/events` | auth | SSE 事件流 |
+| 78 | PUT | `/billing/admin/plans/{plan_id}` | super_admin | 编辑套餐 |
+| 79 | DELETE | `/billing/admin/plans/{plan_id}` | super_admin | 删除套餐 |
+| 80 | POST | `/billing/admin/codes/generate` | super_admin | 批量生成兑换码 |
+| 81 | PUT | `/billing/admin/codes/{code_id}` | super_admin | 编辑兑换码 |
+| 82 | DELETE | `/billing/admin/codes/{code_id}` | super_admin | 删除兑换码 |
+| 83 | POST | `/billing/admin/grant` | super_admin | 手动为用户充值 |
+| 84 | POST | `/billing/admin/plans/batch-toggle` | super_admin | 批量启用/禁用套餐 |
+| 85 | POST | `/billing/admin/plans/batch-delete` | super_admin | 批量删除套餐 |
+| 86 | POST | `/billing/admin/codes/batch-enable` | super_admin | 批量启用兑换码 |
+| 87 | POST | `/billing/admin/codes/batch-disable` | super_admin | 批量禁用兑换码 |
+| 88 | POST | `/billing/admin/codes/batch-delete` | super_admin | 批量删除兑换码 |
+| 89 | POST | `/auth/2fa/passkey/options` | 免认证 | 创建 API Passkey 认证 options |
+| 90 | POST | `/auth/2fa/passkey/verify` | 免认证 | 验证 API Passkey 认证 |
+| 91 | GET | `/events` | auth | SSE 事件流 |
 
 ---
 
@@ -422,6 +433,67 @@ JWT Token 通过 OAuth 登录流程获取，有效期 24 小时（86400 秒）�
 |-------------|------|
 | 400 | 用户未启用二次验证、验证码/恢复码无效，或仅配置了 Passkey 而 API 侧未提供 Passkey 验证路径 |
 | 401 | `mfa_token` 无效或已过期 |
+| 423 | 账户因连续 MFA 验证失败被临时锁定 |
+
+#### POST /auth/2fa/passkey/options
+
+创建 API Passkey（WebAuthn）认证选项，用于移动端 Passkey 二次验证。与 TOTP/恢复码验证流程并列，客户端可根据 `mfa_required` 响应中的 `methods` 字段选择验证方式。
+
+**认证级别**：免认证
+
+**请求体**：
+
+| 字段 | 类型 | 必填 | 说明 |
+|------|------|------|------|
+| `mfa_token` | string | 是 | OAuth 回调返回的临时二次验证 Token |
+
+**响应字段**：
+
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| `data.options` | object | WebAuthn Authentication Options（PublicKeyCredentialRequestOptions JSON）|
+
+**响应示例**：
+
+```json
+{
+  "success": true,
+  "message": "ok",
+  "data": {
+    "options": {
+      "challenge": "base64-encoded-challenge",
+      "rpId": "example.com",
+      "allowCredentials": [...],
+      "timeout": 60000
+    }
+  }
+}
+```
+
+---
+
+#### POST /auth/2fa/passkey/verify
+
+验证 API Passkey（WebAuthn）认证结果，成功后签发正式 JWT access_token。
+
+**认证级别**：免认证
+
+**请求体**：
+
+| 字段 | 类型 | 必填 | 说明 |
+|------|------|------|------|
+| `mfa_token` | string | 是 | OAuth 回调返回的临时二次验证 Token |
+| `credential` | object | 是 | WebAuthn 认证结果（navigator.credentials.get() 返回值 JSON 序列化）|
+
+**响应字段**：同 `POST /auth/callback` 成功签发 Token 时的响应。
+
+**常见错误**：
+
+| HTTP 状态码 | 说明 |
+|-------------|------|
+| 400 | Passkey 认证失败或凭证无效 |
+| 401 | `mfa_token` 无效或已过期 |
+| 423 | 账户因连续 MFA 验证失败被临时锁定 |
 
 ---
 
@@ -2809,6 +2881,161 @@ Billing 端点仅在付费配额系统启用时可用；未启用时会返回拒
   "name": "Pro 月度包"
 }
 ```
+
+---
+
+#### PUT /billing/admin/plans/{plan_id}
+
+编辑现有套餐。
+
+**认证级别**：super_admin
+
+**路径参数**：
+
+| 参数 | 类型 | 说明 |
+|------|------|------|
+| `plan_id` | int | 套餐 ID |
+
+**请求体字段**：同创建套餐（`POST /billing/admin/plans`），所有字段可选，仅传递需要修改的字段。
+
+**响应示例**：
+
+```json
+{
+  "id": 1,
+  "name": "Pro 月度包（更新）"
+}
+```
+
+---
+
+#### DELETE /billing/admin/plans/{plan_id}
+
+删除套餐（软删除）。
+
+**认证级别**：super_admin
+
+**路径参数**：
+
+| 参数 | 类型 | 说明 |
+|------|------|------|
+| `plan_id` | int | 套餐 ID |
+
+**响应示例**：
+
+```json
+{
+  "success": true,
+  "message": "套餐已删除"
+}
+```
+
+---
+
+#### POST /billing/admin/plans/batch-toggle
+
+批量启用或禁用套餐。
+
+**认证级别**：super_admin
+
+**请求体**：
+
+| 字段 | 类型 | 必填 | 说明 |
+|------|------|------|------|
+| `plan_ids` | int[] | 是 | 套餐 ID 列表 |
+| `enabled` | bool | 是 | `true` 启用，`false` 禁用 |
+
+---
+
+#### POST /billing/admin/plans/batch-delete
+
+批量删除套餐。
+
+**认证级别**：super_admin
+
+**请求体**：
+
+| 字段 | 类型 | 必填 | 说明 |
+|------|------|------|------|
+| `plan_ids` | int[] | 是 | 套餐 ID 列表 |
+
+---
+
+#### PUT /billing/admin/codes/{code_id}
+
+编辑兑换码（状态、过期时间、最大使用次数）。
+
+**认证级别**：super_admin
+
+**路径参数**：
+
+| 参数 | 类型 | 说明 |
+|------|------|------|
+| `code_id` | int | 兑换码 ID |
+
+**请求体字段**：
+
+| 字段 | 类型 | 必填 | 说明 |
+|------|------|------|------|
+| `status` | string | 否 | 兑换码状态 |
+| `expires_at` | string \| null | 否 | 过期时间 |
+| `max_uses` | int | 否 | 最大使用次数 |
+
+---
+
+#### DELETE /billing/admin/codes/{code_id}
+
+删除兑换码。
+
+**认证级别**：super_admin
+
+**路径参数**：
+
+| 参数 | 类型 | 说明 |
+|------|------|------|
+| `code_id` | int | 兑换码 ID |
+
+---
+
+#### POST /billing/admin/codes/batch-enable
+
+批量启用兑换码。
+
+**认证级别**：super_admin
+
+**请求体**：
+
+| 字段 | 类型 | 必填 | 说明 |
+|------|------|------|------|
+| `code_ids` | int[] | 是 | 兑换码 ID 列表 |
+
+---
+
+#### POST /billing/admin/codes/batch-disable
+
+批量禁用兑换码。
+
+**认证级别**：super_admin
+
+**请求体**：
+
+| 字段 | 类型 | 必填 | 说明 |
+|------|------|------|------|
+| `code_ids` | int[] | 是 | 兑换码 ID 列表 |
+
+---
+
+#### POST /billing/admin/codes/batch-delete
+
+批量删除兑换码。
+
+**认证级别**：super_admin
+
+**请求体**：
+
+| 字段 | 类型 | 必填 | 说明 |
+|------|------|------|------|
+| `code_ids` | int[] | 是 | 兑换码 ID 列表 |
 
 ---
 
