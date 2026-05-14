@@ -806,9 +806,9 @@ async def admin_batch_delete_codes(
             admin_id=user["user_id"],
             action="batch_delete_codes",
             target_type="redeem_code",
-            detail={"code_ids": code_ids, "success_count": success_count, "skipped_count": skipped_count},
+            detail={"total_count": len(code_ids), "success_count": success_count, "skipped_count": skipped_count},
         )
-        toast_key = "toast.batch_partial_success" if skipped_count > 0 else "toast.batch_codes_deleted"
+        toast_key = "toast.batch_codes_partial_deleted" if skipped_count > 0 else "toast.batch_codes_deleted"
         return toast_redirect(
             "/billing/admin/codes",
             toast_key,

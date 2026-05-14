@@ -1172,6 +1172,7 @@ toast:
   batch_codes_disabled: "已禁用 {count} 个兑换码"
   batch_codes_enabled: "已启用 {count} 个兑换码"
   batch_partial_success: "已处理 {count} 项，跳过 {skipped} 项"
+  batch_codes_partial_deleted: "已删除 {count} 个兑换码，跳过 {skipped} 个"
   batch_codes_deleted: "已删除 {count} 个兑换码（已使用的已跳过）"
   strategy_saved: "策略配置 [{section}] 已保存并即时生效"
   label_validation_failed: "标签验证失败: {error}"
