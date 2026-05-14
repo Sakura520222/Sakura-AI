@@ -64,7 +64,7 @@
             </thead>
             <tbody class="bg-white dark:bg-gray-800 divide-y divide-gray-200 dark:divide-gray-700">
                 {% for plan in plans %}
-                <tr data-plan='{{ {"id": plan.id, "name": plan.name, "plan_type": plan.plan_type, "price_cents": plan.price_cents, "currency": plan.currency, "duration_days": plan.duration_days or "", "pr_quota_bonus": plan.pr_quota_bonus, "pr_daily_add": plan.pr_daily_add, "pr_weekly_add": plan.pr_weekly_add, "pr_monthly_add": plan.pr_monthly_add, "issue_quota_bonus": plan.issue_quota_bonus, "issue_daily_add": plan.issue_daily_add, "issue_weekly_add": plan.issue_weekly_add, "issue_monthly_add": plan.issue_monthly_add, "description": plan.description or "", "sort_order": plan.sort_order} | tojson }}'>
+                <tr data-plan-id="{{ plan.id }}">
                     <td class="px-4 py-4">
                         <input type="checkbox" class="plan-checkbox h-4 w-4 rounded border-gray-300 text-pink-600 focus:ring-pink-500"
                                value="{{ plan.id }}" onchange="updateBatchBar()">
@@ -96,9 +96,9 @@
                                 {{ _('common.disabled') if plan.is_active else _('common.enabled') }}
                             </button>
                         </form>
-                        <button onclick="openEditPlanModal(this.closest('tr').dataset.plan)"
+                        <button onclick="openEditPlanModal(this.closest('tr').dataset.planId)"
                                 class="text-sm text-blue-600 hover:text-blue-800">{{ _('billing.edit_plan') }}</button>
-                        <button onclick="openDeletePlanModal(this.closest('tr').dataset.plan)"
+                        <button onclick="openDeletePlanModal(this.closest('tr').dataset.planId)"
                                 class="text-sm text-red-600 hover:text-red-800">{{ _('billing.delete_plan') }}</button>
                     </td>
                 </tr>
@@ -427,42 +427,48 @@
 </div>
 
 <script>
-function openEditPlanModal(planJson) {
-    try {
-        const plan = JSON.parse(planJson);
-        document.getElementById('edit-plan-form').action = '/billing/admin/plans/' + plan.id + '/edit';
-        document.getElementById('edit-name').value = plan.name;
-        document.getElementById('edit-plan_type').value = plan.plan_type;
-        document.getElementById('edit-price_cents').value = plan.price_cents;
-        document.getElementById('edit-duration_days').value = plan.duration_days || '';
-        document.getElementById('edit-pr_quota_bonus').value = plan.pr_quota_bonus;
-        document.getElementById('edit-pr_daily_add').value = plan.pr_daily_add;
-        document.getElementById('edit-pr_weekly_add').value = plan.pr_weekly_add;
-        document.getElementById('edit-pr_monthly_add').value = plan.pr_monthly_add;
-        document.getElementById('edit-issue_quota_bonus').value = plan.issue_quota_bonus;
-        document.getElementById('edit-issue_daily_add').value = plan.issue_daily_add;
-        document.getElementById('edit-issue_weekly_add').value = plan.issue_weekly_add;
-        document.getElementById('edit-issue_monthly_add').value = plan.issue_monthly_add;
-        document.getElementById('edit-description').value = plan.description;
-        document.getElementById('edit-sort_order').value = plan.sort_order;
-        document.getElementById('edit-plan-modal').classList.remove('hidden');
-    } catch (e) {
-        console.error('Failed to parse plan data:', e);
+const plansData = {
+{% for plan in plans %}
+    {{ plan.id }}: {{ {"id": plan.id, "name": plan.name, "plan_type": plan.plan_type, "price_cents": plan.price_cents, "currency": plan.currency, "duration_days": plan.duration_days or "", "pr_quota_bonus": plan.pr_quota_bonus, "pr_daily_add": plan.pr_daily_add, "pr_weekly_add": plan.pr_weekly_add, "pr_monthly_add": plan.pr_monthly_add, "issue_quota_bonus": plan.issue_quota_bonus, "issue_daily_add": plan.issue_daily_add, "issue_weekly_add": plan.issue_weekly_add, "issue_monthly_add": plan.issue_monthly_add, "description": plan.description or "", "sort_order": plan.sort_order} | tojson }}{{ "," if not loop.last }}
+{% endfor %}
+};
+
+function openEditPlanModal(planId) {
+    const plan = plansData[planId];
+    if (!plan) {
+        console.error('Plan not found:', planId);
         alert('Failed to load plan data. Please refresh the page.');
+        return;
     }
+    document.getElementById('edit-plan-form').action = '/billing/admin/plans/' + plan.id + '/edit';
+    document.getElementById('edit-name').value = plan.name;
+    document.getElementById('edit-plan_type').value = plan.plan_type;
+    document.getElementById('edit-price_cents').value = plan.price_cents;
+    document.getElementById('edit-duration_days').value = plan.duration_days || '';
+    document.getElementById('edit-pr_quota_bonus').value = plan.pr_quota_bonus;
+    document.getElementById('edit-pr_daily_add').value = plan.pr_daily_add;
+    document.getElementById('edit-pr_weekly_add').value = plan.pr_weekly_add;
+    document.getElementById('edit-pr_monthly_add').value = plan.pr_monthly_add;
+    document.getElementById('edit-issue_quota_bonus').value = plan.issue_quota_bonus;
+    document.getElementById('edit-issue_daily_add').value = plan.issue_daily_add;
+    document.getElementById('edit-issue_weekly_add').value = plan.issue_weekly_add;
+    document.getElementById('edit-issue_monthly_add').value = plan.issue_monthly_add;
+    document.getElementById('edit-description').value = plan.description;
+    document.getElementById('edit-sort_order').value = plan.sort_order;
+    document.getElementById('edit-plan-modal').classList.remove('hidden');
 }
 
-function openDeletePlanModal(planJson) {
-    try {
-        const plan = JSON.parse(planJson);
-        document.getElementById('delete-plan-name').textContent = plan.name;
-        document.getElementById('delete-plan-form').action = '/billing/admin/plans/' + plan.id + '/delete';
-        document.getElementById('hard-delete-checkbox').checked = false;
-        document.getElementById('delete-plan-modal').classList.remove('hidden');
-    } catch (e) {
-        console.error('Failed to parse plan data:', e);
+function openDeletePlanModal(planId) {
+    const plan = plansData[planId];
+    if (!plan) {
+        console.error('Plan not found:', planId);
         alert('Failed to load plan data. Please refresh the page.');
+        return;
     }
+    document.getElementById('delete-plan-name').textContent = plan.name;
+    document.getElementById('delete-plan-form').action = '/billing/admin/plans/' + plan.id + '/delete';
+    document.getElementById('hard-delete-checkbox').checked = false;
+    document.getElementById('delete-plan-modal').classList.remove('hidden');
 }
 
 // ========== 批量选择 ==========
