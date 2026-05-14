@@ -1155,6 +1155,7 @@ toast:
   agent_skill_install_failed: "Skill 安装失败"
   config_saved_live: "全局配置已保存并即时生效"
   config_no_change: "配置未发生变化"
+  no_changes: "未检测到变更，无需更新"
   config_validation_failed: "配置验证失败: {error}"
   file_permission_denied: "文件权限不足"
   save_failed: "保存失败，请稍后重试"

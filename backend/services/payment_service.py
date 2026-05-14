@@ -343,7 +343,7 @@ class PaymentService:
                 code = await self.update_redeem_code(cid, **kwargs)
                 results.append(code)
             except PaymentError as e:
-                logger.debug(f"Skipped code {cid}: {e}")
+                logger.info(f"Skipped code {cid}: {e}")
         return results
 
     # ========== 用户兑换/购买 ==========
