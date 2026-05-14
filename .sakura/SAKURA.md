@@ -62,6 +62,7 @@ Sakura AI Reviewer 是一款基于大语言模型的智能 GitHub 代码审查�
 - **批量操作事务一致性**：检查部分失败时是否回滚或记录补偿日志（major）
 - **前端JS对象键格式**：明确要求数字ID作为键时需注释说明，字符串ID需引号（minor）
 - **配置冻结检查**：静态数据建议使用`Object.freeze()`，防止运行时修改（suggestion）
+- **批量操作的skipped reason应使用结构化字典（含reason类型和detail字段），避免冒号拼接字符串**
 
 ## 4. 审查中发现的重要模式
 
@@ -100,6 +101,8 @@ Sakura AI Reviewer 是一款基于大语言模型的智能 GitHub 代码审查�
 - **单例模式线程安全检查**：针对延迟初始化的单例，强制审查竞态条件（如使用锁或线程安全初始化器），标记为minor
 - **日志语义一致性**：“未初始化”类日志优先使用info级别，仅异常情况用warning，避免误报
 - **loguru 日志风格规范**：必须使用 `{}` 占位符风格，禁止 f-string，`logger.error` 统一添加 `exc_info=True`
+- **审查质量评估**：覆盖度、准确度、完整性需综合评估，警惕增量隧道视野
+- **增量审查反思**：必须输出“已检查的规则清单”、“历史未解决问题清单并升温”、“未直接测试但依赖的调用链”
 
 ## 5. 团队约定和规范
 
@@ -125,6 +128,7 @@ Sakura AI Reviewer 是一款基于大语言模型的智能 GitHub 代码审查�
 - **服务层事务边界规范**：强制要求服务层函数不执行commit，仅flush；路由层统一commit
 - **批量操作返回值强制结构化**：所有批量操作必须返回`{"success": [...], "skipped": [...]}`格式，且skipped条目包含id和reason
 - **历史问题追踪强制关联**：未修复的major问题必须关联issue编号，否则阻断合并
+- **批量操作的skipped reason应使用结构化字典（含reason类型和detail字段），避免冒号拼接字符串**
 
 ### suggestion 疲劳归档协议
 第 1 轮未修复：评估降级 | 第 2 轮未修复：强制降级 | 第 3 轮未修复：强制归档
@@ -157,4 +161,4 @@ Sakura AI Reviewer 是一款基于大语言模型的智能 GitHub 代码审查�
 ## 仓库信息
 - 仓库名: Sakura520222/Sakura-AI-Reviewer
 - 语言统计: Python: 2218537, HTML: 614408, Shell: 4551, Dockerfile: 982, url: https://api.github.com/repos/Sakura520222/Sakura-AI-Reviewer/languages
-- 累计反思次数: 235
+- 累计反思次数: 238
