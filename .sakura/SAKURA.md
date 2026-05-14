@@ -122,6 +122,9 @@ Sakura AI Reviewer 是一款基于大语言模型的智能 GitHub 代码审查�
 - **路由级依赖与异常处理器的 state 字段契约必须在 PR 中明确**（major）
 - **批量操作返回值必须包含`skipped`列表，且每个条目需含`id`和`reason`**
 - **模板JS上下文禁用内联JSON，强制使用全局对象+ID引用**
+- **服务层事务边界规范**：强制要求服务层函数不执行commit，仅flush；路由层统一commit
+- **批量操作返回值强制结构化**：所有批量操作必须返回`{"success": [...], "skipped": [...]}`格式，且skipped条目包含id和reason
+- **历史问题追踪强制关联**：未修复的major问题必须关联issue编号，否则阻断合并
 
 ### suggestion 疲劳归档协议
 第 1 轮未修复：评估降级 | 第 2 轮未修复：强制降级 | 第 3 轮未修复：强制归档
@@ -138,6 +141,7 @@ Sakura AI Reviewer 是一款基于大语言模型的智能 GitHub 代码审查�
 - **增量审查必须输出旧逻辑约束清单与新逻辑保留情况对比表**
 - **增量审查必须强制输出“本次未修复的历史问题”的issue追踪状态**
 - **增量审查需关注变更的副作用和关联影响**
+- **增量审查需重点检查事务边界与返回值规范**
 
 ### 常量与配置规范
 - 常量定义位置与语义保持一致
@@ -152,5 +156,5 @@ Sakura AI Reviewer 是一款基于大语言模型的智能 GitHub 代码审查�
 
 ## 仓库信息
 - 仓库名: Sakura520222/Sakura-AI-Reviewer
-- 语言统计: Python: 2218537, HTML: 614408, Shell: 4551, Dockerfile: 982
-- 累计反思次数: 232
+- 语言统计: Python: 2218537, HTML: 614408, Shell: 4551, Dockerfile: 982, url: https://api.github.com/repos/Sakura520222/Sakura-AI-Reviewer/languages
+- 累计反思次数: 235
