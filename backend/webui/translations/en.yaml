@@ -1155,6 +1155,7 @@ toast:
   agent_skill_install_failed: "Skill installation failed"
   config_saved_live: "Configuration saved and applied"
   config_no_change: "No changes detected"
+  no_changes: "No changes detected, nothing to update"
   config_validation_failed: "Configuration validation failed: {error}"
   file_permission_denied: "File permission denied"
   save_failed: "Save failed, please try again later"
