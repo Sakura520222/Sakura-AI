@@ -74,7 +74,7 @@ class CommentService:
             return comment
 
         except Exception as e:
-            logger.error(f"创建占位评论时出错: {e}", exc_info=True)
+            logger.error("创建占位评论时出错: {}", str(e), exc_info=True)
             raise
 
     async def delete_placeholder_comment(self, comment: Any):
@@ -87,7 +87,7 @@ class CommentService:
             await asyncio.to_thread(comment.delete)
             logger.info(f"✓ 已删除占位评论 (Comment ID: {comment.id})")
         except Exception as e:
-            logger.error(f"删除占位评论时出错: {e}", exc_info=True)
+            logger.error("删除占位评论时出错: {}", str(e), exc_info=True)
             # 不抛出异常，因为占位评论删除失败不应影响主流程
 
     async def update_review(
@@ -305,7 +305,7 @@ Please check system logs or contact the administrator.
             logger.info(f"✓ 成功发布审查评论到PR: {pr.base.repo.full_name}#{pr.number}")
 
         except Exception as e:
-            logger.error(f"发布评论时出错: {e}", exc_info=True)
+            logger.error("发布评论时出错: {}", str(e), exc_info=True)
             raise
 
     def _format_comment(
@@ -368,7 +368,7 @@ Please check system logs or contact the administrator.
             )
             return review
         except Exception as e:
-            logger.error(f"创建审查评论时出错: {e}")
+            logger.error("创建审查评论时出错: {}", str(e))
             raise
 
     async def create_inline_comment(
@@ -389,7 +389,7 @@ Please check system logs or contact the administrator.
             )
             return comment
         except Exception as e:
-            logger.error(f"创建行内评论时出错: {e}")
+            logger.error("创建行内评论时出错: {}", str(e))
             raise
 
     async def create_batch_inline_comments(
@@ -474,28 +474,28 @@ Please check system logs or contact the administrator.
 
         except Exception as e:
             # "剥茧抽丝"式错误日志
-            logger.error(f"批量创建行内评论时出错: {e}")
+            logger.error("批量创建行内评论时出错: {}", str(e))
 
             # 尝试捕获 GithubException 的详细信息
             try:
                 if hasattr(e, "status") and hasattr(e, "data"):
                     logger.error("GitHub API 错误详情:")
-                    logger.error(f"  - Status: {e.status}")
-                    logger.error(f"  - Data: {e.data}")
+                    logger.error("  - Status: {}", e.status)
+                    logger.error("  - Data: {}", e.data)
                     if isinstance(e.data, dict):
-                        logger.error(f"  - Message: {e.data.get('message', 'N/A')}")
-                        logger.error(f"  - Errors: {e.data.get('errors', 'N/A')}")
+                        logger.error("  - Message: {}", e.data.get('message', 'N/A'))
+                        logger.error("  - Errors: {}", e.data.get('errors', 'N/A'))
                 else:
-                    logger.error(f"异常类型: {type(e).__name__}")
-                    logger.error(f"异常信息: {str(e)}")
+                    logger.error("异常类型: {}", type(e).__name__)
+                    logger.error("异常信息: {}", str(e))
             except Exception as log_error:
-                logger.error(f"无法解析详细错误信息: {log_error}")
+                logger.error("无法解析详细错误信息: {}", str(log_error))
 
             # 打印评论数据用于调试
-            logger.error(f"失败的评论数量: {len(inline_comments)}")
+            logger.error("失败的评论数量: {}", len(inline_comments))
             for i, comment in enumerate(inline_comments[:3], 1):  # 只打印前3条
                 logger.error(
-                    f"  评论 {i}: {comment['file_path']}:{comment['line_number']}"
+                    "  评论 {}: {}:{}", i, comment['file_path'], comment['line_number']
                 )
 
             raise
