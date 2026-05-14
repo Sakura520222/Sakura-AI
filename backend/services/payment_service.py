@@ -96,7 +96,7 @@ class PaymentService:
         )
         self.session.add(plan)
         await self.session.flush()
-        logger.info(f"Created plan: {name} (type={plan_type}, price={price_cents})")
+        logger.info("Created plan: {} (type={}, price={})", name, plan_type, price_cents)
         return plan
 
     async def update_plan(self, plan_id: int, **kwargs) -> Plan:
@@ -120,6 +120,99 @@ class PaymentService:
         stmt = select(Plan).where(Plan.id == plan_id)
         result = await self.session.execute(stmt)
         return result.scalar_one_or_none()
+
+    async def delete_plan(self, plan_id: int, hard_delete: bool = False) -> Plan:
+        """删除套餐（默认软删除，可选硬删除）
+
+        软删除: 设置 is_active=False
+        硬删除: 从数据库删除，但必须无关联订单和活跃订阅
+        """
+        plan = await self.get_plan(plan_id)
+        if not plan:
+            raise PaymentError(f"Plan not found: {plan_id}")
+
+        if hard_delete:
+            # 检查关联订单
+            order_count = (
+                await self.session.execute(
+                    select(func.count()).select_from(Order).where(Order.plan_id == plan_id)
+                )
+            ).scalar() or 0
+            if order_count > 0:
+                raise PaymentError(
+                    f"Cannot hard delete plan with {order_count} associated orders"
+                )
+
+            # 检查活跃订阅
+            active_sub_count = (
+                await self.session.execute(
+                    select(func.count())
+                    .select_from(UserSubscription)
+                    .where(
+                        and_(
+                            UserSubscription.plan_id == plan_id,
+                            UserSubscription.status
+                            == SubscriptionStatus.ACTIVE.value,
+                        )
+                    )
+                )
+            ).scalar() or 0
+            if active_sub_count > 0:
+                raise PaymentError(
+                    f"Cannot hard delete plan with {active_sub_count} active subscriptions"
+                )
+
+            await self.session.delete(plan)
+            await self.session.flush()
+            logger.info("Hard deleted plan: {} (id={})", plan.name, plan_id)
+        else:
+            plan.is_active = False
+            await self.session.flush()
+            logger.info("Soft deleted plan: {} (id={})", plan.name, plan_id)
+
+        return plan
+
+    async def batch_delete_plans(
+        self, plan_ids: list[int], hard_delete: bool = False
+    ) -> dict:
+        """批量删除套餐
+
+        使用 savepoint 模式：单个失败不影响其他操作。
+
+        Returns:
+            dict: {"success": list[Plan], "failed": list[dict]}
+        """
+        results: list[Plan] = []
+        failed: list[dict] = []
+        for pid in plan_ids:
+            async with self.session.begin_nested():
+                try:
+                    plan = await self.delete_plan(pid, hard_delete=hard_delete)
+                    results.append(plan)
+                except PaymentError as e:
+                    logger.warning("batch_delete: plan {} failed: {}", pid, e)
+                    failed.append({"id": pid, "reason": str(e)})
+        return {"success": results, "failed": failed}
+
+    async def batch_toggle_plans(self, plan_ids: list[int]) -> dict:
+        """批量切换套餐启用/禁用状态
+
+        Returns:
+            dict: {"success": list[Plan], "skipped": list[dict]}
+        """
+        results: list[Plan] = []
+        skipped: list[dict] = []
+        for pid in plan_ids:
+            plan = await self.get_plan(pid)
+            if plan:
+                plan.is_active = not plan.is_active
+                results.append(plan)
+            else:
+                logger.warning("batch_toggle: plan {} not found, skipped", pid)
+                skipped.append({"id": pid, "reason": "Plan not found"})
+        if results:
+            await self.session.flush()
+        return {"success": results, "skipped": skipped}
 
     # ========== 兑换码管理 ==========
 
@@ -182,6 +275,107 @@ class PaymentService:
         )
         result = await self.session.execute(stmt)
         return list(result.scalars().all()), total
+
+    async def get_redeem_code(self, code_id: int) -> Optional[RedeemCode]:
+        """按 ID 获取单个兑换码"""
+        stmt = select(RedeemCode).where(RedeemCode.id == code_id)
+        result = await self.session.execute(stmt)
+        return result.scalar_one_or_none()
+
+    REDEEM_CODE_UPDATE_FIELDS = {"status", "expires_at", "max_uses", "plan_id"}
+
+    async def update_redeem_code(self, code_id: int, **kwargs) -> RedeemCode:
+        """更新兑换码信息（状态、有效期、最大使用次数、关联套餐）"""
+        code = await self.get_redeem_code(code_id)
+        if not code:
+            raise PaymentError(f"Redeem code not found: {code_id}")
+
+        new_plan_id = kwargs.get("plan_id")
+        if new_plan_id is not None:
+            plan = await self.get_plan(new_plan_id)
+            if not plan or not plan.is_active:
+                raise PaymentError(f"Plan not found or inactive: {new_plan_id}")
+
+        new_max_uses = kwargs.get("max_uses")
+        if new_max_uses is not None and new_max_uses < code.used_count:
+            raise PaymentError(
+                f"max_uses ({new_max_uses}) cannot be less than used_count ({code.used_count})"
+            )
+
+        new_status = kwargs.get("status")
+        if new_status and new_status not in (
+            RedeemCodeStatus.ACTIVE.value,
+            RedeemCodeStatus.DISABLED.value,
+        ):
+            raise PaymentError(f"Invalid status: {new_status}")
+
+        for key, value in kwargs.items():
+            if key in self.REDEEM_CODE_UPDATE_FIELDS and value is not None:
+                setattr(code, key, value)
+        await self.session.flush()
+        logger.info("Updated redeem code {} (id={})", code.code, code_id)
+        return code
+
+    async def delete_redeem_code(self, code_id: int) -> RedeemCode:
+        """删除兑换码（仅允许删除未使用的兑换码）"""
+        code = await self.get_redeem_code(code_id)
+        if not code:
+            raise PaymentError(f"Redeem code not found: {code_id}")
+
+        if code.used_count > 0:
+            raise PaymentError(
+                f"Cannot delete redeem code that has been used {code.used_count} time(s)"
+            )
+
+        await self.session.delete(code)
+        await self.session.flush()
+        logger.info("Deleted redeem code {} (id={})", code.code, code_id)
+        return code
+
+    async def batch_delete_redeem_codes(self, code_ids: list[int]) -> dict:
+        """批量删除兑换码（仅删除未使用的）
+
+        不使用 savepoint：所有异常情况（已使用、未找到）均被优雅处理为 skipped
+        而非 raise，因此无需 savepoint 保护。若未来 session.delete() 可能
+        触发数据库约束异常，需重新评估是否引入 begin_nested()。
+
+        Returns:
+            dict: {"success": list[RedeemCode], "skipped": list[dict]}
+        """
+        results: list[RedeemCode] = []
+        skipped: list[dict] = []
+        for cid in code_ids:
+            code = await self.get_redeem_code(cid)
+            if code and code.used_count == 0:
+                await self.session.delete(code)
+                results.append(code)
+            elif code:
+                skipped.append({"id": cid, "reason": f"already_used:{code.used_count}"})
+                logger.info("Skipped deleting used code {} (id={})", code.code, cid)
+            else:
+                skipped.append({"id": cid, "reason": "not_found"})
+        if results:
+            await self.session.flush()
+        return {"success": results, "skipped": skipped}
+
+    async def batch_update_redeem_codes(
+        self, code_ids: list[int], **kwargs
+    ) -> dict:
+        """批量更新兑换码状态
+
+        Returns:
+            dict: {"success": list[RedeemCode], "skipped": list[dict]}
+        """
+        results: list[RedeemCode] = []
+        skipped: list[dict] = []
+        for cid in code_ids:
+            try:
+                code = await self.update_redeem_code(cid, **kwargs)
+                results.append(code)
+            except PaymentError as e:
+                logger.info("Skipped code {}: {}", cid, e)
+                skipped.append({"id": cid, "reason": str(e)})
+        return {"success": results, "skipped": skipped}
 
     # ========== 用户兑换/购买 ==========
 
@@ -330,7 +524,7 @@ class PaymentService:
         )
 
         order = await self._fulfill_order(order, user, plan, operator_id)
-        logger.info(f"Admin {operator_id} granted plan {plan.name} to user {user_id}")
+        logger.info("Admin {} granted plan {} to user {}", operator_id, plan.name, user_id)
         return order
 
     # ========== 订阅管理 ==========

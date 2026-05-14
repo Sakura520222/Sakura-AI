@@ -27,5 +27,5 @@ async def log_admin_action(
         db.add(log_entry)
         await db.commit()
     except Exception as e:
-        logger.error(f"记录操作日志失败: {e}")
+        logger.error("记录操作日志失败: {}", e, exc_info=True)
         await db.rollback()

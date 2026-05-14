@@ -15,11 +15,44 @@
         </button>
     </div>
 
+    <!-- 批量操作栏（选中时显示） -->
+    <div id="batch-bar" class="hidden mb-4 flex items-center gap-4 px-4 py-3 bg-blue-50 dark:bg-blue-900/20 rounded-lg border border-blue-200 dark:border-blue-800">
+        <span class="text-sm font-medium text-blue-700 dark:text-blue-300">
+            {{ _('billing.batch_selected') }}: <span id="batch-count">0</span>
+        </span>
+        <form id="batch-toggle-form" action="/billing/admin/plans/batch-toggle" method="POST" class="inline">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+            <div id="batch-toggle-ids"></div>
+            <button type="submit" class="px-3 py-1.5 text-sm bg-yellow-500 hover:bg-yellow-600 text-white rounded-lg transition-colors">
+                {{ _('billing.batch_toggle') }}
+            </button>
+        </form>
+        <form id="batch-delete-form" action="/billing/admin/plans/batch-delete" method="POST" class="inline">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+            <div id="batch-delete-ids"></div>
+            <label class="flex items-center gap-1 text-xs text-red-600 dark:text-red-400">
+                <input type="checkbox" name="hard_delete" value="on" class="h-3 w-3 rounded border-gray-300 text-red-600">
+                {{ _('billing.hard_delete') }}
+            </label>
+            <button type="submit" onclick="return confirm('{{ _('billing.confirm_batch_delete') }}')"
+                    class="px-3 py-1.5 text-sm bg-red-600 hover:bg-red-700 text-white rounded-lg transition-colors">
+                {{ _('billing.batch_delete') }}
+            </button>
+        </form>
+        <button onclick="clearSelection()" class="text-sm text-gray-500 hover:text-gray-700 dark:hover:text-gray-300 ml-auto">
+            {{ _('billing.batch_clear') }}
+        </button>
+    </div>
+
     <!-- 套餐列表 -->
     <div class="bg-white dark:bg-gray-800 rounded-lg shadow overflow-hidden">
         <table class="min-w-full divide-y divide-gray-200 dark:divide-gray-700">
             <thead class="bg-gray-50 dark:bg-gray-700">
                 <tr>
+                    <th class="px-4 py-3 text-left">
+                        <input type="checkbox" id="select-all-plans" onchange="toggleSelectAll(this)"
+                               class="h-4 w-4 rounded border-gray-300 text-pink-600 focus:ring-pink-500">
+                    </th>
                     <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase">ID</th>
                     <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase">{{ _('common.name') }}</th>
                     <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase">{{ _('billing.plan_type') }}</th>
@@ -31,7 +64,11 @@
             </thead>
             <tbody class="bg-white dark:bg-gray-800 divide-y divide-gray-200 dark:divide-gray-700">
                 {% for plan in plans %}
-                <tr>
+                <tr data-plan-id="{{ plan.id }}">
+                    <td class="px-4 py-4">
+                        <input type="checkbox" class="plan-checkbox h-4 w-4 rounded border-gray-300 text-pink-600 focus:ring-pink-500"
+                               value="{{ plan.id }}" onchange="updateBatchBar()">
+                    </td>
                     <td class="px-6 py-4 text-sm text-gray-900 dark:text-white">{{ plan.id }}</td>
                     <td class="px-6 py-4 text-sm font-medium text-gray-900 dark:text-white">{{ plan.name }}</td>
                     <td class="px-6 py-4">
@@ -51,7 +88,7 @@
                             {{ _('common.enabled') if plan.is_active else _('common.disabled') }}
                         </span>
                     </td>
-                    <td class="px-6 py-4">
+                    <td class="px-6 py-4 space-x-2">
                         <form action="/billing/admin/plans/{{ plan.id }}/toggle" method="POST" class="inline">
                             <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
                             <button type="submit"
@@ -59,12 +96,16 @@
                                 {{ _('common.disabled') if plan.is_active else _('common.enabled') }}
                             </button>
                         </form>
+                        <button onclick="openEditPlanModal(this.closest('tr').dataset.planId)"
+                                class="text-sm text-blue-600 hover:text-blue-800">{{ _('billing.edit_plan') }}</button>
+                        <button onclick="openDeletePlanModal(this.closest('tr').dataset.planId)"
+                                class="text-sm text-red-600 hover:text-red-800">{{ _('billing.delete_plan') }}</button>
                     </td>
                 </tr>
                 {% endfor %}
                 {% if not plans %}
                 <tr>
-                    <td colspan="7" class="px-6 py-12 text-center text-gray-500 dark:text-gray-400">
+                    <td colspan="8" class="px-6 py-12 text-center text-gray-500 dark:text-gray-400">
                         {{ _('billing.no_plans') }}
                     </td>
                 </tr>
@@ -209,4 +250,265 @@
         </form>
     </div>
 </div>
+
+<!-- 编辑套餐弹窗 -->
+<div id="edit-plan-modal" class="hidden fixed inset-0 z-50 flex items-center justify-center">
+    <div class="absolute inset-0 bg-black/50" onclick="this.parentElement.classList.add('hidden')"></div>
+    <div class="relative bg-white dark:bg-gray-800 rounded-lg shadow-xl max-w-2xl w-full mx-4 max-h-[90vh] overflow-y-auto">
+        <div class="px-6 py-4 border-b border-gray-200 dark:border-gray-700 flex items-center justify-between">
+            <h3 class="text-lg font-semibold text-gray-900 dark:text-white">{{ _('billing.edit_plan') }}</h3>
+            <button onclick="this.closest('#edit-plan-modal').classList.add('hidden')"
+                    class="text-gray-400 hover:text-gray-600 dark:hover:text-gray-300">&times;</button>
+        </div>
+        <form id="edit-plan-form" action="" method="POST" class="px-6 py-4 space-y-4">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+
+            <div class="grid grid-cols-2 gap-4">
+                <div>
+                    <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">{{ _('billing.plan_name') }}</label>
+                    <input type="text" name="name" id="edit-name" required
+                           class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg
+                                  bg-white dark:bg-gray-700 text-gray-900 dark:text-white">
+                </div>
+                <div>
+                    <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">{{ _('billing.plan_type') }}</label>
+                    <select name="plan_type" id="edit-plan_type" required
+                            class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg
+                                   bg-white dark:bg-gray-700 text-gray-900 dark:text-white">
+                        <option value="one_time">{{ _('billing.one_time') }}</option>
+                        <option value="subscription">{{ _('billing.subscription') }}</option>
+                    </select>
+                </div>
+            </div>
+
+            <div class="grid grid-cols-2 gap-4">
+                <div>
+                    <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">{{ _('billing.price_cents') }}</label>
+                    <input type="number" name="price_cents" id="edit-price_cents" min="0"
+                           class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg
+                                  bg-white dark:bg-gray-700 text-gray-900 dark:text-white">
+                </div>
+                <div>
+                    <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">{{ _('billing.subscription_days') }}</label>
+                    <input type="number" name="duration_days" id="edit-duration_days"
+                           class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg
+                                  bg-white dark:bg-gray-700 text-gray-900 dark:text-white">
+                </div>
+            </div>
+
+            <fieldset class="border border-gray-200 dark:border-gray-700 rounded-lg p-4">
+                <legend class="text-sm font-medium text-gray-700 dark:text-gray-300 px-2">{{ _('billing.pr_review_quota') }}</legend>
+                <div class="grid grid-cols-4 gap-3">
+                    <div>
+                        <label class="block text-xs text-gray-500 dark:text-gray-400 mb-1">{{ _('billing.one_time_bonus') }}</label>
+                        <input type="number" name="pr_quota_bonus" id="edit-pr_quota_bonus" min="0"
+                               class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg
+                                      bg-white dark:bg-gray-700 text-gray-900 dark:text-white text-sm">
+                    </div>
+                    <div>
+                        <label class="block text-xs text-gray-500 dark:text-gray-400 mb-1">{{ _('billing.daily_add') }}</label>
+                        <input type="number" name="pr_daily_add" id="edit-pr_daily_add" min="0"
+                               class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg
+                                      bg-white dark:bg-gray-700 text-gray-900 dark:text-white text-sm">
+                    </div>
+                    <div>
+                        <label class="block text-xs text-gray-500 dark:text-gray-400 mb-1">{{ _('billing.weekly_add') }}</label>
+                        <input type="number" name="pr_weekly_add" id="edit-pr_weekly_add" min="0"
+                               class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg
+                                      bg-white dark:bg-gray-700 text-gray-900 dark:text-white text-sm">
+                    </div>
+                    <div>
+                        <label class="block text-xs text-gray-500 dark:text-gray-400 mb-1">{{ _('billing.monthly_add') }}</label>
+                        <input type="number" name="pr_monthly_add" id="edit-pr_monthly_add" min="0"
+                               class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg
+                                      bg-white dark:bg-gray-700 text-gray-900 dark:text-white text-sm">
+                    </div>
+                </div>
+            </fieldset>
+
+            <fieldset class="border border-gray-200 dark:border-gray-700 rounded-lg p-4">
+                <legend class="text-sm font-medium text-gray-700 dark:text-gray-300 px-2">{{ _('billing.issue_analysis_quota') }}</legend>
+                <div class="grid grid-cols-4 gap-3">
+                    <div>
+                        <label class="block text-xs text-gray-500 dark:text-gray-400 mb-1">{{ _('billing.one_time_bonus') }}</label>
+                        <input type="number" name="issue_quota_bonus" id="edit-issue_quota_bonus" min="0"
+                               class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg
+                                      bg-white dark:bg-gray-700 text-gray-900 dark:text-white text-sm">
+                    </div>
+                    <div>
+                        <label class="block text-xs text-gray-500 dark:text-gray-400 mb-1">{{ _('billing.daily_add') }}</label>
+                        <input type="number" name="issue_daily_add" id="edit-issue_daily_add" min="0"
+                               class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg
+                                      bg-white dark:bg-gray-700 text-gray-900 dark:text-white text-sm">
+                    </div>
+                    <div>
+                        <label class="block text-xs text-gray-500 dark:text-gray-400 mb-1">{{ _('billing.weekly_add') }}</label>
+                        <input type="number" name="issue_weekly_add" id="edit-issue_weekly_add" min="0"
+                               class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg
+                                      bg-white dark:bg-gray-700 text-gray-900 dark:text-white text-sm">
+                    </div>
+                    <div>
+                        <label class="block text-xs text-gray-500 dark:text-gray-400 mb-1">{{ _('billing.monthly_add') }}</label>
+                        <input type="number" name="issue_monthly_add" id="edit-issue_monthly_add" min="0"
+                               class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg
+                                      bg-white dark:bg-gray-700 text-gray-900 dark:text-white text-sm">
+                    </div>
+                </div>
+            </fieldset>
+
+            <div>
+                <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">{{ _('common.description') }}</label>
+                <textarea name="description" id="edit-description" rows="2"
+                          class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg
+                                 bg-white dark:bg-gray-700 text-gray-900 dark:text-white"></textarea>
+            </div>
+
+            <div>
+                <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">{{ _('billing.sort_order') }}</label>
+                <input type="number" name="sort_order" id="edit-sort_order" min="0"
+                       class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg
+                              bg-white dark:bg-gray-700 text-gray-900 dark:text-white">
+            </div>
+
+            <div class="flex justify-end gap-3 pt-2">
+                <button type="button"
+                        onclick="this.closest('#edit-plan-modal').classList.add('hidden')"
+                        class="px-4 py-2 text-gray-700 dark:text-gray-300 bg-gray-100 dark:bg-gray-700 rounded-lg
+                               hover:bg-gray-200 dark:hover:bg-gray-600">
+                    {{ _('common.cancel') }}
+                </button>
+                <button type="submit"
+                        class="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white font-medium rounded-lg
+                               transition-colors">
+                    {{ _('billing.update_plan') }}
+                </button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<!-- 删除套餐确认弹窗 -->
+<div id="delete-plan-modal" class="hidden fixed inset-0 z-50 flex items-center justify-center">
+    <div class="absolute inset-0 bg-black/50" onclick="this.parentElement.classList.add('hidden')"></div>
+    <div class="relative bg-white dark:bg-gray-800 rounded-lg shadow-xl max-w-md w-full mx-4">
+        <div class="px-6 py-4 border-b border-gray-200 dark:border-gray-700">
+            <h3 class="text-lg font-semibold text-red-600">{{ _('billing.delete_plan') }}</h3>
+        </div>
+        <div class="px-6 py-4">
+            <p class="text-sm text-gray-700 dark:text-gray-300 mb-4">
+                {{ _('billing.confirm_delete_plan') }} (<span id="delete-plan-name" class="font-semibold"></span>)
+            </p>
+            <p class="text-xs text-gray-500 dark:text-gray-400 mb-4">{{ _('billing.hard_delete_desc') }}</p>
+            <form id="delete-plan-form" action="" method="POST" class="space-y-3">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                <div class="flex items-center">
+                    <input type="checkbox" name="hard_delete" id="hard-delete-checkbox" value="on"
+                           class="h-4 w-4 text-red-600 border-gray-300 rounded focus:ring-red-500">
+                    <label for="hard-delete-checkbox" class="ml-2 text-sm text-red-600 font-medium">
+                        {{ _('billing.hard_delete') }}
+                    </label>
+                </div>
+                <div class="flex justify-end gap-3 pt-2">
+                    <button type="button"
+                            onclick="this.closest('#delete-plan-modal').classList.add('hidden')"
+                            class="px-4 py-2 text-gray-700 dark:text-gray-300 bg-gray-100 dark:bg-gray-700 rounded-lg
+                                   hover:bg-gray-200 dark:hover:bg-gray-600">
+                        {{ _('common.cancel') }}
+                    </button>
+                    <button type="submit"
+                            class="px-4 py-2 bg-red-600 hover:bg-red-700 text-white font-medium rounded-lg
+                                   transition-colors">
+                        {{ _('billing.delete_plan') }}
+                    </button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+
+<script>
+// plansData: object keyed by plan ID (integer, auto-coerced to string by JS)
+const plansData = Object.freeze({
+{% for plan in plans %}
+    {{ plan.id }}: {{ {"id": plan.id, "name": plan.name, "plan_type": plan.plan_type, "price_cents": plan.price_cents, "currency": plan.currency, "duration_days": plan.duration_days or "", "pr_quota_bonus": plan.pr_quota_bonus, "pr_daily_add": plan.pr_daily_add, "pr_weekly_add": plan.pr_weekly_add, "pr_monthly_add": plan.pr_monthly_add, "issue_quota_bonus": plan.issue_quota_bonus, "issue_daily_add": plan.issue_daily_add, "issue_weekly_add": plan.issue_weekly_add, "issue_monthly_add": plan.issue_monthly_add, "description": plan.description or "", "sort_order": plan.sort_order} | tojson }}{{ "," if not loop.last }}
+{% endfor %}
+});
+
+function openEditPlanModal(planId) {
+    const plan = plansData[planId];
+    if (!plan) {
+        console.error('Plan not found:', planId);
+        alert('Failed to load plan data. Please refresh the page.');
+        return;
+    }
+    document.getElementById('edit-plan-form').action = '/billing/admin/plans/' + plan.id + '/edit';
+    document.getElementById('edit-name').value = plan.name;
+    document.getElementById('edit-plan_type').value = plan.plan_type;
+    document.getElementById('edit-price_cents').value = plan.price_cents;
+    document.getElementById('edit-duration_days').value = plan.duration_days || '';
+    document.getElementById('edit-pr_quota_bonus').value = plan.pr_quota_bonus;
+    document.getElementById('edit-pr_daily_add').value = plan.pr_daily_add;
+    document.getElementById('edit-pr_weekly_add').value = plan.pr_weekly_add;
+    document.getElementById('edit-pr_monthly_add').value = plan.pr_monthly_add;
+    document.getElementById('edit-issue_quota_bonus').value = plan.issue_quota_bonus;
+    document.getElementById('edit-issue_daily_add').value = plan.issue_daily_add;
+    document.getElementById('edit-issue_weekly_add').value = plan.issue_weekly_add;
+    document.getElementById('edit-issue_monthly_add').value = plan.issue_monthly_add;
+    document.getElementById('edit-description').value = plan.description;
+    document.getElementById('edit-sort_order').value = plan.sort_order;
+    document.getElementById('edit-plan-modal').classList.remove('hidden');
+}
+
+function openDeletePlanModal(planId) {
+    const plan = plansData[planId];
+    if (!plan) {
+        console.error('Plan not found:', planId);
+        alert('Failed to load plan data. Please refresh the page.');
+        return;
+    }
+    document.getElementById('delete-plan-name').textContent = plan.name;
+    document.getElementById('delete-plan-form').action = '/billing/admin/plans/' + plan.id + '/delete';
+    document.getElementById('hard-delete-checkbox').checked = false;
+    document.getElementById('delete-plan-modal').classList.remove('hidden');
+}
+
+// ========== 批量选择 ==========
+function getSelectedIds() {
+    return Array.from(document.querySelectorAll('.plan-checkbox:checked')).map(cb => cb.value);
+}
+
+function updateBatchBar() {
+    const ids = getSelectedIds();
+    const bar = document.getElementById('batch-bar');
+    const count = document.getElementById('batch-count');
+    count.textContent = ids.length;
+    bar.classList.toggle('hidden', ids.length === 0);
+
+    // 同步到批量表单（使用 DOM API 安全构建元素）
+    ['batch-toggle-ids', 'batch-delete-ids'].forEach(containerId => {
+        const container = document.getElementById(containerId);
+        const input = document.createElement('input');
+        input.type = 'hidden';
+        input.name = 'plan_ids';
+        input.value = ids.join(',');
+        container.replaceChildren(input);
+    });
+
+    // 同步全选框
+    const all = document.querySelectorAll('.plan-checkbox');
+    const checked = document.querySelectorAll('.plan-checkbox:checked');
+    document.getElementById('select-all-plans').checked = all.length > 0 && all.length === checked.length;
+}
+
+function toggleSelectAll(master) {
+    document.querySelectorAll('.plan-checkbox').forEach(cb => cb.checked = master.checked);
+    updateBatchBar();
+}
+
+function clearSelection() {
+    document.querySelectorAll('.plan-checkbox').forEach(cb => cb.checked = false);
+    document.getElementById('select-all-plans').checked = false;
+    updateBatchBar();
+}
+</script>
 {% endblock %}

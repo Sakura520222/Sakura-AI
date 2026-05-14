@@ -10,8 +10,10 @@ Sakura AI Reviewer 支持以下安全能力：
 
 - **TOTP 两步验证**：用户可在个人设置中扫描二维码绑定认证器 App。
 - **恢复码**：启用 TOTP 时生成一次性恢复码，用于认证器不可用时登录。
-- **Passkeys/WebAuthn**：用户可注册平台通行密钥或安全密钥，并用于 WebUI 二次验证。
+- **Passkeys/WebAuthn**：用户可注册平台通行密钥或安全密钥，并用于 WebUI 和 API 二次验证。
 - **OAuth 后二次验证**：GitHub OAuth 认证成功后，如用户已启用 MFA，会先进入二次验证流程。
+- **MFA 失败锁定**：连续 MFA 验证失败达到阈值后临时锁定账户，并通过 Telegram 通知管理员。
+- **API Passkey 二次验证**：移动端 API 登录支持使用 Passkey 完成 MFA 二次验证，与 TOTP/恢复码并列可选。
 - **全局 MFA 要求**：超级管理员可要求所有普通访问用户先注册至少一种 MFA 方法。
 - **单用户 MFA 要求**：超级管理员可对指定用户强制要求注册 MFA。
 - **安全中心**：集中查看用户 MFA 状态、Passkey 数量、最近安全事件并执行管理操作。
@@ -75,7 +77,7 @@ Passkey 可用于 WebUI 登录后的二次验证。Passkey 功能依赖浏览器
 6. 客户端提示用户输入 TOTP 或恢复码，并调用 `POST /api/v1/auth/2fa/verify`。
 7. 验证成功后获得正式 `access_token`。
 
-当前 API v1 的二次验证接口支持 TOTP 与恢复码；WebUI 支持 TOTP、恢复码和 Passkey 二次验证。
+当前 API v1 的二次验证接口支持 TOTP、恢复码和 Passkey；WebUI 支持 TOTP、恢复码和 Passkey 二次验证。
 
 ---
 
@@ -104,8 +106,22 @@ Passkey 可用于 WebUI 登录后的二次验证。Passkey 功能依赖浏览器
 | `passkeys_rp_id` | 空 | WebAuthn Relying Party ID；为空时使用应用域名 |
 | `passkeys_rp_name` | `Sakura AI Reviewer` | WebAuthn Relying Party 显示名称 |
 | `passkeys_origin` | 空 | WebAuthn 允许的 Origin；为空时根据应用域名和端口推导 |
-| `passkeys_challenge_ttl_seconds` | `300` | WebAuthn challenge 有效期 |
+| `passkeys_challenge_ttl_seconds` | `300` | WebAuthn challenge 有效期（范围 60-900） |
 | `passkeys_authentication_rate_limit` | `10/minute` | Passkey 认证接口限流规则 |
+
+### MFA 失败锁定
+
+| 配置项 | 默认值 | 说明 |
+|--------|--------|------|
+| `mfa_lockout_threshold` | `5` | 连续 MFA 验证失败次数达到此值后锁定账户（范围 3-20） |
+| `mfa_lockout_duration_minutes` | `10` | 锁定持续时间，单位分钟（范围 1-60） |
+
+锁定机制说明：
+
+- 基于 Redis 追踪每个用户的 MFA 验证失败次数（Redis 不可用时自动降级为内存追踪）。
+- 验证成功后自动清除失败计数。
+- 锁定触发后发送 Telegram 通知给管理员。
+- `/auth/2fa/verify`、`/auth/2fa/passkey/options`、`/auth/2fa/passkey/verify` 三个端点均集成锁定检查。
 
 ---
 
@@ -149,7 +165,7 @@ TOTP 设置临时密钥和 WebAuthn challenge 优先存储在 Redis 中。Redis 
 
 ### 用户只注册了 Passkey，API 登录如何完成二次验证？
 
-当前 API v1 提供 TOTP/恢复码验证接口；Passkey 二次验证主要用于 WebUI。面向移动端 API 登录的用户建议同时启用 TOTP 或妥善保存恢复码。
+API v1 现已支持 Passkey 二次验证（`POST /auth/2fa/passkey/options` + `POST /auth/2fa/passkey/verify`）。客户端可根据 `mfa_required` 响应中的 `methods` 字段判断可用验证方式。面向移动端建议同时支持 TOTP 和 Passkey 两种路径，以获得最佳用户体验。
 
 ### 为什么 Passkey 注册失败？
 
