@@ -61,7 +61,8 @@
 
 ### Agent 专家团队
 
-- **超级管理员手动启动**：从 Issue 分析和仓库扫描发现中筛选候选任务，按需启动自动修复流程
+- **超级管理员手动启动**：从 Issue 分析和仓库扫描发现中筛选候选任务，支持自然语言描述筛选条件，按需启动自动修复流程
+- **智能候选筛选**：自动去重、过滤已关闭 Issue、按评分排序，支持 AI 自然语言筛选匹配最合适的候选任务
 - **双 Agent 协作**：内置全栈专家负责计划与代码修改，专业审查负责推送前质量复核
 - **独立 Git 工作区**：在 `agent_team_workspace_root` 下 clone/fetch/checkout 专用分支，避免污染服务运行目录
 - **受控工具执行**：文件读写、搜索、shell 验证命令均限制在工作区内，验证命令受白名单控制
@@ -71,15 +72,16 @@
 ### 管理与运维
 
 - **首次部署引导（Setup Wizard）**：首次启动自动检测配置状态，分步引导完成 GitHub App、数据库、AI 模型、RAG 等配置，支持断点续配
+- **系统核心配置管理**：超级管理员可在 WebUI 运行时修改基础设施配置（数据库、GitHub App/OAuth、Telegram、应用域名等），无需重新运行 Setup Wizard，变更自动审计记录
 - **动态配置管理**：通过 WebUI 修改配置即时生效，无需重启服务
 - **AI API 超时治理**：通过 `ai_api_timeout_seconds` 和 `ai_api_total_timeout_seconds` 分别控制单次请求超时与重试循环总耗时
 - **用户级配置覆盖**：普通用户可在个人设置或 API 中覆盖允许的偏好配置（当前支持 AI 输出语言），按 UserConfig → AppConfig → Settings 默认值逐级回退
 - **AI Provider 注册表**：内置 OpenAI、DeepSeek、Qwen、Z.ai、Doubao、SiliconFlow、Gemini、Anthropic 兼容与自定义 OpenAI 兼容厂商，支持自动获取模型列表和上下文窗口信息
 - **GitHub App 安装管理**：自动处理 GitHub App 安装/卸载事件，同步仓库授权状态
-- **安全中心与多因素认证**：支持 TOTP、恢复码、Passkeys/WebAuthn、全局/单用户强制 MFA、管理员重置 MFA 与安全事件审计
+- **安全中心与多因素认证**：支持 TOTP、恢复码、Passkeys/WebAuthn、全局/单用户强制 MFA、管理员重置 MFA 与安全事件审计、MFA 失败锁定（动态阈值与锁定时长）、API Passkey 二次验证
 - **SSE 实时推送**：基于 Redis Pub/Sub 的多进程实时通信，WebUI 数据即时更新
 - **配额制访问控制**：基于配额的灵活访问管理体系，支持用户自注册，并按 UTC 日/周/月自动重置 PR 与 Issue 用量
-- **付费配额系统**：套餐计划管理、兑换码批量生成与兑换、管理员手动充值，支持一次性包和订阅模式
+- **付费配额系统**：套餐计划与兑换码完整 CRUD 管理（创建/编辑/删除/批量操作）、管理员手动充值，支持一次性包和订阅模式
 - **管理员操作审计**：完整的操作日志，覆盖配置变更、用户管理等关键操作
 - **WebUI 管理界面**：仪表盘、PR 管理、用户管理、配置管理、队列监控、操作日志、仓库扫描管理、Agent 专家团队与 Agent Skills，支持 Markdown 内容渲染
 - **Telegram Bot**：实时通知、按钮菜单交互、三级权限体系（超级管理员/管理员/普通用户）、配额管理
@@ -255,7 +257,7 @@ WebUI：`https://your-domain.com/`
 - **辅助模型**：WebUI 配置管理中设置 `summary_model`、`summary_api_base`、`summary_api_key`，用于摘要生成、上下文压缩、标签推荐等轻量任务，留空则自动回退到主模型
 - **PR 自动审查**：WebUI 配置管理中 `enable_auto_review` 控制 PR webhook 是否自动触发审查；关闭后仍可通过命令或手动入口触发
 - **AI API 超时**：WebUI 配置管理中 `ai_api_timeout_seconds` 控制单次请求超时，`ai_api_total_timeout_seconds` 控制一次 AI 调用重试循环的最长总耗时
-- **安全与 MFA**：WebUI 安全中心可开启全局 MFA 要求、为单个用户强制 MFA、重置 TOTP/恢复码、删除 Passkeys，并记录安全审计事件；用户可在个人设置中启用 TOTP、生成恢复码、注册 Passkeys/WebAuthn
+- **安全与 MFA**：WebUI 安全中心可开启全局 MFA 要求、为单个用户强制 MFA、重置 TOTP/恢复码、删除 Passkeys，并记录安全审计事件；用户可在个人设置中启用 TOTP、生成恢复码、注册 Passkeys/WebAuthn；支持 MFA 失败锁定（`mfa_lockout_threshold` / `mfa_lockout_duration_minutes`）和 API Passkey 二次验证
 - **审查策略**：编辑 `config/strategies.yaml`，支持快速/标准/深度/大PR 四种策略
 - **文件过滤**：在 `config/strategies.yaml` 中配置跳过的文件扩展名和路径
 - **AI 工具**：WebUI 配置管理中 `enable_ai_tools` / `max_tool_iterations`
@@ -268,6 +270,7 @@ WebUI：`https://your-domain.com/`
 - **RAG 知识库**：WebUI 配置管理中配置嵌入模型（支持 BAAI/bge-m3 等）、重排序模型、ChromaDB 等
 - **PR 代码索引**：WebUI 配置管理中配置代码分块、支持语言、核心目录等
 - **Issue 自动指派**：WebUI 配置管理中 `issue_auto_assign` / `issue_assignee_confidence_threshold`
+- **Issue 并发控制**：WebUI 配置管理中 `max_concurrent_issues`，控制同时进行的最大 Issue 分析任务数，超出排队等待
 - **Issue 标题改写**：WebUI 配置管理中 `issue_auto_rewrite_title`
 - **语义 Issue 关联**：WebUI 配置管理中 `enable_semantic_issue_linking` / `semantic_issue_similarity_threshold`
 - **增量审查历史**：WebUI 配置管理中 `enable_incremental_history_context`，AI 自动学习历史审查记录
