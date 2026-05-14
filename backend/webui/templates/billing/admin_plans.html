@@ -427,6 +427,7 @@
 </div>
 
 <script>
+// plansData: object keyed by plan ID (integer, auto-coerced to string by JS)
 const plansData = {
 {% for plan in plans %}
     {{ plan.id }}: {{ {"id": plan.id, "name": plan.name, "plan_type": plan.plan_type, "price_cents": plan.price_cents, "currency": plan.currency, "duration_days": plan.duration_days or "", "pr_quota_bonus": plan.pr_quota_bonus, "pr_daily_add": plan.pr_daily_add, "pr_weekly_add": plan.pr_weekly_add, "pr_monthly_add": plan.pr_monthly_add, "issue_quota_bonus": plan.issue_quota_bonus, "issue_daily_add": plan.issue_daily_add, "issue_weekly_add": plan.issue_weekly_add, "issue_monthly_add": plan.issue_monthly_add, "description": plan.description or "", "sort_order": plan.sort_order} | tojson }}{{ "," if not loop.last }}
@@ -483,10 +484,14 @@ function updateBatchBar() {
     count.textContent = ids.length;
     bar.classList.toggle('hidden', ids.length === 0);
 
-    // 同步到批量表单（使用单个逗号分隔值，避免多同名 input 问题）
+    // 同步到批量表单（使用 DOM API 安全构建元素）
     ['batch-toggle-ids', 'batch-delete-ids'].forEach(containerId => {
         const container = document.getElementById(containerId);
-        container.innerHTML = '<input type="hidden" name="plan_ids" value="' + ids.join(',') + '">';
+        const input = document.createElement('input');
+        input.type = 'hidden';
+        input.name = 'plan_ids';
+        input.value = ids.join(',');
+        container.replaceChildren(input);
     });
 
     // 同步全选框

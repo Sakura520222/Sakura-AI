@@ -174,17 +174,34 @@ class PaymentService:
 
     async def batch_delete_plans(
         self, plan_ids: list[int], hard_delete: bool = False
-    ) -> list[Plan]:
-        """批量删除套餐"""
-        results = []
-        for pid in plan_ids:
-            plan = await self.delete_plan(pid, hard_delete=hard_delete)
-            results.append(plan)
-        return results
+    ) -> dict:
+        """批量删除套餐
 
-    async def batch_toggle_plans(self, plan_ids: list[int]) -> list[Plan]:
-        """批量切换套餐启用/禁用状态"""
-        results = []
+        使用 savepoint 模式：单个失败不影响其他操作。
+
+        Returns:
+            dict: {"success": list[Plan], "failed": list[dict]}
+        """
+        results: list[Plan] = []
+        failed: list[dict] = []
+        for pid in plan_ids:
+            async with self.session.begin_nested():
+                try:
+                    plan = await self.delete_plan(pid, hard_delete=hard_delete)
+                    results.append(plan)
+                except PaymentError as e:
+                    logger.warning(f"batch_delete: plan {pid} failed: {e}")
+                    failed.append({"id": pid, "reason": str(e)})
+        return {"success": results, "failed": failed}
+
+    async def batch_toggle_plans(self, plan_ids: list[int]) -> dict:
+        """批量切换套餐启用/禁用状态
+
+        Returns:
+            dict: {"success": list[Plan], "skipped": list[dict]}
+        """
+        results: list[Plan] = []
+        skipped: list[dict] = []
         for pid in plan_ids:
             plan = await self.get_plan(pid)
             if plan:
@@ -192,9 +209,10 @@ class PaymentService:
                 results.append(plan)
             else:
                 logger.warning(f"batch_toggle: plan {pid} not found, skipped")
+                skipped.append({"id": pid, "reason": "Plan not found"})
         if results:
             await self.session.flush()
-        return results
+        return {"success": results, "skipped": skipped}
 
     # ========== 兑换码管理 ==========
 
