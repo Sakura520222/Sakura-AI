@@ -74,7 +74,7 @@ class CommentService:
             return comment
 
         except Exception as e:
-            logger.error(f"创建占位评论时出错: {e}", exc_info=True)
+            logger.error("创建占位评论时出错: {}", e, exc_info=True)
             raise
 
     async def delete_placeholder_comment(self, comment: Any):
@@ -85,9 +85,9 @@ class CommentService:
         """
         try:
             await asyncio.to_thread(comment.delete)
-            logger.info(f"✓ 已删除占位评论 (Comment ID: {comment.id})")
+            logger.info("✓ 已删除占位评论 (Comment ID: {})", comment.id)
         except Exception as e:
-            logger.error(f"删除占位评论时出错: {e}", exc_info=True)
+            logger.error("删除占位评论时出错: {}", e, exc_info=True)
             # 不抛出异常，因为占位评论删除失败不应影响主流程
 
     async def update_review(
@@ -125,7 +125,7 @@ class CommentService:
                 try:
                     # 1. 删除占位 comment
                     await asyncio.to_thread(comment.delete)
-                    logger.info(f"✓ 已删除占位评论 (Comment ID: {comment.id})")
+                    logger.info("✓ 已删除占位评论 (Comment ID: {})", comment.id)
 
                     # 2. 构建整体评论内容
                     review_body = self._format_comment(
@@ -139,7 +139,8 @@ class CommentService:
                     if inline_comments:
                         # 使用批量创建行内评论的方法
                         logger.info(
-                            f"发现 {len(inline_comments)} 条行内评论，使用批量创建"
+                            "发现 {} 条行内评论，使用批量创建",
+                            len(inline_comments),
                         )
 
                         # 验证和过滤行内评论（使用 Diff 安全区）
@@ -151,7 +152,7 @@ class CommentService:
                             filtered_count = len(inline_comments) - len(
                                 validated_comments
                             )
-                            logger.info(f"过滤掉 {filtered_count} 条无效的行内评论")
+                            logger.info("过滤掉 {} 条无效的行内评论", filtered_count)
 
                         # 只有当有有效评论时才创建 review
                         if validated_comments:
@@ -159,7 +160,8 @@ class CommentService:
                                 pr, validated_comments, overall_body=review_body
                             )
                             logger.info(
-                                f"✓ 已创建带行内评论的审查 (Review ID: {review.id})"
+                                "✓ 已创建带行内评论的审查 (Review ID: {})",
+                                review.id,
                             )
                         else:
                             # 所有评论都被过滤，降级为普通 review
@@ -170,7 +172,7 @@ class CommentService:
                                 event="COMMENT",
                                 comments=[],
                             )
-                            logger.info(f"✓ 已创建普通审查 (Review ID: {review.id})")
+                            logger.info("✓ 已创建普通审查 (Review ID: {})", review.id)
                     else:
                         # 没有行内评论，创建普通 review
                         review = await asyncio.to_thread(
@@ -179,11 +181,11 @@ class CommentService:
                             event="COMMENT",
                             comments=[],
                         )
-                        logger.info(f"✓ 已创建正式审查评论 (Review ID: {review.id})")
+                        logger.info("✓ 已创建正式审查评论 (Review ID: {})", review.id)
 
                 except Exception as e:
                     logger.error(
-                        "删除评论并创建 review 失败: {}", str(e), exc_info=True
+                        "删除评论并创建 review 失败: {}", e, exc_info=True
                     )
                     # 降级方案：创建新的普通评论
                     review_body = self._format_comment(
@@ -201,7 +203,7 @@ class CommentService:
                 logger.warning("无法更新评论：没有 PR 对象")
 
         except Exception as e:
-            logger.error("更新评论时出错: {}", str(e), exc_info=True)
+            logger.error("更新评论时出错: {}", e, exc_info=True)
             raise
 
     async def update_review_with_error(
@@ -256,7 +258,7 @@ Please check system logs or contact the administrator.
                 try:
                     # 1. 删除占位 comment
                     await asyncio.to_thread(comment.delete)
-                    logger.info(f"✓ 已删除占位评论 (Comment ID: {comment.id})")
+                    logger.info("✓ 已删除占位评论 (Comment ID: {})", comment.id)
 
                     # 2. 创建错误评论
                     await asyncio.to_thread(pr.create_issue_comment, error_body)
@@ -264,7 +266,7 @@ Please check system logs or contact the administrator.
 
                 except Exception as e:
                     logger.error(
-                        "删除评论并创建错误评论失败: {}", str(e), exc_info=True
+                        "删除评论并创建错误评论失败: {}", e, exc_info=True
                     )
                     # 降级方案：直接创建新的错误评论
                     await asyncio.to_thread(pr.create_issue_comment, error_body)
@@ -273,7 +275,7 @@ Please check system logs or contact the administrator.
                 logger.warning("无法更新错误评论：没有 PR 对象")
 
         except Exception as e:
-            logger.error("更新错误消息时出错: {}", str(e), exc_info=True)
+            logger.error("更新错误消息时出错: {}", e, exc_info=True)
             # 如果更新失败，尝试记录日志但不中断流程
 
     async def post_review_comment(
@@ -302,10 +304,10 @@ Please check system logs or contact the administrator.
                 comments=[],  # 整体评论，不需要行内评论
             )
 
-            logger.info(f"✓ 成功发布审查评论到PR: {pr.base.repo.full_name}#{pr.number}")
+            logger.info("✓ 成功发布审查评论到PR: {}#{}", pr.base.repo.full_name, pr.number)
 
         except Exception as e:
-            logger.error(f"发布评论时出错: {e}", exc_info=True)
+            logger.error("发布评论时出错: {}", e, exc_info=True)
             raise
 
     def _format_comment(
@@ -368,7 +370,7 @@ Please check system logs or contact the administrator.
             )
             return review
         except Exception as e:
-            logger.error(f"创建审查评论时出错: {e}")
+            logger.error("创建审查评论时出错: {}", e)
             raise
 
     async def create_inline_comment(
@@ -389,7 +391,7 @@ Please check system logs or contact the administrator.
             )
             return comment
         except Exception as e:
-            logger.error(f"创建行内评论时出错: {e}")
+            logger.error("创建行内评论时出错: {}", e)
             raise
 
     async def create_batch_inline_comments(
@@ -420,7 +422,7 @@ Please check system logs or contact the administrator.
                 logger.info("没有行内评论需要创建")
                 return None
 
-            logger.info(f"开始批量创建 {len(inline_comments)} 条行内评论")
+            logger.info("开始批量创建 {} 条行内评论", len(inline_comments))
 
             # 构建 GitHub API 需要的评论格式
             comments = []
@@ -454,7 +456,7 @@ Please check system logs or contact the administrator.
                     comments.append(comment_dict)
 
                 except Exception as e:
-                    logger.warning(f"跳过无效的行内评论数据: {comment_data}, 错误: {e}")
+                    logger.warning("跳过无效的行内评论数据: {}, 错误: {}", comment_data, e)
                     continue
 
             if not comments:
@@ -469,33 +471,33 @@ Please check system logs or contact the administrator.
                 comments=comments,
             )
 
-            logger.info(f"✓ 成功批量创建 {len(comments)} 条行内评论")
+            logger.info("✓ 成功批量创建 {} 条行内评论", len(comments))
             return review
 
         except Exception as e:
             # "剥茧抽丝"式错误日志
-            logger.error(f"批量创建行内评论时出错: {e}")
+            logger.error("批量创建行内评论时出错: {}", e)
 
             # 尝试捕获 GithubException 的详细信息
             try:
                 if hasattr(e, "status") and hasattr(e, "data"):
                     logger.error("GitHub API 错误详情:")
-                    logger.error(f"  - Status: {e.status}")
-                    logger.error(f"  - Data: {e.data}")
+                    logger.error("  - Status: {}", e.status)
+                    logger.error("  - Data: {}", e.data)
                     if isinstance(e.data, dict):
-                        logger.error(f"  - Message: {e.data.get('message', 'N/A')}")
-                        logger.error(f"  - Errors: {e.data.get('errors', 'N/A')}")
+                        logger.error("  - Message: {}", e.data.get('message', 'N/A'))
+                        logger.error("  - Errors: {}", e.data.get('errors', 'N/A'))
                 else:
-                    logger.error(f"异常类型: {type(e).__name__}")
-                    logger.error(f"异常信息: {str(e)}")
+                    logger.error("异常类型: {}", type(e).__name__)
+                    logger.error("异常信息: {}", e)
             except Exception as log_error:
-                logger.error(f"无法解析详细错误信息: {log_error}")
+                logger.error("无法解析详细错误信息: {}", log_error)
 
             # 打印评论数据用于调试
-            logger.error(f"失败的评论数量: {len(inline_comments)}")
+            logger.error("失败的评论数量: {}", len(inline_comments))
             for i, comment in enumerate(inline_comments[:3], 1):  # 只打印前3条
                 logger.error(
-                    f"  评论 {i}: {comment['file_path']}:{comment['line_number']}"
+                    "  评论 {}: {}:{}", i, comment['file_path'], comment['line_number']
                 )
 
             raise
@@ -530,7 +532,7 @@ Please check system logs or contact the administrator.
             matched_path = self._match_file_path(file_path, pr_files)
 
             if not matched_path:
-                logger.warning(f"文件路径无法匹配: {file_path}，跳过该评论")
+                logger.warning("文件路径无法匹配: {}，跳过该评论", file_path)
                 continue
 
             # 2. 验证行号是否在 Diff 安全区内
@@ -585,7 +587,7 @@ Please check system logs or contact the administrator.
             if start_line:
                 validated_comment["start_line"] = start_line
             validated.append(validated_comment)
-            logger.debug(f"✓ 验证通过: {matched_path}:{line_number}")
+            logger.debug("✓ 验证通过: {}:{}", matched_path, line_number)
 
         return validated
 
@@ -611,7 +613,7 @@ Please check system logs or contact the administrator.
         for i in range(len(parts)):
             test_path = "/".join(parts[i:])
             if test_path in pr_files:
-                logger.debug(f"路径匹配: {ai_path} -> {test_path}")
+                logger.debug("路径匹配: {} -> {}", ai_path, test_path)
                 return test_path
 
         # 3. 尝试添加常见前缀
@@ -619,7 +621,7 @@ Please check system logs or contact the administrator.
         for prefix in common_prefixes:
             test_path = prefix + ai_path
             if test_path in pr_files:
-                logger.debug(f"路径匹配: {ai_path} -> {test_path}")
+                logger.debug("路径匹配: {} -> {}", ai_path, test_path)
                 return test_path
 
         # 4. 文件名匹配（最后手段）
@@ -627,12 +629,12 @@ Please check system logs or contact the administrator.
         matches = [f for f in pr_files if f.endswith(filename)]
 
         if len(matches) == 1:
-            logger.debug(f"路径匹配: {ai_path} -> {matches[0]} (通过文件名)")
+            logger.debug("路径匹配: {} -> {} (通过文件名)", ai_path, matches[0])
             return matches[0]
         elif len(matches) > 1:
-            logger.warning(f"文件名 {filename} 匹配到多个文件: {matches}，跳过")
+            logger.warning("文件名 {} 匹配到多个文件: {}，跳过", filename, matches)
 
-        logger.warning(f"无法匹配文件路径: {ai_path}")
+        logger.warning("无法匹配文件路径: {}", ai_path)
         return None
 
     def format_file_review(

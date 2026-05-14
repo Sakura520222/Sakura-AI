@@ -1,5 +1,6 @@
 """API v1 付费配额端点"""
 
+from datetime import datetime
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -52,6 +53,32 @@ class GenerateCodesRequest(BaseModel):
     count: int = Field(..., ge=1, le=100)
     batch_name: Optional[str] = None
     max_uses: int = Field(1, ge=1)
+
+
+class PlanUpdateRequest(BaseModel):
+    name: Optional[str] = Field(None, min_length=1, max_length=100)
+    plan_type: Optional[str] = Field(None, pattern="^(one_time|subscription)$")
+    price_cents: Optional[int] = Field(None, ge=0)
+    currency: Optional[str] = Field(None, max_length=10)
+    duration_days: Optional[int] = None
+    pr_quota_bonus: Optional[int] = Field(None, ge=0)
+    pr_daily_add: Optional[int] = Field(None, ge=0)
+    pr_weekly_add: Optional[int] = Field(None, ge=0)
+    pr_monthly_add: Optional[int] = Field(None, ge=0)
+    issue_quota_bonus: Optional[int] = Field(None, ge=0)
+    issue_daily_add: Optional[int] = Field(None, ge=0)
+    issue_weekly_add: Optional[int] = Field(None, ge=0)
+    issue_monthly_add: Optional[int] = Field(None, ge=0)
+    is_active: Optional[bool] = None
+    sort_order: Optional[int] = Field(None, ge=0)
+    description: Optional[str] = None
+
+
+class RedeemCodeUpdateRequest(BaseModel):
+    status: Optional[str] = Field(None, pattern="^(active|disabled)$")
+    expires_at: Optional[datetime] = None
+    max_uses: Optional[int] = Field(None, ge=1)
+    plan_id: Optional[int] = None
 
 
 # ========== Public endpoints ==========
@@ -171,6 +198,52 @@ async def create_plan(
     return {"id": plan.id, "name": plan.name}
 
 
+@router.put("/admin/plans/{plan_id}")
+async def update_plan(
+    plan_id: int,
+    req: PlanUpdateRequest,
+    db: AsyncSession = Depends(get_db),
+    user: dict = Depends(require_api_super_admin),
+):
+    """编辑套餐"""
+    svc = PaymentService(db)
+    try:
+        plan = await svc.update_plan(plan_id, **req.model_dump(exclude_none=True))
+        await db.commit()
+        return {
+            "id": plan.id,
+            "name": plan.name,
+            "plan_type": plan.plan_type,
+            "is_active": plan.is_active,
+        }
+    except PaymentError as e:
+        await db.rollback()
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@router.delete("/admin/plans/{plan_id}")
+async def delete_plan(
+    plan_id: int,
+    hard: bool = Query(False, description="Hard delete (remove from database)"),
+    db: AsyncSession = Depends(get_db),
+    user: dict = Depends(require_api_super_admin),
+):
+    """删除套餐（默认软删除，hard=true 时硬删除）"""
+    svc = PaymentService(db)
+    try:
+        plan = await svc.delete_plan(plan_id, hard_delete=hard)
+        await db.commit()
+        return {
+            "success": True,
+            "id": plan_id,
+            "name": plan.name,
+            "hard_delete": hard,
+        }
+    except PaymentError as e:
+        await db.rollback()
+        raise HTTPException(status_code=400, detail=str(e))
+
+
 @router.post("/admin/codes/generate")
 async def generate_codes(
     req: GenerateCodesRequest,
@@ -189,6 +262,48 @@ async def generate_codes(
         )
         await db.commit()
         return {"count": len(codes), "codes": [c.code for c in codes]}
+    except PaymentError as e:
+        await db.rollback()
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@router.put("/admin/codes/{code_id}")
+async def update_redeem_code(
+    code_id: int,
+    req: RedeemCodeUpdateRequest,
+    db: AsyncSession = Depends(get_db),
+    user: dict = Depends(require_api_super_admin),
+):
+    """编辑兑换码"""
+    svc = PaymentService(db)
+    try:
+        code = await svc.update_redeem_code(
+            code_id, **req.model_dump(exclude_none=True)
+        )
+        await db.commit()
+        return {
+            "success": True,
+            "id": code.id,
+            "code": code.code,
+            "status": code.status,
+        }
+    except PaymentError as e:
+        await db.rollback()
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@router.delete("/admin/codes/{code_id}")
+async def delete_redeem_code(
+    code_id: int,
+    db: AsyncSession = Depends(get_db),
+    user: dict = Depends(require_api_super_admin),
+):
+    """删除兑换码"""
+    svc = PaymentService(db)
+    try:
+        code = await svc.delete_redeem_code(code_id)
+        await db.commit()
+        return {"success": True, "id": code_id, "code": code.code}
     except PaymentError as e:
         await db.rollback()
         raise HTTPException(status_code=400, detail=str(e))
