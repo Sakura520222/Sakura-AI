@@ -428,11 +428,11 @@
 
 <script>
 // plansData: object keyed by plan ID (integer, auto-coerced to string by JS)
-const plansData = {
+const plansData = Object.freeze({
 {% for plan in plans %}
     {{ plan.id }}: {{ {"id": plan.id, "name": plan.name, "plan_type": plan.plan_type, "price_cents": plan.price_cents, "currency": plan.currency, "duration_days": plan.duration_days or "", "pr_quota_bonus": plan.pr_quota_bonus, "pr_daily_add": plan.pr_daily_add, "pr_weekly_add": plan.pr_weekly_add, "pr_monthly_add": plan.pr_monthly_add, "issue_quota_bonus": plan.issue_quota_bonus, "issue_daily_add": plan.issue_daily_add, "issue_weekly_add": plan.issue_weekly_add, "issue_monthly_add": plan.issue_monthly_add, "description": plan.description or "", "sort_order": plan.sort_order} | tojson }}{{ "," if not loop.last }}
 {% endfor %}
-};
+});
 
 function openEditPlanModal(planId) {
     const plan = plansData[planId];

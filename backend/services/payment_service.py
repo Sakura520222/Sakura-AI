@@ -96,7 +96,7 @@ class PaymentService:
         )
         self.session.add(plan)
         await self.session.flush()
-        logger.info(f"Created plan: {name} (type={plan_type}, price={price_cents})")
+        logger.info("Created plan: {} (type={}, price={})", name, plan_type, price_cents)
         return plan
 
     async def update_plan(self, plan_id: int, **kwargs) -> Plan:
@@ -164,11 +164,11 @@ class PaymentService:
 
             await self.session.delete(plan)
             await self.session.flush()
-            logger.info(f"Hard deleted plan: {plan.name} (id={plan_id})")
+            logger.info("Hard deleted plan: {} (id={})", plan.name, plan_id)
         else:
             plan.is_active = False
             await self.session.flush()
-            logger.info(f"Soft deleted plan: {plan.name} (id={plan_id})")
+            logger.info("Soft deleted plan: {} (id={})", plan.name, plan_id)
 
         return plan
 
@@ -190,7 +190,7 @@ class PaymentService:
                     plan = await self.delete_plan(pid, hard_delete=hard_delete)
                     results.append(plan)
                 except PaymentError as e:
-                    logger.warning(f"batch_delete: plan {pid} failed: {e}")
+                    logger.warning("batch_delete: plan {} failed: {}", pid, e)
                     failed.append({"id": pid, "reason": str(e)})
         return {"success": results, "failed": failed}
 
@@ -208,7 +208,7 @@ class PaymentService:
                 plan.is_active = not plan.is_active
                 results.append(plan)
             else:
-                logger.warning(f"batch_toggle: plan {pid} not found, skipped")
+                logger.warning("batch_toggle: plan {} not found, skipped", pid)
                 skipped.append({"id": pid, "reason": "Plan not found"})
         if results:
             await self.session.flush()
@@ -313,7 +313,7 @@ class PaymentService:
             if key in self.REDEEM_CODE_UPDATE_FIELDS and value is not None:
                 setattr(code, key, value)
         await self.session.flush()
-        logger.info(f"Updated redeem code {code.code} (id={code_id})")
+        logger.info("Updated redeem code {} (id={})", code.code, code_id)
         return code
 
     async def delete_redeem_code(self, code_id: int) -> RedeemCode:
@@ -329,27 +329,30 @@ class PaymentService:
 
         await self.session.delete(code)
         await self.session.flush()
-        logger.info(f"Deleted redeem code {code.code} (id={code_id})")
+        logger.info("Deleted redeem code {} (id={})", code.code, code_id)
         return code
 
-    async def batch_delete_redeem_codes(self, code_ids: list[int]) -> list[RedeemCode]:
-        """批量删除兑换码（仅删除未使用的）"""
-        results = []
-        skipped = []
+    async def batch_delete_redeem_codes(self, code_ids: list[int]) -> dict:
+        """批量删除兑换码（仅删除未使用的）
+
+        Returns:
+            dict: {"success": list[RedeemCode], "skipped": list[dict]}
+        """
+        results: list[RedeemCode] = []
+        skipped: list[dict] = []
         for cid in code_ids:
             code = await self.get_redeem_code(cid)
             if code and code.used_count == 0:
                 await self.session.delete(code)
                 results.append(code)
             elif code:
-                skipped.append(code.code)
+                skipped.append({"id": cid, "reason": f"已使用 {code.used_count} 次"})
+                logger.info("Skipped deleting used code {} (id={})", code.code, cid)
+            else:
+                skipped.append({"id": cid, "reason": "未找到"})
         if results:
             await self.session.flush()
-        if skipped:
-            logger.warning(
-                f"Skipped deleting {len(skipped)} used codes: {skipped}"
-            )
-        return results
+        return {"success": results, "skipped": skipped}
 
     async def batch_update_redeem_codes(
         self, code_ids: list[int], **kwargs
@@ -366,7 +369,7 @@ class PaymentService:
                 code = await self.update_redeem_code(cid, **kwargs)
                 results.append(code)
             except PaymentError as e:
-                logger.info(f"Skipped code {cid}: {e}")
+                logger.info("Skipped code {}: {}", cid, e)
                 skipped.append({"id": cid, "reason": str(e)})
         return {"success": results, "skipped": skipped}
 
@@ -517,7 +520,7 @@ class PaymentService:
         )
 
         order = await self._fulfill_order(order, user, plan, operator_id)
-        logger.info(f"Admin {operator_id} granted plan {plan.name} to user {user_id}")
+        logger.info("Admin {} granted plan {} to user {}", operator_id, plan.name, user_id)
         return order
 
     # ========== 订阅管理 ==========

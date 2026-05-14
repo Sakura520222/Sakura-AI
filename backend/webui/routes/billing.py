@@ -640,7 +640,6 @@ async def admin_batch_delete_plans(
     svc = PaymentService(db)
     try:
         result = await svc.batch_delete_plans(plan_ids, hard_delete=is_hard)
-        await db.commit()
         success_count = len(result["success"])
         failed_count = len(result["failed"])
         await log_admin_action(
@@ -799,20 +798,23 @@ async def admin_batch_delete_codes(
 
     svc = PaymentService(db)
     try:
-        codes = await svc.batch_delete_redeem_codes(code_ids)
-        await db.commit()
+        result = await svc.batch_delete_redeem_codes(code_ids)
+        success_count = len(result["success"])
+        skipped_count = len(result["skipped"])
         await log_admin_action(
             db,
             admin_id=user["user_id"],
             action="batch_delete_codes",
             target_type="redeem_code",
-            detail={"code_ids": code_ids, "count": len(codes)},
+            detail={"code_ids": code_ids, "success_count": success_count, "skipped_count": skipped_count},
         )
+        toast_key = "toast.batch_partial_success" if skipped_count > 0 else "toast.batch_codes_deleted"
         return toast_redirect(
             "/billing/admin/codes",
-            "toast.batch_codes_deleted",
+            toast_key,
             lang=detect_language(),
-            count=len(codes),
+            count=success_count,
+            skipped=skipped_count,
         )
     except PaymentError as e:
         await db.rollback()
