@@ -30,12 +30,11 @@ class GitHubAppClient:
         return cls._instance
 
     def __init__(self):
-        """初始化（只执行一次）"""
+        """初始化"""
         if not self._initialized:
             self.integration = None
             self._app_client = None
             self._lock = None
-            self._init_integration()
             self.__class__._initialized = True
             logger.info("GitHubAppClient单例初始化完成")
 
@@ -1000,8 +999,11 @@ class GitHubAppClient:
         """
         try:
             if self.integration is None:
-                logger.warning("GitHub Integration 未初始化，无法获取 bot 用户名")
-                return getattr(settings, "bot_username", None) or "unknown-bot"
+                logger.info("GitHub Integration 尚未初始化，尝试延迟创建...")
+                self._init_integration()
+                if self.integration is None:
+                    logger.warning("GitHub Integration 初始化失败，无法获取 bot 用户名")
+                    return getattr(settings, "bot_username", None) or "unknown-bot"
             # 直接使用 integration 对象获取 App 信息
             app = self.integration.get_app()
             app_slug = app.slug
