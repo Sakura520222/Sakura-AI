@@ -1172,6 +1172,7 @@ toast:
   batch_codes_disabled: "Disabled {count} code(s)"
   batch_codes_enabled: "Enabled {count} code(s)"
   batch_partial_success: "Processed {count} item(s), {skipped} skipped"
+  batch_codes_partial_deleted: "Deleted {count} code(s), {skipped} skipped"
   batch_codes_deleted: "Deleted {count} code(s) (used ones skipped)"
   strategy_saved: "Strategy config [{section}] saved and applied"
   label_validation_failed: "Label validation failed: {error}"

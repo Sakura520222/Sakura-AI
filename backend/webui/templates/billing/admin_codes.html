@@ -320,10 +320,14 @@ function updateBatchBar() {
     count.textContent = ids.length;
     bar.classList.toggle('hidden', ids.length === 0);
 
-    // 同步到批量表单（使用单个逗号分隔值，避免多同名 input 问题）
+    // 同步到批量表单（使用 DOM API 安全构建元素）
     ['batch-disable-ids', 'batch-enable-ids', 'batch-delete-ids'].forEach(containerId => {
         const container = document.getElementById(containerId);
-        container.innerHTML = '<input type="hidden" name="code_ids" value="' + ids.join(',') + '">';
+        const input = document.createElement('input');
+        input.type = 'hidden';
+        input.name = 'code_ids';
+        input.value = ids.join(',');
+        container.replaceChildren(input);
     });
 
     // 同步全选框
