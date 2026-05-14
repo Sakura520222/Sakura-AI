@@ -335,6 +335,10 @@ class PaymentService:
     async def batch_delete_redeem_codes(self, code_ids: list[int]) -> dict:
         """批量删除兑换码（仅删除未使用的）
 
+        不使用 savepoint：所有异常情况（已使用、未找到）均被优雅处理为 skipped
+        而非 raise，因此无需 savepoint 保护。若未来 session.delete() 可能
+        触发数据库约束异常，需重新评估是否引入 begin_nested()。
+
         Returns:
             dict: {"success": list[RedeemCode], "skipped": list[dict]}
         """
@@ -346,10 +350,10 @@ class PaymentService:
                 await self.session.delete(code)
                 results.append(code)
             elif code:
-                skipped.append({"id": cid, "reason": f"已使用 {code.used_count} 次"})
+                skipped.append({"id": cid, "reason": f"already_used:{code.used_count}"})
                 logger.info("Skipped deleting used code {} (id={})", code.code, cid)
             else:
-                skipped.append({"id": cid, "reason": "未找到"})
+                skipped.append({"id": cid, "reason": "not_found"})
         if results:
             await self.session.flush()
         return {"success": results, "skipped": skipped}
