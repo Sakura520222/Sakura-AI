@@ -121,6 +121,81 @@ class PaymentService:
         result = await self.session.execute(stmt)
         return result.scalar_one_or_none()
 
+    async def delete_plan(self, plan_id: int, hard_delete: bool = False) -> Plan:
+        """删除套餐（默认软删除，可选硬删除）
+
+        软删除: 设置 is_active=False
+        硬删除: 从数据库删除，但必须无关联订单和活跃订阅
+        """
+        plan = await self.get_plan(plan_id)
+        if not plan:
+            raise PaymentError(f"Plan not found: {plan_id}")
+
+        if hard_delete:
+            # 检查关联订单
+            order_count = (
+                await self.session.execute(
+                    select(func.count()).select_from(Order).where(Order.plan_id == plan_id)
+                )
+            ).scalar() or 0
+            if order_count > 0:
+                raise PaymentError(
+                    f"Cannot hard delete plan with {order_count} associated orders"
+                )
+
+            # 检查活跃订阅
+            active_sub_count = (
+                await self.session.execute(
+                    select(func.count())
+                    .select_from(UserSubscription)
+                    .where(
+                        and_(
+                            UserSubscription.plan_id == plan_id,
+                            UserSubscription.status
+                            == SubscriptionStatus.ACTIVE.value,
+                        )
+                    )
+                )
+            ).scalar() or 0
+            if active_sub_count > 0:
+                raise PaymentError(
+                    f"Cannot hard delete plan with {active_sub_count} active subscriptions"
+                )
+
+            await self.session.delete(plan)
+            await self.session.flush()
+            logger.info(f"Hard deleted plan: {plan.name} (id={plan_id})")
+        else:
+            plan.is_active = False
+            await self.session.flush()
+            logger.info(f"Soft deleted plan: {plan.name} (id={plan_id})")
+
+        return plan
+
+    async def batch_delete_plans(
+        self, plan_ids: list[int], hard_delete: bool = False
+    ) -> list[Plan]:
+        """批量删除套餐"""
+        results = []
+        for pid in plan_ids:
+            plan = await self.delete_plan(pid, hard_delete=hard_delete)
+            results.append(plan)
+        return results
+
+    async def batch_toggle_plans(self, plan_ids: list[int]) -> list[Plan]:
+        """批量切换套餐启用/禁用状态"""
+        results = []
+        for pid in plan_ids:
+            plan = await self.get_plan(pid)
+            if plan:
+                plan.is_active = not plan.is_active
+                results.append(plan)
+            else:
+                logger.warning(f"batch_toggle: plan {pid} not found, skipped")
+        if results:
+            await self.session.flush()
+        return results
+
     # ========== 兑换码管理 ==========
 
     async def generate_redeem_codes(
@@ -182,6 +257,100 @@ class PaymentService:
         )
         result = await self.session.execute(stmt)
         return list(result.scalars().all()), total
+
+    async def get_redeem_code(self, code_id: int) -> Optional[RedeemCode]:
+        """按 ID 获取单个兑换码"""
+        stmt = select(RedeemCode).where(RedeemCode.id == code_id)
+        result = await self.session.execute(stmt)
+        return result.scalar_one_or_none()
+
+    REDEEM_CODE_UPDATE_FIELDS = {"status", "expires_at", "max_uses", "plan_id"}
+
+    async def update_redeem_code(self, code_id: int, **kwargs) -> RedeemCode:
+        """更新兑换码信息（状态、有效期、最大使用次数、关联套餐）"""
+        code = await self.get_redeem_code(code_id)
+        if not code:
+            raise PaymentError(f"Redeem code not found: {code_id}")
+
+        new_plan_id = kwargs.get("plan_id")
+        if new_plan_id is not None:
+            plan = await self.get_plan(new_plan_id)
+            if not plan or not plan.is_active:
+                raise PaymentError(f"Plan not found or inactive: {new_plan_id}")
+
+        new_max_uses = kwargs.get("max_uses")
+        if new_max_uses is not None and new_max_uses < code.used_count:
+            raise PaymentError(
+                f"max_uses ({new_max_uses}) cannot be less than used_count ({code.used_count})"
+            )
+
+        new_status = kwargs.get("status")
+        if new_status and new_status not in (
+            RedeemCodeStatus.ACTIVE.value,
+            RedeemCodeStatus.DISABLED.value,
+        ):
+            raise PaymentError(f"Invalid status: {new_status}")
+
+        for key, value in kwargs.items():
+            if key in self.REDEEM_CODE_UPDATE_FIELDS and value is not None:
+                setattr(code, key, value)
+        await self.session.flush()
+        logger.info(f"Updated redeem code {code.code} (id={code_id})")
+        return code
+
+    async def delete_redeem_code(self, code_id: int) -> RedeemCode:
+        """删除兑换码（仅允许删除未使用的兑换码）"""
+        code = await self.get_redeem_code(code_id)
+        if not code:
+            raise PaymentError(f"Redeem code not found: {code_id}")
+
+        if code.used_count > 0:
+            raise PaymentError(
+                f"Cannot delete redeem code that has been used {code.used_count} time(s)"
+            )
+
+        await self.session.delete(code)
+        await self.session.flush()
+        logger.info(f"Deleted redeem code {code.code} (id={code_id})")
+        return code
+
+    async def batch_delete_redeem_codes(self, code_ids: list[int]) -> list[RedeemCode]:
+        """批量删除兑换码（仅删除未使用的）"""
+        results = []
+        skipped = []
+        for cid in code_ids:
+            code = await self.get_redeem_code(cid)
+            if code and code.used_count == 0:
+                await self.session.delete(code)
+                results.append(code)
+            elif code:
+                skipped.append(code.code)
+        if results:
+            await self.session.flush()
+        if skipped:
+            logger.warning(
+                f"Skipped deleting {len(skipped)} used codes: {skipped}"
+            )
+        return results
+
+    async def batch_update_redeem_codes(
+        self, code_ids: list[int], **kwargs
+    ) -> dict:
+        """批量更新兑换码状态
+
+        Returns:
+            dict: {"success": list[RedeemCode], "skipped": list[dict]}
+        """
+        results: list[RedeemCode] = []
+        skipped: list[dict] = []
+        for cid in code_ids:
+            try:
+                code = await self.update_redeem_code(cid, **kwargs)
+                results.append(code)
+            except PaymentError as e:
+                logger.info(f"Skipped code {cid}: {e}")
+                skipped.append({"id": cid, "reason": str(e)})
+        return {"success": results, "skipped": skipped}
 
     # ========== 用户兑换/购买 ==========
 

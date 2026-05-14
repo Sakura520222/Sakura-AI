@@ -15,21 +15,62 @@
         </button>
     </div>
 
+    <!-- 批量操作栏（选中时显示） -->
+    <div id="batch-bar" class="hidden mb-4 flex items-center gap-4 px-4 py-3 bg-blue-50 dark:bg-blue-900/20 rounded-lg border border-blue-200 dark:border-blue-800">
+        <span class="text-sm font-medium text-blue-700 dark:text-blue-300">
+            {{ _('billing.batch_selected') }}: <span id="batch-count">0</span>
+        </span>
+        <form id="batch-disable-form" action="/billing/admin/codes/batch-disable" method="POST" class="inline">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+            <div id="batch-disable-ids"></div>
+            <button type="submit" class="px-3 py-1.5 text-sm bg-yellow-500 hover:bg-yellow-600 text-white rounded-lg transition-colors">
+                {{ _('billing.batch_disable') }}
+            </button>
+        </form>
+        <form id="batch-enable-form" action="/billing/admin/codes/batch-enable" method="POST" class="inline">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+            <div id="batch-enable-ids"></div>
+            <button type="submit" class="px-3 py-1.5 text-sm bg-green-500 hover:bg-green-600 text-white rounded-lg transition-colors">
+                {{ _('billing.batch_enable') }}
+            </button>
+        </form>
+        <form id="batch-delete-form" action="/billing/admin/codes/batch-delete" method="POST" class="inline">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+            <div id="batch-delete-ids"></div>
+            <button type="submit" onclick="return confirm('{{ _('billing.confirm_batch_delete') }}')"
+                    class="px-3 py-1.5 text-sm bg-red-600 hover:bg-red-700 text-white rounded-lg transition-colors">
+                {{ _('billing.batch_delete') }}
+            </button>
+        </form>
+        <button onclick="clearSelection()" class="text-sm text-gray-500 hover:text-gray-700 dark:hover:text-gray-300 ml-auto">
+            {{ _('billing.batch_clear') }}
+        </button>
+    </div>
+
     <!-- 兑换码列表 -->
     <div class="bg-white dark:bg-gray-800 rounded-lg shadow overflow-hidden">
         <table class="min-w-full divide-y divide-gray-200 dark:divide-gray-700">
             <thead class="bg-gray-50 dark:bg-gray-700">
                 <tr>
+                    <th class="px-4 py-3 text-left">
+                        <input type="checkbox" id="select-all-codes" onchange="toggleSelectAll(this)"
+                               class="h-4 w-4 rounded border-gray-300 text-pink-600 focus:ring-pink-500">
+                    </th>
                     <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase">{{ _('billing.redeem_code') }}</th>
-                    <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase">{{ _('billing.plan_type') }}</th>
+                    <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase">{{ _('billing.edit_linked_plan') }}</th>
                     <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase">{{ _('billing.batch_name') }}</th>
                     <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase">{{ _('common.status') }}</th>
                     <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase">{{ _('billing.expires_at') }}</th>
+                    <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase">{{ _('common.actions') }}</th>
                 </tr>
             </thead>
             <tbody class="bg-white dark:bg-gray-800 divide-y divide-gray-200 dark:divide-gray-700">
                 {% for code in codes %}
-                <tr>
+                <tr data-code='{{ {"id": code.id, "status": code.status, "expires_at": code.expires_at.strftime('%Y-%m-%dT%H:%M') if code.expires_at else "", "max_uses": code.max_uses, "plan_id": code.plan_id} | tojson }}' data-delete='{{ {"id": code.id, "code": code.code, "used_count": code.used_count} | tojson }}'>
+                    <td class="px-4 py-4">
+                        <input type="checkbox" class="code-checkbox h-4 w-4 rounded border-gray-300 text-pink-600 focus:ring-pink-500"
+                               value="{{ code.id }}" data-used="{{ code.used_count }}" onchange="updateBatchBar()">
+                    </td>
                     <td class="px-6 py-4 text-sm font-mono text-gray-900 dark:text-white">{{ code.code }}</td>
                     <td class="px-6 py-4 text-sm text-gray-700 dark:text-gray-300">
                         {{ code.plan.name if code.plan else '-' }}
@@ -37,25 +78,31 @@
                     <td class="px-6 py-4 text-sm text-gray-700 dark:text-gray-300">
                         {{ code.batch_name or '-' }}
                     </td>
-                    <td class="px-6 py-4 text-sm text-gray-700 dark:text-gray-300">
-                        {{ code.used_count }} / {{ code.max_uses }}
-                    </td>
                     <td class="px-6 py-4">
                         <span class="text-xs px-2 py-1 rounded-full
-                                     {{ 'bg-green-100 text-green-700' if code.status == 'active' else
-                                        'bg-gray-100 text-gray-700' if code.status == 'exhausted' else
-                                        'bg-red-100 text-red-700' }}">
+                                     {{ 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400' if code.status == 'active' else
+                                        'bg-gray-100 text-gray-700 dark:bg-gray-700 dark:text-gray-400' if code.status == 'exhausted' else
+                                        'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400' }}">
                             {{ code.status }}
+                        </span>
+                        <span class="block text-xs text-gray-500 dark:text-gray-400 mt-1">
+                            {{ code.used_count }} / {{ code.max_uses }}
                         </span>
                     </td>
                     <td class="px-6 py-4 text-sm text-gray-500 dark:text-gray-400">
                         {{ code.expires_at.strftime('%Y-%m-%d %H:%M') if code.expires_at else _('billing.never_expire') }}
                     </td>
+                    <td class="px-6 py-4 space-x-2">
+                        <button onclick="openEditCodeModal(this.closest('tr').dataset.code)"
+                                class="text-sm text-blue-600 hover:text-blue-800">{{ _('billing.edit_code') }}</button>
+                        <button onclick="openDeleteCodeModal(this.closest('tr').dataset.delete)"
+                                class="text-sm text-red-600 hover:text-red-800">{{ _('billing.delete_code') }}</button>
+                    </td>
                 </tr>
                 {% endfor %}
                 {% if not codes %}
                 <tr>
-                    <td colspan="6" class="px-6 py-12 text-center text-gray-500 dark:text-gray-400">
+                    <td colspan="7" class="px-6 py-12 text-center text-gray-500 dark:text-gray-400">
                         {{ _('billing.no_plans') }}
                     </td>
                 </tr>
@@ -125,4 +172,175 @@
         </form>
     </div>
 </div>
+
+<!-- 编辑兑换码弹窗 -->
+<div id="edit-code-modal" class="hidden fixed inset-0 z-50 flex items-center justify-center">
+    <div class="absolute inset-0 bg-black/50" onclick="this.parentElement.classList.add('hidden')"></div>
+    <div class="relative bg-white dark:bg-gray-800 rounded-lg shadow-xl max-w-md w-full mx-4">
+        <div class="px-6 py-4 border-b border-gray-200 dark:border-gray-700 flex items-center justify-between">
+            <h3 class="text-lg font-semibold text-gray-900 dark:text-white">{{ _('billing.edit_code') }}</h3>
+            <button onclick="this.closest('#edit-code-modal').classList.add('hidden')"
+                    class="text-gray-400 hover:text-gray-600 dark:hover:text-gray-300">&times;</button>
+        </div>
+        <form id="edit-code-form" action="" method="POST" class="px-6 py-4 space-y-4">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+
+            <div>
+                <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">{{ _('billing.edit_status') }}</label>
+                <select name="status" id="edit-code-status"
+                        class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg
+                               bg-white dark:bg-gray-700 text-gray-900 dark:text-white">
+                    <option value="active">Active</option>
+                    <option value="disabled">Disabled</option>
+                </select>
+            </div>
+
+            <div>
+                <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">{{ _('billing.edit_expires') }}</label>
+                <input type="datetime-local" name="expires_at" id="edit-code-expires"
+                       class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg
+                              bg-white dark:bg-gray-700 text-gray-900 dark:text-white">
+            </div>
+
+            <div>
+                <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">{{ _('billing.edit_max_uses') }}</label>
+                <input type="number" name="max_uses" id="edit-code-max-uses" min="1"
+                       class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg
+                              bg-white dark:bg-gray-700 text-gray-900 dark:text-white">
+            </div>
+
+            <div>
+                <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">{{ _('billing.edit_linked_plan') }}</label>
+                <select name="plan_id" id="edit-code-plan"
+                        class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg
+                               bg-white dark:bg-gray-700 text-gray-900 dark:text-white">
+                    {% for plan in plans %}
+                    <option value="{{ plan.id }}">{{ plan.name }} (¥{{ "%.2f"|format(plan.price_cents / 100) }})</option>
+                    {% endfor %}
+                </select>
+            </div>
+
+            <div class="flex justify-end gap-3 pt-2">
+                <button type="button"
+                        onclick="this.closest('#edit-code-modal').classList.add('hidden')"
+                        class="px-4 py-2 text-gray-700 dark:text-gray-300 bg-gray-100 dark:bg-gray-700 rounded-lg
+                               hover:bg-gray-200 dark:hover:bg-gray-600">
+                    {{ _('common.cancel') }}
+                </button>
+                <button type="submit"
+                        class="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white font-medium rounded-lg
+                               transition-colors">
+                    {{ _('billing.update_code') }}
+                </button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<!-- 删除兑换码确认弹窗 -->
+<div id="delete-code-modal" class="hidden fixed inset-0 z-50 flex items-center justify-center">
+    <div class="absolute inset-0 bg-black/50" onclick="this.parentElement.classList.add('hidden')"></div>
+    <div class="relative bg-white dark:bg-gray-800 rounded-lg shadow-xl max-w-md w-full mx-4">
+        <div class="px-6 py-4 border-b border-gray-200 dark:border-gray-700">
+            <h3 class="text-lg font-semibold text-red-600">{{ _('billing.delete_code') }}</h3>
+        </div>
+        <div class="px-6 py-4">
+            <p class="text-sm text-gray-700 dark:text-gray-300 mb-4">
+                {{ _('billing.confirm_delete_code') }} (<span id="delete-code-value" class="font-mono font-semibold"></span>)
+            </p>
+            <p id="delete-code-warning" class="hidden text-sm text-red-600 mb-4">{{ _('billing.cannot_delete_used_code') }}</p>
+            <form id="delete-code-form" action="" method="POST">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                <div class="flex justify-end gap-3 pt-2">
+                    <button type="button"
+                            onclick="this.closest('#delete-code-modal').classList.add('hidden')"
+                            class="px-4 py-2 text-gray-700 dark:text-gray-300 bg-gray-100 dark:bg-gray-700 rounded-lg
+                                   hover:bg-gray-200 dark:hover:bg-gray-600">
+                        {{ _('common.cancel') }}
+                    </button>
+                    <button type="submit" id="delete-code-submit"
+                            class="px-4 py-2 bg-red-600 hover:bg-red-700 text-white font-medium rounded-lg
+                                   transition-colors">
+                        {{ _('billing.delete_code') }}
+                    </button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+
+<script>
+function openEditCodeModal(codeJson) {
+    try {
+        const code = JSON.parse(codeJson);
+        document.getElementById('edit-code-form').action = '/billing/admin/codes/' + code.id + '/edit';
+        document.getElementById('edit-code-status').value = code.status;
+        document.getElementById('edit-code-expires').value = code.expires_at || '';
+        document.getElementById('edit-code-max-uses').value = code.max_uses;
+        document.getElementById('edit-code-plan').value = code.plan_id;
+        document.getElementById('edit-code-modal').classList.remove('hidden');
+    } catch (e) {
+        console.error('Failed to parse code data:', e);
+        alert('Failed to load code data. Please refresh the page.');
+    }
+}
+
+function openDeleteCodeModal(deleteJson) {
+    try {
+        const data = JSON.parse(deleteJson);
+        document.getElementById('delete-code-value').textContent = data.code;
+        document.getElementById('delete-code-form').action = '/billing/admin/codes/' + data.id + '/delete';
+        const warning = document.getElementById('delete-code-warning');
+        const submitBtn = document.getElementById('delete-code-submit');
+        if (data.used_count > 0) {
+            warning.classList.remove('hidden');
+            submitBtn.disabled = true;
+            submitBtn.classList.add('opacity-50', 'cursor-not-allowed');
+        } else {
+            warning.classList.add('hidden');
+            submitBtn.disabled = false;
+            submitBtn.classList.remove('opacity-50', 'cursor-not-allowed');
+        }
+        document.getElementById('delete-code-modal').classList.remove('hidden');
+    } catch (e) {
+        console.error('Failed to parse code data:', e);
+        alert('Failed to load code data. Please refresh the page.');
+    }
+}
+
+// ========== 批量选择 ==========
+function getSelectedIds() {
+    return Array.from(document.querySelectorAll('.code-checkbox:checked')).map(cb => cb.value);
+}
+
+function updateBatchBar() {
+    const ids = getSelectedIds();
+    const bar = document.getElementById('batch-bar');
+    const count = document.getElementById('batch-count');
+    count.textContent = ids.length;
+    bar.classList.toggle('hidden', ids.length === 0);
+
+    // 同步到批量表单（使用单个逗号分隔值，避免多同名 input 问题）
+    ['batch-disable-ids', 'batch-enable-ids', 'batch-delete-ids'].forEach(containerId => {
+        const container = document.getElementById(containerId);
+        container.innerHTML = '<input type="hidden" name="code_ids" value="' + ids.join(',') + '">';
+    });
+
+    // 同步全选框
+    const all = document.querySelectorAll('.code-checkbox');
+    const checked = document.querySelectorAll('.code-checkbox:checked');
+    document.getElementById('select-all-codes').checked = all.length > 0 && all.length === checked.length;
+}
+
+function toggleSelectAll(master) {
+    document.querySelectorAll('.code-checkbox').forEach(cb => cb.checked = master.checked);
+    updateBatchBar();
+}
+
+function clearSelection() {
+    document.querySelectorAll('.code-checkbox').forEach(cb => cb.checked = false);
+    document.getElementById('select-all-codes').checked = false;
+    updateBatchBar();
+}
+</script>
 {% endblock %}
