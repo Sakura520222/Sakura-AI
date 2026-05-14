@@ -686,22 +686,26 @@ async def admin_batch_disable_codes(
 
     svc = PaymentService(db)
     try:
-        codes = await svc.batch_update_redeem_codes(
+        result = await svc.batch_update_redeem_codes(
             code_ids, status=RedeemCodeStatus.DISABLED.value
         )
+        success_count = len(result["success"])
+        skipped_count = len(result["skipped"])
         await log_admin_action(
             db,
             admin_id=user["user_id"],
             action="batch_disable_codes",
             target_type="redeem_code",
-            detail={"code_ids": code_ids, "count": len(codes)},
+            detail={"code_ids": code_ids, "success_count": success_count, "skipped_count": skipped_count},
         )
         await db.commit()
+        toast_key = "toast.batch_partial_success" if skipped_count > 0 else "toast.batch_codes_disabled"
         return toast_redirect(
             "/billing/admin/codes",
-            "toast.batch_codes_disabled",
+            toast_key,
             lang=detect_language(),
-            count=len(codes),
+            count=success_count,
+            skipped=skipped_count,
         )
     except PaymentError as e:
         await db.rollback()
@@ -735,22 +739,26 @@ async def admin_batch_enable_codes(
 
     svc = PaymentService(db)
     try:
-        codes = await svc.batch_update_redeem_codes(
+        result = await svc.batch_update_redeem_codes(
             code_ids, status=RedeemCodeStatus.ACTIVE.value
         )
+        success_count = len(result["success"])
+        skipped_count = len(result["skipped"])
         await log_admin_action(
             db,
             admin_id=user["user_id"],
             action="batch_enable_codes",
             target_type="redeem_code",
-            detail={"code_ids": code_ids, "count": len(codes)},
+            detail={"code_ids": code_ids, "success_count": success_count, "skipped_count": skipped_count},
         )
         await db.commit()
+        toast_key = "toast.batch_partial_success" if skipped_count > 0 else "toast.batch_codes_enabled"
         return toast_redirect(
             "/billing/admin/codes",
-            "toast.batch_codes_enabled",
+            toast_key,
             lang=detect_language(),
-            count=len(codes),
+            count=success_count,
+            skipped=skipped_count,
         )
     except PaymentError as e:
         await db.rollback()

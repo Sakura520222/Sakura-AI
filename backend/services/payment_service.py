@@ -335,16 +335,22 @@ class PaymentService:
 
     async def batch_update_redeem_codes(
         self, code_ids: list[int], **kwargs
-    ) -> list[RedeemCode]:
-        """批量更新兑换码状态"""
-        results = []
+    ) -> dict:
+        """批量更新兑换码状态
+
+        Returns:
+            dict: {"success": list[RedeemCode], "skipped": list[dict]}
+        """
+        results: list[RedeemCode] = []
+        skipped: list[dict] = []
         for cid in code_ids:
             try:
                 code = await self.update_redeem_code(cid, **kwargs)
                 results.append(code)
             except PaymentError as e:
                 logger.info(f"Skipped code {cid}: {e}")
-        return results
+                skipped.append({"id": cid, "reason": str(e)})
+        return {"success": results, "skipped": skipped}
 
     # ========== 用户兑换/购买 ==========
 
