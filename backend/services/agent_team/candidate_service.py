@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from typing import Any, Iterable
 
 from openai import BadRequestError
-from sqlalchemy import and_, desc, not_, select
+from sqlalchemy import and_, desc, func, not_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from loguru import logger
@@ -104,6 +104,100 @@ class AgentTeamCandidateService:
             max_iterations=max_iterations,
             started_by=started_by,
             ai_config_snapshot=json.dumps(ai_config_snapshot or {}, ensure_ascii=False),
+        )
+        db.add(task)
+        await db.commit()
+        await db.refresh(task)
+        return task
+
+    async def create_task_from_manual_issue(
+        self,
+        db: AsyncSession,
+        repo_full_name: str,
+        issue_number: int,
+        started_by: str,
+        ai_config_snapshot: dict | None = None,
+    ) -> AgentTeamTask:
+        """从管理员手动指定的 GitHub Issue 直接创建 Agent 任务。"""
+        # 1. 验证仓库全名格式
+        if "/" not in repo_full_name:
+            raise ValueError("仓库全名格式无效，应为 owner/repo")
+        repo_owner, repo_name = repo_full_name.split("/", 1)
+
+        # 2. 检查仓库白名单
+        allowlist = await self._load_repo_allowlist()
+        if allowlist and repo_full_name not in allowlist:
+            raise ValueError(
+                f"仓库 {repo_full_name} 不在 Agent 允许列表中，"
+                "请在配置中添加该仓库或清空白名单以允许所有仓库。"
+            )
+
+        # 3. 通过 GitHub API 获取 Issue 并验证状态
+        try:
+            from backend.core.github_app import GitHubAppClient
+
+            github_app = GitHubAppClient()
+            issue = await asyncio.to_thread(
+                github_app.get_issue, repo_owner, repo_name, issue_number
+            )
+        except Exception as exc:
+            raise ValueError(f"GitHub API 调用失败，无法获取 Issue: {exc}") from exc
+
+        if issue is None:
+            raise ValueError(
+                f"Issue 不存在或 GitHub App 无权访问: "
+                f"{repo_full_name}#{issue_number}"
+            )
+        if issue.state != "open":
+            raise ValueError(
+                f"Issue #{issue_number} 状态为 {issue.state}，仅接受 open 状态的 Issue"
+            )
+
+        # 4. 检查是否已有该 Issue 的非终态任务
+        existing = await db.scalar(
+            select(func.count(AgentTeamTask.id)).where(
+                and_(
+                    AgentTeamTask.source_issue_number == issue_number,
+                    AgentTeamTask.repo_full_name == repo_full_name,
+                    AgentTeamTask.status.notin_(
+                        [
+                            AgentTeamTaskStatus.FAILED.value,
+                            AgentTeamTaskStatus.CANCELLED.value,
+                            AgentTeamTaskStatus.ABANDONED.value,
+                        ]
+                    ),
+                )
+            )
+        )
+        if existing and existing > 0:
+            raise ValueError(
+                f"{repo_full_name}#{issue_number} 已存在进行中的 Agent 任务 "
+                f"(共 {existing} 条)，请先等待完成或取消已有任务"
+            )
+
+        # 5. 构建 title 和 summary
+        title = issue.title or f"Issue #{issue_number}"
+        body = (issue.body or "")[:2000] if issue.body else ""
+
+        # 6. 创建 AgentTeamTask
+        max_iterations = await self._load_max_iterations_per_task()
+        task = AgentTeamTask(
+            source_type=AgentTeamSourceType.MANUAL_ISSUE.value,
+            source_id=None,
+            source_issue_number=issue_number,
+            repo_full_name=repo_full_name,
+            repo_owner=repo_owner,
+            repo_name=repo_name,
+            title=title,
+            summary=body,
+            priority="medium",
+            candidate_score=0,
+            status=AgentTeamTaskStatus.QUEUED.value,
+            max_iterations=max_iterations,
+            started_by=started_by,
+            ai_config_snapshot=json.dumps(
+                ai_config_snapshot or {}, ensure_ascii=False
+            ),
         )
         db.add(task)
         await db.commit()

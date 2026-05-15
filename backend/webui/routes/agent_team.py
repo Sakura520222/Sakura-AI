@@ -512,6 +512,63 @@ async def create_task_from_candidate(
     return JSONResponse({"success": True, "task_id": task.id})
 
 
+@router.post("/tasks/create-from-issue")
+async def create_task_from_issue(
+    background_tasks: BackgroundTasks,
+    db: AsyncSession = Depends(get_db),
+    user: dict = Depends(require_super_admin),
+    csrf_token: str = Depends(require_csrf),
+    repo_full_name: str = Form(...),
+    issue_number: int = Form(...),
+):
+    """从指定仓库的 Issue 直接创建 Agent 任务。"""
+    try:
+        config = await load_agent_team_ai_config()
+        config.validate()
+    except ValueError as e:
+        return JSONResponse(
+            {"success": False, "message": str(e)},
+            status_code=200,
+        )
+    except Exception as e:
+        return JSONResponse(
+            {"success": False, "message": f"AI 配置加载失败: {e}"},
+            status_code=200,
+        )
+
+    service = AgentTeamCandidateService()
+    try:
+        task = await service.create_task_from_manual_issue(
+            db,
+            repo_full_name=repo_full_name.strip(),
+            issue_number=issue_number,
+            started_by=user["sub"],
+            ai_config_snapshot=config.safe_snapshot(),
+        )
+    except ValueError as e:
+        return JSONResponse(
+            {"success": False, "message": str(e)},
+            status_code=200,
+        )
+
+    await log_admin_action(
+        db,
+        user["user_id"],
+        "agent_team_task_create_from_issue",
+        "agent_team_task",
+        str(task.id),
+        {
+            "source_type": "manual_issue",
+            "repo_full_name": repo_full_name,
+            "issue_number": issue_number,
+        },
+    )
+
+    background_tasks.add_task(_run_agent_task_background, task.id)
+
+    return JSONResponse({"success": True, "task_id": task.id})
+
+
 @router.post("/tasks/{task_id}/retry")
 async def retry_task(
     task_id: int,
