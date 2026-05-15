@@ -97,7 +97,7 @@ class ShellTool(BaseTool):
                 "\n- 运行测试: pytest -q 或 python -m pytest tests/ -q"
                 "\n- 语法检查: python -m py_compile file.py"
                 "\n- 类型检查: mypy file.py"
-                "\n- Lint: ruff check file.py"
+                "\n- Lint: ruff check"
                 "\n- 查看文件: cat / head / tail"
             ),
             "parameters": {
