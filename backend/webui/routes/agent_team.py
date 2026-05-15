@@ -512,16 +512,62 @@ async def create_task_from_candidate(
     return JSONResponse({"success": True, "task_id": task.id})
 
 
+def _parse_issue_ref(ref: str) -> tuple[str, int]:
+    """Parse issue reference into (repo_full_name, issue_number).
+
+    Supported formats:
+      - https://github.com/owner/repo/issues/123
+      - http://github.com/owner/repo/issues/123
+      - github.com/owner/repo/issues/123
+      - owner/repo#123
+      - owner/repo 123
+    """
+    import re
+
+    ref = ref.strip()
+
+    # GitHub Issue URL
+    m = re.match(
+        r"(?:https?://)?github\.com/([^/]+/[^/]+)/issues/(\d+)", ref
+    )
+    if m:
+        return m.group(1), int(m.group(2))
+
+    # owner/repo#123
+    m = re.match(r"^([^/]+/[^/#]+)#(\d+)$", ref)
+    if m:
+        return m.group(1).strip(), int(m.group(2))
+
+    # owner/repo 123
+    m = re.match(r"^([^/]+/[^/\s]+)\s+(\d+)$", ref)
+    if m:
+        return m.group(1).strip(), int(m.group(2))
+
+    raise ValueError(
+        "无法解析 Issue 引用，请使用以下格式之一：\n"
+        "• https://github.com/owner/repo/issues/123\n"
+        "• owner/repo#123\n"
+        "• owner/repo 123"
+    )
+
+
 @router.post("/tasks/create-from-issue")
 async def create_task_from_issue(
     background_tasks: BackgroundTasks,
     db: AsyncSession = Depends(get_db),
     user: dict = Depends(require_super_admin),
     csrf_token: str = Depends(require_csrf),
-    repo_full_name: str = Form(...),
-    issue_number: int = Form(...),
+    issue_ref: str = Form(...),
 ):
     """从指定仓库的 Issue 直接创建 Agent 任务。"""
+    try:
+        repo_full_name, issue_number = _parse_issue_ref(issue_ref)
+    except ValueError as e:
+        return JSONResponse(
+            {"success": False, "message": str(e)},
+            status_code=200,
+        )
+
     try:
         config = await load_agent_team_ai_config()
         config.validate()
@@ -540,7 +586,7 @@ async def create_task_from_issue(
     try:
         task = await service.create_task_from_manual_issue(
             db,
-            repo_full_name=repo_full_name.strip(),
+            repo_full_name=repo_full_name,
             issue_number=issue_number,
             started_by=user["sub"],
             ai_config_snapshot=config.safe_snapshot(),
