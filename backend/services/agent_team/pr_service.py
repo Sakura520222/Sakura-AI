@@ -8,6 +8,7 @@
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 
 from loguru import logger
@@ -155,3 +156,80 @@ class AgentTeamPRService:
             "*请仔细审查后合并。*\n"
         )
         return "\n".join(parts)
+
+    async def generate_pr_title(
+        self,
+        task_title: str,
+        task_summary: str,
+        modified_files: list[str],
+        review_verdict: str = "",
+        issue_number: int | None = None,
+    ) -> str:
+        """使用辅助 AI 生成自然风格的 PR 标题。
+
+        生成失败时回退到 task_title 原文。
+        """
+        if not modified_files:
+            return task_title
+
+        try:
+            from backend.services.agent_team.ai_client import (
+                create_agent_team_client,
+            )
+
+            client, config = await create_agent_team_client(validate=False)
+            model = config.summary_model or config.model
+
+            files_text = ", ".join(modified_files[:20])
+            if len(modified_files) > 20:
+                files_text += f" ... (共 {len(modified_files)} 个文件)"
+
+            issue_hint = f"\n关联 Issue: #{issue_number}" if issue_number else ""
+
+            system_prompt = (
+                "你是一个代码审查助手。根据任务描述和实际修改的文件，"
+                "生成一个简洁的 PR 标题。\n\n"
+                "要求：\n"
+                "- 使用 Conventional Commits 风格：type(scope): description\n"
+                "- type 从 feat/fix/refactor/docs/style/test/chore 中选择\n"
+                "- scope 可选，表示影响范围\n"
+                "- description 用英文，简洁概括实际改动\n"
+                "- 不加 emoji，不加句号\n"
+                "- 只返回标题文本，不要其他内容"
+            )
+            user_prompt = (
+                f"任务标题: {task_title}\n"
+                f"任务描述: {task_summary}\n"
+                f"修改文件: {files_text}\n"
+                f"审查结论: {review_verdict or 'N/A'}"
+                f"{issue_hint}"
+            )
+
+            response = await client.call_with_retry(
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_prompt},
+                ],
+                model=model,
+                temperature=0.1,
+                max_tokens=100,
+                timeout=15.0,
+            )
+
+            if not response.choices:
+                return task_title
+
+            raw = response.choices[0].message.content.strip()
+            # 去除可能的 markdown 代码块包裹
+            title = re.sub(r"^```\w*\n?", "", raw)
+            title = re.sub(r"\n?```$", "", title)
+            title = title.strip().split("\n")[0].strip()
+
+            if not title or len(title) > 200:
+                return task_title
+
+            return title
+
+        except Exception as e:
+            logger.warning(f"AI 生成 PR 标题失败，使用原始标题: {e}")
+            return task_title

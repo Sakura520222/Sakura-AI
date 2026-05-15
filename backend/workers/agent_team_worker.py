@@ -228,10 +228,20 @@ class AgentTeamWorker:
                     source_issue_number=task.source_issue_number,
                 )
 
+                pr_title = await pr_service.generate_pr_title(
+                    task_title=task.title,
+                    task_summary=task.summary or "",
+                    modified_files=outcome.modified_files,
+                    review_verdict=outcome.review_result.verdict
+                    if outcome.review_result
+                    else "",
+                    issue_number=task.source_issue_number,
+                )
+
                 pr_result = await pr_service.create_pull_request(
                     repo_owner=repo_owner,
                     repo_name=repo_name,
-                    title=f"🤖 {task.title}",
+                    title=pr_title,
                     body=pr_body,
                     head_branch=workspace_info.branch_name,
                     base_branch=workspace_info.default_branch,
