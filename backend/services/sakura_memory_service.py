@@ -11,7 +11,7 @@ import asyncio
 import functools
 import hashlib
 import json
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Dict, Optional
 
 from loguru import logger
@@ -161,7 +161,13 @@ CONSOLIDATE_SAKURA_PROMPT = """你是一个项目知识管理助手。请根据�
 - 语言统计: {languages}
 - 累计反思次数: {total_reflections}（此数值已精确计算，必须原样使用，禁止自行加减或重算）
 
-请直接输出更新后的 SAKURA.md 内容（不超过 {max_chars} 字符），包含：
+## 硬性约束
+- 输出内容不得超过 {max_chars} 字符（含标点和空格），这是严格的硬限制
+- 如当前内容已接近上限，优先保留最重要的经验，主动删除过时或重复内容
+- 宁可精简也不要超长——超出限制的内容将被丢弃，导致信息损失
+- 必须保留累计反思次数标记：累计反思 {total_reflections} 次
+
+请直接输出更新后的 SAKURA.md 内容，包含：
 - 项目简介和技术栈
 - 架构设计和关键决策
 - 已知问题和注意事项
@@ -182,7 +188,13 @@ CONSOLIDATE_MEMORY_PROMPT = """你是一个代码审查经验总结助手。请�
 - 仓库名: {repo_full_name}
 - 累计反思次数: {total_reflections}（此数值已精确计算，必须原样使用，禁止自行加减或重算）
 
-请直接输出更新后的 memory.md 内容（不超过 {max_chars} 字符），包含：
+## 硬性约束
+- 输出内容不得超过 {max_chars} 字符（含标点和空格），这是严格的硬限制
+- 如当前内容已接近上限，优先保留最重要的经验，主动删除过时或重复内容
+- 宁可精简也不要超长——超出限制的内容将被丢弃，导致信息损失
+- 必须保留累计反思次数标记：累计反思 {total_reflections} 次
+
+请直接输出更新后的 memory.md 内容，包含：
 - 常见代码问题和审查要点
 - 近期审查模式总结
 - 规范建议和经验教训
@@ -446,6 +458,19 @@ class SakuraMemoryService:
                 ".sakura/memory.md": "# 项目记忆\n\n（首次初始化，暂无记忆）\n",
             }
 
+            # 自动创建子目录占位文件 / Auto-create subdirectory placeholders
+            dir_config = config.get("directory_convention", {})
+            if dir_config.get("enabled", True) and dir_config.get(
+                "auto_create_subdirs", True
+            ):
+                categories = dir_config.get("categories", {})
+                for cat_name, cat_data in categories.items():
+                    if cat_data.get("skip_placeholder", False):
+                        continue
+                    placeholder = cat_data.get("placeholder", "")
+                    if placeholder:
+                        files[f".sakura/{cat_name}/README.md"] = placeholder
+
             if prepare_only:
                 logger.info(
                     "[sakura] prepare_only: {} init files for {}",
@@ -600,8 +625,8 @@ class SakuraMemoryService:
             pr_description = ""
             try:
                 pr_description = (getattr(pr, "body", None) or "")[:500]
-            except Exception:
-                pass
+            except Exception as e:
+                logger.debug("读取 PR 描述失败，跳过: {}", e)
 
             prompt = REFLECTION_PROMPT.format(
                 pr_number=pr_number,
@@ -878,10 +903,10 @@ class SakuraMemoryService:
             logger.error("Issue 反思失败 ({}): {}", repo_full_name, e, exc_info=True)
 
     async def consolidate(self, repo, repo_full_name: str, total_count: int) -> None:
-        """合并反思，更新 SAKURA.md 和 memory.md / Consolidate reflections
+        """合并反思，更新 SAKURA.md 和 memory.md
 
-        读取最近的反思文件，通过两次独立 LLM 调用分别更新两个知识文件。
-        Read recent reflections, update each knowledge file via separate LLM calls.
+        通过两次独立 Agent 会话分别更新两个知识文件，
+        AI 通过工具自主读取反思、README 和当前文件，精确编辑目标文件。
 
         Args:
             repo: PyGithub Repository 对象
@@ -899,42 +924,22 @@ class SakuraMemoryService:
                 consolidation_config.get("interval", 5),
             )
 
-            # 读取最近的反思 / Read recent reflections
             sakura_ref = await self.write_service.get_sakura_branch(repo)
-            reflections = await self._read_recent_reflections(
-                repo,
-                consolidation_config.get("interval", 5),
-                ref=sakura_ref,
+
+            # 获取上次合并后新增的反思文件名
+            new_files = await self._get_new_reflection_files(
+                repo, sakura_ref, consolidation_config
             )
-            if not reflections:
-                logger.warning("[consolidate] 未找到反思文件: {}", repo_full_name)
+            if not new_files:
+                logger.warning("[consolidate] 未找到新增反思文件: {}", repo_full_name)
                 return
-            logger.info("[consolidate] 读取到 {} 字符反思内容", len(reflections))
-
-            # 读取当前文件 / Read current files
-            current_sakura = (
-                await self.write_service.read_file(
-                    repo,
-                    ".sakura/SAKURA.md",
-                    ref=sakura_ref,
-                )
-                or ""
-            )
-            current_memory = (
-                await self.write_service.read_file(
-                    repo,
-                    ".sakura/memory.md",
-                    ref=sakura_ref,
-                )
-                or ""
-            )
             logger.info(
-                "[consolidate] 当前文件: SAKURA.md={}字, memory.md={}字",
-                len(current_sakura),
-                len(current_memory),
+                "[consolidate] 新增 {} 个反思文件: {}",
+                len(new_files),
+                ", ".join(new_files[:5]) + ("..." if len(new_files) > 5 else ""),
             )
 
-            # 获取仓库信息 / Get repo info
+            # 获取仓库信息
             languages = await asyncio.to_thread(lambda: dict(repo.get_languages()))
             lang_str = ", ".join(f"{k}: {v}" for k, v in languages.items())
 
@@ -942,62 +947,68 @@ class SakuraMemoryService:
             max_memory = consolidation_config.get("max_memory_chars", 2000)
             model = self._get_model(consolidation_config)
 
+            settings = get_settings()
+            max_iterations = (
+                settings.sakura_consolidation_max_iterations
+                or consolidation_config.get("max_iterations", 20)
+            )
+
+            from backend.services.sakura_consolidation_agent import (
+                SakuraConsolidationAgent,
+            )
+
+            agent = SakuraConsolidationAgent()
             files = {}
 
-            # --- 并行调用 LLM 生成两个文件 ---
-            logger.info("[consolidate] 并行调用 LLM 更新两个文件, model={}", model)
-            sakura_prompt = CONSOLIDATE_SAKURA_PROMPT.format(
-                reflections=reflections,
-                current_sakura_md=current_sakura or "（空文件）",
+            # 串行处理 SAKURA.md
+            sakura_changes = await agent.consolidate_file(
+                repo=repo,
                 repo_full_name=repo_full_name,
-                languages=lang_str,
+                sakura_ref=sakura_ref,
+                target_file="SAKURA.md",
+                new_reflection_files=new_files,
                 total_reflections=total_count,
                 max_chars=max_sakura,
+                languages=lang_str,
+                model=model,
+                max_iterations=max_iterations,
             )
-            memory_prompt = CONSOLIDATE_MEMORY_PROMPT.format(
-                reflections=reflections,
-                current_memory_md=current_memory or "（空文件）",
+            for k, v in sakura_changes.items():
+                files[f".sakura/{k}"] = v
+
+            # 串行处理 memory.md
+            memory_changes = await agent.consolidate_file(
+                repo=repo,
                 repo_full_name=repo_full_name,
+                sakura_ref=sakura_ref,
+                target_file="memory.md",
+                new_reflection_files=new_files,
                 total_reflections=total_count,
                 max_chars=max_memory,
+                languages=lang_str,
+                model=model,
+                max_iterations=max_iterations,
             )
-            # 根据配置决定是否允许部分提交 / Partial commit config
-            partial = consolidation_config.get("partial_commit", False)
+            for k, v in memory_changes.items():
+                files[f".sakura/{k}"] = v
 
-            results = await asyncio.gather(
-                self._call_llm(sakura_prompt, model=model),
-                self._call_llm(memory_prompt, model=model),
-                return_exceptions=True,
-            )
-
-            sakura_md = self._clean_llm_output(
-                results[0] if not isinstance(results[0], BaseException) else None
-            )
-            memory_md = self._clean_llm_output(
-                results[1] if not isinstance(results[1], BaseException) else None
-            )
-
-            for i, label in enumerate(["SAKURA.md", "memory.md"]):
-                if isinstance(results[i], BaseException):
-                    if not partial:
-                        raise results[i]
+            # 字符限制告警
+            for path, content in files.items():
+                fname = path.split("/")[-1]
+                if fname == "SAKURA.md" and len(content) > max_sakura:
                     logger.warning(
-                        "[consolidate] {} LLM 调用失败: {}", label, results[i]
+                        "[consolidate] SAKURA.md 超出限制: {} > {}",
+                        len(content),
+                        max_sakura,
+                    )
+                elif fname == "memory.md" and len(content) > max_memory:
+                    logger.warning(
+                        "[consolidate] memory.md 超出限制: {} > {}",
+                        len(content),
+                        max_memory,
                     )
 
-            if sakura_md:
-                files[".sakura/SAKURA.md"] = sakura_md
-                logger.info("[consolidate] SAKURA.md 更新: {}字", len(sakura_md))
-            else:
-                logger.warning("[consolidate] SAKURA.md 生成失败（LLM 返回空）")
-
-            if memory_md:
-                files[".sakura/memory.md"] = memory_md
-                logger.info("[consolidate] memory.md 更新: {}字", len(memory_md))
-            else:
-                logger.warning("[consolidate] memory.md 生成失败（LLM 返回空）")
-
-            # 提交更新 / Commit updates
+            # 提交更新
             if files:
                 commit_msg = (
                     f"chore(sakura): consolidate memory (reflection #{total_count})"
@@ -1006,7 +1017,7 @@ class SakuraMemoryService:
 
                 await self._update_state(
                     repo_full_name,
-                    last_consolidation_at=datetime.utcnow(),
+                    last_consolidation_at=datetime.now(timezone.utc),
                     last_consolidation_count=total_count,
                 )
 
@@ -1016,14 +1027,122 @@ class SakuraMemoryService:
                     total_count,
                     ", ".join(files.keys()),
                 )
+
+                await self._maybe_extract_knowledge(repo, repo_full_name, total_count)
             else:
                 logger.warning(
-                    "[consolidate] 两个文件均生成失败: {}",
+                    "[consolidate] 两个文件均无变更: {}",
                     repo_full_name,
                 )
 
         except Exception as e:
             logger.error(f"合并记忆失败 ({repo_full_name}): {e}", exc_info=True)
+
+    async def _get_new_reflection_files(
+        self, repo, sakura_ref: Optional[str], consolidation_config: dict
+    ) -> list[str]:
+        """获取上次合并后新增的反思文件名列表"""
+        try:
+            ref = sakura_ref or "HEAD"
+
+            def _list():
+                contents = repo.get_contents(".sakura/memory", ref=ref)
+                if isinstance(contents, list):
+                    return [
+                        c.name
+                        for c in contents
+                        if hasattr(c, "name") and c.name.endswith(".md")
+                    ]
+                return []
+
+            all_files = await asyncio.to_thread(_list)
+            all_files.sort(reverse=True)
+
+            # 取最近 interval 个文件作为本次新增
+            interval = consolidation_config.get("interval", 5)
+            return all_files[:interval]
+
+        except Exception as e:
+            logger.warning("[consolidate] 获取反思文件列表失败: {}", e)
+            return []
+
+    async def _maybe_extract_knowledge(
+        self, repo, repo_full_name: str, reflection_count: int
+    ) -> None:
+        """检查是否需要触发一次性知识提取 / Check if one-time knowledge extraction is needed"""
+        try:
+            state = await self._get_or_create_state(repo_full_name)
+            config = self._get_config()
+
+            # 检查配置是否启用（settings 优先）
+            from backend.core.config import get_settings
+
+            settings = get_settings()
+            if not settings.sakura_knowledge_extraction_enabled:
+                return
+
+            # 已提取过或反思数不足则跳过
+            if state.knowledge_extracted:
+                return
+            min_reflections = settings.sakura_extraction_min_reflections or config.get(
+                "knowledge_extraction", {}
+            ).get("min_reflections", 10)
+            if reflection_count < min_reflections:
+                return
+
+            logger.info(
+                "[extract] 触发知识提取: {} ({}次反思)",
+                repo_full_name,
+                reflection_count,
+            )
+            await self.extract_and_save_knowledge(repo, repo_full_name)
+
+        except Exception as e:
+            logger.warning("[extract] 知识提取触发失败: {} - {}", repo_full_name, e)
+
+    async def extract_and_save_knowledge(self, repo, repo_full_name: str) -> bool:
+        """执行知识提取并保存到 .sakura/ 子目录
+
+        Args:
+            repo: PyGithub Repository 对象
+            repo_full_name: 仓库完整名称
+
+        Returns:
+            是否提取成功
+        """
+        from backend.services.sakura_knowledge_extractor import (
+            SakuraKnowledgeExtractor,
+        )
+
+        extractor = SakuraKnowledgeExtractor()
+        config = self._get_config()
+        model = config.get("consolidation", {}).get("model")
+        sakura_ref = await self.write_service.get_sakura_branch(repo)
+
+        extracted = await extractor.extract_knowledge(
+            repo=repo,
+            repo_full_name=repo_full_name,
+            sakura_ref=sakura_ref,
+            model=model,
+        )
+
+        if not extracted:
+            logger.warning("[extract] 知识提取无结果: {}", repo_full_name)
+            return False
+
+        # 合并子目录前缀
+        files = {f".sakura/{k}": v for k, v in extracted.items()}
+
+        commit_msg = "chore(sakura): extract structured knowledge from reflections"
+        await self.write_service.commit_files(repo, files, commit_msg)
+
+        await self._update_state(repo_full_name, knowledge_extracted=True)
+        logger.info(
+            "[extract] 知识提取完成: {}, 生成 {} 个文件",
+            repo_full_name,
+            len(files),
+        )
+        return True
 
     async def get_sakura_context(self, repo, repo_full_name: str) -> Dict[str, str]:
         """获取 SAKURA.md 和 memory.md 用于注入审查 prompt
@@ -1210,8 +1329,10 @@ class SakuraMemoryService:
                             for s in sub[:10]:
                                 icon = "/" if s.type == "dir" else ""
                                 lines.append(f"    {s.name}{icon}")
-                        except Exception:
-                            pass
+                        except Exception as e:
+                            logger.debug(
+                                "读取 .sakura/ 子目录失败，跳过 {}: {}", item.path, e
+                            )
                     else:
                         lines.append(f"  {item.name}")
                 return "\n".join(lines)

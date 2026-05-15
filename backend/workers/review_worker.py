@@ -34,6 +34,7 @@ settings = get_settings()
 # 审查并发控制信号量
 _review_semaphore: asyncio.Semaphore | None = None
 
+
 async def _get_review_semaphore() -> asyncio.Semaphore:
     """获取审查并发信号量（懒初始化，支持动态更新）"""
     global _review_semaphore

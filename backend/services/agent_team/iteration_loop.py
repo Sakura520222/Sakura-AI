@@ -59,6 +59,8 @@ class IterationLoopService:
         sakura_memory: str = "",
         skills_summary: str = "",
         skills_context: dict[str, Any] | None = None,
+        github_repo: Any | None = None,
+        sakura_ref: str | None = None,
     ) -> IterationOutcome:
         """运行迭代循环。"""
         expert = FullStackExpertAgent(self.workspace, self.workspace_service)
@@ -88,13 +90,24 @@ class IterationLoopService:
             )
             total_tool_calls += fs_result.tool_calls_count
 
-            if not fs_result.success:
+            can_review_partial_changes = (
+                fs_result.error == "max_rounds_reached_with_changes"
+            )
+            if not fs_result.success and not can_review_partial_changes:
                 return IterationOutcome(
                     success=False,
                     reason=f"全栈专家执行失败: {fs_result.error or fs_result.summary}",
                     iterations=iteration,
                     fullstack_result=fs_result,
+                    modified_files=fs_result.modified_files,
                     total_tool_calls=total_tool_calls,
+                )
+
+            if not fs_result.success:
+                logger.info(
+                    "全栈专家达到工具轮次上限但已修改 {} 个文件，继续进入专业审查: {}",
+                    len(fs_result.modified_files),
+                    fs_result.error or fs_result.summary,
                 )
 
             if not fs_result.modified_files:
@@ -120,6 +133,8 @@ class IterationLoopService:
                 fullstack_summary=fs_result.summary,
                 skills_summary=skills_summary,
                 skills_context=skills_context,
+                github_repo=github_repo,
+                sakura_ref=sakura_ref,
             )
             total_tool_calls += rev_result.tool_calls_count
 

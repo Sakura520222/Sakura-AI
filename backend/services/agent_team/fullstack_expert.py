@@ -24,6 +24,7 @@ from typing import Any
 
 from loguru import logger
 
+from backend.core.config import DYNAMIC_CONFIG_RANGES, get_dynamic_config, get_settings
 from backend.services.agent_team.ai_client import create_agent_team_client
 from backend.services.agent_team.tools.base import ToolContext, ToolResult
 from backend.services.agent_team.tools.file_state import ReadFileState
@@ -101,10 +102,37 @@ class FullStackResult:
     error: str = ""
 
 
+async def resolve_agent_team_max_tool_rounds() -> int:
+    """读取 Agent Team 全栈专家工具调用轮次上限。"""
+    settings = get_settings()
+    fallback = settings.agent_team_max_tool_rounds
+    try:
+        raw = await get_dynamic_config("agent_team_max_tool_rounds")
+        if raw is None:
+            return fallback
+        value = int(raw)
+        min_value, max_value = DYNAMIC_CONFIG_RANGES["agent_team_max_tool_rounds"]
+        if min_value <= value <= max_value:
+            return value
+        raise ValueError(f"value {value} outside range {min_value}-{max_value}")
+    except (TypeError, ValueError) as exc:
+        logger.warning(
+            "读取 agent_team_max_tool_rounds 配置失败，使用默认值 {}: {}",
+            fallback,
+            exc,
+        )
+        return fallback
+    except Exception as exc:
+        logger.warning(
+            "读取 agent_team_max_tool_rounds 配置异常，使用默认值 {}: {}",
+            fallback,
+            exc,
+        )
+        return fallback
+
+
 class FullStackExpertAgent:
     """全栈专家 Agent - 通过工具调用自主完成代码修改。"""
-
-    MAX_TOOL_ROUNDS = 30
 
     def __init__(
         self,
@@ -147,6 +175,7 @@ class FullStackExpertAgent:
         client, config = await create_agent_team_client()
         ctx = self._build_context(skills_context)
         tool_schemas = get_tool_definitions("fullstack", provider=config.provider)
+        max_tool_rounds = await resolve_agent_team_max_tool_rounds()
 
         self.messages.append(
             {
@@ -165,7 +194,7 @@ class FullStackExpertAgent:
 
         tool_calls_count = 0
 
-        for round_num in range(1, self.MAX_TOOL_ROUNDS + 1):
+        for round_num in range(1, max_tool_rounds + 1):
             logger.debug("全栈专家工具调用第 {} 轮", round_num)
 
             response = await client.call_with_retry(
@@ -253,12 +282,23 @@ class FullStackExpertAgent:
                     tool_calls_count=tool_calls_count,
                 )
 
+        modified_files = sorted(ctx.modified_files)
+        if modified_files:
+            summary = (
+                f"达到最大工具调用轮次 ({max_tool_rounds})，"
+                f"已修改 {len(modified_files)} 个文件但未调用 finish_task"
+            )
+            error = "max_rounds_reached_with_changes"
+        else:
+            summary = f"达到最大工具调用轮次 ({max_tool_rounds})"
+            error = "max_rounds_reached"
+
         return FullStackResult(
             success=False,
-            summary=f"达到最大工具调用轮次 ({self.MAX_TOOL_ROUNDS})",
-            modified_files=sorted(ctx.modified_files),
+            summary=summary,
+            modified_files=modified_files,
             tool_calls_count=tool_calls_count,
-            error="max_rounds_reached",
+            error=error,
         )
 
     def _build_user_message(

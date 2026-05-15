@@ -371,7 +371,9 @@ def test_ai_filter_model_falls_back_when_main_empty():
         _select_ai_filter_model("", "review-model", "summary-model") == "review-model"
     )
 
+
 # ── 候选池去重与 GitHub 状态过滤 ────────────────────────
+
 
 def _make_candidate(
     issue_number: int = 10,

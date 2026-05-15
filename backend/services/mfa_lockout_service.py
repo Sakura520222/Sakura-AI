@@ -166,7 +166,11 @@ async def _notify_lockout(user_id: int) -> None:
         async with db_module.async_session() as session:
             await notify_mfa_event(session, user_id, "mfa_lockout")
     except Exception as exc:
-        logger.warning("Failed to send MFA lockout notification: user_id={}, error={}", user_id, exc)
+        logger.warning(
+            "Failed to send MFA lockout notification: user_id={}, error={}",
+            user_id,
+            exc,
+        )
 
 
 async def reset_mfa_failures(user_id: int) -> None:
