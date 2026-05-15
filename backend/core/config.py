@@ -1206,7 +1206,7 @@ DYNAMIC_CONFIG_RANGES: dict[str, tuple[float, float]] = {
     "sakura_max_memory_chars": (500, 10000),
     "sakura_max_sakura_chars": (1000, 20000),
     "agent_team_max_tokens": (1024, 32768),
-    "agent_team_max_tool_rounds": (1, 5000),
+    "agent_team_max_tool_rounds": (1, 500),
     "max_concurrent_issues": (1, 200),
 }
 

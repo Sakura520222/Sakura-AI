@@ -90,7 +90,10 @@ class IterationLoopService:
             )
             total_tool_calls += fs_result.tool_calls_count
 
-            if not fs_result.success and not fs_result.modified_files:
+            can_review_partial_changes = (
+                fs_result.error == "max_rounds_reached_with_changes"
+            )
+            if not fs_result.success and not can_review_partial_changes:
                 return IterationOutcome(
                     success=False,
                     reason=f"全栈专家执行失败: {fs_result.error or fs_result.summary}",
@@ -102,7 +105,7 @@ class IterationLoopService:
 
             if not fs_result.success:
                 logger.info(
-                    "全栈专家未正常收尾但已修改 {} 个文件，继续进入专业审查: {}",
+                    "全栈专家达到工具轮次上限但已修改 {} 个文件，继续进入专业审查: {}",
                     len(fs_result.modified_files),
                     fs_result.error or fs_result.summary,
                 )
