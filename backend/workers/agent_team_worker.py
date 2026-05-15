@@ -32,6 +32,12 @@ from backend.services.agent_team.iteration_loop import IterationLoopService
 from backend.services.agent_team.pr_service import AgentTeamPRService
 
 
+def _format_failure_reason(reason: str, modified_files: list[str]) -> str:
+    if modified_files:
+        return reason
+    return "全栈专家未能生成有效的代码修改"
+
+
 class AgentTeamWorker:
     """Agent 专家团队任务处理器 - 完整状态机。"""
 
@@ -258,9 +264,7 @@ class AgentTeamWorker:
                 )
             else:
                 # 迭代未能通过审查
-                reason = outcome.reason
-                if not outcome.modified_files:
-                    reason = "全栈专家未能生成有效的代码修改"
+                reason = _format_failure_reason(outcome.reason, outcome.modified_files)
 
                 await self._update_task(
                     task_id,
