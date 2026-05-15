@@ -96,7 +96,9 @@ class ReadSakuraDocsTool(BaseTool):
 
         safe_path = _validate_sakura_path(doc_path)
         if safe_path is None:
-            return ToolResult(success=False, error="路径不能包含 '..' 或逃逸 .sakura/ 目录")
+            return ToolResult(
+                success=False, error="路径不能包含 '..' 或逃逸 .sakura/ 目录"
+            )
 
         content = await self._read_file(repo, sakura_ref, safe_path)
         if content is None:
@@ -120,9 +122,7 @@ class ReadSakuraDocsTool(BaseTool):
 
             for item in contents:
                 if item.type == "file":
-                    content = await self._read_file(
-                        repo, sakura_ref, item.path
-                    )
+                    content = await self._read_file(repo, sakura_ref, item.path)
                     if content:
                         overview["files"].append(
                             {
@@ -132,16 +132,12 @@ class ReadSakuraDocsTool(BaseTool):
                             }
                         )
                 elif item.type == "dir":
-                    sub_contents = await self._list_dir(
-                        repo, sakura_ref, item.path
-                    )
+                    sub_contents = await self._list_dir(repo, sakura_ref, item.path)
                     dir_files = []
                     if sub_contents:
                         for sub in sub_contents:
                             if sub.type == "file":
-                                dir_files.append(
-                                    {"name": sub.name, "path": sub.path}
-                                )
+                                dir_files.append({"name": sub.name, "path": sub.path})
                     overview["directories"].append(
                         {
                             "name": item.name,

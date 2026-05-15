@@ -184,9 +184,7 @@ class CommentService:
                         logger.info("✓ 已创建正式审查评论 (Review ID: {})", review.id)
 
                 except Exception as e:
-                    logger.error(
-                        "删除评论并创建 review 失败: {}", e, exc_info=True
-                    )
+                    logger.error("删除评论并创建 review 失败: {}", e, exc_info=True)
                     # 降级方案：创建新的普通评论
                     review_body = self._format_comment(
                         review_result,
@@ -265,9 +263,7 @@ Please check system logs or contact the administrator.
                     logger.info("✓ 已创建错误评论")
 
                 except Exception as e:
-                    logger.error(
-                        "删除评论并创建错误评论失败: {}", e, exc_info=True
-                    )
+                    logger.error("删除评论并创建错误评论失败: {}", e, exc_info=True)
                     # 降级方案：直接创建新的错误评论
                     await asyncio.to_thread(pr.create_issue_comment, error_body)
                     logger.info("✓ 已降级为直接创建错误评论")
@@ -304,7 +300,9 @@ Please check system logs or contact the administrator.
                 comments=[],  # 整体评论，不需要行内评论
             )
 
-            logger.info("✓ 成功发布审查评论到PR: {}#{}", pr.base.repo.full_name, pr.number)
+            logger.info(
+                "✓ 成功发布审查评论到PR: {}#{}", pr.base.repo.full_name, pr.number
+            )
 
         except Exception as e:
             logger.error("发布评论时出错: {}", e, exc_info=True)
@@ -456,7 +454,9 @@ Please check system logs or contact the administrator.
                     comments.append(comment_dict)
 
                 except Exception as e:
-                    logger.warning("跳过无效的行内评论数据: {}, 错误: {}", comment_data, e)
+                    logger.warning(
+                        "跳过无效的行内评论数据: {}, 错误: {}", comment_data, e
+                    )
                     continue
 
             if not comments:
@@ -485,8 +485,8 @@ Please check system logs or contact the administrator.
                     logger.error("  - Status: {}", e.status)
                     logger.error("  - Data: {}", e.data)
                     if isinstance(e.data, dict):
-                        logger.error("  - Message: {}", e.data.get('message', 'N/A'))
-                        logger.error("  - Errors: {}", e.data.get('errors', 'N/A'))
+                        logger.error("  - Message: {}", e.data.get("message", "N/A"))
+                        logger.error("  - Errors: {}", e.data.get("errors", "N/A"))
                 else:
                     logger.error("异常类型: {}", type(e).__name__)
                     logger.error("异常信息: {}", e)
@@ -497,7 +497,7 @@ Please check system logs or contact the administrator.
             logger.error("失败的评论数量: {}", len(inline_comments))
             for i, comment in enumerate(inline_comments[:3], 1):  # 只打印前3条
                 logger.error(
-                    "  评论 {}: {}:{}", i, comment['file_path'], comment['line_number']
+                    "  评论 {}: {}:{}", i, comment["file_path"], comment["line_number"]
                 )
 
             raise

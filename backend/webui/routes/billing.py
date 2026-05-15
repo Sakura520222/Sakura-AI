@@ -6,7 +6,11 @@ from fastapi import APIRouter, Request, Depends, Form
 from loguru import logger
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from backend.services.payment_service import PaymentError, PaymentService, RedeemCodeStatus
+from backend.services.payment_service import (
+    PaymentError,
+    PaymentService,
+    RedeemCodeStatus,
+)
 from backend.services.quota_service import QuotaService
 from backend.webui.deps import (
     require_auth,
@@ -595,9 +599,17 @@ async def admin_batch_toggle_plans(
             admin_id=user["user_id"],
             action="batch_toggle_plans",
             target_type="plan",
-            detail={"plan_ids": plan_ids, "success_count": success_count, "skipped_count": skipped_count},
+            detail={
+                "plan_ids": plan_ids,
+                "success_count": success_count,
+                "skipped_count": skipped_count,
+            },
         )
-        toast_key = "toast.batch_partial_success" if skipped_count > 0 else "toast.batch_toggle_success"
+        toast_key = (
+            "toast.batch_partial_success"
+            if skipped_count > 0
+            else "toast.batch_toggle_success"
+        )
         return toast_redirect(
             "/billing/admin/plans",
             toast_key,
@@ -647,9 +659,18 @@ async def admin_batch_delete_plans(
             admin_id=user["user_id"],
             action="batch_delete_plans",
             target_type="plan",
-            detail={"plan_ids": plan_ids, "hard_delete": is_hard, "success_count": success_count, "failed_count": failed_count},
+            detail={
+                "plan_ids": plan_ids,
+                "hard_delete": is_hard,
+                "success_count": success_count,
+                "failed_count": failed_count,
+            },
         )
-        toast_key = "toast.batch_partial_success" if failed_count > 0 else ("toast.batch_hard_deleted" if is_hard else "toast.batch_deleted")
+        toast_key = (
+            "toast.batch_partial_success"
+            if failed_count > 0
+            else ("toast.batch_hard_deleted" if is_hard else "toast.batch_deleted")
+        )
         return toast_redirect(
             "/billing/admin/plans",
             toast_key,
@@ -703,9 +724,17 @@ async def admin_batch_disable_codes(
             admin_id=user["user_id"],
             action="batch_disable_codes",
             target_type="redeem_code",
-            detail={"code_ids": code_ids, "success_count": success_count, "skipped_count": skipped_count},
+            detail={
+                "code_ids": code_ids,
+                "success_count": success_count,
+                "skipped_count": skipped_count,
+            },
         )
-        toast_key = "toast.batch_partial_success" if skipped_count > 0 else "toast.batch_codes_disabled"
+        toast_key = (
+            "toast.batch_partial_success"
+            if skipped_count > 0
+            else "toast.batch_codes_disabled"
+        )
         return toast_redirect(
             "/billing/admin/codes",
             toast_key,
@@ -756,9 +785,17 @@ async def admin_batch_enable_codes(
             admin_id=user["user_id"],
             action="batch_enable_codes",
             target_type="redeem_code",
-            detail={"code_ids": code_ids, "success_count": success_count, "skipped_count": skipped_count},
+            detail={
+                "code_ids": code_ids,
+                "success_count": success_count,
+                "skipped_count": skipped_count,
+            },
         )
-        toast_key = "toast.batch_partial_success" if skipped_count > 0 else "toast.batch_codes_enabled"
+        toast_key = (
+            "toast.batch_partial_success"
+            if skipped_count > 0
+            else "toast.batch_codes_enabled"
+        )
         return toast_redirect(
             "/billing/admin/codes",
             toast_key,
@@ -806,9 +843,17 @@ async def admin_batch_delete_codes(
             admin_id=user["user_id"],
             action="batch_delete_codes",
             target_type="redeem_code",
-            detail={"total_count": len(code_ids), "success_count": success_count, "skipped_count": skipped_count},
+            detail={
+                "total_count": len(code_ids),
+                "success_count": success_count,
+                "skipped_count": skipped_count,
+            },
         )
-        toast_key = "toast.batch_codes_partial_deleted" if skipped_count > 0 else "toast.batch_codes_deleted"
+        toast_key = (
+            "toast.batch_codes_partial_deleted"
+            if skipped_count > 0
+            else "toast.batch_codes_deleted"
+        )
         return toast_redirect(
             "/billing/admin/codes",
             toast_key,

@@ -143,7 +143,9 @@ class SakuraMemoryTool(BaseTool):
 
             content = await asyncio.to_thread(_read)
             if content is None:
-                return ToolResult(success=False, error=f"文件不存在或路径为目录: {path}")
+                return ToolResult(
+                    success=False, error=f"文件不存在或路径为目录: {path}"
+                )
 
             return ToolResult(
                 success=True,

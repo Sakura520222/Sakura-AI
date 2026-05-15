@@ -88,9 +88,7 @@ async def save_system_config(
 
             # 数据库连接字符串验证
             if key == "database_url":
-                if not val.startswith(
-                    ("mysql+aiomysql://", "postgresql+asyncpg://")
-                ):
+                if not val.startswith(("mysql+aiomysql://", "postgresql+asyncpg://")):
                     return toast_redirect(
                         "/system-config/",
                         "system_config.invalid_db_url",
@@ -135,9 +133,7 @@ async def save_system_config(
             )
 
         # 通过 Service 层写入数据库
-        changed, needs_restart = await system_config_service.save_configs(
-            db, updates
-        )
+        changed, needs_restart = await system_config_service.save_configs(db, updates)
 
         if not changed:
             return toast_redirect(
@@ -203,9 +199,7 @@ async def test_connection(
         from backend.core.setup_service import setup_service
 
         if test_type == "database":
-            result = await setup_service.test_database_connection(
-                body.get("url", "")
-            )
+            result = await setup_service.test_database_connection(body.get("url", ""))
         else:
             result = await setup_service.test_redis_connection(body.get("url", ""))
         return {
@@ -214,4 +208,3 @@ async def test_connection(
         }
 
     return {"success": False, "message": "Unsupported test type"}
-

@@ -387,8 +387,7 @@ class AgentTeamCandidateService:
                             AgentTeamTaskStatus.ABANDONED.value,
                         ]
                     ),
-                    AgentTeamTask.source_issue_number
-                    == IssueAnalysis.issue_number,
+                    AgentTeamTask.source_issue_number == IssueAnalysis.issue_number,
                     AgentTeamTask.repo_owner == IssueAnalysis.repo_owner,
                     AgentTeamTask.repo_name == IssueAnalysis.repo_name,
                 )
@@ -420,11 +419,9 @@ class AgentTeamCandidateService:
         且最多检查 _MAX_GITHUB_STATE_CHECKS 条以控制 API 调用量。
         如果 API 调用失败则保留该候选（fail-open）。
         """
-        to_check = [
-            c
-            for c in candidates
-            if c.source_issue_number is not None
-        ][:_MAX_GITHUB_STATE_CHECKS]
+        to_check = [c for c in candidates if c.source_issue_number is not None][
+            :_MAX_GITHUB_STATE_CHECKS
+        ]
         if not to_check:
             return candidates
 

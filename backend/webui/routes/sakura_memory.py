@@ -3,7 +3,7 @@
 import asyncio
 from typing import Optional
 
-from fastapi import APIRouter, Request, Depends, Form, HTTPException
+from fastapi import APIRouter, Request, Depends, HTTPException
 from loguru import logger
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -24,6 +24,7 @@ from backend.webui.i18n import detect_language
 
 router = APIRouter(prefix="/sakura-memory", tags=["WebUI Sakura Memory"])
 templates = get_templates()
+MAX_SAKURA_FILE_CONTENT_LENGTH = 50_000
 
 
 def _get_repo(repo_full_name: str):
@@ -327,6 +328,8 @@ async def save_file(
     try:
         form = await request.form()
         content = str(form.get("content", ""))
+        if len(content) > MAX_SAKURA_FILE_CONTENT_LENGTH:
+            raise HTTPException(status_code=400, detail="文件内容过大")
 
         gh_repo = _get_repo(repo_full_name)
         if not gh_repo:

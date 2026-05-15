@@ -34,8 +34,14 @@ async def test_language_switch_full_flow():
     initial_config = SimpleNamespace(language="zh-CN", items_per_page=20)
     db = DbStub(initial_config)
 
-    with patch.object(deps, "decode_access_token", return_value={"user_id": 42, "token_type": "access"}), \
-         patch.object(deps, "is_access_token_payload", return_value=True):
+    with (
+        patch.object(
+            deps,
+            "decode_access_token",
+            return_value={"user_id": 42, "token_type": "access"},
+        ),
+        patch.object(deps, "is_access_token_payload", return_value=True),
+    ):
         prefs_before = await get_user_preferences(RequestStub(), db)
 
     assert prefs_before == {"language": "zh-CN", "items_per_page": 20}
@@ -51,8 +57,14 @@ async def test_language_switch_full_flow():
 
     # 3. 再次读取偏好：应从 DB 获取新值 en
     db2 = DbStub(initial_config)
-    with patch.object(deps, "decode_access_token", return_value={"user_id": 42, "token_type": "access"}), \
-         patch.object(deps, "is_access_token_payload", return_value=True):
+    with (
+        patch.object(
+            deps,
+            "decode_access_token",
+            return_value={"user_id": 42, "token_type": "access"},
+        ),
+        patch.object(deps, "is_access_token_payload", return_value=True),
+    ):
         prefs_after = await get_user_preferences(RequestStub(), db2)
 
     assert prefs_after == {"language": "en", "items_per_page": 50}
@@ -74,8 +86,14 @@ async def test_cache_hit_returns_old_value_after_save_without_invalidation():
     config = SimpleNamespace(language="zh-CN", items_per_page=20)
     db = DbStub(config)
 
-    with patch.object(deps, "decode_access_token", return_value={"user_id": 99, "token_type": "access"}), \
-         patch.object(deps, "is_access_token_payload", return_value=True):
+    with (
+        patch.object(
+            deps,
+            "decode_access_token",
+            return_value={"user_id": 99, "token_type": "access"},
+        ),
+        patch.object(deps, "is_access_token_payload", return_value=True),
+    ):
         prefs1 = await get_user_preferences(RequestStub(), db)
 
     assert prefs1 == {"language": "zh-CN", "items_per_page": 20}
@@ -83,8 +101,14 @@ async def test_cache_hit_returns_old_value_after_save_without_invalidation():
     # 模拟 DB 被更新但缓存未失效
     config.language = "en"
 
-    with patch.object(deps, "decode_access_token", return_value={"user_id": 99, "token_type": "access"}), \
-         patch.object(deps, "is_access_token_payload", return_value=True):
+    with (
+        patch.object(
+            deps,
+            "decode_access_token",
+            return_value={"user_id": 99, "token_type": "access"},
+        ),
+        patch.object(deps, "is_access_token_payload", return_value=True),
+    ):
         prefs2 = await get_user_preferences(RequestStub(), db)
 
     # 缓存命中，仍然返回旧值
@@ -99,16 +123,28 @@ async def test_cache_invalidation_then_read_returns_new_value():
     config = SimpleNamespace(language="zh-CN", items_per_page=20)
     db = DbStub(config)
 
-    with patch.object(deps, "decode_access_token", return_value={"user_id": 88, "token_type": "access"}), \
-         patch.object(deps, "is_access_token_payload", return_value=True):
+    with (
+        patch.object(
+            deps,
+            "decode_access_token",
+            return_value={"user_id": 88, "token_type": "access"},
+        ),
+        patch.object(deps, "is_access_token_payload", return_value=True),
+    ):
         await get_user_preferences(RequestStub(), db)
 
     # 更新并失效
     config.language = "en"
     invalidate_user_prefs_cache(88)
 
-    with patch.object(deps, "decode_access_token", return_value={"user_id": 88, "token_type": "access"}), \
-         patch.object(deps, "is_access_token_payload", return_value=True):
+    with (
+        patch.object(
+            deps,
+            "decode_access_token",
+            return_value={"user_id": 88, "token_type": "access"},
+        ),
+        patch.object(deps, "is_access_token_payload", return_value=True),
+    ):
         prefs = await get_user_preferences(RequestStub(), db)
 
     assert prefs["language"] == "en"
@@ -143,7 +179,9 @@ def test_render_template_injects_correct_lang():
         captured.update(context)
         return MagicMock()
 
-    with patch.object(get_templates(), "TemplateResponse", side_effect=mock_template_response):
+    with patch.object(
+        get_templates(), "TemplateResponse", side_effect=mock_template_response
+    ):
         request = RequestStub()
         user_prefs = {"language": "en", "items_per_page": 20}
         render_template("test.html", request, user_prefs=user_prefs)
@@ -165,7 +203,9 @@ def test_render_template_with_user_prefs_in_context():
         captured.update(context)
         return MagicMock()
 
-    with patch.object(get_templates(), "TemplateResponse", side_effect=mock_template_response):
+    with patch.object(
+        get_templates(), "TemplateResponse", side_effect=mock_template_response
+    ):
         request = RequestStub()
         # 模拟 _render_settings_page 的调用方式：user_prefs 放在 **context 中
         context = {

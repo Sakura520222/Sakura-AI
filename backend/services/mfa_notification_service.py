@@ -41,4 +41,6 @@ async def notify_mfa_event(
             chat_id=int(chat_id),
         )
     except Exception as exc:
-        logger.warning("Failed to send MFA notification: user_id={}, error={}", user_id, exc)
+        logger.warning(
+            "Failed to send MFA notification: user_id={}, error={}", user_id, exc
+        )

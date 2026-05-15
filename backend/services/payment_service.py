@@ -96,7 +96,9 @@ class PaymentService:
         )
         self.session.add(plan)
         await self.session.flush()
-        logger.info("Created plan: {} (type={}, price={})", name, plan_type, price_cents)
+        logger.info(
+            "Created plan: {} (type={}, price={})", name, plan_type, price_cents
+        )
         return plan
 
     async def update_plan(self, plan_id: int, **kwargs) -> Plan:
@@ -135,7 +137,9 @@ class PaymentService:
             # 检查关联订单
             order_count = (
                 await self.session.execute(
-                    select(func.count()).select_from(Order).where(Order.plan_id == plan_id)
+                    select(func.count())
+                    .select_from(Order)
+                    .where(Order.plan_id == plan_id)
                 )
             ).scalar() or 0
             if order_count > 0:
@@ -151,8 +155,7 @@ class PaymentService:
                     .where(
                         and_(
                             UserSubscription.plan_id == plan_id,
-                            UserSubscription.status
-                            == SubscriptionStatus.ACTIVE.value,
+                            UserSubscription.status == SubscriptionStatus.ACTIVE.value,
                         )
                     )
                 )
@@ -358,9 +361,7 @@ class PaymentService:
             await self.session.flush()
         return {"success": results, "skipped": skipped}
 
-    async def batch_update_redeem_codes(
-        self, code_ids: list[int], **kwargs
-    ) -> dict:
+    async def batch_update_redeem_codes(self, code_ids: list[int], **kwargs) -> dict:
         """批量更新兑换码状态
 
         Returns:
@@ -524,7 +525,9 @@ class PaymentService:
         )
 
         order = await self._fulfill_order(order, user, plan, operator_id)
-        logger.info("Admin {} granted plan {} to user {}", operator_id, plan.name, user_id)
+        logger.info(
+            "Admin {} granted plan {} to user {}", operator_id, plan.name, user_id
+        )
         return order
 
     # ========== 订阅管理 ==========

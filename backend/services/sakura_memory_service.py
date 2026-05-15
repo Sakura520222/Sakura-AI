@@ -11,7 +11,7 @@ import asyncio
 import functools
 import hashlib
 import json
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Dict, Optional
 
 from loguru import logger
@@ -625,8 +625,8 @@ class SakuraMemoryService:
             pr_description = ""
             try:
                 pr_description = (getattr(pr, "body", None) or "")[:500]
-            except Exception:
-                pass
+            except Exception as e:
+                logger.debug("读取 PR 描述失败，跳过: {}", e)
 
             prompt = REFLECTION_PROMPT.format(
                 pr_number=pr_number,
@@ -1017,7 +1017,7 @@ class SakuraMemoryService:
 
                 await self._update_state(
                     repo_full_name,
-                    last_consolidation_at=datetime.utcnow(),
+                    last_consolidation_at=datetime.now(timezone.utc),
                     last_consolidation_count=total_count,
                 )
 
@@ -1028,9 +1028,7 @@ class SakuraMemoryService:
                     ", ".join(files.keys()),
                 )
 
-                await self._maybe_extract_knowledge(
-                    repo, repo_full_name, total_count
-                )
+                await self._maybe_extract_knowledge(repo, repo_full_name, total_count)
             else:
                 logger.warning(
                     "[consolidate] 两个文件均无变更: {}",
@@ -1086,13 +1084,9 @@ class SakuraMemoryService:
             # 已提取过或反思数不足则跳过
             if state.knowledge_extracted:
                 return
-            from backend.core.config import get_settings
-
-            settings = get_settings()
-            min_reflections = (
-                settings.sakura_extraction_min_reflections
-                or config.get("knowledge_extraction", {}).get("min_reflections", 10)
-            )
+            min_reflections = settings.sakura_extraction_min_reflections or config.get(
+                "knowledge_extraction", {}
+            ).get("min_reflections", 10)
             if reflection_count < min_reflections:
                 return
 
@@ -1106,9 +1100,7 @@ class SakuraMemoryService:
         except Exception as e:
             logger.warning("[extract] 知识提取触发失败: {} - {}", repo_full_name, e)
 
-    async def extract_and_save_knowledge(
-        self, repo, repo_full_name: str
-    ) -> bool:
+    async def extract_and_save_knowledge(self, repo, repo_full_name: str) -> bool:
         """执行知识提取并保存到 .sakura/ 子目录
 
         Args:
@@ -1141,7 +1133,7 @@ class SakuraMemoryService:
         # 合并子目录前缀
         files = {f".sakura/{k}": v for k, v in extracted.items()}
 
-        commit_msg = f"chore(sakura): extract structured knowledge from reflections"
+        commit_msg = "chore(sakura): extract structured knowledge from reflections"
         await self.write_service.commit_files(repo, files, commit_msg)
 
         await self._update_state(repo_full_name, knowledge_extracted=True)
@@ -1337,8 +1329,10 @@ class SakuraMemoryService:
                             for s in sub[:10]:
                                 icon = "/" if s.type == "dir" else ""
                                 lines.append(f"    {s.name}{icon}")
-                        except Exception:
-                            pass
+                        except Exception as e:
+                            logger.debug(
+                                "读取 .sakura/ 子目录失败，跳过 {}: {}", item.path, e
+                            )
                     else:
                         lines.append(f"  {item.name}")
                 return "\n".join(lines)

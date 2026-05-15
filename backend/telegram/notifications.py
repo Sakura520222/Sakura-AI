@@ -332,7 +332,6 @@ class NotificationSender:
         except Exception as e:
             logger.error(f"发送 Critical Issue 告警失败: {e}")
 
-
     # ========== MFA 安全通知 ==========
 
     _EVENT_EMOJIS = {
