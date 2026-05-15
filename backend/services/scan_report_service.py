@@ -307,6 +307,28 @@ class ScanReportService:
 
             if issue:
                 logger.info(f"✅ 已创建扫描报告 Issue: {scan.repo_name}#{issue.number}")
+
+                # 索引到 Issue 向量库（bot 创建的 Issue 不触发 webhook，需主动索引）
+                try:
+                    from backend.services.issue_embedding_service import (
+                        IssueEmbeddingService,
+                    )
+
+                    emb_service = IssueEmbeddingService()
+                    await emb_service.upsert_issue(
+                        repo_owner,
+                        repo_name_only,
+                        issue.number,
+                        title=issue.title,
+                        body=body,
+                        state="open",
+                    )
+                    logger.info(
+                        f"已索引扫描报告 Issue: {scan.repo_name}#{issue.number}"
+                    )
+                except Exception as emb_err:
+                    logger.warning(f"索引扫描报告 Issue 失败: {emb_err}")
+
                 return {"issue_number": issue.number, "issue_url": issue.html_url}
 
             return None
