@@ -17,7 +17,7 @@ from backend.workers.agent_team_worker import _format_failure_reason
 def test_agent_team_max_tool_rounds_is_registered_for_webui():
     assert "agent_team_max_tool_rounds" in AGENT_TEAM_CONFIG_KEYS
     assert DYNAMIC_CONFIG_LABELS["agent_team_max_tool_rounds"] == "工具调用最大轮次"
-    assert DYNAMIC_CONFIG_RANGES["agent_team_max_tool_rounds"] == (1, 5000)
+    assert DYNAMIC_CONFIG_RANGES["agent_team_max_tool_rounds"] == (1, 500)
     assert get_settings().agent_team_max_tool_rounds == 30
 
 
@@ -114,6 +114,57 @@ async def test_iteration_loop_reviews_changes_when_fullstack_hits_tool_round_lim
     assert outcome.reason == "审查通过 (第 1 轮, 分数 9)"
     assert outcome.review_result is not None
     assert outcome.review_result.summary == "reviewed main.py"
+
+
+@dataclass
+class _FakeBrokenFullstackAgent:
+    workspace: str
+    workspace_service: object
+
+    async def execute(self, **kwargs):
+        return FullStackResult(
+            success=False,
+            summary="AI 返回空响应",
+            modified_files=["main.py"],
+            tool_calls_count=1,
+            error="empty_response",
+        )
+
+
+class _ReviewerMustNotRun:
+    def __init__(self, workspace: str, workspace_service: object):
+        pass
+
+    async def review(self, **kwargs):
+        raise AssertionError("reviewer should not run for non-recoverable failures")
+
+
+@pytest.mark.asyncio
+async def test_iteration_loop_stops_non_recoverable_failures_even_with_modified_files(
+    monkeypatch, tmp_path
+):
+    monkeypatch.setattr(
+        "backend.services.agent_team.iteration_loop.FullStackExpertAgent",
+        _FakeBrokenFullstackAgent,
+    )
+    monkeypatch.setattr(
+        "backend.services.agent_team.iteration_loop.ProfessionalReviewAgent",
+        _ReviewerMustNotRun,
+    )
+
+    workspace_service = AgentTeamWorkspaceService(tmp_path)
+    workspace = workspace_service.ensure_workspace("owner", "repo")
+
+    outcome = await IterationLoopService(workspace, workspace_service).run(
+        task_title="测试任务",
+        task_summary="测试摘要",
+        max_iterations=1,
+    )
+
+    assert outcome.success is False
+    assert outcome.modified_files == ["main.py"]
+    assert outcome.review_result is None
+    assert outcome.reason == "全栈专家执行失败: empty_response"
 
 
 def test_failure_reason_keeps_real_reason_when_modified_files_exist():

@@ -24,7 +24,7 @@ from typing import Any
 
 from loguru import logger
 
-from backend.core.config import get_dynamic_config, get_settings
+from backend.core.config import DYNAMIC_CONFIG_RANGES, get_dynamic_config, get_settings
 from backend.services.agent_team.ai_client import create_agent_team_client
 from backend.services.agent_team.tools.base import ToolContext, ToolResult
 from backend.services.agent_team.tools.file_state import ReadFileState
@@ -111,7 +111,7 @@ async def resolve_agent_team_max_tool_rounds() -> int:
         if raw is None:
             return fallback
         value = int(raw)
-        min_value, max_value = 1, 5000
+        min_value, max_value = DYNAMIC_CONFIG_RANGES["agent_team_max_tool_rounds"]
         if min_value <= value <= max_value:
             return value
         raise ValueError(f"value {value} outside range {min_value}-{max_value}")
