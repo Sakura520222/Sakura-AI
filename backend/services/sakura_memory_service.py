@@ -974,7 +974,8 @@ class SakuraMemoryService:
                 max_iterations=max_iterations,
             )
             for k, v in sakura_changes.items():
-                files[f".sakura/{k}"] = v
+                clean = k.removeprefix(".sakura/").lstrip("/")
+                files[f".sakura/{clean}"] = v
 
             # 串行处理 memory.md
             memory_changes = await agent.consolidate_file(
@@ -990,7 +991,8 @@ class SakuraMemoryService:
                 max_iterations=max_iterations,
             )
             for k, v in memory_changes.items():
-                files[f".sakura/{k}"] = v
+                clean = k.removeprefix(".sakura/").lstrip("/")
+                files[f".sakura/{clean}"] = v
 
             # 字符限制告警
             for path, content in files.items():
@@ -1130,8 +1132,11 @@ class SakuraMemoryService:
             logger.warning("[extract] 知识提取无结果: {}", repo_full_name)
             return False
 
-        # 合并子目录前缀
-        files = {f".sakura/{k}": v for k, v in extracted.items()}
+        # 合并子目录前缀（AI 可能已带 .sakura/ 前缀，需去重）
+        files = {}
+        for k, v in extracted.items():
+            clean = k.removeprefix(".sakura/").lstrip("/")
+            files[f".sakura/{clean}"] = v
 
         commit_msg = "chore(sakura): extract structured knowledge from reflections"
         await self.write_service.commit_files(repo, files, commit_msg)
