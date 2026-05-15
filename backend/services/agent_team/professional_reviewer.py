@@ -105,9 +105,16 @@ class ProfessionalReviewAgent:
         ]
 
     def _build_context(
-        self, skills_context: dict[str, Any] | None = None
+        self,
+        skills_context: dict[str, Any] | None = None,
+        github_repo: Any | None = None,
+        sakura_ref: str | None = None,
     ) -> ToolContext:
         extra: dict[str, Any] = {"file_state": self.file_state}
+        if github_repo is not None:
+            extra["github_repo"] = github_repo
+        if sakura_ref is not None:
+            extra["sakura_ref"] = sakura_ref
         if skills_context:
             extra.update(skills_context)
         return ToolContext(
@@ -126,10 +133,16 @@ class ProfessionalReviewAgent:
         feedback_context: str = "",
         skills_summary: str = "",
         skills_context: dict[str, Any] | None = None,
+        github_repo: Any | None = None,
+        sakura_ref: str | None = None,
     ) -> ReviewResult:
         """执行审查，AI 自主调用工具直到提交审查。"""
         client, config = await create_agent_team_client()
-        ctx = self._build_context(skills_context)
+        ctx = self._build_context(
+            skills_context,
+            github_repo=github_repo,
+            sakura_ref=sakura_ref,
+        )
         tool_schemas = get_tool_definitions("reviewer", provider=config.provider)
 
         self.messages.append(

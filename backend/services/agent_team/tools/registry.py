@@ -19,6 +19,11 @@ from backend.services.agent_team.tools.insert_lines_tool import InsertLinesTool
 from backend.services.agent_team.tools.list_directory_tool import ListDirectoryTool
 from backend.services.agent_team.tools.read_tool import ReadTool
 from backend.services.agent_team.tools.replace_lines_tool import ReplaceLinesTool
+from backend.services.agent_team.tools.sakura_docs_tool import (
+    ListSakuraDirectoryTool,
+    ReadSakuraDocsTool,
+)
+from backend.services.agent_team.tools.sakura_memory_tool import SakuraMemoryTool
 from backend.services.agent_team.tools.shell_tool import ShellTool
 from backend.services.agent_team.tools.submit_review_tool import SubmitReviewTool
 from backend.services.agent_team.tools.use_skill_tool import UseSkillTool
@@ -51,6 +56,9 @@ REVIEWER_TOOL_INSTANCES: list[BaseTool] = [
     UseSkillTool(),
     ShellTool(),
     SubmitReviewTool(),
+    SakuraMemoryTool(),
+    ReadSakuraDocsTool(),
+    ListSakuraDirectoryTool(),
 ]
 
 # 按名称索引的工具注册表

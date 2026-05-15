@@ -69,7 +69,7 @@ COMPACT_TOOLS = ["get_file_diff", "list_changed_files"]
 RAG_TOOLS = ["search_project_docs"]
 CODE_INDEX_TOOLS = ["search_code_context"]
 WEB_SEARCH_TOOLS = ["search_web", "fetch_url"]
-SAKURA_TOOLS = ["read_sakura_docs", "list_sakura_directory"]
+SAKURA_TOOLS = ["read_sakura_docs", "list_sakura_directory", "read_sakura_memory"]
 
 ALL_TOOLS = BASE_TOOLS + RAG_TOOLS + CODE_INDEX_TOOLS + WEB_SEARCH_TOOLS + SAKURA_TOOLS
 
@@ -429,6 +429,31 @@ LIST_SAKURA_DIRECTORY_TOOL = {
     },
 }
 
+READ_SAKURA_MEMORY_TOOL = {
+    "type": "function",
+    "function": {
+        "name": "read_sakura_memory",
+        "description": (
+            "读取 .sakura/memory/ 目录下的审查反思文件，了解历史审查经验和项目模式。"
+            "不指定 file_name 时返回最近反思文件列表。"
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "file_name": {
+                    "type": "string",
+                    "description": ".sakura/memory/ 下的文件名，如 '2024-01-15_PR42_abc1234.md'。留空返回最近反思文件列表。",
+                },
+                "count": {
+                    "type": "integer",
+                    "description": "列出最近 N 个反思文件，默认 5",
+                },
+            },
+            "required": [],
+        },
+    },
+}
+
 ALL_TOOL_DEFINITIONS = [
     READ_FILE_TOOL,
     LIST_DIRECTORY_TOOL,
@@ -441,6 +466,7 @@ ALL_TOOL_DEFINITIONS = [
     LIST_COMMITS_TOOL,
     READ_SAKURA_DOCS_TOOL,
     LIST_SAKURA_DIRECTORY_TOOL,
+    READ_SAKURA_MEMORY_TOOL,
 ]
 
 GET_FILE_DIFF_TOOL = {
@@ -493,6 +519,7 @@ TOOL_NAME_TO_DEFINITION = {
     "list_commits": LIST_COMMITS_TOOL,
     "read_sakura_docs": READ_SAKURA_DOCS_TOOL,
     "list_sakura_directory": LIST_SAKURA_DIRECTORY_TOOL,
+    "read_sakura_memory": READ_SAKURA_MEMORY_TOOL,
     "get_file_diff": GET_FILE_DIFF_TOOL,
     "list_changed_files": LIST_CHANGED_FILES_TOOL,
 }

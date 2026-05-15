@@ -174,6 +174,15 @@ class ToolHandler:
                     repo=repo,
                     pr=pr,
                 )
+            elif function_name == "read_sakura_memory":
+                if not self.sakura_tool:
+                    return {"error": ".sakura/ 记忆工具未启用"}
+                return await self.sakura_tool.read_sakura_memory(
+                    file_name=arguments.get("file_name"),
+                    count=arguments.get("count", 5),
+                    repo=repo,
+                    pr=pr,
+                )
             elif function_name == "get_file_diff":
                 if not self.diff_tool:
                     return {"error": "PR diff 工具未启用"}

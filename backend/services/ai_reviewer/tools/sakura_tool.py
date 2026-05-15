@@ -133,6 +133,57 @@ class SakuraToolHandler:
             logger.error(f"列出 .sakura/ 目录失败: {e}", exc_info=True)
             return {"error": f"列出目录失败: {str(e)}"}
 
+    async def read_sakura_memory(
+        self,
+        file_name: Optional[str] = None,
+        count: int = 5,
+        repo: Any = None,
+        pr: Any = None,
+    ) -> Dict[str, Any]:
+        """读取 .sakura/memory/ 目录下的审查反思文件
+
+        Args:
+            file_name: 反思文件名，留空返回最近文件列表
+            count: 列出最近 N 个文件
+            repo: GitHub 仓库对象
+            pr: GitHub PR 对象
+        """
+        try:
+            if file_name:
+                safe = file_name.replace("\\", "/").strip("/")
+                if "../" in safe or "/" in safe:
+                    return {"error": "文件名不能包含路径分隔符或遍历字符"}
+                if not safe.endswith(".md"):
+                    return {"error": "仅支持读取 .md 文件"}
+                path = f".sakura/memory/{safe}"
+                content = await self._read_file_from_repo(repo, path)
+                if content is None:
+                    return {"error": f"文件不存在: {path}"}
+                return {"file_path": path, "content": content, "size": len(content)}
+
+            # 列出最近反思文件 / List recent reflection files
+            contents = await self._list_directory(repo, ".sakura/memory")
+            if not contents:
+                return {"error": ".sakura/memory/ 目录不存在或为空"}
+
+            files = [
+                {"name": c.name, "path": c.path, "size": c.size}
+                for c in contents
+                if c.type == "file" and c.name.endswith(".md")
+            ]
+            files.sort(key=lambda f: f["name"], reverse=True)
+            recent = files[:count]
+
+            return {
+                "total_files": len(files),
+                "showing": len(recent),
+                "files": recent,
+            }
+
+        except Exception as e:
+            logger.error(f"读取 .sakura/memory/ 失败: {e}", exc_info=True)
+            return {"error": f"读取失败: {str(e)}"}
+
     async def _get_docs_overview(self, repo: Any) -> Dict[str, Any]:
         """获取 .sakura/ 所有文档概览 / Get overview of all .sakura/ documents"""
         try:

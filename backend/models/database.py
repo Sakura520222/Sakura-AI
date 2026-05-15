@@ -873,6 +873,9 @@ class SakuraMemoryState(Base):
     )  # 上次合并时的 reflection_count
     is_initialized = Column(Boolean, default=False, nullable=False)
 
+    # 知识提取状态 / Knowledge extraction state
+    knowledge_extracted = Column(Boolean, default=False, nullable=False)
+
     # 最后写入的文件 SHA / Last written file SHAs
     last_sakura_md_sha = Column(String(40), nullable=True)
     last_memory_md_sha = Column(String(40), nullable=True)

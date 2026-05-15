@@ -1,0 +1,171 @@
+{% extends "base.html" %}
+
+{% block title %}Sakura 记忆管理 - Sakura AI Reviewer{% endblock %}
+
+{% block content %}
+<div class="space-y-6" x-data="{ repo: '{{ selected_repo or '' }}', editing: false }">
+    <!-- 页面标题 -->
+    <div>
+        <h1 class="text-2xl font-bold">Sakura 记忆管理</h1>
+        <p class="mt-1 text-sm text-gray-500 dark:text-gray-400">管理 .sakura/ 知识目录：查看、编辑记忆文件，触发合并和知识提取</p>
+    </div>
+
+    <!-- 仓库选择 -->
+    <div class="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 shadow-sm p-6">
+        <h2 class="text-lg font-semibold mb-4">选择仓库</h2>
+        <select x-model="repo"
+                @change="window.location.href = '/sakura-memory/' + repo"
+                class="w-full max-w-md rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 px-3 py-2 text-sm focus:ring-2 focus:ring-pink-300 focus:border-pink-500 dark:focus:ring-pink-800">
+            <option value="">-- 选择仓库 --</option>
+            {% for r in repos %}
+            <option value="{{ r.repo_full_name }}" {% if selected_repo == r.repo_full_name %}selected{% endif %}>
+                {{ r.repo_full_name }}
+                ({{ r.reflection_count }} 次反思{% if r.knowledge_extracted %}, 已提取{% endif %})
+            </option>
+            {% endfor %}
+        </select>
+    </div>
+
+    {% if selected_repo and repo_state %}
+    <!-- 状态概览 -->
+    <div class="grid grid-cols-1 md:grid-cols-4 gap-4">
+        <div class="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 shadow-sm p-4">
+            <div class="text-sm text-gray-500 dark:text-gray-400">反思次数</div>
+            <div class="text-2xl font-bold text-sakura-600">{{ repo_state.reflection_count }}</div>
+        </div>
+        <div class="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 shadow-sm p-4">
+            <div class="text-sm text-gray-500 dark:text-gray-400">上次合并</div>
+            <div class="text-sm font-medium">{{ repo_state.last_consolidation_at.strftime('%Y-%m-%d %H:%M') if repo_state.last_consolidation_at else '未合并' }}</div>
+        </div>
+        <div class="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 shadow-sm p-4">
+            <div class="text-sm text-gray-500 dark:text-gray-400">知识提取</div>
+            <div class="text-sm font-medium">
+                {% if repo_state.knowledge_extracted %}
+                <span class="text-green-600">已完成</span>
+                {% else %}
+                <span class="text-yellow-600">未提取</span>
+                {% endif %}
+            </div>
+        </div>
+        <div class="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 shadow-sm p-4">
+            <div class="text-sm text-gray-500 dark:text-gray-400">合并间隔</div>
+            <div class="text-2xl font-bold">{{ repo_state.consolidation_interval }} 次</div>
+        </div>
+    </div>
+
+    <!-- 操作按钮 -->
+    <div class="flex flex-wrap gap-3">
+        <form method="POST" action="/sakura-memory/{{ selected_repo }}/trigger/consolidate">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+            <button type="submit"
+                    class="px-4 py-2 bg-sakura-500 text-white rounded-lg hover:bg-sakura-600 transition-colors text-sm font-medium"
+                    onclick="return confirm('确定要手动触发合并吗？这将更新 SAKURA.md 和 memory.md。')">
+                手动合并
+            </button>
+        </form>
+        <form method="POST" action="/sakura-memory/{{ selected_repo }}/trigger/extract">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+            <button type="submit"
+                    class="px-4 py-2 bg-purple-500 text-white rounded-lg hover:bg-purple-600 transition-colors text-sm font-medium"
+                    onclick="return confirm('确定要触发知识提取吗？将从反思文件中提取规则、文档和经验。')">
+            {% if repo_state.knowledge_extracted %}重新提取{% else %}知识提取{% endif %}
+            </button>
+        </form>
+    </div>
+
+    <!-- 文件浏览器 -->
+    <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+        <!-- 文件列表 -->
+        <div class="lg:col-span-1 bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 shadow-sm">
+            <div class="p-4 border-b border-gray-200 dark:border-gray-700">
+                <h3 class="font-semibold">文件列表</h3>
+            </div>
+            <div class="p-2 max-h-[600px] overflow-y-auto">
+                {% if files %}
+                <ul class="space-y-0.5">
+                    {% for f in files %}
+                    {% if f.type == 'dir' %}
+                    <li class="px-3 py-2 text-sm font-medium text-gray-500 dark:text-gray-400 flex items-center gap-2">
+                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z"/></svg>
+                        {{ f.name }}/
+                    </li>
+                    {% else %}
+                    <li>
+                        <a href="/sakura-memory/{{ selected_repo }}/file/{{ f.path }}"
+                           class="px-3 py-2 text-sm flex items-center gap-2 rounded-lg hover:bg-sakura-50 dark:hover:bg-sakura-900/20 transition-colors {% if file_path == f.path %}bg-sakura-50 dark:bg-sakura-900/20 text-sakura-700 dark:text-sakura-400 font-medium{% else %}text-gray-700 dark:text-gray-300{% endif %}">
+                            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/></svg>
+                            <span class="truncate">{{ f.name }}</span>
+                            {% if f.size is defined %}
+                            <span class="ml-auto text-xs text-gray-400">{{ (f.size / 1024)|round(1) }}KB</span>
+                            {% endif %}
+                        </a>
+                    </li>
+                    {% endif %}
+                    {% endfor %}
+                </ul>
+                {% else %}
+                <div class="p-4 text-sm text-gray-500 dark:text-gray-400 text-center">
+                    暂无文件或仓库不可访问
+                </div>
+                {% endif %}
+            </div>
+        </div>
+
+        <!-- 文件内容 -->
+        <div class="lg:col-span-2 bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 shadow-sm">
+            {% if file_path and file_content is not none %}
+            <div class="p-4 border-b border-gray-200 dark:border-gray-700 flex items-center justify-between">
+                <h3 class="font-semibold truncate">{{ file_path }}</h3>
+                <div class="flex gap-2">
+                    <button @click="editing = !editing"
+                            class="px-3 py-1.5 text-xs font-medium rounded-lg border border-gray-300 dark:border-gray-600 hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors">
+                        <span x-text="editing ? '预览' : '编辑'"></span>
+                    </button>
+                    <form method="POST" action="/sakura-memory/{{ selected_repo }}/file/{{ file_path }}/delete"
+                          onsubmit="return confirm('确定要删除此文件吗？此操作不可撤销。')">
+                        <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                        <button type="submit" class="px-3 py-1.5 text-xs font-medium rounded-lg text-red-600 border border-red-300 hover:bg-red-50 dark:hover:bg-red-900/20 transition-colors">
+                            删除
+                        </button>
+                    </form>
+                </div>
+            </div>
+
+            <!-- 编辑模式 -->
+            <div x-show="editing" x-cloak class="p-4">
+                <form method="POST" action="/sakura-memory/{{ selected_repo }}/file/{{ file_path }}">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                    <textarea name="content"
+                              class="w-full h-96 font-mono text-sm p-3 rounded-lg border border-gray-300 dark:border-gray-600 bg-gray-50 dark:bg-gray-900 focus:ring-2 focus:ring-pink-300 focus:border-pink-500 resize-y">{{ file_content }}</textarea>
+                    <div class="mt-3 flex justify-end">
+                        <button type="submit"
+                                class="px-4 py-2 bg-sakura-500 text-white rounded-lg hover:bg-sakura-600 transition-colors text-sm font-medium">
+                            保存
+                        </button>
+                    </div>
+                </form>
+            </div>
+
+            <!-- 预览模式 -->
+            <div x-show="!editing" class="p-4">
+                <pre class="whitespace-pre-wrap font-mono text-sm bg-gray-50 dark:bg-gray-900 p-4 rounded-lg overflow-x-auto">{{ file_content }}</pre>
+            </div>
+
+            {% elif file_path is none and selected_repo %}
+            <div class="p-8 text-center text-gray-500 dark:text-gray-400">
+                <svg class="w-12 h-12 mx-auto mb-3 text-gray-300 dark:text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/>
+                </svg>
+                <p>从左侧选择文件查看内容</p>
+            </div>
+            {% endif %}
+        </div>
+    </div>
+
+    {% elif selected_repo and not repo_state %}
+    <div class="bg-yellow-50 dark:bg-yellow-900/20 border border-yellow-200 dark:border-yellow-800 rounded-xl p-4">
+        <p class="text-yellow-700 dark:text-yellow-400">该仓库尚未初始化 .sakura/ 目录，请先对该仓库触发一次审查。</p>
+    </div>
+    {% endif %}
+</div>
+{% endblock %}

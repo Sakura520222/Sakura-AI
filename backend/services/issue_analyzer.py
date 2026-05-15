@@ -250,9 +250,15 @@ class IssueAnalyzer:
                 sakura_md = sakura_context.get("sakura_md", "")
                 memory_md = sakura_context.get("memory_md", "")
                 if sakura_md or memory_md:
-                    sakura_section = "\n\n## 项目知识（来自 .sakura/ 目录）"
+                    sakura_section = (
+                        "\n\n## 项目知识（来自 .sakura/ 目录，请主动参考）\n\n"
+                        "以下是该项目积累的审查经验和知识，请在分析中参考：\n"
+                        "- 如果项目有已知的审查规则，按照规则检查代码\n"
+                        "- 如果项目记忆中记录了常见问题，重点排查类似问题是否重现\n"
+                        "- 避免提出与项目记忆中已确认的做法相矛盾的建议\n"
+                    )
                     if sakura_md:
-                        sakura_section += f"\n\n### 项目概述\n{sakura_md}"
+                        sakura_section += f"\n### 项目概述\n{sakura_md}"
                     if memory_md:
                         sakura_section += f"\n\n### 项目记忆\n{memory_md}"
                     user_message += sakura_section
