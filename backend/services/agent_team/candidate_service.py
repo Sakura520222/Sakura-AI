@@ -177,7 +177,7 @@ class AgentTeamCandidateService:
 
         # 5. 构建 title 和 summary
         title = issue.title or f"Issue #{issue_number}"
-        body = (issue.body or "")[:2000] if issue.body else ""
+        body = issue.body or ""
 
         # 6. 创建 AgentTeamTask
         max_iterations = await self._load_max_iterations_per_task()
