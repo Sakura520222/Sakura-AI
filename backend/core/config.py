@@ -514,6 +514,7 @@ class Settings(BaseSettings):
     agent_team_min_priority: str = "high"
     agent_team_feasibility_keywords: str = "容易,简单,明确,低风险,可快速修复"
     agent_team_max_iterations_per_task: int = 3
+    agent_team_max_tool_rounds: int = 30
     agent_team_max_runtime_minutes: int = 60
     agent_team_draft_pr: bool = True
     agent_team_max_files_changed: int = 8
@@ -1020,6 +1021,7 @@ DYNAMIC_CONFIG_GROUPS: OrderedDict[str, dict] = OrderedDict(
                     "agent_team_api_key": "Agent 专家团队 API Key；选择独立厂商时填写，保存后脱敏显示",
                     "agent_team_model": "全栈专家使用的模型；选择独立厂商时填写",
                     "agent_team_review_model": "专业审查使用的模型；选择独立厂商时可填写，默认复用全栈专家模型",
+                    "agent_team_max_tool_rounds": "全栈专家单次执行允许的工具调用最大轮次",
                     "agent_team_test_command_allowlist": "允许执行的验证命令白名单，逗号分隔",
                     "agent_team_skills_enabled": "启用后，Agent 可按需加载已安装 Skills 的完整内容",
                     "agent_team_skills_root": "Agent Skills 本地存储根目录，默认 ./Skills",
@@ -1041,6 +1043,7 @@ DYNAMIC_CONFIG_GROUPS: OrderedDict[str, dict] = OrderedDict(
                     "agent_team_min_priority",
                     "agent_team_feasibility_keywords",
                     "agent_team_max_iterations_per_task",
+                    "agent_team_max_tool_rounds",
                     "agent_team_max_runtime_minutes",
                     "agent_team_draft_pr",
                     "agent_team_max_files_changed",
@@ -1203,6 +1206,7 @@ DYNAMIC_CONFIG_RANGES: dict[str, tuple[float, float]] = {
     "sakura_max_memory_chars": (500, 10000),
     "sakura_max_sakura_chars": (1000, 20000),
     "agent_team_max_tokens": (1024, 32768),
+    "agent_team_max_tool_rounds": (1, 5000),
     "max_concurrent_issues": (1, 200),
 }
 
@@ -1353,6 +1357,7 @@ DYNAMIC_CONFIG_LABELS: dict[str, str] = {
     "agent_team_min_priority": "最低 Issue 优先级",
     "agent_team_feasibility_keywords": "可行性关键词",
     "agent_team_max_iterations_per_task": "单任务最大迭代轮数",
+    "agent_team_max_tool_rounds": "工具调用最大轮次",
     "agent_team_max_runtime_minutes": "单任务最长运行时间（分钟）",
     "agent_team_draft_pr": "创建 Draft PR",
     "agent_team_max_files_changed": "最大修改文件数",
