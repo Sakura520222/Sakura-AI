@@ -481,6 +481,15 @@ class Settings(BaseSettings):
     sakura_issue_reflection_enabled: bool = True  # 是否启用 Issue 分析后反思
     sakura_issue_reflection_model: str = ""  # Issue 反思使用的模型，为空时使用审查模型
     sakura_use_summary_model: bool = False  # 反思/合并任务使用辅助模型凭据以降低成本
+    sakura_knowledge_extraction_enabled: bool = True  # 是否启用自动知识提取
+    sakura_extraction_min_reflections: int = 10  # 触发知识提取的最低反思轮数
+    sakura_extraction_provider: str = "main"  # 知识提取 AI 厂商: main/summary/custom
+    sakura_extraction_api_base: str = ""  # 知识提取 API Base，custom 模式下生效
+    sakura_extraction_api_key: str = ""  # 知识提取 API Key，custom 模式下生效
+    sakura_extraction_model: str = ""  # 知识提取模型名称，为空时根据 provider 推导
+    sakura_extraction_max_iterations: int = 15  # 每个分类提取时工具调用最大轮数
+    sakura_consolidation_max_iterations: int = 20  # 合并 Agent 每个文件的最大工具调用轮数
+    sakura_auto_create_subdirs: bool = True  # 初始化时自动创建子目录(rules/docs/plans)
 
     # ========== Agent 专家团队模式配置 ==========
     agent_team_enabled: bool = (
@@ -960,6 +969,16 @@ DYNAMIC_CONFIG_GROUPS: OrderedDict[str, dict] = OrderedDict(
                     "sakura_auto_init": "首次审查时自动在仓库中初始化 .sakura/ 目录",
                     "sakura_consolidation_partial_commit": "合并时一个文件生成失败是否仍提交成功生成的文件",
                     "sakura_use_summary_model": "启用后反思、合并等后台任务将使用辅助模型的 API 凭据，降低成本",
+                    "sakura_knowledge_extraction_enabled": "启用后积累足够反思时自动提取结构化知识到 rules/docs/plans 子目录",
+                    "sakura_extraction_min_reflections": "触发自动知识提取的最低反思轮数（默认 10）",
+                    "sakura_knowledge_extraction_model": "知识提取使用的 AI 模型，留空则使用合并模型（已弃用，请使用下方新配置项）",
+                    "sakura_extraction_provider": "知识提取 AI 凭据来源：main=主AI，summary=辅助AI，custom=独立配置",
+                    "sakura_extraction_api_base": "知识提取 API Base URL，仅 custom 模式生效，留空则使用主 AI",
+                    "sakura_extraction_api_key": "知识提取 API Key，仅 custom 模式生效，留空则使用主 AI",
+                    "sakura_extraction_model": "知识提取模型名称，留空则根据凭据来源自动推导",
+                    "sakura_extraction_max_iterations": "每个分类提取时工具调用最大轮数（默认 15）",
+                    "sakura_consolidation_max_iterations": "合并 Agent 每个文件的最大工具调用轮数（默认 20）",
+                    "sakura_auto_create_subdirs": "初始化 .sakura/ 时自动创建 rules/docs/plans 子目录及占位文件",
                 },
                 "keys": [
                     "sakura_memory_enabled",
@@ -972,8 +991,17 @@ DYNAMIC_CONFIG_GROUPS: OrderedDict[str, dict] = OrderedDict(
                     "sakura_max_memory_chars",
                     "sakura_max_sakura_chars",
                     "sakura_auto_init",
+                    "sakura_auto_create_subdirs",
                     "sakura_consolidation_partial_commit",
                     "sakura_use_summary_model",
+                    "sakura_knowledge_extraction_enabled",
+                    "sakura_extraction_min_reflections",
+                    "sakura_extraction_provider",
+                    "sakura_extraction_api_base",
+                    "sakura_extraction_api_key",
+                    "sakura_extraction_model",
+                    "sakura_extraction_max_iterations",
+                    "sakura_consolidation_max_iterations",
                 ],
             },
         ),
@@ -1127,6 +1155,11 @@ DYNAMIC_CONFIG_SELECT_OPTIONS: dict[str, list[dict]] = {
         {"value": "static", "label": "静态分析（正则提取 import）"},
     ],
     "agent_team_model_provider": get_provider_select_options(include_main_ai=True),
+    "sakura_extraction_provider": [
+        {"value": "main", "label": "主 AI"},
+        {"value": "summary", "label": "辅助 AI"},
+        {"value": "custom", "label": "独立配置"},
+    ],
     "agent_team_min_priority": [
         {"value": "critical", "label": "Critical"},
         {"value": "high", "label": "High"},
@@ -1263,6 +1296,15 @@ DYNAMIC_CONFIG_LABELS: dict[str, str] = {
     "sakura_auto_init": "自动初始化 .sakura/",
     "sakura_consolidation_partial_commit": "部分提交",
     "sakura_use_summary_model": "使用辅助模型",
+    "sakura_knowledge_extraction_enabled": "启用知识提取",
+    "sakura_extraction_min_reflections": "提取触发反思数",
+    "sakura_extraction_provider": "知识提取 AI 凭据",
+    "sakura_extraction_api_base": "知识提取 API Base",
+    "sakura_extraction_api_key": "知识提取 API Key",
+    "sakura_extraction_model": "知识提取模型",
+    "sakura_extraction_max_iterations": "提取最大迭代轮数",
+    "sakura_consolidation_max_iterations": "合并最大迭代轮数",
+    "sakura_auto_create_subdirs": "自动创建子目录",
     # 国际化配置
     "default_language": "默认界面语言",
     "output_language": "AI 输出语言",

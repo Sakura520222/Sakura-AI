@@ -1051,6 +1051,17 @@ context_enhancement:
       cleanup_old_reflections: false
       # 一个文件失败时是否仍提交另一个 / Commit partial results on failure
       partial_commit: false
+      # 每个文件合并时工具调用最大轮数 / Max tool-call iterations per file consolidation
+      max_iterations: 20
+
+    # 知识提取配置 / Knowledge extraction config
+    knowledge_extraction:
+      # 是否启用自动知识提取 / Enable auto knowledge extraction
+      enabled: true
+      # 触发提取的最低反思轮数 / Minimum reflections before extraction
+      min_reflections: 10
+      # 每个分类提取时工具调用最大轮数 / Max tool-call iterations per category
+      max_iterations: 15
 
     # 初始化配置 / Initialization config
     initialization:
@@ -1062,16 +1073,26 @@ context_enhancement:
     # 目录结构约定 / Directory structure convention
     directory_convention:
       enabled: true
+      # 初始化时自动创建子目录 / Auto-create subdirectories during init
+      auto_create_subdirs: true
       categories:
+        memory:
+          description: "审查反思文件 / Reflection files (auto-generated)"
+          priority: 0
+          # 反思文件由系统动态生成，不需要占位文件
+          skip_placeholder: true
         rules:
           description: "审查规则、编码规范 / Review rules, coding standards"
           priority: 1
+          placeholder: "# 审查规则\n\n在此目录下存放项目审查规则和编码规范。\n"
         docs:
           description: "架构文档、设计决策 / Architecture docs, design decisions"
           priority: 2
+          placeholder: "# 项目文档\n\n在此目录下存放项目架构文档和设计决策。\n"
         plans:
           description: "开发计划、路线图 / Development plans, roadmaps"
           priority: 3
+          placeholder: "# 开发计划\n\n在此目录下存放开发计划和路线图。\n"
 
 # 审查批准策略配置
 review_policy:

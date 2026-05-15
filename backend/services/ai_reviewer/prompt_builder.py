@@ -164,7 +164,15 @@ class PromptBuilder:
         # 注入 .sakura/ 记忆上下文 / Inject .sakura/ memory context
         sakura_docs = context.get("sakura_docs_context", {})
         if sakura_docs:
-            message_parts.append("\n## 项目知识（来自 .sakura/ 目录）")
+            message_parts.append(
+                "\n## 项目知识（来自 .sakura/ 目录，请主动参考）"
+            )
+            message_parts.append(
+                "以下是该项目积累的审查经验和知识，请在审查中参考：\n"
+                "- 如果项目有已知的审查规则，按照规则检查代码\n"
+                "- 如果项目记忆中记录了常见问题，重点排查类似问题是否重现\n"
+                "- 避免提出与项目记忆中已确认的做法相矛盾的建议\n"
+            )
             sakura_md = sakura_docs.get("sakura_md", "")
             memory_md = sakura_docs.get("memory_md", "")
             if sakura_md:
@@ -192,6 +200,7 @@ class PromptBuilder:
 - `list_commits`: 查看提交历史记录
 - `read_sakura_docs`: 读取项目 .sakura/ 目录中的指导文档
 - `list_sakura_directory`: 列出 .sakura/ 目录的结构
+- `read_sakura_memory`: 读取 .sakura/memory/ 中的历史审查反思文件，了解项目审查经验
 """
             if compact:
                 tools_text += """- `get_file_diff`: 获取 PR 中指定文件的完整 diff

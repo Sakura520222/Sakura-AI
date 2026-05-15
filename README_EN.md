@@ -34,7 +34,7 @@
 
 ### AI Tools & Knowledge Base
 
-- **AI Tool System**: read_file, list_directory, search_in_files, get_git_info, list_commits, search_web, read_sakura_docs, list_sakura_directory — AI proactively invokes tools on demand
+- **AI Tool System**: read_file, list_directory, search_in_files, get_git_info, list_commits, search_web, read_sakura_docs, list_sakura_directory, read_sakura_memory — AI proactively invokes tools on demand
 - **Cross-file Code Search**: AI can search keywords across files in the repository, quickly locating all usages of functions, variables, and classes
 - **Git Information Query**: AI can retrieve repository info, branch lists, and commit history to understand project evolution
 - **Web Search Enhancement**: Supports DuckDuckGo / Tavily, allowing AI to actively search the internet to assist review decisions
@@ -66,6 +66,7 @@
 - **Two-agent Collaboration**: A full-stack expert plans and edits code, while a professional reviewer performs pre-push quality review
 - **Isolated Git Workspaces**: Clone/fetch/checkout dedicated branches under `agent_team_workspace_root` without polluting the service runtime directory
 - **Controlled Tool Execution**: File operations, search, and shell validation commands are scoped to the workspace; validation commands are controlled by an allowlist
+- **Sakura Knowledge Integration**: Agents can browse and read `.sakura/` knowledge directory and reflection files via dedicated tools, leveraging accumulated review experience to assist code fixes
 - **Agent Skills**: Install skills from uploaded files, ZIP packages, or GitHub `SKILL.md`; agents can load full skill instructions on demand
 - **PR Creation Loop**: Supports normal or Draft PR creation, then iterates through existing Sakura PR Review and human review feedback; PRs are never merged automatically
 
@@ -83,7 +84,7 @@
 - **Quota-based Access Control**: Flexible quota-based access management system with user self-registration support and UTC daily/weekly/monthly auto-reset for PR and Issue usage
 - **Paid Quota System**: Full CRUD management for plans and redeem codes (create/edit/delete/batch operations), admin manual grants, supports one-time packages and subscription plans
 - **Admin Action Audit**: Complete operation logs covering configuration changes, user management, and other critical actions
-- **WebUI Dashboard**: Dashboard charts, PR management, user management, configuration management, queue monitoring, action logs, repository scan management, Agent Expert Team, and Agent Skills, with Markdown content rendering support
+- **WebUI Dashboard**: Dashboard charts, PR management, user management, configuration management, queue monitoring, action logs, repository scan management, Agent Expert Team, Agent Skills, and Sakura Memory management, with Markdown content rendering support
 - **Telegram Bot**: Real-time notifications, interactive button menus, three-tier permission system (super admin / admin / user), quota management
 - **GitHub OAuth Login**: Integrated with Telegram user system, light/dark theme switching
 
@@ -127,6 +128,9 @@
 │  ┌──────────────────────┐  ┌──────────────────────┐        │
 │  │ read_sakura_docs     │  │ list_sakura_directory │        │
 │  └──────────────────────┘  └──────────────────────┘        │
+│  ┌──────────────────────┐                                   │
+│  │ read_sakura_memory   │                                   │
+│  └──────────────────────┘                                   │
 └──────────────────────┬──────────────────────────────────────┘
                        │
                        ▼
@@ -279,7 +283,7 @@ Global configuration follows this priority: **Database app_config (WebUI) > Sett
 - **Web Search Tool**: `web_search_provider` in WebUI configuration (`duckduckgo` free or `tavily` premium)
 - **Cross-file Search**: `context_enhancement.search_in_files` in `config/strategies.yaml` — configure GitHub Search API priority, context lines, max results, etc.
 - **Git Info Tool**: `context_enhancement.git_tools` in `config/strategies.yaml` — configure default branch and commit return counts
-- **Project Memory System**: `sakura_memory_enabled` to enable memory system, `sakura_reflection_enabled` to enable post-review reflection, `sakura_consolidation_interval` for consolidation trigger threshold (default 5), `sakura_auto_init` to auto-initialize `.sakura/` directory — all in WebUI configuration. Users can place custom docs in `.sakura/rules/`, `.sakura/docs/`, `.sakura/plans/`. See [Project Memory Guide](docs/SAKURA_MEMORY_GUIDE.md) (Chinese)
+- **Project Memory System**: `sakura_memory_enabled` to enable memory system, `sakura_reflection_enabled` to enable post-review reflection, `sakura_consolidation_interval` for consolidation trigger threshold (default 5), `sakura_auto_init` to auto-initialize `.sakura/` directory, `sakura_auto_create_subdirs` to auto-create rules/docs/plans subdirectories, `sakura_knowledge_extraction_enabled` to enable automatic knowledge extraction (extracts rules/docs/plans via three serial LLM calls), `sakura_extraction_provider` to configure extraction AI credentials (main/summary/custom) — all in WebUI configuration. WebUI provides a "Sakura Memory" management page for viewing/editing/deleting memory files and manually triggering consolidation and knowledge extraction. See [Project Memory Guide](docs/SAKURA_MEMORY_GUIDE.md) (Chinese)
 - **Model Context**: Configure context window, auto-compression in WebUI configuration, see [Model Context Management](docs/MODEL_CONTEXT_FEATURE.md)
 - **Agent Expert Team**: Configure `agent_team_enabled`, `agent_team_workspace_root`, `agent_team_repo_allowlist`, `agent_team_model_provider`, and other `agent_team_*` model/guardrail settings on the WebUI Agent Team page; `agent_team_model_provider=main` reuses the main AI configuration, while independent Agent AI configuration is also supported
 - **Agent Skills**: Install and toggle Skills on the WebUI Agent Skills page; `agent_team_skills_enabled` controls whether agents may load skills, and `agent_team_skills_root` configures the local storage root
@@ -362,6 +366,8 @@ Sakura-AI-Reviewer/
 │   │   ├── scan_scheduler.py      # Scan scheduler
 │   │   ├── history_context_service.py  # Incremental review history
 │   │   ├── sakura_memory_service.py    # .sakura/ project memory service
+│   │   ├── sakura_consolidation_agent.py  # .sakura/ memory consolidation agent (tool-call driven)
+│   │   ├── sakura_knowledge_extractor.py  # .sakura/ knowledge extraction agent
 │   │   ├── github_write_service.py     # GitHub write operations service (.sakura/ writes)
 │   │   ├── two_factor_service.py       # TOTP and recovery code service
 │   │   ├── webauthn_service.py         # Passkeys/WebAuthn service

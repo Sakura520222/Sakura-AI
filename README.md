@@ -34,7 +34,7 @@
 
 ### AI 工具与知识库
 
-- **AI 工具系统**：read_file、list_directory、search_in_files、get_git_info、list_commits、search_web、read_sakura_docs、list_sakura_directory，AI 按需主动调用
+- **AI 工具系统**：read_file、list_directory、search_in_files、get_git_info、list_commits、search_web、read_sakura_docs、list_sakura_directory、read_sakura_memory，AI 按需主动调用
 - **跨文件代码搜索**：AI 可在仓库中跨文件搜索关键词，快速定位函数/变量/类的所有使用位置
 - **Git 信息查询**：AI 可获取仓库基本信息、分支列表和提交历史，理解项目演进脉络
 - **Web 搜索增强**：支持 DuckDuckGo / Tavily，AI 可主动检索互联网信息辅助审查决策
@@ -66,6 +66,7 @@
 - **双 Agent 协作**：内置全栈专家负责计划与代码修改，专业审查负责推送前质量复核
 - **独立 Git 工作区**：在 `agent_team_workspace_root` 下 clone/fetch/checkout 专用分支，避免污染服务运行目录
 - **受控工具执行**：文件读写、搜索、shell 验证命令均限制在工作区内，验证命令受白名单控制
+- **Sakura 知识集成**：Agent 可通过专用工具浏览和读取 `.sakura/` 知识目录与反思文件，利用项目积累的审查经验辅助代码修复
 - **Agent Skills**：支持从上传文件、ZIP 或 GitHub `SKILL.md` 安装技能，Agent 可按需加载完整技能说明
 - **PR 创建闭环**：支持创建普通或 Draft PR，并通过现有 Sakura PR 审查与人工审查反馈继续迭代；不会自动合并 PR
 
@@ -83,7 +84,7 @@
 - **配额制访问控制**：基于配额的灵活访问管理体系，支持用户自注册，并按 UTC 日/周/月自动重置 PR 与 Issue 用量
 - **付费配额系统**：套餐计划与兑换码完整 CRUD 管理（创建/编辑/删除/批量操作）、管理员手动充值，支持一次性包和订阅模式
 - **管理员操作审计**：完整的操作日志，覆盖配置变更、用户管理等关键操作
-- **WebUI 管理界面**：仪表盘、PR 管理、用户管理、配置管理、队列监控、操作日志、仓库扫描管理、Agent 专家团队与 Agent Skills，支持 Markdown 内容渲染
+- **WebUI 管理界面**：仪表盘、PR 管理、用户管理、配置管理、队列监控、操作日志、仓库扫描管理、Agent 专家团队与 Agent Skills、Sakura 记忆管理，支持 Markdown 内容渲染
 - **Telegram Bot**：实时通知、按钮菜单交互、三级权限体系（超级管理员/管理员/普通用户）、配额管理
 - **GitHub OAuth 登录**：与 Telegram 用户体系打通，明暗主题切换
 
@@ -127,6 +128,9 @@
 │  ┌──────────────────────┐  ┌──────────────────────┐        │
 │  │ read_sakura_docs     │  │ list_sakura_directory │        │
 │  └──────────────────────┘  └──────────────────────┘        │
+│  ┌──────────────────────┐                                   │
+│  │ read_sakura_memory   │                                   │
+│  └──────────────────────┘                                   │
 └──────────────────────┬──────────────────────────────────────┘
                        │
                        ▼
@@ -278,7 +282,7 @@ WebUI：`https://your-domain.com/`
 - **Web 搜索工具**：WebUI 配置管理中 `web_search_provider`（`duckduckgo` 免费或 `tavily` 高级）
 - **跨文件搜索**：`config/strategies.yaml` 中 `context_enhancement.search_in_files`，配置 GitHub Search API 优先策略、上下文行数、最大结果数等
 - **Git 信息工具**：`config/strategies.yaml` 中 `context_enhancement.git_tools`，配置默认分支和提交返回数量
-- **项目记忆系统**：WebUI 配置管理中 `sakura_memory_enabled` 启用记忆系统，`sakura_reflection_enabled` 启用审查后反思，`sakura_consolidation_interval` 合并触发的反思轮数（默认 5），`sakura_auto_init` 自动初始化 `.sakura/` 目录。用户可在 `.sakura/rules/`、`.sakura/docs/`、`.sakura/plans/` 下放置自定义文档，详见 [项目记忆系统使用指南](docs/SAKURA_MEMORY_GUIDE.md)
+- **项目记忆系统**：WebUI 配置管理中 `sakura_memory_enabled` 启用记忆系统，`sakura_reflection_enabled` 启用审查后反思，`sakura_consolidation_interval` 合并触发的反思轮数（默认 5），`sakura_auto_init` 自动初始化 `.sakura/` 目录，`sakura_auto_create_subdirs` 自动创建 rules/docs/plans 子目录，`sakura_knowledge_extraction_enabled` 启用自动知识提取（通过三次串行 LLM 调用分别提取 rules/docs/plans），`sakura_extraction_provider` 配置提取 AI 凭据来源（主AI/辅助AI/独立配置）。WebUI 提供「Sakura 记忆管理」页面，支持查看/编辑/删除记忆文件、手动触发合并和知识提取。详见 [项目记忆系统使用指南](docs/SAKURA_MEMORY_GUIDE.md)
 - **模型上下文**：WebUI 配置管理中配置上下文窗口、自动压缩等，详见 [模型上下文管理](docs/MODEL_CONTEXT_FEATURE.md)
 - **Agent 专家团队**：WebUI Agent Team 页面配置 `agent_team_enabled`、`agent_team_workspace_root`、`agent_team_repo_allowlist`、`agent_team_model_provider`、`agent_team_*` 模型与护栏参数；`agent_team_model_provider=main` 时复用主 AI 配置，也可选择独立 Agent AI 配置
 - **Agent Skills**：WebUI Agent Skills 页面安装和启停 Skills；通过 `agent_team_skills_enabled` 控制 Agent 是否可加载技能，通过 `agent_team_skills_root` 配置本地存储根目录
@@ -361,6 +365,8 @@ Sakura-AI-Reviewer/
 │   │   ├── scan_scheduler.py      # 扫描调度器
 │   │   ├── history_context_service.py  # 增量审查历史
 │   │   ├── sakura_memory_service.py    # .sakura/ 项目记忆服务
+│   │   ├── sakura_consolidation_agent.py  # .sakura/ 记忆合并 Agent（工具调用驱动）
+│   │   ├── sakura_knowledge_extractor.py  # .sakura/ 知识提取 Agent
 │   │   ├── github_write_service.py     # GitHub 写操作服务（.sakura/ 写入）
 │   │   ├── two_factor_service.py       # TOTP 与恢复码服务
 │   │   ├── webauthn_service.py         # Passkeys/WebAuthn 服务

@@ -106,7 +106,7 @@ class AgentTeamWorker:
             max_iterations = await self._resolve_max_iterations(task.max_iterations)
             if task.max_iterations != max_iterations:
                 await self._update_task(task_id, max_iterations=max_iterations)
-            sakura_memory = await self._load_sakura_memory(repo_owner, repo_name)
+            sakura_info = await self._load_sakura_memory(repo_owner, repo_name)
 
             loop_service = IterationLoopService(workspace)
             outcome = await loop_service.run(
@@ -115,9 +115,11 @@ class AgentTeamWorker:
                 source_type=task.source_type,
                 source_issue_number=task.source_issue_number,
                 max_iterations=max_iterations,
-                sakura_memory=sakura_memory,
+                sakura_memory=sakura_info["text"],
                 skills_summary=skills_summary,
                 skills_context=skills_context,
+                github_repo=sakura_info["github_repo"],
+                sakura_ref=sakura_info["sakura_ref"],
             )
 
             logger.info(
@@ -379,11 +381,17 @@ class AgentTeamWorker:
             logger.debug("读取 Agent 变更文件统计失败，使用默认 0: {}", exc)
             return {}
 
-    async def _load_sakura_memory(self, repo_owner: str, repo_name: str) -> str:
-        """加载仓库对应的 Sakura 记忆上下文。"""
+    async def _load_sakura_memory(self, repo_owner: str, repo_name: str) -> dict:
+        """加载仓库对应的 Sakura 记忆上下文及 GitHub repo 对象。
+
+        Returns:
+            包含 text, github_repo, sakura_ref 的字典
+        """
         repo_full_name = f"{repo_owner}/{repo_name}"
+        result: dict = {"text": "", "github_repo": None, "sakura_ref": None}
         try:
             from backend.core.github_app import GitHubAppClient
+            from backend.services.github_write_service import GitHubWriteService
             from backend.services.sakura_memory_service import SakuraMemoryService
 
             github_app = GitHubAppClient()
@@ -393,9 +401,15 @@ class AgentTeamWorker:
                     "Agent 未注入 Sakura 记忆: 无法获取 GitHub 客户端 ({})",
                     repo_full_name,
                 )
-                return ""
+                return result
 
             repo = client.get_repo(repo_full_name)
+            result["github_repo"] = repo
+
+            # 获取 sakura branch ref
+            write_service = GitHubWriteService()
+            result["sakura_ref"] = await write_service.get_sakura_branch(repo)
+
             service = SakuraMemoryService()
             context = await service.get_sakura_context(
                 repo=repo,
@@ -405,7 +419,7 @@ class AgentTeamWorker:
                 logger.info(
                     "Agent 未注入 Sakura 记忆: 仓库无可用上下文 ({})", repo_full_name
                 )
-                return ""
+                return result
 
             parts = []
             if context.get("sakura_md"):
@@ -418,12 +432,12 @@ class AgentTeamWorker:
                 repo_full_name,
                 ", ".join(context.keys()),
             )
-            return "\n\n".join(parts)
+            result["text"] = "\n\n".join(parts)
         except Exception as e:
             logger.info(
                 "Agent 加载 Sakura 记忆失败: repo={}, error={}", repo_full_name, e
             )
-        return ""
+        return result
 
     async def _load_skills_context(self) -> tuple[str, dict, list[dict]]:
         """加载已启用的 Agent Skills 上下文。"""

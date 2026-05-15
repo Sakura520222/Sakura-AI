@@ -59,6 +59,8 @@ class IterationLoopService:
         sakura_memory: str = "",
         skills_summary: str = "",
         skills_context: dict[str, Any] | None = None,
+        github_repo: Any | None = None,
+        sakura_ref: str | None = None,
     ) -> IterationOutcome:
         """运行迭代循环。"""
         expert = FullStackExpertAgent(self.workspace, self.workspace_service)
@@ -120,6 +122,8 @@ class IterationLoopService:
                 fullstack_summary=fs_result.summary,
                 skills_summary=skills_summary,
                 skills_context=skills_context,
+                github_repo=github_repo,
+                sakura_ref=sakura_ref,
             )
             total_tool_calls += rev_result.tool_calls_count
 
