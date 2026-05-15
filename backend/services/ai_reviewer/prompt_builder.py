@@ -164,9 +164,7 @@ class PromptBuilder:
         # 注入 .sakura/ 记忆上下文 / Inject .sakura/ memory context
         sakura_docs = context.get("sakura_docs_context", {})
         if sakura_docs:
-            message_parts.append(
-                "\n## 项目知识（来自 .sakura/ 目录，请主动参考）"
-            )
+            message_parts.append("\n## 项目知识（来自 .sakura/ 目录，请主动参考）")
             message_parts.append(
                 "以下是该项目积累的审查经验和知识，请在审查中参考：\n"
                 "- 如果项目有已知的审查规则，按照规则检查代码\n"

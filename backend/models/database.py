@@ -883,9 +883,14 @@ class SakuraMemoryState(Base):
     # 配置覆盖 / Config override
     consolidation_interval = Column(Integer, default=5, nullable=False)
 
-    created_at = Column(TIMESTAMP, default=datetime.utcnow, nullable=False)
+    created_at = Column(
+        TIMESTAMP, default=lambda: datetime.now(timezone.utc), nullable=False
+    )
     updated_at = Column(
-        TIMESTAMP, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False
+        TIMESTAMP,
+        default=lambda: datetime.now(timezone.utc),
+        onupdate=lambda: datetime.now(timezone.utc),
+        nullable=False,
     )
 
     def __repr__(self):

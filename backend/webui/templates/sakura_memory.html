@@ -86,14 +86,14 @@
                     {% for f in files %}
                     {% if f.type == 'dir' %}
                     <li class="px-3 py-2 text-sm font-medium text-gray-500 dark:text-gray-400 flex items-center gap-2">
-                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z"/></svg>
+                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z"/></svg>
                         {{ f.name }}/
                     </li>
                     {% else %}
                     <li>
                         <a href="/sakura-memory/{{ selected_repo }}/file/{{ f.path }}"
                            class="px-3 py-2 text-sm flex items-center gap-2 rounded-lg hover:bg-sakura-50 dark:hover:bg-sakura-900/20 transition-colors {% if file_path == f.path %}bg-sakura-50 dark:bg-sakura-900/20 text-sakura-700 dark:text-sakura-400 font-medium{% else %}text-gray-700 dark:text-gray-300{% endif %}">
-                            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/></svg>
+                            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/></svg>
                             <span class="truncate">{{ f.name }}</span>
                             {% if f.size is defined %}
                             <span class="ml-auto text-xs text-gray-400">{{ (f.size / 1024)|round(1) }}KB</span>
@@ -153,7 +153,7 @@
 
             {% elif file_path is none and selected_repo %}
             <div class="p-8 text-center text-gray-500 dark:text-gray-400">
-                <svg class="w-12 h-12 mx-auto mb-3 text-gray-300 dark:text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <svg class="w-12 h-12 mx-auto mb-3 text-gray-300 dark:text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/>
                 </svg>
                 <p>从左侧选择文件查看内容</p>

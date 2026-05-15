@@ -488,7 +488,9 @@ class Settings(BaseSettings):
     sakura_extraction_api_key: str = ""  # 知识提取 API Key，custom 模式下生效
     sakura_extraction_model: str = ""  # 知识提取模型名称，为空时根据 provider 推导
     sakura_extraction_max_iterations: int = 15  # 每个分类提取时工具调用最大轮数
-    sakura_consolidation_max_iterations: int = 20  # 合并 Agent 每个文件的最大工具调用轮数
+    sakura_consolidation_max_iterations: int = (
+        20  # 合并 Agent 每个文件的最大工具调用轮数
+    )
     sakura_auto_create_subdirs: bool = True  # 初始化时自动创建子目录(rules/docs/plans)
 
     # ========== Agent 专家团队模式配置 ==========
@@ -971,7 +973,6 @@ DYNAMIC_CONFIG_GROUPS: OrderedDict[str, dict] = OrderedDict(
                     "sakura_use_summary_model": "启用后反思、合并等后台任务将使用辅助模型的 API 凭据，降低成本",
                     "sakura_knowledge_extraction_enabled": "启用后积累足够反思时自动提取结构化知识到 rules/docs/plans 子目录",
                     "sakura_extraction_min_reflections": "触发自动知识提取的最低反思轮数（默认 10）",
-                    "sakura_knowledge_extraction_model": "知识提取使用的 AI 模型，留空则使用合并模型（已弃用，请使用下方新配置项）",
                     "sakura_extraction_provider": "知识提取 AI 凭据来源：main=主AI，summary=辅助AI，custom=独立配置",
                     "sakura_extraction_api_base": "知识提取 API Base URL，仅 custom 模式生效，留空则使用主 AI",
                     "sakura_extraction_api_key": "知识提取 API Key，仅 custom 模式生效，留空则使用主 AI",
