@@ -520,7 +520,7 @@ class Settings(BaseSettings):
     agent_team_max_files_changed: int = 8
     agent_team_max_lines_changed: int = 500
     agent_team_run_tests: bool = True
-    agent_team_test_command_allowlist: str = "pytest -q,python run_ruff.py --check"
+    agent_team_test_command_allowlist: str = "pytest -q,ruff check"
     agent_team_skills_enabled: bool = False
     agent_team_skills_root: str = "./Skills"
 
