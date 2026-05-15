@@ -235,6 +235,18 @@ class SakuraMemoryService:
     - get_sakura_context: 读取上下文注入审查 prompt
     """
 
+    @staticmethod
+    def _normalize_sakura_path(key: str) -> str:
+        """Normalize a path key to .sakura/ relative form.
+
+        Strips any leading ``.sakura/`` prefix (the AI may include it),
+        then ``lstrip("/")`` removes stray leading slashes left after
+        ``removeprefix``.  The result is always prefixed with ``.sakura/``.
+        ``lstrip("/")`` is intentional here — unlike stripping a fixed
+        prefix, we are guarding against variable-length leading slashes.
+        """
+        return f".sakura/{key.removeprefix('.sakura/').lstrip('/')}"
+
     def __init__(self):
         """初始化服务 / Initialize service"""
         self.write_service = get_github_write_service()
@@ -974,7 +986,7 @@ class SakuraMemoryService:
                 max_iterations=max_iterations,
             )
             for k, v in sakura_changes.items():
-                files[f".sakura/{k}"] = v
+                files[self._normalize_sakura_path(k)] = v
 
             # 串行处理 memory.md
             memory_changes = await agent.consolidate_file(
@@ -990,7 +1002,7 @@ class SakuraMemoryService:
                 max_iterations=max_iterations,
             )
             for k, v in memory_changes.items():
-                files[f".sakura/{k}"] = v
+                files[self._normalize_sakura_path(k)] = v
 
             # 字符限制告警
             for path, content in files.items():
@@ -1130,8 +1142,10 @@ class SakuraMemoryService:
             logger.warning("[extract] 知识提取无结果: {}", repo_full_name)
             return False
 
-        # 合并子目录前缀
-        files = {f".sakura/{k}": v for k, v in extracted.items()}
+        # 合并子目录前缀（AI 可能已带 .sakura/ 前缀，需去重）
+        files = {}
+        for k, v in extracted.items():
+            files[self._normalize_sakura_path(k)] = v
 
         commit_msg = "chore(sakura): extract structured knowledge from reflections"
         await self.write_service.commit_files(repo, files, commit_msg)
