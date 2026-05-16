@@ -22,6 +22,7 @@ from typing import Any
 from loguru import logger
 
 from backend.services.agent_team.ai_client import create_agent_team_client
+from backend.services.agent_team.context_compressor import AgentTeamContextCompressor
 from backend.services.agent_team.conversation_checkpoint import (
     ConversationCheckpointService,
 )
@@ -153,6 +154,8 @@ class ProfessionalReviewAgent:
         modified_files: list[str],
         fullstack_summary: str = "",
         feedback_context: str = "",
+        handoff_context: str = "",
+        role_memory_context: str = "",
         skills_summary: str = "",
         skills_context: dict[str, Any] | None = None,
         github_repo: Any | None = None,
@@ -178,6 +181,8 @@ class ProfessionalReviewAgent:
                         modified_files=modified_files,
                         fullstack_summary=fullstack_summary,
                         feedback_context=feedback_context,
+                        handoff_context=handoff_context,
+                        role_memory_context=role_memory_context,
                         skills_summary=skills_summary,
                     ),
                 }
@@ -200,8 +205,12 @@ class ProfessionalReviewAgent:
                     return _review_result_from_terminal(terminal_output, tool_calls_count)
                 continue
 
+            model_messages = await AgentTeamContextCompressor(
+                target_model=config.review_model,
+                compressor_model=config.summary_model,
+            ).build_model_messages(self.messages)
             response = await client.call_with_retry(
-                messages=self.messages,
+                messages=model_messages,
                 model=config.review_model,
                 temperature=max(config.temperature - 0.1, 0.0),
                 max_tokens=config.max_tokens,
@@ -335,7 +344,9 @@ class ProfessionalReviewAgent:
         modified_files: list[str],
         fullstack_summary: str,
         feedback_context: str,
-        skills_summary: str,
+        handoff_context: str = "",
+        role_memory_context: str = "",
+        skills_summary: str = "",
     ) -> str:
         parts = [f"## 任务\n标题: {task_title}\n描述: {task_summary}\n"]
         if fullstack_summary:
@@ -346,6 +357,10 @@ class ProfessionalReviewAgent:
             parts.append("\n请逐一审查以上修改的文件，确认代码质量。\n")
         if feedback_context:
             parts.append(f"\n## 上下文\n{feedback_context}\n")
+        if role_memory_context:
+            parts.append(f"\n## 专业审查历史记忆\n{role_memory_context}\n")
+        if handoff_context:
+            parts.append(f"\n## 专家对话交接\n{handoff_context}\n")
         if skills_summary:
             parts.append(f"\n{skills_summary}\n")
         return "\n".join(parts)

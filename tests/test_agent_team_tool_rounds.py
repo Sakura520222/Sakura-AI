@@ -21,6 +21,24 @@ def test_agent_team_max_tool_rounds_is_registered_for_webui():
     assert get_settings().agent_team_max_tool_rounds == 30
 
 
+def test_agent_team_context_compression_config_is_registered_for_webui():
+    expected_keys = {
+        "agent_team_enable_context_compression",
+        "agent_team_context_compression_threshold",
+        "agent_team_context_compression_keep_rounds",
+        "agent_team_context_summary_max_tokens",
+    }
+
+    assert expected_keys.issubset(AGENT_TEAM_CONFIG_KEYS)
+    assert DYNAMIC_CONFIG_LABELS["agent_team_enable_context_compression"] == "启用上下文压缩"
+    assert DYNAMIC_CONFIG_RANGES["agent_team_context_compression_threshold"] == (0.1, 1.0)
+    assert DYNAMIC_CONFIG_RANGES["agent_team_context_compression_keep_rounds"] == (1, 20)
+    assert DYNAMIC_CONFIG_RANGES["agent_team_context_summary_max_tokens"] == (500, 8192)
+    settings = get_settings()
+    assert settings.agent_team_enable_context_compression is True
+    assert settings.agent_team_context_compression_threshold == 0.85
+
+
 @pytest.mark.asyncio
 async def test_resolve_agent_team_max_tool_rounds_uses_dynamic_config(monkeypatch):
     async def fake_get_dynamic_config(key: str):
