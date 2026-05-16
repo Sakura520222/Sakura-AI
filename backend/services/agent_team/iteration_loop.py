@@ -19,6 +19,9 @@ from backend.services.agent_team.conversation_checkpoint import (
     ConversationCheckpointService,
     ResumeCursor,
 )
+from backend.services.agent_team.conversation_context import (
+    AgentTeamConversationContextService,
+)
 from backend.services.agent_team.fullstack_expert import (
     FullStackExpertAgent,
     FullStackResult,
@@ -61,6 +64,7 @@ class IterationLoopService:
         self.checkpoint = checkpoint
         self.resume_cursor = resume_cursor
         self.resume_index = resume_index
+        self.conversation_context = AgentTeamConversationContextService(task_id)
 
     async def run(
         self,
@@ -89,6 +93,15 @@ class IterationLoopService:
                 task_title,
             )
 
+            fullstack_handoff_context = await self.conversation_context.build_handoff_context(
+                "fullstack", iteration
+            )
+            fullstack_role_memory = await self.conversation_context.build_role_memory(
+                "fullstack", iteration
+            )
+            reviewer_handoff_context = ""
+            reviewer_role_memory = ""
+
             # ── 全栈专家执行 ──
             if resume_cursor and resume_cursor.role_name == "reviewer":
                 fs_result = await self._restore_fullstack_result(iteration)
@@ -110,6 +123,8 @@ class IterationLoopService:
                     skills_summary=skills_summary,
                     skills_context=skills_context,
                     feedback=feedback,
+                    handoff_context=fullstack_handoff_context,
+                    role_memory_context=fullstack_role_memory,
                 )
                 total_tool_calls += fs_result.tool_calls_count
                 await self._complete_session(
@@ -152,6 +167,13 @@ class IterationLoopService:
                 len(fs_result.modified_files),
                 fs_result.summary[:100],
             )
+            await self.conversation_context.record_fullstack_turn(iteration, fs_result)
+            reviewer_handoff_context = await self.conversation_context.build_handoff_context(
+                "reviewer", iteration + 1
+            )
+            reviewer_role_memory = await self.conversation_context.build_role_memory(
+                "reviewer", iteration
+            )
 
             # ── 专业审查 ──
             reviewer = await self._create_reviewer_agent(iteration, resume_cursor)
@@ -160,6 +182,8 @@ class IterationLoopService:
                 task_summary=task_summary,
                 modified_files=fs_result.modified_files,
                 fullstack_summary=fs_result.summary,
+                handoff_context=reviewer_handoff_context,
+                role_memory_context=reviewer_role_memory,
                 skills_summary=skills_summary,
                 skills_context=skills_context,
                 github_repo=github_repo,
@@ -178,6 +202,7 @@ class IterationLoopService:
                 rev_result.score,
                 len(rev_result.findings),
             )
+            await self.conversation_context.record_reviewer_turn(iteration, rev_result)
 
             if rev_result.passed:
                 return IterationOutcome(

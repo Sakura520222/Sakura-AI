@@ -27,6 +27,7 @@ from loguru import logger
 
 from backend.core.config import DYNAMIC_CONFIG_RANGES, get_dynamic_config, get_settings
 from backend.services.agent_team.ai_client import create_agent_team_client
+from backend.services.agent_team.context_compressor import AgentTeamContextCompressor
 from backend.services.agent_team.conversation_checkpoint import (
     ConversationCheckpointService,
 )
@@ -192,6 +193,8 @@ class FullStackExpertAgent:
         skills_summary: str = "",
         skills_context: dict[str, Any] | None = None,
         feedback: str = "",
+        handoff_context: str = "",
+        role_memory_context: str = "",
     ) -> FullStackResult:
         """执行全栈专家任务，AI 自主调用工具直到完成。"""
         client, config = await create_agent_team_client()
@@ -212,6 +215,8 @@ class FullStackExpertAgent:
                         sakura_memory=sakura_memory,
                         skills_summary=skills_summary,
                         feedback=feedback,
+                        handoff_context=handoff_context,
+                        role_memory_context=role_memory_context,
                     ),
                 }
             )
@@ -245,8 +250,12 @@ class FullStackExpertAgent:
                     )
                 continue
 
+            model_messages = await AgentTeamContextCompressor(
+                target_model=config.model,
+                compressor_model=config.summary_model,
+            ).build_model_messages(self.messages)
             response = await client.call_with_retry(
-                messages=self.messages,
+                messages=model_messages,
                 model=config.model,
                 temperature=config.temperature,
                 max_tokens=config.max_tokens,
@@ -383,6 +392,8 @@ class FullStackExpertAgent:
         sakura_memory: str,
         skills_summary: str,
         feedback: str,
+        handoff_context: str = "",
+        role_memory_context: str = "",
     ) -> str:
         parts = [f"## 任务\n标题: {task_title}\n"]
         if source_issue_number:
@@ -394,6 +405,10 @@ class FullStackExpertAgent:
             parts.append(f"\n## 项目记忆\n{sakura_memory}\n")
         if skills_summary:
             parts.append(f"\n{skills_summary}\n")
+        if role_memory_context:
+            parts.append(f"\n## 全栈专家历史记忆\n{role_memory_context}\n")
+        if handoff_context:
+            parts.append(f"\n## 专家对话交接\n{handoff_context}\n")
         if feedback:
             parts.append(f"\n## 审查反馈（请针对以下问题修改）\n{feedback}\n")
         return "".join(parts)

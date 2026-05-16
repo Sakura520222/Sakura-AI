@@ -193,3 +193,28 @@ async def create_agent_team_client(
     if validate:
         config.validate()
     return AIApiClient(base_url=config.api_base, api_key=config.api_key), config
+
+
+async def create_agent_team_summary_client(
+    fallback_config: AgentTeamAIConfig | None = None,
+) -> tuple[AIApiClient, str, AgentTeamAIConfig]:
+    """创建 Agent 上下文压缩用辅助 AI 客户端。"""
+    settings = get_settings()
+    config = fallback_config or await load_agent_team_ai_config()
+    summary_base = str(await _config_value("summary_api_base", settings.summary_api_base))
+    summary_key = str(await _config_value("summary_api_key", settings.summary_api_key))
+    summary_model = str(await _config_value("summary_model", settings.summary_model))
+
+    if summary_base or summary_key or summary_model:
+        return (
+            AIApiClient(
+                base_url=summary_base or config.api_base,
+                api_key=summary_key or config.api_key,
+            ),
+            summary_model or config.summary_model or config.model,
+            config,
+        )
+
+    return AIApiClient(base_url=config.api_base, api_key=config.api_key), (
+        config.summary_model or config.model
+    ), config

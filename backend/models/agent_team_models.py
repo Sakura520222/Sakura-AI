@@ -119,6 +119,11 @@ class AgentTeamTask(Base):
     sessions = relationship(
         "AgentTeamSession", back_populates="task", cascade="all, delete-orphan"
     )
+    conversation_contexts = relationship(
+        "AgentTeamConversationContext",
+        back_populates="task",
+        cascade="all, delete-orphan",
+    )
 
     def __repr__(self):
         return f"<AgentTeamTask(id={self.id}, repo={self.repo_full_name}, status={self.status})>"
@@ -273,6 +278,30 @@ class AgentTeamToolCall(Base):
         "AgentTeamMessage", foreign_keys=[assistant_message_id]
     )
     result_message = relationship("AgentTeamMessage", foreign_keys=[result_message_id])
+
+
+class AgentTeamConversationContext(Base):
+    """Agent 角色间对话上下文摘要。"""
+
+    __tablename__ = "agent_team_conversation_contexts"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    task_id = Column(
+        Integer,
+        ForeignKey("agent_team_tasks.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    iteration_number = Column(Integer, nullable=False, index=True)
+    source_role = Column(String(50), nullable=False, index=True)
+    target_role = Column(String(50), nullable=True, index=True)
+    summary = Column(LONGTEXT, nullable=False)
+    unresolved_items_json = Column(LONGTEXT, nullable=True)
+    modified_files_json = Column(LONGTEXT, nullable=True)
+    token_estimate = Column(Integer, nullable=True)
+    created_at = Column(TIMESTAMP, default=utc_now, nullable=False)
+
+    task = relationship("AgentTeamTask", back_populates="conversation_contexts")
 
 
 class AgentTeamFeedback(Base):

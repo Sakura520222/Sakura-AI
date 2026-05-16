@@ -988,6 +988,9 @@ async def _auto_migrate():
                 sync_conn, checkfirst=True
             )
         )
+        await conn.run_sync(
+            lambda sync_conn: Base.metadata.create_all(sync_conn, checkfirst=True)
+        )
 
         # 用 Inspector 逐表检测缺失列
         def _get_missing_columns(sync_conn):

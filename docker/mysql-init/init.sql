@@ -269,6 +269,25 @@ CREATE TABLE IF NOT EXISTS agent_team_tool_calls (
     INDEX idx_agent_team_tool_calls_result_message_id (result_message_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
+-- 创建 Agent 角色间对话上下文摘要表
+CREATE TABLE IF NOT EXISTS agent_team_conversation_contexts (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    task_id INT NOT NULL,
+    iteration_number INT NOT NULL,
+    source_role VARCHAR(50) NOT NULL,
+    target_role VARCHAR(50),
+    summary LONGTEXT NOT NULL,
+    unresolved_items_json LONGTEXT,
+    modified_files_json LONGTEXT,
+    token_estimate INT,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL,
+    FOREIGN KEY (task_id) REFERENCES agent_team_tasks(id) ON DELETE CASCADE,
+    INDEX idx_agent_team_conversation_contexts_task_id (task_id),
+    INDEX idx_agent_team_conversation_contexts_iteration_number (iteration_number),
+    INDEX idx_agent_team_conversation_contexts_source_role (source_role),
+    INDEX idx_agent_team_conversation_contexts_target_role (target_role)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
 -- 创建 Agent 任务反馈记录表
 CREATE TABLE IF NOT EXISTS agent_team_feedback (
     id INT AUTO_INCREMENT PRIMARY KEY,
