@@ -675,6 +675,76 @@ async def retry_task(
     return JSONResponse({"success": True, "task_id": task_id})
 
 
+@router.post("/tasks/{task_id}/resume")
+async def resume_task(
+    task_id: int,
+    background_tasks: BackgroundTasks,
+    db: AsyncSession = Depends(get_db),
+    user: dict = Depends(require_super_admin),
+    csrf_token: str = Depends(require_csrf),
+):
+    """从已持久化 messages 和工作区继续运行任务。"""
+    result = await db.execute(select(AgentTeamTask).where(AgentTeamTask.id == task_id))
+    task = result.scalar_one_or_none()
+    if task is None:
+        return JSONResponse(
+            {"success": False, "message": "任务不存在"}, status_code=404
+        )
+
+    if task.status not in {"failed", "cancelled"}:
+        return JSONResponse(
+            {"success": False, "message": f"当前状态 {task.status} 不可续跑"},
+            status_code=200,
+        )
+    if not task.workspace_path or not task.branch_name:
+        return JSONResponse(
+            {"success": False, "message": "任务缺少续跑工作区或分支信息"},
+            status_code=200,
+        )
+
+    from backend.services.agent_team.conversation_checkpoint import (
+        ConversationCheckpointService,
+    )
+
+    checkpoint = ConversationCheckpointService(task_id)
+    if not await checkpoint.has_resume_state():
+        return JSONResponse(
+            {"success": False, "message": "任务没有可续跑的 messages checkpoint"},
+            status_code=200,
+        )
+
+    try:
+        config = await load_agent_team_ai_config()
+        config.validate()
+    except ValueError as e:
+        return JSONResponse({"success": False, "message": str(e)}, status_code=200)
+    except Exception as e:
+        return JSONResponse(
+            {"success": False, "message": f"AI 配置加载失败: {e}"}, status_code=200
+        )
+
+    old_status = task.status
+    task.status = AgentTeamTaskStatus.QUEUED.value
+    task.current_phase = "resuming"
+    task.resume_count = (task.resume_count or 0) + 1
+    task.completed_at = None
+    task.error_message = None
+    task.ai_config_snapshot = json.dumps(config.safe_snapshot(), ensure_ascii=False)
+    await db.commit()
+
+    background_tasks.add_task(_resume_agent_task_background, task_id)
+
+    await log_admin_action(
+        db,
+        user["user_id"],
+        "agent_team_task_resume",
+        "agent_team_task",
+        str(task_id),
+        {"old_status": old_status, "resume_count": task.resume_count},
+    )
+    return JSONResponse({"success": True, "task_id": task_id})
+
+
 @router.post("/tasks/{task_id}/cancel")
 async def cancel_task(
     task_id: int,
@@ -831,6 +901,20 @@ async def _run_agent_task_background(task_id: int) -> None:
 
         logger.error(
             "Agent 后台任务提交失败: task_id={}, error={}", task_id, exc, exc_info=True
+        )
+
+
+async def _resume_agent_task_background(task_id: int) -> None:
+    """后台续跑 Agent 任务，避免阻塞 WebUI 请求。"""
+    try:
+        from backend.workers.agent_team_worker import resume_agent_team_task
+
+        await resume_agent_team_task(task_id)
+    except Exception as exc:
+        from loguru import logger
+
+        logger.error(
+            "Agent 后台任务续跑失败: task_id={}, error={}", task_id, exc, exc_info=True
         )
 
 

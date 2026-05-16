@@ -33,6 +33,14 @@
     </section>
     {% endif %}
 
+    {% if task.rate_limit_reset_at %}
+    <section>
+        <div class="text-xs rounded-xl bg-amber-50 dark:bg-amber-900/20 text-amber-700 dark:text-amber-300 p-3">
+            {{ _('agent_team.rate_limit_reset_at') }}: {{ task.rate_limit_reset_at.strftime('%Y-%m-%d %H:%M') }}
+        </div>
+    </section>
+    {% endif %}
+
     {% if task.error_message %}
     <section>
         <h4 class="text-sm font-bold mb-2 text-red-600 dark:text-red-400">{{ _('agent_team.error_message') }}</h4>
