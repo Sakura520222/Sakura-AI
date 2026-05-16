@@ -16,11 +16,15 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass, field
+from types import SimpleNamespace
 from typing import Any
 
 from loguru import logger
 
 from backend.services.agent_team.ai_client import create_agent_team_client
+from backend.services.agent_team.conversation_checkpoint import (
+    ConversationCheckpointService,
+)
 from backend.services.agent_team.tools.base import ToolContext, ToolResult
 from backend.services.agent_team.tools.file_state import ReadFileState
 from backend.services.agent_team.tools.registry import (
@@ -95,14 +99,32 @@ class ProfessionalReviewAgent:
         self,
         workspace: str | Any,
         workspace_service: AgentTeamWorkspaceService | None = None,
+        checkpoint: ConversationCheckpointService | None = None,
+        session_id: int | None = None,
+        initial_messages: list[dict[str, Any]] | None = None,
     ):
         self.workspace_service = workspace_service or AgentTeamWorkspaceService()
         self.workspace = self.workspace_service.resolve_inside_workspace(workspace)
         self.tool_executor = create_executor("reviewer")
         self.file_state = ReadFileState()
-        self.messages: list[dict[str, Any]] = [
+        self.checkpoint = checkpoint
+        self.session_id = session_id
+        self.restored_messages = initial_messages is not None
+        self.messages: list[dict[str, Any]] = initial_messages or [
             {"role": "system", "content": REVIEWER_SYSTEM_PROMPT}
         ]
+
+    async def _append_message(self, message: dict[str, Any]) -> int | None:
+        self.messages.append(message)
+        if self.checkpoint and self.session_id:
+            return await self.checkpoint.append_message(self.session_id, message)
+        return None
+
+    async def _ensure_system_checkpoint(self) -> None:
+        if not self.checkpoint or not self.session_id or not self.messages:
+            return
+        if len(self.messages) == 1 and self.messages[0].get("role") == "system":
+            await self.checkpoint.append_message(self.session_id, self.messages[0])
 
     def _build_context(
         self,
@@ -145,24 +167,38 @@ class ProfessionalReviewAgent:
         )
         tool_schemas = get_tool_definitions("reviewer", provider=config.provider)
 
-        self.messages.append(
-            {
-                "role": "user",
-                "content": self._build_review_message(
-                    task_title=task_title,
-                    task_summary=task_summary,
-                    modified_files=modified_files,
-                    fullstack_summary=fullstack_summary,
-                    feedback_context=feedback_context,
-                    skills_summary=skills_summary,
-                ),
-            }
-        )
+        await self._ensure_system_checkpoint()
+        if not self.restored_messages and not _has_missing_tool_results(self.messages):
+            await self._append_message(
+                {
+                    "role": "user",
+                    "content": self._build_review_message(
+                        task_title=task_title,
+                        task_summary=task_summary,
+                        modified_files=modified_files,
+                        fullstack_summary=fullstack_summary,
+                        feedback_context=feedback_context,
+                        skills_summary=skills_summary,
+                    ),
+                }
+            )
 
         tool_calls_count = 0
 
         for round_num in range(1, self.MAX_TOOL_ROUNDS + 1):
             logger.debug("专业审查工具调用第 {} 轮", round_num)
+
+            pending_tool_calls = _get_missing_tool_calls(self.messages)
+            if pending_tool_calls:
+                terminal_output = await self._execute_tool_calls(
+                    pending_tool_calls,
+                    ctx,
+                    round_num,
+                )
+                tool_calls_count += len(pending_tool_calls)
+                if terminal_output is not None:
+                    return _review_result_from_terminal(terminal_output, tool_calls_count)
+                continue
 
             response = await client.call_with_retry(
                 messages=self.messages,
@@ -193,7 +229,7 @@ class ProfessionalReviewAgent:
                 assistant_msg["tool_calls"] = [
                     _tc_to_dict(tc) for tc in message.tool_calls
                 ]
-            self.messages.append(assistant_msg)
+            await self._append_message(assistant_msg)
 
             if not message.tool_calls:
                 return ReviewResult(
@@ -203,33 +239,12 @@ class ProfessionalReviewAgent:
                     tool_calls_count=tool_calls_count,
                 )
 
-            terminal_output: dict[str, Any] | None = None
-            for tool_call in message.tool_calls:
-                tool_calls_count += 1
-                fn_name = tool_call.function.name
-                logger.info("专业审查调用工具: {} (round={})", fn_name, round_num)
-
-                if terminal_output is None:
-                    result = await self.tool_executor.execute_tool_call(tool_call, ctx)
-                else:
-                    result = ToolResult(
-                        success=True,
-                        output={
-                            "skipped": True,
-                            "reason": "terminal_tool_already_called",
-                        },
-                    )
-                self.messages.append(
-                    {
-                        "role": "tool",
-                        "tool_call_id": tool_call.id,
-                        "content": _serialize_tool_result(result),
-                    }
-                )
-
-                # submit_review → 返回审查结果
-                if result.is_terminal:
-                    terminal_output = result.output
+            terminal_output = await self._execute_tool_calls(
+                message.tool_calls,
+                ctx,
+                round_num,
+            )
+            tool_calls_count += len(message.tool_calls)
 
             if terminal_output is not None:
                 verdict = terminal_output.get("verdict", "reject")
@@ -267,6 +282,52 @@ class ProfessionalReviewAgent:
             tool_calls_count=tool_calls_count,
         )
 
+    async def _execute_tool_calls(
+        self,
+        tool_calls: list[Any],
+        ctx: ToolContext,
+        round_num: int,
+    ) -> dict[str, Any] | None:
+        terminal_output: dict[str, Any] | None = None
+        for tool_call in tool_calls:
+            fn_name = tool_call.function.name
+            logger.info("专业审查调用工具: {} (round={})", fn_name, round_num)
+
+            if self.checkpoint and self.session_id:
+                await self.checkpoint.mark_tool_call_running(self.session_id, tool_call.id)
+            try:
+                if terminal_output is None:
+                    result = await self.tool_executor.execute_tool_call(tool_call, ctx)
+                else:
+                    result = ToolResult(
+                        success=True,
+                        output={
+                            "skipped": True,
+                            "reason": "terminal_tool_already_called",
+                        },
+                    )
+            except Exception as exc:
+                if self.checkpoint and self.session_id:
+                    await self.checkpoint.mark_tool_call_failed(
+                        self.session_id, tool_call.id, str(exc)
+                    )
+                raise
+            result_message_id = await self._append_message(
+                {
+                    "role": "tool",
+                    "tool_call_id": tool_call.id,
+                    "content": _serialize_tool_result(result),
+                }
+            )
+            if self.checkpoint and self.session_id and result_message_id:
+                await self.checkpoint.mark_tool_call_completed(
+                    self.session_id, tool_call.id, result_message_id
+                )
+
+            if result.is_terminal:
+                terminal_output = result.output
+        return terminal_output
+
     def _build_review_message(
         self,
         task_title: str,
@@ -299,6 +360,71 @@ def _tc_to_dict(tool_call: Any) -> dict:
             "arguments": tool_call.function.arguments,
         },
     }
+
+
+def _tool_call_from_dict(data: dict[str, Any]) -> Any:
+    function = data.get("function") or {}
+    return SimpleNamespace(
+        id=data.get("id", ""),
+        function=SimpleNamespace(
+            name=function.get("name", ""),
+            arguments=function.get("arguments", ""),
+        ),
+    )
+
+
+def _get_missing_tool_calls(messages: list[dict[str, Any]]) -> list[Any]:
+    completed = {
+        item.get("tool_call_id")
+        for item in messages
+        if item.get("role") == "tool" and item.get("tool_call_id")
+    }
+    for message in reversed(messages):
+        if message.get("role") != "assistant":
+            continue
+        tool_calls = message.get("tool_calls") or []
+        missing = [
+            _tool_call_from_dict(item)
+            for item in tool_calls
+            if item.get("id") not in completed
+        ]
+        if missing:
+            return missing
+    return []
+
+
+def _has_missing_tool_results(messages: list[dict[str, Any]]) -> bool:
+    return bool(_get_missing_tool_calls(messages))
+
+
+def _review_result_from_terminal(
+    terminal_output: dict[str, Any], tool_calls_count: int
+) -> ReviewResult:
+    verdict = terminal_output.get("verdict", "reject")
+    score = int(terminal_output.get("score", 0))
+    findings = []
+    raw_findings = terminal_output.get("findings", [])
+    if isinstance(raw_findings, list):
+        for item in raw_findings:
+            if not isinstance(item, dict):
+                continue
+            findings.append(
+                ReviewFinding(
+                    severity=item.get("severity", "minor"),
+                    file=item.get("file", ""),
+                    message=item.get("message", ""),
+                    suggestion=item.get("suggestion", ""),
+                )
+            )
+    return ReviewResult(
+        verdict=verdict,
+        score=score,
+        summary=terminal_output.get("summary", ""),
+        findings=findings,
+        improvement_suggestions=terminal_output.get("improvement_suggestions", []),
+        passed=verdict == "pass" and score >= 7,
+        tool_calls_count=tool_calls_count,
+    )
 
 
 def _serialize_tool_result(result: ToolResult) -> str:

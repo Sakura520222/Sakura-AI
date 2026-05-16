@@ -12,6 +12,8 @@ from __future__ import annotations
 
 import asyncio
 import json
+import re
+from datetime import datetime, timezone
 from pathlib import Path
 
 from loguru import logger
@@ -25,6 +27,9 @@ from backend.models.agent_team_models import (
 )
 from backend.models.database import async_session, utc_now as _utc_now
 from backend.services.agent_team.ai_client import load_agent_team_ai_config
+from backend.services.agent_team.conversation_checkpoint import (
+    ConversationCheckpointService,
+)
 from backend.services.agent_team.git_workspace_service import (
     AgentTeamGitWorkspaceService,
 )
@@ -41,7 +46,7 @@ def _format_failure_reason(reason: str, modified_files: list[str]) -> str:
 class AgentTeamWorker:
     """Agent 专家团队任务处理器 - 完整状态机。"""
 
-    async def process_task(self, task_id: int) -> int:
+    async def process_task(self, task_id: int, resume: bool = False) -> int:
         """处理 Agent 专家团队任务，完整执行闭环。"""
         config = await load_agent_team_ai_config()
         config.validate()
@@ -73,12 +78,24 @@ class AgentTeamWorker:
             )
 
             git_service = AgentTeamGitWorkspaceService()
-            workspace_info = await git_service.prepare_workspace(
-                task.repo_owner,
-                task.repo_name,
-                task.source_issue_number,
-                task.source_id,
-            )
+            if resume:
+                if not task.workspace_path or not task.branch_name:
+                    raise RuntimeError("任务缺少可续跑的工作区或分支信息")
+                workspace_info = await git_service.resume_workspace(
+                    task.repo_owner,
+                    task.repo_name,
+                    task.workspace_path,
+                    task.branch_name,
+                    task.base_branch,
+                    task.base_commit_sha,
+                )
+            else:
+                workspace_info = await git_service.prepare_workspace(
+                    task.repo_owner,
+                    task.repo_name,
+                    task.source_issue_number,
+                    task.source_id,
+                )
 
             # 取消检查点
             if cancel_event.is_set():
@@ -92,7 +109,7 @@ class AgentTeamWorker:
 
             await self._update_task(
                 task_id,
-                working_branch=workspace_info.branch_name,
+                branch_name=workspace_info.branch_name,
                 base_branch=workspace_info.default_branch,
                 base_commit_sha=workspace_info.commit_sha,
                 workspace_path=str(workspace_info.workspace),
@@ -114,7 +131,15 @@ class AgentTeamWorker:
                 await self._update_task(task_id, max_iterations=max_iterations)
             sakura_info = await self._load_sakura_memory(repo_owner, repo_name)
 
-            loop_service = IterationLoopService(workspace)
+            checkpoint = ConversationCheckpointService(task_id)
+            resume_cursor = await checkpoint.get_resume_cursor() if resume else None
+            loop_service = IterationLoopService(
+                workspace,
+                task_id=task_id,
+                checkpoint=checkpoint,
+                resume_cursor=resume_cursor,
+                resume_index=task.resume_count or 0,
+            )
             outcome = await loop_service.run(
                 task_title=task.title,
                 task_summary=task.summary or "",
@@ -264,6 +289,9 @@ class AgentTeamWorker:
                     current_phase="completed",
                     completed_at=_utc_now(),
                     error_message=None,
+                    failed_phase=None,
+                    failed_role=None,
+                    rate_limit_reset_at=None,
                 )
 
                 logger.info(
@@ -281,6 +309,7 @@ class AgentTeamWorker:
                     status=AgentTeamTaskStatus.FAILED.value,
                     current_phase="iteration_failed",
                     error_message=reason,
+                    failed_phase="iteration_failed",
                 )
                 logger.warning("Agent 任务失败: task_id={}, reason={}", task_id, reason)
 
@@ -293,6 +322,8 @@ class AgentTeamWorker:
                 status=AgentTeamTaskStatus.FAILED.value,
                 current_phase="error",
                 error_message=f"{type(e).__name__}: {e}",
+                failed_phase="error",
+                rate_limit_reset_at=_parse_rate_limit_reset_at(str(e)),
             )
         finally:
             _cancel_events.pop(task_id, None)
@@ -519,6 +550,21 @@ class AgentTeamWorker:
         return "\n".join(parts)
 
 
+def _parse_rate_limit_reset_at(error_text: str) -> datetime | None:
+    match = re.search(
+        r"限额将在\s*(\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2})\s*重置",
+        error_text,
+    )
+    if not match:
+        return None
+    try:
+        return datetime.strptime(match.group(1), "%Y-%m-%d %H:%M:%S").replace(
+            tzinfo=timezone.utc
+        )
+    except ValueError:
+        return None
+
+
 def _normalize_modified_file_path(file_path: str) -> str:
     normalized = str(file_path).strip().replace("\\", "/")
     while "//" in normalized:
@@ -552,6 +598,10 @@ def get_worker() -> AgentTeamWorker:
 
 async def submit_agent_team_task(task_id: int) -> int:
     return await get_worker().process_task(task_id)
+
+
+async def resume_agent_team_task(task_id: int) -> int:
+    return await get_worker().process_task(task_id, resume=True)
 
 
 def request_task_cancel(task_id: int) -> None:
