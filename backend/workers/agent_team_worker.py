@@ -468,6 +468,7 @@ class AgentTeamWorker:
 
             service = AgentSkillService()
             async with async_session() as session:
+                await service.ensure_builtin_skills(session)
                 summary = await service.build_enabled_skills_summary(session)
                 snapshot = await service.snapshot_enabled_skills(session)
             if not snapshot:
