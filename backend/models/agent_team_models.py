@@ -4,6 +4,7 @@ import enum
 
 from sqlalchemy import BigInteger, Column, ForeignKey, Integer, String, Text, TIMESTAMP
 from sqlalchemy import UniqueConstraint
+from sqlalchemy.dialects.mysql import LONGTEXT
 from sqlalchemy.orm import relationship
 
 from backend.models.database import Base
@@ -225,8 +226,8 @@ class AgentTeamMessage(Base):
     )
     seq = Column(Integer, nullable=False)
     role = Column(String(50), nullable=False, index=True)
-    content = Column(Text, nullable=True)
-    message_json = Column(Text, nullable=False)
+    content = Column(LONGTEXT, nullable=True)
+    message_json = Column(LONGTEXT, nullable=False)
     tool_call_id = Column(String(255), nullable=True, index=True)
     finish_reason = Column(String(100), nullable=True)
     created_at = Column(TIMESTAMP, default=utc_now, nullable=False)
@@ -254,7 +255,7 @@ class AgentTeamToolCall(Base):
     )
     tool_call_id = Column(String(255), nullable=False, index=True)
     name = Column(String(255), nullable=False)
-    arguments_json = Column(Text, nullable=True)
+    arguments_json = Column(LONGTEXT, nullable=True)
     arguments_hash = Column(String(64), nullable=True)
     status = Column(String(50), default="pending", nullable=False, index=True)
     result_message_id = Column(
