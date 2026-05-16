@@ -192,10 +192,16 @@ class AgentTeamShellExecutor:
 
     def _build_env(self) -> dict[str, str]:
         env = os.environ.copy()
-        venv_root = Path(sys.prefix).resolve()
-        script_dir = venv_root / ("Scripts" if os.name == "nt" else "bin")
-        env["VIRTUAL_ENV"] = str(venv_root)
-        env["PATH"] = str(script_dir) + os.pathsep + env.get("PATH", "")
-        # 提供给子进程用于自检，但不作为安全边界。
+        workspace_venv = self.workspace / ".venv"
+        if workspace_venv.exists():
+            venv_root = workspace_venv.resolve()
+            script_dir = venv_root / ("Scripts" if os.name == "nt" else "bin")
+            env["VIRTUAL_ENV"] = str(venv_root)
+            env["PATH"] = str(script_dir) + os.pathsep + env.get("PATH", "")
+        else:
+            venv_root = Path(sys.prefix).resolve()
+            script_dir = venv_root / ("Scripts" if os.name == "nt" else "bin")
+            env["VIRTUAL_ENV"] = str(venv_root)
+            env["PATH"] = str(script_dir) + os.pathsep + env.get("PATH", "")
         env["SAKURA_AGENT_WORKSPACE"] = str(self.workspace)
         return env

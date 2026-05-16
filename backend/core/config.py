@@ -524,6 +524,7 @@ class Settings(BaseSettings):
     agent_team_max_files_changed: int = 8
     agent_team_max_lines_changed: int = 500
     agent_team_run_tests: bool = True
+    agent_team_auto_install_deps: bool = True  # 自动安装工作区项目依赖
     agent_team_test_command_allowlist: str = "pytest -q,ruff check,ruff format"
     agent_team_skills_enabled: bool = False
     agent_team_skills_root: str = "./Skills"
@@ -1030,6 +1031,7 @@ DYNAMIC_CONFIG_GROUPS: OrderedDict[str, dict] = OrderedDict(
                     "agent_team_context_compression_keep_rounds": "Agent 专家团队压缩时保留的最近工具调用轮数",
                     "agent_team_context_summary_max_tokens": "Agent 专家团队历史摘要最大输出 Token 数",
                     "agent_team_max_tool_rounds": "全栈专家单次执行允许的工具调用最大轮次",
+                    "agent_team_auto_install_deps": "Agent 克隆仓库后自动检测并安装 pyproject.toml 或 requirements.txt 中的依赖",
                     "agent_team_test_command_allowlist": "允许执行的验证命令白名单，逗号分隔",
                     "agent_team_skills_enabled": "启用后，Agent 可按需加载已安装 Skills 的完整内容",
                     "agent_team_skills_root": "Agent Skills 本地存储根目录，默认 ./Skills",
@@ -1061,6 +1063,7 @@ DYNAMIC_CONFIG_GROUPS: OrderedDict[str, dict] = OrderedDict(
                     "agent_team_max_files_changed",
                     "agent_team_max_lines_changed",
                     "agent_team_run_tests",
+                    "agent_team_auto_install_deps",
                     "agent_team_test_command_allowlist",
                     "agent_team_skills_enabled",
                     "agent_team_skills_root",
@@ -1382,6 +1385,7 @@ DYNAMIC_CONFIG_LABELS: dict[str, str] = {
     "agent_team_max_files_changed": "最大修改文件数",
     "agent_team_max_lines_changed": "最大修改行数",
     "agent_team_run_tests": "自动运行验证命令",
+    "agent_team_auto_install_deps": "自动安装项目依赖",
     "agent_team_test_command_allowlist": "验证命令白名单",
     "agent_team_skills_enabled": "启用 Agent Skills",
     "agent_team_skills_root": "Skills 根目录",

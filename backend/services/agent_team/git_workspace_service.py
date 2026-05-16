@@ -7,6 +7,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from backend.core.github_app import GitHubAppClient
+from backend.core.config import get_dynamic_config, get_settings
 from backend.services.agent_team.shell_executor import (
     AgentTeamShellExecutor,
     ShellCommandResult,
@@ -87,12 +88,42 @@ class AgentTeamGitWorkspaceService:
                 executor, ["git", "rev-parse", "HEAD"], "read commit sha"
             )
         ).stdout.strip()
+        await self._install_workspace_dependencies(executor, workspace)
         return GitWorkspaceInfo(
             workspace=workspace,
             branch_name=branch_name,
             default_branch=default_branch,
             commit_sha=commit_sha,
         )
+
+    async def _install_workspace_dependencies(
+        self, executor: AgentTeamShellExecutor, workspace: Path
+    ) -> None:
+        """为工作区创建独立 venv 并安装项目依赖。"""
+        value = await get_dynamic_config("agent_team_auto_install_deps")
+        settings = get_settings()
+        enabled = getattr(settings, "agent_team_auto_install_deps", True)
+        if value is not None:
+            enabled = str(value).strip().lower() in {"1", "true", "yes", "on"}
+        if not enabled:
+            return
+
+        venv_dir = workspace / ".venv"
+        if not venv_dir.exists():
+            from loguru import logger
+
+            logger.info("Agent 工作区创建独立 venv: {}", venv_dir)
+            await executor.run("python -m venv .venv", timeout_seconds=settings.agent_team_timeout_seconds)
+
+        pip_cmd = str(venv_dir / "bin" / "pip")
+        if (workspace / "pyproject.toml").exists():
+            await executor.run(
+                f"{pip_cmd} install -e . --quiet", timeout_seconds=settings.agent_team_timeout_seconds
+            )
+        elif (workspace / "requirements.txt").exists():
+            await executor.run(
+                f"{pip_cmd} install -r requirements.txt --quiet", timeout_seconds=settings.agent_team_timeout_seconds
+            )
 
     def make_branch_name(
         self,
