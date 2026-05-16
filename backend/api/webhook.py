@@ -155,17 +155,25 @@ async def handle_pull_request_event(payload: Dict[str, Any]) -> JSONResponse:
         get_worker()._register_task(task_key, force_new=True)
 
         # 过滤 Bot 自身创建的 PR（如 sakura-memory 系统创建的 PR）
+        # 但允许 Agent Team 创建的 PR 进入审查
         bot_username = settings.bot_username
         sender = pr_info.get("sender", "")
         author = pr_info.get("author", "")
+        branch = pr_info.get("branch", "")
+        is_agent_team_pr = branch.startswith("sakura-agent/")
 
         if bot_username and (sender == bot_username or author == bot_username):
-            logger.info(
-                f"跳过 Bot 自身创建的 PR: {pr_info['repo_full_name']}#{pr_info['pr_number']}"
-            )
-            return JSONResponse(
-                content={"status": "ignored", "reason": "bot self-created PR"}
-            )
+            if is_agent_team_pr:
+                logger.info(
+                    f"Agent Team PR，允许审查: {pr_info['repo_full_name']}#{pr_info['pr_number']}"
+                )
+            else:
+                logger.info(
+                    f"跳过 Bot 自身创建的 PR: {pr_info['repo_full_name']}#{pr_info['pr_number']}"
+                )
+                return JSONResponse(
+                    content={"status": "ignored", "reason": "bot self-created PR"}
+                )
 
         # 过滤 sakura-memory 分支 PR（兜底过滤）
         if pr_info.get("branch", "").startswith("sakura-memory/"):
