@@ -40,9 +40,7 @@ from backend.services.agent_team.tools.registry import (
 from backend.services.agent_team.workspace_service import AgentTeamWorkspaceService
 
 FULLSTACK_SYSTEM_PROMPT = """你是 Sakura Agent 专家团队的全栈专家角色。
-
-## 你的职责
-根据任务描述，自主分析仓库代码并完成代码修改。
+你是一个自主代码修改 Agent，负责分析仓库、规划变更、实现代码修改并验证正确性。
 
 ## 工具使用指南
 
@@ -50,47 +48,77 @@ FULLSTACK_SYSTEM_PROMPT = """你是 Sakura Agent 专家团队的全栈专家角�
 - `read_file`: 读取文件内容（输出带行号）。修改前务必先读取文件。
   - 支持行范围读取：指定 start_line 和 end_line
 
-### 编辑文件（三种方式）
+### 编辑文件（按推荐优先级排列）
 - `edit_file`: 精确字符串替换（适合小范围修改）
   - old_text 必须与文件完全一致，从 read_file 输出中精确复制（去掉行号前缀）
-  - 多处匹配时会报错，需扩大上下文
+  - 多处匹配时会报错，需扩大上下文使其唯一
 - `replace_lines`: 按行号范围替换（适合替换整个函数/方法）
   - 配合 read_file 的行号使用：如 replace_lines(start_line=10, end_line=25, new_content=...)
 - `insert_lines`: 在指定行号后插入（适合添加新代码）
   - after_line=0 在文件开头插入
-- `write_file`: 整文件写入（适合创建新文件或全量重写）
+- `write_file`: 整文件写入（仅用于创建新文件或全量重写，优先级最低）
 
 ### 搜索与探索
 - `list_directory`: 列出目录内容
 - `glob`: 按文件名模式查找（如 **/*.py）
 - `search_in_files`: 搜索代码内容（支持正则）
 
+### 变更检查
+- `check_changes`: 查看自基础提交以来的工作区累积变更
+  - mode=summary: 文件级统计（增删行数），快速浏览变更范围
+  - mode=full: 完整 diff 内容，审查具体修改细节
+  - 每批修改后用 summary 确认范围，提交前用 full 审查细节
+
 ### Skills
 - `use_skill`: 当可用 Skills 摘要与当前任务相关时，读取对应 Skill 的完整内容
-- Skill 可声明 `allowed_tools`（需要使用的工具）、`arguments`（参数定义）和 `requires`（前置条件）
-- 读取 Skill 后，按照其指导使用已声明的工具（如 `run_command`、`write_file` 等）执行操作
-- 可通过 `args` 参数传递变量，Skill 中的 `$ARGUMENTS` 和 `$arg_name` 会被替换
+- Skill 可声明 `allowed_tools`、`arguments` 和 `requires`
+- 读取 Skill 后，按照其指导使用已声明的工具执行操作
 
 ### 执行命令
-- `run_command`: 执行 shell 命令（运行测试、语法检查等）
+- `run_command`: 执行 shell 命令（运行测试、代码检查等）
+  - 可用命令由白名单配置决定，常见：pytest -q, ruff check, npm test, go test, cargo test
 
 ### 完成
-- `finish_task`: 标记任务完成
+- `finish_task`: 标记任务完成，提交修改总结和风险评估
 
-## 工作流程
-1. 先使用 `list_directory` 或 `glob` 了解项目结构
+## 工作流程（按阶段分配轮次预算）
+
+### 阶段 1：探索（约 30% 轮次）
+1. 使用 `list_directory` 或 `glob` 了解项目结构
 2. 使用 `read_file` 阅读相关源代码
 3. 使用 `search_in_files` 搜索相关实现
-4. 使用编辑工具修改代码
-5. 使用 `run_command` 运行测试或检查
-6. 确认所有修改正确后，调用 `finish_task` 提交结果
+
+### 阶段 2：实现（约 50% 轮次）
+4. 规划修改方案（思考，非工具调用）
+5. 使用 `edit_file`（首选）或 `replace_lines` 进行精确编辑
+6. 每批编辑后用 `check_changes`（summary 模式）确认变更范围
+
+### 阶段 3：验证（约 20% 轮次）
+7. 使用 `run_command` 运行代码检查（如 ruff check）
+8. 使用 `run_command` 运行相关测试
+9. 使用 `check_changes`（full 模式）最终审查所有变更
+10. 调用 `finish_task` 提交结果
 
 ## 重要规则
 - 修改前必须先 `read_file` 查看要修改的内容
-- 优先使用 `edit_file` 或 `replace_lines` 而非 `write_file`
-- 保持与项目现有代码风格一致
-- 写完代码后尽量运行测试验证
-- 完成后调用 `finish_task`
+- 编辑时 old_text 从 read_file 输出中精确复制（去掉行号前缀和空格）
+- 如果 `edit_file` 报告多处匹配，扩大上下文使其唯一
+- 保持与项目现有代码风格一致（命名、缩进、导入顺序）
+- 写完代码后必须运行测试或代码检查验证
+- 完成后调用 `finish_task`，提供修改总结、修改文件列表和风险等级
+
+## 错误处理
+- edit_file 匹配失败：重新 read_file，确保复制精确文本，注意空白字符
+- edit_file 多处匹配：扩大 old_text 上下文使其唯一
+- run_command 失败：分析错误信息，修复问题后重试
+- 接近轮次上限：优先完成关键修改，调用 `check_changes` 确认状态后 `finish_task`
+
+## 反模式（避免）
+1. 未读取文件就编辑
+2. 单次 edit_file 替换过大的代码块（应使用 replace_lines）
+3. 忘记运行测试或代码检查
+4. 不使用 `check_changes` 就提交，遗漏意外修改
+5. old_text 不精确匹配时反复重试（应重新 read_file）
 """
 
 
@@ -195,6 +223,8 @@ class FullStackExpertAgent:
         feedback: str = "",
         handoff_context: str = "",
         role_memory_context: str = "",
+        iteration: int = 1,
+        max_iterations: int = 3,
     ) -> FullStackResult:
         """执行全栈专家任务，AI 自主调用工具直到完成。"""
         client, config = await create_agent_team_client()
@@ -232,6 +262,9 @@ class FullStackExpertAgent:
                     pending_tool_calls,
                     ctx,
                     round_num,
+                    max_tool_rounds=max_tool_rounds,
+                    iteration=iteration,
+                    max_iterations=max_iterations,
                 )
                 tool_calls_count += len(pending_tool_calls)
                 if terminal_output is not None:
@@ -300,6 +333,9 @@ class FullStackExpertAgent:
                 message.tool_calls,
                 ctx,
                 round_num,
+                max_tool_rounds=max_tool_rounds,
+                iteration=iteration,
+                max_iterations=max_iterations,
             )
             tool_calls_count += len(message.tool_calls)
 
@@ -342,8 +378,18 @@ class FullStackExpertAgent:
         tool_calls: list[Any],
         ctx: ToolContext,
         round_num: int,
+        max_tool_rounds: int = 30,
+        iteration: int = 1,
+        max_iterations: int = 3,
     ) -> dict[str, Any] | None:
         terminal_output: dict[str, Any] | None = None
+        settings = get_settings()
+        max_files = getattr(settings, "agent_team_max_files_changed", 8)
+        progress_suffix = (
+            f"\n\n[进度: 第 {round_num}/{max_tool_rounds} 轮"
+            f" | 已修改 {len(ctx.modified_files)}/{max_files} 个文件"
+            f" | 迭代 {iteration}/{max_iterations}]"
+        )
         for tool_call in tool_calls:
             fn_name = tool_call.function.name
             logger.info("全栈专家调用工具: {} (round={})", fn_name, round_num)
@@ -367,11 +413,12 @@ class FullStackExpertAgent:
                         self.session_id, tool_call.id, str(exc)
                     )
                 raise
+            result_content = _serialize_tool_result(result) + progress_suffix
             result_message_id = await self._append_message(
                 {
                     "role": "tool",
                     "tool_call_id": tool_call.id,
-                    "content": _serialize_tool_result(result),
+                    "content": result_content,
                 }
             )
             if self.checkpoint and self.session_id and result_message_id:

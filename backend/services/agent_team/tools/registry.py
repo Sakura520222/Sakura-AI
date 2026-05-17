@@ -12,13 +12,16 @@ from typing import Any
 
 from backend.services.agent_team.tools.base import BaseTool, ToolExecutor
 from backend.services.agent_team.tools.edit_tool import EditTool
+from backend.services.agent_team.tools.git_diff_tool import GitDiffTool
 from backend.services.agent_team.tools.finish_task_tool import FinishTaskTool
 from backend.services.agent_team.tools.glob_tool import GlobTool
 from backend.services.agent_team.tools.grep_tool import GrepTool
 from backend.services.agent_team.tools.insert_lines_tool import InsertLinesTool
 from backend.services.agent_team.tools.list_directory_tool import ListDirectoryTool
+from backend.services.agent_team.tools.project_detect_tool import DetectProjectTool
 from backend.services.agent_team.tools.read_tool import ReadTool
 from backend.services.agent_team.tools.replace_lines_tool import ReplaceLinesTool
+from backend.services.agent_team.tools.revert_file_tool import RevertFileTool
 from backend.services.agent_team.tools.sakura_docs_tool import (
     ListSakuraDirectoryTool,
     ReadSakuraDocsTool,
@@ -44,6 +47,9 @@ FULLSTACK_TOOL_INSTANCES: list[BaseTool] = [
     ReplaceLinesTool(),
     InsertLinesTool(),
     ShellTool(),
+    GitDiffTool(),
+    DetectProjectTool(),
+    RevertFileTool(),
     FinishTaskTool(),
 ]
 
@@ -55,6 +61,8 @@ REVIEWER_TOOL_INSTANCES: list[BaseTool] = [
     GrepTool(),
     UseSkillTool(),
     ShellTool(),
+    GitDiffTool(),
+    DetectProjectTool(),
     SubmitReviewTool(),
     SakuraMemoryTool(),
     ReadSakuraDocsTool(),

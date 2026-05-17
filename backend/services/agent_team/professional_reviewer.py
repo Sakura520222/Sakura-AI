@@ -21,6 +21,7 @@ from typing import Any
 
 from loguru import logger
 
+from backend.core.config import DYNAMIC_CONFIG_RANGES, get_dynamic_config, get_settings
 from backend.services.agent_team.ai_client import create_agent_team_client
 from backend.services.agent_team.context_compressor import AgentTeamContextCompressor
 from backend.services.agent_team.conversation_checkpoint import (
@@ -34,37 +35,81 @@ from backend.services.agent_team.tools.registry import (
 )
 from backend.services.agent_team.workspace_service import AgentTeamWorkspaceService
 
-REVIEWER_SYSTEM_PROMPT = """你是 Sakura Agent 专家团队的专业审查角色。
+REVIEWER_SYSTEM_PROMPT = """你是 Sakura Agent 专家团队的专业代码审查员。
+你审查全栈专家 Agent 所做的代码修改，确保质量、正确性和安全性。
+你可以使用工具检查代码，但不能修改代码。你的审查结果决定代码是否可以提交。
 
-## 你的职责
-审查全栈专家生成的代码修改，确保质量和安全性。
+## 审查流程（按步骤执行）
 
-## 审查维度
-1. **正确性**: 代码逻辑是否正确，是否解决了目标问题
-2. **安全性**: 是否引入安全隐患（注入、泄露、权限问题）
-3. **代码质量**: 命名、结构、可读性、错误处理
-4. **一致性**: 是否与项目现有风格和架构一致
-5. **完整性**: 是否遗漏了必要的修改（导入、配置、测试）
-6. **风险**: 修改范围是否合理，是否会引入回归
+### 步骤 1：理解变更范围
+- 阅读任务描述和全栈专家的修改总结
+- 使用 `check_changes`（summary 模式）查看所有修改的文件和变更统计
+- 理解修改的目的和背景
 
-## 工作流程
-1. 使用 `list_directory` 了解修改范围
-2. 使用 `read_file` 阅读修改后的文件
-3. 使用 `search_in_files` 搜索相关代码，确认一致性
-4. 当可用 Skills 摘要与当前审查相关时，使用 `use_skill` 读取完整内容，按其指导操作
-5. 使用 `run_command` 运行测试或语法检查
-6. 完成审查后调用 `submit_review` 提交结果
+### 步骤 2：逐文件审查
+- 对每个修改的文件使用 `read_file` 阅读完整内容
+- 不仅看修改的行，也要检查周围的上下文代码
+- 使用 `search_in_files` 检查修改的代码在其他地方是否也被引用
+- 检查是否遗漏了必要的修改（导入、调用点、配置、测试）
+
+### 步骤 3：运行验证
+- 使用 `run_command` 运行代码检查（如 ruff check）
+- 使用 `run_command` 运行测试（如 pytest -q）
+- 验证项目约定是否被遵守
+
+### 步骤 4：提交审查
+- 调用 `submit_review` 提交结构化审查结果
+
+## 审查维度（按优先级）
+
+1. **正确性** (权重 30%)：代码逻辑是否正确？是否解决了目标问题？是否有边界情况？
+2. **安全性** (权重 25%)：SQL 注入、命令注入、路径遍历、敏感数据泄露、权限问题
+3. **完整性** (权重 20%)：所有必要的导入是否存在？调用点是否已更新？配置/测试是否已处理？
+4. **代码质量** (权重 15%)：命名、结构、可读性、错误处理、与项目风格一致
+5. **风险** (权重 10%)：修改范围是否合理？是否会引入回归？性能影响？
+
+## 严重性定义
+- `critical`：安全漏洞、数据丢失风险、功能中断。必须修复。
+- `major`：逻辑错误、缺失的错误处理、API 契约违反。应当修复。
+- `minor`：代码风格、命名、可读性问题。可选修复。
+- `suggestion`：改进建议、替代方案。仅供参考。
+
+## 评分标准
+- 9-10：优秀。仅有微小的风格建议。
+- 7-8：良好。有一些小问题，但可以安全合并。
+- 5-6：可接受。存在问题需要修复，但方案整体可行。
+- 3-4：差。存在严重问题或缺失关键部分。
+- 1-2：不可接受。根本性缺陷，需要完全重做。
 
 ## 判定标准
-- `pass`: 所有 critical/major 问题已解决，可以提交 PR (score >= 7)
-- `needs_improvement`: 存在需要修复的问题，但方案整体可行
-- `reject`: 方案存在根本性问题，需要重新设计
+- `pass`：分数 >= 7，无 critical 发现，major 发现极少
+- `needs_improvement`：分数 4-6，或存在 major 发现但方案整体可行
+- `reject`：分数 < 4，或存在 critical 发现，或方案根本性问题
+
+## Finding 格式要求
+每个 finding 的 `suggestion` 必须具体可操作：
+- 好："将第 42 行的 `except Exception:` 改为 `except (ValueError, KeyError) as e:`"
+- 好："在 routes.py 第 15 行后添加 `from backend.models import User` 导入"
+- 差："改进错误处理"
+- 差："考虑边界情况"
+
+## 工具使用
+- `read_file`：读取文件内容（支持行范围）
+- `list_directory`：浏览目录结构
+- `glob`：按文件名模式查找
+- `search_in_files`：搜索代码内容
+- `check_changes`：查看工作区累积变更（summary=统计，full=完整 diff）
+- `run_command`：运行测试或代码检查
+- `use_skill`：读取相关 Skill 指导
+- `submit_review`：提交审查结果
 
 ## 重要规则
-- 仔细审查每个修改的文件
-- 严格审查安全问题
-- 对于 style 问题，降低为 suggestion 级别
-- 完成后调用 `submit_review`
+- 审查所有修改的文件，不要只看第一个
+- 先用 `check_changes` 查看完整变更范围，再逐文件深入
+- style 问题使用 suggestion 严重性，不要阻塞通过
+- finding 中要具体：引用文件路径和行号，给出精确修复建议
+- 如果修改很小且正确，不要人为压低分数
+- 如果代码检查和测试通过，在评分中应予以认可
 """
 
 
@@ -91,10 +136,37 @@ class ReviewResult:
     tool_calls_count: int = 0
 
 
+async def resolve_reviewer_max_tool_rounds() -> int:
+    """读取专业审查工具调用轮次上限。"""
+    settings = get_settings()
+    fallback = settings.agent_team_reviewer_max_tool_rounds
+    try:
+        raw = await get_dynamic_config("agent_team_reviewer_max_tool_rounds")
+        if raw is None:
+            return fallback
+        value = int(raw)
+        min_value, max_value = DYNAMIC_CONFIG_RANGES["agent_team_reviewer_max_tool_rounds"]
+        if min_value <= value <= max_value:
+            return value
+        raise ValueError(f"value {value} outside range {min_value}-{max_value}")
+    except (TypeError, ValueError) as exc:
+        logger.warning(
+            "读取 agent_team_reviewer_max_tool_rounds 配置失败，使用默认值 {}: {}",
+            fallback,
+            exc,
+        )
+        return fallback
+    except Exception as exc:
+        logger.warning(
+            "读取 agent_team_reviewer_max_tool_rounds 配置异常，使用默认值 {}: {}",
+            fallback,
+            exc,
+        )
+        return fallback
+
+
 class ProfessionalReviewAgent:
     """专业审查 Agent - 通过工具调用自主审查代码。"""
-
-    MAX_TOOL_ROUNDS = 20
 
     def __init__(
         self,
@@ -154,6 +226,7 @@ class ProfessionalReviewAgent:
         modified_files: list[str],
         fullstack_summary: str = "",
         feedback_context: str = "",
+        diff_summary: str = "",
         handoff_context: str = "",
         role_memory_context: str = "",
         skills_summary: str = "",
@@ -169,6 +242,7 @@ class ProfessionalReviewAgent:
             sakura_ref=sakura_ref,
         )
         tool_schemas = get_tool_definitions("reviewer", provider=config.provider)
+        max_tool_rounds = await resolve_reviewer_max_tool_rounds()
 
         await self._ensure_system_checkpoint()
         if not self.restored_messages and not _has_missing_tool_results(self.messages):
@@ -181,6 +255,7 @@ class ProfessionalReviewAgent:
                         modified_files=modified_files,
                         fullstack_summary=fullstack_summary,
                         feedback_context=feedback_context,
+                        diff_summary=diff_summary,
                         handoff_context=handoff_context,
                         role_memory_context=role_memory_context,
                         skills_summary=skills_summary,
@@ -190,7 +265,7 @@ class ProfessionalReviewAgent:
 
         tool_calls_count = 0
 
-        for round_num in range(1, self.MAX_TOOL_ROUNDS + 1):
+        for round_num in range(1, max_tool_rounds + 1):
             logger.debug("专业审查工具调用第 {} 轮", round_num)
 
             pending_tool_calls = _get_missing_tool_calls(self.messages)
@@ -287,7 +362,7 @@ class ProfessionalReviewAgent:
         return ReviewResult(
             verdict="reject",
             score=0,
-            summary=f"达到最大审查轮次 ({self.MAX_TOOL_ROUNDS})",
+            summary=f"达到最大审查轮次 ({max_tool_rounds})",
             tool_calls_count=tool_calls_count,
         )
 
@@ -344,6 +419,7 @@ class ProfessionalReviewAgent:
         modified_files: list[str],
         fullstack_summary: str,
         feedback_context: str,
+        diff_summary: str = "",
         handoff_context: str = "",
         role_memory_context: str = "",
         skills_summary: str = "",
@@ -351,6 +427,8 @@ class ProfessionalReviewAgent:
         parts = [f"## 任务\n标题: {task_title}\n描述: {task_summary}\n"]
         if fullstack_summary:
             parts.append(f"\n## 全栈专家修改总结\n{fullstack_summary}\n")
+        if diff_summary:
+            parts.append(f"\n## Diff 摘要（所有修改的累积）\n```\n{diff_summary}\n```\n")
         if modified_files:
             files_list = "\n".join(f"- `{f}`" for f in modified_files)
             parts.append(f"\n## 已修改的文件\n{files_list}\n")
