@@ -140,6 +140,11 @@ class FullStackResult:
     error: str = ""
 
 
+def _get_missing_tool_calls(messages: list[dict[str, Any]]) -> list[Any]:
+    """返回缺少结果消息的工具调用。"""
+    return get_missing_tool_calls(messages)
+
+
 class FullStackExpertAgent:
     """全栈专家 Agent - 通过工具调用自主完成代码修改。"""
 
