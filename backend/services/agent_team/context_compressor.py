@@ -160,6 +160,11 @@ def _split_message_blocks(messages: list[dict[str, Any]]) -> list[list[dict[str,
     return blocks
 
 
+def _has_missing_tool_results(messages: list[dict[str, Any]]) -> bool:
+    """检查消息中是否存在缺少结果的工具调用。"""
+    return has_missing_tool_results(messages)
+
+
 def _clean_messages(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return [
         {key: value for key, value in message.items() if key != "reasoning_content"}
