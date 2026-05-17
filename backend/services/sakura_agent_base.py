@@ -194,17 +194,13 @@ class SakuraAgentBase:
 
                     result = await self._execute_tool(tool_name, tc.function.arguments)
 
-                    result_display = result
-                    if len(result_display) > 300:
-                        result_display = (
-                            result_display[:300] + f"...({len(result)} chars)"
-                        )
+                    result_len = len(result) if result else 0
                     logger.info(
-                        "{} 工具返回 #{}) {} -> {}",
+                        "{} 工具返回 #{}) {} -> <{} chars>",
                         self.log_prefix,
                         i,
                         tool_name,
-                        result_display,
+                        result_len,
                     )
 
                     messages.append(
