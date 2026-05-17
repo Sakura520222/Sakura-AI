@@ -525,9 +525,16 @@ class Settings(BaseSettings):
     agent_team_max_lines_changed: int = 500
     agent_team_run_tests: bool = True
     agent_team_auto_install_deps: bool = True  # 自动安装工作区项目依赖
-    agent_team_test_command_allowlist: str = "pytest -q,ruff check,ruff format"
+    agent_team_test_command_allowlist: str = (
+        "pytest -q,"
+        "ruff check,ruff check --output-format=concise .,ruff check --fix,ruff format,"
+        "npm test,npm run lint,npm run format,npx eslint,npx prettier --check,"
+        "go test ./...,go vet,"
+        "cargo test,cargo clippy,cargo fmt --check"
+    )
     agent_team_skills_enabled: bool = False
     agent_team_skills_root: str = "./Skills"
+    agent_team_reviewer_max_tool_rounds: int = 20
 
 
 class StrategyConfig:
@@ -1031,6 +1038,7 @@ DYNAMIC_CONFIG_GROUPS: OrderedDict[str, dict] = OrderedDict(
                     "agent_team_context_compression_keep_rounds": "Agent 专家团队压缩时保留的最近工具调用轮数",
                     "agent_team_context_summary_max_tokens": "Agent 专家团队历史摘要最大输出 Token 数",
                     "agent_team_max_tool_rounds": "全栈专家单次执行允许的工具调用最大轮次",
+                    "agent_team_reviewer_max_tool_rounds": "专业审查单次执行允许的工具调用最大轮次",
                     "agent_team_auto_install_deps": "Agent 克隆仓库后自动检测并安装 pyproject.toml 或 requirements.txt 中的依赖",
                     "agent_team_test_command_allowlist": "允许执行的验证命令白名单，逗号分隔",
                     "agent_team_skills_enabled": "启用后，Agent 可按需加载已安装 Skills 的完整内容",
@@ -1058,6 +1066,7 @@ DYNAMIC_CONFIG_GROUPS: OrderedDict[str, dict] = OrderedDict(
                     "agent_team_feasibility_keywords",
                     "agent_team_max_iterations_per_task",
                     "agent_team_max_tool_rounds",
+                    "agent_team_reviewer_max_tool_rounds",
                     "agent_team_max_runtime_minutes",
                     "agent_team_draft_pr",
                     "agent_team_max_files_changed",
@@ -1224,8 +1233,9 @@ DYNAMIC_CONFIG_RANGES: dict[str, tuple[float, float]] = {
     "agent_team_context_compression_threshold": (0.1, 1.0),
     "agent_team_context_compression_keep_rounds": (1, 20),
     "agent_team_context_summary_max_tokens": (500, 8192),
-    "agent_team_max_tool_rounds": (1, 500),
-    "max_concurrent_issues": (1, 200),
+    "agent_team_max_tool_rounds": (1, 1000),
+    "agent_team_reviewer_max_tool_rounds": (5, 500),
+    "max_concurrent_issues": (1, 500),
 }
 
 # 字段中文标签
@@ -1380,6 +1390,7 @@ DYNAMIC_CONFIG_LABELS: dict[str, str] = {
     "agent_team_feasibility_keywords": "可行性关键词",
     "agent_team_max_iterations_per_task": "单任务最大迭代轮数",
     "agent_team_max_tool_rounds": "工具调用最大轮次",
+    "agent_team_reviewer_max_tool_rounds": "审查工具调用最大轮次",
     "agent_team_max_runtime_minutes": "单任务最长运行时间（分钟）",
     "agent_team_draft_pr": "创建 Draft PR",
     "agent_team_max_files_changed": "最大修改文件数",

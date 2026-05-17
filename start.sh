@@ -46,9 +46,14 @@ mkdir -p logs .deploy workplace Skills
 
 # 依赖变更检测
 SAVED_HASH_FILE=".deploy/requirements.hash"
+DOCKERFILE_HASH_FILE=".deploy/dockerfile.hash"
 CURRENT_HASH=""
+DOCKERFILE_HASH=""
 if [[ -f "requirements.txt" ]]; then
     CURRENT_HASH=$(md5sum requirements.txt | awk '{print $1}')
+fi
+if [[ -f "docker/Dockerfile" ]]; then
+    DOCKERFILE_HASH=$(md5sum docker/Dockerfile | awk '{print $1}')
 fi
 
 NEED_BUILD=false
@@ -59,6 +64,9 @@ if $REBUILD; then
     NEED_BUILD=true
 elif [[ ! -f "$SAVED_HASH_FILE" ]]; then
     echo "📦 首次部署，需要构建镜像"
+    NEED_BUILD=true
+elif [[ -f "$DOCKERFILE_HASH_FILE" ]] && [[ "$DOCKERFILE_HASH" != "$(cat "$DOCKERFILE_HASH_FILE")" ]]; then
+    echo "📦 检测到 Dockerfile 变更，需要重建镜像"
     NEED_BUILD=true
 elif [[ "$CURRENT_HASH" != "$(cat "$SAVED_HASH_FILE")" ]]; then
     echo "📦 检测到依赖变更，将使用临时容器安装新依赖"
@@ -76,6 +84,7 @@ if $NEED_BUILD; then
     echo "🔨 构建并启动服务..."
     $COMPOSE up -d --build
     echo "$CURRENT_HASH" > "$SAVED_HASH_FILE"
+    [[ -n "$DOCKERFILE_HASH" ]] && echo "$DOCKERFILE_HASH" > "$DOCKERFILE_HASH_FILE"
     echo "✅ 镜像构建完成，依赖哈希已更新"
 elif $NEED_PIP_INSTALL; then
     echo "📦 在临时容器内安装新依赖..."
@@ -145,6 +154,6 @@ echo ""
 echo "📝 下一步:"
 echo "  1. 首次启动请访问 Setup Wizard 完成配置"
 echo "  2. 配置 GitHub App (参考 README)"
-echo "  3. 将 Webhook URL 设置为: https://your-domain.com:8000/api/webhook/github"
+echo "  3. 将 Webhook URL 设置为: https://your-domain.com/api/webhook/github"
 echo "  4. 安装 GitHub App 到你的仓库"
-echo ""
+echo "  5. 💡 提示: 生产环境请使用反向代理（如 Nginx）和 HTTPS 保护服务安全"

@@ -22,6 +22,9 @@ from backend.services.agent_team.conversation_checkpoint import (
 from backend.services.agent_team.conversation_context import (
     AgentTeamConversationContextService,
 )
+from backend.services.agent_team.git_workspace_service import (
+    AgentTeamGitWorkspaceService,
+)
 from backend.services.agent_team.fullstack_expert import (
     FullStackExpertAgent,
     FullStackResult,
@@ -53,6 +56,7 @@ class IterationLoopService:
         self,
         workspace: str | Any,
         workspace_service: AgentTeamWorkspaceService | None = None,
+        git_workspace_service: AgentTeamGitWorkspaceService | None = None,
         task_id: int | None = None,
         checkpoint: ConversationCheckpointService | None = None,
         resume_cursor: ResumeCursor | None = None,
@@ -60,6 +64,9 @@ class IterationLoopService:
     ):
         self.workspace_service = workspace_service or AgentTeamWorkspaceService()
         self.workspace = self.workspace_service.resolve_inside_workspace(workspace)
+        self.git_workspace_service = (
+            git_workspace_service or AgentTeamGitWorkspaceService()
+        )
         self.task_id = task_id
         self.checkpoint = checkpoint
         self.resume_cursor = resume_cursor
@@ -125,6 +132,8 @@ class IterationLoopService:
                     feedback=feedback,
                     handoff_context=fullstack_handoff_context,
                     role_memory_context=fullstack_role_memory,
+                    iteration=iteration,
+                    max_iterations=max_iterations,
                 )
                 total_tool_calls += fs_result.tool_calls_count
                 await self._complete_session(
@@ -176,12 +185,21 @@ class IterationLoopService:
             )
 
             # ── 专业审查 ──
+            diff_summary = ""
+            try:
+                diff_summary = await self.git_workspace_service.get_diff_summary(
+                    self.workspace
+                )
+            except Exception:
+                logger.warning("获取 diff summary 失败，审查员将不携带 diff 摘要")
+
             reviewer = await self._create_reviewer_agent(iteration, resume_cursor)
             rev_result = await reviewer.review(
                 task_title=task_title,
                 task_summary=task_summary,
                 modified_files=fs_result.modified_files,
                 fullstack_summary=fs_result.summary,
+                diff_summary=diff_summary,
                 handoff_context=reviewer_handoff_context,
                 role_memory_context=reviewer_role_memory,
                 skills_summary=skills_summary,
@@ -217,7 +235,7 @@ class IterationLoopService:
 
             # ── 未通过：准备反馈 ──
             if iteration < max_iterations:
-                feedback = self._build_feedback(rev_result)
+                feedback = self._build_feedback(rev_result, iteration=iteration)
                 logger.info("准备第 {} 轮迭代反馈", iteration + 1)
             else:
                 # 最后一轮也提交（即使未通过），让外部决定
@@ -333,20 +351,39 @@ class IterationLoopService:
         if self.checkpoint and session_id:
             await self.checkpoint.complete_session(session_id, tool_calls_count)
 
-    def _build_feedback(self, review: ReviewResult) -> str:
-        """将审查结果转为反馈文本。"""
+    def _build_feedback(self, review: ReviewResult, iteration: int = 0) -> str:
+        """将审查结果转为结构化反馈文本。"""
         parts = [
-            f"### 审查结论: {review.verdict} (分数: {review.score}/10)\n",
+            f"## 审查反馈 - 迭代 {iteration} (分数: {review.score}/10)\n",
             f"### 审查总结\n{review.summary}\n",
         ]
 
-        if review.findings:
-            parts.append("### 发现的问题")
-            for f in review.findings:
-                parts.append(
-                    f"- [{f.severity}] {f.file}: {f.message}"
-                    + (f"\n  建议: {f.suggestion}" if f.suggestion else "")
-                )
+        # 按严重性分组
+        blocking = [f for f in review.findings if f.severity in ("critical", "major")]
+        optional = [f for f in review.findings if f.severity in ("minor", "suggestion")]
+
+        if blocking:
+            parts.append("### 必须修复（阻塞）")
+            # 按文件分组
+            by_file: dict[str, list[Any]] = {}
+            for f in blocking:
+                by_file.setdefault(f.file, []).append(f)
+            for file_path, items in sorted(by_file.items()):
+                parts.append(f"\n**{file_path}**")
+                for item in items:
+                    line = f"- [{item.severity}] {item.message}"
+                    if item.suggestion:
+                        line += f"\n  修复建议: {item.suggestion}"
+                    parts.append(line)
+            parts.append("")
+
+        if optional:
+            parts.append("### 可选改进")
+            for f in optional:
+                line = f"- [{f.severity}] {f.file}: {f.message}"
+                if f.suggestion:
+                    line += f"\n  建议: {f.suggestion}"
+                parts.append(line)
             parts.append("")
 
         if review.improvement_suggestions:
@@ -355,4 +392,8 @@ class IterationLoopService:
                 parts.append(f"- {s}")
             parts.append("")
 
+        parts.append("### 重要提示")
+        parts.append("- 仅解决上述问题，不要重新设计未标记的区域")
+        parts.append("- 不要撤销之前的修复")
+        parts.append("- 修复后运行代码检查和测试验证")
         return "\n".join(parts)
