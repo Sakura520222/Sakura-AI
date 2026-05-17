@@ -239,7 +239,7 @@ class FullStackExpertAgent:
         for round_num in range(1, max_tool_rounds + 1):
             logger.debug("全栈专家工具调用第 {} 轮", round_num)
 
-            pending_tool_calls = get_missing_tool_calls(self.messages)
+            pending_tool_calls = _get_missing_tool_calls(self.messages)
             if pending_tool_calls:
                 terminal_output = await self._execute_tool_calls(
                     pending_tool_calls,

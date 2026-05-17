@@ -30,7 +30,7 @@ class AgentTeamContextCompressor:
         self,
         messages: list[dict[str, Any]],
     ) -> list[dict[str, Any]]:
-        if not messages or has_missing_tool_results(messages):
+        if not messages or _has_missing_tool_results(messages):
             return messages
         if not await resolve_bool_config("agent_team_enable_context_compression", True):
             return messages
