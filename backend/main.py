@@ -242,16 +242,6 @@ app.include_router(webhook.router, prefix="/api/webhook", tags=["Webhook"])
 app.include_router(webui_router)
 app.include_router(api_v1_router, prefix="/api/v1", tags=["API v1"])
 
-
-# Catch-all: 浏览器访问不存在的路径时自动跳转主页（API 请求仍返回 JSON 404）
-@app.get("/{path:path}", include_in_schema=False)
-async def webui_fallback(request: Request, path: str):
-    accept = request.headers.get("accept", "")
-    if "text/html" in accept:
-        return RedirectResponse(url="/", status_code=302)
-    raise HTTPException(status_code=404, detail="Not Found")
-
-
 # 限流：注册 slowapi 状态 + 异常处理
 app.state.limiter = limiter
 _WEBUI_RATE_LIMIT_JSON_SUFFIXES = frozenset(
@@ -338,6 +328,15 @@ async def auth_exception_handler(request: Request, exc: HTTPException):
 async def health():
     """健康检查"""
     return {"status": "healthy", "service": "Sakura AI Reviewer"}
+
+
+# Catch-all: 浏览器访问不存在的路径时自动跳转主页（API 请求仍返回 JSON 404）
+@app.get("/{path:path}", include_in_schema=False)
+async def webui_fallback(request: Request, path: str):
+    accept = request.headers.get("accept", "")
+    if "text/html" in accept:
+        return RedirectResponse(url="/", status_code=302)
+    raise HTTPException(status_code=404, detail="Not Found")
 
 
 if __name__ == "__main__":
