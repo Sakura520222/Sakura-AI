@@ -27,11 +27,13 @@ async def resolve_int_config(key: str, fallback: int) -> int:
         return fallback
     try:
         parsed = int(value)
-    except (TypeError, ValueError):
+    except (TypeError, ValueError) as exc:
+        logger.warning("配置 {} 值 {} 无法转为整数，使用默认值 {}: {}", key, value, fallback, exc)
         return fallback
     min_value, max_value = DYNAMIC_CONFIG_RANGES.get(key, (parsed, parsed))
     if min_value <= parsed <= max_value:
         return parsed
+    logger.warning("配置 {} 值 {} 超出范围 {}-{}，使用默认值 {}", key, parsed, min_value, max_value, fallback)
     return fallback
 
 
@@ -42,17 +44,19 @@ async def resolve_float_config(key: str, fallback: float) -> float:
         return fallback
     try:
         parsed = float(value)
-    except (TypeError, ValueError):
+    except (TypeError, ValueError) as exc:
+        logger.warning("配置 {} 值 {} 无法转为浮点数，使用默认值 {}: {}", key, value, fallback, exc)
         return fallback
     min_value, max_value = DYNAMIC_CONFIG_RANGES.get(key, (parsed, parsed))
     if min_value <= parsed <= max_value:
         return parsed
+    logger.warning("配置 {} 值 {} 超出范围 {}-{}，使用默认值 {}", key, parsed, min_value, max_value, fallback)
     return fallback
 
 
 async def resolve_clamped_int_config(
     config_key: str,
-    settings_attr: str,
+    settings_attr: str = "",
     log_label: str = "",
 ) -> int:
     """Read an integer config from dynamic settings with range clamping.
@@ -60,8 +64,9 @@ async def resolve_clamped_int_config(
     Consolidates the pattern used by resolve_agent_team_max_tool_rounds
     and resolve_reviewer_max_tool_rounds.
     """
+    attr = settings_attr or config_key
     settings = get_settings()
-    fallback = getattr(settings, settings_attr)
+    fallback = getattr(settings, attr)
     label = log_label or config_key
     try:
         raw = await get_dynamic_config(config_key)

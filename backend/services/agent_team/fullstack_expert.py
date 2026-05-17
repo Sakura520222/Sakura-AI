@@ -208,7 +208,6 @@ class FullStackExpertAgent:
         tool_schemas = get_tool_definitions("fullstack", provider=config.provider)
         max_tool_rounds = await resolve_clamped_int_config(
             "agent_team_max_tool_rounds",
-            "agent_team_max_tool_rounds",
         )
 
         await self._ensure_system_checkpoint()
@@ -392,6 +391,10 @@ class FullStackExpertAgent:
                         self.session_id, tool_call.id, str(exc)
                     )
                 raise
+            # Persist progress suffix alongside tool result so checkpoint and
+            # in-memory messages stay consistent. The legacy fallback path in
+            # _restore_fullstack_result_from_messages strips the suffix before
+            # parsing JSON; the new structured result_payload path is unaffected.
             final_content = serialize_tool_result(result) + progress_suffix
             result_message_id = await self._append_message(
                 {
