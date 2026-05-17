@@ -1,4 +1,8 @@
+<div align="center">
+
 # 🌸 Sakura AI Reviewer
+
+<img src="res/cover.png" alt="Sakura AI Reviewer Cover" width="100%">
 
 > 基于 AI 的智能 GitHub Pull Request 代码审查与 Issue 分析机器人，具备主动探索代码库的能力
 
@@ -10,6 +14,8 @@
 [![License](https://img.shields.io/badge/License-AGPLv3-yellow.svg)](LICENSE)
 [![Live Demo](https://img.shields.io/badge/🌐_免费体验-Online-success.svg)](https://pr-bot.firefly520.top/)
 [![Android App](https://img.shields.io/badge/Android_App-🚧_开发中-orange.svg)](https://github.com/Sakura520222/Sakura-AI-Reviewer-APP)
+
+</div>
 
 ---
 
