@@ -469,6 +469,20 @@ scan:
     low: "Low"
     info: "Info"
 
+# ========== Scan Detail ==========
+scan_detail:
+  scanned_files: "Scanned Files"
+  duration: "Duration"
+  token_usage: "Token Usage"
+  started_at: "Started At"
+  completed_at: "Completed At"
+  health_score: "Health Score"
+  error: "Error:"
+  report_issue: "Scan Report Issue:"
+  code_snippet: "Code Snippet"
+  no_issues: "No Issues Found"
+  code_quality_good: "Code quality is good"
+
 # ========== Review Queue ==========
 queue:
   title: "Review Queue"

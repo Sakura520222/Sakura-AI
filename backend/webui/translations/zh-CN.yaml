@@ -469,6 +469,20 @@ scan:
     low: "低"
     info: "信息"
 
+# ========== 扫描详情 / Scan Detail ==========
+scan_detail:
+  scanned_files: "扫描文件"
+  duration: "扫描耗时"
+  token_usage: "Token 消耗"
+  started_at: "开始时间"
+  completed_at: "完成时间"
+  health_score: "健康评分"
+  error: "错误:"
+  report_issue: "扫描报告 Issue:"
+  code_snippet: "代码片段"
+  no_issues: "未发现问题"
+  code_quality_good: "该仓库代码质量良好"
+
 # ========== 审查队列 / Review Queue ==========
 queue:
   title: "审查队列"
