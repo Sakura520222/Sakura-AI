@@ -142,18 +142,21 @@ class IterationLoopService:
                     getattr(expert, "session_id", None), fs_result.tool_calls_count
                 )
                 if self.checkpoint and getattr(expert, "session_id", None):
-                    await self.checkpoint.save_session_result(
-                        expert.session_id,
-                        {
-                            "success": fs_result.success,
-                            "summary": fs_result.summary,
-                            "modified_files": fs_result.modified_files,
-                            "risk_level": fs_result.risk_level,
-                            "test_result": fs_result.test_result,
-                            "tool_calls_count": fs_result.tool_calls_count,
-                            "error": fs_result.error,
-                        },
-                    )
+                    try:
+                        await self.checkpoint.save_session_result(
+                            expert.session_id,
+                            {
+                                "success": fs_result.success,
+                                "summary": fs_result.summary,
+                                "modified_files": fs_result.modified_files,
+                                "risk_level": fs_result.risk_level,
+                                "test_result": fs_result.test_result,
+                                "tool_calls_count": fs_result.tool_calls_count,
+                                "error": fs_result.error,
+                            },
+                        )
+                    except Exception as exc:
+                        logger.warning("保存 fullstack 结构化结果失败，将使用消息解析回退: {}", exc)
                 if resume_cursor and resume_cursor.role_name == "fullstack":
                     resume_cursor = None
 
@@ -326,7 +329,7 @@ class IterationLoopService:
         role_name: str,
         iteration: int,
         resume_cursor: ResumeCursor | None,
-        agent_class: type,
+        agent_class: type[FullStackExpertAgent | ProfessionalReviewAgent],
     ):
         initial_messages = None
         session_id = None

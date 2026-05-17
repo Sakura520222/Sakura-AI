@@ -220,7 +220,6 @@ class ProfessionalReviewAgent:
         tool_schemas = get_tool_definitions("reviewer", provider=config.provider)
         max_tool_rounds = await resolve_clamped_int_config(
             "agent_team_reviewer_max_tool_rounds",
-            "agent_team_reviewer_max_tool_rounds",
         )
 
         await self._ensure_system_checkpoint()

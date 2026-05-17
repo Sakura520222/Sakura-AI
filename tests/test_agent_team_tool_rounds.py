@@ -59,7 +59,7 @@ async def test_resolve_agent_team_max_tool_rounds_uses_dynamic_config(monkeypatc
     )
 
     assert await resolve_clamped_int_config(
-        "agent_team_max_tool_rounds", "agent_team_max_tool_rounds"
+        "agent_team_max_tool_rounds"
     ) == 75
 
 
@@ -81,7 +81,7 @@ async def test_resolve_agent_team_max_tool_rounds_falls_back_on_invalid_dynamic_
     )
 
     assert await resolve_clamped_int_config(
-        "agent_team_max_tool_rounds", "agent_team_max_tool_rounds"
+        "agent_team_max_tool_rounds"
     ) == 42
 
 
@@ -239,7 +239,7 @@ async def test_resolve_reviewer_max_tool_rounds_uses_dynamic_config(monkeypatch)
     )
 
     assert await resolve_clamped_int_config(
-        "agent_team_reviewer_max_tool_rounds", "agent_team_reviewer_max_tool_rounds"
+        "agent_team_reviewer_max_tool_rounds"
     ) == 50
 
 
@@ -258,7 +258,7 @@ async def test_resolve_reviewer_max_tool_rounds_falls_back_on_invalid(monkeypatc
     )
 
     assert await resolve_clamped_int_config(
-        "agent_team_reviewer_max_tool_rounds", "agent_team_reviewer_max_tool_rounds"
+        "agent_team_reviewer_max_tool_rounds"
     ) == 20
 
 
