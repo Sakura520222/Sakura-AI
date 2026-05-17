@@ -931,6 +931,39 @@ def _get_default_sql(col) -> str | None:
     return None
 
 
+async def _ensure_agent_message_longtext_columns(conn, logger) -> None:
+    from sqlalchemy import inspect
+
+    def _existing_tables(sync_conn):
+        insp = inspect(sync_conn)
+        return set(insp.get_table_names())
+
+    existing_tables = await conn.run_sync(_existing_tables)
+    columns = {
+        "agent_team_messages": {
+            "content": "LONGTEXT NULL",
+            "message_json": "LONGTEXT NOT NULL",
+        },
+        "agent_team_tool_calls": {
+            "arguments_json": "LONGTEXT NULL",
+        },
+    }
+    for table_name, table_columns in columns.items():
+        if table_name not in existing_tables:
+            continue
+        for column_name, column_type in table_columns.items():
+            await conn.execute(
+                text(
+                    f"ALTER TABLE `{table_name}` MODIFY COLUMN `{column_name}` {column_type}"
+                )
+            )
+            logger.info(
+                "[auto-migrate] 扩展列为 LONGTEXT: {}.{}",
+                table_name,
+                column_name,
+            )
+
+
 async def _auto_migrate():
     """自动检测并执行 schema 迁移 / Auto-detect and run schema migrations
 
@@ -955,6 +988,9 @@ async def _auto_migrate():
                 sync_conn, checkfirst=True
             )
         )
+        await conn.run_sync(
+            lambda sync_conn: Base.metadata.create_all(sync_conn, checkfirst=True)
+        )
 
         # 用 Inspector 逐表检测缺失列
         def _get_missing_columns(sync_conn):
@@ -973,6 +1009,8 @@ async def _auto_migrate():
             return missing
 
         missing = await conn.run_sync(_get_missing_columns)
+
+        await _ensure_agent_message_longtext_columns(conn, _logger)
 
         if not missing:
             return

@@ -236,6 +236,13 @@ app.add_middleware(
 # Bootstrap 中间件（CORS 之后、路由之前）
 app.add_middleware(BootstrapMiddleware)
 
+# 健康检查
+@app.get("/health")
+async def health():
+    """健康检查"""
+    return {"status": "healthy", "service": "Sakura AI Reviewer"}
+
+
 # 注册路由
 app.include_router(setup_router)
 app.include_router(webhook.router, prefix="/api/webhook", tags=["Webhook"])
@@ -324,10 +331,13 @@ async def auth_exception_handler(request: Request, exc: HTTPException):
     return JSONResponse(status_code=exc.status_code, content={"detail": exc.detail})
 
 
-@app.get("/health")
-async def health():
-    """健康检查"""
-    return {"status": "healthy", "service": "Sakura AI Reviewer"}
+# Catch-all: 浏览器访问不存在的路径时自动跳转主页（API 请求仍返回 JSON 404）
+@app.get("/{path:path}", include_in_schema=False)
+async def webui_fallback(request: Request, path: str):
+    accept = request.headers.get("accept", "")
+    if "text/html" in accept:
+        return RedirectResponse(url="/", status_code=302)
+    raise HTTPException(status_code=404, detail="Not Found")
 
 
 if __name__ == "__main__":

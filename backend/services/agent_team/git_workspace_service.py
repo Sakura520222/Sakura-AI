@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 
 from backend.core.github_app import GitHubAppClient
+from backend.core.config import get_dynamic_config, get_settings
 from backend.services.agent_team.shell_executor import (
     AgentTeamShellExecutor,
     ShellCommandResult,
@@ -87,12 +89,42 @@ class AgentTeamGitWorkspaceService:
                 executor, ["git", "rev-parse", "HEAD"], "read commit sha"
             )
         ).stdout.strip()
+        await self._install_workspace_dependencies(executor, workspace)
         return GitWorkspaceInfo(
             workspace=workspace,
             branch_name=branch_name,
             default_branch=default_branch,
             commit_sha=commit_sha,
         )
+
+    async def _install_workspace_dependencies(
+        self, executor: AgentTeamShellExecutor, workspace: Path
+    ) -> None:
+        """为工作区创建独立 venv 并安装项目依赖。"""
+        value = await get_dynamic_config("agent_team_auto_install_deps")
+        settings = get_settings()
+        enabled = getattr(settings, "agent_team_auto_install_deps", True)
+        if value is not None:
+            enabled = str(value).strip().lower() in {"1", "true", "yes", "on"}
+        if not enabled:
+            return
+
+        venv_dir = workspace / ".venv"
+        if not venv_dir.exists():
+            from loguru import logger
+
+            logger.info("Agent 工作区创建独立 venv: {}", venv_dir)
+            await executor.run("python -m venv .venv", timeout_seconds=settings.agent_team_timeout_seconds)
+
+        pip_cmd = str(venv_dir / ("Scripts" if os.name == "nt" else "bin") / "pip")
+        if (workspace / "pyproject.toml").exists():
+            await executor.run(
+                f"{pip_cmd} install -e . --quiet", timeout_seconds=settings.agent_team_timeout_seconds
+            )
+        elif (workspace / "requirements.txt").exists():
+            await executor.run(
+                f"{pip_cmd} install -r requirements.txt --quiet", timeout_seconds=settings.agent_team_timeout_seconds
+            )
 
     def make_branch_name(
         self,
@@ -108,6 +140,60 @@ class AgentTeamGitWorkspaceService:
         else:
             source = "manual"
         return f"{self.BRANCH_PREFIX}/{source}-{timestamp}"
+
+    async def resume_workspace(
+        self,
+        repo_owner: str,
+        repo_name: str,
+        workspace_path: str,
+        branch_name: str,
+        base_branch: str | None = None,
+        base_commit_sha: str | None = None,
+    ) -> GitWorkspaceInfo:
+        """恢复既有 Agent 工作区，不重置未提交改动。"""
+        expected_workspace = self.workspace_service.get_workspace_path(repo_owner, repo_name)
+        workspace = self.workspace_service.ensure_within_base(workspace_path)
+        if workspace != expected_workspace:
+            raise RuntimeError("续跑工作区与任务仓库不匹配")
+        if not workspace.exists() or not (workspace / ".git").exists():
+            raise RuntimeError("续跑工作区不存在或不是 Git 仓库")
+
+        executor = AgentTeamShellExecutor(workspace, self.workspace_service)
+        current_branch = (
+            await self._run_checked_args(
+                executor, ["git", "branch", "--show-current"], "read current branch"
+            )
+        ).stdout.strip()
+        if current_branch != branch_name:
+            raise RuntimeError(
+                f"续跑分支不匹配: 当前 {current_branch or '(detached)'}，期望 {branch_name}"
+            )
+
+        remote_url = (
+            await self._run_checked_args(
+                executor, ["git", "remote", "get-url", "origin"], "read remote url"
+            )
+        ).stdout.strip()
+        if f"/{repo_owner}/{repo_name}" not in remote_url and f"{repo_owner}/{repo_name}.git" not in remote_url:
+            raise RuntimeError("续跑工作区 remote 与任务仓库不匹配")
+
+        if base_commit_sha:
+            await self._run_checked_args(
+                executor,
+                ["git", "cat-file", "-e", f"{base_commit_sha}^{{commit}}"],
+                "verify base commit",
+            )
+        commit_sha = (
+            await self._run_checked_args(
+                executor, ["git", "rev-parse", "HEAD"], "read commit sha"
+            )
+        ).stdout.strip()
+        return GitWorkspaceInfo(
+            workspace=workspace,
+            branch_name=branch_name,
+            default_branch=base_branch or "main",
+            commit_sha=commit_sha,
+        )
 
     async def get_diff_summary(self, workspace: str | Path) -> str:
         """读取当前工作区 diff 摘要。"""

@@ -509,6 +509,10 @@ class Settings(BaseSettings):
     )
     agent_team_temperature: float = 0.2
     agent_team_max_tokens: int = 8192
+    agent_team_enable_context_compression: bool = True
+    agent_team_context_compression_threshold: float = 0.85
+    agent_team_context_compression_keep_rounds: int = 4
+    agent_team_context_summary_max_tokens: int = 2048
     agent_team_timeout_seconds: int = 600
     agent_team_max_concurrent: int = 1
     agent_team_min_priority: str = "high"
@@ -516,13 +520,22 @@ class Settings(BaseSettings):
     agent_team_max_iterations_per_task: int = 3
     agent_team_max_tool_rounds: int = 30
     agent_team_max_runtime_minutes: int = 60
+    agent_team_branch_index_delay: float = 2.0
     agent_team_draft_pr: bool = True
     agent_team_max_files_changed: int = 8
     agent_team_max_lines_changed: int = 500
     agent_team_run_tests: bool = True
-    agent_team_test_command_allowlist: str = "pytest -q,python run_ruff.py --check"
+    agent_team_auto_install_deps: bool = True  # 自动安装工作区项目依赖
+    agent_team_test_command_allowlist: str = (
+        "pytest -q,"
+        "ruff check,ruff check --output-format=concise .,ruff check --fix,ruff format,"
+        "npm test,npm run lint,npm run format,npx eslint,npx prettier --check,"
+        "go test ./...,go vet,"
+        "cargo test,cargo clippy,cargo fmt --check"
+    )
     agent_team_skills_enabled: bool = False
     agent_team_skills_root: str = "./Skills"
+    agent_team_reviewer_max_tool_rounds: int = 20
 
 
 class StrategyConfig:
@@ -1021,7 +1034,13 @@ DYNAMIC_CONFIG_GROUPS: OrderedDict[str, dict] = OrderedDict(
                     "agent_team_api_key": "Agent 专家团队 API Key；选择独立厂商时填写，保存后脱敏显示",
                     "agent_team_model": "全栈专家使用的模型；选择独立厂商时填写",
                     "agent_team_review_model": "专业审查使用的模型；选择独立厂商时可填写，默认复用全栈专家模型",
+                    "agent_team_enable_context_compression": "启用 Agent 专家团队上下文压缩；压缩使用辅助 AI，触发阈值按目标 Agent 模型上下文窗口计算",
+                    "agent_team_context_compression_threshold": "Agent 专家团队压缩触发阈值（0-1）",
+                    "agent_team_context_compression_keep_rounds": "Agent 专家团队压缩时保留的最近工具调用轮数",
+                    "agent_team_context_summary_max_tokens": "Agent 专家团队历史摘要最大输出 Token 数",
                     "agent_team_max_tool_rounds": "全栈专家单次执行允许的工具调用最大轮次",
+                    "agent_team_reviewer_max_tool_rounds": "专业审查单次执行允许的工具调用最大轮次",
+                    "agent_team_auto_install_deps": "Agent 克隆仓库后自动检测并安装 pyproject.toml 或 requirements.txt 中的依赖",
                     "agent_team_test_command_allowlist": "允许执行的验证命令白名单，逗号分隔",
                     "agent_team_skills_enabled": "启用后，Agent 可按需加载已安装 Skills 的完整内容",
                     "agent_team_skills_root": "Agent Skills 本地存储根目录，默认 ./Skills",
@@ -1038,17 +1057,23 @@ DYNAMIC_CONFIG_GROUPS: OrderedDict[str, dict] = OrderedDict(
                     "agent_team_summary_model",
                     "agent_team_temperature",
                     "agent_team_max_tokens",
+                    "agent_team_enable_context_compression",
+                    "agent_team_context_compression_threshold",
+                    "agent_team_context_compression_keep_rounds",
+                    "agent_team_context_summary_max_tokens",
                     "agent_team_timeout_seconds",
                     "agent_team_max_concurrent",
                     "agent_team_min_priority",
                     "agent_team_feasibility_keywords",
                     "agent_team_max_iterations_per_task",
                     "agent_team_max_tool_rounds",
+                    "agent_team_reviewer_max_tool_rounds",
                     "agent_team_max_runtime_minutes",
                     "agent_team_draft_pr",
                     "agent_team_max_files_changed",
                     "agent_team_max_lines_changed",
                     "agent_team_run_tests",
+                    "agent_team_auto_install_deps",
                     "agent_team_test_command_allowlist",
                     "agent_team_skills_enabled",
                     "agent_team_skills_root",
@@ -1206,8 +1231,12 @@ DYNAMIC_CONFIG_RANGES: dict[str, tuple[float, float]] = {
     "sakura_max_memory_chars": (500, 10000),
     "sakura_max_sakura_chars": (1000, 20000),
     "agent_team_max_tokens": (1024, 32768),
-    "agent_team_max_tool_rounds": (1, 500),
-    "max_concurrent_issues": (1, 200),
+    "agent_team_context_compression_threshold": (0.1, 1.0),
+    "agent_team_context_compression_keep_rounds": (1, 20),
+    "agent_team_context_summary_max_tokens": (500, 8192),
+    "agent_team_max_tool_rounds": (1, 1000),
+    "agent_team_reviewer_max_tool_rounds": (5, 500),
+    "max_concurrent_issues": (1, 500),
 }
 
 # 字段中文标签
@@ -1352,17 +1381,23 @@ DYNAMIC_CONFIG_LABELS: dict[str, str] = {
     "agent_team_summary_model": "摘要/反思模型",
     "agent_team_temperature": "温度参数",
     "agent_team_max_tokens": "最大 Tokens",
+    "agent_team_enable_context_compression": "启用上下文压缩",
+    "agent_team_context_compression_threshold": "上下文压缩阈值",
+    "agent_team_context_compression_keep_rounds": "压缩保留轮数",
+    "agent_team_context_summary_max_tokens": "上下文摘要最大 Tokens",
     "agent_team_timeout_seconds": "任务超时（秒）",
     "agent_team_max_concurrent": "最大并发任务数",
     "agent_team_min_priority": "最低 Issue 优先级",
     "agent_team_feasibility_keywords": "可行性关键词",
     "agent_team_max_iterations_per_task": "单任务最大迭代轮数",
     "agent_team_max_tool_rounds": "工具调用最大轮次",
+    "agent_team_reviewer_max_tool_rounds": "审查工具调用最大轮次",
     "agent_team_max_runtime_minutes": "单任务最长运行时间（分钟）",
     "agent_team_draft_pr": "创建 Draft PR",
     "agent_team_max_files_changed": "最大修改文件数",
     "agent_team_max_lines_changed": "最大修改行数",
     "agent_team_run_tests": "自动运行验证命令",
+    "agent_team_auto_install_deps": "自动安装项目依赖",
     "agent_team_test_command_allowlist": "验证命令白名单",
     "agent_team_skills_enabled": "启用 Agent Skills",
     "agent_team_skills_root": "Skills 根目录",

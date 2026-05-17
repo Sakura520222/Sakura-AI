@@ -1,4 +1,8 @@
+<div align="center">
+
 # 🌸 Sakura AI Reviewer
+
+<img src="res/cover.png" alt="Sakura AI Reviewer Cover" width="100%">
 
 > AI-powered intelligent GitHub Pull Request code review and Issue analysis bot with proactive codebase exploration capabilities
 
@@ -10,6 +14,8 @@
 [![License](https://img.shields.io/badge/License-AGPLv3-yellow.svg)](LICENSE)
 [![Live Demo](https://img.shields.io/badge/🌐_Free_Demo-Online-success.svg)](https://pr-bot.firefly520.top/)
 [![Android App](https://img.shields.io/badge/Android_App-🚧_In_Development-orange.svg)](https://github.com/Sakura520222/Sakura-AI-Reviewer-APP)
+
+</div>
 
 ---
 
@@ -62,13 +68,16 @@
 ### Agent Expert Team
 
 - **Super-admin Manual Launch**: Select candidate tasks from Issue analysis and repository scan findings, with natural language filtering, and start automated fix workflows on demand
+- **Manual Issue Task Creation**: Paste a GitHub Issue URL or enter `owner/repo#123`; the system validates it and creates an Agent fix task directly
 - **Smart Candidate Filtering**: Automatic deduplication, closed-issue filtering, score-based sorting, and AI natural language selection to match the most suitable candidate tasks
 - **Two-agent Collaboration**: A full-stack expert plans and edits code, while a professional reviewer performs pre-push quality review
+- **Context Compression & Resume**: Long-running tasks compress historical context automatically and persist conversation/message checkpoints for recovery
 - **Isolated Git Workspaces**: Clone/fetch/checkout dedicated branches under `agent_team_workspace_root` without polluting the service runtime directory
 - **Controlled Tool Execution**: File operations, search, and shell validation commands are scoped to the workspace; validation commands are controlled by an allowlist
+- **Dependency Auto-install & Validation**: Can detect and install dependencies from `pyproject.toml` / `requirements.txt`, then run allowlisted tests or lint commands
 - **Sakura Knowledge Integration**: Agents can browse and read `.sakura/` knowledge directory and reflection files via dedicated tools, leveraging accumulated review experience to assist code fixes
-- **Agent Skills**: Install skills from uploaded files, ZIP packages, or GitHub `SKILL.md`; agents can load full skill instructions on demand
-- **PR Creation Loop**: Supports normal or Draft PR creation, then iterates through existing Sakura PR Review and human review feedback; PRs are never merged automatically
+- **Agent Skills & Built-in Ruff**: Install skills from uploaded files, ZIP packages, or GitHub `SKILL.md`; a built-in Ruff lint/format skill can be loaded on demand
+- **PR Creation Loop**: Supports AI-generated Conventional Commits-style PR titles, normal or Draft PR creation, then iterates through Sakura PR Review and human feedback; PRs are never merged automatically
 
 ### Management & Operations
 
@@ -285,7 +294,7 @@ Global configuration follows this priority: **Database app_config (WebUI) > Sett
 - **Git Info Tool**: `context_enhancement.git_tools` in `config/strategies.yaml` — configure default branch and commit return counts
 - **Project Memory System**: `sakura_memory_enabled` to enable memory system, `sakura_reflection_enabled` to enable post-review reflection, `sakura_consolidation_interval` for consolidation trigger threshold (default 5), `sakura_auto_init` to auto-initialize `.sakura/` directory, `sakura_auto_create_subdirs` to auto-create rules/docs/plans subdirectories, `sakura_knowledge_extraction_enabled` to enable automatic knowledge extraction (extracts rules/docs/plans via three serial LLM calls), `sakura_extraction_provider` to configure extraction AI credentials (main/summary/custom) — all in WebUI configuration. WebUI provides a "Sakura Memory" management page for viewing/editing/deleting memory files and manually triggering consolidation and knowledge extraction. See [Project Memory Guide](docs/SAKURA_MEMORY_GUIDE.md) (Chinese)
 - **Model Context**: Configure context window, auto-compression in WebUI configuration, see [Model Context Management](docs/MODEL_CONTEXT_FEATURE.md)
-- **Agent Expert Team**: Configure `agent_team_enabled`, `agent_team_workspace_root`, `agent_team_repo_allowlist`, `agent_team_model_provider`, and other `agent_team_*` model/guardrail settings on the WebUI Agent Team page; `agent_team_model_provider=main` reuses the main AI configuration, while independent Agent AI configuration is also supported
+- **Agent Expert Team**: Configure `agent_team_enabled`, `agent_team_workspace_root`, `agent_team_repo_allowlist`, `agent_team_model_provider`, and other `agent_team_*` model/guardrail settings on the WebUI Agent Team page; supports context compression (`agent_team_enable_context_compression`, etc.), full-stack/reviewer tool-round limits (`agent_team_max_tool_rounds` / `agent_team_reviewer_max_tool_rounds`), dependency auto-install (`agent_team_auto_install_deps`), validation command allowlists, and the Draft PR switch; `agent_team_model_provider=main` reuses the main AI configuration, while independent Agent AI configuration is also supported
 - **Agent Skills**: Install and toggle Skills on the WebUI Agent Skills page; `agent_team_skills_enabled` controls whether agents may load skills, and `agent_team_skills_root` configures the local storage root
 - **Internationalization (i18n)**: WebUI supports Chinese/English interface switching (Settings page). AI output language can be controlled globally via `OUTPUT_LANGUAGE` or overridden per user through `output_language` (`zh-CN` / `en` / follow global). Comment templates automatically match the selected language.
 

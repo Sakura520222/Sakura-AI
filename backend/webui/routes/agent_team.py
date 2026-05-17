@@ -1,6 +1,7 @@
 """WebUI Agent 专家团队路由（超级管理员专用）"""
 
 import json
+import re
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, BackgroundTasks, Depends, Form, Request
@@ -62,17 +63,23 @@ AGENT_TEAM_CONFIG_KEYS = [
     "agent_team_summary_model",
     "agent_team_temperature",
     "agent_team_max_tokens",
+    "agent_team_enable_context_compression",
+    "agent_team_context_compression_threshold",
+    "agent_team_context_compression_keep_rounds",
+    "agent_team_context_summary_max_tokens",
     "agent_team_timeout_seconds",
     "agent_team_max_concurrent",
     "agent_team_min_priority",
     "agent_team_feasibility_keywords",
     "agent_team_max_iterations_per_task",
     "agent_team_max_tool_rounds",
+    "agent_team_reviewer_max_tool_rounds",
     "agent_team_max_runtime_minutes",
     "agent_team_draft_pr",
     "agent_team_max_files_changed",
     "agent_team_max_lines_changed",
     "agent_team_run_tests",
+    "agent_team_auto_install_deps",
     "agent_team_test_command_allowlist",
     "agent_team_skills_enabled",
     "agent_team_skills_root",
@@ -116,6 +123,10 @@ AGENT_TEAM_CONFIG_GROUPS = [
             "agent_team_summary_model",
             "agent_team_temperature",
             "agent_team_max_tokens",
+            "agent_team_enable_context_compression",
+            "agent_team_context_compression_threshold",
+            "agent_team_context_compression_keep_rounds",
+            "agent_team_context_summary_max_tokens",
             "agent_team_timeout_seconds",
         ],
     },
@@ -129,11 +140,13 @@ AGENT_TEAM_CONFIG_GROUPS = [
             "agent_team_feasibility_keywords",
             "agent_team_max_iterations_per_task",
             "agent_team_max_tool_rounds",
+            "agent_team_reviewer_max_tool_rounds",
             "agent_team_max_runtime_minutes",
             "agent_team_draft_pr",
             "agent_team_max_files_changed",
             "agent_team_max_lines_changed",
             "agent_team_run_tests",
+            "agent_team_auto_install_deps",
             "agent_team_test_command_allowlist",
         ],
     },
@@ -512,6 +525,107 @@ async def create_task_from_candidate(
     return JSONResponse({"success": True, "task_id": task.id})
 
 
+def _parse_issue_ref(ref: str) -> tuple[str, int]:
+    """Parse issue reference into (repo_full_name, issue_number).
+
+    Supported formats:
+      - https://github.com/owner/repo/issues/123
+      - http://github.com/owner/repo/issues/123
+      - github.com/owner/repo/issues/123
+      - owner/repo#123
+      - owner/repo 123
+    """
+    ref = ref.strip()
+
+    # GitHub Issue URL
+    m = re.match(
+        r"(?:https?://)?github\.com/([^/]+/[^/]+)/issues/(\d+)", ref
+    )
+    if m:
+        return m.group(1), int(m.group(2))
+
+    # owner/repo#123
+    m = re.match(r"^([^/]+/[^/#]+)#(\d+)$", ref)
+    if m:
+        return m.group(1).strip(), int(m.group(2))
+
+    # owner/repo 123
+    m = re.match(r"^([^/]+/[^/\s]+)\s+(\d+)$", ref)
+    if m:
+        return m.group(1).strip(), int(m.group(2))
+
+    raise ValueError(
+        "无法解析 Issue 引用，请使用以下格式之一：\n"
+        "• https://github.com/owner/repo/issues/123\n"
+        "• owner/repo#123\n"
+        "• owner/repo 123"
+    )
+
+
+@router.post("/tasks/create-from-issue")
+async def create_task_from_issue(
+    background_tasks: BackgroundTasks,
+    db: AsyncSession = Depends(get_db),
+    user: dict = Depends(require_super_admin),
+    csrf_token: str = Depends(require_csrf),
+    issue_ref: str = Form(...),
+):
+    """从指定仓库的 Issue 直接创建 Agent 任务。"""
+    try:
+        repo_full_name, issue_number = _parse_issue_ref(issue_ref)
+    except ValueError as e:
+        return JSONResponse(
+            {"success": False, "message": str(e)},
+            status_code=200,
+        )
+
+    try:
+        config = await load_agent_team_ai_config()
+        config.validate()
+    except ValueError as e:
+        return JSONResponse(
+            {"success": False, "message": str(e)},
+            status_code=200,
+        )
+    except Exception as e:
+        return JSONResponse(
+            {"success": False, "message": f"AI 配置加载失败: {e}"},
+            status_code=200,
+        )
+
+    service = AgentTeamCandidateService()
+    try:
+        task = await service.create_task_from_manual_issue(
+            db,
+            repo_full_name=repo_full_name,
+            issue_number=issue_number,
+            started_by=user["sub"],
+            ai_config_snapshot=config.safe_snapshot(),
+        )
+    except ValueError as e:
+        return JSONResponse(
+            {"success": False, "message": str(e)},
+            status_code=200,
+        )
+
+    await log_admin_action(
+        db,
+        user["user_id"],
+        "agent_team_task_create_from_issue",
+        "agent_team_task",
+        str(task.id),
+        {
+            "source_type": "manual_issue",
+            "repo_full_name": repo_full_name,
+            "issue_number": issue_number,
+        },
+    )
+
+    background_tasks.add_task(_run_agent_task_background, task.id)
+
+    return JSONResponse({"success": True, "task_id": task.id})
+
+
 @router.post("/tasks/{task_id}/retry")
 async def retry_task(
     task_id: int,
@@ -568,6 +682,76 @@ async def retry_task(
         "agent_team_task",
         str(task_id),
         {"old_status": old_status},
+    )
+    return JSONResponse({"success": True, "task_id": task_id})
+
+
+@router.post("/tasks/{task_id}/resume")
+async def resume_task(
+    task_id: int,
+    background_tasks: BackgroundTasks,
+    db: AsyncSession = Depends(get_db),
+    user: dict = Depends(require_super_admin),
+    csrf_token: str = Depends(require_csrf),
+):
+    """从已持久化 messages 和工作区继续运行任务。"""
+    result = await db.execute(select(AgentTeamTask).where(AgentTeamTask.id == task_id))
+    task = result.scalar_one_or_none()
+    if task is None:
+        return JSONResponse(
+            {"success": False, "message": "任务不存在"}, status_code=404
+        )
+
+    if task.status not in {"failed", "cancelled"}:
+        return JSONResponse(
+            {"success": False, "message": f"当前状态 {task.status} 不可续跑"},
+            status_code=200,
+        )
+    if not task.workspace_path or not task.branch_name:
+        return JSONResponse(
+            {"success": False, "message": "任务缺少续跑工作区或分支信息"},
+            status_code=200,
+        )
+
+    from backend.services.agent_team.conversation_checkpoint import (
+        ConversationCheckpointService,
+    )
+
+    checkpoint = ConversationCheckpointService(task_id)
+    if not await checkpoint.has_resume_state():
+        return JSONResponse(
+            {"success": False, "message": "任务没有可续跑的 messages checkpoint"},
+            status_code=200,
+        )
+
+    try:
+        config = await load_agent_team_ai_config()
+        config.validate()
+    except ValueError as e:
+        return JSONResponse({"success": False, "message": str(e)}, status_code=200)
+    except Exception as e:
+        return JSONResponse(
+            {"success": False, "message": f"AI 配置加载失败: {e}"}, status_code=200
+        )
+
+    old_status = task.status
+    task.status = AgentTeamTaskStatus.QUEUED.value
+    task.current_phase = "resuming"
+    task.resume_count = (task.resume_count or 0) + 1
+    task.completed_at = None
+    task.error_message = None
+    task.ai_config_snapshot = json.dumps(config.safe_snapshot(), ensure_ascii=False)
+    await db.commit()
+
+    background_tasks.add_task(_resume_agent_task_background, task_id)
+
+    await log_admin_action(
+        db,
+        user["user_id"],
+        "agent_team_task_resume",
+        "agent_team_task",
+        str(task_id),
+        {"old_status": old_status, "resume_count": task.resume_count},
     )
     return JSONResponse({"success": True, "task_id": task_id})
 
@@ -728,6 +912,20 @@ async def _run_agent_task_background(task_id: int) -> None:
 
         logger.error(
             "Agent 后台任务提交失败: task_id={}, error={}", task_id, exc, exc_info=True
+        )
+
+
+async def _resume_agent_task_background(task_id: int) -> None:
+    """后台续跑 Agent 任务，避免阻塞 WebUI 请求。"""
+    try:
+        from backend.workers.agent_team_worker import resume_agent_team_task
+
+        await resume_agent_team_task(task_id)
+    except Exception as exc:
+        from loguru import logger
+
+        logger.error(
+            "Agent 后台任务续跑失败: task_id={}, error={}", task_id, exc, exc_info=True
         )
 
 

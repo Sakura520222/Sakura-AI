@@ -1,4 +1,8 @@
+<div align="center">
+
 # 🌸 Sakura AI Reviewer
+
+<img src="res/cover.png" alt="Sakura AI Reviewer Cover" width="100%">
 
 > 基于 AI 的智能 GitHub Pull Request 代码审查与 Issue 分析机器人，具备主动探索代码库的能力
 
@@ -10,6 +14,8 @@
 [![License](https://img.shields.io/badge/License-AGPLv3-yellow.svg)](LICENSE)
 [![Live Demo](https://img.shields.io/badge/🌐_免费体验-Online-success.svg)](https://pr-bot.firefly520.top/)
 [![Android App](https://img.shields.io/badge/Android_App-🚧_开发中-orange.svg)](https://github.com/Sakura520222/Sakura-AI-Reviewer-APP)
+
+</div>
 
 ---
 
@@ -62,13 +68,16 @@
 ### Agent 专家团队
 
 - **超级管理员手动启动**：从 Issue 分析和仓库扫描发现中筛选候选任务，支持自然语言描述筛选条件，按需启动自动修复流程
+- **手动 Issue 创建任务**：支持粘贴 GitHub Issue 链接或输入 `owner/repo#123`，验证后直接创建 Agent 修复任务
 - **智能候选筛选**：自动去重、过滤已关闭 Issue、按评分排序，支持 AI 自然语言筛选匹配最合适的候选任务
 - **双 Agent 协作**：内置全栈专家负责计划与代码修改，专业审查负责推送前质量复核
+- **上下文压缩与任务恢复**：长任务自动压缩历史上下文，并持久化会话与消息检查点，支持失败后继续处理
 - **独立 Git 工作区**：在 `agent_team_workspace_root` 下 clone/fetch/checkout 专用分支，避免污染服务运行目录
 - **受控工具执行**：文件读写、搜索、shell 验证命令均限制在工作区内，验证命令受白名单控制
+- **自动依赖与验证**：可自动检测并安装 `pyproject.toml` / `requirements.txt` 依赖，随后运行白名单内测试或 lint 命令
 - **Sakura 知识集成**：Agent 可通过专用工具浏览和读取 `.sakura/` 知识目录与反思文件，利用项目积累的审查经验辅助代码修复
-- **Agent Skills**：支持从上传文件、ZIP 或 GitHub `SKILL.md` 安装技能，Agent 可按需加载完整技能说明
-- **PR 创建闭环**：支持创建普通或 Draft PR，并通过现有 Sakura PR 审查与人工审查反馈继续迭代；不会自动合并 PR
+- **Agent Skills 与内置 Ruff**：支持从上传文件、ZIP 或 GitHub `SKILL.md` 安装技能，并内置 Ruff lint/format 技能供 Agent 按需加载
+- **PR 创建闭环**：支持 AI 生成 Conventional Commits 风格 PR 标题、创建普通或 Draft PR，并通过 Sakura PR 审查与人工反馈继续迭代；不会自动合并 PR
 
 ### 管理与运维
 
@@ -284,7 +293,7 @@ WebUI：`https://your-domain.com/`
 - **Git 信息工具**：`config/strategies.yaml` 中 `context_enhancement.git_tools`，配置默认分支和提交返回数量
 - **项目记忆系统**：WebUI 配置管理中 `sakura_memory_enabled` 启用记忆系统，`sakura_reflection_enabled` 启用审查后反思，`sakura_consolidation_interval` 合并触发的反思轮数（默认 5），`sakura_auto_init` 自动初始化 `.sakura/` 目录，`sakura_auto_create_subdirs` 自动创建 rules/docs/plans 子目录，`sakura_knowledge_extraction_enabled` 启用自动知识提取（通过三次串行 LLM 调用分别提取 rules/docs/plans），`sakura_extraction_provider` 配置提取 AI 凭据来源（主AI/辅助AI/独立配置）。WebUI 提供「Sakura 记忆管理」页面，支持查看/编辑/删除记忆文件、手动触发合并和知识提取。详见 [项目记忆系统使用指南](docs/SAKURA_MEMORY_GUIDE.md)
 - **模型上下文**：WebUI 配置管理中配置上下文窗口、自动压缩等，详见 [模型上下文管理](docs/MODEL_CONTEXT_FEATURE.md)
-- **Agent 专家团队**：WebUI Agent Team 页面配置 `agent_team_enabled`、`agent_team_workspace_root`、`agent_team_repo_allowlist`、`agent_team_model_provider`、`agent_team_*` 模型与护栏参数；`agent_team_model_provider=main` 时复用主 AI 配置，也可选择独立 Agent AI 配置
+- **Agent 专家团队**：WebUI Agent Team 页面配置 `agent_team_enabled`、`agent_team_workspace_root`、`agent_team_repo_allowlist`、`agent_team_model_provider`、`agent_team_*` 模型与护栏参数；支持上下文压缩（`agent_team_enable_context_compression` 等）、全栈/审查工具轮数（`agent_team_max_tool_rounds` / `agent_team_reviewer_max_tool_rounds`）、自动安装依赖（`agent_team_auto_install_deps`）、验证命令白名单和 Draft PR 开关；`agent_team_model_provider=main` 时复用主 AI 配置，也可选择独立 Agent AI 配置
 - **Agent Skills**：WebUI Agent Skills 页面安装和启停 Skills；通过 `agent_team_skills_enabled` 控制 Agent 是否可加载技能，通过 `agent_team_skills_root` 配置本地存储根目录
 - **国际化（i18n）**：WebUI 支持中英文界面切换（个人设置页面），AI 输出语言可通过全局配置 `OUTPUT_LANGUAGE` 或用户级配置覆盖（`output_language`，`zh-CN` / `en` / 跟随全局）控制，评论模板自动匹配对应语言
 

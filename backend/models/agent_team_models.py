@@ -3,6 +3,8 @@
 import enum
 
 from sqlalchemy import BigInteger, Column, ForeignKey, Integer, String, Text, TIMESTAMP
+from sqlalchemy import UniqueConstraint
+from sqlalchemy.dialects.mysql import LONGTEXT
 from sqlalchemy.orm import relationship
 
 from backend.models.database import Base
@@ -39,6 +41,7 @@ class AgentTeamSourceType(str, enum.Enum):
     ISSUE_ANALYSIS = "issue_analysis"
     SCAN_FINDING = "scan_finding"
     SCAN_REPORT_ISSUE = "scan_report_issue"
+    MANUAL_ISSUE = "manual_issue"
 
 
 class AgentTeamFeedbackSource(str, enum.Enum):
@@ -78,6 +81,14 @@ class AgentTeamTask(Base):
     )
     current_phase = Column(String(50), nullable=True)
     branch_name = Column(String(255), nullable=True)
+    workspace_path = Column(String(1000), nullable=True)
+    base_branch = Column(String(255), nullable=True)
+    base_commit_sha = Column(String(64), nullable=True)
+    resume_count = Column(Integer, default=0, nullable=False)
+    failed_phase = Column(String(50), nullable=True)
+    failed_role = Column(String(50), nullable=True)
+    rate_limit_reset_at = Column(TIMESTAMP, nullable=True)
+    last_checkpoint_at = Column(TIMESTAMP, nullable=True)
     pr_number = Column(BigInteger, nullable=True, index=True)
     pr_url = Column(String(500), nullable=True)
 
@@ -104,6 +115,14 @@ class AgentTeamTask(Base):
     )
     feedback = relationship(
         "AgentTeamFeedback", back_populates="task", cascade="all, delete-orphan"
+    )
+    sessions = relationship(
+        "AgentTeamSession", back_populates="task", cascade="all, delete-orphan"
+    )
+    conversation_contexts = relationship(
+        "AgentTeamConversationContext",
+        back_populates="task",
+        cascade="all, delete-orphan",
     )
 
     def __repr__(self):
@@ -163,6 +182,127 @@ class AgentTeamPatchFile(Base):
     created_at = Column(TIMESTAMP, default=utc_now, nullable=False)
 
     iteration = relationship("AgentTeamIteration", back_populates="patch_files")
+
+
+class AgentTeamSession(Base):
+    """Agent 角色会话记录。"""
+
+    __tablename__ = "agent_team_sessions"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    task_id = Column(
+        Integer,
+        ForeignKey("agent_team_tasks.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    iteration_number = Column(Integer, nullable=False, index=True)
+    role_name = Column(String(50), nullable=False, index=True)
+    resume_index = Column(Integer, default=0, nullable=False)
+    status = Column(String(50), default="running", nullable=False, index=True)
+    model = Column(String(255), nullable=True)
+    tool_calls_count = Column(Integer, default=0, nullable=False)
+    last_seq = Column(Integer, default=0, nullable=False)
+    error_message = Column(Text, nullable=True)
+    result_payload = Column(LONGTEXT, nullable=True, comment="Structured result JSON")
+    started_at = Column(TIMESTAMP, default=utc_now, nullable=False)
+    completed_at = Column(TIMESTAMP, nullable=True)
+
+    task = relationship("AgentTeamTask", back_populates="sessions")
+    messages = relationship(
+        "AgentTeamMessage", back_populates="session", cascade="all, delete-orphan"
+    )
+    tool_calls = relationship(
+        "AgentTeamToolCall", back_populates="session", cascade="all, delete-orphan"
+    )
+
+
+class AgentTeamMessage(Base):
+    """Agent OpenAI-compatible 消息日志。"""
+
+    __tablename__ = "agent_team_messages"
+    __table_args__ = (UniqueConstraint("session_id", "seq", name="uq_agent_message_seq"),)
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    session_id = Column(
+        Integer,
+        ForeignKey("agent_team_sessions.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    seq = Column(Integer, nullable=False)
+    role = Column(String(50), nullable=False, index=True)
+    content = Column(LONGTEXT, nullable=True)
+    message_json = Column(LONGTEXT, nullable=False)
+    tool_call_id = Column(String(255), nullable=True, index=True)
+    finish_reason = Column(String(100), nullable=True)
+    created_at = Column(TIMESTAMP, default=utc_now, nullable=False)
+
+    session = relationship("AgentTeamSession", back_populates="messages")
+
+
+class AgentTeamToolCall(Base):
+    """Agent 工具调用账本。"""
+
+    __tablename__ = "agent_team_tool_calls"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    session_id = Column(
+        Integer,
+        ForeignKey("agent_team_sessions.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    assistant_message_id = Column(
+        Integer,
+        ForeignKey("agent_team_messages.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    tool_call_id = Column(String(255), nullable=False, index=True)
+    name = Column(String(255), nullable=False)
+    arguments_json = Column(LONGTEXT, nullable=True)
+    arguments_hash = Column(String(64), nullable=True)
+    status = Column(String(50), default="pending", nullable=False, index=True)
+    result_message_id = Column(
+        Integer,
+        ForeignKey("agent_team_messages.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    started_at = Column(TIMESTAMP, nullable=True)
+    completed_at = Column(TIMESTAMP, nullable=True)
+    error_message = Column(Text, nullable=True)
+
+    session = relationship("AgentTeamSession", back_populates="tool_calls")
+    assistant_message = relationship(
+        "AgentTeamMessage", foreign_keys=[assistant_message_id]
+    )
+    result_message = relationship("AgentTeamMessage", foreign_keys=[result_message_id])
+
+
+class AgentTeamConversationContext(Base):
+    """Agent 角色间对话上下文摘要。"""
+
+    __tablename__ = "agent_team_conversation_contexts"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    task_id = Column(
+        Integer,
+        ForeignKey("agent_team_tasks.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    iteration_number = Column(Integer, nullable=False, index=True)
+    source_role = Column(String(50), nullable=False, index=True)
+    target_role = Column(String(50), nullable=True, index=True)
+    summary = Column(LONGTEXT, nullable=False)
+    unresolved_items_json = Column(LONGTEXT, nullable=True)
+    modified_files_json = Column(LONGTEXT, nullable=True)
+    token_estimate = Column(Integer, nullable=True)
+    created_at = Column(TIMESTAMP, default=utc_now, nullable=False)
+
+    task = relationship("AgentTeamTask", back_populates="conversation_contexts")
 
 
 class AgentTeamFeedback(Base):
