@@ -131,7 +131,9 @@ cmd_attach() {
         exit 1
     fi
     info "附加到构建日志 (Ctrl+C 退出查看，不会中断构建)..."
-    tail -f "$BUILD_LOG"
+    trap 'trap - INT; return 0' INT
+    tail -f "$BUILD_LOG" || true
+    trap - INT
 }
 
 # ============================================================
@@ -167,6 +169,13 @@ build_runner() {
     local need_pip=false
     local current_hash=""
     local dockerfile_hash=""
+
+    COMPOSE=$(detect_compose)
+    if [[ -z "$COMPOSE" ]]; then
+        fail "Docker Compose 未安装"
+        set_phase "preflight" "fail"
+        return 1
+    fi
 
     # --- preflight ---
     set_phase "preflight"
@@ -383,7 +392,9 @@ do_start() {
         echo ""
         info "附加到日志 (Ctrl+C 退出查看，不会中断构建)..."
         echo ""
-        tail -f "$BUILD_LOG"
+        trap 'trap - INT; return 0' INT
+        tail -f "$BUILD_LOG" || true
+        trap - INT
         exit 0
     fi
 
@@ -402,15 +413,34 @@ do_start() {
     # Rotate log
     : > "$BUILD_LOG"
 
-    # Launch build in background
-    (
-        build_runner "$rebuild"
-    ) &
+    # Write a self-contained runner script.
+    # It sources start.sh with _START_SH_SOURCED=1 so functions are loaded
+    # but main() is not executed, then calls build_runner directly.
+    local runner_script
+    runner_script="$DEPLOY_DIR/_runner.sh"
+    local abs_script_dir
+    abs_script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+    cat > "$runner_script" <<RUNNER_EOF
+#!/usr/bin/env bash
+set -euo pipefail
+export _START_SH_SOURCED=1
+cd "${abs_script_dir}"
+source "${abs_script_dir}/start.sh"
+build_runner "${rebuild}"
+RUNNER_EOF
+    chmod +x "$runner_script"
 
+    # Launch in a completely detached session:
+    #   setsid → new session, detached from controlling terminal
+    #   nohup  → ignore SIGHUP when SSH disconnects
+    setsid nohup bash "$runner_script" >> "$BUILD_LOG" 2>&1 &
     local bg_pid=$!
     echo "$bg_pid" > "$PID_FILE"
 
     disown "$bg_pid" 2>/dev/null || true
+
+    # Brief pause to let the background process start
+    sleep 0.5
 
     ok "后台构建已启动 (PID: $bg_pid)"
     echo ""
@@ -418,10 +448,12 @@ do_start() {
     echo -e "  ${DIM}./start.sh --attach${RESET}  实时日志"
     echo ""
 
-    # Auto-attach to log so user can see progress
+    # Auto-attach to log — trap SIGINT so Ctrl+C only stops tail, not the build
     info "自动附加日志 (Ctrl+C 退出查看，不会中断构建)..."
     echo ""
-    tail -f "$BUILD_LOG"
+    trap 'trap - INT; return 0' INT
+    tail -f "$BUILD_LOG" || true
+    trap - INT
 }
 
 main() {
@@ -479,4 +511,6 @@ main() {
     fi
 }
 
-main "$@"
+if [[ "${_START_SH_SOURCED:-}" != "1" ]]; then
+    main "$@"
+fi
