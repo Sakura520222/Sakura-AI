@@ -18,14 +18,12 @@ AI 自主决定调用哪些工具、读取哪些文件、如何修改，循环�
 
 from __future__ import annotations
 
-import json
 from dataclasses import dataclass, field
-from types import SimpleNamespace
 from typing import Any
 
 from loguru import logger
 
-from backend.core.config import DYNAMIC_CONFIG_RANGES, get_dynamic_config, get_settings
+from backend.core.config import get_settings
 from backend.services.agent_team.ai_client import create_agent_team_client
 from backend.services.agent_team.context_compressor import AgentTeamContextCompressor
 from backend.services.agent_team.conversation_checkpoint import (
@@ -38,6 +36,13 @@ from backend.services.agent_team.tools.registry import (
     get_tool_definitions,
 )
 from backend.services.agent_team.workspace_service import AgentTeamWorkspaceService
+from backend.utils.config_utils import resolve_clamped_int_config
+from backend.utils.message_utils import (
+    get_missing_tool_calls,
+    has_missing_tool_results,
+    serialize_tool_result,
+    tool_call_to_dict,
+)
 
 FULLSTACK_SYSTEM_PROMPT = """你是 Sakura Agent 专家团队的全栈专家角色。
 你是一个自主代码修改 Agent，负责分析仓库、规划变更、实现代码修改并验证正确性。
@@ -135,35 +140,6 @@ class FullStackResult:
     error: str = ""
 
 
-async def resolve_agent_team_max_tool_rounds() -> int:
-    """读取 Agent Team 全栈专家工具调用轮次上限。"""
-    settings = get_settings()
-    fallback = settings.agent_team_max_tool_rounds
-    try:
-        raw = await get_dynamic_config("agent_team_max_tool_rounds")
-        if raw is None:
-            return fallback
-        value = int(raw)
-        min_value, max_value = DYNAMIC_CONFIG_RANGES["agent_team_max_tool_rounds"]
-        if min_value <= value <= max_value:
-            return value
-        raise ValueError(f"value {value} outside range {min_value}-{max_value}")
-    except (TypeError, ValueError) as exc:
-        logger.warning(
-            "读取 agent_team_max_tool_rounds 配置失败，使用默认值 {}: {}",
-            fallback,
-            exc,
-        )
-        return fallback
-    except Exception as exc:
-        logger.warning(
-            "读取 agent_team_max_tool_rounds 配置异常，使用默认值 {}: {}",
-            fallback,
-            exc,
-        )
-        return fallback
-
-
 class FullStackExpertAgent:
     """全栈专家 Agent - 通过工具调用自主完成代码修改。"""
 
@@ -230,10 +206,13 @@ class FullStackExpertAgent:
         client, config = await create_agent_team_client()
         ctx = self._build_context(skills_context)
         tool_schemas = get_tool_definitions("fullstack", provider=config.provider)
-        max_tool_rounds = await resolve_agent_team_max_tool_rounds()
+        max_tool_rounds = await resolve_clamped_int_config(
+            "agent_team_max_tool_rounds",
+            "agent_team_max_tool_rounds",
+        )
 
         await self._ensure_system_checkpoint()
-        if not self.restored_messages and not _has_missing_tool_results(self.messages):
+        if not self.restored_messages and not has_missing_tool_results(self.messages):
             await self._append_message(
                 {
                     "role": "user",
@@ -256,7 +235,7 @@ class FullStackExpertAgent:
         for round_num in range(1, max_tool_rounds + 1):
             logger.debug("全栈专家工具调用第 {} 轮", round_num)
 
-            pending_tool_calls = _get_missing_tool_calls(self.messages)
+            pending_tool_calls = get_missing_tool_calls(self.messages)
             if pending_tool_calls:
                 terminal_output = await self._execute_tool_calls(
                     pending_tool_calls,
@@ -314,7 +293,7 @@ class FullStackExpertAgent:
                 assistant_msg["content"] = message.content
             if message.tool_calls:
                 assistant_msg["tool_calls"] = [
-                    _tool_call_to_dict(tc) for tc in message.tool_calls
+                    tool_call_to_dict(tc) for tc in message.tool_calls
                 ]
             await self._append_message(assistant_msg)
 
@@ -413,15 +392,14 @@ class FullStackExpertAgent:
                         self.session_id, tool_call.id, str(exc)
                     )
                 raise
-            clean_content = _serialize_tool_result(result)
+            final_content = serialize_tool_result(result) + progress_suffix
             result_message_id = await self._append_message(
                 {
                     "role": "tool",
                     "tool_call_id": tool_call.id,
-                    "content": clean_content,  # checkpoint persists valid JSON
+                    "content": final_content,
                 }
             )
-            self.messages[-1]["content"] = clean_content + progress_suffix
             if self.checkpoint and self.session_id and result_message_id:
                 await self.checkpoint.mark_tool_call_completed(
                     self.session_id, tool_call.id, result_message_id
@@ -461,57 +439,3 @@ class FullStackExpertAgent:
             parts.append(f"\n## 审查反馈（请针对以下问题修改）\n{feedback}\n")
         return "".join(parts)
 
-
-# ── 辅助函数 ──────────────────────────────────────────
-
-
-def _tool_call_to_dict(tc: Any) -> dict[str, Any]:
-    return {
-        "id": tc.id,
-        "type": "function",
-        "function": {
-            "name": tc.function.name,
-            "arguments": tc.function.arguments,
-        },
-    }
-
-
-def _tool_call_from_dict(data: dict[str, Any]) -> Any:
-    function = data.get("function") or {}
-    return SimpleNamespace(
-        id=data.get("id", ""),
-        function=SimpleNamespace(
-            name=function.get("name", ""),
-            arguments=function.get("arguments", ""),
-        ),
-    )
-
-
-def _get_missing_tool_calls(messages: list[dict[str, Any]]) -> list[Any]:
-    completed = {
-        item.get("tool_call_id")
-        for item in messages
-        if item.get("role") == "tool" and item.get("tool_call_id")
-    }
-    for message in reversed(messages):
-        if message.get("role") != "assistant":
-            continue
-        tool_calls = message.get("tool_calls") or []
-        missing = [
-            _tool_call_from_dict(item)
-            for item in tool_calls
-            if item.get("id") not in completed
-        ]
-        if missing:
-            return missing
-    return []
-
-
-def _has_missing_tool_results(messages: list[dict[str, Any]]) -> bool:
-    return bool(_get_missing_tool_calls(messages))
-
-
-def _serialize_tool_result(result: ToolResult) -> str:
-    if result.success:
-        return json.dumps(result.output, ensure_ascii=False, default=str)
-    return json.dumps({"error": result.error}, ensure_ascii=False)

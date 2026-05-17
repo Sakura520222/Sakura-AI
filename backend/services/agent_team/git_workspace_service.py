@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -115,7 +116,7 @@ class AgentTeamGitWorkspaceService:
             logger.info("Agent 工作区创建独立 venv: {}", venv_dir)
             await executor.run("python -m venv .venv", timeout_seconds=settings.agent_team_timeout_seconds)
 
-        pip_cmd = str(venv_dir / "bin" / "pip")
+        pip_cmd = str(venv_dir / ("Scripts" if os.name == "nt" else "bin") / "pip")
         if (workspace / "pyproject.toml").exists():
             await executor.run(
                 f"{pip_cmd} install -e . --quiet", timeout_seconds=settings.agent_team_timeout_seconds

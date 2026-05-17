@@ -6,10 +6,16 @@ from typing import Any
 
 from loguru import logger
 
-from backend.core.config import DYNAMIC_CONFIG_RANGES, get_dynamic_config, get_settings
+from backend.core.config import get_settings
 from backend.core.model_context import get_model_context_manager
 from backend.services.ai_reviewer.message_utils import estimate_messages_tokens
 from backend.services.agent_team.ai_client import create_agent_team_summary_client
+from backend.utils.config_utils import (
+    resolve_bool_config,
+    resolve_float_config,
+    resolve_int_config,
+)
+from backend.utils.message_utils import has_missing_tool_results
 
 
 class AgentTeamContextCompressor:
@@ -24,20 +30,20 @@ class AgentTeamContextCompressor:
         self,
         messages: list[dict[str, Any]],
     ) -> list[dict[str, Any]]:
-        if not messages or _has_missing_tool_results(messages):
+        if not messages or has_missing_tool_results(messages):
             return messages
-        if not await _resolve_bool_config("agent_team_enable_context_compression", True):
+        if not await resolve_bool_config("agent_team_enable_context_compression", True):
             return messages
 
-        threshold = await _resolve_float_config(
+        threshold = await resolve_float_config(
             "agent_team_context_compression_threshold",
             get_settings().agent_team_context_compression_threshold,
         )
-        keep_rounds = await _resolve_int_config(
+        keep_rounds = await resolve_int_config(
             "agent_team_context_compression_keep_rounds",
             get_settings().agent_team_context_compression_keep_rounds,
         )
-        summary_max_tokens = await _resolve_int_config(
+        summary_max_tokens = await resolve_int_config(
             "agent_team_context_summary_max_tokens",
             get_settings().agent_team_context_summary_max_tokens,
         )
@@ -154,21 +160,6 @@ def _split_message_blocks(messages: list[dict[str, Any]]) -> list[list[dict[str,
     return blocks
 
 
-def _has_missing_tool_results(messages: list[dict[str, Any]]) -> bool:
-    completed = {
-        item.get("tool_call_id")
-        for item in messages
-        if item.get("role") == "tool" and item.get("tool_call_id")
-    }
-    for message in messages:
-        if message.get("role") != "assistant":
-            continue
-        for tool_call in message.get("tool_calls") or []:
-            if tool_call.get("id") not in completed:
-                return True
-    return False
-
-
 def _clean_messages(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return [
         {key: value for key, value in message.items() if key != "reasoning_content"}
@@ -207,40 +198,3 @@ def _build_compression_prompt(messages: list[dict[str, Any]], max_tokens: int) -
 
 {chr(10).join(text)}
 """
-
-
-async def _resolve_bool_config(key: str, fallback: bool) -> bool:
-    value = await get_dynamic_config(key)
-    if value is None:
-        return fallback
-    if isinstance(value, bool):
-        return value
-    return str(value).strip().lower() in {"1", "true", "yes", "on", "启用", "是"}
-
-
-async def _resolve_int_config(key: str, fallback: int) -> int:
-    value = await get_dynamic_config(key)
-    if value is None:
-        return fallback
-    try:
-        parsed = int(value)
-    except (TypeError, ValueError):
-        return fallback
-    min_value, max_value = DYNAMIC_CONFIG_RANGES.get(key, (parsed, parsed))
-    if min_value <= parsed <= max_value:
-        return parsed
-    return fallback
-
-
-async def _resolve_float_config(key: str, fallback: float) -> float:
-    value = await get_dynamic_config(key)
-    if value is None:
-        return fallback
-    try:
-        parsed = float(value)
-    except (TypeError, ValueError):
-        return fallback
-    min_value, max_value = DYNAMIC_CONFIG_RANGES.get(key, (parsed, parsed))
-    if min_value <= parsed <= max_value:
-        return parsed
-    return fallback

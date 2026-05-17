@@ -228,7 +228,7 @@ class AgentTeamWorker:
                 )
 
                 # 等待 GitHub 完成分支索引
-                await asyncio.sleep(2)
+                await asyncio.sleep(get_settings().agent_team_branch_index_delay)
 
                 # ── Phase 5: CREATE PR ──
                 await self._update_task(

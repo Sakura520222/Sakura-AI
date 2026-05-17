@@ -228,6 +228,32 @@ class ConversationCheckpointService:
     async def has_resume_state(self) -> bool:
         return await self.get_resume_cursor() is not None
 
+    async def save_session_result(
+        self, session_id: int, payload: dict[str, Any]
+    ) -> None:
+        """Persist a structured result payload (FullStackResult or ReviewResult)."""
+        async with async_session() as session:
+            agent_session = await session.get(AgentTeamSession, session_id)
+            if agent_session is None:
+                return
+            agent_session.result_payload = json.dumps(
+                payload, ensure_ascii=False, default=str
+            )
+            await session.commit()
+
+    async def load_session_result(
+        self, session_id: int
+    ) -> dict[str, Any] | None:
+        """Load a previously persisted structured result from the session."""
+        async with async_session() as session:
+            agent_session = await session.get(AgentTeamSession, session_id)
+            if agent_session is None or not agent_session.result_payload:
+                return None
+            try:
+                return json.loads(agent_session.result_payload)
+            except json.JSONDecodeError:
+                return None
+
     async def _set_session_status(
         self,
         session_id: int,

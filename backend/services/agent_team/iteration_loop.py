@@ -120,7 +120,9 @@ class IterationLoopService:
                 fs_result = await self._restore_fullstack_result(iteration)
                 resume_cursor = None
             else:
-                expert = await self._create_fullstack_agent(iteration, resume_cursor)
+                expert = await self._create_agent(
+                    "fullstack", iteration, resume_cursor, FullStackExpertAgent
+                )
                 fs_result = await expert.execute(
                     task_title=task_title,
                     task_summary=task_summary,
@@ -139,6 +141,19 @@ class IterationLoopService:
                 await self._complete_session(
                     getattr(expert, "session_id", None), fs_result.tool_calls_count
                 )
+                if self.checkpoint and getattr(expert, "session_id", None):
+                    await self.checkpoint.save_session_result(
+                        expert.session_id,
+                        {
+                            "success": fs_result.success,
+                            "summary": fs_result.summary,
+                            "modified_files": fs_result.modified_files,
+                            "risk_level": fs_result.risk_level,
+                            "test_result": fs_result.test_result,
+                            "tool_calls_count": fs_result.tool_calls_count,
+                            "error": fs_result.error,
+                        },
+                    )
                 if resume_cursor and resume_cursor.role_name == "fullstack":
                     resume_cursor = None
 
@@ -193,7 +208,9 @@ class IterationLoopService:
             except Exception:
                 logger.warning("获取 diff summary 失败，审查员将不携带 diff 摘要")
 
-            reviewer = await self._create_reviewer_agent(iteration, resume_cursor)
+            reviewer = await self._create_agent(
+                "reviewer", iteration, resume_cursor, ProfessionalReviewAgent
+            )
             rev_result = await reviewer.review(
                 task_title=task_title,
                 task_summary=task_summary,
@@ -260,6 +277,26 @@ class IterationLoopService:
         )
         if session_id is None:
             raise RuntimeError("缺少已完成的 fullstack session，无法续跑 reviewer")
+
+        # Prefer structured result payload
+        payload = await self.checkpoint.load_session_result(session_id)
+        if payload and isinstance(payload, dict):
+            return FullStackResult(
+                success=payload.get("success", True),
+                summary=payload.get("summary", ""),
+                modified_files=sorted(payload.get("modified_files", [])),
+                risk_level=payload.get("risk_level", "medium"),
+                test_result=payload.get("test_result", ""),
+                tool_calls_count=payload.get("tool_calls_count", 0),
+                error=payload.get("error", ""),
+            )
+
+        # Fallback: legacy message-based recovery for sessions before migration
+        return await self._restore_fullstack_result_from_messages(session_id)
+
+    async def _restore_fullstack_result_from_messages(
+        self, session_id: int
+    ) -> FullStackResult:
         messages = await self.checkpoint.load_messages(session_id)
         for message in reversed(messages):
             if message.get("role") != "tool":
@@ -284,17 +321,19 @@ class IterationLoopService:
             )
         raise RuntimeError("无法从 fullstack messages 中恢复完成结果")
 
-    async def _create_fullstack_agent(
+    async def _create_agent(
         self,
+        role_name: str,
         iteration: int,
         resume_cursor: ResumeCursor | None,
-    ) -> FullStackExpertAgent:
+        agent_class: type,
+    ):
         initial_messages = None
         session_id = None
         if (
             self.checkpoint
             and resume_cursor
-            and resume_cursor.role_name == "fullstack"
+            and resume_cursor.role_name == role_name
             and resume_cursor.iteration_number == iteration
         ):
             session_id = resume_cursor.session_id
@@ -302,45 +341,13 @@ class IterationLoopService:
         elif self.checkpoint:
             agent_session = await self.checkpoint.create_session(
                 iteration,
-                "fullstack",
+                role_name,
                 resume_index=self.resume_index,
             )
             session_id = agent_session.id
         if not self.checkpoint:
-            return FullStackExpertAgent(self.workspace, self.workspace_service)
-        return FullStackExpertAgent(
-            self.workspace,
-            self.workspace_service,
-            checkpoint=self.checkpoint,
-            session_id=session_id,
-            initial_messages=initial_messages,
-        )
-
-    async def _create_reviewer_agent(
-        self,
-        iteration: int,
-        resume_cursor: ResumeCursor | None,
-    ) -> ProfessionalReviewAgent:
-        initial_messages = None
-        session_id = None
-        if (
-            self.checkpoint
-            and resume_cursor
-            and resume_cursor.role_name == "reviewer"
-            and resume_cursor.iteration_number == iteration
-        ):
-            session_id = resume_cursor.session_id
-            initial_messages = await self.checkpoint.load_messages(session_id)
-        elif self.checkpoint:
-            agent_session = await self.checkpoint.create_session(
-                iteration,
-                "reviewer",
-                resume_index=self.resume_index,
-            )
-            session_id = agent_session.id
-        if not self.checkpoint:
-            return ProfessionalReviewAgent(self.workspace, self.workspace_service)
-        return ProfessionalReviewAgent(
+            return agent_class(self.workspace, self.workspace_service)
+        return agent_class(
             self.workspace,
             self.workspace_service,
             checkpoint=self.checkpoint,

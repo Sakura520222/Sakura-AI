@@ -204,6 +204,7 @@ class AgentTeamSession(Base):
     tool_calls_count = Column(Integer, default=0, nullable=False)
     last_seq = Column(Integer, default=0, nullable=False)
     error_message = Column(Text, nullable=True)
+    result_payload = Column(LONGTEXT, nullable=True, comment="Structured result JSON")
     started_at = Column(TIMESTAMP, default=utc_now, nullable=False)
     completed_at = Column(TIMESTAMP, nullable=True)
 

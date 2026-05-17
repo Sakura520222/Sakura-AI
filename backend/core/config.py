@@ -520,6 +520,7 @@ class Settings(BaseSettings):
     agent_team_max_iterations_per_task: int = 3
     agent_team_max_tool_rounds: int = 30
     agent_team_max_runtime_minutes: int = 60
+    agent_team_branch_index_delay: float = 2.0
     agent_team_draft_pr: bool = True
     agent_team_max_files_changed: int = 8
     agent_team_max_lines_changed: int = 500
