@@ -652,7 +652,7 @@ class PRDependencyGraphService:
         """构建带 HTML 注释标记的依赖图块"""
         return (
             f"{self.START_MARKER}\n\n"
-            f"## 🔗 Sakura AI Reviewer 依赖图\n\n"
+            f"## 依赖图\n\n"
             f"```mermaid\n{mermaid_graph}\n```\n\n"
             f"{self.END_MARKER}"
         )
