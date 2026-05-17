@@ -413,14 +413,15 @@ class FullStackExpertAgent:
                         self.session_id, tool_call.id, str(exc)
                     )
                 raise
-            result_content = _serialize_tool_result(result) + progress_suffix
+            clean_content = _serialize_tool_result(result)
             result_message_id = await self._append_message(
                 {
                     "role": "tool",
                     "tool_call_id": tool_call.id,
-                    "content": result_content,
+                    "content": clean_content,  # checkpoint persists valid JSON
                 }
             )
+            self.messages[-1]["content"] = clean_content + progress_suffix
             if self.checkpoint and self.session_id and result_message_id:
                 await self.checkpoint.mark_tool_call_completed(
                     self.session_id, tool_call.id, result_message_id

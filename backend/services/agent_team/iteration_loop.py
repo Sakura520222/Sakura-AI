@@ -264,8 +264,11 @@ class IterationLoopService:
         for message in reversed(messages):
             if message.get("role") != "tool":
                 continue
+            content = message.get("content") or "{}"
+            if "\n\n[进度:" in content:
+                content = content[: content.index("\n\n[进度:")]
             try:
-                payload = json.loads(message.get("content") or "{}")
+                payload = json.loads(content)
             except json.JSONDecodeError:
                 continue
             if not isinstance(payload, dict) or "summary" not in payload:
