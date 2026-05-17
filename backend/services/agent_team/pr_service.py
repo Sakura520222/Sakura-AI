@@ -8,6 +8,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import re
 from dataclasses import dataclass
 
@@ -91,9 +92,11 @@ class AgentTeamPRService:
         head_branch: str,
         base_branch: str,
         draft: bool = False,
+        max_retries: int = 3,
     ) -> PRCreationResult:
-        """通过 GitHub API 创建 Pull Request。"""
+        """通过 GitHub API 创建 Pull Request，422 时自动重试。"""
         from backend.core.github_app import GitHubAppClient
+        from github import GithubException
 
         github_app = GitHubAppClient()
         client = github_app.get_repo_client(repo_owner, repo_name)
@@ -102,27 +105,62 @@ class AgentTeamPRService:
 
         repo = client.get_repo(f"{repo_owner}/{repo_name}")
 
-        pr = repo.create_pull(
-            title=title,
-            body=body,
-            head=head_branch,
-            base=base_branch,
-            draft=draft,
-        )
+        last_error: Exception | None = None
+        for attempt in range(max_retries):
+            try:
+                # 验证 head 分支存在
+                try:
+                    repo.get_branch(head_branch)
+                except GithubException as branch_err:
+                    if branch_err.status == 404:
+                        logger.warning(
+                            "PR 创建前 head 分支不存在 (attempt {}): {} — 等待后重试",
+                            attempt + 1,
+                            head_branch,
+                        )
+                        if attempt < max_retries - 1:
+                            await asyncio.sleep(2**attempt)
+                            continue
+                        raise RuntimeError(
+                            f"head 分支在 GitHub 上不存在: {head_branch}"
+                        ) from branch_err
+                    raise
 
-        logger.info(
-            "Agent PR 创建成功: #{} {} -> {}",
-            pr.number,
-            head_branch,
-            base_branch,
-        )
+                pr = repo.create_pull(
+                    title=title,
+                    body=body,
+                    head=head_branch,
+                    base=base_branch,
+                    draft=draft,
+                )
+                logger.info(
+                    "Agent PR 创建成功: #{} {} -> {}",
+                    pr.number,
+                    head_branch,
+                    base_branch,
+                )
+                return PRCreationResult(
+                    pr_number=pr.number,
+                    pr_url=pr.html_url,
+                    commit_sha="",
+                    branch_name=head_branch,
+                )
+            except GithubException as e:
+                last_error = e
+                if e.status == 422 and attempt < max_retries - 1:
+                    logger.warning(
+                        "PR 创建 422 (attempt {}/{}): head={}, base={}, errors={}",
+                        attempt + 1,
+                        max_retries,
+                        head_branch,
+                        base_branch,
+                        e.data.get("errors") if hasattr(e, "data") else str(e),
+                    )
+                    await asyncio.sleep(2**attempt)
+                    continue
+                raise
 
-        return PRCreationResult(
-            pr_number=pr.number,
-            pr_url=pr.html_url,
-            commit_sha="",
-            branch_name=head_branch,
-        )
+        raise last_error  # type: ignore[misc]
 
     def build_pr_body(
         self,
@@ -137,7 +175,7 @@ class AgentTeamPRService:
     ) -> str:
         """构建 PR 描述。"""
         parts = [
-            "## 🤖 Sakura Agent 专家团队自动生成的 PR\n",
+            "## Sakura Agent 自动生成的 PR\n",
             f"**任务**: {task_title}\n",
         ]
         if source_issue_number:
@@ -152,7 +190,7 @@ class AgentTeamPRService:
 
         parts.append(
             "\n---\n"
-            "*此 PR 由 Sakura Agent 专家团队自动生成，包含全栈专家的代码修改和专业审查角色的审查。*\n"
+            "*此 PR 由 Sakura Agent 自动生成，包含全栈专家的代码修改和专业审查角色的审查。*\n"
             "*请仔细审查后合并。*\n"
         )
         return "\n".join(parts)
