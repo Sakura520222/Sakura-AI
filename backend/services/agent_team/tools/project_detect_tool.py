@@ -7,6 +7,7 @@ from __future__ import annotations
 
 from pathlib import Path
 from typing import Any
+import json
 
 from backend.services.agent_team.tools.base import BaseTool, ToolContext, ToolResult
 
@@ -194,6 +195,4 @@ class DetectProjectTool(BaseTool):
 
 
 def _safe_read_json(path: Path) -> dict:
-    import json
-
     return json.loads(path.read_text(encoding="utf-8", errors="ignore"))

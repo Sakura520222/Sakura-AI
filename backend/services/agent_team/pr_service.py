@@ -269,5 +269,5 @@ class AgentTeamPRService:
             return title
 
         except Exception as e:
-            logger.warning(f"AI 生成 PR 标题失败，使用原始标题: {e}")
+            logger.warning("AI 生成 PR 标题失败，使用原始标题: {}", e)
             return task_title

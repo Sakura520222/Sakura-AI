@@ -5,13 +5,10 @@ from dataclasses import dataclass
 import pytest
 
 from backend.core.config import DYNAMIC_CONFIG_LABELS, DYNAMIC_CONFIG_RANGES, get_settings
-from backend.services.agent_team.fullstack_expert import resolve_agent_team_max_tool_rounds
 from backend.services.agent_team.fullstack_expert import FullStackResult
 from backend.services.agent_team.iteration_loop import IterationLoopService
-from backend.services.agent_team.professional_reviewer import (
-    resolve_reviewer_max_tool_rounds,
-    ReviewResult,
-)
+from backend.services.agent_team.professional_reviewer import ReviewResult
+from backend.utils.config_utils import resolve_clamped_int_config
 from backend.services.agent_team.tools.registry import (
     FULLSTACK_TOOL_INSTANCES,
     REVIEWER_TOOL_INSTANCES,
@@ -53,15 +50,17 @@ async def test_resolve_agent_team_max_tool_rounds_uses_dynamic_config(monkeypatc
         return "75"
 
     monkeypatch.setattr(
-        "backend.services.agent_team.fullstack_expert.get_dynamic_config",
+        "backend.utils.config_utils.get_dynamic_config",
         fake_get_dynamic_config,
     )
     monkeypatch.setattr(
-        "backend.services.agent_team.fullstack_expert.get_settings",
+        "backend.utils.config_utils.get_settings",
         lambda: type("Settings", (), {"agent_team_max_tool_rounds": 30})(),
     )
 
-    assert await resolve_agent_team_max_tool_rounds() == 75
+    assert await resolve_clamped_int_config(
+        "agent_team_max_tool_rounds", "agent_team_max_tool_rounds"
+    ) == 75
 
 
 @pytest.mark.asyncio
@@ -73,15 +72,17 @@ async def test_resolve_agent_team_max_tool_rounds_falls_back_on_invalid_dynamic_
         return "invalid"
 
     monkeypatch.setattr(
-        "backend.services.agent_team.fullstack_expert.get_dynamic_config",
+        "backend.utils.config_utils.get_dynamic_config",
         fake_get_dynamic_config,
     )
     monkeypatch.setattr(
-        "backend.services.agent_team.fullstack_expert.get_settings",
+        "backend.utils.config_utils.get_settings",
         lambda: type("Settings", (), {"agent_team_max_tool_rounds": 42})(),
     )
 
-    assert await resolve_agent_team_max_tool_rounds() == 42
+    assert await resolve_clamped_int_config(
+        "agent_team_max_tool_rounds", "agent_team_max_tool_rounds"
+    ) == 42
 
 
 @dataclass
@@ -229,15 +230,17 @@ async def test_resolve_reviewer_max_tool_rounds_uses_dynamic_config(monkeypatch)
         return "50"
 
     monkeypatch.setattr(
-        "backend.services.agent_team.professional_reviewer.get_dynamic_config",
+        "backend.utils.config_utils.get_dynamic_config",
         fake_get_dynamic_config,
     )
     monkeypatch.setattr(
-        "backend.services.agent_team.professional_reviewer.get_settings",
+        "backend.utils.config_utils.get_settings",
         lambda: type("Settings", (), {"agent_team_reviewer_max_tool_rounds": 20})(),
     )
 
-    assert await resolve_reviewer_max_tool_rounds() == 50
+    assert await resolve_clamped_int_config(
+        "agent_team_reviewer_max_tool_rounds", "agent_team_reviewer_max_tool_rounds"
+    ) == 50
 
 
 @pytest.mark.asyncio
@@ -246,15 +249,17 @@ async def test_resolve_reviewer_max_tool_rounds_falls_back_on_invalid(monkeypatc
         return "not_a_number"
 
     monkeypatch.setattr(
-        "backend.services.agent_team.professional_reviewer.get_dynamic_config",
+        "backend.utils.config_utils.get_dynamic_config",
         fake_get_dynamic_config,
     )
     monkeypatch.setattr(
-        "backend.services.agent_team.professional_reviewer.get_settings",
+        "backend.utils.config_utils.get_settings",
         lambda: type("Settings", (), {"agent_team_reviewer_max_tool_rounds": 20})(),
     )
 
-    assert await resolve_reviewer_max_tool_rounds() == 20
+    assert await resolve_clamped_int_config(
+        "agent_team_reviewer_max_tool_rounds", "agent_team_reviewer_max_tool_rounds"
+    ) == 20
 
 
 # ── 新工具注册测试 ──

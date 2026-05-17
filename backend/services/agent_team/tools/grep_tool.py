@@ -12,18 +12,8 @@ from pathlib import Path
 from typing import Any
 
 from backend.services.agent_team.tools.base import BaseTool, ToolContext, ToolResult
+from backend.utils.search_excludes import SEARCH_EXCLUDES
 
-# 搜索排除目录（VCS + 包管理器 + 构建产物）
-SEARCH_EXCLUDES = {
-    ".git", ".svn", ".hg", ".bzr",
-    "__pycache__",
-    ".venv", "venv", "env",
-    "node_modules", "vendor", "bower_components",
-    ".tox", ".mypy_cache", ".pytest_cache", ".ruff_cache",
-    "dist", "build", ".eggs", "egg-info",
-    ".cargo", "target",
-    "chroma_data",
-}
 MAX_GREP_KEYWORD_LENGTH = 500
 
 

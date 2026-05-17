@@ -14,14 +14,11 @@ AI 自主决定审查哪些文件、运行什么检查，完成后调用 submit_
 
 from __future__ import annotations
 
-import json
 from dataclasses import dataclass, field
-from types import SimpleNamespace
 from typing import Any
 
 from loguru import logger
 
-from backend.core.config import DYNAMIC_CONFIG_RANGES, get_dynamic_config, get_settings
 from backend.services.agent_team.ai_client import create_agent_team_client
 from backend.services.agent_team.context_compressor import AgentTeamContextCompressor
 from backend.services.agent_team.conversation_checkpoint import (
@@ -34,6 +31,13 @@ from backend.services.agent_team.tools.registry import (
     get_tool_definitions,
 )
 from backend.services.agent_team.workspace_service import AgentTeamWorkspaceService
+from backend.utils.config_utils import resolve_clamped_int_config
+from backend.utils.message_utils import (
+    get_missing_tool_calls,
+    has_missing_tool_results,
+    serialize_tool_result,
+    tool_call_to_dict,
+)
 
 REVIEWER_SYSTEM_PROMPT = """你是 Sakura Agent 专家团队的专业代码审查员。
 你审查全栈专家 Agent 所做的代码修改，确保质量、正确性和安全性。
@@ -136,34 +140,6 @@ class ReviewResult:
     tool_calls_count: int = 0
 
 
-async def resolve_reviewer_max_tool_rounds() -> int:
-    """读取专业审查工具调用轮次上限。"""
-    settings = get_settings()
-    fallback = settings.agent_team_reviewer_max_tool_rounds
-    try:
-        raw = await get_dynamic_config("agent_team_reviewer_max_tool_rounds")
-        if raw is None:
-            return fallback
-        value = int(raw)
-        min_value, max_value = DYNAMIC_CONFIG_RANGES["agent_team_reviewer_max_tool_rounds"]
-        if min_value <= value <= max_value:
-            return value
-        raise ValueError(f"value {value} outside range {min_value}-{max_value}")
-    except (TypeError, ValueError) as exc:
-        logger.warning(
-            "读取 agent_team_reviewer_max_tool_rounds 配置失败，使用默认值 {}: {}",
-            fallback,
-            exc,
-        )
-        return fallback
-    except Exception as exc:
-        logger.warning(
-            "读取 agent_team_reviewer_max_tool_rounds 配置异常，使用默认值 {}: {}",
-            fallback,
-            exc,
-        )
-        return fallback
-
 
 class ProfessionalReviewAgent:
     """专业审查 Agent - 通过工具调用自主审查代码。"""
@@ -242,10 +218,13 @@ class ProfessionalReviewAgent:
             sakura_ref=sakura_ref,
         )
         tool_schemas = get_tool_definitions("reviewer", provider=config.provider)
-        max_tool_rounds = await resolve_reviewer_max_tool_rounds()
+        max_tool_rounds = await resolve_clamped_int_config(
+            "agent_team_reviewer_max_tool_rounds",
+            "agent_team_reviewer_max_tool_rounds",
+        )
 
         await self._ensure_system_checkpoint()
-        if not self.restored_messages and not _has_missing_tool_results(self.messages):
+        if not self.restored_messages and not has_missing_tool_results(self.messages):
             await self._append_message(
                 {
                     "role": "user",
@@ -268,7 +247,7 @@ class ProfessionalReviewAgent:
         for round_num in range(1, max_tool_rounds + 1):
             logger.debug("专业审查工具调用第 {} 轮", round_num)
 
-            pending_tool_calls = _get_missing_tool_calls(self.messages)
+            pending_tool_calls = get_missing_tool_calls(self.messages)
             if pending_tool_calls:
                 terminal_output = await self._execute_tool_calls(
                     pending_tool_calls,
@@ -311,7 +290,7 @@ class ProfessionalReviewAgent:
                 assistant_msg["content"] = message.content
             if message.tool_calls:
                 assistant_msg["tool_calls"] = [
-                    _tc_to_dict(tc) for tc in message.tool_calls
+                    tool_call_to_dict(tc) for tc in message.tool_calls
                 ]
             await self._append_message(assistant_msg)
 
@@ -400,7 +379,7 @@ class ProfessionalReviewAgent:
                 {
                     "role": "tool",
                     "tool_call_id": tool_call.id,
-                    "content": _serialize_tool_result(result),
+                    "content": serialize_tool_result(result),
                 }
             )
             if self.checkpoint and self.session_id and result_message_id:
@@ -444,52 +423,6 @@ class ProfessionalReviewAgent:
         return "\n".join(parts)
 
 
-def _tc_to_dict(tool_call: Any) -> dict:
-    return {
-        "id": tool_call.id,
-        "type": "function",
-        "function": {
-            "name": tool_call.function.name,
-            "arguments": tool_call.function.arguments,
-        },
-    }
-
-
-def _tool_call_from_dict(data: dict[str, Any]) -> Any:
-    function = data.get("function") or {}
-    return SimpleNamespace(
-        id=data.get("id", ""),
-        function=SimpleNamespace(
-            name=function.get("name", ""),
-            arguments=function.get("arguments", ""),
-        ),
-    )
-
-
-def _get_missing_tool_calls(messages: list[dict[str, Any]]) -> list[Any]:
-    completed = {
-        item.get("tool_call_id")
-        for item in messages
-        if item.get("role") == "tool" and item.get("tool_call_id")
-    }
-    for message in reversed(messages):
-        if message.get("role") != "assistant":
-            continue
-        tool_calls = message.get("tool_calls") or []
-        missing = [
-            _tool_call_from_dict(item)
-            for item in tool_calls
-            if item.get("id") not in completed
-        ]
-        if missing:
-            return missing
-    return []
-
-
-def _has_missing_tool_results(messages: list[dict[str, Any]]) -> bool:
-    return bool(_get_missing_tool_calls(messages))
-
-
 def _review_result_from_terminal(
     terminal_output: dict[str, Any], tool_calls_count: int
 ) -> ReviewResult:
@@ -518,9 +451,3 @@ def _review_result_from_terminal(
         passed=verdict == "pass" and score >= 7,
         tool_calls_count=tool_calls_count,
     )
-
-
-def _serialize_tool_result(result: ToolResult) -> str:
-    if result.success:
-        return json.dumps(result.output, ensure_ascii=False, default=str)
-    return json.dumps({"error": result.error}, ensure_ascii=False)

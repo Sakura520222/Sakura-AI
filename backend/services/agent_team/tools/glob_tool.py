@@ -13,18 +13,7 @@ from loguru import logger
 
 from backend.services.agent_team.tools.base import BaseTool, ToolContext, ToolResult
 from backend.services.agent_team.workspace_service import WorkspaceSecurityError
-
-# 搜索排除目录（包管理器 + 构建产物 + VCS）
-_GLOB_EXCLUDES = {
-    ".git", ".svn", ".hg", ".bzr",
-    "__pycache__",
-    ".venv", "venv", "env",
-    "node_modules", "vendor", "bower_components",
-    ".tox", ".mypy_cache", ".pytest_cache", ".ruff_cache",
-    "dist", "build", ".eggs", "egg-info",
-    ".cargo", "target",
-    "chroma_data",
-}
+from backend.utils.search_excludes import SEARCH_EXCLUDES
 
 
 class GlobTool(BaseTool):
@@ -101,7 +90,7 @@ class GlobTool(BaseTool):
         for match in matches:
             if len(filenames) >= max_results:
                 break
-            if any(part in _GLOB_EXCLUDES for part in match.parts):
+            if any(part in SEARCH_EXCLUDES for part in match.parts):
                 continue
             rel = match.relative_to(
                 ctx.workspace_service.resolve_inside_workspace(ctx.workspace)

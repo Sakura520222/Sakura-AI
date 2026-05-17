@@ -1,6 +1,7 @@
 """WebUI Agent 专家团队路由（超级管理员专用）"""
 
 import json
+import re
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, BackgroundTasks, Depends, Form, Request
@@ -534,8 +535,6 @@ def _parse_issue_ref(ref: str) -> tuple[str, int]:
       - owner/repo#123
       - owner/repo 123
     """
-    import re
-
     ref = ref.strip()
 
     # GitHub Issue URL
