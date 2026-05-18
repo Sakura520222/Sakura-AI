@@ -37,92 +37,94 @@
             </div>
         </div>
 
-        <!-- Message stream -->
+        <!-- Message stream — single root element per item for Alpine.js -->
         <template x-for="(item, idx) in displayItems" :key="item.key">
-            <!-- Session divider -->
-            <div x-show="item.type === 'session'" class="flex items-center gap-3 py-2">
-                <div class="flex-1 h-px bg-gray-200 dark:bg-gray-700"></div>
-                <span class="text-xs font-semibold px-3 py-1 rounded-full"
-                      :class="item.role === 'fullstack' ? 'bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300' : 'bg-purple-100 dark:bg-purple-900/30 text-purple-700 dark:text-purple-300'"
-                      x-text="item.label"></span>
-                <div class="flex-1 h-px bg-gray-200 dark:bg-gray-700"></div>
-            </div>
-
-            <!-- Phase status -->
-            <div x-show="item.type === 'phase'" class="flex justify-center">
-                <span class="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-medium bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-400">
-                    <span class="w-1.5 h-1.5 rounded-full bg-sakura-500"></span>
-                    <span x-text="item.label"></span>
-                </span>
-            </div>
-
-            <!-- AI thinking -->
-            <div x-show="item.type === 'thinking'" class="flex justify-start">
-                <div class="flex items-center gap-2 px-4 py-2 rounded-2xl bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 text-sm text-gray-500 dark:text-gray-400">
-                    <svg class="animate-spin h-4 w-4" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg>
-                    <span x-text="item.label"></span>
+            <div>
+                <!-- Session divider -->
+                <div x-show="item.type === 'session'" class="flex items-center gap-3 py-2">
+                    <div class="flex-1 h-px bg-gray-200 dark:bg-gray-700"></div>
+                    <span class="text-xs font-semibold px-3 py-1 rounded-full"
+                          :class="item.role === 'fullstack' ? 'bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300' : 'bg-purple-100 dark:bg-purple-900/30 text-purple-700 dark:text-purple-300'"
+                          x-text="item.label"></span>
+                    <div class="flex-1 h-px bg-gray-200 dark:bg-gray-700"></div>
                 </div>
-            </div>
 
-            <!-- Assistant message -->
-            <div x-show="item.type === 'assistant'" class="flex justify-start">
-                <div class="max-w-[85%] rounded-2xl px-4 py-3 text-sm bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 text-gray-700 dark:text-gray-300 prose prose-sm dark:prose-invert max-w-none"
-                     :class="item.collapsed ? 'max-h-24 overflow-hidden' : ''">
-                    <div x-show="item.content" x-html="item.htmlContent"></div>
-                    <div x-show="item.toolCalls && item.toolCalls.length > 0" class="mt-2 space-y-1">
-                        <template x-for="tc in (item.toolCalls || [])" :key="tc.id">
-                            <div class="flex items-center gap-1.5 text-xs font-mono px-2 py-1 rounded-lg bg-gray-50 dark:bg-gray-900/50 text-gray-600 dark:text-gray-400">
-                                <span class="text-sakura-600 dark:text-sakura-400" x-text="tc.name + '()'"></span>
-                            </div>
-                        </template>
+                <!-- Phase status -->
+                <div x-show="item.type === 'phase'" class="flex justify-center py-1">
+                    <span class="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-medium bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-400">
+                        <span class="w-1.5 h-1.5 rounded-full bg-sakura-500"></span>
+                        <span x-text="item.label"></span>
+                    </span>
+                </div>
+
+                <!-- AI thinking -->
+                <div x-show="item.type === 'thinking'" class="flex justify-start">
+                    <div class="flex items-center gap-2 px-4 py-2 rounded-2xl bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 text-sm text-gray-500 dark:text-gray-400">
+                        <svg class="animate-spin h-4 w-4" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg>
+                        <span x-text="item.label"></span>
                     </div>
                 </div>
-                <button x-show="item.isLong" @click="item.collapsed = !item.collapsed" class="self-end ml-1 text-xs text-gray-400 hover:text-gray-600 dark:hover:text-gray-300">
-                    <span x-show="item.collapsed">{{ _('agent_team.live_expand') }}</span>
-                    <span x-show="!item.collapsed">{{ _('agent_team.live_collapse') }}</span>
-                </button>
-            </div>
 
-            <!-- Tool call -->
-            <div x-show="item.type === 'tool'" class="flex justify-start">
-                <div class="max-w-[85%] rounded-xl px-3 py-2 text-sm border"
-                     :class="item.status === 'running' ? 'bg-amber-50 dark:bg-amber-900/20 border-amber-200 dark:border-amber-800' : item.status === 'completed' ? 'bg-emerald-50 dark:bg-emerald-900/20 border-emerald-200 dark:border-emerald-800' : 'bg-red-50 dark:bg-red-900/20 border-red-200 dark:border-red-800'">
-                    <div class="flex items-center gap-2 font-mono text-xs">
-                        <span x-show="item.status === 'running'" class="flex items-center gap-1">
-                            <svg class="animate-spin h-3 w-3" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg>
-                            <span class="text-amber-700 dark:text-amber-300 font-bold" x-text="item.name + '()'"></span>
-                        </span>
-                        <span x-show="item.status === 'completed'" class="text-emerald-600 dark:text-emerald-400">&#10003;</span>
-                        <span x-show="item.status === 'failed'" class="text-red-600 dark:text-red-400">&#10007;</span>
-                        <span x-show="item.status !== 'running'" class="font-bold" x-text="item.name + '()'"></span>
+                <!-- Assistant message -->
+                <div x-show="item.type === 'assistant'" class="flex justify-start gap-1">
+                    <div class="max-w-[85%] rounded-2xl px-4 py-3 text-sm bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 text-gray-700 dark:text-gray-300 prose prose-sm dark:prose-invert max-w-none"
+                         :class="item.collapsed ? 'max-h-24 overflow-hidden' : ''">
+                        <div x-show="item.content" x-html="item.htmlContent"></div>
+                        <div x-show="item.toolCalls && item.toolCalls.length > 0" class="mt-2 space-y-1">
+                            <template x-for="tc in (item.toolCalls || [])" :key="tc.id">
+                                <div class="flex items-center gap-1.5 text-xs font-mono px-2 py-1 rounded-lg bg-gray-50 dark:bg-gray-900/50 text-gray-600 dark:text-gray-400">
+                                    <span class="text-sakura-600 dark:text-sakura-400" x-text="tc.name + '()'"></span>
+                                </div>
+                            </template>
+                        </div>
                     </div>
-                    <div x-show="item.argsPreview" class="mt-1 text-xs text-gray-500 dark:text-gray-400 truncate" x-text="item.argsPreview"></div>
-                    <div x-show="item.error" class="mt-1 text-xs text-red-600 dark:text-red-400" x-text="item.error"></div>
+                    <button x-show="item.isLong" @click="item.collapsed = !item.collapsed" class="self-end text-xs text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 shrink-0">
+                        <span x-show="item.collapsed">{{ _('agent_team.live_expand') }}</span>
+                        <span x-show="!item.collapsed">{{ _('agent_team.live_collapse') }}</span>
+                    </button>
                 </div>
-            </div>
 
-            <!-- Tool result -->
-            <div x-show="item.type === 'tool_result'" class="flex justify-start">
-                <div class="max-w-[85%] rounded-xl px-3 py-2 text-xs font-mono bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-400 border border-gray-200 dark:border-gray-700"
-                     :class="item.collapsed ? 'max-h-16 overflow-hidden' : ''">
-                    <pre class="whitespace-pre-wrap break-all" x-text="item.content"></pre>
-                </div>
-                <button x-show="item.isLong" @click="item.collapsed = !item.collapsed" class="self-end ml-1 text-xs text-gray-400 hover:text-gray-600">
-                    <span x-show="item.collapsed">{{ _('agent_team.live_expand') }}</span>
-                    <span x-show="!item.collapsed">{{ _('agent_team.live_collapse') }}</span>
-                </button>
-            </div>
-
-            <!-- User prompt -->
-            <div x-show="item.type === 'prompt'" class="flex justify-end">
-                <div class="max-w-[80%] rounded-2xl px-4 py-3 text-sm bg-orange-50 dark:bg-orange-900/20 border border-orange-200 dark:border-orange-800 text-orange-800 dark:text-orange-200">
-                    <div class="flex items-center gap-2 mb-1">
-                        <span class="text-xs font-semibold">{{ _('agent_team.live_admin_guidance') }}</span>
-                        <span class="text-xs px-1.5 py-0.5 rounded-full"
-                              :class="item.status === 'pending' ? 'bg-amber-100 dark:bg-amber-900/40 text-amber-700 dark:text-amber-300' : item.status === 'consumed' ? 'bg-green-100 dark:bg-green-900/40 text-green-700 dark:text-green-300' : 'bg-gray-100 dark:bg-gray-800 text-gray-500'"
-                              x-text="item.status"></span>
+                <!-- Tool call -->
+                <div x-show="item.type === 'tool'" class="flex justify-start">
+                    <div class="max-w-[85%] rounded-xl px-3 py-2 text-sm border"
+                         :class="item.status === 'running' ? 'bg-amber-50 dark:bg-amber-900/20 border-amber-200 dark:border-amber-800' : item.status === 'completed' ? 'bg-emerald-50 dark:bg-emerald-900/20 border-emerald-200 dark:border-emerald-800' : 'bg-red-50 dark:bg-red-900/20 border-red-200 dark:border-red-800'">
+                        <div class="flex items-center gap-2 font-mono text-xs">
+                            <span x-show="item.status === 'running'" class="flex items-center gap-1">
+                                <svg class="animate-spin h-3 w-3" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg>
+                                <span class="text-amber-700 dark:text-amber-300 font-bold" x-text="item.name + '()'"></span>
+                            </span>
+                            <span x-show="item.status === 'completed'" class="text-emerald-600 dark:text-emerald-400">&#10003;</span>
+                            <span x-show="item.status === 'failed'" class="text-red-600 dark:text-red-400">&#10007;</span>
+                            <span x-show="item.status !== 'running'" class="font-bold" x-text="item.name + '()'"></span>
+                        </div>
+                        <div x-show="item.argsPreview" class="mt-1 text-xs text-gray-500 dark:text-gray-400 truncate" x-text="item.argsPreview"></div>
+                        <div x-show="item.error" class="mt-1 text-xs text-red-600 dark:text-red-400" x-text="item.error"></div>
                     </div>
-                    <p class="whitespace-pre-wrap" x-text="item.content"></p>
+                </div>
+
+                <!-- Tool result -->
+                <div x-show="item.type === 'tool_result'" class="flex justify-start gap-1">
+                    <div class="max-w-[85%] rounded-xl px-3 py-2 text-xs font-mono bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-400 border border-gray-200 dark:border-gray-700"
+                         :class="item.collapsed ? 'max-h-16 overflow-hidden' : ''">
+                        <pre class="whitespace-pre-wrap break-all" x-text="item.content"></pre>
+                    </div>
+                    <button x-show="item.isLong" @click="item.collapsed = !item.collapsed" class="self-end text-xs text-gray-400 hover:text-gray-600 shrink-0">
+                        <span x-show="item.collapsed">{{ _('agent_team.live_expand') }}</span>
+                        <span x-show="!item.collapsed">{{ _('agent_team.live_collapse') }}</span>
+                    </button>
+                </div>
+
+                <!-- User prompt -->
+                <div x-show="item.type === 'prompt'" class="flex justify-end">
+                    <div class="max-w-[80%] rounded-2xl px-4 py-3 text-sm bg-orange-50 dark:bg-orange-900/20 border border-orange-200 dark:border-orange-800 text-orange-800 dark:text-orange-200">
+                        <div class="flex items-center gap-2 mb-1">
+                            <span class="text-xs font-semibold">{{ _('agent_team.live_admin_guidance') }}</span>
+                            <span class="text-xs px-1.5 py-0.5 rounded-full"
+                                  :class="item.status === 'pending' ? 'bg-amber-100 dark:bg-amber-900/40 text-amber-700 dark:text-amber-300' : item.status === 'consumed' ? 'bg-green-100 dark:bg-green-900/40 text-green-700 dark:text-green-300' : 'bg-gray-100 dark:bg-gray-800 text-gray-500'"
+                                  x-text="item.status"></span>
+                        </div>
+                        <p class="whitespace-pre-wrap" x-text="item.content"></p>
+                    </div>
                 </div>
             </div>
         </template>
@@ -168,7 +170,8 @@ function agentTeamLiveView() {
         isSending: false,
         isTaskActive: false,
         promptText: '',
-        _lastSeq: 0,
+        _lastMsgId: 0,
+        _messages: [],
         _sessions: [],
         _toolCalls: {},
         _prompts: [],
@@ -196,10 +199,7 @@ function agentTeamLiveView() {
 
         _onSSEEvent(eventName, data) {
             if (!this.selectedTaskId || String(data.task_id) !== String(this.selectedTaskId)) {
-                // Refresh active tasks on any agent event
-                if (eventName === 'sse:agent:task_updated') {
-                    this.loadActiveTasks();
-                }
+                if (eventName === 'sse:agent:task_updated') this.loadActiveTasks();
                 return;
             }
 
@@ -209,9 +209,7 @@ function agentTeamLiveView() {
             } else if (eventName === 'sse:agent:message_added' || eventName === 'sse:agent:tool_started' || eventName === 'sse:agent:tool_completed' || eventName === 'sse:agent:tool_failed') {
                 this.isThinking = false;
                 this._loadIncremental();
-            } else if (eventName === 'sse:agent:session_started') {
-                this._loadIncremental();
-            } else if (eventName === 'sse:agent:session_completed') {
+            } else if (eventName === 'sse:agent:session_started' || eventName === 'sse:agent:session_completed') {
                 this._loadIncremental();
             } else if (eventName === 'sse:agent:task_updated') {
                 this.isTaskActive = this._isActiveStatus(data.status);
@@ -235,14 +233,16 @@ function agentTeamLiveView() {
         async onTaskSelected() {
             if (!this.selectedTaskId) {
                 this.displayItems = [];
-                this._lastSeq = 0;
+                this._lastMsgId = 0;
+                this._messages = [];
                 this._sessions = [];
                 this._toolCalls = {};
                 this._prompts = [];
                 return;
             }
             this.displayItems = [];
-            this._lastSeq = 0;
+            this._lastMsgId = 0;
+            this._messages = [];
             this._sessions = [];
             this._toolCalls = {};
             this._prompts = [];
@@ -257,7 +257,7 @@ function agentTeamLiveView() {
         async _loadFull() {
             this.isLoading = true;
             try {
-                var resp = await fetch('/agent-team/api/tasks/' + this.selectedTaskId + '/stream-data?after_seq=0&limit=200');
+                var resp = await fetch('/agent-team/api/tasks/' + this.selectedTaskId + '/stream-data?after_id=0&limit=200');
                 var data = await resp.json();
                 if (!data.success) return;
                 this._processStreamData(data);
@@ -269,9 +269,9 @@ function agentTeamLiveView() {
         async _loadIncremental() {
             if (!this.selectedTaskId || this.isLoading) return;
             try {
-                var resp = await fetch('/agent-team/api/tasks/' + this.selectedTaskId + '/stream-data?after_seq=' + this._lastSeq + '&limit=50');
+                var resp = await fetch('/agent-team/api/tasks/' + this.selectedTaskId + '/stream-data?after_id=' + this._lastMsgId + '&limit=50');
                 var data = await resp.json();
-                if (!data.success) return;
+                if (!data.success || !data.messages || data.messages.length === 0) return;
                 this._processStreamData(data);
                 this._rebuildDisplay();
             } catch(e) { /* ignore */ }
@@ -287,9 +287,10 @@ function agentTeamLiveView() {
         },
 
         _processStreamData(data) {
+            var self = this;
+
             // Merge sessions
             if (data.sessions) {
-                var self = this;
                 data.sessions.forEach(function(s) {
                     if (!self._sessions.find(function(x) { return x.id === s.id; })) {
                         self._sessions.push(s);
@@ -299,7 +300,6 @@ function agentTeamLiveView() {
 
             // Merge tool calls
             if (data.tool_calls) {
-                var self = this;
                 data.tool_calls.forEach(function(tc) {
                     self._toolCalls[tc.tool_call_id] = tc;
                 });
@@ -307,11 +307,8 @@ function agentTeamLiveView() {
 
             // Merge messages
             if (data.messages) {
-                var self = this;
                 data.messages.forEach(function(m) {
-                    if (m.seq > self._lastSeq) self._lastSeq = m.seq;
-                    // Store message for display rebuild
-                    if (!self._messages) self._messages = [];
+                    if (m.id > self._lastMsgId) self._lastMsgId = m.id;
                     if (!self._messages.find(function(x) { return x.id === m.id; })) {
                         self._messages.push(m);
                     }
@@ -327,7 +324,7 @@ function agentTeamLiveView() {
         _rebuildDisplay() {
             var items = [];
             var sessions = this._sessions.slice().sort(function(a, b) { return a.id - b.id; });
-            var messages = (this._messages || []).slice().sort(function(a, b) { return a.id - b.id; });
+            var messages = this._messages.slice().sort(function(a, b) { return a.id - b.id; });
             var self = this;
 
             // Group messages by session
@@ -337,9 +334,17 @@ function agentTeamLiveView() {
                 bySession[m.session_id].push(m);
             });
 
+            // Build tool call lookup by assistant_message_id
+            var tcByMsg = {};
+            Object.values(self._toolCalls).forEach(function(tc) {
+                if (tc.assistant_message_id) {
+                    if (!tcByMsg[tc.assistant_message_id]) tcByMsg[tc.assistant_message_id] = [];
+                    tcByMsg[tc.assistant_message_id].push(tc);
+                }
+            });
+
             // Render sessions in order
             sessions.forEach(function(session) {
-                // Session divider
                 var roleLabel = session.role_name === 'fullstack'
                     ? '{{ _("agent_team.live_iteration_fullstack") }} ' + session.iteration_number + ' - Fullstack Expert'
                     : '{{ _("agent_team.live_iteration_reviewer") }} ' + session.iteration_number + ' - Professional Reviewer';
@@ -347,25 +352,21 @@ function agentTeamLiveView() {
 
                 var sessionMsgs = bySession[session.id] || [];
                 sessionMsgs.forEach(function(m) {
-                    if (m.role === 'user') {
-                        // User messages are task context, skip (already shown in task detail)
-                    } else if (m.role === 'assistant') {
+                    if (m.role === 'system' || m.role === 'user') {
+                        return; // skip context messages
+                    }
+
+                    if (m.role === 'assistant') {
                         var content = m.content || '';
                         var htmlContent = '';
                         try { htmlContent = marked.parse(content); } catch(e) { htmlContent = content; }
-                        // Collect tool calls from this message
-                        var msgToolCalls = [];
-                        Object.values(self._toolCalls).forEach(function(tc) {
-                            // Find tool calls belonging to this session
-                            if (tc.session_id === session.id) {
-                                msgToolCalls.push(tc);
-                            }
-                        });
+                        // Tool calls attached to this assistant message
+                        var msgToolCalls = tcByMsg[m.id] || null;
                         items.push({
                             type: 'assistant',
                             content: content,
                             htmlContent: htmlContent,
-                            toolCalls: msgToolCalls.length > 0 ? msgToolCalls : null,
+                            toolCalls: msgToolCalls && msgToolCalls.length > 0 ? msgToolCalls : null,
                             isLong: content.length > 500,
                             collapsed: content.length > 500,
                             key: 'msg-' + m.id

@@ -79,9 +79,7 @@
 
     <div class="bg-white dark:bg-gray-800 rounded-2xl border border-gray-200 dark:border-gray-700 p-2 flex flex-wrap gap-2">
         <button @click="activeTab = 'tasks'" :class="activeTab === 'tasks' ? 'bg-sakura-500 text-white shadow-md shadow-sakura-500/25' : 'text-gray-600 dark:text-gray-300 hover:bg-sakura-50 dark:hover:bg-sakura-900/20'" class="px-4 py-2 rounded-xl text-sm font-semibold transition-all">{{ _('agent_team.tab_tasks') }}</button>
-        <button @click="activeTab = 'live'" :class="activeTab === 'live' ? 'bg-orange-500 text-white shadow-md shadow-orange-500/25' : 'text-gray-600 dark:text-gray-300 hover:bg-orange-50 dark:hover:bg-orange-900/20'" class="px-4 py-2 rounded-xl text-sm font-semibold transition-all flex items-center gap-1.5">
-            <span class="w-2 h-2 rounded-full bg-orange-400 animate-pulse"></span>
-            {{ _('agent_team.tab_live') }}
+        <button @click="activeTab = 'live'" :class="activeTab === 'live' ? 'bg-orange-500 text-white shadow-md shadow-orange-500/25' : 'text-gray-600 dark:text-gray-300 hover:bg-orange-50 dark:hover:bg-orange-900/20'" class="px-4 py-2 rounded-xl text-sm font-semibold transition-all">{{ _('agent_team.tab_live') }}
         </button>
         <button @click="activeTab = 'candidates'" :class="activeTab === 'candidates' ? 'bg-sakura-500 text-white shadow-md shadow-sakura-500/25' : 'text-gray-600 dark:text-gray-300 hover:bg-sakura-50 dark:hover:bg-sakura-900/20'" class="px-4 py-2 rounded-xl text-sm font-semibold transition-all">{{ _('agent_team.tab_candidates') }}</button>
         <button @click="activeTab = 'workspaces'; refreshWorkspaces()" :class="activeTab === 'workspaces' ? 'bg-sakura-500 text-white shadow-md shadow-sakura-500/25' : 'text-gray-600 dark:text-gray-300 hover:bg-sakura-50 dark:hover:bg-sakura-900/20'" class="px-4 py-2 rounded-xl text-sm font-semibold transition-all">{{ _('agent_team.tab_workspaces') }}</button>
