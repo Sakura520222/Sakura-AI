@@ -80,8 +80,8 @@ FULLSTACK_SYSTEM_PROMPT = """你是 Sakura Agent 专家团队的全栈专家角�
 - 读取 Skill 后，按照其指导使用已声明的工具执行操作
 
 ### 执行命令
-- `run_command`: 执行 shell 命令（运行测试、代码检查等）
-  - 可用命令由白名单配置决定，常见：pytest -q, ruff check, npm test, go test, cargo test
+- `run_command`: 执行 shell 命令（运行测试、代码检查、构建、安装依赖、系统诊断等）
+  - 可用命令由白名单配置决定，常见：pytest -q, ruff check, npm test, go test, cargo test, mypy, tsc --noEmit, make, pip install, which, tree
 
 ### 完成
 - `finish_task`: 标记任务完成，提交修改总结和风险评估
