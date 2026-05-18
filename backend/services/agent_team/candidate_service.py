@@ -586,13 +586,16 @@ class AgentTeamCandidateService:
     ) -> list[AgentCandidate]:
         """通过 GitHub API 过滤已关闭的 Issue 候选。
 
-        仅检查 source_issue_number 不为 None 的条目，
-        且最多检查 _MAX_GITHUB_STATE_CHECKS 条以控制 API 调用量。
+        Issue 候选已在 DB 层通过 issue_state 过滤，仅对扫描类候选调用 GitHub API。
         如果 API 调用失败则保留该候选（fail-open）。
         """
-        to_check = [c for c in candidates if c.source_issue_number is not None][
-            :_MAX_GITHUB_STATE_CHECKS
-        ]
+        # Issue 候选已由 DB 层 issue_state 过滤，无需再次 GitHub API 检查
+        to_check = [
+            c
+            for c in candidates
+            if c.source_issue_number is not None
+            and c.source_type != AgentTeamSourceType.ISSUE_ANALYSIS.value
+        ][:_MAX_GITHUB_STATE_CHECKS]
         if not to_check:
             return candidates
 
