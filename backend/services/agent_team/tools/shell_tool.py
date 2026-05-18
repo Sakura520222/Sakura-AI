@@ -11,7 +11,7 @@ from typing import Any
 
 from loguru import logger
 
-from backend.core.config import get_dynamic_config, get_settings
+from backend.core.config import get_settings
 from backend.services.agent_team.shell_executor import AgentTeamShellExecutor
 from backend.services.agent_team.tools.base import BaseTool, ToolContext, ToolResult
 
@@ -55,9 +55,7 @@ async def is_agent_command_allowed(command: str) -> bool:
 
     first_token = tokens[0]
 
-    raw = await get_dynamic_config("agent_team_test_command_allowlist")
-    if raw is None:
-        raw = get_settings().agent_team_test_command_allowlist
+    raw = get_settings().agent_team_test_command_allowlist
 
     allowlist = [item.strip() for item in str(raw or "").split(",") if item.strip()]
     if not allowlist:
