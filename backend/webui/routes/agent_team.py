@@ -84,7 +84,6 @@ AGENT_TEAM_CONFIG_KEYS = [
     "agent_team_max_lines_changed",
     "agent_team_run_tests",
     "agent_team_auto_install_deps",
-    "agent_team_test_command_allowlist",
     "agent_team_skills_enabled",
     "agent_team_skills_root",
 ]
@@ -151,7 +150,6 @@ AGENT_TEAM_CONFIG_GROUPS = [
             "agent_team_max_lines_changed",
             "agent_team_run_tests",
             "agent_team_auto_install_deps",
-            "agent_team_test_command_allowlist",
         ],
     },
     {
