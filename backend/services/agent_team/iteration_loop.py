@@ -441,32 +441,37 @@ class IterationLoopService:
 
     async def _consume_pending_prompts(self) -> str:
         """消费 pending 状态的管理员 Prompt，返回格式化指导文本。"""
-        from sqlalchemy import select
+        if not self.task_id:
+            return ""
+        try:
+            from sqlalchemy import select
 
-        async with async_session() as session:
-            result = await session.execute(
-                select(AgentTeamUserPrompt)
-                .where(
-                    AgentTeamUserPrompt.task_id == self.task_id,
-                    AgentTeamUserPrompt.status == "pending",
+            async with async_session() as session:
+                result = await session.execute(
+                    select(AgentTeamUserPrompt)
+                    .where(
+                        AgentTeamUserPrompt.task_id == self.task_id,
+                        AgentTeamUserPrompt.status == "pending",
+                    )
+                    .order_by(AgentTeamUserPrompt.created_at)
                 )
-                .order_by(AgentTeamUserPrompt.created_at)
+                prompts = result.scalars().all()
+                if not prompts:
+                    return ""
+
+                parts = []
+                for prompt in prompts:
+                    prompt.status = "consumed"
+                    prompt.consumed_at = utc_now()
+                    parts.append(prompt.content)
+                await session.commit()
+
+            logger.info(
+                "已消费 {} 条管理员 Prompt (task_id={})",
+                len(parts), self.task_id,
             )
-            prompts = result.scalars().all()
-            if not prompts:
-                return ""
-
-            parts = []
-            for prompt in prompts:
-                prompt.status = "consumed"
-                prompt.consumed_at = utc_now()
-                parts.append(prompt.content)
-            await session.commit()
-
-        logger.info(
-            "已消费 {} 条管理员 Prompt (task_id={})",
-            len(parts), self.task_id,
-        )
-        return "## 管理员指导\n请遵循以下方向执行任务：\n" + "\n".join(
-            f"- {p}" for p in parts
-        )
+            return "## 管理员指导\n请遵循以下方向执行任务：\n" + "\n".join(
+                f"- {p}" for p in parts
+            )
+        except Exception:
+            return ""
