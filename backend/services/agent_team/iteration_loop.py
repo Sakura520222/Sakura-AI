@@ -49,6 +49,8 @@ class IterationOutcome:
     review_result: ReviewResult | None = None
     modified_files: list[str] = field(default_factory=list)
     total_tool_calls: int = 0
+    prompt_tokens: int = 0
+    completion_tokens: int = 0
 
 
 class IterationLoopService:
@@ -91,6 +93,8 @@ class IterationLoopService:
     ) -> IterationOutcome:
         """运行迭代循环。"""
         total_tool_calls = 0
+        total_prompt_tokens = 0
+        total_completion_tokens = 0
         feedback = ""
         resume_cursor = self.resume_cursor
         start_iteration = resume_cursor.iteration_number if resume_cursor else 1
@@ -102,6 +106,8 @@ class IterationLoopService:
                     reason="任务已取消",
                     iterations=iteration - 1,
                     total_tool_calls=total_tool_calls,
+                    prompt_tokens=total_prompt_tokens,
+                    completion_tokens=total_completion_tokens,
                 )
             logger.info(
                 "Agent 迭代循环 第 {}/{} 轮 - 任务: {}",
@@ -157,6 +163,8 @@ class IterationLoopService:
                     guidance_callback=self._consume_pending_prompts,
                 )
                 total_tool_calls += fs_result.tool_calls_count
+                total_prompt_tokens += fs_result.prompt_tokens
+                total_completion_tokens += fs_result.completion_tokens
                 await self._complete_session(
                     getattr(expert, "session_id", None), fs_result.tool_calls_count
                 )
@@ -190,6 +198,8 @@ class IterationLoopService:
                     fullstack_result=fs_result,
                     modified_files=fs_result.modified_files,
                     total_tool_calls=total_tool_calls,
+                    prompt_tokens=total_prompt_tokens,
+                    completion_tokens=total_completion_tokens,
                 )
 
             if not fs_result.success:
@@ -206,6 +216,8 @@ class IterationLoopService:
                     iterations=iteration,
                     fullstack_result=fs_result,
                     total_tool_calls=total_tool_calls,
+                    prompt_tokens=total_prompt_tokens,
+                    completion_tokens=total_completion_tokens,
                 )
 
             logger.info(
@@ -230,6 +242,8 @@ class IterationLoopService:
                     fullstack_result=fs_result,
                     modified_files=fs_result.modified_files,
                     total_tool_calls=total_tool_calls,
+                    prompt_tokens=total_prompt_tokens,
+                    completion_tokens=total_completion_tokens,
                 )
             diff_summary = ""
             try:
@@ -259,6 +273,8 @@ class IterationLoopService:
                 guidance_callback=self._consume_pending_prompts,
             )
             total_tool_calls += rev_result.tool_calls_count
+            total_prompt_tokens += rev_result.prompt_tokens
+            total_completion_tokens += rev_result.completion_tokens
             await self._complete_session(
                 getattr(reviewer, "session_id", None), rev_result.tool_calls_count
             )
@@ -282,6 +298,8 @@ class IterationLoopService:
                     review_result=rev_result,
                     modified_files=fs_result.modified_files,
                     total_tool_calls=total_tool_calls,
+                    prompt_tokens=total_prompt_tokens,
+                    completion_tokens=total_completion_tokens,
                 )
 
             # ── 未通过：准备反馈 ──
@@ -301,6 +319,8 @@ class IterationLoopService:
             review_result=rev_result,
             modified_files=fs_result.modified_files if fs_result else [],
             total_tool_calls=total_tool_calls,
+            prompt_tokens=total_prompt_tokens,
+            completion_tokens=total_completion_tokens,
         )
 
     async def _restore_fullstack_result(self, iteration: int) -> FullStackResult:

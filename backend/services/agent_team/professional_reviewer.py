@@ -31,6 +31,7 @@ from backend.services.agent_team.tools.registry import (
     get_tool_definitions,
 )
 from backend.services.agent_team.workspace_service import AgentTeamWorkspaceService
+from backend.services.ai_reviewer.token_tracker import TokenTracker
 from backend.utils.config_utils import resolve_clamped_int_config
 from backend.utils.message_utils import (
     get_missing_tool_calls,
@@ -138,6 +139,8 @@ class ReviewResult:
     improvement_suggestions: list[str] = field(default_factory=list)
     passed: bool = False
     tool_calls_count: int = 0
+    prompt_tokens: int = 0
+    completion_tokens: int = 0
 
 
 
@@ -246,6 +249,7 @@ class ProfessionalReviewAgent:
             )
 
         tool_calls_count = 0
+        token_tracker = TokenTracker()
 
         for round_num in range(1, max_tool_rounds + 1):
             if cancel_check and cancel_check():
@@ -256,6 +260,8 @@ class ProfessionalReviewAgent:
                     summary="任务已取消",
                     findings=[],
                     tool_calls_count=tool_calls_count,
+                    prompt_tokens=token_tracker.prompt_tokens,
+                    completion_tokens=token_tracker.completion_tokens,
                 )
             logger.debug("专业审查工具调用第 {} 轮", round_num)
 
@@ -268,7 +274,9 @@ class ProfessionalReviewAgent:
                 )
                 tool_calls_count += len(pending_tool_calls)
                 if terminal_output is not None:
-                    return _review_result_from_terminal(terminal_output, tool_calls_count)
+                    return _review_result_from_terminal(
+                        terminal_output, tool_calls_count, token_tracker,
+                    )
                 continue
 
             # 消费新的管理员指导
@@ -284,7 +292,7 @@ class ProfessionalReviewAgent:
             model_messages = await AgentTeamContextCompressor(
                 target_model=config.review_model,
                 compressor_model=config.summary_model,
-            ).build_model_messages(self.messages)
+            ).build_model_messages(self.messages, token_tracker)
             await _publish_review_ai_request(round_num)
             response = await client.call_with_retry(
                 messages=model_messages,
@@ -295,6 +303,7 @@ class ProfessionalReviewAgent:
                 tools=tool_schemas,
                 tool_choice="auto",
             )
+            token_tracker.accumulate(response)
 
             if not response.choices:
                 return ReviewResult(
@@ -302,6 +311,8 @@ class ProfessionalReviewAgent:
                     score=0,
                     summary="AI 返回空响应",
                     tool_calls_count=tool_calls_count,
+                    prompt_tokens=token_tracker.prompt_tokens,
+                    completion_tokens=token_tracker.completion_tokens,
                 )
 
             choice = response.choices[0]
@@ -323,6 +334,8 @@ class ProfessionalReviewAgent:
                     score=0,
                     summary=message.content or "审查未提交结果",
                     tool_calls_count=tool_calls_count,
+                    prompt_tokens=token_tracker.prompt_tokens,
+                    completion_tokens=token_tracker.completion_tokens,
                 )
 
             terminal_output = await self._execute_tool_calls(
@@ -359,6 +372,8 @@ class ProfessionalReviewAgent:
                     ),
                     passed=verdict == "pass" and score >= 7,
                     tool_calls_count=tool_calls_count,
+                    prompt_tokens=token_tracker.prompt_tokens,
+                    completion_tokens=token_tracker.completion_tokens,
                 )
 
         return ReviewResult(
@@ -366,6 +381,8 @@ class ProfessionalReviewAgent:
             score=0,
             summary=f"达到最大审查轮次 ({max_tool_rounds})",
             tool_calls_count=tool_calls_count,
+            prompt_tokens=token_tracker.prompt_tokens,
+            completion_tokens=token_tracker.completion_tokens,
         )
 
     async def _execute_tool_calls(
@@ -450,7 +467,9 @@ class ProfessionalReviewAgent:
 
 
 def _review_result_from_terminal(
-    terminal_output: dict[str, Any], tool_calls_count: int
+    terminal_output: dict[str, Any],
+    tool_calls_count: int,
+    token_tracker: TokenTracker | None = None,
 ) -> ReviewResult:
     verdict = terminal_output.get("verdict", "reject")
     score = int(terminal_output.get("score", 0))
@@ -476,6 +495,8 @@ def _review_result_from_terminal(
         improvement_suggestions=terminal_output.get("improvement_suggestions", []),
         passed=verdict == "pass" and score >= 7,
         tool_calls_count=tool_calls_count,
+        prompt_tokens=token_tracker.prompt_tokens if token_tracker else 0,
+        completion_tokens=token_tracker.completion_tokens if token_tracker else 0,
     )
 
 
