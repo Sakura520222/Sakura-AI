@@ -10,13 +10,19 @@
             <h1 class="text-2xl font-bold">{{ _('repo.title') }}</h1>
             <p class="mt-1 text-sm text-gray-500 dark:text-gray-400">{{ _('repo.installed_at') }}</p>
         </div>
-        <button onclick="loadListPage('repo-list-container', '/repos/list-fragment', 1)"
-                class="px-4 py-2 text-sm border border-gray-300 dark:border-gray-600 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors">
-            <svg class="w-4 h-4 inline mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/>
-            </svg>
-            {{ _('common.refresh') }}
-        </button>
+        <div class="flex items-center gap-2">
+            <button onclick="batchIndexIssues(this, {{ csrf_token | tojson }})"
+                    class="px-4 py-2 text-sm bg-green-500 text-white rounded-lg hover:bg-green-600 transition-colors">
+                全部索引 Issues
+            </button>
+            <button onclick="loadListPage('repo-list-container', '/repos/list-fragment?refresh=true', 1)"
+                    class="px-4 py-2 text-sm border border-gray-300 dark:border-gray-600 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors">
+                <svg class="w-4 h-4 inline mr-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/>
+                </svg>
+                {{ _('common.refresh') }}
+            </button>
+        </div>
     </div>
 
     <!-- 仓库列表（按 installation 分组） -->
@@ -77,6 +83,43 @@ function triggerIndex(btn, repoName, indexType, csrfToken) {
             window.dispatchEvent(new CustomEvent('show-toast', { detail: { message: data.message || data.detail || '操作失败', type: 'error' } }));
         } else {
             window.dispatchEvent(new CustomEvent('show-toast', { detail: { message: data.message, type: 'success' } }));
+        }
+    })
+    .catch(function(err) {
+        btn.disabled = false;
+        btn.textContent = btn.dataset.originalText;
+        window.dispatchEvent(new CustomEvent('show-toast', { detail: { message: err.message || '请求失败', type: 'error' } }));
+    });
+}
+
+// 批量索引所有仓库的 Issues
+function batchIndexIssues(btn, csrfToken) {
+    if (btn.disabled) return;
+    if (!confirm('确认对所有已安装仓库执行 Issues 索引？')) return;
+
+    btn.disabled = true;
+    btn.dataset.originalText = btn.textContent;
+    btn.textContent = '排队中...';
+
+    fetch('/repos/batch/index-issues', {
+        method: 'POST',
+        headers: { 'X-CSRF-Token': csrfToken }
+    })
+    .then(function(r) {
+        if (!r.ok) {
+            return r.json().catch(function() { return {}; }).then(function(data) {
+                throw new Error(data.message || data.detail || '请求失败 (' + r.status + ')');
+            });
+        }
+        return r.json();
+    })
+    .then(function(data) {
+        if (data.success) {
+            window.dispatchEvent(new CustomEvent('show-toast', { detail: { message: data.message, type: 'success' } }));
+        } else {
+            btn.disabled = false;
+            btn.textContent = btn.dataset.originalText;
+            window.dispatchEvent(new CustomEvent('show-toast', { detail: { message: data.message || '批量索引失败', type: 'error' } }));
         }
     })
     .catch(function(err) {
