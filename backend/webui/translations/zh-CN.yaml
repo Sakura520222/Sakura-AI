@@ -161,7 +161,6 @@ nav:
   redemption_codes: "兑换码管理"
   personal_settings: "个人设置"
   about: "关于"
-  service_running: "服务运行中"
 
 # ========== Agent 专家团队 / Agent Team ==========
 agent_team:
