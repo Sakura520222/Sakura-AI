@@ -23,8 +23,12 @@ from backend.core.config import (
 )
 from backend.models.agent_team_models import (
     AgentTeamIteration,
+    AgentTeamMessage,
+    AgentTeamSession,
     AgentTeamTask,
     AgentTeamTaskStatus,
+    AgentTeamToolCall,
+    AgentTeamUserPrompt,
 )
 from backend.models.database import AppConfig
 from backend.services.agent_team.ai_client import (
@@ -1098,3 +1102,238 @@ def _format_bytes(value: int) -> str:
             return f"{size:.1f} {unit}" if unit != "B" else f"{int(size)} B"
         size /= 1024
     return f"{size:.1f} GB"
+
+
+# ── Live View API 端点 ──────────────────────────────────
+
+
+@router.get("/api/active-tasks")
+async def list_active_tasks(
+    _=Depends(require_super_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    """获取活跃任务列表（供 Live View 下拉框使用）。"""
+    rows = (await db.execute(
+        select(AgentTeamTask)
+        .where(AgentTeamTask.status.in_(AGENT_TEAM_ACTIVE_STATUSES))
+        .order_by(desc(AgentTeamTask.updated_at))
+        .limit(20)
+    )).scalars().all()
+
+    return JSONResponse({
+        "success": True,
+        "tasks": [
+            {
+                "id": t.id,
+                "title": t.title,
+                "status": t.status,
+                "repo_full_name": t.repo_full_name,
+                "current_phase": t.current_phase,
+            }
+            for t in rows
+        ],
+    })
+
+
+@router.get("/api/tasks/{task_id}/stream-data")
+async def task_stream_data(
+    task_id: int,
+    after_seq: int = 0,
+    limit: int = 50,
+    _=Depends(require_super_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    """获取任务的消息流数据（messages + tool_calls + sessions + prompts）。"""
+    task = await db.get(AgentTeamTask, task_id)
+    if not task:
+        return JSONResponse({"success": False, "error": "Task not found"}, status_code=404)
+
+    # Sessions for this task
+    session_rows = (await db.execute(
+        select(AgentTeamSession)
+        .where(AgentTeamSession.task_id == task_id)
+        .order_by(AgentTeamSession.id)
+    )).scalars().all()
+    session_ids = [s.id for s in session_rows]
+
+    if not session_ids:
+        return JSONResponse({
+            "success": True,
+            "messages": [],
+            "tool_calls": [],
+            "sessions": [],
+            "prompts": [],
+            "has_more": False,
+        })
+
+    # Messages with pagination
+    msg_query = (
+        select(AgentTeamMessage)
+        .where(
+            AgentTeamMessage.session_id.in_(session_ids),
+            AgentTeamMessage.seq > after_seq,
+        )
+        .order_by(AgentTeamMessage.id)
+        .limit(limit + 1)
+    )
+    msg_rows = (await db.execute(msg_query)).scalars().all()
+    has_more = len(msg_rows) > limit
+    msg_rows = msg_rows[:limit]
+
+    # Tool calls for the fetched messages
+    msg_ids = [m.id for m in msg_rows]
+    tool_call_rows = []
+    if msg_ids:
+        tool_call_rows = (await db.execute(
+            select(AgentTeamToolCall)
+            .where(AgentTeamToolCall.session_id.in_(session_ids))
+            .order_by(AgentTeamToolCall.id)
+        )).scalars().all()
+
+    # User prompts
+    prompt_rows = (await db.execute(
+        select(AgentTeamUserPrompt)
+        .where(AgentTeamUserPrompt.task_id == task_id)
+        .order_by(AgentTeamUserPrompt.created_at)
+    )).scalars().all()
+
+    return JSONResponse({
+        "success": True,
+        "messages": [
+            {
+                "id": m.id,
+                "session_id": m.session_id,
+                "seq": m.seq,
+                "role": m.role,
+                "content": m.content,
+                "tool_call_id": m.tool_call_id,
+                "finish_reason": m.finish_reason,
+                "created_at": m.created_at.isoformat() if m.created_at else None,
+            }
+            for m in msg_rows
+        ],
+        "tool_calls": [
+            {
+                "id": tc.id,
+                "session_id": tc.session_id,
+                "tool_call_id": tc.tool_call_id,
+                "name": tc.name,
+                "status": tc.status,
+                "arguments_json": tc.arguments_json,
+                "started_at": tc.started_at.isoformat() if tc.started_at else None,
+                "completed_at": tc.completed_at.isoformat() if tc.completed_at else None,
+                "error_message": tc.error_message,
+            }
+            for tc in tool_call_rows
+        ],
+        "sessions": [
+            {
+                "id": s.id,
+                "iteration_number": s.iteration_number,
+                "role_name": s.role_name,
+                "status": s.status,
+                "started_at": s.started_at.isoformat() if s.started_at else None,
+                "completed_at": s.completed_at.isoformat() if s.completed_at else None,
+            }
+            for s in session_rows
+        ],
+        "prompts": [
+            {
+                "id": p.id,
+                "content": p.content,
+                "status": p.status,
+                "submitted_by": p.submitted_by,
+                "created_at": p.created_at.isoformat() if p.created_at else None,
+                "consumed_at": p.consumed_at.isoformat() if p.consumed_at else None,
+            }
+            for p in prompt_rows
+        ],
+        "has_more": has_more,
+    })
+
+
+@router.post("/api/tasks/{task_id}/prompts")
+async def submit_user_prompt(
+    task_id: int,
+    content: str = Form(...),
+    request: Request = None,
+    _=Depends(require_super_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    """提交管理员引导 Prompt（pending 状态，下次 AI 请求时注入）。"""
+    task = await db.get(AgentTeamTask, task_id)
+    if not task:
+        return JSONResponse({"success": False, "error": "Task not found"}, status_code=404)
+
+    if task.status not in AGENT_TEAM_ACTIVE_STATUSES:
+        return JSONResponse(
+            {"success": False, "error": "Task is not active"},
+            status_code=400,
+        )
+
+    content = content.strip()
+    if not content:
+        return JSONResponse({"success": False, "error": "Content is empty"}, status_code=400)
+
+    username = ""
+    if request and hasattr(request, "state") and hasattr(request.state, "user"):
+        username = getattr(request.state.user, "username", "")
+
+    prompt = AgentTeamUserPrompt(
+        task_id=task_id,
+        content=content,
+        status="pending",
+        submitted_by=username or "super_admin",
+    )
+    db.add(prompt)
+    await db.commit()
+    await db.refresh(prompt)
+
+    # SSE: 通知前端有新 prompt
+    try:
+        from backend.webui.sse import publish_event
+
+        await publish_event("agent:prompt_received", {
+            "task_id": task_id,
+            "prompt_id": prompt.id,
+        })
+    except Exception:
+        pass
+
+    return JSONResponse({
+        "success": True,
+        "prompt_id": prompt.id,
+    })
+
+
+@router.get("/api/tasks/{task_id}/prompts")
+async def list_user_prompts(
+    task_id: int,
+    _=Depends(require_super_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    """获取任务的管理员引导 Prompt 列表。"""
+    task = await db.get(AgentTeamTask, task_id)
+    if not task:
+        return JSONResponse({"success": False, "error": "Task not found"}, status_code=404)
+
+    rows = (await db.execute(
+        select(AgentTeamUserPrompt)
+        .where(AgentTeamUserPrompt.task_id == task_id)
+        .order_by(AgentTeamUserPrompt.created_at)
+    )).scalars().all()
+
+    return JSONResponse({
+        "success": True,
+        "prompts": [
+            {
+                "id": p.id,
+                "content": p.content,
+                "status": p.status,
+                "submitted_by": p.submitted_by,
+                "created_at": p.created_at.isoformat() if p.created_at else None,
+                "consumed_at": p.consumed_at.isoformat() if p.consumed_at else None,
+            }
+            for p in rows
+        ],
+    })

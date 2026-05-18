@@ -15,6 +15,8 @@ from typing import Any
 
 from loguru import logger
 
+from backend.models.agent_team_models import AgentTeamUserPrompt
+from backend.models.database import async_session, utc_now
 from backend.services.agent_team.conversation_checkpoint import (
     ConversationCheckpointService,
     ResumeCursor,
@@ -120,6 +122,11 @@ class IterationLoopService:
                 fs_result = await self._restore_fullstack_result(iteration)
                 resume_cursor = None
             else:
+                user_guidance = await self._consume_pending_prompts()
+                if user_guidance and feedback:
+                    feedback = f"{feedback}\n\n{user_guidance}"
+                elif user_guidance:
+                    feedback = user_guidance
                 expert = await self._create_agent(
                     "fullstack", iteration, resume_cursor, FullStackExpertAgent
                 )
@@ -214,6 +221,7 @@ class IterationLoopService:
             reviewer = await self._create_agent(
                 "reviewer", iteration, resume_cursor, ProfessionalReviewAgent
             )
+            reviewer_guidance = await self._consume_pending_prompts()
             rev_result = await reviewer.review(
                 task_title=task_title,
                 task_summary=task_summary,
@@ -226,6 +234,7 @@ class IterationLoopService:
                 skills_context=skills_context,
                 github_repo=github_repo,
                 sakura_ref=sakura_ref,
+                user_guidance=reviewer_guidance,
             )
             total_tool_calls += rev_result.tool_calls_count
             await self._complete_session(
@@ -410,3 +419,35 @@ class IterationLoopService:
         parts.append("- 不要撤销之前的修复")
         parts.append("- 修复后运行代码检查和测试验证")
         return "\n".join(parts)
+
+    async def _consume_pending_prompts(self) -> str:
+        """消费 pending 状态的管理员 Prompt，返回格式化指导文本。"""
+        from sqlalchemy import select
+
+        async with async_session() as session:
+            result = await session.execute(
+                select(AgentTeamUserPrompt)
+                .where(
+                    AgentTeamUserPrompt.task_id == self.task_id,
+                    AgentTeamUserPrompt.status == "pending",
+                )
+                .order_by(AgentTeamUserPrompt.created_at)
+            )
+            prompts = result.scalars().all()
+            if not prompts:
+                return ""
+
+            parts = []
+            for prompt in prompts:
+                prompt.status = "consumed"
+                prompt.consumed_at = utc_now()
+                parts.append(prompt.content)
+            await session.commit()
+
+        logger.info(
+            "已消费 {} 条管理员 Prompt (task_id={})",
+            len(parts), self.task_id,
+        )
+        return "## 管理员指导\n请遵循以下方向执行任务：\n" + "\n".join(
+            f"- {p}" for p in parts
+        )

@@ -270,6 +270,7 @@ class FullStackExpertAgent:
                 target_model=config.model,
                 compressor_model=config.summary_model,
             ).build_model_messages(self.messages)
+            await _publish_ai_request("fullstack", round_num)
             response = await client.call_with_retry(
                 messages=model_messages,
                 model=config.model,
@@ -447,3 +448,15 @@ class FullStackExpertAgent:
             parts.append(f"\n## 审查反馈（请针对以下问题修改）\n{feedback}\n")
         return "".join(parts)
 
+
+async def _publish_ai_request(role: str, round_num: int) -> None:
+    """发布 AI 请求 SSE 事件（延迟导入避免循环依赖）。"""
+    try:
+        from backend.webui.sse import publish_event
+
+        await publish_event("agent:ai_request", {
+            "role": role,
+            "round_num": round_num,
+        })
+    except Exception:
+        pass

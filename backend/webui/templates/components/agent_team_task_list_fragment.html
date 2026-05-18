@@ -59,6 +59,12 @@
                         <a href="{{ task.pr_url }}" target="_blank" class="px-3 py-2 text-xs font-semibold rounded-xl bg-gray-900 dark:bg-white text-white dark:text-gray-900 text-center hover:opacity-90 transition-opacity">{{ _('agent_team.open_pr') }}</a>
                         {% endif %}
                         <button onclick="loadTaskDetail({{ task.id }})" class="px-3 py-2 text-xs font-semibold rounded-xl bg-sakura-500 hover:bg-sakura-600 text-white transition-colors">{{ _('agent_team.view_detail') }}</button>
+                        {% if task.status in ('cloning', 'editing', 'self_reviewing', 'validating', 'pushing', 'iterating', 'waiting_human') %}
+                        <button onclick="watchLive({{ task.id }})" class="px-3 py-2 text-xs font-semibold rounded-xl bg-orange-500 hover:bg-orange-600 text-white transition-colors flex items-center justify-center gap-1">
+                            <span class="w-1.5 h-1.5 rounded-full bg-white animate-pulse"></span>
+                            {{ _('agent_team.live') }}
+                        </button>
+                        {% endif %}
                         {% if task.status in ('failed', 'cancelled', 'abandoned') %}
                         {% if task.status in ('failed', 'cancelled') and task.workspace_path and task.branch_name and task.last_checkpoint_at %}
                         <button onclick="resumeTask({{ task.id }})" class="px-3 py-2 text-xs font-semibold rounded-xl bg-green-500 hover:bg-green-600 text-white transition-colors">{{ _('agent_team.resume') }}</button>
