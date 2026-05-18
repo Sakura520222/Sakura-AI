@@ -1,0 +1,439 @@
+<div x-data="agentTeamLiveView()" x-init="init()" class="flex flex-col h-[calc(100vh-320px)] min-h-[500px]">
+    <!-- Header: task selector + status -->
+    <div class="flex items-center gap-3 mb-4">
+        <div class="flex-1">
+            <select x-model="selectedTaskId" @change="onTaskSelected()" class="w-full rounded-xl border-gray-300 dark:border-gray-600 dark:bg-gray-900 text-sm">
+                <option value="">{{ _('agent_team.live_select_task') }}</option>
+                <template x-for="t in activeTasks" :key="t.id">
+                    <option :value="t.id" x-text="'#' + t.id + ' - ' + t.title + ' (' + t.status + ')'"></option>
+                </template>
+            </select>
+        </div>
+        <div class="flex items-center gap-2">
+            <span x-show="isConnected" class="flex items-center gap-1 text-xs text-green-600 dark:text-green-400">
+                <span class="w-2 h-2 rounded-full bg-green-500 animate-pulse"></span>
+                {{ _('agent_team.live_connected') }}
+            </span>
+            <span x-show="!isConnected" class="flex items-center gap-1 text-xs text-gray-400">
+                <span class="w-2 h-2 rounded-full bg-gray-400"></span>
+                {{ _('agent_team.live_disconnected') }}
+            </span>
+        </div>
+    </div>
+
+    <!-- Messages area -->
+    <div id="live-messages" class="flex-1 overflow-y-auto rounded-2xl border border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-900/50 p-4 space-y-3 scroll-smooth">
+        <!-- Empty state -->
+        <div x-show="!selectedTaskId" class="flex flex-col items-center justify-center h-full text-gray-400 dark:text-gray-500">
+            <svg class="w-16 h-16 mb-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1" d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z"/></svg>
+            <p class="text-sm">{{ _('agent_team.live_empty_hint') }}</p>
+        </div>
+
+        <!-- Loading -->
+        <div x-show="selectedTaskId && isLoading" class="flex items-center justify-center h-full">
+            <div class="flex items-center gap-2 text-gray-400">
+                <svg class="animate-spin h-5 w-5" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg>
+                <span class="text-sm">{{ _('common.loading') }}</span>
+            </div>
+        </div>
+
+        <!-- Message stream -->
+        <template x-for="(item, idx) in displayItems" :key="item.key">
+            <!-- Session divider -->
+            <div x-show="item.type === 'session'" class="flex items-center gap-3 py-2">
+                <div class="flex-1 h-px bg-gray-200 dark:bg-gray-700"></div>
+                <span class="text-xs font-semibold px-3 py-1 rounded-full"
+                      :class="item.role === 'fullstack' ? 'bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300' : 'bg-purple-100 dark:bg-purple-900/30 text-purple-700 dark:text-purple-300'"
+                      x-text="item.label"></span>
+                <div class="flex-1 h-px bg-gray-200 dark:bg-gray-700"></div>
+            </div>
+
+            <!-- Phase status -->
+            <div x-show="item.type === 'phase'" class="flex justify-center">
+                <span class="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-medium bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-400">
+                    <span class="w-1.5 h-1.5 rounded-full bg-sakura-500"></span>
+                    <span x-text="item.label"></span>
+                </span>
+            </div>
+
+            <!-- AI thinking -->
+            <div x-show="item.type === 'thinking'" class="flex justify-start">
+                <div class="flex items-center gap-2 px-4 py-2 rounded-2xl bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 text-sm text-gray-500 dark:text-gray-400">
+                    <svg class="animate-spin h-4 w-4" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg>
+                    <span x-text="item.label"></span>
+                </div>
+            </div>
+
+            <!-- Assistant message -->
+            <div x-show="item.type === 'assistant'" class="flex justify-start">
+                <div class="max-w-[85%] rounded-2xl px-4 py-3 text-sm bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 text-gray-700 dark:text-gray-300 prose prose-sm dark:prose-invert max-w-none"
+                     :class="item.collapsed ? 'max-h-24 overflow-hidden' : ''">
+                    <div x-show="item.content" x-html="item.htmlContent"></div>
+                    <div x-show="item.toolCalls && item.toolCalls.length > 0" class="mt-2 space-y-1">
+                        <template x-for="tc in (item.toolCalls || [])" :key="tc.id">
+                            <div class="flex items-center gap-1.5 text-xs font-mono px-2 py-1 rounded-lg bg-gray-50 dark:bg-gray-900/50 text-gray-600 dark:text-gray-400">
+                                <span class="text-sakura-600 dark:text-sakura-400" x-text="tc.name + '()'"></span>
+                            </div>
+                        </template>
+                    </div>
+                </div>
+                <button x-show="item.isLong" @click="item.collapsed = !item.collapsed" class="self-end ml-1 text-xs text-gray-400 hover:text-gray-600 dark:hover:text-gray-300">
+                    <span x-show="item.collapsed">{{ _('agent_team.live_expand') }}</span>
+                    <span x-show="!item.collapsed">{{ _('agent_team.live_collapse') }}</span>
+                </button>
+            </div>
+
+            <!-- Tool call -->
+            <div x-show="item.type === 'tool'" class="flex justify-start">
+                <div class="max-w-[85%] rounded-xl px-3 py-2 text-sm border"
+                     :class="item.status === 'running' ? 'bg-amber-50 dark:bg-amber-900/20 border-amber-200 dark:border-amber-800' : item.status === 'completed' ? 'bg-emerald-50 dark:bg-emerald-900/20 border-emerald-200 dark:border-emerald-800' : 'bg-red-50 dark:bg-red-900/20 border-red-200 dark:border-red-800'">
+                    <div class="flex items-center gap-2 font-mono text-xs">
+                        <span x-show="item.status === 'running'" class="flex items-center gap-1">
+                            <svg class="animate-spin h-3 w-3" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg>
+                            <span class="text-amber-700 dark:text-amber-300 font-bold" x-text="item.name + '()'"></span>
+                        </span>
+                        <span x-show="item.status === 'completed'" class="text-emerald-600 dark:text-emerald-400">&#10003;</span>
+                        <span x-show="item.status === 'failed'" class="text-red-600 dark:text-red-400">&#10007;</span>
+                        <span x-show="item.status !== 'running'" class="font-bold" x-text="item.name + '()'"></span>
+                    </div>
+                    <div x-show="item.argsPreview" class="mt-1 text-xs text-gray-500 dark:text-gray-400 truncate" x-text="item.argsPreview"></div>
+                    <div x-show="item.error" class="mt-1 text-xs text-red-600 dark:text-red-400" x-text="item.error"></div>
+                </div>
+            </div>
+
+            <!-- Tool result -->
+            <div x-show="item.type === 'tool_result'" class="flex justify-start">
+                <div class="max-w-[85%] rounded-xl px-3 py-2 text-xs font-mono bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-400 border border-gray-200 dark:border-gray-700"
+                     :class="item.collapsed ? 'max-h-16 overflow-hidden' : ''">
+                    <pre class="whitespace-pre-wrap break-all" x-text="item.content"></pre>
+                </div>
+                <button x-show="item.isLong" @click="item.collapsed = !item.collapsed" class="self-end ml-1 text-xs text-gray-400 hover:text-gray-600">
+                    <span x-show="item.collapsed">{{ _('agent_team.live_expand') }}</span>
+                    <span x-show="!item.collapsed">{{ _('agent_team.live_collapse') }}</span>
+                </button>
+            </div>
+
+            <!-- User prompt -->
+            <div x-show="item.type === 'prompt'" class="flex justify-end">
+                <div class="max-w-[80%] rounded-2xl px-4 py-3 text-sm bg-orange-50 dark:bg-orange-900/20 border border-orange-200 dark:border-orange-800 text-orange-800 dark:text-orange-200">
+                    <div class="flex items-center gap-2 mb-1">
+                        <span class="text-xs font-semibold">{{ _('agent_team.live_admin_guidance') }}</span>
+                        <span class="text-xs px-1.5 py-0.5 rounded-full"
+                              :class="item.status === 'pending' ? 'bg-amber-100 dark:bg-amber-900/40 text-amber-700 dark:text-amber-300' : item.status === 'consumed' ? 'bg-green-100 dark:bg-green-900/40 text-green-700 dark:text-green-300' : 'bg-gray-100 dark:bg-gray-800 text-gray-500'"
+                              x-text="item.status"></span>
+                    </div>
+                    <p class="whitespace-pre-wrap" x-text="item.content"></p>
+                </div>
+            </div>
+        </template>
+
+        <!-- Thinking indicator for current AI request -->
+        <div x-show="isThinking" class="flex justify-start">
+            <div class="flex items-center gap-2 px-4 py-2 rounded-2xl bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 text-sm text-gray-500 dark:text-gray-400">
+                <svg class="animate-spin h-4 w-4" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg>
+                <span>{{ _('agent_team.live_thinking') }}</span>
+            </div>
+        </div>
+    </div>
+
+    <!-- Prompt input -->
+    <div class="mt-3 flex gap-2">
+        <textarea x-model="promptText"
+                  @keydown.ctrl.enter="sendPrompt()"
+                  @keydown.meta.enter="sendPrompt()"
+                  :disabled="!selectedTaskId || !isTaskActive"
+                  rows="2"
+                  :placeholder="selectedTaskId && isTaskActive ? _('agent_team.live_prompt_placeholder') : _('agent_team.live_prompt_disabled')"
+                  class="flex-1 rounded-xl border-gray-300 dark:border-gray-600 dark:bg-gray-900 text-sm resize-none focus:ring-2 focus:ring-sakura-500 focus:border-sakura-500 disabled:opacity-50"></textarea>
+        <button @click="sendPrompt()"
+                :disabled="!selectedTaskId || !isTaskActive || !promptText.trim() || isSending"
+                class="px-5 py-2 bg-orange-500 hover:bg-orange-600 disabled:bg-gray-300 dark:disabled:bg-gray-700 disabled:cursor-not-allowed text-white text-sm font-semibold rounded-xl transition-colors self-end">
+            <span x-show="!isSending">{{ _('agent_team.live_send_guidance') }}</span>
+            <span x-show="isSending" class="flex items-center gap-1">
+                <svg class="animate-spin h-4 w-4" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg>
+            </span>
+        </button>
+    </div>
+</div>
+
+<script>
+function agentTeamLiveView() {
+    return {
+        selectedTaskId: '',
+        activeTasks: [],
+        displayItems: [],
+        isLoading: false,
+        isConnected: false,
+        isThinking: false,
+        isSending: false,
+        isTaskActive: false,
+        promptText: '',
+        _lastSeq: 0,
+        _sessions: [],
+        _toolCalls: {},
+        _prompts: [],
+        _sseHandlers: [],
+
+        init() {
+            this._setupSSEListeners();
+            this.loadActiveTasks();
+        },
+
+        _setupSSEListeners() {
+            var self = this;
+            var events = [
+                'sse:agent:task_updated', 'sse:agent:session_started', 'sse:agent:session_completed',
+                'sse:agent:message_added', 'sse:agent:tool_started', 'sse:agent:tool_completed',
+                'sse:agent:tool_failed', 'sse:agent:ai_request', 'sse:agent:prompt_received'
+            ];
+            events.forEach(function(name) {
+                function handler(e) { self._onSSEEvent(name, e.detail); }
+                window.addEventListener(name, handler);
+                self._sseHandlers.push({ name: name, handler: handler });
+            });
+            this.isConnected = true;
+        },
+
+        _onSSEEvent(eventName, data) {
+            if (!this.selectedTaskId || String(data.task_id) !== String(this.selectedTaskId)) {
+                // Refresh active tasks on any agent event
+                if (eventName === 'sse:agent:task_updated') {
+                    this.loadActiveTasks();
+                }
+                return;
+            }
+
+            if (eventName === 'sse:agent:ai_request') {
+                this.isThinking = true;
+                this._pushDisplayItem({ type: 'thinking', label: data.role === 'fullstack' ? '{{ _("agent_team.live_fullstack_thinking") }}' : '{{ _("agent_team.live_reviewer_thinking") }}', key: 'thinking-' + Date.now() });
+            } else if (eventName === 'sse:agent:message_added' || eventName === 'sse:agent:tool_started' || eventName === 'sse:agent:tool_completed' || eventName === 'sse:agent:tool_failed') {
+                this.isThinking = false;
+                this._loadIncremental();
+            } else if (eventName === 'sse:agent:session_started') {
+                this._loadIncremental();
+            } else if (eventName === 'sse:agent:session_completed') {
+                this._loadIncremental();
+            } else if (eventName === 'sse:agent:task_updated') {
+                this.isTaskActive = this._isActiveStatus(data.status);
+                this.loadActiveTasks();
+                this._pushDisplayItem({ type: 'phase', label: data.current_phase || data.status, key: 'phase-' + Date.now() });
+            } else if (eventName === 'sse:agent:prompt_received') {
+                this._loadPrompts();
+            }
+            this._scrollToBottom();
+        },
+
+        async loadActiveTasks() {
+            try {
+                var resp = await fetch('/agent-team/api/active-tasks');
+                if (!resp.ok) return;
+                var data = await resp.json();
+                if (data.success) this.activeTasks = data.tasks || [];
+            } catch(e) { /* ignore */ }
+        },
+
+        async onTaskSelected() {
+            if (!this.selectedTaskId) {
+                this.displayItems = [];
+                this._lastSeq = 0;
+                this._sessions = [];
+                this._toolCalls = {};
+                this._prompts = [];
+                return;
+            }
+            this.displayItems = [];
+            this._lastSeq = 0;
+            this._sessions = [];
+            this._toolCalls = {};
+            this._prompts = [];
+            await this._loadFull();
+        },
+
+        watchTask(taskId) {
+            this.selectedTaskId = String(taskId);
+            this.onTaskSelected();
+        },
+
+        async _loadFull() {
+            this.isLoading = true;
+            try {
+                var resp = await fetch('/agent-team/api/tasks/' + this.selectedTaskId + '/stream-data?after_seq=0&limit=200');
+                var data = await resp.json();
+                if (!data.success) return;
+                this._processStreamData(data);
+                this._rebuildDisplay();
+            } catch(e) { /* ignore */ }
+            this.isLoading = false;
+        },
+
+        async _loadIncremental() {
+            if (!this.selectedTaskId || this.isLoading) return;
+            try {
+                var resp = await fetch('/agent-team/api/tasks/' + this.selectedTaskId + '/stream-data?after_seq=' + this._lastSeq + '&limit=50');
+                var data = await resp.json();
+                if (!data.success) return;
+                this._processStreamData(data);
+                this._rebuildDisplay();
+            } catch(e) { /* ignore */ }
+        },
+
+        async _loadPrompts() {
+            if (!this.selectedTaskId) return;
+            try {
+                var resp = await fetch('/agent-team/api/tasks/' + this.selectedTaskId + '/prompts');
+                var data = await resp.json();
+                if (data.success) this._prompts = data.prompts || [];
+            } catch(e) { /* ignore */ }
+        },
+
+        _processStreamData(data) {
+            // Merge sessions
+            if (data.sessions) {
+                var self = this;
+                data.sessions.forEach(function(s) {
+                    if (!self._sessions.find(function(x) { return x.id === s.id; })) {
+                        self._sessions.push(s);
+                    }
+                });
+            }
+
+            // Merge tool calls
+            if (data.tool_calls) {
+                var self = this;
+                data.tool_calls.forEach(function(tc) {
+                    self._toolCalls[tc.tool_call_id] = tc;
+                });
+            }
+
+            // Merge messages
+            if (data.messages) {
+                var self = this;
+                data.messages.forEach(function(m) {
+                    if (m.seq > self._lastSeq) self._lastSeq = m.seq;
+                    // Store message for display rebuild
+                    if (!self._messages) self._messages = [];
+                    if (!self._messages.find(function(x) { return x.id === m.id; })) {
+                        self._messages.push(m);
+                    }
+                });
+            }
+
+            // Merge prompts
+            if (data.prompts) {
+                this._prompts = data.prompts;
+            }
+        },
+
+        _rebuildDisplay() {
+            var items = [];
+            var sessions = this._sessions.slice().sort(function(a, b) { return a.id - b.id; });
+            var messages = (this._messages || []).slice().sort(function(a, b) { return a.id - b.id; });
+            var self = this;
+
+            // Group messages by session
+            var bySession = {};
+            messages.forEach(function(m) {
+                if (!bySession[m.session_id]) bySession[m.session_id] = [];
+                bySession[m.session_id].push(m);
+            });
+
+            // Render sessions in order
+            sessions.forEach(function(session) {
+                // Session divider
+                var roleLabel = session.role_name === 'fullstack'
+                    ? '{{ _("agent_team.live_iteration_fullstack", "Iteration") }} ' + session.iteration_number + ' - Fullstack Expert'
+                    : '{{ _("agent_team.live_iteration_reviewer", "Iteration") }} ' + session.iteration_number + ' - Professional Reviewer';
+                items.push({ type: 'session', role: session.role_name, label: roleLabel, key: 'session-' + session.id });
+
+                var sessionMsgs = bySession[session.id] || [];
+                sessionMsgs.forEach(function(m) {
+                    if (m.role === 'user') {
+                        // User messages are task context, skip (already shown in task detail)
+                    } else if (m.role === 'assistant') {
+                        var content = m.content || '';
+                        var htmlContent = '';
+                        try { htmlContent = marked.parse(content); } catch(e) { htmlContent = content; }
+                        // Collect tool calls from this message
+                        var msgToolCalls = [];
+                        Object.values(self._toolCalls).forEach(function(tc) {
+                            // Find tool calls belonging to this session
+                            if (tc.session_id === session.id) {
+                                msgToolCalls.push(tc);
+                            }
+                        });
+                        items.push({
+                            type: 'assistant',
+                            content: content,
+                            htmlContent: htmlContent,
+                            toolCalls: msgToolCalls.length > 0 ? msgToolCalls : null,
+                            isLong: content.length > 500,
+                            collapsed: content.length > 500,
+                            key: 'msg-' + m.id
+                        });
+                    } else if (m.role === 'tool') {
+                        var tc = self._toolCalls[m.tool_call_id];
+                        var content = m.content || '';
+                        items.push({
+                            type: 'tool_result',
+                            content: content,
+                            isLong: content.length > 300,
+                            collapsed: content.length > 300,
+                            key: 'msg-' + m.id
+                        });
+                    }
+                });
+            });
+
+            // Render prompts
+            this._prompts.forEach(function(p) {
+                items.push({
+                    type: 'prompt',
+                    content: p.content,
+                    status: p.status,
+                    key: 'prompt-' + p.id
+                });
+            });
+
+            this.displayItems = items;
+            this._scrollToBottom();
+        },
+
+        _pushDisplayItem(item) {
+            this.displayItems.push(item);
+        },
+
+        _scrollToBottom() {
+            var self = this;
+            this.$nextTick(function() {
+                var el = document.getElementById('live-messages');
+                if (el) el.scrollTop = el.scrollHeight;
+            });
+        },
+
+        async sendPrompt() {
+            if (!this.selectedTaskId || !this.promptText.trim() || this.isSending) return;
+            this.isSending = true;
+            try {
+                var resp = await fetch('/agent-team/api/tasks/' + this.selectedTaskId + '/prompts', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+                    body: 'content=' + encodeURIComponent(this.promptText)
+                });
+                var data = await resp.json();
+                if (data.success) {
+                    this.promptText = '';
+                    this._loadPrompts();
+                    this._rebuildDisplay();
+                    this._scrollToBottom();
+                }
+            } catch(e) { /* ignore */ }
+            this.isSending = false;
+        },
+
+        _isActiveStatus(status) {
+            var active = ['queued', 'planning', 'cloning', 'editing', 'self_reviewing', 'validating', 'pushing', 'pr_opened', 'iterating', 'waiting_human'];
+            return active.indexOf(status) >= 0;
+        }
+    };
+}
+</script>

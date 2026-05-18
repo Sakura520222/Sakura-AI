@@ -209,6 +209,7 @@ class ProfessionalReviewAgent:
         skills_context: dict[str, Any] | None = None,
         github_repo: Any | None = None,
         sakura_ref: str | None = None,
+        user_guidance: str = "",
     ) -> ReviewResult:
         """执行审查，AI 自主调用工具直到提交审查。"""
         client, config = await create_agent_team_client()
@@ -237,6 +238,7 @@ class ProfessionalReviewAgent:
                         handoff_context=handoff_context,
                         role_memory_context=role_memory_context,
                         skills_summary=skills_summary,
+                        user_guidance=user_guidance,
                     ),
                 }
             )
@@ -262,6 +264,7 @@ class ProfessionalReviewAgent:
                 target_model=config.review_model,
                 compressor_model=config.summary_model,
             ).build_model_messages(self.messages)
+            await _publish_review_ai_request(round_num)
             response = await client.call_with_retry(
                 messages=model_messages,
                 model=config.review_model,
@@ -401,6 +404,7 @@ class ProfessionalReviewAgent:
         handoff_context: str = "",
         role_memory_context: str = "",
         skills_summary: str = "",
+        user_guidance: str = "",
     ) -> str:
         parts = [f"## 任务\n标题: {task_title}\n描述: {task_summary}\n"]
         if fullstack_summary:
@@ -419,6 +423,8 @@ class ProfessionalReviewAgent:
             parts.append(f"\n## 专家对话交接\n{handoff_context}\n")
         if skills_summary:
             parts.append(f"\n{skills_summary}\n")
+        if user_guidance:
+            parts.append(f"\n{user_guidance}\n")
         return "\n".join(parts)
 
 
@@ -450,3 +456,16 @@ def _review_result_from_terminal(
         passed=verdict == "pass" and score >= 7,
         tool_calls_count=tool_calls_count,
     )
+
+
+async def _publish_review_ai_request(round_num: int) -> None:
+    """发布审查 AI 请求 SSE 事件（延迟导入避免循环依赖）。"""
+    try:
+        from backend.webui.sse import publish_event
+
+        await publish_event("agent:ai_request", {
+            "role": "reviewer",
+            "round_num": round_num,
+        })
+    except Exception:
+        pass

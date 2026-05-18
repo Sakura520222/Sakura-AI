@@ -24,6 +24,7 @@ from backend.models.agent_team_models import (
     AgentTeamPatchFile,
     AgentTeamTask,
     AgentTeamTaskStatus,
+    AgentTeamUserPrompt,
 )
 from backend.models.database import async_session, utc_now as _utc_now
 from backend.services.agent_team.ai_client import load_agent_team_ai_config
@@ -330,10 +331,26 @@ class AgentTeamWorker:
             )
         finally:
             _cancel_events.pop(task_id, None)
+            await self._expire_pending_prompts(task_id)
 
         return task_id
 
     # ── 辅助方法 ──────────────────────────────────────────
+
+    async def _expire_pending_prompts(self, task_id: int) -> None:
+        """任务结束时将未消费的 pending prompts 标记为 expired。"""
+        from sqlalchemy import update
+
+        async with async_session() as session:
+            await session.execute(
+                update(AgentTeamUserPrompt)
+                .where(
+                    AgentTeamUserPrompt.task_id == task_id,
+                    AgentTeamUserPrompt.status == "pending",
+                )
+                .values(status="expired")
+            )
+            await session.commit()
 
     async def _load_task(self, task_id: int) -> AgentTeamTask:
         async with async_session() as session:
@@ -362,6 +379,22 @@ class AgentTeamWorker:
                     setattr(task, key, value)
             task.updated_at = _utc_now()
             await session.commit()
+
+        # SSE: 通知前端任务状态/阶段变更
+        if "status" in kwargs or "current_phase" in kwargs:
+            try:
+                from backend.webui.sse import publish_event
+
+                await publish_event(
+                    "agent:task_updated",
+                    {
+                        "task_id": task_id,
+                        "status": kwargs.get("status"),
+                        "current_phase": kwargs.get("current_phase"),
+                    },
+                )
+            except Exception:
+                pass
 
     async def _save_iteration(
         self,

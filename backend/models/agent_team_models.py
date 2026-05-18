@@ -124,6 +124,9 @@ class AgentTeamTask(Base):
         back_populates="task",
         cascade="all, delete-orphan",
     )
+    user_prompts = relationship(
+        "AgentTeamUserPrompt", back_populates="task", cascade="all, delete-orphan"
+    )
 
     def __repr__(self):
         return f"<AgentTeamTask(id={self.id}, repo={self.repo_full_name}, status={self.status})>"
@@ -324,3 +327,26 @@ class AgentTeamFeedback(Base):
     created_at = Column(TIMESTAMP, default=utc_now, nullable=False)
 
     task = relationship("AgentTeamTask", back_populates="feedback")
+
+
+class AgentTeamUserPrompt(Base):
+    """管理员用户引导提示（不立即中断 AI，下次请求时注入）。"""
+
+    __tablename__ = "agent_team_user_prompts"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    task_id = Column(
+        Integer,
+        ForeignKey("agent_team_tasks.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    content = Column(Text, nullable=False)
+    status = Column(
+        String(50), default="pending", nullable=False, index=True
+    )  # pending → consumed | expired
+    submitted_by = Column(String(100), nullable=True)
+    consumed_at = Column(TIMESTAMP, nullable=True)
+    created_at = Column(TIMESTAMP, default=utc_now, nullable=False)
+
+    task = relationship("AgentTeamTask", back_populates="user_prompts")
