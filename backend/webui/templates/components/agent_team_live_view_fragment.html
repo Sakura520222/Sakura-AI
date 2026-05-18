@@ -341,8 +341,8 @@ function agentTeamLiveView() {
             sessions.forEach(function(session) {
                 // Session divider
                 var roleLabel = session.role_name === 'fullstack'
-                    ? '{{ _("agent_team.live_iteration_fullstack", "Iteration") }} ' + session.iteration_number + ' - Fullstack Expert'
-                    : '{{ _("agent_team.live_iteration_reviewer", "Iteration") }} ' + session.iteration_number + ' - Professional Reviewer';
+                    ? '{{ _("agent_team.live_iteration_fullstack") }} ' + session.iteration_number + ' - Fullstack Expert'
+                    : '{{ _("agent_team.live_iteration_reviewer") }} ' + session.iteration_number + ' - Professional Reviewer';
                 items.push({ type: 'session', role: session.role_name, label: roleLabel, key: 'session-' + session.id });
 
                 var sessionMsgs = bySession[session.id] || [];
