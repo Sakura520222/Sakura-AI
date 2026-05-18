@@ -440,6 +440,9 @@ class IssueAnalysis(Base):
     labels_applied = Column(Integer, default=0)
     applied_label_names = Column(Text, nullable=True)
 
+    # GitHub Issue 生命周期状态 (open/closed)，与 status (分析进度) 分离
+    issue_state = Column(String(50), default="open", nullable=True, index=True)
+
     # 时间戳
     created_at = Column(TIMESTAMP, default=datetime.utcnow, nullable=False)
     updated_at = Column(

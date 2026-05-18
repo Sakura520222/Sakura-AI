@@ -180,7 +180,7 @@ class IssueEmbeddingService:
     async def _fetch_ai_analysis(
         self, repo_owner: str, repo_name: str, issue_numbers: list[int]
     ) -> Dict[int, Dict[str, str]]:
-        """从数据库获取 issues 的 AI 分析结果（summary + suggested_title）"""
+        """从数据库获取 issues 的 AI 分析结果（summary + suggested_title + category + priority + feasibility）"""
         try:
             from backend.models.database import IssueAnalysis, async_session
             from sqlalchemy import select
@@ -192,6 +192,9 @@ class IssueEmbeddingService:
                         IssueAnalysis.issue_number,
                         IssueAnalysis.summary,
                         IssueAnalysis.suggested_title,
+                        IssueAnalysis.category,
+                        IssueAnalysis.priority,
+                        IssueAnalysis.feasibility,
                     ).where(
                         IssueAnalysis.repo_name == repo_full,
                         IssueAnalysis.issue_number.in_(issue_numbers),
@@ -201,6 +204,9 @@ class IssueEmbeddingService:
                     row.issue_number: {
                         "summary": row.summary or "",
                         "suggested_title": row.suggested_title or "",
+                        "category": row.category or "",
+                        "priority": row.priority or "",
+                        "feasibility": row.feasibility or "",
                     }
                     for row in result
                 }
@@ -262,6 +268,12 @@ class IssueEmbeddingService:
         ai_results: Dict[int, Dict[str, str]],
     ) -> int:
         """新增缺失的 issues，优先使用 AI 分析结果"""
+        from backend.core.config import get_dynamic_config
+
+        enable_rich = await get_dynamic_config("issue_vector_store_rich_metadata")
+        if enable_rich is None:
+            enable_rich = True
+
         documents = []
         texts = []
         for issue in new_issues:
@@ -273,15 +285,24 @@ class IssueEmbeddingService:
 
             text = f"{title}\n{body}"
             texts.append(text)
+
+            metadata = {
+                "number": str(issue.number),
+                "title": title,
+                "state": issue.state,
+            }
+
+            if enable_rich:
+                for key in ("category", "priority", "feasibility"):
+                    value = ai.get(key)
+                    if value:
+                        metadata[key] = str(value)
+
             documents.append(
                 {
                     "id": f"{self.ISSUE_ID_PREFIX}{issue.number}",
                     "content": text,
-                    "metadata": {
-                        "number": str(issue.number),
-                        "title": title,
-                        "state": issue.state,
-                    },
+                    "metadata": metadata,
                 }
             )
 
@@ -418,22 +439,43 @@ class IssueEmbeddingService:
         title: str,
         body: str,
         state: str,
+        analysis_metadata: dict | None = None,
     ) -> bool:
-        """更新或插入单个 issue（webhook 调用）"""
+        """更新或插入单个 issue（webhook 调用）
+
+        Args:
+            analysis_metadata: AI 分析元数据，可包含 category/priority/feasibility 等字段
+        """
         try:
+            from backend.core.config import get_dynamic_config
+
+            enable_rich = await get_dynamic_config(
+                "issue_vector_store_rich_metadata"
+            )
+            if enable_rich is None:
+                enable_rich = True
+
             collection_key = self._collection_key(repo_owner, repo_name)
             text = f"{title}\n{body or ''}"
             embedding = await self.embedding_service.embed_query(text)
+
+            metadata = {
+                "number": str(issue_number),
+                "title": title,
+                "state": state,
+            }
+
+            if enable_rich and analysis_metadata:
+                for key in ("category", "priority", "feasibility"):
+                    value = analysis_metadata.get(key)
+                    if value:
+                        metadata[key] = str(value)
 
             document = {
                 "id": f"{self.ISSUE_ID_PREFIX}{issue_number}",
                 "content": text,
                 "embedding": embedding,
-                "metadata": {
-                    "number": str(issue_number),
-                    "title": title,
-                    "state": state,
-                },
+                "metadata": metadata,
             }
 
             await self.vector_store.upsert_documents(collection_key, [document])

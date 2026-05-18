@@ -860,18 +860,68 @@ async def handle_issue_event(payload: Dict[str, Any]) -> JSONResponse:
                             body=issue_body,
                             state="open",
                         )
+                        # 同步数据库中的 issue_state
+                        try:
+                            from backend.models.database import (
+                                IssueAnalysis as _IA,
+                                async_session as _as,
+                            )
+                            from sqlalchemy import update as sql_update
+
+                            _repo_full = f"{repo_owner}/{repo_name}"
+                            async with _as() as _session:
+                                await _session.execute(
+                                    sql_update(_IA)
+                                    .where(
+                                        _IA.repo_name == _repo_full,
+                                        _IA.issue_number == issue_number,
+                                    )
+                                    .values(issue_state="open")
+                                )
+                                await _session.commit()
+                        except Exception as _e:
+                            logger.warning(f"同步 Issue reopened 状态到数据库失败: {_e}")
                 else:
                     logger.debug("跳过 Pull Request 的 Issue 向量同步")
             except Exception as e:
                 logger.warning(f"语义 Issue 向量同步失败: {e}")
 
-        # closed 事件仅用于向量同步，不需要触发 Issue 分析
+        # closed 事件：向量同步 + 数据库 issue_state 更新
         if action == "closed":
+            # 同步数据库中的 issue_state
+            try:
+                from backend.models.database import IssueAnalysis, async_session
+                from sqlalchemy import update as sql_update
+
+                repo_full = f"{repo_owner}/{repo_name}"
+                async with async_session() as session:
+                    await session.execute(
+                        sql_update(IssueAnalysis)
+                        .where(
+                            IssueAnalysis.repo_name == repo_full,
+                            IssueAnalysis.issue_number == issue_number,
+                        )
+                        .values(issue_state="closed")
+                    )
+                    await session.commit()
+            except Exception as e:
+                logger.warning(f"同步 Issue closed 状态到数据库失败: {e}")
+
+            # 失效候选池缓存
+            try:
+                from backend.services.agent_team.candidate_service import (
+                    AgentTeamCandidateService,
+                )
+
+                AgentTeamCandidateService().invalidate_cache()
+            except Exception:
+                pass
+
             return JSONResponse(
                 content={
                     "status": "accepted",
                     "action": "closed",
-                    "sync": "vector_only",
+                    "sync": "vector_and_db",
                 }
             )
 
