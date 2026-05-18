@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, Callable
 
 from loguru import logger
 
@@ -87,6 +87,7 @@ class IterationLoopService:
         skills_context: dict[str, Any] | None = None,
         github_repo: Any | None = None,
         sakura_ref: str | None = None,
+        cancel_check: Callable[[], bool] | None = None,
     ) -> IterationOutcome:
         """运行迭代循环。"""
         total_tool_calls = 0
@@ -95,6 +96,13 @@ class IterationLoopService:
         start_iteration = resume_cursor.iteration_number if resume_cursor else 1
 
         for iteration in range(start_iteration, max_iterations + 1):
+            if cancel_check and cancel_check():
+                return IterationOutcome(
+                    success=False,
+                    reason="任务已取消",
+                    iterations=iteration - 1,
+                    total_tool_calls=total_tool_calls,
+                )
             logger.info(
                 "Agent 迭代循环 第 {}/{} 轮 - 任务: {}",
                 iteration,
@@ -143,6 +151,7 @@ class IterationLoopService:
                     role_memory_context=fullstack_role_memory,
                     iteration=iteration,
                     max_iterations=max_iterations,
+                    cancel_check=cancel_check,
                 )
                 total_tool_calls += fs_result.tool_calls_count
                 await self._complete_session(
@@ -210,6 +219,15 @@ class IterationLoopService:
             )
 
             # ── 专业审查 ──
+            if cancel_check and cancel_check():
+                return IterationOutcome(
+                    success=False,
+                    reason="任务已取消",
+                    iterations=iteration,
+                    fullstack_result=fs_result,
+                    modified_files=fs_result.modified_files,
+                    total_tool_calls=total_tool_calls,
+                )
             diff_summary = ""
             try:
                 diff_summary = await self.git_workspace_service.get_diff_summary(
@@ -235,6 +253,7 @@ class IterationLoopService:
                 github_repo=github_repo,
                 sakura_ref=sakura_ref,
                 user_guidance=reviewer_guidance,
+                cancel_check=cancel_check,
             )
             total_tool_calls += rev_result.tool_calls_count
             await self._complete_session(

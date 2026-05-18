@@ -15,7 +15,7 @@ AI 自主决定审查哪些文件、运行什么检查，完成后调用 submit_
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, Callable
 
 from loguru import logger
 
@@ -210,6 +210,7 @@ class ProfessionalReviewAgent:
         github_repo: Any | None = None,
         sakura_ref: str | None = None,
         user_guidance: str = "",
+        cancel_check: Callable[[], bool] | None = None,
     ) -> ReviewResult:
         """执行审查，AI 自主调用工具直到提交审查。"""
         client, config = await create_agent_team_client()
@@ -246,6 +247,15 @@ class ProfessionalReviewAgent:
         tool_calls_count = 0
 
         for round_num in range(1, max_tool_rounds + 1):
+            if cancel_check and cancel_check():
+                return ReviewResult(
+                    passed=False,
+                    verdict="cancelled",
+                    score=0,
+                    summary="任务已取消",
+                    findings=[],
+                    tool_calls_count=tool_calls_count,
+                )
             logger.debug("专业审查工具调用第 {} 轮", round_num)
 
             pending_tool_calls = get_missing_tool_calls(self.messages)

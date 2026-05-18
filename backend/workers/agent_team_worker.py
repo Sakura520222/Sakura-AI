@@ -152,6 +152,7 @@ class AgentTeamWorker:
                 skills_context=skills_context,
                 github_repo=sakura_info["github_repo"],
                 sakura_ref=sakura_info["sakura_ref"],
+                cancel_check=cancel_event.is_set,
             )
 
             logger.info(
@@ -160,6 +161,16 @@ class AgentTeamWorker:
                 outcome.iterations,
                 outcome.total_tool_calls,
             )
+
+            # 迭代循环被取消
+            if not outcome.success and cancel_event.is_set():
+                await self._update_task(
+                    task_id,
+                    status=AgentTeamTaskStatus.CANCELLED.value,
+                    current_phase="cancelled",
+                    error_message="任务在 EDITING 阶段被取消",
+                )
+                return task_id
 
             # ── 记录迭代 ──
             await self._save_iteration(
