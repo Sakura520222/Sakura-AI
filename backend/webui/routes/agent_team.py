@@ -1138,7 +1138,7 @@ async def list_active_tasks(
 @router.get("/api/tasks/{task_id}/stream-data")
 async def task_stream_data(
     task_id: int,
-    after_seq: int = 0,
+    after_id: int = 0,
     limit: int = 50,
     _=Depends(require_super_admin),
     db: AsyncSession = Depends(get_db),
@@ -1166,12 +1166,12 @@ async def task_stream_data(
             "has_more": False,
         })
 
-    # Messages with pagination
+    # Messages with pagination (use global id, not per-session seq)
     msg_query = (
         select(AgentTeamMessage)
         .where(
             AgentTeamMessage.session_id.in_(session_ids),
-            AgentTeamMessage.seq > after_seq,
+            AgentTeamMessage.id > after_id,
         )
         .order_by(AgentTeamMessage.id)
         .limit(limit + 1)
