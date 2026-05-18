@@ -212,11 +212,10 @@ class AgentTeamPRService:
 
         try:
             from backend.services.agent_team.ai_client import (
-                create_agent_team_client,
+                create_agent_team_summary_client,
             )
 
-            client, config = await create_agent_team_client(validate=False)
-            model = config.summary_model or config.model
+            client, model, _config = await create_agent_team_summary_client()
 
             files_text = ", ".join(modified_files[:20])
             if len(modified_files) > 20:
