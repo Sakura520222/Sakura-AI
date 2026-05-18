@@ -341,7 +341,25 @@ async def webui_fallback(request: Request, path: str):
 
 
 if __name__ == "__main__":
+    import logging
     import uvicorn
+
+    # Suppress access log for high-frequency polling endpoints
+    class _PollingLogFilter(logging.Filter):
+        _skip_patterns = (
+            "/agent-team/api/tasks/",
+            "/agent-team/api/active-tasks",
+        )
+
+        def filter(self, record: logging.LogRecord) -> bool:
+            msg = getattr(record, "msg", "") or ""
+            for p in self._skip_patterns:
+                if p in msg:
+                    return False
+            return True
+
+    access_logger = logging.getLogger("uvicorn.access")
+    access_logger.addFilter(_PollingLogFilter())
 
     uvicorn.run(
         "backend.main:app",
