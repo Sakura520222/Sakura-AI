@@ -527,11 +527,35 @@ class Settings(BaseSettings):
     agent_team_run_tests: bool = True
     agent_team_auto_install_deps: bool = True  # 自动安装工作区项目依赖
     agent_team_test_command_allowlist: str = (
-        "pytest -q,"
+        # Python: test, lint, format, type-check, package
+        "pytest -q,python -m pytest,"
         "ruff check,ruff check --output-format=concise .,ruff check --fix,ruff format,"
-        "npm test,npm run lint,npm run format,npx eslint,npx prettier --check,"
-        "go test ./...,go vet,"
-        "cargo test,cargo clippy,cargo fmt --check"
+        "flake8,black --check,isort --check,pylint,mypy,"
+        "pip install,"
+        # Node.js: npm
+        "npm test,npm run lint,npm run format,npm run build,"
+        "npm install,npm ci,npx eslint,npx prettier --check,"
+        # Node.js: yarn
+        "yarn test,yarn lint,yarn build,yarn install,"
+        # Node.js: pnpm
+        "pnpm test,pnpm lint,pnpm build,pnpm install,"
+        # Node.js: bun
+        "bun test,bun run,bun install,"
+        # TypeScript
+        "tsc --noEmit,"
+        # Go
+        "go test ./...,go vet,go build,go fmt,"
+        # Rust
+        "cargo test,cargo clippy,cargo fmt --check,cargo build,"
+        # Deno
+        "deno test,deno check,"
+        # Build systems
+        "make,cmake --build,"
+        # Shell
+        "shellcheck,"
+        # System / diagnostic
+        "which,uname,env,wc,du,diff,tree,file,stat,"
+        "python --version,node --version,go version,java --version"
     )
     agent_team_skills_enabled: bool = False
     agent_team_skills_root: str = "./Skills"

@@ -91,13 +91,21 @@ class ShellTool(BaseTool):
         "function": {
             "name": "run_command",
             "description": (
-                "在工作区内执行 shell 命令（如运行测试、代码检查等）。"
+                "在工作区内执行 shell 命令（如运行测试、代码检查、构建、安装依赖等）。"
                 "命令在项目根目录执行，不允许跳出工作区"
                 "\n\n可用命令（由白名单配置决定）："
-                "\n- Python: pytest -q, ruff check, ruff check --fix, ruff format"
-                "\n- Node.js: npm test, npm run lint, npm run format, npx eslint"
-                "\n- Go: go test ./..., go vet"
-                "\n- Rust: cargo test, cargo clippy, cargo fmt --check"
+                "\n- Python: pytest -q, python -m pytest, ruff check, ruff check --fix, ruff format,"
+                " flake8, black --check, isort --check, pylint, mypy, pip install"
+                "\n- Node.js: npm test/install/ci/run build, yarn test/build/install,"
+                " pnpm test/build/install, bun test/run/install, npx eslint, npx prettier --check"
+                "\n- TypeScript: tsc --noEmit"
+                "\n- Go: go test ./..., go vet, go build, go fmt"
+                "\n- Rust: cargo test/clippy/build, cargo fmt --check"
+                "\n- Deno: deno test, deno check"
+                "\n- Build: make, cmake --build"
+                "\n- Shell: shellcheck"
+                "\n- System: which, uname, env, wc, du, diff, tree, file, stat,"
+                " python --version, node --version, go version, java --version"
             ),
             "parameters": {
                 "type": "object",
