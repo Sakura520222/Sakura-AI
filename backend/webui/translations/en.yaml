@@ -719,7 +719,6 @@ config:
     agent_team_max_lines_changed: "Max Lines Changed"
     agent_team_run_tests: "Auto-run Verification"
     agent_team_auto_install_deps: "Auto Install Dependencies"
-    agent_team_test_command_allowlist: "Verification Command Allowlist"
     agent_team_skills_enabled: "Enable Agent Skills"
     agent_team_skills_root: "Skills Root"
   desc:
@@ -802,7 +801,6 @@ config:
     agent_team_max_lines_changed: "Max lines allowed to change per commit"
     agent_team_run_tests: "Auto-run verification commands before committing"
     agent_team_auto_install_deps: "Automatically detect and install dependencies from pyproject.toml or requirements.txt after cloning the repo"
-    agent_team_test_command_allowlist: "Allowed verification commands (comma-separated), empty means no commands allowed"
     agent_team_skills_enabled: "When enabled, Agent tasks load enabled Skills as summaries and can read full SKILL.md content with the use_skill tool"
     agent_team_skills_root: "Local storage root for Skills, default ./Skills; each Skill is stored as <slug>/SKILL.md"
   option:
