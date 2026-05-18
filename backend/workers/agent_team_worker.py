@@ -36,6 +36,7 @@ from backend.services.agent_team.git_workspace_service import (
 )
 from backend.services.agent_team.iteration_loop import IterationLoopService
 from backend.services.agent_team.pr_service import AgentTeamPRService
+from backend.services.ai_reviewer.token_tracker import TokenTracker
 
 
 def _format_failure_reason(reason: str, modified_files: list[str]) -> str:
@@ -185,6 +186,8 @@ class AgentTeamWorker:
             await self._update_task(
                 task_id,
                 iteration_count=outcome.iterations,
+                prompt_tokens=outcome.prompt_tokens,
+                completion_tokens=outcome.completion_tokens,
                 current_phase="iteration_complete",
             )
 
@@ -298,11 +301,19 @@ class AgentTeamWorker:
                 )
 
                 # 短暂等待后标记为 completed（外部 PR 审查将通过 webhook 异步处理）
+                s = get_settings()
+                cost_tracker = TokenTracker()
+                cost_tracker.prompt_tokens = outcome.prompt_tokens
+                cost_tracker.completion_tokens = outcome.completion_tokens
+                estimated_cost = cost_tracker.calculate_cost(
+                    s.review_price_per_1k_prompt, s.review_price_per_1k_completion,
+                )
                 await self._update_task(
                     task_id,
                     status=AgentTeamTaskStatus.COMPLETED.value,
                     current_phase="completed",
                     completed_at=_utc_now(),
+                    estimated_cost=estimated_cost,
                     error_message=None,
                     failed_phase=None,
                     failed_role=None,
@@ -319,12 +330,20 @@ class AgentTeamWorker:
                 # 迭代未能通过审查
                 reason = _format_failure_reason(outcome.reason, outcome.modified_files)
 
+                s = get_settings()
+                cost_tracker = TokenTracker()
+                cost_tracker.prompt_tokens = outcome.prompt_tokens
+                cost_tracker.completion_tokens = outcome.completion_tokens
+                estimated_cost = cost_tracker.calculate_cost(
+                    s.review_price_per_1k_prompt, s.review_price_per_1k_completion,
+                )
                 await self._update_task(
                     task_id,
                     status=AgentTeamTaskStatus.FAILED.value,
                     current_phase="iteration_failed",
                     error_message=reason,
                     failed_phase="iteration_failed",
+                    estimated_cost=estimated_cost,
                 )
                 logger.warning("Agent 任务失败: task_id={}, reason={}", task_id, reason)
 

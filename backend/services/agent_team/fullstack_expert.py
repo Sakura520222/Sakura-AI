@@ -36,6 +36,7 @@ from backend.services.agent_team.tools.registry import (
     get_tool_definitions,
 )
 from backend.services.agent_team.workspace_service import AgentTeamWorkspaceService
+from backend.services.ai_reviewer.token_tracker import TokenTracker
 from backend.utils.config_utils import resolve_clamped_int_config
 from backend.utils.message_utils import (
     get_missing_tool_calls,
@@ -138,6 +139,8 @@ class FullStackResult:
     test_result: str = ""
     tool_calls_count: int = 0
     error: str = ""
+    prompt_tokens: int = 0
+    completion_tokens: int = 0
 
 
 def _get_missing_tool_calls(messages: list[dict[str, Any]]) -> list[Any]:
@@ -237,6 +240,7 @@ class FullStackExpertAgent:
             )
 
         tool_calls_count = 0
+        token_tracker = TokenTracker()
 
         for round_num in range(1, max_tool_rounds + 1):
             if cancel_check and cancel_check():
@@ -245,6 +249,8 @@ class FullStackExpertAgent:
                     summary="任务已取消",
                     modified_files=sorted(ctx.modified_files),
                     error="cancelled",
+                    prompt_tokens=token_tracker.prompt_tokens,
+                    completion_tokens=token_tracker.completion_tokens,
                 )
             logger.debug("全栈专家工具调用第 {} 轮", round_num)
 
@@ -272,6 +278,8 @@ class FullStackExpertAgent:
                         risk_level=terminal_output.get("risk_level", "medium"),
                         test_result=terminal_output.get("test_result", ""),
                         tool_calls_count=tool_calls_count,
+                        prompt_tokens=token_tracker.prompt_tokens,
+                        completion_tokens=token_tracker.completion_tokens,
                     )
                 continue
 
@@ -288,7 +296,7 @@ class FullStackExpertAgent:
             model_messages = await AgentTeamContextCompressor(
                 target_model=config.model,
                 compressor_model=config.summary_model,
-            ).build_model_messages(self.messages)
+            ).build_model_messages(self.messages, token_tracker)
             await _publish_ai_request("fullstack", round_num)
             response = await client.call_with_retry(
                 messages=model_messages,
@@ -299,6 +307,7 @@ class FullStackExpertAgent:
                 tools=tool_schemas,
                 tool_choice="auto",
             )
+            token_tracker.accumulate(response)
 
             if not response.choices:
                 return FullStackResult(
@@ -306,6 +315,8 @@ class FullStackExpertAgent:
                     summary="AI 返回空响应",
                     modified_files=sorted(ctx.modified_files),
                     error="empty_response",
+                    prompt_tokens=token_tracker.prompt_tokens,
+                    completion_tokens=token_tracker.completion_tokens,
                 )
 
             choice = response.choices[0]
@@ -329,6 +340,8 @@ class FullStackExpertAgent:
                     summary=message.content or "任务完成（无工具调用）",
                     modified_files=tracked,
                     tool_calls_count=tool_calls_count,
+                    prompt_tokens=token_tracker.prompt_tokens,
+                    completion_tokens=token_tracker.completion_tokens,
                 )
 
             # 逐个执行工具调用
@@ -355,6 +368,8 @@ class FullStackExpertAgent:
                     risk_level=terminal_output.get("risk_level", "medium"),
                     test_result=terminal_output.get("test_result", ""),
                     tool_calls_count=tool_calls_count,
+                    prompt_tokens=token_tracker.prompt_tokens,
+                    completion_tokens=token_tracker.completion_tokens,
                 )
 
         modified_files = sorted(ctx.modified_files)
@@ -374,6 +389,8 @@ class FullStackExpertAgent:
             modified_files=modified_files,
             tool_calls_count=tool_calls_count,
             error=error,
+            prompt_tokens=token_tracker.prompt_tokens,
+            completion_tokens=token_tracker.completion_tokens,
         )
 
     async def _execute_tool_calls(
