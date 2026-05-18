@@ -78,7 +78,7 @@
                             </template>
                         </div>
                     </div>
-                    <button x-show="item.isLong" @click="item.collapsed = !item.collapsed" class="self-end text-xs text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 shrink-0">
+                    <button x-show="item.isLong" @click="toggleCollapse(item.key)" class="self-end text-xs text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 shrink-0">
                         <span x-show="item.collapsed">{{ _('agent_team.live_expand') }}</span>
                         <span x-show="!item.collapsed">{{ _('agent_team.live_collapse') }}</span>
                     </button>
@@ -108,7 +108,7 @@
                          :class="item.collapsed ? 'max-h-16 overflow-hidden' : ''">
                         <pre class="whitespace-pre-wrap break-all" x-text="item.content"></pre>
                     </div>
-                    <button x-show="item.isLong" @click="item.collapsed = !item.collapsed" class="self-end text-xs text-gray-400 hover:text-gray-600 shrink-0">
+                    <button x-show="item.isLong" @click="toggleCollapse(item.key)" class="self-end text-xs text-gray-400 hover:text-gray-600 shrink-0">
                         <span x-show="item.collapsed">{{ _('agent_team.live_expand') }}</span>
                         <span x-show="!item.collapsed">{{ _('agent_team.live_collapse') }}</span>
                     </button>
@@ -176,10 +176,25 @@ function agentTeamLiveView() {
         _toolCalls: {},
         _prompts: [],
         _sseHandlers: [],
+        _collapsedState: {},
+        _userScrolledUp: false,
 
         init() {
             this._setupSSEListeners();
             this.loadActiveTasks();
+            this._setupScrollDetection();
+        },
+
+        _setupScrollDetection() {
+            var self = this;
+            this.$nextTick(function() {
+                var el = document.getElementById('live-messages');
+                if (!el) return;
+                el.addEventListener('scroll', function() {
+                    var nearBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 80;
+                    self._userScrolledUp = !nearBottom;
+                });
+            });
         },
 
         _setupSSEListeners() {
@@ -206,6 +221,7 @@ function agentTeamLiveView() {
             if (eventName === 'sse:agent:ai_request') {
                 this.isThinking = true;
                 this._pushDisplayItem({ type: 'thinking', label: data.role === 'fullstack' ? '{{ _("agent_team.live_fullstack_thinking") }}' : '{{ _("agent_team.live_reviewer_thinking") }}', key: 'thinking-' + Date.now() });
+                this._scrollToBottom();
             } else if (eventName === 'sse:agent:message_added' || eventName === 'sse:agent:tool_started' || eventName === 'sse:agent:tool_completed' || eventName === 'sse:agent:tool_failed') {
                 this.isThinking = false;
                 this._loadIncremental();
@@ -215,10 +231,10 @@ function agentTeamLiveView() {
                 this.isTaskActive = this._isActiveStatus(data.status);
                 this.loadActiveTasks();
                 this._pushDisplayItem({ type: 'phase', label: data.current_phase || data.status, key: 'phase-' + Date.now() });
+                this._scrollToBottom();
             } else if (eventName === 'sse:agent:prompt_received') {
                 this._loadPrompts();
             }
-            this._scrollToBottom();
         },
 
         async loadActiveTasks() {
@@ -238,6 +254,8 @@ function agentTeamLiveView() {
                 this._sessions = [];
                 this._toolCalls = {};
                 this._prompts = [];
+                this._collapsedState = {};
+                this.isTaskActive = false;
                 return;
             }
             this.displayItems = [];
@@ -246,6 +264,8 @@ function agentTeamLiveView() {
             this._sessions = [];
             this._toolCalls = {};
             this._prompts = [];
+            this._collapsedState = {};
+            this._userScrolledUp = false;
             await this._loadFull();
         },
 
@@ -260,6 +280,7 @@ function agentTeamLiveView() {
                 var resp = await fetch('/agent-team/api/tasks/' + this.selectedTaskId + '/stream-data?after_id=0&limit=200');
                 var data = await resp.json();
                 if (!data.success) return;
+                this.isTaskActive = this._isActiveStatus(data.task_status);
                 this._processStreamData(data);
                 this._rebuildDisplay();
             } catch(e) { /* ignore */ }
@@ -283,13 +304,13 @@ function agentTeamLiveView() {
                 var resp = await fetch('/agent-team/api/tasks/' + this.selectedTaskId + '/prompts');
                 var data = await resp.json();
                 if (data.success) this._prompts = data.prompts || [];
+                this._rebuildDisplay();
             } catch(e) { /* ignore */ }
         },
 
         _processStreamData(data) {
             var self = this;
 
-            // Merge sessions
             if (data.sessions) {
                 data.sessions.forEach(function(s) {
                     if (!self._sessions.find(function(x) { return x.id === s.id; })) {
@@ -298,14 +319,12 @@ function agentTeamLiveView() {
                 });
             }
 
-            // Merge tool calls
             if (data.tool_calls) {
                 data.tool_calls.forEach(function(tc) {
                     self._toolCalls[tc.tool_call_id] = tc;
                 });
             }
 
-            // Merge messages
             if (data.messages) {
                 data.messages.forEach(function(m) {
                     if (m.id > self._lastMsgId) self._lastMsgId = m.id;
@@ -315,7 +334,6 @@ function agentTeamLiveView() {
                 });
             }
 
-            // Merge prompts
             if (data.prompts) {
                 this._prompts = data.prompts;
             }
@@ -327,14 +345,12 @@ function agentTeamLiveView() {
             var messages = this._messages.slice().sort(function(a, b) { return a.id - b.id; });
             var self = this;
 
-            // Group messages by session
             var bySession = {};
             messages.forEach(function(m) {
                 if (!bySession[m.session_id]) bySession[m.session_id] = [];
                 bySession[m.session_id].push(m);
             });
 
-            // Build tool call lookup by assistant_message_id
             var tcByMsg = {};
             Object.values(self._toolCalls).forEach(function(tc) {
                 if (tc.assistant_message_id) {
@@ -343,7 +359,6 @@ function agentTeamLiveView() {
                 }
             });
 
-            // Render sessions in order
             sessions.forEach(function(session) {
                 var roleLabel = session.role_name === 'fullstack'
                     ? '{{ _("agent_team.live_iteration_fullstack") }} ' + session.iteration_number + ' - Fullstack Expert'
@@ -352,40 +367,40 @@ function agentTeamLiveView() {
 
                 var sessionMsgs = bySession[session.id] || [];
                 sessionMsgs.forEach(function(m) {
-                    if (m.role === 'system' || m.role === 'user') {
-                        return; // skip context messages
-                    }
+                    if (m.role === 'system' || m.role === 'user') return;
 
                     if (m.role === 'assistant') {
                         var content = m.content || '';
                         var htmlContent = '';
                         try { htmlContent = marked.parse(content); } catch(e) { htmlContent = content; }
-                        // Tool calls attached to this assistant message
                         var msgToolCalls = tcByMsg[m.id] || null;
+                        var key = 'msg-' + m.id;
+                        var isLong = content.length > 500;
                         items.push({
                             type: 'assistant',
                             content: content,
                             htmlContent: htmlContent,
                             toolCalls: msgToolCalls && msgToolCalls.length > 0 ? msgToolCalls : null,
-                            isLong: content.length > 500,
-                            collapsed: content.length > 500,
-                            key: 'msg-' + m.id
+                            isLong: isLong,
+                            collapsed: isLong ? (self._collapsedState[key] !== undefined ? self._collapsedState[key] : true) : false,
+                            key: key
                         });
                     } else if (m.role === 'tool') {
                         var tc = self._toolCalls[m.tool_call_id];
                         var content = m.content || '';
+                        var key = 'msg-' + m.id;
+                        var isLong = content.length > 300;
                         items.push({
                             type: 'tool_result',
                             content: content,
-                            isLong: content.length > 300,
-                            collapsed: content.length > 300,
-                            key: 'msg-' + m.id
+                            isLong: isLong,
+                            collapsed: isLong ? (self._collapsedState[key] !== undefined ? self._collapsedState[key] : true) : false,
+                            key: key
                         });
                     }
                 });
             });
 
-            // Render prompts
             this._prompts.forEach(function(p) {
                 items.push({
                     type: 'prompt',
@@ -399,11 +414,26 @@ function agentTeamLiveView() {
             this._scrollToBottom();
         },
 
+        toggleCollapse(key) {
+            if (this._collapsedState[key] === undefined) {
+                this._collapsedState[key] = false;
+            } else {
+                this._collapsedState[key] = !this._collapsedState[key];
+            }
+            for (var i = 0; i < this.displayItems.length; i++) {
+                if (this.displayItems[i].key === key) {
+                    this.displayItems[i].collapsed = this._collapsedState[key];
+                    break;
+                }
+            }
+        },
+
         _pushDisplayItem(item) {
             this.displayItems.push(item);
         },
 
         _scrollToBottom() {
+            if (this._userScrolledUp) return;
             var self = this;
             this.$nextTick(function() {
                 var el = document.getElementById('live-messages');
@@ -424,10 +454,12 @@ function agentTeamLiveView() {
                 if (data.success) {
                     this.promptText = '';
                     this._loadPrompts();
-                    this._rebuildDisplay();
-                    this._scrollToBottom();
+                } else {
+                    window.dispatchEvent(new CustomEvent('show-toast', {detail: {message: data.error || '{{ _("agent_team.request_failed") }}', type: 'error'}}));
                 }
-            } catch(e) { /* ignore */ }
+            } catch(e) {
+                window.dispatchEvent(new CustomEvent('show-toast', {detail: {message: '{{ _("agent_team.request_failed") }}', type: 'error'}}));
+            }
             this.isSending = false;
         },
 

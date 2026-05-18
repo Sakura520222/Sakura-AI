@@ -1112,12 +1112,23 @@ async def list_active_tasks(
     _=Depends(require_super_admin),
     db: AsyncSession = Depends(get_db),
 ):
-    """获取活跃任务列表（供 Live View 下拉框使用）。"""
+    """获取活跃任务列表（供 Live View 下拉框使用，含最近完成的任务以便回看对话）。"""
     rows = (await db.execute(
         select(AgentTeamTask)
-        .where(AgentTeamTask.status.in_(AGENT_TEAM_ACTIVE_STATUSES))
+        .where(
+            AgentTeamTask.status.in_(AGENT_TEAM_ACTIVE_STATUSES)
+            | (
+                AgentTeamTask.status.in_([
+                    AgentTeamTaskStatus.COMPLETED.value,
+                    AgentTeamTaskStatus.FAILED.value,
+                    AgentTeamTaskStatus.CANCELLED.value,
+                    AgentTeamTaskStatus.PR_OPENED.value,
+                ])
+                & AgentTeamTask.completed_at.isnot(None)
+            )
+        )
         .order_by(desc(AgentTeamTask.updated_at))
-        .limit(20)
+        .limit(30)
     )).scalars().all()
 
     return JSONResponse({
@@ -1249,6 +1260,7 @@ async def task_stream_data(
             for p in prompt_rows
         ],
         "has_more": has_more,
+        "task_status": task.status,
     })
 
 
