@@ -130,11 +130,6 @@ class IterationLoopService:
                 fs_result = await self._restore_fullstack_result(iteration)
                 resume_cursor = None
             else:
-                user_guidance = await self._consume_pending_prompts()
-                if user_guidance and feedback:
-                    feedback = f"{feedback}\n\n{user_guidance}"
-                elif user_guidance:
-                    feedback = user_guidance
                 expert = await self._create_agent(
                     "fullstack", iteration, resume_cursor, FullStackExpertAgent
                 )
@@ -152,6 +147,7 @@ class IterationLoopService:
                     iteration=iteration,
                     max_iterations=max_iterations,
                     cancel_check=cancel_check,
+                    guidance_callback=self._consume_pending_prompts,
                 )
                 total_tool_calls += fs_result.tool_calls_count
                 await self._complete_session(
@@ -239,7 +235,6 @@ class IterationLoopService:
             reviewer = await self._create_agent(
                 "reviewer", iteration, resume_cursor, ProfessionalReviewAgent
             )
-            reviewer_guidance = await self._consume_pending_prompts()
             rev_result = await reviewer.review(
                 task_title=task_title,
                 task_summary=task_summary,
@@ -252,8 +247,9 @@ class IterationLoopService:
                 skills_context=skills_context,
                 github_repo=github_repo,
                 sakura_ref=sakura_ref,
-                user_guidance=reviewer_guidance,
+                user_guidance="",
                 cancel_check=cancel_check,
+                guidance_callback=self._consume_pending_prompts,
             )
             total_tool_calls += rev_result.tool_calls_count
             await self._complete_session(
