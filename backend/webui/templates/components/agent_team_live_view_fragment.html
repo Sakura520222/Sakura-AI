@@ -359,11 +359,14 @@ function agentTeamLiveView() {
                 }
             });
 
+            // Helper: parse ISO date string to timestamp
+            function toTs(iso) { return iso ? new Date(iso).getTime() : 0; }
+
             sessions.forEach(function(session) {
                 var roleLabel = session.role_name === 'fullstack'
                     ? '{{ _("agent_team.live_iteration_fullstack") }} ' + session.iteration_number + ' - Fullstack Expert'
                     : '{{ _("agent_team.live_iteration_reviewer") }} ' + session.iteration_number + ' - Professional Reviewer';
-                items.push({ type: 'session', role: session.role_name, label: roleLabel, key: 'session-' + session.id });
+                items.push({ type: 'session', role: session.role_name, label: roleLabel, key: 'session-' + session.id, _ts: toTs(session.started_at) });
 
                 var sessionMsgs = bySession[session.id] || [];
                 sessionMsgs.forEach(function(m) {
@@ -383,7 +386,8 @@ function agentTeamLiveView() {
                             toolCalls: msgToolCalls && msgToolCalls.length > 0 ? msgToolCalls : null,
                             isLong: isLong,
                             collapsed: isLong ? (self._collapsedState[key] !== undefined ? self._collapsedState[key] : true) : false,
-                            key: key
+                            key: key,
+                            _ts: toTs(m.created_at)
                         });
                     } else if (m.role === 'tool') {
                         var tc = self._toolCalls[m.tool_call_id];
@@ -395,19 +399,29 @@ function agentTeamLiveView() {
                             content: content,
                             isLong: isLong,
                             collapsed: isLong ? (self._collapsedState[key] !== undefined ? self._collapsedState[key] : true) : false,
-                            key: key
+                            key: key,
+                            _ts: toTs(m.created_at)
                         });
                     }
                 });
             });
 
+            // Insert prompts with timestamps for chronological ordering
             this._prompts.forEach(function(p) {
                 items.push({
                     type: 'prompt',
                     content: p.content,
                     status: p.status,
-                    key: 'prompt-' + p.id
+                    key: 'prompt-' + p.id,
+                    _ts: toTs(p.created_at)
                 });
+            });
+            // Sort all items chronologically, but keep session dividers before their content
+            items.sort(function(a, b) {
+                if (a._ts === 0 && b._ts === 0) return 0;
+                if (a._ts === 0) return -1;
+                if (b._ts === 0) return 1;
+                return a._ts - b._ts;
             });
 
             this.displayItems = items;
