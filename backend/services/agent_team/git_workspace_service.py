@@ -100,13 +100,18 @@ class AgentTeamGitWorkspaceService:
     async def _install_workspace_dependencies(
         self, executor: AgentTeamShellExecutor, workspace: Path
     ) -> None:
-        """为工作区创建独立 venv 并安装项目依赖。"""
+        """为工作区安装项目依赖（仅 Python 项目创建 venv）。"""
         value = await get_dynamic_config("agent_team_auto_install_deps")
         settings = get_settings()
         enabled = getattr(settings, "agent_team_auto_install_deps", True)
         if value is not None:
             enabled = str(value).strip().lower() in {"1", "true", "yes", "on"}
         if not enabled:
+            return
+
+        has_pyproject = (workspace / "pyproject.toml").exists()
+        has_requirements = (workspace / "requirements.txt").exists()
+        if not has_pyproject and not has_requirements:
             return
 
         venv_dir = workspace / ".venv"
@@ -117,11 +122,11 @@ class AgentTeamGitWorkspaceService:
             await executor.run("python -m venv .venv", timeout_seconds=settings.agent_team_timeout_seconds)
 
         pip_cmd = str(venv_dir / ("Scripts" if os.name == "nt" else "bin") / "pip")
-        if (workspace / "pyproject.toml").exists():
+        if has_pyproject:
             await executor.run(
                 f"{pip_cmd} install -e . --quiet", timeout_seconds=settings.agent_team_timeout_seconds
             )
-        elif (workspace / "requirements.txt").exists():
+        elif has_requirements:
             await executor.run(
                 f"{pip_cmd} install -r requirements.txt --quiet", timeout_seconds=settings.agent_team_timeout_seconds
             )
