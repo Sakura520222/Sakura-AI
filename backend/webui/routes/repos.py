@@ -392,6 +392,11 @@ async def repo_list_fragment(
     user: dict = Depends(require_admin),
 ):
     """仓库列表 HTMX 片段（刷新统计数据）"""
+    # 带 refresh=true 时清除缓存，从 GitHub 拉最新数据
+    global _installations_cache
+    if request.query_params.get("refresh") == "true":
+        _installations_cache = None
+
     try:
         installations = await _get_installations_with_stats(db)
     except Exception as e:
@@ -512,6 +517,70 @@ async def index_issues(
     logger.info(f"WebUI 触发 Issues 索引: {repo_name}, by={user['sub']}")
     await log_admin_action(db, user["user_id"], "repo_index_issues", "repo", repo_name)
     return JSONResponse({"success": True, "message": f"Issues 索引已启动: {repo_name}"})
+
+
+@router.post("/batch/index-issues")
+async def batch_index_issues(
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    user: dict = Depends(require_admin),
+    csrf_token: str = Depends(require_csrf_header),
+) -> JSONResponse:
+    """批量触发所有安装仓库的 Issues 索引"""
+    from backend.core.config import get_settings
+
+    settings = get_settings()
+    if not settings.enable_semantic_issue_linking:
+        return JSONResponse(
+            {"success": False, "message": "语义 Issue 关联功能未启用，请在设置中开启"},
+            status_code=400,
+        )
+
+    try:
+        installations = await _get_installations_with_stats(db)
+    except Exception as e:
+        logger.error(f"批量索引获取仓库列表失败: {e}", exc_info=True)
+        return JSONResponse(
+            {"success": False, "message": f"获取仓库列表失败: {e}"},
+            status_code=500,
+        )
+
+    queued = 0
+    skipped = 0
+    for inst in installations:
+        for repo in inst.get("repos", []):
+            repo_name = repo.get("full_name", "")
+            if not repo_name:
+                continue
+            if _is_index_locked(repo_name, "issues"):
+                skipped += 1
+                continue
+            task = asyncio.create_task(
+                _run_issues_index(repo_name, user["user_id"])
+            )
+            _active_index_tasks[f"{repo_name}:issues"] = task
+            queued += 1
+
+    logger.info(
+        f"WebUI 批量 Issues 索引: queued={queued}, skipped={skipped}, by={user['sub']}"
+    )
+    await log_admin_action(
+        db,
+        user["user_id"],
+        "repo_batch_index_issues",
+        "repo",
+        "all",
+        {"queued": queued, "skipped": skipped},
+    )
+    return JSONResponse(
+        {
+            "success": True,
+            "queued": queued,
+            "skipped": skipped,
+            "message": f"已排队 {queued} 个仓库的 Issues 索引"
+            + (f"，跳过 {skipped} 个（正在索引中）" if skipped else ""),
+        }
+    )
 
 
 async def _run_repo_scan(repo_name: str, user_id: int) -> None:
