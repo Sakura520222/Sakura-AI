@@ -178,6 +178,7 @@ function agentTeamLiveView() {
         _sseHandlers: [],
         _collapsedState: {},
         _userScrolledUp: false,
+        _incrementalTimer: null,
 
         init() {
             this._setupSSEListeners();
@@ -224,9 +225,9 @@ function agentTeamLiveView() {
                 this._scrollToBottom();
             } else if (eventName === 'sse:agent:message_added' || eventName === 'sse:agent:tool_started' || eventName === 'sse:agent:tool_completed' || eventName === 'sse:agent:tool_failed') {
                 this.isThinking = false;
-                this._loadIncremental();
+                this._scheduleIncremental();
             } else if (eventName === 'sse:agent:session_started' || eventName === 'sse:agent:session_completed') {
-                this._loadIncremental();
+                this._scheduleIncremental();
             } else if (eventName === 'sse:agent:task_updated') {
                 this.isTaskActive = this._isActiveStatus(data.status);
                 this.loadActiveTasks();
@@ -285,6 +286,15 @@ function agentTeamLiveView() {
                 this._rebuildDisplay();
             } catch(e) { /* ignore */ }
             this.isLoading = false;
+        },
+
+        _scheduleIncremental() {
+            if (this._incrementalTimer) return;
+            var self = this;
+            this._incrementalTimer = setTimeout(function() {
+                self._incrementalTimer = null;
+                self._loadIncremental();
+            }, 300);
         },
 
         async _loadIncremental() {
