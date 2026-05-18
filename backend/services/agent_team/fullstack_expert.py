@@ -19,7 +19,7 @@ AI 自主决定调用哪些工具、读取哪些文件、如何修改，循环�
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, Callable
 
 from loguru import logger
 
@@ -206,6 +206,7 @@ class FullStackExpertAgent:
         role_memory_context: str = "",
         iteration: int = 1,
         max_iterations: int = 3,
+        cancel_check: Callable[[], bool] | None = None,
     ) -> FullStackResult:
         """执行全栈专家任务，AI 自主调用工具直到完成。"""
         client, config = await create_agent_team_client()
@@ -237,6 +238,13 @@ class FullStackExpertAgent:
         tool_calls_count = 0
 
         for round_num in range(1, max_tool_rounds + 1):
+            if cancel_check and cancel_check():
+                return FullStackResult(
+                    success=False,
+                    summary="任务已取消",
+                    modified_files=sorted(ctx.modified_files),
+                    error="cancelled",
+                )
             logger.debug("全栈专家工具调用第 {} 轮", round_num)
 
             pending_tool_calls = _get_missing_tool_calls(self.messages)
