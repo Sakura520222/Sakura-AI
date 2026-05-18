@@ -151,11 +151,11 @@ class IssueEmbeddingService:
                 # 检查 state 是否需要更新
                 state_updates.append((doc_id, issue))
 
-        # 5. 更新已有文档的 state metadata
+        # 5. 更新已有文档的 state metadata（同时补充 AI 分析元数据）
         updated_count = 0
         if state_updates:
             updated_count = await self._update_existing_states(
-                collection_key, state_updates
+                collection_key, state_updates, ai_results
             )
 
         # 6. 新增缺失的 issues
@@ -218,9 +218,24 @@ class IssueEmbeddingService:
         self,
         collection_key: str,
         state_updates: list[tuple[str, Any]],
+        ai_results: Dict[int, Dict[str, str]] | None = None,
     ) -> int:
-        """批量更新已有文档的 state metadata"""
+        """批量更新已有文档的 state metadata，并补充 AI 分析元数据"""
         collection = await self.vector_store.get_or_create_collection(collection_key)
+
+        # 执行 enrich 配置检查
+        enable_rich = False
+        if ai_results:
+            try:
+                from backend.core.config import get_dynamic_config
+
+                enable_rich = bool(
+                    await get_dynamic_config("issue_vector_store_rich_metadata")
+                )
+                if enable_rich is None:
+                    enable_rich = True
+            except Exception:
+                enable_rich = True
 
         # 批量获取所有需要更新的文档
         doc_ids = [doc_id for doc_id, _ in state_updates]
@@ -234,23 +249,45 @@ class IssueEmbeddingService:
             logger.warning(f"批量获取 issue 文档失败: {e}")
             return 0
 
-        # 筛选出 state 确实变化的文档，批量 upsert
+        # 筛选出需要更新的文档（state 变化或缺少 AI 元数据）
         to_update = []
         for i, doc_id in enumerate(all_existing["ids"]):
             old_metadata = all_existing["metadatas"][i]
             issue = issue_map[doc_id]
-            if old_metadata.get("state") == issue.state:
-                continue
+            needs_update = False
 
-            new_metadata = {**old_metadata, "state": issue.state}
-            to_update.append(
-                {
-                    "id": doc_id,
-                    "content": all_existing["documents"][i],
-                    "embedding": all_existing["embeddings"][i],
-                    "metadata": new_metadata,
-                }
-            )
+            new_metadata = {**old_metadata}
+
+            # state 变化
+            if old_metadata.get("state") != issue.state:
+                new_metadata["state"] = issue.state
+                needs_update = True
+
+            # 补充 AI 分析元数据（如果配置启用且存在分析结果）
+            if enable_rich and ai_results:
+                number_str = old_metadata.get("number", "")
+                try:
+                    number = int(number_str)
+                except (ValueError, TypeError):
+                    number = None
+
+                if number and number in ai_results:
+                    ai = ai_results[number]
+                    for key in ("category", "priority", "feasibility"):
+                        ai_value = ai.get(key)
+                        if ai_value and not old_metadata.get(key):
+                            new_metadata[key] = str(ai_value)
+                            needs_update = True
+
+            if needs_update:
+                to_update.append(
+                    {
+                        "id": doc_id,
+                        "content": all_existing["documents"][i],
+                        "embedding": all_existing["embeddings"][i],
+                        "metadata": new_metadata,
+                    }
+                )
 
         if to_update:
             try:

@@ -317,6 +317,17 @@ async def _run_issues_index(repo_name: str, user_id: int) -> None:
         )
 
         logger.info(f"WebUI Issues 索引完成: {repo_name}, result={result}")
+
+        # 索引完成后失效候选池缓存
+        try:
+            from backend.services.agent_team.candidate_service import (
+                AgentTeamCandidateService,
+            )
+
+            AgentTeamCandidateService().invalidate_cache()
+        except Exception:
+            pass
+
         await publish_event(
             "index:issues_completed",
             {
