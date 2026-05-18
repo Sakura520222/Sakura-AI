@@ -11,7 +11,7 @@
             <p class="mt-1 text-sm text-gray-500 dark:text-gray-400">{{ _('repo.installed_at') }}</p>
         </div>
         <div class="flex items-center gap-2">
-            <button onclick="batchIndexIssues(this, {{ csrf_token | tojson }})"
+            <button onclick='batchIndexIssues(this, {{ csrf_token | tojson }})'
                     class="px-4 py-2 text-sm bg-green-500 text-white rounded-lg hover:bg-green-600 transition-colors">
                 索引全部 Issues
             </button>
@@ -93,6 +93,8 @@ function triggerIndex(btn, repoName, indexType, csrfToken) {
 }
 
 // 批量索引所有仓库的 Issues
+var _batchIssuesProgress = { total: 0, completed: 0, failed: 0, active: false };
+
 function batchIndexIssues(btn, csrfToken) {
     if (btn.disabled) return;
     if (!confirm('确认对所有已安装仓库执行 Issues 索引？')) return;
@@ -115,11 +117,13 @@ function batchIndexIssues(btn, csrfToken) {
     })
     .then(function(data) {
         if (data.success) {
+            _batchIssuesProgress = { total: data.queued, completed: 0, failed: 0, active: true };
+            btn.textContent = '索引中 (0/' + data.queued + ')...';
             window.dispatchEvent(new CustomEvent('show-toast', { detail: { message: data.message, type: 'success' } }));
         } else {
             btn.disabled = false;
             btn.textContent = btn.dataset.originalText;
-            window.dispatchEvent(new CustomEvent('show-toast', { detail: { message: data.message || '批量索引失败', type: 'error' } }));
+            window.dispatchEvent(new CustomEvent('show-toast', { detail: { message: data.message || '批量索引失败', type: data.queued === 0 ? 'info' : 'error' } }));
         }
     })
     .catch(function(err) {
@@ -127,6 +131,23 @@ function batchIndexIssues(btn, csrfToken) {
         btn.textContent = btn.dataset.originalText;
         window.dispatchEvent(new CustomEvent('show-toast', { detail: { message: err.message || '请求失败', type: 'error' } }));
     });
+}
+
+function _updateBatchProgress() {
+    var btn = document.querySelector('[onclick*="batchIndexIssues"]');
+    if (!btn || !_batchIssuesProgress.active) return;
+
+    var p = _batchIssuesProgress;
+    var done = p.completed + p.failed;
+
+    if (done >= p.total) {
+        _batchIssuesProgress.active = false;
+        btn.disabled = false;
+        btn.textContent = btn.dataset.originalText;
+        return;
+    }
+
+    btn.textContent = '索引中 (' + done + '/' + p.total + ')...';
 }
 
 // SSE: 文档索引完成
@@ -166,6 +187,28 @@ window.addEventListener('sse:index-issues', function(e) {
     window.dispatchEvent(new CustomEvent('show-toast', {
         detail: { message: msg, type: isSuccess ? 'success' : 'error' }
     }));
+
+    // 批量进度追踪
+    if (_batchIssuesProgress.active) {
+        if (isSuccess) {
+            _batchIssuesProgress.completed++;
+        } else {
+            _batchIssuesProgress.failed++;
+        }
+        var p = _batchIssuesProgress;
+        var done = p.completed + p.failed;
+
+        if (done >= p.total) {
+            _batchIssuesProgress.active = false;
+            var summary = '批量 Issues 索引完成: 成功 ' + p.completed + ' 个';
+            if (p.failed > 0) summary += '，失败 ' + p.failed + ' 个';
+            window.dispatchEvent(new CustomEvent('show-toast', {
+                detail: { message: summary, type: p.failed > 0 ? 'warning' : 'success' }
+            }));
+        }
+        _updateBatchProgress();
+    }
+
     refreshRepoList();
 });
 

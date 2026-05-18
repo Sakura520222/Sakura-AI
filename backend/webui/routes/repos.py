@@ -306,6 +306,7 @@ async def _run_code_index(repo_name: str, user_id: int) -> None:
 async def _run_issues_index(repo_name: str, user_id: int) -> None:
     """后台执行 Issues 索引（open + closed 全量重建）"""
     key = f"{repo_name}:issues"
+    logger.info("WebUI Issues 索引开始: {}", repo_name)
     try:
         from backend.services.issue_embedding_service import IssueEmbeddingService
         from backend.webui.sse import publish_event
@@ -512,6 +513,8 @@ async def batch_index_issues(
 
     queued = 0
     skipped = 0
+    skipped_names: list[str] = []
+    queued_names: list[str] = []
     for inst in installations:
         for repo in inst.get("repos", []):
             repo_name = repo.get("full_name", "")
@@ -519,16 +522,32 @@ async def batch_index_issues(
                 continue
             if _is_index_locked(repo_name, "issues"):
                 skipped += 1
+                skipped_names.append(repo_name)
                 continue
             task = asyncio.create_task(
                 _run_issues_index(repo_name, user["user_id"])
             )
             _active_index_tasks[f"{repo_name}:issues"] = task
             queued += 1
+            queued_names.append(repo_name)
 
     logger.info(
-        f"WebUI 批量 Issues 索引: queued={queued}, skipped={skipped}, by={user['sub']}"
+        "WebUI 批量 Issues 索引: queued={}, skipped={}, repos=[{}], locked=[{}], by={}",
+        queued, skipped,
+        ", ".join(queued_names) or "-",
+        ", ".join(skipped_names) or "-",
+        user["sub"],
     )
+
+    if queued == 0:
+        msg = "没有需要索引的仓库"
+        if skipped > 0:
+            msg += f"，{skipped} 个仓库正在索引中"
+        return JSONResponse(
+            {"success": False, "queued": 0, "skipped": skipped, "message": msg},
+            status_code=409,
+        )
+
     await log_admin_action(
         db,
         user["user_id"],
