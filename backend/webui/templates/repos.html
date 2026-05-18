@@ -13,7 +13,7 @@
         <div class="flex items-center gap-2">
             <button onclick="batchIndexIssues(this, {{ csrf_token | tojson }})"
                     class="px-4 py-2 text-sm bg-green-500 text-white rounded-lg hover:bg-green-600 transition-colors">
-                全部索引 Issues
+                索引全部 Issues
             </button>
             <button onclick="loadListPage('repo-list-container', '/repos/list-fragment?refresh=true', 1)"
                     class="px-4 py-2 text-sm border border-gray-300 dark:border-gray-600 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors">
