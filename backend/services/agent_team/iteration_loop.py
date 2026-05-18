@@ -119,6 +119,13 @@ class IterationLoopService:
             reviewer_handoff_context = ""
             reviewer_role_memory = ""
 
+            # 消费待处理的管理员指导，合入 feedback 跨迭代传递
+            iteration_guidance = await self._consume_pending_prompts()
+            if iteration_guidance and feedback:
+                feedback = f"{feedback}\n\n{iteration_guidance}"
+            elif iteration_guidance:
+                feedback = iteration_guidance
+
             # ── 全栈专家执行 ──
             if resume_cursor and resume_cursor.role_name == "reviewer":
                 fs_result = await self._restore_fullstack_result(iteration)
