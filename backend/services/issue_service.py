@@ -123,7 +123,25 @@ class IssueService:
     async def get_analysis(
         self, repo_name: str, issue_number: int, db: AsyncSession
     ) -> Optional[IssueAnalysis]:
-        """获取 Issue 的分析记录"""
+        """获取 Issue 的最新分析记录"""
+        result = await db.execute(
+            select(IssueAnalysis)
+            .where(
+                and_(
+                    IssueAnalysis.repo_name == repo_name,
+                    IssueAnalysis.issue_number == issue_number,
+                    IssueAnalysis.status != "archived",
+                )
+            )
+            .order_by(desc(IssueAnalysis.analysis_version))
+            .limit(1)
+        )
+        return result.scalar_one_or_none()
+
+    async def get_analysis_history(
+        self, repo_name: str, issue_number: int, db: AsyncSession
+    ) -> list[IssueAnalysis]:
+        """获取 Issue 的所有分析版本历史"""
         result = await db.execute(
             select(IssueAnalysis)
             .where(
@@ -132,10 +150,9 @@ class IssueService:
                     IssueAnalysis.issue_number == issue_number,
                 )
             )
-            .order_by(desc(IssueAnalysis.created_at))
-            .limit(1)
+            .order_by(desc(IssueAnalysis.analysis_version))
         )
-        return result.scalar_one_or_none()
+        return list(result.scalars().all())
 
     async def get_analyses(
         self,

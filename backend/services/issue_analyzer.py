@@ -10,6 +10,7 @@ from backend.core.config import (
     get_settings,
     get_strategy_config,
     get_user_dynamic_config,
+    get_dynamic_config,
 )
 from backend.models.database import AppConfig, async_session
 from backend.services.ai_reviewer.api_client import AIApiClient
@@ -111,6 +112,7 @@ class IssueAnalyzer:
         issue_info: Dict[str, Any],
         available_labels: List[str],
         collaborators: List[str],
+        comments: List[Dict[str, Any]] | None = None,
     ) -> str:
         """构建用户消息"""
         parts = [
@@ -131,7 +133,65 @@ class IssueAnalyzer:
         if collaborators:
             parts.append(f"\n**仓库协作者**: {', '.join(collaborators)}")
 
+        if comments:
+            parts.append("\n## 评论讨论")
+            for comment in comments:
+                author = comment.get("author", "unknown")
+                body_text = comment.get("body", "")
+                is_bot = comment.get("is_bot", False)
+                if is_bot:
+                    parts.append(f"\n### @{author} (AI 先前分析)\n{body_text}")
+                else:
+                    parts.append(f"\n### @{author}\n{body_text}")
+
         return "\n".join(parts)
+
+    async def _fetch_issue_comments(
+        self, github_app, repo_owner: str, repo_name: str, issue_number: int
+    ) -> List[Dict[str, Any]] | None:
+        """获取 Issue 评论，受 issue_max_comments_in_context 配置控制数量"""
+        if issue_number <= 0:
+            return None
+
+        import asyncio
+
+        settings = get_settings()
+        bot_username = settings.bot_username
+
+        try:
+            comments = await asyncio.to_thread(
+                github_app.get_issue_comments,
+                repo_owner,
+                repo_name,
+                issue_number,
+            )
+        except Exception as e:
+            logger.warning(f"GitHub API 获取评论失败: {e}")
+            return None
+
+        if not comments:
+            return None
+
+        max_count = int(
+            await get_dynamic_config("issue_max_comments_in_context") or 0
+        )
+
+        raw_comments = []
+        for c in comments:
+            author = getattr(c.user, "login", "unknown") if c.user else "unknown"
+            raw_comments.append(
+                {
+                    "author": author,
+                    "body": c.body or "",
+                    "is_bot": bool(bot_username and author == bot_username),
+                }
+            )
+
+        # 按时间正序排列（旧 → 新），便于 AI 理解对话发展
+        if max_count > 0:
+            raw_comments = raw_comments[-max_count:]
+
+        return raw_comments
 
     def _parse_analysis_result(self, response_text: str) -> Dict[str, Any]:
         """解析 AI 返回的分析结果"""
@@ -226,6 +286,17 @@ class IssueAnalyzer:
             }
             logger.debug(f"从 GitHub 获取协作者列表: {cache_key}")
 
+        # 获取评论对话（受配置控制）
+        comments = None
+        include_comments = await get_dynamic_config("issue_include_comments")
+        if include_comments:
+            try:
+                comments = await self._fetch_issue_comments(
+                    github_app, repo_owner, repo_name, issue_info.get("issue_number", 0)
+                )
+            except Exception as e:
+                logger.warning(f"获取 Issue 评论失败（不影响分析）: {e}")
+
         # 构建提示词
         system_prompt = self._build_system_prompt(
             repo_full_name,
@@ -234,7 +305,7 @@ class IssueAnalyzer:
             output_language=output_language or "",
         )
         user_message = self._build_user_message(
-            issue_info, available_labels, collaborators
+            issue_info, available_labels, collaborators, comments
         )
 
         # 注入 .sakura/ 记忆上下文 / Inject .sakura/ memory context
