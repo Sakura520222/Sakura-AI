@@ -211,6 +211,7 @@ class ProfessionalReviewAgent:
         sakura_ref: str | None = None,
         user_guidance: str = "",
         cancel_check: Callable[[], bool] | None = None,
+        guidance_callback: Callable[[], Any] | None = None,
     ) -> ReviewResult:
         """执行审查，AI 自主调用工具直到提交审查。"""
         client, config = await create_agent_team_client()
@@ -269,6 +270,16 @@ class ProfessionalReviewAgent:
                 if terminal_output is not None:
                     return _review_result_from_terminal(terminal_output, tool_calls_count)
                 continue
+
+            # 消费新的管理员指导
+            if guidance_callback:
+                try:
+                    guidance = await guidance_callback()
+                    if guidance:
+                        await self._append_message({"role": "user", "content": guidance})
+                        await self._append_message({"role": "assistant", "content": "收到管理员指导，我将按照要求调整审查方向。"})
+                except Exception:
+                    pass
 
             model_messages = await AgentTeamContextCompressor(
                 target_model=config.review_model,

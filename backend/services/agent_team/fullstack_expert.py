@@ -207,6 +207,7 @@ class FullStackExpertAgent:
         iteration: int = 1,
         max_iterations: int = 3,
         cancel_check: Callable[[], bool] | None = None,
+        guidance_callback: Callable[[], Any] | None = None,
     ) -> FullStackResult:
         """执行全栈专家任务，AI 自主调用工具直到完成。"""
         client, config = await create_agent_team_client()
@@ -273,6 +274,16 @@ class FullStackExpertAgent:
                         tool_calls_count=tool_calls_count,
                     )
                 continue
+
+            # 消费新的管理员指导
+            if guidance_callback:
+                try:
+                    guidance = await guidance_callback()
+                    if guidance:
+                        await self._append_message({"role": "user", "content": guidance})
+                        await self._append_message({"role": "assistant", "content": "收到管理员指导，我将按照要求调整执行方向。"})
+                except Exception:
+                    pass
 
             model_messages = await AgentTeamContextCompressor(
                 target_model=config.model,
