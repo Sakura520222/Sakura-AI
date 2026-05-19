@@ -1,0 +1,258 @@
+{% extends "base.html" %}
+
+{% block title %}{{ _('vector_db.title') }} - Sakura AI Reviewer{% endblock %}
+
+{% block content %}
+<div class="space-y-6" x-data="{
+    testDbLoading: false,
+    testDbResult: null,
+    testChromaLoading: false,
+    testChromaResult: null,
+    selectedDocIds: [],
+    selectAll: false,
+    toggleAll() {
+        this.selectAll = !this.selectAll;
+        this.selectedDocIds = this.selectAll ? [...document.querySelectorAll('.doc-checkbox')].map(cb => cb.value) : [];
+    },
+    toggleDoc(id) {
+        const idx = this.selectedDocIds.indexOf(id);
+        if (idx > -1) { this.selectedDocIds.splice(idx, 1); } else { this.selectedDocIds.push(id); }
+        this.selectAll = this.selectedDocIds.length === document.querySelectorAll('.doc-checkbox').length;
+    }
+}">
+    <!-- 页面标题 -->
+    <div>
+        <h1 class="text-2xl font-bold">{{ _('vector_db.title') }}</h1>
+        <p class="mt-1 text-sm text-gray-500 dark:text-gray-400">{{ _('vector_db.description') }}</p>
+    </div>
+
+    <!-- 危险操作警告 -->
+    <div class="bg-yellow-50 dark:bg-yellow-900/20 border border-yellow-200 dark:border-yellow-800 rounded-xl p-4">
+        <div class="flex items-start gap-3">
+            <svg class="w-5 h-5 text-yellow-600 dark:text-yellow-400 mt-0.5 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-2.5L13.732 4c-.77-.833-1.964-.833-2.732 0L4.082 16.5c-.77.833.192 2.5 1.732 2.5z"/>
+            </svg>
+            <div>
+                <h3 class="text-sm font-semibold text-yellow-700 dark:text-yellow-400">{{ _('vector_db.warning_title') }}</h3>
+                <p class="text-sm text-yellow-600 dark:text-yellow-500 mt-1">{{ _('vector_db.warning_desc') }}</p>
+            </div>
+        </div>
+    </div>
+
+    <!-- 连接测试 -->
+    <div class="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 shadow-sm p-6">
+        <h2 class="text-lg font-semibold mb-4">{{ _('vector_db.connection_tests') }}</h2>
+        <div class="flex flex-wrap gap-3">
+            <button @click="
+                testDbLoading = true; testDbResult = null;
+                fetch('/vector-db/test-connection', {
+                    method: 'POST',
+                    headers: {'X-CSRF-Token': '{{ csrf_token }}', 'Content-Type': 'application/json'}
+                })
+                .then(r => r.json())
+                .then(d => { testDbResult = d; testDbLoading = false; })
+                .catch(e => { testDbResult = {success: false, message: e.message}; testDbLoading = false; })
+            "
+                    :disabled="testDbLoading"
+                    class="px-4 py-2 text-sm font-medium rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 hover:bg-gray-50 dark:hover:bg-gray-600 transition-colors disabled:opacity-50">
+                <span x-show="!testDbLoading">{{ _('vector_db.test_mysql') }}</span>
+                <span x-show="testDbLoading" x-cloak>{{ _('common.loading') }}</span>
+            </button>
+            <div x-show="testDbResult !== null" x-cloak
+                 :class="testDbResult?.success ? 'text-green-600 dark:text-green-400' : 'text-red-600 dark:text-red-400'"
+                 class="flex items-center gap-2 text-sm">
+                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                    <path x-show="testDbResult?.success" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/>
+                    <path x-show="!testDbResult?.success" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/>
+                </svg>
+                <span x-text="testDbResult?.message"></span>
+            </div>
+
+            <button @click="
+                testChromaLoading = true; testChromaResult = null;
+                fetch('/vector-db/test-chromadb', {
+                    method: 'POST',
+                    headers: {'X-CSRF-Token': '{{ csrf_token }}', 'Content-Type': 'application/json'}
+                })
+                .then(r => r.json())
+                .then(d => { testChromaResult = d; testChromaLoading = false; })
+                .catch(e => { testChromaResult = {success: false, message: e.message}; testChromaLoading = false; })
+            "
+                    :disabled="testChromaLoading"
+                    class="px-4 py-2 text-sm font-medium rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 hover:bg-gray-50 dark:hover:bg-gray-600 transition-colors disabled:opacity-50">
+                <span x-show="!testChromaLoading">{{ _('vector_db.test_chromadb') }}</span>
+                <span x-show="testChromaLoading" x-cloak>{{ _('common.loading') }}</span>
+            </button>
+            <div x-show="testChromaResult !== null" x-cloak
+                 :class="testChromaResult?.success ? 'text-green-600 dark:text-green-400' : 'text-red-600 dark:text-red-400'"
+                 class="flex items-center gap-2 text-sm">
+                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                    <path x-show="testChromaResult?.success" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/>
+                    <path x-show="!testChromaResult?.success" stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/>
+                </svg>
+                <span x-text="testChromaResult?.message"></span>
+            </div>
+        </div>
+    </div>
+
+    <!-- Collections 列表 -->
+    <div class="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 shadow-sm">
+        <div class="p-4 border-b border-gray-200 dark:border-gray-700 flex items-center justify-between">
+            <h2 class="text-lg font-semibold">{{ _('vector_db.collections') }} ({{ collections|length }})</h2>
+        </div>
+
+        {% if collections %}
+        <div class="overflow-x-auto">
+            <table class="w-full text-sm">
+                <thead>
+                    <tr class="border-b border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-900/50">
+                        <th class="text-left px-4 py-3 font-medium text-gray-600 dark:text-gray-400">{{ _('vector_db.collection_name') }}</th>
+                        <th class="text-left px-4 py-3 font-medium text-gray-600 dark:text-gray-400">{{ _('vector_db.repo_name') }}</th>
+                        <th class="text-center px-4 py-3 font-medium text-gray-600 dark:text-gray-400">{{ _('vector_db.doc_count') }}</th>
+                        <th class="text-center px-4 py-3 font-medium text-gray-600 dark:text-gray-400">{{ _('common.actions') }}</th>
+                    </tr>
+                </thead>
+                <tbody class="divide-y divide-gray-100 dark:divide-gray-700">
+                    {% for col in collections %}
+                    <tr class="hover:bg-gray-50 dark:hover:bg-gray-700/50 transition-colors">
+                        <td class="px-4 py-3">
+                            <a href="/vector-db/collection/{{ col.name }}"
+                               class="text-sakura-600 dark:text-sakura-400 hover:underline font-mono text-xs">
+                                {{ col.name }}
+                            </a>
+                        </td>
+                        <td class="px-4 py-3 text-gray-700 dark:text-gray-300">
+                            {{ col.repo_full_name or '-' }}
+                        </td>
+                        <td class="px-4 py-3 text-center">
+                            <span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium
+                                         {% if col.doc_count >= 0 %}bg-sakura-100 dark:bg-sakura-900/30 text-sakura-700 dark:text-sakura-300{% else %}bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-300{% endif %}">
+                                {{ col.doc_count if col.doc_count >= 0 else '?' }}
+                            </span>
+                        </td>
+                        <td class="px-4 py-3 text-center">
+                            <div class="flex items-center justify-center gap-2">
+                                <a href="/vector-db/collection/{{ col.name }}"
+                                   class="text-sakura-600 dark:text-sakura-400 hover:underline text-xs">{{ _('common.view_all') }}</a>
+                                <form method="POST" action="/vector-db/collection/{{ col.name }}/delete"
+                                      onsubmit="return confirm('{{ _('vector_db.confirm_delete_collection') }}');"
+                                      class="inline">
+                                    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                                    <button type="submit" class="text-red-600 hover:text-red-800 dark:text-red-400 dark:hover:text-red-300 text-xs font-medium">
+                                        {{ _('common.delete') }}
+                                    </button>
+                                </form>
+                            </div>
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+        {% else %}
+        <div class="p-8 text-center text-gray-500 dark:text-gray-400">
+            <svg class="w-12 h-12 mx-auto mb-3 text-gray-300 dark:text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 7v10c0 2.21 3.582 4 8 4s8-1.79 8-4V7M4 7c0 2.21 3.582 4 8 4s8-1.79 8-4M4 7c0-2.21 3.582-4 8-4s8 1.79 8 4"/>
+            </svg>
+            <p>{{ _('vector_db.no_collections') }}</p>
+        </div>
+        {% endif %}
+    </div>
+
+    {% if selected_collection and collection_detail %}
+    <!-- Collection 详情 -->
+    <div class="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 shadow-sm">
+        <div class="p-4 border-b border-gray-200 dark:border-gray-700 flex items-center justify-between">
+            <div>
+                <h2 class="text-lg font-semibold">{{ collection_detail.name }}</h2>
+                <p class="text-sm text-gray-500 dark:text-gray-400 mt-1">
+                    {{ _('vector_db.repo_label') }}: {{ collection_detail.metadata.get('repo_full_name', '-') }}
+                    &nbsp;·&nbsp;
+                    {{ _('vector_db.doc_count') }}: {{ collection_detail.doc_count }}
+                </p>
+            </div>
+            <div class="flex gap-2">
+                <form method="POST" action="/vector-db/collection/{{ selected_collection }}/clear"
+                      onsubmit="return confirm('{{ _('vector_db.confirm_clear_collection') }}');">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                    <button type="submit"
+                            class="px-3 py-1.5 text-xs font-medium rounded-lg border border-yellow-300 dark:border-yellow-700 text-yellow-600 dark:text-yellow-400 hover:bg-yellow-50 dark:hover:bg-yellow-900/20 transition-colors">
+                        {{ _('vector_db.clear_collection') }}
+                    </button>
+                </form>
+                <form method="POST" action="/vector-db/collection/{{ selected_collection }}/delete"
+                      onsubmit="return confirm('{{ _('vector_db.confirm_delete_collection') }}');">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                    <button type="submit"
+                            class="px-3 py-1.5 text-xs font-medium rounded-lg border border-red-300 dark:border-red-700 text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20 transition-colors">
+                        {{ _('common.delete') }}
+                    </button>
+                </form>
+            </div>
+        </div>
+
+        {% if collection_detail.sample_docs %}
+        <!-- 批量操作 -->
+        <div class="px-4 py-2 bg-gray-50 dark:bg-gray-900/50 border-b border-gray-200 dark:border-gray-700 flex items-center gap-4">
+            <label class="flex items-center gap-2 text-xs text-gray-600 dark:text-gray-400 cursor-pointer">
+                <input type="checkbox" class="rounded border-gray-300 dark:border-gray-600 text-sakura-500 focus:ring-sakura-500"
+                       :checked="selectAll"
+                       @change="toggleAll()">
+                {{ _('vector_db.select_all') }}
+            </label>
+            <form method="POST" action="/vector-db/collection/{{ selected_collection }}/documents/delete"
+                  onsubmit="return selectedDocIds.length > 0 ? confirm('{{ _('vector_db.confirm_delete_docs') }}') : false;"
+                  class="inline">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                <input type="hidden" name="doc_ids" :value="selectedDocIds.join(',')">
+                <button type="submit"
+                        :disabled="selectedDocIds.length === 0"
+                        class="px-3 py-1 text-xs font-medium rounded-lg text-red-600 border border-red-300 dark:border-red-700 hover:bg-red-50 dark:hover:bg-red-900/20 transition-colors disabled:opacity-50 disabled:cursor-not-allowed">
+                    {{ _('vector_db.delete_selected') }} (<span x-text="selectedDocIds.length">0</span>)
+                </button>
+            </form>
+        </div>
+
+        <!-- 文档列表 -->
+        <div class="divide-y divide-gray-100 dark:divide-gray-700 max-h-[600px] overflow-y-auto">
+            {% for doc in collection_detail.sample_docs %}
+            <div class="px-4 py-3 hover:bg-gray-50 dark:hover:bg-gray-700/50 transition-colors">
+                <div class="flex items-start gap-3">
+                    <input type="checkbox" class="doc-checkbox mt-1 rounded border-gray-300 dark:border-gray-600 text-sakura-500 focus:ring-sakura-500"
+                           value="{{ doc.id }}"
+                           :checked="selectedDocIds.includes('{{ doc.id }}')"
+                           @change="toggleDoc('{{ doc.id }}')">
+                    <div class="flex-1 min-w-0">
+                        <div class="flex items-center gap-2 mb-1">
+                            <span class="text-xs font-mono text-gray-500 dark:text-gray-400 truncate">{{ doc.id }}</span>
+                        </div>
+                        <pre class="text-xs text-gray-700 dark:text-gray-300 whitespace-pre-wrap break-words bg-gray-50 dark:bg-gray-900 p-2 rounded-lg max-h-32 overflow-y-auto">{{ doc.content }}</pre>
+                        {% if doc.metadata %}
+                        <div class="flex flex-wrap gap-1 mt-1">
+                            {% for key, value in doc.metadata.items() %}
+                            <span class="inline-flex items-center px-1.5 py-0.5 rounded text-xs bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-400">
+                                {{ key }}={{ value }}
+                            </span>
+                            {% endfor %}
+                        </div>
+                        {% endif %}
+                    </div>
+                </div>
+            </div>
+            {% endfor %}
+        </div>
+
+        {% if collection_detail.doc_count > 50 %}
+        <div class="px-4 py-3 border-t border-gray-200 dark:border-gray-700 text-center text-xs text-gray-500 dark:text-gray-400">
+            {{ _('vector_db.showing_sample') }} ({{ collection_detail.sample_docs|length }} / {{ collection_detail.doc_count }})
+        </div>
+        {% endif %}
+        {% else %}
+        <div class="p-8 text-center text-gray-500 dark:text-gray-400">
+            <p>{{ _('vector_db.no_documents') }}</p>
+        </div>
+        {% endif %}
+    </div>
+    {% endif %}
+</div>
+{% endblock %}
