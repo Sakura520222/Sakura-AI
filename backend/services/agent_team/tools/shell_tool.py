@@ -17,7 +17,8 @@ from backend.services.agent_team.tools.base import BaseTool, ToolContext, ToolRe
 
 # Shell 元字符/模式，出现则拒绝执行以防止命令注入
 # 单独的 $ 不拦截，仅拦截 $(...) 和 ${...} 等命令替换模式
-_SHELL_META_CHARS = frozenset({"&&", "||", ";", "|", "`", ">", ">>", "<", "&"})
+# 管道 | 和重定向 > >> < 允许使用，工作区沙箱已提供隔离
+_SHELL_META_CHARS = frozenset({"&&", "||", ";", "`", "&"})
 _SHELL_SUBST_PATTERNS = ("$('", "$(", "${")
 
 
