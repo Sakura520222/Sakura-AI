@@ -257,7 +257,17 @@ class AgentTeamWorker:
                     "agent_team_draft_pr",
                     get_settings().agent_team_draft_pr,
                 )
-                pr_body = pr_service.build_pr_body(
+
+                # 获取 git diff summary 作为 AI 生成 PR body 的额外上下文
+                git_service = AgentTeamGitWorkspaceService()
+                diff_summary = ""
+                try:
+                    diff_summary = await git_service.get_diff_summary(str(workspace))
+                except Exception as exc:
+                    logger.warning("获取 diff summary 失败: {}", exc)
+
+                # 预计算 fallback body（AI 生成失败时使用）
+                fallback_body = pr_service.build_pr_body(
                     task_title=task.title,
                     task_summary=task.summary or "",
                     fullstack_analysis=outcome.fullstack_result.summary
@@ -270,6 +280,34 @@ class AgentTeamWorker:
                     iteration_count=outcome.iterations,
                     source_type=task.source_type,
                     source_issue_number=task.source_issue_number,
+                )
+
+                # AI 生成 PR body
+                pr_body = await pr_service.generate_pr_body(
+                    task_title=task.title,
+                    task_summary=task.summary or "",
+                    fullstack_analysis=outcome.fullstack_result.summary
+                    if outcome.fullstack_result
+                    else "",
+                    review_summary=outcome.review_result.summary
+                    if outcome.review_result
+                    else "",
+                    review_verdict=outcome.review_result.verdict
+                    if outcome.review_result
+                    else "",
+                    review_score=outcome.review_result.score
+                    if outcome.review_result
+                    else 0,
+                    review_findings=[
+                        {"severity": f.severity, "file": f.file, "message": f.message}
+                        for f in (outcome.review_result.findings or [])
+                    ] if outcome.review_result else [],
+                    modified_files=outcome.modified_files,
+                    iteration_count=outcome.iterations,
+                    source_type=task.source_type,
+                    source_issue_number=task.source_issue_number,
+                    diff_summary=diff_summary,
+                    fallback_body=fallback_body,
                 )
 
                 pr_title = await pr_service.generate_pr_title(
