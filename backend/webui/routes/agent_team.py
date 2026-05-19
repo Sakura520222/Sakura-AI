@@ -1189,15 +1189,12 @@ async def task_stream_data(
     has_more = len(msg_rows) > limit
     msg_rows = msg_rows[:limit]
 
-    # Tool calls for the fetched messages
-    msg_ids = [m.id for m in msg_rows]
-    tool_call_rows = []
-    if msg_ids:
-        tool_call_rows = (await db.execute(
-            select(AgentTeamToolCall)
-            .where(AgentTeamToolCall.session_id.in_(session_ids))
-            .order_by(AgentTeamToolCall.id)
-        )).scalars().all()
+    # Tool calls can change status without producing a new message.
+    tool_call_rows = (await db.execute(
+        select(AgentTeamToolCall)
+        .where(AgentTeamToolCall.session_id.in_(session_ids))
+        .order_by(AgentTeamToolCall.id)
+    )).scalars().all()
 
     # User prompts
     prompt_rows = (await db.execute(
@@ -1225,6 +1222,7 @@ async def task_stream_data(
             {
                 "id": tc.id,
                 "session_id": tc.session_id,
+                "assistant_message_id": tc.assistant_message_id,
                 "tool_call_id": tc.tool_call_id,
                 "name": tc.name,
                 "status": tc.status,

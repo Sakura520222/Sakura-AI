@@ -10,6 +10,13 @@
             </select>
         </div>
         <div class="flex items-center gap-2">
+            <button @click="refreshLiveView()"
+                    :disabled="isRefreshing"
+                    class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl border border-sakura-200 dark:border-sakura-800 bg-white dark:bg-gray-900 text-xs font-medium text-sakura-700 dark:text-sakura-300 hover:bg-sakura-50 dark:hover:bg-sakura-900/20 disabled:opacity-50 disabled:cursor-not-allowed transition-colors">
+                <svg :class="isRefreshing ? 'animate-spin' : ''" class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v6h6M20 20v-6h-6M5 19A9 9 0 0019 5M19 5h-5M5 19h5"/></svg>
+                <span x-show="!isRefreshing">{{ _('agent_team.live_refresh') }}</span>
+                <span x-show="isRefreshing">{{ _('agent_team.live_refreshing') }}</span>
+            </button>
             <span x-show="isConnected" class="flex items-center gap-1 text-xs text-green-600 dark:text-green-400">
                 <span class="w-2 h-2 rounded-full bg-green-500 animate-pulse"></span>
                 {{ _('agent_team.live_connected') }}
@@ -70,10 +77,26 @@
                     <div class="max-w-[85%] rounded-2xl px-4 py-3 text-sm bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 text-gray-700 dark:text-gray-300 prose prose-sm dark:prose-invert max-w-none"
                          :class="item.collapsed ? 'max-h-24 overflow-hidden' : ''">
                         <div x-show="item.content" x-html="item.htmlContent"></div>
-                        <div x-show="item.toolCalls && item.toolCalls.length > 0" class="mt-2 space-y-1">
+                        <div x-show="item.toolCalls && item.toolCalls.length > 0" class="mt-3 space-y-2">
                             <template x-for="tc in (item.toolCalls || [])" :key="tc.id">
-                                <div class="flex items-center gap-1.5 text-xs font-mono px-2 py-1 rounded-lg bg-gray-50 dark:bg-gray-900/50 text-gray-600 dark:text-gray-400">
-                                    <span class="text-sakura-600 dark:text-sakura-400" x-text="tc.name + '()'"></span>
+                                <div class="rounded-xl border px-3 py-2 not-prose"
+                                     :class="tc.status === 'failed' ? 'bg-red-50 dark:bg-red-900/20 border-red-200 dark:border-red-800' : tc.status === 'completed' ? 'bg-emerald-50 dark:bg-emerald-900/20 border-emerald-200 dark:border-emerald-800' : 'bg-amber-50 dark:bg-amber-900/20 border-amber-200 dark:border-amber-800'">
+                                    <div class="flex items-center gap-2 text-xs font-semibold">
+                                        <span x-show="tc.status === 'running' || tc.status === 'pending'" class="inline-flex w-2 h-2 rounded-full bg-amber-500 animate-pulse"></span>
+                                        <span x-show="tc.status === 'completed'" class="text-emerald-600 dark:text-emerald-400">&#10003;</span>
+                                        <span x-show="tc.status === 'failed'" class="text-red-600 dark:text-red-400">&#10007;</span>
+                                        <span class="text-gray-800 dark:text-gray-100" x-text="tc.title"></span>
+                                        <span class="text-gray-400 dark:text-gray-500" x-text="tc.statusLabel"></span>
+                                    </div>
+                                    <div x-show="tc.detailRows && tc.detailRows.length > 0" class="mt-2 space-y-1">
+                                        <template x-for="row in (tc.detailRows || [])" :key="row.label + row.value">
+                                            <div class="grid grid-cols-[4.5rem_1fr] gap-2 text-xs text-gray-600 dark:text-gray-400">
+                                                <span class="font-medium text-gray-500 dark:text-gray-500" x-text="row.label"></span>
+                                                <span class="break-all" x-text="row.value"></span>
+                                            </div>
+                                        </template>
+                                    </div>
+                                    <div x-show="tc.error" class="mt-2 text-xs text-red-600 dark:text-red-400 break-all" x-text="tc.error"></div>
                                 </div>
                             </template>
                         </div>
@@ -84,31 +107,18 @@
                     </button>
                 </div>
 
-                <!-- Tool call -->
-                <div x-show="item.type === 'tool'" class="flex justify-start">
-                    <div class="max-w-[85%] rounded-xl px-3 py-2 text-sm border"
-                         :class="item.status === 'running' ? 'bg-amber-50 dark:bg-amber-900/20 border-amber-200 dark:border-amber-800' : item.status === 'completed' ? 'bg-emerald-50 dark:bg-emerald-900/20 border-emerald-200 dark:border-emerald-800' : 'bg-red-50 dark:bg-red-900/20 border-red-200 dark:border-red-800'">
-                        <div class="flex items-center gap-2 font-mono text-xs">
-                            <span x-show="item.status === 'running'" class="flex items-center gap-1">
-                                <svg class="animate-spin h-3 w-3" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg>
-                                <span class="text-amber-700 dark:text-amber-300 font-bold" x-text="item.name + '()'"></span>
-                            </span>
-                            <span x-show="item.status === 'completed'" class="text-emerald-600 dark:text-emerald-400">&#10003;</span>
-                            <span x-show="item.status === 'failed'" class="text-red-600 dark:text-red-400">&#10007;</span>
-                            <span x-show="item.status !== 'running'" class="font-bold" x-text="item.name + '()'"></span>
-                        </div>
-                        <div x-show="item.argsPreview" class="mt-1 text-xs text-gray-500 dark:text-gray-400 truncate" x-text="item.argsPreview"></div>
-                        <div x-show="item.error" class="mt-1 text-xs text-red-600 dark:text-red-400" x-text="item.error"></div>
-                    </div>
-                </div>
-
                 <!-- Tool result -->
                 <div x-show="item.type === 'tool_result'" class="flex justify-start gap-1">
-                    <div class="max-w-[85%] rounded-xl px-3 py-2 text-xs font-mono bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-400 border border-gray-200 dark:border-gray-700"
-                         :class="item.collapsed ? 'max-h-16 overflow-hidden' : ''">
-                        <pre class="whitespace-pre-wrap break-all" x-text="item.content"></pre>
+                    <div class="max-w-[85%] rounded-xl px-3 py-2 text-xs border"
+                         :class="item.status === 'failed' ? 'bg-red-50 dark:bg-red-900/20 border-red-200 dark:border-red-800 text-red-700 dark:text-red-300' : 'bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-400 border-gray-200 dark:border-gray-700'">
+                        <div class="flex items-center gap-2 font-semibold text-gray-700 dark:text-gray-300">
+                            <span>{{ _('agent_team.live_tool_result') }}</span>
+                            <span x-show="item.status === 'failed'" class="text-red-600 dark:text-red-400">{{ _('agent_team.live_tool_error') }}</span>
+                        </div>
+                        <div x-show="item.toolTitle" class="mt-1 text-gray-500 dark:text-gray-500" x-text="item.toolTitle"></div>
+                        <pre x-show="!item.collapsed" class="mt-2 whitespace-pre-wrap break-all font-mono" x-text="item.content"></pre>
                     </div>
-                    <button x-show="item.isLong" @click="toggleCollapse(item.key)" class="self-end text-xs text-gray-400 hover:text-gray-600 shrink-0">
+                    <button x-show="item.isLong || item.content" @click="toggleCollapse(item.key)" class="self-end text-xs text-gray-400 hover:text-gray-600 shrink-0">
                         <span x-show="item.collapsed">{{ _('agent_team.live_expand') }}</span>
                         <span x-show="!item.collapsed">{{ _('agent_team.live_collapse') }}</span>
                     </button>
@@ -165,6 +175,7 @@ function agentTeamLiveView() {
         activeTasks: [],
         displayItems: [],
         isLoading: false,
+        isRefreshing: false,
         isConnected: false,
         isThinking: false,
         isSending: false,
@@ -247,25 +258,37 @@ function agentTeamLiveView() {
             } catch(e) { /* ignore */ }
         },
 
-        async onTaskSelected() {
-            if (!this.selectedTaskId) {
-                this.displayItems = [];
-                this._lastMsgId = 0;
-                this._messages = [];
-                this._sessions = [];
-                this._toolCalls = {};
-                this._prompts = [];
-                this._collapsedState = {};
-                this.isTaskActive = false;
-                return;
+        async refreshLiveView() {
+            if (this.isRefreshing) return;
+            this.isRefreshing = true;
+            try {
+                await this.loadActiveTasks();
+                if (this.selectedTaskId) {
+                    this._resetStreamState(false);
+                    await this._loadFull();
+                }
+            } finally {
+                this.isRefreshing = false;
             }
+        },
+
+        _resetStreamState(resetCollapsed) {
             this.displayItems = [];
             this._lastMsgId = 0;
             this._messages = [];
             this._sessions = [];
             this._toolCalls = {};
             this._prompts = [];
-            this._collapsedState = {};
+            if (resetCollapsed) this._collapsedState = {};
+        },
+
+        async onTaskSelected() {
+            if (!this.selectedTaskId) {
+                this._resetStreamState(true);
+                this.isTaskActive = false;
+                return;
+            }
+            this._resetStreamState(true);
             this._userScrolledUp = false;
             await this._loadFull();
         },
@@ -302,7 +325,8 @@ function agentTeamLiveView() {
             try {
                 var resp = await fetch('/agent-team/api/tasks/' + this.selectedTaskId + '/stream-data?after_id=' + this._lastMsgId + '&limit=50');
                 var data = await resp.json();
-                if (!data.success || !data.messages || data.messages.length === 0) return;
+                if (!data.success) return;
+                if ((!data.messages || data.messages.length === 0) && (!data.tool_calls || data.tool_calls.length === 0) && (!data.prompts || data.prompts.length === 0)) return;
                 this._processStreamData(data);
                 this._rebuildDisplay();
             } catch(e) { /* ignore */ }
@@ -316,6 +340,58 @@ function agentTeamLiveView() {
                 if (data.success) this._prompts = data.prompts || [];
                 this._rebuildDisplay();
             } catch(e) { /* ignore */ }
+        },
+
+        parseToolArguments(argumentsJson) {
+            if (!argumentsJson) return {};
+            if (typeof argumentsJson === 'object') return argumentsJson;
+            try {
+                return JSON.parse(argumentsJson);
+            } catch(e) {
+                return { raw: String(argumentsJson) };
+            }
+        },
+
+        describeToolAction(name, args, status) {
+            var tool = String(name || '').toLowerCase();
+            var running = status === 'running' || status === 'pending';
+            if (tool === 'read' || tool.indexOf('read_file') >= 0 || tool.indexOf('read') >= 0) {
+                return running ? '{{ _("agent_team.live_tool_read_file_running") }}' : '{{ _("agent_team.live_tool_read_file_completed") }}';
+            }
+            if (tool === 'bash' || tool.indexOf('shell') >= 0 || tool.indexOf('command') >= 0) {
+                return running ? '{{ _("agent_team.live_tool_bash_running") }}' : '{{ _("agent_team.live_tool_bash_completed") }}';
+            }
+            if (tool === 'grep' || tool === 'glob' || tool.indexOf('search') >= 0 || tool.indexOf('grep') >= 0) {
+                return running ? '{{ _("agent_team.live_tool_search_running") }}' : '{{ _("agent_team.live_tool_search_completed") }}';
+            }
+            if (tool === 'edit' || tool === 'write' || tool.indexOf('edit') >= 0 || tool.indexOf('write') >= 0) {
+                return running ? '{{ _("agent_team.live_tool_edit_running") }}' : '{{ _("agent_team.live_tool_edit_completed") }}';
+            }
+            return running ? '{{ _("agent_team.live_tool_generic_running") }}' : '{{ _("agent_team.live_tool_generic_completed") }}';
+        },
+
+        buildToolCallView(tc) {
+            var args = this.parseToolArguments(tc.arguments_json);
+            var detailRows = [{ label: '{{ _("agent_team.live_tool_name") }}', value: tc.name || '' }];
+            var candidates = [
+                ['{{ _("agent_team.live_tool_path") }}', args.file_path || args.path || args.pattern],
+                ['{{ _("agent_team.live_tool_command") }}', args.command],
+                ['{{ _("agent_team.live_tool_query") }}', args.query || args.pattern],
+                ['{{ _("agent_team.live_tool_details") }}', args.description || args.raw]
+            ];
+            candidates.forEach(function(item) {
+                if (item[1] !== undefined && item[1] !== null && String(item[1]) !== '') {
+                    detailRows.push({ label: item[0], value: String(item[1]) });
+                }
+            });
+            return {
+                id: tc.id,
+                status: tc.status || 'running',
+                statusLabel: tc.status || '',
+                title: this.describeToolAction(tc.name, args, tc.status),
+                detailRows: detailRows,
+                error: tc.error_message || ''
+            };
         },
 
         _processStreamData(data) {
@@ -385,7 +461,7 @@ function agentTeamLiveView() {
                     if (m.role === 'assistant') {
                         var content = m.content || '';
                         var htmlContent = '';
-                        try { htmlContent = marked.parse(content); } catch(e) { htmlContent = content; }
+                        try { htmlContent = DOMPurify.sanitize(marked.parse(content)); } catch(e) { htmlContent = content; }
                         var msgToolCalls = tcByMsg[m.id] || null;
                         var key = 'msg-' + m.id;
                         var isLong = content.length > 500;
@@ -393,7 +469,7 @@ function agentTeamLiveView() {
                             type: 'assistant',
                             content: content,
                             htmlContent: htmlContent,
-                            toolCalls: msgToolCalls && msgToolCalls.length > 0 ? msgToolCalls : null,
+                            toolCalls: msgToolCalls && msgToolCalls.length > 0 ? msgToolCalls.map(function(tc) { return self.buildToolCallView(tc); }) : null,
                             isLong: isLong,
                             collapsed: isLong ? (self._collapsedState[key] !== undefined ? self._collapsedState[key] : true) : false,
                             key: key,
@@ -403,12 +479,15 @@ function agentTeamLiveView() {
                         var tc = self._toolCalls[m.tool_call_id];
                         var content = m.content || '';
                         var key = 'msg-' + m.id;
-                        var isLong = content.length > 300;
+                        var isLong = content.length > 0;
+                        var toolView = tc ? self.buildToolCallView(tc) : null;
                         items.push({
                             type: 'tool_result',
                             content: content,
+                            status: tc && tc.status ? tc.status : 'completed',
+                            toolTitle: toolView ? toolView.title : '',
                             isLong: isLong,
-                            collapsed: isLong ? (self._collapsedState[key] !== undefined ? self._collapsedState[key] : true) : false,
+                            collapsed: self._collapsedState[key] !== undefined ? self._collapsedState[key] : true,
                             key: key,
                             _ts: toTs(m.created_at)
                         });
