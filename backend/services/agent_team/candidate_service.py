@@ -121,6 +121,7 @@ class AgentTeamCandidateService:
         candidate: AgentCandidate,
         started_by: str,
         ai_config_snapshot: dict | None = None,
+        base_branch: str | None = None,
     ) -> AgentTeamTask:
         """将候选项转为 AgentTeamTask。"""
         max_iterations = await self._load_max_iterations_per_task()
@@ -138,6 +139,7 @@ class AgentTeamCandidateService:
             status=AgentTeamTaskStatus.QUEUED.value,
             max_iterations=max_iterations,
             started_by=started_by,
+            base_branch=base_branch,
             ai_config_snapshot=json.dumps(ai_config_snapshot or {}, ensure_ascii=False),
         )
         db.add(task)
@@ -152,6 +154,7 @@ class AgentTeamCandidateService:
         issue_number: int,
         started_by: str,
         ai_config_snapshot: dict | None = None,
+        base_branch: str | None = None,
     ) -> AgentTeamTask:
         """从管理员手动指定的 GitHub Issue 直接创建 Agent 任务。
 
@@ -258,6 +261,7 @@ class AgentTeamCandidateService:
             status=AgentTeamTaskStatus.QUEUED.value,
             max_iterations=max_iterations,
             started_by=started_by,
+            base_branch=base_branch,
             ai_config_snapshot=json.dumps(
                 ai_config_snapshot or {}, ensure_ascii=False
             ),

@@ -45,6 +45,7 @@ class AgentTeamGitWorkspaceService:
         repo_name: str,
         source_issue_number: int | None = None,
         source_id: int | None = None,
+        base_branch: str | None = None,
     ) -> GitWorkspaceInfo:
         """准备仓库工作区并切换到 Agent 分支。"""
         repo_full_name = f"{repo_owner}/{repo_name}"
@@ -52,12 +53,13 @@ class AgentTeamGitWorkspaceService:
         default_branch, clone_url = await self._get_repo_info(
             repo_owner, repo_name, repo_full_name
         )
+        resolved_branch = base_branch or default_branch
         executor = AgentTeamShellExecutor(workspace, self.workspace_service)
 
         if not (workspace / ".git").exists():
             await self._run_checked_args(
                 executor,
-                ["git", "clone", "--branch", default_branch, clone_url, "."],
+                ["git", "clone", "--branch", resolved_branch, clone_url, "."],
                 "clone repository",
             )
         else:
@@ -71,13 +73,13 @@ class AgentTeamGitWorkspaceService:
             )
             await self._run_checked_args(
                 executor,
-                ["git", "checkout", default_branch],
-                "checkout default branch",
+                ["git", "checkout", resolved_branch],
+                "checkout base branch",
             )
             await self._run_checked_args(
                 executor,
-                ["git", "reset", "--hard", f"origin/{default_branch}"],
-                "reset default branch",
+                ["git", "reset", "--hard", f"origin/{resolved_branch}"],
+                "reset base branch",
             )
 
         branch_name = self.make_branch_name(source_issue_number, source_id)
@@ -93,7 +95,7 @@ class AgentTeamGitWorkspaceService:
         return GitWorkspaceInfo(
             workspace=workspace,
             branch_name=branch_name,
-            default_branch=default_branch,
+            default_branch=resolved_branch,
             commit_sha=commit_sha,
         )
 
