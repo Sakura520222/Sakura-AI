@@ -169,13 +169,13 @@ class AgentTeamPRService:
             ".mypy_cache/",
             "node_modules/",
         ]
-        # 追加不重复的条目
-        read = await executor.run("cat .gitignore 2>/dev/null || true")
-        existing = read.stdout
-        missing = [e for e in excludes if e not in existing]
+        gitignore_path = executor.workspace / ".gitignore"
+        existing = gitignore_path.read_text(encoding="utf-8") if gitignore_path.exists() else ""
+        existing_rules = {line.strip() for line in existing.splitlines()}
+        missing = [rule for rule in excludes if rule not in existing_rules]
         if missing:
             append_block = ("\n" if existing and not existing.endswith("\n") else "") + "\n".join(missing) + "\n"
-            await executor.run(f"printf '%s' {repr(append_block)} >> .gitignore")
+            gitignore_path.write_text(existing + append_block, encoding="utf-8")
             logger.info("已追加 {} 条 .gitignore 规则", len(missing))
 
     async def create_pull_request(
