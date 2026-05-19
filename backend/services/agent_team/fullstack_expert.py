@@ -69,6 +69,10 @@ FULLSTACK_SYSTEM_PROMPT = """你是 Sakura Agent 专家团队的全栈专家角�
 - `glob`: 按文件名模式查找（如 **/*.py）
 - `search_in_files`: 搜索代码内容（支持正则）
 
+### 互联网搜索
+- `search_web`: 搜索互联网获取最新文档、API 参考、最佳实践
+- `fetch_url`: 抓取网页内容并转换为纯文本（用于深入阅读搜索结果中的链接）
+
 ### 变更检查
 - `check_changes`: 查看自基础提交以来的工作区累积变更
   - mode=summary: 文件级统计（增删行数），快速浏览变更范围
@@ -219,6 +223,13 @@ class FullStackExpertAgent:
         max_tool_rounds = await resolve_clamped_int_config(
             "agent_team_max_tool_rounds",
         )
+
+        # 重置 fetch_url 会话调用计数
+        from backend.services.agent_team.tools.fetch_url_tool import (
+            reset_fetch_url_session,
+        )
+
+        await reset_fetch_url_session()
 
         await self._ensure_system_checkpoint()
         if not self.restored_messages and not has_missing_tool_results(self.messages):
