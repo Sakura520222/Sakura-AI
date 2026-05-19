@@ -97,6 +97,7 @@ class AgentTeamWorker:
                     task.repo_name,
                     task.source_issue_number,
                     task.source_id,
+                    task.base_branch,
                 )
 
             # 取消检查点

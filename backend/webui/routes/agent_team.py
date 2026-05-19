@@ -429,6 +429,40 @@ async def save_agent_team_config(
     )
 
 
+@router.get("/api/repos/{owner}/{name}/branches")
+async def list_repo_branches(
+    owner: str,
+    name: str,
+    _=Depends(require_super_admin),
+):
+    """获取仓库分支列表，供任务创建弹窗选择基础分支。"""
+    try:
+        from backend.core.github_app import GitHubAppClient
+
+        github_app = GitHubAppClient()
+        client = github_app.get_repo_client(owner, name)
+        if not client:
+            return JSONResponse(
+                {"success": False, "message": f"无法获取 GitHub 客户端: {owner}/{name}"},
+                status_code=200,
+            )
+        repo = client.get_repo(f"{owner}/{name}")
+        default_branch = repo.default_branch or "main"
+        branches = []
+        for branch in repo.get_branches()[:100]:
+            branches.append(branch.name)
+        return JSONResponse({
+            "success": True,
+            "default_branch": default_branch,
+            "branches": branches,
+        })
+    except Exception as exc:
+        return JSONResponse(
+            {"success": False, "message": f"获取分支列表失败: {exc}"},
+            status_code=200,
+        )
+
+
 @router.post("/candidates")
 async def preview_candidates(
     db: AsyncSession = Depends(get_db),
@@ -474,6 +508,7 @@ async def create_task_from_candidate(
     source_type: str = Form(...),
     source_id: int = Form(...),
     ai_filter_requirement: str = Form(""),
+    base_branch: str = Form(""),
 ):
     """从候选来源创建 Agent 任务。"""
     try:
@@ -511,6 +546,7 @@ async def create_task_from_candidate(
         candidate,
         started_by=user["sub"],
         ai_config_snapshot=config.safe_snapshot(),
+        base_branch=base_branch.strip() or None,
     )
     await log_admin_action(
         db,
@@ -571,6 +607,7 @@ async def create_task_from_issue(
     user: dict = Depends(require_super_admin),
     csrf_token: str = Depends(require_csrf),
     issue_ref: str = Form(...),
+    base_branch: str = Form(""),
 ):
     """从指定仓库的 Issue 直接创建 Agent 任务。"""
     try:
@@ -603,6 +640,7 @@ async def create_task_from_issue(
             issue_number=issue_number,
             started_by=user["sub"],
             ai_config_snapshot=config.safe_snapshot(),
+            base_branch=base_branch.strip() or None,
         )
     except ValueError as e:
         return JSONResponse(

@@ -330,6 +330,11 @@ agent_team:
   live_tool_edit_completed: "File updated"
   live_tool_generic_running: "Using tool"
   live_tool_generic_completed: "Tool completed"
+  select_base_branch: "Select Base Branch"
+  base_branch_desc: "Choose the base branch for the Agent task. The PR will target this branch."
+  default_branch: "default"
+  loading_branches: "Loading branches..."
+  branch_load_failed: "Failed to load branches, please retry"
 
 # ========== Agent Skills ==========
 agent_skills:

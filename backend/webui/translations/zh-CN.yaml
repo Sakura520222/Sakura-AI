@@ -330,6 +330,11 @@ agent_team:
   live_tool_edit_completed: "文件修改完成"
   live_tool_generic_running: "正在使用工具"
   live_tool_generic_completed: "工具调用完成"
+  select_base_branch: "选择基础分支"
+  base_branch_desc: "选择 Agent 任务的基础分支，PR 将基于此分支创建。"
+  default_branch: "默认"
+  loading_branches: "正在加载分支..."
+  branch_load_failed: "分支加载失败，请重试"
 
 # ========== Agent Skills ==========
 agent_skills:
