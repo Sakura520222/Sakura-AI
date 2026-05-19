@@ -12,6 +12,7 @@ from typing import Any
 
 from backend.services.agent_team.tools.base import BaseTool, ToolExecutor
 from backend.services.agent_team.tools.edit_tool import EditTool
+from backend.services.agent_team.tools.fetch_url_tool import FetchUrlTool
 from backend.services.agent_team.tools.git_diff_tool import GitDiffTool
 from backend.services.agent_team.tools.finish_task_tool import FinishTaskTool
 from backend.services.agent_team.tools.glob_tool import GlobTool
@@ -30,6 +31,7 @@ from backend.services.agent_team.tools.sakura_memory_tool import SakuraMemoryToo
 from backend.services.agent_team.tools.shell_tool import ShellTool
 from backend.services.agent_team.tools.submit_review_tool import SubmitReviewTool
 from backend.services.agent_team.tools.use_skill_tool import UseSkillTool
+from backend.services.agent_team.tools.web_search_tool import WebSearchTool
 from backend.services.agent_team.tools.write_tool import WriteTool
 
 
@@ -51,6 +53,8 @@ FULLSTACK_TOOL_INSTANCES: list[BaseTool] = [
     DetectProjectTool(),
     RevertFileTool(),
     FinishTaskTool(),
+    WebSearchTool(),
+    FetchUrlTool(),
 ]
 
 # 审查角色可用工具（只读 + 审查提交）
@@ -67,6 +71,8 @@ REVIEWER_TOOL_INSTANCES: list[BaseTool] = [
     SakuraMemoryTool(),
     ReadSakuraDocsTool(),
     ListSakuraDirectoryTool(),
+    WebSearchTool(),
+    FetchUrlTool(),
 ]
 
 # 按名称索引的工具注册表

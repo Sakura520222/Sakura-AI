@@ -106,6 +106,8 @@ REVIEWER_SYSTEM_PROMPT = """你是 Sakura Agent 专家团队的专业代码审�
 - `check_changes`：查看工作区累积变更（summary=统计，full=完整 diff）
 - `run_command`：运行测试或代码检查
 - `use_skill`：读取相关 Skill 指导
+- `search_web`：搜索互联网获取文档和最佳实践
+- `fetch_url`：抓取网页内容（用于深入阅读搜索结果中的链接）
 - `submit_review`：提交审查结果
 
 ## 重要规则
@@ -227,6 +229,13 @@ class ProfessionalReviewAgent:
         max_tool_rounds = await resolve_clamped_int_config(
             "agent_team_reviewer_max_tool_rounds",
         )
+
+        # 重置 fetch_url 会话调用计数
+        from backend.services.agent_team.tools.fetch_url_tool import (
+            reset_fetch_url_session,
+        )
+
+        await reset_fetch_url_session()
 
         await self._ensure_system_checkpoint()
         if not self.restored_messages and not has_missing_tool_results(self.messages):
