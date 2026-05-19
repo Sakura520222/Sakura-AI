@@ -200,6 +200,7 @@ agent_team:
   success_rate: "成功率"
   refresh_tasks: "刷新任务"
   open_config: "打开配置"
+  load_default_allowlist: "读取默认"
   tab_tasks: "任务控制台"
   tab_candidates: "候选池"
   tab_workspaces: "工作区管理"
@@ -745,6 +746,7 @@ config:
     agent_team_auto_install_deps: "自动安装项目依赖"
     agent_team_skills_enabled: "启用 Agent Skills"
     agent_team_skills_root: "Skills 根目录"
+    agent_team_test_command_allowlist: "Shell 命令白名单"
   desc:
     ai_api_timeout_seconds: "传递给 OpenAI 兼容 SDK 的单次请求超时时间，不等同于审查任务整体超时"
     ai_api_max_retries: "单次 AI 调用失败或空响应时允许的最大尝试次数"
@@ -827,6 +829,7 @@ config:
     agent_team_auto_install_deps: "Agent 克隆仓库后自动检测并安装 pyproject.toml 或 requirements.txt 中的依赖"
     agent_team_skills_enabled: "启用后，Agent 任务会加载已启用 Skills 的摘要，并可通过 use_skill 工具读取完整 SKILL.md"
     agent_team_skills_root: "Skills 本地存储根目录，默认 ./Skills；每个 Skill 存储为 <slug>/SKILL.md"
+    agent_team_test_command_allowlist: "Agent 在工作区内可执行的 shell 命令白名单（逗号分隔）。无参数的白名单项允许任意参数，有参数的项要求命令以白名单参数为前缀。"
   option:
     ai_provider_openai: "OpenAI"
     ai_provider_deepseek: "DeepSeek"

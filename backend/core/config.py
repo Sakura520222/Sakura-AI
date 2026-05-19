@@ -558,11 +558,15 @@ class Settings(BaseSettings):
         "deno test,deno check,"
         # Build systems
         "make,cmake --build,"
+        # Text processing
+        "sed,awk,grep,find,cat,head,tail,sort,xargs,tr,cut,tee,chmod,"
+        # Script execution
+        "python,"
         # Shell
         "shellcheck,"
         # System / diagnostic
         "which,uname,env,wc,du,diff,tree,file,stat,"
-        "python --version,node --version,go version,java --version"
+        "node --version,go version,java --version"
     )
     agent_team_skills_enabled: bool = False
     agent_team_skills_root: str = "./Skills"

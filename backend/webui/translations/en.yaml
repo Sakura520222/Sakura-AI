@@ -200,6 +200,7 @@ agent_team:
   success_rate: "Success Rate"
   refresh_tasks: "Refresh Tasks"
   open_config: "Open Config"
+  load_default_allowlist: "Load Default"
   tab_tasks: "Task Console"
   tab_candidates: "Candidate Pool"
   tab_workspaces: "Workspaces"
@@ -745,6 +746,7 @@ config:
     agent_team_auto_install_deps: "Auto Install Dependencies"
     agent_team_skills_enabled: "Enable Agent Skills"
     agent_team_skills_root: "Skills Root"
+    agent_team_test_command_allowlist: "Shell Command Allowlist"
   desc:
     ai_api_timeout_seconds: "Per-request timeout passed to the OpenAI-compatible SDK; different from the overall review task timeout"
     ai_api_max_retries: "Maximum attempts allowed when one AI call fails or returns an empty response"
@@ -827,6 +829,7 @@ config:
     agent_team_auto_install_deps: "Automatically detect and install dependencies from pyproject.toml or requirements.txt after cloning the repo"
     agent_team_skills_enabled: "When enabled, Agent tasks load enabled Skills as summaries and can read full SKILL.md content with the use_skill tool"
     agent_team_skills_root: "Local storage root for Skills, default ./Skills; each Skill is stored as <slug>/SKILL.md"
+    agent_team_test_command_allowlist: "Comma-separated allowlist of shell commands the Agent can execute in the workspace. Entries without parameters allow any arguments; parameterized entries require the command to start with those parameters."
   option:
     ai_provider_openai: "OpenAI"
     ai_provider_deepseek: "DeepSeek"

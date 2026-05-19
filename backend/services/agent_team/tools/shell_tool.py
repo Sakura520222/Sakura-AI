@@ -101,9 +101,11 @@ class ShellTool(BaseTool):
                 "\n- Rust: cargo test/clippy/build, cargo fmt --check"
                 "\n- Deno: deno test, deno check"
                 "\n- Build: make, cmake --build"
+                "\n- Text: sed, awk, grep, find, cat, head, tail, sort, xargs, tr, cut, tee, chmod"
+                "\n- Script: python (执行 Python 脚本)"
                 "\n- Shell: shellcheck"
                 "\n- System: which, uname, env, wc, du, diff, tree, file, stat,"
-                " python --version, node --version, go version, java --version"
+                " node --version, go version, java --version"
             ),
             "parameters": {
                 "type": "object",
