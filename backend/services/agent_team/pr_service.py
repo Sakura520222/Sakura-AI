@@ -15,8 +15,26 @@ from dataclasses import dataclass
 from loguru import logger
 
 from backend.core.config import get_settings
+from backend.core.github_app import GitHubAppClient
 from backend.services.agent_team.shell_executor import AgentTeamShellExecutor
 from backend.services.agent_team.workspace_service import AgentTeamWorkspaceService
+
+
+def _get_fresh_installation_token(
+    github_app: GitHubAppClient,
+    repo_owner: str,
+    repo_name: str,
+) -> str:
+    """获取新的 GitHub App installation access token。"""
+    try:
+        installation = github_app.integration.get_repo_installation(
+            owner=repo_owner, repo=repo_name,
+        )
+        access_token = github_app.integration.get_access_token(installation.id)
+        return access_token.token
+    except Exception as exc:
+        logger.warning("获取 installation token 失败: {}", exc)
+        return ""
 
 
 @dataclass(frozen=True)
@@ -45,8 +63,12 @@ class AgentTeamPRService:
         commit_message: str,
         repo_owner: str,
         repo_name: str,
+        max_push_retries: int = 2,
     ) -> str:
-        """将工作区变更 commit 并 push，返回 commit SHA。"""
+        """将工作区变更 commit 并 push，返回 commit SHA。
+
+        push 失败时会尝试刷新 GitHub App token 并重试。
+        """
         executor = AgentTeamShellExecutor(workspace, self.workspace_service)
 
         # 确保有 git user identity（容器环境可能缺少全局配置）
@@ -55,6 +77,9 @@ class AgentTeamPRService:
         await executor.run(
             f'git config user.email "{bot_name}[bot]+noreply@users.noreply.github.com"'
         )
+
+        # 确保 .gitignore 排除 Agent 工作区不应提交的路径
+        await self._ensure_gitignore(executor)
 
         # git add 所有修改
         await executor.run("git add -A")
@@ -69,8 +94,30 @@ class AgentTeamPRService:
         # commit
         await executor.run_args(["git", "commit", "-m", commit_message])
 
-        # push
-        await executor.run_args(["git", "push", "-u", "origin", branch_name])
+        # push（失败时刷新 token 重试）
+        last_error: str | None = None
+        for attempt in range(max_push_retries):
+            push_result = await executor.run_args(
+                ["git", "push", "-u", "origin", branch_name],
+            )
+            if push_result.returncode == 0:
+                break
+
+            last_error = (push_result.stderr or push_result.stdout).strip()
+            logger.warning(
+                "git push 失败 (attempt {}/{}): {}",
+                attempt + 1,
+                max_push_retries,
+                last_error[:300],
+            )
+            if attempt < max_push_retries - 1:
+                await self._refresh_remote_token(executor, repo_owner, repo_name)
+                await asyncio.sleep(1)
+        else:
+            raise RuntimeError(
+                f"git push 失败（已重试 {max_push_retries} 次）: "
+                f"{last_error[:500] if last_error else 'unknown'}"
+            )
 
         # 获取 commit SHA
         head_result = await executor.run_args(["git", "rev-parse", "HEAD"])
@@ -82,6 +129,54 @@ class AgentTeamPRService:
             sha[:8],
         )
         return sha
+
+    async def _refresh_remote_token(
+        self,
+        executor: AgentTeamShellExecutor,
+        repo_owner: str,
+        repo_name: str,
+    ) -> None:
+        """刷新 GitHub App installation token 并更新 remote origin URL。"""
+        from backend.core.github_app import GitHubAppClient
+
+        github_app = GitHubAppClient()
+        token = _get_fresh_installation_token(github_app, repo_owner, repo_name)
+        if not token:
+            logger.warning("无法获取新 token，跳过 remote URL 刷新")
+            return
+
+        clone_url = (
+            f"https://x-access-token:{token}@github.com/{repo_owner}/{repo_name}.git"
+        )
+        result = await executor.run_args(
+            ["git", "remote", "set-url", "origin", clone_url],
+        )
+        if result.returncode != 0:
+            logger.warning("更新 remote URL 失败: {}", result.stderr)
+        else:
+            logger.info("已刷新 remote origin token，准备重试 push")
+
+    async def _ensure_gitignore(
+        self,
+        executor: AgentTeamShellExecutor,
+    ) -> None:
+        """确保 .gitignore 包含 Agent 工作区不应提交的路径。"""
+        excludes = [
+            ".venv/",
+            "__pycache__/",
+            "*.pyc",
+            ".pytest_cache/",
+            ".mypy_cache/",
+            "node_modules/",
+        ]
+        # 追加不重复的条目
+        read = await executor.run("cat .gitignore 2>/dev/null || true")
+        existing = read.stdout
+        missing = [e for e in excludes if e not in existing]
+        if missing:
+            append_block = ("\n" if existing and not existing.endswith("\n") else "") + "\n".join(missing) + "\n"
+            await executor.run(f"printf '%s' {repr(append_block)} >> .gitignore")
+            logger.info("已追加 {} 条 .gitignore 规则", len(missing))
 
     async def create_pull_request(
         self,
