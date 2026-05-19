@@ -380,10 +380,11 @@ def _make_candidate(
     repo: str = "owner/repo",
     score: int = 50,
     source_id: int = 1,
+    source_type: str = "issue_analysis",
 ) -> AgentCandidate:
     owner, name = repo.split("/", 1) if "/" in repo else ("", repo)
     return AgentCandidate(
-        source_type="issue_analysis",
+        source_type=source_type,
         source_id=source_id,
         source_issue_number=issue_number,
         repo_full_name=repo,
@@ -477,8 +478,8 @@ async def test_filter_closed_issues_removes_closed(monkeypatch):
     )
 
     candidates = [
-        _make_candidate(issue_number=10),
-        _make_candidate(issue_number=11),
+        _make_candidate(issue_number=10, source_type="scan_finding"),
+        _make_candidate(issue_number=11, source_type="scan_finding"),
     ]
 
     result = await service._filter_closed_issues(candidates)
@@ -501,7 +502,7 @@ async def test_filter_closed_issues_fail_open(monkeypatch):
         lambda: mock_app,
     )
 
-    candidates = [_make_candidate(issue_number=10)]
+    candidates = [_make_candidate(issue_number=10, source_type="scan_finding")]
 
     result = await service._filter_closed_issues(candidates)
 
