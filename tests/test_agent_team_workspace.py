@@ -183,13 +183,11 @@ async def test_shell_executor_blocks_parent_escape(tmp_path):
 
 @pytest.mark.asyncio
 async def test_agent_command_allowlist(monkeypatch):
-    async def fake_get_dynamic_config(key: str):
-        assert key == "agent_team_test_command_allowlist"
-        return "pytest -q,python run_ruff.py --check"
+    from types import SimpleNamespace
 
     monkeypatch.setattr(
-        "backend.services.agent_team.tools.shell_tool.get_dynamic_config",
-        fake_get_dynamic_config,
+        "backend.services.agent_team.tools.shell_tool.get_settings",
+        lambda: SimpleNamespace(agent_team_test_command_allowlist="pytest -q,python run_ruff.py --check"),
     )
 
     assert await is_agent_command_allowed("pytest -q")
@@ -199,13 +197,11 @@ async def test_agent_command_allowlist(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_shell_tool_rejects_command_not_in_allowlist(tmp_path, monkeypatch):
-    async def fake_get_dynamic_config(key: str):
-        assert key == "agent_team_test_command_allowlist"
-        return "pytest -q"
+    from types import SimpleNamespace
 
     monkeypatch.setattr(
-        "backend.services.agent_team.tools.shell_tool.get_dynamic_config",
-        fake_get_dynamic_config,
+        "backend.services.agent_team.tools.shell_tool.get_settings",
+        lambda: SimpleNamespace(agent_team_test_command_allowlist="pytest -q"),
     )
     service = AgentTeamWorkspaceService(tmp_path / "workplace")
     workspace = service.ensure_workspace("owner", "repo")
