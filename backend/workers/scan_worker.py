@@ -202,7 +202,10 @@ class ScanWorker:
 
             # 2. 更新状态为 INDEXING
             await self._update_scan(
-                scan_id, status=ScanStatus.INDEXING.value, current_phase="indexing"
+                scan_id,
+                status=ScanStatus.INDEXING.value,
+                current_phase="indexing",
+                started_at=datetime.utcnow(),
             )
 
             # 3. Clone 仓库到临时目录

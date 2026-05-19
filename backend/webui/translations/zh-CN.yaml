@@ -471,6 +471,11 @@ scan:
   security_issues: "安全问题"
   quality_issues: "质量问题"
   total_issues: "总问题数"
+  started_at: "开始时间"
+  completed_at: "完成时间"
+  duration: "耗时"
+  progress: "进度"
+  code_snippet: "代码片段"
   severity:
     critical: "严重"
     high: "高"
