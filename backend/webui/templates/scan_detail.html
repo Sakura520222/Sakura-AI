@@ -41,7 +41,6 @@
                 {% endif %}
             </div>
         </div>
-
         <!-- 详情网格 -->
         <div class="mt-4 grid grid-cols-2 sm:grid-cols-4 gap-4 text-sm">
             <div>
@@ -49,18 +48,58 @@
                 <p class="font-mono mt-0.5">{{ scan.commit_sha[:7] if scan.commit_sha else '-' }}</p>
             </div>
             <div>
-                <span class="text-gray-500 dark:text-gray-400">扫描文件</span>
+                <span class="text-gray-500 dark:text-gray-400">{{ _('scan_report.file') }}</span>
                 <p class="mt-0.5">{{ scan.code_file_count or 0 }}</p>
             </div>
             <div>
-                <span class="text-gray-500 dark:text-gray-400">Token 消耗</span>
-                <p class="mt-0.5">{{ (scan.prompt_tokens or 0) + (scan.completion_tokens or 0) }}</p>
+                <span class="text-gray-500 dark:text-gray-400">Token</span>
+                <p class="mt-0.5">{{ (scan.prompt_tokens or 0) + (scan.completion_tokens or 0) }}<span class="text-gray-400 text-xs ml-1">(prompt: {{ scan.prompt_tokens or 0 }}, completion: {{ scan.completion_tokens or 0 }})</span></p>
             </div>
             <div>
-                <span class="text-gray-500 dark:text-gray-400">扫描时间</span>
+                <span class="text-gray-500 dark:text-gray-400">{{ _('scan_report.scan_time') }}</span>
                 <p class="mt-0.5">{{ scan.created_at.strftime('%Y-%m-%d %H:%M') if scan.created_at else '-' }}</p>
             </div>
         </div>
+
+        <!-- 扫描耗时 & 完成时间 -->
+        {% if scan.started_at %}
+        <div class="mt-4 pt-4 border-t border-gray-200 dark:border-gray-700">
+            <div class="grid grid-cols-1 sm:grid-cols-3 gap-4 text-sm">
+                <div>
+                    <span class="text-gray-500 dark:text-gray-400">{{ _('scan.started_at') }}</span>
+                    <p class="mt-0.5">{{ scan.started_at.strftime('%Y-%m-%d %H:%M:%S') }}</p>
+                </div>
+                {% if scan.completed_at %}
+                <div>
+                    <span class="text-gray-500 dark:text-gray-400">{{ _('scan.completed_at') }}</span>
+                    <p class="mt-0.5">{{ scan.completed_at.strftime('%Y-%m-%d %H:%M:%S') }}</p>
+                </div>
+                <div>
+                    <span class="text-gray-500 dark:text-gray-400">{{ _('scan.duration') }}</span>
+                    <p class="mt-0.5">
+                        {% set delta_seconds = (scan.completed_at - scan.started_at).total_seconds() | int %}
+                        {% if delta_seconds < 60 %}{{ delta_seconds }}s
+                        {% elif delta_seconds < 3600 %}{{ delta_seconds // 60 }}m {{ delta_seconds % 60 }}s
+                        {% else %}{{ delta_seconds // 3600 }}h {{ (delta_seconds % 3600) // 60 }}m{% endif %}
+                    </p>
+                </div>
+                {% endif %}
+            </div>
+        </div>
+        {% endif %}
+
+        <!-- 进度条（进行中状态） -->
+        {% if scan.status in ('indexing', 'analyzing', 'reporting') %}
+        <div class="mt-4 pt-4 border-t border-gray-200 dark:border-gray-700">
+            <div class="flex items-center gap-3">
+                <span class="text-sm text-gray-500 dark:text-gray-400">{{ _('scan.progress') }}</span>
+                <div class="flex-1 bg-gray-200 dark:bg-gray-700 rounded-full h-2.5">
+                    <div class="h-2.5 rounded-full bg-blue-500 transition-all" style="width: {{ scan.progress or 0 }}%"></div>
+                </div>
+                <span class="text-sm font-medium">{{ scan.progress or 0 }}%</span>
+            </div>
+        </div>
+        {% endif %}
 
         <!-- 健康评分 -->
         {% if scan.overall_health_score is not none %}
@@ -148,7 +187,7 @@
                     <h3 class="font-medium text-sm">{{ f.title }}</h3>
                     {% if f.file_path %}
                     <p class="text-xs text-gray-500 dark:text-gray-400 mt-1 font-mono">
-                        {{ f.file_path }}{% if f.line_start %}:{{ f.line_start }}{% endif %}
+                        {{ f.file_path }}{% if f.line_start %}:{{ f.line_start }}{% if f.line_end and f.line_end != f.line_start %}-{{ f.line_end }}{% endif %}{% endif %}
                     </p>
                     {% endif %}
                 </div>
@@ -162,6 +201,12 @@
                 </div>
             </div>
             <div data-markdown class="prose dark:prose-invert max-w-none text-sm text-gray-700 dark:text-gray-300 leading-relaxed">{{ f.description }}</div>
+            {% if f.code_snippet %}
+            <div class="mt-2 p-2 bg-gray-50 dark:bg-gray-900/40 rounded-lg border border-gray-200 dark:border-gray-700">
+                <p class="text-xs text-gray-500 dark:text-gray-400 font-medium mb-1">{{ _('scan.code_snippet') }}:</p>
+                <pre class="text-xs text-gray-700 dark:text-gray-300 overflow-x-auto whitespace-pre-wrap break-all"><code>{{ f.code_snippet }}</code></pre>
+            </div>
+            {% endif %}
             {% if f.suggestion %}
             <div class="mt-2 p-2 bg-green-50 dark:bg-green-900/20 rounded-lg">
                 <p class="text-sm text-green-700 dark:text-green-400 font-medium mb-1">{{ _('scan_report.suggestion') }}:</p>

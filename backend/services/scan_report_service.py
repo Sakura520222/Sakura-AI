@@ -214,13 +214,12 @@ class ScanReportService:
             lines.append("✅ 未发现问题，代码质量良好")
             lines.append("")
 
-        # 链接（优先使用传入的 issue_url，其次 DB 值，最后 WebUI URL）
+        # 链接：始终提供 WebUI 链接；如有 Issue 链接则同时展示
+        webui_url = get_webui_url(f"/scans/{scan.id}")
         link_url = issue_url or scan.report_issue_url
         if link_url:
             lines.append(f"[📎 查看详细报告]({link_url})")
-        else:
-            webui_url = get_webui_url(f"/scans/{scan.id}")
-            lines.append(f"[🌐 WebUI 查看详情]({webui_url})")
+        lines.append(f"[🌐 WebUI 查看详情]({webui_url})")
 
         return "\n".join(lines)
 
