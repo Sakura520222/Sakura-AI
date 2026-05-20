@@ -103,6 +103,112 @@ AGENT_TEAM_ACTIVE_STATUSES = [
     AgentTeamTaskStatus.WAITING_HUMAN.value,
 ]
 
+_VALID_TASK_PRIORITIES = {"critical", "high", "medium", "low"}
+
+
+def _clean_optional_text(value: str | None) -> str | None:
+    if value is None:
+        return None
+    cleaned = value.strip()
+    return cleaned or None
+
+
+def _parse_optional_int(value: str | None, field_name: str) -> int | None:
+    cleaned = _clean_optional_text(value)
+    if cleaned is None:
+        return None
+    try:
+        return int(cleaned)
+    except ValueError as exc:
+        raise ValueError(f"{field_name} 必须是整数") from exc
+
+
+def _parse_task_overrides(
+    *,
+    title: str | None = None,
+    summary: str | None = None,
+    priority: str | None = None,
+    candidate_score: str | None = None,
+    source_type: str | None = None,
+    source_id: str | None = None,
+    source_issue_number: str | None = None,
+    repo_full_name: str | None = None,
+    repo_owner: str | None = None,
+    repo_name: str | None = None,
+    status: str | None = None,
+    branch_name: str | None = None,
+    base_branch: str | None = None,
+    max_iterations: str | None = None,
+) -> dict:
+    overrides = {}
+    for key, value in {
+        "title": title,
+        "summary": summary,
+        "source_type": source_type,
+        "repo_full_name": repo_full_name,
+        "repo_owner": repo_owner,
+        "repo_name": repo_name,
+        "branch_name": branch_name,
+        "base_branch": base_branch,
+    }.items():
+        cleaned = _clean_optional_text(value)
+        if cleaned is not None:
+            overrides[key] = cleaned
+
+    cleaned_priority = _clean_optional_text(priority)
+    if cleaned_priority is not None:
+        if cleaned_priority not in _VALID_TASK_PRIORITIES:
+            raise ValueError("priority 必须是 critical/high/medium/low")
+        overrides["priority"] = cleaned_priority
+
+    cleaned_status = _clean_optional_text(status)
+    if cleaned_status is not None:
+        valid_statuses = {item.value for item in AgentTeamTaskStatus}
+        if cleaned_status not in valid_statuses:
+            raise ValueError("status 不是有效的任务状态")
+        overrides["status"] = cleaned_status
+
+    score = _parse_optional_int(candidate_score, "candidate_score")
+    if score is not None:
+        if score < 0 or score > 100:
+            raise ValueError("candidate_score 必须在 0-100 之间")
+        overrides["candidate_score"] = score
+
+    iterations = _parse_optional_int(max_iterations, "max_iterations")
+    if iterations is not None:
+        if iterations < 1:
+            raise ValueError("max_iterations 必须大于 0")
+        overrides["max_iterations"] = iterations
+
+    for key, value in {
+        "source_id": source_id,
+        "source_issue_number": source_issue_number,
+    }.items():
+        parsed = _parse_optional_int(value, key)
+        if parsed is not None:
+            overrides[key] = parsed
+
+    full_name = overrides.get("repo_full_name")
+    owner = overrides.get("repo_owner")
+    name = overrides.get("repo_name")
+    if full_name:
+        if "/" not in full_name:
+            raise ValueError("repo_full_name 必须是 owner/repo 格式")
+        full_owner, full_repo = full_name.split("/", 1)
+        if (owner and owner != full_owner) or (name and name != full_repo):
+            raise ValueError("repo_full_name 必须和 repo_owner/repo_name 一致")
+        overrides.setdefault("repo_owner", full_owner)
+        overrides.setdefault("repo_name", full_repo)
+    elif owner and name:
+        overrides["repo_full_name"] = f"{owner}/{name}"
+
+    return overrides
+
+
+def _should_schedule_agent_task(status: str) -> bool:
+    return status == AgentTeamTaskStatus.QUEUED.value
+
+
 AGENT_TEAM_CONFIG_GROUPS = [
     {
         "key": "basic",
@@ -510,7 +616,20 @@ async def create_task_from_candidate(
     source_type: str = Form(...),
     source_id: int = Form(...),
     ai_filter_requirement: str = Form(""),
+    title: str = Form(""),
+    summary: str = Form(""),
+    priority: str = Form(""),
+    candidate_score: str = Form(""),
+    edited_source_type: str = Form(""),
+    edited_source_id: str = Form(""),
+    source_issue_number: str = Form(""),
+    repo_full_name: str = Form(""),
+    repo_owner: str = Form(""),
+    repo_name: str = Form(""),
+    status: str = Form(""),
+    branch_name: str = Form(""),
     base_branch: str = Form(""),
+    max_iterations: str = Form(""),
 ):
     """从候选来源创建 Agent 任务。"""
     try:
@@ -543,12 +662,33 @@ async def create_task_from_candidate(
             {"success": False, "message": "候选任务不存在或已被处理"}, status_code=404
         )
 
+    try:
+        overrides = _parse_task_overrides(
+            title=title,
+            summary=summary,
+            priority=priority,
+            candidate_score=candidate_score,
+            source_type=edited_source_type,
+            source_id=edited_source_id,
+            source_issue_number=source_issue_number,
+            repo_full_name=repo_full_name,
+            repo_owner=repo_owner,
+            repo_name=repo_name,
+            status=status,
+            branch_name=branch_name,
+            base_branch=base_branch,
+            max_iterations=max_iterations,
+        )
+    except ValueError as e:
+        return JSONResponse({"success": False, "message": str(e)}, status_code=200)
+
     task = await service.create_task_from_candidate(
         db,
         candidate,
         started_by=user["sub"],
         ai_config_snapshot=config.safe_snapshot(),
         base_branch=base_branch.strip() or None,
+        overrides=overrides,
     )
     await log_admin_action(
         db,
@@ -556,11 +696,20 @@ async def create_task_from_candidate(
         "agent_team_task_create",
         "agent_team_task",
         str(task.id),
-        {"source_type": source_type, "source_id": source_id},
+        {
+            "source_type": task.source_type,
+            "source_id": task.source_id,
+            "repo_full_name": task.repo_full_name,
+            "source_issue_number": task.source_issue_number,
+            "status": task.status,
+            "base_branch": task.base_branch,
+            "branch_name": task.branch_name,
+            "max_iterations": task.max_iterations,
+        },
     )
 
-    # 提交给后台 worker 执行，避免阻塞 HTTP 请求导致前端/反代超时
-    background_tasks.add_task(_run_agent_task_background, task.id)
+    if _should_schedule_agent_task(task.status):
+        background_tasks.add_task(_run_agent_task_background, task.id)
 
     return JSONResponse({"success": True, "task_id": task.id})
 
@@ -602,6 +751,27 @@ def _parse_issue_ref(ref: str) -> tuple[str, int]:
     )
 
 
+@router.post("/tasks/preview-from-issue")
+async def preview_task_from_issue(
+    db: AsyncSession = Depends(get_db),
+    user: dict = Depends(require_super_admin),
+    csrf_token: str = Depends(require_csrf),
+    issue_ref: str = Form(...),
+):
+    """从指定 Issue 构建可编辑任务草稿。"""
+    try:
+        repo_full_name, issue_number = _parse_issue_ref(issue_ref)
+        draft = await AgentTeamCandidateService().build_manual_issue_task_draft(
+            db, repo_full_name, issue_number
+        )
+    except ValueError as e:
+        return JSONResponse(
+            {"success": False, "message": str(e)},
+            status_code=200,
+        )
+    return JSONResponse({"success": True, "draft": draft})
+
+
 @router.post("/tasks/create-from-issue")
 async def create_task_from_issue(
     background_tasks: BackgroundTasks,
@@ -609,7 +779,20 @@ async def create_task_from_issue(
     user: dict = Depends(require_super_admin),
     csrf_token: str = Depends(require_csrf),
     issue_ref: str = Form(...),
+    title: str = Form(""),
+    summary: str = Form(""),
+    priority: str = Form(""),
+    candidate_score: str = Form(""),
+    source_type: str = Form(""),
+    source_id: str = Form(""),
+    source_issue_number: str = Form(""),
+    repo_full_name: str = Form(""),
+    repo_owner: str = Form(""),
+    repo_name: str = Form(""),
+    status: str = Form(""),
+    branch_name: str = Form(""),
     base_branch: str = Form(""),
+    max_iterations: str = Form(""),
 ):
     """从指定仓库的 Issue 直接创建 Agent 任务。"""
     try:
@@ -634,6 +817,26 @@ async def create_task_from_issue(
             status_code=200,
         )
 
+    try:
+        overrides = _parse_task_overrides(
+            title=title,
+            summary=summary,
+            priority=priority,
+            candidate_score=candidate_score,
+            source_type=source_type,
+            source_id=source_id,
+            source_issue_number=source_issue_number,
+            repo_full_name=repo_full_name,
+            repo_owner=repo_owner,
+            repo_name=repo_name,
+            status=status,
+            branch_name=branch_name,
+            base_branch=base_branch,
+            max_iterations=max_iterations,
+        )
+    except ValueError as e:
+        return JSONResponse({"success": False, "message": str(e)}, status_code=200)
+
     service = AgentTeamCandidateService()
     try:
         task = await service.create_task_from_manual_issue(
@@ -643,6 +846,7 @@ async def create_task_from_issue(
             started_by=user["sub"],
             ai_config_snapshot=config.safe_snapshot(),
             base_branch=base_branch.strip() or None,
+            overrides=overrides,
         )
     except ValueError as e:
         return JSONResponse(
@@ -657,13 +861,19 @@ async def create_task_from_issue(
         "agent_team_task",
         str(task.id),
         {
-            "source_type": "manual_issue",
-            "repo_full_name": repo_full_name,
-            "issue_number": issue_number,
+            "source_type": task.source_type,
+            "source_id": task.source_id,
+            "repo_full_name": task.repo_full_name,
+            "source_issue_number": task.source_issue_number,
+            "status": task.status,
+            "base_branch": task.base_branch,
+            "branch_name": task.branch_name,
+            "max_iterations": task.max_iterations,
         },
     )
 
-    background_tasks.add_task(_run_agent_task_background, task.id)
+    if _should_schedule_agent_task(task.status):
+        background_tasks.add_task(_run_agent_task_background, task.id)
 
     return JSONResponse({"success": True, "task_id": task.id})
 
