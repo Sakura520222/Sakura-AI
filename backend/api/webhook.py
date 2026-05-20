@@ -2,7 +2,7 @@
 
 from fastapi import APIRouter, Request, HTTPException, Header
 from fastapi.responses import JSONResponse
-from typing import Dict, Any
+from typing import Dict, Any, Optional
 import asyncio
 import re
 from loguru import logger
@@ -82,6 +82,8 @@ async def handle_github_webhook(
             return await handle_issue_event(payload_data)
         elif x_github_event == "issue_comment":
             return await handle_issue_comment_event(payload_data)
+        elif x_github_event == "pull_request_review":
+            return await handle_pull_request_review_event(payload_data)
         elif x_github_event == "installation":
             return await handle_installation_event(payload_data)
         else:
@@ -340,6 +342,10 @@ async def handle_issue_comment_event(payload: Dict[str, Any]) -> JSONResponse:
     """处理Issue Comment事件（PR评论指令）"""
     try:
         action = payload.get("action")
+
+        # 处理评论编辑（包括复选框切换）
+        if action == "edited":
+            return await handle_comment_edited_event(payload)
 
         # 只处理新建评论
         if action != "created":
@@ -619,6 +625,277 @@ async def handle_issue_comment_event(payload: Dict[str, Any]) -> JSONResponse:
 
     except Exception as e:
         logger.error(f"处理Issue Comment事件时出错: {e}", exc_info=True)
+        return JSONResponse(
+            status_code=500, content={"status": "error", "message": "内部服务错误"}
+        )
+
+
+async def _handle_label_checkbox_toggle_inner(
+    repo_owner: str,
+    repo_name: str,
+    pr_number: int,
+    old_body: str,
+    new_body: str,
+    editor_login: str,
+    pr_author_login: str,
+    comment_source: str,
+    comment_id: Optional[int] = None,
+) -> JSONResponse:
+    """Shared logic for detecting label checkbox toggles and applying changes.
+
+    Args:
+        repo_owner: Repository owner login.
+        repo_name: Repository name.
+        pr_number: PR number.
+        old_body: Comment body before the edit.
+        new_body: Comment body after the edit.
+        editor_login: GitHub username of the person who edited the comment.
+        pr_author_login: GitHub username of the PR author.
+        comment_source: "issue_comment" or "pull_request_review" for logging.
+        comment_id: Comment/review ID for restoring checkbox state on denial.
+
+    Returns:
+        JSONResponse with the result.
+    """
+    # Lazy import to avoid circular dependency: webhook → label_service → github_app (webhook already imports it)
+    from backend.services.label_service import label_service
+
+    # Quick check: is this a Sakura label comment?
+    if not label_service.is_sakura_label_comment(new_body):
+        return JSONResponse(
+            content={"status": "ignored", "reason": "not a Sakura label comment"}
+        )
+
+    # Detect checkbox changes
+    labels_to_add, labels_to_remove = label_service.parse_checkbox_changes(
+        old_body, new_body
+    )
+
+    if not labels_to_add and not labels_to_remove:
+        return JSONResponse(
+            content={"status": "ignored", "reason": "no checkbox changes detected"}
+        )
+
+    logger.info(
+        f"[{comment_source}] 检测到标签复选框变化: "
+        f"add={labels_to_add}, remove={labels_to_remove}, "
+        f"editor={editor_login}, {repo_owner}/{repo_name}#{pr_number}"
+    )
+
+    # Permission check: PR author or collaborator (admin/write)
+    is_pr_author = editor_login == pr_author_login
+    is_collaborator = False
+    github_app: Optional[GitHubAppClient] = None
+
+    if not is_pr_author:
+        github_app = GitHubAppClient()
+        permission = await asyncio.to_thread(
+            github_app.check_collaborator_permission,
+            repo_owner, repo_name, editor_login,
+        )
+        is_collaborator = permission in ("admin", "write")
+
+    if not is_pr_author and not is_collaborator:
+        logger.info(
+            f"[{comment_source}] 用户 {editor_login} 无权切换标签 "
+            f"(非PR作者且非仓库协作者)"
+        )
+        # Restore original checkbox state and post a notice comment
+        try:
+            if github_app is None:
+                github_app = GitHubAppClient()
+            assert github_app is not None
+
+            def _revert_and_notify() -> None:
+                client = github_app.get_repo_client(repo_owner, repo_name)
+                if not client:
+                    return
+                repo = client.get_repo(f"{repo_owner}/{repo_name}")
+                # Restore the original comment body to revert checkbox changes
+                if comment_id is not None:
+                    if comment_source == "issue_comment":
+                        comment_obj = repo.get_issue(pr_number).get_comment(comment_id)
+                    else:
+                        comment_obj = repo.get_pull(pr_number).get_review_comment(
+                            comment_id
+                        )
+                    comment_obj.edit(old_body)
+                    logger.info(
+                        f"[{comment_source}] 已恢复评论 #{comment_id} 的原始复选框状态"
+                    )
+                # Post a notice about insufficient permission
+                pr = repo.get_pull(pr_number)
+                pr.create_issue_comment(
+                    f"❌ @{editor_login}，只有 PR 作者或仓库管理员/协作者才能切换标签复选框。"
+                )
+
+            await asyncio.to_thread(_revert_and_notify)
+        except Exception as e:
+            logger.warning(f"[{comment_source}] 恢复复选框/回复无权限提示失败: {e}")
+
+        return JSONResponse(
+            content={"status": "denied", "reason": "insufficient permission"}
+        )
+
+    # Apply the label changes
+    result = await label_service.handle_label_checkbox_toggle(
+        repo_owner=repo_owner,
+        repo_name=repo_name,
+        pr_number=pr_number,
+        labels_to_add=labels_to_add,
+        labels_to_remove=labels_to_remove,
+        operator=editor_login,
+        pr_author=pr_author_login,
+    )
+
+    applied = result.get("applied", [])
+    removed = result.get("removed", [])
+    failed = result.get("failed", [])
+
+    logger.info(
+        f"[{comment_source}] 标签复选框操作完成: "
+        f"applied={applied}, removed={removed}, failed={failed}"
+    )
+
+    return JSONResponse(
+        content={
+            "status": "ok",
+            "applied": applied,
+            "removed": removed,
+            "failed": failed,
+        }
+    )
+
+
+async def handle_comment_edited_event(payload: Dict[str, Any]) -> JSONResponse:
+    """Handle issue_comment edited events to detect label checkbox toggles.
+
+    When a user edits a comment in a PR and changes the checked state of a
+    label checkbox in a Sakura review comment, this handler applies or removes
+    the corresponding label on the PR.
+    """
+    try:
+        # Must be a PR comment (issue with pull_request field)
+        issue = payload.get("issue", {})
+        if not issue.get("pull_request"):
+            return JSONResponse(
+                content={"status": "ignored", "reason": "not a PR comment"}
+            )
+
+        comment = payload.get("comment", {})
+        changes = payload.get("changes", {})
+        new_body = comment.get("body", "")
+        old_body = changes.get("body", {}).get("from", "") if changes else ""
+
+        if not old_body:
+            return JSONResponse(
+                content={"status": "ignored", "reason": "no old body in changes"}
+            )
+
+        repo_info = payload.get("repository", {})
+        repo_owner = repo_info.get("owner", {}).get("login", "")
+        repo_name = repo_info.get("name", "")
+        pr_number = issue.get("number")
+
+        if not all([repo_owner, repo_name, pr_number]):
+            return JSONResponse(
+                status_code=400,
+                content={"status": "error", "message": "无法提取PR信息"},
+            )
+
+        editor_login = comment.get("user", {}).get("login", "")
+        pr_author_login = issue.get("user", {}).get("login", "")
+
+        if not editor_login:
+            return JSONResponse(
+                status_code=400,
+                content={"status": "error", "message": "无法获取编辑者信息"},
+            )
+
+        comment_id = comment.get("id")
+
+        return await _handle_label_checkbox_toggle_inner(
+            repo_owner=repo_owner,
+            repo_name=repo_name,
+            pr_number=pr_number,
+            old_body=old_body,
+            new_body=new_body,
+            editor_login=editor_login,
+            pr_author_login=pr_author_login,
+            comment_source="issue_comment",
+            comment_id=comment_id,
+        )
+
+    except Exception as e:
+        logger.error(f"处理评论编辑事件时出错: {e}", exc_info=True)
+        return JSONResponse(
+            status_code=500, content={"status": "error", "message": "内部服务错误"}
+        )
+
+
+async def handle_pull_request_review_event(
+    payload: Dict[str, Any],
+) -> JSONResponse:
+    """Handle pull_request_review events.
+
+    Currently handles the ``edited`` action to detect label checkbox toggles
+    in PR review body edits.
+    """
+    try:
+        action = payload.get("action")
+
+        # Only handle edited reviews (checkbox toggles)
+        if action != "edited":
+            return JSONResponse(content={"status": "ignored", "action": action})
+
+        review = payload.get("review", {})
+        changes = payload.get("changes", {})
+        new_body = review.get("body", "")
+        old_body = changes.get("body", {}).get("from", "") if changes else ""
+
+        if not old_body:
+            return JSONResponse(
+                content={"status": "ignored", "reason": "no old body in changes"}
+            )
+
+        pr_info_payload = payload.get("pull_request", {})
+        repo_info = payload.get("repository", {})
+
+        repo_owner = repo_info.get("owner", {}).get("login", "")
+        repo_name = repo_info.get("name", "")
+        pr_number = pr_info_payload.get("number")
+
+        if not all([repo_owner, repo_name, pr_number]):
+            return JSONResponse(
+                status_code=400,
+                content={"status": "error", "message": "无法提取PR信息"},
+            )
+
+        editor_login = review.get("user", {}).get("login", "")
+        pr_author_login = pr_info_payload.get("user", {}).get("login", "")
+
+        if not editor_login:
+            return JSONResponse(
+                status_code=400,
+                content={"status": "error", "message": "无法获取编辑者信息"},
+            )
+
+        review_id = review.get("id")
+
+        return await _handle_label_checkbox_toggle_inner(
+            repo_owner=repo_owner,
+            repo_name=repo_name,
+            pr_number=pr_number,
+            old_body=old_body,
+            new_body=new_body,
+            editor_login=editor_login,
+            pr_author_login=pr_author_login,
+            comment_source="pull_request_review",
+            comment_id=review_id,
+        )
+
+    except Exception as e:
+        logger.error(f"处理PR Review事件时出错: {e}", exc_info=True)
         return JSONResponse(
             status_code=500, content={"status": "error", "message": "内部服务错误"}
         )
