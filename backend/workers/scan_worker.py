@@ -4,7 +4,7 @@ import asyncio
 import os
 import shutil
 import tempfile
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 from loguru import logger
@@ -205,7 +205,7 @@ class ScanWorker:
                 scan_id,
                 status=ScanStatus.INDEXING.value,
                 current_phase="indexing",
-                started_at=datetime.utcnow(),
+                started_at=datetime.now(timezone.utc),
             )
 
             # 3. Clone 仓库到临时目录
