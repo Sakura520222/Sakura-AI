@@ -12,7 +12,7 @@ import functools
 import hashlib
 import json
 from datetime import datetime, timezone
-from typing import Dict, Optional
+from typing import Any, Dict, Optional
 
 from loguru import logger
 
@@ -716,7 +716,12 @@ class SakuraMemoryService:
             logger.error("反思失败 ({}): {}", repo_full_name, e, exc_info=True)
 
     async def _post_reflection_checks(
-        self, repo, repo_full_name: str, new_count: int, state, config: dict
+        self,
+        repo: Any,
+        repo_full_name: str,
+        new_count: int,
+        state: SakuraMemoryState,
+        config: dict,
     ) -> None:
         """反思后的合并检查与知识提取检查 / Post-reflection consolidation & knowledge extraction
 
