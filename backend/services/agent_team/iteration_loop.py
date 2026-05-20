@@ -496,5 +496,6 @@ class IterationLoopService:
             return "## 管理员指导\n请遵循以下方向执行任务：\n" + "\n".join(
                 f"- {p}" for p in parts
             )
-        except Exception:
+        except Exception as exc:
+            logger.warning("消费管理员 Prompt 失败 (task_id={}): {}", self.task_id, exc)
             return ""

@@ -617,6 +617,7 @@ class Settings(BaseSettings):
         "which,uname,env,wc,du,diff,tree,file,stat,"
         "node --version,go version,java --version"
     )
+    agent_team_test_command_blocklist: str = ""
     agent_team_skills_enabled: bool = False
     agent_team_skills_root: str = "./Skills"
     agent_team_reviewer_max_tool_rounds: int = 20

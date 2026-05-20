@@ -462,8 +462,8 @@ class AgentTeamWorker:
                         "current_phase": kwargs.get("current_phase"),
                     },
                 )
-            except Exception:
-                pass
+            except Exception as exc:
+                logger.debug("SSE 发布任务更新事件失败: {}", exc)
 
     async def _save_iteration(
         self,

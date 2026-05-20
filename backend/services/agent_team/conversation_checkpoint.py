@@ -7,6 +7,7 @@ import json
 from dataclasses import dataclass
 from typing import Any
 
+from loguru import logger
 from sqlalchemy import desc, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -357,8 +358,8 @@ async def _publish(event_type: str, data: dict[str, Any]) -> None:
         from backend.webui.sse import publish_event
 
         await publish_event(event_type, data)
-    except Exception:
-        pass
+    except Exception as exc:
+        logger.debug("SSE 发布事件失败: {}", exc)
 
 
 def _hash_arguments(arguments: str) -> str:
