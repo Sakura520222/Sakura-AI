@@ -19,7 +19,7 @@ AI 自主决定调用哪些工具、读取哪些文件、如何修改，循环�
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, Callable
 
 from loguru import logger
 
@@ -36,6 +36,7 @@ from backend.services.agent_team.tools.registry import (
     get_tool_definitions,
 )
 from backend.services.agent_team.workspace_service import AgentTeamWorkspaceService
+from backend.services.ai_reviewer.token_tracker import TokenTracker
 from backend.utils.config_utils import resolve_clamped_int_config
 from backend.utils.message_utils import (
     get_missing_tool_calls,
@@ -68,6 +69,10 @@ FULLSTACK_SYSTEM_PROMPT = """你是 Sakura Agent 专家团队的全栈专家角�
 - `glob`: 按文件名模式查找（如 **/*.py）
 - `search_in_files`: 搜索代码内容（支持正则）
 
+### 互联网搜索
+- `search_web`: 搜索互联网获取最新文档、API 参考、最佳实践
+- `fetch_url`: 抓取网页内容并转换为纯文本（用于深入阅读搜索结果中的链接）
+
 ### 变更检查
 - `check_changes`: 查看自基础提交以来的工作区累积变更
   - mode=summary: 文件级统计（增删行数），快速浏览变更范围
@@ -80,8 +85,8 @@ FULLSTACK_SYSTEM_PROMPT = """你是 Sakura Agent 专家团队的全栈专家角�
 - 读取 Skill 后，按照其指导使用已声明的工具执行操作
 
 ### 执行命令
-- `run_command`: 执行 shell 命令（运行测试、代码检查等）
-  - 可用命令由白名单配置决定，常见：pytest -q, ruff check, npm test, go test, cargo test
+- `run_command`: 执行 shell 命令（运行测试、代码检查、构建、安装依赖、系统诊断等）
+  - 可用命令由白名单配置决定，常见：pytest -q, ruff check, npm test, go test, cargo test, mypy, tsc --noEmit, make, pip install, which, tree
 
 ### 完成
 - `finish_task`: 标记任务完成，提交修改总结和风险评估
@@ -138,6 +143,8 @@ class FullStackResult:
     test_result: str = ""
     tool_calls_count: int = 0
     error: str = ""
+    prompt_tokens: int = 0
+    completion_tokens: int = 0
 
 
 def _get_missing_tool_calls(messages: list[dict[str, Any]]) -> list[Any]:
@@ -206,6 +213,8 @@ class FullStackExpertAgent:
         role_memory_context: str = "",
         iteration: int = 1,
         max_iterations: int = 3,
+        cancel_check: Callable[[], bool] | None = None,
+        guidance_callback: Callable[[], Any] | None = None,
     ) -> FullStackResult:
         """执行全栈专家任务，AI 自主调用工具直到完成。"""
         client, config = await create_agent_team_client()
@@ -214,6 +223,13 @@ class FullStackExpertAgent:
         max_tool_rounds = await resolve_clamped_int_config(
             "agent_team_max_tool_rounds",
         )
+
+        # 重置 fetch_url 会话调用计数
+        from backend.services.agent_team.tools.fetch_url_tool import (
+            reset_fetch_url_session,
+        )
+
+        await reset_fetch_url_session()
 
         await self._ensure_system_checkpoint()
         if not self.restored_messages and not has_missing_tool_results(self.messages):
@@ -235,8 +251,18 @@ class FullStackExpertAgent:
             )
 
         tool_calls_count = 0
+        token_tracker = TokenTracker()
 
         for round_num in range(1, max_tool_rounds + 1):
+            if cancel_check and cancel_check():
+                return FullStackResult(
+                    success=False,
+                    summary="任务已取消",
+                    modified_files=sorted(ctx.modified_files),
+                    error="cancelled",
+                    prompt_tokens=token_tracker.prompt_tokens,
+                    completion_tokens=token_tracker.completion_tokens,
+                )
             logger.debug("全栈专家工具调用第 {} 轮", round_num)
 
             pending_tool_calls = _get_missing_tool_calls(self.messages)
@@ -263,13 +289,26 @@ class FullStackExpertAgent:
                         risk_level=terminal_output.get("risk_level", "medium"),
                         test_result=terminal_output.get("test_result", ""),
                         tool_calls_count=tool_calls_count,
+                        prompt_tokens=token_tracker.prompt_tokens,
+                        completion_tokens=token_tracker.completion_tokens,
                     )
                 continue
+
+            # 消费新的管理员指导
+            if guidance_callback:
+                try:
+                    guidance = await guidance_callback()
+                    if guidance:
+                        await self._append_message({"role": "user", "content": guidance})
+                        await self._append_message({"role": "assistant", "content": "收到管理员指导，我将按照要求调整执行方向。"})
+                except Exception:
+                    pass
 
             model_messages = await AgentTeamContextCompressor(
                 target_model=config.model,
                 compressor_model=config.summary_model,
-            ).build_model_messages(self.messages)
+            ).build_model_messages(self.messages, token_tracker)
+            await _publish_ai_request("fullstack", round_num)
             response = await client.call_with_retry(
                 messages=model_messages,
                 model=config.model,
@@ -279,6 +318,7 @@ class FullStackExpertAgent:
                 tools=tool_schemas,
                 tool_choice="auto",
             )
+            token_tracker.accumulate(response)
 
             if not response.choices:
                 return FullStackResult(
@@ -286,6 +326,8 @@ class FullStackExpertAgent:
                     summary="AI 返回空响应",
                     modified_files=sorted(ctx.modified_files),
                     error="empty_response",
+                    prompt_tokens=token_tracker.prompt_tokens,
+                    completion_tokens=token_tracker.completion_tokens,
                 )
 
             choice = response.choices[0]
@@ -309,6 +351,8 @@ class FullStackExpertAgent:
                     summary=message.content or "任务完成（无工具调用）",
                     modified_files=tracked,
                     tool_calls_count=tool_calls_count,
+                    prompt_tokens=token_tracker.prompt_tokens,
+                    completion_tokens=token_tracker.completion_tokens,
                 )
 
             # 逐个执行工具调用
@@ -335,6 +379,8 @@ class FullStackExpertAgent:
                     risk_level=terminal_output.get("risk_level", "medium"),
                     test_result=terminal_output.get("test_result", ""),
                     tool_calls_count=tool_calls_count,
+                    prompt_tokens=token_tracker.prompt_tokens,
+                    completion_tokens=token_tracker.completion_tokens,
                 )
 
         modified_files = sorted(ctx.modified_files)
@@ -354,6 +400,8 @@ class FullStackExpertAgent:
             modified_files=modified_files,
             tool_calls_count=tool_calls_count,
             error=error,
+            prompt_tokens=token_tracker.prompt_tokens,
+            completion_tokens=token_tracker.completion_tokens,
         )
 
     async def _execute_tool_calls(
@@ -447,3 +495,15 @@ class FullStackExpertAgent:
             parts.append(f"\n## 审查反馈（请针对以下问题修改）\n{feedback}\n")
         return "".join(parts)
 
+
+async def _publish_ai_request(role: str, round_num: int) -> None:
+    """发布 AI 请求 SSE 事件（延迟导入避免循环依赖）。"""
+    try:
+        from backend.webui.sse import publish_event
+
+        await publish_event("agent:ai_request", {
+            "role": role,
+            "round_num": round_num,
+        })
+    except Exception:
+        pass

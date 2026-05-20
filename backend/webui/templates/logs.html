@@ -28,5 +28,43 @@
 <script>
 var loadLogPage = function(n) { loadListPage('log-list-container', '/logs/list-fragment', n); };
 initFilterForm('log-filter-form', 'log-list-container', '/logs/list-fragment');
+
+function setLogDetailOpen(reviewId, trigger, open) {
+    var detail = document.getElementById('log-detail-' + reviewId);
+    if (!detail) return;
+    detail.classList.toggle('hidden', !open);
+
+    var icon = trigger ? trigger.querySelector('[data-log-detail-icon]') : null;
+    if (icon) {
+        icon.classList.toggle('rotate-180', open);
+    }
+}
+
+window.openLogDetailLoading = function(reviewId, trigger) {
+    setLogDetailOpen(reviewId, trigger, true);
+};
+
+window.toggleLoadedLogDetail = function(reviewId, trigger) {
+    var detail = document.getElementById('log-detail-' + reviewId);
+    if (!detail || detail.dataset.loaded !== 'true') {
+        return false;
+    }
+
+    setLogDetailOpen(reviewId, trigger, detail.classList.contains('hidden'));
+    return true;
+};
+
+window.markLogDetailLoaded = function(reviewId, trigger, event) {
+    var detail = document.getElementById('log-detail-' + reviewId);
+    if (!detail) return;
+
+    if (event && event.detail && event.detail.successful === false) {
+        setLogDetailOpen(reviewId, trigger, false);
+        return;
+    }
+
+    detail.dataset.loaded = 'true';
+    setLogDetailOpen(reviewId, trigger, true);
+};
 </script>
 {% endblock %}

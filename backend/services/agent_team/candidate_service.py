@@ -3,16 +3,18 @@
 import asyncio
 import json
 import re
+import time
 from dataclasses import dataclass
 from typing import Any, Iterable
 
 from openai import BadRequestError
-from sqlalchemy import and_, desc, func, not_, select
+from sqlalchemy import and_, desc, func, not_, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from loguru import logger
 
 from backend.core.config import get_dynamic_config
+from backend.core.github_app import GitHubAppClient
 from backend.models.agent_team_models import (
     AgentTeamSourceType,
     AgentTeamTask,
@@ -52,6 +54,25 @@ class AgentCandidate:
 class AgentTeamCandidateService:
     """从 Issue 分析和仓库扫描发现中筛选候选任务。"""
 
+    # 类级别缓存：{cache_key: (candidates, timestamp)}
+    # 注意：此缓存为所有实例共享，invalidate_cache() 会清空所有实例的缓存
+    _cache: dict[str, tuple[list[AgentCandidate], float]] = {}
+
+    def _get_cache_ttl(self) -> int:
+        """读取缓存 TTL 配置"""
+        ttl = get_dynamic_config("agent_team_candidate_cache_ttl")
+        try:
+            return int(ttl) if ttl is not None else 300
+        except (ValueError, TypeError):
+            return 300
+
+    def _cache_key(self, limit: int, ai_filter_requirement: str | None) -> str:
+        return f"{limit}:{ai_filter_requirement or ''}"
+
+    def invalidate_cache(self):
+        """清空候选池缓存（影响所有实例的共享缓存）。"""
+        self._cache.clear()
+
     async def collect_candidates(
         self,
         db: AsyncSession,
@@ -59,6 +80,15 @@ class AgentTeamCandidateService:
         ai_filter_requirement: str | None = None,
     ) -> list[AgentCandidate]:
         """收集候选任务，当前仅供 super_admin 手动触发。"""
+        # 检查缓存
+        ttl = self._get_cache_ttl()
+        if ttl > 0:
+            key = self._cache_key(limit, ai_filter_requirement)
+            cached = self._cache.get(key)
+            if cached and (time.time() - cached[1]) < ttl:
+                logger.debug(f"候选池命中缓存: {len(cached[0])} 条")
+                return cached[0]
+
         allowlist = await self._load_repo_allowlist()
         requirement = (ai_filter_requirement or "").strip()
         if requirement:
@@ -68,17 +98,24 @@ class AgentTeamCandidateService:
             candidates = self._deduplicate_candidates(candidates)
             candidates.sort(key=lambda item: item.candidate_score, reverse=True)
             candidates = await self._filter_closed_issues(candidates)
-            return candidates[:limit]
+            result = candidates[:limit]
+        else:
+            candidates: list[AgentCandidate] = []
+            candidates.extend(await self._collect_issue_candidates(db, allowlist, limit))
+            candidates.extend(await self._collect_scan_candidates(db, allowlist, limit))
+            # 同一 Issue 多条分析记录去重
+            candidates = self._deduplicate_candidates(candidates)
+            candidates.sort(key=lambda item: item.candidate_score, reverse=True)
+            # 过滤 GitHub 上已关闭的 Issue
+            candidates = await self._filter_closed_issues(candidates)
+            result = candidates[:limit]
 
-        candidates: list[AgentCandidate] = []
-        candidates.extend(await self._collect_issue_candidates(db, allowlist, limit))
-        candidates.extend(await self._collect_scan_candidates(db, allowlist, limit))
-        # 同一 Issue 多条分析记录去重
-        candidates = self._deduplicate_candidates(candidates)
-        candidates.sort(key=lambda item: item.candidate_score, reverse=True)
-        # 过滤 GitHub 上已关闭的 Issue
-        candidates = await self._filter_closed_issues(candidates)
-        return candidates[:limit]
+        # 写入缓存
+        if ttl > 0:
+            key = self._cache_key(limit, ai_filter_requirement)
+            self._cache[key] = (result, time.time())
+
+        return result
 
     async def create_task_from_candidate(
         self,
@@ -86,22 +123,31 @@ class AgentTeamCandidateService:
         candidate: AgentCandidate,
         started_by: str,
         ai_config_snapshot: dict | None = None,
+        base_branch: str | None = None,
+        overrides: dict | None = None,
     ) -> AgentTeamTask:
-        """将候选项转为 AgentTeamTask。"""
-        max_iterations = await self._load_max_iterations_per_task()
+        """将候选项转为 AgentTeamTask。
+
+        overrides 用于手动创建任务时覆盖候选项字段，优先级高于候选项和显式 base_branch。
+        """
+        values = {
+            "source_type": candidate.source_type,
+            "source_id": candidate.source_id,
+            "source_issue_number": candidate.source_issue_number,
+            "repo_full_name": candidate.repo_full_name,
+            "repo_owner": candidate.repo_owner,
+            "repo_name": candidate.repo_name,
+            "title": candidate.title,
+            "summary": candidate.summary,
+            "priority": candidate.priority,
+            "candidate_score": candidate.candidate_score,
+            "status": AgentTeamTaskStatus.QUEUED.value,
+            "max_iterations": await self._load_max_iterations_per_task(),
+            "base_branch": base_branch,
+        }
+        values.update(overrides or {})
         task = AgentTeamTask(
-            source_type=candidate.source_type,
-            source_id=candidate.source_id,
-            source_issue_number=candidate.source_issue_number,
-            repo_full_name=candidate.repo_full_name,
-            repo_owner=candidate.repo_owner,
-            repo_name=candidate.repo_name,
-            title=candidate.title,
-            summary=candidate.summary,
-            priority=candidate.priority,
-            candidate_score=candidate.candidate_score,
-            status=AgentTeamTaskStatus.QUEUED.value,
-            max_iterations=max_iterations,
+            **values,
             started_by=started_by,
             ai_config_snapshot=json.dumps(ai_config_snapshot or {}, ensure_ascii=False),
         )
@@ -110,21 +156,17 @@ class AgentTeamCandidateService:
         await db.refresh(task)
         return task
 
-    async def create_task_from_manual_issue(
+    async def build_manual_issue_task_draft(
         self,
         db: AsyncSession,
         repo_full_name: str,
         issue_number: int,
-        started_by: str,
-        ai_config_snapshot: dict | None = None,
-    ) -> AgentTeamTask:
-        """从管理员手动指定的 GitHub Issue 直接创建 Agent 任务。"""
-        # 1. 验证仓库全名格式
+    ) -> dict[str, Any]:
+        """构建手动 Issue 的 Agent 任务草稿，不落库。"""
         if "/" not in repo_full_name:
             raise ValueError("仓库全名格式无效，应为 owner/repo")
         repo_owner, repo_name = repo_full_name.split("/", 1)
 
-        # 2. 检查仓库白名单
         allowlist = await self._load_repo_allowlist()
         if allowlist and repo_full_name not in allowlist:
             raise ValueError(
@@ -132,10 +174,7 @@ class AgentTeamCandidateService:
                 "请在配置中添加该仓库或清空白名单以允许所有仓库。"
             )
 
-        # 3. 通过 GitHub API 获取 Issue 并验证状态
         try:
-            from backend.core.github_app import GitHubAppClient
-
             github_app = GitHubAppClient()
             issue = await asyncio.to_thread(
                 github_app.get_issue, repo_owner, repo_name, issue_number
@@ -153,7 +192,6 @@ class AgentTeamCandidateService:
                 f"Issue #{issue_number} 状态为 {issue.state}，仅接受 open 状态的 Issue"
             )
 
-        # 4. 检查是否已有该 Issue 的非终态任务
         existing = await db.scalar(
             select(func.count(AgentTeamTask.id)).where(
                 and_(
@@ -175,25 +213,65 @@ class AgentTeamCandidateService:
                 f"(共 {existing} 条)，请先等待完成或取消已有任务"
             )
 
-        # 5. 构建 title 和 summary
-        title = issue.title or f"Issue #{issue_number}"
-        body = issue.body or ""
+        existing_analysis = await db.scalar(
+            select(IssueAnalysis)
+            .where(
+                and_(
+                    IssueAnalysis.repo_name == repo_full_name,
+                    IssueAnalysis.issue_number == issue_number,
+                    IssueAnalysis.status == IssueAnalysisStatus.COMPLETED.value,
+                )
+            )
+            .order_by(desc(IssueAnalysis.completed_at))
+            .limit(1)
+        )
 
-        # 6. 创建 AgentTeamTask
-        max_iterations = await self._load_max_iterations_per_task()
+        if existing_analysis:
+            title = existing_analysis.suggested_title or issue.title or f"Issue #{issue_number}"
+            summary = existing_analysis.summary or issue.body or ""
+            priority = existing_analysis.priority or "medium"
+            source_type = AgentTeamSourceType.ISSUE_ANALYSIS.value
+            source_id = existing_analysis.id
+            candidate_score = _PRIORITY_SCORE.get(priority, 30)
+        else:
+            title = issue.title or f"Issue #{issue_number}"
+            summary = issue.body or ""
+            priority = "medium"
+            source_type = AgentTeamSourceType.MANUAL_ISSUE.value
+            source_id = None
+            candidate_score = 0
+
+        return {
+            "source_type": source_type,
+            "source_id": source_id,
+            "source_issue_number": issue_number,
+            "repo_full_name": repo_full_name,
+            "repo_owner": repo_owner,
+            "repo_name": repo_name,
+            "title": title,
+            "summary": summary,
+            "priority": priority,
+            "candidate_score": candidate_score,
+            "status": AgentTeamTaskStatus.QUEUED.value,
+            "max_iterations": await self._load_max_iterations_per_task(),
+        }
+
+    async def create_task_from_manual_issue(
+        self,
+        db: AsyncSession,
+        repo_full_name: str,
+        issue_number: int,
+        started_by: str,
+        ai_config_snapshot: dict | None = None,
+        base_branch: str | None = None,
+        overrides: dict | None = None,
+    ) -> AgentTeamTask:
+        """从管理员手动指定的 GitHub Issue 直接创建 Agent 任务。"""
+        values = await self.build_manual_issue_task_draft(db, repo_full_name, issue_number)
+        values["base_branch"] = base_branch
+        values.update(overrides or {})
         task = AgentTeamTask(
-            source_type=AgentTeamSourceType.MANUAL_ISSUE.value,
-            source_id=None,
-            source_issue_number=issue_number,
-            repo_full_name=repo_full_name,
-            repo_owner=repo_owner,
-            repo_name=repo_name,
-            title=title,
-            summary=body,
-            priority="medium",
-            candidate_score=0,
-            status=AgentTeamTaskStatus.QUEUED.value,
-            max_iterations=max_iterations,
+            **values,
             started_by=started_by,
             ai_config_snapshot=json.dumps(
                 ai_config_snapshot or {}, ensure_ascii=False
@@ -230,6 +308,11 @@ class AgentTeamCandidateService:
                 and_(
                     IssueAnalysis.status == IssueAnalysisStatus.COMPLETED.value,
                     IssueAnalysis.duplicate_of.is_(None),
+                    # 仅包含 open 状态的 Issue（issue_state 为 NULL 时视为 open，兼容存量数据）
+                    or_(
+                        IssueAnalysis.issue_state == "open",
+                        IssueAnalysis.issue_state.is_(None),
+                    ),
                     not_(existing_exists),
                 )
             )
@@ -280,6 +363,10 @@ class AgentTeamCandidateService:
                 and_(
                     IssueAnalysis.status == IssueAnalysisStatus.COMPLETED.value,
                     IssueAnalysis.duplicate_of.is_(None),
+                    or_(
+                        IssueAnalysis.issue_state == "open",
+                        IssueAnalysis.issue_state.is_(None),
+                    ),
                     not_(existing_exists),
                 )
             )
@@ -408,6 +495,11 @@ class AgentTeamCandidateService:
                 and_(
                     ScanFinding.severity.in_(["critical", "major"]),
                     not_(ScanFinding.id.in_(existing_subquery)),
+                    # 排除已有 IssueAnalysis 关联的扫描（已在 Issue 候选中覆盖）
+                    or_(
+                        RepoScan.issue_analysis_id.is_(None),
+                        RepoScan.issue_analysis_id == 0,
+                    ),
                 )
             )
             .order_by(desc(ScanFinding.confidence), desc(ScanFinding.created_at))
@@ -509,13 +601,16 @@ class AgentTeamCandidateService:
     ) -> list[AgentCandidate]:
         """通过 GitHub API 过滤已关闭的 Issue 候选。
 
-        仅检查 source_issue_number 不为 None 的条目，
-        且最多检查 _MAX_GITHUB_STATE_CHECKS 条以控制 API 调用量。
+        Issue 候选已在 DB 层通过 issue_state 过滤，仅对扫描类候选调用 GitHub API。
         如果 API 调用失败则保留该候选（fail-open）。
         """
-        to_check = [c for c in candidates if c.source_issue_number is not None][
-            :_MAX_GITHUB_STATE_CHECKS
-        ]
+        # Issue 候选已由 DB 层 issue_state 过滤，无需再次 GitHub API 检查
+        to_check = [
+            c
+            for c in candidates
+            if c.source_issue_number is not None
+            and c.source_type != AgentTeamSourceType.ISSUE_ANALYSIS.value
+        ][:_MAX_GITHUB_STATE_CHECKS]
         if not to_check:
             return candidates
 

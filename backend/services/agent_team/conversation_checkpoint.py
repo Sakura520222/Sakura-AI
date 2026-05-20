@@ -7,6 +7,7 @@ import json
 from dataclasses import dataclass
 from typing import Any
 
+from loguru import logger
 from sqlalchemy import desc, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -54,7 +55,14 @@ class ConversationCheckpointService:
             session.add(agent_session)
             await session.commit()
             await session.refresh(agent_session)
-            return agent_session
+
+        await _publish("agent:session_started", {
+            "task_id": self.task_id,
+            "session_id": agent_session.id,
+            "iteration": iteration_number,
+            "role_name": role_name,
+        })
+        return agent_session
 
     async def load_messages(self, session_id: int) -> list[dict[str, Any]]:
         async with async_session() as session:
@@ -128,6 +136,14 @@ class ConversationCheckpointService:
                         status="pending",
                     )
                 )
+
+        await _publish("agent:message_added", {
+            "task_id": self.task_id,
+            "session_id": session_id,
+            "msg_id": msg.id,
+            "role": msg.role,
+            "seq": seq,
+        })
         return msg
 
     async def mark_tool_call_running(self, session_id: int, tool_call_id: str) -> None:
@@ -138,6 +154,14 @@ class ConversationCheckpointService:
             tool_call.status = "running"
             tool_call.started_at = utc_now()
             await session.commit()
+            tool_name = tool_call.name
+
+        await _publish("agent:tool_started", {
+            "task_id": self.task_id,
+            "session_id": session_id,
+            "tool_call_id": tool_call_id,
+            "tool_name": tool_name,
+        })
 
     async def mark_tool_call_completed(
         self,
@@ -154,6 +178,14 @@ class ConversationCheckpointService:
             tool_call.completed_at = utc_now()
             tool_call.error_message = None
             await session.commit()
+            tool_name = tool_call.name
+
+        await _publish("agent:tool_completed", {
+            "task_id": self.task_id,
+            "session_id": session_id,
+            "tool_call_id": tool_call_id,
+            "tool_name": tool_name,
+        })
 
     async def mark_tool_call_failed(
         self,
@@ -168,6 +200,15 @@ class ConversationCheckpointService:
             tool_call.status = "failed"
             tool_call.error_message = error_message
             await session.commit()
+            tool_name = tool_call.name
+
+        await _publish("agent:tool_failed", {
+            "task_id": self.task_id,
+            "session_id": session_id,
+            "tool_call_id": tool_call_id,
+            "tool_name": tool_name,
+            "error": error_message,
+        })
 
     async def complete_session(
         self,
@@ -271,6 +312,14 @@ class ConversationCheckpointService:
             agent_session.error_message = error_message
             agent_session.completed_at = utc_now()
             await session.commit()
+            role_name = agent_session.role_name
+
+        await _publish("agent:session_completed", {
+            "task_id": self.task_id,
+            "session_id": session_id,
+            "role_name": role_name,
+            "status": status,
+        })
 
     async def _get_tool_call(
         self,
@@ -301,6 +350,16 @@ def _normalize_tool_call(tool_call: Any) -> dict[str, str]:
         "name": str(getattr(function, "name", "")),
         "arguments": str(getattr(function, "arguments", "")),
     }
+
+
+async def _publish(event_type: str, data: dict[str, Any]) -> None:
+    """发布 SSE 事件（延迟导入避免循环依赖）。"""
+    try:
+        from backend.webui.sse import publish_event
+
+        await publish_event(event_type, data)
+    except Exception as exc:
+        logger.debug("SSE 发布事件失败: {}", exc)
 
 
 def _hash_arguments(arguments: str) -> str:

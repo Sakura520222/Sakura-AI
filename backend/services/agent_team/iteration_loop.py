@@ -11,10 +11,12 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, Callable
 
 from loguru import logger
 
+from backend.models.agent_team_models import AgentTeamUserPrompt
+from backend.models.database import async_session, utc_now
 from backend.services.agent_team.conversation_checkpoint import (
     ConversationCheckpointService,
     ResumeCursor,
@@ -47,6 +49,8 @@ class IterationOutcome:
     review_result: ReviewResult | None = None
     modified_files: list[str] = field(default_factory=list)
     total_tool_calls: int = 0
+    prompt_tokens: int = 0
+    completion_tokens: int = 0
 
 
 class IterationLoopService:
@@ -85,14 +89,26 @@ class IterationLoopService:
         skills_context: dict[str, Any] | None = None,
         github_repo: Any | None = None,
         sakura_ref: str | None = None,
+        cancel_check: Callable[[], bool] | None = None,
     ) -> IterationOutcome:
         """运行迭代循环。"""
         total_tool_calls = 0
+        total_prompt_tokens = 0
+        total_completion_tokens = 0
         feedback = ""
         resume_cursor = self.resume_cursor
         start_iteration = resume_cursor.iteration_number if resume_cursor else 1
 
         for iteration in range(start_iteration, max_iterations + 1):
+            if cancel_check and cancel_check():
+                return IterationOutcome(
+                    success=False,
+                    reason="任务已取消",
+                    iterations=iteration - 1,
+                    total_tool_calls=total_tool_calls,
+                    prompt_tokens=total_prompt_tokens,
+                    completion_tokens=total_completion_tokens,
+                )
             logger.info(
                 "Agent 迭代循环 第 {}/{} 轮 - 任务: {}",
                 iteration,
@@ -108,6 +124,13 @@ class IterationLoopService:
             )
             reviewer_handoff_context = ""
             reviewer_role_memory = ""
+
+            # 消费待处理的管理员指导，合入 feedback 跨迭代传递
+            iteration_guidance = await self._consume_pending_prompts()
+            if iteration_guidance and feedback:
+                feedback = f"{feedback}\n\n{iteration_guidance}"
+            elif iteration_guidance:
+                feedback = iteration_guidance
 
             # ── 全栈专家执行 ──
             if resume_cursor and resume_cursor.role_name == "reviewer":
@@ -136,8 +159,12 @@ class IterationLoopService:
                     role_memory_context=fullstack_role_memory,
                     iteration=iteration,
                     max_iterations=max_iterations,
+                    cancel_check=cancel_check,
+                    guidance_callback=self._consume_pending_prompts,
                 )
                 total_tool_calls += fs_result.tool_calls_count
+                total_prompt_tokens += fs_result.prompt_tokens
+                total_completion_tokens += fs_result.completion_tokens
                 await self._complete_session(
                     getattr(expert, "session_id", None), fs_result.tool_calls_count
                 )
@@ -171,6 +198,8 @@ class IterationLoopService:
                     fullstack_result=fs_result,
                     modified_files=fs_result.modified_files,
                     total_tool_calls=total_tool_calls,
+                    prompt_tokens=total_prompt_tokens,
+                    completion_tokens=total_completion_tokens,
                 )
 
             if not fs_result.success:
@@ -187,6 +216,8 @@ class IterationLoopService:
                     iterations=iteration,
                     fullstack_result=fs_result,
                     total_tool_calls=total_tool_calls,
+                    prompt_tokens=total_prompt_tokens,
+                    completion_tokens=total_completion_tokens,
                 )
 
             logger.info(
@@ -203,6 +234,17 @@ class IterationLoopService:
             )
 
             # ── 专业审查 ──
+            if cancel_check and cancel_check():
+                return IterationOutcome(
+                    success=False,
+                    reason="任务已取消",
+                    iterations=iteration,
+                    fullstack_result=fs_result,
+                    modified_files=fs_result.modified_files,
+                    total_tool_calls=total_tool_calls,
+                    prompt_tokens=total_prompt_tokens,
+                    completion_tokens=total_completion_tokens,
+                )
             diff_summary = ""
             try:
                 diff_summary = await self.git_workspace_service.get_diff_summary(
@@ -226,8 +268,13 @@ class IterationLoopService:
                 skills_context=skills_context,
                 github_repo=github_repo,
                 sakura_ref=sakura_ref,
+                user_guidance="",
+                cancel_check=cancel_check,
+                guidance_callback=self._consume_pending_prompts,
             )
             total_tool_calls += rev_result.tool_calls_count
+            total_prompt_tokens += rev_result.prompt_tokens
+            total_completion_tokens += rev_result.completion_tokens
             await self._complete_session(
                 getattr(reviewer, "session_id", None), rev_result.tool_calls_count
             )
@@ -251,6 +298,8 @@ class IterationLoopService:
                     review_result=rev_result,
                     modified_files=fs_result.modified_files,
                     total_tool_calls=total_tool_calls,
+                    prompt_tokens=total_prompt_tokens,
+                    completion_tokens=total_completion_tokens,
                 )
 
             # ── 未通过：准备反馈 ──
@@ -270,6 +319,8 @@ class IterationLoopService:
             review_result=rev_result,
             modified_files=fs_result.modified_files if fs_result else [],
             total_tool_calls=total_tool_calls,
+            prompt_tokens=total_prompt_tokens,
+            completion_tokens=total_completion_tokens,
         )
 
     async def _restore_fullstack_result(self, iteration: int) -> FullStackResult:
@@ -410,3 +461,41 @@ class IterationLoopService:
         parts.append("- 不要撤销之前的修复")
         parts.append("- 修复后运行代码检查和测试验证")
         return "\n".join(parts)
+
+    async def _consume_pending_prompts(self) -> str:
+        """消费 pending 状态的管理员 Prompt，返回格式化指导文本。"""
+        if not self.task_id:
+            return ""
+        try:
+            from sqlalchemy import select
+
+            async with async_session() as session:
+                result = await session.execute(
+                    select(AgentTeamUserPrompt)
+                    .where(
+                        AgentTeamUserPrompt.task_id == self.task_id,
+                        AgentTeamUserPrompt.status == "pending",
+                    )
+                    .order_by(AgentTeamUserPrompt.created_at)
+                )
+                prompts = result.scalars().all()
+                if not prompts:
+                    return ""
+
+                parts = []
+                for prompt in prompts:
+                    prompt.status = "consumed"
+                    prompt.consumed_at = utc_now()
+                    parts.append(prompt.content)
+                await session.commit()
+
+            logger.info(
+                "已消费 {} 条管理员 Prompt (task_id={})",
+                len(parts), self.task_id,
+            )
+            return "## 管理员指导\n请遵循以下方向执行任务：\n" + "\n".join(
+                f"- {p}" for p in parts
+            )
+        except Exception as exc:
+            logger.warning("消费管理员 Prompt 失败 (task_id={}): {}", self.task_id, exc)
+            return ""

@@ -157,10 +157,14 @@ class AgentTeamShellExecutor:
                 self.workspace, match.group(0)
             )
         for match in _POSIX_ABS_RE.finditer(command):
+            path = match.group(0)
+            # /dev/null, /dev/stdin 等是标准 Unix 设备，非文件系统路径，放行
+            if path.startswith("/dev/"):
+                continue
             # Git Bash 风格的 /c/... 路径也按绝对路径处理；常见命令参数如 /? 会被拒绝，
             # 这是为了优先保证不能引用宿主机绝对路径。
             self.workspace_service.resolve_inside_workspace(
-                self.workspace, match.group(0)
+                self.workspace, path
             )
 
     def _validate_command_arg(self, arg: str) -> None:

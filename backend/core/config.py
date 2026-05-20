@@ -405,6 +405,13 @@ class Settings(BaseSettings):
     max_concurrent_issues: int = 3
     issue_price_per_1k_prompt: float = 0.0
     issue_price_per_1k_completion: float = 0.0
+    # Module A: 向量存储元数据增强
+    issue_vector_store_rich_metadata: bool = True
+    # Module D: 分析版本历史
+    issue_max_analysis_versions: int = 10
+    # Module F: 多人对话上下文分析
+    issue_include_comments: bool = False
+    issue_max_comments_in_context: int = 0
 
     # ========== PR 审查价格配置 ==========
     review_price_per_1k_prompt: float = 0.0
@@ -575,16 +582,12 @@ class Settings(BaseSettings):
     agent_team_max_lines_changed: int = 500
     agent_team_run_tests: bool = True
     agent_team_auto_install_deps: bool = True  # 自动安装工作区项目依赖
-    agent_team_test_command_allowlist: str = (
-        "pytest -q,"
-        "ruff check,ruff check --output-format=concise .,ruff check --fix,ruff format,"
-        "npm test,npm run lint,npm run format,npx eslint,npx prettier --check,"
-        "go test ./...,go vet,"
-        "cargo test,cargo clippy,cargo fmt --check"
-    )
+    agent_team_test_command_blocklist: str = ""
     agent_team_skills_enabled: bool = False
     agent_team_skills_root: str = "./Skills"
     agent_team_reviewer_max_tool_rounds: int = 20
+    # Module G: 候选池缓存
+    agent_team_candidate_cache_ttl: int = 300
 
 
 class StrategyConfig:
@@ -961,6 +964,10 @@ DYNAMIC_CONFIG_GROUPS: OrderedDict[str, dict] = OrderedDict(
                     "issue_max_files_per_analysis": "单次分析最多读取的文件数",
                     "issue_max_directory_depth": "目录浏览的最大深度",
                     "max_concurrent_issues": "同时进行的最大 Issue 分析任务数，超出排队等待",
+                    "issue_vector_store_rich_metadata": "启用后向量搜索结果将包含 AI 分类、优先级和可行性评估",
+                    "issue_include_comments": "启用后分析将包含 Issue 评论区的多人讨论，AI 可参考社区反馈做出更准确判断",
+                    "issue_max_comments_in_context": "分析时包含的最大评论条数（0=不限制，仅控制条目数不截断内容）",
+                    "issue_max_analysis_versions": "单个 Issue 最大分析版本数，超出归档最旧版本",
                 },
                 "keys": [
                     "enable_issue_analysis",
@@ -978,6 +985,10 @@ DYNAMIC_CONFIG_GROUPS: OrderedDict[str, dict] = OrderedDict(
                     "issue_max_files_per_analysis",
                     "issue_max_directory_depth",
                     "max_concurrent_issues",
+                    "issue_vector_store_rich_metadata",
+                    "issue_include_comments",
+                    "issue_max_comments_in_context",
+                    "issue_max_analysis_versions",
                 ],
             },
         ),
@@ -1090,9 +1101,9 @@ DYNAMIC_CONFIG_GROUPS: OrderedDict[str, dict] = OrderedDict(
                     "agent_team_max_tool_rounds": "全栈专家单次执行允许的工具调用最大轮次",
                     "agent_team_reviewer_max_tool_rounds": "专业审查单次执行允许的工具调用最大轮次",
                     "agent_team_auto_install_deps": "Agent 克隆仓库后自动检测并安装 pyproject.toml 或 requirements.txt 中的依赖",
-                    "agent_team_test_command_allowlist": "允许执行的验证命令白名单，逗号分隔",
                     "agent_team_skills_enabled": "启用后，Agent 可按需加载已安装 Skills 的完整内容",
                     "agent_team_skills_root": "Agent Skills 本地存储根目录，默认 ./Skills",
+                    "agent_team_candidate_cache_ttl": "候选池内存缓存有效期（秒），0 表示每次实时查询",
                 },
                 "keys": [
                     "agent_team_enabled",
@@ -1123,9 +1134,9 @@ DYNAMIC_CONFIG_GROUPS: OrderedDict[str, dict] = OrderedDict(
                     "agent_team_max_lines_changed",
                     "agent_team_run_tests",
                     "agent_team_auto_install_deps",
-                    "agent_team_test_command_allowlist",
                     "agent_team_skills_enabled",
                     "agent_team_skills_root",
+                    "agent_team_candidate_cache_ttl",
                 ],
             },
         ),
@@ -1294,7 +1305,7 @@ DYNAMIC_CONFIG_RANGES: dict[str, tuple[float, float]] = {
     "web_search_max_results": (1, 100),
     "web_search_max_content_length": (100, 50000),
     "web_search_timeout": (5, 600),
-    "embedding_dimension": (128, 4096),
+    "embedding_dimension": (128, 8192),
     "rerank_score_threshold": (0.0, 1.0),
     "code_chunk_size": (100, 5000),
     "code_chunk_overlap": (0, 1000),
@@ -1310,6 +1321,9 @@ DYNAMIC_CONFIG_RANGES: dict[str, tuple[float, float]] = {
     "pr_dependency_graph_max_files": (5, 200),
     "semantic_issue_similarity_threshold": (0.0, 1.0),
     "semantic_issue_max_links": (1, 20),
+    "issue_max_comments_in_context": (0, 5000),
+    "issue_max_analysis_versions": (1, 100),
+    "agent_team_candidate_cache_ttl": (0, 3600),
     "scan_interval_minutes": (30, 10080),  # 30分钟 ~ 7天
     "scan_cooldown_hours": (1, 168),  # 1小时 ~ 7天
     "scan_max_tokens_per_repo": (0, 5000000),
@@ -1470,6 +1484,10 @@ DYNAMIC_CONFIG_LABELS: dict[str, str] = {
     "issue_max_files_per_analysis": "单次分析最大文件数",
     "issue_max_directory_depth": "目录最大深度",
     "max_concurrent_issues": "最大并发分析数",
+    "issue_vector_store_rich_metadata": "向量存储包含 AI 分析元数据",
+    "issue_include_comments": "分析时包含评论对话",
+    "issue_max_comments_in_context": "最大评论条数（0=不限制）",
+    "issue_max_analysis_versions": "最大分析版本数",
     # Agent 专家团队
     "agent_team_enabled": "启用 Agent 专家团队",
     "agent_team_workspace_root": "工作区根目录",
@@ -1499,9 +1517,9 @@ DYNAMIC_CONFIG_LABELS: dict[str, str] = {
     "agent_team_max_lines_changed": "最大修改行数",
     "agent_team_run_tests": "自动运行验证命令",
     "agent_team_auto_install_deps": "自动安装项目依赖",
-    "agent_team_test_command_allowlist": "验证命令白名单",
     "agent_team_skills_enabled": "启用 Agent Skills",
     "agent_team_skills_root": "Skills 根目录",
+    "agent_team_candidate_cache_ttl": "候选池缓存 TTL（秒）",
     # 初始用户配额
     "init_admin_daily_quota": "管理员初始每日 PR 配额",
     "init_admin_weekly_quota": "管理员初始每周 PR 配额",

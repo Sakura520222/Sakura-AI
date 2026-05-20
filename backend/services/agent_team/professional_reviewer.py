@@ -15,7 +15,7 @@ AI 自主决定审查哪些文件、运行什么检查，完成后调用 submit_
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, Callable
 
 from loguru import logger
 
@@ -31,6 +31,7 @@ from backend.services.agent_team.tools.registry import (
     get_tool_definitions,
 )
 from backend.services.agent_team.workspace_service import AgentTeamWorkspaceService
+from backend.services.ai_reviewer.token_tracker import TokenTracker
 from backend.utils.config_utils import resolve_clamped_int_config
 from backend.utils.message_utils import (
     get_missing_tool_calls,
@@ -105,6 +106,8 @@ REVIEWER_SYSTEM_PROMPT = """你是 Sakura Agent 专家团队的专业代码审�
 - `check_changes`：查看工作区累积变更（summary=统计，full=完整 diff）
 - `run_command`：运行测试或代码检查
 - `use_skill`：读取相关 Skill 指导
+- `search_web`：搜索互联网获取文档和最佳实践
+- `fetch_url`：抓取网页内容（用于深入阅读搜索结果中的链接）
 - `submit_review`：提交审查结果
 
 ## 重要规则
@@ -138,6 +141,8 @@ class ReviewResult:
     improvement_suggestions: list[str] = field(default_factory=list)
     passed: bool = False
     tool_calls_count: int = 0
+    prompt_tokens: int = 0
+    completion_tokens: int = 0
 
 
 
@@ -209,6 +214,9 @@ class ProfessionalReviewAgent:
         skills_context: dict[str, Any] | None = None,
         github_repo: Any | None = None,
         sakura_ref: str | None = None,
+        user_guidance: str = "",
+        cancel_check: Callable[[], bool] | None = None,
+        guidance_callback: Callable[[], Any] | None = None,
     ) -> ReviewResult:
         """执行审查，AI 自主调用工具直到提交审查。"""
         client, config = await create_agent_team_client()
@@ -221,6 +229,13 @@ class ProfessionalReviewAgent:
         max_tool_rounds = await resolve_clamped_int_config(
             "agent_team_reviewer_max_tool_rounds",
         )
+
+        # 重置 fetch_url 会话调用计数
+        from backend.services.agent_team.tools.fetch_url_tool import (
+            reset_fetch_url_session,
+        )
+
+        await reset_fetch_url_session()
 
         await self._ensure_system_checkpoint()
         if not self.restored_messages and not has_missing_tool_results(self.messages):
@@ -237,13 +252,26 @@ class ProfessionalReviewAgent:
                         handoff_context=handoff_context,
                         role_memory_context=role_memory_context,
                         skills_summary=skills_summary,
+                        user_guidance=user_guidance,
                     ),
                 }
             )
 
         tool_calls_count = 0
+        token_tracker = TokenTracker()
 
         for round_num in range(1, max_tool_rounds + 1):
+            if cancel_check and cancel_check():
+                return ReviewResult(
+                    passed=False,
+                    verdict="cancelled",
+                    score=0,
+                    summary="任务已取消",
+                    findings=[],
+                    tool_calls_count=tool_calls_count,
+                    prompt_tokens=token_tracker.prompt_tokens,
+                    completion_tokens=token_tracker.completion_tokens,
+                )
             logger.debug("专业审查工具调用第 {} 轮", round_num)
 
             pending_tool_calls = get_missing_tool_calls(self.messages)
@@ -255,13 +283,26 @@ class ProfessionalReviewAgent:
                 )
                 tool_calls_count += len(pending_tool_calls)
                 if terminal_output is not None:
-                    return _review_result_from_terminal(terminal_output, tool_calls_count)
+                    return _review_result_from_terminal(
+                        terminal_output, tool_calls_count, token_tracker,
+                    )
                 continue
+
+            # 消费新的管理员指导
+            if guidance_callback:
+                try:
+                    guidance = await guidance_callback()
+                    if guidance:
+                        await self._append_message({"role": "user", "content": guidance})
+                        await self._append_message({"role": "assistant", "content": "收到管理员指导，我将按照要求调整审查方向。"})
+                except Exception:
+                    pass
 
             model_messages = await AgentTeamContextCompressor(
                 target_model=config.review_model,
                 compressor_model=config.summary_model,
-            ).build_model_messages(self.messages)
+            ).build_model_messages(self.messages, token_tracker)
+            await _publish_review_ai_request(round_num)
             response = await client.call_with_retry(
                 messages=model_messages,
                 model=config.review_model,
@@ -271,6 +312,7 @@ class ProfessionalReviewAgent:
                 tools=tool_schemas,
                 tool_choice="auto",
             )
+            token_tracker.accumulate(response)
 
             if not response.choices:
                 return ReviewResult(
@@ -278,6 +320,8 @@ class ProfessionalReviewAgent:
                     score=0,
                     summary="AI 返回空响应",
                     tool_calls_count=tool_calls_count,
+                    prompt_tokens=token_tracker.prompt_tokens,
+                    completion_tokens=token_tracker.completion_tokens,
                 )
 
             choice = response.choices[0]
@@ -299,6 +343,8 @@ class ProfessionalReviewAgent:
                     score=0,
                     summary=message.content or "审查未提交结果",
                     tool_calls_count=tool_calls_count,
+                    prompt_tokens=token_tracker.prompt_tokens,
+                    completion_tokens=token_tracker.completion_tokens,
                 )
 
             terminal_output = await self._execute_tool_calls(
@@ -335,6 +381,8 @@ class ProfessionalReviewAgent:
                     ),
                     passed=verdict == "pass" and score >= 7,
                     tool_calls_count=tool_calls_count,
+                    prompt_tokens=token_tracker.prompt_tokens,
+                    completion_tokens=token_tracker.completion_tokens,
                 )
 
         return ReviewResult(
@@ -342,6 +390,8 @@ class ProfessionalReviewAgent:
             score=0,
             summary=f"达到最大审查轮次 ({max_tool_rounds})",
             tool_calls_count=tool_calls_count,
+            prompt_tokens=token_tracker.prompt_tokens,
+            completion_tokens=token_tracker.completion_tokens,
         )
 
     async def _execute_tool_calls(
@@ -401,6 +451,7 @@ class ProfessionalReviewAgent:
         handoff_context: str = "",
         role_memory_context: str = "",
         skills_summary: str = "",
+        user_guidance: str = "",
     ) -> str:
         parts = [f"## 任务\n标题: {task_title}\n描述: {task_summary}\n"]
         if fullstack_summary:
@@ -419,11 +470,15 @@ class ProfessionalReviewAgent:
             parts.append(f"\n## 专家对话交接\n{handoff_context}\n")
         if skills_summary:
             parts.append(f"\n{skills_summary}\n")
+        if user_guidance:
+            parts.append(f"\n{user_guidance}\n")
         return "\n".join(parts)
 
 
 def _review_result_from_terminal(
-    terminal_output: dict[str, Any], tool_calls_count: int
+    terminal_output: dict[str, Any],
+    tool_calls_count: int,
+    token_tracker: TokenTracker | None = None,
 ) -> ReviewResult:
     verdict = terminal_output.get("verdict", "reject")
     score = int(terminal_output.get("score", 0))
@@ -449,4 +504,19 @@ def _review_result_from_terminal(
         improvement_suggestions=terminal_output.get("improvement_suggestions", []),
         passed=verdict == "pass" and score >= 7,
         tool_calls_count=tool_calls_count,
+        prompt_tokens=token_tracker.prompt_tokens if token_tracker else 0,
+        completion_tokens=token_tracker.completion_tokens if token_tracker else 0,
     )
+
+
+async def _publish_review_ai_request(round_num: int) -> None:
+    """发布审查 AI 请求 SSE 事件（延迟导入避免循环依赖）。"""
+    try:
+        from backend.webui.sse import publish_event
+
+        await publish_event("agent:ai_request", {
+            "role": "reviewer",
+            "round_num": round_num,
+        })
+    except Exception:
+        pass

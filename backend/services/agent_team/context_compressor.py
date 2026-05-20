@@ -7,6 +7,7 @@ from typing import Any
 from loguru import logger
 
 from backend.core.config import get_settings
+from backend.services.ai_reviewer.token_tracker import TokenTracker
 from backend.core.model_context import get_model_context_manager
 from backend.services.ai_reviewer.message_utils import estimate_messages_tokens
 from backend.services.agent_team.ai_client import create_agent_team_summary_client
@@ -29,6 +30,7 @@ class AgentTeamContextCompressor:
     async def build_model_messages(
         self,
         messages: list[dict[str, Any]],
+        token_tracker: TokenTracker | None = None,
     ) -> list[dict[str, Any]]:
         if not messages or _has_missing_tool_results(messages):
             return messages
@@ -61,13 +63,14 @@ class AgentTeamContextCompressor:
             safe_context,
             self.target_model,
         )
-        return await self.compress_messages(messages, keep_rounds, summary_max_tokens)
+        return await self.compress_messages(messages, keep_rounds, summary_max_tokens, token_tracker)
 
     async def compress_messages(
         self,
         messages: list[dict[str, Any]],
         keep_rounds: int,
         summary_max_tokens: int,
+        token_tracker: TokenTracker | None = None,
     ) -> list[dict[str, Any]]:
         system_msg, body = _split_system_message(messages)
         blocks = _split_message_blocks(body)
@@ -83,6 +86,7 @@ class AgentTeamContextCompressor:
             summary = await self._summarize_early_messages(
                 early_messages,
                 summary_max_tokens,
+                token_tracker,
             )
         except Exception as exc:
             logger.warning("Agent Team 上下文压缩失败，回退保留最近块: {}", exc)
@@ -104,6 +108,7 @@ class AgentTeamContextCompressor:
         self,
         messages: list[dict[str, Any]],
         max_tokens: int,
+        token_tracker: TokenTracker | None = None,
     ) -> str:
         client, summary_model, config = await create_agent_team_summary_client()
         compressor_model = self.compressor_model or summary_model or self.target_model
@@ -121,6 +126,8 @@ class AgentTeamContextCompressor:
             timeout=config.timeout_seconds,
             max_tokens=max_tokens,
         )
+        if token_tracker is not None:
+            token_tracker.accumulate(response)
         return response.choices[0].message.content.strip()
 
 

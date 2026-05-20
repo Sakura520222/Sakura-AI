@@ -24,6 +24,7 @@ from backend.models.agent_team_models import (
     AgentTeamPatchFile,
     AgentTeamTask,
     AgentTeamTaskStatus,
+    AgentTeamUserPrompt,
 )
 from backend.models.database import async_session, utc_now as _utc_now
 from backend.services.agent_team.ai_client import load_agent_team_ai_config
@@ -35,6 +36,7 @@ from backend.services.agent_team.git_workspace_service import (
 )
 from backend.services.agent_team.iteration_loop import IterationLoopService
 from backend.services.agent_team.pr_service import AgentTeamPRService
+from backend.services.ai_reviewer.token_tracker import TokenTracker
 
 
 def _format_failure_reason(reason: str, modified_files: list[str]) -> str:
@@ -95,6 +97,7 @@ class AgentTeamWorker:
                     task.repo_name,
                     task.source_issue_number,
                     task.source_id,
+                    task.base_branch,
                 )
 
             # 取消检查点
@@ -151,6 +154,7 @@ class AgentTeamWorker:
                 skills_context=skills_context,
                 github_repo=sakura_info["github_repo"],
                 sakura_ref=sakura_info["sakura_ref"],
+                cancel_check=cancel_event.is_set,
             )
 
             logger.info(
@@ -159,6 +163,16 @@ class AgentTeamWorker:
                 outcome.iterations,
                 outcome.total_tool_calls,
             )
+
+            # 迭代循环被取消
+            if not outcome.success and cancel_event.is_set():
+                await self._update_task(
+                    task_id,
+                    status=AgentTeamTaskStatus.CANCELLED.value,
+                    current_phase="cancelled",
+                    error_message="任务在 EDITING 阶段被取消",
+                )
+                return task_id
 
             # ── 记录迭代 ──
             await self._save_iteration(
@@ -173,6 +187,8 @@ class AgentTeamWorker:
             await self._update_task(
                 task_id,
                 iteration_count=outcome.iterations,
+                prompt_tokens=outcome.prompt_tokens,
+                completion_tokens=outcome.completion_tokens,
                 current_phase="iteration_complete",
             )
 
@@ -241,7 +257,17 @@ class AgentTeamWorker:
                     "agent_team_draft_pr",
                     get_settings().agent_team_draft_pr,
                 )
-                pr_body = pr_service.build_pr_body(
+
+                # 获取 git diff summary 作为 AI 生成 PR body 的额外上下文
+                git_service = AgentTeamGitWorkspaceService()
+                diff_summary = ""
+                try:
+                    diff_summary = await git_service.get_diff_summary(str(workspace))
+                except Exception as exc:
+                    logger.warning("获取 diff summary 失败: {}", exc)
+
+                # 预计算 fallback body（AI 生成失败时使用）
+                fallback_body = pr_service.build_pr_body(
                     task_title=task.title,
                     task_summary=task.summary or "",
                     fullstack_analysis=outcome.fullstack_result.summary
@@ -254,6 +280,34 @@ class AgentTeamWorker:
                     iteration_count=outcome.iterations,
                     source_type=task.source_type,
                     source_issue_number=task.source_issue_number,
+                )
+
+                # AI 生成 PR body
+                pr_body = await pr_service.generate_pr_body(
+                    task_title=task.title,
+                    task_summary=task.summary or "",
+                    fullstack_analysis=outcome.fullstack_result.summary
+                    if outcome.fullstack_result
+                    else "",
+                    review_summary=outcome.review_result.summary
+                    if outcome.review_result
+                    else "",
+                    review_verdict=outcome.review_result.verdict
+                    if outcome.review_result
+                    else "",
+                    review_score=outcome.review_result.score
+                    if outcome.review_result
+                    else 0,
+                    review_findings=[
+                        {"severity": f.severity, "file": f.file, "message": f.message}
+                        for f in (outcome.review_result.findings or [])
+                    ] if outcome.review_result else [],
+                    modified_files=outcome.modified_files,
+                    iteration_count=outcome.iterations,
+                    source_type=task.source_type,
+                    source_issue_number=task.source_issue_number,
+                    diff_summary=diff_summary,
+                    fallback_body=fallback_body,
                 )
 
                 pr_title = await pr_service.generate_pr_title(
@@ -286,11 +340,19 @@ class AgentTeamWorker:
                 )
 
                 # 短暂等待后标记为 completed（外部 PR 审查将通过 webhook 异步处理）
+                s = get_settings()
+                cost_tracker = TokenTracker()
+                cost_tracker.prompt_tokens = outcome.prompt_tokens
+                cost_tracker.completion_tokens = outcome.completion_tokens
+                estimated_cost = cost_tracker.calculate_cost(
+                    s.review_price_per_1k_prompt, s.review_price_per_1k_completion,
+                )
                 await self._update_task(
                     task_id,
                     status=AgentTeamTaskStatus.COMPLETED.value,
                     current_phase="completed",
                     completed_at=_utc_now(),
+                    estimated_cost=estimated_cost,
                     error_message=None,
                     failed_phase=None,
                     failed_role=None,
@@ -307,12 +369,20 @@ class AgentTeamWorker:
                 # 迭代未能通过审查
                 reason = _format_failure_reason(outcome.reason, outcome.modified_files)
 
+                s = get_settings()
+                cost_tracker = TokenTracker()
+                cost_tracker.prompt_tokens = outcome.prompt_tokens
+                cost_tracker.completion_tokens = outcome.completion_tokens
+                estimated_cost = cost_tracker.calculate_cost(
+                    s.review_price_per_1k_prompt, s.review_price_per_1k_completion,
+                )
                 await self._update_task(
                     task_id,
                     status=AgentTeamTaskStatus.FAILED.value,
                     current_phase="iteration_failed",
                     error_message=reason,
                     failed_phase="iteration_failed",
+                    estimated_cost=estimated_cost,
                 )
                 logger.warning("Agent 任务失败: task_id={}, reason={}", task_id, reason)
 
@@ -330,10 +400,26 @@ class AgentTeamWorker:
             )
         finally:
             _cancel_events.pop(task_id, None)
+            await self._expire_pending_prompts(task_id)
 
         return task_id
 
     # ── 辅助方法 ──────────────────────────────────────────
+
+    async def _expire_pending_prompts(self, task_id: int) -> None:
+        """任务结束时将未消费的 pending prompts 标记为 expired。"""
+        from sqlalchemy import update
+
+        async with async_session() as session:
+            await session.execute(
+                update(AgentTeamUserPrompt)
+                .where(
+                    AgentTeamUserPrompt.task_id == task_id,
+                    AgentTeamUserPrompt.status == "pending",
+                )
+                .values(status="expired")
+            )
+            await session.commit()
 
     async def _load_task(self, task_id: int) -> AgentTeamTask:
         async with async_session() as session:
@@ -362,6 +448,22 @@ class AgentTeamWorker:
                     setattr(task, key, value)
             task.updated_at = _utc_now()
             await session.commit()
+
+        # SSE: 通知前端任务状态/阶段变更
+        if "status" in kwargs or "current_phase" in kwargs:
+            try:
+                from backend.webui.sse import publish_event
+
+                await publish_event(
+                    "agent:task_updated",
+                    {
+                        "task_id": task_id,
+                        "status": kwargs.get("status"),
+                        "current_phase": kwargs.get("current_phase"),
+                    },
+                )
+            except Exception as exc:
+                logger.debug("SSE 发布任务更新事件失败: {}", exc)
 
     async def _save_iteration(
         self,

@@ -79,6 +79,8 @@
 
     <div class="bg-white dark:bg-gray-800 rounded-2xl border border-gray-200 dark:border-gray-700 p-2 flex flex-wrap gap-2">
         <button @click="activeTab = 'tasks'" :class="activeTab === 'tasks' ? 'bg-sakura-500 text-white shadow-md shadow-sakura-500/25' : 'text-gray-600 dark:text-gray-300 hover:bg-sakura-50 dark:hover:bg-sakura-900/20'" class="px-4 py-2 rounded-xl text-sm font-semibold transition-all">{{ _('agent_team.tab_tasks') }}</button>
+        <button @click="activeTab = 'live'" :class="activeTab === 'live' ? 'bg-orange-500 text-white shadow-md shadow-orange-500/25' : 'text-gray-600 dark:text-gray-300 hover:bg-orange-50 dark:hover:bg-orange-900/20'" class="px-4 py-2 rounded-xl text-sm font-semibold transition-all">{{ _('agent_team.tab_live') }}
+        </button>
         <button @click="activeTab = 'candidates'" :class="activeTab === 'candidates' ? 'bg-sakura-500 text-white shadow-md shadow-sakura-500/25' : 'text-gray-600 dark:text-gray-300 hover:bg-sakura-50 dark:hover:bg-sakura-900/20'" class="px-4 py-2 rounded-xl text-sm font-semibold transition-all">{{ _('agent_team.tab_candidates') }}</button>
         <button @click="activeTab = 'workspaces'; refreshWorkspaces()" :class="activeTab === 'workspaces' ? 'bg-sakura-500 text-white shadow-md shadow-sakura-500/25' : 'text-gray-600 dark:text-gray-300 hover:bg-sakura-50 dark:hover:bg-sakura-900/20'" class="px-4 py-2 rounded-xl text-sm font-semibold transition-all">{{ _('agent_team.tab_workspaces') }}</button>
         <button @click="activeTab = 'config'" :class="activeTab === 'config' ? 'bg-sakura-500 text-white shadow-md shadow-sakura-500/25' : 'text-gray-600 dark:text-gray-300 hover:bg-sakura-50 dark:hover:bg-sakura-900/20'" class="px-4 py-2 rounded-xl text-sm font-semibold transition-all">{{ _('agent_team.tab_config') }}</button>
@@ -141,6 +143,14 @@
         <div id="agent-workspace-list" hx-get="/agent-team/workspaces-fragment" hx-trigger="load" hx-swap="innerHTML">
             <div class="text-center py-8 text-gray-400">{{ _('common.loading') }}</div>
         </div>
+    </section>
+
+    <section x-show="activeTab === 'live'" x-cloak class="bg-white dark:bg-gray-800 rounded-2xl border border-gray-200 dark:border-gray-700 p-5">
+        <div class="flex items-center gap-3 mb-4">
+            <h2 class="text-lg font-bold">{{ _('agent_team.tab_live') }}</h2>
+            <span class="text-xs text-gray-500 dark:text-gray-400">{{ _('agent_team.live_description') }}</span>
+        </div>
+        {% include "components/agent_team_live_view_fragment.html" %}
     </section>
 
     <section x-show="activeTab === 'candidates'" x-cloak class="bg-white dark:bg-gray-800 rounded-2xl border border-gray-200 dark:border-gray-700 p-5">
@@ -217,12 +227,119 @@
             </div>
         </form>
     </section>
+
+    <!-- Base branch selection dialog -->
+    <div x-data="branchDialog()" x-show="active" x-cloak
+         x-transition:enter="transition ease-out duration-200"
+         x-transition:enter-start="opacity-0"
+         x-transition:enter-end="opacity-100"
+         x-transition:leave="transition ease-in duration-150"
+         x-transition:leave-start="opacity-100"
+         x-transition:leave-end="opacity-0"
+         class="fixed inset-0 z-[120] flex items-center justify-center">
+        <div x-show="active" class="absolute inset-0 bg-black/50" @click="cancel()"></div>
+        <div x-show="active"
+             x-transition:enter="transition ease-out duration-200"
+             x-transition:enter-start="opacity-0 scale-95"
+             x-transition:enter-end="opacity-100 scale-100"
+             class="relative glass rounded-2xl shadow-2xl border border-sakura-200 dark:border-sakura-800/50 max-w-md w-full mx-4 p-6">
+            <h3 class="text-lg font-semibold text-center" x-text="title"></h3>
+            <p class="mt-2 text-sm text-center text-gray-500 dark:text-gray-400" x-text="description"></p>
+            <div class="mt-4">
+                <template x-if="loading">
+                    <div class="text-center py-6 text-gray-400">
+                        <svg class="animate-spin h-6 w-6 mx-auto text-sakura-500" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>
+                        <p class="mt-2 text-sm" x-text="loadingText"></p>
+                    </div>
+                </template>
+                <template x-if="!loading && errorMessage">
+                    <div class="text-center py-4 text-red-500 dark:text-red-400 text-sm" x-text="errorMessage"></div>
+                </template>
+                <template x-if="!loading && !errorMessage && branches.length > 0">
+                    <div>
+                        <select x-model="selectedBranch" class="w-full rounded-xl border-gray-300 dark:border-gray-600 dark:bg-gray-900 text-sm">
+                            <template x-for="b in branches" :key="b">
+                                <option :value="b" :selected="b === defaultBranch" x-text="b + (b === defaultBranch ? ' (' + defaultLabel + ')' : '')"></option>
+                            </template>
+                        </select>
+                    </div>
+                </template>
+            </div>
+            <div class="mt-6 flex gap-3 justify-center">
+                <button @click="cancel()" class="px-4 py-2 rounded-xl border border-gray-300 dark:border-gray-600 text-sm font-medium hover:bg-gray-50 dark:hover:bg-gray-800 transition-colors" x-text="cancelLabel"></button>
+                <button @click="confirm()" :disabled="loading || !!errorMessage" class="px-4 py-2 rounded-xl bg-sakura-500 hover:bg-sakura-600 text-white text-sm font-semibold disabled:opacity-50 disabled:cursor-not-allowed transition-colors" x-text="confirmLabel"></button>
+            </div>
+        </div>
+    </div>
 </div>
 {% endblock %}
 
 {% block extra_scripts %}
 {{ super() }}
 <script>
+function branchDialog() {
+    return {
+        active: false,
+        title: '{{ _('agent_team.select_base_branch') }}',
+        description: '{{ _('agent_team.base_branch_desc') }}',
+        loading: false,
+        loadingText: '{{ _('agent_team.loading_branches') }}',
+        errorMessage: '',
+        branches: [],
+        defaultBranch: '',
+        selectedBranch: '',
+        defaultLabel: '{{ _('agent_team.default_branch') }}',
+        cancelLabel: '{{ _('common.cancel') }}',
+        confirmLabel: '{{ _('agent_team.create_task') }}',
+        _resolver: null,
+        _repoOwner: '',
+        _repoName: '',
+        show(repoOwner, repoName) {
+            this._repoOwner = repoOwner;
+            this._repoName = repoName;
+            this.branches = [];
+            this.defaultBranch = '';
+            this.selectedBranch = '';
+            this.errorMessage = '';
+            this.loading = true;
+            this.active = true;
+            this._fetchBranches();
+            return new Promise((resolve) => { this._resolver = resolve; });
+        },
+        async _fetchBranches() {
+            try {
+                const resp = await fetch(`/agent-team/api/repos/${encodeURIComponent(this._repoOwner)}/${encodeURIComponent(this._repoName)}/branches`);
+                const data = await resp.json();
+                if (data.success) {
+                    this.branches = data.branches || [];
+                    this.defaultBranch = data.default_branch || 'main';
+                    this.selectedBranch = this.defaultBranch;
+                } else {
+                    this.errorMessage = data.message || '{{ _('agent_team.branch_load_failed') }}';
+                }
+            } catch (e) {
+                this.errorMessage = '{{ _('agent_team.branch_load_failed') }}';
+            } finally {
+                this.loading = false;
+            }
+        },
+        cancel() {
+            this.active = false;
+            if (this._resolver) { this._resolver(null); this._resolver = null; }
+        },
+        confirm() {
+            this.active = false;
+            if (this._resolver) { this._resolver(this.selectedBranch); this._resolver = null; }
+        }
+    };
+}
+function askBranch(repoOwner, repoName) {
+    const el = document.querySelector('[x-data="branchDialog()"]');
+    if (!el || typeof Alpine === 'undefined') {
+        return Promise.resolve('');
+    }
+    return Alpine.$data(el).show(repoOwner, repoName);
+}
 function agentTeamPage() {
     return {
         activeTab: 'tasks',
@@ -300,6 +417,13 @@ function loadTaskDetail(taskId) {
         .then(html => { target.innerHTML = html; })
         .catch(() => { target.innerHTML = getErrorHTML('{{ _('agent_team.request_failed') }}'); });
 }
+function watchLive(taskId) {
+    if (window.agentTeamState) window.agentTeamState.activeTab = 'live';
+    var liveEl = document.querySelector('[x-data="agentTeamLiveView()"]');
+    if (liveEl && liveEl.__x) {
+        liveEl.__x.$data.watchTask(taskId);
+    }
+}
 function makeText(tag, className, text) {
     const el = document.createElement(tag);
     if (className) el.className = className;
@@ -350,7 +474,7 @@ function previewCandidates() {
             const btn = document.createElement('button');
             btn.className = 'px-4 py-2 text-sm font-semibold bg-sakura-500 hover:bg-sakura-600 text-white rounded-xl transition-colors';
             btn.textContent = '{{ _('agent_team.create_task') }}';
-            btn.onclick = () => createAgentTask(btn, c.source_type, c.source_id, requirement);
+            btn.onclick = () => createAgentTask(btn, c.source_type, c.source_id, requirement, c.repo_owner, c.repo_name);
             foot.appendChild(btn); card.appendChild(foot); grid.appendChild(card);
         });
         box.appendChild(grid);
@@ -358,33 +482,43 @@ function previewCandidates() {
         box.innerHTML = getErrorHTML('{{ _('agent_team.request_failed') }}');
     });
 }
-function createAgentTask(btn, sourceType, sourceId, requirement = '') {
+function createAgentTask(btn, sourceType, sourceId, requirement = '', repoOwner, repoName) {
     btn.disabled = true;
     btn.classList.add('opacity-60', 'cursor-not-allowed');
     btn.textContent = '...';
-    fetch('/agent-team/tasks/create', {
-        method: 'POST',
-        headers: {'Content-Type': 'application/x-www-form-urlencoded'},
-        body: new URLSearchParams({csrf_token: '{{ csrf_token }}', source_type: sourceType, source_id: sourceId, ai_filter_requirement: requirement})
-    }).then(r => r.json()).then(data => {
-        if (data.success) {
-            window.dispatchEvent(new CustomEvent('show-toast', {detail: {message: '{{ _('agent_team.task_created') }}', type: 'success'}}));
-            btn.textContent = '✓';
-            btn.classList.remove('bg-sakura-500', 'hover:bg-sakura-600');
-            btn.classList.add('bg-green-500');
-            refreshAgentTaskList();
-            previewCandidates();
-        } else {
-            window.dispatchEvent(new CustomEvent('show-toast', {detail: {message: data.message || '{{ _('agent_team.request_failed') }}', type: 'error'}}));
+    askBranch(repoOwner, repoName).then(baseBranch => {
+        if (baseBranch === null) {
+            btn.disabled = false;
+            btn.classList.remove('opacity-60', 'cursor-not-allowed');
+            btn.textContent = '{{ _('agent_team.create_task') }}';
+            return;
+        }
+        const params = {csrf_token: '{{ csrf_token }}', source_type: sourceType, source_id: sourceId, ai_filter_requirement: requirement};
+        if (baseBranch) params.base_branch = baseBranch;
+        fetch('/agent-team/tasks/create', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/x-www-form-urlencoded'},
+            body: new URLSearchParams(params)
+        }).then(r => r.json()).then(data => {
+            if (data.success) {
+                window.dispatchEvent(new CustomEvent('show-toast', {detail: {message: '{{ _('agent_team.task_created') }}', type: 'success'}}));
+                btn.textContent = '✓';
+                btn.classList.remove('bg-sakura-500', 'hover:bg-sakura-600');
+                btn.classList.add('bg-green-500');
+                refreshAgentTaskList();
+                previewCandidates();
+            } else {
+                window.dispatchEvent(new CustomEvent('show-toast', {detail: {message: data.message || '{{ _('agent_team.request_failed') }}', type: 'error'}}));
+                btn.disabled = false;
+                btn.classList.remove('opacity-60', 'cursor-not-allowed');
+                btn.textContent = '{{ _('agent_team.retry') }}';
+            }
+        }).catch(() => {
+            window.dispatchEvent(new CustomEvent('show-toast', {detail: {message: '{{ _('agent_team.request_failed') }}', type: 'error'}}));
             btn.disabled = false;
             btn.classList.remove('opacity-60', 'cursor-not-allowed');
             btn.textContent = '{{ _('agent_team.retry') }}';
-        }
-    }).catch(() => {
-        window.dispatchEvent(new CustomEvent('show-toast', {detail: {message: '{{ _('agent_team.request_failed') }}', type: 'error'}}));
-        btn.disabled = false;
-        btn.classList.remove('opacity-60', 'cursor-not-allowed');
-        btn.textContent = '{{ _('agent_team.retry') }}';
+        });
     });
 }
 function createTaskFromIssue() {
@@ -394,36 +528,60 @@ function createTaskFromIssue() {
         if (errorEl) { errorEl.textContent = '{{ _('agent_team.manual_issue_input_required') }}'; errorEl.classList.remove('hidden'); }
         return;
     }
+    // Parse owner/repo from issue ref for branch dialog
+    let repoOwner = '', repoName = '';
+    const urlMatch = raw.match(/(?:https?:\/\/)?github\.com\/([^/]+)\/([^/]+)\/issues\/\d+/);
+    const hashMatch = raw.match(/^([^/]+)\/([^/#]+)#(\d+)$/);
+    const spaceMatch = raw.match(/^([^/]+)\/([^\s]+)\s+(\d+)$/);
+    if (urlMatch) { repoOwner = urlMatch[1]; repoName = urlMatch[2]; }
+    else if (hashMatch) { repoOwner = hashMatch[1]; repoName = hashMatch[2]; }
+    else if (spaceMatch) { repoOwner = spaceMatch[1]; repoName = spaceMatch[2]; }
+
+    if (!repoOwner || !repoName) {
+        if (errorEl) { errorEl.textContent = '{{ _('agent_team.manual_issue_input_required') }}'; errorEl.classList.remove('hidden'); }
+        return;
+    }
     if (errorEl) errorEl.classList.add('hidden');
     const btn = document.getElementById('manual-issue-btn');
     const origText = btn.textContent;
     btn.disabled = true;
     btn.classList.add('opacity-60', 'cursor-not-allowed');
     btn.textContent = '...';
-    fetch('/agent-team/tasks/create-from-issue', {
-        method: 'POST',
-        headers: {'Content-Type': 'application/x-www-form-urlencoded'},
-        body: new URLSearchParams({csrf_token: '{{ csrf_token }}', issue_ref: raw})
-    }).then(r => r.json()).then(data => {
-        if (data.success) {
-            window.dispatchEvent(new CustomEvent('show-toast', {detail: {message: '{{ _('agent_team.task_created') }}', type: 'success'}}));
-            window.agentTeamState.manualIssueInput = '';
-            btn.textContent = '✓';
-            btn.classList.remove('bg-purple-500', 'hover:bg-purple-600', 'opacity-60', 'cursor-not-allowed');
-            btn.classList.add('bg-green-500');
-            setTimeout(() => { btn.disabled = false; btn.textContent = origText; btn.classList.remove('bg-green-500'); btn.classList.add('bg-purple-500', 'hover:bg-purple-600'); }, 2000);
-            refreshAgentTaskList();
-        } else {
-            if (errorEl) { errorEl.textContent = data.message || '{{ _('agent_team.request_failed') }}'; errorEl.classList.remove('hidden'); }
+
+    askBranch(repoOwner, repoName).then(baseBranch => {
+        if (baseBranch === null) {
             btn.disabled = false;
             btn.classList.remove('opacity-60', 'cursor-not-allowed');
             btn.textContent = origText;
+            return;
         }
-    }).catch(() => {
-        if (errorEl) { errorEl.textContent = '{{ _('agent_team.request_failed') }}'; errorEl.classList.remove('hidden'); }
-        btn.disabled = false;
-        btn.classList.remove('opacity-60', 'cursor-not-allowed');
-        btn.textContent = origText;
+        const params = {csrf_token: '{{ csrf_token }}', issue_ref: raw};
+        if (baseBranch) params.base_branch = baseBranch;
+        fetch('/agent-team/tasks/create-from-issue', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/x-www-form-urlencoded'},
+            body: new URLSearchParams(params)
+        }).then(r => r.json()).then(data => {
+            if (data.success) {
+                window.dispatchEvent(new CustomEvent('show-toast', {detail: {message: '{{ _('agent_team.task_created') }}', type: 'success'}}));
+                window.agentTeamState.manualIssueInput = '';
+                btn.textContent = '✓';
+                btn.classList.remove('bg-purple-500', 'hover:bg-purple-600', 'opacity-60', 'cursor-not-allowed');
+                btn.classList.add('bg-green-500');
+                setTimeout(() => { btn.disabled = false; btn.textContent = origText; btn.classList.remove('bg-green-500'); btn.classList.add('bg-purple-500', 'hover:bg-purple-600'); }, 2000);
+                refreshAgentTaskList();
+            } else {
+                if (errorEl) { errorEl.textContent = data.message || '{{ _('agent_team.request_failed') }}'; errorEl.classList.remove('hidden'); }
+                btn.disabled = false;
+                btn.classList.remove('opacity-60', 'cursor-not-allowed');
+                btn.textContent = origText;
+            }
+        }).catch(() => {
+            if (errorEl) { errorEl.textContent = '{{ _('agent_team.request_failed') }}'; errorEl.classList.remove('hidden'); }
+            btn.disabled = false;
+            btn.classList.remove('opacity-60', 'cursor-not-allowed');
+            btn.textContent = origText;
+        });
     });
 }
 </script>

@@ -10,9 +10,8 @@
                  hx-get="/logs/{{ r.id }}/detail-fragment"
                  hx-target="#log-detail-{{ r.id }}"
                  hx-swap="innerHTML"
-                 hx-on::before-request="document.getElementById('log-detail-{{ r.id }}').classList.remove('hidden')"
-                 hx-on::after-request="if(document.getElementById('log-detail-{{ r.id }}').innerHTML.trim()) document.getElementById('log-detail-{{ r.id }}').classList.toggle('hidden'); this.querySelector('svg:last-child').classList.toggle('rotate-180')"
-                 onclick="if(document.getElementById('log-detail-{{ r.id }}').innerHTML.trim()) { document.getElementById('log-detail-{{ r.id }}').classList.toggle('hidden'); this.querySelector('svg:last-child').classList.toggle('rotate-180'); }">
+                 hx-on::before-request="if (window.toggleLoadedLogDetail && window.toggleLoadedLogDetail({{ r.id }}, this)) event.preventDefault(); else if (window.openLogDetailLoading) window.openLogDetailLoading({{ r.id }}, this)"
+                 hx-on::after-request="if (window.markLogDetailLoaded) window.markLogDetailLoaded({{ r.id }}, this, event)">
                 <!-- 状态 -->
                 <div class="flex-shrink-0">
                     {% if r.status == "completed" and r.decision == "approve" %}
@@ -60,13 +59,13 @@
                 </div>
 
                 <!-- 展开箭头 -->
-                <svg class="w-4 h-4 text-gray-400 flex-shrink-0 transition-transform" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <svg data-log-detail-icon class="w-4 h-4 text-gray-400 flex-shrink-0 transition-transform" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/>
                 </svg>
             </div>
 
             <!-- 展开详情区域 -->
-            <div id="log-detail-{{ r.id }}" class="hidden px-5 pb-4">
+            <div id="log-detail-{{ r.id }}" data-loaded="false" class="hidden px-5 pb-4">
                 <div class="text-center py-4 text-gray-400">
                     <svg class="w-6 h-6 mx-auto animate-spin" fill="none" viewBox="0 0 24 24">
                         <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/>
