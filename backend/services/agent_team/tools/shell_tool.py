@@ -22,14 +22,39 @@ _SHELL_META_CHARS = frozenset({"&&", "||", ";", "`", "&"})
 _SHELL_SUBST_PATTERNS = ("$('", "$(", "${")
 
 
+def _extract_unquoted(command: str) -> str:
+    """提取命令中不在引号内的部分，用于检测 shell 元字符。"""
+    result: list[str] = []
+    in_single = False
+    in_double = False
+    i = 0
+    while i < len(command):
+        c = command[i]
+        if c == "'" and not in_double:
+            in_single = not in_single
+            i += 1
+            continue
+        if c == '"' and not in_single:
+            in_double = not in_double
+            i += 1
+            continue
+        if c == "\\" and not in_single and i + 1 < len(command):
+            i += 2
+            continue
+        if not in_single and not in_double:
+            result.append(c)
+        i += 1
+    return "".join(result)
+
+
 def _contains_shell_meta(command: str) -> bool:
-    """检查命令字符串是否包含 Shell 元字符或命令替换模式。"""
+    """检查命令的非引号部分是否包含 Shell 元字符或命令替换模式。"""
+    unquoted = _extract_unquoted(command)
     for meta in _SHELL_META_CHARS:
-        if meta in command:
+        if meta in unquoted:
             return True
-    # 精细检查命令替换：仅拦截 $(...) 和 ${...}，不拦截普通 $ 变量引用
     for pattern in _SHELL_SUBST_PATTERNS:
-        if pattern in command:
+        if pattern in unquoted:
             return True
     return False
 
