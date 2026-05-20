@@ -189,20 +189,32 @@ class IssueAnalyzer:
         json_start = text.find("{")
         json_text = text[json_start:] if json_start >= 0 else ""
 
+        def _unescape_json_string(value: str) -> str:
+            """反转义 JSON 字符串中的转义序列。
+
+            替换顺序很重要：先处理 ``\\\\`` 再处理 ``\\n`` / ``\\\"`` / ``\\t`` ，
+            否则原始文本中 ``\\\\n`` （字面量反斜杠 + n）会被错误替换为换行符。
+            """
+            return (
+                value.replace("\\\\", "\\")
+                .replace("\\n", "\n")
+                .replace('\\"', '"')
+                .replace("\\t", "\t")
+            )
+
         def _extract_string_field(name: str) -> str | None:
-            """提取 JSON 字符串字段值，处理转义字符"""
+            """提取 JSON 字符串字段值，处理转义字符。
+
+            正则使用 ``(?:"|$)`` 而非更严格的 ``"`` 来闭合，
+            以处理 AI 响应被截断时最后一个字段缺少闭合引号的场景。
+            """
             pattern = rf'"{name}"\s*:\s*"((?:[^"\\]|\\.)*)(?:"|$)'
             match = re.search(pattern, json_text)
             if match:
-                value = match.group(1)
-                # 处理末尾截断：最后一个字段可能缺少闭合引号
-                # 反转义常见转义序列
-                value = value.replace("\\n", "\n").replace('\\"', '"')
-                value = value.replace("\\t", "\t").replace("\\\\", "\\")
-                return value
+                return _unescape_json_string(match.group(1))
             return None
 
-        def _extract_number_field(name: str):
+        def _extract_number_field(name: str) -> int | None:
             """提取 JSON 数值型字段（int 或 null）"""
             pattern = rf'"{name}"\s*:\s*(\d+|null)'
             match = re.search(pattern, json_text)
@@ -229,7 +241,7 @@ class IssueAnalyzer:
             array_text = json_text[labels_match.end() :]
             # 逐个提取 name 和 confidence
             for m in re.finditer(r'\{\s*"name"\s*:\s*"((?:[^"\\]|\\.)*)"', array_text):
-                label_name = m.group(1).replace('\\"', '"')
+                label_name = _unescape_json_string(m.group(1))
                 suggested_labels.append(
                     {
                         "name": label_name,
@@ -245,7 +257,7 @@ class IssueAnalyzer:
             for m in re.finditer(
                 r'\{\s*"username"\s*:\s*"((?:[^"\\]|\\.)*)"', array_text
             ):
-                username = m.group(1).replace('\\"', '"')
+                username = _unescape_json_string(m.group(1))
                 suggested_assignees.append(
                     {
                         "username": username,
