@@ -578,6 +578,7 @@ config:
     fetch_url: "URL Fetch Config"
     i18n: "i18n Config"
     payment: "Payment & Quota Config"
+    registration_quota: "Self-registration Quota Config"
   label:
     ai_provider: "AI Provider"
     openai_api_base: "API Base URL"
@@ -808,6 +809,7 @@ config:
     init_user_issue_daily_quota: "Base daily Issue analysis quota for self-registered users"
     init_user_issue_weekly_quota: "Base weekly Issue analysis quota for self-registered users"
     init_user_issue_monthly_quota: "Base monthly Issue analysis quota for self-registered users"
+    register_quota_multiplier: "Self-registered user quota multiplier relative to base quota (0.1-1.0)"
   option:
     ai_provider_openai: "OpenAI"
     ai_provider_deepseek: "DeepSeek"

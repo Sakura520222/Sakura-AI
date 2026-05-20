@@ -578,6 +578,7 @@ config:
     fetch_url: "URL 抓取配置"
     i18n: "国际化配置"
     payment: "付费配额配置"
+    registration_quota: "自注册配额配置"
   label:
     ai_provider: "AI 厂商"
     openai_api_base: "API Base URL"
@@ -808,6 +809,7 @@ config:
     init_user_issue_daily_quota: "自注册用户基础每日 Issue 分析配额"
     init_user_issue_weekly_quota: "自注册用户基础每周 Issue 分析配额"
     init_user_issue_monthly_quota: "自注册用户基础每月 Issue 分析配额"
+    register_quota_multiplier: "自注册用户配额相对于基础值的倍率（0.1-1.0）"
   option:
     ai_provider_openai: "OpenAI"
     ai_provider_deepseek: "DeepSeek"

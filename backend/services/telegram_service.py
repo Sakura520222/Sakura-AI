@@ -430,6 +430,7 @@ class TelegramService:
                 daily_quota=settings.init_admin_daily_quota,
                 weekly_quota=settings.init_admin_weekly_quota,
                 monthly_quota=settings.init_admin_monthly_quota,
+                # 管理员 Issue 配额复用管理员 PR 初始配额，避免新增独立配置项。
                 issue_daily_quota=settings.init_admin_daily_quota,
                 issue_weekly_quota=settings.init_admin_weekly_quota,
                 issue_monthly_quota=settings.init_admin_monthly_quota,
