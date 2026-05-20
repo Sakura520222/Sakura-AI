@@ -92,9 +92,12 @@ class IssueWorker:
                     next_version = (max_version or 0) + 1
 
                     # 归档超出上限的旧版本
-                    max_versions = int(
-                        await get_dynamic_config("issue_max_analysis_versions") or 10
-                    )
+                    try:
+                        max_versions = int(
+                            await get_dynamic_config("issue_max_analysis_versions") or 10
+                        )
+                    except (ValueError, TypeError):
+                        max_versions = 10
                     if next_version > max_versions:
                         await self._archive_old_versions(
                             db, repo_name, issue_number, next_version - max_versions

@@ -55,6 +55,7 @@ class AgentTeamCandidateService:
     """从 Issue 分析和仓库扫描发现中筛选候选任务。"""
 
     # 类级别缓存：{cache_key: (candidates, timestamp)}
+    # 注意：此缓存为所有实例共享，invalidate_cache() 会清空所有实例的缓存
     _cache: dict[str, tuple[list[AgentCandidate], float]] = {}
 
     def _get_cache_ttl(self) -> int:
@@ -69,7 +70,7 @@ class AgentTeamCandidateService:
         return f"{limit}:{ai_filter_requirement or ''}"
 
     def invalidate_cache(self):
-        """清空候选池缓存"""
+        """清空候选池缓存（影响所有实例的共享缓存）。"""
         self._cache.clear()
 
     async def collect_candidates(

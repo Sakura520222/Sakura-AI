@@ -13,7 +13,7 @@
         <div class="flex items-center gap-2">
             <button onclick='batchIndexIssues(this, {{ csrf_token | tojson }})'
                     class="px-4 py-2 text-sm bg-green-500 text-white rounded-lg hover:bg-green-600 transition-colors">
-                索引全部 Issues
+                {{ _('repo.batch_index_issues') }}
             </button>
             <button onclick="loadListPage('repo-list-container', '/repos/list-fragment?refresh=true', 1)"
                     class="px-4 py-2 text-sm border border-gray-300 dark:border-gray-600 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors">
@@ -61,7 +61,7 @@ function triggerIndex(btn, repoName, indexType, csrfToken) {
 
     btn.disabled = true;
     btn.dataset.originalText = btn.textContent;
-    btn.textContent = '索引中...';
+    btn.textContent = _t('repo_indexing');
 
     var encodedName = encodeURIComponent(repoName).replace(/%2F/g, '/');
     fetch('/repos/' + encodedName + '/index-' + indexType, {
@@ -71,7 +71,7 @@ function triggerIndex(btn, repoName, indexType, csrfToken) {
     .then(function(r) {
         if (!r.ok) {
             return r.json().catch(function() { return {}; }).then(function(data) {
-                throw new Error(data.message || data.detail || '请求失败 (' + r.status + ')');
+                throw new Error(data.message || data.detail || _t('repo_request_failed_status').replace('{status}', r.status));
             });
         }
         return r.json();
@@ -80,7 +80,7 @@ function triggerIndex(btn, repoName, indexType, csrfToken) {
         if (!data.success) {
             btn.disabled = false;
             btn.textContent = btn.dataset.originalText;
-            window.dispatchEvent(new CustomEvent('show-toast', { detail: { message: data.message || data.detail || '操作失败', type: 'error' } }));
+            window.dispatchEvent(new CustomEvent('show-toast', { detail: { message: data.message || data.detail || _t('repo_operation_failed'), type: 'error' } }));
         } else {
             window.dispatchEvent(new CustomEvent('show-toast', { detail: { message: data.message, type: 'success' } }));
         }
@@ -88,7 +88,7 @@ function triggerIndex(btn, repoName, indexType, csrfToken) {
     .catch(function(err) {
         btn.disabled = false;
         btn.textContent = btn.dataset.originalText;
-        window.dispatchEvent(new CustomEvent('show-toast', { detail: { message: err.message || '请求失败', type: 'error' } }));
+        window.dispatchEvent(new CustomEvent('show-toast', { detail: { message: err.message || _t('repo_request_failed'), type: 'error' } }));
     });
 }
 
@@ -97,11 +97,11 @@ var _batchIssuesProgress = { total: 0, completed: 0, failed: 0, active: false };
 
 function batchIndexIssues(btn, csrfToken) {
     if (btn.disabled) return;
-    if (!confirm('确认对所有已安装仓库执行 Issues 索引？')) return;
+    if (!confirm(_t('repo_confirm_batch_index'))) return;
 
     btn.disabled = true;
     btn.dataset.originalText = btn.textContent;
-    btn.textContent = '排队中...';
+    btn.textContent = _t('repo_queuing');
 
     fetch('/repos/batch/index-issues', {
         method: 'POST',
@@ -110,7 +110,7 @@ function batchIndexIssues(btn, csrfToken) {
     .then(function(r) {
         if (!r.ok) {
             return r.json().catch(function() { return {}; }).then(function(data) {
-                throw new Error(data.message || data.detail || '请求失败 (' + r.status + ')');
+                throw new Error(data.message || data.detail || _t('repo_request_failed_status').replace('{status}', r.status));
             });
         }
         return r.json();
@@ -118,18 +118,18 @@ function batchIndexIssues(btn, csrfToken) {
     .then(function(data) {
         if (data.success) {
             _batchIssuesProgress = { total: data.queued, completed: 0, failed: 0, active: true };
-            btn.textContent = '索引中 (0/' + data.queued + ')...';
+            btn.textContent = _t('repo_indexing_progress').replace('{done}', '0').replace('{total}', data.queued);
             window.dispatchEvent(new CustomEvent('show-toast', { detail: { message: data.message, type: 'success' } }));
         } else {
             btn.disabled = false;
             btn.textContent = btn.dataset.originalText;
-            window.dispatchEvent(new CustomEvent('show-toast', { detail: { message: data.message || '批量索引失败', type: data.queued === 0 ? 'info' : 'error' } }));
+            window.dispatchEvent(new CustomEvent('show-toast', { detail: { message: data.message || _t('repo_batch_index_failed'), type: data.queued === 0 ? 'info' : 'error' } }));
         }
     })
     .catch(function(err) {
         btn.disabled = false;
         btn.textContent = btn.dataset.originalText;
-        window.dispatchEvent(new CustomEvent('show-toast', { detail: { message: err.message || '请求失败', type: 'error' } }));
+        window.dispatchEvent(new CustomEvent('show-toast', { detail: { message: err.message || _t('repo_request_failed'), type: 'error' } }));
     });
 }
 
@@ -147,7 +147,7 @@ function _updateBatchProgress() {
         return;
     }
 
-    btn.textContent = '索引中 (' + done + '/' + p.total + ')...';
+    btn.textContent = _t('repo_indexing_progress').replace('{done}', done).replace('{total}', p.total);
 }
 
 // SSE: 文档索引完成
@@ -155,8 +155,8 @@ window.addEventListener('sse:index-docs', function(e) {
     var detail = e.detail;
     var isSuccess = detail.success && detail.result;
     var msg = isSuccess
-        ? '文档索引完成: ' + detail.repo_name + ' (' + (detail.result.total_files || 0) + ' 文件, ' + (detail.result.total_chunks || 0) + ' 块)'
-        : '文档索引失败: ' + detail.repo_name + ' - ' + (detail.error || '未知错误');
+        ? _t('repo_doc_index_success') + ': ' + detail.repo_name + ' (' + (detail.result.total_files || 0) + ' ' + _t('repo_files') + ', ' + (detail.result.total_chunks || 0) + ' ' + _t('repo_chunks') + ')'
+        : _t('repo_doc_index_failed') + ': ' + detail.repo_name + ' - ' + (detail.error || _t('repo_unknown_error'));
     window.dispatchEvent(new CustomEvent('show-toast', {
         detail: { message: msg, type: isSuccess ? 'success' : 'error' }
     }));
@@ -169,8 +169,8 @@ window.addEventListener('sse:index-code', function(e) {
     var detail = e.detail;
     var isSuccess = detail.success && detail.result;
     var msg = isSuccess
-        ? '代码索引完成: ' + detail.repo_name + ' (' + (detail.result.indexed || 0) + ' 文件, ' + (detail.result.total_chunks || 0) + ' 块)'
-        : '代码索引失败: ' + detail.repo_name + ' - ' + (detail.error || '未知错误');
+        ? _t('repo_code_index_success') + ': ' + detail.repo_name + ' (' + (detail.result.indexed || 0) + ' ' + _t('repo_files') + ', ' + (detail.result.total_chunks || 0) + ' ' + _t('repo_chunks') + ')'
+        : _t('repo_code_index_failed') + ': ' + detail.repo_name + ' - ' + (detail.error || _t('repo_unknown_error'));
     window.dispatchEvent(new CustomEvent('show-toast', {
         detail: { message: msg, type: isSuccess ? 'success' : 'error' }
     }));
@@ -182,8 +182,8 @@ window.addEventListener('sse:index-issues', function(e) {
     var detail = e.detail;
     var isSuccess = detail.success && detail.result;
     var msg = isSuccess
-        ? 'Issues 索引完成: ' + detail.repo_name + ' (' + (detail.result.count || 0) + ' 条)'
-        : 'Issues 索引失败: ' + detail.repo_name + ' - ' + (detail.error || '未知错误');
+        ? _t('repo_issues_index_success') + ': ' + detail.repo_name + ' (' + (detail.result.count || 0) + ' ' + _t('repo_items') + ')'
+        : _t('repo_issues_index_failed') + ': ' + detail.repo_name + ' - ' + (detail.error || _t('repo_unknown_error'));
     window.dispatchEvent(new CustomEvent('show-toast', {
         detail: { message: msg, type: isSuccess ? 'success' : 'error' }
     }));
@@ -200,8 +200,8 @@ window.addEventListener('sse:index-issues', function(e) {
 
         if (done >= p.total) {
             _batchIssuesProgress.active = false;
-            var summary = '批量 Issues 索引完成: 成功 ' + p.completed + ' 个';
-            if (p.failed > 0) summary += '，失败 ' + p.failed + ' 个';
+            var summary = _t('repo_batch_issues_complete') + ': ' + _t('repo_succeeded') + ' ' + p.completed + ' ';
+            if (p.failed > 0) summary += _t('repo_failed') + ' ' + p.failed + ' ';
             window.dispatchEvent(new CustomEvent('show-toast', {
                 detail: { message: summary, type: p.failed > 0 ? 'warning' : 'success' }
             }));
@@ -215,11 +215,11 @@ window.addEventListener('sse:index-issues', function(e) {
 // 触发仓库扫描
 function triggerScan(btn, repoName, csrfToken) {
     if (btn.disabled) return;
-    if (!confirm('确认扫描仓库 ' + repoName + '？')) return;
+    if (!confirm(_t('repo_confirm_scan') + ' ' + repoName + '？')) return;
 
     btn.disabled = true;
     btn.dataset.originalText = btn.textContent;
-    btn.textContent = '扫描中...';
+    btn.textContent = _t('repo_scanning');
 
     var encodedName = encodeURIComponent(repoName).replace(/%2F/g, '/');
     fetch('/repos/' + encodedName + '/scan', {
@@ -229,7 +229,7 @@ function triggerScan(btn, repoName, csrfToken) {
     .then(function(r) {
         if (!r.ok) {
             return r.json().catch(function() { return {}; }).then(function(data) {
-                throw new Error(data.message || data.detail || '请求失败 (' + r.status + ')');
+                throw new Error(data.message || data.detail || _t('repo_request_failed_status').replace('{status}', r.status));
             });
         }
         return r.json();
@@ -238,7 +238,7 @@ function triggerScan(btn, repoName, csrfToken) {
         if (!data.success) {
             btn.disabled = false;
             btn.textContent = btn.dataset.originalText;
-            window.dispatchEvent(new CustomEvent('show-toast', { detail: { message: data.message || '扫描失败', type: 'error' } }));
+            window.dispatchEvent(new CustomEvent('show-toast', { detail: { message: data.message || _t('repo_scan_failed'), type: 'error' } }));
         } else {
             window.dispatchEvent(new CustomEvent('show-toast', { detail: { message: data.message, type: 'success' } }));
         }
@@ -246,7 +246,7 @@ function triggerScan(btn, repoName, csrfToken) {
     .catch(function(err) {
         btn.disabled = false;
         btn.textContent = btn.dataset.originalText;
-        window.dispatchEvent(new CustomEvent('show-toast', { detail: { message: err.message || '请求失败', type: 'error' } }));
+        window.dispatchEvent(new CustomEvent('show-toast', { detail: { message: err.message || _t('repo_request_failed'), type: 'error' } }));
     });
 }
 
@@ -254,8 +254,8 @@ function triggerScan(btn, repoName, csrfToken) {
 window.addEventListener('sse:scan-completed', function(e) {
     var detail = e.detail;
     var msg = detail.success
-        ? '仓库扫描完成: ' + detail.repo_name
-        : '仓库扫描失败: ' + detail.repo_name + ' - ' + (detail.error || '未知错误');
+        ? _t('repo_scan_complete') + ': ' + detail.repo_name
+        : _t('repo_scan_failed_error') + ': ' + detail.repo_name + ' - ' + (detail.error || _t('repo_unknown_error'));
     window.dispatchEvent(new CustomEvent('show-toast', {
         detail: { message: msg, type: detail.success ? 'success' : 'error' }
     }));

@@ -229,11 +229,8 @@ class IssueEmbeddingService:
             try:
                 from backend.core.config import get_dynamic_config
 
-                enable_rich = bool(
-                    await get_dynamic_config("issue_vector_store_rich_metadata")
-                )
-                if enable_rich is None:
-                    enable_rich = True
+                raw = await get_dynamic_config("issue_vector_store_rich_metadata")
+                enable_rich = True if raw is None else bool(raw)
             except Exception:
                 enable_rich = True
 

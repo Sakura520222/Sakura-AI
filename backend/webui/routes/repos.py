@@ -545,7 +545,7 @@ async def batch_index_issues(
             msg += f"，{skipped} 个仓库正在索引中"
         return JSONResponse(
             {"success": False, "queued": 0, "skipped": skipped, "message": msg},
-            status_code=409,
+            status_code=200,
         )
 
     await log_admin_action(

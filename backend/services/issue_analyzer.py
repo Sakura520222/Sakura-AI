@@ -172,9 +172,12 @@ class IssueAnalyzer:
         if not comments:
             return None
 
-        max_count = int(
-            await get_dynamic_config("issue_max_comments_in_context") or 0
-        )
+        try:
+            max_count = int(
+                await get_dynamic_config("issue_max_comments_in_context") or 0
+            )
+        except (ValueError, TypeError):
+            max_count = 0
 
         raw_comments = []
         for c in comments:

