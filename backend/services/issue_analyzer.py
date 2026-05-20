@@ -199,11 +199,16 @@ class IssueAnalyzer:
             try:
                 return json.loads(f'"{value}"')
             except json.JSONDecodeError:
+                # Best-effort fallback for truncated / malformed JSON
                 return (
                     value.replace("\\\\", "\\")
                     .replace("\\n", "\n")
-                    .replace('\\"', '"')
+                    .replace("\\r", "\r")
                     .replace("\\t", "\t")
+                    .replace("\\b", "\b")
+                    .replace("\\f", "\f")
+                    .replace("\\/", "/")
+                    .replace('\\"', '"')
                 )
 
         def _extract_string_field(name: str) -> str | None:
