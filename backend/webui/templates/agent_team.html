@@ -214,9 +214,6 @@
                         </select>
                         {% else %}
                         <input id="{{ item.key }}" name="{{ item.key }}" type="{{ 'password' if item.input_type == 'password' else item.input_type }}" value="{{ '' if item.sensitive else item.value }}" placeholder="{{ item.value if item.sensitive else '' }}" {% if item.sensitive %}oninput="document.getElementById('{{ item.key }}_changed').value='true'"{% endif %} class="w-full rounded-xl border-gray-300 dark:border-gray-600 dark:bg-gray-900 text-sm">
-                        {% if item.key == 'agent_team_test_command_allowlist' %}
-                        <button type="button" onclick="document.getElementById('agent_team_test_command_allowlist').value=this.getAttribute('data-default')" data-default="{{ item.default|e }}" class="mt-2 px-3 py-1 text-xs font-medium rounded-lg border border-sakura-300 dark:border-sakura-700 bg-sakura-50 dark:bg-sakura-900/30 text-sakura-700 dark:text-sakura-300 hover:bg-sakura-100 dark:hover:bg-sakura-900/50 transition-colors">{{ _('agent_team.load_default_allowlist') }}</button>
-                        {% endif %}
                         {% if item.sensitive %}<input type="hidden" id="{{ item.key }}_changed" name="{{ item.key }}_changed" value="false">{% endif %}
                         {% if item.min_val is not none and item.max_val is not none %}<p class="mt-1 text-xs text-gray-400">{{ _('agent_team.range_hint') }} {{ item.min_val }} - {{ item.max_val }}</p>{% endif %}
                         {% endif %}

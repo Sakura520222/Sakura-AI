@@ -102,7 +102,10 @@ def _is_segment_blocked(tokens: list[str], blocklist: set[str]) -> bool:
     name = _command_name(tokens[0])
     if name in blocklist:
         return True
-    if name == "rm" and any(token.startswith("-") and "r" in token for token in tokens[1:]):
+    if name == "rm" and any(
+        token == "--recursive" or (token.startswith("-") and "r" in token.lower())
+        for token in tokens[1:]
+    ):
         return True
     if name == "chmod" and any(token in {"777", "a+w", "ugo+w"} for token in tokens[1:]):
         return True
@@ -139,9 +142,6 @@ async def is_agent_command_allowed(command: str) -> bool:
     """
     command = command.strip()
     if not command:
-        return False
-
-    if _has_redundant_cd_prefix(command):
         return False
 
     if _contains_shell_meta(command):

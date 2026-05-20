@@ -188,7 +188,6 @@ async def test_agent_command_blocklist(monkeypatch):
     monkeypatch.setattr(
         "backend.services.agent_team.tools.shell_tool.get_settings",
         lambda: SimpleNamespace(
-            agent_team_test_command_allowlist="",
             agent_team_test_command_blocklist="",
         ),
     )
@@ -215,7 +214,6 @@ async def test_shell_tool_rejects_blocked_command(tmp_path, monkeypatch):
     monkeypatch.setattr(
         "backend.services.agent_team.tools.shell_tool.get_settings",
         lambda: SimpleNamespace(
-            agent_team_test_command_allowlist="",
             agent_team_test_command_blocklist="",
         ),
     )

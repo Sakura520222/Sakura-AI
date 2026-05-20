@@ -19,9 +19,9 @@ Agent 专家团队模式用于把已发现的 Issue 或仓库扫描问题转化�
 - 仅手动启动任务，不提供定时或无人值守自动执行入口。
 - 支持任务列表、任务详情、工作区管理、配置管理和运行状态展示。
 - 支持复用主 AI 配置，也支持独立 Agent AI 配置。
-- 支持受控文件工具、工作区内搜索、项目识别、diff 检查、文件回退、shell 白名单验证命令和 Agent Skills。
+- 支持受控文件工具、工作区内搜索、项目识别、diff 检查、文件回退、shell 黑名单安全策略验证命令和 Agent Skills。
 - 支持 Agent 上下文压缩、会话 checkpoint 和任务恢复。
-- 支持按配置自动安装项目依赖，并运行白名单内的验证命令。
+- 支持按配置自动安装项目依赖，并运行安全策略允许的验证命令。
 - 支持创建 PR / Draft PR，但不会自动合并。
 - 支持 AI 生成 Conventional Commits 风格 PR 标题，并在 GitHub 422 响应时重试创建 PR。
 
@@ -62,7 +62,7 @@ Agent Team 会记录任务会话与消息 checkpoint，用于任务恢复和问�
 - 制定实现计划。
 - 在受控工作区内修改代码。
 - 使用允许的工具读取、搜索和编辑文件。
-- 选择并运行白名单内的验证命令。
+- 选择并运行安全策略允许的验证命令。
 - 根据内部审查、Sakura PR Review 和人工审查反馈继续迭代。
 - 可用工具轮数由 `agent_team_max_tool_rounds` 控制。
 
@@ -110,7 +110,7 @@ Agent 可使用受控工具完成代码修改和验证：
 - `detect_project` 识别 Python、Node、Java 等项目类型、依赖文件和可用验证命令。
 - `revert_file` 将指定文件回退到基线版本，便于撤销错误修改。
 - `read_sakura_docs`、`list_sakura_directory`、`read_sakura_memory` 读取 Sakura 项目知识与历史反思。
-- 白名单 shell 命令验证，例如测试、lint 或项目允许的构建命令。
+- 黑名单安全策略下的 shell 命令验证，例如测试、lint 或项目允许的构建命令。
 - `use_skill` 按需加载已启用 Agent Skill 的完整说明。
 - `finish_task` 和 `submit_review` 用于结束实现或提交审查结论。
 
@@ -118,17 +118,17 @@ Agent 可使用受控工具完成代码修改和验证：
 
 - 所有文件路径必须解析到工作区内。
 - Shell 命令在工作区内执行。
-- 验证命令受 `agent_team_test_command_allowlist` 控制。
+- 验证命令受默认黑名单与 `agent_team_test_command_blocklist` 控制。
 - 最大修改文件数和 diff 行数受护栏配置控制。
 - GitHub token、AI API Key 等敏感信息不得写入日志或 PR 内容。
 
 ## 自动依赖与验证
 
-当 `agent_team_auto_install_deps=true` 时，系统可根据项目识别结果自动运行受控依赖安装命令，例如 Python 的 `pip install -r requirements.txt` 或 Node 的包管理器安装命令。验证阶段仍遵循白名单策略：
+当 `agent_team_auto_install_deps=true` 时，系统可根据项目识别结果自动运行受控依赖安装命令，例如 Python 的 `pip install -r requirements.txt` 或 Node 的包管理器安装命令。验证阶段仍遵循命令安全策略：
 
 - `agent_team_run_tests` 控制是否运行验证命令。
-- `agent_team_test_command_allowlist` 控制允许执行的测试、lint、format、build 命令。
-- 项目识别结果可作为 Agent 选择验证命令的依据，但不能绕过白名单。
+- 默认黑名单与 `agent_team_test_command_blocklist` 控制额外拦截的高危命令。
+- 项目识别结果可作为 Agent 选择验证命令的依据，但不能绕过命令安全策略。
 - 内置 Ruff Skill 会提示 Agent 优先使用 `ruff check`、`ruff check --fix` 和 `ruff format` 处理 Python lint/format 问题。
 
 ## Agent Skills
@@ -144,7 +144,7 @@ Agent Skills 用于为 Agent 提供可复用的任务知识和操作指南。
 - 在 WebUI 中启用、禁用和删除技能。
 - Agent 通过工具按需读取技能完整内容。
 
-Skills 只向 Agent 注入说明和操作流程，不会扩大 Agent 的工具权限。所有文件写入、shell 执行和 Git 操作仍受 Agent Team 的受控工具与白名单约束。
+Skills 只向 Agent 注入说明和操作流程，不会扩大 Agent 的工具权限。所有文件写入、shell 执行和 Git 操作仍受 Agent Team 的受控工具与命令安全策略约束。
 
 相关配置：
 
@@ -199,7 +199,7 @@ Agent 创建 PR 后，仍通过现有 webhook 进入 Sakura PR 审查流程。�
 | `agent_team_context_compression_threshold` | 上下文压缩触发阈值 |
 | `agent_team_auto_install_deps` | 自动安装项目依赖 |
 | `agent_team_run_tests` | 是否运行验证命令 |
-| `agent_team_test_command_allowlist` | 允许执行的验证命令白名单 |
+| `agent_team_test_command_blocklist` | 额外拦截的 Shell 命令黑名单 |
 | `agent_team_draft_pr` | 创建 Draft PR |
 | `agent_team_skills_enabled` | 启用 Agent Skills |
 | `agent_team_skills_root` | Skills 本地存储根目录 |
