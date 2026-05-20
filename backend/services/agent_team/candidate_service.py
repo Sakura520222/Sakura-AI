@@ -14,6 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from loguru import logger
 
 from backend.core.config import get_dynamic_config
+from backend.core.github_app import GitHubAppClient
 from backend.models.agent_team_models import (
     AgentTeamSourceType,
     AgentTeamTask,
@@ -122,24 +123,28 @@ class AgentTeamCandidateService:
         started_by: str,
         ai_config_snapshot: dict | None = None,
         base_branch: str | None = None,
+        overrides: dict | None = None,
     ) -> AgentTeamTask:
         """将候选项转为 AgentTeamTask。"""
-        max_iterations = await self._load_max_iterations_per_task()
+        values = {
+            "source_type": candidate.source_type,
+            "source_id": candidate.source_id,
+            "source_issue_number": candidate.source_issue_number,
+            "repo_full_name": candidate.repo_full_name,
+            "repo_owner": candidate.repo_owner,
+            "repo_name": candidate.repo_name,
+            "title": candidate.title,
+            "summary": candidate.summary,
+            "priority": candidate.priority,
+            "candidate_score": candidate.candidate_score,
+            "status": AgentTeamTaskStatus.QUEUED.value,
+            "max_iterations": await self._load_max_iterations_per_task(),
+            "base_branch": base_branch,
+        }
+        values.update(overrides or {})
         task = AgentTeamTask(
-            source_type=candidate.source_type,
-            source_id=candidate.source_id,
-            source_issue_number=candidate.source_issue_number,
-            repo_full_name=candidate.repo_full_name,
-            repo_owner=candidate.repo_owner,
-            repo_name=candidate.repo_name,
-            title=candidate.title,
-            summary=candidate.summary,
-            priority=candidate.priority,
-            candidate_score=candidate.candidate_score,
-            status=AgentTeamTaskStatus.QUEUED.value,
-            max_iterations=max_iterations,
+            **values,
             started_by=started_by,
-            base_branch=base_branch,
             ai_config_snapshot=json.dumps(ai_config_snapshot or {}, ensure_ascii=False),
         )
         db.add(task)
@@ -147,25 +152,17 @@ class AgentTeamCandidateService:
         await db.refresh(task)
         return task
 
-    async def create_task_from_manual_issue(
+    async def build_manual_issue_task_draft(
         self,
         db: AsyncSession,
         repo_full_name: str,
         issue_number: int,
-        started_by: str,
-        ai_config_snapshot: dict | None = None,
-        base_branch: str | None = None,
-    ) -> AgentTeamTask:
-        """从管理员手动指定的 GitHub Issue 直接创建 Agent 任务。
-
-        优先复用已有的 IssueAnalysis AI 分析结果，提供更丰富的上下文。
-        """
-        # 1. 验证仓库全名格式
+    ) -> dict[str, Any]:
+        """构建手动 Issue 的 Agent 任务草稿，不落库。"""
         if "/" not in repo_full_name:
             raise ValueError("仓库全名格式无效，应为 owner/repo")
         repo_owner, repo_name = repo_full_name.split("/", 1)
 
-        # 2. 检查仓库白名单
         allowlist = await self._load_repo_allowlist()
         if allowlist and repo_full_name not in allowlist:
             raise ValueError(
@@ -173,10 +170,7 @@ class AgentTeamCandidateService:
                 "请在配置中添加该仓库或清空白名单以允许所有仓库。"
             )
 
-        # 3. 通过 GitHub API 获取 Issue 并验证状态
         try:
-            from backend.core.github_app import GitHubAppClient
-
             github_app = GitHubAppClient()
             issue = await asyncio.to_thread(
                 github_app.get_issue, repo_owner, repo_name, issue_number
@@ -194,7 +188,6 @@ class AgentTeamCandidateService:
                 f"Issue #{issue_number} 状态为 {issue.state}，仅接受 open 状态的 Issue"
             )
 
-        # 4. 检查是否已有该 Issue 的非终态任务
         existing = await db.scalar(
             select(func.count(AgentTeamTask.id)).where(
                 and_(
@@ -216,7 +209,6 @@ class AgentTeamCandidateService:
                 f"(共 {existing} 条)，请先等待完成或取消已有任务"
             )
 
-        # 5. 查询已有的 AI 分析结果，优先复用
         existing_analysis = await db.scalar(
             select(IssueAnalysis)
             .where(
@@ -245,23 +237,38 @@ class AgentTeamCandidateService:
             source_id = None
             candidate_score = 0
 
-        # 6. 创建 AgentTeamTask
-        max_iterations = await self._load_max_iterations_per_task()
+        return {
+            "source_type": source_type,
+            "source_id": source_id,
+            "source_issue_number": issue_number,
+            "repo_full_name": repo_full_name,
+            "repo_owner": repo_owner,
+            "repo_name": repo_name,
+            "title": title,
+            "summary": summary,
+            "priority": priority,
+            "candidate_score": candidate_score,
+            "status": AgentTeamTaskStatus.QUEUED.value,
+            "max_iterations": await self._load_max_iterations_per_task(),
+        }
+
+    async def create_task_from_manual_issue(
+        self,
+        db: AsyncSession,
+        repo_full_name: str,
+        issue_number: int,
+        started_by: str,
+        ai_config_snapshot: dict | None = None,
+        base_branch: str | None = None,
+        overrides: dict | None = None,
+    ) -> AgentTeamTask:
+        """从管理员手动指定的 GitHub Issue 直接创建 Agent 任务。"""
+        values = await self.build_manual_issue_task_draft(db, repo_full_name, issue_number)
+        values["base_branch"] = base_branch
+        values.update(overrides or {})
         task = AgentTeamTask(
-            source_type=source_type,
-            source_id=source_id,
-            source_issue_number=issue_number,
-            repo_full_name=repo_full_name,
-            repo_owner=repo_owner,
-            repo_name=repo_name,
-            title=title,
-            summary=summary,
-            priority=priority,
-            candidate_score=candidate_score,
-            status=AgentTeamTaskStatus.QUEUED.value,
-            max_iterations=max_iterations,
+            **values,
             started_by=started_by,
-            base_branch=base_branch,
             ai_config_snapshot=json.dumps(
                 ai_config_snapshot or {}, ensure_ascii=False
             ),
