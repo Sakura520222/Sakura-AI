@@ -219,7 +219,6 @@
             <div class="px-4 py-3 hover:bg-gray-50 dark:hover:bg-gray-700/50 transition-colors">
                 <div class="flex items-start gap-3">
                     <input type="checkbox" class="doc-checkbox mt-1 rounded border-gray-300 dark:border-gray-600 text-sakura-500 focus:ring-sakura-500"
-                           value="{{ doc.id }}"
                            data-doc-id="{{ doc.id }}"
                            :checked="selectedDocIds.includes($el.dataset.docId)"
                            @change="toggleDoc($el.dataset.docId)">
