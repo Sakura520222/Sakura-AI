@@ -472,6 +472,7 @@ async def handle_issue_comment_event(payload: Dict[str, Any]) -> JSONResponse:
                 "installation_id": installation_id,
                 "author": pr.user.login,
                 "title": pr.title,
+                "body": pr.body or "",
                 "branch": pr.head.ref,
                 "base_branch": pr.base.ref,
                 "diff_url": pr.diff_url,
