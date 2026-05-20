@@ -118,6 +118,7 @@ class SakuraKnowledgeExtractor(SakuraAgentBase):
         repo_full_name: str,
         sakura_ref: Optional[str] = None,
         model: Optional[str] = None,
+        reflection_count: int = 0,
     ) -> Dict[str, str]:
         """运行知识提取 Agent 会话
 
@@ -143,6 +144,15 @@ class SakuraKnowledgeExtractor(SakuraAgentBase):
         effective_model = model or self._default_model
         system_prompt = EXTRACT_KNOWLEDGE_SYSTEM.format(max_chars=max_chars)
 
+        # 构建初始用户消息，为 AI 提供具体仓库上下文
+        # Build initial user message to provide repo-specific context for the AI
+        user_message = (
+            f"请对仓库 {repo_full_name} 执行知识提取。\n"
+            f"该仓库已有 {reflection_count} 次审查反思。\n"
+            f"请先查看 .sakura/ 目录结构，阅读反思文件，"
+            f"然后将可复用的知识整理到 rules/、docs/、plans/ 目录下。"
+        )
+
         logger.info(
             "[extract] 开始提取: {}, model={}, max_iterations={}",
             repo_full_name,
@@ -151,7 +161,10 @@ class SakuraKnowledgeExtractor(SakuraAgentBase):
         )
 
         await self._run_agent_conversation(
-            system_prompt, effective_model, max_iterations
+            system_prompt,
+            effective_model,
+            max_iterations,
+            initial_user_message=user_message,
         )
 
         changes = self._collect_changes()
