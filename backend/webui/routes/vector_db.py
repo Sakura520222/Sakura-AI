@@ -4,6 +4,8 @@
 以及数据库连接状态检查。仅对超级管理员可见和可用。
 """
 
+import asyncio
+
 from fastapi import APIRouter, Request, Depends
 from loguru import logger
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -20,6 +22,9 @@ from backend.webui.deps import (
     render_template,
 )
 from backend.webui.helpers.admin_log import log_admin_action
+
+# CSRF strategy: JSON API endpoints use header-based CSRF (require_csrf_header),
+# while form-submission endpoints use form-based CSRF (require_csrf).
 from backend.webui.i18n import detect_language
 
 router = APIRouter(prefix="/vector-db", tags=["WebUI Vector DB"])
@@ -88,7 +93,11 @@ def _get_collection_detail(collection_name: str):
                 sample_docs.append(
                     {
                         "id": doc_id,
-                        "content": (documents[i][:500] if i < len(documents) else ""),
+                        "content": (
+                            documents[i][:500]
+                            if i < len(documents) and documents[i]
+                            else ""
+                        ),
                         "metadata": metadatas[i] if i < len(metadatas) else {},
                     }
                 )
@@ -115,7 +124,7 @@ async def vector_db_page(
     user_prefs: dict = Depends(get_user_preferences),
 ):
     """渲染向量存储管理主页，列出所有 Collection"""
-    collections = _get_collections_info()
+    collections = await asyncio.to_thread(_get_collections_info)
 
     return render_template(
         "vector_db.html",
@@ -142,8 +151,8 @@ async def view_collection(
     user_prefs: dict = Depends(get_user_preferences),
 ):
     """查看指定 Collection 的详细信息和文档样本"""
-    collections = _get_collections_info()
-    detail = _get_collection_detail(collection_name)
+    collections = await asyncio.to_thread(_get_collections_info)
+    detail = await asyncio.to_thread(_get_collection_detail, collection_name)
 
     if detail is None:
         return toast_redirect(
@@ -176,11 +185,12 @@ async def delete_collection(
     db: AsyncSession = Depends(get_db),
     user: dict = Depends(require_super_admin),
     csrf_token: str = Depends(require_csrf),
+    user_prefs: dict = Depends(get_user_preferences),
 ):
     """删除指定的 Collection 及其所有文档"""
     try:
         vs = get_vector_store()
-        vs.client.delete_collection(name=collection_name)
+        await asyncio.to_thread(vs.client.delete_collection, name=collection_name)
 
         logger.info("Collection {} 已删除, by={}", collection_name, user["sub"])
         await log_admin_action(
@@ -196,13 +206,13 @@ async def delete_collection(
             "/vector-db/",
             "vector_db.delete_failed",
             "error",
-            lang=detect_language(),
+            lang=detect_language(user_prefs),
         )
 
     return toast_redirect(
         "/vector-db/",
         "vector_db.collection_deleted",
-        lang=detect_language(),
+        lang=detect_language(user_prefs),
     )
 
 
@@ -216,20 +226,26 @@ async def clear_collection(
     db: AsyncSession = Depends(get_db),
     user: dict = Depends(require_super_admin),
     csrf_token: str = Depends(require_csrf),
+    user_prefs: dict = Depends(get_user_preferences),
 ):
     """清空指定 Collection 的所有文档（保留 Collection 本身）"""
     try:
         vs = get_vector_store()
-        # 删除后重建
+        # 删除后重建，先获取旧元数据
         old_metadata = {}
         try:
-            old_col = vs.client.get_collection(name=collection_name)
+            old_col = await asyncio.to_thread(
+                vs.client.get_collection, name=collection_name
+            )
             old_metadata = old_col.metadata or {}
         except Exception:
-            pass
+            logger.warning(
+                "获取 Collection {} 元数据失败，将使用空元数据重建", collection_name
+            )
 
-        vs.client.delete_collection(name=collection_name)
-        vs.client.create_collection(
+        await asyncio.to_thread(vs.client.delete_collection, name=collection_name)
+        await asyncio.to_thread(
+            vs.client.create_collection,
             name=collection_name,
             metadata=old_metadata,
         )
@@ -248,13 +264,13 @@ async def clear_collection(
             f"/vector-db/collection/{collection_name}",
             "vector_db.clear_failed",
             "error",
-            lang=detect_language(),
+            lang=detect_language(user_prefs),
         )
 
     return toast_redirect(
         f"/vector-db/collection/{collection_name}",
         "vector_db.collection_cleared",
-        lang=detect_language(),
+        lang=detect_language(user_prefs),
     )
 
 
@@ -268,6 +284,7 @@ async def delete_documents(
     db: AsyncSession = Depends(get_db),
     user: dict = Depends(require_super_admin),
     csrf_token: str = Depends(require_csrf),
+    user_prefs: dict = Depends(get_user_preferences),
 ):
     """从 Collection 中删除指定的文档"""
     form = await request.form()
@@ -277,7 +294,7 @@ async def delete_documents(
             f"/vector-db/collection/{collection_name}",
             "vector_db.no_docs_selected",
             "error",
-            lang=detect_language(),
+            lang=detect_language(user_prefs),
         )
 
     doc_ids = [did.strip() for did in str(doc_ids_raw).split(",") if did.strip()]
@@ -286,13 +303,15 @@ async def delete_documents(
             f"/vector-db/collection/{collection_name}",
             "vector_db.no_docs_selected",
             "error",
-            lang=detect_language(),
+            lang=detect_language(user_prefs),
         )
 
     try:
         vs = get_vector_store()
-        collection = vs.client.get_collection(name=collection_name)
-        collection.delete(ids=doc_ids)
+        collection = await asyncio.to_thread(
+            vs.client.get_collection, name=collection_name
+        )
+        await asyncio.to_thread(collection.delete, ids=doc_ids)
 
         logger.info(
             "从 Collection {} 删除 {} 个文档, by={}",
@@ -314,13 +333,13 @@ async def delete_documents(
             f"/vector-db/collection/{collection_name}",
             "vector_db.delete_failed",
             "error",
-            lang=detect_language(),
+            lang=detect_language(user_prefs),
         )
 
     return toast_redirect(
         f"/vector-db/collection/{collection_name}",
         "vector_db.docs_deleted",
-        lang=detect_language(),
+        lang=detect_language(user_prefs),
     )
 
 
@@ -332,6 +351,7 @@ async def test_db_connection(
     request: Request,
     user: dict = Depends(require_super_admin),
     _csrf: str = Depends(require_csrf_header),
+    user_prefs: dict = Depends(get_user_preferences),
 ):
     """测试 MySQL 数据库连接"""
     try:
@@ -357,11 +377,12 @@ async def test_chromadb(
     request: Request,
     user: dict = Depends(require_super_admin),
     _csrf: str = Depends(require_csrf_header),
+    user_prefs: dict = Depends(get_user_preferences),
 ):
     """测试 ChromaDB 向量数据库连接"""
     try:
         vs = get_vector_store()
-        collections = vs.client.list_collections()
+        collections = await asyncio.to_thread(vs.client.list_collections)
         return {
             "success": True,
             "message": f"ChromaDB 连接正常，共有 {len(collections)} 个 Collection",
