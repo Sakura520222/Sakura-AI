@@ -9,40 +9,40 @@
 from __future__ import annotations
 
 import asyncio
+import base64
 import re
 from dataclasses import dataclass
 
 from loguru import logger
 
-from backend.core.config import get_settings
 from backend.core.github_app import GitHubAppClient
 from backend.services.agent_team.shell_executor import AgentTeamShellExecutor
 from backend.services.agent_team.workspace_service import AgentTeamWorkspaceService
 
 
-def _get_fresh_installation_token(
-    github_app: GitHubAppClient,
-    repo_owner: str,
-    repo_name: str,
-) -> str:
-    """获取新的 GitHub App installation access token。"""
-    try:
-        installation = github_app.integration.get_repo_installation(
-            owner=repo_owner, repo=repo_name,
-        )
-        access_token = github_app.integration.get_access_token(installation.id)
-        return access_token.token
-    except Exception as exc:
-        logger.warning("获取 installation token 失败: {}", exc)
-        return ""
+def _normalize_git_path(raw_path: str) -> str:
+    """归一化 git 输出中的文件路径。"""
+    path = raw_path.strip()
+    if path.startswith('"') and path.endswith('"'):
+        path = path[1:-1]
+    return re.sub(r"/+", "/", path.replace("\\", "/"))
 
 
-def _ensure_bot_suffix(bot_username: str | None) -> str:
-    """生成 GitHub App bot 提交显示名。"""
-    bot_name = bot_username or "Sakura Agent"
-    if bot_name.endswith("[bot]"):
-        return bot_name
-    return f"{bot_name}[bot]"
+def _decode_git_path(raw_path: str) -> str:
+    """解析 git 输出中的文件路径。"""
+    path = raw_path.strip()
+    if " -> " in path:
+        path = path.split(" -> ")[-1].strip()
+    return _normalize_git_path(path)
+
+
+def _decode_git_rename_paths(raw_path: str) -> tuple[str, str] | None:
+    """解析 git rename 输出中的旧路径和新路径。"""
+    path = raw_path.strip()
+    if " -> " not in path:
+        return None
+    old_path, new_path = path.split(" -> ", 1)
+    return _normalize_git_path(old_path), _normalize_git_path(new_path)
 
 
 @dataclass(frozen=True)
@@ -53,6 +53,16 @@ class PRCreationResult:
     pr_url: str
     commit_sha: str
     branch_name: str
+
+
+@dataclass(frozen=True)
+class _ApiCommitChange:
+    """通过 GitHub API 提交的单个文件变更。"""
+
+    path: str
+    mode: str
+    content: bytes | None = None
+    delete: bool = False
 
 
 class AgentTeamPRService:
@@ -73,24 +83,14 @@ class AgentTeamPRService:
         repo_name: str,
         max_push_retries: int = 2,
     ) -> str:
-        """将工作区变更 commit 并 push，返回 commit SHA。
+        """将工作区变更通过 GitHub API 提交到远端分支，返回 commit SHA。
 
-        push 失败时会尝试刷新 GitHub App token 并重试。
+        通过 GitHub App installation token 创建提交，保持与记忆系统一致的 bot 身份。
         """
         executor = AgentTeamShellExecutor(workspace, self.workspace_service)
 
-        # 确保有 git user identity（容器环境可能缺少全局配置）
-        bot_name = _ensure_bot_suffix(get_settings().bot_username)
-        await executor.run(f'git config user.name "{bot_name}"')
-        await executor.run(
-            f'git config user.email "{bot_name}+noreply@users.noreply.github.com"'
-        )
-
         # 确保 .gitignore 排除 Agent 工作区不应提交的路径
         await self._ensure_gitignore(executor)
-
-        # git add 所有修改
-        await executor.run("git add -A")
 
         # 检查是否有变更
         status_result = await executor.run("git status --porcelain")
@@ -99,70 +99,178 @@ class AgentTeamPRService:
             head_result = await executor.run_args(["git", "rev-parse", "HEAD"])
             return head_result.stdout.strip()
 
-        # commit
-        await executor.run_args(["git", "commit", "-m", commit_message])
+        changes = await self._collect_changes_for_api_commit(executor)
+        if not changes:
+            logger.info("工作区没有可通过 API 提交的文件，跳过 commit")
+            head_result = await executor.run_args(["git", "rev-parse", "HEAD"])
+            return head_result.stdout.strip()
 
-        # push（失败时刷新 token 重试）
+        base_sha_result = await executor.run_args(["git", "rev-parse", "HEAD"])
+        base_sha = base_sha_result.stdout.strip()
+
+        github_app = GitHubAppClient()
+        client = github_app.get_repo_client(repo_owner, repo_name)
+        if not client:
+            raise RuntimeError(f"无法获取 GitHub 客户端: {repo_owner}/{repo_name}")
+        repo = client.get_repo(f"{repo_owner}/{repo_name}")
+
         last_error: str | None = None
         for attempt in range(max_push_retries):
-            push_result = await executor.run_args(
-                ["git", "push", "-u", "origin", branch_name],
-            )
-            if push_result.returncode == 0:
+            try:
+                sha = await self._commit_changes_via_api(
+                    repo,
+                    changes,
+                    branch_name,
+                    commit_message,
+                    base_sha,
+                )
                 break
-
-            last_error = (push_result.stderr or push_result.stdout).strip()
-            logger.warning(
-                "git push 失败 (attempt {}/{}): {}",
-                attempt + 1,
-                max_push_retries,
-                last_error[:300],
-            )
-            if attempt < max_push_retries - 1:
-                await self._refresh_remote_token(executor, repo_owner, repo_name)
+            except Exception as exc:
+                last_error = str(exc)
+                logger.warning(
+                    "GitHub API 提交失败 (attempt {}/{}): {}",
+                    attempt + 1,
+                    max_push_retries,
+                    last_error[:300],
+                )
+                if attempt >= max_push_retries - 1:
+                    raise RuntimeError(
+                        f"GitHub API 提交失败（已重试 {max_push_retries} 次）: "
+                        f"{last_error[:500] if last_error else 'unknown'}"
+                    ) from exc
                 await asyncio.sleep(1)
-        else:
-            raise RuntimeError(
-                f"git push 失败（已重试 {max_push_retries} 次）: "
-                f"{last_error[:500] if last_error else 'unknown'}"
-            )
 
-        # 获取 commit SHA
-        head_result = await executor.run_args(["git", "rev-parse", "HEAD"])
-        sha = head_result.stdout.strip()
+        await self._sync_local_branch_to_commit(executor, branch_name, sha)
         logger.info(
-            "Agent 推送成功: {}:{} @ {}",
+            "Agent API 提交成功: {}:{} @ {}",
             repo_owner + "/" + repo_name,
             branch_name,
             sha[:8],
         )
         return sha
 
-    async def _refresh_remote_token(
+    async def _collect_changes_for_api_commit(
         self,
         executor: AgentTeamShellExecutor,
-        repo_owner: str,
-        repo_name: str,
+    ) -> list[_ApiCommitChange]:
+        """收集工作区中可通过 GitHub API 提交的文件变更。"""
+        status_result = await executor.run("git status --porcelain")
+        changes: list[_ApiCommitChange] = []
+        for line in status_result.stdout.splitlines():
+            if len(line) < 4:
+                continue
+            status_code = line[:2]
+            raw_path = line[3:]
+            rename_paths = _decode_git_rename_paths(raw_path)
+            if "R" in status_code and rename_paths:
+                old_path, file_path = rename_paths
+                changes.append(
+                    _ApiCommitChange(path=old_path, mode="100644", delete=True)
+                )
+            else:
+                file_path = _decode_git_path(raw_path)
+            if "D" in status_code:
+                changes.append(
+                    _ApiCommitChange(path=file_path, mode="100644", delete=True)
+                )
+                continue
+            mode = await self._get_git_file_mode(executor, file_path)
+            absolute_path = self.workspace_service.resolve_inside_workspace(
+                executor.workspace,
+                file_path,
+            )
+            if not absolute_path.is_file():
+                continue
+            changes.append(
+                _ApiCommitChange(
+                    path=file_path,
+                    mode=mode,
+                    content=absolute_path.read_bytes(),
+                )
+            )
+        return changes
+
+    async def _get_git_file_mode(
+        self,
+        executor: AgentTeamShellExecutor,
+        file_path: str,
+    ) -> str:
+        """读取 Git 索引中的文件模式，新增文件默认按普通文件处理。"""
+        result = await executor.run_args(["git", "ls-files", "-s", "--", file_path])
+        line = result.stdout.strip().splitlines()[0] if result.stdout.strip() else ""
+        mode = line.split()[0] if line else "100644"
+        return mode if mode in {"100644", "100755", "120000"} else "100644"
+
+    async def _commit_changes_via_api(
+        self,
+        repo,
+        changes: list[_ApiCommitChange],
+        branch_name: str,
+        commit_message: str,
+        base_sha: str,
+    ) -> str:
+        """使用 GitHub Git Data API 创建提交，身份由 installation token 决定。"""
+        from github import GithubException
+        from github.InputGitTreeElement import InputGitTreeElement
+
+        def _sync() -> str:
+            try:
+                ref = repo.get_git_ref(f"heads/{branch_name}")
+            except GithubException as exc:
+                if exc.status != 404:
+                    raise
+                ref = repo.create_git_ref(
+                    ref=f"refs/heads/{branch_name}",
+                    sha=base_sha,
+                )
+
+            parent = repo.get_git_commit(ref.object.sha)
+            tree_elements = []
+            for change in changes:
+                if change.delete:
+                    tree_elements.append(
+                        InputGitTreeElement(
+                            path=change.path,
+                            mode=change.mode,
+                            type="blob",
+                            sha=None,
+                        )
+                    )
+                    continue
+
+                content = change.content or b""
+                encoded = base64.b64encode(content).decode("ascii")
+                blob = repo.create_git_blob(encoded, "base64")
+                tree_elements.append(
+                    InputGitTreeElement(
+                        path=change.path,
+                        mode=change.mode,
+                        type="blob",
+                        sha=blob.sha,
+                    )
+                )
+
+            tree = repo.create_git_tree(tree_elements, parent.tree)
+            commit = repo.create_git_commit(commit_message, tree, [parent])
+            ref.edit(commit.sha)
+            return commit.sha
+
+        return await asyncio.to_thread(_sync)
+
+    async def _sync_local_branch_to_commit(
+        self,
+        executor: AgentTeamShellExecutor,
+        branch_name: str,
+        commit_sha: str,
     ) -> None:
-        """刷新 GitHub App installation token 并更新 remote origin URL。"""
-        from backend.core.github_app import GitHubAppClient
-
-        github_app = GitHubAppClient()
-        token = _get_fresh_installation_token(github_app, repo_owner, repo_name)
-        if not token:
-            logger.warning("无法获取新 token，跳过 remote URL 刷新")
+        """同步本地工作区到 API 创建的远端提交。"""
+        fetch_result = await executor.run_args(["git", "fetch", "origin", branch_name])
+        if fetch_result.returncode != 0:
+            logger.warning("同步 Agent 远端分支失败: {}", fetch_result.stderr)
             return
-
-        clone_url = (
-            f"https://x-access-token:{token}@github.com/{repo_owner}/{repo_name}.git"
-        )
-        result = await executor.run_args(
-            ["git", "remote", "set-url", "origin", clone_url],
-        )
-        if result.returncode != 0:
-            logger.warning("更新 remote URL 失败: {}", result.stderr)
-        else:
-            logger.info("已刷新 remote origin token，准备重试 push")
+        reset_result = await executor.run_args(["git", "reset", "--hard", commit_sha])
+        if reset_result.returncode != 0:
+            logger.warning("重置 Agent 工作区到 API 提交失败: {}", reset_result.stderr)
 
     async def _ensure_gitignore(
         self,
@@ -182,7 +290,11 @@ class AgentTeamPRService:
         existing_rules = {line.strip() for line in existing.splitlines()}
         missing = [rule for rule in excludes if rule not in existing_rules]
         if missing:
-            append_block = ("\n" if existing and not existing.endswith("\n") else "") + "\n".join(missing) + "\n"
+            append_block = (
+                ("\n" if existing and not existing.endswith("\n") else "")
+                + "\n".join(missing)
+                + "\n"
+            )
             gitignore_path.write_text(existing + append_block, encoding="utf-8")
             logger.info("已追加 {} 条 .gitignore 规则", len(missing))
 
@@ -198,7 +310,6 @@ class AgentTeamPRService:
         max_retries: int = 3,
     ) -> PRCreationResult:
         """通过 GitHub API 创建 Pull Request，422 时自动重试。"""
-        from backend.core.github_app import GitHubAppClient
         from github import GithubException
 
         github_app = GitHubAppClient()
