@@ -438,14 +438,17 @@ class SetupService:
                 existing.is_active = True
                 logger.info(f"已将用户 {github_username} 提升为超级管理员")
             else:
+                from backend.core.config import get_settings
+
+                settings = get_settings()
                 admin = TelegramUser(
                     telegram_id=telegram_id,
                     github_username=github_username,
                     role="super_admin",
                     is_active=True,
-                    daily_quota=999,
-                    weekly_quota=9999,
-                    monthly_quota=99999,
+                    daily_quota=settings.init_admin_daily_quota,
+                    weekly_quota=settings.init_admin_weekly_quota,
+                    monthly_quota=settings.init_admin_monthly_quota,
                 )
                 session.add(admin)
                 logger.info(f"已创建超级管理员: {github_username}")
