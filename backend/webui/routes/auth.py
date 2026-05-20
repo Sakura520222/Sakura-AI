@@ -719,14 +719,23 @@ async def passkey_verify_discover(request: Request, body: dict = Body(...)):
                     },
                 )
             # Build the full token payload
-            # Note: github_id and avatar_url are not available for passkey-only login;
-            # the user can refresh them via a subsequent GitHub OAuth if needed.
+            # Note: github_id is not available for passkey-only login; the user can
+            # refresh it via a subsequent GitHub OAuth if needed.
+            # avatar_url is derived from github_username via GitHub's public avatar
+            # endpoint, so the WebUI can display the user's avatar without an extra
+            # API call.
+            github_username = user.github_username or ""
+            avatar_url = (
+                f"https://avatars.githubusercontent.com/{github_username}"
+                if github_username
+                else None
+            )
             token_payload = {
-                "sub": user.github_username or "",
+                "sub": github_username,
                 "role": user.role,
                 "user_id": user.id,
                 "github_id": None,
-                "avatar_url": None,
+                "avatar_url": avatar_url,
             }
             await reset_mfa_failures(user_id)
             await session.commit()
