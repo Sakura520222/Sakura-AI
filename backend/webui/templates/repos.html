@@ -215,7 +215,7 @@ window.addEventListener('sse:index-issues', function(e) {
 // 触发仓库扫描
 function triggerScan(btn, repoName, csrfToken) {
     if (btn.disabled) return;
-    if (!confirm(_t('repo_confirm_scan') + ' ' + repoName + '？')) return;
+    if (!confirm(_t('repo_confirm_scan').replace('{repo}', repoName))) return;
 
     btn.disabled = true;
     btn.dataset.originalText = btn.textContent;

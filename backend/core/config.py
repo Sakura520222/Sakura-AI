@@ -582,6 +582,7 @@ class Settings(BaseSettings):
     agent_team_max_lines_changed: int = 500
     agent_team_run_tests: bool = True
     agent_team_auto_install_deps: bool = True  # 自动安装工作区项目依赖
+    # Deprecated: Shell 工具已切换为黑名单模式，此字段仅保留用于旧配置兼容。
     agent_team_test_command_allowlist: str = (
         # Python: test, lint, format, type-check, package
         "pytest -q,python -m pytest,"

@@ -126,7 +126,10 @@ class AgentTeamCandidateService:
         base_branch: str | None = None,
         overrides: dict | None = None,
     ) -> AgentTeamTask:
-        """将候选项转为 AgentTeamTask。"""
+        """将候选项转为 AgentTeamTask。
+
+        overrides 用于手动创建任务时覆盖候选项字段，优先级高于候选项和显式 base_branch。
+        """
         values = {
             "source_type": candidate.source_type,
             "source_id": candidate.source_id,

@@ -6,6 +6,7 @@ from datetime import datetime, timezone
 
 from fastapi import APIRouter, BackgroundTasks, Depends, Form, Request
 from fastapi.responses import JSONResponse
+from loguru import logger
 from sqlalchemy import desc, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -84,7 +85,6 @@ AGENT_TEAM_CONFIG_KEYS = [
     "agent_team_max_lines_changed",
     "agent_team_run_tests",
     "agent_team_auto_install_deps",
-    "agent_team_test_command_allowlist",
     "agent_team_test_command_blocklist",
     "agent_team_skills_enabled",
     "agent_team_skills_root",
@@ -258,7 +258,6 @@ AGENT_TEAM_CONFIG_GROUPS = [
             "agent_team_max_lines_changed",
             "agent_team_run_tests",
             "agent_team_auto_install_deps",
-            "agent_team_test_command_allowlist",
             "agent_team_test_command_blocklist",
         ],
     },
@@ -1162,8 +1161,6 @@ async def _run_agent_task_background(task_id: int) -> None:
 
         await submit_agent_team_task(task_id)
     except Exception as exc:
-        from loguru import logger
-
         logger.error(
             "Agent 后台任务提交失败: task_id={}, error={}", task_id, exc, exc_info=True
         )
@@ -1176,8 +1173,6 @@ async def _resume_agent_task_background(task_id: int) -> None:
 
         await resume_agent_team_task(task_id)
     except Exception as exc:
-        from loguru import logger
-
         logger.error(
             "Agent 后台任务续跑失败: task_id={}, error={}", task_id, exc, exc_info=True
         )
@@ -1558,7 +1553,6 @@ async def submit_user_prompt(
             "prompt_id": prompt.id,
         })
     except Exception as exc:
-        from loguru import logger
         logger.debug("SSE 发布 prompt 通知失败: {}", exc)
 
     return JSONResponse({
