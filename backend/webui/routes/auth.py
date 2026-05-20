@@ -118,7 +118,7 @@ def _build_login_token_payload(
     user: TelegramUser,
     github_username: str,
     github_id: int | None,
-    avatar_url: str,
+    avatar_url: str | None,
 ) -> dict:
     """构建 WebUI/API 登录 JWT payload。"""
     return {
@@ -718,25 +718,16 @@ async def passkey_verify_discover(request: Request, body: dict = Body(...)):
                         "data": None,
                     },
                 )
-            # Build the full token payload
-            # Note: github_id is not available for passkey-only login; the user can
-            # refresh it via a subsequent GitHub OAuth if needed.
-            # avatar_url is derived from github_username via GitHub's public avatar
-            # endpoint, so the WebUI can display the user's avatar without an extra
-            # API call.
+            # github_id is not available for passkey-only login.
             github_username = user.github_username or ""
             avatar_url = (
                 f"https://avatars.githubusercontent.com/{github_username}"
                 if github_username
                 else None
             )
-            token_payload = {
-                "sub": github_username,
-                "role": user.role,
-                "user_id": user.id,
-                "github_id": None,
-                "avatar_url": avatar_url,
-            }
+            token_payload = _build_login_token_payload(
+                user, github_username, None, avatar_url
+            )
             await reset_mfa_failures(user_id)
             await session.commit()
     except AccountLockedError as exc:
