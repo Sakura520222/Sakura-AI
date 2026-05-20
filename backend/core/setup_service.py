@@ -438,14 +438,21 @@ class SetupService:
                 existing.is_active = True
                 logger.info(f"已将用户 {github_username} 提升为超级管理员")
             else:
+                from backend.core.config import get_settings  # 延迟导入避免循环引用
+
+                settings = get_settings()
                 admin = TelegramUser(
                     telegram_id=telegram_id,
                     github_username=github_username,
                     role="super_admin",
                     is_active=True,
-                    daily_quota=999,
-                    weekly_quota=9999,
-                    monthly_quota=99999,
+                    daily_quota=settings.init_admin_daily_quota,
+                    weekly_quota=settings.init_admin_weekly_quota,
+                    monthly_quota=settings.init_admin_monthly_quota,
+                    # 管理员 Issue 配额复用管理员 PR 初始配额，避免新增独立配置项。
+                    issue_daily_quota=settings.init_admin_daily_quota,
+                    issue_weekly_quota=settings.init_admin_weekly_quota,
+                    issue_monthly_quota=settings.init_admin_monthly_quota,
                 )
                 session.add(admin)
                 logger.info(f"已创建超级管理员: {github_username}")

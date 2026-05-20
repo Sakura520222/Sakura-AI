@@ -89,6 +89,17 @@ def test_fetch_url_dynamic_config_fields_support_live_update():
             setattr(settings, key, value)
 
 
+def test_registration_quota_multiplier_has_own_dynamic_group():
+    assert "registration_quota" in DYNAMIC_CONFIG_GROUPS
+    assert DYNAMIC_CONFIG_GROUPS["registration_quota"]["keys"] == [
+        "register_quota_multiplier"
+    ]
+    assert "register_quota_multiplier" not in DYNAMIC_CONFIG_GROUPS["init_quota"][
+        "keys"
+    ]
+    assert "register_quota_multiplier" in get_all_db_config_keys()
+
+
 def test_web_search_configs_have_range_limits_and_fetch_url_configs_do_not():
     from backend.core.config import DYNAMIC_CONFIG_RANGES
 

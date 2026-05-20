@@ -420,25 +420,35 @@ class TelegramService:
         if existing_by_github:
             return False, f"GitHub 用户名 {github_username} 已被其他账号绑定"
 
-        # 如果是超级管理员，自动设置角色为 super_admin，使用完整配额
+        # 如果是超级管理员，自动设置角色为 super_admin，使用管理员配额
         if await self.is_super_admin(telegram_id):
             role = UserRole.SUPER_ADMIN
-            multiplier = 1.0
+            user = TelegramUser(
+                telegram_id=telegram_id,
+                github_username=github_username,
+                role=role.value,
+                daily_quota=settings.init_admin_daily_quota,
+                weekly_quota=settings.init_admin_weekly_quota,
+                monthly_quota=settings.init_admin_monthly_quota,
+                # 管理员 Issue 配额复用管理员 PR 初始配额，避免新增独立配置项。
+                issue_daily_quota=settings.init_admin_daily_quota,
+                issue_weekly_quota=settings.init_admin_weekly_quota,
+                issue_monthly_quota=settings.init_admin_monthly_quota,
+            )
         else:
             role = UserRole.USER
             multiplier = settings.register_quota_multiplier
-
-        user = TelegramUser(
-            telegram_id=telegram_id,
-            github_username=github_username,
-            role=role.value,
-            daily_quota=max(1, int(10 * multiplier)),
-            weekly_quota=max(1, int(50 * multiplier)),
-            monthly_quota=max(1, int(200 * multiplier)),
-            issue_daily_quota=max(1, int(20 * multiplier)),
-            issue_weekly_quota=max(1, int(80 * multiplier)),
-            issue_monthly_quota=max(1, int(300 * multiplier)),
-        )
+            user = TelegramUser(
+                telegram_id=telegram_id,
+                github_username=github_username,
+                role=role.value,
+                daily_quota=max(1, int(settings.init_user_daily_quota * multiplier)),
+                weekly_quota=max(1, int(settings.init_user_weekly_quota * multiplier)),
+                monthly_quota=max(1, int(settings.init_user_monthly_quota * multiplier)),
+                issue_daily_quota=max(1, int(settings.init_user_issue_daily_quota * multiplier)),
+                issue_weekly_quota=max(1, int(settings.init_user_issue_weekly_quota * multiplier)),
+                issue_monthly_quota=max(1, int(settings.init_user_issue_monthly_quota * multiplier)),
+            )
         try:
             self.session.add(user)
             await self.session.commit()
@@ -447,11 +457,18 @@ class TelegramService:
             logger.error(f"用户注册失败: {e}", exc_info=True)
             return False, f"注册失败: {str(e)}"
 
-        quota_info = (
-            f"\n📊 配额（×{multiplier}）:\n"
-            f"  PR: {user.daily_quota}/{user.weekly_quota}/{user.monthly_quota}（日/周/月）\n"
-            f"  Issue: {user.issue_daily_quota}/{user.issue_weekly_quota}/{user.issue_monthly_quota}（日/周/月）"
-        )
+        if role == UserRole.SUPER_ADMIN:
+            quota_info = (
+                f"\n📊 管理员配额:\n"
+                f"  PR: {user.daily_quota}/{user.weekly_quota}/{user.monthly_quota}（日/周/月）\n"
+                f"  Issue: {user.issue_daily_quota}/{user.issue_weekly_quota}/{user.issue_monthly_quota}（日/周/月）"
+            )
+        else:
+            quota_info = (
+                f"\n📊 配额（×{multiplier}）:\n"
+                f"  PR: {user.daily_quota}/{user.weekly_quota}/{user.monthly_quota}（日/周/月）\n"
+                f"  Issue: {user.issue_daily_quota}/{user.issue_weekly_quota}/{user.issue_monthly_quota}（日/周/月）"
+            )
         return True, f"注册成功{quota_info}"
 
     async def subscribe_repo(

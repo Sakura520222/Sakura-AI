@@ -239,6 +239,55 @@ class Settings(BaseSettings):
         description="自注册用户配额倍率（0.1-1.0）",
     )
 
+    # ========== 初始用户配额配置 / Initial user quota configuration ==========
+    # Setup Wizard 创建的初始管理员配额
+    init_admin_daily_quota: int = Field(
+        999,
+        ge=1,
+        description="初始管理员每日 PR 审查配额",
+    )
+    init_admin_weekly_quota: int = Field(
+        9999,
+        ge=1,
+        description="初始管理员每周 PR 审查配额",
+    )
+    init_admin_monthly_quota: int = Field(
+        99999,
+        ge=1,
+        description="初始管理员每月 PR 审查配额",
+    )
+    # 自注册用户基础配额（乘以 register_quota_multiplier 得到实际配额）
+    init_user_daily_quota: int = Field(
+        10,
+        ge=1,
+        description="自注册用户基础每日 PR 审查配额",
+    )
+    init_user_weekly_quota: int = Field(
+        50,
+        ge=1,
+        description="自注册用户基础每周 PR 审查配额",
+    )
+    init_user_monthly_quota: int = Field(
+        200,
+        ge=1,
+        description="自注册用户基础每月 PR 审查配额",
+    )
+    init_user_issue_daily_quota: int = Field(
+        20,
+        ge=1,
+        description="自注册用户基础每日 Issue 分析配额",
+    )
+    init_user_issue_weekly_quota: int = Field(
+        80,
+        ge=1,
+        description="自注册用户基础每周 Issue 分析配额",
+    )
+    init_user_issue_monthly_quota: int = Field(
+        300,
+        ge=1,
+        description="自注册用户基础每月 Issue 分析配额",
+    )
+
     # GitHub App机器人用户名（可选，用于幂等性检查）
     bot_username: Optional[str] = None  # 备用方案，当无法从GitHub API获取时使用
 
@@ -1183,6 +1232,48 @@ DYNAMIC_CONFIG_GROUPS: OrderedDict[str, dict] = OrderedDict(
                 ],
             },
         ),
+        (
+            "registration_quota",
+            {
+                "label": "自注册配额配置",
+                "icon": "user-plus",
+                "descriptions": {
+                    "register_quota_multiplier": "自注册用户配额相对于基础值的倍率（0.1-1.0）",
+                },
+                "keys": [
+                    "register_quota_multiplier",
+                ],
+            },
+        ),
+        (
+            "init_quota",
+            {
+                "label": "初始用户配额配置",
+                "icon": "users",
+                "descriptions": {
+                    "init_admin_daily_quota": "Setup Wizard 创建的初始管理员每日 PR 审查配额",
+                    "init_admin_weekly_quota": "Setup Wizard 创建的初始管理员每周 PR 审查配额",
+                    "init_admin_monthly_quota": "Setup Wizard 创建的初始管理员每月 PR 审查配额",
+                    "init_user_daily_quota": "自注册用户基础每日 PR 审查配额（实际值 = 基础值 × 倍率）",
+                    "init_user_weekly_quota": "自注册用户基础每周 PR 审查配额",
+                    "init_user_monthly_quota": "自注册用户基础每月 PR 审查配额",
+                    "init_user_issue_daily_quota": "自注册用户基础每日 Issue 分析配额",
+                    "init_user_issue_weekly_quota": "自注册用户基础每周 Issue 分析配额",
+                    "init_user_issue_monthly_quota": "自注册用户基础每月 Issue 分析配额",
+                },
+                "keys": [
+                    "init_admin_daily_quota",
+                    "init_admin_weekly_quota",
+                    "init_admin_monthly_quota",
+                    "init_user_daily_quota",
+                    "init_user_weekly_quota",
+                    "init_user_monthly_quota",
+                    "init_user_issue_daily_quota",
+                    "init_user_issue_weekly_quota",
+                    "init_user_issue_monthly_quota",
+                ],
+            },
+        ),
     ]
 )
 
@@ -1285,6 +1376,16 @@ DYNAMIC_CONFIG_RANGES: dict[str, tuple[float, float]] = {
     "agent_team_max_tool_rounds": (1, 1000),
     "agent_team_reviewer_max_tool_rounds": (5, 500),
     "max_concurrent_issues": (1, 500),
+    # 初始用户配额
+    "init_admin_daily_quota": (1, 999999),
+    "init_admin_weekly_quota": (1, 999999),
+    "init_admin_monthly_quota": (1, 999999),
+    "init_user_daily_quota": (1, 999999),
+    "init_user_weekly_quota": (1, 999999),
+    "init_user_monthly_quota": (1, 999999),
+    "init_user_issue_daily_quota": (1, 999999),
+    "init_user_issue_weekly_quota": (1, 999999),
+    "init_user_issue_monthly_quota": (1, 999999),
 }
 
 # 字段中文标签
@@ -1453,6 +1554,17 @@ DYNAMIC_CONFIG_LABELS: dict[str, str] = {
     "agent_team_skills_enabled": "启用 Agent Skills",
     "agent_team_skills_root": "Skills 根目录",
     "agent_team_candidate_cache_ttl": "候选池缓存 TTL（秒）",
+    # 初始用户配额
+    "init_admin_daily_quota": "管理员初始每日 PR 配额",
+    "init_admin_weekly_quota": "管理员初始每周 PR 配额",
+    "init_admin_monthly_quota": "管理员初始每月 PR 配额",
+    "init_user_daily_quota": "自注册基础每日 PR 配额",
+    "init_user_weekly_quota": "自注册基础每周 PR 配额",
+    "init_user_monthly_quota": "自注册基础每月 PR 配额",
+    "init_user_issue_daily_quota": "自注册基础每日 Issue 配额",
+    "init_user_issue_weekly_quota": "自注册基础每周 Issue 配额",
+    "init_user_issue_monthly_quota": "自注册基础每月 Issue 配额",
+    "register_quota_multiplier": "自注册配额倍率",
 }
 
 # 内存 TTL 缓存（进程级，多 Worker 部署时各进程独立，配置变更仅当前进程可见）

@@ -219,17 +219,133 @@ class IssueAnalyzer:
                             return json.loads(text[start : i + 1])
                         except json.JSONDecodeError:
                             break
-            logger.warning(f"无法解析分析结果 JSON: {text[:200]}...")
-            return {
-                "category": "other",
-                "priority": "medium",
-                "summary": response_text[:500] if response_text else "解析失败",
-                "feasibility": "无法评估",
-                "suggested_labels": [],
-                "suggested_assignees": [],
-                "suggested_milestone": None,
-                "duplicate_of": None,
-            }
+
+            # JSON 完整解析失败，尝试从不完整的 JSON 中提取字段
+            partial_result = self._extract_partial_json_fields(text)
+
+            # 提取到有效 summary 时使用提取结果，否则使用完整响应文本
+            if not partial_result.get("summary"):
+                # 移除开头的思考/过渡文本，保留有价值的内容
+                cleaned_text = response_text.strip() if response_text else "解析失败"
+                partial_result["summary"] = cleaned_text
+
+            logger.warning(f"无法解析分析结果 JSON，已降级处理: {text[:200]}...")
+            return partial_result
+
+    @staticmethod
+    def _extract_partial_json_fields(text: str) -> Dict[str, Any]:
+        """从不完整的 JSON 文本中提取已知字段
+
+        当 AI 返回的 JSON 被截断（如 token 限制）或前面带有思考文本时，
+        尝试通过正则提取关键字段以减少信息丢失。
+
+        Args:
+            text: AI 返回的原始文本（可能包含不完整 JSON）
+
+        Returns:
+            提取到的字段字典，缺失字段使用默认值填充
+        """
+        # 找到 JSON 起始位置
+        json_start = text.find("{")
+        json_text = text[json_start:] if json_start >= 0 else ""
+
+        def _unescape_json_string(value: str) -> str:
+            """反转义 JSON 字符串中的转义序列。
+
+            优先使用 ``json.loads`` 一次性正确处理所有转义，
+            避免 ``replace("\\\\", "\\")`` 后新产生的 ``\\n`` 被后续替换误伤。
+            截断 / 非法转义时回退到逐项替换。
+            """
+            try:
+                return json.loads(f'"{value}"')
+            except json.JSONDecodeError:
+                # Best-effort fallback for truncated / malformed JSON
+                return (
+                    value.replace("\\\\", "\\")
+                    .replace("\\n", "\n")
+                    .replace("\\r", "\r")
+                    .replace("\\t", "\t")
+                    .replace("\\b", "\b")
+                    .replace("\\f", "\f")
+                    .replace("\\/", "/")
+                    .replace('\\"', '"')
+                )
+
+        def _extract_string_field(name: str) -> str | None:
+            """提取 JSON 字符串字段值，处理转义字符。
+
+            正则使用 ``(?:"|$)`` 而非更严格的 ``"`` 来闭合，
+            以处理 AI 响应被截断时最后一个字段缺少闭合引号的场景。
+            """
+            pattern = rf'"{name}"\s*:\s*"((?:[^"\\]|\\.)*)(?:"|$)'
+            match = re.search(pattern, json_text)
+            if match:
+                return _unescape_json_string(match.group(1))
+            return None
+
+        def _extract_number_field(name: str) -> int | None:
+            """提取 JSON 数值型字段（int 或 null）"""
+            pattern = rf'"{name}"\s*:\s*(\d+|null)'
+            match = re.search(pattern, json_text)
+            if match:
+                val = match.group(1)
+                return None if val == "null" else int(val)
+            return None
+
+        # 提取各个字段
+        category = _extract_string_field("category")
+        priority = _extract_string_field("priority")
+        summary = _extract_string_field("summary")
+        feasibility = _extract_string_field("feasibility")
+        suggested_title = _extract_string_field("suggested_title")
+        duplicate_of = _extract_number_field("duplicate_of")
+
+        # 尝试提取 suggested_labels 和 suggested_assignees 数组
+        suggested_labels = []
+        suggested_assignees = []
+
+        # suggested_labels: 提取数组中的 name 字段
+        labels_match = re.search(r'"suggested_labels"\s*:\s*\[', json_text)
+        if labels_match:
+            array_text = json_text[labels_match.end() :]
+            # 逐个提取 name 和 confidence
+            for m in re.finditer(r'\{\s*"name"\s*:\s*"((?:[^"\\]|\\.)*)"', array_text):
+                label_name = _unescape_json_string(m.group(1))
+                suggested_labels.append(
+                    {
+                        "name": label_name,
+                        "confidence": 0.5,
+                        "reason": "",
+                    }
+                )
+
+        # suggested_assignees: 提取数组中的 username 字段
+        assignees_match = re.search(r'"suggested_assignees"\s*:\s*\[', json_text)
+        if assignees_match:
+            array_text = json_text[assignees_match.end() :]
+            for m in re.finditer(
+                r'\{\s*"username"\s*:\s*"((?:[^"\\]|\\.)*)"', array_text
+            ):
+                username = _unescape_json_string(m.group(1))
+                suggested_assignees.append(
+                    {
+                        "username": username,
+                        "confidence": 0.5,
+                        "reason": "",
+                    }
+                )
+
+        return {
+            "category": category or "other",
+            "priority": priority or "medium",
+            "summary": summary or "",
+            "feasibility": feasibility or "无法评估",
+            "suggested_labels": suggested_labels,
+            "suggested_assignees": suggested_assignees,
+            "suggested_milestone": None,
+            "suggested_title": suggested_title,
+            "duplicate_of": duplicate_of,
+        }
 
     async def analyze_issue(
         self,

@@ -242,9 +242,21 @@ class NotificationSender:
         major_count: int,
         total_findings: int,
         issue_url: str = "",
+        scan_id: int | None = None,
         chat_ids: Optional[List[int]] = None,
     ):
-        """扫描完成通知"""
+        """扫描完成通知
+
+        Args:
+            repo_name: 仓库全名
+            health_score: 健康评分 (0-100)
+            critical_count: Critical 问题数
+            major_count: Major 问题数
+            total_findings: 总发现数
+            issue_url: GitHub Issue 链接（可为空）
+            scan_id: 扫描记录 ID，用于生成 WebUI 链接回退
+            chat_ids: 通知目标 Telegram chat_id 列表
+        """
         try:
             safe_repo_name = escape_markdown(repo_name, version=1)
             health_emoji = (
@@ -260,8 +272,15 @@ class NotificationSender:
                 f"📝 总计发现: {total_findings} 个问题\n"
             )
 
+            # 链接：如有 Issue 链接则展示；始终提供 WebUI 链接回退
             if issue_url:
                 text += f"\n[查看详细报告]({issue_url})"
+            if scan_id is not None:
+                # 延迟导入：避免 telegram 模块与 webui 模块之间产生循环依赖
+                from backend.webui.deps import get_webui_url
+
+                webui_url = get_webui_url(f"/scans/{scan_id}")
+                text += f"\n[🌐 WebUI 查看详情]({webui_url})"
 
             if not chat_ids:
                 logger.debug(f"无通知目标，跳过扫描完成通知: {repo_name}")
