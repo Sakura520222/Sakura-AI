@@ -82,6 +82,15 @@ def _contains_shell_meta(command: str) -> bool:
     return False
 
 
+def _has_redundant_cd_prefix(command: str) -> bool:
+    """检查是否包含多余的 cd ... && 前缀。"""
+    try:
+        tokens = shlex.split(command)
+    except ValueError:
+        return False
+    return len(tokens) >= 4 and tokens[0] == "cd" and tokens[2] == "&&"
+
+
 def _command_name(first_token: str) -> str:
     """提取命令 basename（处理 /usr/bin/curl、C:/bin/curl.exe 等路径形式）。"""
     name = first_token.replace("\\", "/").rsplit("/", 1)[-1].lower()
@@ -111,7 +120,7 @@ def _parse_pipe_segments(tokens: list[str]) -> list[list[str]] | None:
     for token in tokens:
         if token == "|":
             if not current:
-                return None  # 管道符在开头或连续管道
+                return None
             segments.append(current)
             current = []
         else:
@@ -130,6 +139,9 @@ async def is_agent_command_allowed(command: str) -> bool:
     """
     command = command.strip()
     if not command:
+        return False
+
+    if _has_redundant_cd_prefix(command):
         return False
 
     if _contains_shell_meta(command):
@@ -175,8 +187,9 @@ class ShellTool(BaseTool):
         "function": {
             "name": "run_command",
             "description": (
-                "在工作区内执行 shell 命令（如运行测试、代码检查、构建、安装依赖等）。"
-                "命令在项目根目录执行，不允许跳出工作区。"
+                "在目标仓库工作区根目录执行 shell 命令。"
+                "重要：当前工作目录已经是仓库工作区根目录，"
+                "请直接运行目标命令，例如 pytest -q、ruff check、npm test。"
                 "\n\n大多数命令允许执行，以下高危命令被拦截："
                 "\n- 网络工具: curl, wget, nc, ssh, scp, telnet 等"
                 "\n- 系统管理: sudo, su, systemctl, apt-get, yum 等"
@@ -189,7 +202,9 @@ class ShellTool(BaseTool):
                 "properties": {
                     "command": {
                         "type": "string",
-                        "description": "要执行的 shell 命令",
+                        "description": (
+                            "要执行的 shell 命令。直接写命令本身，不要加 cd ... && 前缀。"
+                        ),
                     },
                     "timeout": {
                         "type": "integer",
@@ -213,6 +228,15 @@ class ShellTool(BaseTool):
     async def execute(self, args: dict[str, Any], ctx: ToolContext) -> ToolResult:
         command = args["command"]
         timeout = min(int(args.get("timeout", 120)), 600)  # 最大 600 秒
+
+        if _has_redundant_cd_prefix(command):
+            return ToolResult(
+                success=False,
+                error=(
+                    "当前已处于工作区根目录，请直接运行目标命令，"
+                    "不要添加 cd workplace &&、cd home && 或 cd <repo> && 前缀。"
+                ),
+            )
 
         if not await is_agent_command_allowed(command):
             return ToolResult(success=False, error="命令被安全策略拦截")
