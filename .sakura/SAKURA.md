@@ -60,6 +60,11 @@ Sakura AI Reviewer 是一款基于大语言模型的智能 GitHub 代码审查�
 - **参数边界值测试**：新增数值参数必须检查负数、零值、极大值场景，并在PR描述中说明处理逻辑
 - **JSON解析回退路径注释规范**：当回退逻辑存在已知局限时，必须在代码中添加注释说明，标为minor
 - **公共函数调用点全量检查**：增量审查中，若变更涉及公共函数，必须列出并验证所有调用点，避免功能碎片化，标为major
+- **闭包类型安全强制检查**：对于闭包中使用的Optional类型变量，强制要求添加assert或类型守卫，禁止仅用# type: ignore抑制错误（标minor）
+- **跨事件类型参数传递验证**：当公共函数被多个事件类型调用时，强制列出所有调用点并验证参数兼容性（标major）
+- **外部库类型注解规范**：强制要求对Any类型的外部对象添加注释说明（如# PyGithub Repository object），避免维护者困惑
+- **异常隔离日志规范**：独立try/except块应记录具体阶段（如"后处理合并失败"），避免外层重复日志（标major）
+- **配置降级检查**：新增配置读取必须包含None/非法值的降级逻辑，并在PR描述中说明（标major）
 
 ## 5. 团队约定和规范
 
@@ -71,8 +76,10 @@ Sakura AI Reviewer 是一款基于大语言模型的智能 GitHub 代码审查�
 - **延迟导入必须注释原因**：函数体内import若无注释说明循环引用原因，阻断合并，标major
 - **增量变更上下文影响检查**：增量审查需检查变更是否影响已缺失的 i18n 键或其他依赖项，标major
 - **GitHub头像URL规范**：统一使用重定向端点（`avatars.githubusercontent.com/{username}`）而非API端点，以减少认证依赖和延迟
+- **异步路由同步调用包装强制化**：明确要求所有 async 路由中的同步 I/O 必须使用 asyncio.to_thread() 包装，并作为 major 问题阻断合并
+- **type: ignore替换优先级**：强制要求用assert或类型守卫替代type: ignore，避免抑制真实类型错误
 
 ## 仓库信息
 - 仓库名: Sakura520222/Sakura-AI-Reviewer
 - 语言统计: Python: 2245659, HTML: 646134, Shell: 4551, Dockerfile: 982, url: https://api.github.com/repos/Sakura520222/Sakura-AI-Reviewer/languages
-- 累计反思次数: 269
+- 累计反思次数: 274
