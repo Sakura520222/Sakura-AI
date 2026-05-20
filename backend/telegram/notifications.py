@@ -276,6 +276,7 @@ class NotificationSender:
             if issue_url:
                 text += f"\n[查看详细报告]({issue_url})"
             if scan_id is not None:
+                # 延迟导入：避免 telegram 模块与 webui 模块之间产生循环依赖
                 from backend.webui.deps import get_webui_url
 
                 webui_url = get_webui_url(f"/scans/{scan_id}")
