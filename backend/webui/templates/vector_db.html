@@ -201,7 +201,7 @@
                 {{ _('vector_db.select_all') }}
             </label>
             <form method="POST" action="/vector-db/collection/{{ selected_collection }}/documents/delete"
-                  onsubmit="return selectedDocIds.length > 0 ? confirm('{{ _('vector_db.confirm_delete_docs') }}') : false;"
+                  x-on:submit="if (selectedDocIds.length === 0 || !confirm('{{ _('vector_db.confirm_delete_docs') }}')) $event.preventDefault();"
                   class="inline">
                 <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
                 <input type="hidden" name="doc_ids" :value="selectedDocIds.join(',')">
@@ -220,8 +220,9 @@
                 <div class="flex items-start gap-3">
                     <input type="checkbox" class="doc-checkbox mt-1 rounded border-gray-300 dark:border-gray-600 text-sakura-500 focus:ring-sakura-500"
                            value="{{ doc.id }}"
-                           :checked="selectedDocIds.includes('{{ doc.id }}')"
-                           @change="toggleDoc('{{ doc.id }}')">
+                           data-doc-id="{{ doc.id }}"
+                           :checked="selectedDocIds.includes($el.dataset.docId)"
+                           @change="toggleDoc($el.dataset.docId)">
                     <div class="flex-1 min-w-0">
                         <div class="flex items-center gap-2 mb-1">
                             <span class="text-xs font-mono text-gray-500 dark:text-gray-400 truncate">{{ doc.id }}</span>
