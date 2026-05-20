@@ -192,15 +192,19 @@ class IssueAnalyzer:
         def _unescape_json_string(value: str) -> str:
             """反转义 JSON 字符串中的转义序列。
 
-            替换顺序很重要：先处理 ``\\\\`` 再处理 ``\\n`` / ``\\\"`` / ``\\t`` ，
-            否则原始文本中 ``\\\\n`` （字面量反斜杠 + n）会被错误替换为换行符。
+            优先使用 ``json.loads`` 一次性正确处理所有转义，
+            避免 ``replace("\\\\", "\\")`` 后新产生的 ``\\n`` 被后续替换误伤。
+            截断 / 非法转义时回退到逐项替换。
             """
-            return (
-                value.replace("\\\\", "\\")
-                .replace("\\n", "\n")
-                .replace('\\"', '"')
-                .replace("\\t", "\t")
-            )
+            try:
+                return json.loads(f'"{value}"')
+            except json.JSONDecodeError:
+                return (
+                    value.replace("\\\\", "\\")
+                    .replace("\\n", "\n")
+                    .replace('\\"', '"')
+                    .replace("\\t", "\t")
+                )
 
         def _extract_string_field(name: str) -> str | None:
             """提取 JSON 字符串字段值，处理转义字符。
