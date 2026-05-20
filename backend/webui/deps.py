@@ -360,6 +360,7 @@ def toast_redirect(
             "auth.",
             "wizard.",
             "system_config.",
+            "vector_db.",
         )
     ):
         # Temporary fallback: auto-translate known translation key prefixes
