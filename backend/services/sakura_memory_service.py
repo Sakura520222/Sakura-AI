@@ -707,7 +707,23 @@ class SakuraMemoryService:
                 ", 初始化完成" if needs_init else "",
             )
 
-            # 检查是否需要合并 / Check if consolidation is needed
+            # 合并 + 知识提取后处理 / Post-reflection checks
+            await self._post_reflection_checks(
+                repo, repo_full_name, new_count, state, config
+            )
+
+        except Exception as e:
+            logger.error("反思失败 ({}): {}", repo_full_name, e, exc_info=True)
+
+    async def _post_reflection_checks(
+        self, repo, repo_full_name: str, new_count: int, state, config: dict
+    ) -> None:
+        """反思后的合并检查与知识提取检查 / Post-reflection consolidation & knowledge extraction
+
+        两个检查各自独立异常处理，合并失败不阻塞知识提取，反之亦然。
+        """
+        # 1) 合并检查 / Consolidation check
+        try:
             consolidation_config = config.get("consolidation", {})
             interval = consolidation_config.get(
                 "interval", state.consolidation_interval
@@ -715,13 +731,16 @@ class SakuraMemoryService:
             since_last = new_count - (state.last_consolidation_count or 0)
             if since_last >= interval:
                 await self.consolidate(repo, repo_full_name, new_count)
-
-            # 检查是否需要知识提取（独立于合并触发）
-            # Check knowledge extraction independently of consolidation
-            await self._maybe_extract_knowledge(repo, repo_full_name, new_count)
-
         except Exception as e:
-            logger.error("反思失败 ({}): {}", repo_full_name, e, exc_info=True)
+            logger.error("合并失败 ({}): {}", repo_full_name, e, exc_info=True)
+
+        # 2) 知识提取检查（独立于合并）/ Knowledge extraction (independent)
+        try:
+            await self._maybe_extract_knowledge(repo, repo_full_name, new_count)
+        except Exception as e:
+            logger.error(
+                "知识提取检查失败 ({}): {}", repo_full_name, e, exc_info=True
+            )
 
     async def _count_pr_reflections(self, repo, pr_number: int) -> int:
         """统计某 PR 已有的反思文件数 / Count existing reflection files for a PR"""
@@ -911,18 +930,10 @@ class SakuraMemoryService:
                 ", 初始化完成" if needs_init else "",
             )
 
-            # 检查合并触发 / Check consolidation trigger
-            consolidation_config = config.get("consolidation", {})
-            interval = consolidation_config.get(
-                "interval", state.consolidation_interval
+            # 合并 + 知识提取后处理 / Post-reflection checks
+            await self._post_reflection_checks(
+                repo, repo_full_name, new_count, state, config
             )
-            since_last = new_count - (state.last_consolidation_count or 0)
-            if since_last >= interval:
-                await self.consolidate(repo, repo_full_name, new_count)
-
-            # 检查是否需要知识提取（独立于合并触发）
-            # Check knowledge extraction independently of consolidation
-            await self._maybe_extract_knowledge(repo, repo_full_name, new_count)
 
         except Exception as e:
             logger.error("Issue 反思失败 ({}): {}", repo_full_name, e, exc_info=True)
