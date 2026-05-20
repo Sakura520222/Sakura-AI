@@ -472,6 +472,11 @@ scan:
   security_issues: "Security Issues"
   quality_issues: "Quality Issues"
   total_issues: "Total Issues"
+  started_at: "Started At"
+  completed_at: "Completed At"
+  duration: "Duration"
+  progress: "Progress"
+  code_snippet: "Code Snippet"
   severity:
     critical: "Critical"
     high: "High"
