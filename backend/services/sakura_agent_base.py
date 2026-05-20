@@ -137,9 +137,15 @@ class SakuraAgentBase:
     # ── Agent 会话循环 ──────────────────────────────────────────────────
 
     async def _run_agent_conversation(
-        self, system_prompt: str, model: str, max_iterations: int
+        self,
+        system_prompt: str,
+        model: str,
+        max_iterations: int,
+        initial_user_message: Optional[str] = None,
     ) -> None:
         messages: list = [{"role": "system", "content": system_prompt}]
+        if initial_user_message:
+            messages.append({"role": "user", "content": initial_user_message})
         tools = self._get_tools()
 
         for i in range(max_iterations):

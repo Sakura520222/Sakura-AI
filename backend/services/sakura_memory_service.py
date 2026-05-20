@@ -12,7 +12,7 @@ import functools
 import hashlib
 import json
 from datetime import datetime, timezone
-from typing import Dict, Optional
+from typing import Any, Dict, Optional
 
 from loguru import logger
 
@@ -308,6 +308,11 @@ class SakuraMemoryService:
                 "partial_commit": yaml_config.get("consolidation", {}).get(
                     "partial_commit", False
                 ),
+            },
+            "knowledge_extraction": {
+                "enabled": settings.sakura_knowledge_extraction_enabled,
+                "min_reflections": settings.sakura_extraction_min_reflections,
+                "max_iterations": settings.sakura_extraction_max_iterations,
             },
             "initialization": {
                 "auto_init": settings.sakura_auto_init,
@@ -702,7 +707,28 @@ class SakuraMemoryService:
                 ", 初始化完成" if needs_init else "",
             )
 
-            # 检查是否需要合并 / Check if consolidation is needed
+            # 合并 + 知识提取后处理 / Post-reflection checks
+            await self._post_reflection_checks(
+                repo, repo_full_name, new_count, state, config
+            )
+
+        except Exception as e:
+            logger.error("反思失败 ({}): {}", repo_full_name, e, exc_info=True)
+
+    async def _post_reflection_checks(
+        self,
+        repo: Any,
+        repo_full_name: str,
+        new_count: int,
+        state: SakuraMemoryState,
+        config: dict,
+    ) -> None:
+        """反思后的合并检查与知识提取检查 / Post-reflection consolidation & knowledge extraction
+
+        两个检查各自独立异常处理，合并失败不阻塞知识提取，反之亦然。
+        """
+        # 1) 合并检查 / Consolidation check
+        try:
             consolidation_config = config.get("consolidation", {})
             interval = consolidation_config.get(
                 "interval", state.consolidation_interval
@@ -710,9 +736,16 @@ class SakuraMemoryService:
             since_last = new_count - (state.last_consolidation_count or 0)
             if since_last >= interval:
                 await self.consolidate(repo, repo_full_name, new_count)
-
         except Exception as e:
-            logger.error("反思失败 ({}): {}", repo_full_name, e, exc_info=True)
+            logger.error("合并失败 ({}): {}", repo_full_name, e, exc_info=True)
+
+        # 2) 知识提取检查（独立于合并）/ Knowledge extraction (independent)
+        try:
+            await self._maybe_extract_knowledge(repo, repo_full_name, new_count)
+        except Exception as e:
+            logger.error(
+                "知识提取检查失败 ({}): {}", repo_full_name, e, exc_info=True
+            )
 
     async def _count_pr_reflections(self, repo, pr_number: int) -> int:
         """统计某 PR 已有的反思文件数 / Count existing reflection files for a PR"""
@@ -902,14 +935,10 @@ class SakuraMemoryService:
                 ", 初始化完成" if needs_init else "",
             )
 
-            # 检查合并触发 / Check consolidation trigger
-            consolidation_config = config.get("consolidation", {})
-            interval = consolidation_config.get(
-                "interval", state.consolidation_interval
+            # 合并 + 知识提取后处理 / Post-reflection checks
+            await self._post_reflection_checks(
+                repo, repo_full_name, new_count, state, config
             )
-            since_last = new_count - (state.last_consolidation_count or 0)
-            if since_last >= interval:
-                await self.consolidate(repo, repo_full_name, new_count)
 
         except Exception as e:
             logger.error("Issue 反思失败 ({}): {}", repo_full_name, e, exc_info=True)
@@ -1039,8 +1068,6 @@ class SakuraMemoryService:
                     total_count,
                     ", ".join(files.keys()),
                 )
-
-                await self._maybe_extract_knowledge(repo, repo_full_name, total_count)
             else:
                 logger.warning(
                     "[consolidate] 两个文件均无变更: {}",
@@ -1086,16 +1113,18 @@ class SakuraMemoryService:
             state = await self._get_or_create_state(repo_full_name)
             config = self._get_config()
 
-            # 检查配置是否启用（settings 优先）
+            # 检查配置是否启用（settings 优先） / Check enabled (settings first)
             from backend.core.config import get_settings
 
             settings = get_settings()
             if not settings.sakura_knowledge_extraction_enabled:
                 return
 
-            # 已提取过或反思数不足则跳过
+            # 已提取过则跳过 / Skip if already extracted
             if state.knowledge_extracted:
                 return
+
+            # 反思数不足则跳过 / Skip if insufficient reflections
             min_reflections = settings.sakura_extraction_min_reflections or config.get(
                 "knowledge_extraction", {}
             ).get("min_reflections", 10)
@@ -1107,17 +1136,22 @@ class SakuraMemoryService:
                 repo_full_name,
                 reflection_count,
             )
-            await self.extract_and_save_knowledge(repo, repo_full_name)
+            await self.extract_and_save_knowledge(
+                repo, repo_full_name, reflection_count=reflection_count
+            )
 
         except Exception as e:
             logger.warning("[extract] 知识提取触发失败: {} - {}", repo_full_name, e)
 
-    async def extract_and_save_knowledge(self, repo, repo_full_name: str) -> bool:
+    async def extract_and_save_knowledge(
+        self, repo, repo_full_name: str, reflection_count: int = 0
+    ) -> bool:
         """执行知识提取并保存到 .sakura/ 子目录
 
         Args:
             repo: PyGithub Repository 对象
             repo_full_name: 仓库完整名称
+            reflection_count: 当前累计反思次数，用于为 Agent 提供上下文
 
         Returns:
             是否提取成功
@@ -1136,6 +1170,7 @@ class SakuraMemoryService:
             repo_full_name=repo_full_name,
             sakura_ref=sakura_ref,
             model=model,
+            reflection_count=reflection_count,
         )
 
         if not extracted:

@@ -61,6 +61,15 @@ EXTRACT_KNOWLEDGE_SYSTEM = """你是一个项目知识管理助手。你的任�
 - 不可修改 memory/ 目录下的反思文件
 - 你可以自由创建新的分类文件，不限于上述三个目录"""
 
+# ── 用户提示词模板 ─────────────────────────────────────────────────────
+
+EXTRACT_KNOWLEDGE_USER_PROMPT = (
+    "请对仓库 {repo_full_name} 执行知识提取。\n"
+    "该仓库已有 {reflection_count} 次审查反思。\n"
+    "请先查看 .sakura/ 目录结构，阅读反思文件，"
+    "然后将可复用的知识整理到 rules/、docs/、plans/ 目录下。"
+)
+
 
 class SakuraKnowledgeExtractor(SakuraAgentBase):
     """从反思文件中提取结构化知识
@@ -118,6 +127,7 @@ class SakuraKnowledgeExtractor(SakuraAgentBase):
         repo_full_name: str,
         sakura_ref: Optional[str] = None,
         model: Optional[str] = None,
+        reflection_count: int = 0,
     ) -> Dict[str, str]:
         """运行知识提取 Agent 会话
 
@@ -143,6 +153,12 @@ class SakuraKnowledgeExtractor(SakuraAgentBase):
         effective_model = model or self._default_model
         system_prompt = EXTRACT_KNOWLEDGE_SYSTEM.format(max_chars=max_chars)
 
+        # Build initial user message to provide repo-specific context for the AI
+        user_message = EXTRACT_KNOWLEDGE_USER_PROMPT.format(
+            repo_full_name=repo_full_name,
+            reflection_count=reflection_count,
+        )
+
         logger.info(
             "[extract] 开始提取: {}, model={}, max_iterations={}",
             repo_full_name,
@@ -151,7 +167,10 @@ class SakuraKnowledgeExtractor(SakuraAgentBase):
         )
 
         await self._run_agent_conversation(
-            system_prompt, effective_model, max_iterations
+            system_prompt,
+            effective_model,
+            max_iterations,
+            initial_user_message=user_message,
         )
 
         changes = self._collect_changes()
