@@ -29,7 +29,9 @@ _DEFAULT_BLOCKED_COMMANDS = frozenset({
     "curl", "wget", "nc", "ncat", "telnet",
     "ssh", "scp", "sftp", "rsync",
     # 系统管理
-    "sudo", "su", "passwd",
+    "sudo", "su", "passwd", "chown",
+    # Shell/解释器嵌套执行
+    "bash", "sh", "zsh", "fish", "cmd", "powershell", "pwsh", "eval",
     # 进程控制
     "kill", "pkill", "killall",
     # 系统包管理（pip/npm/yarn 等工作区级别包管理不拦截）
@@ -80,11 +82,26 @@ def _contains_shell_meta(command: str) -> bool:
     return False
 
 
-def _is_token_blocked(first_token: str, blocklist: set[str]) -> bool:
-    """检查命令首 token 是否在黑名单中。"""
-    # 提取 basename（处理 /usr/bin/curl 等路径形式）
-    name = first_token.rsplit("/", 1)[-1].lower()
-    return name in blocklist
+def _command_name(first_token: str) -> str:
+    """提取命令 basename（处理 /usr/bin/curl、C:/bin/curl.exe 等路径形式）。"""
+    name = first_token.replace("\\", "/").rsplit("/", 1)[-1].lower()
+    return name[:-4] if name.endswith(".exe") else name
+
+
+def _is_segment_blocked(tokens: list[str], blocklist: set[str]) -> bool:
+    """检查命令段是否被黑名单或危险参数策略拦截。"""
+    name = _command_name(tokens[0])
+    if name in blocklist:
+        return True
+    if name == "rm" and any(token.startswith("-") and "r" in token for token in tokens[1:]):
+        return True
+    if name == "chmod" and any(token in {"777", "a+w", "ugo+w"} for token in tokens[1:]):
+        return True
+    if name in {"python", "python3", "py", "node", "ruby", "perl"} and any(
+        token in {"-c", "-e"} for token in tokens[1:]
+    ):
+        return True
+    return False
 
 
 def _parse_pipe_segments(tokens: list[str]) -> list[list[str]] | None:
@@ -142,7 +159,7 @@ async def is_agent_command_allowed(command: str) -> bool:
         return False
 
     for segment in segments:
-        if _is_token_blocked(segment[0], blocklist):
+        if _is_segment_blocked(segment, blocklist):
             logger.warning("Shell 命令被黑名单拦截: {}", segment[0])
             return False
     return True
