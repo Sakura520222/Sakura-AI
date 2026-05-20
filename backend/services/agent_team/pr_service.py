@@ -37,6 +37,14 @@ def _get_fresh_installation_token(
         return ""
 
 
+def _ensure_bot_suffix(bot_username: str | None) -> str:
+    """生成 GitHub App bot 提交显示名。"""
+    bot_name = bot_username or "Sakura Agent"
+    if bot_name.endswith("[bot]"):
+        return bot_name
+    return f"{bot_name}[bot]"
+
+
 @dataclass(frozen=True)
 class PRCreationResult:
     """PR 创建结果。"""
@@ -72,10 +80,10 @@ class AgentTeamPRService:
         executor = AgentTeamShellExecutor(workspace, self.workspace_service)
 
         # 确保有 git user identity（容器环境可能缺少全局配置）
-        bot_name = get_settings().bot_username or "Sakura Agent"
-        await executor.run(f'git config user.name "{bot_name}[bot]"')
+        bot_name = _ensure_bot_suffix(get_settings().bot_username)
+        await executor.run(f'git config user.name "{bot_name}"')
         await executor.run(
-            f'git config user.email "{bot_name}[bot]+noreply@users.noreply.github.com"'
+            f'git config user.email "{bot_name}+noreply@users.noreply.github.com"'
         )
 
         # 确保 .gitignore 排除 Agent 工作区不应提交的路径
