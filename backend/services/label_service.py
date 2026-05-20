@@ -7,7 +7,7 @@ import asyncio
 import json
 import re
 import threading
-from typing import Dict, List, Optional, Any
+from typing import Dict, List, Optional, Any, Tuple
 from datetime import datetime, timedelta
 from loguru import logger
 
@@ -590,9 +590,10 @@ class LabelService:
             checkboxes[label_name] = checked_char == "x"
         return checkboxes
 
+    @staticmethod
     def parse_checkbox_changes(
-        self, old_body: str, new_body: str
-    ) -> tuple[list[str], list[str]]:
+        old_body: str, new_body: str
+    ) -> Tuple[List[str], List[str]]:
         """Compare old and new comment bodies to detect checkbox state changes.
 
         Args:
@@ -602,11 +603,11 @@ class LabelService:
         Returns:
             A tuple of (labels_to_add, labels_to_remove).
         """
-        old_checkboxes = self.parse_label_checkboxes(old_body)
-        new_checkboxes = self.parse_label_checkboxes(new_body)
+        old_checkboxes = LabelService.parse_label_checkboxes(old_body)
+        new_checkboxes = LabelService.parse_label_checkboxes(new_body)
 
-        labels_to_add: list[str] = []
-        labels_to_remove: list[str] = []
+        labels_to_add: List[str] = []
+        labels_to_remove: List[str] = []
 
         all_labels = set(old_checkboxes.keys()) | set(new_checkboxes.keys())
         for label in all_labels:
