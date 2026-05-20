@@ -2,7 +2,7 @@
 
 本文档提取自当前仓库中 Claude Code Agent 的工具系统，重点覆盖文件读取、文件写入、精确编辑、搜索、命令执行等能力，并整理为可迁移到 Python 项目的完整实现思路与参考代码。
 
-> Sakura 当前实现补充：本项目的 Agent Team 已在 `backend/services/agent_team/tools/` 下实现一组工作区受控工具，供全栈修复 Agent 与专业审查 Agent 使用。所有路径必须限制在隔离工作区内，shell 命令必须经过白名单，Skills 只提供说明，不会扩大工具权限。
+> Sakura 当前实现补充：本项目的 Agent Team 已在 `backend/services/agent_team/tools/` 下实现一组工作区受控工具，供全栈修复 Agent 与专业审查 Agent 使用。所有路径必须限制在隔离工作区内，shell 命令采用黑名单安全策略，Skills 只提供说明，不会扩大工具权限。
 
 > 主要参考源码：
 >
@@ -63,7 +63,7 @@ Agent Team 当前内置工具覆盖代码阅读、编辑、验证、审查和项
 | `list_directory` | 列出工作区目录 |
 | `glob` | 按 glob 模式查找文件 |
 | `search_in_files` | 在工作区内搜索文件内容 |
-| `run_command` | 运行白名单内的 shell 验证命令 |
+| `run_command` | 在工作区内运行 shell 命令，并拦截黑名单高危命令 |
 | `check_changes` | 查看当前工作区 Git diff 和状态摘要 |
 | `detect_project` | 识别项目类型、依赖文件和候选验证命令 |
 | `revert_file` | 将指定文件回退到基线版本 |
@@ -361,8 +361,8 @@ Sakura Agent Team 在此基础上增加了面向自动修复任务的边界：
 - 工具上下文绑定到 `agent_team_workspace_root` 下的隔离工作区。
 - 文件工具只能访问当前任务工作区内路径。
 - 搜索与 glob 会排除依赖目录、构建产物和常见缓存目录，减少噪声与大输出。
-- Shell 命令必须在工作区内执行，并受 `agent_team_test_command_allowlist` 控制。
-- `detect_project` 可给出候选依赖安装和验证命令，但不能绕过命令白名单。
+- Shell 命令必须在工作区内执行，并受默认黑名单与 `agent_team_test_command_blocklist` 控制。
+- `detect_project` 可给出候选依赖安装和验证命令，但不能绕过命令安全策略。
 - `check_changes` 使用 Git diff/status 帮助 Agent 和审查 Agent 理解累计变更。
 - `revert_file` 用于撤销单文件错误修改，降低自动编辑风险。
 - Sakura docs/memory 工具只读访问仓库 `.sakura/` 知识，不提供写入能力。

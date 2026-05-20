@@ -260,7 +260,7 @@ class AgentToolExecutor:
         if not command:
             return {"error": "缺少 command 参数"}
         if not await is_agent_command_allowed(command):
-            return {"error": "命令不在 Agent 验证命令白名单中"}
+            return {"error": "命令被安全策略拦截"}
 
         result = await self.executor.run(command, timeout_seconds=120)
         return {

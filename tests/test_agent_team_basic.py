@@ -254,7 +254,6 @@ async def test_load_agent_team_ai_config_preserves_explicit_zero_values(monkeypa
             openai_api_key="settings-key",
             openai_model="settings-model",
             summary_model="settings-summary-model",
-            agent_team_test_command_allowlist="pytest -q",
         ),
     )
 
