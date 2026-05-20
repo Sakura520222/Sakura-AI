@@ -704,9 +704,10 @@ async def _handle_label_checkbox_toggle_inner(
         try:
             if github_app is None:
                 github_app = GitHubAppClient()
+            assert github_app is not None
 
             def _revert_and_notify() -> None:
-                client = github_app.get_repo_client(repo_owner, repo_name)  # type: ignore[union-attr]
+                client = github_app.get_repo_client(repo_owner, repo_name)
                 if not client:
                     return
                 repo = client.get_repo(f"{repo_owner}/{repo_name}")
