@@ -1426,6 +1426,7 @@ api:
   user_role_changed: "User role changed to {role}"
   user_quota_updated: "User quota updated"
   issue_quota_updated: "Issue quota updated"
+  agent_quota_updated: "Agent quota updated"
   cannot_disable_self: "Cannot disable yourself"
   permission_denied_user: "Insufficient permissions to modify user status"
   user_status_changed: "User {username} has been {status}"
