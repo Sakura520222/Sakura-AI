@@ -1,5 +1,6 @@
 """WebUI Agent 专家团队路由（超级管理员专用）"""
 
+import asyncio
 import json
 import re
 from datetime import datetime, timezone
@@ -16,6 +17,7 @@ from backend.core.config import (
     DYNAMIC_CONFIG_SENSITIVE_KEYS,
     DYNAMIC_CONFIG_SELECT_OPTIONS,
     get_all_dynamic_config_keys,
+    get_dynamic_config,
     get_dynamic_config_input_type,
     get_settings,
     invalidate_dynamic_config_cache,
@@ -23,15 +25,17 @@ from backend.core.config import (
     update_settings_field,
 )
 from backend.models.agent_team_models import (
+    AgentTeamConversationContext,
     AgentTeamIteration,
     AgentTeamMessage,
     AgentTeamSession,
+    AgentTeamSourceType,
     AgentTeamTask,
     AgentTeamTaskStatus,
     AgentTeamToolCall,
     AgentTeamUserPrompt,
 )
-from backend.models.database import AppConfig
+from backend.models.database import AppConfig, IssueAnalysis, IssueAnalysisStatus
 from backend.services.agent_team.ai_client import (
     load_agent_team_ai_config,
     resolve_agent_team_max_iterations,
@@ -208,6 +212,225 @@ def _parse_task_overrides(
 
 def _should_schedule_agent_task(status: str) -> bool:
     return status == AgentTeamTaskStatus.QUEUED.value
+
+
+def _json_loads(value, fallback):
+    if value in (None, ""):
+        return fallback
+    if isinstance(value, (dict, list)):
+        return value
+    try:
+        return json.loads(value)
+    except (TypeError, json.JSONDecodeError):
+        return fallback
+
+
+def _json_list(value) -> list:
+    loaded = _json_loads(value, [])
+    return loaded if isinstance(loaded, list) else []
+
+
+def _json_dict(value) -> dict:
+    loaded = _json_loads(value, {})
+    return loaded if isinstance(loaded, dict) else {}
+
+
+def _compact_json(value) -> str:
+    try:
+        return json.dumps(value, ensure_ascii=False)
+    except (TypeError, ValueError):
+        return str(value)
+
+
+def _format_context_items(value) -> list[dict]:
+    items = []
+    for item in _json_list(value):
+        if isinstance(item, dict):
+            text = (
+                item.get("title")
+                or item.get("summary")
+                or item.get("description")
+                or item.get("issue")
+                or item.get("path")
+                or item.get("file_path")
+                or _compact_json(item)
+            )
+            meta = item.get("severity") or item.get("status") or item.get("risk_level")
+        else:
+            text = str(item)
+            meta = None
+        if text:
+            items.append({"text": text, "meta": meta})
+    return items
+
+
+def _format_agent_conversation_contexts(
+    contexts: list[AgentTeamConversationContext],
+) -> list[dict]:
+    ordered = sorted(
+        contexts,
+        key=lambda item: (
+            item.iteration_number or 0,
+            item.created_at.isoformat() if item.created_at else "",
+            item.id or 0,
+        ),
+    )
+    return [
+        {
+            "id": context.id,
+            "iteration_number": context.iteration_number,
+            "source_role": context.source_role,
+            "target_role": context.target_role,
+            "summary": context.summary,
+            "unresolved_items": _format_context_items(
+                context.unresolved_items_json
+            ),
+            "modified_files": _format_context_items(context.modified_files_json),
+            "token_estimate": context.token_estimate,
+            "created_at": context.created_at,
+        }
+        for context in ordered
+    ]
+
+
+def _format_issue_analysis_context(analysis: IssueAnalysis | None) -> dict | None:
+    if analysis is None:
+        return None
+
+    detail = _json_dict(analysis.analysis_detail)
+    detail_json = ""
+    if detail:
+        detail_json = json.dumps(detail, ensure_ascii=False, indent=2)
+
+    repo_name = analysis.repo_name or ""
+    repo_full_name = repo_name
+    if repo_name and "/" not in repo_name and analysis.repo_owner:
+        repo_full_name = f"{analysis.repo_owner}/{repo_name}"
+    return {
+        "id": analysis.id,
+        "issue_number": analysis.issue_number,
+        "repo_full_name": repo_full_name,
+        "author": analysis.author,
+        "title": analysis.title,
+        "category": analysis.category or detail.get("category"),
+        "priority": analysis.priority or detail.get("priority"),
+        "summary": analysis.summary or detail.get("summary"),
+        "feasibility": analysis.feasibility or detail.get("feasibility"),
+        "suggested_title": analysis.suggested_title or detail.get("suggested_title"),
+        "suggested_labels": _json_list(analysis.suggested_labels)
+        or detail.get("suggested_labels", []),
+        "suggested_assignees": _json_list(analysis.suggested_assignees)
+        or detail.get("suggested_assignees", []),
+        "related_prs": _json_list(analysis.related_prs)
+        or detail.get("related_prs", []),
+        "duplicate_of": analysis.duplicate_of or detail.get("duplicate_of"),
+        "status": analysis.status,
+        "error_message": analysis.error_message,
+        "prompt_tokens": analysis.prompt_tokens or 0,
+        "completion_tokens": analysis.completion_tokens or 0,
+        "estimated_cost": analysis.estimated_cost or 0,
+        "comment_posted": analysis.comment_posted,
+        "comment_url": analysis.comment_url,
+        "analysis_detail_json": detail_json,
+        "created_at": analysis.created_at,
+        "completed_at": analysis.completed_at,
+    }
+
+
+def _format_issue_comments(comments: list, bot_username: str | None = None) -> list[dict]:
+    bot_login = (bot_username or "").lower()
+    formatted = []
+    for comment in comments:
+        user = getattr(comment, "user", None)
+        author = getattr(user, "login", "") or "unknown"
+        author_lower = author.lower()
+        user_type = (getattr(user, "type", "") or "").lower()
+        is_bot = user_type == "bot" or author_lower.endswith("[bot]")
+        if bot_login and author_lower == bot_login:
+            is_bot = True
+        body = getattr(comment, "body", "") or ""
+        if not body.strip():
+            continue
+        formatted.append(
+            {
+                "id": getattr(comment, "id", None),
+                "author": author,
+                "body": body,
+                "created_at": getattr(comment, "created_at", None),
+                "updated_at": getattr(comment, "updated_at", None),
+                "html_url": getattr(comment, "html_url", None),
+                "author_association": getattr(comment, "author_association", None),
+                "is_bot": is_bot,
+            }
+        )
+    return formatted
+
+
+async def _load_task_issue_analysis(
+    db: AsyncSession, task: AgentTeamTask
+) -> IssueAnalysis | None:
+    if (
+        task.source_type == AgentTeamSourceType.ISSUE_ANALYSIS.value
+        and task.source_id
+    ):
+        analysis = await db.get(IssueAnalysis, task.source_id)
+        if analysis is not None:
+            return analysis
+
+    if not task.source_issue_number:
+        return None
+
+    repo_names = {name for name in (task.repo_name, task.repo_full_name) if name}
+    filters = [
+        IssueAnalysis.issue_number == task.source_issue_number,
+        IssueAnalysis.status == IssueAnalysisStatus.COMPLETED.value,
+    ]
+    if task.repo_owner:
+        filters.append(IssueAnalysis.repo_owner == task.repo_owner)
+    if repo_names:
+        filters.append(IssueAnalysis.repo_name.in_(repo_names))
+
+    result = await db.execute(
+        select(IssueAnalysis)
+        .where(*filters)
+        .order_by(desc(IssueAnalysis.analysis_version), desc(IssueAnalysis.created_at))
+        .limit(1)
+    )
+    return result.scalar_one_or_none()
+
+
+async def _load_task_issue_comments(task: AgentTeamTask) -> list[dict]:
+    if not (task.repo_owner and task.repo_name and task.source_issue_number):
+        return []
+
+    try:
+        max_count = int(await get_dynamic_config("issue_max_comments_in_context") or 0)
+    except (TypeError, ValueError):
+        max_count = 0
+
+    try:
+        from backend.core.github_app import GitHubAppClient
+
+        github_app = GitHubAppClient()
+        comments = await asyncio.to_thread(
+            github_app.get_issue_comments,
+            task.repo_owner,
+            task.repo_name,
+            int(task.source_issue_number),
+        )
+    except Exception as exc:
+        logger.warning(
+            "获取 Agent 任务关联 Issue 评论失败: {}/{}#{}: {}",
+            task.repo_owner,
+            task.repo_name,
+            task.source_issue_number,
+            exc,
+        )
+        return []
+
+    if max_count > 0:
+        comments = comments[-max_count:]
+    return _format_issue_comments(comments, get_settings().bot_username)
 
 
 AGENT_TEAM_CONFIG_GROUPS = [
@@ -405,6 +628,7 @@ async def task_detail_fragment(
                 AgentTeamIteration.patch_files
             ),
             selectinload(AgentTeamTask.feedback),
+            selectinload(AgentTeamTask.conversation_contexts),
         )
     )
     task = result.scalar_one_or_none()
@@ -419,6 +643,10 @@ async def task_detail_fragment(
     for iteration in task.iterations:
         iteration.patch_files.sort(key=lambda item: item.file_path)
 
+    issue_analysis = await _load_task_issue_analysis(db, task)
+    issue_comments = await _load_task_issue_comments(task)
+    agent_contexts = _format_agent_conversation_contexts(task.conversation_contexts)
+
     return render_template(
         "components/agent_team_task_detail_fragment.html",
         request,
@@ -426,6 +654,9 @@ async def task_detail_fragment(
         current_user=user,
         csrf_token=get_csrf_serializer().dumps({}),
         task=task,
+        issue_analysis_context=_format_issue_analysis_context(issue_analysis),
+        issue_comments=issue_comments,
+        agent_contexts=agent_contexts,
     )
 
 
