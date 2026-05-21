@@ -93,7 +93,7 @@ def test_should_schedule_agent_task_only_for_queued_status():
     assert _should_schedule_agent_task("completed") is False
 
 
-def testformat_issue_analysis_context_parses_json_fields():
+def test_format_issue_analysis_context_parses_json_fields():
     analysis = SimpleNamespace(
         id=1,
         issue_number=123,
@@ -134,7 +134,7 @@ def testformat_issue_analysis_context_parses_json_fields():
     assert '"Detail summary"' in context["analysis_detail_json"]
 
 
-def testformat_issue_comments_detects_bot_and_skips_empty_body():
+def test_format_issue_comments_detects_bot_and_skips_empty_body():
     comments = [
         SimpleNamespace(
             id=1,
@@ -326,16 +326,27 @@ async def test_preview_task_from_issue_returns_draft(monkeypatch):
             "repo_name": "repo",
         }
 
-    async def fake_runtime_context(draft):
-        return {"sakura_memory": "", "skills_summary": ""}
+    monkeypatch.setattr(
+        "backend.webui.routes.agent_team.AgentTeamCandidateService.build_manual_issue_task_draft",
+        fake_draft,
+    )
+    async def fake_sakura_memory(repo_owner, repo_name):
+        return {"text": ""}
+
+    async def fake_skills_context():
+        return "", {}, []
 
     monkeypatch.setattr(
         "backend.webui.routes.agent_team.AgentTeamCandidateService.build_manual_issue_task_draft",
         fake_draft,
     )
     monkeypatch.setattr(
-        "backend.webui.routes.agent_team._load_submission_runtime_context",
-        fake_runtime_context,
+        "backend.webui.routes.agent_team.load_sakura_memory",
+        fake_sakura_memory,
+    )
+    monkeypatch.setattr(
+        "backend.webui.routes.agent_team.load_skills_context",
+        fake_skills_context,
     )
 
     response = await preview_task_from_issue(
@@ -422,8 +433,11 @@ async def test_create_task_from_issue_passes_edited_overrides(monkeypatch):
     async def fake_config():
         return FakeConfig()
 
-    async def fake_runtime_context(draft):
-        return {"sakura_memory": "", "skills_summary": ""}
+    async def fake_sakura_memory(repo_owner, repo_name):
+        return {"text": ""}
+
+    async def fake_skills_context():
+        return "", {}, []
 
     async def fake_create(
         self,
@@ -470,8 +484,12 @@ async def test_create_task_from_issue_passes_edited_overrides(monkeypatch):
         fake_log_admin_action,
     )
     monkeypatch.setattr(
-        "backend.webui.routes.agent_team._load_submission_runtime_context",
-        fake_runtime_context,
+        "backend.webui.routes.agent_team.load_sakura_memory",
+        fake_sakura_memory,
+    )
+    monkeypatch.setattr(
+        "backend.webui.routes.agent_team.load_skills_context",
+        fake_skills_context,
     )
 
     background_tasks = SimpleNamespace(add_task=lambda *args, **kwargs: None)
