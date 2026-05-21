@@ -37,6 +37,8 @@
 - **Auxiliary Model Support**: Independently configure lightweight models for summarization, context compression, label recommendation, and other tasks to reduce inference costs
 - **Inline Comments Toggle**: Control whether inline comments are posted on PR diffs via WebUI config `enable_inline_comments`, reducing review noise
 - **Controlled Auto Review**: Use WebUI config `enable_auto_review` to control whether PR opened/synchronize/reopened events enqueue reviews automatically while keeping command and manual triggers available
+- **Review Comment Label Interaction**: Review reports include label checkboxes — users can check/uncheck labels directly on the GitHub PR page, and the AI automatically applies or removes corresponding labels
+- **AI-generated PR Descriptions**: When agents create PRs, AI auto-generates descriptions with metadata markers, allowing subsequent reviews to precisely identify and update AI-injected areas
 
 ### AI Tools & Knowledge Base
 
@@ -73,11 +75,17 @@
 - **Two-agent Collaboration**: A full-stack expert plans and edits code, while a professional reviewer performs pre-push quality review
 - **Context Compression & Resume**: Long-running tasks compress historical context automatically and persist conversation/message checkpoints for recovery
 - **Isolated Git Workspaces**: Clone/fetch/checkout dedicated branches under `agent_team_workspace_root` without polluting the service runtime directory
-- **Controlled Tool Execution**: File operations, search, and shell validation commands are scoped to the workspace; validation commands are controlled by an allowlist
+- **Controlled Tool Execution**: File operations, search, and shell validation commands are scoped to the workspace; validation commands are controlled by a blacklist (blocking dangerous commands while allowing the rest)
 - **Dependency Auto-install & Validation**: Can detect and install dependencies from `pyproject.toml` / `requirements.txt`, then run allowlisted tests or lint commands
 - **Sakura Knowledge Integration**: Agents can browse and read `.sakura/` knowledge directory and reflection files via dedicated tools, leveraging accumulated review experience to assist code fixes
 - **Agent Skills & Built-in Ruff**: Install skills from uploaded files, ZIP packages, or GitHub `SKILL.md`; a built-in Ruff lint/format skill can be loaded on demand
-- **PR Creation Loop**: Supports AI-generated Conventional Commits-style PR titles, normal or Draft PR creation, then iterates through Sakura PR Review and human feedback; PRs are never merged automatically
+- **Real-time Admin Intervention**: Admins can inject guidance through the WebUI Live View during task execution; the Agent consumes and merges guidance into subsequent iteration rounds
+- **Task Cancellation**: Supports cancelling Agent tasks mid-execution with safe workspace resource cleanup
+- **Web Search & URL Fetching**: Agents can use web search and URL fetching tools to expand their information-gathering capabilities for code fixes
+- **Token Usage Tracking**: Real-time tracking of token consumption and estimated costs across all AI API calls in Agent Team
+- **Base Branch Selection**: Choose the target branch (develop/main, etc.) when creating tasks for flexible merge direction control
+- **Manual Issue Task Preview/Edit**: Preview and edit Issue analysis results in WebUI before creating an Agent task
+- **PR Creation Loop**: Supports AI-generated Conventional Commits-style PR titles and descriptions, normal or Draft PR creation, then iterates through Sakura PR Review and human feedback; PRs are never merged automatically
 
 ### Management & Operations
 
@@ -93,7 +101,10 @@
 - **Quota-based Access Control**: Flexible quota-based access management system with user self-registration support and UTC daily/weekly/monthly auto-reset for PR and Issue usage
 - **Paid Quota System**: Full CRUD management for plans and redeem codes (create/edit/delete/batch operations), admin manual grants, supports one-time packages and subscription plans
 - **Admin Action Audit**: Complete operation logs covering configuration changes, user management, and other critical actions
-- **WebUI Dashboard**: Dashboard charts, PR management, user management, configuration management, queue monitoring, action logs, repository scan management, Agent Expert Team, Agent Skills, and Sakura Memory management, with Markdown content rendering support
+- **WebUI Dashboard**: Dashboard charts, PR management, user management, configuration management, queue monitoring, action logs, repository scan management, Agent Expert Team, Agent Skills, Sakura Memory management, vector storage & database management, with Markdown content rendering support
+- **Batch Issue Indexing**: Supports batch indexing of repository Issues in WebUI with vector cache refresh and AI metadata enrichment for embedding quality
+- **Health Check Endpoint**: `/health` endpoint for Docker health checks and deployment verification, with built-in Docker Compose automatic health detection
+- **Registration Quota Management**: Dedicated registration quota configuration group for controlling initial quotas granted to new users upon registration
 - **Telegram Bot**: Real-time notifications, interactive button menus, three-tier permission system (super admin / admin / user), quota management
 - **GitHub OAuth Login**: Integrated with Telegram user system, light/dark theme switching
 
@@ -294,7 +305,7 @@ Global configuration follows this priority: **Database app_config (WebUI) > Sett
 - **Git Info Tool**: `context_enhancement.git_tools` in `config/strategies.yaml` — configure default branch and commit return counts
 - **Project Memory System**: `sakura_memory_enabled` to enable memory system, `sakura_reflection_enabled` to enable post-review reflection, `sakura_consolidation_interval` for consolidation trigger threshold (default 5), `sakura_auto_init` to auto-initialize `.sakura/` directory, `sakura_auto_create_subdirs` to auto-create rules/docs/plans subdirectories, `sakura_knowledge_extraction_enabled` to enable automatic knowledge extraction (extracts rules/docs/plans via three serial LLM calls), `sakura_extraction_provider` to configure extraction AI credentials (main/summary/custom) — all in WebUI configuration. WebUI provides a "Sakura Memory" management page for viewing/editing/deleting memory files and manually triggering consolidation and knowledge extraction. See [Project Memory Guide](docs/SAKURA_MEMORY_GUIDE.md) (Chinese)
 - **Model Context**: Configure context window, auto-compression in WebUI configuration, see [Model Context Management](docs/MODEL_CONTEXT_FEATURE.md)
-- **Agent Expert Team**: Configure `agent_team_enabled`, `agent_team_workspace_root`, `agent_team_repo_allowlist`, `agent_team_model_provider`, and other `agent_team_*` model/guardrail settings on the WebUI Agent Team page; supports context compression (`agent_team_enable_context_compression`, etc.), full-stack/reviewer tool-round limits (`agent_team_max_tool_rounds` / `agent_team_reviewer_max_tool_rounds`), dependency auto-install (`agent_team_auto_install_deps`), validation command allowlists, and the Draft PR switch; `agent_team_model_provider=main` reuses the main AI configuration, while independent Agent AI configuration is also supported
+- **Agent Expert Team**: Configure `agent_team_enabled`, `agent_team_workspace_root`, `agent_team_repo_allowlist`, `agent_team_model_provider`, and other `agent_team_*` model/guardrail settings on the WebUI Agent Team page; supports context compression (`agent_team_enable_context_compression`, etc.), full-stack/reviewer tool-round limits (`agent_team_max_tool_rounds` / `agent_team_reviewer_max_tool_rounds`), dependency auto-install (`agent_team_auto_install_deps`), validation command blacklists, and the Draft PR switch; `agent_team_model_provider=main` reuses the main AI configuration, while independent Agent AI configuration is also supported; supports web search tools and token usage tracking
 - **Agent Skills**: Install and toggle Skills on the WebUI Agent Skills page; `agent_team_skills_enabled` controls whether agents may load skills, and `agent_team_skills_root` configures the local storage root
 - **Internationalization (i18n)**: WebUI supports Chinese/English interface switching (Settings page). AI output language can be controlled globally via `OUTPUT_LANGUAGE` or overridden per user through `output_language` (`zh-CN` / `en` / follow global). Comment templates automatically match the selected language.
 
