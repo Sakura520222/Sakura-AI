@@ -12,6 +12,7 @@ from backend.services.agent_team.candidate_service import (
 from backend.webui.routes.agent_team import (
     _parse_task_overrides,
     _should_schedule_agent_task,
+    create_task_from_issue,
     preview_task_from_issue,
 )
 
@@ -168,6 +169,115 @@ async def test_preview_task_from_issue_returns_draft(monkeypatch):
     assert payload == {
         "success": True,
         "draft": {"title": "Draft title", "repo_full_name": "owner/repo"},
+    }
+
+
+@pytest.mark.asyncio
+async def test_create_task_from_issue_passes_edited_overrides(monkeypatch):
+    captured = {}
+
+    class FakeConfig:
+        def validate(self):
+            pass
+
+        def safe_snapshot(self):
+            return {"model": "safe"}
+
+    async def fake_config():
+        return FakeConfig()
+
+    async def fake_create(
+        self,
+        db,
+        repo_full_name,
+        issue_number,
+        started_by,
+        ai_config_snapshot=None,
+        base_branch=None,
+        overrides=None,
+    ):
+        captured.update(
+            {
+                "repo_full_name": repo_full_name,
+                "issue_number": issue_number,
+                "started_by": started_by,
+                "ai_config_snapshot": ai_config_snapshot,
+                "base_branch": base_branch,
+                "overrides": overrides,
+            }
+        )
+        return SimpleNamespace(
+            id=88,
+            source_type=overrides["source_type"],
+            source_id=overrides["source_id"],
+            repo_full_name=overrides["repo_full_name"],
+            source_issue_number=overrides["source_issue_number"],
+            status=overrides["status"],
+            base_branch=overrides["base_branch"],
+            branch_name=overrides["branch_name"],
+            max_iterations=overrides["max_iterations"],
+        )
+
+    async def fake_log_admin_action(*args, **kwargs):
+        return None
+
+    monkeypatch.setattr("backend.webui.routes.agent_team.load_agent_team_ai_config", fake_config)
+    monkeypatch.setattr(
+        "backend.webui.routes.agent_team.AgentTeamCandidateService.create_task_from_manual_issue",
+        fake_create,
+    )
+    monkeypatch.setattr(
+        "backend.webui.routes.agent_team.log_admin_action",
+        fake_log_admin_action,
+    )
+
+    background_tasks = SimpleNamespace(add_task=lambda *args, **kwargs: None)
+    response = await create_task_from_issue(
+        background_tasks=background_tasks,
+        db=object(),
+        user={"user_id": 1, "sub": "admin"},
+        csrf_token="token",
+        issue_ref="owner/repo#123",
+        title="Edited title",
+        summary="Edited summary",
+        priority="high",
+        candidate_score="91",
+        source_type="manual_issue",
+        source_id="77",
+        source_issue_number="123",
+        repo_full_name="owner/repo",
+        repo_owner="owner",
+        repo_name="repo",
+        status="candidate",
+        branch_name="feature/manual-edit",
+        base_branch="develop",
+        max_iterations="5",
+    )
+    payload = json.loads(response.body)
+
+    assert payload == {"success": True, "task_id": 88}
+    assert captured == {
+        "repo_full_name": "owner/repo",
+        "issue_number": 123,
+        "started_by": "admin",
+        "ai_config_snapshot": {"model": "safe"},
+        "base_branch": "develop",
+        "overrides": {
+            "title": "Edited title",
+            "summary": "Edited summary",
+            "source_type": "manual_issue",
+            "repo_full_name": "owner/repo",
+            "repo_owner": "owner",
+            "repo_name": "repo",
+            "branch_name": "feature/manual-edit",
+            "base_branch": "develop",
+            "priority": "high",
+            "status": "candidate",
+            "candidate_score": 91,
+            "max_iterations": 5,
+            "source_id": 77,
+            "source_issue_number": 123,
+        },
     }
 
 
