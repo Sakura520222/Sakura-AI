@@ -175,16 +175,16 @@ class ScanReportService:
                 duration = f"{int(delta // 3600)}h{int((delta % 3600) // 60)}m"
 
         lines = [
-            "🛡️ *Sakura AI 仓库扫描完成*",
+            "*Sakura AI 仓库扫描完成*",
             "",
-            f"📦 仓库: `{scan.repo_name}`",
+            f"仓库: `{scan.repo_name}`",
         ]
 
         if scan.commit_sha:
-            lines.append(f"🔧 Commit: `{scan.commit_sha[:7]}`")
+            lines.append(f"Commit: `{scan.commit_sha[:7]}`")
         if duration:
-            lines.append(f"⏱ 扫描耗时: {duration}")
-        lines.append(f"📊 扫描文件: {scan.code_file_count or 0}")
+            lines.append(f"扫描耗时: {duration}")
+        lines.append(f"扫描文件: {scan.code_file_count or 0}")
         lines.append("")
 
         # 健康评分
@@ -194,33 +194,38 @@ class ScanReportService:
         # 问题统计
         total = scan.total_findings or 0
         if total > 0:
-            lines.append("📋 *问题统计*")
+            lines.append("*问题统计*")
             if scan.critical_count or 0:
-                lines.append(f"  🔴 Critical: {scan.critical_count}")
+                lines.append(f" 🔴 Critical: {scan.critical_count}")
             if scan.major_count or 0:
-                lines.append(f"  🟡 Major: {scan.major_count}")
+                lines.append(f" 🟡 Major: {scan.major_count}")
             if scan.minor_count or 0:
-                lines.append(f"  🟠 Minor: {scan.minor_count}")
+                lines.append(f" 🟠 Minor: {scan.minor_count}")
             if scan.suggestion_count or 0:
-                lines.append(f"  💡 Suggestion: {scan.suggestion_count}")
+                lines.append(f" 💡 Suggestion: {scan.suggestion_count}")
             lines.append("")
 
             # Token 消耗
             total_tokens = (scan.prompt_tokens or 0) + (scan.completion_tokens or 0)
             if total_tokens > 0:
-                lines.append(f"🪙 Token 消耗: {total_tokens:,}")
+                lines.append(f"Token 消耗: {total_tokens:,}")
                 lines.append("")
         else:
             lines.append("✅ 未发现问题，代码质量良好")
             lines.append("")
 
-        # 链接（优先使用传入的 issue_url，其次 DB 值，最后 WebUI URL）
+        # 链接：如有 Issue 链接则展示；始终提供 WebUI 链接（若 app_domain 已配置）
+        webui_url = get_webui_url(f"/scans/{scan.id}")
+        logger.debug(f"WebUI URL for scan {scan.id}: {webui_url!r}")
         link_url = issue_url or scan.report_issue_url
         if link_url:
-            lines.append(f"[📎 查看详细报告]({link_url})")
+            lines.append(f"[查看详细报告]({link_url})")
+        if webui_url:
+            lines.append(f"[WebUI 查看详情]({webui_url})")
         else:
-            webui_url = get_webui_url(f"/scans/{scan.id}")
-            lines.append(f"[🌐 WebUI 查看详情]({webui_url})")
+            logger.warning(
+                f"app_domain 未配置，跳过 WebUI 链接 (scan_id={scan.id})"
+            )
 
         return "\n".join(lines)
 
@@ -307,6 +312,28 @@ class ScanReportService:
 
             if issue:
                 logger.info(f"✅ 已创建扫描报告 Issue: {scan.repo_name}#{issue.number}")
+
+                # 索引到 Issue 向量库（bot 创建的 Issue 不触发 webhook，需主动索引）
+                try:
+                    from backend.services.issue_embedding_service import (
+                        IssueEmbeddingService,
+                    )
+
+                    emb_service = IssueEmbeddingService()
+                    await emb_service.upsert_issue(
+                        repo_owner,
+                        repo_name_only,
+                        issue.number,
+                        title=issue.title,
+                        body=body,
+                        state="open",
+                    )
+                    logger.info(
+                        f"已索引扫描报告 Issue: {scan.repo_name}#{issue.number}"
+                    )
+                except Exception as emb_err:
+                    logger.warning(f"索引扫描报告 Issue 失败: {emb_err}")
+
                 return {"issue_number": issue.number, "issue_url": issue.html_url}
 
             return None

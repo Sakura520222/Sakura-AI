@@ -208,6 +208,11 @@ def test_registry_has_all_fullstack_tools():
         "run_command",
         "use_skill",
         "finish_task",
+        "revert_file",
+        "detect_project",
+        "check_changes",
+        "search_web",
+        "fetch_url",
     }
     assert expected == names
 
@@ -223,7 +228,7 @@ def test_registry_has_all_reviewer_tools():
 
 def test_get_tool_definitions():
     schemas = get_tool_definitions("fullstack")
-    assert len(schemas) == 11
+    assert len(schemas) == len(get_fullstack_tools())
     names = {s["function"]["name"] for s in schemas}
     assert "edit_file" in names
     assert "replace_lines" in names

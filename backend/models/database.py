@@ -440,6 +440,9 @@ class IssueAnalysis(Base):
     labels_applied = Column(Integer, default=0)
     applied_label_names = Column(Text, nullable=True)
 
+    # GitHub Issue 生命周期状态 (open/closed)，与 status (分析进度) 分离
+    issue_state = Column(String(50), default="open", nullable=True, index=True)
+
     # 时间戳
     created_at = Column(TIMESTAMP, default=datetime.utcnow, nullable=False)
     updated_at = Column(
@@ -562,7 +565,7 @@ async def insert_default_configs_async():
         raise RuntimeError("异步会话工厂未初始化,请先调用 init_async_db()")
 
     default_configs = [
-        AppConfig(key_name="app_version", key_value="2.10.1", description="应用版本号"),
+        AppConfig(key_name="app_version", key_value="2.11.0", description="应用版本号"),
         AppConfig(
             key_name="max_concurrent_reviews",
             key_value="5",
@@ -683,7 +686,7 @@ def init_database(database_url: str):
 
             default_configs = [
                 AppConfig(
-                    key_name="app_version", key_value="2.10.1", description="应用版本号"
+                    key_name="app_version", key_value="2.11.0", description="应用版本号"
                 ),
                 AppConfig(
                     key_name="max_concurrent_reviews",
@@ -873,6 +876,9 @@ class SakuraMemoryState(Base):
     )  # 上次合并时的 reflection_count
     is_initialized = Column(Boolean, default=False, nullable=False)
 
+    # 知识提取状态 / Knowledge extraction state
+    knowledge_extracted = Column(Boolean, default=False, nullable=False)
+
     # 最后写入的文件 SHA / Last written file SHAs
     last_sakura_md_sha = Column(String(40), nullable=True)
     last_memory_md_sha = Column(String(40), nullable=True)
@@ -880,9 +886,14 @@ class SakuraMemoryState(Base):
     # 配置覆盖 / Config override
     consolidation_interval = Column(Integer, default=5, nullable=False)
 
-    created_at = Column(TIMESTAMP, default=datetime.utcnow, nullable=False)
+    created_at = Column(
+        TIMESTAMP, default=lambda: datetime.now(timezone.utc), nullable=False
+    )
     updated_at = Column(
-        TIMESTAMP, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False
+        TIMESTAMP,
+        default=lambda: datetime.now(timezone.utc),
+        onupdate=lambda: datetime.now(timezone.utc),
+        nullable=False,
     )
 
     def __repr__(self):
@@ -923,6 +934,39 @@ def _get_default_sql(col) -> str | None:
     return None
 
 
+async def _ensure_agent_message_longtext_columns(conn, logger) -> None:
+    from sqlalchemy import inspect
+
+    def _existing_tables(sync_conn):
+        insp = inspect(sync_conn)
+        return set(insp.get_table_names())
+
+    existing_tables = await conn.run_sync(_existing_tables)
+    columns = {
+        "agent_team_messages": {
+            "content": "LONGTEXT NULL",
+            "message_json": "LONGTEXT NOT NULL",
+        },
+        "agent_team_tool_calls": {
+            "arguments_json": "LONGTEXT NULL",
+        },
+    }
+    for table_name, table_columns in columns.items():
+        if table_name not in existing_tables:
+            continue
+        for column_name, column_type in table_columns.items():
+            await conn.execute(
+                text(
+                    f"ALTER TABLE `{table_name}` MODIFY COLUMN `{column_name}` {column_type}"
+                )
+            )
+            logger.info(
+                "[auto-migrate] 扩展列为 LONGTEXT: {}.{}",
+                table_name,
+                column_name,
+            )
+
+
 async def _auto_migrate():
     """自动检测并执行 schema 迁移 / Auto-detect and run schema migrations
 
@@ -947,6 +991,9 @@ async def _auto_migrate():
                 sync_conn, checkfirst=True
             )
         )
+        await conn.run_sync(
+            lambda sync_conn: Base.metadata.create_all(sync_conn, checkfirst=True)
+        )
 
         # 用 Inspector 逐表检测缺失列
         def _get_missing_columns(sync_conn):
@@ -965,6 +1012,8 @@ async def _auto_migrate():
             return missing
 
         missing = await conn.run_sync(_get_missing_columns)
+
+        await _ensure_agent_message_longtext_columns(conn, _logger)
 
         if not missing:
             return

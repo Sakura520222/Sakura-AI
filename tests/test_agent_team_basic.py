@@ -254,7 +254,6 @@ async def test_load_agent_team_ai_config_preserves_explicit_zero_values(monkeypa
             openai_api_key="settings-key",
             openai_model="settings-model",
             summary_model="settings-summary-model",
-            agent_team_test_command_allowlist="pytest -q",
         ),
     )
 
@@ -371,17 +370,20 @@ def test_ai_filter_model_falls_back_when_main_empty():
         _select_ai_filter_model("", "review-model", "summary-model") == "review-model"
     )
 
+
 # ── 候选池去重与 GitHub 状态过滤 ────────────────────────
+
 
 def _make_candidate(
     issue_number: int = 10,
     repo: str = "owner/repo",
     score: int = 50,
     source_id: int = 1,
+    source_type: str = "issue_analysis",
 ) -> AgentCandidate:
     owner, name = repo.split("/", 1) if "/" in repo else ("", repo)
     return AgentCandidate(
-        source_type="issue_analysis",
+        source_type=source_type,
         source_id=source_id,
         source_issue_number=issue_number,
         repo_full_name=repo,
@@ -475,8 +477,8 @@ async def test_filter_closed_issues_removes_closed(monkeypatch):
     )
 
     candidates = [
-        _make_candidate(issue_number=10),
-        _make_candidate(issue_number=11),
+        _make_candidate(issue_number=10, source_type="scan_finding"),
+        _make_candidate(issue_number=11, source_type="scan_finding"),
     ]
 
     result = await service._filter_closed_issues(candidates)
@@ -499,7 +501,7 @@ async def test_filter_closed_issues_fail_open(monkeypatch):
         lambda: mock_app,
     )
 
-    candidates = [_make_candidate(issue_number=10)]
+    candidates = [_make_candidate(issue_number=10, source_type="scan_finding")]
 
     result = await service._filter_closed_issues(candidates)
 

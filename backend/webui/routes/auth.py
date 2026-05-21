@@ -118,7 +118,7 @@ def _build_login_token_payload(
     user: TelegramUser,
     github_username: str,
     github_id: int | None,
-    avatar_url: str,
+    avatar_url: str | None,
 ) -> dict:
     """构建 WebUI/API 登录 JWT payload。"""
     return {
@@ -468,7 +468,9 @@ async def verify_two_factor(
             await check_mfa_lockout(int(user_id))
         except AccountLockedError as exc:
             lang = detect_language()
-            locked_msg = _i18n.t("toast.account_locked", lang=lang, seconds=exc.remaining_seconds)
+            locked_msg = _i18n.t(
+                "toast.account_locked", lang=lang, seconds=exc.remaining_seconds
+            )
             return render_template(
                 "two_factor_verify.html",
                 request,
@@ -609,9 +611,7 @@ async def two_factor_passkey_verify(
             await session.commit()
     except Exception as exc:
         await record_mfa_failure(user_id)
-        logger.warning(
-            "Passkey 登录验证失败: user_id={}, error={}", user_id, exc
-        )
+        logger.warning("Passkey 登录验证失败: user_id={}, error={}", user_id, exc)
         return JSONResponse(
             status_code=400,
             content={"success": False, "message": "Passkey 验证失败", "data": None},
@@ -643,9 +643,7 @@ async def logout(request: Request, csrf_token: str = Form(...)):
         raise HTTPException(status_code=403, detail="CSRF 验证失败")
 
     logger.info("WebUI 用户登出")
-    response = toast_redirect(
-        "/auth/login", "toast.logged_out", lang=detect_language()
-    )
+    response = toast_redirect("/auth/login", "toast.logged_out", lang=detect_language())
     response.delete_cookie("webui_token")
     response.delete_cookie(MFA_PENDING_COOKIE_NAME)
     return response
@@ -714,18 +712,22 @@ async def passkey_verify_discover(request: Request, body: dict = Body(...)):
             if not user:
                 return JSONResponse(
                     status_code=403,
-                    content={"success": False, "message": "toast.user_not_found", "data": None},
+                    content={
+                        "success": False,
+                        "message": "toast.user_not_found",
+                        "data": None,
+                    },
                 )
-            # Build the full token payload
-            # Note: github_id and avatar_url are not available for passkey-only login;
-            # the user can refresh them via a subsequent GitHub OAuth if needed.
-            token_payload = {
-                "sub": user.github_username or "",
-                "role": user.role,
-                "user_id": user.id,
-                "github_id": None,
-                "avatar_url": None,
-            }
+            # github_id is not available for passkey-only login.
+            github_username = user.github_username or ""
+            avatar_url = (
+                f"https://avatars.githubusercontent.com/{github_username}"
+                if github_username
+                else None
+            )
+            token_payload = _build_login_token_payload(
+                user, github_username, None, avatar_url
+            )
             await reset_mfa_failures(user_id)
             await session.commit()
     except AccountLockedError as exc:
@@ -745,7 +747,11 @@ async def passkey_verify_discover(request: Request, body: dict = Body(...)):
         logger.warning("Passkey 直接登录失败: error={}", exc)
         return JSONResponse(
             status_code=400,
-            content={"success": False, "message": "toast.passkey_login_failed", "data": None},
+            content={
+                "success": False,
+                "message": "toast.passkey_login_failed",
+                "data": None,
+            },
         )
 
     jwt_token = create_access_token(token_payload)

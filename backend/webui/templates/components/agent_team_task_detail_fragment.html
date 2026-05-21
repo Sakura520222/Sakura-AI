@@ -33,6 +33,179 @@
     </section>
     {% endif %}
 
+    {% if task.source_issue_number or issue_analysis_context or issue_comments %}
+    <section class="space-y-3">
+        <h4 class="text-sm font-bold">{{ _('agent_team.issue_context') }}</h4>
+        <div class="grid grid-cols-1 lg:grid-cols-2 gap-3">
+            <div class="rounded-2xl border border-gray-200 dark:border-gray-700 p-4 space-y-3">
+                <div class="flex items-center justify-between gap-2">
+                    <div>
+                        <h5 class="text-sm font-semibold text-gray-900 dark:text-gray-100">{{ _('agent_team.issue_ai_analysis') }}</h5>
+                        {% if issue_analysis_context %}
+                        <p class="text-xs text-gray-500 dark:text-gray-400 mt-1">{{ issue_analysis_context.repo_full_name }} #{{ issue_analysis_context.issue_number }}</p>
+                        {% endif %}
+                    </div>
+                    {% if issue_analysis_context and issue_analysis_context.status %}
+                    <span class="shrink-0 px-2 py-1 rounded-full text-xs bg-sakura-50 dark:bg-sakura-900/20 text-sakura-700 dark:text-sakura-300">{{ issue_analysis_context.status }}</span>
+                    {% endif %}
+                </div>
+                {% if issue_analysis_context %}
+                <div class="flex flex-wrap gap-2 text-xs">
+                    {% if issue_analysis_context.category %}<span class="px-2 py-1 rounded-full bg-blue-50 dark:bg-blue-900/20 text-blue-700 dark:text-blue-300">{{ issue_analysis_context.category }}</span>{% endif %}
+                    {% if issue_analysis_context.priority %}<span class="px-2 py-1 rounded-full bg-amber-50 dark:bg-amber-900/20 text-amber-700 dark:text-amber-300">{{ issue_analysis_context.priority }}</span>{% endif %}
+                    <span class="px-2 py-1 rounded-full bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-300">{{ _('agent_team.tokens') }} {{ issue_analysis_context.prompt_tokens + issue_analysis_context.completion_tokens }}</span>
+                </div>
+                <div>
+                    <div class="text-xs font-semibold text-gray-500 dark:text-gray-400 mb-1">{{ _('issue.summary') }}</div>
+                    <div data-markdown class="prose dark:prose-invert max-w-none text-sm text-gray-700 dark:text-gray-300 leading-relaxed">{{ issue_analysis_context.summary or _('issue.no_summary') }}</div>
+                </div>
+                <div>
+                    <div class="text-xs font-semibold text-gray-500 dark:text-gray-400 mb-1">{{ _('issue.feasibility') }}</div>
+                    <div data-markdown class="prose dark:prose-invert max-w-none text-sm text-gray-700 dark:text-gray-300 leading-relaxed">{{ issue_analysis_context.feasibility or _('issue.no_feasibility') }}</div>
+                </div>
+                {% if issue_analysis_context.suggested_labels %}
+                <div>
+                    <div class="text-xs font-semibold text-gray-500 dark:text-gray-400 mb-2">{{ _('issue.suggested_labels') }}</div>
+                    <div class="flex flex-wrap gap-2">
+                        {% for label in issue_analysis_context.suggested_labels %}
+                        <span class="px-2 py-1 rounded-full text-xs bg-pink-50 dark:bg-pink-900/20 text-pink-700 dark:text-pink-300">{{ label.name if label is mapping else label }}</span>
+                        {% endfor %}
+                    </div>
+                </div>
+                {% endif %}
+                {% if issue_analysis_context.suggested_assignees %}
+                <div>
+                    <div class="text-xs font-semibold text-gray-500 dark:text-gray-400 mb-2">{{ _('issue.suggested_assignees') }}</div>
+                    <div class="space-y-2">
+                        {% for assignee in issue_analysis_context.suggested_assignees %}
+                        <div class="text-sm text-gray-700 dark:text-gray-300">
+                            @{{ assignee.username if assignee is mapping else assignee }}
+                            {% if assignee is mapping and assignee.reason %}
+                            <div data-markdown class="prose dark:prose-invert max-w-none text-xs text-gray-500 dark:text-gray-400 mt-1">{{ assignee.reason }}</div>
+                            {% endif %}
+                        </div>
+                        {% endfor %}
+                    </div>
+                </div>
+                {% endif %}
+                {% if issue_analysis_context.related_prs %}
+                <div>
+                    <div class="text-xs font-semibold text-gray-500 dark:text-gray-400 mb-2">{{ _('issue.related_pr') }}</div>
+                    <div class="space-y-1">
+                        {% for pr in issue_analysis_context.related_prs %}
+                        <div class="text-xs text-gray-600 dark:text-gray-300">#{{ pr.number if pr is mapping else '-' }} {{ pr.title if pr is mapping else pr }}{% if pr is mapping and pr.state %} · {{ pr.state }}{% endif %}</div>
+                        {% endfor %}
+                    </div>
+                </div>
+                {% endif %}
+                {% if issue_analysis_context.duplicate_of %}
+                <div class="rounded-xl bg-yellow-50 dark:bg-yellow-900/20 text-yellow-800 dark:text-yellow-200 p-3 text-xs">
+                    {{ _('issue.duplicate_of', id=issue_analysis_context.duplicate_of) }}
+                </div>
+                {% endif %}
+                {% if issue_analysis_context.analysis_detail_json %}
+                <details class="rounded-xl bg-gray-50 dark:bg-gray-900/50 p-3">
+                    <summary class="cursor-pointer text-xs font-semibold text-gray-600 dark:text-gray-300">{{ _('agent_team.analysis_detail') }}</summary>
+                    <pre class="mt-3 text-xs whitespace-pre-wrap max-h-64 overflow-auto text-gray-700 dark:text-gray-300">{{ issue_analysis_context.analysis_detail_json }}</pre>
+                </details>
+                {% endif %}
+                {% if issue_analysis_context.error_message %}
+                <pre class="text-xs whitespace-pre-wrap rounded-xl bg-red-50 dark:bg-red-900/20 text-red-700 dark:text-red-300 p-3 max-h-40 overflow-auto">{{ issue_analysis_context.error_message }}</pre>
+                {% endif %}
+                {% else %}
+                <div class="rounded-xl border border-dashed border-gray-300 dark:border-gray-600 p-5 text-center text-sm text-gray-500">{{ _('agent_team.no_issue_analysis') }}</div>
+                {% endif %}
+            </div>
+
+            <div class="rounded-2xl border border-gray-200 dark:border-gray-700 p-4 space-y-3">
+                <div class="flex items-center justify-between gap-2">
+                    <h5 class="text-sm font-semibold text-gray-900 dark:text-gray-100">{{ _('agent_team.issue_discussion') }}</h5>
+                    {% if issue_comments %}<span class="text-xs text-gray-500 dark:text-gray-400">{{ issue_comments|length }}</span>{% endif %}
+                </div>
+                {% if issue_comments %}
+                <div class="space-y-3 max-h-96 overflow-auto pr-1">
+                    {% for comment in issue_comments %}
+                    <article class="rounded-xl bg-gray-50 dark:bg-gray-900/50 p-3 text-sm">
+                        <div class="flex items-center justify-between gap-2 text-xs text-gray-500 dark:text-gray-400 mb-2">
+                            <div class="min-w-0">
+                                <span class="font-semibold text-gray-700 dark:text-gray-200">@{{ comment.author }}</span>
+                                {% if comment.is_bot %}<span class="ml-1 px-1.5 py-0.5 rounded bg-indigo-100 dark:bg-indigo-900/30 text-indigo-700 dark:text-indigo-300">{{ _('agent_team.ai_comment') }}</span>{% endif %}
+                                {% if comment.author_association %}<span class="ml-1">{{ comment.author_association }}</span>{% endif %}
+                            </div>
+                            <span class="shrink-0">{{ comment.created_at.strftime('%Y-%m-%d %H:%M') if comment.created_at else '-' }}</span>
+                        </div>
+                        <div data-markdown class="prose dark:prose-invert max-w-none text-sm text-gray-700 dark:text-gray-300 leading-relaxed">{{ comment.body }}</div>
+                    </article>
+                    {% endfor %}
+                </div>
+                {% else %}
+                <div class="rounded-xl border border-dashed border-gray-300 dark:border-gray-600 p-5 text-center text-sm text-gray-500">{{ _('agent_team.no_issue_discussion') }}</div>
+                {% endif %}
+            </div>
+        </div>
+    </section>
+    {% endif %}
+
+    <section>
+        <h4 class="text-sm font-bold mb-3">{{ _('agent_team.agent_context') }}</h4>
+        {% if agent_contexts %}
+        <div class="space-y-3">
+            {% for context in agent_contexts %}
+            <details class="rounded-2xl border border-gray-200 dark:border-gray-700 overflow-hidden" {% if loop.last %}open{% endif %}>
+                <summary class="cursor-pointer px-4 py-3 bg-gray-50 dark:bg-gray-900/50 text-sm font-semibold">
+                    {{ _('agent_team.iteration') }} {{ context.iteration_number }} · {{ context.source_role }} → {{ context.target_role }}
+                </summary>
+                <div class="p-4 space-y-3 text-sm">
+                    {% if context.summary %}
+                    <div data-markdown class="prose dark:prose-invert max-w-none text-sm text-gray-700 dark:text-gray-300 leading-relaxed">{{ context.summary }}</div>
+                    {% endif %}
+                    <div class="grid grid-cols-1 lg:grid-cols-2 gap-3">
+                        <div class="rounded-xl bg-gray-50 dark:bg-gray-900/50 p-3">
+                            <div class="text-xs font-semibold text-gray-500 dark:text-gray-400 mb-2">{{ _('agent_team.unresolved_items') }}</div>
+                            {% if context.unresolved_items %}
+                            <ul class="space-y-1 text-xs text-gray-700 dark:text-gray-300">
+                                {% for item in context.unresolved_items %}
+                                <li class="flex gap-2"><span class="mt-1 h-1.5 w-1.5 rounded-full bg-amber-400 shrink-0"></span><span>{{ item.text }}{% if item.meta %} · {{ item.meta }}{% endif %}</span></li>
+                                {% endfor %}
+                            </ul>
+                            {% else %}
+                            <p class="text-xs text-gray-400">{{ _('common.none') }}</p>
+                            {% endif %}
+                        </div>
+                        <div class="rounded-xl bg-gray-50 dark:bg-gray-900/50 p-3">
+                            <div class="text-xs font-semibold text-gray-500 dark:text-gray-400 mb-2">{{ _('agent_team.modified_files') }}</div>
+                            {% if context.modified_files %}
+                            <ul class="space-y-1 text-xs text-gray-700 dark:text-gray-300">
+                                {% for item in context.modified_files %}
+                                <li class="break-all">{{ item.text }}{% if item.meta %} · {{ item.meta }}{% endif %}</li>
+                                {% endfor %}
+                            </ul>
+                            {% else %}
+                            <p class="text-xs text-gray-400">{{ _('common.none') }}</p>
+                            {% endif %}
+                        </div>
+                    </div>
+                    <div class="flex items-center justify-between gap-2 text-xs text-gray-500 dark:text-gray-400">
+                        <span>{{ _('agent_team.token_estimate') }}: {{ context.token_estimate or 0 }}</span>
+                        <span>{{ context.created_at.strftime('%Y-%m-%d %H:%M') if context.created_at else '-' }}</span>
+                    </div>
+                </div>
+            </details>
+            {% endfor %}
+        </div>
+        {% else %}
+        <div class="rounded-xl border border-dashed border-gray-300 dark:border-gray-600 p-5 text-center text-sm text-gray-500">{{ _('agent_team.no_agent_context') }}</div>
+        {% endif %}
+    </section>
+
+    {% if task.rate_limit_reset_at %}
+    <section>
+        <div class="text-xs rounded-xl bg-amber-50 dark:bg-amber-900/20 text-amber-700 dark:text-amber-300 p-3">
+            {{ _('agent_team.rate_limit_reset_at') }}: {{ task.rate_limit_reset_at.strftime('%Y-%m-%d %H:%M') }}
+        </div>
+    </section>
+    {% endif %}
+
     {% if task.error_message %}
     <section>
         <h4 class="text-sm font-bold mb-2 text-red-600 dark:text-red-400">{{ _('agent_team.error_message') }}</h4>

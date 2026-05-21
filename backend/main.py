@@ -40,7 +40,7 @@ settings = get_settings()
 
 def _get_allowed_origins(app_settings: Settings) -> list[str]:
     """构造 CORS origin 列表。开发模式下放行本地调试地址。"""
-    origins = {f"https://{app_settings.app_domain}"}
+    origins = {f"https://{app_settings.sanitized_app_domain}"}
     if app_settings.is_development:
         port = app_settings.app_port
         origins.update(
@@ -236,6 +236,13 @@ app.add_middleware(
 # Bootstrap 中间件（CORS 之后、路由之前）
 app.add_middleware(BootstrapMiddleware)
 
+# 健康检查
+@app.get("/health")
+async def health():
+    """健康检查"""
+    return {"status": "healthy", "service": "Sakura AI Reviewer"}
+
+
 # 注册路由
 app.include_router(setup_router)
 app.include_router(webhook.router, prefix="/api/webhook", tags=["Webhook"])
@@ -276,9 +283,7 @@ async def rate_limit_exception_handler(request: Request, exc: RateLimitExceeded)
             )
         referer = request.headers.get("referer")
         redirect_url = (
-            referer
-            if referer and referer.startswith(str(request.base_url))
-            else "/"
+            referer if referer and referer.startswith(str(request.base_url)) else "/"
         )
         return toast_redirect(redirect_url, message, "error", status_code=303)
     return await _rate_limit_exceeded_handler(request, exc)
@@ -326,14 +331,35 @@ async def auth_exception_handler(request: Request, exc: HTTPException):
     return JSONResponse(status_code=exc.status_code, content={"detail": exc.detail})
 
 
-@app.get("/health")
-async def health():
-    """健康检查"""
-    return {"status": "healthy", "service": "Sakura AI Reviewer"}
+# Catch-all: 浏览器访问不存在的路径时自动跳转主页（API 请求仍返回 JSON 404）
+@app.get("/{path:path}", include_in_schema=False)
+async def webui_fallback(request: Request, path: str):
+    accept = request.headers.get("accept", "")
+    if "text/html" in accept:
+        return RedirectResponse(url="/", status_code=302)
+    raise HTTPException(status_code=404, detail="Not Found")
 
 
 if __name__ == "__main__":
+    import logging
     import uvicorn
+
+    # Suppress access log for high-frequency polling endpoints
+    class _PollingLogFilter(logging.Filter):
+        _skip_patterns = (
+            "/agent-team/api/tasks/",
+            "/agent-team/api/active-tasks",
+        )
+
+        def filter(self, record: logging.LogRecord) -> bool:
+            msg = getattr(record, "msg", "") or ""
+            for p in self._skip_patterns:
+                if p in msg:
+                    return False
+            return True
+
+    access_logger = logging.getLogger("uvicorn.access")
+    access_logger.addFilter(_PollingLogFilter())
 
     uvicorn.run(
         "backend.main:app",

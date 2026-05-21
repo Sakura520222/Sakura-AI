@@ -1029,6 +1029,21 @@ class GitHubAppClient:
             )
             return None
 
+    def get_issue_comments(
+        self, repo_owner: str, repo_name: str, issue_number: int
+    ) -> list:
+        """获取 Issue 的评论列表"""
+        client = self.get_repo_client(repo_owner, repo_name)
+        repo = client.get_repo(f"{repo_owner}/{repo_name}")
+        try:
+            issue = repo.get_issue(issue_number)
+            return list(issue.get_comments())
+        except Exception as e:
+            logger.error(
+                f"获取 Issue 评论失败: {repo_owner}/{repo_name}#{issue_number}: {e}"
+            )
+            return []
+
     def get_repo_issues(
         self,
         repo_owner: str,
@@ -1228,7 +1243,7 @@ def extract_pr_info_from_webhook(payload: Dict[str, Any]) -> Optional[Dict[str, 
             "installation_id": installation["id"],
             "author": pull_request["user"]["login"],
             "title": pull_request["title"],
-            "body": pull_request.get("body", ""),
+            "body": pull_request.get("body") or "",
             "branch": pull_request["head"]["ref"],
             "base_branch": pull_request["base"]["ref"],
             "diff_url": pull_request["diff_url"],

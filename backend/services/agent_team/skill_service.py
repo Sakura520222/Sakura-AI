@@ -529,6 +529,12 @@ class AgentSkillService:
         logger.info("Agent Skill 已删除: slug={}, path={}", skill.slug, skill_dir)
         return skill
 
+    async def ensure_builtin_skills(self, db: AsyncSession) -> int:
+        """注册内置技能（已存在则跳过），返回新安装数量。"""
+        from backend.services.agent_team.builtin_skills import install_builtin_skills
+
+        return await install_builtin_skills(db, self)
+
     async def build_enabled_skills_summary(self, db: AsyncSession) -> str:
         """构建注入 Agent Prompt 的已启用 Skills 摘要。"""
         skills = await self._enabled_skills(db)

@@ -93,7 +93,7 @@ CREATE TABLE IF NOT EXISTS review_queue (
 
 -- 插入默认配置
 INSERT IGNORE INTO app_config (key_name, key_value, description) VALUES
-('app_version', '2.10.1', '应用版本号'),
+('app_version', '2.11.0', '应用版本号'),
 ('max_concurrent_reviews', '5', '最大并发审查数量'),
 ('review_timeout_seconds', '300', '审查超时时间（秒）'),
 ('enable_auto_review', 'true', '是否启用自动审查'),
@@ -111,6 +111,7 @@ CREATE TABLE IF NOT EXISTS sakura_memory_states (
     last_consolidation_at TIMESTAMP NULL,
     last_consolidation_count INT NULL,
     is_initialized TINYINT(1) NOT NULL DEFAULT 0,
+    knowledge_extracted TINYINT(1) NOT NULL DEFAULT 0,
     last_sakura_md_sha VARCHAR(40) NULL,
     last_memory_md_sha VARCHAR(40) NULL,
     consolidation_interval INT NOT NULL DEFAULT 5,
@@ -135,6 +136,14 @@ CREATE TABLE IF NOT EXISTS agent_team_tasks (
     status VARCHAR(50) NOT NULL DEFAULT 'candidate',
     current_phase VARCHAR(50),
     branch_name VARCHAR(255),
+    workspace_path VARCHAR(1000),
+    base_branch VARCHAR(255),
+    base_commit_sha VARCHAR(64),
+    resume_count INT NOT NULL DEFAULT 0,
+    failed_phase VARCHAR(50),
+    failed_role VARCHAR(50),
+    rate_limit_reset_at TIMESTAMP NULL,
+    last_checkpoint_at TIMESTAMP NULL,
     pr_number BIGINT,
     pr_url VARCHAR(500),
     iteration_count INT NOT NULL DEFAULT 0,
@@ -195,6 +204,88 @@ CREATE TABLE IF NOT EXISTS agent_team_patch_files (
     FOREIGN KEY (iteration_id) REFERENCES agent_team_iterations(id) ON DELETE CASCADE,
     INDEX idx_agent_team_patch_files_iteration_id (iteration_id),
     INDEX idx_agent_team_patch_files_file_path (file_path)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- 创建 Agent 会话记录表
+CREATE TABLE IF NOT EXISTS agent_team_sessions (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    task_id INT NOT NULL,
+    iteration_number INT NOT NULL,
+    role_name VARCHAR(50) NOT NULL,
+    resume_index INT NOT NULL DEFAULT 0,
+    status VARCHAR(50) NOT NULL DEFAULT 'running',
+    model VARCHAR(255),
+    tool_calls_count INT NOT NULL DEFAULT 0,
+    last_seq INT NOT NULL DEFAULT 0,
+    error_message TEXT,
+    started_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL,
+    completed_at TIMESTAMP NULL,
+    FOREIGN KEY (task_id) REFERENCES agent_team_tasks(id) ON DELETE CASCADE,
+    INDEX idx_agent_team_sessions_task_id (task_id),
+    INDEX idx_agent_team_sessions_iteration_number (iteration_number),
+    INDEX idx_agent_team_sessions_role_name (role_name),
+    INDEX idx_agent_team_sessions_status (status)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- 创建 Agent messages 追加日志表
+CREATE TABLE IF NOT EXISTS agent_team_messages (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    session_id INT NOT NULL,
+    seq INT NOT NULL,
+    role VARCHAR(50) NOT NULL,
+    content LONGTEXT,
+    message_json LONGTEXT NOT NULL,
+    tool_call_id VARCHAR(255),
+    finish_reason VARCHAR(100),
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL,
+    FOREIGN KEY (session_id) REFERENCES agent_team_sessions(id) ON DELETE CASCADE,
+    UNIQUE KEY uq_agent_message_seq (session_id, seq),
+    INDEX idx_agent_team_messages_session_id (session_id),
+    INDEX idx_agent_team_messages_role (role),
+    INDEX idx_agent_team_messages_tool_call_id (tool_call_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- 创建 Agent 工具调用账本表
+CREATE TABLE IF NOT EXISTS agent_team_tool_calls (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    session_id INT NOT NULL,
+    assistant_message_id INT NOT NULL,
+    tool_call_id VARCHAR(255) NOT NULL,
+    name VARCHAR(255) NOT NULL,
+    arguments_json LONGTEXT,
+    arguments_hash VARCHAR(64),
+    status VARCHAR(50) NOT NULL DEFAULT 'pending',
+    result_message_id INT NULL,
+    started_at TIMESTAMP NULL,
+    completed_at TIMESTAMP NULL,
+    error_message TEXT,
+    FOREIGN KEY (session_id) REFERENCES agent_team_sessions(id) ON DELETE CASCADE,
+    FOREIGN KEY (assistant_message_id) REFERENCES agent_team_messages(id) ON DELETE CASCADE,
+    FOREIGN KEY (result_message_id) REFERENCES agent_team_messages(id) ON DELETE SET NULL,
+    INDEX idx_agent_team_tool_calls_session_id (session_id),
+    INDEX idx_agent_team_tool_calls_assistant_message_id (assistant_message_id),
+    INDEX idx_agent_team_tool_calls_tool_call_id (tool_call_id),
+    INDEX idx_agent_team_tool_calls_status (status),
+    INDEX idx_agent_team_tool_calls_result_message_id (result_message_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- 创建 Agent 角色间对话上下文摘要表
+CREATE TABLE IF NOT EXISTS agent_team_conversation_contexts (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    task_id INT NOT NULL,
+    iteration_number INT NOT NULL,
+    source_role VARCHAR(50) NOT NULL,
+    target_role VARCHAR(50),
+    summary LONGTEXT NOT NULL,
+    unresolved_items_json LONGTEXT,
+    modified_files_json LONGTEXT,
+    token_estimate INT,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL,
+    FOREIGN KEY (task_id) REFERENCES agent_team_tasks(id) ON DELETE CASCADE,
+    INDEX idx_agent_team_conversation_contexts_task_id (task_id),
+    INDEX idx_agent_team_conversation_contexts_iteration_number (iteration_number),
+    INDEX idx_agent_team_conversation_contexts_source_role (source_role),
+    INDEX idx_agent_team_conversation_contexts_target_role (target_role)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- 创建 Agent 任务反馈记录表

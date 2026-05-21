@@ -151,11 +151,11 @@ class IssueEmbeddingService:
                 # 检查 state 是否需要更新
                 state_updates.append((doc_id, issue))
 
-        # 5. 更新已有文档的 state metadata
+        # 5. 更新已有文档的 state metadata（同时补充 AI 分析元数据）
         updated_count = 0
         if state_updates:
             updated_count = await self._update_existing_states(
-                collection_key, state_updates
+                collection_key, state_updates, ai_results
             )
 
         # 6. 新增缺失的 issues
@@ -180,7 +180,7 @@ class IssueEmbeddingService:
     async def _fetch_ai_analysis(
         self, repo_owner: str, repo_name: str, issue_numbers: list[int]
     ) -> Dict[int, Dict[str, str]]:
-        """从数据库获取 issues 的 AI 分析结果（summary + suggested_title）"""
+        """从数据库获取 issues 的 AI 分析结果（summary + suggested_title + category + priority + feasibility）"""
         try:
             from backend.models.database import IssueAnalysis, async_session
             from sqlalchemy import select
@@ -192,6 +192,9 @@ class IssueEmbeddingService:
                         IssueAnalysis.issue_number,
                         IssueAnalysis.summary,
                         IssueAnalysis.suggested_title,
+                        IssueAnalysis.category,
+                        IssueAnalysis.priority,
+                        IssueAnalysis.feasibility,
                     ).where(
                         IssueAnalysis.repo_name == repo_full,
                         IssueAnalysis.issue_number.in_(issue_numbers),
@@ -201,6 +204,9 @@ class IssueEmbeddingService:
                     row.issue_number: {
                         "summary": row.summary or "",
                         "suggested_title": row.suggested_title or "",
+                        "category": row.category or "",
+                        "priority": row.priority or "",
+                        "feasibility": row.feasibility or "",
                     }
                     for row in result
                 }
@@ -212,9 +218,21 @@ class IssueEmbeddingService:
         self,
         collection_key: str,
         state_updates: list[tuple[str, Any]],
+        ai_results: Dict[int, Dict[str, str]] | None = None,
     ) -> int:
-        """批量更新已有文档的 state metadata"""
+        """批量更新已有文档的 state metadata，并补充 AI 分析元数据"""
         collection = await self.vector_store.get_or_create_collection(collection_key)
+
+        # 执行 enrich 配置检查
+        enable_rich = False
+        if ai_results:
+            try:
+                from backend.core.config import get_dynamic_config
+
+                raw = await get_dynamic_config("issue_vector_store_rich_metadata")
+                enable_rich = True if raw is None else bool(raw)
+            except Exception:
+                enable_rich = True
 
         # 批量获取所有需要更新的文档
         doc_ids = [doc_id for doc_id, _ in state_updates]
@@ -228,23 +246,45 @@ class IssueEmbeddingService:
             logger.warning(f"批量获取 issue 文档失败: {e}")
             return 0
 
-        # 筛选出 state 确实变化的文档，批量 upsert
+        # 筛选出需要更新的文档（state 变化或缺少 AI 元数据）
         to_update = []
         for i, doc_id in enumerate(all_existing["ids"]):
             old_metadata = all_existing["metadatas"][i]
             issue = issue_map[doc_id]
-            if old_metadata.get("state") == issue.state:
-                continue
+            needs_update = False
 
-            new_metadata = {**old_metadata, "state": issue.state}
-            to_update.append(
-                {
-                    "id": doc_id,
-                    "content": all_existing["documents"][i],
-                    "embedding": all_existing["embeddings"][i],
-                    "metadata": new_metadata,
-                }
-            )
+            new_metadata = {**old_metadata}
+
+            # state 变化
+            if old_metadata.get("state") != issue.state:
+                new_metadata["state"] = issue.state
+                needs_update = True
+
+            # 补充 AI 分析元数据（如果配置启用且存在分析结果）
+            if enable_rich and ai_results:
+                number_str = old_metadata.get("number", "")
+                try:
+                    number = int(number_str)
+                except (ValueError, TypeError):
+                    number = None
+
+                if number and number in ai_results:
+                    ai = ai_results[number]
+                    for key in ("category", "priority", "feasibility"):
+                        ai_value = ai.get(key)
+                        if ai_value and not old_metadata.get(key):
+                            new_metadata[key] = str(ai_value)
+                            needs_update = True
+
+            if needs_update:
+                to_update.append(
+                    {
+                        "id": doc_id,
+                        "content": all_existing["documents"][i],
+                        "embedding": all_existing["embeddings"][i],
+                        "metadata": new_metadata,
+                    }
+                )
 
         if to_update:
             try:
@@ -262,6 +302,12 @@ class IssueEmbeddingService:
         ai_results: Dict[int, Dict[str, str]],
     ) -> int:
         """新增缺失的 issues，优先使用 AI 分析结果"""
+        from backend.core.config import get_dynamic_config
+
+        enable_rich = await get_dynamic_config("issue_vector_store_rich_metadata")
+        if enable_rich is None:
+            enable_rich = True
+
         documents = []
         texts = []
         for issue in new_issues:
@@ -273,15 +319,24 @@ class IssueEmbeddingService:
 
             text = f"{title}\n{body}"
             texts.append(text)
+
+            metadata = {
+                "number": str(issue.number),
+                "title": title,
+                "state": issue.state,
+            }
+
+            if enable_rich:
+                for key in ("category", "priority", "feasibility"):
+                    value = ai.get(key)
+                    if value:
+                        metadata[key] = str(value)
+
             documents.append(
                 {
                     "id": f"{self.ISSUE_ID_PREFIX}{issue.number}",
                     "content": text,
-                    "metadata": {
-                        "number": str(issue.number),
-                        "title": title,
-                        "state": issue.state,
-                    },
+                    "metadata": metadata,
                 }
             )
 
@@ -418,22 +473,43 @@ class IssueEmbeddingService:
         title: str,
         body: str,
         state: str,
+        analysis_metadata: dict | None = None,
     ) -> bool:
-        """更新或插入单个 issue（webhook 调用）"""
+        """更新或插入单个 issue（webhook 调用）
+
+        Args:
+            analysis_metadata: AI 分析元数据，可包含 category/priority/feasibility 等字段
+        """
         try:
+            from backend.core.config import get_dynamic_config
+
+            enable_rich = await get_dynamic_config(
+                "issue_vector_store_rich_metadata"
+            )
+            if enable_rich is None:
+                enable_rich = True
+
             collection_key = self._collection_key(repo_owner, repo_name)
             text = f"{title}\n{body or ''}"
             embedding = await self.embedding_service.embed_query(text)
+
+            metadata = {
+                "number": str(issue_number),
+                "title": title,
+                "state": state,
+            }
+
+            if enable_rich and analysis_metadata:
+                for key in ("category", "priority", "feasibility"):
+                    value = analysis_metadata.get(key)
+                    if value:
+                        metadata[key] = str(value)
 
             document = {
                 "id": f"{self.ISSUE_ID_PREFIX}{issue_number}",
                 "content": text,
                 "embedding": embedding,
-                "metadata": {
-                    "number": str(issue_number),
-                    "title": title,
-                    "state": state,
-                },
+                "metadata": metadata,
             }
 
             await self.vector_store.upsert_documents(collection_key, [document])

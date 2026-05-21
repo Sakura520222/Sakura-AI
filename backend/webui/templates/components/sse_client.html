@@ -64,6 +64,23 @@
             }
         });
 
+        // Agent team events
+        var agentEvents = [
+            'agent:task_updated', 'agent:session_started', 'agent:session_completed',
+            'agent:message_added', 'agent:tool_started', 'agent:tool_completed',
+            'agent:tool_failed', 'agent:ai_request', 'agent:prompt_received'
+        ];
+        agentEvents.forEach(function(eventName) {
+            eventSource.addEventListener(eventName, function(e) {
+                try {
+                    var data = JSON.parse(e.data);
+                    window.dispatchEvent(new CustomEvent('sse:' + eventName, { detail: data }));
+                } catch(err) {
+                    // ignore parse errors for agent events
+                }
+            });
+        });
+
         eventSource.onopen = function() {
             reconnectDelay = 1000;
             console.log('[SSE] 连接已建立');

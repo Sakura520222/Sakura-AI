@@ -17,7 +17,7 @@ services:
       - ../Skills:/app/Skills  # Agent Skills 技能目录持久化
       - chroma_data:/app/data/chroma  # ChromaDB 向量数据库持久化
     healthcheck:
-      test: ["CMD", "python", "-c", "import requests; requests.get('http://localhost:8000/health')"]
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
       interval: 30s
       timeout: 10s
       retries: 3

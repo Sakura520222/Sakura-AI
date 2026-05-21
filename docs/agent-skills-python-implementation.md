@@ -4,6 +4,8 @@
 
 Skills 的本质不是“普通 prompt 模板文件”，而是一套建立在 `Command` 与 `Tool` 系统之上的可发现、可授权、可延迟加载、可动态激活、可作为子 Agent 执行的能力扩展机制。
 
+> Sakura 当前实现补充：本项目已在 Agent Team 中实现 Skills 管理与调用能力，当前定位为“给 Agent 注入可复用说明和操作流程”。Skills 不会扩大 Agent 的文件、shell 或 Git 权限，所有实际操作仍受 Agent Team 受控工具和白名单限制。
+
 > 主要参考源码：
 >
 > - `src/skills/loadSkillsDir.ts`
@@ -49,6 +51,21 @@ SKILL.md / bundled / plugin / MCP resource
 5. **支持动态发现**：文件工具触碰某些路径时，可以发现下层 `.claude/skills` 并激活 `paths` 条件技能。
 6. **支持搜索与预加载**：`DiscoverSkills` 和 turn-zero prefetch 用 TF-IDF 搜索相关技能。
 7. **支持 compaction 保存**：已调用 Skill 的内容保存到 session state，压缩后可恢复。
+
+### 1.1 Sakura Agent Team 当前落地范围
+
+Sakura 的 Agent Skills 功能面向超级管理员开放，主要用于增强 Agent Team 的任务执行知识：
+
+- WebUI 上传单个 `SKILL.md`。
+- WebUI 上传 ZIP 技能包。
+- 从 GitHub blob/raw `SKILL.md` 安装。
+- 在 WebUI 中启用、禁用和删除 Skill。
+- Agent 通过 `use_skill` 工具按需读取完整 Skill 内容。
+- 通过 `agent_team_skills_enabled` 控制是否允许 Agent 使用 Skills。
+- 通过 `agent_team_skills_root` 配置 Skills 本地存储根目录。
+- 内置 `ruff-lint` Skill（展示名 `Ruff Lint & Format`），指导 Agent 使用 `ruff check`、`ruff check --fix` 和 `ruff format`。
+
+Sakura 当前的 Skills 更接近“延迟加载的任务说明书”，不实现额外工具授权扩展；即便 Skill 文档中提到 shell 命令，执行时仍必须经过 Agent Team 的命令白名单与工作区安全边界。
 
 ---
 

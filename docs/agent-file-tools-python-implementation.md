@@ -2,6 +2,8 @@
 
 本文档提取自当前仓库中 Claude Code Agent 的工具系统，重点覆盖文件读取、文件写入、精确编辑、搜索、命令执行等能力，并整理为可迁移到 Python 项目的完整实现思路与参考代码。
 
+> Sakura 当前实现补充：本项目的 Agent Team 已在 `backend/services/agent_team/tools/` 下实现一组工作区受控工具，供全栈修复 Agent 与专业审查 Agent 使用。所有路径必须限制在隔离工作区内，shell 命令采用黑名单安全策略，Skills 只提供说明，不会扩大工具权限。
+
 > 主要参考源码：
 >
 > - `src/Tool.ts`
@@ -46,6 +48,33 @@ LLM tool_use
 ```
 
 迁移到 Python 项目时，建议保留这个生命周期，而不是把所有逻辑写成简单函数。
+
+### 1.1 Sakura Agent Team 当前工具集
+
+Agent Team 当前内置工具覆盖代码阅读、编辑、验证、审查和项目知识读取：
+
+| 工具 | 作用 |
+| --- | --- |
+| `read_file` | 读取工作区文件，并记录读取状态用于写前新鲜度校验 |
+| `write_file` | 写入或创建工作区文件 |
+| `edit_file` | 精确字符串替换，适合小范围修改 |
+| `replace_lines` | 按行号替换文件片段 |
+| `insert_lines` | 在指定行后插入文本 |
+| `list_directory` | 列出工作区目录 |
+| `glob` | 按 glob 模式查找文件 |
+| `search_in_files` | 在工作区内搜索文件内容 |
+| `run_command` | 在工作区内运行 shell 命令，并拦截黑名单高危命令 |
+| `check_changes` | 查看当前工作区 Git diff 和状态摘要 |
+| `detect_project` | 识别项目类型、依赖文件和候选验证命令 |
+| `revert_file` | 将指定文件回退到基线版本 |
+| `read_sakura_docs` | 读取 `.sakura/` 下的项目知识文档 |
+| `list_sakura_directory` | 浏览 `.sakura/` 目录结构 |
+| `read_sakura_memory` | 读取 `.sakura/memory/` 下的历史反思 |
+| `use_skill` | 加载已启用 Agent Skill 的完整说明 |
+| `finish_task` | 结束实现任务并提交总结 |
+| `submit_review` | 专业审查 Agent 提交审查结论 |
+
+这些工具由统一 registry 暴露给模型，执行结果会写入任务消息流。写入类工具在成功后会更新文件状态，避免后续编辑基于过期内容继续覆盖。
 
 ---
 
@@ -326,6 +355,17 @@ def assert_file_not_modified_since_read(path: str, content_now: str, state: Read
 4. 对读、写分别维护 allow / deny / ask 规则。
 5. 危险目录或文件需要显式权限，例如 `.git`、`.vscode`、`.idea`、`.claude`、`.gitconfig`、shell rc 文件等。
 6. 读取设备文件如 `/dev/zero`、`/dev/random`、`/dev/stdin` 需禁止，避免阻塞或无限输出。
+
+Sakura Agent Team 在此基础上增加了面向自动修复任务的边界：
+
+- 工具上下文绑定到 `agent_team_workspace_root` 下的隔离工作区。
+- 文件工具只能访问当前任务工作区内路径。
+- 搜索与 glob 会排除依赖目录、构建产物和常见缓存目录，减少噪声与大输出。
+- Shell 命令必须在工作区内执行，并受默认黑名单与 `agent_team_test_command_blocklist` 控制。
+- `detect_project` 可给出候选依赖安装和验证命令，但不能绕过命令安全策略。
+- `check_changes` 使用 Git diff/status 帮助 Agent 和审查 Agent 理解累计变更。
+- `revert_file` 用于撤销单文件错误修改，降低自动编辑风险。
+- Sakura docs/memory 工具只读访问仓库 `.sakura/` 知识，不提供写入能力。
 
 ### 5.2 Python 权限模型
 

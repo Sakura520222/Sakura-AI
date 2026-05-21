@@ -12,6 +12,8 @@ from __future__ import annotations
 
 import asyncio
 import json
+import re
+from datetime import datetime, timezone
 from pathlib import Path
 
 from loguru import logger
@@ -22,20 +24,37 @@ from backend.models.agent_team_models import (
     AgentTeamPatchFile,
     AgentTeamTask,
     AgentTeamTaskStatus,
+    AgentTeamUserPrompt,
 )
-from backend.models.database import async_session, utc_now as _utc_now
+from backend.models import database as db_module
+from backend.models.database import utc_now as _utc_now
 from backend.services.agent_team.ai_client import load_agent_team_ai_config
+from backend.services.agent_team.conversation_checkpoint import (
+    ConversationCheckpointService,
+)
 from backend.services.agent_team.git_workspace_service import (
     AgentTeamGitWorkspaceService,
 )
 from backend.services.agent_team.iteration_loop import IterationLoopService
 from backend.services.agent_team.pr_service import AgentTeamPRService
+from backend.services.agent_team.submission_context import (
+    build_agent_task_summary,
+    load_sakura_memory,
+    load_skills_context,
+)
+from backend.services.ai_reviewer.token_tracker import TokenTracker
+
+
+def _format_failure_reason(reason: str, modified_files: list[str]) -> str:
+    if modified_files:
+        return reason
+    return "全栈专家未能生成有效的代码修改"
 
 
 class AgentTeamWorker:
     """Agent 专家团队任务处理器 - 完整状态机。"""
 
-    async def process_task(self, task_id: int) -> int:
+    async def process_task(self, task_id: int, resume: bool = False) -> int:
         """处理 Agent 专家团队任务，完整执行闭环。"""
         config = await load_agent_team_ai_config()
         config.validate()
@@ -52,7 +71,7 @@ class AgentTeamWorker:
                 skills_summary,
                 skills_context,
                 skills_snapshot,
-            ) = await self._load_skills_context()
+            ) = await load_skills_context()
             ai_config_snapshot = config.safe_snapshot()
             if skills_snapshot:
                 ai_config_snapshot["skills"] = skills_snapshot
@@ -67,12 +86,25 @@ class AgentTeamWorker:
             )
 
             git_service = AgentTeamGitWorkspaceService()
-            workspace_info = await git_service.prepare_workspace(
-                task.repo_owner,
-                task.repo_name,
-                task.source_issue_number,
-                task.source_id,
-            )
+            if resume:
+                if not task.workspace_path or not task.branch_name:
+                    raise RuntimeError("任务缺少可续跑的工作区或分支信息")
+                workspace_info = await git_service.resume_workspace(
+                    task.repo_owner,
+                    task.repo_name,
+                    task.workspace_path,
+                    task.branch_name,
+                    task.base_branch,
+                    task.base_commit_sha,
+                )
+            else:
+                workspace_info = await git_service.prepare_workspace(
+                    task.repo_owner,
+                    task.repo_name,
+                    task.source_issue_number,
+                    task.source_id,
+                    task.base_branch,
+                )
 
             # 取消检查点
             if cancel_event.is_set():
@@ -86,7 +118,7 @@ class AgentTeamWorker:
 
             await self._update_task(
                 task_id,
-                working_branch=workspace_info.branch_name,
+                branch_name=workspace_info.branch_name,
                 base_branch=workspace_info.default_branch,
                 base_commit_sha=workspace_info.commit_sha,
                 workspace_path=str(workspace_info.workspace),
@@ -106,18 +138,32 @@ class AgentTeamWorker:
             max_iterations = await self._resolve_max_iterations(task.max_iterations)
             if task.max_iterations != max_iterations:
                 await self._update_task(task_id, max_iterations=max_iterations)
-            sakura_memory = await self._load_sakura_memory(repo_owner, repo_name)
+            sakura_info = await load_sakura_memory(repo_owner, repo_name)
+            # task.summary 在创建时已包含 issue context（由 submission_context 合并），
+            # 此处仅传入 summary 即可，无需重复加载 issue 分析和评论。
+            task_context = build_agent_task_summary(task.summary or "")
 
-            loop_service = IterationLoopService(workspace)
+            checkpoint = ConversationCheckpointService(task_id)
+            resume_cursor = await checkpoint.get_resume_cursor() if resume else None
+            loop_service = IterationLoopService(
+                workspace,
+                task_id=task_id,
+                checkpoint=checkpoint,
+                resume_cursor=resume_cursor,
+                resume_index=task.resume_count or 0,
+            )
             outcome = await loop_service.run(
                 task_title=task.title,
-                task_summary=task.summary or "",
+                task_summary=task_context,
                 source_type=task.source_type,
                 source_issue_number=task.source_issue_number,
                 max_iterations=max_iterations,
-                sakura_memory=sakura_memory,
+                sakura_memory=sakura_info["text"],
                 skills_summary=skills_summary,
                 skills_context=skills_context,
+                github_repo=sakura_info["github_repo"],
+                sakura_ref=sakura_info["sakura_ref"],
+                cancel_check=cancel_event.is_set,
             )
 
             logger.info(
@@ -126,6 +172,16 @@ class AgentTeamWorker:
                 outcome.iterations,
                 outcome.total_tool_calls,
             )
+
+            # 迭代循环被取消
+            if not outcome.success and cancel_event.is_set():
+                await self._update_task(
+                    task_id,
+                    status=AgentTeamTaskStatus.CANCELLED.value,
+                    current_phase="cancelled",
+                    error_message="任务在 EDITING 阶段被取消",
+                )
+                return task_id
 
             # ── 记录迭代 ──
             await self._save_iteration(
@@ -140,6 +196,8 @@ class AgentTeamWorker:
             await self._update_task(
                 task_id,
                 iteration_count=outcome.iterations,
+                prompt_tokens=outcome.prompt_tokens,
+                completion_tokens=outcome.completion_tokens,
                 current_phase="iteration_complete",
             )
 
@@ -194,6 +252,9 @@ class AgentTeamWorker:
                     repo_name=repo_name,
                 )
 
+                # 等待 GitHub 完成分支索引
+                await asyncio.sleep(get_settings().agent_team_branch_index_delay)
+
                 # ── Phase 5: CREATE PR ──
                 await self._update_task(
                     task_id,
@@ -205,7 +266,17 @@ class AgentTeamWorker:
                     "agent_team_draft_pr",
                     get_settings().agent_team_draft_pr,
                 )
-                pr_body = pr_service.build_pr_body(
+
+                # 获取 git diff summary 作为 AI 生成 PR body 的额外上下文
+                git_service = AgentTeamGitWorkspaceService()
+                diff_summary = ""
+                try:
+                    diff_summary = await git_service.get_diff_summary(str(workspace))
+                except Exception as exc:
+                    logger.warning("获取 diff summary 失败: {}", exc)
+
+                # 预计算 fallback body（AI 生成失败时使用）
+                fallback_body = pr_service.build_pr_body(
                     task_title=task.title,
                     task_summary=task.summary or "",
                     fullstack_analysis=outcome.fullstack_result.summary
@@ -220,10 +291,48 @@ class AgentTeamWorker:
                     source_issue_number=task.source_issue_number,
                 )
 
+                # AI 生成 PR body
+                pr_body = await pr_service.generate_pr_body(
+                    task_title=task.title,
+                    task_summary=task.summary or "",
+                    fullstack_analysis=outcome.fullstack_result.summary
+                    if outcome.fullstack_result
+                    else "",
+                    review_summary=outcome.review_result.summary
+                    if outcome.review_result
+                    else "",
+                    review_verdict=outcome.review_result.verdict
+                    if outcome.review_result
+                    else "",
+                    review_score=outcome.review_result.score
+                    if outcome.review_result
+                    else 0,
+                    review_findings=[
+                        {"severity": f.severity, "file": f.file, "message": f.message}
+                        for f in (outcome.review_result.findings or [])
+                    ] if outcome.review_result else [],
+                    modified_files=outcome.modified_files,
+                    iteration_count=outcome.iterations,
+                    source_type=task.source_type,
+                    source_issue_number=task.source_issue_number,
+                    diff_summary=diff_summary,
+                    fallback_body=fallback_body,
+                )
+
+                pr_title = await pr_service.generate_pr_title(
+                    task_title=task.title,
+                    task_summary=task.summary or "",
+                    modified_files=outcome.modified_files,
+                    review_verdict=outcome.review_result.verdict
+                    if outcome.review_result
+                    else "",
+                    issue_number=task.source_issue_number,
+                )
+
                 pr_result = await pr_service.create_pull_request(
                     repo_owner=repo_owner,
                     repo_name=repo_name,
-                    title=f"🤖 {task.title}",
+                    title=pr_title,
                     body=pr_body,
                     head_branch=workspace_info.branch_name,
                     base_branch=workspace_info.default_branch,
@@ -240,12 +349,23 @@ class AgentTeamWorker:
                 )
 
                 # 短暂等待后标记为 completed（外部 PR 审查将通过 webhook 异步处理）
+                s = get_settings()
+                cost_tracker = TokenTracker()
+                cost_tracker.prompt_tokens = outcome.prompt_tokens
+                cost_tracker.completion_tokens = outcome.completion_tokens
+                estimated_cost = cost_tracker.calculate_cost(
+                    s.review_price_per_1k_prompt, s.review_price_per_1k_completion,
+                )
                 await self._update_task(
                     task_id,
                     status=AgentTeamTaskStatus.COMPLETED.value,
                     current_phase="completed",
                     completed_at=_utc_now(),
+                    estimated_cost=estimated_cost,
                     error_message=None,
+                    failed_phase=None,
+                    failed_role=None,
+                    rate_limit_reset_at=None,
                 )
 
                 logger.info(
@@ -256,15 +376,22 @@ class AgentTeamWorker:
                 )
             else:
                 # 迭代未能通过审查
-                reason = outcome.reason
-                if not outcome.modified_files:
-                    reason = "全栈专家未能生成有效的代码修改"
+                reason = _format_failure_reason(outcome.reason, outcome.modified_files)
 
+                s = get_settings()
+                cost_tracker = TokenTracker()
+                cost_tracker.prompt_tokens = outcome.prompt_tokens
+                cost_tracker.completion_tokens = outcome.completion_tokens
+                estimated_cost = cost_tracker.calculate_cost(
+                    s.review_price_per_1k_prompt, s.review_price_per_1k_completion,
+                )
                 await self._update_task(
                     task_id,
                     status=AgentTeamTaskStatus.FAILED.value,
                     current_phase="iteration_failed",
                     error_message=reason,
+                    failed_phase="iteration_failed",
+                    estimated_cost=estimated_cost,
                 )
                 logger.warning("Agent 任务失败: task_id={}, reason={}", task_id, reason)
 
@@ -277,16 +404,34 @@ class AgentTeamWorker:
                 status=AgentTeamTaskStatus.FAILED.value,
                 current_phase="error",
                 error_message=f"{type(e).__name__}: {e}",
+                failed_phase="error",
+                rate_limit_reset_at=_parse_rate_limit_reset_at(str(e)),
             )
         finally:
             _cancel_events.pop(task_id, None)
+            await self._expire_pending_prompts(task_id)
 
         return task_id
 
     # ── 辅助方法 ──────────────────────────────────────────
 
+    async def _expire_pending_prompts(self, task_id: int) -> None:
+        """任务结束时将未消费的 pending prompts 标记为 expired。"""
+        from sqlalchemy import update
+
+        async with db_module.async_session() as session:
+            await session.execute(
+                update(AgentTeamUserPrompt)
+                .where(
+                    AgentTeamUserPrompt.task_id == task_id,
+                    AgentTeamUserPrompt.status == "pending",
+                )
+                .values(status="expired")
+            )
+            await session.commit()
+
     async def _load_task(self, task_id: int) -> AgentTeamTask:
-        async with async_session() as session:
+        async with db_module.async_session() as session:
             from sqlalchemy import select
 
             result = await session.execute(
@@ -298,7 +443,7 @@ class AgentTeamWorker:
             return task
 
     async def _update_task(self, task_id: int, **kwargs) -> None:
-        async with async_session() as session:
+        async with db_module.async_session() as session:
             from sqlalchemy import select
 
             result = await session.execute(
@@ -313,6 +458,22 @@ class AgentTeamWorker:
             task.updated_at = _utc_now()
             await session.commit()
 
+        # SSE: 通知前端任务状态/阶段变更
+        if "status" in kwargs or "current_phase" in kwargs:
+            try:
+                from backend.webui.sse import publish_event
+
+                await publish_event(
+                    "agent:task_updated",
+                    {
+                        "task_id": task_id,
+                        "status": kwargs.get("status"),
+                        "current_phase": kwargs.get("current_phase"),
+                    },
+                )
+            except Exception as exc:
+                logger.debug("SSE 发布任务更新事件失败: {}", exc)
+
     async def _save_iteration(
         self,
         task_id: int,
@@ -325,7 +486,7 @@ class AgentTeamWorker:
         patch_stats = (
             await self._collect_patch_file_stats(workspace) if workspace else {}
         )
-        async with async_session() as session:
+        async with db_module.async_session() as session:
             iteration = AgentTeamIteration(
                 task_id=task_id,
                 iteration_number=iteration_number,
@@ -379,85 +540,6 @@ class AgentTeamWorker:
             logger.debug("读取 Agent 变更文件统计失败，使用默认 0: {}", exc)
             return {}
 
-    async def _load_sakura_memory(self, repo_owner: str, repo_name: str) -> str:
-        """加载仓库对应的 Sakura 记忆上下文。"""
-        repo_full_name = f"{repo_owner}/{repo_name}"
-        try:
-            from backend.core.github_app import GitHubAppClient
-            from backend.services.sakura_memory_service import SakuraMemoryService
-
-            github_app = GitHubAppClient()
-            client = github_app.get_repo_client(repo_owner, repo_name)
-            if not client:
-                logger.info(
-                    "Agent 未注入 Sakura 记忆: 无法获取 GitHub 客户端 ({})",
-                    repo_full_name,
-                )
-                return ""
-
-            repo = client.get_repo(repo_full_name)
-            service = SakuraMemoryService()
-            context = await service.get_sakura_context(
-                repo=repo,
-                repo_full_name=repo_full_name,
-            )
-            if not context:
-                logger.info(
-                    "Agent 未注入 Sakura 记忆: 仓库无可用上下文 ({})", repo_full_name
-                )
-                return ""
-
-            parts = []
-            if context.get("sakura_md"):
-                parts.append(f"### SAKURA.md\n{context['sakura_md']}")
-            if context.get("memory_md"):
-                parts.append(f"### memory.md\n{context['memory_md']}")
-
-            logger.info(
-                "Agent 已注入 Sakura 记忆: repo={}, files={}",
-                repo_full_name,
-                ", ".join(context.keys()),
-            )
-            return "\n\n".join(parts)
-        except Exception as e:
-            logger.info(
-                "Agent 加载 Sakura 记忆失败: repo={}, error={}", repo_full_name, e
-            )
-        return ""
-
-    async def _load_skills_context(self) -> tuple[str, dict, list[dict]]:
-        """加载已启用的 Agent Skills 上下文。"""
-        enabled = await self._resolve_bool_config(
-            "agent_team_skills_enabled",
-            get_settings().agent_team_skills_enabled,
-        )
-        if not enabled:
-            logger.info("Agent Skills 未启用")
-            return "", {}, []
-
-        try:
-            from backend.services.agent_team.skill_service import AgentSkillService
-
-            service = AgentSkillService()
-            async with async_session() as session:
-                summary = await service.build_enabled_skills_summary(session)
-                snapshot = await service.snapshot_enabled_skills(session)
-            if not snapshot:
-                logger.info("Agent Skills 已启用但无可用 Skill")
-                return "", {}, []
-
-            root = await service.resolve_root()
-            context = {
-                "skills_root": str(root),
-                "skills_index": {skill["slug"]: skill for skill in snapshot},
-                "skills_cache": {},
-            }
-            logger.info("Agent 已加载 Skills: count={}", len(snapshot))
-            return summary, context, snapshot
-        except Exception as exc:
-            logger.info("Agent Skills 加载失败: {}", exc)
-            return "", {}, []
-
     async def _get_config(self, key: str) -> str | None:
         from backend.core.config import get_dynamic_config
 
@@ -488,6 +570,21 @@ class AgentTeamWorker:
                     f"审查分数: {outcome.review_result.score}/10 ({outcome.review_result.verdict})"
                 )
         return "\n".join(parts)
+
+
+def _parse_rate_limit_reset_at(error_text: str) -> datetime | None:
+    match = re.search(
+        r"限额将在\s*(\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2})\s*重置",
+        error_text,
+    )
+    if not match:
+        return None
+    try:
+        return datetime.strptime(match.group(1), "%Y-%m-%d %H:%M:%S").replace(
+            tzinfo=timezone.utc
+        )
+    except ValueError:
+        return None
 
 
 def _normalize_modified_file_path(file_path: str) -> str:
@@ -523,6 +620,10 @@ def get_worker() -> AgentTeamWorker:
 
 async def submit_agent_team_task(task_id: int) -> int:
     return await get_worker().process_task(task_id)
+
+
+async def resume_agent_team_task(task_id: int) -> int:
+    return await get_worker().process_task(task_id, resume=True)
 
 
 def request_task_cancel(task_id: int) -> None:

@@ -2,6 +2,7 @@
 
 通过已有的 AgentTeamShellExecutor 执行。
 支持超时和输出截断。
+安全策略：黑名单模式，默认允许所有命令，仅拦截高危命令。
 """
 
 from __future__ import annotations
@@ -11,32 +12,133 @@ from typing import Any
 
 from loguru import logger
 
-from backend.core.config import get_dynamic_config, get_settings
+from backend.core.config import get_settings
 from backend.services.agent_team.shell_executor import AgentTeamShellExecutor
 from backend.services.agent_team.tools.base import BaseTool, ToolContext, ToolResult
 
 # Shell 元字符/模式，出现则拒绝执行以防止命令注入
 # 单独的 $ 不拦截，仅拦截 $(...) 和 ${...} 等命令替换模式
-_SHELL_META_CHARS = frozenset({"&&", "||", ";", "|", "`", ">", ">>", "<", "&"})
+# 命令链接 && || ; 和后台 & 仍拦截，防止命令注入
+# 管道 | 允许（在 is_agent_command_allowed 中对每段做黑名单校验）
+_SHELL_META_CHARS = frozenset({"&&", "||", ";", "`", "&"})
 _SHELL_SUBST_PATTERNS = ("$('", "$(", "${")
+
+# 默认拦截的高危命令（首 token 匹配）
+_DEFAULT_BLOCKED_COMMANDS = frozenset({
+    # 网络外泄（Agent 有独立的 fetch_url 工具）
+    "curl", "wget", "nc", "ncat", "telnet",
+    "ssh", "scp", "sftp", "rsync",
+    # 系统管理
+    "sudo", "su", "passwd", "chown",
+    # Shell/解释器嵌套执行
+    "bash", "sh", "zsh", "fish", "cmd", "powershell", "pwsh", "eval",
+    # 进程控制
+    "kill", "pkill", "killall",
+    # 系统包管理（pip/npm/yarn 等工作区级别包管理不拦截）
+    "apt", "apt-get", "yum", "dnf", "brew", "pacman", "snap", "flatpak",
+    # 服务管理
+    "systemctl", "service", "crontab", "launchctl",
+    # 磁盘/系统
+    "dd", "mkfs", "fdisk", "mount", "umount",
+    # 容器
+    "docker", "podman", "kubectl",
+})
+
+
+def _extract_unquoted(command: str) -> str:
+    """提取命令中不在引号内的部分，用于检测 shell 元字符。"""
+    result: list[str] = []
+    in_single = False
+    in_double = False
+    i = 0
+    while i < len(command):
+        c = command[i]
+        if c == "'" and not in_double:
+            in_single = not in_single
+            i += 1
+            continue
+        if c == '"' and not in_single:
+            in_double = not in_double
+            i += 1
+            continue
+        if c == "\\" and not in_single and i + 1 < len(command):
+            i += 2
+            continue
+        if not in_single and not in_double:
+            result.append(c)
+        i += 1
+    return "".join(result)
 
 
 def _contains_shell_meta(command: str) -> bool:
-    """检查命令字符串是否包含 Shell 元字符或命令替换模式。"""
+    """检查命令的非引号部分是否包含 Shell 元字符或命令替换模式。"""
+    unquoted = _extract_unquoted(command)
     for meta in _SHELL_META_CHARS:
-        if meta in command:
+        if meta in unquoted:
             return True
-    # 精细检查命令替换：仅拦截 $(...) 和 ${...}，不拦截普通 $ 变量引用
     for pattern in _SHELL_SUBST_PATTERNS:
-        if pattern in command:
+        if pattern in unquoted:
             return True
     return False
 
 
-async def is_agent_command_allowed(command: str) -> bool:
-    """检查 Agent 可执行命令是否在配置白名单内。
+def _has_redundant_cd_prefix(command: str) -> bool:
+    """检查是否包含多余的 cd ... && 前缀。"""
+    try:
+        tokens = shlex.split(command)
+    except ValueError:
+        return False
+    return len(tokens) >= 4 and tokens[0] == "cd" and tokens[2] == "&&"
 
-    使用 shlex.split 提取命令首 token 进行精确匹配，并拒绝包含 Shell 元字符的命令。
+
+def _command_name(first_token: str) -> str:
+    """提取命令 basename（处理 /usr/bin/curl、C:/bin/curl.exe 等路径形式）。"""
+    name = first_token.replace("\\", "/").rsplit("/", 1)[-1].lower()
+    return name[:-4] if name.endswith(".exe") else name
+
+
+def _is_segment_blocked(tokens: list[str], blocklist: set[str]) -> bool:
+    """检查命令段是否被黑名单或危险参数策略拦截。"""
+    name = _command_name(tokens[0])
+    if name in blocklist:
+        return True
+    if name == "rm" and any(
+        token == "--recursive" or (token.startswith("-") and "r" in token.lower())
+        for token in tokens[1:]
+    ):
+        return True
+    if name == "chmod" and any(token in {"777", "a+w", "ugo+w"} for token in tokens[1:]):
+        return True
+    if name in {"python", "python3", "py", "node", "ruby", "perl"} and any(
+        token in {"-c", "-e"} for token in tokens[1:]
+    ):
+        return True
+    return False
+
+
+def _parse_pipe_segments(tokens: list[str]) -> list[list[str]] | None:
+    """将 token 列表按管道符分段。返回 None 表示格式异常。"""
+    segments: list[list[str]] = []
+    current: list[str] = []
+    for token in tokens:
+        if token == "|":
+            if not current:
+                return None
+            segments.append(current)
+            current = []
+        else:
+            current.append(token)
+    if current:
+        segments.append(current)
+    return segments if segments else None
+
+
+async def is_agent_command_allowed(command: str) -> bool:
+    """检查 Agent 命令是否允许执行（黑名单模式）。
+
+    默认允许所有命令，仅拦截黑名单中的高危命令。
+    管道 | 两侧的命令段分别进行黑名单校验。
+    管道和重定向不拦截，由 shell_executor 的路径校验提供隔离。
     """
     command = command.strip()
     if not command:
@@ -53,32 +155,26 @@ async def is_agent_command_allowed(command: str) -> bool:
     if not tokens:
         return False
 
-    first_token = tokens[0]
+    # 构建黑名单：默认 + 用户配置
+    blocklist = set(_DEFAULT_BLOCKED_COMMANDS)
+    raw = getattr(get_settings(), "agent_team_test_command_blocklist", "")
+    if raw:
+        blocklist.update(
+            item.strip().lower()
+            for item in str(raw).split(",")
+            if item.strip()
+        )
 
-    raw = await get_dynamic_config("agent_team_test_command_allowlist")
-    if raw is None:
-        raw = get_settings().agent_team_test_command_allowlist
-
-    allowlist = [item.strip() for item in str(raw or "").split(",") if item.strip()]
-    if not allowlist:
+    # 按管道分段，每段独立校验
+    segments = _parse_pipe_segments(tokens)
+    if segments is None:
         return False
 
-    for allowed in allowlist:
-        allowed_tokens = shlex.split(allowed)
-        if not allowed_tokens:
-            continue
-        allowed_first = allowed_tokens[0]
-        if first_token != allowed_first:
-            continue
-        # 白名单项无参数时，允许任意参数；白名单项有参数时，命令参数必须以白名单参数为前缀
-        if len(allowed_tokens) == 1:
-            return True
-        if (
-            len(tokens) >= len(allowed_tokens)
-            and tokens[: len(allowed_tokens)] == allowed_tokens
-        ):
-            return True
-    return False
+    for segment in segments:
+        if _is_segment_blocked(segment, blocklist):
+            logger.warning("Shell 命令被黑名单拦截: {}", segment[0])
+            return False
+    return True
 
 
 class ShellTool(BaseTool):
@@ -91,21 +187,24 @@ class ShellTool(BaseTool):
         "function": {
             "name": "run_command",
             "description": (
-                "在工作区内执行 shell 命令（如运行测试、检查语法、构建等）。"
-                "命令在项目根目录执行，不允许跳出工作区，且必须匹配配置的白名单。"
-                "\n\n常用命令："
-                "\n- 运行测试: pytest -q 或 python -m pytest tests/ -q"
-                "\n- 语法检查: python -m py_compile file.py"
-                "\n- 类型检查: mypy file.py"
-                "\n- Lint: ruff check file.py"
-                "\n- 查看文件: cat / head / tail"
+                "在目标仓库工作区根目录执行 shell 命令。"
+                "重要：当前工作目录已经是仓库工作区根目录，"
+                "请直接运行目标命令，例如 pytest -q、ruff check、npm test。"
+                "\n\n大多数命令允许执行，以下高危命令被拦截："
+                "\n- 网络工具: curl, wget, nc, ssh, scp, telnet 等"
+                "\n- 系统管理: sudo, su, systemctl, apt-get, yum 等"
+                "\n- 进程控制: kill, pkill, killall"
+                "\n- 容器: docker, podman, kubectl"
+                "\n\n支持管道 (|) 和重定向 (> >> <)。"
             ),
             "parameters": {
                 "type": "object",
                 "properties": {
                     "command": {
                         "type": "string",
-                        "description": "要执行的 shell 命令",
+                        "description": (
+                            "要执行的 shell 命令。直接写命令本身，不要加 cd ... && 前缀。"
+                        ),
                     },
                     "timeout": {
                         "type": "integer",
@@ -130,8 +229,17 @@ class ShellTool(BaseTool):
         command = args["command"]
         timeout = min(int(args.get("timeout", 120)), 600)  # 最大 600 秒
 
+        if _has_redundant_cd_prefix(command):
+            return ToolResult(
+                success=False,
+                error=(
+                    "当前已处于工作区根目录，请直接运行目标命令，"
+                    "不要添加 cd workplace &&、cd home && 或 cd <repo> && 前缀。"
+                ),
+            )
+
         if not await is_agent_command_allowed(command):
-            return ToolResult(success=False, error="命令不在 Agent 验证命令白名单中")
+            return ToolResult(success=False, error="命令被安全策略拦截")
 
         executor = AgentTeamShellExecutor(ctx.workspace, ctx.workspace_service)
 

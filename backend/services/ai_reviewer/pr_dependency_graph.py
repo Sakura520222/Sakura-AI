@@ -152,8 +152,7 @@ class PRDependencyGraphService:
                 )
                 return None
 
-            current_body = await asyncio.to_thread(lambda: pr.body or "")
-            await self.update_pr_body_with_graph(pr, mermaid_graph, current_body)
+            await self.update_pr_body_with_graph(pr, mermaid_graph)
             logger.info(f"静态 PR 依赖图已生成，长度: {len(mermaid_graph)} 字符")
             return mermaid_graph
 
@@ -198,9 +197,8 @@ class PRDependencyGraphService:
             logger.info("AI 未生成有效的 Mermaid 图，跳过依赖图注入")
             return None
 
-        # 注入 PR Body（从 GitHub 读取最新 body，避免竞态覆盖 PR Summary）
-        current_body = await asyncio.to_thread(lambda: pr.body or "")
-        await self.update_pr_body_with_graph(pr, mermaid_graph, current_body)
+        # 注入 PR Body
+        await self.update_pr_body_with_graph(pr, mermaid_graph)
         logger.info(f"PR 依赖图已生成，长度: {len(mermaid_graph)} 字符")
         return mermaid_graph
 
@@ -208,17 +206,18 @@ class PRDependencyGraphService:
         self,
         pr: Any,
         mermaid_graph: str,
-        original_body: str,
     ) -> None:
         """将依赖图注入到 PR Body
 
         使用独立的 HTML 注释标记，与 PR Summary 共存。
+        从 GitHub 读取最新 body，避免用过期的 pr.body 缓存。
         """
-        original = self._extract_original_body(original_body)
+        current_body = await asyncio.to_thread(lambda: pr.body or "")
+        original = self._extract_original_body(current_body)
         graph_block = self._build_graph_block(mermaid_graph)
 
         # 保留 PR Summary 块（如果存在）
-        summary_block = self._extract_summary_block(original_body)
+        summary_block = self._extract_summary_block(current_body)
 
         parts = []
         if original.strip():
@@ -652,7 +651,7 @@ class PRDependencyGraphService:
         """构建带 HTML 注释标记的依赖图块"""
         return (
             f"{self.START_MARKER}\n\n"
-            f"## 🔗 Sakura AI Reviewer 依赖图\n\n"
+            f"## 依赖图\n\n"
             f"```mermaid\n{mermaid_graph}\n```\n\n"
             f"{self.END_MARKER}"
         )

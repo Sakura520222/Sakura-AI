@@ -306,6 +306,7 @@ async def _run_code_index(repo_name: str, user_id: int) -> None:
 async def _run_issues_index(repo_name: str, user_id: int) -> None:
     """后台执行 Issues 索引（open + closed 全量重建）"""
     key = f"{repo_name}:issues"
+    logger.info("WebUI Issues 索引开始: {}", repo_name)
     try:
         from backend.services.issue_embedding_service import IssueEmbeddingService
         from backend.webui.sse import publish_event
@@ -317,6 +318,17 @@ async def _run_issues_index(repo_name: str, user_id: int) -> None:
         )
 
         logger.info(f"WebUI Issues 索引完成: {repo_name}, result={result}")
+
+        # 索引完成后失效候选池缓存
+        try:
+            from backend.services.agent_team.candidate_service import (
+                AgentTeamCandidateService,
+            )
+
+            AgentTeamCandidateService().invalidate_cache()
+        except Exception:
+            pass
+
         await publish_event(
             "index:issues_completed",
             {
@@ -381,6 +393,11 @@ async def repo_list_fragment(
     user: dict = Depends(require_admin),
 ):
     """仓库列表 HTMX 片段（刷新统计数据）"""
+    # 带 refresh=true 时清除缓存，从 GitHub 拉最新数据
+    global _installations_cache
+    if request.query_params.get("refresh") == "true":
+        _installations_cache = None
+
     try:
         installations = await _get_installations_with_stats(db)
     except Exception as e:
@@ -466,6 +483,88 @@ async def index_code(
     logger.info(f"WebUI 触发代码索引: {repo_name}, by={user['sub']}")
     await log_admin_action(db, user["user_id"], "repo_index_code", "repo", repo_name)
     return JSONResponse({"success": True, "message": f"代码索引已启动: {repo_name}"})
+
+
+@router.post("/batch/index-issues")
+async def batch_index_issues(
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    user: dict = Depends(require_admin),
+    csrf_token: str = Depends(require_csrf_header),
+) -> JSONResponse:
+    """批量触发所有安装仓库的 Issues 索引"""
+    from backend.core.config import get_settings
+
+    settings = get_settings()
+    if not settings.enable_semantic_issue_linking:
+        return JSONResponse(
+            {"success": False, "message": "语义 Issue 关联功能未启用，请在设置中开启"},
+            status_code=400,
+        )
+
+    try:
+        installations = await _get_installations_with_stats(db)
+    except Exception as e:
+        logger.error(f"批量索引获取仓库列表失败: {e}", exc_info=True)
+        return JSONResponse(
+            {"success": False, "message": f"获取仓库列表失败: {e}"},
+            status_code=500,
+        )
+
+    queued = 0
+    skipped = 0
+    skipped_names: list[str] = []
+    queued_names: list[str] = []
+    for inst in installations:
+        for repo in inst.get("repos", []):
+            repo_name = repo.get("full_name", "")
+            if not repo_name:
+                continue
+            if _is_index_locked(repo_name, "issues"):
+                skipped += 1
+                skipped_names.append(repo_name)
+                continue
+            task = asyncio.create_task(
+                _run_issues_index(repo_name, user["user_id"])
+            )
+            _active_index_tasks[f"{repo_name}:issues"] = task
+            queued += 1
+            queued_names.append(repo_name)
+
+    logger.info(
+        "WebUI 批量 Issues 索引: queued={}, skipped={}, repos=[{}], locked=[{}], by={}",
+        queued, skipped,
+        ", ".join(queued_names) or "-",
+        ", ".join(skipped_names) or "-",
+        user["sub"],
+    )
+
+    if queued == 0:
+        msg = "没有需要索引的仓库"
+        if skipped > 0:
+            msg += f"，{skipped} 个仓库正在索引中"
+        return JSONResponse(
+            {"success": False, "queued": 0, "skipped": skipped, "message": msg},
+            status_code=200,
+        )
+
+    await log_admin_action(
+        db,
+        user["user_id"],
+        "repo_batch_index_issues",
+        "repo",
+        "all",
+        {"queued": queued, "skipped": skipped},
+    )
+    return JSONResponse(
+        {
+            "success": True,
+            "queued": queued,
+            "skipped": skipped,
+            "message": f"已排队 {queued} 个仓库的 Issues 索引"
+            + (f"，跳过 {skipped} 个（正在索引中）" if skipped else ""),
+        }
+    )
 
 
 @router.post("/{repo_name:path}/index-issues")

@@ -12,9 +12,8 @@ from pathlib import Path
 from typing import Any
 
 from backend.services.agent_team.tools.base import BaseTool, ToolContext, ToolResult
+from backend.utils.search_excludes import SEARCH_EXCLUDES
 
-# VCS 目录排除
-VCS_EXCLUDES = {".git", ".svn", ".hg", ".bzr", "__pycache__", "node_modules"}
 MAX_GREP_KEYWORD_LENGTH = 500
 
 
@@ -91,6 +90,8 @@ class GrepTool(BaseTool):
             cmd_parts.append("-i")
         if file_ext:
             cmd_parts.extend(["--include", f"*{file_ext}"])
+        for excl in SEARCH_EXCLUDES:
+            cmd_parts.extend(["--exclude-dir", excl])
         cmd_parts.extend(["--", keyword, "."])
 
         try:
@@ -167,7 +168,7 @@ class GrepTool(BaseTool):
                 break
             if not file_path.is_file():
                 continue
-            if any(part in VCS_EXCLUDES for part in file_path.parts):
+            if any(part in SEARCH_EXCLUDES for part in file_path.parts):
                 continue
             if file_ext and file_path.suffix != file_ext:
                 continue

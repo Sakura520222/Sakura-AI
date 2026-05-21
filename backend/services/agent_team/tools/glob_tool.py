@@ -13,6 +13,7 @@ from loguru import logger
 
 from backend.services.agent_team.tools.base import BaseTool, ToolContext, ToolResult
 from backend.services.agent_team.workspace_service import WorkspaceSecurityError
+from backend.utils.search_excludes import SEARCH_EXCLUDES
 
 
 class GlobTool(BaseTool):
@@ -89,6 +90,8 @@ class GlobTool(BaseTool):
         for match in matches:
             if len(filenames) >= max_results:
                 break
+            if any(part in SEARCH_EXCLUDES for part in match.parts):
+                continue
             rel = match.relative_to(
                 ctx.workspace_service.resolve_inside_workspace(ctx.workspace)
             )

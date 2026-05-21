@@ -93,6 +93,9 @@ class RepoScan(Base):
     report_issue_number = Column(BigInteger, nullable=True, index=True)
     report_issue_url = Column(String(500), nullable=True)
 
+    # Issue 分析关联（扫描创建的 Issue 被 AI 分析后回填）
+    issue_analysis_id = Column(Integer, nullable=True)
+
     # 时间戳
     created_at = Column(TIMESTAMP, default=datetime.utcnow, nullable=False, index=True)
     updated_at = Column(

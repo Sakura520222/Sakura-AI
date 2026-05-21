@@ -10,6 +10,7 @@ from backend.core.config import (
     get_settings,
     get_strategy_config,
     get_user_dynamic_config,
+    get_dynamic_config,
 )
 from backend.models.database import AppConfig, async_session
 from backend.services.ai_reviewer.api_client import AIApiClient
@@ -111,6 +112,7 @@ class IssueAnalyzer:
         issue_info: Dict[str, Any],
         available_labels: List[str],
         collaborators: List[str],
+        comments: List[Dict[str, Any]] | None = None,
     ) -> str:
         """构建用户消息"""
         parts = [
@@ -131,7 +133,68 @@ class IssueAnalyzer:
         if collaborators:
             parts.append(f"\n**仓库协作者**: {', '.join(collaborators)}")
 
+        if comments:
+            parts.append("\n## 评论讨论")
+            for comment in comments:
+                author = comment.get("author", "unknown")
+                body_text = comment.get("body", "")
+                is_bot = comment.get("is_bot", False)
+                if is_bot:
+                    parts.append(f"\n### @{author} (AI 先前分析)\n{body_text}")
+                else:
+                    parts.append(f"\n### @{author}\n{body_text}")
+
         return "\n".join(parts)
+
+    async def _fetch_issue_comments(
+        self, github_app, repo_owner: str, repo_name: str, issue_number: int
+    ) -> List[Dict[str, Any]] | None:
+        """获取 Issue 评论，受 issue_max_comments_in_context 配置控制数量"""
+        if issue_number <= 0:
+            return None
+
+        import asyncio
+
+        settings = get_settings()
+        bot_username = settings.bot_username
+
+        try:
+            comments = await asyncio.to_thread(
+                github_app.get_issue_comments,
+                repo_owner,
+                repo_name,
+                issue_number,
+            )
+        except Exception as e:
+            logger.warning(f"GitHub API 获取评论失败: {e}")
+            return None
+
+        if not comments:
+            return None
+
+        try:
+            max_count = int(
+                await get_dynamic_config("issue_max_comments_in_context") or 0
+            )
+        except (ValueError, TypeError):
+            max_count = 0
+
+        raw_comments = []
+        for c in comments:
+            author = getattr(c.user, "login", "unknown") if c.user else "unknown"
+            raw_comments.append(
+                {
+                    "author": author,
+                    "body": c.body or "",
+                    "is_bot": bool(bot_username and author == bot_username),
+                }
+            )
+
+        # 按时间正序排列（旧 → 新），便于 AI 理解对话发展
+        if max_count > 0:
+            raw_comments = raw_comments[-max_count:]
+
+        return raw_comments
 
     def _parse_analysis_result(self, response_text: str) -> Dict[str, Any]:
         """解析 AI 返回的分析结果"""
@@ -159,17 +222,133 @@ class IssueAnalyzer:
                             return json.loads(text[start : i + 1])
                         except json.JSONDecodeError:
                             break
-            logger.warning(f"无法解析分析结果 JSON: {text[:200]}...")
-            return {
-                "category": "other",
-                "priority": "medium",
-                "summary": response_text[:500] if response_text else "解析失败",
-                "feasibility": "无法评估",
-                "suggested_labels": [],
-                "suggested_assignees": [],
-                "suggested_milestone": None,
-                "duplicate_of": None,
-            }
+
+            # JSON 完整解析失败，尝试从不完整的 JSON 中提取字段
+            partial_result = self._extract_partial_json_fields(text)
+
+            # 提取到有效 summary 时使用提取结果，否则使用完整响应文本
+            if not partial_result.get("summary"):
+                # 移除开头的思考/过渡文本，保留有价值的内容
+                cleaned_text = response_text.strip() if response_text else "解析失败"
+                partial_result["summary"] = cleaned_text
+
+            logger.warning(f"无法解析分析结果 JSON，已降级处理: {text[:200]}...")
+            return partial_result
+
+    @staticmethod
+    def _extract_partial_json_fields(text: str) -> Dict[str, Any]:
+        """从不完整的 JSON 文本中提取已知字段
+
+        当 AI 返回的 JSON 被截断（如 token 限制）或前面带有思考文本时，
+        尝试通过正则提取关键字段以减少信息丢失。
+
+        Args:
+            text: AI 返回的原始文本（可能包含不完整 JSON）
+
+        Returns:
+            提取到的字段字典，缺失字段使用默认值填充
+        """
+        # 找到 JSON 起始位置
+        json_start = text.find("{")
+        json_text = text[json_start:] if json_start >= 0 else ""
+
+        def _unescape_json_string(value: str) -> str:
+            """反转义 JSON 字符串中的转义序列。
+
+            优先使用 ``json.loads`` 一次性正确处理所有转义，
+            避免 ``replace("\\\\", "\\")`` 后新产生的 ``\\n`` 被后续替换误伤。
+            截断 / 非法转义时回退到逐项替换。
+            """
+            try:
+                return json.loads(f'"{value}"')
+            except json.JSONDecodeError:
+                # Best-effort fallback for truncated / malformed JSON
+                return (
+                    value.replace("\\\\", "\\")
+                    .replace("\\n", "\n")
+                    .replace("\\r", "\r")
+                    .replace("\\t", "\t")
+                    .replace("\\b", "\b")
+                    .replace("\\f", "\f")
+                    .replace("\\/", "/")
+                    .replace('\\"', '"')
+                )
+
+        def _extract_string_field(name: str) -> str | None:
+            """提取 JSON 字符串字段值，处理转义字符。
+
+            正则使用 ``(?:"|$)`` 而非更严格的 ``"`` 来闭合，
+            以处理 AI 响应被截断时最后一个字段缺少闭合引号的场景。
+            """
+            pattern = rf'"{name}"\s*:\s*"((?:[^"\\]|\\.)*)(?:"|$)'
+            match = re.search(pattern, json_text)
+            if match:
+                return _unescape_json_string(match.group(1))
+            return None
+
+        def _extract_number_field(name: str) -> int | None:
+            """提取 JSON 数值型字段（int 或 null）"""
+            pattern = rf'"{name}"\s*:\s*(\d+|null)'
+            match = re.search(pattern, json_text)
+            if match:
+                val = match.group(1)
+                return None if val == "null" else int(val)
+            return None
+
+        # 提取各个字段
+        category = _extract_string_field("category")
+        priority = _extract_string_field("priority")
+        summary = _extract_string_field("summary")
+        feasibility = _extract_string_field("feasibility")
+        suggested_title = _extract_string_field("suggested_title")
+        duplicate_of = _extract_number_field("duplicate_of")
+
+        # 尝试提取 suggested_labels 和 suggested_assignees 数组
+        suggested_labels = []
+        suggested_assignees = []
+
+        # suggested_labels: 提取数组中的 name 字段
+        labels_match = re.search(r'"suggested_labels"\s*:\s*\[', json_text)
+        if labels_match:
+            array_text = json_text[labels_match.end() :]
+            # 逐个提取 name 和 confidence
+            for m in re.finditer(r'\{\s*"name"\s*:\s*"((?:[^"\\]|\\.)*)"', array_text):
+                label_name = _unescape_json_string(m.group(1))
+                suggested_labels.append(
+                    {
+                        "name": label_name,
+                        "confidence": 0.5,
+                        "reason": "",
+                    }
+                )
+
+        # suggested_assignees: 提取数组中的 username 字段
+        assignees_match = re.search(r'"suggested_assignees"\s*:\s*\[', json_text)
+        if assignees_match:
+            array_text = json_text[assignees_match.end() :]
+            for m in re.finditer(
+                r'\{\s*"username"\s*:\s*"((?:[^"\\]|\\.)*)"', array_text
+            ):
+                username = _unescape_json_string(m.group(1))
+                suggested_assignees.append(
+                    {
+                        "username": username,
+                        "confidence": 0.5,
+                        "reason": "",
+                    }
+                )
+
+        return {
+            "category": category or "other",
+            "priority": priority or "medium",
+            "summary": summary or "",
+            "feasibility": feasibility or "无法评估",
+            "suggested_labels": suggested_labels,
+            "suggested_assignees": suggested_assignees,
+            "suggested_milestone": None,
+            "suggested_title": suggested_title,
+            "duplicate_of": duplicate_of,
+        }
 
     async def analyze_issue(
         self,
@@ -226,6 +405,17 @@ class IssueAnalyzer:
             }
             logger.debug(f"从 GitHub 获取协作者列表: {cache_key}")
 
+        # 获取评论对话（受配置控制）
+        comments = None
+        include_comments = await get_dynamic_config("issue_include_comments")
+        if include_comments:
+            try:
+                comments = await self._fetch_issue_comments(
+                    github_app, repo_owner, repo_name, issue_info.get("issue_number", 0)
+                )
+            except Exception as e:
+                logger.warning(f"获取 Issue 评论失败（不影响分析）: {e}")
+
         # 构建提示词
         system_prompt = self._build_system_prompt(
             repo_full_name,
@@ -234,7 +424,7 @@ class IssueAnalyzer:
             output_language=output_language or "",
         )
         user_message = self._build_user_message(
-            issue_info, available_labels, collaborators
+            issue_info, available_labels, collaborators, comments
         )
 
         # 注入 .sakura/ 记忆上下文 / Inject .sakura/ memory context
@@ -250,9 +440,15 @@ class IssueAnalyzer:
                 sakura_md = sakura_context.get("sakura_md", "")
                 memory_md = sakura_context.get("memory_md", "")
                 if sakura_md or memory_md:
-                    sakura_section = "\n\n## 项目知识（来自 .sakura/ 目录）"
+                    sakura_section = (
+                        "\n\n## 项目知识（来自 .sakura/ 目录，请主动参考）\n\n"
+                        "以下是该项目积累的审查经验和知识，请在分析中参考：\n"
+                        "- 如果项目有已知的审查规则，按照规则检查代码\n"
+                        "- 如果项目记忆中记录了常见问题，重点排查类似问题是否重现\n"
+                        "- 避免提出与项目记忆中已确认的做法相矛盾的建议\n"
+                    )
                     if sakura_md:
-                        sakura_section += f"\n\n### 项目概述\n{sakura_md}"
+                        sakura_section += f"\n### 项目概述\n{sakura_md}"
                     if memory_md:
                         sakura_section += f"\n\n### 项目记忆\n{memory_md}"
                     user_message += sakura_section

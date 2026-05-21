@@ -13,7 +13,7 @@ from backend.models.database import (
     IssueAnalysis,
     IssueAnalysisStatus,
 )
-from sqlalchemy import select, and_
+from sqlalchemy import select, and_, func
 from backend.services.issue_analyzer import IssueAnalyzer
 from backend.services.issue_service import issue_service
 
@@ -80,7 +80,30 @@ class IssueWorker:
         async with semaphore:
             async with async_session() as db:
                 try:
-                    # 1. 创建分析记录（PENDING）
+                    # 1. 计算下一个分析版本号
+                    max_version = await db.scalar(
+                        select(func.max(IssueAnalysis.analysis_version)).where(
+                            and_(
+                                IssueAnalysis.repo_name == repo_name,
+                                IssueAnalysis.issue_number == issue_number,
+                            )
+                        )
+                    )
+                    next_version = (max_version or 0) + 1
+
+                    # 归档超出上限的旧版本
+                    try:
+                        max_versions = int(
+                            await get_dynamic_config("issue_max_analysis_versions") or 10
+                        )
+                    except (ValueError, TypeError):
+                        max_versions = 10
+                    if next_version > max_versions:
+                        await self._archive_old_versions(
+                            db, repo_name, issue_number, next_version - max_versions
+                        )
+
+                    # 创建分析记录（PENDING）
                     record = IssueAnalysis(
                         issue_number=issue_number,
                         repo_name=repo_name,
@@ -89,7 +112,8 @@ class IssueWorker:
                         title=issue_info.get("title", ""),
                         body=issue_info.get("body", ""),
                         status=IssueAnalysisStatus.PENDING.value,
-                        analysis_version=issue_info.get("analysis_version", 1),
+                        analysis_version=next_version,
+                        issue_state=issue_info.get("state", "open"),
                     )
                     db.add(record)
                     await db.commit()
@@ -137,6 +161,24 @@ class IssueWorker:
                         logger.error(f"[{task_id}] 未找到待更新的分析记录")
                         return task_id
 
+                    # 5.1 关联扫描记录（如果此 Issue 来自仓库扫描）
+                    try:
+                        from backend.models.scan_models import RepoScan
+
+                        scan = await db.scalar(
+                            select(RepoScan).where(
+                                RepoScan.report_issue_number == issue_number
+                            )
+                        )
+                        if scan and not scan.issue_analysis_id:
+                            scan.issue_analysis_id = analysis_record.id
+                            await db.commit()
+                            logger.info(
+                                f"[{task_id}] 已关联扫描记录到分析: scan_id={scan.id}"
+                            )
+                    except Exception as e:
+                        logger.warning(f"[{task_id}] 关联扫描记录失败: {e}")
+
                     # 5.5 使用 AI 摘要更新 Issue 向量
                     try:
                         from backend.services.issue_embedding_service import (
@@ -146,6 +188,11 @@ class IssueWorker:
                         summary = analysis_result.get("summary", "")
                         if summary:
                             emb_service = IssueEmbeddingService()
+                            analysis_metadata = {
+                                "category": analysis_result.get("category", ""),
+                                "priority": analysis_result.get("priority", ""),
+                                "feasibility": analysis_result.get("feasibility", ""),
+                            }
                             await emb_service.upsert_issue(
                                 repo_owner,
                                 repo_name,
@@ -153,6 +200,7 @@ class IssueWorker:
                                 title=issue_info.get("title", ""),
                                 body=summary,
                                 state=issue_info.get("state", "open"),
+                                analysis_metadata=analysis_metadata,
                             )
                             logger.info(f"[{task_id}] 已使用 AI 摘要更新 Issue 向量")
                     except Exception as e:
@@ -447,6 +495,35 @@ class IssueWorker:
                         pass
 
         return task_id
+
+    async def _archive_old_versions(
+        self, db, repo_name: str, issue_number: int, archive_count: int
+    ):
+        """归档超出上限的旧版本分析记录（标记为 archived 状态）"""
+        try:
+            old_records = await db.execute(
+                select(IssueAnalysis)
+                .where(
+                    and_(
+                        IssueAnalysis.repo_name == repo_name,
+                        IssueAnalysis.issue_number == issue_number,
+                    )
+                )
+                .order_by(IssueAnalysis.analysis_version.asc())
+                .limit(archive_count)
+            )
+            for record in old_records.scalars().all():
+                if record.status not in (
+                    IssueAnalysisStatus.PENDING.value,
+                    IssueAnalysisStatus.ANALYZING.value,
+                ):
+                    record.status = "archived"
+            await db.commit()
+            logger.info(
+                f"已归档 {archive_count} 条旧版本分析: {repo_name}#{issue_number}"
+            )
+        except Exception as e:
+            logger.warning(f"归档旧版本分析失败: {e}")
 
 
 _worker_instance: Optional[IssueWorker] = None

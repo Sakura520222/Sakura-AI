@@ -16,6 +16,18 @@ from backend.core.ai_providers import get_provider_select_options
 DEFAULT_FETCH_URL_ALLOWED_CONTENT_TYPES = "text/html,application/xhtml+xml,text/plain"
 
 
+def sanitize_domain(domain: Optional[str]) -> str:
+    """Strip protocol prefix and trailing slashes from a domain string."""
+    domain = (domain or "").strip()
+    for prefix in ("https://", "http://"):
+        if domain.startswith(prefix):
+            domain = domain.removeprefix(prefix)
+            break
+    while domain.endswith("/"):
+        domain = domain.removesuffix("/")
+    return domain
+
+
 class Settings(BaseSettings):
     """应用配置"""
 
@@ -239,6 +251,55 @@ class Settings(BaseSettings):
         description="自注册用户配额倍率（0.1-1.0）",
     )
 
+    # ========== 初始用户配额配置 / Initial user quota configuration ==========
+    # Setup Wizard 创建的初始管理员配额
+    init_admin_daily_quota: int = Field(
+        999,
+        ge=1,
+        description="初始管理员每日 PR 审查配额",
+    )
+    init_admin_weekly_quota: int = Field(
+        9999,
+        ge=1,
+        description="初始管理员每周 PR 审查配额",
+    )
+    init_admin_monthly_quota: int = Field(
+        99999,
+        ge=1,
+        description="初始管理员每月 PR 审查配额",
+    )
+    # 自注册用户基础配额（乘以 register_quota_multiplier 得到实际配额）
+    init_user_daily_quota: int = Field(
+        10,
+        ge=1,
+        description="自注册用户基础每日 PR 审查配额",
+    )
+    init_user_weekly_quota: int = Field(
+        50,
+        ge=1,
+        description="自注册用户基础每周 PR 审查配额",
+    )
+    init_user_monthly_quota: int = Field(
+        200,
+        ge=1,
+        description="自注册用户基础每月 PR 审查配额",
+    )
+    init_user_issue_daily_quota: int = Field(
+        20,
+        ge=1,
+        description="自注册用户基础每日 Issue 分析配额",
+    )
+    init_user_issue_weekly_quota: int = Field(
+        80,
+        ge=1,
+        description="自注册用户基础每周 Issue 分析配额",
+    )
+    init_user_issue_monthly_quota: int = Field(
+        300,
+        ge=1,
+        description="自注册用户基础每月 Issue 分析配额",
+    )
+
     # GitHub App机器人用户名（可选，用于幂等性检查）
     bot_username: Optional[str] = None  # 备用方案，当无法从GitHub API获取时使用
 
@@ -274,9 +335,14 @@ class Settings(BaseSettings):
         return self.sakura_env.lower() in {"dev", "development", "local"}
 
     @property
+    def sanitized_app_domain(self) -> str:
+        """Return app_domain with protocol prefix and trailing slashes stripped."""
+        return sanitize_domain(self.app_domain)
+
+    @property
     def webhook_url(self) -> str:
         """获取完整的Webhook URL"""
-        return f"https://{self.app_domain}{self.webhook_path}"
+        return f"https://{self.sanitized_app_domain}{self.webhook_path}"
 
     @property
     def github_oauth_auth_url(self) -> str:
@@ -356,6 +422,13 @@ class Settings(BaseSettings):
     max_concurrent_issues: int = 3
     issue_price_per_1k_prompt: float = 0.0
     issue_price_per_1k_completion: float = 0.0
+    # Module A: 向量存储元数据增强
+    issue_vector_store_rich_metadata: bool = True
+    # Module D: 分析版本历史
+    issue_max_analysis_versions: int = 10
+    # Module F: 多人对话上下文分析
+    issue_include_comments: bool = False
+    issue_max_comments_in_context: int = 0
 
     # ========== PR 审查价格配置 ==========
     review_price_per_1k_prompt: float = 0.0
@@ -481,6 +554,17 @@ class Settings(BaseSettings):
     sakura_issue_reflection_enabled: bool = True  # 是否启用 Issue 分析后反思
     sakura_issue_reflection_model: str = ""  # Issue 反思使用的模型，为空时使用审查模型
     sakura_use_summary_model: bool = False  # 反思/合并任务使用辅助模型凭据以降低成本
+    sakura_knowledge_extraction_enabled: bool = True  # 是否启用自动知识提取
+    sakura_extraction_min_reflections: int = 10  # 触发知识提取的最低反思轮数
+    sakura_extraction_provider: str = "main"  # 知识提取 AI 厂商: main/summary/custom
+    sakura_extraction_api_base: str = ""  # 知识提取 API Base，custom 模式下生效
+    sakura_extraction_api_key: str = ""  # 知识提取 API Key，custom 模式下生效
+    sakura_extraction_model: str = ""  # 知识提取模型名称，为空时根据 provider 推导
+    sakura_extraction_max_iterations: int = 15  # 每个分类提取时工具调用最大轮数
+    sakura_consolidation_max_iterations: int = (
+        20  # 合并 Agent 每个文件的最大工具调用轮数
+    )
+    sakura_auto_create_subdirs: bool = True  # 初始化时自动创建子目录(rules/docs/plans)
 
     # ========== Agent 专家团队模式配置 ==========
     agent_team_enabled: bool = (
@@ -498,19 +582,29 @@ class Settings(BaseSettings):
     )
     agent_team_temperature: float = 0.2
     agent_team_max_tokens: int = 8192
+    agent_team_enable_context_compression: bool = True
+    agent_team_context_compression_threshold: float = 0.85
+    agent_team_context_compression_keep_rounds: int = 4
+    agent_team_context_summary_max_tokens: int = 2048
     agent_team_timeout_seconds: int = 600
     agent_team_max_concurrent: int = 1
     agent_team_min_priority: str = "high"
     agent_team_feasibility_keywords: str = "容易,简单,明确,低风险,可快速修复"
     agent_team_max_iterations_per_task: int = 3
+    agent_team_max_tool_rounds: int = 30
     agent_team_max_runtime_minutes: int = 60
+    agent_team_branch_index_delay: float = 2.0
     agent_team_draft_pr: bool = True
     agent_team_max_files_changed: int = 8
     agent_team_max_lines_changed: int = 500
     agent_team_run_tests: bool = True
-    agent_team_test_command_allowlist: str = "pytest -q,python run_ruff.py --check"
+    agent_team_auto_install_deps: bool = True  # 自动安装工作区项目依赖
+    agent_team_test_command_blocklist: str = ""
     agent_team_skills_enabled: bool = False
     agent_team_skills_root: str = "./Skills"
+    agent_team_reviewer_max_tool_rounds: int = 20
+    # Module G: 候选池缓存
+    agent_team_candidate_cache_ttl: int = 300
 
 
 class StrategyConfig:
@@ -887,6 +981,10 @@ DYNAMIC_CONFIG_GROUPS: OrderedDict[str, dict] = OrderedDict(
                     "issue_max_files_per_analysis": "单次分析最多读取的文件数",
                     "issue_max_directory_depth": "目录浏览的最大深度",
                     "max_concurrent_issues": "同时进行的最大 Issue 分析任务数，超出排队等待",
+                    "issue_vector_store_rich_metadata": "启用后向量搜索结果将包含 AI 分类、优先级和可行性评估",
+                    "issue_include_comments": "启用后分析将包含 Issue 评论区的多人讨论，AI 可参考社区反馈做出更准确判断",
+                    "issue_max_comments_in_context": "分析时包含的最大评论条数（0=不限制，仅控制条目数不截断内容）",
+                    "issue_max_analysis_versions": "单个 Issue 最大分析版本数，超出归档最旧版本",
                 },
                 "keys": [
                     "enable_issue_analysis",
@@ -904,6 +1002,10 @@ DYNAMIC_CONFIG_GROUPS: OrderedDict[str, dict] = OrderedDict(
                     "issue_max_files_per_analysis",
                     "issue_max_directory_depth",
                     "max_concurrent_issues",
+                    "issue_vector_store_rich_metadata",
+                    "issue_include_comments",
+                    "issue_max_comments_in_context",
+                    "issue_max_analysis_versions",
                 ],
             },
         ),
@@ -960,6 +1062,15 @@ DYNAMIC_CONFIG_GROUPS: OrderedDict[str, dict] = OrderedDict(
                     "sakura_auto_init": "首次审查时自动在仓库中初始化 .sakura/ 目录",
                     "sakura_consolidation_partial_commit": "合并时一个文件生成失败是否仍提交成功生成的文件",
                     "sakura_use_summary_model": "启用后反思、合并等后台任务将使用辅助模型的 API 凭据，降低成本",
+                    "sakura_knowledge_extraction_enabled": "启用后积累足够反思时自动提取结构化知识到 rules/docs/plans 子目录",
+                    "sakura_extraction_min_reflections": "触发自动知识提取的最低反思轮数（默认 10）",
+                    "sakura_extraction_provider": "知识提取 AI 凭据来源：main=主AI，summary=辅助AI，custom=独立配置",
+                    "sakura_extraction_api_base": "知识提取 API Base URL，仅 custom 模式生效，留空则使用主 AI",
+                    "sakura_extraction_api_key": "知识提取 API Key，仅 custom 模式生效，留空则使用主 AI",
+                    "sakura_extraction_model": "知识提取模型名称，留空则根据凭据来源自动推导",
+                    "sakura_extraction_max_iterations": "每个分类提取时工具调用最大轮数（默认 15）",
+                    "sakura_consolidation_max_iterations": "合并 Agent 每个文件的最大工具调用轮数（默认 20）",
+                    "sakura_auto_create_subdirs": "初始化 .sakura/ 时自动创建 rules/docs/plans 子目录及占位文件",
                 },
                 "keys": [
                     "sakura_memory_enabled",
@@ -972,8 +1083,17 @@ DYNAMIC_CONFIG_GROUPS: OrderedDict[str, dict] = OrderedDict(
                     "sakura_max_memory_chars",
                     "sakura_max_sakura_chars",
                     "sakura_auto_init",
+                    "sakura_auto_create_subdirs",
                     "sakura_consolidation_partial_commit",
                     "sakura_use_summary_model",
+                    "sakura_knowledge_extraction_enabled",
+                    "sakura_extraction_min_reflections",
+                    "sakura_extraction_provider",
+                    "sakura_extraction_api_base",
+                    "sakura_extraction_api_key",
+                    "sakura_extraction_model",
+                    "sakura_extraction_max_iterations",
+                    "sakura_consolidation_max_iterations",
                 ],
             },
         ),
@@ -991,9 +1111,16 @@ DYNAMIC_CONFIG_GROUPS: OrderedDict[str, dict] = OrderedDict(
                     "agent_team_api_key": "Agent 专家团队 API Key；选择独立厂商时填写，保存后脱敏显示",
                     "agent_team_model": "全栈专家使用的模型；选择独立厂商时填写",
                     "agent_team_review_model": "专业审查使用的模型；选择独立厂商时可填写，默认复用全栈专家模型",
-                    "agent_team_test_command_allowlist": "允许执行的验证命令白名单，逗号分隔",
+                    "agent_team_enable_context_compression": "启用 Agent 专家团队上下文压缩；压缩使用辅助 AI，触发阈值按目标 Agent 模型上下文窗口计算",
+                    "agent_team_context_compression_threshold": "Agent 专家团队压缩触发阈值（0-1）",
+                    "agent_team_context_compression_keep_rounds": "Agent 专家团队压缩时保留的最近工具调用轮数",
+                    "agent_team_context_summary_max_tokens": "Agent 专家团队历史摘要最大输出 Token 数",
+                    "agent_team_max_tool_rounds": "全栈专家单次执行允许的工具调用最大轮次",
+                    "agent_team_reviewer_max_tool_rounds": "专业审查单次执行允许的工具调用最大轮次",
+                    "agent_team_auto_install_deps": "Agent 克隆仓库后自动检测并安装 pyproject.toml 或 requirements.txt 中的依赖",
                     "agent_team_skills_enabled": "启用后，Agent 可按需加载已安装 Skills 的完整内容",
                     "agent_team_skills_root": "Agent Skills 本地存储根目录，默认 ./Skills",
+                    "agent_team_candidate_cache_ttl": "候选池内存缓存有效期（秒），0 表示每次实时查询",
                 },
                 "keys": [
                     "agent_team_enabled",
@@ -1007,19 +1134,26 @@ DYNAMIC_CONFIG_GROUPS: OrderedDict[str, dict] = OrderedDict(
                     "agent_team_summary_model",
                     "agent_team_temperature",
                     "agent_team_max_tokens",
+                    "agent_team_enable_context_compression",
+                    "agent_team_context_compression_threshold",
+                    "agent_team_context_compression_keep_rounds",
+                    "agent_team_context_summary_max_tokens",
                     "agent_team_timeout_seconds",
                     "agent_team_max_concurrent",
                     "agent_team_min_priority",
                     "agent_team_feasibility_keywords",
                     "agent_team_max_iterations_per_task",
+                    "agent_team_max_tool_rounds",
+                    "agent_team_reviewer_max_tool_rounds",
                     "agent_team_max_runtime_minutes",
                     "agent_team_draft_pr",
                     "agent_team_max_files_changed",
                     "agent_team_max_lines_changed",
                     "agent_team_run_tests",
-                    "agent_team_test_command_allowlist",
+                    "agent_team_auto_install_deps",
                     "agent_team_skills_enabled",
                     "agent_team_skills_root",
+                    "agent_team_candidate_cache_ttl",
                 ],
             },
         ),
@@ -1081,6 +1215,48 @@ DYNAMIC_CONFIG_GROUPS: OrderedDict[str, dict] = OrderedDict(
                 ],
             },
         ),
+        (
+            "registration_quota",
+            {
+                "label": "自注册配额配置",
+                "icon": "user-plus",
+                "descriptions": {
+                    "register_quota_multiplier": "自注册用户配额相对于基础值的倍率（0.1-1.0）",
+                },
+                "keys": [
+                    "register_quota_multiplier",
+                ],
+            },
+        ),
+        (
+            "init_quota",
+            {
+                "label": "初始用户配额配置",
+                "icon": "users",
+                "descriptions": {
+                    "init_admin_daily_quota": "Setup Wizard 创建的初始管理员每日 PR 审查配额",
+                    "init_admin_weekly_quota": "Setup Wizard 创建的初始管理员每周 PR 审查配额",
+                    "init_admin_monthly_quota": "Setup Wizard 创建的初始管理员每月 PR 审查配额",
+                    "init_user_daily_quota": "自注册用户基础每日 PR 审查配额（实际值 = 基础值 × 倍率）",
+                    "init_user_weekly_quota": "自注册用户基础每周 PR 审查配额",
+                    "init_user_monthly_quota": "自注册用户基础每月 PR 审查配额",
+                    "init_user_issue_daily_quota": "自注册用户基础每日 Issue 分析配额",
+                    "init_user_issue_weekly_quota": "自注册用户基础每周 Issue 分析配额",
+                    "init_user_issue_monthly_quota": "自注册用户基础每月 Issue 分析配额",
+                },
+                "keys": [
+                    "init_admin_daily_quota",
+                    "init_admin_weekly_quota",
+                    "init_admin_monthly_quota",
+                    "init_user_daily_quota",
+                    "init_user_weekly_quota",
+                    "init_user_monthly_quota",
+                    "init_user_issue_daily_quota",
+                    "init_user_issue_weekly_quota",
+                    "init_user_issue_monthly_quota",
+                ],
+            },
+        ),
     ]
 )
 
@@ -1127,6 +1303,11 @@ DYNAMIC_CONFIG_SELECT_OPTIONS: dict[str, list[dict]] = {
         {"value": "static", "label": "静态分析（正则提取 import）"},
     ],
     "agent_team_model_provider": get_provider_select_options(include_main_ai=True),
+    "sakura_extraction_provider": [
+        {"value": "main", "label": "主 AI"},
+        {"value": "summary", "label": "辅助 AI"},
+        {"value": "custom", "label": "独立配置"},
+    ],
     "agent_team_min_priority": [
         {"value": "critical", "label": "Critical"},
         {"value": "high", "label": "High"},
@@ -1141,7 +1322,7 @@ DYNAMIC_CONFIG_RANGES: dict[str, tuple[float, float]] = {
     "web_search_max_results": (1, 100),
     "web_search_max_content_length": (100, 50000),
     "web_search_timeout": (5, 600),
-    "embedding_dimension": (128, 4096),
+    "embedding_dimension": (128, 8192),
     "rerank_score_threshold": (0.0, 1.0),
     "code_chunk_size": (100, 5000),
     "code_chunk_overlap": (0, 1000),
@@ -1157,6 +1338,9 @@ DYNAMIC_CONFIG_RANGES: dict[str, tuple[float, float]] = {
     "pr_dependency_graph_max_files": (5, 200),
     "semantic_issue_similarity_threshold": (0.0, 1.0),
     "semantic_issue_max_links": (1, 20),
+    "issue_max_comments_in_context": (0, 5000),
+    "issue_max_analysis_versions": (1, 100),
+    "agent_team_candidate_cache_ttl": (0, 3600),
     "scan_interval_minutes": (30, 10080),  # 30分钟 ~ 7天
     "scan_cooldown_hours": (1, 168),  # 1小时 ~ 7天
     "scan_max_tokens_per_repo": (0, 5000000),
@@ -1169,7 +1353,22 @@ DYNAMIC_CONFIG_RANGES: dict[str, tuple[float, float]] = {
     "sakura_max_memory_chars": (500, 10000),
     "sakura_max_sakura_chars": (1000, 20000),
     "agent_team_max_tokens": (1024, 32768),
-    "max_concurrent_issues": (1, 200),
+    "agent_team_context_compression_threshold": (0.1, 1.0),
+    "agent_team_context_compression_keep_rounds": (1, 20),
+    "agent_team_context_summary_max_tokens": (500, 8192),
+    "agent_team_max_tool_rounds": (1, 1000),
+    "agent_team_reviewer_max_tool_rounds": (5, 500),
+    "max_concurrent_issues": (1, 500),
+    # 初始用户配额
+    "init_admin_daily_quota": (1, 999999),
+    "init_admin_weekly_quota": (1, 999999),
+    "init_admin_monthly_quota": (1, 999999),
+    "init_user_daily_quota": (1, 999999),
+    "init_user_weekly_quota": (1, 999999),
+    "init_user_monthly_quota": (1, 999999),
+    "init_user_issue_daily_quota": (1, 999999),
+    "init_user_issue_weekly_quota": (1, 999999),
+    "init_user_issue_monthly_quota": (1, 999999),
 }
 
 # 字段中文标签
@@ -1263,6 +1462,15 @@ DYNAMIC_CONFIG_LABELS: dict[str, str] = {
     "sakura_auto_init": "自动初始化 .sakura/",
     "sakura_consolidation_partial_commit": "部分提交",
     "sakura_use_summary_model": "使用辅助模型",
+    "sakura_knowledge_extraction_enabled": "启用知识提取",
+    "sakura_extraction_min_reflections": "提取触发反思数",
+    "sakura_extraction_provider": "知识提取 AI 凭据",
+    "sakura_extraction_api_base": "知识提取 API Base",
+    "sakura_extraction_api_key": "知识提取 API Key",
+    "sakura_extraction_model": "知识提取模型",
+    "sakura_extraction_max_iterations": "提取最大迭代轮数",
+    "sakura_consolidation_max_iterations": "合并最大迭代轮数",
+    "sakura_auto_create_subdirs": "自动创建子目录",
     # 国际化配置
     "default_language": "默认界面语言",
     "output_language": "AI 输出语言",
@@ -1293,6 +1501,10 @@ DYNAMIC_CONFIG_LABELS: dict[str, str] = {
     "issue_max_files_per_analysis": "单次分析最大文件数",
     "issue_max_directory_depth": "目录最大深度",
     "max_concurrent_issues": "最大并发分析数",
+    "issue_vector_store_rich_metadata": "向量存储包含 AI 分析元数据",
+    "issue_include_comments": "分析时包含评论对话",
+    "issue_max_comments_in_context": "最大评论条数（0=不限制）",
+    "issue_max_analysis_versions": "最大分析版本数",
     # Agent 专家团队
     "agent_team_enabled": "启用 Agent 专家团队",
     "agent_team_workspace_root": "工作区根目录",
@@ -1305,19 +1517,37 @@ DYNAMIC_CONFIG_LABELS: dict[str, str] = {
     "agent_team_summary_model": "摘要/反思模型",
     "agent_team_temperature": "温度参数",
     "agent_team_max_tokens": "最大 Tokens",
+    "agent_team_enable_context_compression": "启用上下文压缩",
+    "agent_team_context_compression_threshold": "上下文压缩阈值",
+    "agent_team_context_compression_keep_rounds": "压缩保留轮数",
+    "agent_team_context_summary_max_tokens": "上下文摘要最大 Tokens",
     "agent_team_timeout_seconds": "任务超时（秒）",
     "agent_team_max_concurrent": "最大并发任务数",
     "agent_team_min_priority": "最低 Issue 优先级",
     "agent_team_feasibility_keywords": "可行性关键词",
     "agent_team_max_iterations_per_task": "单任务最大迭代轮数",
+    "agent_team_max_tool_rounds": "工具调用最大轮次",
+    "agent_team_reviewer_max_tool_rounds": "审查工具调用最大轮次",
     "agent_team_max_runtime_minutes": "单任务最长运行时间（分钟）",
     "agent_team_draft_pr": "创建 Draft PR",
     "agent_team_max_files_changed": "最大修改文件数",
     "agent_team_max_lines_changed": "最大修改行数",
     "agent_team_run_tests": "自动运行验证命令",
-    "agent_team_test_command_allowlist": "验证命令白名单",
+    "agent_team_auto_install_deps": "自动安装项目依赖",
     "agent_team_skills_enabled": "启用 Agent Skills",
     "agent_team_skills_root": "Skills 根目录",
+    "agent_team_candidate_cache_ttl": "候选池缓存 TTL（秒）",
+    # 初始用户配额
+    "init_admin_daily_quota": "管理员初始每日 PR 配额",
+    "init_admin_weekly_quota": "管理员初始每周 PR 配额",
+    "init_admin_monthly_quota": "管理员初始每月 PR 配额",
+    "init_user_daily_quota": "自注册基础每日 PR 配额",
+    "init_user_weekly_quota": "自注册基础每周 PR 配额",
+    "init_user_monthly_quota": "自注册基础每月 PR 配额",
+    "init_user_issue_daily_quota": "自注册基础每日 Issue 配额",
+    "init_user_issue_weekly_quota": "自注册基础每周 Issue 配额",
+    "init_user_issue_monthly_quota": "自注册基础每月 Issue 配额",
+    "register_quota_multiplier": "自注册配额倍率",
 }
 
 # 内存 TTL 缓存（进程级，多 Worker 部署时各进程独立，配置变更仅当前进程可见）
