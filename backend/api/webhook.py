@@ -684,11 +684,17 @@ async def _handle_label_checkbox_toggle_inner(
     )
 
     # Permission check: PR author or collaborator (admin/write)
+    #
+    # Special case for pull_request_review: GitHub attributes review body edits
+    # (including user checkbox clicks) to the review author (the bot), so we
+    # cannot determine the actual editor.  Skip permission checks for review
+    # bodies to avoid infinite revert loops and allow user interaction.
     is_pr_author = editor_login == pr_author_login
     is_collaborator = False
+    is_review_body_edit = comment_source == "pull_request_review"
     github_app: Optional[GitHubAppClient] = None
 
-    if not is_pr_author:
+    if not is_pr_author and not is_review_body_edit:
         github_app = GitHubAppClient()
         permission = await asyncio.to_thread(
             github_app.check_collaborator_permission,
@@ -696,7 +702,7 @@ async def _handle_label_checkbox_toggle_inner(
         )
         is_collaborator = permission in ("admin", "write")
 
-    if not is_pr_author and not is_collaborator:
+    if not is_pr_author and not is_collaborator and not is_review_body_edit:
         logger.info(
             f"[{comment_source}] 用户 {editor_login} 无权切换标签 "
             f"(非PR作者且非仓库协作者)"
