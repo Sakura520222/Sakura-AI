@@ -296,7 +296,7 @@ class TestWebhookRouting:
 
         payload = {
             "action": "edited",
-            "review": {"body": "new body", "user": {"login": "editor"}},
+            "review": {"body": "new body", "user": {"login": "editor"}, "id": 123},
             "changes": {"body": {"from": "old body"}},
             "pull_request": {
                 "number": 42,
@@ -306,6 +306,7 @@ class TestWebhookRouting:
                 "owner": {"login": "owner"},
                 "name": "repo",
             },
+            "sender": {"login": "editor"},
         }
 
         with patch(
