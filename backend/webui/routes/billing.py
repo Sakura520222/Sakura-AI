@@ -162,6 +162,10 @@ async def admin_create_plan(
     issue_daily_add: int = Form(0),
     issue_weekly_add: int = Form(0),
     issue_monthly_add: int = Form(0),
+    agent_quota_bonus: int = Form(0),
+    agent_daily_add: int = Form(0),
+    agent_weekly_add: int = Form(0),
+    agent_monthly_add: int = Form(0),
     description: str = Form(None),
     sort_order: int = Form(0),
 ):
@@ -181,6 +185,10 @@ async def admin_create_plan(
             issue_daily_add=issue_daily_add,
             issue_weekly_add=issue_weekly_add,
             issue_monthly_add=issue_monthly_add,
+            agent_quota_bonus=agent_quota_bonus,
+            agent_daily_add=agent_daily_add,
+            agent_weekly_add=agent_weekly_add,
+            agent_monthly_add=agent_monthly_add,
             description=description if description else None,
             sort_order=sort_order,
         )
@@ -379,6 +387,10 @@ async def admin_edit_plan(
     issue_daily_add: int = Form(None),
     issue_weekly_add: int = Form(None),
     issue_monthly_add: int = Form(None),
+    agent_quota_bonus: int = Form(None),
+    agent_daily_add: int = Form(None),
+    agent_weekly_add: int = Form(None),
+    agent_monthly_add: int = Form(None),
     description: str = Form(None),
     sort_order: int = Form(None),
 ):
@@ -397,6 +409,10 @@ async def admin_edit_plan(
         "issue_daily_add": issue_daily_add,
         "issue_weekly_add": issue_weekly_add,
         "issue_monthly_add": issue_monthly_add,
+        "agent_quota_bonus": agent_quota_bonus,
+        "agent_daily_add": agent_daily_add,
+        "agent_weekly_add": agent_weekly_add,
+        "agent_monthly_add": agent_monthly_add,
         "description": description,
         "sort_order": sort_order,
     }

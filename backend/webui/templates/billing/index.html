@@ -13,7 +13,7 @@
     {% if db_user %}
     <div class="mb-8 glass rounded-2xl border border-sakura-200/50 dark:border-sakura-800/30 shadow-sm p-6">
         <h2 class="text-lg font-semibold text-gray-900 dark:text-white mb-4">{{ _('billing.current_quota') }}</h2>
-        <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+        <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
             <div>
                 <h3 class="text-sm font-medium text-gray-500 dark:text-gray-400 mb-3">{{ _('billing.pr_quota') }}</h3>
                 <div class="space-y-2">
@@ -42,6 +42,27 @@
                         (_('billing.daily'), db_user.issue_daily_quota, db_user.issue_daily_used),
                         (_('billing.weekly'), db_user.issue_weekly_quota, db_user.issue_weekly_used),
                         (_('billing.monthly'), db_user.issue_monthly_quota, db_user.issue_monthly_used)
+                    ] %}
+                    <div class="flex items-center justify-between">
+                        <span class="text-sm text-gray-700 dark:text-gray-300">{{ label }}</span>
+                        <span class="text-sm {{ 'text-red-600' if used >= quota else 'text-gray-900 dark:text-white' }}">
+                            {{ used }} / {{ quota }}
+                        </span>
+                    </div>
+                    <div class="w-full bg-gray-200 dark:bg-gray-700 rounded-full h-2">
+                        <div class="h-2 rounded-full {{ 'bg-red-500' if used >= quota else 'bg-gradient-to-r from-sakura-400 to-sakura-500' }}"
+                             style="width: {{ percentage(used, quota) }}%"></div>
+                    </div>
+                    {% endfor %}
+                </div>
+            </div>
+            <div>
+                <h3 class="text-sm font-medium text-gray-500 dark:text-gray-400 mb-3">{{ _('billing.agent_quota') }}</h3>
+                <div class="space-y-2">
+                    {% for label, quota, used in [
+                        (_('billing.daily'), db_user.agent_daily_quota, db_user.agent_daily_used),
+                        (_('billing.weekly'), db_user.agent_weekly_quota, db_user.agent_weekly_used),
+                        (_('billing.monthly'), db_user.agent_monthly_quota, db_user.agent_monthly_used)
                     ] %}
                     <div class="flex items-center justify-between">
                         <span class="text-sm text-gray-700 dark:text-gray-300">{{ label }}</span>
@@ -122,6 +143,18 @@
                     {% endif %}
                     {% if plan.issue_monthly_add > 0 %}
                     <li>{{ _('billing.monthly') }} {{ _('billing.issue_quota') }} +{{ plan.issue_monthly_add }}</li>
+                    {% endif %}
+                    {% if plan.agent_quota_bonus > 0 %}
+                    <li>+{{ plan.agent_quota_bonus }} {{ _('billing.agent_quota') }}（{{ _('billing.one_time') }}）</li>
+                    {% endif %}
+                    {% if plan.agent_daily_add > 0 %}
+                    <li>{{ _('billing.daily') }} {{ _('billing.agent_quota') }} +{{ plan.agent_daily_add }}</li>
+                    {% endif %}
+                    {% if plan.agent_weekly_add > 0 %}
+                    <li>{{ _('billing.weekly') }} {{ _('billing.agent_quota') }} +{{ plan.agent_weekly_add }}</li>
+                    {% endif %}
+                    {% if plan.agent_monthly_add > 0 %}
+                    <li>{{ _('billing.monthly') }} {{ _('billing.agent_quota') }} +{{ plan.agent_monthly_add }}</li>
                     {% endif %}
                     {% if plan.plan_type == 'subscription' and plan.duration_days %}
                     <li>{{ _('billing.validity_days', days=plan.duration_days) }}</li>
