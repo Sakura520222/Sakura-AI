@@ -243,7 +243,7 @@ async def load_sakura_memory(repo_owner: str, repo_name: str) -> dict:
         )
         result["text"] = "\n\n".join(parts)
     except Exception as e:
-        logger.info(
+        logger.warning(
             "Agent 加载 Sakura 记忆失败: repo={}, error={}", repo_full_name, e
         )
     return result
