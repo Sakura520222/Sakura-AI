@@ -684,11 +684,20 @@ async def _handle_label_checkbox_toggle_inner(
     )
 
     # Permission check: PR author or collaborator (admin/write)
+    #
+    # Special case for pull_request_review: GitHub attributes review body edits
+    # to the review author (the bot).  Although `sender` gives us the actual
+    # editor, we skip permission checks for review bodies to avoid infinite
+    # revert loops (bot reverting triggers another edited event) and to allow
+    # user interaction with label checkboxes.  This is an intentional security
+    # trade-off: only users with repo access can see and interact with PRs, so
+    # the risk is bounded by GitHub's own access controls.
     is_pr_author = editor_login == pr_author_login
     is_collaborator = False
+    is_review_body_edit = comment_source == "pull_request_review"
     github_app: Optional[GitHubAppClient] = None
 
-    if not is_pr_author:
+    if not is_pr_author and not is_review_body_edit:
         github_app = GitHubAppClient()
         permission = await asyncio.to_thread(
             github_app.check_collaborator_permission,
@@ -696,7 +705,7 @@ async def _handle_label_checkbox_toggle_inner(
         )
         is_collaborator = permission in ("admin", "write")
 
-    if not is_pr_author and not is_collaborator:
+    if not is_pr_author and not is_collaborator and not is_review_body_edit:
         logger.info(
             f"[{comment_source}] 用户 {editor_login} 无权切换标签 "
             f"(非PR作者且非仓库协作者)"
@@ -717,7 +726,7 @@ async def _handle_label_checkbox_toggle_inner(
                     if comment_source == "issue_comment":
                         comment_obj = repo.get_issue(pr_number).get_comment(comment_id)
                     else:
-                        comment_obj = repo.get_pull(pr_number).get_review_comment(
+                        comment_obj = repo.get_pull(pr_number).get_review(
                             comment_id
                         )
                     comment_obj.edit(old_body)
@@ -872,7 +881,7 @@ async def handle_pull_request_review_event(
                 content={"status": "error", "message": "无法提取PR信息"},
             )
 
-        editor_login = review.get("user", {}).get("login", "")
+        editor_login = payload.get("sender", {}).get("login", "")
         pr_author_login = pr_info_payload.get("user", {}).get("login", "")
 
         if not editor_login:
