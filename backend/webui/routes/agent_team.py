@@ -43,18 +43,17 @@ from backend.services.agent_team.candidate_service import (
     AgentTeamCandidateService,
     candidates_to_dicts,
 )
+from backend.services.agent_team.fullstack_expert import build_fullstack_user_message
 from backend.services.agent_team.submission_context import (
     build_agent_submission_context_preview,
-    build_agent_submission_preview,
     build_agent_task_summary,
     build_issue_context_markdown,
     format_issue_analysis_context,
-    format_issue_comments,
-    json_dict,
     json_list,
-    json_loads,
     load_issue_analysis_for_context,
     load_issue_comments_for_context,
+    load_sakura_memory,
+    load_skills_context,
 )
 from backend.services.agent_team.workspace_service import AgentTeamWorkspaceService
 from backend.webui.deps import (
@@ -226,18 +225,6 @@ def _should_schedule_agent_task(status: str) -> bool:
     return status == AgentTeamTaskStatus.QUEUED.value
 
 
-def _json_loads(value, fallback):
-    return json_loads(value, fallback)
-
-
-def _json_list(value) -> list:
-    return json_list(value)
-
-
-def _json_dict(value) -> dict:
-    return json_dict(value)
-
-
 def _compact_json(value) -> str:
     try:
         return json.dumps(value, ensure_ascii=False)
@@ -247,7 +234,7 @@ def _compact_json(value) -> str:
 
 def _format_context_items(value) -> list[dict]:
     items = []
-    for item in _json_list(value):
+    for item in json_list(value):
         if isinstance(item, dict):
             text = (
                 item.get("title")
@@ -294,14 +281,6 @@ def _format_agent_conversation_contexts(
         }
         for context in ordered
     ]
-
-
-def _format_issue_analysis_context(analysis: IssueAnalysis | None) -> dict | None:
-    return format_issue_analysis_context(analysis)
-
-
-def _format_issue_comments(comments: list, bot_username: str | None = None) -> list[dict]:
-    return format_issue_comments(comments, bot_username)
 
 
 async def _load_task_issue_analysis(
@@ -354,7 +333,7 @@ async def _build_manual_issue_submission_context(
         draft.get("summary") or "", issue_context_markdown
     )
     runtime_context = await _load_submission_runtime_context(draft)
-    fullstack_user_message = build_agent_submission_preview(
+    fullstack_user_message = build_fullstack_user_message(
         task_title=draft.get("title") or "",
         task_summary=agent_task_context,
         source_type=draft.get("source_type") or "",
@@ -383,15 +362,12 @@ async def _build_manual_issue_submission_context(
 async def _load_submission_runtime_context(draft: dict) -> dict:
     runtime = {"sakura_memory": "", "skills_summary": ""}
     try:
-        from backend.workers.agent_team_worker import AgentTeamWorker
-
-        worker = AgentTeamWorker()
         repo_owner = draft.get("repo_owner")
         repo_name = draft.get("repo_name")
         if repo_owner and repo_name:
-            sakura_info = await worker._load_sakura_memory(repo_owner, repo_name)
+            sakura_info = await load_sakura_memory(repo_owner, repo_name)
             runtime["sakura_memory"] = sakura_info.get("text") or ""
-        skills_summary, _, _ = await worker._load_skills_context()
+        skills_summary, _, _ = await load_skills_context()
         runtime["skills_summary"] = skills_summary or ""
     except Exception as exc:
         logger.warning("加载 Agent 提交预览运行时上下文失败: {}", exc)
@@ -619,7 +595,7 @@ async def task_detail_fragment(
         current_user=user,
         csrf_token=get_csrf_serializer().dumps({}),
         task=task,
-        issue_analysis_context=_format_issue_analysis_context(issue_analysis),
+        issue_analysis_context=format_issue_analysis_context(issue_analysis),
         issue_comments=issue_comments,
         agent_contexts=agent_contexts,
     )
@@ -1050,9 +1026,11 @@ async def create_task_from_issue(
         "summary": overrides.get("summary") or summary or "",
     }
     if not draft_for_context["repo_owner"] or not draft_for_context["repo_name"]:
-        owner, name = (draft_for_context["repo_full_name"] or repo_full_name).split("/", 1)
-        draft_for_context["repo_owner"] = draft_for_context["repo_owner"] or owner
-        draft_for_context["repo_name"] = draft_for_context["repo_name"] or name
+        full_name = draft_for_context["repo_full_name"] or repo_full_name
+        parts = full_name.split("/", 1) if "/" in full_name else []
+        if len(parts) == 2:
+            draft_for_context["repo_owner"] = draft_for_context["repo_owner"] or parts[0]
+            draft_for_context["repo_name"] = draft_for_context["repo_name"] or parts[1]
     submission_context = await _build_manual_issue_submission_context(
         db, draft_for_context
     )
