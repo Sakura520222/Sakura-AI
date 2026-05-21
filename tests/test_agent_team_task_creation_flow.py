@@ -1,6 +1,7 @@
 """Agent Team task creation wizard backend tests."""
 
 import json
+from datetime import datetime, timezone
 from types import SimpleNamespace
 
 import pytest
@@ -8,6 +9,11 @@ import pytest
 from backend.services.agent_team.candidate_service import (
     AgentCandidate,
     AgentTeamCandidateService,
+)
+from backend.services.agent_team.submission_context import (
+    build_agent_submission_context_preview,
+    build_agent_task_summary,
+    build_issue_context_markdown,
 )
 from backend.webui.routes.agent_team import (
     _format_agent_conversation_contexts,
@@ -202,6 +208,37 @@ def test_format_agent_conversation_contexts_parses_items():
     ]
 
 
+def test_build_issue_submission_context_markdown_includes_analysis_and_comments():
+    issue_context = build_issue_context_markdown(
+        repo_full_name="owner/repo",
+        issue_number=123,
+        issue_analysis_context={
+            "title": "Issue title",
+            "summary": "AI summary",
+            "priority": "high",
+            "analysis_detail_json": '{"root_cause": "bug"}',
+        },
+        issue_comments=[{"author": "alice", "body": "Please fix", "is_bot": False}],
+    )
+    task_summary = build_agent_task_summary("Editable summary", issue_context)
+    preview = build_agent_submission_context_preview(
+        task_title="Task title",
+        task_summary=task_summary,
+        source_type="manual_issue",
+        source_issue_number=123,
+        sakura_memory="### SAKURA.md\nMemory",
+        skills_summary="## 可用 Skills\n- test",
+    )
+
+    assert "## GitHub Issue 上下文" in task_summary
+    assert "AI summary" in task_summary
+    assert "@alice" in task_summary
+    assert preview.startswith("## system\n")
+    assert "## user" in preview
+    assert "## 项目记忆" in preview
+    assert "## 可用 Skills" in preview
+
+
 class DraftDb:
     def __init__(self):
         self.scalar_calls = 0
@@ -221,6 +258,12 @@ class DraftDb:
 
     def add(self, item):
         self.added.append(item)
+
+    async def get(self, *args, **kwargs):
+        return None
+
+    async def execute(self, *args, **kwargs):
+        return SimpleNamespace(scalar_one_or_none=lambda: None)
 
 
 @pytest.mark.asyncio
@@ -271,25 +314,96 @@ async def test_preview_task_from_issue_returns_draft(monkeypatch):
     async def fake_draft(self, db, repo_full_name, issue_number):
         assert repo_full_name == "owner/repo"
         assert issue_number == 123
-        return {"title": "Draft title", "repo_full_name": repo_full_name}
+        return {
+            "title": "Draft title",
+            "summary": "Draft summary",
+            "source_type": "manual_issue",
+            "source_issue_number": 123,
+            "repo_full_name": repo_full_name,
+            "repo_owner": "owner",
+            "repo_name": "repo",
+        }
+
+    async def fake_runtime_context(draft):
+        return {"sakura_memory": "", "skills_summary": ""}
 
     monkeypatch.setattr(
         "backend.webui.routes.agent_team.AgentTeamCandidateService.build_manual_issue_task_draft",
         fake_draft,
     )
+    monkeypatch.setattr(
+        "backend.webui.routes.agent_team._load_submission_runtime_context",
+        fake_runtime_context,
+    )
 
     response = await preview_task_from_issue(
-        db=object(),
+        db=DraftDb(),
         user={"user_id": 1},
         csrf_token="token",
         issue_ref="owner/repo#123",
     )
     payload = json.loads(response.body)
 
-    assert payload == {
-        "success": True,
-        "draft": {"title": "Draft title", "repo_full_name": "owner/repo"},
-    }
+    assert payload["success"] is True
+    assert payload["draft"]["title"] == "Draft title"
+    assert payload["submission_context"]["agent_task_context"].startswith(
+        "Draft summary"
+    )
+    assert "## system" in payload["submission_context"]["full_submission_preview"]
+    assert "## user" in payload["submission_context"]["full_submission_preview"]
+    assert "## GitHub Issue 上下文" in payload["submission_context"]["agent_task_context"]
+
+
+@pytest.mark.asyncio
+async def test_preview_task_from_issue_serializes_datetime_context(monkeypatch):
+    timestamp = datetime(2026, 5, 21, 3, 11, 19, tzinfo=timezone.utc)
+
+    async def fake_draft(self, db, repo_full_name, issue_number):
+        return {
+            "title": "Draft title",
+            "summary": "Draft summary",
+            "source_type": "manual_issue",
+            "source_issue_number": issue_number,
+            "repo_full_name": repo_full_name,
+            "repo_owner": "owner",
+            "repo_name": "repo",
+        }
+
+    async def fake_submission_context(db, draft):
+        return {
+            "issue_analysis": {"created_at": timestamp, "completed_at": timestamp},
+            "issue_comments": [{"author": "alice", "created_at": timestamp}],
+            "issue_context_markdown": "## GitHub Issue 上下文",
+            "agent_task_context": "Draft summary",
+            "fullstack_user_message": "user message",
+            "full_submission_preview": "## system\nsystem\n\n## user\nuser",
+            "runtime_context": {"sakura_memory": "", "skills_summary": ""},
+        }
+
+    monkeypatch.setattr(
+        "backend.webui.routes.agent_team.AgentTeamCandidateService.build_manual_issue_task_draft",
+        fake_draft,
+    )
+    monkeypatch.setattr(
+        "backend.webui.routes.agent_team._build_manual_issue_submission_context",
+        fake_submission_context,
+    )
+
+    response = await preview_task_from_issue(
+        db=DraftDb(),
+        user={"user_id": 1},
+        csrf_token="token",
+        issue_ref="owner/repo#123",
+    )
+    payload = json.loads(response.body)
+
+    assert payload["success"] is True
+    assert payload["submission_context"]["issue_analysis"]["created_at"].startswith(
+        "2026-05-21T03:11:19"
+    )
+    assert payload["submission_context"]["issue_comments"][0]["created_at"].startswith(
+        "2026-05-21T03:11:19"
+    )
 
 
 @pytest.mark.asyncio
@@ -305,6 +419,9 @@ async def test_create_task_from_issue_passes_edited_overrides(monkeypatch):
 
     async def fake_config():
         return FakeConfig()
+
+    async def fake_runtime_context(draft):
+        return {"sakura_memory": "", "skills_summary": ""}
 
     async def fake_create(
         self,
@@ -350,11 +467,15 @@ async def test_create_task_from_issue_passes_edited_overrides(monkeypatch):
         "backend.webui.routes.agent_team.log_admin_action",
         fake_log_admin_action,
     )
+    monkeypatch.setattr(
+        "backend.webui.routes.agent_team._load_submission_runtime_context",
+        fake_runtime_context,
+    )
 
     background_tasks = SimpleNamespace(add_task=lambda *args, **kwargs: None)
     response = await create_task_from_issue(
         background_tasks=background_tasks,
-        db=object(),
+        db=DraftDb(),
         user={"user_id": 1, "sub": "admin"},
         csrf_token="token",
         issue_ref="owner/repo#123",
@@ -376,6 +497,14 @@ async def test_create_task_from_issue_passes_edited_overrides(monkeypatch):
     payload = json.loads(response.body)
 
     assert payload == {"success": True, "task_id": 88}
+    expected_summary = (
+        "Edited summary\n\n"
+        "## GitHub Issue 上下文\n"
+        "仓库: owner/repo\n"
+        "Issue: #123\n\n"
+        "### Issue AI 分析\n暂无已完成的 Issue AI 分析。\n\n"
+        "### Issue 评论讨论\n暂无 Issue 评论。"
+    )
     assert captured == {
         "repo_full_name": "owner/repo",
         "issue_number": 123,
@@ -384,7 +513,7 @@ async def test_create_task_from_issue_passes_edited_overrides(monkeypatch):
         "base_branch": "develop",
         "overrides": {
             "title": "Edited title",
-            "summary": "Edited summary",
+            "summary": expected_summary,
             "source_type": "manual_issue",
             "repo_full_name": "owner/repo",
             "repo_owner": "owner",

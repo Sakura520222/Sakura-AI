@@ -293,6 +293,8 @@ agent_team:
   issue_preview_title: "预览并编辑任务"
   issue_preview_desc: "确认 Issue 解析结果，并在创建前调整任务标题、摘要、优先级、分支和执行参数。"
   issue_preview_creating: "创建中..."
+  submission_context: "提交给 Agent 的完整上下文"
+  submission_context_desc: "创建任务时将按该 system/user 消息上下文提交给 Agent；编辑摘要后这里会同步更新。"
   repo_full_name: "仓库"
   issue_number: "Issue 编号"
   source_type: "来源类型"

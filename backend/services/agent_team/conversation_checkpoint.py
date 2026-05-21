@@ -17,7 +17,8 @@ from backend.models.agent_team_models import (
     AgentTeamTask,
     AgentTeamToolCall,
 )
-from backend.models.database import async_session, utc_now
+from backend.models import database as db_module
+from backend.models.database import utc_now
 
 
 @dataclass(frozen=True)
@@ -43,7 +44,7 @@ class ConversationCheckpointService:
         model: str | None = None,
         resume_index: int = 0,
     ) -> AgentTeamSession:
-        async with async_session() as session:
+        async with db_module.async_session() as session:
             agent_session = AgentTeamSession(
                 task_id=self.task_id,
                 iteration_number=iteration_number,
@@ -65,7 +66,7 @@ class ConversationCheckpointService:
         return agent_session
 
     async def load_messages(self, session_id: int) -> list[dict[str, Any]]:
-        async with async_session() as session:
+        async with db_module.async_session() as session:
             result = await session.execute(
                 select(AgentTeamMessage)
                 .where(AgentTeamMessage.session_id == session_id)
@@ -82,7 +83,7 @@ class ConversationCheckpointService:
         message: dict[str, Any],
         finish_reason: str | None = None,
     ) -> int:
-        async with async_session() as session:
+        async with db_module.async_session() as session:
             msg = await self.append_message_in_session(
                 session,
                 session_id=session_id,
@@ -147,7 +148,7 @@ class ConversationCheckpointService:
         return msg
 
     async def mark_tool_call_running(self, session_id: int, tool_call_id: str) -> None:
-        async with async_session() as session:
+        async with db_module.async_session() as session:
             tool_call = await self._get_tool_call(session, session_id, tool_call_id)
             if tool_call is None:
                 return
@@ -169,7 +170,7 @@ class ConversationCheckpointService:
         tool_call_id: str,
         result_message_id: int,
     ) -> None:
-        async with async_session() as session:
+        async with db_module.async_session() as session:
             tool_call = await self._get_tool_call(session, session_id, tool_call_id)
             if tool_call is None:
                 return
@@ -193,7 +194,7 @@ class ConversationCheckpointService:
         tool_call_id: str,
         error_message: str,
     ) -> None:
-        async with async_session() as session:
+        async with db_module.async_session() as session:
             tool_call = await self._get_tool_call(session, session_id, tool_call_id)
             if tool_call is None:
                 return
@@ -221,7 +222,7 @@ class ConversationCheckpointService:
         await self._set_session_status(session_id, "failed", error_message=error_message)
 
     async def get_resume_cursor(self) -> ResumeCursor | None:
-        async with async_session() as session:
+        async with db_module.async_session() as session:
             result = await session.execute(
                 select(AgentTeamSession)
                 .where(
@@ -252,7 +253,7 @@ class ConversationCheckpointService:
     async def get_latest_completed_session(
         self, iteration_number: int, role_name: str
     ) -> int | None:
-        async with async_session() as session:
+        async with db_module.async_session() as session:
             result = await session.execute(
                 select(AgentTeamSession.id)
                 .where(
@@ -273,7 +274,7 @@ class ConversationCheckpointService:
         self, session_id: int, payload: dict[str, Any]
     ) -> None:
         """Persist a structured result payload (FullStackResult or ReviewResult)."""
-        async with async_session() as session:
+        async with db_module.async_session() as session:
             agent_session = await session.get(AgentTeamSession, session_id)
             if agent_session is None:
                 return
@@ -286,7 +287,7 @@ class ConversationCheckpointService:
         self, session_id: int
     ) -> dict[str, Any] | None:
         """Load a previously persisted structured result from the session."""
-        async with async_session() as session:
+        async with db_module.async_session() as session:
             agent_session = await session.get(AgentTeamSession, session_id)
             if agent_session is None or not agent_session.result_payload:
                 return None
@@ -302,7 +303,7 @@ class ConversationCheckpointService:
         tool_calls_count: int = 0,
         error_message: str | None = None,
     ) -> None:
-        async with async_session() as session:
+        async with db_module.async_session() as session:
             agent_session = await session.get(AgentTeamSession, session_id)
             if agent_session is None:
                 return

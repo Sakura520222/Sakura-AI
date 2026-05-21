@@ -26,7 +26,8 @@ from backend.models.agent_team_models import (
     AgentTeamTaskStatus,
     AgentTeamUserPrompt,
 )
-from backend.models.database import async_session, utc_now as _utc_now
+from backend.models import database as db_module
+from backend.models.database import utc_now as _utc_now
 from backend.services.agent_team.ai_client import load_agent_team_ai_config
 from backend.services.agent_team.conversation_checkpoint import (
     ConversationCheckpointService,
@@ -36,6 +37,7 @@ from backend.services.agent_team.git_workspace_service import (
 )
 from backend.services.agent_team.iteration_loop import IterationLoopService
 from backend.services.agent_team.pr_service import AgentTeamPRService
+from backend.services.agent_team.submission_context import build_agent_task_summary
 from backend.services.ai_reviewer.token_tracker import TokenTracker
 
 
@@ -133,6 +135,7 @@ class AgentTeamWorker:
             if task.max_iterations != max_iterations:
                 await self._update_task(task_id, max_iterations=max_iterations)
             sakura_info = await self._load_sakura_memory(repo_owner, repo_name)
+            task_context = build_agent_task_summary(task.summary or "")
 
             checkpoint = ConversationCheckpointService(task_id)
             resume_cursor = await checkpoint.get_resume_cursor() if resume else None
@@ -145,7 +148,7 @@ class AgentTeamWorker:
             )
             outcome = await loop_service.run(
                 task_title=task.title,
-                task_summary=task.summary or "",
+                task_summary=task_context,
                 source_type=task.source_type,
                 source_issue_number=task.source_issue_number,
                 max_iterations=max_iterations,
@@ -410,7 +413,7 @@ class AgentTeamWorker:
         """任务结束时将未消费的 pending prompts 标记为 expired。"""
         from sqlalchemy import update
 
-        async with async_session() as session:
+        async with db_module.async_session() as session:
             await session.execute(
                 update(AgentTeamUserPrompt)
                 .where(
@@ -422,7 +425,7 @@ class AgentTeamWorker:
             await session.commit()
 
     async def _load_task(self, task_id: int) -> AgentTeamTask:
-        async with async_session() as session:
+        async with db_module.async_session() as session:
             from sqlalchemy import select
 
             result = await session.execute(
@@ -434,7 +437,7 @@ class AgentTeamWorker:
             return task
 
     async def _update_task(self, task_id: int, **kwargs) -> None:
-        async with async_session() as session:
+        async with db_module.async_session() as session:
             from sqlalchemy import select
 
             result = await session.execute(
@@ -477,7 +480,7 @@ class AgentTeamWorker:
         patch_stats = (
             await self._collect_patch_file_stats(workspace) if workspace else {}
         )
-        async with async_session() as session:
+        async with db_module.async_session() as session:
             iteration = AgentTeamIteration(
                 task_id=task_id,
                 iteration_number=iteration_number,
@@ -603,7 +606,7 @@ class AgentTeamWorker:
             from backend.services.agent_team.skill_service import AgentSkillService
 
             service = AgentSkillService()
-            async with async_session() as session:
+            async with db_module.async_session() as session:
                 await service.ensure_builtin_skills(session)
                 summary = await service.build_enabled_skills_summary(session)
                 snapshot = await service.snapshot_enabled_skills(session)
