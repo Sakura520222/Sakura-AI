@@ -26,7 +26,8 @@ from backend.models.agent_team_models import (
     AgentTeamTaskStatus,
     AgentTeamUserPrompt,
 )
-from backend.models.database import async_session, utc_now as _utc_now
+from backend.models import database as db_module
+from backend.models.database import utc_now as _utc_now
 from backend.services.agent_team.ai_client import load_agent_team_ai_config
 from backend.services.agent_team.conversation_checkpoint import (
     ConversationCheckpointService,
@@ -36,6 +37,11 @@ from backend.services.agent_team.git_workspace_service import (
 )
 from backend.services.agent_team.iteration_loop import IterationLoopService
 from backend.services.agent_team.pr_service import AgentTeamPRService
+from backend.services.agent_team.submission_context import (
+    build_agent_task_summary,
+    load_sakura_memory,
+    load_skills_context,
+)
 from backend.services.ai_reviewer.token_tracker import TokenTracker
 
 
@@ -65,7 +71,7 @@ class AgentTeamWorker:
                 skills_summary,
                 skills_context,
                 skills_snapshot,
-            ) = await self._load_skills_context()
+            ) = await load_skills_context()
             ai_config_snapshot = config.safe_snapshot()
             if skills_snapshot:
                 ai_config_snapshot["skills"] = skills_snapshot
@@ -132,7 +138,10 @@ class AgentTeamWorker:
             max_iterations = await self._resolve_max_iterations(task.max_iterations)
             if task.max_iterations != max_iterations:
                 await self._update_task(task_id, max_iterations=max_iterations)
-            sakura_info = await self._load_sakura_memory(repo_owner, repo_name)
+            sakura_info = await load_sakura_memory(repo_owner, repo_name)
+            # task.summary 在创建时已包含 issue context（由 submission_context 合并），
+            # 此处仅传入 summary 即可，无需重复加载 issue 分析和评论。
+            task_context = build_agent_task_summary(task.summary or "")
 
             checkpoint = ConversationCheckpointService(task_id)
             resume_cursor = await checkpoint.get_resume_cursor() if resume else None
@@ -145,7 +154,7 @@ class AgentTeamWorker:
             )
             outcome = await loop_service.run(
                 task_title=task.title,
-                task_summary=task.summary or "",
+                task_summary=task_context,
                 source_type=task.source_type,
                 source_issue_number=task.source_issue_number,
                 max_iterations=max_iterations,
@@ -410,7 +419,7 @@ class AgentTeamWorker:
         """任务结束时将未消费的 pending prompts 标记为 expired。"""
         from sqlalchemy import update
 
-        async with async_session() as session:
+        async with db_module.async_session() as session:
             await session.execute(
                 update(AgentTeamUserPrompt)
                 .where(
@@ -422,7 +431,7 @@ class AgentTeamWorker:
             await session.commit()
 
     async def _load_task(self, task_id: int) -> AgentTeamTask:
-        async with async_session() as session:
+        async with db_module.async_session() as session:
             from sqlalchemy import select
 
             result = await session.execute(
@@ -434,7 +443,7 @@ class AgentTeamWorker:
             return task
 
     async def _update_task(self, task_id: int, **kwargs) -> None:
-        async with async_session() as session:
+        async with db_module.async_session() as session:
             from sqlalchemy import select
 
             result = await session.execute(
@@ -477,7 +486,7 @@ class AgentTeamWorker:
         patch_stats = (
             await self._collect_patch_file_stats(workspace) if workspace else {}
         )
-        async with async_session() as session:
+        async with db_module.async_session() as session:
             iteration = AgentTeamIteration(
                 task_id=task_id,
                 iteration_number=iteration_number,
@@ -530,98 +539,6 @@ class AgentTeamWorker:
         except Exception as exc:
             logger.debug("读取 Agent 变更文件统计失败，使用默认 0: {}", exc)
             return {}
-
-    async def _load_sakura_memory(self, repo_owner: str, repo_name: str) -> dict:
-        """加载仓库对应的 Sakura 记忆上下文及 GitHub repo 对象。
-
-        Returns:
-            包含 text, github_repo, sakura_ref 的字典
-        """
-        repo_full_name = f"{repo_owner}/{repo_name}"
-        result: dict = {"text": "", "github_repo": None, "sakura_ref": None}
-        try:
-            from backend.core.github_app import GitHubAppClient
-            from backend.services.github_write_service import GitHubWriteService
-            from backend.services.sakura_memory_service import SakuraMemoryService
-
-            github_app = GitHubAppClient()
-            client = github_app.get_repo_client(repo_owner, repo_name)
-            if not client:
-                logger.info(
-                    "Agent 未注入 Sakura 记忆: 无法获取 GitHub 客户端 ({})",
-                    repo_full_name,
-                )
-                return result
-
-            repo = client.get_repo(repo_full_name)
-            result["github_repo"] = repo
-
-            # 获取 sakura branch ref
-            write_service = GitHubWriteService()
-            result["sakura_ref"] = await write_service.get_sakura_branch(repo)
-
-            service = SakuraMemoryService()
-            context = await service.get_sakura_context(
-                repo=repo,
-                repo_full_name=repo_full_name,
-            )
-            if not context:
-                logger.info(
-                    "Agent 未注入 Sakura 记忆: 仓库无可用上下文 ({})", repo_full_name
-                )
-                return result
-
-            parts = []
-            if context.get("sakura_md"):
-                parts.append(f"### SAKURA.md\n{context['sakura_md']}")
-            if context.get("memory_md"):
-                parts.append(f"### memory.md\n{context['memory_md']}")
-
-            logger.info(
-                "Agent 已注入 Sakura 记忆: repo={}, files={}",
-                repo_full_name,
-                ", ".join(context.keys()),
-            )
-            result["text"] = "\n\n".join(parts)
-        except Exception as e:
-            logger.info(
-                "Agent 加载 Sakura 记忆失败: repo={}, error={}", repo_full_name, e
-            )
-        return result
-
-    async def _load_skills_context(self) -> tuple[str, dict, list[dict]]:
-        """加载已启用的 Agent Skills 上下文。"""
-        enabled = await self._resolve_bool_config(
-            "agent_team_skills_enabled",
-            get_settings().agent_team_skills_enabled,
-        )
-        if not enabled:
-            logger.info("Agent Skills 未启用")
-            return "", {}, []
-
-        try:
-            from backend.services.agent_team.skill_service import AgentSkillService
-
-            service = AgentSkillService()
-            async with async_session() as session:
-                await service.ensure_builtin_skills(session)
-                summary = await service.build_enabled_skills_summary(session)
-                snapshot = await service.snapshot_enabled_skills(session)
-            if not snapshot:
-                logger.info("Agent Skills 已启用但无可用 Skill")
-                return "", {}, []
-
-            root = await service.resolve_root()
-            context = {
-                "skills_root": str(root),
-                "skills_index": {skill["slug"]: skill for skill in snapshot},
-                "skills_cache": {},
-            }
-            logger.info("Agent 已加载 Skills: count={}", len(snapshot))
-            return summary, context, snapshot
-        except Exception as exc:
-            logger.info("Agent Skills 加载失败: {}", exc)
-            return "", {}, []
 
     async def _get_config(self, key: str) -> str | None:
         from backend.core.config import get_dynamic_config

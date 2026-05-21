@@ -5,6 +5,7 @@ import re
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, BackgroundTasks, Depends, Form, Request
+from fastapi.encoders import jsonable_encoder
 from fastapi.responses import JSONResponse
 from loguru import logger
 from sqlalchemy import desc, func, or_, select
@@ -23,15 +24,17 @@ from backend.core.config import (
     update_settings_field,
 )
 from backend.models.agent_team_models import (
+    AgentTeamConversationContext,
     AgentTeamIteration,
     AgentTeamMessage,
     AgentTeamSession,
+    AgentTeamSourceType,
     AgentTeamTask,
     AgentTeamTaskStatus,
     AgentTeamToolCall,
     AgentTeamUserPrompt,
 )
-from backend.models.database import AppConfig
+from backend.models.database import AppConfig, IssueAnalysis
 from backend.services.agent_team.ai_client import (
     load_agent_team_ai_config,
     resolve_agent_team_max_iterations,
@@ -39,6 +42,18 @@ from backend.services.agent_team.ai_client import (
 from backend.services.agent_team.candidate_service import (
     AgentTeamCandidateService,
     candidates_to_dicts,
+)
+from backend.services.agent_team.fullstack_expert import build_fullstack_user_message
+from backend.services.agent_team.submission_context import (
+    build_agent_submission_context_preview,
+    build_agent_task_summary,
+    build_issue_context_markdown,
+    format_issue_analysis_context,
+    json_list,
+    load_issue_analysis_for_context,
+    load_issue_comments_for_context,
+    load_sakura_memory,
+    load_skills_context,
 )
 from backend.services.agent_team.workspace_service import AgentTeamWorkspaceService
 from backend.webui.deps import (
@@ -208,6 +223,151 @@ def _parse_task_overrides(
 
 def _should_schedule_agent_task(status: str) -> bool:
     return status == AgentTeamTaskStatus.QUEUED.value
+
+
+def _compact_json(value) -> str:
+    try:
+        return json.dumps(value, ensure_ascii=False)
+    except (TypeError, ValueError):
+        return str(value)
+
+
+def _format_context_items(value) -> list[dict]:
+    items = []
+    for item in json_list(value):
+        if isinstance(item, dict):
+            text = (
+                item.get("title")
+                or item.get("summary")
+                or item.get("description")
+                or item.get("issue")
+                or item.get("path")
+                or item.get("file_path")
+                or _compact_json(item)
+            )
+            meta = item.get("severity") or item.get("status") or item.get("risk_level")
+        else:
+            text = str(item)
+            meta = None
+        if text:
+            items.append({"text": text, "meta": meta})
+    return items
+
+
+def _format_agent_conversation_contexts(
+    contexts: list[AgentTeamConversationContext],
+) -> list[dict]:
+    ordered = sorted(
+        contexts,
+        key=lambda item: (
+            item.iteration_number or 0,
+            item.created_at.isoformat() if item.created_at else "",
+            item.id or 0,
+        ),
+    )
+    return [
+        {
+            "id": context.id,
+            "iteration_number": context.iteration_number,
+            "source_role": context.source_role,
+            "target_role": context.target_role,
+            "summary": context.summary,
+            "unresolved_items": _format_context_items(
+                context.unresolved_items_json
+            ),
+            "modified_files": _format_context_items(context.modified_files_json),
+            "token_estimate": context.token_estimate,
+            "created_at": context.created_at,
+        }
+        for context in ordered
+    ]
+
+
+async def _load_task_issue_analysis(
+    db: AsyncSession, task: AgentTeamTask
+) -> IssueAnalysis | None:
+    return await load_issue_analysis_for_context(
+        db,
+        source_type=task.source_type,
+        source_id=task.source_id,
+        repo_owner=task.repo_owner,
+        repo_name=task.repo_name,
+        repo_full_name=task.repo_full_name,
+        issue_number=task.source_issue_number,
+    )
+
+
+async def _load_task_issue_comments(task: AgentTeamTask) -> list[dict]:
+    return await load_issue_comments_for_context(
+        repo_owner=task.repo_owner,
+        repo_name=task.repo_name,
+        issue_number=task.source_issue_number,
+    )
+
+
+async def _build_manual_issue_submission_context(
+    db: AsyncSession, draft: dict
+) -> dict:
+    analysis = await load_issue_analysis_for_context(
+        db,
+        source_type=draft.get("source_type"),
+        source_id=draft.get("source_id"),
+        repo_owner=draft.get("repo_owner"),
+        repo_name=draft.get("repo_name"),
+        repo_full_name=draft.get("repo_full_name"),
+        issue_number=draft.get("source_issue_number"),
+    )
+    issue_analysis_context = format_issue_analysis_context(analysis)
+    issue_comments = await load_issue_comments_for_context(
+        repo_owner=draft.get("repo_owner"),
+        repo_name=draft.get("repo_name"),
+        issue_number=draft.get("source_issue_number"),
+    )
+    issue_context_markdown = build_issue_context_markdown(
+        repo_full_name=draft.get("repo_full_name"),
+        issue_number=draft.get("source_issue_number"),
+        issue_analysis_context=issue_analysis_context,
+        issue_comments=issue_comments,
+    )
+    agent_task_context = build_agent_task_summary(
+        draft.get("summary") or "", issue_context_markdown
+    )
+    sakura_memory = ""
+    skills_summary = ""
+    try:
+        repo_owner = draft.get("repo_owner")
+        repo_name = draft.get("repo_name")
+        if repo_owner and repo_name:
+            sakura_info = await load_sakura_memory(repo_owner, repo_name)
+            sakura_memory = sakura_info.get("text") or ""
+        skills_summary, _, _ = await load_skills_context()
+        skills_summary = skills_summary or ""
+    except Exception as exc:
+        logger.warning("加载 Agent 提交预览运行时上下文失败: {}", exc)
+    fullstack_user_message = build_fullstack_user_message(
+        task_title=draft.get("title") or "",
+        task_summary=agent_task_context,
+        source_type=draft.get("source_type") or "",
+        source_issue_number=draft.get("source_issue_number"),
+        sakura_memory=sakura_memory,
+        skills_summary=skills_summary,
+    )
+    return {
+        "issue_analysis": issue_analysis_context,
+        "issue_comments": issue_comments,
+        "issue_context_markdown": issue_context_markdown,
+        "agent_task_context": agent_task_context,
+        "fullstack_user_message": fullstack_user_message,
+        "full_submission_preview": build_agent_submission_context_preview(
+            task_title=draft.get("title") or "",
+            task_summary=agent_task_context,
+            source_type=draft.get("source_type") or "",
+            source_issue_number=draft.get("source_issue_number"),
+            sakura_memory=sakura_memory,
+            skills_summary=skills_summary,
+        ),
+        "runtime_context": {"sakura_memory": sakura_memory, "skills_summary": skills_summary},
+    }
 
 
 AGENT_TEAM_CONFIG_GROUPS = [
@@ -405,6 +565,7 @@ async def task_detail_fragment(
                 AgentTeamIteration.patch_files
             ),
             selectinload(AgentTeamTask.feedback),
+            selectinload(AgentTeamTask.conversation_contexts),
         )
     )
     task = result.scalar_one_or_none()
@@ -419,6 +580,10 @@ async def task_detail_fragment(
     for iteration in task.iterations:
         iteration.patch_files.sort(key=lambda item: item.file_path)
 
+    issue_analysis = await _load_task_issue_analysis(db, task)
+    issue_comments = await _load_task_issue_comments(task)
+    agent_contexts = _format_agent_conversation_contexts(task.conversation_contexts)
+
     return render_template(
         "components/agent_team_task_detail_fragment.html",
         request,
@@ -426,6 +591,9 @@ async def task_detail_fragment(
         current_user=user,
         csrf_token=get_csrf_serializer().dumps({}),
         task=task,
+        issue_analysis_context=format_issue_analysis_context(issue_analysis),
+        issue_comments=issue_comments,
+        agent_contexts=agent_contexts,
     )
 
 
@@ -765,12 +933,17 @@ async def preview_task_from_issue(
         draft = await AgentTeamCandidateService().build_manual_issue_task_draft(
             db, repo_full_name, issue_number
         )
+        submission_context = await _build_manual_issue_submission_context(db, draft)
     except ValueError as e:
         return JSONResponse(
             {"success": False, "message": str(e)},
             status_code=200,
         )
-    return JSONResponse({"success": True, "draft": draft})
+    return JSONResponse(
+        jsonable_encoder(
+            {"success": True, "draft": draft, "submission_context": submission_context}
+        )
+    )
 
 
 @router.post("/tasks/create-from-issue")
@@ -837,6 +1010,28 @@ async def create_task_from_issue(
         )
     except ValueError as e:
         return JSONResponse({"success": False, "message": str(e)}, status_code=200)
+
+    draft_for_context = {
+        "source_type": overrides.get("source_type") or AgentTeamSourceType.MANUAL_ISSUE.value,
+        "source_id": overrides.get("source_id"),
+        "source_issue_number": overrides.get("source_issue_number") or issue_number,
+        "repo_full_name": overrides.get("repo_full_name") or repo_full_name,
+        "repo_owner": overrides.get("repo_owner"),
+        "repo_name": overrides.get("repo_name"),
+        "title": overrides.get("title") or title or "",
+        "summary": overrides.get("summary") or summary or "",
+    }
+    if not draft_for_context["repo_owner"] or not draft_for_context["repo_name"]:
+        full_name = draft_for_context["repo_full_name"] or repo_full_name
+        parts = full_name.split("/", 1) if "/" in full_name else []
+        if len(parts) == 2:
+            draft_for_context["repo_owner"] = draft_for_context["repo_owner"] or parts[0]
+            draft_for_context["repo_name"] = draft_for_context["repo_name"] or parts[1]
+    submission_context = await _build_manual_issue_submission_context(
+        db, draft_for_context
+    )
+    if submission_context["agent_task_context"]:
+        overrides["summary"] = submission_context["agent_task_context"]
 
     service = AgentTeamCandidateService()
     try:
