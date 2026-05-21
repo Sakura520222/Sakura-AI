@@ -141,6 +141,7 @@ async def _check_and_consume_agent_quota(
     """非管理员用户消费 Agent 配额，管理员跳过"""
     if _is_admin(user):
         return True, ""
+    # 延迟导入避免循环引用
     from backend.services.telegram_service import TelegramService
 
     service = TelegramService(db)
@@ -493,6 +494,7 @@ async def agent_team_page(
     config_groups = _group_config_items(config_items, lang=lang) if is_admin else []
     agent_quota = None
     if not is_admin:
+        # 延迟导入避免循环引用
         from backend.services.telegram_service import TelegramService
 
         quota_info = await TelegramService(db).get_user_quota_info(user["sub"])
@@ -1007,10 +1009,6 @@ async def preview_task_from_issue(
                 {"success": False, "message": err},
                 status_code=200,
             )
-        return JSONResponse(
-            {"success": False, "message": "该仓库不在允许列表中，无法创建任务"},
-            status_code=200,
-        )
     try:
         draft = await AgentTeamCandidateService().build_manual_issue_task_draft(
             db, repo_full_name, issue_number
@@ -1051,11 +1049,6 @@ async def create_task_from_issue(
     max_iterations: str = Form(""),
 ):
     """从指定仓库的 Issue 直接创建 Agent 任务。"""
-    # Agent 配额消费
-    ok, msg = await _check_and_consume_agent_quota(db, user)
-    if not ok:
-        return JSONResponse({"success": False, "message": msg}, status_code=200)
-
     try:
         repo_full_name, issue_number = _parse_issue_ref(issue_ref)
     except ValueError as e:
@@ -1070,10 +1063,11 @@ async def create_task_from_issue(
                 {"success": False, "message": err},
                 status_code=200,
             )
-        return JSONResponse(
-            {"success": False, "message": "该仓库不在允许列表中，无法创建任务"},
-            status_code=200,
-        )
+
+    # Agent 配额消费（仓库权限校验通过后再扣费）
+    ok, msg = await _check_and_consume_agent_quota(db, user)
+    if not ok:
+        return JSONResponse({"success": False, "message": msg}, status_code=200)
 
     try:
         config = await load_agent_team_ai_config()
@@ -1181,11 +1175,6 @@ async def retry_task(
     csrf_token: str = Depends(require_csrf),
 ):
     """重试失败或卡住的任务。"""
-    # Agent 配额消费（重试消耗额外配额）
-    ok, msg = await _check_and_consume_agent_quota(db, user)
-    if not ok:
-        return JSONResponse({"success": False, "message": msg}, status_code=200)
-
     result = await db.execute(select(AgentTeamTask).where(AgentTeamTask.id == task_id))
     task = result.scalar_one_or_none()
     if task is None:
@@ -1206,6 +1195,11 @@ async def retry_task(
             },
             status_code=200,
         )
+
+    # Agent 配额消费（确认任务可重试后再扣费）
+    ok, msg = await _check_and_consume_agent_quota(db, user)
+    if not ok:
+        return JSONResponse({"success": False, "message": msg}, status_code=200)
 
     try:
         config = await load_agent_team_ai_config()
@@ -1332,9 +1326,6 @@ async def cancel_task(
     if not _is_admin(user) and task.started_by != user["sub"]:
         return JSONResponse(
             {"success": False, "message": "无权操作此任务"}, status_code=403
-        )
-        return JSONResponse(
-            {"success": False, "message": "任务不存在"}, status_code=404
         )
 
     cancellable = {
@@ -1611,9 +1602,9 @@ async def _load_stats(db: AsyncSession, user: dict | None = None) -> dict:
         )
     )
     status_rows = await db.execute(
-        select(AgentTeamTask.status, func.count(AgentTeamTask.id)).group_by(
-            AgentTeamTask.status
-        )
+        select(AgentTeamTask.status, func.count(AgentTeamTask.id))
+        .where(*base)
+        .group_by(AgentTeamTask.status)
     )
     return {
         "total": total or 0,

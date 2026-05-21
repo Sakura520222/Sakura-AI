@@ -1421,6 +1421,7 @@ api:
   user_role_changed: "用户角色已更改为 {role}"
   user_quota_updated: "用户配额已更新"
   issue_quota_updated: "Issue 配额已更新"
+  agent_quota_updated: "Agent 配额已更新"
   cannot_disable_self: "不能禁用自己"
   permission_denied_user: "权限不足，无法修改此用户状态"
   user_status_changed: "用户 {username} 已{status}"
