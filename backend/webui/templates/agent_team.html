@@ -228,6 +228,113 @@
         </form>
     </section>
 
+    <!-- Manual Issue task preview/edit dialog -->
+    <div x-show="issuePreview.show" x-cloak
+         x-transition:enter="transition ease-out duration-200"
+         x-transition:enter-start="opacity-0"
+         x-transition:enter-end="opacity-100"
+         x-transition:leave="transition ease-in duration-150"
+         x-transition:leave-start="opacity-100"
+         x-transition:leave-end="opacity-0"
+         @keydown.escape.window="closeIssuePreview()"
+         class="fixed inset-0 z-[115] flex items-center justify-center p-4">
+        <div x-show="issuePreview.show" class="absolute inset-0 bg-black/50" @click="closeIssuePreview()"></div>
+        <div x-show="issuePreview.show"
+             x-transition:enter="transition ease-out duration-200"
+             x-transition:enter-start="opacity-0 scale-95 translate-y-2"
+             x-transition:enter-end="opacity-100 scale-100 translate-y-0"
+             class="relative glass rounded-3xl shadow-2xl border border-purple-200 dark:border-purple-800/50 max-w-4xl w-full max-h-[90vh] overflow-hidden">
+            <div class="px-6 py-5 border-b border-gray-200 dark:border-gray-700 bg-white/70 dark:bg-gray-900/70">
+                <div class="flex items-start justify-between gap-4">
+                    <div>
+                        <h3 class="text-xl font-bold text-gray-900 dark:text-gray-100">{{ _('agent_team.issue_preview_title') }}</h3>
+                        <p class="mt-1 text-sm text-gray-500 dark:text-gray-400">{{ _('agent_team.issue_preview_desc') }}</p>
+                    </div>
+                    <button type="button" @click="closeIssuePreview()" :disabled="issuePreview.creating" class="shrink-0 w-9 h-9 inline-flex items-center justify-center rounded-xl hover:bg-gray-100 dark:hover:bg-gray-800 text-gray-500 dark:text-gray-400 disabled:opacity-50" aria-label="{{ _('common.cancel') }}">
+                        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
+                    </button>
+                </div>
+            </div>
+
+            <template x-if="issuePreview.draft">
+                <div class="p-6 overflow-y-auto max-h-[calc(90vh-170px)] space-y-5">
+                    <div class="grid grid-cols-1 md:grid-cols-4 gap-3">
+                        <div class="rounded-2xl border border-gray-200 dark:border-gray-700 bg-white/70 dark:bg-gray-900/50 p-3">
+                            <div class="text-xs font-semibold text-gray-500 dark:text-gray-400">{{ _('agent_team.repo_full_name') }}</div>
+                            <div class="mt-1 text-sm font-bold text-gray-900 dark:text-gray-100 break-all" x-text="issuePreview.draft.repo_full_name || '-'"></div>
+                        </div>
+                        <div class="rounded-2xl border border-gray-200 dark:border-gray-700 bg-white/70 dark:bg-gray-900/50 p-3">
+                            <div class="text-xs font-semibold text-gray-500 dark:text-gray-400">{{ _('agent_team.issue_number') }}</div>
+                            <div class="mt-1 text-sm font-bold text-gray-900 dark:text-gray-100" x-text="issuePreview.draft.source_issue_number || '-'"></div>
+                        </div>
+                        <div class="rounded-2xl border border-gray-200 dark:border-gray-700 bg-white/70 dark:bg-gray-900/50 p-3">
+                            <div class="text-xs font-semibold text-gray-500 dark:text-gray-400">{{ _('agent_team.source_type') }}</div>
+                            <div class="mt-1 text-sm font-bold text-gray-900 dark:text-gray-100" x-text="issuePreview.draft.source_type || '-'"></div>
+                        </div>
+                        <div class="rounded-2xl border border-gray-200 dark:border-gray-700 bg-white/70 dark:bg-gray-900/50 p-3">
+                            <div class="text-xs font-semibold text-gray-500 dark:text-gray-400">{{ _('agent_team.source_id') }}</div>
+                            <div class="mt-1 text-sm font-bold text-gray-900 dark:text-gray-100" x-text="issuePreview.draft.source_id || '-'"></div>
+                        </div>
+                    </div>
+
+                    <div class="grid grid-cols-1 lg:grid-cols-2 gap-4">
+                        <div class="lg:col-span-2">
+                            <label class="block text-sm font-semibold text-gray-900 dark:text-gray-100 mb-1" for="issue-preview-title">{{ _('agent_team.task_title') }}</label>
+                            <input id="issue-preview-title" x-model="issuePreview.draft.title" type="text" class="w-full rounded-xl border-gray-300 dark:border-gray-600 dark:bg-gray-900 text-sm">
+                        </div>
+                        <div class="lg:col-span-2">
+                            <label class="block text-sm font-semibold text-gray-900 dark:text-gray-100 mb-1" for="issue-preview-summary">{{ _('agent_team.summary') }}</label>
+                            <textarea id="issue-preview-summary" x-model="issuePreview.draft.summary" rows="6" class="w-full rounded-xl border-gray-300 dark:border-gray-600 dark:bg-gray-900 text-sm"></textarea>
+                        </div>
+                        <div>
+                            <label class="block text-sm font-semibold text-gray-900 dark:text-gray-100 mb-1" for="issue-preview-priority">{{ _('agent_team.priority') }}</label>
+                            <select id="issue-preview-priority" x-model="issuePreview.draft.priority" class="w-full rounded-xl border-gray-300 dark:border-gray-600 dark:bg-gray-900 text-sm">
+                                <option value="critical">Critical</option>
+                                <option value="high">High</option>
+                                <option value="medium">Medium</option>
+                                <option value="low">Low</option>
+                            </select>
+                        </div>
+                        <div>
+                            <label class="block text-sm font-semibold text-gray-900 dark:text-gray-100 mb-1" for="issue-preview-status">{{ _('agent_team.task_status') }}</label>
+                            <select id="issue-preview-status" x-model="issuePreview.draft.status" class="w-full rounded-xl border-gray-300 dark:border-gray-600 dark:bg-gray-900 text-sm">
+                                {% for opt in status_options %}<option value="{{ opt }}">{{ _('agent_team.status_' ~ opt) }}</option>{% endfor %}
+                            </select>
+                        </div>
+                        <div>
+                            <label class="block text-sm font-semibold text-gray-900 dark:text-gray-100 mb-1" for="issue-preview-score">{{ _('agent_team.candidate_score') }}</label>
+                            <input id="issue-preview-score" x-model="issuePreview.draft.candidate_score" type="number" class="w-full rounded-xl border-gray-300 dark:border-gray-600 dark:bg-gray-900 text-sm">
+                        </div>
+                        <div>
+                            <label class="block text-sm font-semibold text-gray-900 dark:text-gray-100 mb-1" for="issue-preview-max-iterations">{{ _('agent_team.max_iterations') }}</label>
+                            <input id="issue-preview-max-iterations" x-model="issuePreview.draft.max_iterations" type="number" class="w-full rounded-xl border-gray-300 dark:border-gray-600 dark:bg-gray-900 text-sm">
+                        </div>
+                        <div>
+                            <label class="block text-sm font-semibold text-gray-900 dark:text-gray-100 mb-1" for="issue-preview-base-branch">{{ _('agent_team.base_branch') }}</label>
+                            <input id="issue-preview-base-branch" x-model="issuePreview.draft.base_branch" type="text" class="w-full rounded-xl border-gray-300 dark:border-gray-600 dark:bg-gray-900 text-sm" placeholder="{{ _('agent_team.base_branch_placeholder') }}">
+                        </div>
+                        <div>
+                            <label class="block text-sm font-semibold text-gray-900 dark:text-gray-100 mb-1" for="issue-preview-branch-name">{{ _('agent_team.branch_name') }}</label>
+                            <input id="issue-preview-branch-name" x-model="issuePreview.draft.branch_name" type="text" class="w-full rounded-xl border-gray-300 dark:border-gray-600 dark:bg-gray-900 text-sm" placeholder="{{ _('agent_team.branch_name_placeholder') }}">
+                        </div>
+                    </div>
+
+                    <template x-if="issuePreview.errorMessage">
+                        <div class="rounded-2xl border border-red-200 dark:border-red-900/60 bg-red-50 dark:bg-red-950/30 px-4 py-3 text-sm text-red-600 dark:text-red-300" x-text="issuePreview.errorMessage"></div>
+                    </template>
+                </div>
+            </template>
+
+            <div class="px-6 py-4 border-t border-gray-200 dark:border-gray-700 bg-white/70 dark:bg-gray-900/70 flex flex-col sm:flex-row sm:items-center sm:justify-end gap-3">
+                <button type="button" @click="closeIssuePreview()" :disabled="issuePreview.creating" class="px-4 py-2 rounded-xl border border-gray-300 dark:border-gray-600 text-sm font-medium hover:bg-gray-50 dark:hover:bg-gray-800 transition-colors disabled:opacity-50">{{ _('common.cancel') }}</button>
+                <button type="button" @click="submitIssuePreviewTask()" :disabled="!issuePreview.draft || issuePreview.creating" class="px-5 py-2 rounded-xl bg-purple-500 hover:bg-purple-600 text-white text-sm font-semibold disabled:opacity-50 disabled:cursor-not-allowed transition-colors">
+                    <span x-show="!issuePreview.creating">{{ _('agent_team.create_task') }}</span>
+                    <span x-show="issuePreview.creating">{{ _('agent_team.issue_preview_creating') }}</span>
+                </button>
+            </div>
+        </div>
+    </div>
+
     <!-- Base branch selection dialog -->
     <div x-data="branchDialog()" x-show="active" x-cloak
          x-transition:enter="transition ease-out duration-200"
@@ -346,6 +453,14 @@ function agentTeamPage() {
         filters: {status: 'all', source_type: 'all', q: '', sort: 'newest'},
         candidateFilterRequirement: '',
         manualIssueInput: '',
+        issuePreview: {
+            show: false,
+            loading: false,
+            creating: false,
+            issueRef: '',
+            draft: null,
+            errorMessage: ''
+        },
         init() {
             window.agentTeamState = this;
             setInterval(() => {
@@ -370,7 +485,17 @@ function agentTeamPage() {
             else this.loadAgentTaskPage(document.getElementById('agent-task-list')?.dataset.page || 1);
         },
         refreshWorkspaces() { refreshWorkspaces(); },
-        previewCandidates() { previewCandidates(); }
+        previewCandidates() { previewCandidates(); },
+        closeIssuePreview() {
+            if (this.issuePreview.creating) return;
+            this.issuePreview.show = false;
+            this.issuePreview.loading = false;
+            this.issuePreview.creating = false;
+            this.issuePreview.issueRef = '';
+            this.issuePreview.draft = null;
+            this.issuePreview.errorMessage = '';
+        },
+        submitIssuePreviewTask() { submitIssuePreviewTask(); }
     }
 }
 function refreshAgentTaskList() { window.agentTeamState?.refreshAgentTaskList(); }
@@ -528,19 +653,6 @@ function createTaskFromIssue() {
         if (errorEl) { errorEl.textContent = '{{ _('agent_team.manual_issue_input_required') }}'; errorEl.classList.remove('hidden'); }
         return;
     }
-    // Parse owner/repo from issue ref for branch dialog
-    let repoOwner = '', repoName = '';
-    const urlMatch = raw.match(/(?:https?:\/\/)?github\.com\/([^/]+)\/([^/]+)\/issues\/\d+/);
-    const hashMatch = raw.match(/^([^/]+)\/([^/#]+)#(\d+)$/);
-    const spaceMatch = raw.match(/^([^/]+)\/([^\s]+)\s+(\d+)$/);
-    if (urlMatch) { repoOwner = urlMatch[1]; repoName = urlMatch[2]; }
-    else if (hashMatch) { repoOwner = hashMatch[1]; repoName = hashMatch[2]; }
-    else if (spaceMatch) { repoOwner = spaceMatch[1]; repoName = spaceMatch[2]; }
-
-    if (!repoOwner || !repoName) {
-        if (errorEl) { errorEl.textContent = '{{ _('agent_team.manual_issue_input_required') }}'; errorEl.classList.remove('hidden'); }
-        return;
-    }
     if (errorEl) errorEl.classList.add('hidden');
     const btn = document.getElementById('manual-issue-btn');
     const origText = btn.textContent;
@@ -548,41 +660,105 @@ function createTaskFromIssue() {
     btn.classList.add('opacity-60', 'cursor-not-allowed');
     btn.textContent = '...';
 
-    askBranch(repoOwner, repoName).then(baseBranch => {
-        if (baseBranch === null) {
-            btn.disabled = false;
-            btn.classList.remove('opacity-60', 'cursor-not-allowed');
-            btn.textContent = origText;
-            return;
+    fetch('/agent-team/tasks/preview-from-issue', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/x-www-form-urlencoded'},
+        body: new URLSearchParams({csrf_token: '{{ csrf_token }}', issue_ref: raw})
+    }).then(r => r.json()).then(data => {
+        if (data.success) {
+            const state = window.agentTeamState;
+            state.issuePreview.issueRef = raw;
+            state.issuePreview.draft = normalizeIssueDraft(data.draft);
+            state.issuePreview.errorMessage = '';
+            state.issuePreview.show = true;
+        } else if (errorEl) {
+            errorEl.textContent = data.message || '{{ _('agent_team.request_failed') }}';
+            errorEl.classList.remove('hidden');
         }
-        const params = {csrf_token: '{{ csrf_token }}', issue_ref: raw};
-        if (baseBranch) params.base_branch = baseBranch;
-        fetch('/agent-team/tasks/create-from-issue', {
+    }).catch(() => {
+        if (errorEl) { errorEl.textContent = '{{ _('agent_team.request_failed') }}'; errorEl.classList.remove('hidden'); }
+    }).finally(() => {
+        btn.disabled = false;
+        btn.classList.remove('opacity-60', 'cursor-not-allowed');
+        btn.textContent = origText;
+    });
+}
+function normalizeIssueDraft(draft) {
+    return Object.assign({
+        source_type: 'manual_issue',
+        source_id: '',
+        source_issue_number: '',
+        repo_full_name: '',
+        repo_owner: '',
+        repo_name: '',
+        title: '',
+        summary: '',
+        priority: 'medium',
+        candidate_score: '',
+        status: 'queued',
+        branch_name: '',
+        base_branch: '',
+        max_iterations: ''
+    }, draft || {});
+}
+async function submitIssuePreviewTask() {
+    const state = window.agentTeamState;
+    const preview = state?.issuePreview;
+    const draft = preview?.draft;
+    if (!preview || !draft || preview.creating) return;
+
+    preview.creating = true;
+    preview.errorMessage = '';
+    try {
+        let baseBranch = `${draft.base_branch ?? ''}`.trim();
+        if (!baseBranch && draft.repo_owner && draft.repo_name) {
+            const selected = await askBranch(draft.repo_owner, draft.repo_name);
+            if (selected === null) {
+                preview.creating = false;
+                return;
+            }
+            baseBranch = selected || '';
+            draft.base_branch = baseBranch;
+        }
+
+        const params = {
+            csrf_token: '{{ csrf_token }}',
+            issue_ref: preview.issueRef,
+            title: draft.title || '',
+            summary: draft.summary || '',
+            priority: draft.priority || '',
+            candidate_score: draft.candidate_score ?? '',
+            source_type: draft.source_type || '',
+            source_id: draft.source_id ?? '',
+            source_issue_number: draft.source_issue_number ?? '',
+            repo_full_name: draft.repo_full_name || '',
+            repo_owner: draft.repo_owner || '',
+            repo_name: draft.repo_name || '',
+            status: draft.status || '',
+            branch_name: draft.branch_name || '',
+            base_branch: baseBranch,
+            max_iterations: draft.max_iterations ?? ''
+        };
+        const resp = await fetch('/agent-team/tasks/create-from-issue', {
             method: 'POST',
             headers: {'Content-Type': 'application/x-www-form-urlencoded'},
             body: new URLSearchParams(params)
-        }).then(r => r.json()).then(data => {
-            if (data.success) {
-                window.dispatchEvent(new CustomEvent('show-toast', {detail: {message: '{{ _('agent_team.task_created') }}', type: 'success'}}));
-                window.agentTeamState.manualIssueInput = '';
-                btn.textContent = '✓';
-                btn.classList.remove('bg-purple-500', 'hover:bg-purple-600', 'opacity-60', 'cursor-not-allowed');
-                btn.classList.add('bg-green-500');
-                setTimeout(() => { btn.disabled = false; btn.textContent = origText; btn.classList.remove('bg-green-500'); btn.classList.add('bg-purple-500', 'hover:bg-purple-600'); }, 2000);
-                refreshAgentTaskList();
-            } else {
-                if (errorEl) { errorEl.textContent = data.message || '{{ _('agent_team.request_failed') }}'; errorEl.classList.remove('hidden'); }
-                btn.disabled = false;
-                btn.classList.remove('opacity-60', 'cursor-not-allowed');
-                btn.textContent = origText;
-            }
-        }).catch(() => {
-            if (errorEl) { errorEl.textContent = '{{ _('agent_team.request_failed') }}'; errorEl.classList.remove('hidden'); }
-            btn.disabled = false;
-            btn.classList.remove('opacity-60', 'cursor-not-allowed');
-            btn.textContent = origText;
         });
-    });
+        const data = await resp.json();
+        if (data.success) {
+            window.dispatchEvent(new CustomEvent('show-toast', {detail: {message: '{{ _('agent_team.task_created') }}', type: 'success'}}));
+            state.manualIssueInput = '';
+            preview.creating = false;
+            state.closeIssuePreview();
+            refreshAgentTaskList();
+        } else {
+            preview.errorMessage = data.message || '{{ _('agent_team.request_failed') }}';
+        }
+    } catch (e) {
+        preview.errorMessage = '{{ _('agent_team.request_failed') }}';
+    } finally {
+        preview.creating = false;
+    }
 }
 </script>
 {% endblock %}
