@@ -332,14 +332,25 @@ async def _build_manual_issue_submission_context(
     agent_task_context = build_agent_task_summary(
         draft.get("summary") or "", issue_context_markdown
     )
-    runtime_context = await _load_submission_runtime_context(draft)
+    sakura_memory = ""
+    skills_summary = ""
+    try:
+        repo_owner = draft.get("repo_owner")
+        repo_name = draft.get("repo_name")
+        if repo_owner and repo_name:
+            sakura_info = await load_sakura_memory(repo_owner, repo_name)
+            sakura_memory = sakura_info.get("text") or ""
+        skills_summary, _, _ = await load_skills_context()
+        skills_summary = skills_summary or ""
+    except Exception as exc:
+        logger.warning("加载 Agent 提交预览运行时上下文失败: {}", exc)
     fullstack_user_message = build_fullstack_user_message(
         task_title=draft.get("title") or "",
         task_summary=agent_task_context,
         source_type=draft.get("source_type") or "",
         source_issue_number=draft.get("source_issue_number"),
-        sakura_memory=runtime_context["sakura_memory"],
-        skills_summary=runtime_context["skills_summary"],
+        sakura_memory=sakura_memory,
+        skills_summary=skills_summary,
     )
     return {
         "issue_analysis": issue_analysis_context,
@@ -352,26 +363,11 @@ async def _build_manual_issue_submission_context(
             task_summary=agent_task_context,
             source_type=draft.get("source_type") or "",
             source_issue_number=draft.get("source_issue_number"),
-            sakura_memory=runtime_context["sakura_memory"],
-            skills_summary=runtime_context["skills_summary"],
+            sakura_memory=sakura_memory,
+            skills_summary=skills_summary,
         ),
-        "runtime_context": runtime_context,
+        "runtime_context": {"sakura_memory": sakura_memory, "skills_summary": skills_summary},
     }
-
-
-async def _load_submission_runtime_context(draft: dict) -> dict:
-    runtime = {"sakura_memory": "", "skills_summary": ""}
-    try:
-        repo_owner = draft.get("repo_owner")
-        repo_name = draft.get("repo_name")
-        if repo_owner and repo_name:
-            sakura_info = await load_sakura_memory(repo_owner, repo_name)
-            runtime["sakura_memory"] = sakura_info.get("text") or ""
-        skills_summary, _, _ = await load_skills_context()
-        runtime["skills_summary"] = skills_summary or ""
-    except Exception as exc:
-        logger.warning("加载 Agent 提交预览运行时上下文失败: {}", exc)
-    return runtime
 
 
 AGENT_TEAM_CONFIG_GROUPS = [

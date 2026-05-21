@@ -199,6 +199,7 @@ async def load_sakura_memory(repo_owner: str, repo_name: str) -> dict:
     repo_full_name = f"{repo_owner}/{repo_name}"
     result: dict = {"text": "", "github_repo": None, "sakura_ref": None}
     try:
+        # 延迟导入: 避免 submission_context 与 github_app/sakura_memory_service 循环依赖
         from backend.core.github_app import GitHubAppClient
         from backend.services.github_write_service import GitHubWriteService
         from backend.services.sakura_memory_service import SakuraMemoryService
@@ -250,6 +251,7 @@ async def load_sakura_memory(repo_owner: str, repo_name: str) -> dict:
 
 async def load_skills_context() -> tuple[str, dict, list[dict]]:
     """加载已启用的 Agent Skills 上下文。"""
+    # 延迟导入: 避免 submission_context 与 ai_client 循环依赖
     from backend.services.agent_team.ai_client import resolve_agent_team_bool_config
 
     enabled = await resolve_agent_team_bool_config(
@@ -261,6 +263,7 @@ async def load_skills_context() -> tuple[str, dict, list[dict]]:
         return "", {}, []
 
     try:
+        # 延迟导入: 避免 submission_context 与 database/skill_service 循环依赖
         from backend.models import database as db_module
         from backend.services.agent_team.skill_service import AgentSkillService
 
@@ -282,7 +285,7 @@ async def load_skills_context() -> tuple[str, dict, list[dict]]:
         logger.info("Agent 已加载 Skills: count={}", len(snapshot))
         return summary, context, snapshot
     except Exception as exc:
-        logger.info("Agent Skills 加载失败: {}", exc)
+        logger.warning("Agent Skills 加载失败: {}", exc)
         return "", {}, []
 
 
