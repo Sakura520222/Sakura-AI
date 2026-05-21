@@ -449,10 +449,13 @@ class SetupService:
                     daily_quota=settings.init_admin_daily_quota,
                     weekly_quota=settings.init_admin_weekly_quota,
                     monthly_quota=settings.init_admin_monthly_quota,
-                    # 管理员 Issue 配额复用管理员 PR 初始配额，避免新增独立配置项。
+                    # 管理员 Issue 配额复用管理员 PR 初始配额
                     issue_daily_quota=settings.init_admin_daily_quota,
                     issue_weekly_quota=settings.init_admin_weekly_quota,
                     issue_monthly_quota=settings.init_admin_monthly_quota,
+                    agent_daily_quota=settings.init_admin_agent_daily_quota,
+                    agent_weekly_quota=settings.init_admin_agent_weekly_quota,
+                    agent_monthly_quota=settings.init_admin_agent_monthly_quota,
                 )
                 session.add(admin)
                 logger.info(f"已创建超级管理员: {github_username}")

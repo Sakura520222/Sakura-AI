@@ -87,6 +87,12 @@ class Plan(Base):
     issue_weekly_add = Column(Integer, default=0, nullable=False)
     issue_monthly_add = Column(Integer, default=0, nullable=False)
 
+    # Agent 配额增量
+    agent_quota_bonus = Column(Integer, default=0, nullable=False)
+    agent_daily_add = Column(Integer, default=0, nullable=False)
+    agent_weekly_add = Column(Integer, default=0, nullable=False)
+    agent_monthly_add = Column(Integer, default=0, nullable=False)
+
     is_active = Column(Boolean, default=True, nullable=False)
     sort_order = Column(Integer, default=0, nullable=False)
     description = Column(Text, nullable=True)
@@ -197,6 +203,10 @@ class UserSubscription(Base):
     applied_issue_daily_add = Column(Integer, default=0, nullable=False)
     applied_issue_weekly_add = Column(Integer, default=0, nullable=False)
     applied_issue_monthly_add = Column(Integer, default=0, nullable=False)
+    applied_agent_quota_bonus = Column(Integer, default=0, nullable=False)
+    applied_agent_daily_add = Column(Integer, default=0, nullable=False)
+    applied_agent_weekly_add = Column(Integer, default=0, nullable=False)
+    applied_agent_monthly_add = Column(Integer, default=0, nullable=False)
     last_order_id = Column(
         Integer, ForeignKey("payment_orders.id", ondelete="SET NULL"), nullable=True
     )

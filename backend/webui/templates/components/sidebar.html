@@ -49,7 +49,7 @@
         </a>
         {% endif %}
 
-        {% if current_user and current_user.role == 'super_admin' %}
+        {% if current_user %}
         <a href="/agent-team/"
            class="sidebar-link flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium transition-all duration-200
                   {% if active_page == 'agent_team' %}bg-gradient-to-r from-sakura-500 to-sakura-600 text-white shadow-md shadow-sakura-500/25{% else %}text-gray-700 dark:text-gray-300 hover:bg-sakura-50 dark:hover:bg-sakura-900/20 hover:text-sakura-700 dark:hover:text-sakura-400{% endif %}">
@@ -59,6 +59,7 @@
             </svg>
             {{ _('nav.agent_team') }}
         </a>
+        {% if current_user.role == 'super_admin' %}
         <a href="/agent-skills/"
            class="sidebar-link flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium transition-all duration-200
                   {% if active_page == 'agent_skills' %}bg-gradient-to-r from-sakura-500 to-sakura-600 text-white shadow-md shadow-sakura-500/25{% else %}text-gray-700 dark:text-gray-300 hover:bg-sakura-50 dark:hover:bg-sakura-900/20 hover:text-sakura-700 dark:hover:text-sakura-400{% endif %}">
@@ -67,6 +68,7 @@
             </svg>
             {{ _('nav.agent_skills') }}
         </a>
+        {% endif %}
         {% endif %}
 
         {% if current_user and (current_user.role == 'admin' or current_user.role == 'super_admin') %}
