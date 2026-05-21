@@ -8,6 +8,7 @@ from functools import lru_cache
 from fastapi import Request, HTTPException, Depends, Form, Header
 from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
+from loguru import logger
 from sqlalchemy import Select
 from sqlalchemy.ext.asyncio import AsyncSession
 from itsdangerous import URLSafeTimedSerializer, BadSignature
@@ -171,8 +172,14 @@ def get_webui_url(path: str = "") -> str:
     """Build an absolute WebUI URL for external consumption (Telegram, GitHub, etc.).
 
     ``path`` should start with ``/`` (e.g. ``"/scans/42"``).
+    Returns empty string if ``app_domain`` is not configured.
     """
-    domain = get_settings().app_domain
+    domain = get_settings().sanitized_app_domain
+    if not domain:
+        logger.warning(f"app_domain is empty, cannot build WebUI URL for path={path!r}")
+        return ""
+    if path and not path.startswith("/"):
+        path = "/" + path
     return f"https://{domain}{path}"
 
 
