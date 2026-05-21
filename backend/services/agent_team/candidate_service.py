@@ -217,7 +217,8 @@ class AgentTeamCandidateService:
             select(IssueAnalysis)
             .where(
                 and_(
-                    IssueAnalysis.repo_name == repo_full_name,
+                    IssueAnalysis.repo_owner == repo_owner,
+                    IssueAnalysis.repo_name.in_({repo_name, repo_full_name}),
                     IssueAnalysis.issue_number == issue_number,
                     IssueAnalysis.status == IssueAnalysisStatus.COMPLETED.value,
                 )

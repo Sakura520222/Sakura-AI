@@ -477,23 +477,47 @@ class FullStackExpertAgent:
         handoff_context: str = "",
         role_memory_context: str = "",
     ) -> str:
-        parts = [f"## 任务\n标题: {task_title}\n"]
-        if source_issue_number:
-            parts.append(f"关联 Issue: #{source_issue_number}\n")
-        if source_type:
-            parts.append(f"来源类型: {source_type}\n")
-        parts.append(f"\n## 任务描述\n{task_summary}\n")
-        if sakura_memory:
-            parts.append(f"\n## 项目记忆\n{sakura_memory}\n")
-        if skills_summary:
-            parts.append(f"\n{skills_summary}\n")
-        if role_memory_context:
-            parts.append(f"\n## 全栈专家历史记忆\n{role_memory_context}\n")
-        if handoff_context:
-            parts.append(f"\n## 专家对话交接\n{handoff_context}\n")
-        if feedback:
-            parts.append(f"\n## 审查反馈（请针对以下问题修改）\n{feedback}\n")
-        return "".join(parts)
+        return build_fullstack_user_message(
+            task_title=task_title,
+            task_summary=task_summary,
+            source_type=source_type,
+            source_issue_number=source_issue_number,
+            sakura_memory=sakura_memory,
+            skills_summary=skills_summary,
+            feedback=feedback,
+            handoff_context=handoff_context,
+            role_memory_context=role_memory_context,
+        )
+
+
+def build_fullstack_user_message(
+    task_title: str,
+    task_summary: str,
+    source_type: str,
+    source_issue_number: int | None,
+    sakura_memory: str = "",
+    skills_summary: str = "",
+    feedback: str = "",
+    handoff_context: str = "",
+    role_memory_context: str = "",
+) -> str:
+    parts = [f"## 任务\n标题: {task_title}\n"]
+    if source_issue_number:
+        parts.append(f"关联 Issue: #{source_issue_number}\n")
+    if source_type:
+        parts.append(f"来源类型: {source_type}\n")
+    parts.append(f"\n## 任务描述\n{task_summary}\n")
+    if sakura_memory:
+        parts.append(f"\n## 项目记忆\n{sakura_memory}\n")
+    if skills_summary:
+        parts.append(f"\n{skills_summary}\n")
+    if role_memory_context:
+        parts.append(f"\n## 全栈专家历史记忆\n{role_memory_context}\n")
+    if handoff_context:
+        parts.append(f"\n## 专家对话交接\n{handoff_context}\n")
+    if feedback:
+        parts.append(f"\n## 审查反馈（请针对以下问题修改）\n{feedback}\n")
+    return "".join(parts)
 
 
 async def _publish_ai_request(role: str, round_num: int) -> None:

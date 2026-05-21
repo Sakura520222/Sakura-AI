@@ -1,11 +1,11 @@
 """WebUI Agent 专家团队路由（超级管理员专用）"""
 
-import asyncio
 import json
 import re
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, BackgroundTasks, Depends, Form, Request
+from fastapi.encoders import jsonable_encoder
 from fastapi.responses import JSONResponse
 from loguru import logger
 from sqlalchemy import desc, func, or_, select
@@ -17,7 +17,6 @@ from backend.core.config import (
     DYNAMIC_CONFIG_SENSITIVE_KEYS,
     DYNAMIC_CONFIG_SELECT_OPTIONS,
     get_all_dynamic_config_keys,
-    get_dynamic_config,
     get_dynamic_config_input_type,
     get_settings,
     invalidate_dynamic_config_cache,
@@ -35,7 +34,7 @@ from backend.models.agent_team_models import (
     AgentTeamToolCall,
     AgentTeamUserPrompt,
 )
-from backend.models.database import AppConfig, IssueAnalysis, IssueAnalysisStatus
+from backend.models.database import AppConfig, IssueAnalysis
 from backend.services.agent_team.ai_client import (
     load_agent_team_ai_config,
     resolve_agent_team_max_iterations,
@@ -43,6 +42,19 @@ from backend.services.agent_team.ai_client import (
 from backend.services.agent_team.candidate_service import (
     AgentTeamCandidateService,
     candidates_to_dicts,
+)
+from backend.services.agent_team.submission_context import (
+    build_agent_submission_context_preview,
+    build_agent_submission_preview,
+    build_agent_task_summary,
+    build_issue_context_markdown,
+    format_issue_analysis_context,
+    format_issue_comments,
+    json_dict,
+    json_list,
+    json_loads,
+    load_issue_analysis_for_context,
+    load_issue_comments_for_context,
 )
 from backend.services.agent_team.workspace_service import AgentTeamWorkspaceService
 from backend.webui.deps import (
@@ -215,24 +227,15 @@ def _should_schedule_agent_task(status: str) -> bool:
 
 
 def _json_loads(value, fallback):
-    if value in (None, ""):
-        return fallback
-    if isinstance(value, (dict, list)):
-        return value
-    try:
-        return json.loads(value)
-    except (TypeError, json.JSONDecodeError):
-        return fallback
+    return json_loads(value, fallback)
 
 
 def _json_list(value) -> list:
-    loaded = _json_loads(value, [])
-    return loaded if isinstance(loaded, list) else []
+    return json_list(value)
 
 
 def _json_dict(value) -> dict:
-    loaded = _json_loads(value, {})
-    return loaded if isinstance(loaded, dict) else {}
+    return json_dict(value)
 
 
 def _compact_json(value) -> str:
@@ -294,143 +297,105 @@ def _format_agent_conversation_contexts(
 
 
 def _format_issue_analysis_context(analysis: IssueAnalysis | None) -> dict | None:
-    if analysis is None:
-        return None
-
-    detail = _json_dict(analysis.analysis_detail)
-    detail_json = ""
-    if detail:
-        detail_json = json.dumps(detail, ensure_ascii=False, indent=2)
-
-    repo_name = analysis.repo_name or ""
-    repo_full_name = repo_name
-    if repo_name and "/" not in repo_name and analysis.repo_owner:
-        repo_full_name = f"{analysis.repo_owner}/{repo_name}"
-    return {
-        "id": analysis.id,
-        "issue_number": analysis.issue_number,
-        "repo_full_name": repo_full_name,
-        "author": analysis.author,
-        "title": analysis.title,
-        "category": analysis.category or detail.get("category"),
-        "priority": analysis.priority or detail.get("priority"),
-        "summary": analysis.summary or detail.get("summary"),
-        "feasibility": analysis.feasibility or detail.get("feasibility"),
-        "suggested_title": analysis.suggested_title or detail.get("suggested_title"),
-        "suggested_labels": _json_list(analysis.suggested_labels)
-        or detail.get("suggested_labels", []),
-        "suggested_assignees": _json_list(analysis.suggested_assignees)
-        or detail.get("suggested_assignees", []),
-        "related_prs": _json_list(analysis.related_prs)
-        or detail.get("related_prs", []),
-        "duplicate_of": analysis.duplicate_of or detail.get("duplicate_of"),
-        "status": analysis.status,
-        "error_message": analysis.error_message,
-        "prompt_tokens": analysis.prompt_tokens or 0,
-        "completion_tokens": analysis.completion_tokens or 0,
-        "estimated_cost": analysis.estimated_cost or 0,
-        "comment_posted": analysis.comment_posted,
-        "comment_url": analysis.comment_url,
-        "analysis_detail_json": detail_json,
-        "created_at": analysis.created_at,
-        "completed_at": analysis.completed_at,
-    }
+    return format_issue_analysis_context(analysis)
 
 
 def _format_issue_comments(comments: list, bot_username: str | None = None) -> list[dict]:
-    bot_login = (bot_username or "").lower()
-    formatted = []
-    for comment in comments:
-        user = getattr(comment, "user", None)
-        author = getattr(user, "login", "") or "unknown"
-        author_lower = author.lower()
-        user_type = (getattr(user, "type", "") or "").lower()
-        is_bot = user_type == "bot" or author_lower.endswith("[bot]")
-        if bot_login and author_lower == bot_login:
-            is_bot = True
-        body = getattr(comment, "body", "") or ""
-        if not body.strip():
-            continue
-        formatted.append(
-            {
-                "id": getattr(comment, "id", None),
-                "author": author,
-                "body": body,
-                "created_at": getattr(comment, "created_at", None),
-                "updated_at": getattr(comment, "updated_at", None),
-                "html_url": getattr(comment, "html_url", None),
-                "author_association": getattr(comment, "author_association", None),
-                "is_bot": is_bot,
-            }
-        )
-    return formatted
+    return format_issue_comments(comments, bot_username)
 
 
 async def _load_task_issue_analysis(
     db: AsyncSession, task: AgentTeamTask
 ) -> IssueAnalysis | None:
-    if (
-        task.source_type == AgentTeamSourceType.ISSUE_ANALYSIS.value
-        and task.source_id
-    ):
-        analysis = await db.get(IssueAnalysis, task.source_id)
-        if analysis is not None:
-            return analysis
-
-    if not task.source_issue_number:
-        return None
-
-    repo_names = {name for name in (task.repo_name, task.repo_full_name) if name}
-    filters = [
-        IssueAnalysis.issue_number == task.source_issue_number,
-        IssueAnalysis.status == IssueAnalysisStatus.COMPLETED.value,
-    ]
-    if task.repo_owner:
-        filters.append(IssueAnalysis.repo_owner == task.repo_owner)
-    if repo_names:
-        filters.append(IssueAnalysis.repo_name.in_(repo_names))
-
-    result = await db.execute(
-        select(IssueAnalysis)
-        .where(*filters)
-        .order_by(desc(IssueAnalysis.analysis_version), desc(IssueAnalysis.created_at))
-        .limit(1)
+    return await load_issue_analysis_for_context(
+        db,
+        source_type=task.source_type,
+        source_id=task.source_id,
+        repo_owner=task.repo_owner,
+        repo_name=task.repo_name,
+        repo_full_name=task.repo_full_name,
+        issue_number=task.source_issue_number,
     )
-    return result.scalar_one_or_none()
 
 
 async def _load_task_issue_comments(task: AgentTeamTask) -> list[dict]:
-    if not (task.repo_owner and task.repo_name and task.source_issue_number):
-        return []
+    return await load_issue_comments_for_context(
+        repo_owner=task.repo_owner,
+        repo_name=task.repo_name,
+        issue_number=task.source_issue_number,
+    )
 
+
+async def _build_manual_issue_submission_context(
+    db: AsyncSession, draft: dict
+) -> dict:
+    analysis = await load_issue_analysis_for_context(
+        db,
+        source_type=draft.get("source_type"),
+        source_id=draft.get("source_id"),
+        repo_owner=draft.get("repo_owner"),
+        repo_name=draft.get("repo_name"),
+        repo_full_name=draft.get("repo_full_name"),
+        issue_number=draft.get("source_issue_number"),
+    )
+    issue_analysis_context = format_issue_analysis_context(analysis)
+    issue_comments = await load_issue_comments_for_context(
+        repo_owner=draft.get("repo_owner"),
+        repo_name=draft.get("repo_name"),
+        issue_number=draft.get("source_issue_number"),
+    )
+    issue_context_markdown = build_issue_context_markdown(
+        repo_full_name=draft.get("repo_full_name"),
+        issue_number=draft.get("source_issue_number"),
+        issue_analysis_context=issue_analysis_context,
+        issue_comments=issue_comments,
+    )
+    agent_task_context = build_agent_task_summary(
+        draft.get("summary") or "", issue_context_markdown
+    )
+    runtime_context = await _load_submission_runtime_context(draft)
+    fullstack_user_message = build_agent_submission_preview(
+        task_title=draft.get("title") or "",
+        task_summary=agent_task_context,
+        source_type=draft.get("source_type") or "",
+        source_issue_number=draft.get("source_issue_number"),
+        sakura_memory=runtime_context["sakura_memory"],
+        skills_summary=runtime_context["skills_summary"],
+    )
+    return {
+        "issue_analysis": issue_analysis_context,
+        "issue_comments": issue_comments,
+        "issue_context_markdown": issue_context_markdown,
+        "agent_task_context": agent_task_context,
+        "fullstack_user_message": fullstack_user_message,
+        "full_submission_preview": build_agent_submission_context_preview(
+            task_title=draft.get("title") or "",
+            task_summary=agent_task_context,
+            source_type=draft.get("source_type") or "",
+            source_issue_number=draft.get("source_issue_number"),
+            sakura_memory=runtime_context["sakura_memory"],
+            skills_summary=runtime_context["skills_summary"],
+        ),
+        "runtime_context": runtime_context,
+    }
+
+
+async def _load_submission_runtime_context(draft: dict) -> dict:
+    runtime = {"sakura_memory": "", "skills_summary": ""}
     try:
-        max_count = int(await get_dynamic_config("issue_max_comments_in_context") or 0)
-    except (TypeError, ValueError):
-        max_count = 0
+        from backend.workers.agent_team_worker import AgentTeamWorker
 
-    try:
-        from backend.core.github_app import GitHubAppClient
-
-        github_app = GitHubAppClient()
-        comments = await asyncio.to_thread(
-            github_app.get_issue_comments,
-            task.repo_owner,
-            task.repo_name,
-            int(task.source_issue_number),
-        )
+        worker = AgentTeamWorker()
+        repo_owner = draft.get("repo_owner")
+        repo_name = draft.get("repo_name")
+        if repo_owner and repo_name:
+            sakura_info = await worker._load_sakura_memory(repo_owner, repo_name)
+            runtime["sakura_memory"] = sakura_info.get("text") or ""
+        skills_summary, _, _ = await worker._load_skills_context()
+        runtime["skills_summary"] = skills_summary or ""
     except Exception as exc:
-        logger.warning(
-            "获取 Agent 任务关联 Issue 评论失败: {}/{}#{}: {}",
-            task.repo_owner,
-            task.repo_name,
-            task.source_issue_number,
-            exc,
-        )
-        return []
-
-    if max_count > 0:
-        comments = comments[-max_count:]
-    return _format_issue_comments(comments, get_settings().bot_username)
+        logger.warning("加载 Agent 提交预览运行时上下文失败: {}", exc)
+    return runtime
 
 
 AGENT_TEAM_CONFIG_GROUPS = [
@@ -996,12 +961,17 @@ async def preview_task_from_issue(
         draft = await AgentTeamCandidateService().build_manual_issue_task_draft(
             db, repo_full_name, issue_number
         )
+        submission_context = await _build_manual_issue_submission_context(db, draft)
     except ValueError as e:
         return JSONResponse(
             {"success": False, "message": str(e)},
             status_code=200,
         )
-    return JSONResponse({"success": True, "draft": draft})
+    return JSONResponse(
+        jsonable_encoder(
+            {"success": True, "draft": draft, "submission_context": submission_context}
+        )
+    )
 
 
 @router.post("/tasks/create-from-issue")
@@ -1068,6 +1038,26 @@ async def create_task_from_issue(
         )
     except ValueError as e:
         return JSONResponse({"success": False, "message": str(e)}, status_code=200)
+
+    draft_for_context = {
+        "source_type": overrides.get("source_type") or AgentTeamSourceType.MANUAL_ISSUE.value,
+        "source_id": overrides.get("source_id"),
+        "source_issue_number": overrides.get("source_issue_number") or issue_number,
+        "repo_full_name": overrides.get("repo_full_name") or repo_full_name,
+        "repo_owner": overrides.get("repo_owner"),
+        "repo_name": overrides.get("repo_name"),
+        "title": overrides.get("title") or title or "",
+        "summary": overrides.get("summary") or summary or "",
+    }
+    if not draft_for_context["repo_owner"] or not draft_for_context["repo_name"]:
+        owner, name = (draft_for_context["repo_full_name"] or repo_full_name).split("/", 1)
+        draft_for_context["repo_owner"] = draft_for_context["repo_owner"] or owner
+        draft_for_context["repo_name"] = draft_for_context["repo_name"] or name
+    submission_context = await _build_manual_issue_submission_context(
+        db, draft_for_context
+    )
+    if submission_context["agent_task_context"]:
+        overrides["summary"] = submission_context["agent_task_context"]
 
     service = AgentTeamCandidateService()
     try:

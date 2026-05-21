@@ -293,6 +293,8 @@ agent_team:
   issue_preview_title: "Preview and Edit Task"
   issue_preview_desc: "Confirm the parsed Issue result and adjust title, summary, priority, branch, and execution parameters before creating the task."
   issue_preview_creating: "Creating..."
+  submission_context: "Full Context Sent to Agent"
+  submission_context_desc: "The task will be submitted to the Agent with this system/user message context. Editing the summary updates it here."
   repo_full_name: "Repository"
   issue_number: "Issue Number"
   source_type: "Source Type"

@@ -7,7 +7,7 @@ import json
 from sqlalchemy import desc, select
 
 from backend.models.agent_team_models import AgentTeamConversationContext
-from backend.models.database import async_session
+from backend.models import database as db_module
 from backend.services.ai_reviewer.message_utils import estimate_messages_tokens
 from backend.services.agent_team.fullstack_expert import FullStackResult
 from backend.services.agent_team.professional_reviewer import ReviewFinding, ReviewResult
@@ -103,7 +103,7 @@ class AgentTeamConversationContextService:
         modified_files: list[str],
         unresolved_items: list[str],
     ) -> None:
-        async with async_session() as session:
+        async with db_module.async_session() as session:
             context = AgentTeamConversationContext(
                 task_id=self.task_id,
                 iteration_number=iteration_number,
@@ -125,7 +125,7 @@ class AgentTeamConversationContextService:
         before_iteration: int,
         limit: int,
     ) -> list[AgentTeamConversationContext]:
-        async with async_session() as session:
+        async with db_module.async_session() as session:
             result = await session.execute(
                 select(AgentTeamConversationContext)
                 .where(
@@ -144,7 +144,7 @@ class AgentTeamConversationContextService:
         before_iteration: int,
         limit: int,
     ) -> list[AgentTeamConversationContext]:
-        async with async_session() as session:
+        async with db_module.async_session() as session:
             result = await session.execute(
                 select(AgentTeamConversationContext)
                 .where(
