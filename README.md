@@ -418,7 +418,7 @@ Sakura-AI-Reviewer/
 | [PR 功能指南](docs/PR_FEATURES_GUIDE.md)                   | PR 变更总结与依赖图配置说明        |
 | [配额系统指南](docs/QUOTA_SYSTEM_GUIDE.md)                 | PR/Issue 配额统计与自动重置机制    |
 | [安全与 MFA 指南](docs/SECURITY_MFA_GUIDE.md)              | TOTP、恢复码、Passkeys/WebAuthn 与安全中心 |
-| [API v1 参考文档](docs/api-v1-reference.md)             | RESTful API 接口文档（移动端对接） |
+| [API v1 参考文档](docs/api-v1-reference.md)             | RESTful API v1.3 接口文档（移动端 OAuth、MFA、SSE、Billing） |
 | [WebUI 设计文档](docs/plans/2026-03-27-webui-design.md) | WebUI 设计规范              |
 | [项目记忆系统使用指南](docs/SAKURA_MEMORY_GUIDE.md) | .sakura/ 目录结构、生命周期、配置说明 |
 | [项目记忆系统设计](docs/plans/2026-04-20-sakura-memory-design.md) | .sakura/ 记忆系统架构与配置 |

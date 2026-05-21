@@ -419,7 +419,7 @@ Sakura-AI-Reviewer/
 | [PR Features Guide](docs/PR_FEATURES_GUIDE.md)                 | PR change summary and dependency graph configuration |
 | [Quota System Guide](docs/QUOTA_SYSTEM_GUIDE.md)               | PR/Issue quota usage tracking and auto-reset mechanism |
 | [Security & MFA Guide](docs/SECURITY_MFA_GUIDE.md)             | TOTP, recovery codes, Passkeys/WebAuthn, and Security Center |
-| [API v1 Reference](docs/api-v1-reference.md)                   | RESTful API documentation (mobile integration)  |
+| [API v1 Reference](docs/api-v1-reference.md)                   | RESTful API v1.3 docs (mobile OAuth, MFA, SSE, Billing) |
 | [WebUI Design Document](docs/plans/2026-03-27-webui-design.md) | WebUI design specification                      |
 | [Project Memory Guide](docs/SAKURA_MEMORY_GUIDE.md) | .sakura/ directory structure, lifecycle, configuration (Chinese) |
 | [Project Memory System Design](docs/plans/2026-04-20-sakura-memory-design.md) | .sakura/ memory system architecture & config |
