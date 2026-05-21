@@ -40,7 +40,7 @@ settings = get_settings()
 
 def _get_allowed_origins(app_settings: Settings) -> list[str]:
     """构造 CORS origin 列表。开发模式下放行本地调试地址。"""
-    origins = {f"https://{app_settings.app_domain}"}
+    origins = {f"https://{app_settings.sanitized_app_domain}"}
     if app_settings.is_development:
         port = app_settings.app_port
         origins.update(
