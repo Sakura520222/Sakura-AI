@@ -28,6 +28,14 @@ from backend.services.agent_team.submission_context import (
 )
 
 
+async def _fake_sakura_memory(repo_owner, repo_name):
+    return {"text": ""}
+
+
+async def _fake_skills_context():
+    return "", {}, []
+
+
 def test_parse_task_overrides_cleans_empty_values():
     overrides = _parse_task_overrides(
         title="  Improve reviewer  ",
@@ -330,23 +338,13 @@ async def test_preview_task_from_issue_returns_draft(monkeypatch):
         "backend.webui.routes.agent_team.AgentTeamCandidateService.build_manual_issue_task_draft",
         fake_draft,
     )
-    async def fake_sakura_memory(repo_owner, repo_name):
-        return {"text": ""}
-
-    async def fake_skills_context():
-        return "", {}, []
-
-    monkeypatch.setattr(
-        "backend.webui.routes.agent_team.AgentTeamCandidateService.build_manual_issue_task_draft",
-        fake_draft,
-    )
     monkeypatch.setattr(
         "backend.webui.routes.agent_team.load_sakura_memory",
-        fake_sakura_memory,
+        _fake_sakura_memory,
     )
     monkeypatch.setattr(
         "backend.webui.routes.agent_team.load_skills_context",
-        fake_skills_context,
+        _fake_skills_context,
     )
 
     response = await preview_task_from_issue(
@@ -433,12 +431,6 @@ async def test_create_task_from_issue_passes_edited_overrides(monkeypatch):
     async def fake_config():
         return FakeConfig()
 
-    async def fake_sakura_memory(repo_owner, repo_name):
-        return {"text": ""}
-
-    async def fake_skills_context():
-        return "", {}, []
-
     async def fake_create(
         self,
         db,
@@ -485,11 +477,11 @@ async def test_create_task_from_issue_passes_edited_overrides(monkeypatch):
     )
     monkeypatch.setattr(
         "backend.webui.routes.agent_team.load_sakura_memory",
-        fake_sakura_memory,
+        _fake_sakura_memory,
     )
     monkeypatch.setattr(
         "backend.webui.routes.agent_team.load_skills_context",
-        fake_skills_context,
+        _fake_skills_context,
     )
 
     background_tasks = SimpleNamespace(add_task=lambda *args, **kwargs: None)
