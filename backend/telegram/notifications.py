@@ -276,11 +276,14 @@ class NotificationSender:
             if issue_url:
                 text += f"\n[查看详细报告]({issue_url})"
             if scan_id is not None:
+                # 延迟导入：避免 telegram 模块与 webui 模块之间产生循环依赖
                 from backend.webui.deps import get_webui_url
 
                 webui_url = get_webui_url(f"/scans/{scan_id}")
                 if webui_url:
                     text += f"\n[WebUI 查看详情]({webui_url})"
+                else:
+                    logger.warning(f"app_domain 未配置，跳过 WebUI 链接 (scan_id={scan_id})")
 
             if not chat_ids:
                 logger.debug(f"无通知目标，跳过扫描完成通知: {repo_name}")

@@ -16,6 +16,16 @@ from backend.core.ai_providers import get_provider_select_options
 DEFAULT_FETCH_URL_ALLOWED_CONTENT_TYPES = "text/html,application/xhtml+xml,text/plain"
 
 
+def sanitize_domain(domain: str) -> str:
+    """Strip protocol prefix and trailing slashes from a domain string."""
+    domain = (domain or "").strip()
+    for prefix in ("https://", "http://"):
+        if domain.startswith(prefix):
+            domain = domain.removeprefix(prefix)
+            break
+    return domain.removesuffix("/")
+
+
 class Settings(BaseSettings):
     """应用配置"""
 
@@ -325,12 +335,7 @@ class Settings(BaseSettings):
     @property
     def sanitized_app_domain(self) -> str:
         """Return app_domain with protocol prefix and trailing slashes stripped."""
-        domain = (self.app_domain or "").strip()
-        for prefix in ("https://", "http://"):
-            if domain.startswith(prefix):
-                domain = domain[len(prefix) :]
-                break
-        return domain.rstrip("/")
+        return sanitize_domain(self.app_domain)
 
     @property
     def webhook_url(self) -> str:
