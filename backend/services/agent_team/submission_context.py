@@ -194,6 +194,98 @@ async def load_issue_comments_for_context(
     return format_issue_comments(comments, get_settings().bot_username)
 
 
+async def load_sakura_memory(repo_owner: str, repo_name: str) -> dict:
+    """加载仓库对应的 Sakura 记忆上下文及 GitHub repo 对象。"""
+    repo_full_name = f"{repo_owner}/{repo_name}"
+    result: dict = {"text": "", "github_repo": None, "sakura_ref": None}
+    try:
+        from backend.core.github_app import GitHubAppClient
+        from backend.services.github_write_service import GitHubWriteService
+        from backend.services.sakura_memory_service import SakuraMemoryService
+
+        github_app = GitHubAppClient()
+        client = github_app.get_repo_client(repo_owner, repo_name)
+        if not client:
+            logger.info(
+                "Agent 未注入 Sakura 记忆: 无法获取 GitHub 客户端 ({})",
+                repo_full_name,
+            )
+            return result
+
+        repo = client.get_repo(repo_full_name)
+        result["github_repo"] = repo
+
+        write_service = GitHubWriteService()
+        result["sakura_ref"] = await write_service.get_sakura_branch(repo)
+
+        service = SakuraMemoryService()
+        context = await service.get_sakura_context(
+            repo=repo,
+            repo_full_name=repo_full_name,
+        )
+        if not context:
+            logger.info(
+                "Agent 未注入 Sakura 记忆: 仓库无可用上下文 ({})", repo_full_name
+            )
+            return result
+
+        parts = []
+        if context.get("sakura_md"):
+            parts.append(f"### SAKURA.md\n{context['sakura_md']}")
+        if context.get("memory_md"):
+            parts.append(f"### memory.md\n{context['memory_md']}")
+
+        logger.info(
+            "Agent 已注入 Sakura 记忆: repo={}, files={}",
+            repo_full_name,
+            ", ".join(context.keys()),
+        )
+        result["text"] = "\n\n".join(parts)
+    except Exception as e:
+        logger.info(
+            "Agent 加载 Sakura 记忆失败: repo={}, error={}", repo_full_name, e
+        )
+    return result
+
+
+async def load_skills_context() -> tuple[str, dict, list[dict]]:
+    """加载已启用的 Agent Skills 上下文。"""
+    from backend.services.agent_team.ai_client import resolve_agent_team_bool_config
+
+    enabled = await resolve_agent_team_bool_config(
+        "agent_team_skills_enabled",
+        get_settings().agent_team_skills_enabled,
+    )
+    if not enabled:
+        logger.info("Agent Skills 未启用")
+        return "", {}, []
+
+    try:
+        from backend.models import database as db_module
+        from backend.services.agent_team.skill_service import AgentSkillService
+
+        service = AgentSkillService()
+        async with db_module.async_session() as session:
+            await service.ensure_builtin_skills(session)
+            summary = await service.build_enabled_skills_summary(session)
+            snapshot = await service.snapshot_enabled_skills(session)
+        if not snapshot:
+            logger.info("Agent Skills 已启用但无可用 Skill")
+            return "", {}, []
+
+        root = await service.resolve_root()
+        context = {
+            "skills_root": str(root),
+            "skills_index": {skill["slug"]: skill for skill in snapshot},
+            "skills_cache": {},
+        }
+        logger.info("Agent 已加载 Skills: count={}", len(snapshot))
+        return summary, context, snapshot
+    except Exception as exc:
+        logger.info("Agent Skills 加载失败: {}", exc)
+        return "", {}, []
+
+
 def _format_markdown_items(items: list) -> str:
     lines = []
     for item in items:
@@ -275,6 +367,8 @@ def build_issue_context_markdown(
             role = "AI/Bot" if comment.get("is_bot") else "User"
             author = comment.get("author") or "unknown"
             created_at = comment.get("created_at")
+            if created_at and hasattr(created_at, "isoformat"):
+                created_at = created_at.isoformat()
             timestamp = f" · {created_at}" if created_at else ""
             parts.append(f"\n#### 评论 {index}: @{author} ({role}{timestamp})\n")
             parts.append(f"{comment.get('body') or ''}\n")
@@ -294,32 +388,6 @@ def build_agent_task_summary(task_summary: str, issue_context_markdown: str = ""
     return "\n\n".join(parts)
 
 
-def build_agent_submission_preview(
-    *,
-    task_title: str,
-    task_summary: str,
-    source_type: str = "",
-    source_issue_number: int | None = None,
-    sakura_memory: str = "",
-    skills_summary: str = "",
-    role_memory_context: str = "",
-    handoff_context: str = "",
-    feedback: str = "",
-) -> str:
-    """Build the first user message submitted to the fullstack Agent."""
-    return build_fullstack_user_message(
-        task_title=task_title,
-        task_summary=task_summary,
-        source_type=source_type,
-        source_issue_number=source_issue_number,
-        sakura_memory=sakura_memory,
-        skills_summary=skills_summary,
-        role_memory_context=role_memory_context,
-        handoff_context=handoff_context,
-        feedback=feedback,
-    )
-
-
 def build_agent_submission_context_preview(
     *,
     task_title: str,
@@ -334,7 +402,7 @@ def build_agent_submission_context_preview(
     system_prompt: str = FULLSTACK_SYSTEM_PROMPT,
 ) -> str:
     """Build a role-separated preview of the messages sent to the fullstack Agent."""
-    user_message = build_agent_submission_preview(
+    user_message = build_fullstack_user_message(
         task_title=task_title,
         task_summary=task_summary,
         source_type=source_type,
