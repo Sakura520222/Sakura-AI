@@ -16,14 +16,16 @@ from backend.core.ai_providers import get_provider_select_options
 DEFAULT_FETCH_URL_ALLOWED_CONTENT_TYPES = "text/html,application/xhtml+xml,text/plain"
 
 
-def sanitize_domain(domain: str) -> str:
+def sanitize_domain(domain: Optional[str]) -> str:
     """Strip protocol prefix and trailing slashes from a domain string."""
     domain = (domain or "").strip()
     for prefix in ("https://", "http://"):
         if domain.startswith(prefix):
             domain = domain.removeprefix(prefix)
             break
-    return domain.removesuffix("/")
+    while domain.endswith("/"):
+        domain = domain.removesuffix("/")
+    return domain
 
 
 class Settings(BaseSettings):
