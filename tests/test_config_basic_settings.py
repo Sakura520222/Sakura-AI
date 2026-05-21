@@ -151,3 +151,9 @@ class TestSanitizeDomain:
 
     def test_whitespace_and_prefix_and_slash(self):
         assert sanitize_domain("  https://example.com/  ") == "example.com"
+
+    def test_multiple_trailing_slashes(self):
+        assert sanitize_domain("example.com//") == "example.com"
+
+    def test_https_prefix_and_multiple_trailing_slashes(self):
+        assert sanitize_domain("https://example.com///") == "example.com"
