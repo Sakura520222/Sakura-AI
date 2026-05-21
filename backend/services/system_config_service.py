@@ -16,6 +16,7 @@ from backend.core.config import (
     get_settings,
     invalidate_dynamic_config_cache,
     get_all_dynamic_config_keys,
+    sanitize_domain,
 )
 
 # 敏感键（在页面显示时脱敏）
@@ -147,12 +148,7 @@ class SystemConfigService:
 
             # Auto-sanitize app_domain: strip protocol prefix and trailing slashes
             if key == "app_domain" and val:
-                val = val.strip()
-                for prefix in ("https://", "http://"):
-                    if val.startswith(prefix):
-                        val = val[len(prefix) :]
-                        break
-                val = val.rstrip("/")
+                val = sanitize_domain(val)
 
             result = await db.execute(
                 select(AppConfig).where(AppConfig.key_name == key)
