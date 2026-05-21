@@ -264,33 +264,33 @@ class NotificationSender:
             )
 
             text = (
-                f"🛡️ *Sakura AI 仓库扫描完成*\n\n"
-                f"📦 仓库: {safe_repo_name}\n"
+                f"*Sakura AI 仓库扫描完成*\n\n"
+                f"仓库: {safe_repo_name}\n"
                 f"{health_emoji} 健康评分: *{health_score}/100*\n"
                 f"🔴 Critical: {critical_count}\n"
                 f"🟡 Major: {major_count}\n"
-                f"📝 总计发现: {total_findings} 个问题\n"
+                f"总计发现: {total_findings} 个问题\n"
             )
 
-            # 链接：如有 Issue 链接则展示；始终提供 WebUI 链接回退
+            # 链接：如有 Issue 链接则展示；始终提供 WebUI 链接回退（若 app_domain 已配置）
             if issue_url:
                 text += f"\n[查看详细报告]({issue_url})"
             if scan_id is not None:
-                # 延迟导入：避免 telegram 模块与 webui 模块之间产生循环依赖
                 from backend.webui.deps import get_webui_url
 
                 webui_url = get_webui_url(f"/scans/{scan_id}")
-                text += f"\n[🌐 WebUI 查看详情]({webui_url})"
+                if webui_url:
+                    text += f"\n[WebUI 查看详情]({webui_url})"
 
             if not chat_ids:
                 logger.debug(f"无通知目标，跳过扫描完成通知: {repo_name}")
                 return
 
             await self.send_to_targets(text, chat_ids, disable_web_page_preview=True)
-            logger.info(f"✅ 发送扫描完成通知: {repo_name} → {len(chat_ids)} 人")
+            logger.info(f"发送扫描完成通知: {repo_name} → {len(chat_ids)} 人")
 
         except Exception as e:
-            logger.error(f"❌ 发送扫描完成通知失败: {e}")
+            logger.error(f"发送扫描完成通知失败: {e}")
 
     async def send_critical_issue_alert(
         self,
@@ -321,9 +321,9 @@ class NotificationSender:
                 f"📝 标题: {safe_title}\n"
             )
 
-            text += f"\n📋 *AI 摘要*\n{safe_summary}\n"
+            text += f"\n*AI 摘要*\n{safe_summary}\n"
 
-            text += f"\n🔍 *可行性评估*\n{safe_feasibility}\n"
+            text += f"\n*可行性评估*\n{safe_feasibility}\n"
 
             if suggested_labels:
                 labels_str = ", ".join(

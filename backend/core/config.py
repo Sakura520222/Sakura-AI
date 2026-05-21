@@ -323,9 +323,19 @@ class Settings(BaseSettings):
         return self.sakura_env.lower() in {"dev", "development", "local"}
 
     @property
+    def sanitized_app_domain(self) -> str:
+        """Return app_domain with protocol prefix and trailing slashes stripped."""
+        domain = (self.app_domain or "").strip()
+        for prefix in ("https://", "http://"):
+            if domain.startswith(prefix):
+                domain = domain[len(prefix) :]
+                break
+        return domain.rstrip("/")
+
+    @property
     def webhook_url(self) -> str:
         """获取完整的Webhook URL"""
-        return f"https://{self.app_domain}{self.webhook_path}"
+        return f"https://{self.sanitized_app_domain}{self.webhook_path}"
 
     @property
     def github_oauth_auth_url(self) -> str:
