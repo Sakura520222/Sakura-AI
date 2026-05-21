@@ -37,6 +37,8 @@
 - **辅助模型支持**：独立配置轻量级模型处理摘要、上下文压缩、标签推荐等任务，降低推理成本
 - **行内评论开关**：通过 WebUI 配置 `enable_inline_comments`，控制是否在 PR diff 上发布行内评论，减少审查噪音
 - **可控自动审查**：通过 WebUI 配置 `enable_auto_review` 控制 PR opened/synchronize/reopened 是否自动入队，保留命令和手动触发路径
+- **审查评论标签交互**：审查报告中包含标签复选框，用户可在 GitHub PR 页面直接勾选/取消标签，AI 自动应用或移除对应标签
+- **AI 生成 PR 描述**：Agent 创建 PR 时 AI 自动生成包含元数据标记的 PR 描述，后续审查可精确识别和更新 AI 注入区域
 
 ### AI 工具与知识库
 
@@ -73,11 +75,17 @@
 - **双 Agent 协作**：内置全栈专家负责计划与代码修改，专业审查负责推送前质量复核
 - **上下文压缩与任务恢复**：长任务自动压缩历史上下文，并持久化会话与消息检查点，支持失败后继续处理
 - **独立 Git 工作区**：在 `agent_team_workspace_root` 下 clone/fetch/checkout 专用分支，避免污染服务运行目录
-- **受控工具执行**：文件读写、搜索、shell 验证命令均限制在工作区内，验证命令受白名单控制
+- **受控工具执行**：文件读写、搜索、shell 验证命令均限制在工作区内，验证命令受黑名单控制（阻止危险命令，允许其余命令）
 - **自动依赖与验证**：可自动检测并安装 `pyproject.toml` / `requirements.txt` 依赖，随后运行白名单内测试或 lint 命令
 - **Sakura 知识集成**：Agent 可通过专用工具浏览和读取 `.sakura/` 知识目录与反思文件，利用项目积累的审查经验辅助代码修复
 - **Agent Skills 与内置 Ruff**：支持从上传文件、ZIP 或 GitHub `SKILL.md` 安装技能，并内置 Ruff lint/format 技能供 Agent 按需加载
-- **PR 创建闭环**：支持 AI 生成 Conventional Commits 风格 PR 标题、创建普通或 Draft PR，并通过 Sakura PR 审查与人工反馈继续迭代；不会自动合并 PR
+- **实时管理员干预**：管理员可在任务执行过程中通过 WebUI Live View 注入指导意见，Agent 在下一轮迭代中消费并合并指导到后续流程
+- **任务取消支持**：支持在任务执行过程中随时取消 Agent 任务，安全释放工作区资源
+- **Web 搜索与 URL 抓取**：Agent 可使用 Web 搜索和 URL 抓取工具，扩展信息获取能力辅助代码修复
+- **Token 消耗追踪**：实时追踪 Agent Team 中所有 AI API 调用的 token 消耗量与预估成本
+- **目标分支选择**：创建任务时支持选择目标分支（develop/main 等），灵活控制合入方向
+- **手动 Issue 任务预览/编辑**：WebUI 中支持预览和编辑 Issue 分析结果后再创建 Agent 任务
+- **PR 创建闭环**：支持 AI 生成 Conventional Commits 风格 PR 标题和描述、创建普通或 Draft PR，并通过 Sakura PR 审查与人工反馈继续迭代；不会自动合并 PR
 
 ### 管理与运维
 
@@ -93,7 +101,10 @@
 - **配额制访问控制**：基于配额的灵活访问管理体系，支持用户自注册，并按 UTC 日/周/月自动重置 PR 与 Issue 用量
 - **付费配额系统**：套餐计划与兑换码完整 CRUD 管理（创建/编辑/删除/批量操作）、管理员手动充值，支持一次性包和订阅模式
 - **管理员操作审计**：完整的操作日志，覆盖配置变更、用户管理等关键操作
-- **WebUI 管理界面**：仪表盘、PR 管理、用户管理、配置管理、队列监控、操作日志、仓库扫描管理、Agent 专家团队与 Agent Skills、Sakura 记忆管理，支持 Markdown 内容渲染
+- **WebUI 管理界面**：仪表盘、PR 管理、用户管理、配置管理、队列监控、操作日志、仓库扫描管理、Agent 专家团队与 Agent Skills、Sakura 记忆管理、向量存储与数据库管理，支持 Markdown 内容渲染
+- **批量 Issue 索引**：支持在 WebUI 中批量索引仓库 Issue 并刷新向量缓存，AI 元数据增强嵌入质量
+- **健康检查端点**：`/health` 端点用于 Docker 健康检查和部署验证，Docker Compose 内置自动健康检测
+- **注册配额管理**：独立的注册配额配置组，控制新用户注册时赠送的初始配额
 - **Telegram Bot**：实时通知、按钮菜单交互、三级权限体系（超级管理员/管理员/普通用户）、配额管理
 - **GitHub OAuth 登录**：与 Telegram 用户体系打通，明暗主题切换
 
@@ -293,7 +304,7 @@ WebUI：`https://your-domain.com/`
 - **Git 信息工具**：`config/strategies.yaml` 中 `context_enhancement.git_tools`，配置默认分支和提交返回数量
 - **项目记忆系统**：WebUI 配置管理中 `sakura_memory_enabled` 启用记忆系统，`sakura_reflection_enabled` 启用审查后反思，`sakura_consolidation_interval` 合并触发的反思轮数（默认 5），`sakura_auto_init` 自动初始化 `.sakura/` 目录，`sakura_auto_create_subdirs` 自动创建 rules/docs/plans 子目录，`sakura_knowledge_extraction_enabled` 启用自动知识提取（通过三次串行 LLM 调用分别提取 rules/docs/plans），`sakura_extraction_provider` 配置提取 AI 凭据来源（主AI/辅助AI/独立配置）。WebUI 提供「Sakura 记忆管理」页面，支持查看/编辑/删除记忆文件、手动触发合并和知识提取。详见 [项目记忆系统使用指南](docs/SAKURA_MEMORY_GUIDE.md)
 - **模型上下文**：WebUI 配置管理中配置上下文窗口、自动压缩等，详见 [模型上下文管理](docs/MODEL_CONTEXT_FEATURE.md)
-- **Agent 专家团队**：WebUI Agent Team 页面配置 `agent_team_enabled`、`agent_team_workspace_root`、`agent_team_repo_allowlist`、`agent_team_model_provider`、`agent_team_*` 模型与护栏参数；支持上下文压缩（`agent_team_enable_context_compression` 等）、全栈/审查工具轮数（`agent_team_max_tool_rounds` / `agent_team_reviewer_max_tool_rounds`）、自动安装依赖（`agent_team_auto_install_deps`）、验证命令白名单和 Draft PR 开关；`agent_team_model_provider=main` 时复用主 AI 配置，也可选择独立 Agent AI 配置
+- **Agent 专家团队**：WebUI Agent Team 页面配置 `agent_team_enabled`、`agent_team_workspace_root`、`agent_team_repo_allowlist`、`agent_team_model_provider`、`agent_team_*` 模型与护栏参数；支持上下文压缩（`agent_team_enable_context_compression` 等）、全栈/审查工具轮数（`agent_team_max_tool_rounds` / `agent_team_reviewer_max_tool_rounds`）、自动安装依赖（`agent_team_auto_install_deps`）、验证命令黑名单和 Draft PR 开关；`agent_team_model_provider=main` 时复用主 AI 配置，也可选择独立 Agent AI 配置；支持 Web 搜索工具和 Token 消耗追踪
 - **Agent Skills**：WebUI Agent Skills 页面安装和启停 Skills；通过 `agent_team_skills_enabled` 控制 Agent 是否可加载技能，通过 `agent_team_skills_root` 配置本地存储根目录
 - **国际化（i18n）**：WebUI 支持中英文界面切换（个人设置页面），AI 输出语言可通过全局配置 `OUTPUT_LANGUAGE` 或用户级配置覆盖（`output_language`，`zh-CN` / `en` / 跟随全局）控制，评论模板自动匹配对应语言
 
