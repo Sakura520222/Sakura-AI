@@ -17,12 +17,14 @@ from backend.services.agent_team.submission_context import (
 )
 from backend.webui.routes.agent_team import (
     _format_agent_conversation_contexts,
-    _format_issue_analysis_context,
-    _format_issue_comments,
     _parse_task_overrides,
     _should_schedule_agent_task,
     create_task_from_issue,
     preview_task_from_issue,
+)
+from backend.services.agent_team.submission_context import (
+    format_issue_analysis_context,
+    format_issue_comments,
 )
 
 
@@ -91,7 +93,7 @@ def test_should_schedule_agent_task_only_for_queued_status():
     assert _should_schedule_agent_task("completed") is False
 
 
-def test_format_issue_analysis_context_parses_json_fields():
+def testformat_issue_analysis_context_parses_json_fields():
     analysis = SimpleNamespace(
         id=1,
         issue_number=123,
@@ -120,7 +122,7 @@ def test_format_issue_analysis_context_parses_json_fields():
         completed_at=None,
     )
 
-    context = _format_issue_analysis_context(analysis)
+    context = format_issue_analysis_context(analysis)
 
     assert context["repo_full_name"] == "owner/repo"
     assert context["summary"] == "Stored summary"
@@ -132,7 +134,7 @@ def test_format_issue_analysis_context_parses_json_fields():
     assert '"Detail summary"' in context["analysis_detail_json"]
 
 
-def test_format_issue_comments_detects_bot_and_skips_empty_body():
+def testformat_issue_comments_detects_bot_and_skips_empty_body():
     comments = [
         SimpleNamespace(
             id=1,
@@ -163,7 +165,7 @@ def test_format_issue_comments_detects_bot_and_skips_empty_body():
         ),
     ]
 
-    formatted = _format_issue_comments(comments, bot_username="sakura-ai[bot]")
+    formatted = format_issue_comments(comments, bot_username="sakura-ai[bot]")
 
     assert [item["author"] for item in formatted] == ["alice", "sakura-ai[bot]"]
     assert formatted[0]["is_bot"] is False
