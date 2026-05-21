@@ -717,7 +717,7 @@ async def _handle_label_checkbox_toggle_inner(
                     if comment_source == "issue_comment":
                         comment_obj = repo.get_issue(pr_number).get_comment(comment_id)
                     else:
-                        comment_obj = repo.get_pull(pr_number).get_review_comment(
+                        comment_obj = repo.get_pull(pr_number).get_review(
                             comment_id
                         )
                     comment_obj.edit(old_body)
@@ -872,7 +872,7 @@ async def handle_pull_request_review_event(
                 content={"status": "error", "message": "无法提取PR信息"},
             )
 
-        editor_login = review.get("user", {}).get("login", "")
+        editor_login = payload.get("sender", {}).get("login", "")
         pr_author_login = pr_info_payload.get("user", {}).get("login", "")
 
         if not editor_login:
