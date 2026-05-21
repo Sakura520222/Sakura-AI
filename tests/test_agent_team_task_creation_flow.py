@@ -10,6 +10,9 @@ from backend.services.agent_team.candidate_service import (
     AgentTeamCandidateService,
 )
 from backend.webui.routes.agent_team import (
+    _format_agent_conversation_contexts,
+    _format_issue_analysis_context,
+    _format_issue_comments,
     _parse_task_overrides,
     _should_schedule_agent_task,
     create_task_from_issue,
@@ -80,6 +83,123 @@ def test_should_schedule_agent_task_only_for_queued_status():
     assert _should_schedule_agent_task("queued") is True
     assert _should_schedule_agent_task("candidate") is False
     assert _should_schedule_agent_task("completed") is False
+
+
+def test_format_issue_analysis_context_parses_json_fields():
+    analysis = SimpleNamespace(
+        id=1,
+        issue_number=123,
+        repo_owner="owner",
+        repo_name="repo",
+        author="alice",
+        title="Issue title",
+        category="bug",
+        priority="high",
+        summary="Stored summary",
+        feasibility="Stored feasibility",
+        suggested_title=None,
+        suggested_labels=json.dumps([{"name": "bug"}]),
+        suggested_assignees=json.dumps([{"username": "bob", "reason": "Knows it"}]),
+        related_prs=json.dumps([{"number": 7, "title": "Fix", "state": "open"}]),
+        duplicate_of=None,
+        status="completed",
+        error_message=None,
+        prompt_tokens=10,
+        completion_tokens=5,
+        estimated_cost=3,
+        comment_posted=True,
+        comment_url="https://example.test/comment",
+        analysis_detail=json.dumps({"summary": "Detail summary"}),
+        created_at=None,
+        completed_at=None,
+    )
+
+    context = _format_issue_analysis_context(analysis)
+
+    assert context["repo_full_name"] == "owner/repo"
+    assert context["summary"] == "Stored summary"
+    assert context["suggested_labels"] == [{"name": "bug"}]
+    assert context["suggested_assignees"] == [
+        {"username": "bob", "reason": "Knows it"}
+    ]
+    assert context["related_prs"] == [{"number": 7, "title": "Fix", "state": "open"}]
+    assert '"Detail summary"' in context["analysis_detail_json"]
+
+
+def test_format_issue_comments_detects_bot_and_skips_empty_body():
+    comments = [
+        SimpleNamespace(
+            id=1,
+            user=SimpleNamespace(login="alice", type="User"),
+            body="Need more context",
+            created_at=None,
+            updated_at=None,
+            html_url="https://example.test/1",
+            author_association="MEMBER",
+        ),
+        SimpleNamespace(
+            id=2,
+            user=SimpleNamespace(login="sakura-ai[bot]", type="Bot"),
+            body="AI analysis",
+            created_at=None,
+            updated_at=None,
+            html_url="https://example.test/2",
+            author_association="NONE",
+        ),
+        SimpleNamespace(
+            id=3,
+            user=SimpleNamespace(login="empty", type="User"),
+            body="  ",
+            created_at=None,
+            updated_at=None,
+            html_url="https://example.test/3",
+            author_association="NONE",
+        ),
+    ]
+
+    formatted = _format_issue_comments(comments, bot_username="sakura-ai[bot]")
+
+    assert [item["author"] for item in formatted] == ["alice", "sakura-ai[bot]"]
+    assert formatted[0]["is_bot"] is False
+    assert formatted[1]["is_bot"] is True
+
+
+def test_format_agent_conversation_contexts_parses_items():
+    contexts = [
+        SimpleNamespace(
+            id=2,
+            iteration_number=2,
+            source_role="reviewer",
+            target_role="fullstack",
+            summary="Review summary",
+            unresolved_items_json=json.dumps(
+                [{"title": "Handle edge case", "severity": "medium"}]
+            ),
+            modified_files_json=json.dumps(["backend/main.py"]),
+            token_estimate=32,
+            created_at=None,
+        ),
+        SimpleNamespace(
+            id=1,
+            iteration_number=1,
+            source_role="fullstack",
+            target_role="reviewer",
+            summary="Build summary",
+            unresolved_items_json="bad json",
+            modified_files_json=json.dumps([{"file_path": "tests/test_app.py"}]),
+            token_estimate=20,
+            created_at=None,
+        ),
+    ]
+
+    formatted = _format_agent_conversation_contexts(contexts)
+
+    assert [item["iteration_number"] for item in formatted] == [1, 2]
+    assert formatted[0]["unresolved_items"] == []
+    assert formatted[0]["modified_files"] == [{"text": "tests/test_app.py", "meta": None}]
+    assert formatted[1]["unresolved_items"] == [
+        {"text": "Handle edge case", "meta": "medium"}
+    ]
 
 
 class DraftDb:
