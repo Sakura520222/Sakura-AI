@@ -6,6 +6,7 @@ from backend.core.config import (
     Settings,
     get_all_db_config_keys,
     get_settings,
+    sanitize_domain,
     update_settings_field,
 )
 
@@ -116,3 +117,37 @@ def test_web_search_configs_have_range_limits_and_fetch_url_configs_do_not():
     }
 
     assert unrestricted_fetch_url_keys.isdisjoint(DYNAMIC_CONFIG_RANGES)
+
+
+class TestSanitizeDomain:
+    """Cover sanitize_domain edge cases."""
+
+    def test_plain_domain(self):
+        assert sanitize_domain("example.com") == "example.com"
+
+    def test_empty_string(self):
+        assert sanitize_domain("") == ""
+
+    def test_none_input(self):
+        assert sanitize_domain(None) == ""
+
+    def test_strip_whitespace(self):
+        assert sanitize_domain("  example.com  ") == "example.com"
+
+    def test_remove_https_prefix(self):
+        assert sanitize_domain("https://example.com") == "example.com"
+
+    def test_remove_http_prefix(self):
+        assert sanitize_domain("http://example.com") == "example.com"
+
+    def test_remove_trailing_slash(self):
+        assert sanitize_domain("example.com/") == "example.com"
+
+    def test_https_prefix_and_trailing_slash(self):
+        assert sanitize_domain("https://example.com/") == "example.com"
+
+    def test_http_prefix_and_trailing_slash(self):
+        assert sanitize_domain("http://example.com/") == "example.com"
+
+    def test_whitespace_and_prefix_and_slash(self):
+        assert sanitize_domain("  https://example.com/  ") == "example.com"
