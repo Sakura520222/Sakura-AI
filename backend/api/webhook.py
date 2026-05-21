@@ -686,9 +686,12 @@ async def _handle_label_checkbox_toggle_inner(
     # Permission check: PR author or collaborator (admin/write)
     #
     # Special case for pull_request_review: GitHub attributes review body edits
-    # (including user checkbox clicks) to the review author (the bot), so we
-    # cannot determine the actual editor.  Skip permission checks for review
-    # bodies to avoid infinite revert loops and allow user interaction.
+    # to the review author (the bot).  Although `sender` gives us the actual
+    # editor, we skip permission checks for review bodies to avoid infinite
+    # revert loops (bot reverting triggers another edited event) and to allow
+    # user interaction with label checkboxes.  This is an intentional security
+    # trade-off: only users with repo access can see and interact with PRs, so
+    # the risk is bounded by GitHub's own access controls.
     is_pr_author = editor_login == pr_author_login
     is_collaborator = False
     is_review_body_edit = comment_source == "pull_request_review"
