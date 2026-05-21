@@ -17,6 +17,7 @@ from backend.core.config import (
     DYNAMIC_CONFIG_SENSITIVE_KEYS,
     DYNAMIC_CONFIG_SELECT_OPTIONS,
     get_all_dynamic_config_keys,
+    get_dynamic_config,
     get_dynamic_config_input_type,
     get_settings,
     invalidate_dynamic_config_cache,
@@ -146,6 +147,24 @@ async def _check_and_consume_agent_quota(
     return await service.check_and_consume_agent_quota(
         github_username=user["sub"],
     )
+
+
+async def _check_repo_access(user: dict, repo_full_name: str) -> str | None:
+    """非管理员用户校验仓库访问权限，返回错误信息或 None 表示通过。
+
+    校验规则：
+      1. 仓库 owner 必须是用户自己的 GitHub 用户名
+      2. 仓库必须在 Agent 允许列表中（allowlist 为空时不限制）
+    """
+    repo_owner = repo_full_name.split("/")[0] if "/" in repo_full_name else ""
+    github_username = user.get("sub", "")
+    if repo_owner != github_username:
+        return "只能操作自己仓库的 Issue"
+    raw = str(await get_dynamic_config("agent_team_repo_allowlist") or "")
+    allowlist = {item.strip() for item in raw.split(",") if item.strip()}
+    if allowlist and repo_full_name not in allowlist:
+        return "该仓库不在允许列表中，无法创建任务"
+    return None
 
 
 def _clean_optional_text(value: str | None) -> str | None:
@@ -976,6 +995,23 @@ async def preview_task_from_issue(
     """从指定 Issue 构建可编辑任务草稿。"""
     try:
         repo_full_name, issue_number = _parse_issue_ref(issue_ref)
+    except ValueError as e:
+        return JSONResponse(
+            {"success": False, "message": str(e)},
+            status_code=200,
+        )
+    if not _is_admin(user):
+        err = await _check_repo_access(user, repo_full_name)
+        if err:
+            return JSONResponse(
+                {"success": False, "message": err},
+                status_code=200,
+            )
+        return JSONResponse(
+            {"success": False, "message": "该仓库不在允许列表中，无法创建任务"},
+            status_code=200,
+        )
+    try:
         draft = await AgentTeamCandidateService().build_manual_issue_task_draft(
             db, repo_full_name, issue_number
         )
@@ -1025,6 +1061,17 @@ async def create_task_from_issue(
     except ValueError as e:
         return JSONResponse(
             {"success": False, "message": str(e)},
+            status_code=200,
+        )
+    if not _is_admin(user):
+        err = await _check_repo_access(user, repo_full_name)
+        if err:
+            return JSONResponse(
+                {"success": False, "message": err},
+                status_code=200,
+            )
+        return JSONResponse(
+            {"success": False, "message": "该仓库不在允许列表中，无法创建任务"},
             status_code=200,
         )
 
