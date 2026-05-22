@@ -58,6 +58,12 @@ def sample_user():
     user.issue_daily_used = 0
     user.issue_weekly_used = 0
     user.issue_monthly_used = 0
+    user.agent_daily_quota = 1
+    user.agent_weekly_quota = 2
+    user.agent_monthly_quota = 5
+    user.agent_daily_used = 0
+    user.agent_weekly_used = 0
+    user.agent_monthly_used = 0
     return user
 
 
