@@ -60,6 +60,7 @@ SYSTEM_CONFIG_GROUPS = [
             "github_oauth_client_id",
             "github_oauth_client_secret",
             "github_oauth_redirect_uri",
+            "mobile_oauth_allowed_redirect_uris",
         ],
     },
     {

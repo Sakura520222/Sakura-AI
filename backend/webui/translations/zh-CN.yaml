@@ -1245,6 +1245,8 @@ system_config:
   key_github_oauth_client_secret_desc: "GitHub OAuth App 的 Client Secret"
   key_github_oauth_redirect_uri: "回调地址"
   key_github_oauth_redirect_uri_desc: "OAuth 回调 URL，需与 GitHub OAuth App 中配置一致"
+  key_mobile_oauth_allowed_redirect_uris: "移动端允许回调 URI"
+  key_mobile_oauth_allowed_redirect_uris_desc: "移动端 OAuth 自定义回调 URI 白名单，多个值用英文逗号分隔；为空时仅允许默认 OAuth 回调地址。"
   key_telegram_bot_token: "Bot Token"
   key_telegram_bot_token_desc: "Telegram Bot API Token，从 @BotFather 获取"
   key_app_domain: "应用域名"

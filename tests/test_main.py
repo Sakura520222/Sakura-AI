@@ -2,6 +2,11 @@
 
 from unittest.mock import patch
 
+import pytest
+from starlette.requests import Request
+from starlette.responses import JSONResponse
+
+import backend.main as main
 from backend.core.config import Settings
 from backend.main import _get_webui_error_user
 from backend.main import _get_allowed_origins, _should_start_background_tasks
@@ -69,3 +74,33 @@ def test_background_tasks_can_be_skipped_for_local_development():
     assert _should_start_background_tasks(settings) is False
     assert _should_start_background_tasks(Settings(sakura_dev_bootstrap=True)) is False
     assert _should_start_background_tasks(Settings()) is True
+
+
+@pytest.mark.anyio
+async def test_rate_limit_handler_returns_sync_slowapi_response_without_await(monkeypatch):
+    expected = JSONResponse({"detail": "rate limit"}, status_code=429)
+
+    def fake_rate_limit_exceeded_handler(_request, _exc):
+        return expected
+
+    monkeypatch.setattr(
+        main,
+        "_rate_limit_exceeded_handler",
+        fake_rate_limit_exceeded_handler,
+    )
+
+    request = Request(
+        {
+            "type": "http",
+            "method": "GET",
+            "path": "/api/v1/example",
+            "headers": [(b"accept", b"application/json")],
+            "server": ("testserver", 80),
+            "scheme": "http",
+            "client": ("testclient", 123),
+        }
+    )
+
+    response = await main.rate_limit_exception_handler(request, object())
+
+    assert response is expected
