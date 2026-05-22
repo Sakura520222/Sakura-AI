@@ -162,7 +162,9 @@ async def _check_repo_access(user: dict, repo_full_name: str) -> str | None:
     if repo_owner != github_username:
         return "只能操作自己仓库的 Issue"
     raw = str(await get_dynamic_config("agent_team_repo_allowlist") or "")
-    allowlist = {item.strip() for item in raw.split(",") if item.strip()}
+    allowlist = {
+        item.strip() for item in raw.replace("\n", ",").split(",") if item.strip()
+    }
     if allowlist and repo_full_name not in allowlist:
         return "该仓库不在允许列表中，无法创建任务"
     return None
@@ -640,6 +642,10 @@ async def task_detail_fragment(
         return JSONResponse(
             {"success": False, "message": "任务不存在"}, status_code=404
         )
+    if not _is_admin(user) and task.started_by != user["sub"]:
+        return JSONResponse(
+            {"success": False, "message": "无权查看此任务"}, status_code=403
+        )
 
     # selectinload 不支持在当前 SQLAlchemy 版本中稳定地继续链式排序，模板侧按序展示即可。
     task.iterations.sort(key=lambda item: item.iteration_number)
@@ -777,9 +783,13 @@ async def save_agent_team_config(
 async def list_repo_branches(
     owner: str,
     name: str,
-    _=Depends(require_auth),
+    user: dict = Depends(require_auth),
 ):
     """获取仓库分支列表，供任务创建弹窗选择基础分支。"""
+    if not _is_admin(user):
+        err = await _check_repo_access(user, f"{owner}/{name}")
+        if err:
+            return JSONResponse({"success": False, "message": err}, status_code=403)
     try:
         from backend.core.github_app import GitHubAppClient
 
