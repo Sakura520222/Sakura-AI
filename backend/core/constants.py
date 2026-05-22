@@ -12,7 +12,15 @@ ANDROID_SHA256_CERT_FINGERPRINTS: tuple[str, ...] = (
 
 def _fingerprint_to_apk_key_hash(fingerprint: str) -> str:
     """将 SHA-256 指纹（冒号分隔十六进制）转换为 android:apk-key-hash 格式。"""
-    raw = bytes.fromhex(fingerprint.replace(":", ""))
+    hex_str = fingerprint.replace(":", "")
+    if len(hex_str) != 64:
+        raise ValueError(
+            f"SHA-256 指纹应为 32 字节（64 个十六进制字符），当前 {len(hex_str)} 个: {fingerprint!r}"
+        )
+    try:
+        raw = bytes.fromhex(hex_str)
+    except ValueError:
+        raise ValueError(f"SHA-256 指纹包含非法十六进制字符: {fingerprint!r}") from None
     b64 = base64.urlsafe_b64encode(raw).rstrip(b"=").decode("ascii")
     return f"android:apk-key-hash:{b64}"
 
