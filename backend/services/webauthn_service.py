@@ -34,6 +34,10 @@ from backend.models.telegram_models import TelegramUser, UserWebAuthnCredential
 _WEBAUTHN_CHALLENGE_PREFIX = "webauthn:challenge:"
 _webauthn_challenge_fallback: dict[str, dict] = {}
 _MAX_FALLBACK_CHALLENGES = 1000
+_DEFAULT_ANDROID_PASSKEY_ORIGINS = (
+    "android:apk-key-hash:S1dtx2UHTOwaUDfi8f7xrEdDfofmcEz4fgvRXLSnyzg",
+    "android:apk-key-hash:CzQNOrqlE6aOMd628-CB02Z8skMxr5DlUtZDjfRBEqA",
+)
 
 
 @dataclass(frozen=True)
@@ -43,6 +47,7 @@ class WebAuthnRpConfig:
     rp_id: str
     rp_name: str
     origin: str
+    allowed_origins: list[str]
 
 
 class WebAuthnError(Exception):
@@ -63,6 +68,31 @@ def b64url_decode(value: str) -> bytes:
 def credential_id_hash(credential_id: str) -> str:
     """Return a fixed-length hash for indexing WebAuthn credential IDs."""
     return hashlib.sha256(credential_id.encode("utf-8")).hexdigest()
+
+
+def _split_origins(value: str | None) -> list[str]:
+    """Split comma/newline separated origin configuration values."""
+    if not value:
+        return []
+    normalized = value.replace("\r", "\n").replace(",", "\n")
+    return [
+        origin.strip().rstrip("/")
+        for origin in normalized.splitlines()
+        if origin.strip()
+    ]
+
+
+def _dedupe_origins(origins: list[str]) -> list[str]:
+    """Deduplicate origins while preserving order."""
+    seen: set[str] = set()
+    result: list[str] = []
+    for origin in origins:
+        normalized = origin.strip().rstrip("/")
+        if not normalized or normalized in seen:
+            continue
+        seen.add(normalized)
+        result.append(normalized)
+    return result
 
 
 def _cleanup_fallback_challenges() -> None:
@@ -99,8 +129,36 @@ def get_rp_config(request_origin: str | None = None) -> WebAuthnRpConfig:
     if not parsed.scheme or not parsed.netloc:
         raise WebAuthnError("Invalid passkeys_origin configuration")
     rp_id = settings.passkeys_rp_id or parsed.hostname or "localhost"
+    allowed_origins = _dedupe_origins(
+        [
+            origin,
+            *_DEFAULT_ANDROID_PASSKEY_ORIGINS,
+            *_split_origins(settings.passkeys_allowed_origins),
+        ]
+    )
     return WebAuthnRpConfig(
-        rp_id=rp_id, rp_name=settings.passkeys_rp_name, origin=origin
+        rp_id=rp_id,
+        rp_name=settings.passkeys_rp_name,
+        origin=origin,
+        allowed_origins=allowed_origins,
+    )
+
+
+def _rp_config_from_challenge_context(context: dict) -> WebAuthnRpConfig:
+    """Build RP config for verifying an existing WebAuthn challenge."""
+    fallback = get_rp_config()
+    origin = (context.get("origin") or fallback.origin).strip().rstrip("/")
+    return WebAuthnRpConfig(
+        rp_id=context.get("rp_id") or fallback.rp_id,
+        rp_name=get_settings().passkeys_rp_name,
+        origin=origin,
+        allowed_origins=_dedupe_origins(
+            [
+                origin,
+                *context.get("allowed_origins", []),
+                *fallback.allowed_origins,
+            ]
+        ),
     )
 
 
@@ -200,6 +258,7 @@ async def begin_registration(
             "user_id": user.id,
             "rp_id": rp.rp_id,
             "origin": rp.origin,
+            "allowed_origins": rp.allowed_origins,
         },
     )
     return {
@@ -225,16 +284,12 @@ async def finish_registration(
     if context.get("type") != "registration" or int(context.get("user_id")) != user.id:
         raise WebAuthnError("Registration challenge context mismatch")
 
-    rp = WebAuthnRpConfig(
-        rp_id=context.get("rp_id") or get_rp_config().rp_id,
-        rp_name=get_settings().passkeys_rp_name,
-        origin=context.get("origin") or get_rp_config().origin,
-    )
+    rp = _rp_config_from_challenge_context(context)
     verification = verify_registration_response(
         credential=credential,
         expected_challenge=challenge,
         expected_rp_id=rp.rp_id,
-        expected_origin=rp.origin,
+        expected_origin=rp.allowed_origins,
         require_user_verification=False,
     )
     db_credential = UserWebAuthnCredential(
@@ -292,6 +347,7 @@ async def begin_authentication(
             "user_id": user_id,
             "rp_id": rp.rp_id,
             "origin": rp.origin,
+            "allowed_origins": rp.allowed_origins,
         },
     )
     return {
@@ -335,16 +391,12 @@ async def finish_authentication(
     if expected_user_id is not None and db_credential.user_id != expected_user_id:
         raise WebAuthnError("Passkey does not belong to this user")
 
-    rp = WebAuthnRpConfig(
-        rp_id=context.get("rp_id") or get_rp_config().rp_id,
-        rp_name=get_settings().passkeys_rp_name,
-        origin=context.get("origin") or get_rp_config().origin,
-    )
+    rp = _rp_config_from_challenge_context(context)
     verification = verify_authentication_response(
         credential=credential,
         expected_challenge=challenge,
         expected_rp_id=rp.rp_id,
-        expected_origin=rp.origin,
+        expected_origin=rp.allowed_origins,
         credential_public_key=b64url_decode(db_credential.public_key),
         credential_current_sign_count=int(db_credential.sign_count or 0),
         require_user_verification=True,

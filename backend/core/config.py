@@ -197,6 +197,10 @@ class Settings(BaseSettings):
         "",
         description="WebAuthn 允许的 Origin；为空时根据 app_domain/app_port 推导",
     )
+    passkeys_allowed_origins: str = Field(
+        "",
+        description="WebAuthn 额外允许的 Origins，多个值使用逗号或换行分隔；用于 Android 原生 Passkey origin 等场景",
+    )
     passkeys_challenge_ttl_seconds: int = Field(
         300,
         ge=60,
@@ -1808,6 +1812,7 @@ CORE_CONFIG_KEYS = frozenset(
         "github_oauth_client_secret",
         "github_oauth_redirect_uri",
         "mobile_oauth_allowed_redirect_uris",
+        "passkeys_allowed_origins",
         "database_url",
         "summary_provider",
     }
