@@ -125,7 +125,7 @@ async def github_mobile_authorize(
     if redirect_uri and redirect_uri != settings.github_oauth_redirect_uri:
         allowed = [
             urlparse(u.strip()).geturl()
-            for u in settings.mobile_oauth_allowed_redirect_uris.split(",")
+            for u in (settings.mobile_oauth_allowed_redirect_uris or "").split(",")
             if u.strip()
         ]
         normalized_uri = urlparse(redirect_uri).geturl()

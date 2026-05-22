@@ -197,6 +197,10 @@ class Settings(BaseSettings):
         "",
         description="WebAuthn 允许的 Origin；为空时根据 app_domain/app_port 推导",
     )
+    passkeys_allowed_origins: str = Field(
+        "",
+        description="WebAuthn 额外允许的 Origins，多个值使用逗号或换行分隔；用于 Android 原生 Passkey origin 等场景",
+    )
     passkeys_challenge_ttl_seconds: int = Field(
         300,
         ge=60,
@@ -1436,6 +1440,7 @@ DYNAMIC_CONFIG_LABELS: dict[str, str] = {
     "github_oauth_client_id": "GitHub OAuth Client ID",
     "github_oauth_client_secret": "GitHub OAuth Client Secret",
     "github_oauth_redirect_uri": "GitHub OAuth 回调地址",
+    "mobile_oauth_allowed_redirect_uris": "移动端 OAuth 允许回调 URI",
     # 仓库扫描配置标签
     "enable_repo_scan": "启用仓库扫描",
     "scan_interval_minutes": "扫描间隔（分钟）",
@@ -1806,6 +1811,8 @@ CORE_CONFIG_KEYS = frozenset(
         "github_oauth_client_id",
         "github_oauth_client_secret",
         "github_oauth_redirect_uri",
+        "mobile_oauth_allowed_redirect_uris",
+        "passkeys_allowed_origins",
         "database_url",
         "summary_provider",
     }

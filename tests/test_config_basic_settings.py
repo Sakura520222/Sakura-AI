@@ -2,7 +2,9 @@
 
 from backend.core.config import (
     BASIC_CONFIG_KEYS,
+    CORE_CONFIG_KEYS,
     DYNAMIC_CONFIG_GROUPS,
+    DYNAMIC_CONFIG_LABELS,
     Settings,
     get_all_db_config_keys,
     get_settings,
@@ -36,6 +38,34 @@ def test_basic_review_config_fields_support_live_update():
 
 def test_basic_config_keys_are_loaded_from_database_config_keys():
     assert BASIC_CONFIG_KEYS.issubset(set(get_all_db_config_keys()))
+
+
+def test_mobile_oauth_allowed_redirect_uris_is_available_in_core_config_paths():
+    required_key = "mobile_oauth_allowed_redirect_uris"
+
+    assert required_key in Settings.model_fields
+    assert required_key in CORE_CONFIG_KEYS
+    assert required_key in get_all_db_config_keys()
+    assert DYNAMIC_CONFIG_LABELS[required_key] == "移动端 OAuth 允许回调 URI"
+
+
+def test_mobile_oauth_allowed_redirect_uris_env_is_accepted_by_setup_service():
+    from backend.core import setup_service
+
+    assert (
+        setup_service._ENV_TO_SETTINGS_KEY["MOBILE_OAUTH_ALLOWED_REDIRECT_URIS"]
+        == "mobile_oauth_allowed_redirect_uris"
+    )
+
+
+def test_mobile_oauth_allowed_redirect_uris_is_exposed_in_system_config_group():
+    from backend.services.system_config_service import SYSTEM_CONFIG_GROUPS
+
+    github_oauth_group = next(
+        group for group in SYSTEM_CONFIG_GROUPS if group["id"] == "github_oauth"
+    )
+
+    assert "mobile_oauth_allowed_redirect_uris" in github_oauth_group["keys"]
 
 
 def test_ai_api_config_fields_support_live_update():
