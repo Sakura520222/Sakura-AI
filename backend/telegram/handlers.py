@@ -263,7 +263,11 @@ async def cmd_myquota(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"📋 *Issue 分析配额*\n"
             f"📅 每日: {quota_info['issue_daily']['used']}/{quota_info['issue_daily']['limit']}\n"
             f"📆 每周: {quota_info['issue_weekly']['used']}/{quota_info['issue_weekly']['limit']}\n"
-            f"🗓️ 每月: {quota_info['issue_monthly']['used']}/{quota_info['issue_monthly']['limit']}"
+            f"🗓️ 每月: {quota_info['issue_monthly']['used']}/{quota_info['issue_monthly']['limit']}\n\n"
+            f"🤖 *Agent 配额*\n"
+            f"📅 每日: {quota_info['agent_daily']['used']}/{quota_info['agent_daily']['limit']}\n"
+            f"📆 每周: {quota_info['agent_weekly']['used']}/{quota_info['agent_weekly']['limit']}\n"
+            f"🗓️ 每月: {quota_info['agent_monthly']['used']}/{quota_info['agent_monthly']['limit']}"
         )
 
         await update.message.reply_text(text, parse_mode="Markdown")

@@ -11,13 +11,14 @@
                 <div class="max-w-3xl">
                     <div class="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-white/70 dark:bg-gray-800/70 border border-sakura-200/70 dark:border-sakura-700/40 text-xs font-medium text-sakura-700 dark:text-sakura-300 mb-4">
                         <span class="w-2 h-2 rounded-full {% if stats.active %}bg-green-500 animate-pulse{% else %}bg-gray-400{% endif %}"></span>
-                        {{ _('agent_team.super_admin_console') }}
+                        {% if is_admin %}{{ _('agent_team.super_admin_console') }}{% else %}{{ _('agent_team.title') }}{% endif %}
                     </div>
                     <h1 class="text-3xl lg:text-4xl font-extrabold bg-gradient-to-r from-sakura-700 via-pink-600 to-purple-700 dark:from-sakura-300 dark:via-pink-300 dark:to-purple-300 bg-clip-text text-transparent">
                         {{ _('agent_team.title') }}
                     </h1>
                     <p class="mt-3 text-sm lg:text-base text-gray-600 dark:text-gray-300 leading-7">{{ _('agent_team.description') }}</p>
                     <div class="mt-5 grid grid-cols-1 sm:grid-cols-3 gap-3 text-sm">
+                        {% if is_admin %}
                         <div class="rounded-2xl bg-white/65 dark:bg-gray-800/65 border border-white/60 dark:border-gray-700/70 p-3">
                             <div class="text-gray-500 dark:text-gray-400">{{ _('agent_team.queue_pressure') }}</div>
                             <div class="mt-1 text-lg font-bold text-gray-900 dark:text-gray-100">{{ stats.queued }}</div>
@@ -36,26 +37,45 @@
                             <div class="text-gray-500 dark:text-gray-400">{{ _('agent_team.workspace_count') }}</div>
                             <div class="mt-1 text-lg font-bold text-gray-900 dark:text-gray-100">{{ workspace_summary.count }}</div>
                         </div>
+                        {% elif agent_quota %}
+                        <div class="rounded-2xl bg-white/65 dark:bg-gray-800/65 border border-white/60 dark:border-gray-700/70 p-3">
+                            <div class="text-gray-500 dark:text-gray-400">{{ _('billing.daily') }}</div>
+                            <div class="mt-1 text-lg font-bold {{ 'text-red-600' if agent_quota.daily_used >= agent_quota.daily_limit else 'text-gray-900 dark:text-gray-100' }}">{{ agent_quota.daily_used }} / {{ agent_quota.daily_limit }}</div>
+                        </div>
+                        <div class="rounded-2xl bg-white/65 dark:bg-gray-800/65 border border-white/60 dark:border-gray-700/70 p-3">
+                            <div class="text-gray-500 dark:text-gray-400">{{ _('billing.weekly') }}</div>
+                            <div class="mt-1 text-lg font-bold {{ 'text-red-600' if agent_quota.weekly_used >= agent_quota.weekly_limit else 'text-gray-900 dark:text-gray-100' }}">{{ agent_quota.weekly_used }} / {{ agent_quota.weekly_limit }}</div>
+                        </div>
+                        <div class="rounded-2xl bg-white/65 dark:bg-gray-800/65 border border-white/60 dark:border-gray-700/70 p-3">
+                            <div class="text-gray-500 dark:text-gray-400">{{ _('billing.monthly') }}</div>
+                            <div class="mt-1 text-lg font-bold {{ 'text-red-600' if agent_quota.monthly_used >= agent_quota.monthly_limit else 'text-gray-900 dark:text-gray-100' }}">{{ agent_quota.monthly_used }} / {{ agent_quota.monthly_limit }}</div>
+                        </div>
+                        {% endif %}
                     </div>
                 </div>
                 <div class="flex flex-col sm:flex-row lg:flex-col gap-3 lg:min-w-56">
+                    {% if is_admin %}
                     <button @click="activeTab = 'candidates'; previewCandidates()" class="inline-flex items-center justify-center gap-2 px-5 py-3 bg-sakura-500 hover:bg-sakura-600 text-white text-sm font-semibold rounded-2xl transition-all shadow-lg shadow-sakura-500/25">
                         {{ _('agent_team.preview_candidates') }}
                     </button>
+                    {% endif %}
                     <button @click="activeTab = 'tasks'; refreshAgentTaskList()" class="inline-flex items-center justify-center gap-2 px-5 py-3 bg-white/80 dark:bg-gray-800/80 hover:bg-white dark:hover:bg-gray-700 border border-sakura-200 dark:border-sakura-800/50 text-sm font-semibold rounded-2xl transition-all">
                         {{ _('agent_team.refresh_tasks') }}
                     </button>
+                    {% if is_admin %}
                     <button @click="activeTab = 'workspaces'; refreshWorkspaces()" class="inline-flex items-center justify-center gap-2 px-5 py-3 bg-white/80 dark:bg-gray-800/80 hover:bg-white dark:hover:bg-gray-700 border border-purple-200 dark:border-purple-800/50 text-sm font-semibold rounded-2xl transition-all">
                         {{ _('agent_team.manage_workspaces') }}
                     </button>
                     <button @click="activeTab = 'config'" class="inline-flex items-center justify-center gap-2 px-5 py-3 bg-purple-500 hover:bg-purple-600 text-white text-sm font-semibold rounded-2xl transition-all shadow-lg shadow-purple-500/20">
                         {{ _('agent_team.open_config') }}
                     </button>
+                    {% endif %}
                 </div>
             </div>
         </div>
     </section>
 
+    {% if is_admin %}
     <section class="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4">
         {% set stat_cards = [
             ('stats_total', stats.total, 'from-gray-700 to-gray-900', 'bg-gray-100 text-gray-700 dark:bg-gray-700 dark:text-gray-200'),
@@ -76,14 +96,18 @@
         </div>
         {% endfor %}
     </section>
+    {% endif %}
 
     <div class="bg-white dark:bg-gray-800 rounded-2xl border border-gray-200 dark:border-gray-700 p-2 flex flex-wrap gap-2">
         <button @click="activeTab = 'tasks'" :class="activeTab === 'tasks' ? 'bg-sakura-500 text-white shadow-md shadow-sakura-500/25' : 'text-gray-600 dark:text-gray-300 hover:bg-sakura-50 dark:hover:bg-sakura-900/20'" class="px-4 py-2 rounded-xl text-sm font-semibold transition-all">{{ _('agent_team.tab_tasks') }}</button>
         <button @click="activeTab = 'live'" :class="activeTab === 'live' ? 'bg-orange-500 text-white shadow-md shadow-orange-500/25' : 'text-gray-600 dark:text-gray-300 hover:bg-orange-50 dark:hover:bg-orange-900/20'" class="px-4 py-2 rounded-xl text-sm font-semibold transition-all">{{ _('agent_team.tab_live') }}
         </button>
+        <button @click="activeTab = 'create'" :class="activeTab === 'create' ? 'bg-purple-500 text-white shadow-md shadow-purple-500/25' : 'text-gray-600 dark:text-gray-300 hover:bg-purple-50 dark:hover:bg-purple-900/20'" class="px-4 py-2 rounded-xl text-sm font-semibold transition-all">{{ _('agent_team.tab_create_task') }}</button>
+        {% if is_admin %}
         <button @click="activeTab = 'candidates'" :class="activeTab === 'candidates' ? 'bg-sakura-500 text-white shadow-md shadow-sakura-500/25' : 'text-gray-600 dark:text-gray-300 hover:bg-sakura-50 dark:hover:bg-sakura-900/20'" class="px-4 py-2 rounded-xl text-sm font-semibold transition-all">{{ _('agent_team.tab_candidates') }}</button>
         <button @click="activeTab = 'workspaces'; refreshWorkspaces()" :class="activeTab === 'workspaces' ? 'bg-sakura-500 text-white shadow-md shadow-sakura-500/25' : 'text-gray-600 dark:text-gray-300 hover:bg-sakura-50 dark:hover:bg-sakura-900/20'" class="px-4 py-2 rounded-xl text-sm font-semibold transition-all">{{ _('agent_team.tab_workspaces') }}</button>
         <button @click="activeTab = 'config'" :class="activeTab === 'config' ? 'bg-sakura-500 text-white shadow-md shadow-sakura-500/25' : 'text-gray-600 dark:text-gray-300 hover:bg-sakura-50 dark:hover:bg-sakura-900/20'" class="px-4 py-2 rounded-xl text-sm font-semibold transition-all">{{ _('agent_team.tab_config') }}</button>
+        {% endif %}
     </div>
 
     <section x-show="activeTab === 'tasks'" x-cloak class="grid grid-cols-1 2xl:grid-cols-[minmax(0,1fr)_460px] gap-5">
@@ -132,6 +156,7 @@
         </aside>
     </section>
 
+    {% if is_admin %}
     <section x-show="activeTab === 'workspaces'" x-cloak class="bg-white dark:bg-gray-800 rounded-2xl border border-gray-200 dark:border-gray-700 p-5">
         <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 mb-5">
             <div>
@@ -144,6 +169,7 @@
             <div class="text-center py-8 text-gray-400">{{ _('common.loading') }}</div>
         </div>
     </section>
+    {% endif %}
 
     <section x-show="activeTab === 'live'" x-cloak class="bg-white dark:bg-gray-800 rounded-2xl border border-gray-200 dark:border-gray-700 p-5">
         <div class="flex items-center gap-3 mb-4">
@@ -153,6 +179,7 @@
         {% include "components/agent_team_live_view_fragment.html" %}
     </section>
 
+    {% if is_admin %}
     <section x-show="activeTab === 'candidates'" x-cloak class="bg-white dark:bg-gray-800 rounded-2xl border border-gray-200 dark:border-gray-700 p-5">
         <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 mb-5">
             <div>
@@ -183,7 +210,26 @@
             <div class="p-10 text-center text-gray-500 dark:text-gray-400 border border-dashed border-gray-300 dark:border-gray-600 rounded-2xl">{{ _('agent_team.candidates_empty_hint') }}</div>
         </div>
     </section>
+    {% endif %}
 
+    <!-- 创建任务（所有用户可用） -->
+    <section x-show="activeTab === 'create'" x-cloak class="bg-white dark:bg-gray-800 rounded-2xl border border-gray-200 dark:border-gray-700 p-5">
+        <div class="mb-5">
+            <h2 class="text-lg font-bold">{{ _('agent_team.create_task') }}</h2>
+            <p class="text-sm text-gray-500 dark:text-gray-400 mt-1">{{ _('agent_team.manual_issue_desc') }}</p>
+        </div>
+        <div class="rounded-2xl border border-purple-100 dark:border-purple-900/40 bg-purple-50/60 dark:bg-purple-950/20 p-4">
+            <label class="block text-sm font-semibold text-gray-900 dark:text-gray-100">{{ _('agent_team.manual_issue_title') }}</label>
+            <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">{{ _('agent_team.manual_issue_desc') }}</p>
+            <div class="mt-3 flex flex-col sm:flex-row gap-3">
+                <input id="manual-issue-input-user" type="text" x-model="manualIssueInput" placeholder="https://github.com/owner/repo/issues/123" class="flex-1 rounded-xl border-gray-300 dark:border-gray-600 dark:bg-gray-900 text-sm">
+                <button id="manual-issue-btn-user" @click="createTaskFromIssue()" class="px-4 py-2 bg-purple-500 hover:bg-purple-600 text-white rounded-xl text-sm font-semibold whitespace-nowrap transition-colors">{{ _('agent_team.manual_issue_submit') }}</button>
+            </div>
+            <div id="manual-issue-error-user" class="mt-2 text-xs text-red-500 dark:text-red-400 hidden"></div>
+        </div>
+    </section>
+
+    {% if is_admin %}
     <section x-show="activeTab === 'config'" x-cloak class="bg-white dark:bg-gray-800 rounded-2xl border border-gray-200 dark:border-gray-700 p-5">
         <div class="mb-5">
             <h2 class="text-lg font-bold">{{ _('agent_team.dedicated_ai_config') }}</h2>
@@ -227,6 +273,7 @@
             </div>
         </form>
     </section>
+    {% endif %}
 
     <!-- Manual Issue task preview/edit dialog -->
     <div x-show="issuePreview.show" x-cloak
@@ -459,7 +506,8 @@ function askBranch(repoOwner, repoName) {
 }
 function agentTeamPage() {
     return {
-        activeTab: 'tasks',
+        activeTab: '{% if not is_admin %}create{% else %}tasks{% endif %}',
+        isAdmin: {{ 'true' if is_admin else 'false' }},
         filters: {status: 'all', source_type: 'all', q: '', sort: 'newest'},
         candidateFilterRequirement: '',
         manualIssueInput: '',
@@ -661,13 +709,13 @@ function createAgentTask(btn, sourceType, sourceId, requirement = '', repoOwner,
 }
 function createTaskFromIssue() {
     const raw = window.agentTeamState?.manualIssueInput?.trim() || '';
-    const errorEl = document.getElementById('manual-issue-error');
+    const errorEl = document.getElementById('manual-issue-error') || document.getElementById('manual-issue-error-user');
     if (!raw) {
         if (errorEl) { errorEl.textContent = '{{ _('agent_team.manual_issue_input_required') }}'; errorEl.classList.remove('hidden'); }
         return;
     }
     if (errorEl) errorEl.classList.add('hidden');
-    const btn = document.getElementById('manual-issue-btn');
+    const btn = document.getElementById('manual-issue-btn') || document.getElementById('manual-issue-btn-user');
     const origText = btn.textContent;
     btn.disabled = true;
     btn.classList.add('opacity-60', 'cursor-not-allowed');

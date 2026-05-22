@@ -76,6 +76,21 @@ class TelegramUser(Base):
     last_reset_issue_weekly = Column(TIMESTAMP, nullable=True)
     last_reset_issue_monthly = Column(TIMESTAMP, nullable=True)
 
+    # Agent 配额设置
+    agent_daily_quota = Column(Integer, default=1, nullable=False)
+    agent_weekly_quota = Column(Integer, default=2, nullable=False)
+    agent_monthly_quota = Column(Integer, default=5, nullable=False)
+
+    # Agent 已使用配额
+    agent_daily_used = Column(Integer, default=0, nullable=False)
+    agent_weekly_used = Column(Integer, default=0, nullable=False)
+    agent_monthly_used = Column(Integer, default=0, nullable=False)
+
+    # Agent 配额重置时间
+    last_reset_agent_daily = Column(TIMESTAMP, nullable=True)
+    last_reset_agent_weekly = Column(TIMESTAMP, nullable=True)
+    last_reset_agent_monthly = Column(TIMESTAMP, nullable=True)
+
     # 状态
     is_active = Column(Boolean, default=True, nullable=False)
 

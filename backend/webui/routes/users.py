@@ -123,6 +123,9 @@ async def add_user(
     issue_daily_quota: int = Form(20),
     issue_weekly_quota: int = Form(80),
     issue_monthly_quota: int = Form(300),
+    agent_daily_quota: int = Form(1),
+    agent_weekly_quota: int = Form(2),
+    agent_monthly_quota: int = Form(5),
 ) -> RedirectResponse:
     """添加新用户（仅超级管理员）"""
     # 角色验证
@@ -211,6 +214,9 @@ async def add_user(
         issue_daily_quota=issue_daily_quota,
         issue_weekly_quota=issue_weekly_quota,
         issue_monthly_quota=issue_monthly_quota,
+        agent_daily_quota=agent_daily_quota,
+        agent_weekly_quota=agent_weekly_quota,
+        agent_monthly_quota=agent_monthly_quota,
         is_active=True,
     )
     try:
@@ -471,6 +477,62 @@ async def update_user_issue_quota(
     )
 
 
+@router.post("/{user_id}/agent-quota")
+async def update_user_agent_quota(
+    request: Request,
+    user_id: int,
+    db: AsyncSession = Depends(get_db),
+    user: dict = Depends(require_admin),
+    csrf_token: str = Depends(require_csrf),
+    agent_daily_quota: int = Form(...),
+    agent_weekly_quota: int = Form(...),
+    agent_monthly_quota: int = Form(...),
+) -> RedirectResponse:
+    """修改用户 Agent 配额"""
+    if agent_daily_quota < 0 or agent_weekly_quota < 0 or agent_monthly_quota < 0:
+        return toast_redirect(
+            f"/users/{user_id}",
+            "toast.quota_non_negative",
+            "error",
+            lang=detect_language(),
+        )
+
+    result = await db.execute(select(TelegramUser).where(TelegramUser.id == user_id))
+    target_user = result.scalar_one_or_none()
+    if not target_user:
+        return error_page(request, message="用户不存在", user=user)
+
+    old_daily = target_user.agent_daily_quota
+    old_weekly = target_user.agent_weekly_quota
+    old_monthly = target_user.agent_monthly_quota
+    target_user.agent_daily_quota = agent_daily_quota
+    target_user.agent_weekly_quota = agent_weekly_quota
+    target_user.agent_monthly_quota = agent_monthly_quota
+    await db.commit()
+
+    logger.info(
+        f"用户 Agent 配额已变更: user={target_user.github_username}, daily={agent_daily_quota}, weekly={agent_weekly_quota}, monthly={agent_monthly_quota}, by={user['sub']}"
+    )
+    await log_admin_action(
+        db,
+        user["user_id"],
+        "user_agent_quota",
+        "user",
+        str(user_id),
+        {
+            "old_daily": old_daily,
+            "old_weekly": old_weekly,
+            "old_monthly": old_monthly,
+            "new_daily": agent_daily_quota,
+            "new_weekly": agent_weekly_quota,
+            "new_monthly": agent_monthly_quota,
+        },
+    )
+    return toast_redirect(
+        f"/users/{user_id}", "toast.agent_quota_updated", lang=detect_language()
+    )
+
+
 @router.post("/{user_id}/toggle")
 async def toggle_user_status(
     request: Request,
@@ -699,6 +761,9 @@ async def reset_user_quota(
         "issue_daily": target_user.issue_daily_used,
         "issue_weekly": target_user.issue_weekly_used,
         "issue_monthly": target_user.issue_monthly_used,
+        "agent_daily": target_user.agent_daily_used,
+        "agent_weekly": target_user.agent_weekly_used,
+        "agent_monthly": target_user.agent_monthly_used,
     }
 
     target_user.daily_used = 0
@@ -707,12 +772,18 @@ async def reset_user_quota(
     target_user.issue_daily_used = 0
     target_user.issue_weekly_used = 0
     target_user.issue_monthly_used = 0
+    target_user.agent_daily_used = 0
+    target_user.agent_weekly_used = 0
+    target_user.agent_monthly_used = 0
     target_user.last_reset_daily = now
     target_user.last_reset_weekly = now
     target_user.last_reset_monthly = now
     target_user.last_reset_issue_daily = now
     target_user.last_reset_issue_weekly = now
     target_user.last_reset_issue_monthly = now
+    target_user.last_reset_agent_daily = now
+    target_user.last_reset_agent_weekly = now
+    target_user.last_reset_agent_monthly = now
     await db.commit()
 
     logger.info(f"用户配额已重置: user={target_user.github_username}, by={user['sub']}")

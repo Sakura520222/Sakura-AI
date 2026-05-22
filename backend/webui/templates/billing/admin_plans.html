@@ -220,6 +220,36 @@
                 </div>
             </fieldset>
 
+            <fieldset class="border border-gray-200 dark:border-gray-700 rounded-lg p-4">
+                <legend class="text-sm font-medium text-gray-700 dark:text-gray-300 px-2">{{ _('billing.agent_quota') }}</legend>
+                <div class="grid grid-cols-4 gap-3">
+                    <div>
+                        <label class="block text-xs text-gray-500 dark:text-gray-400 mb-1">{{ _('billing.one_time_bonus') }}</label>
+                        <input type="number" name="agent_quota_bonus" value="0" min="0"
+                               class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg
+                                      bg-white dark:bg-gray-700 text-gray-900 dark:text-white text-sm">
+                    </div>
+                    <div>
+                        <label class="block text-xs text-gray-500 dark:text-gray-400 mb-1">{{ _('billing.daily_add') }}</label>
+                        <input type="number" name="agent_daily_add" value="0" min="0"
+                               class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg
+                                      bg-white dark:bg-gray-700 text-gray-900 dark:text-white text-sm">
+                    </div>
+                    <div>
+                        <label class="block text-xs text-gray-500 dark:text-gray-400 mb-1">{{ _('billing.weekly_add') }}</label>
+                        <input type="number" name="agent_weekly_add" value="0" min="0"
+                               class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg
+                                      bg-white dark:bg-gray-700 text-gray-900 dark:text-white text-sm">
+                    </div>
+                    <div>
+                        <label class="block text-xs text-gray-500 dark:text-gray-400 mb-1">{{ _('billing.monthly_add') }}</label>
+                        <input type="number" name="agent_monthly_add" value="0" min="0"
+                               class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg
+                                      bg-white dark:bg-gray-700 text-gray-900 dark:text-white text-sm">
+                    </div>
+                </div>
+            </fieldset>
+
             <div>
                 <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">{{ _('common.description') }}</label>
                 <textarea name="description" rows="2"
@@ -356,6 +386,36 @@
                 </div>
             </fieldset>
 
+            <fieldset class="border border-gray-200 dark:border-gray-700 rounded-lg p-4">
+                <legend class="text-sm font-medium text-gray-700 dark:text-gray-300 px-2">{{ _('billing.agent_quota') }}</legend>
+                <div class="grid grid-cols-4 gap-3">
+                    <div>
+                        <label class="block text-xs text-gray-500 dark:text-gray-400 mb-1">{{ _('billing.one_time_bonus') }}</label>
+                        <input type="number" name="agent_quota_bonus" id="edit-agent_quota_bonus" min="0"
+                               class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg
+                                      bg-white dark:bg-gray-700 text-gray-900 dark:text-white text-sm">
+                    </div>
+                    <div>
+                        <label class="block text-xs text-gray-500 dark:text-gray-400 mb-1">{{ _('billing.daily_add') }}</label>
+                        <input type="number" name="agent_daily_add" id="edit-agent_daily_add" min="0"
+                               class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg
+                                      bg-white dark:bg-gray-700 text-gray-900 dark:text-white text-sm">
+                    </div>
+                    <div>
+                        <label class="block text-xs text-gray-500 dark:text-gray-400 mb-1">{{ _('billing.weekly_add') }}</label>
+                        <input type="number" name="agent_weekly_add" id="edit-agent_weekly_add" min="0"
+                               class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg
+                                      bg-white dark:bg-gray-700 text-gray-900 dark:text-white text-sm">
+                    </div>
+                    <div>
+                        <label class="block text-xs text-gray-500 dark:text-gray-400 mb-1">{{ _('billing.monthly_add') }}</label>
+                        <input type="number" name="agent_monthly_add" id="edit-agent_monthly_add" min="0"
+                               class="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg
+                                      bg-white dark:bg-gray-700 text-gray-900 dark:text-white text-sm">
+                    </div>
+                </div>
+            </fieldset>
+
             <div>
                 <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">{{ _('common.description') }}</label>
                 <textarea name="description" id="edit-description" rows="2"
@@ -430,7 +490,7 @@
 // plansData: object keyed by plan ID (integer, auto-coerced to string by JS)
 const plansData = Object.freeze({
 {% for plan in plans %}
-    {{ plan.id }}: {{ {"id": plan.id, "name": plan.name, "plan_type": plan.plan_type, "price_cents": plan.price_cents, "currency": plan.currency, "duration_days": plan.duration_days or "", "pr_quota_bonus": plan.pr_quota_bonus, "pr_daily_add": plan.pr_daily_add, "pr_weekly_add": plan.pr_weekly_add, "pr_monthly_add": plan.pr_monthly_add, "issue_quota_bonus": plan.issue_quota_bonus, "issue_daily_add": plan.issue_daily_add, "issue_weekly_add": plan.issue_weekly_add, "issue_monthly_add": plan.issue_monthly_add, "description": plan.description or "", "sort_order": plan.sort_order} | tojson }}{{ "," if not loop.last }}
+    {{ plan.id }}: {{ {"id": plan.id, "name": plan.name, "plan_type": plan.plan_type, "price_cents": plan.price_cents, "currency": plan.currency, "duration_days": plan.duration_days or "", "pr_quota_bonus": plan.pr_quota_bonus, "pr_daily_add": plan.pr_daily_add, "pr_weekly_add": plan.pr_weekly_add, "pr_monthly_add": plan.pr_monthly_add, "issue_quota_bonus": plan.issue_quota_bonus, "issue_daily_add": plan.issue_daily_add, "issue_weekly_add": plan.issue_weekly_add, "issue_monthly_add": plan.issue_monthly_add, "agent_quota_bonus": plan.agent_quota_bonus, "agent_daily_add": plan.agent_daily_add, "agent_weekly_add": plan.agent_weekly_add, "agent_monthly_add": plan.agent_monthly_add, "description": plan.description or "", "sort_order": plan.sort_order} | tojson }}{{ "," if not loop.last }}
 {% endfor %}
 });
 
@@ -454,6 +514,10 @@ function openEditPlanModal(planId) {
     document.getElementById('edit-issue_daily_add').value = plan.issue_daily_add;
     document.getElementById('edit-issue_weekly_add').value = plan.issue_weekly_add;
     document.getElementById('edit-issue_monthly_add').value = plan.issue_monthly_add;
+    document.getElementById('edit-agent_quota_bonus').value = plan.agent_quota_bonus;
+    document.getElementById('edit-agent_daily_add').value = plan.agent_daily_add;
+    document.getElementById('edit-agent_weekly_add').value = plan.agent_weekly_add;
+    document.getElementById('edit-agent_monthly_add').value = plan.agent_monthly_add;
     document.getElementById('edit-description').value = plan.description;
     document.getElementById('edit-sort_order').value = plan.sort_order;
     document.getElementById('edit-plan-modal').classList.remove('hidden');

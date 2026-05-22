@@ -304,6 +304,38 @@ class Settings(BaseSettings):
         description="自注册用户基础每月 Issue 分析配额",
     )
 
+    # Agent 配额
+    init_admin_agent_daily_quota: int = Field(
+        999,
+        ge=1,
+        description="Setup Wizard 创建的初始管理员每日 Agent 配额",
+    )
+    init_admin_agent_weekly_quota: int = Field(
+        9999,
+        ge=1,
+        description="Setup Wizard 创建的初始管理员每周 Agent 配额",
+    )
+    init_admin_agent_monthly_quota: int = Field(
+        99999,
+        ge=1,
+        description="Setup Wizard 创建的初始管理员每月 Agent 配额",
+    )
+    init_user_agent_daily_quota: int = Field(
+        1,
+        ge=1,
+        description="自注册用户基础每日 Agent 配额",
+    )
+    init_user_agent_weekly_quota: int = Field(
+        2,
+        ge=1,
+        description="自注册用户基础每周 Agent 配额",
+    )
+    init_user_agent_monthly_quota: int = Field(
+        5,
+        ge=1,
+        description="自注册用户基础每月 Agent 配额",
+    )
+
     # GitHub App机器人用户名（可选，用于幂等性检查）
     bot_username: Optional[str] = None  # 备用方案，当无法从GitHub API获取时使用
 
@@ -1247,6 +1279,9 @@ DYNAMIC_CONFIG_GROUPS: OrderedDict[str, dict] = OrderedDict(
                     "init_user_issue_daily_quota": "自注册用户基础每日 Issue 分析配额",
                     "init_user_issue_weekly_quota": "自注册用户基础每周 Issue 分析配额",
                     "init_user_issue_monthly_quota": "自注册用户基础每月 Issue 分析配额",
+                    "init_user_agent_daily_quota": "自注册用户基础每日 Agent 配额",
+                    "init_user_agent_weekly_quota": "自注册用户基础每周 Agent 配额",
+                    "init_user_agent_monthly_quota": "自注册用户基础每月 Agent 配额",
                 },
                 "keys": [
                     "init_admin_daily_quota",
@@ -1258,6 +1293,12 @@ DYNAMIC_CONFIG_GROUPS: OrderedDict[str, dict] = OrderedDict(
                     "init_user_issue_daily_quota",
                     "init_user_issue_weekly_quota",
                     "init_user_issue_monthly_quota",
+                    "init_admin_agent_daily_quota",
+                    "init_admin_agent_weekly_quota",
+                    "init_admin_agent_monthly_quota",
+                    "init_user_agent_daily_quota",
+                    "init_user_agent_weekly_quota",
+                    "init_user_agent_monthly_quota",
                 ],
             },
         ),
@@ -1373,6 +1414,12 @@ DYNAMIC_CONFIG_RANGES: dict[str, tuple[float, float]] = {
     "init_user_issue_daily_quota": (1, 999999),
     "init_user_issue_weekly_quota": (1, 999999),
     "init_user_issue_monthly_quota": (1, 999999),
+    "init_admin_agent_daily_quota": (1, 999999),
+    "init_admin_agent_weekly_quota": (1, 999999),
+    "init_admin_agent_monthly_quota": (1, 999999),
+    "init_user_agent_daily_quota": (1, 999999),
+    "init_user_agent_weekly_quota": (1, 999999),
+    "init_user_agent_monthly_quota": (1, 999999),
 }
 
 # 字段中文标签
@@ -1552,6 +1599,12 @@ DYNAMIC_CONFIG_LABELS: dict[str, str] = {
     "init_user_issue_daily_quota": "自注册基础每日 Issue 配额",
     "init_user_issue_weekly_quota": "自注册基础每周 Issue 配额",
     "init_user_issue_monthly_quota": "自注册基础每月 Issue 配额",
+    "init_admin_agent_daily_quota": "管理员初始每日 Agent 配额",
+    "init_admin_agent_weekly_quota": "管理员初始每周 Agent 配额",
+    "init_admin_agent_monthly_quota": "管理员初始每月 Agent 配额",
+    "init_user_agent_daily_quota": "自注册基础每日 Agent 配额",
+    "init_user_agent_weekly_quota": "自注册基础每周 Agent 配额",
+    "init_user_agent_monthly_quota": "自注册基础每月 Agent 配额",
     "register_quota_multiplier": "自注册配额倍率",
 }
 

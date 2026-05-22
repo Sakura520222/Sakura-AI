@@ -49,6 +49,10 @@ class PaymentService:
         "issue_daily_add",
         "issue_weekly_add",
         "issue_monthly_add",
+        "agent_quota_bonus",
+        "agent_daily_add",
+        "agent_weekly_add",
+        "agent_monthly_add",
         "is_active",
         "sort_order",
         "description",
@@ -74,6 +78,10 @@ class PaymentService:
         issue_daily_add: int = 0,
         issue_weekly_add: int = 0,
         issue_monthly_add: int = 0,
+        agent_quota_bonus: int = 0,
+        agent_daily_add: int = 0,
+        agent_weekly_add: int = 0,
+        agent_monthly_add: int = 0,
         description: Optional[str] = None,
         sort_order: int = 0,
     ) -> Plan:
@@ -91,6 +99,10 @@ class PaymentService:
             issue_daily_add=issue_daily_add,
             issue_weekly_add=issue_weekly_add,
             issue_monthly_add=issue_monthly_add,
+            agent_quota_bonus=agent_quota_bonus,
+            agent_daily_add=agent_daily_add,
+            agent_weekly_add=agent_weekly_add,
+            agent_monthly_add=agent_monthly_add,
             description=description,
             sort_order=sort_order,
         )
@@ -626,6 +638,10 @@ class PaymentService:
             "issue_daily_add": plan.issue_daily_add or 0,
             "issue_weekly_add": plan.issue_weekly_add or 0,
             "issue_monthly_add": plan.issue_monthly_add or 0,
+            "agent_quota_bonus": plan.agent_quota_bonus or 0,
+            "agent_daily_add": plan.agent_daily_add or 0,
+            "agent_weekly_add": plan.agent_weekly_add or 0,
+            "agent_monthly_add": plan.agent_monthly_add or 0,
         }
 
     async def _apply_plan_to_user(self, user: TelegramUser, plan: Plan) -> TelegramUser:
@@ -648,6 +664,15 @@ class PaymentService:
             user.issue_weekly_quota += values["issue_weekly_add"]
         if values["issue_monthly_add"] > 0:
             user.issue_monthly_quota += values["issue_monthly_add"]
+
+        if values["agent_quota_bonus"] > 0:
+            user.agent_daily_quota += values["agent_quota_bonus"]
+        if values["agent_daily_add"] > 0:
+            user.agent_daily_quota += values["agent_daily_add"]
+        if values["agent_weekly_add"] > 0:
+            user.agent_weekly_quota += values["agent_weekly_add"]
+        if values["agent_monthly_add"] > 0:
+            user.agent_monthly_quota += values["agent_monthly_add"]
 
         await self.session.flush()
         return user
@@ -677,6 +702,10 @@ class PaymentService:
             existing.applied_issue_daily_add = values["issue_daily_add"]
             existing.applied_issue_weekly_add = values["issue_weekly_add"]
             existing.applied_issue_monthly_add = values["issue_monthly_add"]
+            existing.applied_agent_quota_bonus = values["agent_quota_bonus"]
+            existing.applied_agent_daily_add = values["agent_daily_add"]
+            existing.applied_agent_weekly_add = values["agent_weekly_add"]
+            existing.applied_agent_monthly_add = values["agent_monthly_add"]
             existing.last_order_id = order_id
             await self.session.flush()
             return existing
@@ -694,6 +723,10 @@ class PaymentService:
             applied_issue_daily_add=values["issue_daily_add"],
             applied_issue_weekly_add=values["issue_weekly_add"],
             applied_issue_monthly_add=values["issue_monthly_add"],
+            applied_agent_quota_bonus=values["agent_quota_bonus"],
+            applied_agent_daily_add=values["agent_daily_add"],
+            applied_agent_weekly_add=values["agent_weekly_add"],
+            applied_agent_monthly_add=values["agent_monthly_add"],
             last_order_id=order_id,
         )
         self.session.add(sub)
@@ -717,6 +750,16 @@ class PaymentService:
             "issue_monthly_add": getattr(
                 subscription, "applied_issue_monthly_add", None
             ),
+            "agent_quota_bonus": getattr(
+                subscription, "applied_agent_quota_bonus", None
+            ),
+            "agent_daily_add": getattr(subscription, "applied_agent_daily_add", None),
+            "agent_weekly_add": getattr(
+                subscription, "applied_agent_weekly_add", None
+            ),
+            "agent_monthly_add": getattr(
+                subscription, "applied_agent_monthly_add", None
+            ),
         }
 
         if all(value is None for value in applied_values.values()):
@@ -729,6 +772,10 @@ class PaymentService:
                 "issue_daily_add": plan.issue_daily_add,
                 "issue_weekly_add": plan.issue_weekly_add,
                 "issue_monthly_add": plan.issue_monthly_add,
+                "agent_quota_bonus": plan.agent_quota_bonus,
+                "agent_daily_add": plan.agent_daily_add,
+                "agent_weekly_add": plan.agent_weekly_add,
+                "agent_monthly_add": plan.agent_monthly_add,
             }
 
         user.daily_quota = max(
@@ -757,6 +804,20 @@ class PaymentService:
             0,
             user.issue_monthly_quota - (applied_values["issue_monthly_add"] or 0),
         )
+        user.agent_daily_quota = max(
+            0,
+            user.agent_daily_quota
+            - (applied_values["agent_quota_bonus"] or 0)
+            - (applied_values["agent_daily_add"] or 0),
+        )
+        user.agent_weekly_quota = max(
+            0,
+            user.agent_weekly_quota - (applied_values["agent_weekly_add"] or 0),
+        )
+        user.agent_monthly_quota = max(
+            0,
+            user.agent_monthly_quota - (applied_values["agent_monthly_add"] or 0),
+        )
         quota_checks = [
             ("PR daily", user.daily_used, user.daily_quota),
             ("PR weekly", user.weekly_used, user.weekly_quota),
@@ -764,6 +825,9 @@ class PaymentService:
             ("Issue daily", user.issue_daily_used, user.issue_daily_quota),
             ("Issue weekly", user.issue_weekly_used, user.issue_weekly_quota),
             ("Issue monthly", user.issue_monthly_used, user.issue_monthly_quota),
+            ("Agent daily", user.agent_daily_used, user.agent_daily_quota),
+            ("Agent weekly", user.agent_weekly_used, user.agent_weekly_quota),
+            ("Agent monthly", user.agent_monthly_used, user.agent_monthly_quota),
         ]
         for label, used, quota in quota_checks:
             if used > quota:
