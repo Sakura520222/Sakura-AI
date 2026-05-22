@@ -28,16 +28,13 @@ from webauthn.helpers.structs import (
 )
 
 from backend.core.config import get_settings
+from backend.core.constants import ANDROID_APK_KEY_HASH_ORIGINS
 from backend.core.redis import get_async_redis
 from backend.models.telegram_models import TelegramUser, UserWebAuthnCredential
 
 _WEBAUTHN_CHALLENGE_PREFIX = "webauthn:challenge:"
 _webauthn_challenge_fallback: dict[str, dict] = {}
 _MAX_FALLBACK_CHALLENGES = 1000
-_DEFAULT_ANDROID_PASSKEY_ORIGINS = (
-    "android:apk-key-hash:S1dtx2UHTOwaUDfi8f7xrEdDfofmcEz4fgvRXLSnyzg",
-    "android:apk-key-hash:CzQNOrqlE6aOMd628-CB02Z8skMxr5DlUtZDjfRBEqA",
-)
 
 
 @dataclass(frozen=True)
@@ -70,13 +67,18 @@ def credential_id_hash(credential_id: str) -> str:
     return hashlib.sha256(credential_id.encode("utf-8")).hexdigest()
 
 
+def _normalize_origin(origin: str) -> str:
+    """Trim whitespace and trailing slash from an origin string."""
+    return origin.strip().removesuffix("/")
+
+
 def _split_origins(value: str | None) -> list[str]:
     """Split comma/newline separated origin configuration values."""
     if not value:
         return []
     normalized = value.replace("\r", "\n").replace(",", "\n")
     return [
-        origin.strip().rstrip("/")
+        _normalize_origin(origin)
         for origin in normalized.splitlines()
         if origin.strip()
     ]
@@ -87,7 +89,7 @@ def _dedupe_origins(origins: list[str]) -> list[str]:
     seen: set[str] = set()
     result: list[str] = []
     for origin in origins:
-        normalized = origin.strip().rstrip("/")
+        normalized = _normalize_origin(origin)
         if not normalized or normalized in seen:
             continue
         seen.add(normalized)
@@ -132,7 +134,7 @@ def get_rp_config(request_origin: str | None = None) -> WebAuthnRpConfig:
     allowed_origins = _dedupe_origins(
         [
             origin,
-            *_DEFAULT_ANDROID_PASSKEY_ORIGINS,
+            *ANDROID_APK_KEY_HASH_ORIGINS,
             *_split_origins(settings.passkeys_allowed_origins),
         ]
     )
