@@ -49,6 +49,7 @@ _ENV_TO_SETTINGS_KEY: dict[str, str] = {
     "GITHUB_OAUTH_CLIENT_ID": "github_oauth_client_id",
     "GITHUB_OAUTH_CLIENT_SECRET": "github_oauth_client_secret",
     "GITHUB_OAUTH_REDIRECT_URI": "github_oauth_redirect_uri",
+    "MOBILE_OAUTH_ALLOWED_REDIRECT_URIS": "mobile_oauth_allowed_redirect_uris",
     # 嵌入 & 重排序
     "EMBEDDING_API_KEY": "embedding_api_key",
     "EMBEDDING_BASE_URL": "embedding_base_url",

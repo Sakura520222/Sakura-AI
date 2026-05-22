@@ -491,6 +491,18 @@
                             </button>
                         </div>
                     </div>
+
+                    <div>
+                        <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+                            移动端允许回调 URI（可选）
+                        </label>
+                        <input type="text" x-model="form.mobile_oauth_allowed_redirect_uris"
+                               placeholder="myapp://oauth/callback, anotherapp://oauth/callback"
+                               class="w-full px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-sm text-gray-900 dark:text-white focus:ring-2 focus:ring-pink-500 focus:border-transparent outline-none">
+                        <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
+                            移动端 OAuth 自定义 scheme 回调白名单，多个值用英文逗号分隔；为空时仅允许上方默认回调地址。
+                        </p>
+                    </div>
                 </div>
             </div>
 
@@ -589,6 +601,7 @@ function setupWizard() {
             github_oauth_client_id: '',
             github_oauth_client_secret: '',
             github_oauth_redirect_uri: '',
+            mobile_oauth_allowed_redirect_uris: '',
             bot_username: '',
         },
         aiProviders: [
@@ -849,6 +862,7 @@ function setupWizard() {
             if (this.form.github_oauth_client_id) map.GITHUB_OAUTH_CLIENT_ID = this.form.github_oauth_client_id;
             if (this.form.github_oauth_client_secret) map.GITHUB_OAUTH_CLIENT_SECRET = this.form.github_oauth_client_secret;
             if (this.form.github_oauth_redirect_uri) map.GITHUB_OAUTH_REDIRECT_URI = this.form.github_oauth_redirect_uri;
+            if (this.form.mobile_oauth_allowed_redirect_uris) map.MOBILE_OAUTH_ALLOWED_REDIRECT_URIS = this.form.mobile_oauth_allowed_redirect_uris;
             return map;
         },
     }

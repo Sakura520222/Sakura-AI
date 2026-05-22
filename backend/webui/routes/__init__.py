@@ -23,6 +23,7 @@ from backend.webui.routes import (
     sakura_memory,
     system_config,
     vector_db,
+    assetlinks,
 )
 
 # WebUI routes are mounted at root (no prefix) so the dashboard is served at /.
@@ -48,6 +49,7 @@ webui_router.include_router(scans.router)
 webui_router.include_router(billing.router)
 webui_router.include_router(security.router)
 webui_router.include_router(agent_team.router)
+webui_router.include_router(assetlinks.router)
 webui_router.include_router(agent_skills.router)
 webui_router.include_router(sakura_memory.router)
 webui_router.include_router(system_config.router)

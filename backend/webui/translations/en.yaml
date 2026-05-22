@@ -1245,6 +1245,8 @@ system_config:
   key_github_oauth_client_secret_desc: "GitHub OAuth App Client Secret"
   key_github_oauth_redirect_uri: "Redirect URI"
   key_github_oauth_redirect_uri_desc: "OAuth callback URL, must match the GitHub OAuth App configuration"
+  key_mobile_oauth_allowed_redirect_uris: "Mobile Allowed Redirect URIs"
+  key_mobile_oauth_allowed_redirect_uris_desc: "Allowlist for mobile OAuth custom redirect URIs, separated by commas. Leave empty to allow only the default OAuth redirect URI."
   key_telegram_bot_token: "Bot Token"
   key_telegram_bot_token_desc: "Telegram Bot API Token from @BotFather"
   key_app_domain: "App Domain"

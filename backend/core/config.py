@@ -1436,6 +1436,7 @@ DYNAMIC_CONFIG_LABELS: dict[str, str] = {
     "github_oauth_client_id": "GitHub OAuth Client ID",
     "github_oauth_client_secret": "GitHub OAuth Client Secret",
     "github_oauth_redirect_uri": "GitHub OAuth 回调地址",
+    "mobile_oauth_allowed_redirect_uris": "移动端 OAuth 允许回调 URI",
     # 仓库扫描配置标签
     "enable_repo_scan": "启用仓库扫描",
     "scan_interval_minutes": "扫描间隔（分钟）",
@@ -1806,6 +1807,7 @@ CORE_CONFIG_KEYS = frozenset(
         "github_oauth_client_id",
         "github_oauth_client_secret",
         "github_oauth_redirect_uri",
+        "mobile_oauth_allowed_redirect_uris",
         "database_url",
         "summary_provider",
     }
