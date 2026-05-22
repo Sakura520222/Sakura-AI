@@ -349,7 +349,7 @@ async def test_preview_task_from_issue_returns_draft(monkeypatch):
 
     response = await preview_task_from_issue(
         db=DraftDb(),
-        user={"user_id": 1},
+        user={"user_id": 1, "sub": "owner", "role": "admin"},
         csrf_token="token",
         issue_ref="owner/repo#123",
     )
@@ -402,7 +402,7 @@ async def test_preview_task_from_issue_serializes_datetime_context(monkeypatch):
 
     response = await preview_task_from_issue(
         db=DraftDb(),
-        user={"user_id": 1},
+        user={"user_id": 1, "sub": "owner", "role": "admin"},
         csrf_token="token",
         issue_ref="owner/repo#123",
     )
@@ -488,7 +488,7 @@ async def test_create_task_from_issue_passes_edited_overrides(monkeypatch):
     response = await create_task_from_issue(
         background_tasks=background_tasks,
         db=DraftDb(),
-        user={"user_id": 1, "sub": "admin"},
+        user={"user_id": 1, "sub": "admin", "role": "admin"},
         csrf_token="token",
         issue_ref="owner/repo#123",
         title="Edited title",
