@@ -37,7 +37,11 @@ router = APIRouter(prefix="/users", tags=["Users"])
 
 
 def _serialize_quota_usage_log(log: QuotaUsageLog) -> dict:
-    """序列化配额使用日志。"""
+    """序列化配额使用日志。
+
+    ``quota_type`` 是 ``usage_type`` 的别名，用于兼容前端展示。
+    ``used_count`` 固定为 1，因为每条日志代表一次使用。
+    """
     usage_type = log.usage_type
     return {
         "id": log.id,
