@@ -36,6 +36,21 @@ from backend.api.v1.responses import (
 router = APIRouter(prefix="/users", tags=["Users"])
 
 
+def _serialize_quota_usage_log(log: QuotaUsageLog) -> dict:
+    """序列化配额使用日志。"""
+    usage_type = log.usage_type
+    return {
+        "id": log.id,
+        "quota_type": usage_type,
+        "usage_type": usage_type,
+        "usage_category": log.usage_category,
+        "repo_name": log.repo_name,
+        "pr_number": log.pr_number,
+        "used_count": 1,
+        "created_at": log.created_at.isoformat() if log.created_at else None,
+    }
+
+
 def _validate_user_input(telegram_id: int, github_username: str) -> str | None:
     """校验用户输入（不修改原值），返回错误信息或 None"""
     if telegram_id <= 0:
@@ -214,15 +229,7 @@ async def get_user(
         .limit(20)
     )
     logs = logs_result.scalars().all()
-    data["usage_logs"] = [
-        {
-            "id": log.id,
-            "quota_type": log.quota_type,
-            "used_count": log.used_count,
-            "created_at": log.created_at.isoformat() if log.created_at else None,
-        }
-        for log in logs
-    ]
+    data["usage_logs"] = [_serialize_quota_usage_log(log) for log in logs]
 
     return success_response(data=data)
 
