@@ -22,12 +22,13 @@ class TestFingerprintToApkKeyHash:
         assert "=" not in b64_part
 
     def test_fingerprint_without_colons(self):
+        # 使用生产配置中的第一个指纹（去除冒号）验证无分隔符格式
         fp = "4B576DC765074CEC1A5037E2F1FEF1AC47437E87E6704CF87E0BD15CB4A7CB38"
         result = _fingerprint_to_apk_key_hash(fp)
         assert result.startswith("android:apk-key-hash:")
 
     def test_known_value(self):
-        # 手工验证: 全零 → base64url(32 zero bytes)
+        # 验证命令: python -c "import base64; print(base64.urlsafe_b64encode(b'\x00'*32).rstrip(b'=').decode())"
         fp = "00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00"
         assert _fingerprint_to_apk_key_hash(fp) == "android:apk-key-hash:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
 
