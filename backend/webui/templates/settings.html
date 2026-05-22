@@ -258,7 +258,14 @@ document.getElementById('register-passkey-btn').addEventListener('click', async 
         if (!verifyJson.success) throw new Error(localizePasskeyMessage(verifyJson.message, 'Passkey registration failed'));
         window.location.reload();
     } catch (error) {
-        errorEl.textContent = error.message || '{{ _("auth.passkey_failed") }}';
+        if (isWebAuthnUserCancel(error)) return;
+        errorEl.textContent = classifyWebAuthnError(error, {
+            passkey_failed: '{{ _("auth.passkey_failed") }}',
+            passkey_credential_manager_error: '{{ _("auth.passkey_credential_manager_error") }}',
+            passkey_security_error: '{{ _("auth.passkey_security_error") }}',
+            passkey_already_registered: '{{ _("auth.passkey_already_registered") }}',
+            passkey_not_supported: '{{ _("auth.passkey_not_supported") }}',
+        });
         errorEl.classList.remove('hidden');
     }
 });

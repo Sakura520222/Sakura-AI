@@ -132,9 +132,12 @@ auth:
   verify: "Verify"
   verify_with_passkey: "Verify with Passkey"
   passkey_not_supported: "This browser does not support passkeys."
-  passkey_failed: "Passkey verification failed"
+  passkey_failed: "Passkey operation failed"
+  passkey_credential_manager_error: "Unable to communicate with the credential manager. Please try the built-in password manager (e.g. Google Password Manager) or a hardware security key."
+  passkey_security_error: "Passkey security error. Please ensure the site is accessed over HTTPS with the correct domain."
+  passkey_already_registered: "This authenticator has already been registered."
 
-# ========== Navigation ==========
+# ========== Navigation =========="
 nav:
   toggle_sidebar: "Toggle sidebar"
   toggle_dark: "Switch to dark mode"

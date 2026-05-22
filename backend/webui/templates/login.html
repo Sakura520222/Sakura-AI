@@ -210,12 +210,14 @@
                     showError(verifyData.message || '{{ _("toast.passkey_login_failed") }}');
                 }
             } catch (e) {
-                if (e.name === 'NotAllowedError') {
-                    // 用户取消了 passkey 选择器，静默处理
-                    return;
-                }
+                if (isWebAuthnUserCancel(e)) return;
                 console.error('Passkey login error:', e);
-                showError(e.message || '{{ _("toast.passkey_login_failed") }}');
+                showError(classifyWebAuthnError(e, {
+                    passkey_failed: '{{ _("toast.passkey_login_failed") }}',
+                    passkey_credential_manager_error: '{{ _("auth.passkey_credential_manager_error") }}',
+                    passkey_security_error: '{{ _("auth.passkey_security_error") }}',
+                    passkey_not_supported: '{{ _("auth.passkey_not_supported") }}',
+                }));
             } finally {
                 btn.disabled = false;
                 btn.style.opacity = '1';

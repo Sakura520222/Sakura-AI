@@ -132,9 +132,12 @@ auth:
   verify: "验证"
   verify_with_passkey: "使用通行密钥验证"
   passkey_not_supported: "当前浏览器不支持通行密钥。"
-  passkey_failed: "通行密钥验证失败"
+  passkey_failed: "通行密钥操作失败"
+  passkey_credential_manager_error: "无法与密码管理器通信，请尝试使用系统内置密码管理器（如 Google 密码管理器）或硬件安全密钥。"
+  passkey_security_error: "通行密钥安全错误，请确保通过 HTTPS 并使用正确域名访问本站。"
+  passkey_already_registered: "该验证器已注册过通行密钥。"
 
-# ========== 导航 / Navigation ==========
+# ========== 导航 / Navigation =========="
 nav:
   toggle_sidebar: "切换侧边栏"
   toggle_dark: "切换到暗色模式"
