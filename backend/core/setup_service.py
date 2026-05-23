@@ -102,7 +102,7 @@ class SetupService:
             }
 
         try:
-            engine = create_async_engine(database_url, pool_pre_ping=True)
+            engine = create_async_engine(database_url)
             async with engine.connect() as conn:
                 await conn.execute(select(1))
             await engine.dispose()
