@@ -1173,6 +1173,14 @@ billing:
   batch_delete: "Delete Selected"
   batch_clear: "Clear Selection"
   confirm_batch_delete: "Are you sure you want to delete selected items? Used codes will be skipped."
+  payment_result: "Payment Result"
+  payment_success: "Payment Successful"
+  payment_processing: "Your order is being processed, quota will be credited shortly"
+  payment_cancelled: "Payment Cancelled"
+  payment_cancelled_desc: "You have cancelled the payment. You can purchase again anytime."
+  payment_failed: "Payment Failed"
+  payment_failed_desc: "An error occurred during payment. Please try again later or contact support."
+  back_to_plans: "Back to Plans"
 
 # ========== About ==========
 about:
@@ -1391,6 +1399,8 @@ toast:
   numeric_required: "{field_key} must be a valid number"
   value_range: "{field_key} must be between {min_v}-{max_v}"
   value_invalid: "{field_key} value is invalid"
+  refund_success: "Refund successful, order: {order_no}"
+  payment_error: "Payment error: {error}"
 
 # ========== Telegram MFA Notifications ====
 telegram_mfa:

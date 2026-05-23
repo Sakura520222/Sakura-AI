@@ -1,0 +1,235 @@
+"""Stripe 支付网关实现
+
+使用 Stripe Checkout Session 模式（Stripe 托管支付页面）。
+"""
+
+from typing import Optional
+
+import stripe
+from loguru import logger
+
+from backend.services.payment.gateway_base import (
+    PaymentGateway,
+    PaymentIntentResult,
+    PaymentStatusResult,
+    RefundResult,
+    WebhookEvent,
+    WebhookEventType,
+)
+
+
+class StripeGateway(PaymentGateway):
+    """Stripe Checkout Session 网关"""
+
+    def __init__(self, api_key: str, webhook_secret: str):
+        self._api_key = api_key
+        self._webhook_secret = webhook_secret
+
+    async def create_payment(
+        self,
+        order_no: str,
+        amount_cents: int,
+        currency: str,
+        plan_name: str,
+        user_id: int,
+        success_url: str,
+        cancel_url: str,
+        metadata: Optional[dict[str, str]] = None,
+    ) -> PaymentIntentResult:
+        try:
+            session_meta = {"order_no": order_no, "user_id": str(user_id)}
+            if metadata:
+                session_meta.update(metadata)
+
+            session = stripe.checkout.Session.create(
+                api_key=self._api_key,
+                mode="payment",
+                line_items=[
+                    {
+                        "price_data": {
+                            "currency": currency.lower(),
+                            "product_data": {
+                                "name": plan_name,
+                            },
+                            "unit_amount": amount_cents,
+                        },
+                        "quantity": 1,
+                    }
+                ],
+                metadata=session_meta,
+                success_url=success_url,
+                cancel_url=cancel_url,
+            )
+
+            logger.info(
+                "Stripe Checkout Session created: session_id={}, order_no={}",
+                session.id,
+                order_no,
+            )
+
+            return PaymentIntentResult(
+                success=True,
+                provider_tx_id=session.id,
+                checkout_url=session.url or "",
+                client_secret="",
+                raw_data={
+                    "session_id": session.id,
+                    "session_url": session.url,
+                    "payment_status": session.payment_status,
+                },
+            )
+        except stripe.error.StripeError as e:
+            logger.error("Stripe create_payment failed: {}", e)
+            return PaymentIntentResult(
+                success=False,
+                error_message=str(e),
+            )
+        except Exception as e:
+            logger.error("Unexpected error in Stripe create_payment: {}", e)
+            return PaymentIntentResult(
+                success=False,
+                error_message=str(e),
+            )
+
+    def verify_webhook(
+        self,
+        payload: bytes,
+        headers: dict[str, str],
+    ) -> WebhookEvent:
+        signature = headers.get("stripe-signature", "")
+        try:
+            event = stripe.Webhook.construct_event(
+                payload=payload,
+                sig_header=signature,
+                secret=self._webhook_secret,
+            )
+        except stripe.error.SignatureVerificationError as e:
+            logger.warning("Stripe webhook signature verification failed: {}", e)
+            return WebhookEvent(event_type=WebhookEventType.UNKNOWN)
+        except Exception as e:
+            logger.warning("Stripe webhook construction failed: {}", e)
+            return WebhookEvent(event_type=WebhookEventType.UNKNOWN)
+
+        event_type = event.get("type", "")
+        event_data = event.get("data", {}).get("object", {})
+
+        type_map = {
+            "checkout.session.completed": WebhookEventType.PAYMENT_COMPLETED,
+            "checkout.session.expired": WebhookEventType.PAYMENT_EXPIRED,
+            "charge.refunded": WebhookEventType.PAYMENT_REFUNDED,
+        }
+        resolved_type = type_map.get(event_type, WebhookEventType.UNKNOWN)
+
+        provider_tx_id = event_data.get("id", "")
+        order_no = event_data.get("metadata", {}).get("order_no", "")
+        amount_cents = event_data.get("amount_total", 0) or event_data.get("amount", 0)
+        currency = event_data.get("currency", "")
+
+        return WebhookEvent(
+            event_type=resolved_type,
+            provider_tx_id=provider_tx_id,
+            order_no=order_no,
+            amount_cents=amount_cents,
+            currency=currency,
+            raw_event=event,
+        )
+
+    async def refund(
+        self,
+        provider_tx_id: str,
+        amount_cents: Optional[int] = None,
+        reason: Optional[str] = None,
+    ) -> RefundResult:
+        try:
+            sessions = stripe.checkout.Session.list(
+                api_key=self._api_key,
+                limit=1,
+            )
+            payment_intent_id = None
+            for s in sessions.auto_paging_iter():
+                if s.id == provider_tx_id:
+                    payment_intent_id = s.payment_intent
+                    break
+
+            if not payment_intent_id:
+                session = stripe.checkout.Session.retrieve(
+                    provider_tx_id,
+                    api_key=self._api_key,
+                )
+                payment_intent_id = session.payment_intent
+
+            if not payment_intent_id:
+                return RefundResult(
+                    success=False,
+                    error_message="Cannot find payment intent for session",
+                )
+
+            refund_params = {
+                "api_key": self._api_key,
+                "payment_intent": payment_intent_id,
+            }
+            if amount_cents is not None:
+                refund_params["amount"] = amount_cents
+            if reason:
+                refund_params["reason"] = "requested_by_customer"
+
+            refund_obj = stripe.Refund.create(**refund_params)
+
+            logger.info(
+                "Stripe refund created: refund_id={}, provider_tx_id={}",
+                refund_obj.id,
+                provider_tx_id,
+            )
+
+            return RefundResult(
+                success=True,
+                refund_id=refund_obj.id,
+                amount_cents=refund_obj.amount or 0,
+                status=refund_obj.status or "",
+            )
+        except stripe.error.StripeError as e:
+            logger.error("Stripe refund failed: {}", e)
+            return RefundResult(
+                success=False,
+                error_message=str(e),
+            )
+        except Exception as e:
+            logger.error("Unexpected error in Stripe refund: {}", e)
+            return RefundResult(
+                success=False,
+                error_message=str(e),
+            )
+
+    async def get_payment_status(
+        self,
+        provider_tx_id: str,
+    ) -> PaymentStatusResult:
+        try:
+            session = stripe.checkout.Session.retrieve(
+                provider_tx_id,
+                api_key=self._api_key,
+            )
+            return PaymentStatusResult(
+                success=True,
+                status=session.payment_status or "",
+                provider_tx_id=session.id,
+                amount_cents=session.amount_total or 0,
+                currency=session.currency or "",
+                raw_data={
+                    "session_id": session.id,
+                    "payment_status": session.payment_status,
+                    "payment_intent": session.payment_intent,
+                },
+            )
+        except stripe.error.StripeError as e:
+            logger.error("Stripe get_payment_status failed: {}", e)
+            return PaymentStatusResult(
+                success=False,
+                error_message=str(e),
+            )
+        except Exception as e:
+            logger.error("Unexpected error in Stripe get_payment_status: {}", e)
+            return PaymentStatusResult(
+                success=False,
+                error_message=str(e),
+            )

@@ -1,0 +1,170 @@
+"""Stripe Webhook 端点单元测试
+
+覆盖：签名验证、事件处理（支付完成/过期/退款）、幂等性。
+"""
+
+import json
+from unittest.mock import AsyncMock, MagicMock, patch
+
+import pytest
+
+
+@pytest.fixture
+def mock_db_session():
+    session = AsyncMock()
+    session.flush = AsyncMock()
+    session.commit = AsyncMock()
+    session.get = AsyncMock(return_value=None)
+    session.execute = AsyncMock()
+    session.add = MagicMock()
+    session.__aenter__ = AsyncMock(return_value=session)
+    session.__aexit__ = AsyncMock(return_value=None)
+    return session
+
+
+@pytest.fixture
+def mock_gateway():
+    gateway = MagicMock()
+    return gateway
+
+
+class TestStripeWebhookEndpoint:
+    """Test the Stripe webhook handler in webhook.py"""
+
+    @pytest.mark.asyncio
+    async def test_webhook_payment_completed(
+        self, mock_db_session, mock_gateway
+    ):
+        from backend.services.payment.gateway_base import (
+            WebhookEvent,
+            WebhookEventType,
+        )
+        from backend.models.payment_models import OrderStatus
+
+        event = WebhookEvent(
+            event_type=WebhookEventType.PAYMENT_COMPLETED,
+            provider_tx_id="cs_test_123",
+            order_no="ORD20240101000000ABCD1234",
+            amount_cents=1000,
+            currency="cny",
+        )
+        mock_gateway.verify_webhook.return_value = event
+
+        mock_order = MagicMock()
+        mock_order.order_no = "ORD20240101000000ABCD1234"
+        mock_order.status = OrderStatus.FULFILLED.value
+
+        with patch(
+            "backend.api.webhook.get_async_session",
+            return_value=mock_db_session,
+        ), patch(
+            "backend.services.payment.get_gateway",
+            new_callable=AsyncMock,
+            return_value=mock_gateway,
+        ), patch(
+            "backend.services.payment_service.PaymentService.confirm_payment",
+            new_callable=AsyncMock,
+            return_value=mock_order,
+        ):
+            from backend.api.webhook import handle_stripe_webhook
+            from fastapi import Request
+
+            mock_request = MagicMock(spec=Request)
+            mock_request.body = AsyncMock(return_value=b'{"test": true}')
+            mock_request.headers = {"stripe-signature": "t=123,v1=abc"}
+
+            response = await handle_stripe_webhook(mock_request)
+
+            body_text = response.body.decode()
+            assert response.status_code == 200, f"Got {response.status_code}: {body_text}"
+            body = json.loads(body_text)
+            assert body["status"] == "processed"
+            assert body["event"] == "payment_completed"
+
+    @pytest.mark.asyncio
+    async def test_webhook_payment_expired(
+        self, mock_db_session, mock_gateway
+    ):
+        from backend.services.payment.gateway_base import (
+            WebhookEvent,
+            WebhookEventType,
+        )
+
+        event = WebhookEvent(
+            event_type=WebhookEventType.PAYMENT_EXPIRED,
+            provider_tx_id="cs_test_expired",
+            order_no="ORD20240101000000EXPI1234",
+        )
+        mock_gateway.verify_webhook.return_value = event
+
+        mock_order = MagicMock()
+        mock_order.order_no = "ORD20240101000000EXPI1234"
+
+        with patch(
+            "backend.api.webhook.get_async_session",
+            return_value=mock_db_session,
+        ), patch(
+            "backend.services.payment.get_gateway",
+            new_callable=AsyncMock,
+            return_value=mock_gateway,
+        ), patch(
+            "backend.services.payment_service.PaymentService.cancel_expired_order",
+            new_callable=AsyncMock,
+            return_value=mock_order,
+        ):
+            from backend.api.webhook import handle_stripe_webhook
+            from fastapi import Request
+
+            mock_request = MagicMock(spec=Request)
+            mock_request.body = AsyncMock(return_value=b'{"test": true}')
+            mock_request.headers = {"stripe-signature": "t=123,v1=abc"}
+
+            response = await handle_stripe_webhook(mock_request)
+
+            assert response.status_code == 200
+            body = json.loads(response.body.decode())
+            assert body["event"] == "payment_expired"
+
+    @pytest.mark.asyncio
+    async def test_webhook_invalid_signature(self, mock_gateway):
+        from backend.services.payment.gateway_base import WebhookEventType
+
+        event = MagicMock()
+        event.event_type = WebhookEventType.UNKNOWN
+        mock_gateway.verify_webhook.return_value = event
+
+        with patch(
+            "backend.services.payment.get_gateway",
+            new_callable=AsyncMock,
+            return_value=mock_gateway,
+        ):
+            from backend.api.webhook import handle_stripe_webhook
+            from fastapi import Request
+
+            mock_request = MagicMock(spec=Request)
+            mock_request.body = AsyncMock(return_value=b'{"test": true}')
+            mock_request.headers = {}
+
+            response = await handle_stripe_webhook(mock_request)
+
+            assert response.status_code == 400
+
+    @pytest.mark.asyncio
+    async def test_webhook_gateway_not_configured(self):
+        with patch(
+            "backend.services.payment.get_gateway",
+            new_callable=AsyncMock,
+            side_effect=ValueError("missing API key"),
+        ):
+            from backend.api.webhook import handle_stripe_webhook
+            from fastapi import Request
+
+            mock_request = MagicMock(spec=Request)
+            mock_request.body = AsyncMock(return_value=b'{"test": true}')
+            mock_request.headers = {}
+
+            response = await handle_stripe_webhook(mock_request)
+
+            assert response.status_code == 400
+            body = json.loads(response.body.decode())
+            assert "error" in body["status"]

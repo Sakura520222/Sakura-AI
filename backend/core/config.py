@@ -501,6 +501,13 @@ class Settings(BaseSettings):
     )
     payment_default_currency: str = Field("CNY", description="默认货币")
 
+    # Stripe 支付网关
+    stripe_api_key: str = Field("", description="Stripe Secret API Key")
+    stripe_webhook_secret: str = Field(
+        "", description="Stripe Webhook Signing Secret"
+    )
+    stripe_currency: str = Field("CNY", description="Stripe 默认货币")
+
     # ========== 代码索引配置 ==========
     enable_code_index: bool = True  # 是否启用代码索引功能
     auto_index_pr_changes: bool = True  # PR审查时自动索引变更文件
@@ -1248,6 +1255,9 @@ DYNAMIC_CONFIG_GROUPS: OrderedDict[str, dict] = OrderedDict(
                     "payment_enabled",
                     "payment_order_expire_minutes",
                     "payment_default_currency",
+                    "stripe_api_key",
+                    "stripe_webhook_secret",
+                    "stripe_currency",
                 ],
             },
         ),
@@ -1317,6 +1327,8 @@ DYNAMIC_CONFIG_SENSITIVE_KEYS = frozenset(
         "github_oauth_client_secret",
         "telegram_bot_token",
         "agent_team_api_key",
+    "stripe_api_key",
+    "stripe_webhook_secret",
     }
 )
 
@@ -1474,6 +1486,9 @@ DYNAMIC_CONFIG_LABELS: dict[str, str] = {
     "payment_enabled": "启用付费配额系统",
     "payment_order_expire_minutes": "订单过期时间（分钟）",
     "payment_default_currency": "默认货币",
+    "stripe_api_key": "Stripe API Key",
+    "stripe_webhook_secret": "Stripe Webhook Secret",
+    "stripe_currency": "Stripe 默认货币",
     # 核心配置标签
     "github_app_id": "GitHub App ID",
     "github_private_key": "GitHub App 私钥",
