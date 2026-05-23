@@ -1118,7 +1118,7 @@ class SakuraMemoryService:
 
             settings = get_settings()
             if not settings.sakura_knowledge_extraction_enabled:
-                logger.debug(
+                logger.info(
                     "[extract] 跳过知识提取: {} - 功能已禁用 (sakura_knowledge_extraction_enabled=False)",
                     repo_full_name,
                 )
@@ -1126,7 +1126,7 @@ class SakuraMemoryService:
 
             # 已提取过则跳过 / Skip if already extracted
             if state.knowledge_extracted:
-                logger.debug(
+                logger.info(
                     "[extract] 跳过知识提取: {} - 已完成提取 (knowledge_extracted=True)",
                     repo_full_name,
                 )
@@ -1137,7 +1137,7 @@ class SakuraMemoryService:
                 "knowledge_extraction", {}
             ).get("min_reflections", 10)
             if reflection_count < min_reflections:
-                logger.debug(
+                logger.info(
                     "[extract] 跳过知识提取: {} - 反思数不足 ({}/{})",
                     repo_full_name,
                     reflection_count,
