@@ -1118,10 +1118,18 @@ class SakuraMemoryService:
 
             settings = get_settings()
             if not settings.sakura_knowledge_extraction_enabled:
+                logger.info(
+                    "[extract] 跳过知识提取: {} - 功能已禁用 (sakura_knowledge_extraction_enabled=False)",
+                    repo_full_name,
+                )
                 return
 
             # 已提取过则跳过 / Skip if already extracted
             if state.knowledge_extracted:
+                logger.info(
+                    "[extract] 跳过知识提取: {} - 已完成提取 (knowledge_extracted=True)",
+                    repo_full_name,
+                )
                 return
 
             # 反思数不足则跳过 / Skip if insufficient reflections
@@ -1129,6 +1137,12 @@ class SakuraMemoryService:
                 "knowledge_extraction", {}
             ).get("min_reflections", 10)
             if reflection_count < min_reflections:
+                logger.info(
+                    "[extract] 跳过知识提取: {} - 反思数不足 ({}/{})",
+                    repo_full_name,
+                    reflection_count,
+                    min_reflections,
+                )
                 return
 
             logger.info(
@@ -1141,7 +1155,7 @@ class SakuraMemoryService:
             )
 
         except Exception as e:
-            logger.warning("[extract] 知识提取触发失败: {} - {}", repo_full_name, e)
+            logger.warning("[extract] 知识提取触发失败: {} - {}", repo_full_name, e, exc_info=True)
 
     async def extract_and_save_knowledge(
         self, repo, repo_full_name: str, reflection_count: int = 0
