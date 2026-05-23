@@ -1183,6 +1183,8 @@ billing:
   back_to_plans: "Back to Plans"
   refund: "Refund"
   confirm_refund: "Confirm refund? Quotas will be revoked and payment will be returned to the original payment method."
+  confirm_delete_order: "Delete this order record? This action cannot be undone."
+  order_deleted: "Order deleted"
 
 # ========== About ==========
 about:
