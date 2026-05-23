@@ -691,8 +691,17 @@ class PaymentService:
                 reason="requested_by_customer",
             )
             if not refund_result.success:
-                raise PaymentError(
-                    f"Refund failed via gateway: {refund_result.error_message}"
+                # Idempotent: if already refunded in Stripe, proceed locally
+                already_refunded = "already been refunded" in str(
+                    refund_result.error_message
+                )
+                if not already_refunded:
+                    raise PaymentError(
+                        f"Refund failed via gateway: {refund_result.error_message}"
+                    )
+                logger.info(
+                    "Order already refunded in gateway, proceeding locally: order_id={}",
+                    order_id,
                 )
 
             await self._log_payment(
@@ -713,7 +722,11 @@ class PaymentService:
                 operator_id=operator_id,
             )
 
-        # Claw back quotas for subscription plans
+        # Claw back quotas: subtract the same plan values that were added at purchase
+        if plan:
+            await self._clawback_plan_quotas(user, plan)
+
+        # Expire subscription linked to this order (if any)
         if plan and plan.plan_type == PlanType.SUBSCRIPTION.value:
             stmt = select(UserSubscription).where(
                 and_(
@@ -726,7 +739,8 @@ class PaymentService:
                 await self.session.execute(stmt)
             ).scalar_one_or_none()
             if subscription:
-                await self._expire_subscription(subscription, user, plan)
+                subscription.status = SubscriptionStatus.EXPIRED.value
+                await self.session.flush()
 
         order.status = OrderStatus.REFUNDED.value
         await self.session.flush()
@@ -978,6 +992,63 @@ class PaymentService:
         self.session.add(sub)
         await self.session.flush()
         return sub
+
+    async def _clawback_plan_quotas(
+        self, user: TelegramUser, plan: Plan
+    ) -> TelegramUser:
+        """退款时扣回套餐配额（与 _apply_plan_to_user 完全对称的减法操作）"""
+        values = self._plan_quota_values(plan)
+
+        user.daily_quota = max(
+            0,
+            user.daily_quota
+            - values["pr_quota_bonus"]
+            - values["pr_daily_add"],
+        )
+        user.weekly_quota = max(
+            0, user.weekly_quota - values["pr_weekly_add"]
+        )
+        user.monthly_quota = max(
+            0, user.monthly_quota - values["pr_monthly_add"]
+        )
+
+        user.issue_daily_quota = max(
+            0,
+            user.issue_daily_quota
+            - values["issue_quota_bonus"]
+            - values["issue_daily_add"],
+        )
+        user.issue_weekly_quota = max(
+            0,
+            user.issue_weekly_quota - values["issue_weekly_add"],
+        )
+        user.issue_monthly_quota = max(
+            0,
+            user.issue_monthly_quota - values["issue_monthly_add"],
+        )
+
+        user.agent_daily_quota = max(
+            0,
+            user.agent_daily_quota
+            - values["agent_quota_bonus"]
+            - values["agent_daily_add"],
+        )
+        user.agent_weekly_quota = max(
+            0,
+            user.agent_weekly_quota - values["agent_weekly_add"],
+        )
+        user.agent_monthly_quota = max(
+            0,
+            user.agent_monthly_quota - values["agent_monthly_add"],
+        )
+
+        await self.session.flush()
+        logger.info(
+            "Clawed back plan quotas for user_id={}, plan={}",
+            user.id,
+            plan.name,
+        )
+        return user
 
     async def _expire_subscription(
         self, subscription: UserSubscription, user: TelegramUser, plan: Plan
