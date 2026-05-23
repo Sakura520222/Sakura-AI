@@ -1181,6 +1181,8 @@ billing:
   payment_failed: "Payment Failed"
   payment_failed_desc: "An error occurred during payment. Please try again later or contact support."
   back_to_plans: "Back to Plans"
+  refund: "Refund"
+  confirm_refund: "Confirm refund? Quotas will be revoked and payment will be returned to the original payment method."
 
 # ========== About ==========
 about:

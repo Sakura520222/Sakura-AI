@@ -18,36 +18,30 @@ def gateway():
 
 @pytest.fixture
 def mock_session_completed_event():
-    """Mock a checkout.session.completed event data"""
-    return {
-        "id": "cs_test_123",
-        "type": "checkout.session.completed",
-        "data": {
-            "object": {
-                "id": "cs_test_123",
-                "metadata": {"order_no": "ORD20240101000000ABCD1234", "user_id": "1"},
-                "amount_total": 1000,
-                "currency": "cny",
-                "payment_status": "paid",
-            }
-        },
-    }
+    """Mock a checkout.session.completed StripeObject (Stripe SDK v15+)"""
+    event = MagicMock()
+    event.type = "checkout.session.completed"
+    event_data_obj = MagicMock()
+    event_data_obj.id = "cs_test_123"
+    event_data_obj.metadata = {"order_no": "ORD20240101000000ABCD1234", "user_id": "1"}
+    event_data_obj.amount_total = 1000
+    event_data_obj.currency = "cny"
+    event_data_obj.payment_status = "paid"
+    event.data.object = event_data_obj
+    return event
 
 
 @pytest.fixture
 def mock_session_expired_event():
-    return {
-        "id": "cs_test_expired",
-        "type": "checkout.session.expired",
-        "data": {
-            "object": {
-                "id": "cs_test_expired",
-                "metadata": {"order_no": "ORD20240101000000EXPI1234", "user_id": "1"},
-                "amount_total": 1000,
-                "currency": "cny",
-            }
-        },
-    }
+    event = MagicMock()
+    event.type = "checkout.session.expired"
+    event_data_obj = MagicMock()
+    event_data_obj.id = "cs_test_expired"
+    event_data_obj.metadata = {"order_no": "ORD20240101000000EXPI1234", "user_id": "1"}
+    event_data_obj.amount_total = 1000
+    event_data_obj.currency = "cny"
+    event.data.object = event_data_obj
+    return event
 
 
 class TestStripeGatewayCreatePayment:
@@ -145,11 +139,10 @@ class TestStripeGatewayVerifyWebhook:
 
     @patch("backend.services.payment.stripe_gateway.stripe")
     def test_verify_webhook_unknown_event_type(self, mock_stripe, gateway):
-        mock_stripe.Webhook.construct_event.return_value = {
-            "id": "evt_123",
-            "type": "customer.created",
-            "data": {"object": {}},
-        }
+        event = MagicMock()
+        event.type = "customer.created"
+        event.data.object = MagicMock()
+        mock_stripe.Webhook.construct_event.return_value = event
 
         result = gateway.verify_webhook(
             payload=b"test",

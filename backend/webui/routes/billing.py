@@ -172,6 +172,15 @@ async def payment_result(
     order_no = request.query_params.get("order_no", "")
     status = request.query_params.get("status", "failed")
 
+    # If user cancelled, mark the order as cancelled
+    if status == "cancel" and order_no:
+        try:
+            svc = PaymentService(db)
+            await svc.cancel_expired_order(order_no)
+            await db.commit()
+        except Exception:
+            await db.rollback()
+
     return render_template(
         "billing/payment_result.html",
         request,
@@ -181,6 +190,60 @@ async def payment_result(
         order_no=order_no,
         status=status,
     )
+
+
+@router.post("/orders/{order_id}/refund")
+async def user_refund_order(
+    order_id: int,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    user: dict = Depends(require_auth),
+    csrf_token: str = Depends(require_csrf),
+):
+    """User requests a refund for their own fulfilled order"""
+    from backend.models.payment_models import Order, OrderStatus
+    from sqlalchemy import select, and_
+
+    # Verify the order belongs to this user and is refundable
+    stmt = select(Order).where(
+        and_(
+            Order.id == order_id,
+            Order.user_id == user["user_id"],
+            Order.status == OrderStatus.FULFILLED.value,
+        )
+    )
+    order = (await db.execute(stmt)).scalar_one_or_none()
+    if not order:
+        return toast_redirect(
+            "/billing/",
+            "toast.payment_error",
+            "error",
+            lang=detect_language(),
+            error="Order not found or not refundable",
+        )
+
+    svc = PaymentService(db)
+    try:
+        order = await svc.process_refund(
+            order_id=order_id,
+            operator_id=user["user_id"],
+        )
+        await db.commit()
+        return toast_redirect(
+            "/billing/",
+            "toast.refund_success",
+            lang=detect_language(),
+            order_no=order.order_no,
+        )
+    except PaymentError as e:
+        await db.rollback()
+        return toast_redirect(
+            "/billing/",
+            "toast.payment_error",
+            "error",
+            lang=detect_language(),
+            error=str(e),
+        )
 
 
 # ========== 管理员：套餐管理 ==========

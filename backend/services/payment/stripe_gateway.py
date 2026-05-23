@@ -110,20 +110,43 @@ class StripeGateway(PaymentGateway):
             logger.warning("Stripe webhook construction failed: {}", e)
             return WebhookEvent(event_type=WebhookEventType.UNKNOWN)
 
-        event_type = event.get("type", "")
-        event_data = event.get("data", {}).get("object", {})
+        # Stripe SDK v15+ returns stripe.Event (StripeObject), not a dict.
+        # Use attribute access instead of .get() to avoid KeyError.
+        event_type = getattr(event, "type", "") or ""
+        event_data_obj = getattr(event, "data", None)
+        event_data = getattr(event_data_obj, "object", None) if event_data_obj else None
 
         type_map = {
             "checkout.session.completed": WebhookEventType.PAYMENT_COMPLETED,
+            "checkout.session.async_payment_succeeded": WebhookEventType.PAYMENT_COMPLETED,
             "checkout.session.expired": WebhookEventType.PAYMENT_EXPIRED,
+            "checkout.session.async_payment_failed": WebhookEventType.PAYMENT_EXPIRED,
             "charge.refunded": WebhookEventType.PAYMENT_REFUNDED,
+            "refund.created": WebhookEventType.PAYMENT_REFUNDED,
+            "refund.updated": WebhookEventType.PAYMENT_REFUNDED,
         }
         resolved_type = type_map.get(event_type, WebhookEventType.UNKNOWN)
 
-        provider_tx_id = event_data.get("id", "")
-        order_no = event_data.get("metadata", {}).get("order_no", "")
-        amount_cents = event_data.get("amount_total", 0) or event_data.get("amount", 0)
-        currency = event_data.get("currency", "")
+        if resolved_type == WebhookEventType.UNKNOWN:
+            logger.warning("Stripe webhook: unmapped event type '{}'", event_type)
+            return WebhookEvent(event_type=WebhookEventType.UNKNOWN)
+
+        provider_tx_id = getattr(event_data, "id", "") or ""
+        # metadata is also a StripeObject in v15+, use getattr for attribute access
+        raw_metadata = getattr(event_data, "metadata", None)
+        if raw_metadata and isinstance(raw_metadata, dict):
+            order_no = raw_metadata.get("order_no", "")
+        elif raw_metadata:
+            # StripeObject: attribute access works via __getattr__ -> __getitem__
+            order_no = getattr(raw_metadata, "order_no", "") or ""
+        else:
+            order_no = ""
+        amount_cents = (
+            getattr(event_data, "amount_total", 0)
+            or getattr(event_data, "amount", 0)
+            or 0
+        )
+        currency = getattr(event_data, "currency", "") or ""
 
         return WebhookEvent(
             event_type=resolved_type,

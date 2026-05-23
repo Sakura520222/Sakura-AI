@@ -147,7 +147,9 @@ class TestStripeWebhookEndpoint:
 
             response = await handle_stripe_webhook(mock_request)
 
-            assert response.status_code == 400
+            assert response.status_code == 200
+            body = json.loads(response.body.decode())
+            assert body["status"] == "ignored"
 
     @pytest.mark.asyncio
     async def test_webhook_gateway_not_configured(self):

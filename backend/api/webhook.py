@@ -1431,10 +1431,9 @@ async def handle_stripe_webhook(
         event = gateway.verify_webhook(payload, headers)
 
         if event.event_type == WebhookEventType.UNKNOWN:
-            logger.warning("Stripe webhook: unverified or unknown event")
+            # Return 200 for unmapped but valid events so Stripe doesn't retry
             return JSONResponse(
-                status_code=400,
-                content={"status": "error", "message": "Invalid signature or unknown event"},
+                content={"status": "ignored", "message": "Event type not handled"}
             )
 
         async with get_async_session() as db:
@@ -1512,7 +1511,7 @@ async def handle_stripe_webhook(
             content={"status": "error", "message": str(e)},
         )
     except Exception as e:
-        logger.error("Stripe webhook unexpected error: {}", e, exc_info=True)
+        logger.error("Stripe webhook unexpected error: {} - {}", type(e).__name__, e, exc_info=True)
         return JSONResponse(
             status_code=500,
             content={"status": "error", "message": "Internal server error"},

@@ -512,6 +512,20 @@ class PaymentService:
         domain = settings.sanitized_app_domain
         currency = str(await self._get_stripe_currency())
 
+        # Stripe minimum amount validation (per currency)
+        stripe_minimums = {
+            "usd": 50, "eur": 50, "gbp": 30, "jpy": 50, "cny": 320,
+            "cad": 60, "aud": 60, "hkd": 400, "sgd": 50, "twd": 200,
+        }
+        min_cents = stripe_minimums.get(currency.lower(), 50)
+        if order.amount_cents < min_cents:
+            min_display = min_cents / 100
+            raise PaymentError(
+                f"Payment amount too low. Stripe requires a minimum of "
+                f"{min_display:.2f} {currency.upper()} "
+                f"(current: {order.amount_cents / 100:.2f} {currency.upper()})"
+            )
+
         success_url = f"https://{domain}/billing/payment/result?order_no={order.order_no}&status=success"
         cancel_url = f"https://{domain}/billing/payment/result?order_no={order.order_no}&status=cancel"
 
