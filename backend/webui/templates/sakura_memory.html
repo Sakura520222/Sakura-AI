@@ -40,8 +40,14 @@
         <div class="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 shadow-sm p-4">
             <div class="text-sm text-gray-500 dark:text-gray-400">知识提取</div>
             <div class="text-sm font-medium">
-                {% if repo_state.knowledge_extracted %}
+                {% if ke_status.status == "completed" %}
                 <span class="text-green-600">已完成</span>
+                {% elif ke_status.status == "disabled" %}
+                <span class="text-gray-500">已禁用</span>
+                {% elif ke_status.status == "insufficient" %}
+                <span class="text-yellow-600">{{ ke_status.detail }}</span>
+                {% elif ke_status.status == "ready" %}
+                <span class="text-blue-600">{{ ke_status.detail }}</span>
                 {% else %}
                 <span class="text-yellow-600">未提取</span>
                 {% endif %}
