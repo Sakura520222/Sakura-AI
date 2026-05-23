@@ -119,6 +119,70 @@ async def redeem_code(
         )
 
 
+@router.post("/purchase/{plan_id}")
+async def purchase_plan(
+    plan_id: int,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    user: dict = Depends(require_auth),
+    csrf_token: str = Depends(require_csrf),
+):
+    """Create a payment order and redirect to Stripe Checkout"""
+    svc = PaymentService(db)
+    try:
+        order = await svc.create_order(
+            user_id=user["user_id"],
+            plan_id=plan_id,
+            provider="stripe",
+        )
+        await db.commit()
+
+        checkout_url = getattr(order, "_checkout_url", "")
+        if checkout_url:
+            from fastapi.responses import RedirectResponse
+
+            return RedirectResponse(url=checkout_url, status_code=303)
+
+        return toast_redirect(
+            "/billing/",
+            "toast.payment_error",
+            "error",
+            lang=detect_language(),
+            error="No checkout URL returned",
+        )
+    except PaymentError as e:
+        await db.rollback()
+        return toast_redirect(
+            "/billing/",
+            "toast.payment_error",
+            "error",
+            lang=detect_language(),
+            error=str(e),
+        )
+
+
+@router.get("/payment/result")
+async def payment_result(
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    user: dict = Depends(require_auth),
+    user_prefs: dict = Depends(get_user_preferences),
+):
+    """Payment result page (Stripe redirects back here)"""
+    order_no = request.query_params.get("order_no", "")
+    status = request.query_params.get("status", "failed")
+
+    return render_template(
+        "billing/payment_result.html",
+        request,
+        user_prefs=user_prefs,
+        current_user=user,
+        active_page="billing",
+        order_no=order_no,
+        status=status,
+    )
+
+
 # ========== 管理员：套餐管理 ==========
 
 
@@ -582,7 +646,51 @@ async def admin_delete_code(
         )
 
 
-# ========== 管理员：套餐批量操作 ==========
+# ========== 管理员：订单退款 ==========
+
+
+@router.post("/admin/orders/{order_id}/refund")
+async def admin_refund_order(
+    order_id: int,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    user: dict = Depends(require_super_admin),
+    csrf_token: str = Depends(require_csrf),
+):
+    """管理员发起退款"""
+    svc = PaymentService(db)
+    try:
+        order = await svc.process_refund(
+            order_id=order_id,
+            operator_id=user["user_id"],
+        )
+        await db.commit()
+        await log_admin_action(
+            db,
+            admin_id=user["user_id"],
+            action="refund_order",
+            target_type="order",
+            target_id=str(order_id),
+            detail={
+                "order_no": order.order_no,
+                "status": order.status,
+            },
+        )
+        return toast_redirect(
+            "/billing/",
+            "toast.refund_success",
+            lang=detect_language(),
+            order_no=order.order_no,
+        )
+    except PaymentError as e:
+        await db.rollback()
+        return toast_redirect(
+            "/billing/",
+            "toast.payment_error",
+            "error",
+            lang=detect_language(),
+            error=str(e),
+        )
 
 
 @router.post("/admin/plans/batch-toggle")

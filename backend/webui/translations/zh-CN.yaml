@@ -1173,6 +1173,14 @@ billing:
   batch_delete: "批量删除"
   batch_clear: "取消选择"
   confirm_batch_delete: "确定要批量删除选中项吗？已使用的兑换码将被跳过。"
+  payment_result: "支付结果"
+  payment_success: "支付成功"
+  payment_processing: "订单正在处理中，配额将在几秒内到账"
+  payment_cancelled: "支付已取消"
+  payment_cancelled_desc: "你已取消本次支付，可以随时重新购买"
+  payment_failed: "支付失败"
+  payment_failed_desc: "支付过程中发生错误，请稍后重试或联系管理员"
+  back_to_plans: "返回套餐中心"
 
 # ========== 关于 / About ==========
 about:
@@ -1391,6 +1399,8 @@ toast:
   numeric_required: "{field_key} 必须是有效数值"
   value_range: "{field_key} 值须在 {min_v}-{max_v} 之间"
   value_invalid: "{field_key} 值无效"
+  refund_success: "退款成功，订单号: {order_no}"
+  payment_error: "支付错误: {error}"
 
 # ========== Telegram MFA 通知 / Telegram MFA Notifications ===="
 telegram_mfa:

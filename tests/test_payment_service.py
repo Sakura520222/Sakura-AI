@@ -436,3 +436,157 @@ class TestOrderNumber:
         order_no = PaymentService._generate_order_no()
         assert order_no.startswith("ORD")
         assert len(order_no) > 16
+
+
+@pytest.mark.asyncio
+class TestConfirmPayment:
+    async def test_confirm_payment_success(self, svc, mock_session, sample_user):
+        from backend.models.payment_models import Order
+
+        plan = Plan(
+            id=1,
+            name="Test Plan",
+            plan_type=PlanType.ONE_TIME.value,
+            price_cents=1000,
+            is_active=True,
+            pr_quota_bonus=5,
+        )
+        order = Order(
+            id=1,
+            order_no="ORD20240101000000ABCD1234",
+            user_id=sample_user.id,
+            plan_id=plan.id,
+            amount_cents=1000,
+            status=OrderStatus.PENDING.value,
+            payment_provider="stripe",
+            provider_tx_id="cs_test_123",
+        )
+
+        mock_result = MagicMock()
+        mock_result.scalar_one_or_none.return_value = order
+        mock_session.execute.return_value = mock_result
+        mock_session.get = AsyncMock(side_effect=lambda model, pk: {
+            id(sample_user): sample_user,
+            id(plan): plan,
+        }.get(id(model) if hasattr(model, '__hash__') else pk))
+
+        # Override get to return user and plan by type
+        async def mock_get(model, pk):
+            if model is TelegramUser and pk == sample_user.id:
+                return sample_user
+            if model is Plan and pk == plan.id:
+                return plan
+            return None
+
+        mock_session.get = AsyncMock(side_effect=mock_get)
+
+        svc.get_plan = AsyncMock(return_value=plan)
+
+        confirmed = await svc.confirm_payment(
+            order_no="ORD20240101000000ABCD1234",
+            provider_tx_id="cs_test_123",
+        )
+
+        assert confirmed.status == OrderStatus.FULFILLED.value
+        assert confirmed.paid_at is not None
+
+    async def test_confirm_payment_idempotent(self, svc, mock_session):
+        from backend.models.payment_models import Order
+
+        order = Order(
+            id=1,
+            order_no="ORD_ALREADY_PAID",
+            user_id=1,
+            plan_id=1,
+            status=OrderStatus.FULFILLED.value,
+            payment_provider="stripe",
+            provider_tx_id="cs_already",
+        )
+
+        mock_result = MagicMock()
+        mock_result.scalar_one_or_none.return_value = order
+        mock_session.execute.return_value = mock_result
+
+        result = await svc.confirm_payment(
+            order_no="ORD_ALREADY_PAID",
+            provider_tx_id="cs_already",
+        )
+
+        assert result.status == OrderStatus.FULFILLED.value
+
+    async def test_confirm_payment_order_not_found(self, svc, mock_session):
+        mock_result = MagicMock()
+        mock_result.scalar_one_or_none.return_value = None
+        mock_session.execute.return_value = mock_result
+
+        with pytest.raises(PaymentError, match="Order not found"):
+            await svc.confirm_payment(
+                order_no="ORD_NONEXISTENT",
+                provider_tx_id="cs_nonexistent",
+            )
+
+
+@pytest.mark.asyncio
+class TestCancelExpiredOrder:
+    async def test_cancel_expired_order(self, svc, mock_session):
+        from backend.models.payment_models import Order
+
+        order = Order(
+            id=1,
+            order_no="ORD_EXPIRED",
+            user_id=1,
+            plan_id=1,
+            status=OrderStatus.PENDING.value,
+            payment_provider="stripe",
+        )
+
+        mock_result = MagicMock()
+        mock_result.scalar_one_or_none.return_value = order
+        mock_session.execute.return_value = mock_result
+
+        cancelled = await svc.cancel_expired_order("ORD_EXPIRED")
+
+        assert cancelled.status == OrderStatus.CANCELLED.value
+
+    async def test_cancel_non_pending_order_raises(self, svc, mock_session):
+        from backend.models.payment_models import Order
+
+        order = Order(
+            id=1,
+            order_no="ORD_FULFILLED",
+            user_id=1,
+            plan_id=1,
+            status=OrderStatus.FULFILLED.value,
+        )
+
+        mock_result = MagicMock()
+        mock_result.scalar_one_or_none.return_value = order
+        mock_session.execute.return_value = mock_result
+
+        with pytest.raises(PaymentError, match="Cannot cancel order"):
+            await svc.cancel_expired_order("ORD_FULFILLED")
+
+
+@pytest.mark.asyncio
+class TestProcessRefund:
+    async def test_process_refund_not_fulfilled_raises(self, svc, mock_session):
+        from backend.models.payment_models import Order
+
+        order = Order(
+            id=1,
+            order_no="ORD_PENDING",
+            user_id=1,
+            plan_id=1,
+            status=OrderStatus.PENDING.value,
+        )
+        mock_session.get = AsyncMock(return_value=order)
+
+        with pytest.raises(PaymentError, match="only FULFILLED orders"):
+            await svc.process_refund(order_id=1)
+
+    async def test_process_refund_order_not_found(self, svc, mock_session):
+
+        mock_session.get = AsyncMock(return_value=None)
+
+        with pytest.raises(PaymentError, match="Order not found"):
+            await svc.process_refund(order_id=999)

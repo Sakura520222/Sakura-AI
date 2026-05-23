@@ -491,6 +491,238 @@ class PaymentService:
             detail=f"Order created, provider={provider}",
         )
 
+        # For external payment providers, create payment via gateway
+        from backend.services.payment import EXTERNAL_PAYMENT_PROVIDERS
+
+        if provider in EXTERNAL_PAYMENT_PROVIDERS:
+            checkout_url = await self._create_external_payment(order, plan, user_id)
+            order._checkout_url = checkout_url
+
+        return order
+
+    async def _create_external_payment(
+        self, order: Order, plan: Plan, user_id: int
+    ) -> str:
+        """Create payment via external gateway and return checkout URL"""
+        import json
+
+        from backend.services.payment import get_gateway
+
+        settings = get_settings()
+        domain = settings.sanitized_app_domain
+        currency = str(await self._get_stripe_currency())
+
+        success_url = f"https://{domain}/billing/payment/result?order_no={order.order_no}&status=success"
+        cancel_url = f"https://{domain}/billing/payment/result?order_no={order.order_no}&status=cancel"
+
+        gateway = await get_gateway(order.payment_provider)
+        result = await gateway.create_payment(
+            order_no=order.order_no,
+            amount_cents=order.amount_cents,
+            currency=currency,
+            plan_name=plan.name,
+            user_id=user_id,
+            success_url=success_url,
+            cancel_url=cancel_url,
+        )
+
+        if not result.success:
+            raise PaymentError(
+                f"Failed to create payment: {result.error_message}"
+            )
+
+        order.provider_tx_id = result.provider_tx_id
+        metadata = {
+            "checkout_url": result.checkout_url,
+            "session_id": result.provider_tx_id,
+        }
+        if order.metadata_json:
+            try:
+                existing = json.loads(order.metadata_json)
+                existing.update(metadata)
+                metadata = existing
+            except (json.JSONDecodeError, TypeError):
+                pass
+        order.metadata_json = json.dumps(metadata)
+        await self.session.flush()
+
+        await self._log_payment(
+            order_id=order.id,
+            user_id=order.user_id,
+            action=PaymentAction.CREATE,
+            detail=f"External payment created via {order.payment_provider}, "
+            f"tx_id={result.provider_tx_id}",
+        )
+
+        return result.checkout_url
+
+    async def _get_stripe_currency(self) -> str:
+        """Get Stripe currency from dynamic config, fallback to plan currency"""
+        from backend.core.config import get_dynamic_config
+
+        return str(
+            await get_dynamic_config("stripe_currency")
+            or await get_dynamic_config("payment_default_currency")
+            or "CNY"
+        )
+
+    async def confirm_payment(
+        self,
+        order_no: str,
+        provider_tx_id: str,
+    ) -> Order:
+        """Confirm payment for a PENDING order (PENDING -> PAID -> FULFILLED)"""
+        stmt = select(Order).where(
+            and_(
+                Order.order_no == order_no,
+                Order.provider_tx_id == provider_tx_id,
+            )
+        )
+        order = (await self.session.execute(stmt)).scalar_one_or_none()
+        if not order:
+            raise PaymentError(f"Order not found: {order_no}")
+
+        if order.status != OrderStatus.PENDING.value:
+            logger.warning(
+                "Order {} is already {}, skipping confirmation",
+                order_no,
+                order.status,
+            )
+            return order
+
+        user = await self.session.get(TelegramUser, order.user_id)
+        if not user:
+            raise PaymentError(f"User not found for order: {order_no}")
+
+        plan = await self.get_plan(order.plan_id)
+        if not plan:
+            raise PaymentError(f"Plan not found for order: {order_no}")
+
+        order.status = OrderStatus.PAID.value
+        order.paid_at = datetime.utcnow()
+
+        await self._log_payment(
+            order_id=order.id,
+            user_id=order.user_id,
+            action=PaymentAction.PAY,
+            detail=f"Payment confirmed via webhook, tx_id={provider_tx_id}",
+        )
+
+        order = await self._fulfill_order(order, user, plan)
+
+        logger.info(
+            "Payment confirmed and fulfilled: order_no={}, tx_id={}",
+            order_no,
+            provider_tx_id,
+        )
+        return order
+
+    async def cancel_expired_order(self, order_no: str) -> Order:
+        """Cancel an expired PENDING order"""
+        stmt = select(Order).where(Order.order_no == order_no)
+        order = (await self.session.execute(stmt)).scalar_one_or_none()
+        if not order:
+            raise PaymentError(f"Order not found: {order_no}")
+
+        if order.status != OrderStatus.PENDING.value:
+            raise PaymentError(
+                f"Cannot cancel order in status: {order.status}"
+            )
+
+        order.status = OrderStatus.CANCELLED.value
+        await self._log_payment(
+            order_id=order.id,
+            user_id=order.user_id,
+            action=PaymentAction.EXPIRE,
+            detail="Order cancelled (checkout session expired)",
+        )
+        await self.session.flush()
+
+        logger.info("Order cancelled: order_no={}", order_no)
+        return order
+
+    async def process_refund(
+        self,
+        order_id: int,
+        amount_cents: Optional[int] = None,
+        operator_id: Optional[int] = None,
+    ) -> Order:
+        """Process refund for a FULFILLED order"""
+        order = await self.session.get(Order, order_id)
+        if not order:
+            raise PaymentError(f"Order not found: {order_id}")
+
+        if order.status != OrderStatus.FULFILLED.value:
+            raise PaymentError(
+                f"Cannot refund order in status: {order.status}, "
+                "only FULFILLED orders can be refunded"
+            )
+
+        user = await self.session.get(TelegramUser, order.user_id)
+        if not user:
+            raise PaymentError(f"User not found for order: {order_id}")
+
+        plan = await self.get_plan(order.plan_id)
+
+        from backend.services.payment import EXTERNAL_PAYMENT_PROVIDERS, get_gateway
+
+        if (
+            order.payment_provider in EXTERNAL_PAYMENT_PROVIDERS
+            and order.provider_tx_id
+        ):
+            gateway = await get_gateway(order.payment_provider)
+            refund_result = await gateway.refund(
+                provider_tx_id=order.provider_tx_id,
+                amount_cents=amount_cents,
+                reason="requested_by_customer",
+            )
+            if not refund_result.success:
+                raise PaymentError(
+                    f"Refund failed via gateway: {refund_result.error_message}"
+                )
+
+            await self._log_payment(
+                order_id=order.id,
+                user_id=order.user_id,
+                action=PaymentAction.REFUND,
+                detail=f"Refund processed via {order.payment_provider}, "
+                f"refund_id={refund_result.refund_id}, "
+                f"amount={refund_result.amount_cents}",
+                operator_id=operator_id,
+            )
+        else:
+            await self._log_payment(
+                order_id=order.id,
+                user_id=order.user_id,
+                action=PaymentAction.REFUND,
+                detail=f"Manual refund by operator {operator_id}",
+                operator_id=operator_id,
+            )
+
+        # Claw back quotas for subscription plans
+        if plan and plan.plan_type == PlanType.SUBSCRIPTION.value:
+            stmt = select(UserSubscription).where(
+                and_(
+                    UserSubscription.user_id == order.user_id,
+                    UserSubscription.last_order_id == order.id,
+                    UserSubscription.status == SubscriptionStatus.ACTIVE.value,
+                )
+            )
+            subscription = (
+                await self.session.execute(stmt)
+            ).scalar_one_or_none()
+            if subscription:
+                await self._expire_subscription(subscription, user, plan)
+
+        order.status = OrderStatus.REFUNDED.value
+        await self.session.flush()
+
+        logger.info(
+            "Order refunded: order_id={}, provider={}, operator={}",
+            order_id,
+            order.payment_provider,
+            operator_id,
+        )
         return order
 
     async def grant_plan_to_user(

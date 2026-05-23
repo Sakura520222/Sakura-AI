@@ -40,6 +40,9 @@ chromadb>=0.4.0
 watchfiles>=0.20.0  # 文件监控
 python-slugify>=8.0.0  # Collection 名称 slugify
 
+# 支付网关
+stripe>=9.0.0
+
 # WebUI
 jinja2>=3.1.2
 python-jose[cryptography]>=3.3.0
