@@ -221,11 +221,22 @@
                         <td class="px-6 py-4 text-sm">
                             {% if order.status == 'fulfilled' and order.amount_cents > 0 %}
                             <form method="POST" action="/billing/orders/{{ order.id }}/refund"
-                                  onsubmit="return confirm('{{ _('billing.confirm_refund') }}');">
+                                  onsubmit="return confirm('{{ _('billing.confirm_refund') }}');"
+                                  class="inline">
                                 <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
                                 <button type="submit"
                                         class="text-red-600 hover:text-red-800 dark:text-red-400 dark:hover:text-red-300 text-xs font-medium">
                                     {{ _('billing.refund') }}
+                                </button>
+                            </form>
+                            {% elif order.status in ['pending', 'cancelled', 'expired', 'refunded'] %}
+                            <form method="POST" action="/billing/orders/{{ order.id }}/delete"
+                                  onsubmit="return confirm('{{ _('billing.confirm_delete_order') }}');"
+                                  class="inline">
+                                <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                                <button type="submit"
+                                        class="text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200 text-xs font-medium">
+                                    {{ _('common.delete') }}
                                 </button>
                             </form>
                             {% endif %}

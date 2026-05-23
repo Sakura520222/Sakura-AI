@@ -246,6 +246,56 @@ async def user_refund_order(
         )
 
 
+@router.post("/orders/{order_id}/delete")
+async def user_delete_order(
+    order_id: int,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    user: dict = Depends(require_auth),
+    csrf_token: str = Depends(require_csrf),
+):
+    """User deletes their own order record (only non-active statuses)"""
+    from backend.models.payment_models import Order, OrderStatus, PaymentLog
+    from sqlalchemy import select, and_
+
+    deletable_statuses = [
+        OrderStatus.PENDING.value,
+        OrderStatus.CANCELLED.value,
+        OrderStatus.EXPIRED.value,
+        OrderStatus.REFUNDED.value,
+    ]
+
+    stmt = select(Order).where(
+        and_(
+            Order.id == order_id,
+            Order.user_id == user["user_id"],
+            Order.status.in_(deletable_statuses),
+        )
+    )
+    order = (await db.execute(stmt)).scalar_one_or_none()
+    if not order:
+        return toast_redirect(
+            "/billing/",
+            "toast.payment_error",
+            "error",
+            lang=detect_language(),
+            error="Order not found or cannot be deleted",
+        )
+
+    # Delete related payment logs first
+    await db.execute(
+        PaymentLog.__table__.delete().where(PaymentLog.order_id == order_id)
+    )
+    await db.delete(order)
+    await db.commit()
+
+    return toast_redirect(
+        "/billing/",
+        "billing.order_deleted",
+        lang=detect_language(),
+    )
+
+
 # ========== 管理员：套餐管理 ==========
 
 
