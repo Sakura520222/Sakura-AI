@@ -1415,7 +1415,105 @@ async def handle_installation_event(payload: Dict[str, Any]) -> JSONResponse:
         )
 
 
-@router.get("/health")
-async def health_check() -> JSONResponse:
-    """健康检查端点"""
-    return JSONResponse(content={"status": "healthy", "service": "Sakura AI Reviewer"})
+@router.post("/stripe")
+async def handle_stripe_webhook(
+    request: Request,
+) -> JSONResponse:
+    """Handle Stripe webhook events (checkout.session.completed, etc.)"""
+    from backend.services.payment import get_gateway, WebhookEventType
+    from backend.services.payment_service import PaymentService, PaymentError
+
+    payload = await request.body()
+    headers = {k.lower(): v for k, v in request.headers.items()}
+
+    try:
+        gateway = await get_gateway("stripe")
+        event = gateway.verify_webhook(payload, headers)
+
+        if event.event_type == WebhookEventType.UNKNOWN:
+            logger.warning("Stripe webhook: unverified or unknown event")
+            return JSONResponse(
+                status_code=400,
+                content={"status": "error", "message": "Invalid signature or unknown event"},
+            )
+
+        async with get_async_session() as db:
+            svc = PaymentService(db)
+            try:
+                if event.event_type == WebhookEventType.PAYMENT_COMPLETED:
+                    order = await svc.confirm_payment(
+                        order_no=event.order_no,
+                        provider_tx_id=event.provider_tx_id,
+                    )
+                    await db.commit()
+                    logger.info(
+                        "Stripe webhook: payment confirmed for order {}",
+                        order.order_no,
+                    )
+                    return JSONResponse(
+                        content={"status": "processed", "event": "payment_completed"}
+                    )
+
+                elif event.event_type == WebhookEventType.PAYMENT_EXPIRED:
+                    order = await svc.cancel_expired_order(event.order_no)
+                    await db.commit()
+                    logger.info(
+                        "Stripe webhook: order expired/cancelled {}",
+                        order.order_no,
+                    )
+                    return JSONResponse(
+                        content={"status": "processed", "event": "payment_expired"}
+                    )
+
+                elif event.event_type == WebhookEventType.PAYMENT_REFUNDED:
+                    # For refund events from Stripe, find order by provider_tx_id
+                    from sqlalchemy import select
+                    from backend.models.payment_models import Order, OrderStatus
+
+                    stmt = select(Order).where(
+                        Order.provider_tx_id == event.provider_tx_id,
+                        Order.status == OrderStatus.FULFILLED.value,
+                    )
+                    order = (await db.execute(stmt)).scalar_one_or_none()
+                    if order:
+                        await svc.process_refund(order_id=order.id)
+                        await db.commit()
+                        logger.info(
+                            "Stripe webhook: refund processed for order {}",
+                            order.order_no,
+                        )
+                    else:
+                        logger.info(
+                            "Stripe webhook: refund event but no actionable order for tx {}",
+                            event.provider_tx_id,
+                        )
+                    return JSONResponse(
+                        content={"status": "processed", "event": "payment_refunded"}
+                    )
+
+                else:
+                    logger.info("Stripe webhook: ignoring event type {}", event.event_type)
+                    return JSONResponse(
+                        content={"status": "ignored", "event": str(event.event_type)}
+                    )
+
+            except PaymentError as e:
+                await db.rollback()
+                logger.warning("Stripe webhook processing error: {}", e)
+                return JSONResponse(
+                    status_code=200,
+                    content={"status": "error", "message": str(e)},
+                )
+
+    except ValueError as e:
+        logger.warning("Stripe webhook gateway error: {}", e)
+        return JSONResponse(
+            status_code=400,
+            content={"status": "error", "message": str(e)},
+        )
+    except Exception as e:
+        logger.error("Stripe webhook unexpected error: {}", e, exc_info=True)
+        return JSONResponse(
+            status_code=500,
+            content={"status": "error", "message": "Internal server error"},
+        )
