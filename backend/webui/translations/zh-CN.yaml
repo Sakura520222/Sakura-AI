@@ -1183,6 +1183,8 @@ billing:
   back_to_plans: "返回套餐中心"
   refund: "退款"
   confirm_refund: "确认退款？退款后配额将被收回，资金将原路退回。"
+  confirm_delete_order: "确认删除该订单记录？此操作不可撤销。"
+  order_deleted: "订单已删除"
 
 # ========== 关于 / About ==========
 about:
