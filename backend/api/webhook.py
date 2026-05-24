@@ -1,7 +1,7 @@
 """GitHub Webhook API端点"""
 
 from fastapi import APIRouter, Request, HTTPException, Header
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, PlainTextResponse
 from typing import Dict, Any, Optional
 import asyncio
 import re
@@ -1620,3 +1620,71 @@ async def handle_paddle_webhook(
             status_code=500,
             content={"status": "error", "message": "Internal server error"},
         )
+
+
+@router.post("/alipay", response_model=None)
+async def handle_alipay_webhook(
+    request: Request,
+):
+    """Handle Alipay async payment notification (当面付回调)
+
+    支付宝回调为 POST form-urlencoded，验签成功后返回纯文本 "success"。
+    """
+    from backend.services.payment import get_gateway, WebhookEventType
+    from backend.services.payment_service import PaymentService, PaymentError
+
+    payload = await request.body()
+    headers = {k.lower(): v for k, v in request.headers.items()}
+
+    try:
+        gateway = await get_gateway("alipay")
+        event = gateway.verify_webhook(payload, headers)
+
+        if event.event_type == WebhookEventType.UNKNOWN:
+            logger.info("Alipay webhook: ignoring unmapped event")
+            return PlainTextResponse("fail")
+
+        async with get_async_session() as db:
+            svc = PaymentService(db)
+            try:
+                if event.event_type == WebhookEventType.PAYMENT_COMPLETED:
+                    order = await svc.confirm_payment(
+                        order_no=event.order_no,
+                        provider_tx_id=event.provider_tx_id,
+                    )
+                    await db.commit()
+                    logger.info(
+                        "Alipay webhook: payment confirmed for order {}",
+                        order.order_no,
+                    )
+                    # 支付宝要求返回 "success" 纯文本
+                    return PlainTextResponse("success")
+
+                elif event.event_type == WebhookEventType.PAYMENT_EXPIRED:
+                    if event.order_no:
+                        order = await svc.cancel_expired_order(event.order_no)
+                        await db.commit()
+                        logger.info(
+                            "Alipay webhook: order closed {}",
+                            order.order_no,
+                        )
+                    return PlainTextResponse("success")
+
+                else:
+                    logger.info(
+                        "Alipay webhook: ignoring event type {}", event.event_type
+                    )
+                    return PlainTextResponse("success")
+
+            except PaymentError as e:
+                await db.rollback()
+                logger.warning("Alipay webhook processing error: {}", e)
+                # 仍返回 success 避免支付宝重复通知
+                return PlainTextResponse("success")
+
+    except ValueError as e:
+        logger.warning("Alipay webhook gateway error: {}", e)
+        return PlainTextResponse("fail")
+    except Exception as e:
+        logger.error("Alipay webhook unexpected error: {} - {}", type(e).__name__, e, exc_info=True)
+        return PlainTextResponse("fail")

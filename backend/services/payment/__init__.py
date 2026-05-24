@@ -24,8 +24,9 @@ __all__ = [
 # Provider name constants
 PROVIDER_STRIPE = "stripe"
 PROVIDER_PADDLE = "paddle"
+PROVIDER_ALIPAY = "alipay"
 PROVIDER_MANUAL = "manual"
 PROVIDER_REDEEM_CODE = "redeem_code"
 
 # Providers that require external payment gateway integration
-EXTERNAL_PAYMENT_PROVIDERS = {PROVIDER_STRIPE, PROVIDER_PADDLE}
+EXTERNAL_PAYMENT_PROVIDERS = {PROVIDER_STRIPE, PROVIDER_PADDLE, PROVIDER_ALIPAY}

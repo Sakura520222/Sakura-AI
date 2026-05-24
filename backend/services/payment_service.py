@@ -578,7 +578,7 @@ class PaymentService:
         return str(
             await get_dynamic_config(provider_currency_key)
             or await get_dynamic_config("payment_default_currency")
-            or ("CNY" if provider == "stripe" else "USD")
+            or ("CNY" if provider in ("stripe", "alipay") else "USD")
         )
 
     async def _get_stripe_currency(self) -> str:
