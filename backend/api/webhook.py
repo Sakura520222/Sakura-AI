@@ -369,6 +369,13 @@ async def handle_issue_comment_event(payload: Dict[str, Any]) -> JSONResponse:
                 return JSONResponse(
                     content={"status": "ignored", "reason": "/analyze 仅适用于 Issue"}
                 )
+            # 检查 /agent 命令（仅限 Issue）
+            if re.match(r"^/agent(\s|$)", comment_body):
+                if not issue.get("pull_request"):
+                    return await handle_agent_command(payload)
+                return JSONResponse(
+                    content={"status": "ignored", "reason": "/agent 仅适用于 Issue"}
+                )
             return JSONResponse(
                 content={"status": "ignored", "reason": "not a review command"}
             )
@@ -1370,6 +1377,232 @@ async def handle_issue_analyze_command(payload: Dict[str, Any]) -> JSONResponse:
 
     except Exception as e:
         logger.error(f"处理 /analyze 命令时出错: {e}", exc_info=True)
+        return JSONResponse(
+            status_code=500, content={"status": "error", "message": "内部服务错误"}
+        )
+
+
+async def handle_agent_command(payload: Dict[str, Any]) -> JSONResponse:
+    """处理 /agent 命令：将已分析的 Issue 委派给 Agent 团队执行"""
+    try:
+        comment_body = payload.get("comment", {}).get("body", "").strip()
+
+        # 解析 base_branch 参数
+        base_branch = None
+        branch_match = re.search(r"base:(\S+)", comment_body)
+        if branch_match:
+            base_branch = branch_match.group(1)
+
+        # 过滤 Bot 自身评论
+        bot_username = settings.bot_username
+        commenter = payload.get("comment", {}).get("user", {}).get("login", "")
+        if bot_username and commenter == bot_username:
+            return JSONResponse(
+                content={"status": "ignored", "reason": "bot self-comment"}
+            )
+
+        # 提取仓库和 Issue 信息
+        repo_info = payload.get("repository", {})
+        issue = payload.get("issue", {})
+        repo_owner = repo_info.get("owner", {}).get("login", "")
+        repo_name = repo_info.get("name", "")
+        repo_full_name = repo_info.get("full_name", "")
+        issue_number = issue.get("number")
+
+        if not all([repo_owner, repo_name, repo_full_name, issue_number]):
+            return JSONResponse(
+                status_code=400,
+                content={"status": "error", "message": "无法提取 Issue 信息"},
+            )
+
+        logger.info(
+            f"收到 /agent 指令: {repo_full_name}#{issue_number}, "
+            f"评论者: {commenter}, base: {base_branch or 'default'}"
+        )
+
+        # 权限检查：仅 admin/write 用户可触发
+        github_app = GitHubAppClient()
+        permission = github_app.check_collaborator_permission(
+            repo_owner, repo_name, commenter
+        )
+        if permission not in ("admin", "write"):
+            logger.info(f"/agent 权限不足: {commenter} 权限为 {permission}")
+            try:
+                client = github_app.get_repo_client(repo_owner, repo_name)
+                if client:
+                    repo = client.get_repo(repo_full_name)
+                    repo.get_issue(issue_number).create_comment(
+                        f"❌ @{commenter}，只有仓库管理员/协作者才能触发 Agent 任务。"
+                    )
+            except Exception as e:
+                logger.warning(f"/agent 无权限回复评论失败: {e}")
+            return JSONResponse(
+                content={"status": "denied", "reason": "insufficient permission"}
+            )
+
+        # 仓库所有者配额检查
+        async with get_async_session() as session:
+            service = TelegramService(session)
+            ok, reason = await service.check_and_consume_agent_quota(
+                github_username=repo_owner,
+                repo_name=repo_full_name,
+                task_id=0,
+            )
+            if not ok:
+                logger.warning(f"Agent 配额不足: repo_owner={repo_owner} - {reason}")
+                try:
+                    client = github_app.get_repo_client(repo_owner, repo_name)
+                    if client:
+                        repo = client.get_repo(repo_full_name)
+                        repo.get_issue(issue_number).create_comment(
+                            f"❌ Agent 配额不足（仓库所有者 @{repo_owner}）：{reason}"
+                        )
+                except Exception as e:
+                    logger.warning(f"/agent 配额不足回复评论失败: {e}")
+                return JSONResponse(
+                    content={
+                        "status": "skipped",
+                        "reason": "quota exceeded",
+                        "detail": reason,
+                    }
+                )
+
+        # 前置校验：检查是否有已完成的 Issue 分析记录
+        async with get_async_session() as session:
+            from sqlalchemy import select, and_, desc
+            from backend.models.database import IssueAnalysis, IssueAnalysisStatus
+
+            existing_analysis = await session.scalar(
+                select(IssueAnalysis)
+                .where(
+                    and_(
+                        IssueAnalysis.repo_owner == repo_owner,
+                        IssueAnalysis.repo_name.in_({repo_name, repo_full_name}),
+                        IssueAnalysis.issue_number == issue_number,
+                        IssueAnalysis.status == IssueAnalysisStatus.COMPLETED.value,
+                    )
+                )
+                .order_by(desc(IssueAnalysis.completed_at))
+                .limit(1)
+            )
+
+        if not existing_analysis:
+            logger.info(
+                f"/agent 无分析记录: {repo_full_name}#{issue_number}"
+            )
+            try:
+                client = github_app.get_repo_client(repo_owner, repo_name)
+                if client:
+                    repo = client.get_repo(repo_full_name)
+                    repo.get_issue(issue_number).create_comment(
+                        "❌ 此 Issue 尚未完成 AI 分析，请先使用 `/analyze` 命令分析此 Issue。"
+                    )
+            except Exception as e:
+                logger.warning(f"/agent 无分析记录回复评论失败: {e}")
+            return JSONResponse(
+                content={
+                    "status": "skipped",
+                    "reason": "no completed analysis",
+                }
+            )
+
+        # 构建提交上下文（与通过 WebUI 创建任务一致）
+        from backend.services.agent_team.submission_context import (
+            build_agent_task_summary,
+            build_issue_context_markdown,
+            format_issue_analysis_context,
+            load_issue_comments_for_context,
+        )
+
+        overrides = {}
+        async with get_async_session() as session:
+            analysis_ctx = format_issue_analysis_context(existing_analysis)
+            issue_comments = await load_issue_comments_for_context(
+                repo_owner=repo_owner,
+                repo_name=repo_name,
+                issue_number=issue_number,
+            )
+            issue_context_md = build_issue_context_markdown(
+                repo_full_name=repo_full_name,
+                issue_number=issue_number,
+                issue_analysis_context=analysis_ctx,
+                issue_comments=issue_comments,
+            )
+            agent_task_context = build_agent_task_summary(
+                existing_analysis.summary or "", issue_context_md
+            )
+            if agent_task_context:
+                overrides["summary"] = agent_task_context
+
+        # 创建 Agent 任务
+        from backend.services.agent_team.candidate_service import (
+            AgentTeamCandidateService,
+        )
+
+        candidate_service = AgentTeamCandidateService()
+        async with get_async_session() as session:
+            try:
+                task = await candidate_service.create_task_from_manual_issue(
+                    db=session,
+                    repo_full_name=repo_full_name,
+                    issue_number=issue_number,
+                    started_by=commenter,
+                    base_branch=base_branch,
+                    overrides=overrides or None,
+                )
+            except ValueError as e:
+                logger.warning(f"/agent 创建任务失败: {e}")
+                try:
+                    client = github_app.get_repo_client(repo_owner, repo_name)
+                    if client:
+                        repo = client.get_repo(repo_full_name)
+                        repo.get_issue(issue_number).create_comment(
+                            f"❌ 无法创建 Agent 任务：{e}"
+                        )
+                except Exception as comment_err:
+                    logger.warning(f"/agent 创建失败回复评论失败: {comment_err}")
+                return JSONResponse(
+                    content={
+                        "status": "error",
+                        "reason": str(e),
+                    }
+                )
+
+            task_id = task.id
+
+        # 后台执行任务
+        from backend.workers.agent_team_worker import submit_agent_team_task
+
+        asyncio.create_task(submit_agent_team_task(task_id))
+
+        # 回复确认评论
+        branch_info = f"，基础分支：`{base_branch}`" if base_branch else ""
+        try:
+            client = github_app.get_repo_client(repo_owner, repo_name)
+            if client:
+                repo = client.get_repo(repo_full_name)
+                repo.get_issue(issue_number).create_comment(
+                    f"已创建 Agent 任务（ID: {task_id}）{branch_info}\n\n"
+                    f"由 @{commenter} 触发"
+                )
+        except Exception as e:
+            logger.warning(f"/agent 确认评论发送失败: {e}")
+
+        logger.info(
+            f"/agent 任务已创建: {repo_full_name}#{issue_number}, "
+            f"task_id={task_id}, base={base_branch or 'default'}"
+        )
+
+        return JSONResponse(
+            content={
+                "status": "accepted",
+                "message": "Agent 任务已创建并开始执行",
+                "task_id": task_id,
+            }
+        )
+
+    except Exception as e:
+        logger.error(f"处理 /agent 命令时出错: {e}", exc_info=True)
         return JSONResponse(
             status_code=500, content={"status": "error", "message": "内部服务错误"}
         )
