@@ -5,10 +5,12 @@ from typing import Optional
 from loguru import logger
 
 from backend.services.payment.gateway_base import PaymentGateway
+from backend.services.payment.paddle_gateway import PaddleGateway
 from backend.services.payment.stripe_gateway import StripeGateway
 
 _GATEWAY_REGISTRY: dict[str, type[PaymentGateway]] = {
     "stripe": StripeGateway,
+    "paddle": PaddleGateway,
 }
 
 

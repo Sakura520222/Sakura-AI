@@ -508,6 +508,14 @@ class Settings(BaseSettings):
     )
     stripe_currency: str = Field("CNY", description="Stripe 默认货币")
 
+    # Paddle 支付网关
+    paddle_api_key: str = Field("", description="Paddle API Key")
+    paddle_webhook_secret: str = Field(
+        "", description="Paddle Webhook Signing Secret"
+    )
+    paddle_currency: str = Field("USD", description="Paddle 默认货币")
+    paddle_vendor_id: str = Field("", description="Paddle Client-side Token (用于前端)")
+
     # ========== 代码索引配置 ==========
     enable_code_index: bool = True  # 是否启用代码索引功能
     auto_index_pr_changes: bool = True  # PR审查时自动索引变更文件
@@ -1258,6 +1266,10 @@ DYNAMIC_CONFIG_GROUPS: OrderedDict[str, dict] = OrderedDict(
                     "stripe_api_key",
                     "stripe_webhook_secret",
                     "stripe_currency",
+                    "paddle_api_key",
+                    "paddle_webhook_secret",
+                    "paddle_currency",
+                    "paddle_vendor_id",
                 ],
             },
         ),
@@ -1329,6 +1341,8 @@ DYNAMIC_CONFIG_SENSITIVE_KEYS = frozenset(
         "agent_team_api_key",
     "stripe_api_key",
     "stripe_webhook_secret",
+    "paddle_api_key",
+    "paddle_webhook_secret",
     }
 )
 
@@ -1489,6 +1503,10 @@ DYNAMIC_CONFIG_LABELS: dict[str, str] = {
     "stripe_api_key": "Stripe API Key",
     "stripe_webhook_secret": "Stripe Webhook Secret",
     "stripe_currency": "Stripe 默认货币",
+    "paddle_api_key": "Paddle API Key",
+    "paddle_webhook_secret": "Paddle Webhook Secret",
+    "paddle_currency": "Paddle 默认货币",
+    "paddle_vendor_id": "Paddle Client-side Token",
     # 核心配置标签
     "github_app_id": "GitHub App ID",
     "github_private_key": "GitHub App 私钥",
