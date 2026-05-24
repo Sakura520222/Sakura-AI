@@ -1516,3 +1516,107 @@ async def handle_stripe_webhook(
             status_code=500,
             content={"status": "error", "message": "Internal server error"},
         )
+
+
+@router.post("/paddle")
+async def handle_paddle_webhook(
+    request: Request,
+) -> JSONResponse:
+    """Handle Paddle Billing webhook events (transaction.completed, etc.)"""
+    from backend.services.payment import get_gateway, WebhookEventType
+    from backend.services.payment_service import PaymentService, PaymentError
+
+    payload = await request.body()
+    headers = {k.lower(): v for k, v in request.headers.items()}
+
+    try:
+        gateway = await get_gateway("paddle")
+        event = gateway.verify_webhook(payload, headers)
+
+        if event.event_type == WebhookEventType.UNKNOWN:
+            # Return 200 for unmapped but valid events so Paddle doesn't retry
+            return JSONResponse(
+                content={"status": "ignored", "message": "Event type not handled"}
+            )
+
+        async with get_async_session() as db:
+            svc = PaymentService(db)
+            try:
+                if event.event_type == WebhookEventType.PAYMENT_COMPLETED:
+                    order = await svc.confirm_payment(
+                        order_no=event.order_no,
+                        provider_tx_id=event.provider_tx_id,
+                    )
+                    await db.commit()
+                    logger.info(
+                        "Paddle webhook: payment confirmed for order {}",
+                        order.order_no,
+                    )
+                    return JSONResponse(
+                        content={"status": "processed", "event": "payment_completed"}
+                    )
+
+                elif event.event_type == WebhookEventType.PAYMENT_EXPIRED:
+                    if event.order_no:
+                        order = await svc.cancel_expired_order(event.order_no)
+                        await db.commit()
+                        logger.info(
+                            "Paddle webhook: order expired/cancelled {}",
+                            order.order_no,
+                        )
+                    return JSONResponse(
+                        content={"status": "processed", "event": "payment_expired"}
+                    )
+
+                elif event.event_type == WebhookEventType.PAYMENT_REFUNDED:
+                    # For refund events from Paddle, find order by provider_tx_id
+                    from sqlalchemy import select
+                    from backend.models.payment_models import Order, OrderStatus
+
+                    stmt = select(Order).where(
+                        Order.provider_tx_id == event.provider_tx_id,
+                        Order.status == OrderStatus.FULFILLED.value,
+                    )
+                    order = (await db.execute(stmt)).scalar_one_or_none()
+                    if order:
+                        await svc.process_refund(order_id=order.id)
+                        await db.commit()
+                        logger.info(
+                            "Paddle webhook: refund processed for order {}",
+                            order.order_no,
+                        )
+                    else:
+                        logger.info(
+                            "Paddle webhook: refund event but no actionable order for tx {}",
+                            event.provider_tx_id,
+                        )
+                    return JSONResponse(
+                        content={"status": "processed", "event": "payment_refunded"}
+                    )
+
+                else:
+                    logger.info("Paddle webhook: ignoring event type {}", event.event_type)
+                    return JSONResponse(
+                        content={"status": "ignored", "event": str(event.event_type)}
+                    )
+
+            except PaymentError as e:
+                await db.rollback()
+                logger.warning("Paddle webhook processing error: {}", e)
+                return JSONResponse(
+                    status_code=200,
+                    content={"status": "error", "message": str(e)},
+                )
+
+    except ValueError as e:
+        logger.warning("Paddle webhook gateway error: {}", e)
+        return JSONResponse(
+            status_code=400,
+            content={"status": "error", "message": str(e)},
+        )
+    except Exception as e:
+        logger.error("Paddle webhook unexpected error: {} - {}", type(e).__name__, e, exc_info=True)
+        return JSONResponse(
+            status_code=500,
+            content={"status": "error", "message": "Internal server error"},
+        )

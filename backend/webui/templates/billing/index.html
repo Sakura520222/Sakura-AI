@@ -163,6 +163,7 @@
                 {% if plan.price_cents > 0 %}
                 <form action="/billing/purchase/{{ plan.id }}" method="POST" class="mt-4">
                     <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                    <input type="hidden" name="provider" value="paddle">
                     <button type="submit"
                             class="w-full px-4 py-2 rounded-lg text-sm font-medium
                                    bg-gradient-to-r from-sakura-500 to-purple-500 hover:from-sakura-600 hover:to-purple-600

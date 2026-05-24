@@ -1,0 +1,128 @@
+{% extends "legal/base.html" %}
+
+{% block content %}
+<h1 class="text-3xl font-bold bg-gradient-to-r from-sakura-700 to-purple-700 dark:from-sakura-400 dark:to-purple-400 bg-clip-text text-transparent mb-2">Pricing</h1>
+<p class="text-sm text-gray-500 dark:text-gray-400 mb-8">Choose the plan that fits your workflow. All plans include AI-powered code review.</p>
+
+{% if plans and plans|length > 0 %}
+<div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+    {% for plan in plans %}
+    <div class="relative glass rounded-2xl border border-sakura-200/50 dark:border-sakura-800/30 p-6 flex flex-col hover:shadow-lg hover:shadow-sakura-200/30 dark:hover:shadow-sakura-950/30 transition-all duration-300 {% if loop.index == 2 %}ring-2 ring-sakura-500/50{% endif %}">
+        {% if loop.index == 2 %}
+        <div class="absolute -top-3 left-1/2 -translate-x-1/2 bg-gradient-to-r from-sakura-500 to-purple-500 text-white text-xs font-bold px-3 py-1 rounded-full shadow-md">POPULAR</div>
+        {% endif %}
+
+        <div class="mb-4">
+            <h3 class="text-xl font-bold text-gray-900 dark:text-gray-100">{{ plan.name }}</h3>
+            {% if plan.description %}
+            <p class="text-sm text-gray-500 dark:text-gray-400 mt-1">{{ plan.description }}</p>
+            {% endif %}
+        </div>
+
+        <div class="mb-6">
+            <div class="flex items-baseline gap-1">
+                <span class="text-3xl font-extrabold text-gray-900 dark:text-gray-100">
+                    {% if plan.price_cents == 0 %}
+                        Free
+                    {% else %}
+                        {{ "%.2f"|format(plan.price_cents / 100) }}
+                    {% endif %}
+                </span>
+                {% if plan.price_cents > 0 %}
+                <span class="text-sm text-gray-500 dark:text-gray-400">
+                    {{ plan.currency }}
+                    {% if plan.duration_days %}
+                        / {% if plan.duration_days >= 365 %}year{% elif plan.duration_days >= 30 %}month{% elif plan.duration_days >= 7 %}week{% else %}{{ plan.duration_days }} days{% endif %}
+                    {% endif %}
+                </span>
+                {% endif %}
+            </div>
+        </div>
+
+        <div class="flex-1 space-y-3 text-sm text-gray-600 dark:text-gray-400">
+            {% if plan.pr_quota_bonus > 0 %}
+            <div class="flex items-center gap-2">
+                <svg class="w-4 h-4 text-green-500 shrink-0" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clip-rule="evenodd"/></svg>
+                <span><strong class="text-gray-900 dark:text-gray-100">{{ plan.pr_quota_bonus }}</strong> PR reviews bonus</span>
+            </div>
+            {% endif %}
+            {% if plan.pr_monthly_add > 0 %}
+            <div class="flex items-center gap-2">
+                <svg class="w-4 h-4 text-green-500 shrink-0" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clip-rule="evenodd"/></svg>
+                <span><strong class="text-gray-900 dark:text-gray-100">{{ plan.pr_monthly_add }}</strong> PR / month</span>
+            </div>
+            {% endif %}
+            {% if plan.issue_quota_bonus > 0 %}
+            <div class="flex items-center gap-2">
+                <svg class="w-4 h-4 text-green-500 shrink-0" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clip-rule="evenodd"/></svg>
+                <span><strong class="text-gray-900 dark:text-gray-100">{{ plan.issue_quota_bonus }}</strong> Issue analyses bonus</span>
+            </div>
+            {% endif %}
+            {% if plan.issue_monthly_add > 0 %}
+            <div class="flex items-center gap-2">
+                <svg class="w-4 h-4 text-green-500 shrink-0" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clip-rule="evenodd"/></svg>
+                <span><strong class="text-gray-900 dark:text-gray-100">{{ plan.issue_monthly_add }}</strong> Issues / month</span>
+            </div>
+            {% endif %}
+            {% if plan.agent_quota_bonus > 0 %}
+            <div class="flex items-center gap-2">
+                <svg class="w-4 h-4 text-green-500 shrink-0" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clip-rule="evenodd"/></svg>
+                <span><strong class="text-gray-900 dark:text-gray-100">{{ plan.agent_quota_bonus }}</strong> Agent tasks bonus</span>
+            </div>
+            {% endif %}
+            {% if plan.agent_monthly_add > 0 %}
+            <div class="flex items-center gap-2">
+                <svg class="w-4 h-4 text-green-500 shrink-0" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clip-rule="evenodd"/></svg>
+                <span><strong class="text-gray-900 dark:text-gray-100">{{ plan.agent_monthly_add }}</strong> Agent tasks / month</span>
+            </div>
+            {% endif %}
+            {% if plan.pr_daily_add > 0 %}
+            <div class="flex items-center gap-2">
+                <svg class="w-4 h-4 text-green-500 shrink-0" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clip-rule="evenodd"/></svg>
+                <span><strong class="text-gray-900 dark:text-gray-100">{{ plan.pr_daily_add }}</strong> PR / day</span>
+            </div>
+            {% endif %}
+            {% if plan.issue_daily_add > 0 %}
+            <div class="flex items-center gap-2">
+                <svg class="w-4 h-4 text-green-500 shrink-0" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clip-rule="evenodd"/></svg>
+                <span><strong class="text-gray-900 dark:text-gray-100">{{ plan.issue_daily_add }}</strong> Issues / day</span>
+            </div>
+            {% endif %}
+        </div>
+
+        <div class="mt-6">
+            <a href="/billing/"
+               class="block w-full text-center py-2.5 px-4 rounded-xl font-medium text-sm transition-all {% if plan.price_cents == 0 %}bg-gray-100 dark:bg-gray-800 text-gray-700 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-700{% else %}bg-gradient-to-r from-sakura-500 to-sakura-600 text-white hover:from-sakura-600 hover:to-sakura-700 shadow-md shadow-sakura-500/25{% endif %}">
+                {% if plan.price_cents == 0 %}Get Started{% else %}Subscribe{% endif %}
+            </a>
+        </div>
+    </div>
+    {% endfor %}
+</div>
+{% else %}
+<div class="text-center py-16">
+    <span class="text-6xl inline-block mb-4">🌸</span>
+    <h2 class="text-2xl font-bold text-gray-900 dark:text-gray-100 mb-2">Plans Coming Soon</h2>
+    <p class="text-gray-500 dark:text-gray-400">We're preparing exciting plans for you. Check back soon!</p>
+</div>
+{% endif %}
+
+<!-- FAQ -->
+<div class="mt-12">
+    <h2 class="text-xl font-bold text-gray-900 dark:text-gray-100 mb-6">Frequently Asked Questions</h2>
+    <div class="space-y-4">
+        <div class="glass rounded-xl border border-sakura-200/50 dark:border-sakura-800/30 p-5">
+            <h3 class="font-semibold text-gray-900 dark:text-gray-100 mb-2">How does billing work?</h3>
+            <p class="text-sm text-gray-600 dark:text-gray-400">Plans are billed in advance through Paddle. You'll be charged at the beginning of each billing cycle. You can cancel anytime.</p>
+        </div>
+        <div class="glass rounded-xl border border-sakura-200/50 dark:border-sakura-800/30 p-5">
+            <h3 class="font-semibold text-gray-900 dark:text-gray-100 mb-2">Can I get a refund?</h3>
+            <p class="text-sm text-gray-600 dark:text-gray-400">Yes! We offer refunds within the applicable window. See our <a href="/refund" class="text-sakura-600 dark:text-sakura-400 hover:underline">Refund Policy</a> for details.</p>
+        </div>
+        <div class="glass rounded-xl border border-sakura-200/50 dark:border-sakura-800/30 p-5">
+            <h3 class="font-semibold text-gray-900 dark:text-gray-100 mb-2">What payment methods are supported?</h3>
+            <p class="text-sm text-gray-600 dark:text-gray-400">We support major credit/debit cards and PayPal via Paddle. Availability may vary by region.</p>
+        </div>
+    </div>
+</div>
+{% endblock %}

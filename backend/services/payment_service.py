@@ -510,18 +510,18 @@ class PaymentService:
 
         settings = get_settings()
         domain = settings.sanitized_app_domain
-        currency = str(await self._get_stripe_currency())
+        currency = str(await self._get_provider_currency(order.payment_provider))
 
-        # Stripe minimum amount validation (per currency)
-        stripe_minimums = {
+        # Minimum amount validation (per provider / currency)
+        minimum_amounts = {
             "usd": 50, "eur": 50, "gbp": 30, "jpy": 50, "cny": 320,
             "cad": 60, "aud": 60, "hkd": 400, "sgd": 50, "twd": 200,
         }
-        min_cents = stripe_minimums.get(currency.lower(), 50)
+        min_cents = minimum_amounts.get(currency.lower(), 50)
         if order.amount_cents < min_cents:
             min_display = min_cents / 100
             raise PaymentError(
-                f"Payment amount too low. Stripe requires a minimum of "
+                f"Payment amount too low. Minimum is "
                 f"{min_display:.2f} {currency.upper()} "
                 f"(current: {order.amount_cents / 100:.2f} {currency.upper()})"
             )
@@ -570,15 +570,20 @@ class PaymentService:
 
         return result.checkout_url
 
-    async def _get_stripe_currency(self) -> str:
-        """Get Stripe currency from dynamic config, fallback to plan currency"""
+    async def _get_provider_currency(self, provider: str) -> str:
+        """Get currency for the given payment provider from dynamic config"""
         from backend.core.config import get_dynamic_config
 
+        provider_currency_key = f"{provider}_currency"
         return str(
-            await get_dynamic_config("stripe_currency")
+            await get_dynamic_config(provider_currency_key)
             or await get_dynamic_config("payment_default_currency")
-            or "CNY"
+            or ("CNY" if provider == "stripe" else "USD")
         )
+
+    async def _get_stripe_currency(self) -> str:
+        """Get Stripe currency from dynamic config (backward compat)"""
+        return await self._get_provider_currency("stripe")
 
     async def confirm_payment(
         self,

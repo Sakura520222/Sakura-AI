@@ -1,0 +1,79 @@
+{% extends "legal/base.html" %}
+
+{% block content %}
+<h1 class="text-3xl font-bold bg-gradient-to-r from-sakura-700 to-purple-700 dark:from-sakura-400 dark:to-purple-400 bg-clip-text text-transparent mb-2">Privacy Policy</h1>
+<p class="text-sm text-gray-500 dark:text-gray-400 mb-8">Last updated: May 23, 2026</p>
+
+<div class="prose prose-sm dark:prose-invert max-w-none space-y-6 text-gray-700 dark:text-gray-300 leading-relaxed">
+
+    <h2 class="text-xl font-semibold text-gray-900 dark:text-gray-100">1. Information We Collect</h2>
+    <p>We collect the following types of information:</p>
+    <ul class="list-disc pl-5 space-y-1">
+        <li><strong>Account Information:</strong> GitHub username/ID or Telegram user ID provided during authentication.</li>
+        <li><strong>Code &amp; Repository Data:</strong> Source code from PRs and issues you submit for review. This data is processed temporarily for AI analysis and may be stored for context continuity.</li>
+        <li><strong>Usage Data:</strong> Information about how you use the Service, including quota consumption, review requests, and feature usage.</li>
+        <li><strong>Payment Information:</strong> Transaction records processed through Paddle (our payment processor). We do not store credit card details directly — Paddle handles all payment data in compliance with PCI-DSS.</li>
+        <li><strong>Technical Data:</strong> IP address, browser type, and access logs for security and performance monitoring.</li>
+    </ul>
+
+    <h2 class="text-xl font-semibold text-gray-900 dark:text-gray-100">2. How We Use Your Information</h2>
+    <ul class="list-disc pl-5 space-y-1">
+        <li>To provide, maintain, and improve the Service.</li>
+        <li>To process payments and manage subscriptions.</li>
+        <li>To communicate important updates, security alerts, and support responses.</li>
+        <li>To enforce our Terms of Service and prevent abuse.</li>
+        <li>To analyze usage patterns and improve user experience.</li>
+    </ul>
+
+    <h2 class="text-xl font-semibold text-gray-900 dark:text-gray-100">3. Code &amp; Repository Data</h2>
+    <p><strong>This is especially important to us.</strong></p>
+    <ul class="list-disc pl-5 space-y-1">
+        <li>Code submitted for review is processed temporarily in memory for AI analysis.</li>
+        <li>We may index and store code snippets in our vector database (ChromaDB) to provide context-aware reviews across sessions.</li>
+        <li>You can delete indexed data at any time through the Service's settings.</li>
+        <li>We do not share your code with third parties for training or any other purpose.</li>
+        <li>AI model providers (e.g., OpenAI) process code under their data usage policies — we recommend reviewing their respective privacy terms.</li>
+    </ul>
+
+    <h2 class="text-xl font-semibold text-gray-900 dark:text-gray-100">4. Data Sharing</h2>
+    <p>We do not sell your personal data. We may share data with:</p>
+    <ul class="list-disc pl-5 space-y-1">
+        <li><strong>Payment Processor (Paddle):</strong> Transaction data necessary for billing.</li>
+        <li><strong>AI Providers:</strong> Code snippets sent for analysis as part of the review process.</li>
+        <li><strong>GitHub API:</strong> To read PR/issue data and post review comments on your behalf.</li>
+        <li><strong>Legal Requirements:</strong> When required by law or to protect our rights.</li>
+    </ul>
+
+    <h2 class="text-xl font-semibold text-gray-900 dark:text-gray-100">5. Data Retention</h2>
+    <ul class="list-disc pl-5 space-y-1">
+        <li>Account data is retained while your account is active and for up to 30 days after deletion.</li>
+        <li>Payment records are retained as required by applicable financial regulations.</li>
+        <li>Code index data can be deleted by the user at any time.</li>
+        <li>Access logs are retained for 90 days for security purposes.</li>
+    </ul>
+
+    <h2 class="text-xl font-semibold text-gray-900 dark:text-gray-100">6. Data Security</h2>
+    <p>We implement industry-standard security measures including encryption in transit (TLS), encrypted storage for sensitive data, and regular security audits. However, no system is completely secure, and we cannot guarantee absolute security.</p>
+
+    <h2 class="text-xl font-semibold text-gray-900 dark:text-gray-100">7. Your Rights</h2>
+    <ul class="list-disc pl-5 space-y-1">
+        <li>Access and review your personal data.</li>
+        <li>Request correction or deletion of your data.</li>
+        <li>Opt out of non-essential communications.</li>
+        <li>Export your account data upon request.</li>
+    </ul>
+
+    <h2 class="text-xl font-semibold text-gray-900 dark:text-gray-100">8. Cookies &amp; Local Storage</h2>
+    <p>The Service uses minimal cookies and local storage for authentication (session tokens), theme preferences, and language settings. We do not use tracking cookies or third-party analytics that track you across sites.</p>
+
+    <h2 class="text-xl font-semibold text-gray-900 dark:text-gray-100">9. International Users</h2>
+    <p>The Service is operated from China. If you access the Service from other regions, your data may be transferred to and processed in China. By using the Service, you consent to such transfers.</p>
+
+    <h2 class="text-xl font-semibold text-gray-900 dark:text-gray-100">10. Changes to This Policy</h2>
+    <p>We may update this Privacy Policy from time to time. We will notify registered users of material changes. Continued use after changes constitutes acceptance.</p>
+
+    <h2 class="text-xl font-semibold text-gray-900 dark:text-gray-100">11. Contact</h2>
+    <p>For privacy-related inquiries, contact us at <a href="mailto:support@firefly520.top" class="text-sakura-600 dark:text-sakura-400 hover:underline">support@firefly520.top</a>.</p>
+
+</div>
+{% endblock %}
