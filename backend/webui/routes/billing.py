@@ -66,6 +66,9 @@ async def billing_index(
         user["user_id"], limit=per_page, offset=offset
     )
 
+    from backend.services.payment.gateway_factory import get_configured_providers
+    available_providers = await get_configured_providers()
+
     return render_template(
         "billing/index.html",
         request,
@@ -79,6 +82,7 @@ async def billing_index(
         total=total,
         page=page,
         per_page=per_page,
+        available_providers=available_providers,
     )
 
 
@@ -128,14 +132,27 @@ async def purchase_plan(
     csrf_token: str = Depends(require_csrf),
 ):
     """Create a payment order and redirect to payment provider checkout"""
-    # 支持通过表单选择 provider，默认 paddle
+    # 支持通过表单选择 provider
     form = await request.form()
-    provider = str(form.get("provider", "paddle"))
+    provider = str(form.get("provider", ""))
 
     # 验证 provider 是否为已知的外部支付提供商
     from backend.services.payment import EXTERNAL_PAYMENT_PROVIDERS
+    from backend.services.payment.gateway_factory import get_configured_providers
+
     if provider not in EXTERNAL_PAYMENT_PROVIDERS:
-        provider = "paddle"
+        # 选择第一个已配置的 provider 作为默认
+        configured = await get_configured_providers()
+        if configured:
+            provider = configured[0]["id"]
+        else:
+            return toast_redirect(
+                "/billing/",
+                "toast.payment_error",
+                "error",
+                lang=detect_language(),
+                error="No payment provider configured",
+            )
 
     svc = PaymentService(db)
     try:

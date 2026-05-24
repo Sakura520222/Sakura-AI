@@ -516,6 +516,12 @@ class Settings(BaseSettings):
     paddle_currency: str = Field("USD", description="Paddle 默认货币")
     paddle_vendor_id: str = Field("", description="Paddle Client-side Token (用于前端)")
 
+    # 支付宝当面付（个人开发者可用）
+    alipay_app_id: str = Field("", description="支付宝 App ID")
+    alipay_private_key: str = Field("", description="支付宝应用私钥（RSA2 PEM）")
+    alipay_public_key: str = Field("", description="支付宝公钥（用于验签）")
+    alipay_currency: str = Field("CNY", description="支付宝默认货币")
+
     # ========== 代码索引配置 ==========
     enable_code_index: bool = True  # 是否启用代码索引功能
     auto_index_pr_changes: bool = True  # PR审查时自动索引变更文件
@@ -1270,6 +1276,10 @@ DYNAMIC_CONFIG_GROUPS: OrderedDict[str, dict] = OrderedDict(
                     "paddle_webhook_secret",
                     "paddle_currency",
                     "paddle_vendor_id",
+                    "alipay_app_id",
+                    "alipay_private_key",
+                    "alipay_public_key",
+                    "alipay_currency",
                 ],
             },
         ),
@@ -1343,6 +1353,8 @@ DYNAMIC_CONFIG_SENSITIVE_KEYS = frozenset(
     "stripe_webhook_secret",
     "paddle_api_key",
     "paddle_webhook_secret",
+    "alipay_private_key",
+    "alipay_public_key",
     }
 )
 
@@ -1507,6 +1519,10 @@ DYNAMIC_CONFIG_LABELS: dict[str, str] = {
     "paddle_webhook_secret": "Paddle Webhook Secret",
     "paddle_currency": "Paddle 默认货币",
     "paddle_vendor_id": "Paddle Client-side Token",
+    "alipay_app_id": "支付宝 App ID",
+    "alipay_private_key": "支付宝应用私钥",
+    "alipay_public_key": "支付宝公钥（验签用）",
+    "alipay_currency": "支付宝默认货币",
     # 核心配置标签
     "github_app_id": "GitHub App ID",
     "github_private_key": "GitHub App 私钥",
