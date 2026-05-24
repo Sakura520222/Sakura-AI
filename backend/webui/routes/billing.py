@@ -127,13 +127,22 @@ async def purchase_plan(
     user: dict = Depends(require_auth),
     csrf_token: str = Depends(require_csrf),
 ):
-    """Create a payment order and redirect to Stripe Checkout"""
+    """Create a payment order and redirect to payment provider checkout"""
+    # 支持通过表单选择 provider，默认 paddle
+    form = await request.form()
+    provider = str(form.get("provider", "paddle"))
+
+    # 验证 provider 是否为已知的外部支付提供商
+    from backend.services.payment import EXTERNAL_PAYMENT_PROVIDERS
+    if provider not in EXTERNAL_PAYMENT_PROVIDERS:
+        provider = "paddle"
+
     svc = PaymentService(db)
     try:
         order = await svc.create_order(
             user_id=user["user_id"],
             plan_id=plan_id,
-            provider="stripe",
+            provider=provider,
         )
         await db.commit()
 
@@ -168,7 +177,7 @@ async def payment_result(
     user: dict = Depends(require_auth),
     user_prefs: dict = Depends(get_user_preferences),
 ):
-    """Payment result page (Stripe redirects back here)"""
+    """Payment result page (payment provider redirects back here)"""
     order_no = request.query_params.get("order_no", "")
     status = request.query_params.get("status", "failed")
 
