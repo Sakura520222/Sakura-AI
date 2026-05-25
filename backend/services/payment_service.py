@@ -1,5 +1,6 @@
 """付费配额核心服务"""
 
+import json
 import uuid
 from datetime import datetime, timedelta
 from typing import List, Optional
@@ -495,8 +496,27 @@ class PaymentService:
         from backend.services.payment import EXTERNAL_PAYMENT_PROVIDERS
 
         if provider in EXTERNAL_PAYMENT_PROVIDERS:
-            checkout_url = await self._create_external_payment(order, plan, user_id)
+            checkout_url = await self._create_external_payment(
+                order, plan, user_id
+            )
             order._checkout_url = checkout_url
+
+            # 虚拟币支付：提取充值信息供前端展示
+            if provider == "nowpayments" and order.metadata_json:
+                try:
+                    md = json.loads(order.metadata_json)
+                    if md.get("is_crypto") == "true":
+                        order._crypto_payment_info = {
+                            "pay_address": md.get("pay_address", ""),
+                            "pay_amount": md.get("pay_amount", ""),
+                            "pay_currency": md.get("pay_currency", ""),
+                            "price_amount": md.get("price_amount", ""),
+                            "price_currency": md.get("price_currency", "usd"),
+                            "payment_id": md.get("payment_id", ""),
+                            "order_no": order.order_no,
+                        }
+                except (json.JSONDecodeError, TypeError):
+                    pass
 
         return order
 
@@ -512,22 +532,12 @@ class PaymentService:
         domain = settings.sanitized_app_domain
         currency = str(await self._get_provider_currency(order.payment_provider))
 
-        # Minimum amount validation (per provider / currency)
-        minimum_amounts = {
-            "usd": 50, "eur": 50, "gbp": 30, "jpy": 50, "cny": 320,
-            "cad": 60, "aud": 60, "hkd": 400, "sgd": 50, "twd": 200,
-        }
-        min_cents = minimum_amounts.get(currency.lower(), 50)
-        if order.amount_cents < min_cents:
-            min_display = min_cents / 100
-            raise PaymentError(
-                f"Payment amount too low. Minimum is "
-                f"{min_display:.2f} {currency.upper()} "
-                f"(current: {order.amount_cents / 100:.2f} {currency.upper()})"
-            )
-
         success_url = f"https://{domain}/billing/payment/result?order_no={order.order_no}&status=success"
         cancel_url = f"https://{domain}/billing/payment/result?order_no={order.order_no}&status=cancel"
+
+        # Alipay/NOWPayments 需要 webhook 回调地址而非前端跳转地址
+        if order.payment_provider in ("alipay", "nowpayments"):
+            success_url = f"https://{domain}/api/webhook/{order.payment_provider}"
 
         gateway = await get_gateway(order.payment_provider)
         result = await gateway.create_payment(
@@ -550,6 +560,21 @@ class PaymentService:
             "checkout_url": result.checkout_url,
             "session_id": result.provider_tx_id,
         }
+
+        # NOWPayments 等虚拟币支付：存储充值地址、金额、币种等额外信息
+        if order.payment_provider == "nowpayments" and result.raw_data:
+            metadata["pay_address"] = result.raw_data.get("pay_address", "")
+            metadata["pay_amount"] = str(result.raw_data.get("pay_amount", ""))
+            metadata["pay_currency"] = result.raw_data.get("pay_currency", "")
+            metadata["payment_id"] = result.raw_data.get("payment_id", "")
+            metadata["price_amount"] = str(
+                result.raw_data.get("price_amount", "")
+            )
+            metadata["price_currency"] = result.raw_data.get(
+                "price_currency", "usd"
+            )
+            metadata["is_crypto"] = "true"
+
         if order.metadata_json:
             try:
                 existing = json.loads(order.metadata_json)

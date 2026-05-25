@@ -1,8 +1,9 @@
 """WebUI 付费配额路由"""
 
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, Request, Depends, Form
+from fastapi.responses import JSONResponse
 from loguru import logger
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -129,6 +130,7 @@ async def purchase_plan(
     request: Request,
     db: AsyncSession = Depends(get_db),
     user: dict = Depends(require_auth),
+    user_prefs: dict = Depends(get_user_preferences),
     csrf_token: str = Depends(require_csrf),
 ):
     """Create a payment order and redirect to payment provider checkout"""
@@ -164,6 +166,41 @@ async def purchase_plan(
         await db.commit()
 
         checkout_url = getattr(order, "_checkout_url", "")
+        crypto_info = getattr(order, "_crypto_payment_info", None)
+
+        # 虚拟币支付：渲染加密货币支付页面（含 QR 码）
+        if crypto_info and order.payment_provider == "nowpayments":
+            lang = detect_language()
+            expires_at = (
+                datetime.now(timezone.utc) + timedelta(hours=1)
+            ).isoformat()
+            # 币种显示名：usdttrc20 → USDT (TRC20)
+            raw_cur = crypto_info.get("pay_currency", "usdttrc20")
+            if raw_cur.lower().startswith("usdt"):
+                currency_display = "USDT"
+                network = raw_cur.upper().replace("USDT", "").strip()
+                if network:
+                    currency_display = f"USDT ({network})"
+            else:
+                currency_display = raw_cur.upper()
+
+            return render_template(
+                "billing/crypto_payment.html",
+                request,
+                lang=lang,
+                current_user=user,
+                order_no=crypto_info.get("order_no", order.order_no),
+                pay_address=crypto_info.get("pay_address", ""),
+                pay_amount=crypto_info.get("pay_amount", ""),
+                pay_currency_display=currency_display,
+                price_amount=crypto_info.get("price_amount", ""),
+                price_currency=crypto_info.get(
+                    "price_currency", "usd"
+                ),
+                expires_at=expires_at,
+                user_prefs=user_prefs,
+            )
+
         if checkout_url:
             from fastapi.responses import RedirectResponse
 
@@ -185,6 +222,172 @@ async def purchase_plan(
             lang=detect_language(),
             error=str(e),
         )
+
+
+@router.get("/crypto-payment/{order_no}")
+async def reopen_crypto_payment(
+    order_no: str,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    user: dict = Depends(require_auth),
+    user_prefs: dict = Depends(get_user_preferences),
+):
+    """重新打开虚拟币支付页面（用户点击'先返回'后可再次进入）"""
+    import json
+
+    from backend.models.payment_models import Order
+    from sqlalchemy import select
+
+    stmt = select(Order).where(
+        Order.order_no == order_no,
+        Order.user_id == user["user_id"],
+    )
+    result = await db.execute(stmt)
+    order = result.scalar_one_or_none()
+
+    if not order or order.status != "pending":
+        return toast_redirect(
+            "/billing/",
+            "toast.payment_error",
+            "error",
+            lang=detect_language(),
+            error="Order not found or already processed",
+        )
+
+    if order.payment_provider != "nowpayments":
+        return toast_redirect(
+            "/billing/",
+            "toast.payment_error",
+            "error",
+            lang=detect_language(),
+            error="Not a crypto payment order",
+        )
+
+    # 从 order metadata 中提取支付信息
+    try:
+        md = json.loads(order.metadata_json) if order.metadata_json else {}
+    except (json.JSONDecodeError, TypeError):
+        md = {}
+
+    pay_address = md.get("pay_address", "")
+    pay_amount = md.get("pay_amount", "")
+    pay_currency = md.get("pay_currency", "usdttrc20")
+    price_amount = md.get("price_amount", "")
+    price_currency = md.get("price_currency", "usd")
+
+    if not pay_address:
+        return toast_redirect(
+            "/billing/",
+            "toast.payment_error",
+            "error",
+            lang=detect_language(),
+            error="Payment info not available",
+        )
+
+    # 币种显示名
+    if pay_currency.lower().startswith("usdt"):
+        currency_display = "USDT"
+        network = pay_currency.upper().replace("USDT", "").strip()
+        if network:
+            currency_display = f"USDT ({network})"
+    else:
+        currency_display = pay_currency.upper()
+
+    lang = detect_language()
+    expires_at = (
+        datetime.now(timezone.utc) + timedelta(hours=1)
+    ).isoformat()
+
+    return render_template(
+        "billing/crypto_payment.html",
+        request,
+        user_prefs=user_prefs,
+        current_user=user,
+        lang=lang,
+        order_no=order_no,
+        pay_address=pay_address,
+        pay_amount=pay_amount,
+        pay_currency_display=currency_display,
+        price_amount=price_amount,
+        price_currency=price_currency,
+        expires_at=expires_at,
+    )
+
+
+@router.get("/crypto-status")
+async def crypto_payment_status(
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    user: dict = Depends(require_auth),
+):
+    """轮询虚拟币支付状态（直接查询 NOWPayments API 获取实时状态）"""
+    order_no = request.query_params.get("order_no", "")
+    if not order_no:
+        return JSONResponse({"status": "unknown"}, status_code=400)
+
+    from backend.models.payment_models import Order
+    from sqlalchemy import select
+
+    stmt = select(Order).where(
+        Order.order_no == order_no,
+        Order.user_id == user["user_id"],
+    )
+    result = await db.execute(stmt)
+    order = result.scalar_one_or_none()
+    if not order:
+        return JSONResponse({"status": "unknown"}, status_code=404)
+
+    # 如果订单已经完成/失败/取消，直接返回数据库状态
+    if order.status in ("completed", "failed", "cancelled", "refunded"):
+        db_status_map = {
+            "completed": "completed",
+            "failed": "failed",
+            "cancelled": "expired",
+            "refunded": "failed",
+        }
+        return JSONResponse(
+            {"status": db_status_map.get(order.status, order.status)}
+        )
+
+    # 对于 pending 状态，直接查询 NOWPayments API 获取实时状态
+    if (
+        order.payment_provider == "nowpayments"
+        and order.provider_tx_id
+    ):
+        try:
+            from backend.services.payment import get_gateway
+
+            gateway = await get_gateway("nowpayments")
+            api_result = await gateway.get_payment_status(
+                order.provider_tx_id
+            )
+            if api_result.success and api_result.raw_data:
+                raw_status = api_result.raw_data.get(
+                    "payment_status", ""
+                )
+                # NOWPayments 状态 → 前端状态
+                nowpay_map = {
+                    "waiting": "waiting",
+                    "confirming": "confirming",
+                    "confirmed": "confirming",
+                    "sending": "confirming",
+                    "partially_paid": "confirming",
+                    "finished": "completed",
+                    "expired": "expired",
+                    "failed": "failed",
+                    "refunded": "failed",
+                }
+                front_status = nowpay_map.get(
+                    raw_status, "waiting"
+                )
+                return JSONResponse(
+                    {"status": front_status}
+                )
+        except Exception:
+            pass  # 查询失败时 fallback 到数据库状态
+
+    # fallback: 返回数据库的 pending → waiting
+    return JSONResponse({"status": "waiting"})
 
 
 @router.get("/payment/result")

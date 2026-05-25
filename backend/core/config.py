@@ -522,6 +522,13 @@ class Settings(BaseSettings):
     alipay_public_key: str = Field("", description="支付宝公钥（用于验签）")
     alipay_currency: str = Field("CNY", description="支付宝默认货币")
 
+    # NOWPayments 虚拟币支付（无需 KYC，非托管）
+    nowpayments_api_key: str = Field("", description="NOWPayments API Key")
+    nowpayments_ipn_secret: str = Field("", description="NOWPayments IPN Secret Key")
+    nowpayments_pay_currency: str = Field(
+        "usdttrc20", description="接收虚拟币类型（如 usdttrc20, usdterc20）"
+    )
+
     # ========== 代码索引配置 ==========
     enable_code_index: bool = True  # 是否启用代码索引功能
     auto_index_pr_changes: bool = True  # PR审查时自动索引变更文件
@@ -1280,6 +1287,9 @@ DYNAMIC_CONFIG_GROUPS: OrderedDict[str, dict] = OrderedDict(
                     "alipay_private_key",
                     "alipay_public_key",
                     "alipay_currency",
+                    "nowpayments_api_key",
+                    "nowpayments_ipn_secret",
+                    "nowpayments_pay_currency",
                 ],
             },
         ),
@@ -1355,6 +1365,7 @@ DYNAMIC_CONFIG_SENSITIVE_KEYS = frozenset(
     "paddle_webhook_secret",
     "alipay_private_key",
     "alipay_public_key",
+    "nowpayments_ipn_secret",
     }
 )
 
@@ -1523,6 +1534,9 @@ DYNAMIC_CONFIG_LABELS: dict[str, str] = {
     "alipay_private_key": "支付宝应用私钥",
     "alipay_public_key": "支付宝公钥（验签用）",
     "alipay_currency": "支付宝默认货币",
+    "nowpayments_api_key": "NOWPayments API Key",
+    "nowpayments_ipn_secret": "NOWPayments IPN 密钥",
+    "nowpayments_pay_currency": "虚拟币类型（如 usdttrc20）",
     # 核心配置标签
     "github_app_id": "GitHub App ID",
     "github_private_key": "GitHub App 私钥",

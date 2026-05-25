@@ -6,6 +6,7 @@ from loguru import logger
 
 from backend.services.payment.gateway_base import PaymentGateway
 from backend.services.payment.alipay_gateway import AlipayGateway
+from backend.services.payment.nowpayments_gateway import NowPaymentsGateway
 from backend.services.payment.paddle_gateway import PaddleGateway
 from backend.services.payment.stripe_gateway import StripeGateway
 
@@ -13,6 +14,7 @@ _GATEWAY_REGISTRY: dict[str, type[PaymentGateway]] = {
     "stripe": StripeGateway,
     "paddle": PaddleGateway,
     "alipay": AlipayGateway,
+    "nowpayments": NowPaymentsGateway,
 }
 
 
@@ -49,6 +51,16 @@ async def get_gateway(
                 webhook_secret = str(
                     await get_dynamic_config("alipay_private_key") or ""
                 )
+        # NOWPayments uses ipn_secret as webhook secret
+        elif provider == "nowpayments":
+            if api_key is None:
+                api_key = str(
+                    await get_dynamic_config("nowpayments_api_key") or ""
+                )
+            if webhook_secret is None:
+                webhook_secret = str(
+                    await get_dynamic_config("nowpayments_ipn_secret") or ""
+                )
         else:
             if api_key is None:
                 api_key = str(await get_dynamic_config(f"{provider}_api_key") or "")
@@ -75,6 +87,19 @@ async def get_gateway(
             alipay_public_key=alipay_public_key,
         )
 
+    # NOWPayments 需要额外的 pay_currency 参数
+    if provider == "nowpayments":
+        from backend.core.config import get_dynamic_config
+
+        pay_currency = str(
+            await get_dynamic_config("nowpayments_pay_currency") or "usdttrc20"
+        )
+        return gateway_cls(
+            api_key=api_key,
+            webhook_secret=webhook_secret,
+            pay_currency=pay_currency,
+        )
+
     return gateway_cls(api_key=api_key, webhook_secret=webhook_secret)
 
 
@@ -90,6 +115,7 @@ async def get_configured_providers() -> list[dict[str, str]]:
         "stripe": ("stripe_api_key", "Stripe (信用卡)"),
         "paddle": ("paddle_api_key", "Paddle (国际支付)"),
         "alipay": ("alipay_app_id", "支付宝"),
+        "nowpayments": ("nowpayments_api_key", "USDT 虚拟币"),
     }
 
     configured = []
