@@ -1688,3 +1688,91 @@ async def handle_alipay_webhook(
     except Exception as e:
         logger.error("Alipay webhook unexpected error: {} - {}", type(e).__name__, e, exc_info=True)
         return PlainTextResponse("fail")
+
+
+@router.post("/nowpayments", response_model=None)
+async def handle_nowpayments_webhook(
+    request: Request,
+) -> JSONResponse:
+    """Handle NOWPayments IPN callback (virtual currency payment notification)
+
+    NOWPayments sends POST JSON with x-nowpayments-sig header.
+    Verification uses HMAC-SHA512 with IPN secret.
+    """
+    from backend.services.payment import get_gateway, WebhookEventType
+    from backend.services.payment_service import PaymentService, PaymentError
+
+    payload = await request.body()
+    headers = {k.lower(): v for k, v in request.headers.items()}
+
+    try:
+        gateway = await get_gateway("nowpayments")
+        event = gateway.verify_webhook(payload, headers)
+
+        if event.event_type == WebhookEventType.UNKNOWN:
+            logger.info("NOWPayments webhook: ignoring unmapped event")
+            return JSONResponse(content={"status": "ignored"})
+
+        async with get_async_session() as db:
+            svc = PaymentService(db)
+            try:
+                if event.event_type == WebhookEventType.PAYMENT_COMPLETED:
+                    order = await svc.confirm_payment(
+                        order_no=event.order_no,
+                        provider_tx_id=event.provider_tx_id,
+                    )
+                    await db.commit()
+                    logger.info(
+                        "NOWPayments webhook: payment confirmed for order {}",
+                        order.order_no,
+                    )
+                    return JSONResponse(
+                        content={"status": "processed", "event": "payment_completed"}
+                    )
+
+                elif event.event_type == WebhookEventType.PAYMENT_EXPIRED:
+                    if event.order_no:
+                        order = await svc.cancel_expired_order(event.order_no)
+                        await db.commit()
+                        logger.info(
+                            "NOWPayments webhook: order expired {}",
+                            order.order_no,
+                        )
+                    return JSONResponse(
+                        content={"status": "processed", "event": "payment_expired"}
+                    )
+
+                elif event.event_type == WebhookEventType.PAYMENT_REFUNDED:
+                    logger.info("NOWPayments webhook: refund event received")
+                    return JSONResponse(
+                        content={"status": "processed", "event": "refund"}
+                    )
+
+                else:
+                    logger.info(
+                        "NOWPayments webhook: ignoring event type {}",
+                        event.event_type,
+                    )
+                    return JSONResponse(content={"status": "ignored"})
+
+            except PaymentError as e:
+                await db.rollback()
+                logger.warning("NOWPayments webhook processing error: {}", e)
+                return JSONResponse(
+                    content={"status": "error", "message": str(e)}
+                )
+
+    except ValueError as e:
+        logger.warning("NOWPayments webhook gateway error: {}", e)
+        return JSONResponse(content={"status": "error", "message": str(e)})
+    except Exception as e:
+        logger.error(
+            "NOWPayments webhook unexpected error: {} - {}",
+            type(e).__name__,
+            e,
+            exc_info=True,
+        )
+        return JSONResponse(
+            status_code=500,
+            content={"status": "error", "message": "Internal server error"},
+        )

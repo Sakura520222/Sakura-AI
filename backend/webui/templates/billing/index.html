@@ -245,6 +245,11 @@
                                     {{ _('billing.refund') }}
                                 </button>
                             </form>
+                            {% elif order.status == 'pending' and order.payment_provider == 'nowpayments' %}
+                            <a href="/billing/crypto-payment/{{ order.order_no }}"
+                               class="text-sakura-600 hover:text-sakura-800 dark:text-sakura-400 dark:hover:text-sakura-300 text-xs font-medium">
+                                {{ _('billing.crypto_continue_payment') }}
+                            </a>
                             {% elif order.status in ['pending', 'cancelled', 'expired', 'refunded'] %}
                             <form method="POST" action="/billing/orders/{{ order.id }}/delete"
                                   onsubmit="return confirm('{{ _('billing.confirm_delete_order') }}');"
