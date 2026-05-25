@@ -402,8 +402,34 @@ Sakura-AI-Reviewer/
 │   └── bootstrap.py       # Setup Wizard 引导配置
 ├── config/                # YAML 配置文件（strategies.yaml）
 ├── docker/                # Docker Compose 部署
-└── docs/                  # 项目文档
+├── docs/                  # 项目文档
+└── .understand-anything/  # 交互式知识图谱（Understand Anything）
 ```
+
+### 交互式知识图谱
+
+项目使用 [Understand Anything](https://github.com/nichochar/understand-anything) 生成交互式代码知识图谱，包含架构层次、节点关系和学习路径，便于快速理解项目结构。
+
+**生成/更新知识图谱**（在 Claude Code 中执行）：
+
+```
+/understand --language zh
+```
+
+**启动可视化仪表盘**：
+
+```
+/understand-dashboard
+```
+
+启动后会自动在浏览器中打开交互式仪表盘，支持以下功能：
+
+- 浏览架构层次和模块依赖关系
+- 查看节点（文件、函数、类、端点）之间的调用和导入关系
+- 按引导路径逐步了解项目架构
+- 按类型、标签、层级筛选节点
+
+知识图谱数据存储在 `.understand-anything/knowledge-graph.json`，支持增量更新——代码变更后重新执行 `/understand` 即可自动同步。
 
 ---
 

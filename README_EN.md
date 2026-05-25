@@ -403,8 +403,34 @@ Sakura-AI-Reviewer/
 │   └── bootstrap.py       # Setup Wizard guided configuration
 ├── config/                # YAML config files (strategies.yaml)
 ├── docker/                # Docker Compose deployment
-└── docs/                  # Project documentation
+├── docs/                  # Project documentation
+└── .understand-anything/  # Interactive knowledge graph (Understand Anything)
 ```
+
+### Interactive Knowledge Graph
+
+The project uses [Understand Anything](https://github.com/nichochar/understand-anything) to generate an interactive code knowledge graph with architectural layers, node relationships, and guided learning paths for quick onboarding.
+
+**Generate/update the knowledge graph** (run in Claude Code):
+
+```
+/understand --language zh
+```
+
+**Launch the visual dashboard**:
+
+```
+/understand-dashboard
+```
+
+The dashboard opens automatically in your browser and provides:
+
+- Browse architectural layers and module dependencies
+- Explore call and import relationships between nodes (files, functions, classes, endpoints)
+- Follow the guided tour to understand the project architecture step by step
+- Filter nodes by type, tags, or layer
+
+Graph data is stored in `.understand-anything/knowledge-graph.json` and supports incremental updates — re-run `/understand` after code changes to sync.
 
 ---
 
