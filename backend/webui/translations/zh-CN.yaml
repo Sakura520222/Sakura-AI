@@ -1106,6 +1106,7 @@ billing:
   quota_limit: "配额额度"
   features: "功能特性"
   purchase: "购买"
+  no_payment_provider: "暂无可用支付方式"
   redeem_code: "兑换码"
   redeem: "兑换"
   redeem_success: "兑换成功"
