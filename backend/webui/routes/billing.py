@@ -48,9 +48,13 @@ def _format_crypto_currency_display(raw_currency: str) -> str:
 
 
 def _get_order_expires_at(order) -> str:
-    """获取订单过期时间的 ISO 格式字符串，无则默认 1 小时后"""
+    """获取订单过期时间的 ISO 格式字符串（带 UTC 后缀），无则默认 1 小时后"""
     if order.expires_at:
-        return order.expires_at.isoformat()
+        dt = order.expires_at
+        # MySQL TIMESTAMP 返回 naive datetime（实为 UTC），确保带 +00:00
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        return dt.isoformat()
     return (datetime.now(timezone.utc) + timedelta(hours=1)).isoformat()
 
 
