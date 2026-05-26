@@ -3,7 +3,7 @@
 覆盖：套餐管理、兑换码生成/兑换、配额发放、手动充值、边界条件。
 """
 
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -128,7 +128,7 @@ class TestPlanManagement:
         mock_session.execute.return_value = mock_result
 
         updated = await svc.update_plan(
-            1, name="新名称", id=999, created_at=datetime.utcnow()
+            1, name="新名称", id=999, created_at=datetime.now(timezone.utc)
         )
 
         assert updated.name == "新名称"
@@ -249,7 +249,7 @@ class TestRedeemCodeUsage:
             max_uses=1,
             used_count=0,
             status=RedeemCodeStatus.ACTIVE.value,
-            expires_at=datetime.utcnow() - timedelta(days=1),
+            expires_at=datetime.now(timezone.utc) - timedelta(days=1),
         )
         mock_result = MagicMock()
         mock_result.scalar_one_or_none.return_value = expired_code
@@ -353,7 +353,7 @@ class TestSubscription:
             user_id=1,
             plan_id=sample_subscription_plan.id,
             status=SubscriptionStatus.EXPIRED.value,
-            expires_at=datetime.utcnow() - timedelta(days=1),
+            expires_at=datetime.now(timezone.utc) - timedelta(days=1),
         )
         mock_result = MagicMock()
         mock_result.scalar_one_or_none.return_value = existing
@@ -381,7 +381,7 @@ class TestSubscription:
             user_id=sample_user.id,
             plan_id=plan.id,
             status=SubscriptionStatus.ACTIVE.value,
-            expires_at=datetime.utcnow() - timedelta(days=1),
+            expires_at=datetime.now(timezone.utc) - timedelta(days=1),
             applied_pr_daily_add=0,
             applied_pr_monthly_add=0,
         )
@@ -401,7 +401,7 @@ class TestSubscription:
             user_id=sample_user.id,
             plan_id=sample_subscription_plan.id,
             status=SubscriptionStatus.ACTIVE.value,
-            expires_at=datetime.utcnow() - timedelta(days=1),
+            expires_at=datetime.now(timezone.utc) - timedelta(days=1),
             applied_pr_daily_add=5,
             applied_pr_monthly_add=100,
         )

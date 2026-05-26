@@ -164,22 +164,12 @@ class StripeGateway(PaymentGateway):
         reason: Optional[str] = None,
     ) -> RefundResult:
         try:
-            sessions = stripe.checkout.Session.list(
+            # 直接 retrieve session 获取 payment_intent
+            session = stripe.checkout.Session.retrieve(
+                provider_tx_id,
                 api_key=self._api_key,
-                limit=1,
             )
-            payment_intent_id = None
-            for s in sessions.auto_paging_iter():
-                if s.id == provider_tx_id:
-                    payment_intent_id = s.payment_intent
-                    break
-
-            if not payment_intent_id:
-                session = stripe.checkout.Session.retrieve(
-                    provider_tx_id,
-                    api_key=self._api_key,
-                )
-                payment_intent_id = session.payment_intent
+            payment_intent_id = session.payment_intent
 
             if not payment_intent_id:
                 return RefundResult(
