@@ -161,6 +161,7 @@ async def purchase_plan(
     provider = str(form.get("provider", ""))
 
     # 验证 provider 是否为已配置且已启用的外部支付提供商
+    # 延迟导入避免循环引用
     from backend.services.payment import EXTERNAL_PAYMENT_PROVIDERS
     from backend.services.payment.gateway_factory import get_configured_providers
 

@@ -588,9 +588,11 @@ class PaymentService:
         if order.payment_provider in ("alipay", "nowpayments"):
             success_url = f"https://{domain}/api/webhook/{order.payment_provider}"
 
+        # get_gateway 会对未注册/未启用/未配置的 provider 抛出 ValueError
+        # 其他意外异常（如配置读取失败）也应转为 PaymentError
         try:
             gateway = await get_gateway(order.payment_provider)
-        except ValueError as exc:
+        except (ValueError, RuntimeError) as exc:
             raise PaymentError(str(exc)) from exc
         result = await gateway.create_payment(
             order_no=order.order_no,
