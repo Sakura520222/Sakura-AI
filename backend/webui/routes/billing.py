@@ -7,6 +7,7 @@ from fastapi.responses import JSONResponse
 from loguru import logger
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from backend.models.payment_models import RefundRequestStatus
 from backend.services.payment_service import (
     PaymentError,
     PaymentService,
@@ -88,6 +89,9 @@ async def billing_index(
     orders, total = await svc.list_user_orders(
         user["user_id"], limit=per_page, offset=offset
     )
+    refund_requests_by_order = await svc.list_refund_requests_for_orders(
+        user["user_id"], [order.id for order in orders]
+    )
 
     from backend.services.payment.gateway_factory import get_configured_providers
     available_providers = await get_configured_providers()
@@ -102,6 +106,7 @@ async def billing_index(
         plans=plans,
         db_user=db_user,
         orders=orders,
+        refund_requests_by_order=refund_requests_by_order,
         total=total,
         page=page,
         per_page=per_page,
@@ -469,47 +474,33 @@ async def user_refund_order(
     db: AsyncSession = Depends(get_db),
     user: dict = Depends(require_auth),
     csrf_token: str = Depends(require_csrf),
+    reason: str = Form(""),
 ):
-    """User requests a refund for their own fulfilled order"""
-    from backend.models.payment_models import Order, OrderStatus
-    from sqlalchemy import select, and_
-
-    # Verify the order belongs to this user and is refundable
-    stmt = select(Order).where(
-        and_(
-            Order.id == order_id,
-            Order.user_id == user["user_id"],
-            Order.status == OrderStatus.FULFILLED.value,
-        )
-    )
-    order = (await db.execute(stmt)).scalar_one_or_none()
-    if not order:
-        return toast_redirect(
-            "/billing/",
-            "toast.payment_error",
-            "error",
-            lang=detect_language(),
-            error="Order not found or not refundable",
-        )
-
+    """User submits a refund request for super-admin review."""
     svc = PaymentService(db)
     try:
-        order = await svc.process_refund(
+        refund_request = await svc.submit_refund_request(
             order_id=order_id,
-            operator_id=user["user_id"],
+            user_id=user["user_id"],
+            reason=reason,
         )
         await db.commit()
         return toast_redirect(
             "/billing/",
-            "toast.refund_success",
+            "toast.refund_request_submitted",
             lang=detect_language(),
-            order_no=order.order_no,
+            order_no=refund_request.order.order_no if refund_request.order else order_id,
         )
     except PaymentError as e:
         await db.rollback()
+        toast_key = (
+            "toast.refund_request_exists"
+            if "already exists" in str(e)
+            else "toast.payment_error"
+        )
         return toast_redirect(
             "/billing/",
-            "toast.payment_error",
+            toast_key,
             "error",
             lang=detect_language(),
             error=str(e),
@@ -614,6 +605,148 @@ async def user_delete_order(
 
 
 # ========== 管理员：套餐管理 ==========
+
+
+@router.get("/admin/refund-requests")
+async def admin_refund_requests(
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    user: dict = Depends(require_super_admin),
+    user_prefs: dict = Depends(get_user_preferences),
+):
+    """超级管理员退款审核列表"""
+    status = request.query_params.get("status") or None
+    page = _parse_page(request.query_params.get("page"))
+    per_page = user_prefs.get("items_per_page", 20)
+    offset = (page - 1) * per_page
+
+    svc = PaymentService(db)
+    refund_requests, total = await svc.list_refund_requests(
+        status=status,
+        limit=per_page,
+        offset=offset,
+    )
+
+    return render_template(
+        "billing/admin_refund_requests.html",
+        request,
+        user_prefs=user_prefs,
+        current_user=user,
+        csrf_token=get_csrf_serializer().dumps({}),
+        active_page="billing_admin_refunds",
+        refund_requests=refund_requests,
+        status=status or "",
+        total=total,
+        page=page,
+        per_page=per_page,
+    )
+
+
+@router.post("/admin/refund-requests/{request_id}/approve")
+async def admin_approve_refund_request(
+    request_id: int,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    user: dict = Depends(require_super_admin),
+    csrf_token: str = Depends(require_csrf),
+    review_note: str = Form(""),
+):
+    """批准退款申请并执行真实退款。"""
+    svc = PaymentService(db)
+    try:
+        refund_request = await svc.approve_refund_request(
+            request_id=request_id,
+            reviewer_id=user["user_id"],
+            review_note=review_note,
+        )
+        await db.commit()
+        await log_admin_action(
+            db,
+            admin_id=user["user_id"],
+            action="approve_refund_request",
+            target_type="refund_request",
+            target_id=str(request_id),
+            detail={
+                "order_no": refund_request.order.order_no if refund_request.order else None,
+                "amount_cents": refund_request.amount_cents,
+                "status": refund_request.status,
+                "review_note": review_note,
+                "error_message": refund_request.error_message,
+            },
+        )
+        toast_key = (
+            "toast.refund_failed"
+            if refund_request.status == RefundRequestStatus.FAILED.value
+            else "toast.refund_approved"
+        )
+        toast_type = (
+            "error"
+            if refund_request.status == RefundRequestStatus.FAILED.value
+            else "success"
+        )
+        return toast_redirect(
+            "/billing/admin/refund-requests",
+            toast_key,
+            toast_type,
+            lang=detect_language(),
+            error=refund_request.error_message or "",
+        )
+    except PaymentError as e:
+        await db.rollback()
+        return toast_redirect(
+            "/billing/admin/refund-requests",
+            "toast.payment_error",
+            "error",
+            lang=detect_language(),
+            error=str(e),
+        )
+
+
+@router.post("/admin/refund-requests/{request_id}/reject")
+async def admin_reject_refund_request(
+    request_id: int,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    user: dict = Depends(require_super_admin),
+    csrf_token: str = Depends(require_csrf),
+    review_note: str = Form(""),
+):
+    """驳回退款申请。"""
+    svc = PaymentService(db)
+    try:
+        refund_request = await svc.reject_refund_request(
+            request_id=request_id,
+            reviewer_id=user["user_id"],
+            review_note=review_note,
+        )
+        await db.commit()
+        await log_admin_action(
+            db,
+            admin_id=user["user_id"],
+            action="reject_refund_request",
+            target_type="refund_request",
+            target_id=str(request_id),
+            detail={
+                "order_no": refund_request.order.order_no if refund_request.order else None,
+                "amount_cents": refund_request.amount_cents,
+                "status": refund_request.status,
+                "review_note": review_note,
+            },
+        )
+        return toast_redirect(
+            "/billing/admin/refund-requests",
+            "toast.refund_rejected",
+            lang=detect_language(),
+        )
+    except PaymentError as e:
+        await db.rollback()
+        return toast_redirect(
+            "/billing/admin/refund-requests",
+            "toast.payment_error",
+            "error",
+            lang=detect_language(),
+            error=str(e),
+        )
 
 
 @router.get("/admin/plans")

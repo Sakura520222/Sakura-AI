@@ -43,6 +43,7 @@ def test_sidebar_hides_billing_links_when_payment_disabled():
     assert "套餐中心" not in rendered
     assert "套餐管理" not in rendered
     assert "兑换码管理" not in rendered
+    assert "退款审核" not in rendered
 
 
 def test_sidebar_shows_billing_links_when_payment_enabled():
@@ -59,3 +60,18 @@ def test_sidebar_shows_billing_links_when_payment_enabled():
     assert "套餐中心" in rendered
     assert "套餐管理" in rendered
     assert "兑换码管理" in rendered
+    assert "退款审核" in rendered
+
+
+def test_sidebar_hides_refund_reviews_for_non_super_admin():
+    from backend.webui.deps import get_templates
+
+    template = get_templates().get_template("components/sidebar.html")
+    rendered = template.render(
+        active_page="dashboard",
+        current_user={"role": "admin"},
+        settings=SettingsStub(payment_enabled=True),
+    )
+
+    assert "套餐中心" in rendered
+    assert "退款审核" not in rendered

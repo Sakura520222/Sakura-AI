@@ -34,6 +34,8 @@ from backend.models.payment_models import (
     SubscriptionStatus,
     PaymentLog,
     PaymentAction,
+    RefundRequest,
+    RefundRequestStatus,
 )
 from backend.models.agent_skill_models import AgentSkill
 from backend.core.config import get_settings
@@ -61,6 +63,8 @@ __all__ = [
     "SubscriptionStatus",
     "PaymentLog",
     "PaymentAction",
+    "RefundRequest",
+    "RefundRequestStatus",
     "AgentSkill",
     "RepoScan",
     "ScanFinding",

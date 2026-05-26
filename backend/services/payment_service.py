@@ -7,6 +7,7 @@ from typing import List, Optional
 
 from sqlalchemy import select, and_, func
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 from loguru import logger
 
 from backend.models.payment_models import (
@@ -20,9 +21,17 @@ from backend.models.payment_models import (
     SubscriptionStatus,
     PaymentLog,
     PaymentAction,
+    RefundRequest,
+    RefundRequestStatus,
 )
 from backend.models.telegram_models import TelegramUser
 from backend.core.config import get_dynamic_config, get_settings
+from backend.services.refund_notification_service import (
+    notify_refund_request_approved,
+    notify_refund_request_failed,
+    notify_refund_request_rejected,
+    notify_refund_request_submitted,
+)
 
 
 class PaymentError(Exception):
@@ -943,6 +952,221 @@ class PaymentService:
             operator_id,
         )
         return order
+
+    async def submit_refund_request(
+        self,
+        order_id: int,
+        user_id: int,
+        reason: str = "",
+    ) -> RefundRequest:
+        """Create a pending refund request for a user's fulfilled paid order."""
+        order = await self.session.get(Order, order_id)
+        if not order or order.user_id != user_id:
+            raise PaymentError("Order not found or not refundable")
+
+        if order.status != OrderStatus.FULFILLED.value:
+            raise PaymentError("Only fulfilled orders can request refund")
+
+        if order.amount_cents <= 0:
+            raise PaymentError("Free or manual grant orders cannot be refunded")
+
+        existing_stmt = select(RefundRequest).where(
+            and_(
+                RefundRequest.order_id == order_id,
+                RefundRequest.user_id == user_id,
+                RefundRequest.status.in_(
+                    [
+                        RefundRequestStatus.PENDING.value,
+                        RefundRequestStatus.FAILED.value,
+                    ]
+                ),
+            )
+        )
+        existing = (await self.session.execute(existing_stmt)).scalar_one_or_none()
+        if existing:
+            raise PaymentError("Refund request already exists")
+
+        user = await self.session.get(TelegramUser, user_id)
+        refund_request = RefundRequest(
+            order_id=order.id,
+            user_id=user_id,
+            amount_cents=order.amount_cents,
+            currency=order.currency,
+            status=RefundRequestStatus.PENDING.value,
+            reason=(reason or "").strip() or None,
+        )
+        refund_request.order = order
+        if user:
+            refund_request.user = user
+
+        self.session.add(refund_request)
+        await self.session.flush()
+        await notify_refund_request_submitted(self.session, refund_request)
+        logger.info(
+            "Refund request submitted: request_id={}, order_id={}, user_id={}",
+            refund_request.id,
+            order_id,
+            user_id,
+        )
+        return refund_request
+
+    async def list_refund_requests(
+        self,
+        status: Optional[str] = None,
+        limit: int = 50,
+        offset: int = 0,
+    ) -> tuple[List[RefundRequest], int]:
+        """List refund requests for admin review."""
+        conditions = []
+        if status:
+            conditions.append(RefundRequest.status == status)
+
+        count_stmt = select(func.count()).select_from(RefundRequest)
+        stmt = (
+            select(RefundRequest)
+            .options(
+                selectinload(RefundRequest.order).selectinload(Order.plan),
+                selectinload(RefundRequest.user),
+                selectinload(RefundRequest.reviewer),
+            )
+            .order_by(RefundRequest.requested_at.desc(), RefundRequest.id.desc())
+            .limit(limit)
+            .offset(offset)
+        )
+        if conditions:
+            count_stmt = count_stmt.where(and_(*conditions))
+            stmt = stmt.where(and_(*conditions))
+
+        total = (await self.session.execute(count_stmt)).scalar() or 0
+        result = await self.session.execute(stmt)
+        return list(result.scalars().all()), total
+
+    async def list_refund_requests_for_orders(
+        self,
+        user_id: int,
+        order_ids: list[int],
+    ) -> dict[int, RefundRequest]:
+        """Return the latest refund request per order for the user's order list."""
+        if not order_ids:
+            return {}
+        stmt = (
+            select(RefundRequest)
+            .where(
+                and_(
+                    RefundRequest.user_id == user_id,
+                    RefundRequest.order_id.in_(order_ids),
+                )
+            )
+            .order_by(RefundRequest.requested_at.desc(), RefundRequest.id.desc())
+        )
+        result = await self.session.execute(stmt)
+        requests_by_order: dict[int, RefundRequest] = {}
+        for refund_request in result.scalars().all():
+            requests_by_order.setdefault(refund_request.order_id, refund_request)
+        return requests_by_order
+
+    async def get_refund_request(
+        self,
+        request_id: int,
+    ) -> Optional[RefundRequest]:
+        stmt = (
+            select(RefundRequest)
+            .options(
+                selectinload(RefundRequest.order).selectinload(Order.plan),
+                selectinload(RefundRequest.user),
+                selectinload(RefundRequest.reviewer),
+            )
+            .where(RefundRequest.id == request_id)
+        )
+        result = await self.session.execute(stmt)
+        return result.scalar_one_or_none()
+
+    async def approve_refund_request(
+        self,
+        request_id: int,
+        reviewer_id: int,
+        review_note: str = "",
+    ) -> RefundRequest:
+        """Approve a refund request and execute the real refund."""
+        refund_request = await self.get_refund_request(request_id)
+        if not refund_request:
+            raise PaymentError(f"Refund request not found: {request_id}")
+
+        if refund_request.status not in {
+            RefundRequestStatus.PENDING.value,
+            RefundRequestStatus.FAILED.value,
+        }:
+            raise PaymentError(
+                f"Cannot approve refund request in status: {refund_request.status}"
+            )
+
+        now = datetime.now(timezone.utc)
+        refund_request.reviewed_by = reviewer_id
+        refund_request.reviewed_at = now
+        refund_request.review_note = (review_note or "").strip() or None
+
+        try:
+            order = await self.process_refund(
+                order_id=refund_request.order_id,
+                amount_cents=refund_request.amount_cents,
+                operator_id=reviewer_id,
+            )
+            refund_request.order = order
+            refund_request.status = RefundRequestStatus.APPROVED.value
+            refund_request.processed_at = datetime.now(timezone.utc)
+            refund_request.error_message = None
+            await self.session.flush()
+            await notify_refund_request_approved(self.session, refund_request)
+            logger.info(
+                "Refund request approved: request_id={}, reviewer_id={}",
+                request_id,
+                reviewer_id,
+            )
+        except Exception as exc:
+            refund_request.status = RefundRequestStatus.FAILED.value
+            refund_request.error_message = str(exc)
+            await self.session.flush()
+            await notify_refund_request_failed(self.session, refund_request)
+            logger.warning(
+                "Refund request failed during approval: request_id={}, error={}",
+                request_id,
+                exc,
+            )
+
+        return refund_request
+
+    async def reject_refund_request(
+        self,
+        request_id: int,
+        reviewer_id: int,
+        review_note: str = "",
+    ) -> RefundRequest:
+        """Reject a pending refund request without executing refund."""
+        refund_request = await self.get_refund_request(request_id)
+        if not refund_request:
+            raise PaymentError(f"Refund request not found: {request_id}")
+
+        if refund_request.status not in {
+            RefundRequestStatus.PENDING.value,
+            RefundRequestStatus.FAILED.value,
+        }:
+            raise PaymentError(
+                f"Cannot reject refund request in status: {refund_request.status}"
+            )
+
+        refund_request.status = RefundRequestStatus.REJECTED.value
+        refund_request.reviewed_by = reviewer_id
+        refund_request.reviewed_at = datetime.now(timezone.utc)
+        refund_request.review_note = (review_note or "").strip() or None
+        refund_request.error_message = None
+        await self.session.flush()
+        await notify_refund_request_rejected(self.session, refund_request)
+        logger.info(
+            "Refund request rejected: request_id={}, reviewer_id={}",
+            request_id,
+            reviewer_id,
+        )
+        return refund_request
 
     async def grant_plan_to_user(
         self,
