@@ -148,16 +148,24 @@ async def get_configured_providers() -> list[dict[str, str]]:
     from backend.core.config import get_dynamic_config
 
     provider_checks = {
-        "stripe": ("stripe_api_key", "Stripe (信用卡)"),
-        "paddle": ("paddle_api_key", "Paddle (国际支付)"),
-        "alipay": ("alipay_app_id", "支付宝"),
-        "nowpayments": ("nowpayments_api_key", "USDT 虚拟币 (NOWPayments)"),
-        "tron": ("tron_wallet_address", "USDT 虚拟币 (直收)"),
+        "stripe": ("stripe_enabled", "stripe_api_key", "Stripe (信用卡)"),
+        "paddle": ("paddle_enabled", "paddle_api_key", "Paddle (国际支付)"),
+        "alipay": ("alipay_enabled", "alipay_app_id", "支付宝"),
+        "nowpayments": (
+            "nowpayments_enabled",
+            "nowpayments_api_key",
+            "USDT 虚拟币 (NOWPayments)",
+        ),
+        "tron": ("tron_enabled", "tron_wallet_address", "USDT 虚拟币 (直收)"),
     }
 
     configured = []
-    for provider_id, (key_name, label) in provider_checks.items():
-        value = await get_dynamic_config(key_name)
+    for provider_id, (enabled_key, cred_key, label) in provider_checks.items():
+        # 开关必须开启，且有对应凭证
+        is_enabled = await get_dynamic_config(enabled_key)
+        if not is_enabled:
+            continue
+        value = await get_dynamic_config(cred_key)
         if value:
             configured.append({"id": provider_id, "label": label})
 

@@ -502,6 +502,7 @@ class Settings(BaseSettings):
     payment_default_currency: str = Field("CNY", description="默认货币")
 
     # Stripe 支付网关
+    stripe_enabled: bool = Field(False, description="启用 Stripe 支付")
     stripe_api_key: str = Field("", description="Stripe Secret API Key")
     stripe_webhook_secret: str = Field(
         "", description="Stripe Webhook Signing Secret"
@@ -509,6 +510,7 @@ class Settings(BaseSettings):
     stripe_currency: str = Field("CNY", description="Stripe 默认货币")
 
     # Paddle 支付网关
+    paddle_enabled: bool = Field(False, description="启用 Paddle 支付")
     paddle_api_key: str = Field("", description="Paddle API Key")
     paddle_webhook_secret: str = Field(
         "", description="Paddle Webhook Signing Secret"
@@ -517,12 +519,14 @@ class Settings(BaseSettings):
     paddle_vendor_id: str = Field("", description="Paddle Client-side Token (用于前端)")
 
     # 支付宝当面付（个人开发者可用）
+    alipay_enabled: bool = Field(False, description="启用支付宝支付")
     alipay_app_id: str = Field("", description="支付宝 App ID")
     alipay_private_key: str = Field("", description="支付宝应用私钥（RSA2 PEM）")
     alipay_public_key: str = Field("", description="支付宝公钥（用于验签）")
     alipay_currency: str = Field("CNY", description="支付宝默认货币")
 
     # NOWPayments 虚拟币支付（无需 KYC，非托管）
+    nowpayments_enabled: bool = Field(False, description="启用 NOWPayments 虚拟币支付")
     nowpayments_api_key: str = Field("", description="NOWPayments API Key")
     nowpayments_ipn_secret: str = Field("", description="NOWPayments IPN Secret Key")
     nowpayments_pay_currency: str = Field(
@@ -530,6 +534,7 @@ class Settings(BaseSettings):
     )
 
     # 自建 TRON USDT 收款（零手续费，资金直达钱包）
+    tron_enabled: bool = Field(False, description="启用 TRON USDT 直收")
     tron_wallet_address: str = Field(
         "", description="TRON 收款钱包地址（Base58 格式）"
     )
@@ -1284,20 +1289,25 @@ DYNAMIC_CONFIG_GROUPS: OrderedDict[str, dict] = OrderedDict(
                     "payment_enabled",
                     "payment_order_expire_minutes",
                     "payment_default_currency",
+                    "stripe_enabled",
                     "stripe_api_key",
                     "stripe_webhook_secret",
                     "stripe_currency",
+                    "paddle_enabled",
                     "paddle_api_key",
                     "paddle_webhook_secret",
                     "paddle_currency",
                     "paddle_vendor_id",
+                    "alipay_enabled",
                     "alipay_app_id",
                     "alipay_private_key",
                     "alipay_public_key",
                     "alipay_currency",
+                    "nowpayments_enabled",
                     "nowpayments_api_key",
                     "nowpayments_ipn_secret",
                     "nowpayments_pay_currency",
+                    "tron_enabled",
                     "tron_wallet_address",
                     "tron_api_key",
                 ],
@@ -1535,20 +1545,25 @@ DYNAMIC_CONFIG_LABELS: dict[str, str] = {
     "payment_enabled": "启用付费配额系统",
     "payment_order_expire_minutes": "订单过期时间（分钟）",
     "payment_default_currency": "默认货币",
+    "stripe_enabled": "启用 Stripe 支付",
     "stripe_api_key": "Stripe API Key",
     "stripe_webhook_secret": "Stripe Webhook Secret",
     "stripe_currency": "Stripe 默认货币",
+    "paddle_enabled": "启用 Paddle 支付",
     "paddle_api_key": "Paddle API Key",
     "paddle_webhook_secret": "Paddle Webhook Secret",
     "paddle_currency": "Paddle 默认货币",
     "paddle_vendor_id": "Paddle Client-side Token",
+    "alipay_enabled": "启用支付宝支付",
     "alipay_app_id": "支付宝 App ID",
     "alipay_private_key": "支付宝应用私钥",
     "alipay_public_key": "支付宝公钥（验签用）",
     "alipay_currency": "支付宝默认货币",
+    "nowpayments_enabled": "启用 NOWPayments 虚拟币支付",
     "nowpayments_api_key": "NOWPayments API Key",
     "nowpayments_ipn_secret": "NOWPayments IPN 密钥",
     "nowpayments_pay_currency": "虚拟币类型（如 usdttrc20）",
+    "tron_enabled": "启用 TRON USDT 直收",
     "tron_wallet_address": "TRON 收款钱包地址",
     "tron_api_key": "TronGrid API Key（可选）",
     # 核心配置标签
