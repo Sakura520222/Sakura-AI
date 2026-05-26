@@ -170,7 +170,7 @@
                             <input type="radio" name="provider" value="{{ p.id }}"
                                    {% if loop.first %}checked{% endif %}
                                    class="text-sakura-500 focus:ring-sakura-500">
-                            {{ p.label }}
+                            {{ _('billing.provider_' + p.id) }}
                         </label>
                         {% endfor %}
                     </div>
