@@ -7,7 +7,7 @@ from fastapi.responses import JSONResponse
 from loguru import logger
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from backend.models.payment_models import RefundRequestStatus
+from backend.models.payment_models import Order, RefundRequestStatus
 from backend.services.payment_service import (
     PaymentError,
     PaymentService,
@@ -48,7 +48,7 @@ def _format_crypto_currency_display(raw_currency: str) -> str:
     return raw_currency.upper()
 
 
-def _get_order_expires_at(order) -> str:
+def _get_order_expires_at(order: Order) -> str:
     """获取订单过期时间的 ISO 格式字符串（带 UTC 后缀），无则默认 1 小时后"""
     if order.expires_at:
         dt = order.expires_at
@@ -495,7 +495,7 @@ async def user_refund_order(
         await db.rollback()
         toast_key = (
             "toast.refund_request_exists"
-            if "already exists" in str(e)
+            if e.code == "DUPLICATE_REFUND_REQUEST"
             else "toast.payment_error"
         )
         return toast_redirect(
