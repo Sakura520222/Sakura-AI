@@ -54,9 +54,14 @@ async def get_gateway(
             f"Unsupported payment provider: {provider}. Supported: {supported}"
         )
 
-    if api_key is None or webhook_secret is None:
-        from backend.core.config import get_dynamic_config
+    from backend.core.config import get_dynamic_config
 
+    enabled_key = f"{provider}_enabled"
+    is_enabled = await get_dynamic_config(enabled_key)
+    if not is_enabled:
+        raise ValueError(f"Payment provider {provider} is disabled")
+
+    if api_key is None or webhook_secret is None:
         # Alipay uses different key names
         if provider == "alipay":
             if api_key is None:
@@ -93,8 +98,6 @@ async def get_gateway(
 
     # Alipay 需要额外的 alipay_public_key 参数
     if provider == "alipay":
-        from backend.core.config import get_dynamic_config
-
         alipay_public_key = str(
             await get_dynamic_config("alipay_public_key") or ""
         )
@@ -106,8 +109,6 @@ async def get_gateway(
 
     # NOWPayments 需要额外的 pay_currency 参数
     if provider == "nowpayments":
-        from backend.core.config import get_dynamic_config
-
         pay_currency = str(
             await get_dynamic_config("nowpayments_pay_currency") or "usdttrc20"
         )
@@ -119,8 +120,6 @@ async def get_gateway(
 
     # TronGateway 需要 wallet_address
     if provider == "tron":
-        from backend.core.config import get_dynamic_config
-
         wallet_address = str(
             await get_dynamic_config("tron_wallet_address") or ""
         )
