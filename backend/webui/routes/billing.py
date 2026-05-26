@@ -160,13 +160,15 @@ async def purchase_plan(
     form = await request.form()
     provider = str(form.get("provider", ""))
 
-    # 验证 provider 是否为已知的外部支付提供商
+    # 验证 provider 是否为已配置且已启用的外部支付提供商
     from backend.services.payment import EXTERNAL_PAYMENT_PROVIDERS
     from backend.services.payment.gateway_factory import get_configured_providers
 
-    if provider not in EXTERNAL_PAYMENT_PROVIDERS:
+    configured = await get_configured_providers()
+    configured_ids = {p["id"] for p in configured}
+
+    if provider not in EXTERNAL_PAYMENT_PROVIDERS or provider not in configured_ids:
         # 选择第一个已配置的 provider 作为默认
-        configured = await get_configured_providers()
         if configured:
             provider = configured[0]["id"]
         else:
