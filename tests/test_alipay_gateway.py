@@ -265,3 +265,73 @@ class TestGetPaymentStatus:
 
         assert result.success is False
         assert "Connection error" in result.error_message
+
+
+class TestCancelPayment:
+    """关闭交易（alipay.trade.close）"""
+
+    @pytest.mark.asyncio
+    async def test_close_success(self, gateway):
+        """code=10000 → 关闭成功"""
+        mock_data = {
+            "alipay_trade_close_response": {
+                "code": "10000",
+                "msg": "Success",
+            }
+        }
+
+        with patch.object(AlipayGateway, "_sign_with_rsa2", return_value="fake_sign"):
+            with patch.object(AlipayGateway, "_post", return_value=mock_data):
+                result = await gateway.cancel_payment(provider_tx_id="ORDER-001")
+
+        assert result.success is True
+        assert result.status == "cancelled"
+
+    @pytest.mark.asyncio
+    async def test_close_trade_not_found(self, gateway):
+        """code=40004 → 交易不存在，视为取消成功"""
+        mock_data = {
+            "alipay_trade_close_response": {
+                "code": "40004",
+                "msg": "Business Failed",
+                "sub_code": "ACQ.TRADE_NOT_EXIST",
+                "sub_msg": "交易不存在",
+            }
+        }
+
+        with patch.object(AlipayGateway, "_sign_with_rsa2", return_value="fake_sign"):
+            with patch.object(AlipayGateway, "_post", return_value=mock_data):
+                result = await gateway.cancel_payment(provider_tx_id="ORDER-002")
+
+        assert result.success is True
+        assert result.status == "cancelled"
+
+    @pytest.mark.asyncio
+    async def test_close_other_error(self, gateway):
+        """其他错误码 → 返回失败"""
+        mock_data = {
+            "alipay_trade_close_response": {
+                "code": "20000",
+                "msg": "Service Not Available",
+                "sub_msg": "服务不可用",
+            }
+        }
+
+        with patch.object(AlipayGateway, "_sign_with_rsa2", return_value="fake_sign"):
+            with patch.object(AlipayGateway, "_post", return_value=mock_data):
+                result = await gateway.cancel_payment(provider_tx_id="ORDER-003")
+
+        assert result.success is False
+        assert "服务不可用" in result.error_message
+
+    @pytest.mark.asyncio
+    async def test_close_network_error(self, gateway):
+        """网络异常 → 返回失败"""
+        with patch.object(AlipayGateway, "_sign_with_rsa2", return_value="fake_sign"):
+            with patch.object(
+                AlipayGateway, "_post", side_effect=Exception("Connection timeout")
+            ):
+                result = await gateway.cancel_payment(provider_tx_id="ORDER-004")
+
+        assert result.success is False
+        assert "Connection timeout" in result.error_message

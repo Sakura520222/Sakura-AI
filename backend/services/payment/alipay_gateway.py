@@ -21,7 +21,7 @@
 """
 
 from typing import Optional
-from urllib.parse import parse_qs
+from urllib.parse import parse_qs, urlencode
 
 import httpx
 from loguru import logger
@@ -283,7 +283,6 @@ class AlipayGateway(PaymentGateway):
             cancel_url: 用作 return_url（支付完成后前端回跳地址）
         """
         import json
-        from urllib.parse import urlencode
 
         # 金额转换：cents → 元
         total_amount = f"{amount_cents / 100:.2f}"
@@ -304,6 +303,7 @@ class AlipayGateway(PaymentGateway):
             "version": "1.0",
             "notify_url": success_url,
             "return_url": cancel_url,
+            # ensure_ascii=True: biz_content 将被 URL 编码，非 ASCII 字符需先转义
             "biz_content": json.dumps(biz_content, ensure_ascii=True),
         }
 
@@ -544,6 +544,7 @@ class AlipayGateway(PaymentGateway):
         import json
 
         try:
+            # ensure_ascii=True: biz_content 将被 URL 编码，非 ASCII 字符需先转义
             biz_content = json.dumps(
                 {"out_trade_no": provider_tx_id},
                 ensure_ascii=True,
