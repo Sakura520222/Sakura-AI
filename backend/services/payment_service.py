@@ -502,7 +502,7 @@ class PaymentService:
             order._checkout_url = checkout_url
 
             # 虚拟币支付：提取充值信息供前端展示
-            if provider == "nowpayments" and order.metadata_json:
+            if provider in ("nowpayments", "tron") and order.metadata_json:
                 try:
                     md = json.loads(order.metadata_json)
                     if md.get("is_crypto") is True:
@@ -537,13 +537,35 @@ class PaymentService:
             await self._get_provider_currency("stripe")
         ).upper()  # stripe/alipay 默认 CNY，视为定价货币
 
+        # TronGateway 使用 USDT（≈USD），provider_currency 固定为 USD，
+        # 不受 payment_default_currency 影响。
+        if order.payment_provider == "tron":
+            provider_currency = "USD"
+
         # NOWPayments 支持 price_currency 直接传 CNY，由其 API 按实时汇率转换，
-        # 无需自研转换。其他网关若货币不一致则需要转换。
+        # 无需自研转换。TronGateway 需要转换为 USD（USDT≈USD）。
+        # 其他网关若货币不一致则需要转换。
         amount_cents = order.amount_cents
         gateway_currency = provider_currency
         if order.payment_provider == "nowpayments":
             # 直接传原始 CNY 金额，让 NOWPayments 处理汇率
             gateway_currency = order_currency
+        elif order.payment_provider == "tron":
+            # TronGateway 使用 USDT（≈USD），需要从 CNY 转换
+            if provider_currency != order_currency:
+                converted = await self._convert_currency(
+                    order.amount_cents, order_currency, provider_currency
+                )
+                if converted != order.amount_cents:
+                    logger.info(
+                        "Currency conversion: {} {} cents → {} {} cents, order={}",
+                        order.amount_cents,
+                        order_currency,
+                        converted,
+                        provider_currency,
+                        order.order_no,
+                    )
+                amount_cents = converted
         elif provider_currency != order_currency:
             converted = await self._convert_currency(
                 order.amount_cents, order_currency, provider_currency
@@ -588,12 +610,12 @@ class PaymentService:
             "session_id": result.provider_tx_id,
         }
 
-        # NOWPayments 等虚拟币支付：存储充值地址、金额、币种等额外信息
-        if order.payment_provider == "nowpayments" and result.raw_data:
+        # 虚拟币支付：存储充值地址、金额、币种等额外信息
+        if order.payment_provider in ("nowpayments", "tron") and result.raw_data:
             metadata["pay_address"] = result.raw_data.get("pay_address", "")
             metadata["pay_amount"] = str(result.raw_data.get("pay_amount", ""))
             metadata["pay_currency"] = result.raw_data.get("pay_currency", "")
-            metadata["payment_id"] = result.raw_data.get("payment_id", "")
+            metadata["payment_id"] = str(result.raw_data.get("payment_id", ""))
             metadata["price_amount"] = str(
                 result.raw_data.get("price_amount", "")
             )
