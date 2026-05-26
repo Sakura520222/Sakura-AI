@@ -1,11 +1,13 @@
 """付费配额核心服务"""
 
+import json
 import uuid
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import List, Optional
 
 from sqlalchemy import select, and_, func
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 from loguru import logger
 
 from backend.models.payment_models import (
@@ -19,15 +21,25 @@ from backend.models.payment_models import (
     SubscriptionStatus,
     PaymentLog,
     PaymentAction,
+    RefundRequest,
+    RefundRequestStatus,
 )
 from backend.models.telegram_models import TelegramUser
 from backend.core.config import get_dynamic_config, get_settings
+from backend.services.refund_notification_service import (
+    notify_refund_request_approved,
+    notify_refund_request_failed,
+    notify_refund_request_rejected,
+    notify_refund_request_submitted,
+)
 
 
 class PaymentError(Exception):
     """支付业务异常"""
 
-    pass
+    def __init__(self, message: str, code: str | None = None):
+        super().__init__(message)
+        self.code = code
 
 
 async def is_payment_enabled() -> bool:
@@ -411,7 +423,7 @@ class PaymentService:
         if not redeem:
             raise PaymentError("Invalid or inactive redeem code")
 
-        if redeem.expires_at and redeem.expires_at < datetime.utcnow():
+        if redeem.expires_at and redeem.expires_at < datetime.now(timezone.utc):
             raise PaymentError("Redeem code has expired")
 
         if redeem.used_count >= redeem.max_uses:
@@ -434,7 +446,7 @@ class PaymentService:
             status=OrderStatus.PAID.value,
             payment_provider="redeem_code",
             provider_tx_id=code,
-            paid_at=datetime.utcnow(),
+            paid_at=datetime.now(timezone.utc),
         )
         self.session.add(order)
         await self.session.flush()
@@ -479,7 +491,7 @@ class PaymentService:
             currency=plan.currency,
             status=OrderStatus.PENDING.value,
             payment_provider=provider,
-            expires_at=datetime.utcnow() + timedelta(minutes=expire_minutes),
+            expires_at=datetime.now(timezone.utc) + timedelta(minutes=expire_minutes),
         )
         self.session.add(order)
         await self.session.flush()
@@ -491,7 +503,682 @@ class PaymentService:
             detail=f"Order created, provider={provider}",
         )
 
+        # For external payment providers, create payment via gateway
+        from backend.services.payment import EXTERNAL_PAYMENT_PROVIDERS
+
+        if provider in EXTERNAL_PAYMENT_PROVIDERS:
+            checkout_url = await self._create_external_payment(
+                order, plan, user_id
+            )
+            order._checkout_url = checkout_url
+
+            # 虚拟币支付：提取充值信息供前端展示
+            if provider in ("nowpayments", "tron") and order.metadata_json:
+                try:
+                    md = json.loads(order.metadata_json)
+                    if md.get("is_crypto") is True:
+                        order._crypto_payment_info = {
+                            "pay_address": md.get("pay_address", ""),
+                            "pay_amount": md.get("pay_amount", ""),
+                            "pay_currency": md.get("pay_currency", ""),
+                            "price_amount": md.get("price_amount", ""),
+                            "price_currency": md.get("price_currency", "usd"),
+                            "payment_id": md.get("payment_id", ""),
+                            "order_no": order.order_no,
+                        }
+                except (json.JSONDecodeError, TypeError):
+                    pass
+
         return order
+
+    async def _create_external_payment(
+        self, order: Order, plan: Plan, user_id: int
+    ) -> str:
+        """Create payment via external gateway and return checkout URL"""
+        from backend.services.payment import get_gateway
+
+        settings = get_settings()
+        domain = settings.sanitized_app_domain
+        provider_currency = str(
+            await self._get_provider_currency(order.payment_provider)
+        ).upper()
+
+        # 确定订单原始货币（套餐定价货币）
+        order_currency = str(
+            await self._get_provider_currency("stripe")
+        ).upper()  # stripe/alipay 默认 CNY，视为定价货币
+
+        # TronGateway 使用 USDT（≈USD），provider_currency 固定为 USD，
+        # 不受 payment_default_currency 影响。
+        if order.payment_provider == "tron":
+            provider_currency = "USD"
+
+        # NOWPayments 支持 price_currency 直接传 CNY，由其 API 按实时汇率转换，
+        # 无需自研转换。TronGateway 需要转换为 USD（USDT≈USD）。
+        # 其他网关若货币不一致则需要转换。
+        amount_cents = order.amount_cents
+        gateway_currency = provider_currency
+        if order.payment_provider == "nowpayments":
+            # 直接传原始 CNY 金额，让 NOWPayments 处理汇率
+            gateway_currency = order_currency
+        elif order.payment_provider == "tron":
+            # TronGateway 使用 USDT（≈USD），需要从 CNY 转换
+            if provider_currency != order_currency:
+                converted = await self._convert_currency(
+                    order.amount_cents, order_currency, provider_currency
+                )
+                if converted != order.amount_cents:
+                    logger.info(
+                        "Currency conversion: {} {} cents → {} {} cents, order={}",
+                        order.amount_cents,
+                        order_currency,
+                        converted,
+                        provider_currency,
+                        order.order_no,
+                    )
+                amount_cents = converted
+        elif provider_currency != order_currency:
+            converted = await self._convert_currency(
+                order.amount_cents, order_currency, provider_currency
+            )
+            if converted != order.amount_cents:
+                logger.info(
+                    "Currency conversion: {} {} cents → {} {} cents, order={}",
+                    order.amount_cents,
+                    order_currency,
+                    converted,
+                    provider_currency,
+                    order.order_no,
+                )
+            amount_cents = converted
+
+        success_url = f"https://{domain}/billing/payment/result?order_no={order.order_no}&status=success"
+        cancel_url = f"https://{domain}/billing/payment/result?order_no={order.order_no}&status=cancel"
+
+        # Alipay: notify_url 用 webhook 回调，return_url 用前端成功页面
+        if order.payment_provider == "alipay":
+            success_url = f"https://{domain}/api/webhook/{order.payment_provider}"
+            cancel_url = f"https://{domain}/billing/payment/result?order_no={order.order_no}&status=success"
+        # NOWPayments: webhook 回调
+        elif order.payment_provider == "nowpayments":
+            success_url = f"https://{domain}/api/webhook/{order.payment_provider}"
+
+        # get_gateway 会对未注册/未启用/未配置的 provider 抛出 ValueError
+        # 其他意外异常（如配置读取失败）也应转为 PaymentError
+        try:
+            gateway = await get_gateway(order.payment_provider)
+        except (ValueError, RuntimeError) as exc:
+            raise PaymentError(str(exc)) from exc
+        result = await gateway.create_payment(
+            order_no=order.order_no,
+            amount_cents=amount_cents,
+            currency=gateway_currency,
+            plan_name=plan.name,
+            user_id=user_id,
+            success_url=success_url,
+            cancel_url=cancel_url,
+        )
+
+        if not result.success:
+            raise PaymentError(
+                f"Failed to create payment: {result.error_message}"
+            )
+
+        order.provider_tx_id = result.provider_tx_id
+        metadata = {
+            "checkout_url": result.checkout_url,
+            "session_id": result.provider_tx_id,
+        }
+
+        # 虚拟币支付：存储充值地址、金额、币种等额外信息
+        if order.payment_provider in ("nowpayments", "tron") and result.raw_data:
+            metadata["pay_address"] = result.raw_data.get("pay_address", "")
+            metadata["pay_amount"] = str(result.raw_data.get("pay_amount", ""))
+            metadata["pay_currency"] = result.raw_data.get("pay_currency", "")
+            metadata["payment_id"] = str(result.raw_data.get("payment_id", ""))
+            metadata["price_amount"] = str(
+                result.raw_data.get("price_amount", "")
+            )
+            metadata["price_currency"] = result.raw_data.get(
+                "price_currency", "usd"
+            )
+            metadata["is_crypto"] = True
+
+        if order.metadata_json:
+            try:
+                existing = json.loads(order.metadata_json)
+                existing.update(metadata)
+                metadata = existing
+            except (json.JSONDecodeError, TypeError):
+                pass
+        order.metadata_json = json.dumps(metadata)
+        await self.session.flush()
+
+        await self._log_payment(
+            order_id=order.id,
+            user_id=order.user_id,
+            action=PaymentAction.CREATE,
+            detail=f"External payment created via {order.payment_provider}, "
+            f"tx_id={result.provider_tx_id}",
+        )
+
+        return result.checkout_url
+
+    async def _get_provider_currency(self, provider: str) -> str:
+        """Get currency for the given payment provider from dynamic config"""
+        provider_currency_key = f"{provider}_currency"
+        return str(
+            await get_dynamic_config(provider_currency_key)
+            or await get_dynamic_config("payment_default_currency")
+            or ("CNY" if provider in ("stripe", "alipay") else "USD")
+        )
+
+    async def _get_stripe_currency(self) -> str:
+        """Get Stripe currency from dynamic config (backward compat)"""
+        return await self._get_provider_currency("stripe")
+
+    async def _convert_currency(
+        self, amount_cents: int, from_cur: str, to_cur: str
+    ) -> int:
+        """将金额从一种货币转换为另一种货币（cents → cents）
+
+        优先从动态配置读取汇率，fallback 到内置参考汇率。
+        """
+        if from_cur == to_cur:
+            return amount_cents
+
+        # 尝试从动态配置获取汇率
+        rate_key = f"exchange_rate_{from_cur.upper()}_{to_cur.upper()}"
+        rate_str = await get_dynamic_config(rate_key)
+        converted: int | None = None
+        if rate_str:
+            try:
+                rate = float(rate_str)
+                converted = round(amount_cents * rate)
+                logger.info(
+                    "Dynamic exchange rate: {} {} → {} = {} (rate={})",
+                    amount_cents,
+                    from_cur,
+                    to_cur,
+                    converted,
+                    rate,
+                )
+            except (ValueError, TypeError):
+                logger.warning(
+                    "Invalid dynamic exchange rate '{}', using fallback",
+                    rate_str,
+                )
+
+        # 内置参考汇率（fallback）
+        if converted is None:
+            rates_vs_usd: dict[str, float] = {
+                "USD": 1.0,
+                "CNY": 7.25,
+                "EUR": 0.92,
+                "GBP": 0.79,
+                "JPY": 155.0,
+            }
+
+            from_rate = rates_vs_usd.get(from_cur.upper())
+            to_rate = rates_vs_usd.get(to_cur.upper())
+
+            if not from_rate or not to_rate:
+                logger.warning(
+                    "No exchange rate for {} → {}, using 1:1",
+                    from_cur,
+                    to_cur,
+                )
+                return amount_cents
+
+            # amount_cents / from_rate = USD → * to_rate = target
+            usd_amount = amount_cents / from_rate
+            converted = round(usd_amount * to_rate)
+
+        # 统一最低金额保护
+        return max(converted, 100)
+
+    async def confirm_payment(
+        self,
+        order_no: str,
+        provider_tx_id: str,
+    ) -> Order:
+        """Confirm payment for a PENDING order (PENDING -> PAID -> FULFILLED)"""
+        # 仅按 order_no 查询，provider_tx_id 在创建时设为 order_no，
+        # webhook 回调时用实际 trade_no 覆盖，两者不一致不能用作 WHERE 条件
+        stmt = select(Order).where(Order.order_no == order_no)
+        order = (await self.session.execute(stmt)).scalar_one_or_none()
+        if not order:
+            raise PaymentError(f"Order not found: {order_no}")
+
+        if order.status != OrderStatus.PENDING.value:
+            logger.warning(
+                "Order {} is already {}, skipping confirmation",
+                order_no,
+                order.status,
+            )
+            return order
+
+        user = await self.session.get(TelegramUser, order.user_id)
+        if not user:
+            raise PaymentError(f"User not found for order: {order_no}")
+
+        plan = await self.get_plan(order.plan_id)
+        if not plan:
+            raise PaymentError(f"Plan not found for order: {order_no}")
+
+        order.provider_tx_id = provider_tx_id
+        order.status = OrderStatus.PAID.value
+        order.paid_at = datetime.now(timezone.utc)
+
+        await self._log_payment(
+            order_id=order.id,
+            user_id=order.user_id,
+            action=PaymentAction.PAY,
+            detail=f"Payment confirmed via webhook, tx_id={provider_tx_id}",
+        )
+
+        order = await self._fulfill_order(order, user, plan)
+
+        logger.info(
+            "Payment confirmed and fulfilled: order_no={}, tx_id={}",
+            order_no,
+            provider_tx_id,
+        )
+        return order
+
+    async def cancel_expired_order(self, order_no: str) -> Order:
+        """Cancel an expired PENDING order"""
+        stmt = select(Order).where(Order.order_no == order_no)
+        order = (await self.session.execute(stmt)).scalar_one_or_none()
+        if not order:
+            raise PaymentError(f"Order not found: {order_no}")
+
+        if order.status != OrderStatus.PENDING.value:
+            raise PaymentError(
+                f"Cannot cancel order in status: {order.status}"
+            )
+
+        order.status = OrderStatus.CANCELLED.value
+        await self._log_payment(
+            order_id=order.id,
+            user_id=order.user_id,
+            action=PaymentAction.EXPIRE,
+            detail="Order cancelled (checkout session expired)",
+        )
+        await self.session.flush()
+
+        logger.info("Order cancelled: order_no={}", order_no)
+        return order
+
+    async def cancel_order(self, order_no: str, user_id: int) -> Order:
+        """用户主动取消 pending 订单，同时通知网关"""
+        stmt = select(Order).where(
+            and_(
+                Order.order_no == order_no,
+                Order.user_id == user_id,
+            )
+        )
+        order = (await self.session.execute(stmt)).scalar_one_or_none()
+        if not order:
+            raise PaymentError(f"Order not found: {order_no}")
+
+        if order.status != OrderStatus.PENDING.value:
+            raise PaymentError(
+                f"Cannot cancel order in status: {order.status}"
+            )
+
+        # 尝试通知支付网关取消
+        if order.provider_tx_id and order.payment_provider:
+            try:
+                from backend.services.payment import get_gateway
+
+                gateway = await get_gateway(order.payment_provider)
+                result = await gateway.cancel_payment(order.provider_tx_id)
+                if not result.success:
+                    logger.warning(
+                        "Gateway cancel failed for {}: {}",
+                        order_no,
+                        result.error_message,
+                    )
+            except Exception as e:
+                logger.warning(
+                    "Gateway cancel error for {}: {}", order_no, e
+                )
+
+        order.status = OrderStatus.CANCELLED.value
+        await self._log_payment(
+            order_id=order.id,
+            user_id=order.user_id,
+            action=PaymentAction.EXPIRE,
+            detail="Order cancelled by user",
+        )
+        await self.session.flush()
+
+        logger.info("Order cancelled by user: order_no={}", order_no)
+        return order
+
+    async def process_refund(
+        self,
+        order_id: int,
+        amount_cents: Optional[int] = None,
+        operator_id: Optional[int] = None,
+    ) -> Order:
+        """Process refund for a FULFILLED order"""
+        order = await self.session.get(Order, order_id)
+        if not order:
+            raise PaymentError(f"Order not found: {order_id}")
+
+        if order.status != OrderStatus.FULFILLED.value:
+            raise PaymentError(
+                f"Cannot refund order in status: {order.status}, "
+                "only FULFILLED orders can be refunded"
+            )
+
+        user = await self.session.get(TelegramUser, order.user_id)
+        if not user:
+            raise PaymentError(f"User not found for order: {order_id}")
+
+        plan = await self.get_plan(order.plan_id)
+
+        from backend.services.payment import EXTERNAL_PAYMENT_PROVIDERS, get_gateway
+
+        if (
+            order.payment_provider in EXTERNAL_PAYMENT_PROVIDERS
+            and order.provider_tx_id
+        ):
+            gateway = await get_gateway(order.payment_provider)
+            # 全额退款时使用订单原始金额
+            refund_amount = amount_cents if amount_cents is not None else order.amount_cents
+            refund_result = await gateway.refund(
+                provider_tx_id=order.provider_tx_id,
+                amount_cents=refund_amount,
+                reason="requested_by_customer",
+            )
+            if not refund_result.success:
+                # Idempotent: if already refunded in Stripe, proceed locally
+                already_refunded = "already been refunded" in str(
+                    refund_result.error_message
+                )
+                if not already_refunded:
+                    raise PaymentError(
+                        f"Refund failed via gateway: {refund_result.error_message}"
+                    )
+                logger.info(
+                    "Order already refunded in gateway, proceeding locally: order_id={}",
+                    order_id,
+                )
+
+            await self._log_payment(
+                order_id=order.id,
+                user_id=order.user_id,
+                action=PaymentAction.REFUND,
+                detail=f"Refund processed via {order.payment_provider}, "
+                f"refund_id={refund_result.refund_id}, "
+                f"amount={refund_result.amount_cents}",
+                operator_id=operator_id,
+            )
+        else:
+            await self._log_payment(
+                order_id=order.id,
+                user_id=order.user_id,
+                action=PaymentAction.REFUND,
+                detail=f"Manual refund by operator {operator_id}",
+                operator_id=operator_id,
+            )
+
+        # Claw back quotas: subtract the same plan values that were added at purchase
+        if plan:
+            await self._clawback_plan_quotas(user, plan)
+
+        # Expire subscription linked to this order (if any)
+        if plan and plan.plan_type == PlanType.SUBSCRIPTION.value:
+            stmt = select(UserSubscription).where(
+                and_(
+                    UserSubscription.user_id == order.user_id,
+                    UserSubscription.last_order_id == order.id,
+                    UserSubscription.status == SubscriptionStatus.ACTIVE.value,
+                )
+            )
+            subscription = (
+                await self.session.execute(stmt)
+            ).scalar_one_or_none()
+            if subscription:
+                subscription.status = SubscriptionStatus.EXPIRED.value
+                await self.session.flush()
+
+        order.status = OrderStatus.REFUNDED.value
+        await self.session.flush()
+
+        logger.info(
+            "Order refunded: order_id={}, provider={}, operator={}",
+            order_id,
+            order.payment_provider,
+            operator_id,
+        )
+        return order
+
+    async def submit_refund_request(
+        self,
+        order_id: int,
+        user_id: int,
+        reason: str = "",
+    ) -> RefundRequest:
+        """Create a pending refund request for a user's fulfilled paid order."""
+        order = await self.session.get(Order, order_id)
+        if not order or order.user_id != user_id:
+            raise PaymentError("Order not found or not refundable")
+
+        if order.status != OrderStatus.FULFILLED.value:
+            raise PaymentError("Only fulfilled orders can request refund")
+
+        if order.amount_cents <= 0:
+            raise PaymentError("Free or manual grant orders cannot be refunded")
+
+        existing_stmt = select(RefundRequest).where(
+            and_(
+                RefundRequest.order_id == order_id,
+                RefundRequest.user_id == user_id,
+                # 仅阻止待审核中的重复请求；FAILED 表示执行失败，允许用户重新提交。
+                RefundRequest.status == RefundRequestStatus.PENDING.value,
+            )
+        )
+        existing = (await self.session.execute(existing_stmt)).scalar_one_or_none()
+        if existing:
+            raise PaymentError(
+                "Refund request already exists",
+                code="DUPLICATE_REFUND_REQUEST",
+            )
+
+        user = await self.session.get(TelegramUser, user_id)
+        refund_request = RefundRequest(
+            order_id=order.id,
+            user_id=user_id,
+            amount_cents=order.amount_cents,
+            currency=order.currency,
+            status=RefundRequestStatus.PENDING.value,
+            reason=(reason or "").strip() or None,
+        )
+        refund_request.order = order
+        if user:
+            refund_request.user = user
+
+        self.session.add(refund_request)
+        await self.session.flush()
+        await notify_refund_request_submitted(self.session, refund_request)
+        logger.info(
+            "Refund request submitted: request_id={}, order_id={}, user_id={}",
+            refund_request.id,
+            order_id,
+            user_id,
+        )
+        return refund_request
+
+    async def list_refund_requests(
+        self,
+        status: Optional[str] = None,
+        limit: int = 50,
+        offset: int = 0,
+    ) -> tuple[List[RefundRequest], int]:
+        """List refund requests for admin review."""
+        conditions = []
+        if status:
+            conditions.append(RefundRequest.status == status)
+
+        count_stmt = select(func.count()).select_from(RefundRequest)
+        stmt = (
+            select(RefundRequest)
+            .options(
+                selectinload(RefundRequest.order).selectinload(Order.plan),
+                selectinload(RefundRequest.user),
+                selectinload(RefundRequest.reviewer),
+            )
+            .order_by(RefundRequest.requested_at.desc(), RefundRequest.id.desc())
+            .limit(limit)
+            .offset(offset)
+        )
+        if conditions:
+            count_stmt = count_stmt.where(and_(*conditions))
+            stmt = stmt.where(and_(*conditions))
+
+        total = (await self.session.execute(count_stmt)).scalar() or 0
+        result = await self.session.execute(stmt)
+        return list(result.scalars().all()), total
+
+    async def list_refund_requests_for_orders(
+        self,
+        user_id: int,
+        order_ids: list[int],
+    ) -> dict[int, RefundRequest]:
+        """Return the latest refund request per order for the user's order list."""
+        if not order_ids:
+            return {}
+        stmt = (
+            select(RefundRequest)
+            .where(
+                and_(
+                    RefundRequest.user_id == user_id,
+                    RefundRequest.order_id.in_(order_ids),
+                )
+            )
+            .order_by(RefundRequest.requested_at.desc(), RefundRequest.id.desc())
+        )
+        result = await self.session.execute(stmt)
+        requests_by_order: dict[int, RefundRequest] = {}
+        for refund_request in result.scalars().all():
+            requests_by_order.setdefault(refund_request.order_id, refund_request)
+        return requests_by_order
+
+    async def get_refund_request(
+        self,
+        request_id: int,
+    ) -> Optional[RefundRequest]:
+        stmt = (
+            select(RefundRequest)
+            .options(
+                selectinload(RefundRequest.order).selectinload(Order.plan),
+                selectinload(RefundRequest.user),
+                selectinload(RefundRequest.reviewer),
+            )
+            .where(RefundRequest.id == request_id)
+        )
+        result = await self.session.execute(stmt)
+        return result.scalar_one_or_none()
+
+    async def approve_refund_request(
+        self,
+        request_id: int,
+        reviewer_id: int,
+        review_note: str = "",
+    ) -> RefundRequest:
+        """Approve a refund request and execute the real refund."""
+        refund_request = await self.get_refund_request(request_id)
+        if not refund_request:
+            raise PaymentError(f"Refund request not found: {request_id}")
+
+        if refund_request.status not in {
+            RefundRequestStatus.PENDING.value,
+            RefundRequestStatus.FAILED.value,
+        }:
+            raise PaymentError(
+                f"Cannot approve refund request in status: {refund_request.status}"
+            )
+
+        now = datetime.now(timezone.utc)
+        refund_request.reviewed_by = reviewer_id
+        refund_request.reviewed_at = now
+        refund_request.review_note = (review_note or "").strip() or None
+
+        try:
+            order = await self.process_refund(
+                order_id=refund_request.order_id,
+                amount_cents=refund_request.amount_cents,
+                operator_id=reviewer_id,
+            )
+            refund_request.order = order
+            refund_request.status = RefundRequestStatus.APPROVED.value
+            refund_request.processed_at = datetime.now(timezone.utc)
+            refund_request.error_message = None
+            await self.session.flush()
+            await notify_refund_request_approved(self.session, refund_request)
+            logger.info(
+                "Refund request approved: request_id={}, reviewer_id={}",
+                request_id,
+                reviewer_id,
+            )
+        except Exception as exc:
+            refund_request.status = RefundRequestStatus.FAILED.value
+            refund_request.error_message = str(exc)
+            logger.warning(
+                "Refund request failed during approval: request_id={}, error={}",
+                request_id,
+                exc,
+            )
+            try:
+                await self.session.flush()
+            except Exception as flush_exc:
+                logger.error(
+                    "Failed to flush refund failure state: request_id={}, error={}",
+                    request_id,
+                    flush_exc,
+                )
+                await notify_refund_request_failed(self.session, refund_request)
+                raise
+            await notify_refund_request_failed(self.session, refund_request)
+
+        return refund_request
+
+    async def reject_refund_request(
+        self,
+        request_id: int,
+        reviewer_id: int,
+        review_note: str = "",
+    ) -> RefundRequest:
+        """Reject a pending refund request without executing refund."""
+        refund_request = await self.get_refund_request(request_id)
+        if not refund_request:
+            raise PaymentError(f"Refund request not found: {request_id}")
+
+        if refund_request.status not in {
+            RefundRequestStatus.PENDING.value,
+            RefundRequestStatus.FAILED.value,
+        }:
+            raise PaymentError(
+                f"Cannot reject refund request in status: {refund_request.status}"
+            )
+
+        refund_request.status = RefundRequestStatus.REJECTED.value
+        refund_request.reviewed_by = reviewer_id
+        refund_request.reviewed_at = datetime.now(timezone.utc)
+        refund_request.review_note = (review_note or "").strip() or None
+        refund_request.error_message = None
+        await self.session.flush()
+        await notify_refund_request_rejected(self.session, refund_request)
+        logger.info(
+            "Refund request rejected: request_id={}, reviewer_id={}",
+            request_id,
+            reviewer_id,
+        )
+        return refund_request
 
     async def grant_plan_to_user(
         self,
@@ -516,7 +1203,7 @@ class PaymentService:
             currency=plan.currency,
             status=OrderStatus.PAID.value,
             payment_provider="manual",
-            paid_at=datetime.utcnow(),
+            paid_at=datetime.now(timezone.utc),
         )
         self.session.add(order)
         await self.session.flush()
@@ -550,7 +1237,7 @@ class PaymentService:
             and_(
                 UserSubscription.user_id == user_id,
                 UserSubscription.status == SubscriptionStatus.ACTIVE.value,
-                UserSubscription.expires_at > datetime.utcnow(),
+                UserSubscription.expires_at > datetime.now(timezone.utc),
             )
         )
         result = await self.session.execute(stmt)
@@ -559,7 +1246,7 @@ class PaymentService:
     async def expire_due_subscriptions(self, user_id: Optional[int] = None) -> int:
         conditions = [
             UserSubscription.status == SubscriptionStatus.ACTIVE.value,
-            UserSubscription.expires_at <= datetime.utcnow(),
+            UserSubscription.expires_at <= datetime.now(timezone.utc),
         ]
         if user_id is not None:
             conditions.append(UserSubscription.user_id == user_id)
@@ -612,7 +1299,7 @@ class PaymentService:
         user = await self._apply_plan_to_user(user, plan)
 
         order.status = OrderStatus.FULFILLED.value
-        order.fulfilled_at = datetime.utcnow()
+        order.fulfilled_at = datetime.now(timezone.utc)
 
         if plan.plan_type == PlanType.SUBSCRIPTION.value:
             await self._upsert_subscription(user.id, plan, order.id)
@@ -691,7 +1378,7 @@ class PaymentService:
         values = self._plan_quota_values(plan)
         if existing:
             existing.status = SubscriptionStatus.ACTIVE.value
-            existing.expires_at = datetime.utcnow() + timedelta(
+            existing.expires_at = datetime.now(timezone.utc) + timedelta(
                 days=plan.duration_days or 30
             )
             existing.applied_pr_quota_bonus = values["pr_quota_bonus"]
@@ -714,7 +1401,7 @@ class PaymentService:
             user_id=user_id,
             plan_id=plan.id,
             status=SubscriptionStatus.ACTIVE.value,
-            expires_at=datetime.utcnow() + timedelta(days=plan.duration_days or 30),
+            expires_at=datetime.now(timezone.utc) + timedelta(days=plan.duration_days or 30),
             applied_pr_quota_bonus=values["pr_quota_bonus"],
             applied_pr_daily_add=values["pr_daily_add"],
             applied_pr_weekly_add=values["pr_weekly_add"],
@@ -732,6 +1419,63 @@ class PaymentService:
         self.session.add(sub)
         await self.session.flush()
         return sub
+
+    async def _clawback_plan_quotas(
+        self, user: TelegramUser, plan: Plan
+    ) -> TelegramUser:
+        """退款时扣回套餐配额（与 _apply_plan_to_user 完全对称的减法操作）"""
+        values = self._plan_quota_values(plan)
+
+        user.daily_quota = max(
+            0,
+            user.daily_quota
+            - values["pr_quota_bonus"]
+            - values["pr_daily_add"],
+        )
+        user.weekly_quota = max(
+            0, user.weekly_quota - values["pr_weekly_add"]
+        )
+        user.monthly_quota = max(
+            0, user.monthly_quota - values["pr_monthly_add"]
+        )
+
+        user.issue_daily_quota = max(
+            0,
+            user.issue_daily_quota
+            - values["issue_quota_bonus"]
+            - values["issue_daily_add"],
+        )
+        user.issue_weekly_quota = max(
+            0,
+            user.issue_weekly_quota - values["issue_weekly_add"],
+        )
+        user.issue_monthly_quota = max(
+            0,
+            user.issue_monthly_quota - values["issue_monthly_add"],
+        )
+
+        user.agent_daily_quota = max(
+            0,
+            user.agent_daily_quota
+            - values["agent_quota_bonus"]
+            - values["agent_daily_add"],
+        )
+        user.agent_weekly_quota = max(
+            0,
+            user.agent_weekly_quota - values["agent_weekly_add"],
+        )
+        user.agent_monthly_quota = max(
+            0,
+            user.agent_monthly_quota - values["agent_monthly_add"],
+        )
+
+        await self.session.flush()
+        logger.info(
+            "Clawed back plan quotas for user_id={}, plan={}",
+            user.id,
+            plan.name,
+        )
+        return user
 
     async def _expire_subscription(
         self, subscription: UserSubscription, user: TelegramUser, plan: Plan
@@ -858,6 +1602,6 @@ class PaymentService:
 
     @staticmethod
     def _generate_order_no() -> str:
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc)
         short_uuid = uuid.uuid4().hex[:8].upper()
         return f"ORD{now.strftime('%Y%m%d%H%M%S')}{short_uuid}"

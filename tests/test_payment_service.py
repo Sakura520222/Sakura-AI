@@ -3,7 +3,7 @@
 覆盖：套餐管理、兑换码生成/兑换、配额发放、手动充值、边界条件。
 """
 
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -11,7 +11,10 @@ import pytest
 from backend.models.payment_models import (
     Plan,
     PlanType,
+    Order,
     OrderStatus,
+    RefundRequest,
+    RefundRequestStatus,
     RedeemCode,
     RedeemCodeStatus,
     UserSubscription,
@@ -128,7 +131,7 @@ class TestPlanManagement:
         mock_session.execute.return_value = mock_result
 
         updated = await svc.update_plan(
-            1, name="新名称", id=999, created_at=datetime.utcnow()
+            1, name="新名称", id=999, created_at=datetime.now(timezone.utc)
         )
 
         assert updated.name == "新名称"
@@ -249,7 +252,7 @@ class TestRedeemCodeUsage:
             max_uses=1,
             used_count=0,
             status=RedeemCodeStatus.ACTIVE.value,
-            expires_at=datetime.utcnow() - timedelta(days=1),
+            expires_at=datetime.now(timezone.utc) - timedelta(days=1),
         )
         mock_result = MagicMock()
         mock_result.scalar_one_or_none.return_value = expired_code
@@ -353,7 +356,7 @@ class TestSubscription:
             user_id=1,
             plan_id=sample_subscription_plan.id,
             status=SubscriptionStatus.EXPIRED.value,
-            expires_at=datetime.utcnow() - timedelta(days=1),
+            expires_at=datetime.now(timezone.utc) - timedelta(days=1),
         )
         mock_result = MagicMock()
         mock_result.scalar_one_or_none.return_value = existing
@@ -381,7 +384,7 @@ class TestSubscription:
             user_id=sample_user.id,
             plan_id=plan.id,
             status=SubscriptionStatus.ACTIVE.value,
-            expires_at=datetime.utcnow() - timedelta(days=1),
+            expires_at=datetime.now(timezone.utc) - timedelta(days=1),
             applied_pr_daily_add=0,
             applied_pr_monthly_add=0,
         )
@@ -401,7 +404,7 @@ class TestSubscription:
             user_id=sample_user.id,
             plan_id=sample_subscription_plan.id,
             status=SubscriptionStatus.ACTIVE.value,
-            expires_at=datetime.utcnow() - timedelta(days=1),
+            expires_at=datetime.now(timezone.utc) - timedelta(days=1),
             applied_pr_daily_add=5,
             applied_pr_monthly_add=100,
         )
@@ -436,3 +439,364 @@ class TestOrderNumber:
         order_no = PaymentService._generate_order_no()
         assert order_no.startswith("ORD")
         assert len(order_no) > 16
+
+
+@pytest.mark.asyncio
+class TestConfirmPayment:
+    async def test_confirm_payment_success(self, svc, mock_session, sample_user):
+        from backend.models.payment_models import Order
+
+        plan = Plan(
+            id=1,
+            name="Test Plan",
+            plan_type=PlanType.ONE_TIME.value,
+            price_cents=1000,
+            is_active=True,
+            pr_quota_bonus=5,
+        )
+        order = Order(
+            id=1,
+            order_no="ORD20240101000000ABCD1234",
+            user_id=sample_user.id,
+            plan_id=plan.id,
+            amount_cents=1000,
+            status=OrderStatus.PENDING.value,
+            payment_provider="stripe",
+            provider_tx_id="cs_test_123",
+        )
+
+        mock_result = MagicMock()
+        mock_result.scalar_one_or_none.return_value = order
+        mock_session.execute.return_value = mock_result
+        mock_session.get = AsyncMock(side_effect=lambda model, pk: {
+            id(sample_user): sample_user,
+            id(plan): plan,
+        }.get(id(model) if hasattr(model, '__hash__') else pk))
+
+        # Override get to return user and plan by type
+        async def mock_get(model, pk):
+            if model is TelegramUser and pk == sample_user.id:
+                return sample_user
+            if model is Plan and pk == plan.id:
+                return plan
+            return None
+
+        mock_session.get = AsyncMock(side_effect=mock_get)
+
+        svc.get_plan = AsyncMock(return_value=plan)
+
+        confirmed = await svc.confirm_payment(
+            order_no="ORD20240101000000ABCD1234",
+            provider_tx_id="cs_test_123",
+        )
+
+        assert confirmed.status == OrderStatus.FULFILLED.value
+        assert confirmed.paid_at is not None
+
+    async def test_confirm_payment_idempotent(self, svc, mock_session):
+        from backend.models.payment_models import Order
+
+        order = Order(
+            id=1,
+            order_no="ORD_ALREADY_PAID",
+            user_id=1,
+            plan_id=1,
+            status=OrderStatus.FULFILLED.value,
+            payment_provider="stripe",
+            provider_tx_id="cs_already",
+        )
+
+        mock_result = MagicMock()
+        mock_result.scalar_one_or_none.return_value = order
+        mock_session.execute.return_value = mock_result
+
+        result = await svc.confirm_payment(
+            order_no="ORD_ALREADY_PAID",
+            provider_tx_id="cs_already",
+        )
+
+        assert result.status == OrderStatus.FULFILLED.value
+
+    async def test_confirm_payment_order_not_found(self, svc, mock_session):
+        mock_result = MagicMock()
+        mock_result.scalar_one_or_none.return_value = None
+        mock_session.execute.return_value = mock_result
+
+        with pytest.raises(PaymentError, match="Order not found"):
+            await svc.confirm_payment(
+                order_no="ORD_NONEXISTENT",
+                provider_tx_id="cs_nonexistent",
+            )
+
+
+@pytest.mark.asyncio
+class TestCancelExpiredOrder:
+    async def test_cancel_expired_order(self, svc, mock_session):
+        from backend.models.payment_models import Order
+
+        order = Order(
+            id=1,
+            order_no="ORD_EXPIRED",
+            user_id=1,
+            plan_id=1,
+            status=OrderStatus.PENDING.value,
+            payment_provider="stripe",
+        )
+
+        mock_result = MagicMock()
+        mock_result.scalar_one_or_none.return_value = order
+        mock_session.execute.return_value = mock_result
+
+        cancelled = await svc.cancel_expired_order("ORD_EXPIRED")
+
+        assert cancelled.status == OrderStatus.CANCELLED.value
+
+    async def test_cancel_non_pending_order_raises(self, svc, mock_session):
+        from backend.models.payment_models import Order
+
+        order = Order(
+            id=1,
+            order_no="ORD_FULFILLED",
+            user_id=1,
+            plan_id=1,
+            status=OrderStatus.FULFILLED.value,
+        )
+
+        mock_result = MagicMock()
+        mock_result.scalar_one_or_none.return_value = order
+        mock_session.execute.return_value = mock_result
+
+        with pytest.raises(PaymentError, match="Cannot cancel order"):
+            await svc.cancel_expired_order("ORD_FULFILLED")
+
+
+@pytest.mark.asyncio
+class TestProcessRefund:
+    async def test_process_refund_not_fulfilled_raises(self, svc, mock_session):
+        from backend.models.payment_models import Order
+
+        order = Order(
+            id=1,
+            order_no="ORD_PENDING",
+            user_id=1,
+            plan_id=1,
+            status=OrderStatus.PENDING.value,
+        )
+        mock_session.get = AsyncMock(return_value=order)
+
+        with pytest.raises(PaymentError, match="only FULFILLED orders"):
+            await svc.process_refund(order_id=1)
+
+    async def test_process_refund_order_not_found(self, svc, mock_session):
+
+        mock_session.get = AsyncMock(return_value=None)
+
+        with pytest.raises(PaymentError, match="Order not found"):
+            await svc.process_refund(order_id=999)
+
+
+@pytest.mark.asyncio
+class TestRefundRequests:
+    async def test_submit_refund_request_success(self, svc, mock_session, sample_user):
+        order = Order(
+            id=1,
+            order_no="ORD_REFUND_REQUEST",
+            user_id=sample_user.id,
+            plan_id=1,
+            amount_cents=1000,
+            currency="CNY",
+            status=OrderStatus.FULFILLED.value,
+        )
+
+        existing_result = MagicMock()
+        existing_result.scalar_one_or_none.return_value = None
+        mock_session.execute.return_value = existing_result
+
+        async def mock_get(model, pk):
+            if model is Order and pk == order.id:
+                return order
+            if model is TelegramUser and pk == sample_user.id:
+                return sample_user
+            return None
+
+        mock_session.get = AsyncMock(side_effect=mock_get)
+
+        with patch(
+            "backend.services.payment_service.notify_refund_request_submitted",
+            new=AsyncMock(),
+        ) as mock_notify:
+            refund_request = await svc.submit_refund_request(
+                order_id=order.id,
+                user_id=sample_user.id,
+                reason="不再需要",
+            )
+
+        assert refund_request.status == RefundRequestStatus.PENDING.value
+        assert refund_request.order_id == order.id
+        assert refund_request.amount_cents == order.amount_cents
+        assert refund_request.reason == "不再需要"
+        mock_session.add.assert_called_once_with(refund_request)
+        mock_session.flush.assert_awaited()
+        mock_notify.assert_awaited_once_with(mock_session, refund_request)
+
+    async def test_submit_refund_request_rejects_foreign_order(
+        self, svc, mock_session
+    ):
+        order = Order(
+            id=1,
+            order_no="ORD_FOREIGN",
+            user_id=999,
+            plan_id=1,
+            amount_cents=1000,
+            status=OrderStatus.FULFILLED.value,
+        )
+        mock_session.get = AsyncMock(return_value=order)
+
+        with pytest.raises(PaymentError, match="not found or not refundable"):
+            await svc.submit_refund_request(order_id=order.id, user_id=1)
+
+    async def test_submit_refund_request_rejects_non_fulfilled_order(
+        self, svc, mock_session
+    ):
+        order = Order(
+            id=1,
+            order_no="ORD_PENDING_REFUND",
+            user_id=1,
+            plan_id=1,
+            amount_cents=1000,
+            status=OrderStatus.PENDING.value,
+        )
+        mock_session.get = AsyncMock(return_value=order)
+
+        with pytest.raises(PaymentError, match="Only fulfilled"):
+            await svc.submit_refund_request(order_id=order.id, user_id=1)
+
+    async def test_submit_refund_request_rejects_free_order(
+        self, svc, mock_session
+    ):
+        order = Order(
+            id=1,
+            order_no="ORD_FREE_REFUND",
+            user_id=1,
+            plan_id=1,
+            amount_cents=0,
+            status=OrderStatus.FULFILLED.value,
+        )
+        mock_session.get = AsyncMock(return_value=order)
+
+        with pytest.raises(PaymentError, match="Free or manual grant"):
+            await svc.submit_refund_request(order_id=order.id, user_id=1)
+
+    async def test_submit_refund_request_rejects_existing_request(
+        self, svc, mock_session
+    ):
+        order = Order(
+            id=1,
+            order_no="ORD_DUP_REFUND",
+            user_id=1,
+            plan_id=1,
+            amount_cents=1000,
+            status=OrderStatus.FULFILLED.value,
+        )
+        existing = RefundRequest(
+            id=10,
+            order_id=order.id,
+            user_id=1,
+            amount_cents=1000,
+            status=RefundRequestStatus.PENDING.value,
+        )
+        mock_session.get = AsyncMock(return_value=order)
+        existing_result = MagicMock()
+        existing_result.scalar_one_or_none.return_value = existing
+        mock_session.execute.return_value = existing_result
+
+        with pytest.raises(PaymentError, match="already exists"):
+            await svc.submit_refund_request(order_id=order.id, user_id=1)
+
+    async def test_approve_refund_request_success(self, svc):
+        refund_request = RefundRequest(
+            id=1,
+            order_id=1,
+            user_id=1,
+            amount_cents=1000,
+            status=RefundRequestStatus.PENDING.value,
+        )
+        order = Order(
+            id=1,
+            order_no="ORD_APPROVE_REFUND",
+            user_id=1,
+            plan_id=1,
+            amount_cents=1000,
+            status=OrderStatus.REFUNDED.value,
+        )
+        svc.get_refund_request = AsyncMock(return_value=refund_request)
+        svc.process_refund = AsyncMock(return_value=order)
+
+        with patch(
+            "backend.services.payment_service.notify_refund_request_approved",
+            new=AsyncMock(),
+        ) as mock_notify:
+            result = await svc.approve_refund_request(
+                request_id=1,
+                reviewer_id=2,
+                review_note="同意退款",
+            )
+
+        assert result.status == RefundRequestStatus.APPROVED.value
+        assert result.reviewed_by == 2
+        assert result.review_note == "同意退款"
+        assert result.processed_at is not None
+        svc.process_refund.assert_awaited_once_with(
+            order_id=refund_request.order_id,
+            amount_cents=refund_request.amount_cents,
+            operator_id=2,
+        )
+        mock_notify.assert_awaited_once_with(svc.session, refund_request)
+
+    async def test_approve_refund_request_marks_failed_on_refund_error(self, svc):
+        refund_request = RefundRequest(
+            id=1,
+            order_id=1,
+            user_id=1,
+            amount_cents=1000,
+            status=RefundRequestStatus.PENDING.value,
+        )
+        svc.get_refund_request = AsyncMock(return_value=refund_request)
+        svc.process_refund = AsyncMock(side_effect=PaymentError("gateway down"))
+
+        with patch(
+            "backend.services.payment_service.notify_refund_request_failed",
+            new=AsyncMock(),
+        ) as mock_notify:
+            result = await svc.approve_refund_request(request_id=1, reviewer_id=2)
+
+        assert result.status == RefundRequestStatus.FAILED.value
+        assert result.error_message == "gateway down"
+        mock_notify.assert_awaited_once_with(svc.session, refund_request)
+
+    async def test_reject_refund_request(self, svc):
+        refund_request = RefundRequest(
+            id=1,
+            order_id=1,
+            user_id=1,
+            amount_cents=1000,
+            status=RefundRequestStatus.PENDING.value,
+        )
+        svc.get_refund_request = AsyncMock(return_value=refund_request)
+        svc.process_refund = AsyncMock()
+
+        with patch(
+            "backend.services.payment_service.notify_refund_request_rejected",
+            new=AsyncMock(),
+        ) as mock_notify:
+            result = await svc.reject_refund_request(
+                request_id=1,
+                reviewer_id=2,
+                review_note="不符合退款条件",
+            )
+
+        assert result.status == RefundRequestStatus.REJECTED.value
+        assert result.reviewed_by == 2
+        assert result.review_note == "不符合退款条件"
+        svc.process_refund.assert_not_called()
+        mock_notify.assert_awaited_once_with(svc.session, refund_request)

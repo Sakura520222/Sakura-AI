@@ -210,6 +210,14 @@
             </svg>
             {{ _('nav.redemption_codes') }}
         </a>
+        <a href="/billing/admin/refund-requests"
+           class="sidebar-link flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium transition-all duration-200
+                  {% if active_page == 'billing_admin_refunds' %}bg-gradient-to-r from-sakura-500 to-sakura-600 text-white shadow-md shadow-sakura-500/25{% else %}text-gray-700 dark:text-gray-300 hover:bg-sakura-50 dark:hover:bg-sakura-900/20 hover:text-sakura-700 dark:hover:text-sakura-400{% endif %}">
+            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 10h10a4 4 0 014 4v6m0 0l-3-3m3 3l3-3M3 4h18M3 7h18"/>
+            </svg>
+            {{ _('nav.refund_reviews') }}
+        </a>
         {% endif %}
         {% endif %}
 

@@ -1,7 +1,7 @@
 """GitHub Webhook API端点"""
 
 from fastapi import APIRouter, Request, HTTPException, Header
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, PlainTextResponse
 from typing import Dict, Any, Optional
 import asyncio
 import re
@@ -1415,7 +1415,364 @@ async def handle_installation_event(payload: Dict[str, Any]) -> JSONResponse:
         )
 
 
-@router.get("/health")
-async def health_check() -> JSONResponse:
-    """健康检查端点"""
-    return JSONResponse(content={"status": "healthy", "service": "Sakura AI Reviewer"})
+@router.post("/stripe")
+async def handle_stripe_webhook(
+    request: Request,
+) -> JSONResponse:
+    """Handle Stripe webhook events (checkout.session.completed, etc.)"""
+    from backend.services.payment import get_gateway, WebhookEventType
+    from backend.services.payment_service import PaymentService, PaymentError
+
+    payload = await request.body()
+    headers = {k.lower(): v for k, v in request.headers.items()}
+
+    try:
+        gateway = await get_gateway("stripe")
+        event = gateway.verify_webhook(payload, headers)
+
+        if event.event_type == WebhookEventType.UNKNOWN:
+            # Return 200 for unmapped but valid events so Stripe doesn't retry
+            return JSONResponse(
+                content={"status": "ignored", "message": "Event type not handled"}
+            )
+
+        async with get_async_session() as db:
+            svc = PaymentService(db)
+            try:
+                if event.event_type == WebhookEventType.PAYMENT_COMPLETED:
+                    order = await svc.confirm_payment(
+                        order_no=event.order_no,
+                        provider_tx_id=event.provider_tx_id,
+                    )
+                    await db.commit()
+                    logger.info(
+                        "Stripe webhook: payment confirmed for order {}",
+                        order.order_no,
+                    )
+                    return JSONResponse(
+                        content={"status": "processed", "event": "payment_completed"}
+                    )
+
+                elif event.event_type == WebhookEventType.PAYMENT_EXPIRED:
+                    order = await svc.cancel_expired_order(event.order_no)
+                    await db.commit()
+                    logger.info(
+                        "Stripe webhook: order expired/cancelled {}",
+                        order.order_no,
+                    )
+                    return JSONResponse(
+                        content={"status": "processed", "event": "payment_expired"}
+                    )
+
+                elif event.event_type == WebhookEventType.PAYMENT_REFUNDED:
+                    # For refund events from Stripe, find order by provider_tx_id
+                    from sqlalchemy import select
+                    from backend.models.payment_models import Order, OrderStatus
+
+                    stmt = select(Order).where(
+                        Order.provider_tx_id == event.provider_tx_id,
+                        Order.status == OrderStatus.FULFILLED.value,
+                    )
+                    order = (await db.execute(stmt)).scalar_one_or_none()
+                    if order:
+                        await svc.process_refund(order_id=order.id)
+                        await db.commit()
+                        logger.info(
+                            "Stripe webhook: refund processed for order {}",
+                            order.order_no,
+                        )
+                    else:
+                        logger.info(
+                            "Stripe webhook: refund event but no actionable order for tx {}",
+                            event.provider_tx_id,
+                        )
+                    return JSONResponse(
+                        content={"status": "processed", "event": "payment_refunded"}
+                    )
+
+                else:
+                    logger.info("Stripe webhook: ignoring event type {}", event.event_type)
+                    return JSONResponse(
+                        content={"status": "ignored", "event": str(event.event_type)}
+                    )
+
+            except PaymentError as e:
+                await db.rollback()
+                logger.warning("Stripe webhook processing error: {}", e)
+                return JSONResponse(
+                    status_code=200,
+                    content={"status": "error", "message": str(e)},
+                )
+
+    except ValueError as e:
+        logger.warning("Stripe webhook gateway error: {}", e)
+        return JSONResponse(
+            status_code=400,
+            content={"status": "error", "message": str(e)},
+        )
+    except Exception as e:
+        logger.error("Stripe webhook unexpected error: {} - {}", type(e).__name__, e, exc_info=True)
+        return JSONResponse(
+            status_code=500,
+            content={"status": "error", "message": "Internal server error"},
+        )
+
+
+@router.post("/paddle")
+async def handle_paddle_webhook(
+    request: Request,
+) -> JSONResponse:
+    """Handle Paddle Billing webhook events (transaction.completed, etc.)"""
+    from backend.services.payment import get_gateway, WebhookEventType
+    from backend.services.payment_service import PaymentService, PaymentError
+
+    payload = await request.body()
+    headers = {k.lower(): v for k, v in request.headers.items()}
+
+    try:
+        gateway = await get_gateway("paddle")
+        event = gateway.verify_webhook(payload, headers)
+
+        if event.event_type == WebhookEventType.UNKNOWN:
+            # Return 200 for unmapped but valid events so Paddle doesn't retry
+            return JSONResponse(
+                content={"status": "ignored", "message": "Event type not handled"}
+            )
+
+        async with get_async_session() as db:
+            svc = PaymentService(db)
+            try:
+                if event.event_type == WebhookEventType.PAYMENT_COMPLETED:
+                    order = await svc.confirm_payment(
+                        order_no=event.order_no,
+                        provider_tx_id=event.provider_tx_id,
+                    )
+                    await db.commit()
+                    logger.info(
+                        "Paddle webhook: payment confirmed for order {}",
+                        order.order_no,
+                    )
+                    return JSONResponse(
+                        content={"status": "processed", "event": "payment_completed"}
+                    )
+
+                elif event.event_type == WebhookEventType.PAYMENT_EXPIRED:
+                    if event.order_no:
+                        order = await svc.cancel_expired_order(event.order_no)
+                        await db.commit()
+                        logger.info(
+                            "Paddle webhook: order expired/cancelled {}",
+                            order.order_no,
+                        )
+                    return JSONResponse(
+                        content={"status": "processed", "event": "payment_expired"}
+                    )
+
+                elif event.event_type == WebhookEventType.PAYMENT_REFUNDED:
+                    # For refund events from Paddle, find order by provider_tx_id
+                    from sqlalchemy import select
+                    from backend.models.payment_models import Order, OrderStatus
+
+                    stmt = select(Order).where(
+                        Order.provider_tx_id == event.provider_tx_id,
+                        Order.status == OrderStatus.FULFILLED.value,
+                    )
+                    order = (await db.execute(stmt)).scalar_one_or_none()
+                    if order:
+                        await svc.process_refund(order_id=order.id)
+                        await db.commit()
+                        logger.info(
+                            "Paddle webhook: refund processed for order {}",
+                            order.order_no,
+                        )
+                    else:
+                        logger.info(
+                            "Paddle webhook: refund event but no actionable order for tx {}",
+                            event.provider_tx_id,
+                        )
+                    return JSONResponse(
+                        content={"status": "processed", "event": "payment_refunded"}
+                    )
+
+                else:
+                    logger.info("Paddle webhook: ignoring event type {}", event.event_type)
+                    return JSONResponse(
+                        content={"status": "ignored", "event": str(event.event_type)}
+                    )
+
+            except PaymentError as e:
+                await db.rollback()
+                logger.warning("Paddle webhook processing error: {}", e)
+                return JSONResponse(
+                    status_code=200,
+                    content={"status": "error", "message": str(e)},
+                )
+
+    except ValueError as e:
+        logger.warning("Paddle webhook gateway error: {}", e)
+        return JSONResponse(
+            status_code=400,
+            content={"status": "error", "message": str(e)},
+        )
+    except Exception as e:
+        logger.error("Paddle webhook unexpected error: {} - {}", type(e).__name__, e, exc_info=True)
+        return JSONResponse(
+            status_code=500,
+            content={"status": "error", "message": "Internal server error"},
+        )
+
+
+@router.post("/alipay", response_model=None)
+async def handle_alipay_webhook(
+    request: Request,
+):
+    """Handle Alipay async payment notification (当面付回调)
+
+    支付宝回调为 POST form-urlencoded，验签成功后返回纯文本 "success"。
+    """
+    from backend.services.payment import get_gateway, WebhookEventType
+    from backend.services.payment_service import PaymentService, PaymentError
+
+    payload = await request.body()
+    headers = {k.lower(): v for k, v in request.headers.items()}
+
+    try:
+        gateway = await get_gateway("alipay")
+        event = gateway.verify_webhook(payload, headers)
+
+        if event.event_type == WebhookEventType.UNKNOWN:
+            logger.info("Alipay webhook: ignoring unmapped event")
+            return PlainTextResponse("fail")
+
+        async with get_async_session() as db:
+            svc = PaymentService(db)
+            try:
+                if event.event_type == WebhookEventType.PAYMENT_COMPLETED:
+                    order = await svc.confirm_payment(
+                        order_no=event.order_no,
+                        provider_tx_id=event.provider_tx_id,
+                    )
+                    await db.commit()
+                    logger.info(
+                        "Alipay webhook: payment confirmed for order {}",
+                        order.order_no,
+                    )
+                    # 支付宝要求返回 "success" 纯文本
+                    return PlainTextResponse("success")
+
+                elif event.event_type == WebhookEventType.PAYMENT_EXPIRED:
+                    if event.order_no:
+                        order = await svc.cancel_expired_order(event.order_no)
+                        await db.commit()
+                        logger.info(
+                            "Alipay webhook: order closed {}",
+                            order.order_no,
+                        )
+                    return PlainTextResponse("success")
+
+                else:
+                    logger.info(
+                        "Alipay webhook: ignoring event type {}", event.event_type
+                    )
+                    return PlainTextResponse("success")
+
+            except PaymentError as e:
+                await db.rollback()
+                logger.warning("Alipay webhook processing error: {}", e)
+                # 仍返回 success 避免支付宝重复通知
+                return PlainTextResponse("success")
+
+    except ValueError as e:
+        logger.warning("Alipay webhook gateway error: {}", e)
+        return PlainTextResponse("fail")
+    except Exception as e:
+        logger.error("Alipay webhook unexpected error: {} - {}", type(e).__name__, e, exc_info=True)
+        return PlainTextResponse("fail")
+
+
+@router.post("/nowpayments", response_model=None)
+async def handle_nowpayments_webhook(
+    request: Request,
+) -> JSONResponse:
+    """Handle NOWPayments IPN callback (virtual currency payment notification)
+
+    NOWPayments sends POST JSON with x-nowpayments-sig header.
+    Verification uses HMAC-SHA512 with IPN secret.
+    """
+    from backend.services.payment import get_gateway, WebhookEventType
+    from backend.services.payment_service import PaymentService, PaymentError
+
+    payload = await request.body()
+    headers = {k.lower(): v for k, v in request.headers.items()}
+
+    try:
+        gateway = await get_gateway("nowpayments")
+        event = gateway.verify_webhook(payload, headers)
+
+        if event.event_type == WebhookEventType.UNKNOWN:
+            logger.info("NOWPayments webhook: ignoring unmapped event")
+            return JSONResponse(content={"status": "ignored"})
+
+        async with get_async_session() as db:
+            svc = PaymentService(db)
+            try:
+                if event.event_type == WebhookEventType.PAYMENT_COMPLETED:
+                    order = await svc.confirm_payment(
+                        order_no=event.order_no,
+                        provider_tx_id=event.provider_tx_id,
+                    )
+                    await db.commit()
+                    logger.info(
+                        "NOWPayments webhook: payment confirmed for order {}",
+                        order.order_no,
+                    )
+                    return JSONResponse(
+                        content={"status": "processed", "event": "payment_completed"}
+                    )
+
+                elif event.event_type == WebhookEventType.PAYMENT_EXPIRED:
+                    if event.order_no:
+                        order = await svc.cancel_expired_order(event.order_no)
+                        await db.commit()
+                        logger.info(
+                            "NOWPayments webhook: order expired {}",
+                            order.order_no,
+                        )
+                    return JSONResponse(
+                        content={"status": "processed", "event": "payment_expired"}
+                    )
+
+                elif event.event_type == WebhookEventType.PAYMENT_REFUNDED:
+                    logger.info("NOWPayments webhook: refund event received")
+                    return JSONResponse(
+                        content={"status": "processed", "event": "refund"}
+                    )
+
+                else:
+                    logger.info(
+                        "NOWPayments webhook: ignoring event type {}",
+                        event.event_type,
+                    )
+                    return JSONResponse(content={"status": "ignored"})
+
+            except PaymentError as e:
+                await db.rollback()
+                logger.warning("NOWPayments webhook processing error: {}", e)
+                return JSONResponse(
+                    content={"status": "error", "message": str(e)}
+                )
+
+    except ValueError as e:
+        logger.warning("NOWPayments webhook gateway error: {}", e)
+        return JSONResponse(content={"status": "error", "message": str(e)})
+    except Exception as e:
+        logger.error(
+            "NOWPayments webhook unexpected error: {} - {}",
+            type(e).__name__,
+            e,
+            exc_info=True,
+        )
+        return JSONResponse(
+            status_code=500,
+            content={"status": "error", "message": "Internal server error"},
+        )

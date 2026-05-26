@@ -24,6 +24,7 @@ from backend.webui.routes import (
     system_config,
     vector_db,
     assetlinks,
+    legal,
 )
 
 # WebUI routes are mounted at root (no prefix) so the dashboard is served at /.
@@ -54,3 +55,4 @@ webui_router.include_router(agent_skills.router)
 webui_router.include_router(sakura_memory.router)
 webui_router.include_router(system_config.router)
 webui_router.include_router(vector_db.router)
+webui_router.include_router(legal.router)

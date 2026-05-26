@@ -524,6 +524,7 @@ def _ensure_model_modules_imported() -> None:
     """导入独立模型模块，确保 metadata 已注册。"""
     import backend.models.agent_skill_models  # noqa: F401
     import backend.models.agent_team_models  # noqa: F401
+    import backend.models.payment_models  # noqa: F401
 
 
 def _append_dynamic_config_defaults(default_configs: list) -> None:
@@ -783,7 +784,7 @@ def init_async_db(database_url: str):
     """初始化异步数据库引擎和会话
 
     Args:
-        database_url: 数据库连接字符串（需要是异步URL，如 mysql+aiomysql://...）
+        database_url: 数据库连接字符串（需要是异步URL，如 mysql+asyncmy://...）
     """
     global async_engine, async_session
     import logging
@@ -791,13 +792,18 @@ def init_async_db(database_url: str):
     logger = logging.getLogger(__name__)
 
     try:
+        # 向后兼容：将旧版 aiomysql 驱动自动转换为 asyncmy
+        if "mysql+aiomysql://" in database_url:
+            database_url = database_url.replace("mysql+aiomysql://", "mysql+asyncmy://", 1)
+            logger.info("已将数据库驱动从 aiomysql 自动转换为 asyncmy")
+
         # 确保使用异步驱动
         if not database_url.startswith(
-            "mysql+aiomysql://"
+            "mysql+asyncmy://"
         ) and not database_url.startswith("postgresql+asyncpg://"):
             # 如果不是异步URL，尝试转换
             if database_url.startswith("mysql://"):
-                database_url = database_url.replace("mysql://", "mysql+aiomysql://", 1)
+                database_url = database_url.replace("mysql://", "mysql+asyncmy://", 1)
             elif database_url.startswith("postgresql://"):
                 database_url = database_url.replace(
                     "postgresql://", "postgresql+asyncpg://", 1
@@ -806,10 +812,12 @@ def init_async_db(database_url: str):
         logger.info(f"初始化异步数据库引擎: {database_url}")
 
         # 创建异步引擎
+        # aiomysql 的 ping() 签名与 SQLAlchemy 的 pool_pre_ping 不兼容，
+        # 通过 pool_recycle 定期回收连接来保证连接可用性
         async_engine = create_async_engine(
             database_url,
             echo=False,
-            pool_pre_ping=True,
+            pool_pre_ping=False,
             pool_size=10,
             max_overflow=20,
             pool_recycle=1800,
