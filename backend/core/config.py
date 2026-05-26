@@ -529,6 +529,14 @@ class Settings(BaseSettings):
         "usdttrc20", description="接收虚拟币类型（如 usdttrc20, usdterc20）"
     )
 
+    # 自建 TRON USDT 收款（零手续费，资金直达钱包）
+    tron_wallet_address: str = Field(
+        "", description="TRON 收款钱包地址（Base58 格式）"
+    )
+    tron_api_key: str = Field(
+        "", description="TronGrid API Key（可选，提高频率限制）"
+    )
+
     # ========== 代码索引配置 ==========
     enable_code_index: bool = True  # 是否启用代码索引功能
     auto_index_pr_changes: bool = True  # PR审查时自动索引变更文件
@@ -1290,6 +1298,8 @@ DYNAMIC_CONFIG_GROUPS: OrderedDict[str, dict] = OrderedDict(
                     "nowpayments_api_key",
                     "nowpayments_ipn_secret",
                     "nowpayments_pay_currency",
+                    "tron_wallet_address",
+                    "tron_api_key",
                 ],
             },
         ),
@@ -1366,6 +1376,8 @@ DYNAMIC_CONFIG_SENSITIVE_KEYS = frozenset(
     "alipay_private_key",
     "alipay_public_key",
     "nowpayments_ipn_secret",
+    "nowpayments_api_key",
+    "tron_api_key",
     }
 )
 
@@ -1537,6 +1549,8 @@ DYNAMIC_CONFIG_LABELS: dict[str, str] = {
     "nowpayments_api_key": "NOWPayments API Key",
     "nowpayments_ipn_secret": "NOWPayments IPN 密钥",
     "nowpayments_pay_currency": "虚拟币类型（如 usdttrc20）",
+    "tron_wallet_address": "TRON 收款钱包地址",
+    "tron_api_key": "TronGrid API Key（可选）",
     # 核心配置标签
     "github_app_id": "GitHub App ID",
     "github_private_key": "GitHub App 私钥",

@@ -9,12 +9,14 @@ from backend.services.payment.alipay_gateway import AlipayGateway
 from backend.services.payment.nowpayments_gateway import NowPaymentsGateway
 from backend.services.payment.paddle_gateway import PaddleGateway
 from backend.services.payment.stripe_gateway import StripeGateway
+from backend.services.payment.tron_gateway import TronGateway
 
 _GATEWAY_REGISTRY: dict[str, type[PaymentGateway]] = {
     "stripe": StripeGateway,
     "paddle": PaddleGateway,
     "alipay": AlipayGateway,
     "nowpayments": NowPaymentsGateway,
+    "tron": TronGateway,
 }
 
 # 已注册的支付提供商名称列表（供外部验证用）
@@ -73,6 +75,9 @@ async def get_gateway(
                 webhook_secret = str(
                     await get_dynamic_config("nowpayments_ipn_secret") or ""
                 )
+        # Tron uses wallet_address instead of api_key
+        elif provider == "tron":
+            api_key = str(await get_dynamic_config("tron_wallet_address") or "")
         else:
             if api_key is None:
                 api_key = str(await get_dynamic_config(f"{provider}_api_key") or "")
@@ -81,7 +86,7 @@ async def get_gateway(
                     await get_dynamic_config(f"{provider}_webhook_secret") or ""
                 )
 
-    if not api_key:
+    if not api_key and provider != "tron":
         raise ValueError(
             f"Payment provider {provider} is not configured: missing API key"
         )
@@ -112,6 +117,25 @@ async def get_gateway(
             pay_currency=pay_currency,
         )
 
+    # TronGateway 需要 wallet_address
+    if provider == "tron":
+        from backend.core.config import get_dynamic_config
+
+        wallet_address = str(
+            await get_dynamic_config("tron_wallet_address") or ""
+        )
+        tron_api_key = str(
+            await get_dynamic_config("tron_api_key") or ""
+        )
+        if not wallet_address:
+            raise ValueError(
+                "TronGateway not configured: missing tron_wallet_address"
+            )
+        return gateway_cls(
+            wallet_address=wallet_address,
+            api_key=tron_api_key,
+        )
+
     return gateway_cls(api_key=api_key, webhook_secret=webhook_secret)
 
 
@@ -127,7 +151,8 @@ async def get_configured_providers() -> list[dict[str, str]]:
         "stripe": ("stripe_api_key", "Stripe (信用卡)"),
         "paddle": ("paddle_api_key", "Paddle (国际支付)"),
         "alipay": ("alipay_app_id", "支付宝"),
-        "nowpayments": ("nowpayments_api_key", "USDT 虚拟币"),
+        "nowpayments": ("nowpayments_api_key", "USDT 虚拟币 (NOWPayments)"),
+        "tron": ("tron_wallet_address", "USDT 虚拟币 (直收)"),
     }
 
     configured = []

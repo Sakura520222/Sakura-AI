@@ -187,7 +187,7 @@ async def purchase_plan(
         crypto_info = getattr(order, "_crypto_payment_info", None)
 
         # 虚拟币支付：渲染加密货币支付页面（含 QR 码）
-        if crypto_info and order.payment_provider == "nowpayments":
+        if crypto_info and order.payment_provider in ("nowpayments", "tron"):
             lang = detect_language()
             expires_at = _get_order_expires_at(order)
             # 币种显示名
@@ -267,7 +267,7 @@ async def reopen_crypto_payment(
             error="Order not found or already processed",
         )
 
-    if order.payment_provider != "nowpayments":
+    if order.payment_provider not in ("nowpayments", "tron"):
         return toast_redirect(
             "/billing/",
             "toast.payment_error",
@@ -356,11 +356,8 @@ async def crypto_payment_status(
             {"status": db_status_map.get(order.status, order.status)}
         )
 
-    # 对于 pending 状态，直接查询 NOWPayments API 获取实时状态
-    if (
-        order.payment_provider == "nowpayments"
-        and order.provider_tx_id
-    ):
+    # 对于 pending 状态，查询链上状态
+    if order.payment_provider == "nowpayments" and order.provider_tx_id:
         try:
             from backend.services.payment import get_gateway
 
@@ -390,6 +387,36 @@ async def crypto_payment_status(
                 return JSONResponse(
                     {"status": front_status}
                 )
+        except Exception:
+            pass  # 查询失败时 fallback 到数据库状态
+
+    elif order.payment_provider == "tron" and order.metadata_json:
+        try:
+            import json as _json
+
+            from backend.services.payment import get_gateway
+            from backend.services.payment.tron_gateway import TronGateway
+
+            md = _json.loads(order.metadata_json)
+            expected_usdt = float(md.get("pay_amount", "0"))
+            if expected_usdt > 0:
+                gateway = await get_gateway("tron")
+                if isinstance(gateway, TronGateway):
+                    api_result = await gateway.check_payment_by_amount(
+                        order.order_no, expected_usdt
+                    )
+                    if api_result.success and api_result.status == "completed":
+                        # 到账确认，触发订单完成
+                        try:
+                            svc = PaymentService(db)
+                            await svc.confirm_payment(
+                                order_no=order.order_no,
+                                provider_tx_id=api_result.provider_tx_id,
+                            )
+                            await db.commit()
+                        except Exception:
+                            await db.rollback()
+                        return JSONResponse({"status": "completed"})
         except Exception:
             pass  # 查询失败时 fallback 到数据库状态
 
@@ -514,7 +541,7 @@ async def user_cancel_order(
         await db.commit()
         return toast_redirect(
             "/billing/",
-            "toast.payment_success",
+            "toast.payment_cancelled",
             "success",
             lang=detect_language(),
         )

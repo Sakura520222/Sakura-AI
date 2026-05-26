@@ -246,7 +246,7 @@
                                 </button>
                             </form>
                             {% elif order.status == 'pending' %}
-                            {% if order.payment_provider == 'nowpayments' %}
+                            {% if order.payment_provider in ('nowpayments', 'tron') %}
                             <a href="/billing/crypto-payment/{{ order.order_no }}"
                                class="text-sakura-600 hover:text-sakura-800 dark:text-sakura-400 dark:hover:text-sakura-300 text-xs font-medium">
                                 {{ _('billing.crypto_continue_payment') }}
