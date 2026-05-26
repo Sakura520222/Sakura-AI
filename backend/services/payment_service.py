@@ -978,6 +978,7 @@ class PaymentService:
             and_(
                 RefundRequest.order_id == order_id,
                 RefundRequest.user_id == user_id,
+                # 仅阻止待审核中的重复请求；FAILED 表示执行失败，允许用户重新提交。
                 RefundRequest.status == RefundRequestStatus.PENDING.value,
             )
         )
@@ -1127,6 +1128,11 @@ class PaymentService:
         except Exception as exc:
             refund_request.status = RefundRequestStatus.FAILED.value
             refund_request.error_message = str(exc)
+            logger.warning(
+                "Refund request failed during approval: request_id={}, error={}",
+                request_id,
+                exc,
+            )
             try:
                 await self.session.flush()
             except Exception as flush_exc:
@@ -1135,13 +1141,9 @@ class PaymentService:
                     request_id,
                     flush_exc,
                 )
+                await notify_refund_request_failed(self.session, refund_request)
                 raise
             await notify_refund_request_failed(self.session, refund_request)
-            logger.warning(
-                "Refund request failed during approval: request_id={}, error={}",
-                request_id,
-                exc,
-            )
 
         return refund_request
 
