@@ -127,14 +127,23 @@ class NowPaymentsGateway(PaymentGateway):
         try:
             data = json.loads(body)
             sorted_data = json.dumps(
-                data, sort_keys=True, separators=(",", ":")
+                data, sort_keys=True, separators=(",", ":"),
+                ensure_ascii=False,
             )
             expected = hmac.new(
                 self._ipn_secret.encode("utf-8"),
                 sorted_data.encode("utf-8"),
                 hashlib.sha512,
             ).hexdigest()
-            return hmac.compare_digest(expected, signature)
+            if not hmac.compare_digest(expected, signature):
+                logger.warning(
+                    "NOWPayments IPN sig mismatch: expected={}, got={}, sorted_data={}",
+                    expected[:16] + "...",
+                    signature[:16] + "..." if len(signature) > 16 else signature,
+                    sorted_data[:200],
+                )
+                return False
+            return True
         except Exception as e:
             logger.warning("NOWPayments IPN verify failed: {}", e)
             return False
