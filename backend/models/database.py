@@ -524,6 +524,7 @@ def _ensure_model_modules_imported() -> None:
     """导入独立模型模块，确保 metadata 已注册。"""
     import backend.models.agent_skill_models  # noqa: F401
     import backend.models.agent_team_models  # noqa: F401
+    import backend.models.payment_models  # noqa: F401
 
 
 def _append_dynamic_config_defaults(default_configs: list) -> None:
