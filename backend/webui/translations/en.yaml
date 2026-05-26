@@ -752,6 +752,7 @@ config:
     alipay_private_key: "Alipay Private Key (RSA2 PEM)"
     alipay_public_key: "Alipay Public Key (Verification)"
     alipay_currency: "Alipay Default Currency"
+    alipay_sandbox: "Enable Alipay Sandbox"
     nowpayments_enabled: "Enable NOWPayments Crypto"
     nowpayments_api_key: "NOWPayments API Key"
     nowpayments_ipn_secret: "NOWPayments IPN Secret"

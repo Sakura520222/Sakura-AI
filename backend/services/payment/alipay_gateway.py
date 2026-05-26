@@ -1,19 +1,20 @@
-"""支付宝当面付网关实现
+"""支付宝电脑网站支付网关实现
 
-使用支付宝开放平台「当面付」能力（alipay.trade.precreate），
-适合个人开发者，无需营业执照，单笔 ≤¥1000，单日 ≤¥50000。
+使用支付宝开放平台「电脑网站支付」能力（alipay.trade.page.pay），
+用户在电脑浏览器中跳转到支付宝页面完成付款。
 
 接入条件：
-- 支付宝实名认证（个人即可）
-- 经营场所照片（百度门店招牌即可）
-- 经营类目选择「百货零售 > 超市」
-- 费率 0.6%（支付宝官方）
+- 支付宝企业账号或个体工商户
+- 网站已通过 ICP 备案
+- 费率 0.6%
 
 关键概念：
 - app_id: 支付宝开放平台应用 ID
 - app_private_key: 应用私钥（RSA2）
 - alipay_public_key: 支付宝公钥（用于验签回调）
-- alipay.trade.precreate: 生成付款二维码
+- alipay.trade.page.pay: 电脑网站支付（浏览器跳转）
+- product_code: FAST_INSTANT_TRADE_PAY
+- return_url: 支付完成后前端回跳地址
 - notify_url: 异步回调地址
 
 签名：RSA2（SHA256WithRSA）
@@ -36,7 +37,7 @@ from backend.services.payment.gateway_base import (
 
 
 class AlipayGateway(PaymentGateway):
-    """支付宝当面付网关（个人开发者可用）"""
+    """支付宝电脑网站支付网关（alipay.trade.page.pay）"""
 
     GATEWAY_URL = "https://openapi.alipay.com/gateway.do"
     GATEWAY_SANDBOX_URL = "https://openapi-sandbox.dl.alipaydev.com/gateway.do"
@@ -258,7 +259,7 @@ class AlipayGateway(PaymentGateway):
             return _json.loads(text)
 
     # ------------------------------------------------------------------
-    # 创建支付（当面付预下单）
+    # 创建支付（电脑网站支付）
     # ------------------------------------------------------------------
 
     async def create_payment(
@@ -272,11 +273,18 @@ class AlipayGateway(PaymentGateway):
         cancel_url: str,
         metadata: Optional[dict[str, str]] = None,
     ) -> PaymentIntentResult:
-        """调用 alipay.trade.precreate 生成付款二维码
+        """构建 alipay.trade.page.pay 跳转 URL
 
-        金额从 cents 转为元。
-        success_url 用作 notify_url（支付宝异步回调地址）。
+        电脑网站支付不通过服务端 API 调用获取二维码，
+        而是构建签名参数后拼接网关 URL，由浏览器直接跳转。
+
+        Args:
+            success_url: 用作 notify_url（支付宝异步回调地址）
+            cancel_url: 用作 return_url（支付完成后前端回跳地址）
         """
+        import json
+        from urllib.parse import urlencode
+
         # 金额转换：cents → 元
         total_amount = f"{amount_cents / 100:.2f}"
 
@@ -284,17 +292,18 @@ class AlipayGateway(PaymentGateway):
             "out_trade_no": order_no,
             "total_amount": total_amount,
             "subject": plan_name,
+            "product_code": "FAST_INSTANT_TRADE_PAY",
         }
-        import json
 
         params = {
             "app_id": self._app_id,
-            "method": "alipay.trade.precreate",
+            "method": "alipay.trade.page.pay",
             "charset": "utf-8",
             "sign_type": "RSA2",
             "timestamp": self._now_timestamp(),
             "version": "1.0",
             "notify_url": success_url,
+            "return_url": cancel_url,
             "biz_content": json.dumps(biz_content, ensure_ascii=True),
         }
 
@@ -303,30 +312,14 @@ class AlipayGateway(PaymentGateway):
             sign = self._sign_with_rsa2(params, self._app_private_key)
             params["sign"] = sign
 
-            # 调用 API
-            data = await self._post(params)
+            # 构建跳转 URL，浏览器直接访问即可进入支付宝收银台
+            checkout_url = f"{self._gateway_url}?{urlencode(params)}"
 
-            # 解析响应
-            resp_key = "alipay_trade_precreate_response"
-            result = data.get(resp_key, {})
-
-            code = result.get("code")
-            if code == "10000":
-                qr_code = result.get("qr_code", "")
-                trade_no = result.get("trade_no", "")
-                return PaymentIntentResult(
-                    success=True,
-                    provider_tx_id=trade_no or order_no,
-                    checkout_url=qr_code,
-                    raw_data=result,
-                )
-
-            error_msg = result.get("sub_msg") or result.get("msg", "Unknown error")
-            logger.error("Alipay precreate failed: code={}, msg={}", code, error_msg)
             return PaymentIntentResult(
-                success=False,
-                error_message=f"[{code}] {error_msg}",
-                raw_data=result,
+                success=True,
+                provider_tx_id=order_no,
+                checkout_url=checkout_url,
+                raw_data={"method": "page.pay", "order_no": order_no},
             )
 
         except Exception as e:
@@ -544,7 +537,10 @@ class AlipayGateway(PaymentGateway):
         self,
         provider_tx_id: str,
     ) -> RefundResult:
-        """支付宝当面付撤销交易（alipay.trade.cancel）"""
+        """支付宝关闭交易（alipay.trade.close）
+
+        电脑网站支付使用 alipay.trade.close 关闭未付款订单
+        """
         import json
 
         try:
@@ -554,7 +550,7 @@ class AlipayGateway(PaymentGateway):
             )
             params = {
                 "app_id": self._app_id,
-                "method": "alipay.trade.cancel",
+                "method": "alipay.trade.close",
                 "charset": "utf-8",
                 "sign_type": "RSA2",
                 "timestamp": self._now_timestamp(),
@@ -565,10 +561,21 @@ class AlipayGateway(PaymentGateway):
             params["sign"] = sign
 
             result = await self._post(params)
-            flag = result.get("alipay_trade_cancel_response", {})
-            if flag.get("code") == "10000":
+            resp = result.get("alipay_trade_close_response", {})
+            code = resp.get("code", "")
+            if code == "10000":
                 logger.info(
-                    "Alipay trade cancelled: out_trade_no={}",
+                    "Alipay trade closed: out_trade_no={}",
+                    provider_tx_id,
+                )
+                return RefundResult(
+                    success=True,
+                    status="cancelled",
+                )
+            # 交易不存在（用户未跳转到支付宝）视为取消成功
+            if code == "40004":
+                logger.info(
+                    "Alipay trade not found, treat as cancelled: out_trade_no={}",
                     provider_tx_id,
                 )
                 return RefundResult(
@@ -577,12 +584,12 @@ class AlipayGateway(PaymentGateway):
                 )
             return RefundResult(
                 success=False,
-                error_message=flag.get(
-                    "sub_msg", flag.get("msg", "Unknown error")
+                error_message=resp.get(
+                    "sub_msg", resp.get("msg", "Unknown error")
                 ),
             )
         except Exception as e:
-            logger.opt(exception=True).error("Alipay cancel error: {}", e)
+            logger.opt(exception=True).error("Alipay close error: {}", e)
             return RefundResult(
                 success=False,
                 error_message=str(e),

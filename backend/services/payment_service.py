@@ -584,8 +584,12 @@ class PaymentService:
         success_url = f"https://{domain}/billing/payment/result?order_no={order.order_no}&status=success"
         cancel_url = f"https://{domain}/billing/payment/result?order_no={order.order_no}&status=cancel"
 
-        # Alipay/NOWPayments 需要 webhook 回调地址而非前端跳转地址
-        if order.payment_provider in ("alipay", "nowpayments"):
+        # Alipay: notify_url 用 webhook 回调，return_url 用前端成功页面
+        if order.payment_provider == "alipay":
+            success_url = f"https://{domain}/api/webhook/{order.payment_provider}"
+            cancel_url = f"https://{domain}/billing/payment/result?order_no={order.order_no}&status=success"
+        # NOWPayments: webhook 回调
+        elif order.payment_provider == "nowpayments":
             success_url = f"https://{domain}/api/webhook/{order.payment_provider}"
 
         # get_gateway 会对未注册/未启用/未配置的 provider 抛出 ValueError
@@ -728,12 +732,7 @@ class PaymentService:
         provider_tx_id: str,
     ) -> Order:
         """Confirm payment for a PENDING order (PENDING -> PAID -> FULFILLED)"""
-        stmt = select(Order).where(
-            and_(
-                Order.order_no == order_no,
-                Order.provider_tx_id == provider_tx_id,
-            )
-        )
+        stmt = select(Order).where(Order.order_no == order_no)
         order = (await self.session.execute(stmt)).scalar_one_or_none()
         if not order:
             raise PaymentError(f"Order not found: {order_no}")
@@ -754,6 +753,7 @@ class PaymentService:
         if not plan:
             raise PaymentError(f"Plan not found for order: {order_no}")
 
+        order.provider_tx_id = provider_tx_id
         order.status = OrderStatus.PAID.value
         order.paid_at = datetime.now(timezone.utc)
 
@@ -874,9 +874,11 @@ class PaymentService:
             and order.provider_tx_id
         ):
             gateway = await get_gateway(order.payment_provider)
+            # 全额退款时使用订单原始金额
+            refund_amount = amount_cents if amount_cents is not None else order.amount_cents
             refund_result = await gateway.refund(
                 provider_tx_id=order.provider_tx_id,
-                amount_cents=amount_cents,
+                amount_cents=refund_amount,
                 reason="requested_by_customer",
             )
             if not refund_result.success:

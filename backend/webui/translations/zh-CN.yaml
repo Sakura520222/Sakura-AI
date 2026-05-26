@@ -752,6 +752,7 @@ config:
     alipay_private_key: "支付宝应用私钥"
     alipay_public_key: "支付宝公钥（验签用）"
     alipay_currency: "支付宝默认货币"
+    alipay_sandbox: "启用支付宝沙箱环境"
     nowpayments_enabled: "启用 NOWPayments 虚拟币支付"
     nowpayments_api_key: "NOWPayments API Key"
     nowpayments_ipn_secret: "NOWPayments IPN 密钥"

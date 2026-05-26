@@ -518,12 +518,13 @@ class Settings(BaseSettings):
     paddle_currency: str = Field("USD", description="Paddle 默认货币")
     paddle_vendor_id: str = Field("", description="Paddle Client-side Token (用于前端)")
 
-    # 支付宝当面付（个人开发者可用）
+    # 支付宝电脑网站支付
     alipay_enabled: bool = Field(False, description="启用支付宝支付")
     alipay_app_id: str = Field("", description="支付宝 App ID")
     alipay_private_key: str = Field("", description="支付宝应用私钥（RSA2 PEM）")
     alipay_public_key: str = Field("", description="支付宝公钥（用于验签）")
     alipay_currency: str = Field("CNY", description="支付宝默认货币")
+    alipay_sandbox: bool = Field(False, description="启用支付宝沙箱环境")
 
     # NOWPayments 虚拟币支付（无需 KYC，非托管）
     nowpayments_enabled: bool = Field(False, description="启用 NOWPayments 虚拟币支付")
@@ -1303,6 +1304,7 @@ DYNAMIC_CONFIG_GROUPS: OrderedDict[str, dict] = OrderedDict(
                     "alipay_private_key",
                     "alipay_public_key",
                     "alipay_currency",
+                    "alipay_sandbox",
                     "nowpayments_enabled",
                     "nowpayments_api_key",
                     "nowpayments_ipn_secret",
@@ -1559,6 +1561,7 @@ DYNAMIC_CONFIG_LABELS: dict[str, str] = {
     "alipay_private_key": "支付宝应用私钥",
     "alipay_public_key": "支付宝公钥（验签用）",
     "alipay_currency": "支付宝默认货币",
+    "alipay_sandbox": "启用支付宝沙箱环境",
     "nowpayments_enabled": "启用 NOWPayments 虚拟币支付",
     "nowpayments_api_key": "NOWPayments API Key",
     "nowpayments_ipn_secret": "NOWPayments IPN 密钥",
