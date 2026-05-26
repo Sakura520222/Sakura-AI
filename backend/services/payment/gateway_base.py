@@ -103,3 +103,18 @@ class PaymentGateway(ABC):
         provider_tx_id: str,
     ) -> PaymentStatusResult:
         """查询支付状态"""
+
+    async def cancel_payment(
+        self,
+        provider_tx_id: str,
+    ) -> RefundResult:
+        """取消未完成的支付
+
+        对于不支持取消 API 的网关（如虚拟币支付），充值地址已生成且不可撤回，
+        这里仅返回成功，由调用方在数据库中将订单标记为 cancelled。
+        如果用户后续仍然向该地址转账，webhook 回调会因为订单已不是 pending 而被跳过。
+        """
+        return RefundResult(
+            success=True,
+            status="cancelled",
+        )

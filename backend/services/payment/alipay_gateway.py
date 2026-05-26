@@ -541,6 +541,45 @@ class AlipayGateway(PaymentGateway):
                 success=False, error_message=str(e),
             )
 
+    async def cancel_payment(
+        self,
+        provider_tx_id: str,
+    ) -> RefundResult:
+        """支付宝当面付撤销交易（alipay.trade.cancel）"""
+        import json
+
+        try:
+            biz_content = json.dumps(
+                {"out_trade_no": provider_tx_id},
+                ensure_ascii=True,
+            )
+            result = await self._post(
+                "alipay.trade.cancel",
+                biz_content,
+            )
+            flag = result.get("alipay_trade_cancel_response", {})
+            if flag.get("code") == "10000":
+                logger.info(
+                    "Alipay trade cancelled: out_trade_no={}",
+                    provider_tx_id,
+                )
+                return RefundResult(
+                    success=True,
+                    status="cancelled",
+                )
+            return RefundResult(
+                success=False,
+                error_message=flag.get(
+                    "sub_msg", flag.get("msg", "Unknown error")
+                ),
+            )
+        except Exception as e:
+            logger.opt(exception=True).error("Alipay cancel error: {}", e)
+            return RefundResult(
+                success=False,
+                error_message=str(e),
+            )
+
     # ------------------------------------------------------------------
     # 辅助
     # ------------------------------------------------------------------

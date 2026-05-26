@@ -234,7 +234,7 @@
                         <td class="px-6 py-4 text-sm text-gray-500 dark:text-gray-400">
                             {{ order.created_at.strftime('%Y-%m-%d %H:%M') if order.created_at else '-' }}
                         </td>
-                        <td class="px-6 py-4 text-sm">
+                        <td class="px-6 py-4 text-sm space-x-3">
                             {% if order.status == 'fulfilled' and order.amount_cents > 0 %}
                             <form method="POST" action="/billing/orders/{{ order.id }}/refund"
                                   onsubmit="return confirm('{{ _('billing.confirm_refund') }}');"
@@ -245,12 +245,24 @@
                                     {{ _('billing.refund') }}
                                 </button>
                             </form>
-                            {% elif order.status == 'pending' and order.payment_provider == 'nowpayments' %}
+                            {% elif order.status == 'pending' %}
+                            {% if order.payment_provider == 'nowpayments' %}
                             <a href="/billing/crypto-payment/{{ order.order_no }}"
                                class="text-sakura-600 hover:text-sakura-800 dark:text-sakura-400 dark:hover:text-sakura-300 text-xs font-medium">
                                 {{ _('billing.crypto_continue_payment') }}
                             </a>
-                            {% elif order.status in ['pending', 'cancelled', 'expired', 'refunded'] %}
+                            <span class="text-gray-300 dark:text-gray-600">|</span>
+                            {% endif %}
+                            <form method="POST" action="/billing/orders/{{ order.id }}/cancel"
+                                  onsubmit="return confirm('{{ _('billing.confirm_cancel_order') }}');"
+                                  class="inline">
+                                <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                                <button type="submit"
+                                        class="text-red-600 hover:text-red-800 dark:text-red-400 dark:hover:text-red-300 text-xs font-medium">
+                                    {{ _('billing.cancel_order') }}
+                                </button>
+                            </form>
+                            {% elif order.status in ['cancelled', 'expired', 'refunded'] %}
                             <form method="POST" action="/billing/orders/{{ order.id }}/delete"
                                   onsubmit="return confirm('{{ _('billing.confirm_delete_order') }}');"
                                   class="inline">

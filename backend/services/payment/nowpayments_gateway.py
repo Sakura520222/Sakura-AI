@@ -156,18 +156,27 @@ class NowPaymentsGateway(PaymentGateway):
     ) -> PaymentIntentResult:
         """调用 NOWPayments 创建支付，返回充值地址
 
-        amount_cents 会转为美元金额（price_amount）。
+        price_currency 使用传入的 currency 参数（通常为 CNY），
+        NOWPayments 会自动按实时汇率换算成 pay_currency 对应的加密货币。
         success_url 用作 ipn_callback_url。
         """
-        # cents → 美元
+        # cents → 原始金额（如 1300 cents → 13.00 CNY）
         price_amount = amount_cents / 100
+        price_currency = currency.lower()
+
+        logger.info(
+            "NOWPayments create: price_amount={}, price_currency={}, pay_currency={}",
+            price_amount,
+            price_currency,
+            self._pay_currency,
+        )
 
         try:
             data = await self._post(
                 "/v1/payment",
                 {
                     "price_amount": price_amount,
-                    "price_currency": "usd",
+                    "price_currency": price_currency,
                     "pay_currency": self._pay_currency,
                     "ipn_callback_url": success_url,
                     "order_id": order_no,

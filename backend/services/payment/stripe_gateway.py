@@ -256,3 +256,43 @@ class StripeGateway(PaymentGateway):
                 success=False,
                 error_message=str(e),
             )
+
+    async def cancel_payment(
+        self,
+        provider_tx_id: str,
+    ) -> RefundResult:
+        """取消 Stripe Checkout Session（expire）"""
+        try:
+            session = stripe.checkout.Session.retrieve(
+                provider_tx_id,
+                api_key=self._api_key,
+            )
+            if session.status == "complete":
+                return RefundResult(
+                    success=False,
+                    error_message="Session already completed, use refund instead",
+                )
+            stripe.checkout.Session.expire(
+                provider_tx_id,
+                api_key=self._api_key,
+            )
+            logger.info(
+                "Stripe session expired: session_id={}",
+                provider_tx_id,
+            )
+            return RefundResult(
+                success=True,
+                status="cancelled",
+            )
+        except stripe.error.StripeError as e:
+            logger.error("Stripe cancel failed: {}", e)
+            return RefundResult(
+                success=False,
+                error_message=str(e),
+            )
+        except Exception as e:
+            logger.error("Unexpected error in Stripe cancel: {}", e)
+            return RefundResult(
+                success=False,
+                error_message=str(e),
+            )

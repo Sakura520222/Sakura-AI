@@ -1208,6 +1208,8 @@ billing:
   crypto_instruction_4: "Do not send any other assets to this address"
   crypto_retry_purchase: "Retry Purchase"
   crypto_continue_payment: "Continue Payment"
+  cancel_order: "Cancel Order"
+  confirm_cancel_order: "Confirm cancel this order? This cannot be undone."
   crypto_back_anyway: "Go Back"
 
 # ========== About ==========

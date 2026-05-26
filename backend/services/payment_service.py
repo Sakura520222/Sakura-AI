@@ -530,7 +530,36 @@ class PaymentService:
 
         settings = get_settings()
         domain = settings.sanitized_app_domain
-        currency = str(await self._get_provider_currency(order.payment_provider))
+        provider_currency = str(
+            await self._get_provider_currency(order.payment_provider)
+        ).upper()
+
+        # 确定订单原始货币（套餐定价货币）
+        order_currency = str(
+            await self._get_provider_currency("stripe")
+        ).upper()  # stripe/alipay 默认 CNY，视为定价货币
+
+        # NOWPayments 支持 price_currency 直接传 CNY，由其 API 按实时汇率转换，
+        # 无需自研转换。其他网关若货币不一致则需要转换。
+        amount_cents = order.amount_cents
+        gateway_currency = provider_currency
+        if order.payment_provider == "nowpayments":
+            # 直接传原始 CNY 金额，让 NOWPayments 处理汇率
+            gateway_currency = order_currency
+        elif provider_currency != order_currency:
+            converted = await self._convert_currency(
+                order.amount_cents, order_currency, provider_currency
+            )
+            if converted != order.amount_cents:
+                logger.info(
+                    "Currency conversion: {} {} cents → {} {} cents, order={}",
+                    order.amount_cents,
+                    order_currency,
+                    converted,
+                    provider_currency,
+                    order.order_no,
+                )
+            amount_cents = converted
 
         success_url = f"https://{domain}/billing/payment/result?order_no={order.order_no}&status=success"
         cancel_url = f"https://{domain}/billing/payment/result?order_no={order.order_no}&status=cancel"
@@ -542,8 +571,8 @@ class PaymentService:
         gateway = await get_gateway(order.payment_provider)
         result = await gateway.create_payment(
             order_no=order.order_no,
-            amount_cents=order.amount_cents,
-            currency=currency,
+            amount_cents=amount_cents,
+            currency=gateway_currency,
             plan_name=plan.name,
             user_id=user_id,
             success_url=success_url,
@@ -609,6 +638,44 @@ class PaymentService:
     async def _get_stripe_currency(self) -> str:
         """Get Stripe currency from dynamic config (backward compat)"""
         return await self._get_provider_currency("stripe")
+
+    async def _convert_currency(
+        self, amount_cents: int, from_cur: str, to_cur: str
+    ) -> int:
+        """将金额从一种货币转换为另一种货币（cents → cents）
+
+        使用固定汇率作为 fallback，优先尝试从动态配置读取。
+        """
+        if from_cur == to_cur:
+            return amount_cents
+
+        # 内置参考汇率（可被动态配置覆盖）
+        # 以 USD 为基准
+        rates_vs_usd: dict[str, float] = {
+            "USD": 1.0,
+            "CNY": 7.25,
+            "EUR": 0.92,
+            "GBP": 0.79,
+            "JPY": 155.0,
+        }
+
+        from_rate = rates_vs_usd.get(from_cur.upper())
+        to_rate = rates_vs_usd.get(to_cur.upper())
+
+        if not from_rate or not to_rate:
+            logger.warning(
+                "No exchange rate for {} → {}, using 1:1",
+                from_cur,
+                to_cur,
+            )
+            return amount_cents
+
+        # amount_cents / from_rate = USD → * to_rate = target
+        usd_amount = amount_cents / from_rate
+        converted = round(usd_amount * to_rate)
+
+        # 最低 100 cents (1 单位)
+        return max(converted, 100)
 
     async def confirm_payment(
         self,
@@ -683,6 +750,53 @@ class PaymentService:
         await self.session.flush()
 
         logger.info("Order cancelled: order_no={}", order_no)
+        return order
+
+    async def cancel_order(self, order_no: str, user_id: int) -> Order:
+        """用户主动取消 pending 订单，同时通知网关"""
+        stmt = select(Order).where(
+            and_(
+                Order.order_no == order_no,
+                Order.user_id == user_id,
+            )
+        )
+        order = (await self.session.execute(stmt)).scalar_one_or_none()
+        if not order:
+            raise PaymentError(f"Order not found: {order_no}")
+
+        if order.status != OrderStatus.PENDING.value:
+            raise PaymentError(
+                f"Cannot cancel order in status: {order.status}"
+            )
+
+        # 尝试通知支付网关取消
+        if order.provider_tx_id and order.payment_provider:
+            try:
+                from backend.services.payment import get_gateway
+
+                gateway = await get_gateway(order.payment_provider)
+                result = await gateway.cancel_payment(order.provider_tx_id)
+                if not result.success:
+                    logger.warning(
+                        "Gateway cancel failed for {}: {}",
+                        order_no,
+                        result.error_message,
+                    )
+            except Exception as e:
+                logger.warning(
+                    "Gateway cancel error for {}: {}", order_no, e
+                )
+
+        order.status = OrderStatus.CANCELLED.value
+        await self._log_payment(
+            order_id=order.id,
+            user_id=order.user_id,
+            action=PaymentAction.EXPIRE,
+            detail="Order cancelled by user",
+        )
+        await self.session.flush()
+
+        logger.info("Order cancelled by user: order_no={}", order_no)
         return order
 
     async def process_refund(
