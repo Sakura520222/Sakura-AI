@@ -1,6 +1,6 @@
 """AlipayGateway 单元测试
 
-覆盖：创建支付（当面付预下单）、Webhook 验签、退款、支付状态查询。
+覆盖：创建支付（电脑网站支付 page.pay）、Webhook 验签、退款、支付状态查询。
 使用 mock 替代真实 RSA2 签名和 HTTP 调用。
 """
 
@@ -22,78 +22,65 @@ def gateway():
 
 
 class TestCreatePayment:
-    """创建支付（当面付预下单）"""
+    """创建支付（电脑网站支付 page.pay）"""
 
     @pytest.mark.asyncio
-    async def test_precreate_success(self, gateway):
-        """预下单成功，返回二维码"""
-        mock_data = {
-            "alipay_trade_precreate_response": {
-                "code": "10000",
-                "msg": "Success",
-                "trade_no": "2026052400001000100000000001",
-                "qr_code": "https://qr.alipay.com/bax00010",
-            }
-        }
-
+    async def test_page_pay_success(self, gateway):
+        """构建跳转 URL 成功"""
         with patch.object(AlipayGateway, "_sign_with_rsa2", return_value="fake_sign"):
-            with patch.object(AlipayGateway, "_post", return_value=mock_data):
-                result = await gateway.create_payment(
-                    order_no="ORDER-001",
-                    amount_cents=1000,
-                    currency="CNY",
-                    plan_name="Pro Monthly",
-                    user_id=42,
-                    success_url="https://example.com/api/webhook/alipay",
-                    cancel_url="https://example.com/billing/",
-                )
+            result = await gateway.create_payment(
+                order_no="ORDER-001",
+                amount_cents=1000,
+                currency="CNY",
+                plan_name="Pro Monthly",
+                user_id=42,
+                success_url="https://example.com/api/webhook/alipay",
+                cancel_url="https://example.com/billing/result",
+            )
 
         assert result.success is True
-        assert "qr.alipay.com" in result.checkout_url
-        assert result.provider_tx_id == "2026052400001000100000000001"
+        assert "openapi.alipay.com/gateway.do" in result.checkout_url
+        assert "method=alipay.trade.page.pay" in result.checkout_url
+        assert "FAST_INSTANT_TRADE_PAY" in result.checkout_url
+        assert result.provider_tx_id == "ORDER-001"
 
     @pytest.mark.asyncio
-    async def test_precreate_error(self, gateway):
-        """预下单失败"""
-        mock_data = {
-            "alipay_trade_precreate_response": {
-                "code": "40004",
-                "msg": "Business Failed",
-                "sub_msg": "订单已存在",
-            }
-        }
-
+    async def test_page_pay_sandbox(self):
+        """沙箱环境使用沙箱网关 URL"""
+        gw = AlipayGateway(
+            api_key="sandbox_app_id",
+            webhook_secret="fake_key",
+            sandbox=True,
+        )
         with patch.object(AlipayGateway, "_sign_with_rsa2", return_value="fake_sign"):
-            with patch.object(AlipayGateway, "_post", return_value=mock_data):
-                result = await gateway.create_payment(
-                    order_no="ORDER-DUP",
-                    amount_cents=500,
-                    currency="CNY",
-                    plan_name="Basic",
-                    user_id=1,
-                    success_url="https://example.com/notify",
-                    cancel_url="https://example.com/cancel",
-                )
+            result = await gw.create_payment(
+                order_no="ORDER-SB",
+                amount_cents=500,
+                currency="CNY",
+                plan_name="Basic",
+                user_id=1,
+                success_url="https://example.com/notify",
+                cancel_url="https://example.com/cancel",
+            )
 
-        assert result.success is False
-        assert "40004" in result.error_message
+        assert result.success is True
+        assert "openapi-sandbox.dl.alipaydev.com" in result.checkout_url
 
     @pytest.mark.asyncio
-    async def test_http_error(self, gateway):
-        """HTTP 错误"""
-        with patch.object(AlipayGateway, "_sign_with_rsa2", return_value="fake_sign"):
-            with patch.object(
-                AlipayGateway, "_post", side_effect=Exception("Connection refused")
-            ):
-                result = await gateway.create_payment(
-                    order_no="ORDER-ERR",
-                    amount_cents=500,
-                    currency="CNY",
-                    plan_name="Basic",
-                    user_id=1,
-                    success_url="https://example.com/notify",
-                    cancel_url="https://example.com/cancel",
-                )
+    async def test_sign_error(self, gateway):
+        """签名异常"""
+        with patch.object(
+            AlipayGateway, "_sign_with_rsa2", side_effect=Exception("Key error")
+        ):
+            result = await gateway.create_payment(
+                order_no="ORDER-ERR",
+                amount_cents=500,
+                currency="CNY",
+                plan_name="Basic",
+                user_id=1,
+                success_url="https://example.com/notify",
+                cancel_url="https://example.com/cancel",
+            )
 
         assert result.success is False
 
