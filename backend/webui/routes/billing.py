@@ -47,6 +47,13 @@ def _format_crypto_currency_display(raw_currency: str) -> str:
     return raw_currency.upper()
 
 
+def _get_order_expires_at(order) -> str:
+    """获取订单过期时间的 ISO 格式字符串，无则默认 1 小时后"""
+    if order.expires_at:
+        return order.expires_at.isoformat()
+    return (datetime.now(timezone.utc) + timedelta(hours=1)).isoformat()
+
+
 def _parse_page(value: str | None) -> int:
     try:
         return max(1, int(value or 1))
@@ -182,13 +189,7 @@ async def purchase_plan(
         # 虚拟币支付：渲染加密货币支付页面（含 QR 码）
         if crypto_info and order.payment_provider == "nowpayments":
             lang = detect_language()
-            # 使用订单实际过期时间，无则默认 1 小时
-            if order.expires_at:
-                expires_at = order.expires_at.isoformat()
-            else:
-                expires_at = (
-                    datetime.now(timezone.utc) + timedelta(hours=1)
-                ).isoformat()
+            expires_at = _get_order_expires_at(order)
             # 币种显示名
             currency_display = _format_crypto_currency_display(
                 crypto_info.get("pay_currency", "usdttrc20")
@@ -300,13 +301,7 @@ async def reopen_crypto_payment(
     currency_display = _format_crypto_currency_display(pay_currency)
 
     lang = detect_language()
-    # 使用订单实际过期时间，无则默认 1 小时
-    if order.expires_at:
-        expires_at = order.expires_at.isoformat()
-    else:
-        expires_at = (
-            datetime.now(timezone.utc) + timedelta(hours=1)
-        ).isoformat()
+    expires_at = _get_order_expires_at(order)
 
     return render_template(
         "billing/crypto_payment.html",

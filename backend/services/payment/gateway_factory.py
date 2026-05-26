@@ -18,12 +18,21 @@ _GATEWAY_REGISTRY: dict[str, type[PaymentGateway]] = {
 }
 
 # 已注册的支付提供商名称列表（供外部验证用）
-SUPPORTED_PROVIDERS = tuple(_GATEWAY_REGISTRY.keys())
+def get_supported_providers() -> tuple[str, ...]:
+    """获取当前已注册的支付提供商名称列表"""
+    return tuple(_GATEWAY_REGISTRY.keys())
+
+
+# 向后兼容的模块级常量（模块加载时快照）
+SUPPORTED_PROVIDERS = get_supported_providers()
 
 
 def register_gateway(name: str, gateway_cls: type[PaymentGateway]) -> None:
     """注册新的支付网关提供商"""
     _GATEWAY_REGISTRY[name] = gateway_cls
+    # 同步更新模块级常量
+    global SUPPORTED_PROVIDERS
+    SUPPORTED_PROVIDERS = get_supported_providers()
     logger.info("Payment gateway registered: {}", name)
 
 
