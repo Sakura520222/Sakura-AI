@@ -8,7 +8,7 @@ from backend.services.payment.gateway_base import (
     RefundResult,
     PaymentStatusResult,
 )
-from backend.services.payment.gateway_factory import get_gateway
+from backend.services.payment.gateway_factory import get_gateway, SUPPORTED_PROVIDERS
 
 __all__ = [
     "PaymentGateway",
@@ -18,6 +18,7 @@ __all__ = [
     "RefundResult",
     "PaymentStatusResult",
     "get_gateway",
+    "SUPPORTED_PROVIDERS",
 ]
 
 

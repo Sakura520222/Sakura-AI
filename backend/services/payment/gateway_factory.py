@@ -17,6 +17,9 @@ _GATEWAY_REGISTRY: dict[str, type[PaymentGateway]] = {
     "nowpayments": NowPaymentsGateway,
 }
 
+# 已注册的支付提供商名称列表（供外部验证用）
+SUPPORTED_PROVIDERS = tuple(_GATEWAY_REGISTRY.keys())
+
 
 def register_gateway(name: str, gateway_cls: type[PaymentGateway]) -> None:
     """注册新的支付网关提供商"""

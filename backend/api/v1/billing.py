@@ -8,6 +8,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.services.payment_service import PaymentError, PaymentService
+from backend.services.payment import SUPPORTED_PROVIDERS
 from backend.webui.deps import get_db, require_payment_enabled
 from backend.api.v1.deps import require_api_auth, require_api_super_admin
 
@@ -83,7 +84,10 @@ class RedeemCodeUpdateRequest(BaseModel):
 
 class CreateOrderRequest(BaseModel):
     plan_id: int
-    provider: str = Field("stripe", pattern="^(stripe|paddle|alipay|nowpayments)$")
+    provider: str = Field(
+        "stripe",
+        pattern="^(" + "|".join(SUPPORTED_PROVIDERS) + ")$",
+    )
 
 
 class RefundRequest(BaseModel):

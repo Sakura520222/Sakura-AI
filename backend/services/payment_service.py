@@ -624,8 +624,6 @@ class PaymentService:
 
     async def _get_provider_currency(self, provider: str) -> str:
         """Get currency for the given payment provider from dynamic config"""
-        from backend.core.config import get_dynamic_config
-
         provider_currency_key = f"{provider}_currency"
         return str(
             await get_dynamic_config(provider_currency_key)
@@ -648,10 +646,9 @@ class PaymentService:
             return amount_cents
 
         # 尝试从动态配置获取汇率
-        from backend.core.config import get_dynamic_config
-
         rate_key = f"exchange_rate_{from_cur.upper()}_{to_cur.upper()}"
         rate_str = await get_dynamic_config(rate_key)
+        converted: int | None = None
         if rate_str:
             try:
                 rate = float(rate_str)
@@ -664,7 +661,6 @@ class PaymentService:
                     converted,
                     rate,
                 )
-                return max(converted, 100)
             except (ValueError, TypeError):
                 logger.warning(
                     "Invalid dynamic exchange rate '{}', using fallback",
@@ -672,31 +668,31 @@ class PaymentService:
                 )
 
         # 内置参考汇率（fallback）
-        # 以 USD 为基准
-        rates_vs_usd: dict[str, float] = {
-            "USD": 1.0,
-            "CNY": 7.25,
-            "EUR": 0.92,
-            "GBP": 0.79,
-            "JPY": 155.0,
-        }
+        if converted is None:
+            rates_vs_usd: dict[str, float] = {
+                "USD": 1.0,
+                "CNY": 7.25,
+                "EUR": 0.92,
+                "GBP": 0.79,
+                "JPY": 155.0,
+            }
 
-        from_rate = rates_vs_usd.get(from_cur.upper())
-        to_rate = rates_vs_usd.get(to_cur.upper())
+            from_rate = rates_vs_usd.get(from_cur.upper())
+            to_rate = rates_vs_usd.get(to_cur.upper())
 
-        if not from_rate or not to_rate:
-            logger.warning(
-                "No exchange rate for {} → {}, using 1:1",
-                from_cur,
-                to_cur,
-            )
-            return amount_cents
+            if not from_rate or not to_rate:
+                logger.warning(
+                    "No exchange rate for {} → {}, using 1:1",
+                    from_cur,
+                    to_cur,
+                )
+                return amount_cents
 
-        # amount_cents / from_rate = USD → * to_rate = target
-        usd_amount = amount_cents / from_rate
-        converted = round(usd_amount * to_rate)
+            # amount_cents / from_rate = USD → * to_rate = target
+            usd_amount = amount_cents / from_rate
+            converted = round(usd_amount * to_rate)
 
-        # 最低 100 cents (1 单位)
+        # 统一最低金额保护
         return max(converted, 100)
 
     async def confirm_payment(
