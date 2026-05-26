@@ -14,6 +14,7 @@ Webhook 签名验证：
 - HMAC-SHA256(secret, f"{timestamp}:{raw_body}")
 """
 
+import asyncio
 import hashlib
 import hmac
 import re
@@ -93,7 +94,7 @@ class PaddleGateway(PaymentGateway):
             # Paddle 金额格式：字符串，无小数点（最小货币单位，如 cents）
             amount_str = str(amount_cents)
 
-            transaction = paddle.transactions.create(
+            transaction = await asyncio.to_thread(paddle.transactions.create,
                 CreateTransaction(
                     items=[
                         TransactionCreateItemWithPrice(
@@ -282,7 +283,7 @@ class PaddleGateway(PaymentGateway):
 
             if amount_cents is not None:
                 # 部分退款：需要获取 transaction items
-                transaction = paddle.transactions.get(provider_tx_id)
+                transaction = await asyncio.to_thread(paddle.transactions.get, provider_tx_id)
                 items = []
                 for item in transaction.details.line_items if transaction.details else []:
                     items.append(
@@ -300,7 +301,8 @@ class PaddleGateway(PaymentGateway):
                         error_message="No line items found for transaction",
                     )
 
-                adjustment = paddle.adjustments.create(
+                adjustment = await asyncio.to_thread(
+                    paddle.adjustments.create,
                     CreateAdjustment.partial(
                         action=Action.Refund,
                         items=items,
@@ -310,7 +312,8 @@ class PaddleGateway(PaymentGateway):
                 )
             else:
                 # 全额退款
-                adjustment = paddle.adjustments.create(
+                adjustment = await asyncio.to_thread(
+                    paddle.adjustments.create,
                     CreateAdjustment.full(
                         action=Action.Refund,
                         reason=refund_reason,
@@ -359,7 +362,7 @@ class PaddleGateway(PaymentGateway):
             env = Environment.SANDBOX if self._api_key.startswith("test_") else Environment.PRODUCTION
             paddle = Client(self._api_key, options=Options(env))
 
-            transaction = paddle.transactions.get(provider_tx_id)
+            transaction = await asyncio.to_thread(paddle.transactions.get, provider_tx_id)
 
             # 提取金额
             detail_totals = (
@@ -423,8 +426,6 @@ class PaddleGateway(PaymentGateway):
 
             env = Environment.SANDBOX if self._api_key.startswith("test_") else Environment.PRODUCTION
             paddle = Client(self._api_key, options=Options(env))
-            # 同步 SDK 调用需包装以避免阻塞事件循环
-            import asyncio
             await asyncio.to_thread(paddle.transactions.cancel, provider_tx_id, TransactionCancel())
             logger.info(
                 "Paddle transaction cancelled: tx_id={}",

@@ -3,6 +3,7 @@
 使用 Stripe Checkout Session 模式（Stripe 托管支付页面）。
 """
 
+import asyncio
 from typing import Optional
 
 import stripe
@@ -41,7 +42,8 @@ class StripeGateway(PaymentGateway):
             if metadata:
                 session_meta.update(metadata)
 
-            session = stripe.checkout.Session.create(
+            session = await asyncio.to_thread(
+                stripe.checkout.Session.create,
                 api_key=self._api_key,
                 mode="payment",
                 line_items=[
@@ -164,8 +166,6 @@ class StripeGateway(PaymentGateway):
         reason: Optional[str] = None,
     ) -> RefundResult:
         try:
-            import asyncio
-
             # 同步 Stripe SDK 调用需包装以避免阻塞事件循环
             session = await asyncio.to_thread(
                 stripe.checkout.Session.retrieve,
@@ -221,7 +221,9 @@ class StripeGateway(PaymentGateway):
         provider_tx_id: str,
     ) -> PaymentStatusResult:
         try:
-            session = stripe.checkout.Session.retrieve(
+            # 同步 Stripe SDK 调用需包装以避免阻塞事件循环
+            session = await asyncio.to_thread(
+                stripe.checkout.Session.retrieve,
                 provider_tx_id,
                 api_key=self._api_key,
             )
@@ -256,7 +258,8 @@ class StripeGateway(PaymentGateway):
     ) -> RefundResult:
         """取消 Stripe Checkout Session（expire）"""
         try:
-            session = stripe.checkout.Session.retrieve(
+            session = await asyncio.to_thread(
+                stripe.checkout.Session.retrieve,
                 provider_tx_id,
                 api_key=self._api_key,
             )
@@ -265,7 +268,8 @@ class StripeGateway(PaymentGateway):
                     success=False,
                     error_message="Session already completed, use refund instead",
                 )
-            stripe.checkout.Session.expire(
+            await asyncio.to_thread(
+                stripe.checkout.Session.expire,
                 provider_tx_id,
                 api_key=self._api_key,
             )
