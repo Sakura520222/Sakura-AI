@@ -101,10 +101,12 @@ async def get_gateway(
         alipay_public_key = str(
             await get_dynamic_config("alipay_public_key") or ""
         )
+        alipay_sandbox = bool(await get_dynamic_config("alipay_sandbox"))
         return gateway_cls(
             api_key=api_key,
             webhook_secret=webhook_secret,
             alipay_public_key=alipay_public_key,
+            sandbox=alipay_sandbox,
         )
 
     # NOWPayments 需要额外的 pay_currency 参数
