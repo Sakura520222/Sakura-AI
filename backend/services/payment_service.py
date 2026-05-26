@@ -37,7 +37,9 @@ from backend.services.refund_notification_service import (
 class PaymentError(Exception):
     """支付业务异常"""
 
-    pass
+    def __init__(self, message: str, code: str | None = None):
+        super().__init__(message)
+        self.code = code
 
 
 async def is_payment_enabled() -> bool:
@@ -976,17 +978,15 @@ class PaymentService:
             and_(
                 RefundRequest.order_id == order_id,
                 RefundRequest.user_id == user_id,
-                RefundRequest.status.in_(
-                    [
-                        RefundRequestStatus.PENDING.value,
-                        RefundRequestStatus.FAILED.value,
-                    ]
-                ),
+                RefundRequest.status == RefundRequestStatus.PENDING.value,
             )
         )
         existing = (await self.session.execute(existing_stmt)).scalar_one_or_none()
         if existing:
-            raise PaymentError("Refund request already exists")
+            raise PaymentError(
+                "Refund request already exists",
+                code="DUPLICATE_REFUND_REQUEST",
+            )
 
         user = await self.session.get(TelegramUser, user_id)
         refund_request = RefundRequest(
@@ -1127,7 +1127,15 @@ class PaymentService:
         except Exception as exc:
             refund_request.status = RefundRequestStatus.FAILED.value
             refund_request.error_message = str(exc)
-            await self.session.flush()
+            try:
+                await self.session.flush()
+            except Exception as flush_exc:
+                logger.error(
+                    "Failed to flush refund failure state: request_id={}, error={}",
+                    request_id,
+                    flush_exc,
+                )
+                raise
             await notify_refund_request_failed(self.session, refund_request)
             logger.warning(
                 "Refund request failed during approval: request_id={}, error={}",
