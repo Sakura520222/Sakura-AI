@@ -594,7 +594,9 @@ class AlipayGateway(PaymentGateway):
 
     @staticmethod
     def _now_timestamp() -> str:
-        """当前时间戳，格式 YYYY-MM-DD HH:mm:ss"""
-        from datetime import datetime
+        """当前时间戳（北京时间，支付宝 API 要求），格式 YYYY-MM-DD HH:mm:ss"""
+        from datetime import datetime, timezone, timedelta
 
-        return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        # 支付宝 API timestamp 参数要求北京时间（东八区）
+        bj_tz = timezone(timedelta(hours=8))
+        return datetime.now(bj_tz).strftime("%Y-%m-%d %H:%M:%S")

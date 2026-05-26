@@ -415,6 +415,7 @@ class PaddleGateway(PaymentGateway):
     ) -> RefundResult:
         """取消 Paddle 交易"""
         try:
+            # 延迟导入：paddle_billing SDK 为可选依赖，避免未安装时 import 失败
             from paddle_billing import Client, Environment, Options
             from paddle_billing.Resources.Transactions.TransactionCancel import (
                 TransactionCancel,
@@ -422,7 +423,9 @@ class PaddleGateway(PaymentGateway):
 
             env = Environment.SANDBOX if self._api_key.startswith("test_") else Environment.PRODUCTION
             paddle = Client(self._api_key, options=Options(env))
-            paddle.transactions.cancel(provider_tx_id, TransactionCancel())
+            # 同步 SDK 调用需包装以避免阻塞事件循环
+            import asyncio
+            await asyncio.to_thread(paddle.transactions.cancel, provider_tx_id, TransactionCancel())
             logger.info(
                 "Paddle transaction cancelled: tx_id={}",
                 provider_tx_id,
