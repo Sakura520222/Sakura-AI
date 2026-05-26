@@ -177,8 +177,9 @@
                     {% elif available_providers and available_providers|length == 1 %}
                     <input type="hidden" name="provider" value="{{ available_providers[0].id }}">
                     {% else %}
-                    <input type="hidden" name="provider" value="alipay">
+                    <p class="text-xs text-gray-400 dark:text-gray-500 mt-2">{{ _('billing.no_payment_provider') }}</p>
                     {% endif %}
+                    {% if available_providers and available_providers|length > 0 %}
                     <button type="submit"
                             class="w-full px-4 py-2 rounded-lg text-sm font-medium
                                    bg-gradient-to-r from-sakura-500 to-purple-500 hover:from-sakura-600 hover:to-purple-600
@@ -186,6 +187,7 @@
                                    focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-sakura-500">
                         {{ _('billing.purchase') }}
                     </button>
+                    {% endif %}
                 </form>
                 {% endif %}
             </div>

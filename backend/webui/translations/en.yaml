@@ -1106,6 +1106,7 @@ billing:
   quota_limit: "Quota Limit"
   features: "Features"
   purchase: "Purchase"
+  no_payment_provider: "No payment provider available"
   redeem_code: "Redemption Code"
   redeem: "Redeem"
   redeem_success: "Redeemed successfully"

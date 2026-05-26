@@ -588,7 +588,10 @@ class PaymentService:
         if order.payment_provider in ("alipay", "nowpayments"):
             success_url = f"https://{domain}/api/webhook/{order.payment_provider}"
 
-        gateway = await get_gateway(order.payment_provider)
+        try:
+            gateway = await get_gateway(order.payment_provider)
+        except ValueError as exc:
+            raise PaymentError(str(exc)) from exc
         result = await gateway.create_payment(
             order_no=order.order_no,
             amount_cents=amount_cents,
