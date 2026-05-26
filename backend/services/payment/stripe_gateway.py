@@ -164,8 +164,11 @@ class StripeGateway(PaymentGateway):
         reason: Optional[str] = None,
     ) -> RefundResult:
         try:
-            # 直接 retrieve session 获取 payment_intent
-            session = stripe.checkout.Session.retrieve(
+            import asyncio
+
+            # 同步 Stripe SDK 调用需包装以避免阻塞事件循环
+            session = await asyncio.to_thread(
+                stripe.checkout.Session.retrieve,
                 provider_tx_id,
                 api_key=self._api_key,
             )
@@ -186,7 +189,7 @@ class StripeGateway(PaymentGateway):
             if reason:
                 refund_params["reason"] = "requested_by_customer"
 
-            refund_obj = stripe.Refund.create(**refund_params)
+            refund_obj = await asyncio.to_thread(stripe.Refund.create, **refund_params)
 
             logger.info(
                 "Stripe refund created: refund_id={}, provider_tx_id={}",
