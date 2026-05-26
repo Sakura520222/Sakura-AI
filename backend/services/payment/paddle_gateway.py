@@ -408,3 +408,40 @@ class PaddleGateway(PaymentGateway):
                 success=False,
                 error_message=str(e),
             )
+
+    async def cancel_payment(
+        self,
+        provider_tx_id: str,
+    ) -> RefundResult:
+        """取消 Paddle 交易"""
+        try:
+            from paddle_billing.Resources.Transactions.TransactionCancel import (
+                TransactionCancel,
+            )
+
+            client = self._get_client()
+            client.transaction.cancel(provider_tx_id, TransactionCancel())
+            logger.info(
+                "Paddle transaction cancelled: tx_id={}",
+                provider_tx_id,
+            )
+            return RefundResult(
+                success=True,
+                status="cancelled",
+            )
+        except ImportError:
+            # SDK 不可用时直接标记成功（Paddle 未支付的订单会自动过期）
+            logger.info(
+                "Paddle SDK not installed, marking as cancelled: {}",
+                provider_tx_id,
+            )
+            return RefundResult(
+                success=True,
+                status="cancelled",
+            )
+        except Exception as e:
+            logger.error("Paddle cancel failed: {}", e)
+            return RefundResult(
+                success=False,
+                error_message=str(e),
+            )

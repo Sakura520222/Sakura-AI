@@ -158,11 +158,25 @@
             </a>
         </template>
         <template x-if="status === 'waiting' || status === 'confirming'">
-            <a href="/billing/"
-               class="inline-flex items-center px-4 py-2 rounded-lg text-sm
-                      text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-300 transition-colors">
-                {{ _('billing.crypto_back_anyway') }}
-            </a>
+            <div class="flex items-center gap-4">
+                <a href="/billing/"
+                   class="inline-flex items-center px-4 py-2 rounded-lg text-sm
+                          text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-300 transition-colors">
+                    {{ _('billing.crypto_back_anyway') }}
+                </a>
+                <form method="POST" action="/billing/orders/{{ order_id }}/cancel"
+                      onsubmit="return confirm('{{ _('billing.confirm_cancel_order') }}');"
+                      class="inline">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                    <button type="submit"
+                            class="inline-flex items-center px-4 py-2 rounded-lg text-sm font-medium
+                                   text-red-600 hover:text-red-800 dark:text-red-400
+                                   border border-red-300 dark:border-red-700 hover:border-red-500
+                                   transition-colors duration-200">
+                        {{ _('billing.cancel_order') }}
+                    </button>
+                </form>
+            </div>
         </template>
     </div>
 </div>

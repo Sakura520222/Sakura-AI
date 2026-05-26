@@ -190,6 +190,8 @@ async def purchase_plan(
                 lang=lang,
                 current_user=user,
                 order_no=crypto_info.get("order_no", order.order_no),
+                order_id=order.id,
+                csrf_token=get_csrf_serializer().dumps({}),
                 pay_address=crypto_info.get("pay_address", ""),
                 pay_amount=crypto_info.get("pay_amount", ""),
                 pay_currency_display=currency_display,
@@ -305,6 +307,8 @@ async def reopen_crypto_payment(
         current_user=user,
         lang=lang,
         order_no=order_no,
+        order_id=order.id,
+        csrf_token=get_csrf_serializer().dumps({}),
         pay_address=pay_address,
         pay_amount=pay_amount,
         pay_currency_display=currency_display,
@@ -463,6 +467,53 @@ async def user_refund_order(
             "toast.refund_success",
             lang=detect_language(),
             order_no=order.order_no,
+        )
+    except PaymentError as e:
+        await db.rollback()
+        return toast_redirect(
+            "/billing/",
+            "toast.payment_error",
+            "error",
+            lang=detect_language(),
+            error=str(e),
+        )
+
+
+@router.post("/orders/{order_id}/cancel")
+async def user_cancel_order(
+    order_id: int,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    user: dict = Depends(require_auth),
+    csrf_token: str = Depends(require_csrf),
+):
+    """用户主动取消 pending 订单"""
+    from backend.models.payment_models import Order
+    from sqlalchemy import select
+
+    stmt = select(Order).where(
+        Order.id == order_id,
+        Order.user_id == user["user_id"],
+    )
+    order = (await db.execute(stmt)).scalar_one_or_none()
+    if not order or order.status != "pending":
+        return toast_redirect(
+            "/billing/",
+            "toast.payment_error",
+            "error",
+            lang=detect_language(),
+            error="Order not found or not cancellable",
+        )
+
+    svc = PaymentService(db)
+    try:
+        await svc.cancel_order(order.order_no, user["user_id"])
+        await db.commit()
+        return toast_redirect(
+            "/billing/",
+            "toast.payment_success",
+            "success",
+            lang=detect_language(),
         )
     except PaymentError as e:
         await db.rollback()
