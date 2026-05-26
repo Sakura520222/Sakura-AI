@@ -36,6 +36,17 @@ router = APIRouter(
 templates = get_templates()
 
 
+def _format_crypto_currency_display(raw_currency: str) -> str:
+    """格式化虚拟币显示名，如 usdttrc20 → USDT (TRC20)"""
+    if raw_currency.lower().startswith("usdt"):
+        currency_display = "USDT"
+        network = raw_currency.upper().replace("USDT", "").strip()
+        if network:
+            currency_display = f"USDT ({network})"
+        return currency_display
+    return raw_currency.upper()
+
+
 def _parse_page(value: str | None) -> int:
     try:
         return max(1, int(value or 1))
@@ -174,15 +185,10 @@ async def purchase_plan(
             expires_at = (
                 datetime.now(timezone.utc) + timedelta(hours=1)
             ).isoformat()
-            # 币种显示名：usdttrc20 → USDT (TRC20)
-            raw_cur = crypto_info.get("pay_currency", "usdttrc20")
-            if raw_cur.lower().startswith("usdt"):
-                currency_display = "USDT"
-                network = raw_cur.upper().replace("USDT", "").strip()
-                if network:
-                    currency_display = f"USDT ({network})"
-            else:
-                currency_display = raw_cur.upper()
+            # 币种显示名
+            currency_display = _format_crypto_currency_display(
+                crypto_info.get("pay_currency", "usdttrc20")
+            )
 
             return render_template(
                 "billing/crypto_payment.html",
@@ -287,13 +293,7 @@ async def reopen_crypto_payment(
         )
 
     # 币种显示名
-    if pay_currency.lower().startswith("usdt"):
-        currency_display = "USDT"
-        network = pay_currency.upper().replace("USDT", "").strip()
-        if network:
-            currency_display = f"USDT ({network})"
-    else:
-        currency_display = pay_currency.upper()
+    currency_display = _format_crypto_currency_display(pay_currency)
 
     lang = detect_language()
     expires_at = (
