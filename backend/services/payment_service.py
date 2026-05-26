@@ -2,7 +2,7 @@
 
 import json
 import uuid
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import List, Optional
 
 from sqlalchemy import select, and_, func
@@ -412,7 +412,7 @@ class PaymentService:
         if not redeem:
             raise PaymentError("Invalid or inactive redeem code")
 
-        if redeem.expires_at and redeem.expires_at < datetime.utcnow():
+        if redeem.expires_at and redeem.expires_at < datetime.now(timezone.utc):
             raise PaymentError("Redeem code has expired")
 
         if redeem.used_count >= redeem.max_uses:
@@ -435,7 +435,7 @@ class PaymentService:
             status=OrderStatus.PAID.value,
             payment_provider="redeem_code",
             provider_tx_id=code,
-            paid_at=datetime.utcnow(),
+            paid_at=datetime.now(timezone.utc),
         )
         self.session.add(order)
         await self.session.flush()
@@ -480,7 +480,7 @@ class PaymentService:
             currency=plan.currency,
             status=OrderStatus.PENDING.value,
             payment_provider=provider,
-            expires_at=datetime.utcnow() + timedelta(minutes=expire_minutes),
+            expires_at=datetime.now(timezone.utc) + timedelta(minutes=expire_minutes),
         )
         self.session.add(order)
         await self.session.flush()
@@ -505,7 +505,7 @@ class PaymentService:
             if provider == "nowpayments" and order.metadata_json:
                 try:
                     md = json.loads(order.metadata_json)
-                    if md.get("is_crypto") == "true":
+                    if md.get("is_crypto") is True:
                         order._crypto_payment_info = {
                             "pay_address": md.get("pay_address", ""),
                             "pay_amount": md.get("pay_amount", ""),
@@ -524,8 +524,6 @@ class PaymentService:
         self, order: Order, plan: Plan, user_id: int
     ) -> str:
         """Create payment via external gateway and return checkout URL"""
-        import json
-
         from backend.services.payment import get_gateway
 
         settings = get_settings()
@@ -602,7 +600,7 @@ class PaymentService:
             metadata["price_currency"] = result.raw_data.get(
                 "price_currency", "usd"
             )
-            metadata["is_crypto"] = "true"
+            metadata["is_crypto"] = True
 
         if order.metadata_json:
             try:
@@ -644,12 +642,36 @@ class PaymentService:
     ) -> int:
         """将金额从一种货币转换为另一种货币（cents → cents）
 
-        使用固定汇率作为 fallback，优先尝试从动态配置读取。
+        优先从动态配置读取汇率，fallback 到内置参考汇率。
         """
         if from_cur == to_cur:
             return amount_cents
 
-        # 内置参考汇率（可被动态配置覆盖）
+        # 尝试从动态配置获取汇率
+        from backend.core.config import get_dynamic_config
+
+        rate_key = f"exchange_rate_{from_cur.upper()}_{to_cur.upper()}"
+        rate_str = await get_dynamic_config(rate_key)
+        if rate_str:
+            try:
+                rate = float(rate_str)
+                converted = round(amount_cents * rate)
+                logger.info(
+                    "Dynamic exchange rate: {} {} → {} = {} (rate={})",
+                    amount_cents,
+                    from_cur,
+                    to_cur,
+                    converted,
+                    rate,
+                )
+                return max(converted, 100)
+            except (ValueError, TypeError):
+                logger.warning(
+                    "Invalid dynamic exchange rate '{}', using fallback",
+                    rate_str,
+                )
+
+        # 内置参考汇率（fallback）
         # 以 USD 为基准
         rates_vs_usd: dict[str, float] = {
             "USD": 1.0,
@@ -710,7 +732,7 @@ class PaymentService:
             raise PaymentError(f"Plan not found for order: {order_no}")
 
         order.status = OrderStatus.PAID.value
-        order.paid_at = datetime.utcnow()
+        order.paid_at = datetime.now(timezone.utc)
 
         await self._log_payment(
             order_id=order.id,
@@ -920,7 +942,7 @@ class PaymentService:
             currency=plan.currency,
             status=OrderStatus.PAID.value,
             payment_provider="manual",
-            paid_at=datetime.utcnow(),
+            paid_at=datetime.now(timezone.utc),
         )
         self.session.add(order)
         await self.session.flush()
@@ -954,7 +976,7 @@ class PaymentService:
             and_(
                 UserSubscription.user_id == user_id,
                 UserSubscription.status == SubscriptionStatus.ACTIVE.value,
-                UserSubscription.expires_at > datetime.utcnow(),
+                UserSubscription.expires_at > datetime.now(timezone.utc),
             )
         )
         result = await self.session.execute(stmt)
@@ -963,7 +985,7 @@ class PaymentService:
     async def expire_due_subscriptions(self, user_id: Optional[int] = None) -> int:
         conditions = [
             UserSubscription.status == SubscriptionStatus.ACTIVE.value,
-            UserSubscription.expires_at <= datetime.utcnow(),
+            UserSubscription.expires_at <= datetime.now(timezone.utc),
         ]
         if user_id is not None:
             conditions.append(UserSubscription.user_id == user_id)
@@ -1016,7 +1038,7 @@ class PaymentService:
         user = await self._apply_plan_to_user(user, plan)
 
         order.status = OrderStatus.FULFILLED.value
-        order.fulfilled_at = datetime.utcnow()
+        order.fulfilled_at = datetime.now(timezone.utc)
 
         if plan.plan_type == PlanType.SUBSCRIPTION.value:
             await self._upsert_subscription(user.id, plan, order.id)
@@ -1095,7 +1117,7 @@ class PaymentService:
         values = self._plan_quota_values(plan)
         if existing:
             existing.status = SubscriptionStatus.ACTIVE.value
-            existing.expires_at = datetime.utcnow() + timedelta(
+            existing.expires_at = datetime.now(timezone.utc) + timedelta(
                 days=plan.duration_days or 30
             )
             existing.applied_pr_quota_bonus = values["pr_quota_bonus"]
@@ -1118,7 +1140,7 @@ class PaymentService:
             user_id=user_id,
             plan_id=plan.id,
             status=SubscriptionStatus.ACTIVE.value,
-            expires_at=datetime.utcnow() + timedelta(days=plan.duration_days or 30),
+            expires_at=datetime.now(timezone.utc) + timedelta(days=plan.duration_days or 30),
             applied_pr_quota_bonus=values["pr_quota_bonus"],
             applied_pr_daily_add=values["pr_daily_add"],
             applied_pr_weekly_add=values["pr_weekly_add"],
@@ -1319,6 +1341,6 @@ class PaymentService:
 
     @staticmethod
     def _generate_order_no() -> str:
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc)
         short_uuid = uuid.uuid4().hex[:8].upper()
         return f"ORD{now.strftime('%Y%m%d%H%M%S')}{short_uuid}"

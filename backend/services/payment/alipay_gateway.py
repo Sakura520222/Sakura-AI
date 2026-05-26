@@ -235,8 +235,7 @@ class AlipayGateway(PaymentGateway):
     # 内部 HTTP 辅助：处理支付宝 GBK/UTF-8 响应
     # ------------------------------------------------------------------
 
-    @staticmethod
-    async def _post(params: dict) -> dict:
+    async def _post(self, params: dict) -> dict:
         """POST 到支付宝网关，自动处理 GBK/UTF-8 编码响应
 
         支付宝部分接口返回 GBK 编码的中文错误消息，
@@ -246,7 +245,7 @@ class AlipayGateway(PaymentGateway):
 
         async with httpx.AsyncClient(timeout=30.0) as client:
             resp = await client.post(
-                AlipayGateway.GATEWAY_URL,
+                self._gateway_url,
                 data=params,
             )
             resp.raise_for_status()
@@ -553,10 +552,19 @@ class AlipayGateway(PaymentGateway):
                 {"out_trade_no": provider_tx_id},
                 ensure_ascii=True,
             )
-            result = await self._post(
-                "alipay.trade.cancel",
-                biz_content,
-            )
+            params = {
+                "app_id": self._app_id,
+                "method": "alipay.trade.cancel",
+                "charset": "utf-8",
+                "sign_type": "RSA2",
+                "timestamp": self._now_timestamp(),
+                "version": "1.0",
+                "biz_content": biz_content,
+            }
+            sign = self._sign_with_rsa2(params, self._app_private_key)
+            params["sign"] = sign
+
+            result = await self._post(params)
             flag = result.get("alipay_trade_cancel_response", {})
             if flag.get("code") == "10000":
                 logger.info(

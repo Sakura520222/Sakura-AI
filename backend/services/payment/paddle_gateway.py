@@ -415,12 +415,14 @@ class PaddleGateway(PaymentGateway):
     ) -> RefundResult:
         """取消 Paddle 交易"""
         try:
+            from paddle_billing import Client, Environment, Options
             from paddle_billing.Resources.Transactions.TransactionCancel import (
                 TransactionCancel,
             )
 
-            client = self._get_client()
-            client.transaction.cancel(provider_tx_id, TransactionCancel())
+            env = Environment.SANDBOX if self._api_key.startswith("test_") else Environment.PRODUCTION
+            paddle = Client(self._api_key, options=Options(env))
+            paddle.transactions.cancel(provider_tx_id, TransactionCancel())
             logger.info(
                 "Paddle transaction cancelled: tx_id={}",
                 provider_tx_id,

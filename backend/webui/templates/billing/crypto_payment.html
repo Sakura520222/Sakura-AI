@@ -192,7 +192,7 @@ function cryptoPayment() {
         countdownText: '',
         pollInterval: null,
         countdownInterval: null,
-        expiresAt: new Date('{{ expires_at }}').getTime(),
+        expiresAt: new Date({{ expires_at | tojson }}).getTime(),
 
         init() {
             this.generateQR();
@@ -201,7 +201,7 @@ function cryptoPayment() {
         },
 
         generateQR() {
-            const address = '{{ pay_address }}';
+            const address = {{ pay_address | tojson }};
             const container = document.getElementById('qr-code');
             if (container && typeof QRCode !== 'undefined') {
                 container.innerHTML = '';
@@ -217,7 +217,7 @@ function cryptoPayment() {
         },
 
         copyAddress() {
-            const address = '{{ pay_address }}';
+            const address = {{ pay_address | tojson }};
             navigator.clipboard.writeText(address).then(() => {
                 this.copied = true;
                 setTimeout(() => { this.copied = false; }, 2000);
@@ -238,7 +238,7 @@ function cryptoPayment() {
             // 每 15 秒轮询一次支付状态
             this.pollInterval = setInterval(async () => {
                 try {
-                    const resp = await fetch('/billing/crypto-status?order_no={{ order_no }}');
+                    const resp = await fetch('/billing/crypto-status?order_no=' + encodeURIComponent({{ order_no | tojson }}));
                     if (resp.ok) {
                         const data = await resp.json();
                         if (data.status) {

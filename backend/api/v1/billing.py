@@ -83,7 +83,7 @@ class RedeemCodeUpdateRequest(BaseModel):
 
 class CreateOrderRequest(BaseModel):
     plan_id: int
-    provider: str = Field("stripe", pattern="^(stripe)$")
+    provider: str = Field("stripe", pattern="^(stripe|paddle|alipay|nowpayments)$")
 
 
 class RefundRequest(BaseModel):
