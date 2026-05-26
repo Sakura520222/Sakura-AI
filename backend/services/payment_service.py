@@ -741,6 +741,8 @@ class PaymentService:
         provider_tx_id: str,
     ) -> Order:
         """Confirm payment for a PENDING order (PENDING -> PAID -> FULFILLED)"""
+        # 仅按 order_no 查询，provider_tx_id 在创建时设为 order_no，
+        # webhook 回调时用实际 trade_no 覆盖，两者不一致不能用作 WHERE 条件
         stmt = select(Order).where(Order.order_no == order_no)
         order = (await self.session.execute(stmt)).scalar_one_or_none()
         if not order:
