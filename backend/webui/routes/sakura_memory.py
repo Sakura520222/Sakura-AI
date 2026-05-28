@@ -30,34 +30,36 @@ MAX_SAKURA_FILE_CONTENT_LENGTH = 50_000
 def _get_knowledge_extraction_status(repo_state: SakuraMemoryState) -> dict:
     """计算知识提取的诊断状态 / Compute diagnostic status for knowledge extraction
 
+    周期性提取：基于 last_extraction_count 与 min_reflections 间隔判断进度。
+
     Returns:
-        dict with keys: status (str), detail (str)
-        status: "completed" | "disabled" | "ready" | "insufficient"
+        dict with keys: status (str), detail (str), min_reflections (int)
+        status: "disabled" | "pending" | "ready"
     """
     from backend.core.config import get_settings
 
     settings = get_settings()
     enabled = settings.sakura_knowledge_extraction_enabled
-    min_reflections = settings.sakura_extraction_min_reflections or 10
+    interval = settings.sakura_extraction_min_reflections or 10
 
     if not enabled:
-        return {"status": "disabled", "detail": "已禁用", "min_reflections": min_reflections}
-
-    if repo_state.knowledge_extracted:
-        return {"status": "completed", "detail": "已完成", "min_reflections": min_reflections}
+        return {"status": "disabled", "detail": "已禁用", "min_reflections": interval}
 
     count = repo_state.reflection_count
-    if count < min_reflections:
+    last_extraction = repo_state.last_extraction_count or 0
+    since_last = count - last_extraction
+
+    if since_last >= interval:
         return {
-            "status": "insufficient",
-            "detail": f"反思数不足 ({count}/{min_reflections})",
-            "min_reflections": min_reflections,
+            "status": "ready",
+            "detail": f"待触发（{since_last} ≥ {interval}）",
+            "min_reflections": interval,
         }
 
     return {
-        "status": "ready",
-        "detail": f"待触发 ({count}≥{min_reflections})",
-        "min_reflections": min_reflections,
+        "status": "pending",
+        "detail": f"进行中（{since_last}/{interval}）",
+        "min_reflections": interval,
     }
 
 

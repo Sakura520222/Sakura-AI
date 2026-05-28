@@ -132,13 +132,13 @@ async def lifespan(app: FastAPI):
             # 知识提取配置自检 / Knowledge extraction config self-check
             try:
                 ke_enabled = settings.sakura_knowledge_extraction_enabled
-                ke_min = settings.sakura_extraction_min_reflections
+                ke_interval = settings.sakura_extraction_min_reflections
                 logger.info(
-                    f"📚 知识提取配置: enabled={ke_enabled}, min_reflections={ke_min}"
+                    f"📚 知识提取配置: enabled={ke_enabled}, interval={ke_interval}"
                 )
-                if ke_enabled and not ke_min:
+                if ke_enabled and not ke_interval:
                     logger.warning(
-                        "⚠️ 知识提取已启用但 min_reflections 为 0 或空，将使用默认值 10"
+                        "⚠️ 知识提取已启用但 extraction_interval 为 0 或空，将使用默认值 10"
                     )
             except Exception as e:
                 logger.warning(f"⚠️ 知识提取配置自检失败: {e}")
