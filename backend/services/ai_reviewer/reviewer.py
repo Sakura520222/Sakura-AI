@@ -463,18 +463,15 @@ class AIReviewer:
                     context=context,
                     tool_handler=active_tool_handler,
                 )
-            finally:
-                diff_tool.clear()
 
-        except PromptTooLongError as e:
-            logger.warning(
-                "🚨 Prompt 超出模型上下文限制 (估算 ~{} tokens, 模型: {})",
-                e.estimated_tokens,
-                e.model,
-            )
-            # 尝试压缩后重试
-            if self.enable_compression:
-                try:
+            except PromptTooLongError as e:
+                logger.warning(
+                    "🚨 Prompt 超出模型上下文限制 (估算 ~{} tokens, 模型: {})",
+                    e.estimated_tokens,
+                    e.model,
+                )
+                # 尝试压缩后重试
+                if self.enable_compression:
                     settings = get_settings()
                     safe_context = self.model_context_mgr.calculate_safe_context(
                         settings.openai_model, settings.context_safety_threshold
@@ -490,6 +487,8 @@ class AIReviewer:
                             tracker=tracker,
                         )
                     )
+                    # 重新加载 diff 数据（前一次 clear 可能已清空）
+                    diff_tool.set_files_data(context.get("files", []))
                     return await self._run_tool_loop(
                         messages=compressed_messages,
                         system_prompt=system_prompt,
@@ -501,18 +500,15 @@ class AIReviewer:
                         context=context,
                         tool_handler=active_tool_handler,
                     )
-                except Exception as compression_error:
-                    logger.error(
-                        "压缩对话历史后重试失败: {}",
-                        str(compression_error),
-                        exc_info=True,
-                    )
-                    raise
-            logger.error(
-                "🚨 上下文超限但压缩未启用 (估算 ~{} tokens)",
-                e.estimated_tokens,
-            )
-            raise
+                logger.error(
+                    "🚨 上下文超限但压缩未启用 (估算 ~{} tokens)",
+                    e.estimated_tokens,
+                )
+                raise
+
+            finally:
+                diff_tool.clear()
+
         except Exception as e:
             logger.error("AI审查（带工具）时出错: {}", str(e), exc_info=True)
             raise

@@ -528,16 +528,15 @@ class PRAnalyzer:
 
             # 对于大型PR（deep策略），只包含主要文件
             elif strategy_name == "deep":
-                # 分批处理
-                batch_config = get_strategy_config().get_batch_config()
-                max_files_per_batch = batch_config.get("max_files_per_batch", 10)
+                ce_config = get_strategy_config().get_context_enhancement_config()
+                max_files = ce_config.get("max_files_for_deep_strategy", 10)
 
                 # 对文件按重要性排序（变更量大的优先）
                 sorted_files = sorted(
                     analysis.code_files, key=lambda f: f.changes, reverse=True
                 )
 
-                for file_info in sorted_files[:max_files_per_batch]:
+                for file_info in sorted_files[:max_files]:
                     file_context = {
                         "path": file_info.path,
                         "status": file_info.status,
@@ -552,9 +551,9 @@ class PRAnalyzer:
 
                     context["files"].append(file_context)
 
-                if len(analysis.code_files) > max_files_per_batch:
+                if len(analysis.code_files) > max_files:
                     context["remaining_files"] = (
-                        len(analysis.code_files) - max_files_per_batch
+                        len(analysis.code_files) - max_files
                     )
 
             # 对于超大PR，只包含概览

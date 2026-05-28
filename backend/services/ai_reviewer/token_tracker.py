@@ -108,7 +108,7 @@ class TokenTracker:
         return int(cost * 100)
 
     def to_dict(self) -> dict:
-        """序列化为字典"""
+        """序列化为字典（仅持久化 token 统计，context_usage_log 仅用于运行时日志）"""
         return {
             "prompt_tokens": self.prompt_tokens,
             "completion_tokens": self.completion_tokens,

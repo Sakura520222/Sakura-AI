@@ -1,8 +1,7 @@
 import pytest
 
 from backend.services.ai_reviewer.api_client import AIApiClient
-from backend.services.ai_reviewer.compact_diff import extend_with_diff_tools
-from backend.services.ai_reviewer.constants import DIFF_TOOLS
+from backend.services.ai_reviewer.constants import DIFF_TOOLS, TOOL_NAME_TO_DEFINITION
 from backend.services.ai_reviewer.prompt_builder import PromptBuilder
 from backend.services.ai_reviewer.token_tracker import TokenTracker
 from backend.services.ai_reviewer.tools.diff_tool import DiffToolHandler
@@ -91,29 +90,13 @@ async def test_diff_tool_lists_and_returns_file_diff():
     )
 
 
-def test_extend_diff_tools_without_duplicates():
-    base_tools = [
-        {"type": "function", "function": {"name": "read_file"}},
-        {"type": "function", "function": {"name": "get_file_diff"}},
-    ]
-
-    extended_tools = extend_with_diff_tools(base_tools)
-    tool_names = [tool["function"]["name"] for tool in extended_tools]
-
-    assert tool_names.count("get_file_diff") == 1
-    assert "list_changed_files" in tool_names
-
-
-def test_extend_diff_tools_adds_all_diff_tools():
-    base_tools = [
-        {"type": "function", "function": {"name": "read_file"}},
-    ]
-
-    extended_tools = extend_with_diff_tools(base_tools)
-    tool_names = [tool["function"]["name"] for tool in extended_tools]
-
-    for diff_tool_name in DIFF_TOOLS:
-        assert diff_tool_name in tool_names
+def test_diff_tools_have_valid_definitions():
+    for tool_name in DIFF_TOOLS:
+        assert tool_name in TOOL_NAME_TO_DEFINITION, f"{tool_name} missing from TOOL_NAME_TO_DEFINITION"
+        tool_def = TOOL_NAME_TO_DEFINITION[tool_name]
+        assert tool_def["type"] == "function"
+        assert "name" in tool_def["function"]
+        assert "parameters" in tool_def["function"]
 
 
 def test_token_tracker_logs_context_usage():

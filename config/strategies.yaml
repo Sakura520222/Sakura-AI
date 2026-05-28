@@ -971,30 +971,33 @@ context_enhancement:
   enable_project_structure: true
   
   # 项目结构最大文件数
-  max_structure_files: 500
+  max_structure_files: 1000
   
   # 是否启用AI函数工具（让AI自主查看文件）
   enable_ai_tools: true
   
   # AI工具的最大调用次数（防止无限循环）
-  max_tool_iterations: 100
+  max_tool_iterations: 200
   
   # 单个文件最大读取大小（字节）
   max_file_size: 500000  # 500KB
 
+  # deep 策略下包含的最大文件数（按变更量排序取前 N 个）
+  max_files_for_deep_strategy: 20
+
   # 单文件最大读取行数（超过则截断并提示AI使用行范围读取）
-  max_file_lines: 500
+  max_file_lines: 100
 
   # 搜索匹配时的默认上下文行数（匹配行前后各显示多少行）
   default_context_lines: 20
 
   # 搜索匹配时的最大上下文行数
-  max_context_lines: 200
+  max_context_lines: 2000
 
   # 跨文件搜索工具配置
   search_in_files:
     use_search_api: true           # 优先使用 GitHub Search API
-    default_context_lines: 3       # 默认上下文行数
+    default_context_lines: 50       # 默认上下文行数
     default_max_results: 20        # 默认最大结果数
     skip_binary: true              # 是否跳过二进制文件
     max_files_to_search: 100       # 回退模式下最大扫描文件数
@@ -1036,22 +1039,22 @@ context_enhancement:
       # memory.md 最大字符数 / Max chars for memory.md
       max_memory_chars: 2000
       # SAKURA.md 最大字符数 / Max chars for SAKURA.md
-      max_sakura_chars: 5000
+      max_sakura_chars: 3000
       # 合并后是否清理旧的反思文件 / Clean old reflections after consolidation
       cleanup_old_reflections: false
       # 一个文件失败时是否仍提交另一个 / Commit partial results on failure
-      partial_commit: false
+      partial_commit: true
       # 每个文件合并时工具调用最大轮数 / Max tool-call iterations per file consolidation
-      max_iterations: 20
+      max_iterations: 50
 
     # 知识提取配置 / Knowledge extraction config
     knowledge_extraction:
       # 是否启用自动知识提取 / Enable auto knowledge extraction
       enabled: true
       # 触发提取的最低反思轮数 / Minimum reflections before extraction
-      min_reflections: 10
+      min_reflections: 15
       # 每个分类提取时工具调用最大轮数 / Max tool-call iterations per category
-      max_iterations: 15
+      max_iterations: 100
 
     # 初始化配置 / Initialization config
     initialization:
@@ -1127,24 +1130,24 @@ review_policy:
     approve: |
       # 🌸 Sakura AI 审查报告 - {strategy_name}
       
-      ✅ **审查通过**
+      ## ✅ **审查通过**
       
       {summary}
       
-      代码质量评分：{score}/10
-      AI审查决策：批准合并
+      # 代码质量评分：{score}/10
+      ## AI审查决策：批准合并
       
       {comment_summary}
     
     request_changes: |
       # 🌸 Sakura AI 审查报告 - {strategy_name}
       
-      ❌ **请求变更**
+      ## ❌ **请求变更**
       
       {summary}
       
-      代码质量评分：{score}/10
-      AI审查决策：需要修复后重新提交
+      # 代码质量评分：{score}/10
+      ## AI审查决策：需要修复后重新提交
       
       **阻断原因**：{decision_reason}
       
@@ -1153,12 +1156,12 @@ review_policy:
     comment: |
       # 🌸 Sakura AI 审查报告 - {strategy_name}
 
-      💬 **审查评论**
+      ## 💬 **审查评论**
 
       {summary}
 
-      代码质量评分：{score}/10
-      AI审查决策：请人工复审
+      # 代码质量评分：{score}/10
+      ## AI审查决策：请人工复审
 
       {comment_summary}
 
@@ -1167,24 +1170,24 @@ review_policy:
     approve: |
       # 🌸 Sakura AI Review Report - {strategy_name}
       
-      ✅ **Approved**
+      ## ✅ **Approved**
       
       {summary}
       
-      Code Quality Score: {score}/10
-      AI Decision: Approve merge
+      # Code Quality Score: {score}/10
+      ## AI Decision: Approve merge
       
       {comment_summary}
     
     request_changes: |
       # 🌸 Sakura AI Review Report - {strategy_name}
       
-      ❌ **Changes Requested**
+      ## ❌ **Changes Requested**
       
       {summary}
       
-      Code Quality Score: {score}/10
-      AI Decision: Changes required before resubmitting
+      # Code Quality Score: {score}/10
+      ## AI Decision: Changes required before resubmitting
       
       **Block Reason**: {decision_reason}
       
@@ -1193,12 +1196,12 @@ review_policy:
     comment: |
       # 🌸 Sakura AI Review Report - {strategy_name}
 
-      💬 **Review Comment**
+      ## 💬 **Review Comment**
 
       {summary}
 
-      Code Quality Score: {score}/10
-      AI Decision: Manual review requested
+      # Code Quality Score: {score}/10
+      ## AI Decision: Manual review requested
 
       {comment_summary}
 
