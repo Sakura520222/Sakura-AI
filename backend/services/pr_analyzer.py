@@ -402,11 +402,21 @@ class PRAnalyzer:
 
         return False, None
 
-    async def get_project_structure(self, repo: any, max_files: int = 500) -> List[str]:
+    async def get_project_structure(self, repo: any, max_files: int | None = None) -> List[str]:
         """获取项目的目录结构（将 PyGithub 同步调用移到线程池）"""
+        if max_files is None:
+            max_files = self._get_max_structure_files()
         return await asyncio.to_thread(
             self._get_project_structure_sync, repo, max_files
         )
+
+    def _get_max_structure_files(self) -> int:
+        """从策略配置中获取项目结构最大文件数"""
+        try:
+            context_cfg = get_strategy_config().get_context_enhancement_config()
+            return int(context_cfg.get("max_structure_files", 500))
+        except Exception:
+            return 500
 
     def _get_project_structure_sync(self, repo: any, max_files: int = 500) -> List[str]:
         """获取项目的目录结构
@@ -453,7 +463,7 @@ class PRAnalyzer:
                     file_count += 1
 
             logger.info(
-                f"获取项目结构完成，共 {min(len(tree.tree), max_files)} 个项目（已过滤skip_paths）"
+                f"获取项目结构完成，共 {len(structure)} 个项目（max_files={max_files}，已过滤skip_paths）"
             )
             return structure
 
@@ -485,7 +495,8 @@ class PRAnalyzer:
             repo = pr.base.repo
 
             # 获取项目结构
-            project_structure = self._get_project_structure_sync(repo)
+            max_structure = self._get_max_structure_files()
+            project_structure = self._get_project_structure_sync(repo, max_structure)
 
             # 构建 context，只包含必要信息
             context = {

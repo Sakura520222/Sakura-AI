@@ -77,13 +77,8 @@ class TokenTracker:
                 "📊 上下文使用率: {:.1f}K / {:.1f}K ({:.0f}%) | 轮次: {} ⚠️ 接近上限",
                 current_k, safe_k, percentage, iteration,
             )
-        elif percentage >= 70:
-            logger.info(
-                "📊 上下文使用率: {:.1f}K / {:.1f}K ({:.0f}%) | 轮次: {}",
-                current_k, safe_k, percentage, iteration,
-            )
         else:
-            logger.debug(
+            logger.info(
                 "📊 上下文使用率: {:.1f}K / {:.1f}K ({:.0f}%) | 轮次: {}",
                 current_k, safe_k, percentage, iteration,
             )
