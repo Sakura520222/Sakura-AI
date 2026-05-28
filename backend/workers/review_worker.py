@@ -1173,9 +1173,13 @@ class ReviewWorker:
             bot_names = (
                 {bot_username, f"{bot_username}[bot]"} if bot_username else set()
             )
-            if review_event == "APPROVE" and author in bot_names:
+            if (
+                review_event in ("APPROVE", "REQUEST_CHANGES")
+                and author in bot_names
+            ):
                 logger.info(
-                    f"[{task_id}] Bot 自身创建的 PR 不能 APPROVE，降级为 COMMENT: "
+                    f"[{task_id}] Bot 自身创建的 PR 不能 "
+                    f"{review_event}，降级为 COMMENT: "
                     f"author={author}"
                 )
                 review_event = "COMMENT"
