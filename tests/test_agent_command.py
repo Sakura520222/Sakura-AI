@@ -225,10 +225,35 @@ async def test_agent_command_skipped_when_quota_exceeded(monkeypatch):
     payload = _base_payload()
     _make_base_mocks(monkeypatch, telegram_service_cls=_FakeTelegramServiceQuotaExceeded)
 
+    # 记录清理会话的 execute 调用，验证孤儿任务回滚
+    class _RecordingSession(_FakeSession):
+        def __init__(self, *a, **kw):
+            super().__init__(*a, **kw)
+            self.executed = []
+
+        async def execute(self, stmt, *a, **kw):
+            self.executed.append(stmt)
+
+    recording_sessions = []
+
+    def _make_recording_session(*a, **kw):
+        s = _RecordingSession(scalar_result=_FakeAnalysis())
+        recording_sessions.append(s)
+        return s
+
+    monkeypatch.setattr(webhook, "get_async_session", _make_recording_session)
+
     response = await webhook.handle_agent_command(payload)
 
     assert response.status_code == 200
     assert b"quota exceeded" in response.body
+    # 验证清理会话执行了 DELETE 操作
+    cleanup_sessions = [s for s in recording_sessions if s.executed]
+    assert len(cleanup_sessions) >= 1
+    last_stmt = cleanup_sessions[-1].executed[-1]
+    stmt_str = str(last_stmt)
+    assert "DELETE" in stmt_str.upper()
+    assert "agent_team_tasks" in stmt_str.lower()
 
 
 @pytest.mark.asyncio

@@ -1576,15 +1576,18 @@ async def handle_agent_command(payload: Dict[str, Any]) -> JSONResponse:
                 else:
                     reply = f"❌ Agent 配额不足（仓库所有者 @{repo_owner}）：{reason}"
                 logger.warning("/agent 配额检查失败: repo_owner={} - {}", repo_owner, reason)
-                # 回滚已创建的孤儿任务
+                # 延迟导入：避免 webhook ↔ agent_team_models 循环依赖
                 from backend.models.agent_team_models import AgentTeamTask as _ATT
 
-                async with get_async_session() as cleanup_session:
-                    await cleanup_session.execute(
-                        _ATT.__table__.delete().where(_ATT.id == task_id)
-                    )
-                    await cleanup_session.commit()
-                    logger.info("/agent 已清理孤儿任务: task_id={}", task_id)
+                try:
+                    async with get_async_session() as cleanup_session:
+                        await cleanup_session.execute(
+                            _ATT.__table__.delete().where(_ATT.id == task_id)
+                        )
+                        await cleanup_session.commit()
+                        logger.info("/agent 已清理孤儿任务: task_id={}", task_id)
+                except Exception as cleanup_err:
+                    logger.warning("/agent 清理孤儿任务失败: task_id={} - {}", task_id, cleanup_err)
                 await _post_issue_comment(
                     github_app, repo_owner, repo_name, repo_full_name, issue_number, reply,
                 )
