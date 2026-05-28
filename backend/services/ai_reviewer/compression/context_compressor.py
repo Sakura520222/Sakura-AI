@@ -9,6 +9,7 @@
 """
 
 import json
+import time
 from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
 from loguru import logger
@@ -65,8 +66,11 @@ class ContextCompressor:
             压缩后的消息列表
         """
         try:
+            start_time = time.monotonic()
+            tokens_before = self.estimate_messages_tokens(messages)
             logger.info(
-                f"🗜️  开始压缩对话历史，当前大小: {self.estimate_messages_tokens(messages)} tokens"
+                "🗜️  开始压缩对话历史，当前大小: {} tokens",
+                tokens_before,
             )
 
             # 1. 分离消息：保留最近几轮工具调用，压缩更早的历史
@@ -128,19 +132,28 @@ class ContextCompressor:
                 for round_msgs in tool_call_rounds:
                     compressed_messages.extend(round_msgs)
 
+                tokens_after = self.estimate_messages_tokens(compressed_messages)
+                elapsed = time.monotonic() - start_time
+                ratio = (tokens_after / tokens_before * 100) if tokens_before > 0 else 0
                 logger.info(
-                    f"✅ 压缩完成: "
-                    f"{self.estimate_messages_tokens(messages)} → "
-                    f"{self.estimate_messages_tokens(compressed_messages)} tokens "
-                    f"(保留了 {len(tool_call_rounds)} 轮工具调用)"
+                    "✅ 压缩完成: {} → {} tokens ({:.0f}%) | "
+                    "保留了 {} 轮工具调用 | 耗时 {:.1f}s",
+                    tokens_before,
+                    tokens_after,
+                    ratio,
+                    len(tool_call_rounds),
+                    elapsed,
                 )
             else:
                 # 没有早期历史需要压缩，直接返回保留的消息
                 for round_msgs in tool_call_rounds:
                     compressed_messages.extend(round_msgs)
 
+                elapsed = time.monotonic() - start_time
                 logger.info(
-                    f"ℹ️  无需压缩，仅保留最近 {len(tool_call_rounds)} 轮工具调用"
+                    "ℹ️  无需压缩，仅保留最近 {} 轮工具调用 | 耗时 {:.1f}s",
+                    len(tool_call_rounds),
+                    elapsed,
                 )
 
             return compressed_messages

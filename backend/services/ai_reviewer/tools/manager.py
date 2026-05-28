@@ -11,6 +11,7 @@ from loguru import logger
 from backend.core.config import get_settings
 from backend.services.ai_reviewer.constants import (
     BASE_TOOLS,
+    DIFF_TOOLS,
     SAKURA_TOOLS,
     TOOL_NAME_TO_DEFINITION,
 )
@@ -51,10 +52,11 @@ class ToolManager:
         Returns:
             启用的工具列表
         """
-        # 基础工具（始终可用）
+        # 基础工具 + PR diff 工具（始终可用）
+        always_available = BASE_TOOLS + DIFF_TOOLS
         base_tools = [
             TOOL_NAME_TO_DEFINITION[name]
-            for name in BASE_TOOLS
+            for name in always_available
             if name in TOOL_NAME_TO_DEFINITION
         ]
 

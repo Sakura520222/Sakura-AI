@@ -10,7 +10,7 @@ from typing import Dict
 # =============================================================================
 DEFAULT_MAX_TOKENS = 16000  # 默认最大输出 token 数
 
-# 批处理专用参数
+# 总结/标签推荐参数
 SUMMARY_TIMEOUT = 60.0  # 总结阶段超时
 SUMMARY_MAX_TOKENS = 4000  # 总结阶段最大输出
 LABEL_RECOMMENDATION_TIMEOUT = 60.0  # 标签推荐超时
@@ -22,14 +22,6 @@ MAX_FILE_SIZE_BYTES = 200000  # 最大文件大小（200KB）
 MAX_FILE_LINES = 500  # 最大文件行数（fallback 默认值，实际值从策略配置读取）
 DEFAULT_CONTEXT_LINES = 20  # 搜索匹配时的默认上下文行数
 MAX_CONTEXT_LINES = 200  # 搜索匹配时的最大上下文行数
-
-# =============================================================================
-# 批处理配置
-# =============================================================================
-MAX_FILES_PER_BATCH = 5  # 每批最大文件数
-MAX_LINES_PER_BATCH = 2000  # 每批最大行数
-BATCH_CONCURRENCY = 2  # 批次并发数
-BATCH_JITTER_SECONDS = 0.3  # 批次抖动时间
 
 # =============================================================================
 # 严重程度映射
@@ -64,8 +56,8 @@ BASE_TOOLS = [
     "get_git_info",
     "list_commits",
 ]
-# 精简模式专用工具（prompt 超长时按需添加）
-COMPACT_TOOLS = ["get_file_diff", "list_changed_files"]
+# PR diff 工具（始终可用，AI 按需查看文件变更）
+DIFF_TOOLS = ["get_file_diff", "list_changed_files"]
 RAG_TOOLS = ["search_project_docs"]
 CODE_INDEX_TOOLS = ["search_code_context"]
 WEB_SEARCH_TOOLS = ["search_web", "fetch_url"]
@@ -112,8 +104,7 @@ VALID_DECISIONS = {"approve", "request_changes", "comment"}
 LOG_MESSAGES = {
     "ai_call_success": "AI调用成功（耗时 {duration:.1f}秒，重试 {retry} 次）",
     "ai_call_retry": "AI调用失败 [{error_type}]: {error}，{delay:.1f}秒后重试 ({attempt}/{max_retries}, 已耗时 {elapsed:.1f}s)",
-    "batch_start": "开始审查批次 {batch_idx}/{total_batches} ({file_count} 个文件, 工具: {use_tools})",
-    "batch_complete": "批次 {batch_idx}/{total_batches} 审查完成: {comments} 条评论, {inline} 条行内评论",
+    "context_usage": "📊 上下文使用率: {current_k:.1f}K / {safe_k:.1f}K ({percentage:.0f}%) | 轮次: {iteration}",
     "compression_start": "开始压缩对话历史，当前大小: {tokens} tokens",
     "compression_complete": "压缩完成: {before} → {after} tokens (保留了 {rounds} 轮工具调用)",
 }
