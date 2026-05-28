@@ -194,16 +194,19 @@ JWT Token 通过 OAuth 登录流程获取，有效期 24 小时（86400 秒）�
 | 74 | GET | `/billing/plans` | auth | 获取可用套餐 |
 | 75 | POST | `/billing/redeem` | auth | 兑换配额码 |
 | 76 | GET | `/billing/orders` | auth | 获取订单历史 |
-| 77 | POST | `/billing/admin/plans` | super_admin | 创建套餐 |
-| 78 | PUT | `/billing/admin/plans/{plan_id}` | super_admin | 编辑套餐 |
-| 79 | DELETE | `/billing/admin/plans/{plan_id}` | super_admin | 删除套餐（默认软删除，可选硬删除） |
-| 80 | POST | `/billing/admin/codes/generate` | super_admin | 批量生成兑换码 |
-| 81 | PUT | `/billing/admin/codes/{code_id}` | super_admin | 编辑兑换码 |
-| 82 | DELETE | `/billing/admin/codes/{code_id}` | super_admin | 删除兑换码 |
-| 83 | POST | `/billing/admin/grant` | super_admin | 手动为用户充值 |
-| 84 | POST | `/auth/2fa/passkey/options` | 免认证 | 创建 API Passkey 认证 options |
-| 85 | POST | `/auth/2fa/passkey/verify` | 免认证 | 验证 API Passkey 认证 |
-| 86 | GET | `/events` | auth | SSE 事件流 |
+| 77 | POST | `/billing/orders` | auth | 创建外部支付订单 |
+| 78 | GET | `/billing/orders/{order_id}` | auth | 查询订单状态 |
+| 79 | POST | `/billing/orders/{order_id}/refund` | super_admin | 直接退款订单 |
+| 80 | POST | `/billing/admin/plans` | super_admin | 创建套餐 |
+| 81 | PUT | `/billing/admin/plans/{plan_id}` | super_admin | 编辑套餐 |
+| 82 | DELETE | `/billing/admin/plans/{plan_id}` | super_admin | 删除套餐（默认软删除，可选硬删除） |
+| 83 | POST | `/billing/admin/codes/generate` | super_admin | 批量生成兑换码 |
+| 84 | PUT | `/billing/admin/codes/{code_id}` | super_admin | 编辑兑换码 |
+| 85 | DELETE | `/billing/admin/codes/{code_id}` | super_admin | 删除兑换码 |
+| 86 | POST | `/billing/admin/grant` | super_admin | 手动为用户充值 |
+| 87 | POST | `/auth/2fa/passkey/options` | 免认证 | 创建 API Passkey 认证 options |
+| 88 | POST | `/auth/2fa/passkey/verify` | 免认证 | 验证 API Passkey 认证 |
+| 89 | GET | `/events` | auth | SSE 事件流 |
 
 ---
 
@@ -2782,6 +2785,8 @@ Issue 分析详情。
 
 Billing 端点仅在付费配额系统启用时可用；未启用时会返回拒绝访问或功能未启用错误。当前 Billing 模块部分响应为直接 JSON，不完全使用统一 `success_response` 包装。
 
+2.12.0 起，Billing API 支持外部支付订单创建和查询，`provider` 可使用 `stripe`、`paddle`、`alipay`、`nowpayments`、`tron`。兑换码和管理员手动发放仍可用于无需外部支付网关的配额发放。
+
 #### GET /billing/plans
 
 列出当前可用套餐。
@@ -2869,6 +2874,99 @@ Billing 端点仅在付费配额系统启用时可用；未启用时会返回拒
       "fulfilled_at": "2026-05-09T12:00:01"
     }
   ]
+}
+```
+
+---
+
+#### POST /billing/orders
+
+创建外部支付订单并返回支付跳转地址。适用于 Stripe、Paddle、支付宝、NOWPayments 和 TRON USDT 等已启用网关。
+
+**认证级别**：auth
+
+**请求体**：
+
+| 字段 | 类型 | 必填 | 默认值 | 说明 |
+|------|------|------|--------|------|
+| `plan_id` | int | 是 | - | 要购买的套餐 ID |
+| `provider` | string | 否 | `"stripe"` | 支付网关：`stripe` / `paddle` / `alipay` / `nowpayments` / `tron` |
+
+**响应示例**：
+
+```json
+{
+  "success": true,
+  "order_no": "ORD202605280001",
+  "status": "pending",
+  "amount_cents": 990,
+  "currency": "CNY",
+  "provider": "alipay",
+  "checkout_url": "https://openapi.alipay.com/gateway.do?...",
+  "expires_at": "2026-05-28T12:30:00+00:00"
+}
+```
+
+---
+
+#### GET /billing/orders/{order_id}
+
+查询当前用户自己的订单状态，并返回可继续支付的 checkout URL（如果订单元数据中存在）。
+
+**认证级别**：auth
+
+**路径参数**：
+
+| 参数 | 类型 | 说明 |
+|------|------|------|
+| `order_id` | int | 订单 ID |
+
+**响应示例**：
+
+```json
+{
+  "id": 1,
+  "order_no": "ORD202605280001",
+  "status": "pending",
+  "amount_cents": 990,
+  "currency": "CNY",
+  "payment_provider": "alipay",
+  "provider_tx_id": null,
+  "checkout_url": "https://openapi.alipay.com/gateway.do?...",
+  "paid_at": null,
+  "fulfilled_at": null,
+  "created_at": "2026-05-28T12:00:00",
+  "expires_at": "2026-05-28T12:30:00+00:00"
+}
+```
+
+---
+
+#### POST /billing/orders/{order_id}/refund
+
+超级管理员直接对订单执行退款。WebUI 中还提供用户退款申请与超级管理员审核流程；该 API 端点用于管理员侧直接退款。
+
+**认证级别**：super_admin
+
+**路径参数**：
+
+| 参数 | 类型 | 说明 |
+|------|------|------|
+| `order_id` | int | 订单 ID |
+
+**请求体**：
+
+| 字段 | 类型 | 必填 | 说明 |
+|------|------|------|------|
+| `amount_cents` | int \| null | 否 | 退款金额（分）；为空时按服务逻辑执行默认退款金额 |
+
+**响应示例**：
+
+```json
+{
+  "success": true,
+  "order_no": "ORD202605280001",
+  "status": "refunded"
 }
 ```
 
