@@ -255,7 +255,7 @@ def test_install_workspace_dependencies_skips_non_python(tmp_path):
     executor.run = AsyncMock()
 
     import asyncio
-    asyncio.get_event_loop().run_until_complete(
+    asyncio.run(
         service._install_workspace_dependencies(executor, tmp_path)
     )
 
@@ -282,4 +282,4 @@ def test_install_workspace_dependencies_creates_venv_for_python(tmp_path):
         calls_str = " ".join(str(c) for c in executor.run.call_args_list)
         assert "venv" in calls_str
 
-    asyncio.get_event_loop().run_until_complete(_run())
+    asyncio.run(_run())
