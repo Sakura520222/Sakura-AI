@@ -20,6 +20,8 @@ from backend.core.config import get_settings, get_dynamic_config
 
 settings = get_settings()
 
+SCAN_SEVERITY_ORDER = {"critical": 0, "major": 1, "minor": 2, "suggestion": 3}
+
 
 def get_async_session():
     """获取异步会话"""
@@ -1556,9 +1558,8 @@ async def handle_agent_command(payload: Dict[str, Any]) -> JSONResponse:
                     scan_report, scan_findings
                 )
                 task_summary = scan_markdown
-                severity_order = {"critical": 0, "major": 1, "minor": 2, "suggestion": 3}
                 highest = min(
-                    (severity_order.get(f.severity, 4) for f in scan_findings),
+                    (SCAN_SEVERITY_ORDER.get(f.severity, 4) for f in scan_findings),
                     default=3,
                 )
                 priority = "critical" if highest == 0 else "high" if highest == 1 else "medium"

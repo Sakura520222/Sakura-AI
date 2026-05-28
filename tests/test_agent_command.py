@@ -263,7 +263,7 @@ async def test_agent_command_skipped_when_no_analysis(monkeypatch):
     response = await webhook.handle_agent_command(payload)
 
     assert response.status_code == 200
-    assert b"no completed analysis" in response.body
+    assert b"no completed analysis or scan report" in response.body
 
 
 @pytest.mark.asyncio
@@ -304,7 +304,9 @@ async def test_agent_command_creates_task_from_scan_report_issue(monkeypatch):
     overrides = captured["overrides"]
     assert overrides["source_type"] == "scan_report_issue"
     assert overrides["source_id"] == 77
+    assert overrides["source_issue_number"] == 42
     assert overrides["priority"] == "critical"
+    assert overrides["candidate_score"] == 90
     assert "Sakura AI 仓库扫描报告" in overrides["summary"]
     assert "Critical scan finding" in overrides["summary"]
 
