@@ -743,9 +743,7 @@ class SakuraMemoryService:
         try:
             await self._maybe_extract_knowledge(repo, repo_full_name, new_count)
         except Exception as e:
-            logger.error(
-                "知识提取检查失败 ({}): {}", repo_full_name, e, exc_info=True
-            )
+            logger.error("知识提取检查失败 ({}): {}", repo_full_name, e, exc_info=True)
 
     async def _count_pr_reflections(self, repo, pr_number: int) -> int:
         """统计某 PR 已有的反思文件数 / Count existing reflection files for a PR"""
@@ -1108,7 +1106,12 @@ class SakuraMemoryService:
     async def _maybe_extract_knowledge(
         self, repo, repo_full_name: str, reflection_count: int
     ) -> None:
-        """检查是否需要触发一次性知识提取 / Check if one-time knowledge extraction is needed"""
+        """周期性知识提取检查 / Periodic knowledge extraction check
+
+        参照合并（consolidation）的 `_check_and_run()` 模式，
+        基于 `last_extraction_count` 与 `sakura_extraction_min_reflections` 间隔
+        判断是否需要触发下一次知识提取。
+        """
         try:
             state = await self._get_or_create_state(repo_full_name)
             config = self._get_config()
@@ -1124,38 +1127,35 @@ class SakuraMemoryService:
                 )
                 return
 
-            # 已提取过则跳过 / Skip if already extracted
-            if state.knowledge_extracted:
-                logger.info(
-                    "[extract] 跳过知识提取: {} - 已完成提取 (knowledge_extracted=True)",
-                    repo_full_name,
-                )
-                return
-
-            # 反思数不足则跳过 / Skip if insufficient reflections
-            min_reflections = settings.sakura_extraction_min_reflections or config.get(
+            # 周期性触发：基于间隔判断 / Periodic trigger: interval-based check
+            interval = settings.sakura_extraction_min_reflections or config.get(
                 "knowledge_extraction", {}
             ).get("min_reflections", 10)
-            if reflection_count < min_reflections:
-                logger.info(
-                    "[extract] 跳过知识提取: {} - 反思数不足 ({}/{})",
+            since_last = reflection_count - (state.last_extraction_count or 0)
+            if since_last < interval:
+                logger.debug(
+                    "[extract] 跳过知识提取: {} - 距上次提取不足间隔 ({}/{})",
                     repo_full_name,
-                    reflection_count,
-                    min_reflections,
+                    since_last,
+                    interval,
                 )
                 return
 
             logger.info(
-                "[extract] 触发知识提取: {} ({}次反思)",
+                "[extract] 触发知识提取: {} (第{}次反思, 距上次{}次, 间隔{})",
                 repo_full_name,
                 reflection_count,
+                since_last,
+                interval,
             )
             await self.extract_and_save_knowledge(
                 repo, repo_full_name, reflection_count=reflection_count
             )
 
         except Exception as e:
-            logger.warning("[extract] 知识提取触发失败: {} - {}", repo_full_name, e, exc_info=True)
+            logger.warning(
+                "[extract] 知识提取触发失败: {} - {}", repo_full_name, e, exc_info=True
+            )
 
     async def extract_and_save_knowledge(
         self, repo, repo_full_name: str, reflection_count: int = 0
@@ -1165,11 +1165,22 @@ class SakuraMemoryService:
         Args:
             repo: PyGithub Repository 对象
             repo_full_name: 仓库完整名称
-            reflection_count: 当前累计反思次数，用于为 Agent 提供上下文
+            reflection_count: 当前累计反思次数，用于为 Agent 提供上下文。
+                为 0 时自动从数据库读取实际值，防止 last_extraction_count
+                被错误设为 0 导致周期检查立即重复触发。
 
         Returns:
             是否提取成功
         """
+        # 防御性逻辑：调用方未传 reflection_count 时从数据库读取实际值
+        if reflection_count == 0:
+            state = await self._get_or_create_state(repo_full_name)
+            reflection_count = state.reflection_count
+            logger.debug(
+                "[extract] reflection_count 未传入，使用 state 中的值: {}",
+                reflection_count,
+            )
+
         from backend.services.sakura_knowledge_extractor import (
             SakuraKnowledgeExtractor,
         )
@@ -1199,7 +1210,11 @@ class SakuraMemoryService:
         commit_msg = "chore(sakura): extract structured knowledge from reflections"
         await self.write_service.commit_files(repo, files, commit_msg)
 
-        await self._update_state(repo_full_name, knowledge_extracted=True)
+        await self._update_state(
+            repo_full_name,
+            last_extraction_count=reflection_count,
+            knowledge_extracted=True,  # 向后兼容：供 WebUI 模板状态判断和外部监控使用
+        )
         logger.info(
             "[extract] 知识提取完成: {}, 生成 {} 个文件",
             repo_full_name,

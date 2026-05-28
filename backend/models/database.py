@@ -794,7 +794,9 @@ def init_async_db(database_url: str):
     try:
         # 向后兼容：将旧版 aiomysql 驱动自动转换为 asyncmy
         if "mysql+aiomysql://" in database_url:
-            database_url = database_url.replace("mysql+aiomysql://", "mysql+asyncmy://", 1)
+            database_url = database_url.replace(
+                "mysql+aiomysql://", "mysql+asyncmy://", 1
+            )
             logger.info("已将数据库驱动从 aiomysql 自动转换为 asyncmy")
 
         # 确保使用异步驱动
@@ -885,7 +887,12 @@ class SakuraMemoryState(Base):
     is_initialized = Column(Boolean, default=False, nullable=False)
 
     # 知识提取状态 / Knowledge extraction state
-    knowledge_extracted = Column(Boolean, default=False, nullable=False)
+    knowledge_extracted = Column(
+        Boolean, default=False, nullable=False
+    )  # deprecated: 保留向后兼容
+    last_extraction_count = Column(
+        Integer, nullable=True
+    )  # 上次知识提取时的 reflection_count
 
     # 最后写入的文件 SHA / Last written file SHAs
     last_sakura_md_sha = Column(String(40), nullable=True)
