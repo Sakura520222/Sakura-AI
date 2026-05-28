@@ -112,6 +112,7 @@ CREATE TABLE IF NOT EXISTS sakura_memory_states (
     last_consolidation_count INT NULL,
     is_initialized TINYINT(1) NOT NULL DEFAULT 0,
     knowledge_extracted TINYINT(1) NOT NULL DEFAULT 0,
+    last_extraction_count INT NULL,
     last_sakura_md_sha VARCHAR(40) NULL,
     last_memory_md_sha VARCHAR(40) NULL,
     consolidation_interval INT NOT NULL DEFAULT 5,

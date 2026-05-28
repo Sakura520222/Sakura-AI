@@ -633,7 +633,7 @@ class Settings(BaseSettings):
     sakura_issue_reflection_model: str = ""  # Issue 反思使用的模型，为空时使用审查模型
     sakura_use_summary_model: bool = False  # 反思/合并任务使用辅助模型凭据以降低成本
     sakura_knowledge_extraction_enabled: bool = True  # 是否启用自动知识提取
-    sakura_extraction_min_reflections: int = 10  # 触发知识提取的最低反思轮数
+    sakura_extraction_min_reflections: int = 10  # 知识提取间隔（每N次反思触发一次）
     sakura_extraction_provider: str = "main"  # 知识提取 AI 厂商: main/summary/custom
     sakura_extraction_api_base: str = ""  # 知识提取 API Base，custom 模式下生效
     sakura_extraction_api_key: str = ""  # 知识提取 API Key，custom 模式下生效
@@ -1137,7 +1137,7 @@ DYNAMIC_CONFIG_GROUPS: OrderedDict[str, dict] = OrderedDict(
                     "sakura_consolidation_partial_commit": "合并时一个文件生成失败是否仍提交成功生成的文件",
                     "sakura_use_summary_model": "启用后反思、合并等后台任务将使用辅助模型的 API 凭据，降低成本",
                     "sakura_knowledge_extraction_enabled": "启用后积累足够反思时自动提取结构化知识到 rules/docs/plans 子目录",
-                    "sakura_extraction_min_reflections": "触发自动知识提取的最低反思轮数（默认 10）",
+                    "sakura_extraction_min_reflections": "知识提取间隔，每积累指定轮数反思后自动触发一次提取（默认 10）",
                     "sakura_extraction_provider": "知识提取 AI 凭据来源：main=主AI，summary=辅助AI，custom=独立配置",
                     "sakura_extraction_api_base": "知识提取 API Base URL，仅 custom 模式生效，留空则使用主 AI",
                     "sakura_extraction_api_key": "知识提取 API Key，仅 custom 模式生效，留空则使用主 AI",
@@ -1606,7 +1606,7 @@ DYNAMIC_CONFIG_LABELS: dict[str, str] = {
     "sakura_consolidation_partial_commit": "部分提交",
     "sakura_use_summary_model": "使用辅助模型",
     "sakura_knowledge_extraction_enabled": "启用知识提取",
-    "sakura_extraction_min_reflections": "提取触发反思数",
+    "sakura_extraction_min_reflections": "提取间隔反思数",
     "sakura_extraction_provider": "知识提取 AI 凭据",
     "sakura_extraction_api_base": "知识提取 API Base",
     "sakura_extraction_api_key": "知识提取 API Key",
