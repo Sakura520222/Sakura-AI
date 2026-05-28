@@ -741,7 +741,7 @@ class SakuraMemoryService:
 
         # 2) 知识提取检查（独立于合并）/ Knowledge extraction (independent)
         try:
-            await self._maybe_extract_knowledge(repo, repo_full_name, new_count)
+            await self._maybe_extract_knowledge(repo, repo_full_name, new_count, state)
         except Exception as e:
             logger.error("知识提取检查失败 ({}): {}", repo_full_name, e, exc_info=True)
 
@@ -1104,7 +1104,11 @@ class SakuraMemoryService:
             return []
 
     async def _maybe_extract_knowledge(
-        self, repo, repo_full_name: str, reflection_count: int
+        self,
+        repo,
+        repo_full_name: str,
+        reflection_count: int,
+        state: SakuraMemoryState,
     ) -> None:
         """周期性知识提取检查 / Periodic knowledge extraction check
 
@@ -1113,7 +1117,6 @@ class SakuraMemoryService:
         判断是否需要触发下一次知识提取。
         """
         try:
-            state = await self._get_or_create_state(repo_full_name)
             config = self._get_config()
 
             # 检查配置是否启用（settings 优先） / Check enabled (settings first)
@@ -1158,22 +1161,19 @@ class SakuraMemoryService:
             )
 
     async def extract_and_save_knowledge(
-        self, repo, repo_full_name: str, reflection_count: int = 0
+        self, repo, repo_full_name: str, reflection_count: int | None = None
     ) -> bool:
         """执行知识提取并保存到 .sakura/ 子目录
 
         Args:
             repo: PyGithub Repository 对象
             repo_full_name: 仓库完整名称
-            reflection_count: 当前累计反思次数，用于为 Agent 提供上下文。
-                为 0 时自动从数据库读取实际值，防止 last_extraction_count
-                被错误设为 0 导致周期检查立即重复触发。
+            reflection_count: 当前累计反思次数，用于为 Agent 提供上下文；未传入时从数据库读取。
 
         Returns:
             是否提取成功
         """
-        # 防御性逻辑：调用方未传 reflection_count 时从数据库读取实际值
-        if reflection_count == 0:
+        if reflection_count is None:
             state = await self._get_or_create_state(repo_full_name)
             reflection_count = state.reflection_count
             logger.debug(

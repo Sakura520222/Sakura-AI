@@ -322,10 +322,7 @@ async def trigger_extract(
             )
 
         service = get_sakura_memory_service()
-        state = await service._get_or_create_state(repo_full_name)
-        success = await service.extract_and_save_knowledge(
-            gh_repo, repo_full_name, reflection_count=state.reflection_count
-        )
+        success = await service.extract_and_save_knowledge(gh_repo, repo_full_name)
 
         if not success:
             return toast_redirect(
