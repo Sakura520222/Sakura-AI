@@ -73,6 +73,12 @@ class _FakeSession:
     async def scalar(self, stmt):
         return self._scalar_result
 
+    async def execute(self, *a, **kw):
+        pass
+
+    async def commit(self):
+        pass
+
 
 class _FakeTelegramService:
     def __init__(self, session):
