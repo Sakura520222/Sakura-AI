@@ -1400,7 +1400,7 @@ async def _post_issue_comment(
 
         await asyncio.to_thread(_do_post)
     except Exception as e:
-        logger.warning(f"发送 Issue 评论失败: {repo_full_name}#{issue_number} - {e}")
+        logger.warning("发送 Issue 评论失败: {}#{} - {}", repo_full_name, issue_number, e)
 
 
 async def handle_agent_command(payload: Dict[str, Any]) -> JSONResponse:
@@ -1458,7 +1458,7 @@ async def handle_agent_command(payload: Dict[str, Any]) -> JSONResponse:
             repo_owner, repo_name, commenter,
         )
         if permission not in ("admin", "write"):
-            logger.info(f"/agent 权限不足: {commenter} 权限为 {permission}")
+            logger.info("/agent 权限不足: {} 权限为 {}", commenter, permission)
             await _post_issue_comment(
                 github_app, repo_owner, repo_name, repo_full_name, issue_number,
                 f"❌ @{commenter}，只有仓库管理员/协作者才能触发 Agent 任务。",
@@ -1467,38 +1467,12 @@ async def handle_agent_command(payload: Dict[str, Any]) -> JSONResponse:
                 content={"status": "denied", "reason": "insufficient permission"}
             )
 
-        # 仓库所有者配额检查 + 前置校验（同一会话）
+        # 前置校验：检查是否有已完成的 Issue 分析记录
         # 延迟导入：避免 webhook ↔ database 循环依赖
         from sqlalchemy import select, and_, desc
         from backend.models.database import IssueAnalysis, IssueAnalysisStatus
 
-        existing_analysis = None
         async with get_async_session() as session:
-            service = TelegramService(session)
-            ok, reason = await service.check_and_consume_agent_quota(
-                github_username=repo_owner,
-                repo_name=repo_full_name,
-                task_id=0,
-            )
-            if not ok:
-                is_unregistered = "未注册" in reason
-                if is_unregistered:
-                    reply = f"❌ 仓库所有者 @{repo_owner} 尚未注册，无法使用 Agent 任务。请先注册后再试。"
-                else:
-                    reply = f"❌ Agent 配额不足（仓库所有者 @{repo_owner}）：{reason}"
-                logger.warning(f"/agent 配额检查失败: repo_owner={repo_owner} - {reason}")
-                await _post_issue_comment(
-                    github_app, repo_owner, repo_name, repo_full_name, issue_number, reply,
-                )
-                return JSONResponse(
-                    content={
-                        "status": "skipped",
-                        "reason": "unregistered" if is_unregistered else "quota exceeded",
-                        "detail": reason,
-                    }
-                )
-
-            # 前置校验：检查是否有已完成的 Issue 分析记录
             existing_analysis = await session.scalar(
                 select(IssueAnalysis)
                 .where(
@@ -1514,7 +1488,7 @@ async def handle_agent_command(payload: Dict[str, Any]) -> JSONResponse:
             )
 
         if not existing_analysis:
-            logger.info(f"/agent 无分析记录: {repo_full_name}#{issue_number}")
+            logger.info("/agent 无分析记录: {}#{}", repo_full_name, issue_number)
             await _post_issue_comment(
                 github_app, repo_owner, repo_name, repo_full_name, issue_number,
                 "❌ 此 Issue 尚未完成 AI 分析，请先使用 `/analyze` 命令分析此 Issue。",
@@ -1555,6 +1529,32 @@ async def handle_agent_command(payload: Dict[str, Any]) -> JSONResponse:
             if agent_task_context:
                 overrides["summary"] = agent_task_context
 
+        # 仓库所有者配额检查（在前置校验通过后、任务创建前，避免失败时浪费配额）
+        async with get_async_session() as session:
+            service = TelegramService(session)
+            ok, reason = await service.check_and_consume_agent_quota(
+                github_username=repo_owner,
+                repo_name=repo_full_name,
+                task_id=0,
+            )
+            if not ok:
+                is_unregistered = "未注册" in reason
+                if is_unregistered:
+                    reply = f"❌ 仓库所有者 @{repo_owner} 尚未注册，无法使用 Agent 任务。请先注册后再试。"
+                else:
+                    reply = f"❌ Agent 配额不足（仓库所有者 @{repo_owner}）：{reason}"
+                logger.warning("/agent 配额检查失败: repo_owner={} - {}", repo_owner, reason)
+                await _post_issue_comment(
+                    github_app, repo_owner, repo_name, repo_full_name, issue_number, reply,
+                )
+                return JSONResponse(
+                    content={
+                        "status": "skipped",
+                        "reason": "unregistered" if is_unregistered else "quota exceeded",
+                        "detail": reason,
+                    }
+                )
+
         # 创建 Agent 任务
         # 延迟导入：避免 webhook ↔ agent_team_candidate_service 循环依赖
         from backend.services.agent_team.candidate_service import (
@@ -1573,7 +1573,7 @@ async def handle_agent_command(payload: Dict[str, Any]) -> JSONResponse:
                     overrides=overrides if overrides else None,
                 )
             except ValueError as e:
-                logger.warning(f"/agent 创建任务失败: {e}")
+                logger.warning("/agent 创建任务失败: {}", e)
                 await _post_issue_comment(
                     github_app, repo_owner, repo_name, repo_full_name, issue_number,
                     f"❌ 无法创建 Agent 任务：{e}",
@@ -1602,8 +1602,8 @@ async def handle_agent_command(payload: Dict[str, Any]) -> JSONResponse:
         )
 
         logger.info(
-            f"/agent 任务已创建: {repo_full_name}#{issue_number}, "
-            f"task_id={task_id}, base={base_branch or 'default'}"
+            "/agent 任务已创建: {}#{}, task_id={}, base={}",
+            repo_full_name, issue_number, task_id, base_branch or "default",
         )
 
         return JSONResponse(
@@ -1615,7 +1615,7 @@ async def handle_agent_command(payload: Dict[str, Any]) -> JSONResponse:
         )
 
     except Exception as e:
-        logger.error(f"处理 /agent 命令时出错: {e}", exc_info=True)
+        logger.error("处理 /agent 命令时出错: {}", e, exc_info=True)
         return JSONResponse(
             status_code=500, content={"status": "error", "message": "内部服务错误"}
         )

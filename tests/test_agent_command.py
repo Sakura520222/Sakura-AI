@@ -162,6 +162,18 @@ async def test_agent_command_ignores_bot_self_comment():
 
 
 @pytest.mark.asyncio
+async def test_agent_command_skipped_when_feature_disabled(monkeypatch):
+    payload = _base_payload()
+    # 功能开关返回 False，其余 mock 不需要
+    monkeypatch.setattr(webhook, "get_dynamic_config", _async_noop)
+
+    response = await webhook.handle_agent_command(payload)
+
+    assert response.status_code == 200
+    assert b"agent team feature disabled" in response.body
+
+
+@pytest.mark.asyncio
 async def test_agent_command_denied_for_insufficient_permission(monkeypatch):
     payload = _base_payload()
     _make_base_mocks(monkeypatch, permission="read")
