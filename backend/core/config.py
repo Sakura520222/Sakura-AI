@@ -712,10 +712,6 @@ class StrategyConfig:
         """获取文件过滤规则"""
         return self.config.get("file_filters", {})
 
-    def get_batch_config(self) -> dict:
-        """获取批处理配置"""
-        return self.config.get("batch", {})
-
     def determine_strategy(self, file_count: int, line_count: int) -> str:
         """根据PR规模确定审查策略"""
         strategies = self.get_all_strategies()
