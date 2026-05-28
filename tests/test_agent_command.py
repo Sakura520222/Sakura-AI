@@ -101,14 +101,24 @@ class _FakeGitHubApp:
         return None
 
 
+class _FakeCandidateService:
+    async def create_task_from_manual_issue(self, *a, **kw):
+        return _FakeTask()
+
+
 async def _async_noop(*a, **kw):
     """通用异步 no-op，用于 monkeypatch 同步函数为 async 版本"""
     return None
 
 
 async def _async_true(*a, **kw):
-    """返回 True 的异步函数，用于 mock 功能开关"""
+    """返回 True 的异步函数，用于 mock 功能开关启用"""
     return True
+
+
+async def _async_false(*a, **kw):
+    """返回 False 的异步函数，用于 mock 功能开关禁用"""
+    return False
 
 
 def _make_base_mocks(
@@ -127,11 +137,20 @@ def _make_base_mocks(
     monkeypatch.setattr(webhook, "get_dynamic_config", _async_true)
     # _post_issue_comment 是 async 函数，静默忽略评论发送
     monkeypatch.setattr(webhook, "_post_issue_comment", _async_noop)
+    # mock 提交上下文构建函数，避免真实 GitHub API 调用
+    import backend.services.agent_team.submission_context as sc_mod
+
+    monkeypatch.setattr(sc_mod, "load_issue_comments_for_context", _async_noop)
     # asyncio.to_thread 直接调用同步函数（测试环境下无真实事件循环阻塞）
     async def _sync_to_thread(fn, *args):
         return fn(*args)
 
     monkeypatch.setattr(webhook.asyncio, "to_thread", _sync_to_thread)
+    # 默认 mock AgentTeamCandidateService，避免真实 GitHub API 调用
+    monkeypatch.setattr(
+        "backend.services.agent_team.candidate_service.AgentTeamCandidateService",
+        _FakeCandidateService,
+    )
 
 
 @pytest.mark.asyncio
@@ -165,7 +184,7 @@ async def test_agent_command_ignores_bot_self_comment():
 async def test_agent_command_skipped_when_feature_disabled(monkeypatch):
     payload = _base_payload()
     # 功能开关返回 False，其余 mock 不需要
-    monkeypatch.setattr(webhook, "get_dynamic_config", _async_noop)
+    monkeypatch.setattr(webhook, "get_dynamic_config", _async_false)
 
     response = await webhook.handle_agent_command(payload)
 
