@@ -2639,7 +2639,7 @@ Issue 分析详情。
   "success": true,
   "message": "ok",
   "data": {
-    "version": "2.11.0",
+    "version": "2.12.0",
     "build_date": "2026-05-11"
   }
 }
