@@ -1638,6 +1638,7 @@ strategy:
   enable_ai_tools: "启用 AI 函数工具"
   max_structure_files: "项目结构最大文件数"
   max_tool_iterations: "AI 工具最大调用次数"
+  max_files_for_deep_strategy: "Deep 策略最大文件数"
   max_file_size: "单文件最大大小 (字节)"
   file_read_limits: "文件读取工具限制"
   max_file_lines: "单文件最大读取行数"

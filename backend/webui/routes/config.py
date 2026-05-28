@@ -224,6 +224,9 @@ async def save_strategies_section(
                     "enable_ai_tools": form.get("enable_ai_tools") is not None,
                     "max_tool_iterations": int(form.get("max_tool_iterations", 20)),
                     "max_file_size": int(form.get("max_file_size", 200000)),
+                    "max_files_for_deep_strategy": int(
+                        form.get("max_files_for_deep_strategy", 10)
+                    ),
                     "max_file_lines": int(float(form.get("max_file_lines", 500))),
                     "default_context_lines": int(
                         float(form.get("default_context_lines", 20))

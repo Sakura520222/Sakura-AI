@@ -1638,6 +1638,7 @@ strategy:
   enable_ai_tools: "Enable AI function tools"
   max_structure_files: "Max structure files"
   max_tool_iterations: "Max AI tool iterations"
+  max_files_for_deep_strategy: "Deep strategy max files"
   max_file_size: "Max file size (bytes)"
   file_read_limits: "File Read Limits"
   max_file_lines: "Max file read lines"
