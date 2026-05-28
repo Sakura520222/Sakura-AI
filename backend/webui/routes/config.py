@@ -148,7 +148,6 @@ async def strategies_page(
         active_page="config_strategies",
         strategies=config_data.get("strategies", {}),
         file_filters=config_data.get("file_filters", {}),
-        batch=config_data.get("batch", {}),
         context_enhancement=config_data.get("context_enhancement", {}),
         review_policy=config_data.get("review_policy", {}),
         pr_dependency_graph=pr_dependency_graph,
@@ -217,12 +216,6 @@ async def save_strategies_section(
                     ],
                 }
 
-            elif section == "batch":
-                config["batch"] = {
-                    "max_files_per_batch": int(form.get("max_files_per_batch", 10)),
-                    "max_lines_per_batch": int(form.get("max_lines_per_batch", 2000)),
-                }
-
             elif section == "context_enhancement":
                 config["context_enhancement"] = {
                     "enable_project_structure": form.get("enable_project_structure")
@@ -231,8 +224,6 @@ async def save_strategies_section(
                     "enable_ai_tools": form.get("enable_ai_tools") is not None,
                     "max_tool_iterations": int(form.get("max_tool_iterations", 20)),
                     "max_file_size": int(form.get("max_file_size", 200000)),
-                    "enable_ai_tools_in_batch": form.get("enable_ai_tools_in_batch")
-                    is not None,
                     "max_file_lines": int(float(form.get("max_file_lines", 500))),
                     "default_context_lines": int(
                         float(form.get("default_context_lines", 20))
