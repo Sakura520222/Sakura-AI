@@ -255,7 +255,10 @@ async def test_install_workspace_dependencies_skips_non_python(tmp_path):
     executor = MagicMock()
     executor.run = AsyncMock()
 
-    await service._install_workspace_dependencies(executor, tmp_path)
+    import asyncio
+    asyncio.run(
+        service._install_workspace_dependencies(executor, tmp_path)
+    )
 
     assert not (tmp_path / ".venv").exists()
     executor.run.assert_not_awaited()
