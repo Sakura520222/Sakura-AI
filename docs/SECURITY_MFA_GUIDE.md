@@ -11,6 +11,8 @@ Sakura AI Reviewer 支持以下安全能力：
 - **TOTP 两步验证**：用户可在个人设置中扫描二维码绑定认证器 App。
 - **恢复码**：启用 TOTP 时生成一次性恢复码，用于认证器不可用时登录。
 - **Passkeys/WebAuthn**：用户可注册平台通行密钥或安全密钥，并用于 WebUI 和 API 二次验证。
+- **多 Origin WebAuthn**：支持 `passkeys_allowed_origins` 配置额外允许 Origin，适配 Android 原生 Passkey 等非浏览器 Web Origin 场景。
+- **移动端 OAuth 回调白名单**：`/api/v1/auth/github/mobile` 支持自定义 `redirect_uri`，并通过 `mobile_oauth_allowed_redirect_uris` 防止 open redirect。
 - **OAuth 后二次验证**：GitHub OAuth 认证成功后，如用户已启用 MFA，会先进入二次验证流程。
 - **MFA 失败锁定**：连续 MFA 验证失败达到阈值后临时锁定账户，并通过 Telegram 通知管理员。
 - **API Passkey 二次验证**：移动端 API 登录支持使用 Passkey 完成 MFA 二次验证，与 TOTP/恢复码并列可选。
@@ -106,6 +108,7 @@ Passkey 可用于 WebUI 登录后的二次验证。Passkey 功能依赖浏览器
 | `passkeys_rp_id` | 空 | WebAuthn Relying Party ID；为空时使用应用域名 |
 | `passkeys_rp_name` | `Sakura AI Reviewer` | WebAuthn Relying Party 显示名称 |
 | `passkeys_origin` | 空 | WebAuthn 允许的 Origin；为空时根据应用域名和端口推导 |
+| `passkeys_allowed_origins` | 空 | WebAuthn 额外允许 Origin，多个值使用逗号或换行分隔；用于 Android 原生 Passkey 等场景 |
 | `passkeys_challenge_ttl_seconds` | `300` | WebAuthn challenge 有效期（范围 60-900） |
 | `passkeys_authentication_rate_limit` | `10/minute` | Passkey 认证接口限流规则 |
 
@@ -136,6 +139,15 @@ Passkey 可用于 WebUI 登录后的二次验证。Passkey 功能依赖浏览器
 - `passkeys_rp_id` 通常应设置为主域名，例如 `example.com`。
 - `passkeys_origin` 应包含协议和域名，例如 `https://pr-bot.example.com`。
 - 如果通过反向代理、CDN 或非标准端口访问，请确保外部访问 Origin 与配置一致。
+- Android 或其他原生客户端需要使用不同 Origin 时，可通过 `passkeys_allowed_origins` 追加允许列表。
+
+### 移动端 OAuth 回调
+
+移动端客户端可调用 `GET /api/v1/auth/github/mobile?redirect_uri=...` 获取授权 URL。自定义 `redirect_uri` 必须出现在 `mobile_oauth_allowed_redirect_uris` 中；为空时仅允许默认 `github_oauth_redirect_uri`。服务端会把回调 URI 绑定到 OAuth `state`，回调换取 Token 时校验一致性。
+
+### Android App Links
+
+后端提供 `/.well-known/assetlinks.json` 用于 Android App Links 和凭据关联。指纹来自 Android 证书指纹常量/配置，生产环境应确保包名、签名证书与 App 发布配置一致。
 
 ### Cookie Secure
 

@@ -21,6 +21,14 @@
 
 ## ✨ Core Features
 
+### 2.12.0 Highlights
+
+- **Multi-provider payments and refund workflow**: Adds Stripe, Paddle, Alipay, NOWPayments, and direct TRON USDT gateways, with order creation, status polling, signed webhooks, user refund requests, super-admin review, and real refund execution.
+- **Quota-controlled Agent Team access**: Agent tasks can be delegated from Issue comments with `/agent`; non-admin users must pass repository ownership/allowlist checks and consume dedicated Agent daily/weekly/monthly quotas.
+- **Mobile authentication improvements**: Mobile OAuth supports allowlisted redirect URIs, while WebAuthn/Passkeys support extra allowed origins and Android App Links scenarios for native Android integration.
+- **Sakura Memory extraction cadence**: Knowledge extraction now runs periodically by reflection count, continuously distilling reusable rules, docs, and plans into `.sakura/rules`, `.sakura/docs`, and `.sakura/plans`.
+- **Simplified review and task loop**: Removes the old batch processing module, relies on compact diff tool mode for large PRs, and closes the loop from repository scan report Issues to Agent tasks.
+
 ### Review Capabilities
 
 - **AI Reasoning Mode**: Leverages AI reasoning for in-depth code analysis, proactively invoking tools to inspect project structure and arbitrary files
@@ -71,6 +79,8 @@
 
 - **Super-admin Manual Launch**: Select candidate tasks from Issue analysis and repository scan findings, with natural language filtering, and start automated fix workflows on demand
 - **Manual Issue Task Creation**: Paste a GitHub Issue URL or enter `owner/repo#123`; the system validates it and creates an Agent fix task directly
+- **Issue Comment Delegation**: Repository admins or write collaborators can comment `/agent` on analyzed Issues or scan report Issues to create fix tasks, optionally adding `base:<branch>` to select the base branch
+- **Non-admin Repository Access Control**: Non-admin users may only operate repositories they own and that match `agent_team_repo_allowlist`; task creation, retry, and `/agent` delegation consume dedicated Agent quotas
 - **Smart Candidate Filtering**: Automatic deduplication, closed-issue filtering, score-based sorting, and AI natural language selection to match the most suitable candidate tasks
 - **Two-agent Collaboration**: A full-stack expert plans and edits code, while a professional reviewer performs pre-push quality review
 - **Context Compression & Resume**: Long-running tasks compress historical context automatically and persist conversation/message checkpoints for recovery
@@ -96,10 +106,11 @@
 - **Per-user Config Overrides**: Users can override allowed preference settings in WebUI or API (currently AI output language), with fallback order UserConfig → AppConfig → Settings defaults
 - **AI Provider Registry**: Built-in OpenAI, DeepSeek, Qwen, Z.ai, Doubao, SiliconFlow, Gemini, Anthropic-compatible, and custom OpenAI-compatible providers, with automatic model list and context window discovery
 - **GitHub App Installation Management**: Automatically handles GitHub App install/uninstall events, syncing repository authorization status
-- **Security Center & MFA**: Supports TOTP, recovery codes, Passkeys/WebAuthn, global/per-user MFA enforcement, admin MFA reset, security event audit logs, MFA failure lockout (dynamic threshold and duration), and API Passkey second-factor authentication
+- **Security Center & MFA**: Supports TOTP, recovery codes, Passkeys/WebAuthn, global/per-user MFA enforcement, admin MFA reset, security event audit logs, MFA failure lockout (dynamic threshold and duration), and API Passkey second-factor authentication; mobile OAuth supports allowlisted redirect URIs, and WebAuthn supports multiple allowed origins plus Android App Links
 - **SSE Real-time Push**: Multi-process real-time communication based on Redis Pub/Sub, with instant WebUI data updates
-- **Quota-based Access Control**: Flexible quota-based access management system with user self-registration support and UTC daily/weekly/monthly auto-reset for PR and Issue usage
-- **Paid Quota System**: Full CRUD management for plans and redeem codes (create/edit/delete/batch operations), admin manual grants, supports one-time packages and subscription plans
+- **Quota-based Access Control**: Flexible quota-based access management system with user self-registration support and UTC daily/weekly/monthly auto-reset for PR, Issue, and Agent usage
+- **Paid Quota System**: Full CRUD management for plans and redeem codes (create/edit/delete/batch operations), admin manual grants, supports one-time packages and subscription plans, and can grant PR, Issue, and Agent entitlements
+- **External Payments & Refunds**: Supports Stripe, Paddle, Alipay, NOWPayments, direct TRON USDT collection, signed payment webhooks, order cancellation/status polling, user refund requests, super-admin review, and refund notifications
 - **Admin Action Audit**: Complete operation logs covering configuration changes, user management, and other critical actions
 - **WebUI Dashboard**: Dashboard charts, PR management, user management, configuration management, queue monitoring, action logs, repository scan management, Agent Expert Team, Agent Skills, Sakura Memory management, vector storage & database management, with Markdown content rendering support
 - **Batch Issue Indexing**: Supports batch indexing of repository Issues in WebUI with vector cache refresh and AI metadata enrichment for embedding quality
@@ -260,6 +271,7 @@ Create a PR in a repository with the App installed, and the AI will automaticall
 - **Auto-analysis**: Triggered automatically on Issue opened/edited/reopened, posting classification, priority, and label suggestions
 - **Auto-labeling**: AI recommends labels; high-confidence labels are applied automatically
 - **Manual trigger**: Comment `/analyze` in an Issue
+- **Agent delegation**: Repository admins or write collaborators can comment `/agent` on analyzed Issues or scan report Issues to hand the work to Agent Expert Team; use `/agent base:develop` to choose the base branch
 - **Duplicate detection**: Automatically identifies duplicate Issues and links to existing ones
 
 ### WebUI Management
@@ -282,7 +294,7 @@ Global configuration follows this priority: **Database app_config (WebUI) > Sett
 - **Auxiliary Model**: Set `summary_model`, `summary_api_base`, `summary_api_key` in WebUI configuration for lightweight tasks like summarization, context compression, and label recommendation; auto-falls back to main model if left empty
 - **PR Auto Review**: `enable_auto_review` in WebUI configuration controls whether PR webhook events automatically trigger reviews; command and manual triggers remain available when disabled
 - **AI API Timeout**: `ai_api_timeout_seconds` controls the per-request timeout, and `ai_api_total_timeout_seconds` controls the maximum total duration of one AI call retry loop
-- **Security & MFA**: The WebUI Security Center can enforce MFA globally or per user, reset TOTP/recovery codes, delete Passkeys, and record security audit events; users can enable TOTP, generate recovery codes, and register Passkeys/WebAuthn in personal settings; supports MFA failure lockout (`mfa_lockout_threshold` / `mfa_lockout_duration_minutes`) and API Passkey second-factor authentication
+- **Security & MFA**: The WebUI Security Center can enforce MFA globally or per user, reset TOTP/recovery codes, delete Passkeys, and record security audit events; users can enable TOTP, generate recovery codes, and register Passkeys/WebAuthn in personal settings; supports MFA failure lockout (`mfa_lockout_threshold` / `mfa_lockout_duration_minutes`), API Passkey second-factor authentication, extra `passkeys_allowed_origins`, and the `mobile_oauth_allowed_redirect_uris` mobile OAuth redirect allowlist
 - **Review Strategy**: Edit `config/strategies.yaml`, supports quick/standard/deep/large-PR four strategies
 - **File Filtering**: Configure skipped file extensions and paths in `config/strategies.yaml`
 - **AI Tools**: `enable_ai_tools` / `max_tool_iterations` in WebUI configuration
@@ -292,6 +304,7 @@ Global configuration follows this priority: **Database app_config (WebUI) > Sett
 - **PR Dependency Graph**: `enable_pr_dependency_graph` / `pr_dependency_graph_mode` / `pr_dependency_graph_max_nodes` / `pr_dependency_graph_max_files` in WebUI configuration; `ai` mode uses model-based dependency analysis, while `static` mode uses static import parsing to reduce cost
 - **Large PR Context Management**: `model_context_window` / `context_safety_threshold` / `enable_context_compression` / `context_compression_threshold` / `context_compression_keep_rounds` in WebUI configuration; when the initial diff is too large, review automatically uses compact diff tool mode
 - **Token Cost Tracking**: `review_price_per_1k_prompt` / `review_price_per_1k_completion` in WebUI configuration for tracking review token consumption and costs
+- **Payment Gateways**: Enable the paid quota system with `payment_enabled`, then configure `stripe_*`, `paddle_*`, `alipay_*`, `nowpayments_*`, and `tron_*` gateway settings as needed; supports external payment orders, webhook signature verification, refund requests, and super-admin refund approval
 - **RAG Knowledge Base**: Configure embedding models (supports BAAI/bge-m3, etc.), reranking models, ChromaDB in WebUI configuration
 - **PR Code Index**: Configure code chunking, supported languages, core directories in WebUI configuration
 - **Issue Auto-assignment**: `issue_auto_assign` / `issue_assignee_confidence_threshold` in WebUI configuration
@@ -305,7 +318,7 @@ Global configuration follows this priority: **Database app_config (WebUI) > Sett
 - **Git Info Tool**: `context_enhancement.git_tools` in `config/strategies.yaml` — configure default branch and commit return counts
 - **Project Memory System**: `sakura_memory_enabled` to enable memory system, `sakura_reflection_enabled` to enable post-review reflection, `sakura_consolidation_interval` for consolidation trigger threshold (default 5), `sakura_auto_init` to auto-initialize `.sakura/` directory, `sakura_auto_create_subdirs` to auto-create rules/docs/plans subdirectories, `sakura_knowledge_extraction_enabled` to enable automatic knowledge extraction (extracts rules/docs/plans via three serial LLM calls), `sakura_extraction_provider` to configure extraction AI credentials (main/summary/custom) — all in WebUI configuration. WebUI provides a "Sakura Memory" management page for viewing/editing/deleting memory files and manually triggering consolidation and knowledge extraction. See [Project Memory Guide](docs/SAKURA_MEMORY_GUIDE.md) (Chinese)
 - **Model Context**: Configure context window, auto-compression in WebUI configuration, see [Model Context Management](docs/MODEL_CONTEXT_FEATURE.md)
-- **Agent Expert Team**: Configure `agent_team_enabled`, `agent_team_workspace_root`, `agent_team_repo_allowlist`, `agent_team_model_provider`, and other `agent_team_*` model/guardrail settings on the WebUI Agent Team page; supports context compression (`agent_team_enable_context_compression`, etc.), full-stack/reviewer tool-round limits (`agent_team_max_tool_rounds` / `agent_team_reviewer_max_tool_rounds`), dependency auto-install (`agent_team_auto_install_deps`), validation command blacklists, and the Draft PR switch; `agent_team_model_provider=main` reuses the main AI configuration, while independent Agent AI configuration is also supported; supports web search tools and token usage tracking
+- **Agent Expert Team**: Configure `agent_team_enabled`, `agent_team_workspace_root`, `agent_team_repo_allowlist`, `agent_team_model_provider`, and other `agent_team_*` model/guardrail settings on the WebUI Agent Team page; supports context compression (`agent_team_enable_context_compression`, etc.), full-stack/reviewer tool-round limits (`agent_team_max_tool_rounds` / `agent_team_reviewer_max_tool_rounds`), dependency auto-install (`agent_team_auto_install_deps`), validation command blacklists, and the Draft PR switch; `agent_team_model_provider=main` reuses the main AI configuration, while independent Agent AI configuration is also supported; non-admin entry points validate repository ownership and `agent_team_repo_allowlist`, consume Agent quotas, and `/agent` comments can create tasks from analyzed Issues or scan report Issues; supports web search tools and token usage tracking
 - **Agent Skills**: Install and toggle Skills on the WebUI Agent Skills page; `agent_team_skills_enabled` controls whether agents may load skills, and `agent_team_skills_root` configures the local storage root
 - **Internationalization (i18n)**: WebUI supports Chinese/English interface switching (Settings page). AI output language can be controlled globally via `OUTPUT_LANGUAGE` or overridden per user through `output_language` (`zh-CN` / `en` / follow global). Comment templates automatically match the selected language.
 
