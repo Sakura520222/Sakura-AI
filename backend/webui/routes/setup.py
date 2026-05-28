@@ -26,6 +26,7 @@ templates = get_templates()
 def _check_bootstrap():
     """检查是否处于 bootstrap 模式，已完成后拒绝访问"""
     if not is_bootstrap_mode():
+        # 直接跳转登录页，避免与根路径路由产生重定向循环
         return RedirectResponse(url="/auth/login", status_code=302)
     return None
 

@@ -334,7 +334,7 @@ async def auth_exception_handler(request: Request, exc: HTTPException):
 # Catch-all: 浏览器访问不存在的路径时自动跳转主页（API 请求仍返回 JSON 404）
 @app.get("/{path:path}", include_in_schema=False)
 async def webui_fallback(request: Request, path: str):
-    # Exclude setup paths to avoid redirect loops in bootstrap mode
+    # Bootstrap 模式下：/setup → catch-all 重定向到 / → 中间件重定向到 /setup → 循环
     if path == "setup" or path.startswith("setup/"):
         raise HTTPException(status_code=404, detail="Not Found")
     accept = request.headers.get("accept", "")
