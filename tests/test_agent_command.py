@@ -60,9 +60,52 @@ class _FakeTask:
     id = 99
 
 
+class _FakeScan:
+    id = 77
+    repo_name = "owner/repo"
+    repo_owner = "owner"
+    report_issue_number = 42
+    created_at = None
+    commit_sha = "abcdef123456"
+    code_file_count = 10
+    overall_health_score = 55
+    critical_count = 1
+    major_count = 0
+    minor_count = 0
+    suggestion_count = 0
+    total_findings = 1
+
+
+class _FakeFinding:
+    id = 88
+    scan_id = 77
+    severity = "critical"
+    category = "security"
+    title = "Critical scan finding"
+    description = "Dangerous issue"
+    suggestion = "Fix it"
+    file_path = "src/app.py"
+    line_start = 10
+    line_end = 12
+    confidence = 95
+
+
+class _FakeResult:
+    def __init__(self, items):
+        self._items = items
+
+    def scalars(self):
+        return self
+
+    def all(self):
+        return self._items
+
+
 class _FakeSession:
-    def __init__(self, scalar_result=None):
+    def __init__(self, scalar_result=None, scalar_results=None, execute_result=None):
         self._scalar_result = scalar_result
+        self._scalar_results = list(scalar_results or [])
+        self._execute_result = execute_result
 
     async def __aenter__(self):
         return self
@@ -71,10 +114,13 @@ class _FakeSession:
         pass
 
     async def scalar(self, stmt):
+        if self._scalar_results:
+            return self._scalar_results.pop(0)
         return self._scalar_result
 
     async def execute(self, *a, **kw):
-        pass
+        if self._execute_result is not None:
+            return self._execute_result
 
     async def commit(self):
         pass
@@ -218,6 +264,49 @@ async def test_agent_command_skipped_when_no_analysis(monkeypatch):
 
     assert response.status_code == 200
     assert b"no completed analysis" in response.body
+
+
+@pytest.mark.asyncio
+async def test_agent_command_creates_task_from_scan_report_issue(monkeypatch):
+    payload = _base_payload()
+    captured = {}
+
+    class CapturingCandidateService:
+        async def create_task_from_manual_issue(
+            self, db, repo_full_name, issue_number, started_by,
+            ai_config_snapshot=None, base_branch=None, overrides=None,
+        ):
+            captured["overrides"] = overrides
+            return _FakeTask()
+
+    _make_base_mocks(monkeypatch)
+    calls = {"count": 0}
+
+    def _session_factory():
+        calls["count"] += 1
+        if calls["count"] == 1:
+            return _FakeSession(
+                scalar_results=[None, _FakeScan()],
+                execute_result=_FakeResult([_FakeFinding()]),
+            )
+        return _FakeSession(scalar_result=_FakeAnalysis())
+
+    monkeypatch.setattr(webhook, "get_async_session", _session_factory)
+    monkeypatch.setattr(
+        "backend.services.agent_team.candidate_service.AgentTeamCandidateService",
+        CapturingCandidateService,
+    )
+
+    response = await webhook.handle_agent_command(payload)
+
+    assert response.status_code == 200
+    assert b"accepted" in response.body
+    overrides = captured["overrides"]
+    assert overrides["source_type"] == "scan_report_issue"
+    assert overrides["source_id"] == 77
+    assert overrides["priority"] == "critical"
+    assert "Sakura AI 仓库扫描报告" in overrides["summary"]
+    assert "Critical scan finding" in overrides["summary"]
 
 
 @pytest.mark.asyncio

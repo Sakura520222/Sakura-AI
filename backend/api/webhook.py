@@ -1467,11 +1467,14 @@ async def handle_agent_command(payload: Dict[str, Any]) -> JSONResponse:
                 content={"status": "denied", "reason": "insufficient permission"}
             )
 
-        # 前置校验：检查是否有已完成的 Issue 分析记录
-        # 延迟导入：避免 webhook ↔ database 循环依赖
+        # 前置校验：检查是否有已完成的 Issue 分析记录，或是否为扫描自动创建的报告 Issue
+        # 延迟导入：避免 webhook ↔ database/scan_models 循环依赖
         from sqlalchemy import select, and_, desc
         from backend.models.database import IssueAnalysis, IssueAnalysisStatus
+        from backend.models.scan_models import RepoScan, ScanFinding
 
+        scan_report = None
+        scan_findings = []
         async with get_async_session() as session:
             existing_analysis = await session.scalar(
                 select(IssueAnalysis)
@@ -1486,17 +1489,37 @@ async def handle_agent_command(payload: Dict[str, Any]) -> JSONResponse:
                 .order_by(desc(IssueAnalysis.completed_at))
                 .limit(1)
             )
+            if not existing_analysis:
+                scan_report = await session.scalar(
+                    select(RepoScan)
+                    .where(
+                        and_(
+                            RepoScan.repo_owner == repo_owner,
+                            RepoScan.repo_name.in_({repo_name, repo_full_name}),
+                            RepoScan.report_issue_number == issue_number,
+                        )
+                    )
+                    .order_by(desc(RepoScan.completed_at), desc(RepoScan.created_at))
+                    .limit(1)
+                )
+                if scan_report:
+                    result = await session.execute(
+                        select(ScanFinding)
+                        .where(ScanFinding.scan_id == scan_report.id)
+                        .order_by(ScanFinding.severity, desc(ScanFinding.confidence))
+                    )
+                    scan_findings = list(result.scalars().all())
 
-        if not existing_analysis:
-            logger.info("/agent 无分析记录: {}#{}", repo_full_name, issue_number)
+        if not existing_analysis and not scan_report:
+            logger.info("/agent 无分析记录或扫描报告: {}#{}", repo_full_name, issue_number)
             await _post_issue_comment(
                 github_app, repo_owner, repo_name, repo_full_name, issue_number,
-                "❌ 此 Issue 尚未完成 AI 分析，请先使用 `/analyze` 命令分析此 Issue。",
+                "❌ 此 Issue 尚未完成 AI 分析，也未匹配到 Sakura 仓库扫描报告。请先使用 `/analyze` 命令分析此 Issue。",
             )
             return JSONResponse(
                 content={
                     "status": "skipped",
-                    "reason": "no completed analysis",
+                    "reason": "no completed analysis or scan report",
                 }
             )
 
@@ -1523,9 +1546,33 @@ async def handle_agent_command(payload: Dict[str, Any]) -> JSONResponse:
                 issue_analysis_context=analysis_ctx,
                 issue_comments=issue_comments,
             )
-            agent_task_context = build_agent_task_summary(
-                existing_analysis.summary or "", issue_context_md
-            )
+            task_summary = existing_analysis.summary if existing_analysis else ""
+            if scan_report:
+                # 延迟导入：避免 webhook ↔ scan_report_service/agent_team_models 循环依赖
+                from backend.services.scan_report_service import ScanReportService
+                from backend.models.agent_team_models import AgentTeamSourceType
+
+                scan_markdown = ScanReportService().generate_issue_body(
+                    scan_report, scan_findings
+                )
+                task_summary = scan_markdown
+                severity_order = {"critical": 0, "major": 1, "minor": 2, "suggestion": 3}
+                highest = min(
+                    (severity_order.get(f.severity, 4) for f in scan_findings),
+                    default=3,
+                )
+                priority = "critical" if highest == 0 else "high" if highest == 1 else "medium"
+                overrides.update(
+                    {
+                        "source_type": AgentTeamSourceType.SCAN_REPORT_ISSUE.value,
+                        "source_id": scan_report.id,
+                        "source_issue_number": issue_number,
+                        "title": f"处理扫描报告 Issue #{issue_number}",
+                        "priority": priority,
+                        "candidate_score": 90 if highest == 0 else 80 if highest == 1 else 60,
+                    }
+                )
+            agent_task_context = build_agent_task_summary(task_summary or "", issue_context_md)
             if agent_task_context:
                 overrides["summary"] = agent_task_context
 
