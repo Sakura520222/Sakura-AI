@@ -460,6 +460,7 @@ class TestConfirmPayment:
             user_id=sample_user.id,
             plan_id=plan.id,
             amount_cents=1000,
+            currency="CNY",
             status=OrderStatus.PENDING.value,
             payment_provider="stripe",
             provider_tx_id="cs_test_123",
@@ -488,10 +489,225 @@ class TestConfirmPayment:
         confirmed = await svc.confirm_payment(
             order_no="ORD20240101000000ABCD1234",
             provider_tx_id="cs_test_123",
+            paid_amount_cents=1000,
+            paid_currency="CNY",
         )
 
         assert confirmed.status == OrderStatus.FULFILLED.value
         assert confirmed.paid_at is not None
+
+    @pytest.mark.parametrize(
+        "paid_amount_cents",
+        [999, 0, -1],
+    )
+    async def test_confirm_payment_rejects_invalid_paid_amount(
+        self, svc, mock_session, sample_user, paid_amount_cents
+    ):
+        from backend.models.payment_models import Order
+
+        plan = Plan(
+            id=1,
+            name="Test Plan",
+            plan_type=PlanType.ONE_TIME.value,
+            price_cents=1000,
+            is_active=True,
+            pr_quota_bonus=5,
+        )
+        order = Order(
+            id=1,
+            order_no="ORD_AMOUNT_MISMATCH",
+            user_id=sample_user.id,
+            plan_id=plan.id,
+            amount_cents=1000,
+            currency="CNY",
+            status=OrderStatus.PENDING.value,
+            payment_provider="stripe",
+            provider_tx_id="cs_pending",
+        )
+
+        mock_result = MagicMock()
+        mock_result.scalar_one_or_none.return_value = order
+        mock_session.execute.return_value = mock_result
+
+        async def mock_get(model, pk):
+            if model is TelegramUser and pk == sample_user.id:
+                return sample_user
+            return None
+
+        mock_session.get = AsyncMock(side_effect=mock_get)
+        svc.get_plan = AsyncMock(return_value=plan)
+
+        with pytest.raises(PaymentError, match="Payment amount mismatch"):
+            await svc.confirm_payment(
+                order_no="ORD_AMOUNT_MISMATCH",
+                provider_tx_id="cs_underpaid",
+                paid_amount_cents=paid_amount_cents,
+                paid_currency="CNY",
+            )
+
+        assert order.status == OrderStatus.PENDING.value
+        assert order.provider_tx_id == "cs_pending"
+        assert order.paid_at is None
+        mock_session.flush.assert_not_awaited()
+
+    async def test_confirm_payment_rejects_non_positive_paid_amount_before_currency_skip(
+        self, svc, mock_session, sample_user
+    ):
+        from backend.models.payment_models import Order
+
+        plan = Plan(
+            id=1,
+            name="Test Plan",
+            plan_type=PlanType.ONE_TIME.value,
+            price_cents=0,
+            is_active=True,
+            pr_quota_bonus=5,
+        )
+        order = Order(
+            id=1,
+            order_no="ORD_ZERO_AMOUNT",
+            user_id=sample_user.id,
+            plan_id=plan.id,
+            amount_cents=0,
+            currency="CNY",
+            status=OrderStatus.PENDING.value,
+            payment_provider="stripe",
+            provider_tx_id="cs_pending",
+        )
+
+        mock_result = MagicMock()
+        mock_result.scalar_one_or_none.return_value = order
+        mock_session.execute.return_value = mock_result
+
+        async def mock_get(model, pk):
+            if model is TelegramUser and pk == sample_user.id:
+                return sample_user
+            return None
+
+        mock_session.get = AsyncMock(side_effect=mock_get)
+        svc.get_plan = AsyncMock(return_value=plan)
+
+        with pytest.raises(PaymentError, match="Payment amount mismatch"):
+            await svc.confirm_payment(
+                order_no="ORD_ZERO_AMOUNT",
+                provider_tx_id="cs_negative",
+                paid_amount_cents=-1,
+                paid_currency="USD",
+            )
+
+        assert order.status == OrderStatus.PENDING.value
+        assert order.provider_tx_id == "cs_pending"
+        assert order.paid_at is None
+        mock_session.flush.assert_not_awaited()
+
+    async def test_confirm_payment_logs_currency_mismatch_before_skipping_strict_amount_comparison(
+        self, svc, mock_session, sample_user
+    ):
+        from backend.models.payment_models import Order
+
+        plan = Plan(
+            id=1,
+            name="Test Plan",
+            plan_type=PlanType.ONE_TIME.value,
+            price_cents=1000,
+            is_active=True,
+            pr_quota_bonus=5,
+        )
+        order = Order(
+            id=1,
+            order_no="ORD_DIFFERENT_CURRENCY",
+            user_id=sample_user.id,
+            plan_id=plan.id,
+            amount_cents=1000,
+            currency="CNY",
+            status=OrderStatus.PENDING.value,
+            payment_provider="nowpayments",
+            provider_tx_id="np_pending",
+        )
+
+        mock_result = MagicMock()
+        mock_result.scalar_one_or_none.return_value = order
+        mock_session.execute.return_value = mock_result
+
+        async def mock_get(model, pk):
+            if model is TelegramUser and pk == sample_user.id:
+                return sample_user
+            return None
+
+        mock_session.get = AsyncMock(side_effect=mock_get)
+        svc.get_plan = AsyncMock(return_value=plan)
+
+        with patch("backend.services.payment_service.logger") as mock_logger:
+            confirmed = await svc.confirm_payment(
+                order_no="ORD_DIFFERENT_CURRENCY",
+                provider_tx_id="np_paid",
+                paid_amount_cents=25,
+                paid_currency="USD",
+            )
+
+        assert confirmed.status == OrderStatus.FULFILLED.value
+        mock_session.flush.assert_awaited()
+        mock_logger.warning.assert_any_call(
+            "Payment currency differs for order {}: expected {} {}, got {} {}; "
+            "skipping strict amount comparison because webhook currency should match "
+            "the order currency and no exchange-rate conversion is performed here",
+            "ORD_DIFFERENT_CURRENCY",
+            1000,
+            "CNY",
+            25,
+            "USD",
+        )
+
+    async def test_confirm_payment_logs_error_when_amount_validation_is_bypassed(
+        self, svc, mock_session, sample_user
+    ):
+        from backend.models.payment_models import Order
+
+        plan = Plan(
+            id=1,
+            name="Test Plan",
+            plan_type=PlanType.ONE_TIME.value,
+            price_cents=1000,
+            is_active=True,
+            pr_quota_bonus=5,
+        )
+        order = Order(
+            id=1,
+            order_no="ORD_MISSING_AMOUNT",
+            user_id=sample_user.id,
+            plan_id=plan.id,
+            amount_cents=1000,
+            currency="CNY",
+            status=OrderStatus.PENDING.value,
+            payment_provider="stripe",
+            provider_tx_id="cs_pending",
+        )
+
+        mock_result = MagicMock()
+        mock_result.scalar_one_or_none.return_value = order
+        mock_session.execute.return_value = mock_result
+
+        async def mock_get(model, pk):
+            if model is TelegramUser and pk == sample_user.id:
+                return sample_user
+            return None
+
+        mock_session.get = AsyncMock(side_effect=mock_get)
+        svc.get_plan = AsyncMock(return_value=plan)
+
+        with patch("backend.services.payment_service.logger") as mock_logger:
+            confirmed = await svc.confirm_payment(
+                order_no="ORD_MISSING_AMOUNT",
+                provider_tx_id="cs_paid",
+            )
+
+        assert confirmed.status == OrderStatus.FULFILLED.value
+        mock_logger.error.assert_any_call(
+            "BYPASSING amount validation for payment confirmation: "
+            "order_no={}, provider={}",
+            "ORD_MISSING_AMOUNT",
+            "stripe",
+        )
 
     async def test_confirm_payment_idempotent(self, svc, mock_session):
         from backend.models.payment_models import Order

@@ -7,7 +7,7 @@ Sakura AI Reviewer 内置项目记忆系统，通过 `.sakura/` 目录实现自�
 **核心能力：**
 - 🔄 **自动反思**：每次审查后 AI 自主总结经验教训
 - 📝 **知识合并**：定期将反思精炼为结构化的项目知识
-- 🗂️ **知识提取**：积累足够反思后，将可复用规则、架构知识和经验计划沉淀到分类文档
+- 🗂️ **周期性知识提取**：每累计指定数量的反思后，将可复用规则、架构知识和经验计划沉淀到分类文档
 - 🧩 **上下文注入**：下次审查时自动加载项目知识，无需手动配置
 - 📂 **自定义文档**：用户可在 `rules/`、`docs/`、`plans/` 目录放置项目文档，通过 RAG 按需检索
 - 🖥️ **WebUI 管理**：超级管理员可查看、编辑、删除文件，并手动触发合并或知识提取
@@ -136,7 +136,7 @@ chore(sakura): consolidate memory (reflection #5)
 
 ### 4. 知识提取（周期性触发）
 
-当 `sakura_knowledge_extraction_enabled=true` 时，Sakura 会按照 `sakura_extraction_min_reflections`（默认 10）设定的间隔，周期性运行知识提取 Agent。每当反思数量距上次提取达到间隔值时自动触发：
+当 `sakura_knowledge_extraction_enabled=true` 时，Sakura 会按照 `sakura_extraction_min_reflections`（默认 10）设定的间隔，周期性运行知识提取 Agent。2.12.0 起，知识提取不再是一次性开关，而是每当反思数量距上次提取达到间隔值时自动触发：
 
 1. 浏览 `.sakura/` 目录结构
 2. 读取 `memory/` 下的反思文件，提取可复用知识

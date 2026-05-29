@@ -737,10 +737,84 @@ class PaymentService:
         # 统一最低金额保护
         return max(converted, 100)
 
+    async def _validate_payment_amount(
+        self,
+        order: Order,
+        paid_amount_cents: Optional[int],
+        paid_currency: Optional[str],
+    ) -> None:
+        """Validate webhook amount before fulfilling an order.
+
+        The None branch is only expected for TRON polling confirmations, where
+        the UI route has already matched the unique USDT amount on chain via
+        TronGateway.check_payment_by_amount before calling this method. It is not
+        the expected path for signed external webhooks: Stripe, Paddle, Alipay,
+        and NOWPayments handlers pass the gateway-reported amount into this
+        method. It logs at error level with "BYPASSING amount validation" so any
+        unexpected use outside that TRON polling path can be alerted.
+
+        If the webhook currency differs from the order currency, this method does
+        not perform exchange-rate conversion. Providers are expected to report the
+        same pricing currency that was used when the payment was created (for
+        example, NOWPayments receives the order currency as price_currency and
+        converts only to the configured crypto pay_currency internally), so a
+        mismatch is logged with both amounts for audit and alerting rather than
+        compared with an in-service, potentially stale FX rate.
+        """
+        if paid_amount_cents is None:
+            logger.error(
+                "BYPASSING amount validation for payment confirmation: "
+                "order_no={}, provider={}",
+                order.order_no,
+                order.payment_provider,
+            )
+            return
+
+        try:
+            paid_amount = int(paid_amount_cents)
+        except (TypeError, ValueError) as exc:
+            raise PaymentError(
+                f"Payment amount mismatch for order {order.order_no}: "
+                f"invalid paid amount {paid_amount_cents!r}"
+            ) from exc
+
+        expected_amount = int(order.amount_cents or 0)
+        order_currency = str(order.currency or "").upper()
+        webhook_currency = str(paid_currency or order_currency or "").upper()
+
+        if paid_amount <= 0:
+            raise PaymentError(
+                f"Payment amount mismatch for order {order.order_no}: "
+                f"expected {expected_amount} {order_currency or 'UNKNOWN'} cents, "
+                f"got {paid_amount} {webhook_currency or 'UNKNOWN'} cents"
+            )
+
+        if order_currency and webhook_currency and webhook_currency != order_currency:
+            logger.warning(
+                "Payment currency differs for order {}: expected {} {}, got {} {}; "
+                "skipping strict amount comparison because webhook currency should match "
+                "the order currency and no exchange-rate conversion is performed here",
+                order.order_no,
+                expected_amount,
+                order_currency,
+                paid_amount,
+                webhook_currency,
+            )
+            return
+
+        if paid_amount != expected_amount:
+            raise PaymentError(
+                f"Payment amount mismatch for order {order.order_no}: "
+                f"expected {expected_amount} {order_currency or 'UNKNOWN'} cents, "
+                f"got {paid_amount} {webhook_currency or 'UNKNOWN'} cents"
+            )
+
     async def confirm_payment(
         self,
         order_no: str,
         provider_tx_id: str,
+        paid_amount_cents: Optional[int] = None,
+        paid_currency: Optional[str] = None,
     ) -> Order:
         """Confirm payment for a PENDING order (PENDING -> PAID -> FULFILLED)"""
         # 仅按 order_no 查询，provider_tx_id 在创建时设为 order_no，
@@ -757,6 +831,12 @@ class PaymentService:
                 order.status,
             )
             return order
+
+        await self._validate_payment_amount(
+            order,
+            paid_amount_cents=paid_amount_cents,
+            paid_currency=paid_currency,
+        )
 
         user = await self.session.get(TelegramUser, order.user_id)
         if not user:

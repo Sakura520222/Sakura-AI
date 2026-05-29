@@ -12,11 +12,12 @@ Agent 专家团队模式用于把已发现的 Issue 或仓库扫描问题转化�
 
 ## 当前实现范围
 
-- 仅 `super_admin` 可访问 Agent Team 和 Agent Skills WebUI。
-- 候选任务来自已完成的 Issue 分析、超级管理员手动指定的 GitHub Issue 和仓库扫描发现。
+- `super_admin` 可访问完整 Agent Team / Agent Skills 管理能力；普通登录用户可使用受限的任务创建、查看、重试、取消和反馈入口。
+- 候选任务来自已完成的 Issue 分析、超级管理员手动指定的 GitHub Issue、普通用户手动指定的本人仓库 Issue 和仓库扫描发现。
 - 手动 Issue 支持 `https://github.com/owner/repo/issues/123`、`github.com/owner/repo/issues/123` 和 `owner/repo#123` 等引用格式。
+- Issue 评论支持 `/agent` 命令：仓库管理员或写权限协作者可将已分析 Issue 或 Sakura 仓库扫描报告 Issue 委派给 Agent Team，可附加 `base:<branch>` 指定基础分支。
 - 支持 AI 候选筛选，帮助超级管理员优先选择高价值任务。
-- 仅手动启动任务，不提供定时或无人值守自动执行入口。
+- 仅手动启动或评论命令触发任务，不提供定时或无人值守自动执行入口。
 - 支持任务列表、任务详情、工作区管理、配置管理和运行状态展示。
 - 支持复用主 AI 配置，也支持独立 Agent AI 配置。
 - 支持受控文件工具、工作区内搜索、项目识别、diff 检查、文件回退、shell 黑名单安全策略验证命令和 Agent Skills。
@@ -90,6 +91,17 @@ candidate -> queued -> planning -> cloning -> editing -> self_reviewing -> valid
 
 所有状态迁移应集中校验，避免越权跳转。
 
+## 权限与配额
+
+Agent Team 的入口按用户角色分层：
+
+- **超级管理员**：可访问候选筛选、工作区管理、配置管理、Skills 管理和所有任务运维入口。
+- **管理员**：可使用登录态下的任务入口，并跳过普通用户仓库归属限制。
+- **普通用户**：只能从本人 GitHub 用户名匹配的仓库创建或重试任务，且仓库必须匹配 `agent_team_repo_allowlist`；任务创建和重试会消耗 Agent 配额。
+- **Issue 评论 `/agent`**：要求评论者在 GitHub 仓库中具有 `admin` 或 `write` 权限；系统按仓库所有者对应的已注册用户检查 Agent 配额，仓库所有者为管理员或超级管理员时跳过扣减。
+
+普通用户入口先校验仓库权限，再扣减配额；如果 Issue 尚未完成 AI 分析且也不是 Sakura 扫描报告 Issue，`/agent` 会提示先执行 `/analyze`。
+
 ## 工作区与 Git 分支
 
 - Agent Team 在 `agent_team_workspace_root` 下创建隔离工作区。
@@ -157,9 +169,10 @@ Skills 只向 Agent 注入说明和操作流程，不会扩大 Agent 的工具�
 
 Agent Team WebUI 提供：
 
-- 候选任务预览和筛选。
+- 候选任务预览和筛选（管理员能力）。
 - 通过 GitHub Issue 链接或 `owner/repo#123` 手动创建任务。
-- AI 候选筛选入口。
+- 普通用户 Agent 配额展示、仓库权限校验和任务重试入口。
+- AI 候选筛选入口（管理员能力）。
 - 任务列表和任务详情。
 - 工作区列表和清理入口。
 - Agent Team 配置分组：基础、AI、上下文压缩、护栏、验证、Skills。
@@ -172,7 +185,7 @@ Agent Skills WebUI 提供：
 - 启用 / 禁用 Skill。
 - 删除 Skill。
 
-所有入口仅 `super_admin` 可访问，并应记录关键管理员动作。
+配置、候选筛选、工作区清理和 Skills 管理仍仅限 `super_admin`，普通用户只能访问受限任务入口；关键管理员动作应记录审计日志。
 
 ## 与现有 PR 审查联动
 
@@ -191,7 +204,7 @@ Agent 创建 PR 后，仍通过现有 webhook 进入 Sakura PR 审查流程。�
 | --- | --- |
 | `agent_team_enabled` | 启用 Agent Team 功能 |
 | `agent_team_workspace_root` | 隔离工作区根目录 |
-| `agent_team_repo_allowlist` | 允许 Agent Team 操作的仓库列表 |
+| `agent_team_repo_allowlist` | 允许 Agent Team 操作的仓库列表；普通用户入口还要求仓库 owner 与当前 GitHub 用户名一致 |
 | `agent_team_model_provider` | 模型配置来源：主 AI 或独立 Agent 配置 |
 | `agent_team_max_tool_rounds` | 全栈专家最大工具调用轮数 |
 | `agent_team_reviewer_max_tool_rounds` | 专业审查 Agent 最大工具调用轮数 |
@@ -207,6 +220,7 @@ Agent 创建 PR 后，仍通过现有 webhook 进入 Sakura PR 审查流程。�
 ## 相关实现
 
 - `backend/services/agent_team/`：Agent Team 核心服务。
+- `backend/api/webhook.py`：Issue 评论 `/agent` 命令处理、权限检查、扫描报告 Issue 匹配与任务提交。
 - `backend/services/agent_team/candidate_service.py`：候选任务收集、手动 Issue 任务创建与 AI 筛选。
 - `backend/services/agent_team/git_workspace_service.py`：Git 工作区准备、分支与 PR 前置操作。
 - `backend/services/agent_team/tools/`：工作区内受控工具。
