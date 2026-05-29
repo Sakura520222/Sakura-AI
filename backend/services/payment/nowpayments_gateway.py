@@ -136,7 +136,12 @@ class NowPaymentsGateway(PaymentGateway):
 
     @classmethod
     def _to_minor_units(cls, amount: object, currency: str) -> int:
-        """Convert a main-unit amount to currency-specific minor units."""
+        """Convert a main-unit amount to currency-specific minor units.
+
+        Invalid provider amounts are logged and converted to 0 as a sentinel.
+        Callers must treat the 0 result as invalid in payment-confirmation paths;
+        PaymentService rejects non-positive paid amounts before fulfilling orders.
+        """
         decimals = cls._currency_decimals(currency)
         try:
             value = Decimal(str(amount))
