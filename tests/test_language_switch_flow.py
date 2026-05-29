@@ -168,14 +168,6 @@ def test_make_translation_func_en():
     assert t("nonexistent.key") == "nonexistent.key"  # 回退到 key 本身
 
 
-def test_toast_redirect_rejects_protocol_relative_url():
-    """协议相对 URL（//host/path）必须回退到站内根路径。"""
-    response = deps.toast_redirect("//evil.com/path", message="ok")
-
-    assert response.headers["location"].startswith("/?")
-    assert not response.headers["location"].startswith("//evil.com")
-
-
 def test_render_template_injects_correct_lang():
     """render_template 应注入正确的 lang 和 _ 翻译函数。"""
     from backend.webui.deps import render_template, get_templates

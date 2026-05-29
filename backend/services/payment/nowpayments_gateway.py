@@ -140,7 +140,8 @@ class NowPaymentsGateway(PaymentGateway):
 
         Invalid provider amounts are logged and converted to 0 as a sentinel.
         Callers must treat the 0 result as invalid in payment-confirmation paths;
-        PaymentService rejects non-positive paid amounts before fulfilling orders.
+        PaymentService._validate_payment_amount rejects non-positive paid amounts
+        before fulfilling orders.
         """
         decimals = cls._currency_decimals(currency)
         try:

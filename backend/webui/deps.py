@@ -323,6 +323,13 @@ def error_page(
     )
 
 
+def _safe_redirect_path(url: str) -> str:
+    """Return a same-origin absolute path for redirects, or root if unsafe."""
+    if not url or not url.startswith("/") or url.startswith("//") or "://" in url:
+        return "/"
+    return url
+
+
 def toast_redirect(
     url: str,
     message: str = "toast.success",
@@ -345,10 +352,7 @@ def toast_redirect(
     """
     from urllib.parse import urlencode
 
-    # Prevent open redirect: only allow same-origin relative paths.
-    # Reject protocol-relative URLs such as //evil.com/path.
-    if not url or not url.startswith("/") or url.startswith("//") or "://" in url:
-        url = "/"
+    safe_path = _safe_redirect_path(url)
 
     display_message = message
     if lang:
@@ -382,9 +386,10 @@ def toast_redirect(
         display_message = _i18n.t(message, **fmt_kwargs)
 
     params = {"_toast": display_message, "_toast_type": toast_type}
-    separator = "&" if "?" in url else "?"
+    separator = "&" if "?" in safe_path else "?"
+    redirect_url = safe_path + separator + urlencode(params)
     return RedirectResponse(
-        url=f"{url}{separator}{urlencode(params)}",
+        url=redirect_url,
         status_code=status_code,
     )
 
