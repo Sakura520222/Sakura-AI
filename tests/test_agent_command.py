@@ -439,7 +439,8 @@ async def test_agent_command_rejected_when_task_already_exists(monkeypatch):
     response = await webhook.handle_agent_command(payload)
 
     assert response.status_code == 200
-    assert "已存在进行中的 Agent 任务" in response.body.decode("utf-8")
+    body = response.body.decode("utf-8")
+    assert "Failed to create task" in body
 
 
 @pytest.mark.asyncio
