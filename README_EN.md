@@ -19,6 +19,18 @@
 
 ---
 
+## 🌐 Official Service
+
+**Official Service Platform**: [https://pr-bot.firefly520.top/](https://pr-bot.firefly520.top/)
+
+- ✅ **Free Quota**: Register to receive free trial credits for PR review, Issue analysis, and other core features
+- ✅ **Full Features**: Experience all features including PR review, Issue analysis, Agent task delegation, and more
+- ✅ **No Deployment Required**: Ready to use out of the box — no need to set up servers or configure environments
+
+> 💡 If you want to self-host or contribute to development, refer to the [Quick Start](#-quick-start) section below.
+
+---
+
 ## ✨ Core Features
 
 ### 2.12.0 Highlights
