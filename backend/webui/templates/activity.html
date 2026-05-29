@@ -1,0 +1,391 @@
+{% extends "base.html" %}
+
+{% block title %}{{ _('activity.title') }} - Sakura AI Reviewer{% endblock %}
+
+{% block content %}
+<div class="space-y-6" x-data="activityMonitor()" x-init="init()">
+
+    <!-- 页面标题 -->
+    <div class="flex items-center justify-between">
+        <div>
+            <h1 class="text-2xl font-bold bg-gradient-to-r from-sakura-700 to-purple-700 dark:from-sakura-400 dark:to-purple-400 bg-clip-text text-transparent">{{ _('activity.title') }}</h1>
+            <p class="mt-1 text-sm text-gray-500 dark:text-gray-400">{{ _('activity.description') }}</p>
+        </div>
+        <div class="flex items-center gap-3">
+            <!-- 连接状态 -->
+            <span x-show="isConnected" class="flex items-center gap-1.5 text-xs text-green-600 dark:text-green-400">
+                <span class="w-2 h-2 rounded-full bg-green-500 animate-pulse"></span>
+                {{ _('activity.connected') }}
+            </span>
+            <span x-show="!isConnected" class="flex items-center gap-1.5 text-xs text-gray-400">
+                <span class="w-2 h-2 rounded-full bg-gray-400"></span>
+                {{ _('activity.disconnected') }}
+            </span>
+            <!-- 刷新按钮 -->
+            <button @click="refresh()"
+                    :disabled="isRefreshing"
+                    class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl border border-sakura-200 dark:border-sakura-800 bg-white dark:bg-gray-900 text-xs font-medium text-sakura-700 dark:text-sakura-300 hover:bg-sakura-50 dark:hover:bg-sakura-900/20 disabled:opacity-50 disabled:cursor-not-allowed transition-colors">
+                <svg :class="isRefreshing ? 'animate-spin' : ''" class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v6h6M20 20v-6h-6M5 19A9 9 0 0019 5M19 5h-5M5 19h5"/></svg>
+                <span x-show="!isRefreshing">{{ _('activity.refresh') }}</span>
+                <span x-show="isRefreshing">{{ _('activity.refreshing') }}</span>
+            </button>
+        </div>
+    </div>
+
+    <!-- 统计摘要卡片 -->
+    <div class="grid grid-cols-1 sm:grid-cols-3 gap-4">
+        <!-- PR 审查 -->
+        <div class="rounded-2xl border border-blue-200 dark:border-blue-800 bg-gradient-to-br from-blue-50 to-blue-100/50 dark:from-blue-900/20 dark:to-blue-900/10 p-4">
+            <div class="flex items-center gap-3">
+                <div class="flex items-center justify-center w-10 h-10 rounded-xl bg-blue-500/10 dark:bg-blue-500/20">
+                    <svg class="w-5 h-5 text-blue-600 dark:text-blue-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 7h.01M7 3h5c.512 0 1.024.195 1.414.586l7 7a2 2 0 010 2.828l-7 7a2 2 0 01-2.828 0l-7-7A1.994 1.994 0 013 12V7a4 4 0 014-4z"/></svg>
+                </div>
+                <div>
+                    <p class="text-2xl font-bold text-blue-700 dark:text-blue-300" x-text="prCount">0</p>
+                    <p class="text-xs text-blue-600/70 dark:text-blue-400/70">{{ _('activity.active_pr_reviews') }}</p>
+                </div>
+            </div>
+        </div>
+
+        <!-- Issue 分析 -->
+        <div class="rounded-2xl border border-purple-200 dark:border-purple-800 bg-gradient-to-br from-purple-50 to-purple-100/50 dark:from-purple-900/20 dark:to-purple-900/10 p-4">
+            <div class="flex items-center gap-3">
+                <div class="flex items-center justify-center w-10 h-10 rounded-xl bg-purple-500/10 dark:bg-purple-500/20">
+                    <svg class="w-5 h-5 text-purple-600 dark:text-purple-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5H7a2 2 0 00-2 2v10a2 2 0 002 2h8a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-3 7h3m-3 4h3m-6-4h.01M9 16h.01"/></svg>
+                </div>
+                <div>
+                    <p class="text-2xl font-bold text-purple-700 dark:text-purple-300" x-text="issueCount">0</p>
+                    <p class="text-xs text-purple-600/70 dark:text-purple-400/70">{{ _('activity.active_issue_analyses') }}</p>
+                </div>
+            </div>
+        </div>
+
+        <!-- 仓库扫描 -->
+        <div class="rounded-2xl border border-emerald-200 dark:border-emerald-800 bg-gradient-to-br from-emerald-50 to-emerald-100/50 dark:from-emerald-900/20 dark:to-emerald-900/10 p-4">
+            <div class="flex items-center gap-3">
+                <div class="flex items-center justify-center w-10 h-10 rounded-xl bg-emerald-500/10 dark:bg-emerald-500/20">
+                    <svg class="w-5 h-5 text-emerald-600 dark:text-emerald-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z"/></svg>
+                </div>
+                <div>
+                    <p class="text-2xl font-bold text-emerald-700 dark:text-emerald-300" x-text="scanCount">0</p>
+                    <p class="text-xs text-emerald-600/70 dark:text-emerald-400/70">{{ _('activity.active_repo_scans') }}</p>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 筛选按钮组 -->
+    <div class="flex items-center gap-2">
+        <button @click="filter = 'all'"
+                :class="filter === 'all' ? 'bg-sakura-500 text-white shadow-md shadow-sakura-500/25' : 'text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800'"
+                class="px-3 py-1.5 rounded-xl text-xs font-medium transition-all duration-200">
+            {{ _('activity.filter_all') }}
+            <span class="ml-1 px-1.5 py-0.5 rounded-full text-[10px]"
+                  :class="filter === 'all' ? 'bg-white/20' : 'bg-gray-200 dark:bg-gray-700'"
+                  x-text="tasks.length"></span>
+        </button>
+        <button @click="filter = 'pr'"
+                :class="filter === 'pr' ? 'bg-blue-500 text-white shadow-md shadow-blue-500/25' : 'text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800'"
+                class="px-3 py-1.5 rounded-xl text-xs font-medium transition-all duration-200">
+            {{ _('activity.filter_pr') }}
+            <span class="ml-1 px-1.5 py-0.5 rounded-full text-[10px]"
+                  :class="filter === 'pr' ? 'bg-white/20' : 'bg-gray-200 dark:bg-gray-700'"
+                  x-text="prCount"></span>
+        </button>
+        <button @click="filter = 'issue'"
+                :class="filter === 'issue' ? 'bg-purple-500 text-white shadow-md shadow-purple-500/25' : 'text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800'"
+                class="px-3 py-1.5 rounded-xl text-xs font-medium transition-all duration-200">
+            {{ _('activity.filter_issue') }}
+            <span class="ml-1 px-1.5 py-0.5 rounded-full text-[10px]"
+                  :class="filter === 'issue' ? 'bg-white/20' : 'bg-gray-200 dark:bg-gray-700'"
+                  x-text="issueCount"></span>
+        </button>
+        <button @click="filter = 'scan'"
+                :class="filter === 'scan' ? 'bg-emerald-500 text-white shadow-md shadow-emerald-500/25' : 'text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800'"
+                class="px-3 py-1.5 rounded-xl text-xs font-medium transition-all duration-200">
+            {{ _('activity.filter_scan') }}
+            <span class="ml-1 px-1.5 py-0.5 rounded-full text-[10px]"
+                  :class="filter === 'scan' ? 'bg-white/20' : 'bg-gray-200 dark:bg-gray-700'"
+                  x-text="scanCount"></span>
+        </button>
+    </div>
+
+    <!-- 活动流区域 -->
+    <div id="activity-stream" class="flex-1 overflow-y-auto rounded-2xl border border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-900/50 p-4 space-y-3 min-h-[400px] max-h-[calc(100vh-420px)] scroll-smooth">
+        <!-- 加载中 -->
+        <div x-show="isLoading" class="flex items-center justify-center py-16">
+            <div class="flex items-center gap-2 text-gray-400">
+                <svg class="animate-spin h-5 w-5" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg>
+                <span class="text-sm">{{ _('common.loading') }}</span>
+            </div>
+        </div>
+
+        <!-- 空状态 -->
+        <div x-show="!isLoading && filteredTasks.length === 0" class="flex flex-col items-center justify-center py-16 text-gray-400 dark:text-gray-500">
+            <svg class="w-16 h-16 mb-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1" d="M13 10V3L4 14h7v7l9-11h-7z"/></svg>
+            <p class="text-sm font-medium">{{ _('activity.empty_title') }}</p>
+            <p class="text-xs mt-1">{{ _('activity.empty_hint') }}</p>
+        </div>
+
+        <!-- 任务卡片列表 -->
+        <template x-for="task in filteredTasks" :key="task.id">
+            <div class="rounded-2xl border p-4 transition-all duration-200 hover:shadow-md"
+                 :class="taskBorderColor(task.type)">
+
+                <!-- 卡片头部 -->
+                <div class="flex items-start justify-between gap-3">
+                    <div class="flex items-start gap-3 min-w-0">
+                        <!-- 类型图标 -->
+                        <div class="flex items-center justify-center w-9 h-9 rounded-xl shrink-0 mt-0.5"
+                             :class="taskIconBg(task.type)">
+                            <!-- PR 图标 -->
+                            <svg x-show="task.type === 'pr'" class="w-4.5 h-4.5 text-blue-600 dark:text-blue-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 7h.01M7 3h5c.512 0 1.024.195 1.414.586l7 7a2 2 0 010 2.828l-7 7a2 2 0 01-2.828 0l-7-7A1.994 1.994 0 013 12V7a4 4 0 014-4z"/></svg>
+                            <!-- Issue 图标 -->
+                            <svg x-show="task.type === 'issue'" class="w-4.5 h-4.5 text-purple-600 dark:text-purple-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5H7a2 2 0 00-2 2v10a2 2 0 002 2h8a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-3 7h3m-3 4h3m-6-4h.01M9 16h.01"/></svg>
+                            <!-- Scan 图标 -->
+                            <svg x-show="task.type === 'scan'" class="w-4.5 h-4.5 text-emerald-600 dark:text-emerald-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z"/></svg>
+                        </div>
+                        <!-- 任务信息 -->
+                        <div class="min-w-0">
+                            <div class="flex items-center gap-2 flex-wrap">
+                                <!-- 类型标签 -->
+                                <span class="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-semibold"
+                                      :class="taskTypeBadge(task.type)"
+                                      x-text="taskTypeLabel(task.type)"></span>
+                                <!-- 状态标签 -->
+                                <span class="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-medium"
+                                      :class="taskStatusBadge(task.status)">
+                                    <span x-show="isActiveStatus(task.status)" class="w-1.5 h-1.5 rounded-full animate-pulse"
+                                          :class="task.status === 'failed' ? 'bg-red-500' : 'bg-current'"></span>
+                                    <span x-text="taskStatusLabel(task.status)"></span>
+                                </span>
+                                <!-- 策略标签（仅 PR） -->
+                                <span x-show="task.type === 'pr' && task.strategy"
+                                      class="inline-flex px-2 py-0.5 rounded-full text-[10px] font-medium bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-400"
+                                      x-text="task.strategy"></span>
+                            </div>
+                            <p class="mt-1 text-sm font-medium text-gray-800 dark:text-gray-200 truncate" x-text="task.title"></p>
+                            <div class="mt-1 flex items-center gap-2 text-xs text-gray-500 dark:text-gray-400">
+                                <span x-text="task.repo_name"></span>
+                                <span x-show="task.author">·</span>
+                                <span x-show="task.author" x-text="task.author"></span>
+                                <span>·</span>
+                                <span x-text="formatTimeAgo(task.updated_at || task.created_at)"></span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 扫描进度条（仅 Scan 类型） -->
+                <div x-show="task.type === 'scan'" class="mt-3">
+                    <div class="flex items-center justify-between text-xs text-gray-500 dark:text-gray-400 mb-1">
+                        <span x-text="task.current_phase || '{{ _('activity.progress') }}'"></span>
+                        <span x-text="(task.progress || 0) + '%'"></span>
+                    </div>
+                    <div class="w-full h-1.5 rounded-full bg-gray-200 dark:bg-gray-700 overflow-hidden">
+                        <div class="h-full rounded-full bg-emerald-500 transition-all duration-500"
+                             :style="'width:' + (task.progress || 0) + '%'"></div>
+                    </div>
+                </div>
+
+                <!-- 操作按钮 -->
+                <div class="mt-3 flex items-center gap-2">
+                    <a x-show="task.type === 'pr'"
+                       :href="'/pr/' + task.task_id"
+                       class="inline-flex items-center gap-1 px-3 py-1 rounded-lg text-xs font-medium bg-blue-50 dark:bg-blue-900/20 text-blue-700 dark:text-blue-300 hover:bg-blue-100 dark:hover:bg-blue-900/40 transition-colors">
+                        <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z"/></svg>
+                        {{ _('activity.view_detail') }}
+                    </a>
+                    <a x-show="task.type === 'issue'"
+                       :href="'/issues/' + task.task_id"
+                       class="inline-flex items-center gap-1 px-3 py-1 rounded-lg text-xs font-medium bg-purple-50 dark:bg-purple-900/20 text-purple-700 dark:text-purple-300 hover:bg-purple-100 dark:hover:bg-purple-900/40 transition-colors">
+                        <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z"/></svg>
+                        {{ _('activity.view_detail') }}
+                    </a>
+                    <a x-show="task.type === 'scan'"
+                       :href="'/scans/' + task.task_id"
+                       class="inline-flex items-center gap-1 px-3 py-1 rounded-lg text-xs font-medium bg-emerald-50 dark:bg-emerald-900/20 text-emerald-700 dark:text-emerald-300 hover:bg-emerald-100 dark:hover:bg-emerald-900/40 transition-colors">
+                        <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z"/></svg>
+                        {{ _('activity.view_detail') }}
+                    </a>
+                </div>
+            </div>
+        </template>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_scripts %}
+{{ super() }}
+<script>
+function activityMonitor() {
+    return {
+        tasks: [],
+        filter: 'all',
+        isLoading: true,
+        isRefreshing: false,
+        isConnected: false,
+        _sseHandlers: [],
+        _userScrolledUp: false,
+
+        init() {
+            this.loadTasks();
+            this._setupSSEListeners();
+            this._setupScrollDetection();
+            // 定时轮询兜底（30 秒无 SSE 事件时自动刷新）
+            var self = this;
+            this._pollTimer = setInterval(function() { self.loadTasks(); }, 30000);
+        },
+
+        get filteredTasks() {
+            var f = this.filter;
+            if (f === 'all') return this.tasks;
+            return this.tasks.filter(function(t) { return t.type === f; });
+        },
+
+        get prCount() {
+            return this.tasks.filter(function(t) { return t.type === 'pr'; }).length;
+        },
+
+        get issueCount() {
+            return this.tasks.filter(function(t) { return t.type === 'issue'; }).length;
+        },
+
+        get scanCount() {
+            return this.tasks.filter(function(t) { return t.type === 'scan'; }).length;
+        },
+
+        _setupScrollDetection() {
+            var self = this;
+            this.$nextTick(function() {
+                var el = document.getElementById('activity-stream');
+                if (!el) return;
+                el.addEventListener('scroll', function() {
+                    var nearBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 80;
+                    self._userScrolledUp = !nearBottom;
+                });
+            });
+        },
+
+        _setupSSEListeners() {
+            var self = this;
+
+            // 监听 PR 状态变更
+            function onReviewStatus(e) { self._onTaskUpdate('pr', e.detail); }
+            window.addEventListener('sse:review-status', onReviewStatus);
+            self._sseHandlers.push({ name: 'sse:review-status', handler: onReviewStatus });
+
+            // 监听 Issue 状态变更
+            function onIssueStatus(e) { self._onTaskUpdate('issue', e.detail); }
+            window.addEventListener('sse:issue-status', onIssueStatus);
+            self._sseHandlers.push({ name: 'sse:issue-status', handler: onIssueStatus });
+
+            // 监听 Scan 完成事件
+            function onScanCompleted(e) { self._onTaskUpdate('scan', e.detail); }
+            window.addEventListener('sse:scan-completed', onScanCompleted);
+            self._sseHandlers.push({ name: 'sse:scan-completed', handler: onScanCompleted });
+
+            this.isConnected = true;
+        },
+
+        _onTaskUpdate(type, data) {
+            // 收到 SSE 事件后刷新任务列表
+            this.loadTasks();
+        },
+
+        async loadTasks() {
+            try {
+                var resp = await fetch('/activity/api/active-tasks');
+                if (!resp.ok) return;
+                var data = await resp.json();
+                if (data.success) {
+                    this.tasks = data.tasks || [];
+                    // 更新连接状态
+                    this.isConnected = true;
+                }
+            } catch(e) {
+                // ignore
+            }
+            this.isLoading = false;
+        },
+
+        async refresh() {
+            if (this.isRefreshing) return;
+            this.isRefreshing = true;
+            try {
+                await this.loadTasks();
+            } finally {
+                this.isRefreshing = false;
+            }
+        },
+
+        taskBorderColor(type) {
+            if (type === 'pr') return 'border-blue-200 dark:border-blue-800 bg-white dark:bg-gray-800/60';
+            if (type === 'issue') return 'border-purple-200 dark:border-purple-800 bg-white dark:bg-gray-800/60';
+            if (type === 'scan') return 'border-emerald-200 dark:border-emerald-800 bg-white dark:bg-gray-800/60';
+            return 'border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800/60';
+        },
+
+        taskIconBg(type) {
+            if (type === 'pr') return 'bg-blue-100 dark:bg-blue-900/30';
+            if (type === 'issue') return 'bg-purple-100 dark:bg-purple-900/30';
+            if (type === 'scan') return 'bg-emerald-100 dark:bg-emerald-900/30';
+            return 'bg-gray-100 dark:bg-gray-800';
+        },
+
+        taskTypeBadge(type) {
+            if (type === 'pr') return 'bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300';
+            if (type === 'issue') return 'bg-purple-100 dark:bg-purple-900/30 text-purple-700 dark:text-purple-300';
+            if (type === 'scan') return 'bg-emerald-100 dark:bg-emerald-900/30 text-emerald-700 dark:text-emerald-300';
+            return 'bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-400';
+        },
+
+        taskTypeLabel(type) {
+            if (type === 'pr') return '{{ _('activity.type_pr') }}';
+            if (type === 'issue') return '{{ _('activity.type_issue') }}';
+            if (type === 'scan') return '{{ _('activity.type_scan') }}';
+            return type;
+        },
+
+        taskStatusBadge(status) {
+            if (status === 'pending' || status === 'queued') return 'bg-amber-100 dark:bg-amber-900/30 text-amber-700 dark:text-amber-300';
+            if (status === 'reviewing' || status === 'analyzing') return 'bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300';
+            if (status === 'indexing' || status === 'reporting') return 'bg-cyan-100 dark:bg-cyan-900/30 text-cyan-700 dark:text-cyan-300';
+            if (status === 'completed') return 'bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-300';
+            if (status === 'failed') return 'bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-300';
+            return 'bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-400';
+        },
+
+        taskStatusLabel(status) {
+            var map = {
+                'pending': '{{ _('activity.status_pending') }}',
+                'queued': '{{ _('activity.status_pending') }}',
+                'reviewing': '{{ _('activity.status_reviewing') }}',
+                'analyzing': '{{ _('activity.status_analyzing') }}',
+                'indexing': '{{ _('activity.status_indexing') }}',
+                'reporting': '{{ _('activity.status_reporting') }}',
+                'completed': '{{ _('activity.status_completed') }}',
+                'failed': '{{ _('activity.status_failed') }}',
+                'cancelled': '{{ _('activity.status_cancelled') }}'
+            };
+            return map[status] || status;
+        },
+
+        isActiveStatus(status) {
+            return ['pending', 'queued', 'reviewing', 'analyzing', 'indexing', 'reporting'].indexOf(status) >= 0;
+        },
+
+        formatTimeAgo(isoStr) {
+            if (!isoStr) return '';
+            var now = Date.now();
+            var then = new Date(isoStr).getTime();
+            var diff = Math.floor((now - then) / 1000);
+            if (diff < 60) return '{{ _('activity.time_just_now') }}';
+            if (diff < 3600) return Math.floor(diff / 60) + '{{ _('activity.time_minutes_ago') }}';
+            if (diff < 86400) return Math.floor(diff / 3600) + '{{ _('activity.time_hours_ago') }}';
+            return Math.floor(diff / 86400) + '{{ _('activity.time_days_ago') }}';
+        }
+    };
+}
+</script>
+{% endblock %}
