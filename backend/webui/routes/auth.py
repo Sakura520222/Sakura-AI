@@ -637,9 +637,9 @@ async def two_factor_passkey_verify(
 
 
 @router.post("/logout")
-async def logout(request: Request, csrf_token: str = Form(...)):
+async def logout(request: Request, csrf_token: str = Form(default="")):
     """登出"""
-    if not validate_csrf_token(csrf_token):
+    if not csrf_token or not validate_csrf_token(csrf_token):
         raise HTTPException(status_code=403, detail="CSRF 验证失败")
 
     logger.info("WebUI 用户登出")
