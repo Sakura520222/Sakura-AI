@@ -13,6 +13,7 @@ from sqlalchemy.exc import OperationalError, InterfaceError
 
 from backend.core.config import get_settings
 from backend.models.scan_models import RepoScan, ScanFinding, ScanStatus
+from backend.services.ai_reviewer.token_tracker import TokenTracker
 
 # 扫描并发控制信号量
 _scan_semaphore: Optional[asyncio.Semaphore] = None
@@ -240,7 +241,7 @@ class ScanWorker:
             )
 
             # 6. 使用 AIReviewer 工具链进行全仓扫描
-            all_findings, ai_health_score = await self._full_scan_with_tools(
+            all_findings, ai_health_score, scan_rounds = await self._full_scan_with_tools(
                 scan_id=scan_id,
                 repo_name=repo_name,
                 repo_path=repo_path,
@@ -288,7 +289,16 @@ class ScanWorker:
             issue_number = report_info.get("issue_number")
             issue_url = report_info.get("issue_url")
 
-            # 11. 完成
+            # 11. 计算 estimated_cost
+            s = get_settings()
+            cost_tracker = TokenTracker()
+            cost_tracker.prompt_tokens = budget.prompt_tokens
+            cost_tracker.completion_tokens = budget.completion_tokens
+            estimated_cost = cost_tracker.calculate_cost(
+                s.review_price_per_1k_prompt, s.review_price_per_1k_completion,
+            )
+
+            # 12. 完成
             await self._update_scan(
                 scan_id,
                 status=ScanStatus.COMPLETED.value,
@@ -296,13 +306,20 @@ class ScanWorker:
                 progress=100,
                 report_issue_number=issue_number,
                 report_issue_url=issue_url,
+                estimated_cost=estimated_cost,
                 completed_at=datetime.utcnow(),
             )
 
             logger.info(
-                f"扫描完成: {repo_name} — "
-                f"发现 {aggregated['total_findings']} 个问题, "
-                f"健康评分 {aggregated['health_score']}/100"
+                "扫描完成: {} | 轮数={}, tokens={}+{}, cost={} | "
+                "发现 {} 个问题, 健康评分 {}/100",
+                repo_name,
+                scan_rounds,
+                budget.prompt_tokens,
+                budget.completion_tokens,
+                estimated_cost,
+                aggregated["total_findings"],
+                aggregated["health_score"],
             )
 
         except Exception as e:
@@ -571,6 +588,11 @@ class ScanWorker:
         max_iterations = settings.scan_max_iterations
         scan_temperature = settings.scan_temperature
 
+        tracker = TokenTracker()
+        safe_context = reviewer.model_context_mgr.calculate_safe_context(
+            scan_model, settings.scan_context_safety_threshold,
+        ) if reviewer.model_context_mgr else 0
+
         iteration = 0
         while iteration < max_iterations:
             if not budget.can_proceed(estimated_tokens=3000):
@@ -591,13 +613,13 @@ class ScanWorker:
                     temperature=scan_temperature,
                 )
 
-                if budget:
-                    usage = getattr(response, "usage", None)
-                    if usage:
-                        budget.consume(
-                            getattr(usage, "prompt_tokens", 0) or 0,
-                            getattr(usage, "completion_tokens", 0) or 0,
-                        )
+                tracker.accumulate(response)
+                usage = getattr(response, "usage", None)
+                if usage and budget:
+                    budget.consume(
+                        getattr(usage, "prompt_tokens", 0) or 0,
+                        getattr(usage, "completion_tokens", 0) or 0,
+                    )
 
                 # 检查工具调用
                 tool_calls = getattr(response.choices[0].message, "tool_calls", None)
@@ -610,7 +632,7 @@ class ScanWorker:
                         f"{len(result.get('findings', []))} 个问题, "
                         f"评分={result.get('overall_score', '-')}"
                     )
-                    return result.get("findings", []), result.get("overall_score")
+                    return result.get("findings", []), result.get("overall_score"), iteration
 
                 # 处理工具调用
                 assistant_message = response.choices[0].message
@@ -660,20 +682,20 @@ class ScanWorker:
                             }
                         )
 
+                # 每轮记录上下文使用率
+                try:
+                    current_tokens = (
+                        reviewer.context_compressor.estimate_messages_tokens(
+                            messages
+                        )
+                    )
+                    tracker.log_context_usage(current_tokens, safe_context, iteration)
+                except Exception:
+                    current_tokens = 0
+
                 # 上下文压缩检查（使用扫描独立配置）
                 if reviewer.enable_compression:
                     try:
-                        current_tokens = (
-                            reviewer.context_compressor.estimate_messages_tokens(
-                                messages
-                            )
-                        )
-                        safe_context = (
-                            reviewer.model_context_mgr.calculate_safe_context(
-                                scan_model,
-                                settings.scan_context_safety_threshold,
-                            )
-                        )
                         threshold_tokens = int(
                             safe_context * settings.scan_compression_threshold
                         )
@@ -693,7 +715,7 @@ class ScanWorker:
                 break
 
         logger.warning(f"全仓扫描达到最大轮次 ({max_iterations})，停止")
-        return [], None
+        return [], None, iteration
 
     async def _call_ai(
         self, messages: list[dict], budget: ScanTokenBudget | None = None

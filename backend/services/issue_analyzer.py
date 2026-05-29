@@ -14,6 +14,9 @@ from backend.core.config import (
 )
 from backend.models.database import AppConfig, async_session
 from backend.services.ai_reviewer.api_client import AIApiClient
+from backend.services.ai_reviewer.token_tracker import TokenTracker
+from backend.services.ai_reviewer.message_utils import estimate_messages_tokens
+from backend.core.model_context import get_model_context_manager
 from backend.services.ai_reviewer.tools import (
     FileToolHandler,
     GitToolHandler,
@@ -487,8 +490,9 @@ class IssueAnalyzer:
         except Exception:
             pass
         iteration = 0
-        total_prompt_tokens = 0
-        total_completion_tokens = 0
+        tracker = TokenTracker()
+        model_ctx_mgr = get_model_context_manager()
+        safe_context = model_ctx_mgr.calculate_safe_context(settings.openai_model, 0.8)
 
         while iteration < max_iterations:
             iteration += 1
@@ -512,8 +516,9 @@ class IssueAnalyzer:
                     "suggested_assignees": [],
                     "suggested_milestone": None,
                     "duplicate_of": None,
-                    "prompt_tokens": 0,
-                    "completion_tokens": 0,
+                    "prompt_tokens": tracker.prompt_tokens,
+                    "completion_tokens": tracker.completion_tokens,
+                    "tool_rounds": iteration,
                     "estimated_cost": 0,
                 }
 
@@ -529,17 +534,14 @@ class IssueAnalyzer:
                     "suggested_assignees": [],
                     "suggested_milestone": None,
                     "duplicate_of": None,
-                    "prompt_tokens": total_prompt_tokens,
-                    "completion_tokens": total_completion_tokens,
+                    "prompt_tokens": tracker.prompt_tokens,
+                    "completion_tokens": tracker.completion_tokens,
+                    "tool_rounds": iteration,
                     "estimated_cost": 0,
                 }
 
             # 累积 token 使用
-            if hasattr(response, "usage") and response.usage:
-                total_prompt_tokens += getattr(response.usage, "prompt_tokens", 0) or 0
-                total_completion_tokens += (
-                    getattr(response.usage, "completion_tokens", 0) or 0
-                )
+            tracker.accumulate(response)
 
             # 检查是否有工具调用
             tool_calls = (
@@ -552,21 +554,17 @@ class IssueAnalyzer:
                 result = self._parse_analysis_result(review_text)
 
                 # 计算成本
-                price_prompt = settings.issue_price_per_1k_prompt
-                price_completion = settings.issue_price_per_1k_completion
-                estimated_cost = (total_prompt_tokens / 1000) * price_prompt + (
-                    total_completion_tokens / 1000
-                ) * price_completion
-
-                result["prompt_tokens"] = total_prompt_tokens
-                result["completion_tokens"] = total_completion_tokens
-                result["estimated_cost"] = (
-                    int(estimated_cost * 100) if estimated_cost else 0
+                result["prompt_tokens"] = tracker.prompt_tokens
+                result["completion_tokens"] = tracker.completion_tokens
+                result["tool_rounds"] = iteration
+                result["estimated_cost"] = tracker.calculate_cost(
+                    settings.issue_price_per_1k_prompt,
+                    settings.issue_price_per_1k_completion,
                 )
 
                 logger.info(
                     f"Issue #{issue_info.get('issue_number')} 分析完成 "
-                    f"({iteration}轮对话, tokens: {total_prompt_tokens}+{total_completion_tokens})"
+                    f"({iteration}轮对话, tokens: {tracker.prompt_tokens}+{tracker.completion_tokens})"
                 )
                 return result
 
@@ -619,6 +617,10 @@ class IssueAnalyzer:
                         }
                     )
 
+            # 每轮工具调用处理后记录上下文使用率
+            current_tokens = estimate_messages_tokens(messages, model_ctx_mgr)
+            tracker.log_context_usage(current_tokens, safe_context, iteration)
+
         # 达到最大迭代次数，做最后一次 API 调用强制 AI 返回结果
         logger.warning(
             f"Issue 分析达到最大迭代次数 ({max_iterations})，强制生成最终结果"
@@ -654,13 +656,11 @@ class IssueAnalyzer:
                 "duplicate_of": None,
             }
 
-        price_prompt = settings.issue_price_per_1k_prompt
-        price_completion = settings.issue_price_per_1k_completion
-        estimated_cost = (total_prompt_tokens / 1000) * price_prompt + (
-            total_completion_tokens / 1000
-        ) * price_completion
-
-        result["prompt_tokens"] = total_prompt_tokens
-        result["completion_tokens"] = total_completion_tokens
-        result["estimated_cost"] = int(estimated_cost * 100) if estimated_cost else 0
+        result["prompt_tokens"] = tracker.prompt_tokens
+        result["completion_tokens"] = tracker.completion_tokens
+        result["tool_rounds"] = max_iterations
+        result["estimated_cost"] = tracker.calculate_cost(
+            settings.issue_price_per_1k_prompt,
+            settings.issue_price_per_1k_completion,
+        )
         return result

@@ -8,7 +8,9 @@ from fastapi import APIRouter, Depends
 from sqlalchemy import select, func, desc, case, and_
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from backend.models.database import PRReview, ReviewComment
+from backend.models.database import PRReview, ReviewComment, IssueAnalysis
+from backend.models.agent_team_models import AgentTeamTask
+from backend.models.scan_models import RepoScan
 from backend.webui.deps import (
     get_db,
     build_user_scope_filter,
@@ -116,6 +118,50 @@ async def get_stats(
 
     avg_score = float(round(stats_row.avg_score, 1)) if stats_row.avg_score else 0.0
 
+    # ── 其他模块 Token 聚合（Issue分析、Agent任务、仓库扫描）──
+    issue_tokens = (await db.execute(
+        select(
+            func.coalesce(func.sum(IssueAnalysis.prompt_tokens), 0).label("p"),
+            func.coalesce(func.sum(IssueAnalysis.completion_tokens), 0).label("c"),
+            func.coalesce(func.sum(IssueAnalysis.estimated_cost), 0).label("e"),
+        ).where(IssueAnalysis.status == "completed")
+    )).one()
+
+    agent_tokens = (await db.execute(
+        select(
+            func.coalesce(func.sum(AgentTeamTask.prompt_tokens), 0).label("p"),
+            func.coalesce(func.sum(AgentTeamTask.completion_tokens), 0).label("c"),
+            func.coalesce(func.sum(AgentTeamTask.estimated_cost), 0).label("e"),
+        ).where(AgentTeamTask.status == "completed")
+    )).one()
+
+    scan_tokens = (await db.execute(
+        select(
+            func.coalesce(func.sum(RepoScan.prompt_tokens), 0).label("p"),
+            func.coalesce(func.sum(RepoScan.completion_tokens), 0).label("c"),
+            func.coalesce(func.sum(RepoScan.estimated_cost), 0).label("e"),
+        ).where(RepoScan.status == "completed")
+    )).one()
+
+    total_prompt = (
+        int(stats_row.total_prompt_tokens or 0)
+        + int(issue_tokens.p or 0)
+        + int(agent_tokens.p or 0)
+        + int(scan_tokens.p or 0)
+    )
+    total_completion = (
+        int(stats_row.total_completion_tokens or 0)
+        + int(issue_tokens.c or 0)
+        + int(agent_tokens.c or 0)
+        + int(scan_tokens.c or 0)
+    )
+    total_cost = (
+        int(stats_row.total_estimated_cost or 0)
+        + int(issue_tokens.e or 0)
+        + int(agent_tokens.e or 0)
+        + int(scan_tokens.e or 0)
+    )
+
     result = {
         "total": int(stats_row.total or 0),
         "completed": int(stats_row.completed or 0),
@@ -126,9 +172,9 @@ async def get_stats(
         "changes_requested": int(stats_row.changes_requested or 0),
         "avg_score": avg_score,
         "comment_count": comment_count,
-        "total_prompt_tokens": int(stats_row.total_prompt_tokens or 0),
-        "total_completion_tokens": int(stats_row.total_completion_tokens or 0),
-        "total_estimated_cost": int(stats_row.total_estimated_cost or 0),
+        "total_prompt_tokens": total_prompt,
+        "total_completion_tokens": total_completion,
+        "total_estimated_cost": total_cost,
     }
 
     # LRU 缓存
@@ -260,7 +306,7 @@ async def get_chart_data(
         repo_query = repo_query.where(scope_filter)
     repo_rows = (await db.execute(repo_query)).all()
 
-    # 4. Token 消耗趋势
+    # 4. Token 消耗趋势（合并所有模块）
     token_query = (
         select(
             func.date(PRReview.created_at).label("day"),
@@ -282,7 +328,29 @@ async def get_chart_data(
         if row.day:
             idx = (row.day - thirty_days_ago.date()).days
             if 0 <= idx < len(labels):
-                token_data[idx] = int(row.tokens)
+                token_data[idx] += int(row.tokens)
+
+    # ── 其他模块 token 趋势 ──
+    for model_cls, date_col in [
+        (IssueAnalysis, IssueAnalysis.completed_at),
+        (AgentTeamTask, AgentTeamTask.completed_at),
+        (RepoScan, RepoScan.completed_at),
+    ]:
+        extra_rows = (await db.execute(
+            select(
+                func.date(date_col).label("day"),
+                (func.coalesce(func.sum(model_cls.prompt_tokens), 0)
+                 + func.coalesce(func.sum(model_cls.completion_tokens), 0)).label("tokens"),
+            )
+            .where(date_col >= thirty_days_ago)
+            .where(model_cls.status == "completed")
+            .group_by(func.date(date_col))
+        )).all()
+        for row in extra_rows:
+            if row.day:
+                idx = (row.day - thirty_days_ago.date()).days
+                if 0 <= idx < len(labels):
+                    token_data[idx] += int(row.tokens)
 
     result = {
         "trend": {
