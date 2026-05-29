@@ -253,6 +253,7 @@ class FullStackExpertAgent:
         tool_calls_count = 0
         token_tracker = TokenTracker()
 
+        # 延迟导入：避免 agent_team → ai_reviewer → model_context 循环依赖
         from backend.core.model_context import get_model_context_manager
         from backend.services.ai_reviewer.message_utils import estimate_messages_tokens
 

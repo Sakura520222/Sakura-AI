@@ -563,8 +563,11 @@ class IssueAnalyzer:
                 )
 
                 logger.info(
-                    f"Issue #{issue_info.get('issue_number')} 分析完成 "
-                    f"({iteration}轮对话, tokens: {tracker.prompt_tokens}+{tracker.completion_tokens})"
+                    "Issue #{} 分析完成 ({}轮对话, tokens: {}+{})",
+                    issue_info.get("issue_number"),
+                    iteration,
+                    tracker.prompt_tokens,
+                    tracker.completion_tokens,
                 )
                 return result
 

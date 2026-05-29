@@ -1,5 +1,6 @@
 """Agent Team 取消信号传播与 User Prompt 消费测试。"""
 
+import asyncio
 from dataclasses import dataclass
 
 import pytest

@@ -169,8 +169,7 @@ class AgentTeamWorker:
             # 提前计算 estimated_cost（供成功/失败两分支共用）
             s = get_settings()
             cost_tracker = TokenTracker()
-            cost_tracker.prompt_tokens = outcome.prompt_tokens
-            cost_tracker.completion_tokens = outcome.completion_tokens
+            cost_tracker.add_tokens(outcome.prompt_tokens, outcome.completion_tokens)
             estimated_cost = cost_tracker.calculate_cost(
                 s.review_price_per_1k_prompt, s.review_price_per_1k_completion,
             )

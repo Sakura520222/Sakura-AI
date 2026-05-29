@@ -89,6 +89,11 @@ class TokenTracker:
         self.completion_tokens += other.completion_tokens
         self.api_call_count += other.api_call_count
 
+    def add_tokens(self, prompt_tokens: int, completion_tokens: int) -> None:
+        """直接累加 token 数值（无需构造临时 TokenTracker 对象）。"""
+        self.prompt_tokens += prompt_tokens
+        self.completion_tokens += completion_tokens
+
     @classmethod
     def from_dict(cls, data: dict) -> TokenTracker:
         """从字典创建 TokenTracker"""

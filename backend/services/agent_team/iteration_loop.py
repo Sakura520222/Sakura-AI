@@ -164,10 +164,7 @@ class IterationLoopService:
                     guidance_callback=self._consume_pending_prompts,
                 )
                 total_tool_calls += fs_result.tool_calls_count
-                _agent_tracker = TokenTracker()
-                _agent_tracker.prompt_tokens = fs_result.prompt_tokens
-                _agent_tracker.completion_tokens = fs_result.completion_tokens
-                tracker.merge(_agent_tracker)
+                tracker.add_tokens(fs_result.prompt_tokens, fs_result.completion_tokens)
                 await self._complete_session(
                     getattr(expert, "session_id", None), fs_result.tool_calls_count
                 )
@@ -276,10 +273,7 @@ class IterationLoopService:
                 guidance_callback=self._consume_pending_prompts,
             )
             total_tool_calls += rev_result.tool_calls_count
-            _agent_tracker = TokenTracker()
-            _agent_tracker.prompt_tokens = rev_result.prompt_tokens
-            _agent_tracker.completion_tokens = rev_result.completion_tokens
-            tracker.merge(_agent_tracker)
+            tracker.add_tokens(rev_result.prompt_tokens, rev_result.completion_tokens)
             await self._complete_session(
                 getattr(reviewer, "session_id", None), rev_result.tool_calls_count
             )

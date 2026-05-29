@@ -292,8 +292,7 @@ class ScanWorker:
             # 11. 计算 estimated_cost
             s = get_settings()
             cost_tracker = TokenTracker()
-            cost_tracker.prompt_tokens = budget.prompt_tokens
-            cost_tracker.completion_tokens = budget.completion_tokens
+            cost_tracker.add_tokens(budget.prompt_tokens, budget.completion_tokens)
             estimated_cost = cost_tracker.calculate_cost(
                 s.review_price_per_1k_prompt, s.review_price_per_1k_completion,
             )
@@ -691,6 +690,7 @@ class ScanWorker:
                     )
                     tracker.log_context_usage(current_tokens, safe_context, iteration)
                 except Exception:
+                    # 估算失败不影响扫描流程，跳过日志即可
                     current_tokens = 0
 
                 # 上下文压缩检查（使用扫描独立配置）
