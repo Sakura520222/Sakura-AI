@@ -37,6 +37,7 @@ from backend.services.agent_team.professional_reviewer import (
     ReviewResult,
 )
 from backend.services.agent_team.workspace_service import AgentTeamWorkspaceService
+from backend.services.ai_reviewer.token_tracker import TokenTracker
 
 
 @dataclass
@@ -94,8 +95,7 @@ class IterationLoopService:
     ) -> IterationOutcome:
         """运行迭代循环。"""
         total_tool_calls = 0
-        total_prompt_tokens = 0
-        total_completion_tokens = 0
+        tracker = TokenTracker()
         feedback = ""
         resume_cursor = self.resume_cursor
         start_iteration = resume_cursor.iteration_number if resume_cursor else 1
@@ -107,8 +107,8 @@ class IterationLoopService:
                     reason="任务已取消",
                     iterations=iteration - 1,
                     total_tool_calls=total_tool_calls,
-                    prompt_tokens=total_prompt_tokens,
-                    completion_tokens=total_completion_tokens,
+                    prompt_tokens=tracker.prompt_tokens,
+                    completion_tokens=tracker.completion_tokens,
                 )
             logger.info(
                 "Agent 迭代循环 第 {}/{} 轮 - 任务: {}",
@@ -164,8 +164,7 @@ class IterationLoopService:
                     guidance_callback=self._consume_pending_prompts,
                 )
                 total_tool_calls += fs_result.tool_calls_count
-                total_prompt_tokens += fs_result.prompt_tokens
-                total_completion_tokens += fs_result.completion_tokens
+                tracker.add_tokens(fs_result.prompt_tokens, fs_result.completion_tokens)
                 await self._complete_session(
                     getattr(expert, "session_id", None), fs_result.tool_calls_count
                 )
@@ -199,8 +198,8 @@ class IterationLoopService:
                     fullstack_result=fs_result,
                     modified_files=fs_result.modified_files,
                     total_tool_calls=total_tool_calls,
-                    prompt_tokens=total_prompt_tokens,
-                    completion_tokens=total_completion_tokens,
+                    prompt_tokens=tracker.prompt_tokens,
+                    completion_tokens=tracker.completion_tokens,
                 )
 
             if not fs_result.success:
@@ -217,8 +216,8 @@ class IterationLoopService:
                     iterations=iteration,
                     fullstack_result=fs_result,
                     total_tool_calls=total_tool_calls,
-                    prompt_tokens=total_prompt_tokens,
-                    completion_tokens=total_completion_tokens,
+                    prompt_tokens=tracker.prompt_tokens,
+                    completion_tokens=tracker.completion_tokens,
                 )
 
             logger.info(
@@ -243,8 +242,8 @@ class IterationLoopService:
                     fullstack_result=fs_result,
                     modified_files=fs_result.modified_files,
                     total_tool_calls=total_tool_calls,
-                    prompt_tokens=total_prompt_tokens,
-                    completion_tokens=total_completion_tokens,
+                    prompt_tokens=tracker.prompt_tokens,
+                    completion_tokens=tracker.completion_tokens,
                 )
             diff_summary = ""
             try:
@@ -274,8 +273,7 @@ class IterationLoopService:
                 guidance_callback=self._consume_pending_prompts,
             )
             total_tool_calls += rev_result.tool_calls_count
-            total_prompt_tokens += rev_result.prompt_tokens
-            total_completion_tokens += rev_result.completion_tokens
+            tracker.add_tokens(rev_result.prompt_tokens, rev_result.completion_tokens)
             await self._complete_session(
                 getattr(reviewer, "session_id", None), rev_result.tool_calls_count
             )
@@ -290,6 +288,15 @@ class IterationLoopService:
             )
             await self.conversation_context.record_reviewer_turn(iteration, rev_result)
 
+            # 每轮迭代汇总 token 使用
+            logger.info(
+                "📊 Agent 第 {}/{} 轮完成 | "
+                "累计 tokens: {}+{}, api_calls={}",
+                iteration, max_iterations,
+                tracker.prompt_tokens, tracker.completion_tokens,
+                tracker.api_call_count,
+            )
+
             if rev_result.passed:
                 return IterationOutcome(
                     success=True,
@@ -299,8 +306,8 @@ class IterationLoopService:
                     review_result=rev_result,
                     modified_files=fs_result.modified_files,
                     total_tool_calls=total_tool_calls,
-                    prompt_tokens=total_prompt_tokens,
-                    completion_tokens=total_completion_tokens,
+                    prompt_tokens=tracker.prompt_tokens,
+                    completion_tokens=tracker.completion_tokens,
                 )
 
             # ── 未通过：准备反馈 ──
@@ -320,8 +327,8 @@ class IterationLoopService:
             review_result=rev_result,
             modified_files=fs_result.modified_files if fs_result else [],
             total_tool_calls=total_tool_calls,
-            prompt_tokens=total_prompt_tokens,
-            completion_tokens=total_completion_tokens,
+            prompt_tokens=tracker.prompt_tokens,
+            completion_tokens=tracker.completion_tokens,
         )
 
     async def _restore_fullstack_result(self, iteration: int) -> FullStackResult:

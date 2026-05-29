@@ -9,6 +9,10 @@ from sqlalchemy import select, func, desc, case, and_
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.models.database import PRReview, ReviewComment
+from backend.services.dashboard_stats_service import (
+    fetch_module_token_stats,
+    fetch_token_trend,
+)
 from backend.webui.deps import (
     get_db,
     build_user_scope_filter,
@@ -116,6 +120,12 @@ async def get_stats(
 
     avg_score = float(round(stats_row.avg_score, 1)) if stats_row.avg_score else 0.0
 
+    # 合并所有模块的 token / cost
+    module_stats = await fetch_module_token_stats(db)
+    total_prompt = int(stats_row.total_prompt_tokens or 0) + module_stats["total_prompt"]
+    total_completion = int(stats_row.total_completion_tokens or 0) + module_stats["total_completion"]
+    total_cost = int(stats_row.total_estimated_cost or 0) + module_stats["total_cost"]
+
     result = {
         "total": int(stats_row.total or 0),
         "completed": int(stats_row.completed or 0),
@@ -126,9 +136,9 @@ async def get_stats(
         "changes_requested": int(stats_row.changes_requested or 0),
         "avg_score": avg_score,
         "comment_count": comment_count,
-        "total_prompt_tokens": int(stats_row.total_prompt_tokens or 0),
-        "total_completion_tokens": int(stats_row.total_completion_tokens or 0),
-        "total_estimated_cost": int(stats_row.total_estimated_cost or 0),
+        "total_prompt_tokens": total_prompt,
+        "total_completion_tokens": total_completion,
+        "total_estimated_cost": total_cost,
     }
 
     # LRU 缓存
@@ -260,29 +270,8 @@ async def get_chart_data(
         repo_query = repo_query.where(scope_filter)
     repo_rows = (await db.execute(repo_query)).all()
 
-    # 4. Token 消耗趋势
-    token_query = (
-        select(
-            func.date(PRReview.created_at).label("day"),
-            (
-                func.coalesce(func.sum(PRReview.prompt_tokens), 0)
-                + func.coalesce(func.sum(PRReview.completion_tokens), 0)
-            ).label("tokens"),
-        )
-        .where(PRReview.created_at >= thirty_days_ago)
-        .where(PRReview.status == "completed")
-        .group_by(func.date(PRReview.created_at))
-    )
-    if scope_filter is not None:
-        token_query = token_query.where(scope_filter)
-    token_rows = (await db.execute(token_query)).all()
-
-    token_data = [0] * len(labels)
-    for row in token_rows:
-        if row.day:
-            idx = (row.day - thirty_days_ago.date()).days
-            if 0 <= idx < len(labels):
-                token_data[idx] = int(row.tokens)
+    # 4. Token 消耗趋势（合并所有模块）
+    token_data = await fetch_token_trend(db, thirty_days_ago, labels, scope_filter)
 
     result = {
         "trend": {

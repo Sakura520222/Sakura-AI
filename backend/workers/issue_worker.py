@@ -446,7 +446,15 @@ class IssueWorker:
                         )
 
                     logger.info(
-                        f"[{task_id}] Issue 分析完成: {repo_full_name}#{issue_number}"
+                        "[{}] Issue 分析完成: {}#{} | "
+                        "轮数={}, tokens={}+{}, cost={}",
+                        task_id,
+                        repo_full_name,
+                        issue_number,
+                        analysis_result.get("tool_rounds", "?"),
+                        analysis_result.get("prompt_tokens", 0),
+                        analysis_result.get("completion_tokens", 0),
+                        analysis_result.get("estimated_cost", 0),
                     )
 
                 except Exception as e:
