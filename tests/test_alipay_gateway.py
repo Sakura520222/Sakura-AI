@@ -64,7 +64,8 @@ class TestCreatePayment:
             )
 
         assert result.success is True
-        assert "openapi-sandbox.dl.alipaydev.com" in result.checkout_url
+        from urllib.parse import urlparse
+        assert urlparse(result.checkout_url).hostname == "openapi-sandbox.dl.alipaydev.com"
 
     @pytest.mark.asyncio
     async def test_sign_error(self, gateway):
@@ -169,12 +170,12 @@ class TestVerifyWebhook:
         event = gateway.verify_webhook(payload, {})
         assert event.event_type == WebhookEventType.UNKNOWN
 
-    def test_no_public_key_skip_verify(self):
-        """无支付宝公钥时跳过验签（仍解析事件）"""
+    def test_no_public_key_fails_closed(self):
+        """缺少支付宝公钥时拒绝处理回调，避免绕过验签"""
         gw = AlipayGateway(
             api_key="test",
             webhook_secret="test",
-            alipay_public_key="",  # 空 = 跳过验签
+            alipay_public_key="",
         )
         params = {
             "trade_no": "2026xxx",
@@ -186,8 +187,9 @@ class TestVerifyWebhook:
         payload = "&".join(f"{k}={v}" for k, v in params.items()).encode("utf-8")
 
         event = gw.verify_webhook(payload, {})
-        assert event.event_type == WebhookEventType.PAYMENT_COMPLETED
-        assert event.amount_cents == 100
+        assert event.event_type == WebhookEventType.UNKNOWN
+        assert event.order_no == ""
+        assert event.amount_cents == 0
 
 
 class TestRefund:

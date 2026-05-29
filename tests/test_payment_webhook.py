@@ -65,7 +65,7 @@ class TestStripeWebhookEndpoint:
             "backend.services.payment_service.PaymentService.confirm_payment",
             new_callable=AsyncMock,
             return_value=mock_order,
-        ):
+        ) as mock_confirm_payment:
             from backend.api.webhook import handle_stripe_webhook
             from fastapi import Request
 
@@ -80,6 +80,12 @@ class TestStripeWebhookEndpoint:
             body = json.loads(body_text)
             assert body["status"] == "processed"
             assert body["event"] == "payment_completed"
+            mock_confirm_payment.assert_awaited_once_with(
+                order_no="ORD20240101000000ABCD1234",
+                provider_tx_id="cs_test_123",
+                paid_amount_cents=1000,
+                paid_currency="cny",
+            )
 
     @pytest.mark.asyncio
     async def test_webhook_payment_expired(
@@ -170,3 +176,69 @@ class TestStripeWebhookEndpoint:
             assert response.status_code == 400
             body = json.loads(response.body.decode())
             assert "error" in body["status"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("handler_name", "provider", "expected_body"),
+    [
+        ("handle_paddle_webhook", "paddle", b'{"status":"processed","event":"payment_completed"}'),
+        ("handle_alipay_webhook", "alipay", b"success"),
+        (
+            "handle_nowpayments_webhook",
+            "nowpayments",
+            b'{"status":"processed","event":"payment_completed"}',
+        ),
+    ],
+)
+async def test_payment_completed_webhooks_pass_amount_to_confirmation(
+    handler_name,
+    provider,
+    expected_body,
+    mock_db_session,
+    mock_gateway,
+):
+    from backend.api import webhook
+    from backend.models.payment_models import OrderStatus
+    from backend.services.payment.gateway_base import WebhookEvent, WebhookEventType
+    from fastapi import Request
+
+    event = WebhookEvent(
+        event_type=WebhookEventType.PAYMENT_COMPLETED,
+        provider_tx_id=f"{provider}_tx_123",
+        order_no=f"ORD_{provider.upper()}_AMOUNT",
+        amount_cents=2500,
+        currency="CNY",
+    )
+    mock_gateway.verify_webhook.return_value = event
+
+    mock_order = MagicMock()
+    mock_order.order_no = event.order_no
+    mock_order.status = OrderStatus.FULFILLED.value
+
+    with patch(
+        "backend.api.webhook.get_async_session",
+        return_value=mock_db_session,
+    ), patch(
+        "backend.services.payment.get_gateway",
+        new_callable=AsyncMock,
+        return_value=mock_gateway,
+    ), patch(
+        "backend.services.payment_service.PaymentService.confirm_payment",
+        new_callable=AsyncMock,
+        return_value=mock_order,
+    ) as mock_confirm_payment:
+        mock_request = MagicMock(spec=Request)
+        mock_request.body = AsyncMock(return_value=b'{"test": true}')
+        mock_request.headers = {}
+
+        response = await getattr(webhook, handler_name)(mock_request)
+
+    assert response.status_code == 200
+    assert response.body == expected_body
+    mock_confirm_payment.assert_awaited_once_with(
+        order_no=event.order_no,
+        provider_tx_id=event.provider_tx_id,
+        paid_amount_cents=event.amount_cents,
+        paid_currency=event.currency,
+    )
