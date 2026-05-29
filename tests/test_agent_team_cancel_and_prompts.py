@@ -246,7 +246,8 @@ def test_is_task_cancel_requested_returns_false_for_unknown():
 # ── Git workspace: Python project detection ──────────────────
 
 
-def test_install_workspace_dependencies_skips_non_python(tmp_path):
+@pytest.mark.asyncio
+async def test_install_workspace_dependencies_skips_non_python(tmp_path):
     """Non-Python projects should not create .venv or call pip."""
     from unittest.mock import AsyncMock, MagicMock
 
@@ -263,7 +264,8 @@ def test_install_workspace_dependencies_skips_non_python(tmp_path):
     executor.run.assert_not_awaited()
 
 
-def test_install_workspace_dependencies_creates_venv_for_python(tmp_path):
+@pytest.mark.asyncio
+async def test_install_workspace_dependencies_creates_venv_for_python(tmp_path):
     """Python projects with pyproject.toml should trigger venv creation."""
     (tmp_path / "pyproject.toml").write_text("[project]\nname='test'\n")
 
@@ -273,7 +275,12 @@ def test_install_workspace_dependencies_creates_venv_for_python(tmp_path):
     executor = MagicMock()
     executor.run = AsyncMock()
 
-    import asyncio
+    with patch(
+        "backend.services.agent_team.git_workspace_service.get_dynamic_config",
+        new_callable=AsyncMock,
+        return_value=None,
+    ):
+        await service._install_workspace_dependencies(executor, tmp_path)
 
     async def _run():
         with patch("backend.services.agent_team.git_workspace_service.get_dynamic_config", new_callable=AsyncMock, return_value=None):
