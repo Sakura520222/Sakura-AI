@@ -737,10 +737,65 @@ class PaymentService:
         # 统一最低金额保护
         return max(converted, 100)
 
+    async def _validate_payment_amount(
+        self,
+        order: Order,
+        paid_amount_cents: Optional[int],
+        paid_currency: Optional[str],
+    ) -> None:
+        """Validate webhook amount before fulfilling an order."""
+        if paid_amount_cents is None:
+            logger.warning(
+                "Payment confirmation without amount validation: order_no={}, provider={}",
+                order.order_no,
+                order.payment_provider,
+            )
+            return
+
+        try:
+            paid_amount = int(paid_amount_cents)
+        except (TypeError, ValueError) as exc:
+            raise PaymentError(
+                f"Payment amount mismatch for order {order.order_no}: "
+                f"invalid paid amount {paid_amount_cents!r}"
+            ) from exc
+
+        expected_amount = int(order.amount_cents or 0)
+        order_currency = str(order.currency or "").upper()
+        webhook_currency = str(paid_currency or order_currency or "").upper()
+
+        if expected_amount > 0 and paid_amount <= 0:
+            raise PaymentError(
+                f"Payment amount mismatch for order {order.order_no}: "
+                f"expected {expected_amount} {order_currency or 'UNKNOWN'} cents, "
+                f"got {paid_amount} {webhook_currency or 'UNKNOWN'} cents"
+            )
+
+        if order_currency and webhook_currency and webhook_currency != order_currency:
+            logger.warning(
+                "Payment currency differs for order {}: expected {} {}, got {} {}; "
+                "skipping strict amount comparison",
+                order.order_no,
+                expected_amount,
+                order_currency,
+                paid_amount,
+                webhook_currency,
+            )
+            return
+
+        if paid_amount != expected_amount:
+            raise PaymentError(
+                f"Payment amount mismatch for order {order.order_no}: "
+                f"expected {expected_amount} {order_currency or 'UNKNOWN'} cents, "
+                f"got {paid_amount} {webhook_currency or 'UNKNOWN'} cents"
+            )
+
     async def confirm_payment(
         self,
         order_no: str,
         provider_tx_id: str,
+        paid_amount_cents: Optional[int] = None,
+        paid_currency: Optional[str] = None,
     ) -> Order:
         """Confirm payment for a PENDING order (PENDING -> PAID -> FULFILLED)"""
         # 仅按 order_no 查询，provider_tx_id 在创建时设为 order_no，
@@ -757,6 +812,12 @@ class PaymentService:
                 order.status,
             )
             return order
+
+        await self._validate_payment_amount(
+            order,
+            paid_amount_cents=paid_amount_cents,
+            paid_currency=paid_currency,
+        )
 
         user = await self.session.get(TelegramUser, order.user_id)
         if not user:

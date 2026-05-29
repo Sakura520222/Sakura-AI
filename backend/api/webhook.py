@@ -1749,6 +1749,8 @@ async def handle_stripe_webhook(
                     order = await svc.confirm_payment(
                         order_no=event.order_no,
                         provider_tx_id=event.provider_tx_id,
+                        paid_amount_cents=event.amount_cents,
+                        paid_currency=event.currency,
                     )
                     await db.commit()
                     logger.info(
@@ -1852,6 +1854,8 @@ async def handle_paddle_webhook(
                     order = await svc.confirm_payment(
                         order_no=event.order_no,
                         provider_tx_id=event.provider_tx_id,
+                        paid_amount_cents=event.amount_cents,
+                        paid_currency=event.currency,
                     )
                     await db.commit()
                     logger.info(
@@ -1957,6 +1961,8 @@ async def handle_alipay_webhook(
                     order = await svc.confirm_payment(
                         order_no=event.order_no,
                         provider_tx_id=event.provider_tx_id,
+                        paid_amount_cents=event.amount_cents,
+                        paid_currency=event.currency,
                     )
                     await db.commit()
                     logger.info(
@@ -2026,6 +2032,8 @@ async def handle_nowpayments_webhook(
                     order = await svc.confirm_payment(
                         order_no=event.order_no,
                         provider_tx_id=event.provider_tx_id,
+                        paid_amount_cents=event.amount_cents,
+                        paid_currency=event.currency,
                     )
                     await db.commit()
                     logger.info(

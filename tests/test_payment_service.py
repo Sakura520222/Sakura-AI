@@ -460,6 +460,7 @@ class TestConfirmPayment:
             user_id=sample_user.id,
             plan_id=plan.id,
             amount_cents=1000,
+            currency="CNY",
             status=OrderStatus.PENDING.value,
             payment_provider="stripe",
             provider_tx_id="cs_test_123",
@@ -488,10 +489,62 @@ class TestConfirmPayment:
         confirmed = await svc.confirm_payment(
             order_no="ORD20240101000000ABCD1234",
             provider_tx_id="cs_test_123",
+            paid_amount_cents=1000,
+            paid_currency="CNY",
         )
 
         assert confirmed.status == OrderStatus.FULFILLED.value
         assert confirmed.paid_at is not None
+
+    async def test_confirm_payment_rejects_amount_mismatch(
+        self, svc, mock_session, sample_user
+    ):
+        from backend.models.payment_models import Order
+
+        plan = Plan(
+            id=1,
+            name="Test Plan",
+            plan_type=PlanType.ONE_TIME.value,
+            price_cents=1000,
+            is_active=True,
+            pr_quota_bonus=5,
+        )
+        order = Order(
+            id=1,
+            order_no="ORD_AMOUNT_MISMATCH",
+            user_id=sample_user.id,
+            plan_id=plan.id,
+            amount_cents=1000,
+            currency="CNY",
+            status=OrderStatus.PENDING.value,
+            payment_provider="stripe",
+            provider_tx_id="cs_pending",
+        )
+
+        mock_result = MagicMock()
+        mock_result.scalar_one_or_none.return_value = order
+        mock_session.execute.return_value = mock_result
+
+        async def mock_get(model, pk):
+            if model is TelegramUser and pk == sample_user.id:
+                return sample_user
+            return None
+
+        mock_session.get = AsyncMock(side_effect=mock_get)
+        svc.get_plan = AsyncMock(return_value=plan)
+
+        with pytest.raises(PaymentError, match="Payment amount mismatch"):
+            await svc.confirm_payment(
+                order_no="ORD_AMOUNT_MISMATCH",
+                provider_tx_id="cs_underpaid",
+                paid_amount_cents=999,
+                paid_currency="CNY",
+            )
+
+        assert order.status == OrderStatus.PENDING.value
+        assert order.provider_tx_id == "cs_pending"
+        assert order.paid_at is None
+        mock_session.flush.assert_not_awaited()
 
     async def test_confirm_payment_idempotent(self, svc, mock_session):
         from backend.models.payment_models import Order
