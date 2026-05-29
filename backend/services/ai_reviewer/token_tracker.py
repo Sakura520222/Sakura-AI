@@ -45,9 +45,12 @@ class TokenTracker:
             self.completion_tokens += completion
             self.api_call_count += 1
             logger.debug(
-                f"Token 累积: +{prompt}+{completion} "
-                f"(累计: {self.prompt_tokens}+{self.completion_tokens}, "
-                f"{self.api_call_count}次调用)"
+                "Token 累积: +{}+{} (累计: {}+{}, {}次调用)",
+                prompt,
+                completion,
+                self.prompt_tokens,
+                self.completion_tokens,
+                self.api_call_count,
             )
 
     def log_context_usage(

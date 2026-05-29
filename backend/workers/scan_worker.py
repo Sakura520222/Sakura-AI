@@ -690,7 +690,7 @@ class ScanWorker:
                     )
                     tracker.log_context_usage(current_tokens, safe_context, iteration)
                 except Exception:
-                    # 估算失败不影响扫描流程，跳过日志即可
+                    logger.warning("token estimation failed, skipping", exc_info=True)
                     current_tokens = 0
 
                 # 上下文压缩检查（使用扫描独立配置）

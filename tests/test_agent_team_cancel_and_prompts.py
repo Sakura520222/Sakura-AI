@@ -1,6 +1,5 @@
 """Agent Team 取消信号传播与 User Prompt 消费测试。"""
 
-import asyncio
 from dataclasses import dataclass
 
 import pytest
@@ -256,10 +255,7 @@ async def test_install_workspace_dependencies_skips_non_python(tmp_path):
     executor = MagicMock()
     executor.run = AsyncMock()
 
-    import asyncio
-    asyncio.run(
-        service._install_workspace_dependencies(executor, tmp_path)
-    )
+    await service._install_workspace_dependencies(executor, tmp_path)
 
     assert not (tmp_path / ".venv").exists()
     executor.run.assert_not_awaited()
@@ -283,11 +279,6 @@ async def test_install_workspace_dependencies_creates_venv_for_python(tmp_path):
     ):
         await service._install_workspace_dependencies(executor, tmp_path)
 
-    async def _run():
-        with patch("backend.services.agent_team.git_workspace_service.get_dynamic_config", new_callable=AsyncMock, return_value=None):
-            await service._install_workspace_dependencies(executor, tmp_path)
-        assert executor.run.call_count >= 1
-        calls_str = " ".join(str(c) for c in executor.run.call_args_list)
-        assert "venv" in calls_str
-
-    asyncio.run(_run())
+    assert executor.run.call_count >= 1
+    calls_str = " ".join(str(c) for c in executor.run.call_args_list)
+    assert "venv" in calls_str
