@@ -81,6 +81,16 @@
             });
         });
 
+        // Activity stream events (PR/Issue/Scan conversation flow)
+        eventSource.addEventListener('activity:event', function(e) {
+            try {
+                var data = JSON.parse(e.data);
+                window.dispatchEvent(new CustomEvent('sse:activity-event', { detail: data }));
+            } catch(err) {
+                console.error('[SSE] 解析 activity 事件失败:', err);
+            }
+        });
+
         eventSource.onopen = function() {
             reconnectDelay = 1000;
             console.log('[SSE] 连接已建立');

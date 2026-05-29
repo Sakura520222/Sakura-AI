@@ -126,6 +126,20 @@ class ReviewWorker:
         self._cancel_events: Dict[str, asyncio.Event] = {}
 
     @staticmethod
+    async def _log_activity(
+        review_id: int,
+        event_type: str,
+        content: dict[str, Any] | None = None,
+    ) -> None:
+        """记录审查活动事件（持久化 + SSE 推送）。"""
+        try:
+            from backend.services.activity_event_service import ActivityEventService
+
+            await ActivityEventService.log_event("pr", review_id, event_type, content)
+        except Exception as exc:
+            logger.debug("审查活动事件记录失败: {}", exc)
+
+    @staticmethod
     def _make_task_key(pr_info: Dict[str, Any]) -> str:
         """Generate unique task key: owner/repo#pr_number"""
         return f"{pr_info['repo_full_name']}#{pr_info['pr_number']}"
@@ -227,6 +241,10 @@ class ReviewWorker:
                     )
 
                 # 1. 分析PR
+                await self._log_activity(0, "thinking", {
+                    "message": f"分析 PR #{pr_info.get('pr_number')} ...",
+                    "repo_full_name": pr_info.get("repo_full_name"),
+                })
                 analysis = await self.analyzer.analyze_pr(pr_info)
 
                 # 2. 检查是否应该跳过
@@ -249,12 +267,22 @@ class ReviewWorker:
 
                         indexer = get_pr_code_indexer()
                         logger.info(f"[{task_id}] 开始代码索引...")
+                        await self._log_activity(review_id, "tool_call", {
+                            "tool": "index_pr_changes",
+                            "status": "running",
+                            "detail": pr_info["repo_full_name"],
+                        })
                         await indexer.index_pr_changes(
                             repo_full_name=pr_info["repo_full_name"],
                             pr_number=pr_info["pr_number"],
                             install_id=pr_info.get("install_id", 0),
                         )
                         logger.info(f"[{task_id}] 代码索引完成")
+                        await self._log_activity(review_id, "tool_result", {
+                            "tool": "index_pr_changes",
+                            "status": "completed",
+                            "detail": "代码索引完成",
+                        })
                     except Exception as e:
                         logger.warning(
                             "[{}] 代码索引失败（将继续审查）: {}",
@@ -332,6 +360,13 @@ class ReviewWorker:
 
                 # 3. 创建数据库记录
                 review_id = await self._create_review_record(analysis, pr_info, task_id)
+
+                await self._log_activity(review_id, "status", {
+                    "status": "pending",
+                    "message": f"PR #{pr_info.get('pr_number')} 审查已创建",
+                    "strategy": analysis.strategy,
+                    "repo_full_name": pr_info.get("repo_full_name"),
+                })
 
                 # 4. 获取PR对象用于后续操作
                 client = self.github_app.get_repo_client(
@@ -623,6 +658,13 @@ class ReviewWorker:
 
                 # 7. 并行执行AI审查和标签推荐
                 await self._update_review_status(review_id, PRStatus.REVIEWING)
+                await self._log_activity(review_id, "status", {
+                    "status": "reviewing",
+                    "message": "开始 AI 审查",
+                })
+                await self._log_activity(review_id, "thinking", {
+                    "message": "AI 正在审查 PR ...",
+                })
 
                 # 检查是否启用标签推荐功能
                 enable_label_recommendation = _get_label_rec_setting("enabled", True)
@@ -727,6 +769,11 @@ class ReviewWorker:
                 if not isinstance(review_result, Exception):
                     # 8. 保存审查结果
                     await self._save_review_results(review_id, review_result, analysis)
+                    await self._log_activity(review_id, "ai_response", {
+                        "message": "AI 审查完成",
+                        "overall_score": review_result.get("overall_score"),
+                        "content_preview": str(review_result.get("summary", ""))[:500],
+                    })
                 else:
                     logger.error("[{}] AI审查失败: {}", task_id, str(review_result))
                     raise review_result
@@ -767,6 +814,12 @@ class ReviewWorker:
                     decision=decision,
                     decision_reason=decision_reason,
                 )
+                await self._log_activity(review_id, "result", {
+                    "status": "completed",
+                    "message": "审查完成",
+                    "decision": decision.value if decision else "unknown",
+                    "overall_score": review_result.get("overall_score"),
+                })
 
                 # 11.5 异步触发 .sakura/ 反思 / Trigger .sakura/ reflection async
                 try:
@@ -821,6 +874,11 @@ class ReviewWorker:
                     str(e),
                     exc_info=True,
                 )
+
+                if review_id:
+                    await self._log_activity(review_id, "error", {
+                        "message": f"审查失败: {str(e)[:500]}",
+                    })
 
                 # 【错误处理】更新占位评论为错误消息
                 if review_obj:

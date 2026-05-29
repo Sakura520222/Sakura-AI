@@ -56,6 +56,22 @@ class IssueWorker:
         self.github_app = GitHubAppClient()
         self._background_tasks: set[asyncio.Task] = set()
 
+    @staticmethod
+    async def _log_activity(
+        analysis_id: int,
+        event_type: str,
+        content: dict[str, Any] | None = None,
+    ) -> None:
+        """记录 Issue 分析活动事件（持久化 + SSE 推送）。"""
+        try:
+            from backend.services.activity_event_service import ActivityEventService
+
+            await ActivityEventService.log_event(
+                "issue", analysis_id, event_type, content
+            )
+        except Exception as exc:
+            logger.debug("Issue 活动事件记录失败: {}", exc)
+
     async def process_issue_analysis(self, issue_info: Dict[str, Any]) -> str:
         """处理 Issue 分析任务
 
@@ -123,6 +139,15 @@ class IssueWorker:
                     record.status = IssueAnalysisStatus.ANALYZING.value
                     await db.commit()
 
+                    await self._log_activity(record.id, "status", {
+                        "status": "analyzing",
+                        "message": f"开始分析 Issue #{issue_number}",
+                        "repo_name": repo_name,
+                    })
+                    await self._log_activity(record.id, "thinking", {
+                        "message": "AI 正在分析 Issue ...",
+                    })
+
                     # 发布 SSE 事件通知前端
                     try:
                         from backend.webui.sse import publish_event
@@ -151,6 +176,14 @@ class IssueWorker:
                         repo_name=repo_name,
                         repo=repo,
                     )
+
+                    # 4.5 记录 AI 分析完成事件
+                    await self._log_activity(record.id, "ai_response", {
+                        "message": "AI 分析完成",
+                        "category": analysis_result.get("category", ""),
+                        "priority": analysis_result.get("priority", ""),
+                        "content_preview": str(analysis_result.get("summary", ""))[:500],
+                    })
 
                     # 5. 保存分析结果（更新已有的 PENDING 记录）
                     analysis_record = await issue_service.save_analysis_result(
@@ -252,6 +285,13 @@ class IssueWorker:
                         )
                     except Exception as e:
                         logger.warning(f"发布 SSE 事件失败（不影响主流程）: {e}")
+
+                    await self._log_activity(record.id, "result", {
+                        "status": "completed",
+                        "message": f"Issue #{issue_number} 分析完成",
+                        "category": analysis_result.get("category", ""),
+                        "priority": analysis_result.get("priority", ""),
+                    })
 
                     # 8. 自动评论
                     if await get_dynamic_config("issue_auto_comment"):
@@ -484,6 +524,9 @@ class IssueWorker:
                             record.status = IssueAnalysisStatus.FAILED.value
                             record.error_message = str(e)[:1000]
                             await db.commit()
+                            await self._log_activity(record.id, "error", {
+                                "message": f"Issue 分析失败: {str(e)[:500]}",
+                            })
 
                             # 发布 SSE 事件通知前端（失败）
                             try:

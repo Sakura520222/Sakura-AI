@@ -15,6 +15,7 @@ from backend.models.database import (
     IssueAnalysisStatus,
 )
 from backend.models.scan_models import RepoScan, ScanStatus
+from backend.services.activity_event_service import ActivityEventService
 from backend.webui.deps import (
     require_auth,
     get_db,
@@ -161,3 +162,125 @@ async def get_active_tasks(
     tasks.sort(key=lambda t: t.get("updated_at") or "", reverse=True)
 
     return {"success": True, "tasks": tasks, "total": len(tasks)}
+
+
+@router.get("/api/events/{task_type}/{task_id}")
+async def get_task_events(
+    task_type: str,
+    task_id: int,
+    after_id: int = 0,
+    limit: int = 200,
+    user: dict = Depends(require_auth),
+):
+    """获取指定任务的活动事件列表（支持增量拉取）"""
+    if task_type not in ("pr", "issue", "scan"):
+        return {"success": False, "error": "Invalid task_type"}
+    events = await ActivityEventService.get_events(
+        task_type, task_id, after_id=after_id, limit=limit
+    )
+    return {"success": True, "events": events}
+
+
+@router.get("/api/recent-tasks")
+async def get_recent_tasks(
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    user: dict = Depends(require_auth),
+):
+    """获取最近完成的任务（用于活动流展示，包含已完成的）"""
+    tasks = []
+    limit = 20
+
+    # --- 最近 PR 审查（含已完成） ---
+    pr_query = (
+        select(PRReview)
+        .order_by(desc(PRReview.updated_at))
+        .limit(limit)
+    )
+    scope_filter = build_user_scope_filter(user, PRReview)
+    if scope_filter is not None:
+        pr_query = pr_query.where(scope_filter)
+
+    pr_result = await db.execute(pr_query)
+    for pr in pr_result.scalars().all():
+        tasks.append(
+            {
+                "type": "pr",
+                "id": f"pr-{pr.id}",
+                "task_id": pr.id,
+                "repo_name": pr.repo_name,
+                "title": pr.title or f"PR #{pr.pr_id}",
+                "author": pr.author or "",
+                "status": pr.status,
+                "strategy": pr.strategy,
+                "overall_score": pr.overall_score,
+                "created_at": pr.created_at.isoformat() if pr.created_at else None,
+                "updated_at": pr.updated_at.isoformat() if pr.updated_at else None,
+            }
+        )
+
+    # --- 最近 Issue 分析（含已完成） ---
+    issue_query = (
+        select(IssueAnalysis)
+        .order_by(desc(IssueAnalysis.updated_at))
+        .limit(limit)
+    )
+    scope_filter = build_user_scope_filter(user, IssueAnalysis)
+    if scope_filter is not None:
+        issue_query = issue_query.where(scope_filter)
+
+    issue_result = await db.execute(issue_query)
+    for issue in issue_result.scalars().all():
+        tasks.append(
+            {
+                "type": "issue",
+                "id": f"issue-{issue.id}",
+                "task_id": issue.id,
+                "repo_name": issue.repo_name,
+                "title": issue.title or f"Issue #{issue.issue_number}",
+                "author": issue.author or "",
+                "status": issue.status,
+                "created_at": (
+                    issue.created_at.isoformat() if issue.created_at else None
+                ),
+                "updated_at": (
+                    issue.updated_at.isoformat() if issue.updated_at else None
+                ),
+            }
+        )
+
+    # --- 最近仓库扫描（含已完成） ---
+    scan_query = (
+        select(RepoScan)
+        .order_by(desc(RepoScan.updated_at))
+        .limit(limit)
+    )
+    if user.get("role") not in ("admin", "super_admin"):
+        scan_query = scan_query.where(RepoScan.repo_owner == user["sub"])
+
+    scan_result = await db.execute(scan_query)
+    for scan in scan_result.scalars().all():
+        tasks.append(
+            {
+                "type": "scan",
+                "id": f"scan-{scan.id}",
+                "task_id": scan.id,
+                "repo_name": scan.repo_name,
+                "title": f"{scan.repo_name}",
+                "author": scan.triggered_by or scan.trigger_type,
+                "status": scan.status,
+                "progress": scan.progress or 0,
+                "current_phase": scan.current_phase or "",
+                "created_at": (
+                    scan.created_at.isoformat() if scan.created_at else None
+                ),
+                "updated_at": (
+                    scan.updated_at.isoformat() if scan.updated_at else None
+                ),
+            }
+        )
+
+    # 按 updated_at 降序排序
+    tasks.sort(key=lambda t: t.get("updated_at") or "", reverse=True)
+
+    return {"success": True, "tasks": tasks[:50]}

@@ -522,6 +522,7 @@ async def create_tables_async():
 
 def _ensure_model_modules_imported() -> None:
     """导入独立模型模块，确保 metadata 已注册。"""
+    import backend.models.activity_event_models  # noqa: F401
     import backend.models.agent_skill_models  # noqa: F401
     import backend.models.agent_team_models  # noqa: F401
     import backend.models.payment_models  # noqa: F401
