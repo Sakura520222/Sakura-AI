@@ -257,6 +257,7 @@ class NowPaymentsGateway(PaymentGateway):
             payment_id = str(data.get("payment_id", ""))
             order_id = str(data.get("order_id", ""))
             price_amount = data.get("price_amount", 0)
+            price_currency = str(data.get("price_currency") or "USD").upper()
 
             logger.info(
                 "NOWPayments IPN: status={}, payment_id={}, order_id={}",
@@ -265,7 +266,7 @@ class NowPaymentsGateway(PaymentGateway):
                 order_id,
             )
 
-            # 金额转换（美元 → cents）
+            # 金额转换（price_currency 对应的主单位 → cents）
             try:
                 amount_cents = int(float(price_amount) * 100)
             except (ValueError, TypeError):
@@ -297,7 +298,7 @@ class NowPaymentsGateway(PaymentGateway):
                 provider_tx_id=payment_id,
                 order_no=order_id,
                 amount_cents=amount_cents,
-                currency="USD",
+                currency=price_currency,
                 raw_event=data,
             )
 

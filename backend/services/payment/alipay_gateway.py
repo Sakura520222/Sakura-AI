@@ -357,13 +357,18 @@ class AlipayGateway(PaymentGateway):
                 )
 
             # 验签
-            if self._alipay_public_key:
-                verified = self._verify_rsa2(flat_params, sign, self._alipay_public_key)
-                if not verified:
-                    logger.warning("Alipay webhook: signature verification failed")
-                    return WebhookEvent(
-                        event_type=WebhookEventType.UNKNOWN, raw_event=flat_params
-                    )
+            if not self._alipay_public_key:
+                logger.warning("Alipay webhook: missing public key, rejecting callback")
+                return WebhookEvent(
+                    event_type=WebhookEventType.UNKNOWN, raw_event=flat_params
+                )
+
+            verified = self._verify_rsa2(flat_params, sign, self._alipay_public_key)
+            if not verified:
+                logger.warning("Alipay webhook: signature verification failed")
+                return WebhookEvent(
+                    event_type=WebhookEventType.UNKNOWN, raw_event=flat_params
+                )
 
             trade_status = flat_params.get("trade_status", "")
             out_trade_no = flat_params.get("out_trade_no", "")
