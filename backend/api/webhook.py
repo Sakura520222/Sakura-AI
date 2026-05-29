@@ -1603,7 +1603,7 @@ async def handle_agent_command(payload: Dict[str, Any]) -> JSONResponse:
                 return JSONResponse(
                     content={
                         "status": "error",
-                        "reason": str(e),
+                        "reason": "Failed to create task",
                     }
                 )
 
@@ -1809,14 +1809,14 @@ async def handle_stripe_webhook(
                 logger.warning("Stripe webhook processing error: {}", e)
                 return JSONResponse(
                     status_code=200,
-                    content={"status": "error", "message": str(e)},
+                    content={"status": "error", "message": "Payment processing failed"},
                 )
 
     except ValueError as e:
         logger.warning("Stripe webhook gateway error: {}", e)
         return JSONResponse(
             status_code=400,
-            content={"status": "error", "message": str(e)},
+            content={"status": "error", "message": "Invalid request"},
         )
     except Exception as e:
         logger.error("Stripe webhook unexpected error: {} - {}", type(e).__name__, e, exc_info=True)
@@ -1915,14 +1915,14 @@ async def handle_paddle_webhook(
                 logger.warning("Paddle webhook processing error: {}", e)
                 return JSONResponse(
                     status_code=200,
-                    content={"status": "error", "message": str(e)},
+                    content={"status": "error", "message": "Payment processing failed"},
                 )
 
     except ValueError as e:
         logger.warning("Paddle webhook gateway error: {}", e)
         return JSONResponse(
             status_code=400,
-            content={"status": "error", "message": str(e)},
+            content={"status": "error", "message": "Invalid request"},
         )
     except Exception as e:
         logger.error("Paddle webhook unexpected error: {} - {}", type(e).__name__, e, exc_info=True)
@@ -2073,12 +2073,12 @@ async def handle_nowpayments_webhook(
                 await db.rollback()
                 logger.warning("NOWPayments webhook processing error: {}", e)
                 return JSONResponse(
-                    content={"status": "error", "message": str(e)}
+                    content={"status": "error", "message": "Payment processing failed"}
                 )
 
     except ValueError as e:
         logger.warning("NOWPayments webhook gateway error: {}", e)
-        return JSONResponse(content={"status": "error", "message": str(e)})
+        return JSONResponse(content={"status": "error", "message": "Invalid request"})
     except Exception as e:
         logger.error(
             "NOWPayments webhook unexpected error: {} - {}",

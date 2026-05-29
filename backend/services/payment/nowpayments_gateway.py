@@ -51,6 +51,7 @@ class NowPaymentsGateway(PaymentGateway):
 
     API_URL = "https://api.nowpayments.io"
     SANDBOX_URL = "https://api-sandbox.nowpayments.io"
+    # 零小数位货币（ISO 4217 exponent = 0）；未列出的货币默认使用 2 位小数。
     CURRENCY_DECIMALS = {
         "BIF": 0,
         "CLP": 0,
@@ -140,13 +141,22 @@ class NowPaymentsGateway(PaymentGateway):
         try:
             value = Decimal(str(amount))
         except (InvalidOperation, ValueError):
+            logger.warning(
+                "Invalid amount '{}' for currency '{}', defaulting to 0",
+                amount,
+                currency,
+            )
             return 0
         scale = Decimal(10) ** decimals
         return int((value * scale).quantize(Decimal("1"), rounding=ROUND_HALF_UP))
 
     @classmethod
     def _from_minor_units(cls, amount: int, currency: str) -> int | float:
-        """Convert currency-specific minor units to JSON-safe main units."""
+        """Convert currency-specific minor units to JSON-safe main units.
+
+        Returns int for zero-decimal currencies (JPY, KRW, etc.) and float for
+        standard two-decimal currencies (USD, CNY, etc.).
+        """
         decimals = cls._currency_decimals(currency)
         value = Decimal(amount) / (Decimal(10) ** decimals)
         return int(value) if decimals == 0 else float(value)

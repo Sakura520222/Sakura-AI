@@ -743,7 +743,24 @@ class PaymentService:
         paid_amount_cents: Optional[int],
         paid_currency: Optional[str],
     ) -> None:
-        """Validate webhook amount before fulfilling an order."""
+        """Validate webhook amount before fulfilling an order.
+
+        The None branch is a compatibility fallback for legacy/manual callers, not
+        the expected path for signed external webhooks: Stripe, Paddle, Alipay,
+        and NOWPayments handlers pass the gateway-reported amount into this
+        method. It is kept to avoid breaking non-webhook confirmations, but it
+        logs at error level with "BYPASSING amount validation" so production log
+        alerts can page on this condition. Rejecting here would also reject
+        trusted administrative/manual confirmations that have no provider amount.
+
+        If the webhook currency differs from the order currency, this method does
+        not perform exchange-rate conversion. Providers are expected to report the
+        same pricing currency that was used when the payment was created (for
+        example, NOWPayments receives the order currency as price_currency and
+        converts only to the configured crypto pay_currency internally), so a
+        mismatch is logged with both amounts for audit and alerting rather than
+        compared with an in-service, potentially stale FX rate.
+        """
         if paid_amount_cents is None:
             logger.error(
                 "BYPASSING amount validation for payment confirmation: "

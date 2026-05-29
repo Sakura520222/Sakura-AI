@@ -105,7 +105,8 @@ class TestPaddleGatewayCreatePayment:
 
         assert result.success is True
         assert result.provider_tx_id == "txn_01test123"
-        assert "checkout.paddle.com" in result.checkout_url
+        from urllib.parse import urlparse
+        assert urlparse(result.checkout_url).hostname == "checkout.paddle.com"
 
     @pytest.mark.asyncio
     async def test_create_payment_sdk_error(self, gateway, paddle_sdk_mock):

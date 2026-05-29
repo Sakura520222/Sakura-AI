@@ -1008,8 +1008,9 @@ async def preview_task_from_issue(
     try:
         repo_full_name, issue_number = _parse_issue_ref(issue_ref)
     except ValueError as e:
+        logger.warning("Invalid issue ref in preview-from-issue: {}", e)
         return JSONResponse(
-            {"success": False, "message": str(e)},
+            {"success": False, "message": "Invalid issue reference format"},
             status_code=200,
         )
     if not _is_admin(user):

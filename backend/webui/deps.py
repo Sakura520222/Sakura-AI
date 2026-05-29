@@ -345,6 +345,10 @@ def toast_redirect(
     """
     from urllib.parse import urlencode
 
+    # Prevent open redirect: only allow relative URLs starting with '/'
+    if not url or not url.startswith("/") or "://" in url:
+        url = "/"
+
     display_message = message
     if lang:
         from backend.webui.i18n import i18n as _i18n
