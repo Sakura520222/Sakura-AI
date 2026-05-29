@@ -42,6 +42,14 @@ class QuotaService:
         "last_reset_weekly": "last_reset_issue_weekly",
         "last_reset_monthly": "last_reset_issue_monthly",
     }
+    AGENT_QUOTA_FIELDS = {
+        "daily_used": "agent_daily_used",
+        "weekly_used": "agent_weekly_used",
+        "monthly_used": "agent_monthly_used",
+        "last_reset_daily": "last_reset_agent_daily",
+        "last_reset_weekly": "last_reset_agent_weekly",
+        "last_reset_monthly": "last_reset_agent_monthly",
+    }
 
     def __init__(self, session: AsyncSession):
         self.session = session
@@ -114,12 +122,22 @@ class QuotaService:
             user, QuotaService.ISSUE_QUOTA_FIELDS, now
         )
 
+    @staticmethod
+    def reset_user_agent_quotas_if_expired(
+        user: TelegramUser, now: datetime | None = None
+    ) -> bool:
+        """重置单个用户过期的 Agent 配额，返回是否发生变更。"""
+        return QuotaService._reset_quota_group(
+            user, QuotaService.AGENT_QUOTA_FIELDS, now
+        )
+
     async def reset_user_quotas_if_expired(
         self,
         user: TelegramUser,
         *,
         include_pr: bool = True,
         include_issue: bool = True,
+        include_agent: bool = True,
         commit: bool = True,
     ) -> bool:
         """重置单个用户过期配额。"""
@@ -130,6 +148,8 @@ class QuotaService:
             changed = self.reset_user_pr_quotas_if_expired(user, now) or changed
         if include_issue:
             changed = self.reset_user_issue_quotas_if_expired(user, now) or changed
+        if include_agent:
+            changed = self.reset_user_agent_quotas_if_expired(user, now) or changed
 
         if changed and commit:
             await self.session.commit()
@@ -180,6 +200,21 @@ class QuotaService:
                 (TelegramUser.last_reset_issue_monthly.is_(None))
                 | (TelegramUser.last_reset_issue_monthly < monthly_cutoff),
                 {"issue_monthly_used": 0, "last_reset_issue_monthly": now},
+            ),
+            (
+                (TelegramUser.last_reset_agent_daily.is_(None))
+                | (TelegramUser.last_reset_agent_daily < daily_cutoff),
+                {"agent_daily_used": 0, "last_reset_agent_daily": now},
+            ),
+            (
+                (TelegramUser.last_reset_agent_weekly.is_(None))
+                | (TelegramUser.last_reset_agent_weekly < week_start),
+                {"agent_weekly_used": 0, "last_reset_agent_weekly": now},
+            ),
+            (
+                (TelegramUser.last_reset_agent_monthly.is_(None))
+                | (TelegramUser.last_reset_agent_monthly < monthly_cutoff),
+                {"agent_monthly_used": 0, "last_reset_agent_monthly": now},
             ),
         )
 

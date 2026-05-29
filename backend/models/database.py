@@ -524,6 +524,7 @@ def _ensure_model_modules_imported() -> None:
     """导入独立模型模块，确保 metadata 已注册。"""
     import backend.models.agent_skill_models  # noqa: F401
     import backend.models.agent_team_models  # noqa: F401
+    import backend.models.payment_models  # noqa: F401
 
 
 def _append_dynamic_config_defaults(default_configs: list) -> None:
@@ -565,7 +566,7 @@ async def insert_default_configs_async():
         raise RuntimeError("异步会话工厂未初始化,请先调用 init_async_db()")
 
     default_configs = [
-        AppConfig(key_name="app_version", key_value="2.11.0", description="应用版本号"),
+        AppConfig(key_name="app_version", key_value="2.12.0", description="应用版本号"),
         AppConfig(
             key_name="max_concurrent_reviews",
             key_value="5",
@@ -686,7 +687,7 @@ def init_database(database_url: str):
 
             default_configs = [
                 AppConfig(
-                    key_name="app_version", key_value="2.11.0", description="应用版本号"
+                    key_name="app_version", key_value="2.12.0", description="应用版本号"
                 ),
                 AppConfig(
                     key_name="max_concurrent_reviews",
@@ -783,7 +784,7 @@ def init_async_db(database_url: str):
     """初始化异步数据库引擎和会话
 
     Args:
-        database_url: 数据库连接字符串（需要是异步URL，如 mysql+aiomysql://...）
+        database_url: 数据库连接字符串（需要是异步URL，如 mysql+asyncmy://...）
     """
     global async_engine, async_session
     import logging
@@ -791,13 +792,20 @@ def init_async_db(database_url: str):
     logger = logging.getLogger(__name__)
 
     try:
+        # 向后兼容：将旧版 aiomysql 驱动自动转换为 asyncmy
+        if "mysql+aiomysql://" in database_url:
+            database_url = database_url.replace(
+                "mysql+aiomysql://", "mysql+asyncmy://", 1
+            )
+            logger.info("已将数据库驱动从 aiomysql 自动转换为 asyncmy")
+
         # 确保使用异步驱动
         if not database_url.startswith(
-            "mysql+aiomysql://"
+            "mysql+asyncmy://"
         ) and not database_url.startswith("postgresql+asyncpg://"):
             # 如果不是异步URL，尝试转换
             if database_url.startswith("mysql://"):
-                database_url = database_url.replace("mysql://", "mysql+aiomysql://", 1)
+                database_url = database_url.replace("mysql://", "mysql+asyncmy://", 1)
             elif database_url.startswith("postgresql://"):
                 database_url = database_url.replace(
                     "postgresql://", "postgresql+asyncpg://", 1
@@ -806,10 +814,12 @@ def init_async_db(database_url: str):
         logger.info(f"初始化异步数据库引擎: {database_url}")
 
         # 创建异步引擎
+        # aiomysql 的 ping() 签名与 SQLAlchemy 的 pool_pre_ping 不兼容，
+        # 通过 pool_recycle 定期回收连接来保证连接可用性
         async_engine = create_async_engine(
             database_url,
             echo=False,
-            pool_pre_ping=True,
+            pool_pre_ping=False,
             pool_size=10,
             max_overflow=20,
             pool_recycle=1800,
@@ -877,7 +887,12 @@ class SakuraMemoryState(Base):
     is_initialized = Column(Boolean, default=False, nullable=False)
 
     # 知识提取状态 / Knowledge extraction state
-    knowledge_extracted = Column(Boolean, default=False, nullable=False)
+    knowledge_extracted = Column(
+        Boolean, default=False, nullable=False
+    )  # deprecated: 保留向后兼容
+    last_extraction_count = Column(
+        Integer, nullable=True
+    )  # 上次知识提取时的 reflection_count
 
     # 最后写入的文件 SHA / Last written file SHAs
     last_sakura_md_sha = Column(String(40), nullable=True)

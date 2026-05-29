@@ -7,6 +7,7 @@ from datetime import datetime
 from sqlalchemy import (
     Boolean,
     Column,
+    Index,
     Integer,
     String,
     Text,
@@ -63,6 +64,15 @@ class PaymentAction(str, enum.Enum):
     EXPIRE = "expire"
 
 
+class RefundRequestStatus(str, enum.Enum):
+    """退款申请状态"""
+
+    PENDING = "pending"
+    APPROVED = "approved"
+    REJECTED = "rejected"
+    FAILED = "failed"
+
+
 class Plan(Base):
     """套餐计划表"""
 
@@ -86,6 +96,12 @@ class Plan(Base):
     issue_daily_add = Column(Integer, default=0, nullable=False)
     issue_weekly_add = Column(Integer, default=0, nullable=False)
     issue_monthly_add = Column(Integer, default=0, nullable=False)
+
+    # Agent 配额增量
+    agent_quota_bonus = Column(Integer, default=0, nullable=False)
+    agent_daily_add = Column(Integer, default=0, nullable=False)
+    agent_weekly_add = Column(Integer, default=0, nullable=False)
+    agent_monthly_add = Column(Integer, default=0, nullable=False)
 
     is_active = Column(Boolean, default=True, nullable=False)
     sort_order = Column(Integer, default=0, nullable=False)
@@ -197,6 +213,10 @@ class UserSubscription(Base):
     applied_issue_daily_add = Column(Integer, default=0, nullable=False)
     applied_issue_weekly_add = Column(Integer, default=0, nullable=False)
     applied_issue_monthly_add = Column(Integer, default=0, nullable=False)
+    applied_agent_quota_bonus = Column(Integer, default=0, nullable=False)
+    applied_agent_daily_add = Column(Integer, default=0, nullable=False)
+    applied_agent_weekly_add = Column(Integer, default=0, nullable=False)
+    applied_agent_monthly_add = Column(Integer, default=0, nullable=False)
     last_order_id = Column(
         Integer, ForeignKey("payment_orders.id", ondelete="SET NULL"), nullable=True
     )
@@ -232,3 +252,56 @@ class PaymentLog(Base):
 
     def __repr__(self):
         return f"<PaymentLog(order={self.order_id}, action={self.action})>"
+
+
+class RefundRequest(Base):
+    """退款申请表（用户申请，超级管理员审核后执行）"""
+
+    __tablename__ = "payment_refund_requests"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    order_id = Column(
+        Integer, ForeignKey("payment_orders.id", ondelete="CASCADE"), nullable=False
+    )
+    user_id = Column(
+        Integer, ForeignKey("telegram_users.id", ondelete="CASCADE"), nullable=False
+    )
+    amount_cents = Column(Integer, nullable=False)
+    currency = Column(String(10), default="CNY", nullable=False)
+    status = Column(
+        String(20), default=RefundRequestStatus.PENDING.value, nullable=False
+    )
+    reason = Column(Text, nullable=True)
+    review_note = Column(Text, nullable=True)
+    requested_at = Column(TIMESTAMP, default=datetime.utcnow, nullable=False)
+    reviewed_by = Column(
+        Integer, ForeignKey("telegram_users.id", ondelete="SET NULL"), nullable=True
+    )
+    reviewed_at = Column(TIMESTAMP, nullable=True)
+    processed_at = Column(TIMESTAMP, nullable=True)
+    error_message = Column(Text, nullable=True)
+
+    created_at = Column(TIMESTAMP, default=datetime.utcnow, nullable=False)
+    updated_at = Column(
+        TIMESTAMP, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False
+    )
+
+    order = relationship("Order", lazy="selectin")
+    user = relationship(
+        "TelegramUser", foreign_keys=[user_id], lazy="selectin"
+    )
+    reviewer = relationship(
+        "TelegramUser", foreign_keys=[reviewed_by], lazy="selectin"
+    )
+
+    __table_args__ = (
+        Index("idx_refund_request_order", "order_id"),
+        Index("idx_refund_request_user", "user_id"),
+        Index("idx_refund_request_status", "status"),
+    )
+
+    def __repr__(self):
+        return (
+            f"<RefundRequest(order={self.order_id}, status={self.status}, "
+            f"amount={self.amount_cents})>"
+        )

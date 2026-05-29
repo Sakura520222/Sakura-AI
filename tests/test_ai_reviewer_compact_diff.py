@@ -1,15 +1,9 @@
 import pytest
 
 from backend.services.ai_reviewer.api_client import AIApiClient
-from backend.services.ai_reviewer.compact_diff import (
-    extend_with_compact_tools,
-    should_use_compact_prompt,
-)
-from backend.services.ai_reviewer.constants import COMPACT_TOOLS
+from backend.services.ai_reviewer.constants import DIFF_TOOLS, TOOL_NAME_TO_DEFINITION
 from backend.services.ai_reviewer.prompt_builder import PromptBuilder
-from backend.services.ai_reviewer.reviewer import AIReviewer
 from backend.services.ai_reviewer.token_tracker import TokenTracker
-from backend.services.ai_reviewer.tools import ToolHandler
 from backend.services.ai_reviewer.tools.diff_tool import DiffToolHandler
 
 
@@ -54,24 +48,28 @@ def test_api_client_recognizes_prompt_exceeds_max_length():
     assert AIApiClient._is_context_overflow_error(error) is True
 
 
-def test_prompt_builder_exposes_diff_tools_only_in_compact_mode(review_context):
+def test_prompt_builder_compact_mode_omits_diff(review_context):
     builder = PromptBuilder()
 
-    standard_message = builder.build_user_message(
-        review_context, "balanced", include_tools=True, compact=False
-    )
     compact_message = builder.build_user_message(
         review_context, "balanced", include_tools=True, compact=True
     )
-
-    assert "```diff" in standard_message
-    assert "get_file_diff" not in standard_message
-    assert "list_changed_files" not in standard_message
 
     assert "```diff" not in compact_message
     assert "backend/example.py" in compact_message
     assert "get_file_diff" in compact_message
     assert "list_changed_files" in compact_message
+
+
+def test_prompt_builder_standard_mode_includes_diff(review_context):
+    builder = PromptBuilder()
+
+    standard_message = builder.build_user_message(
+        review_context, "balanced", include_tools=True, compact=False
+    )
+
+    assert "```diff" in standard_message
+    assert "get_file_diff" not in standard_message
 
 
 @pytest.mark.asyncio
@@ -92,72 +90,23 @@ async def test_diff_tool_lists_and_returns_file_diff():
     )
 
 
-def test_extend_compact_tools_without_duplicates():
-    base_tools = [
-        {"type": "function", "function": {"name": "read_file"}},
-        {"type": "function", "function": {"name": "get_file_diff"}},
-    ]
-
-    extended_tools = extend_with_compact_tools(base_tools)
-    tool_names = [tool["function"]["name"] for tool in extended_tools]
-
-    assert tool_names.count("get_file_diff") == 1
-    assert "list_changed_files" in tool_names
+def test_diff_tools_have_valid_definitions():
+    for tool_name in DIFF_TOOLS:
+        assert tool_name in TOOL_NAME_TO_DEFINITION, f"{tool_name} missing from TOOL_NAME_TO_DEFINITION"
+        tool_def = TOOL_NAME_TO_DEFINITION[tool_name]
+        assert tool_def["type"] == "function"
+        assert "name" in tool_def["function"]
+        assert "parameters" in tool_def["function"]
 
 
-def test_should_use_compact_prompt_when_over_budget(review_context):
-    class ModelContextManager:
-        def estimate_tokens(self, _content):
-            return 101
+def test_token_tracker_logs_context_usage():
+    tracker = TokenTracker()
 
-        def calculate_safe_context(self, _model, _threshold):
-            return 100
+    tracker.log_context_usage(5000, 10000, 1)
+    tracker.log_context_usage(8000, 10000, 2)
+    tracker.log_context_usage(9500, 10000, 3)
 
-    should_compact, current_tokens, threshold_tokens = should_use_compact_prompt(
-        [{"role": "user", "content": "large prompt"}],
-        review_context,
-        compression_threshold=1.0,
-        model_context_mgr=ModelContextManager(),
-    )
-
-    assert should_compact is True
-    assert current_tokens == 101
-    assert threshold_tokens == 100
-
-
-@pytest.mark.asyncio
-async def test_compact_diff_review_uses_compact_messages_and_tools(
-    monkeypatch, review_context
-):
-    reviewer = AIReviewer.__new__(AIReviewer)
-    reviewer.prompt_builder = PromptBuilder()
-    reviewer.context_compressor = type(
-        "Compressor", (), {"estimate_messages_tokens": lambda self, messages: 42}
-    )()
-
-    async def fake_run_tool_loop(**kwargs):
-        tool_names = [tool["function"]["name"] for tool in kwargs["enabled_tools"]]
-        user_message = kwargs["messages"][1]["content"]
-
-        assert all(tool_name in tool_names for tool_name in COMPACT_TOOLS)
-        assert "```diff" not in user_message
-        assert "get_file_diff" in user_message
-        assert kwargs["tool_handler"].diff_tool.has_data is True
-        return {"summary": "ok", "comments": [], "inline_comments": []}
-
-    monkeypatch.setattr(reviewer, "_run_tool_loop", fake_run_tool_loop)
-    reviewer.tool_handler = ToolHandler(file_tool=None, search_tool=None)
-
-    result = await reviewer._run_compact_diff_review(
-        context=review_context,
-        strategy="balanced",
-        system_prompt="system",
-        enabled_tools=[],
-        repo=None,
-        pr=None,
-        tracker=TokenTracker(),
-        original_tokens=1000,
-        reason="test",
-    )
-
-    assert result["summary"] == "ok"
+    assert len(tracker.context_usage_log) == 3
+    assert tracker.context_usage_log[0].percentage == 50.0
+    assert tracker.context_usage_log[1].percentage == 80.0
+    assert tracker.context_usage_log[2].percentage == 95.0

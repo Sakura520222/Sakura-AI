@@ -402,11 +402,21 @@ class PRAnalyzer:
 
         return False, None
 
-    async def get_project_structure(self, repo: any, max_files: int = 500) -> List[str]:
+    async def get_project_structure(self, repo: any, max_files: int | None = None) -> List[str]:
         """获取项目的目录结构（将 PyGithub 同步调用移到线程池）"""
+        if max_files is None:
+            max_files = self._get_max_structure_files()
         return await asyncio.to_thread(
             self._get_project_structure_sync, repo, max_files
         )
+
+    def _get_max_structure_files(self) -> int:
+        """从策略配置中获取项目结构最大文件数"""
+        try:
+            context_cfg = get_strategy_config().get_context_enhancement_config()
+            return int(context_cfg.get("max_structure_files", 500))
+        except Exception:
+            return 500
 
     def _get_project_structure_sync(self, repo: any, max_files: int = 500) -> List[str]:
         """获取项目的目录结构
@@ -453,7 +463,7 @@ class PRAnalyzer:
                     file_count += 1
 
             logger.info(
-                f"获取项目结构完成，共 {min(len(tree.tree), max_files)} 个项目（已过滤skip_paths）"
+                f"获取项目结构完成，共 {len(structure)} 个项目（max_files={max_files}，已过滤skip_paths）"
             )
             return structure
 
@@ -485,7 +495,8 @@ class PRAnalyzer:
             repo = pr.base.repo
 
             # 获取项目结构
-            project_structure = self._get_project_structure_sync(repo)
+            max_structure = self._get_max_structure_files()
+            project_structure = self._get_project_structure_sync(repo, max_structure)
 
             # 构建 context，只包含必要信息
             context = {
@@ -517,16 +528,15 @@ class PRAnalyzer:
 
             # 对于大型PR（deep策略），只包含主要文件
             elif strategy_name == "deep":
-                # 分批处理
-                batch_config = get_strategy_config().get_batch_config()
-                max_files_per_batch = batch_config.get("max_files_per_batch", 10)
+                ce_config = get_strategy_config().get_context_enhancement_config()
+                max_files = ce_config.get("max_files_for_deep_strategy", 10)
 
                 # 对文件按重要性排序（变更量大的优先）
                 sorted_files = sorted(
                     analysis.code_files, key=lambda f: f.changes, reverse=True
                 )
 
-                for file_info in sorted_files[:max_files_per_batch]:
+                for file_info in sorted_files[:max_files]:
                     file_context = {
                         "path": file_info.path,
                         "status": file_info.status,
@@ -541,9 +551,9 @@ class PRAnalyzer:
 
                     context["files"].append(file_context)
 
-                if len(analysis.code_files) > max_files_per_batch:
+                if len(analysis.code_files) > max_files:
                     context["remaining_files"] = (
-                        len(analysis.code_files) - max_files_per_batch
+                        len(analysis.code_files) - max_files
                     )
 
             # 对于超大PR，只包含概览

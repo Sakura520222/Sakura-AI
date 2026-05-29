@@ -8,6 +8,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.services.payment_service import PaymentError, PaymentService
+from backend.services.payment import SUPPORTED_PROVIDERS
 from backend.webui.deps import get_db, require_payment_enabled
 from backend.api.v1.deps import require_api_auth, require_api_super_admin
 
@@ -79,6 +80,18 @@ class RedeemCodeUpdateRequest(BaseModel):
     expires_at: Optional[datetime] = None
     max_uses: Optional[int] = Field(None, ge=1)
     plan_id: Optional[int] = None
+
+
+class CreateOrderRequest(BaseModel):
+    plan_id: int
+    provider: str = Field(
+        "stripe",
+        pattern="^(" + "|".join(SUPPORTED_PROVIDERS) + ")$",
+    )
+
+
+class RefundRequest(BaseModel):
+    amount_cents: Optional[int] = None
 
 
 # ========== Public endpoints ==========
@@ -164,6 +177,109 @@ async def list_orders(
             for o in orders
         ],
     }
+
+
+@router.post("/orders")
+async def create_order(
+    req: CreateOrderRequest,
+    db: AsyncSession = Depends(get_db),
+    user: dict = Depends(require_api_auth),
+):
+    """Create a payment order and return checkout URL"""
+    svc = PaymentService(db)
+    try:
+        order = await svc.create_order(
+            user_id=user["user_id"],
+            plan_id=req.plan_id,
+            provider=req.provider,
+        )
+        await db.commit()
+
+        checkout_url = getattr(order, "_checkout_url", "")
+        return {
+            "success": True,
+            "order_no": order.order_no,
+            "status": order.status,
+            "amount_cents": order.amount_cents,
+            "currency": order.currency,
+            "provider": order.payment_provider,
+            "checkout_url": checkout_url,
+            "expires_at": order.expires_at.isoformat() if order.expires_at else None,
+        }
+    except PaymentError as e:
+        await db.rollback()
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@router.get("/orders/{order_id}")
+async def get_order(
+    order_id: int,
+    db: AsyncSession = Depends(get_db),
+    user: dict = Depends(require_api_auth),
+):
+    """Query order status"""
+    from sqlalchemy import select
+
+    from backend.models.payment_models import Order
+
+    stmt = select(Order).where(
+        Order.id == order_id, Order.user_id == user["user_id"]
+    )
+    result = await db.execute(stmt)
+    order = result.scalar_one_or_none()
+    if not order:
+        raise HTTPException(status_code=404, detail="Order not found")
+
+    import json
+
+    checkout_url = ""
+    if order.metadata_json:
+        try:
+            meta = json.loads(order.metadata_json)
+            checkout_url = meta.get("checkout_url", "")
+        except (json.JSONDecodeError, TypeError):
+            pass
+
+    return {
+        "id": order.id,
+        "order_no": order.order_no,
+        "status": order.status,
+        "amount_cents": order.amount_cents,
+        "currency": order.currency,
+        "payment_provider": order.payment_provider,
+        "provider_tx_id": order.provider_tx_id,
+        "checkout_url": checkout_url,
+        "paid_at": order.paid_at.isoformat() if order.paid_at else None,
+        "fulfilled_at": order.fulfilled_at.isoformat() if order.fulfilled_at else None,
+        "created_at": order.created_at.isoformat() if order.created_at else None,
+        "expires_at": order.expires_at.isoformat() if order.expires_at else None,
+    }
+
+
+@router.post("/orders/{order_id}/refund")
+async def refund_order(
+    order_id: int,
+    req: RefundRequest,
+    db: AsyncSession = Depends(get_db),
+    user: dict = Depends(require_api_super_admin),
+):
+    """Admin: refund an order"""
+    svc = PaymentService(db)
+    try:
+        order = await svc.process_refund(
+            order_id=order_id,
+            amount_cents=req.amount_cents,
+            operator_id=user["user_id"],
+        )
+        await db.commit()
+        return {
+            "success": True,
+            "order_no": order.order_no,
+            "status": order.status,
+        }
+    except PaymentError as e:
+        await db.rollback()
+        raise HTTPException(status_code=400, detail=str(e))
 
 
 # ========== Admin endpoints ==========

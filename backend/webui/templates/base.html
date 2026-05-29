@@ -658,5 +658,21 @@
     document.body.addEventListener('htmx:afterSettle', renderMarkdownElements);
     </script>
     {% endblock %}
+
+    <!-- 页脚 -->
+    <footer class="border-t border-sakura-200/50 dark:border-sakura-800/30 py-4 px-4 mt-auto">
+        <div class="ml-0 lg:ml-64 flex flex-col sm:flex-row items-center justify-between gap-2 text-xs text-gray-400 dark:text-gray-500">
+            <div class="flex items-center gap-2">
+                <span>🌸</span>
+                <span>&copy; 2025-2026 Sakura AI Reviewer</span>
+            </div>
+            <div class="flex flex-wrap items-center justify-center gap-x-4 gap-y-1">
+                <a href="/pricing" class="hover:text-sakura-600 dark:hover:text-sakura-400 transition-colors">Pricing</a>
+                <a href="/terms" class="hover:text-sakura-600 dark:hover:text-sakura-400 transition-colors">Terms of Service</a>
+                <a href="/privacy" class="hover:text-sakura-600 dark:hover:text-sakura-400 transition-colors">Privacy Policy</a>
+                <a href="/refund" class="hover:text-sakura-600 dark:hover:text-sakura-400 transition-colors">Refund Policy</a>
+            </div>
+        </div>
+    </footer>
 </body>
 </html>

@@ -1,0 +1,287 @@
+{% extends "base.html" %}
+
+{% block title %}{{ _('billing.crypto_payment_title') }} - Sakura AI Reviewer{% endblock %}
+
+{% block content %}
+<div class="max-w-2xl mx-auto px-4 sm:px-6 lg:px-8 py-12" x-data="cryptoPayment()" x-init="init()">
+    <!-- Header -->
+    <div class="text-center mb-8">
+        <div class="mx-auto flex items-center justify-center h-16 w-16 rounded-full bg-amber-100 dark:bg-amber-900/30 mb-4">
+            <svg class="h-8 w-8 text-amber-600 dark:text-amber-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+            </svg>
+        </div>
+        <h1 class="text-2xl font-bold text-gray-900 dark:text-white mb-2">{{ _('billing.crypto_payment_title') }}</h1>
+        <p class="text-gray-500 dark:text-gray-400">{{ _('billing.crypto_payment_subtitle') }}</p>
+    </div>
+
+    <!-- Order Info Card -->
+    <div class="bg-white dark:bg-gray-800 rounded-xl shadow-sm border border-gray-200 dark:border-gray-700 p-6 mb-6">
+        <div class="flex items-center justify-between mb-4">
+            <span class="text-sm text-gray-500 dark:text-gray-400">{{ _('billing.order_no') }}</span>
+            <span class="font-mono text-sm text-gray-900 dark:text-white">{{ order_no }}</span>
+        </div>
+        <div class="flex items-center justify-between">
+            <span class="text-sm text-gray-500 dark:text-gray-400">{{ _('billing.crypto_amount_to_pay') }}</span>
+            <div class="text-right">
+                <span class="text-2xl font-bold text-amber-600 dark:text-amber-400">{{ pay_amount }}</span>
+                <span class="text-lg text-amber-600 dark:text-amber-400 ml-1">{{ pay_currency_display }}</span>
+            </div>
+        </div>
+        {% if price_amount %}
+        <div class="flex items-center justify-between mt-2">
+            <span class="text-sm text-gray-500 dark:text-gray-400">{{ _('billing.crypto_reference_amount') }}</span>
+            <span class="text-sm text-gray-500 dark:text-gray-400">≈ {{ price_amount }} {{ price_currency | upper }}</span>
+        </div>
+        {% endif %}
+    </div>
+
+    <!-- Wallet Address Card -->
+    <div class="bg-white dark:bg-gray-800 rounded-xl shadow-sm border border-gray-200 dark:border-gray-700 p-6 mb-6">
+        <h2 class="text-sm font-medium text-gray-700 dark:text-gray-300 mb-3">{{ _('billing.crypto_send_to') }}</h2>
+        <!-- QR Code -->
+        <div class="flex justify-center mb-4">
+            <div id="qr-code" class="bg-white p-3 rounded-lg shadow-inner"></div>
+        </div>
+        <!-- Address -->
+        <div class="relative">
+            <div class="bg-gray-50 dark:bg-gray-900 rounded-lg p-4 pr-20 font-mono text-xs break-all text-gray-800 dark:text-gray-200 select-all" id="wallet-address">
+                {{ pay_address }}
+            </div>
+            <button @click="copyAddress()"
+                    class="absolute right-2 top-1/2 -translate-y-1/2 inline-flex items-center gap-1.5 px-3 py-2 rounded-md text-xs font-medium
+                           bg-sakura-500 hover:bg-sakura-600 text-white transition-colors duration-200">
+                <template x-if="!copied">
+                    <svg class="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"></path>
+                    </svg>
+                </template>
+                <template x-if="copied">
+                    <svg class="h-4 w-4 text-green-300" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"></path>
+                    </svg>
+                </template>
+                <span x-text="copied ? '{{ _('billing.crypto_copied') }}' : '{{ _('billing.crypto_copy') }}'"></span>
+            </button>
+        </div>
+    </div>
+
+    <!-- Countdown & Status -->
+    <div class="bg-white dark:bg-gray-800 rounded-xl shadow-sm border border-gray-200 dark:border-gray-700 p-6 mb-6">
+        <div class="flex items-center justify-between mb-4">
+            <div class="flex items-center gap-2">
+                <template x-if="status === 'waiting'">
+                    <div class="flex items-center gap-2">
+                        <div class="animate-spin h-4 w-4 border-2 border-amber-500 border-t-transparent rounded-full"></div>
+                        <span class="text-sm font-medium text-amber-600 dark:text-amber-400">{{ _('billing.crypto_status_waiting') }}</span>
+                    </div>
+                </template>
+                <template x-if="status === 'confirming'">
+                    <div class="flex items-center gap-2">
+                        <div class="animate-spin h-4 w-4 border-2 border-blue-500 border-t-transparent rounded-full"></div>
+                        <span class="text-sm font-medium text-blue-600 dark:text-blue-400">{{ _('billing.crypto_status_confirming') }}</span>
+                    </div>
+                </template>
+                <template x-if="status === 'completed'">
+                    <div class="flex items-center gap-2">
+                        <svg class="h-5 w-5 text-green-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"></path>
+                        </svg>
+                        <span class="text-sm font-medium text-green-600 dark:text-green-400">{{ _('billing.crypto_status_completed') }}</span>
+                    </div>
+                </template>
+                <template x-if="status === 'expired'">
+                    <div class="flex items-center gap-2">
+                        <svg class="h-5 w-5 text-red-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+                        </svg>
+                        <span class="text-sm font-medium text-red-600 dark:text-red-400">{{ _('billing.crypto_status_expired') }}</span>
+                    </div>
+                </template>
+                <template x-if="status === 'failed'">
+                    <div class="flex items-center gap-2">
+                        <svg class="h-5 w-5 text-red-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path>
+                        </svg>
+                        <span class="text-sm font-medium text-red-600 dark:text-red-400">{{ _('billing.crypto_status_failed') }}</span>
+                    </div>
+                </template>
+            </div>
+            <template x-if="status === 'waiting' || status === 'confirming'">
+                <span class="text-sm text-gray-500 dark:text-gray-400" x-text="countdownText"></span>
+            </template>
+        </div>
+
+        <!-- Progress Steps -->
+        <div class="flex items-center gap-1">
+            <div class="flex-1 h-1.5 rounded-full"
+                 :class="status !== 'waiting' ? 'bg-green-500' : 'bg-amber-400 animate-pulse'"></div>
+            <div class="flex-1 h-1.5 rounded-full"
+                 :class="['confirming','completed'].includes(status) ? 'bg-green-500' : 'bg-gray-200 dark:bg-gray-700'"></div>
+            <div class="flex-1 h-1.5 rounded-full"
+                 :class="status === 'completed' ? 'bg-green-500' : 'bg-gray-200 dark:bg-gray-700'"></div>
+        </div>
+        <div class="flex justify-between mt-2 text-xs text-gray-400">
+            <span>{{ _('billing.crypto_step_send') }}</span>
+            <span>{{ _('billing.crypto_step_confirm') }}</span>
+            <span>{{ _('billing.crypto_step_done') }}</span>
+        </div>
+    </div>
+
+    <!-- Instructions -->
+    <div class="bg-amber-50 dark:bg-amber-900/20 rounded-xl p-4 mb-6">
+        <h3 class="text-sm font-medium text-amber-800 dark:text-amber-300 mb-2">{{ _('billing.crypto_instructions_title') }}</h3>
+        <ul class="text-xs text-amber-700 dark:text-amber-400 space-y-1.5 list-disc list-inside">
+            <li>{{ _('billing.crypto_instruction_1') }}</li>
+            <li>{{ _('billing.crypto_instruction_2') }}</li>
+            <li>{{ _('billing.crypto_instruction_3') }}</li>
+            <li>{{ _('billing.crypto_instruction_4') }}</li>
+        </ul>
+    </div>
+
+    <!-- Actions -->
+    <div class="text-center">
+        <template x-if="status === 'completed'">
+            <a href="/billing/"
+               class="inline-flex items-center px-6 py-3 rounded-lg text-sm font-medium
+                      bg-gradient-to-r from-green-500 to-emerald-500 hover:from-green-600 hover:to-emerald-600
+                      text-white shadow-sm transition-all duration-200">
+                {{ _('billing.back_to_plans') }}
+            </a>
+        </template>
+        <template x-if="status === 'expired' || status === 'failed'">
+            <a href="/billing/"
+               class="inline-flex items-center px-6 py-3 rounded-lg text-sm font-medium
+                      bg-gradient-to-r from-sakura-500 to-purple-500 hover:from-sakura-600 hover:to-purple-600
+                      text-white shadow-sm transition-all duration-200">
+                {{ _('billing.crypto_retry_purchase') }}
+            </a>
+        </template>
+        <template x-if="status === 'waiting' || status === 'confirming'">
+            <div class="flex items-center gap-4">
+                <a href="/billing/"
+                   class="inline-flex items-center px-4 py-2 rounded-lg text-sm
+                          text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-300 transition-colors">
+                    {{ _('billing.crypto_back_anyway') }}
+                </a>
+                <form method="POST" action="/billing/orders/{{ order_id }}/cancel"
+                      onsubmit="return confirm('{{ _('billing.confirm_cancel_order') }}');"
+                      class="inline">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                    <button type="submit"
+                            class="inline-flex items-center px-4 py-2 rounded-lg text-sm font-medium
+                                   text-red-600 hover:text-red-800 dark:text-red-400
+                                   border border-red-300 dark:border-red-700 hover:border-red-500
+                                   transition-colors duration-200">
+                        {{ _('billing.cancel_order') }}
+                    </button>
+                </form>
+            </div>
+        </template>
+    </div>
+</div>
+
+<!-- QR Code Library -->
+<script src="https://cdn.jsdelivr.net/npm/qrcodejs@1.0.0/qrcode.min.js"></script>
+
+<script>
+function cryptoPayment() {
+    return {
+        status: 'waiting',
+        copied: false,
+        countdownText: '',
+        pollInterval: null,
+        countdownInterval: null,
+        expiresAt: new Date({{ expires_at | tojson }}).getTime(),
+
+        init() {
+            this.generateQR();
+            this.startPolling();
+            this.startCountdown();
+        },
+
+        generateQR() {
+            const address = {{ pay_address | tojson }};
+            const container = document.getElementById('qr-code');
+            if (container && typeof QRCode !== 'undefined') {
+                container.innerHTML = '';
+                new QRCode(container, {
+                    text: address,
+                    width: 180,
+                    height: 180,
+                    colorDark: '#1f2937',
+                    colorLight: '#ffffff',
+                    correctLevel: QRCode.CorrectLevel.M,
+                });
+            }
+        },
+
+        copyAddress() {
+            const address = {{ pay_address | tojson }};
+            navigator.clipboard.writeText(address).then(() => {
+                this.copied = true;
+                setTimeout(() => { this.copied = false; }, 2000);
+            }).catch(() => {
+                // Fallback
+                const el = document.getElementById('wallet-address');
+                const range = document.createRange();
+                range.selectNodeContents(el);
+                window.getSelection().removeAllRanges();
+                window.getSelection().addRange(range);
+                document.execCommand('copy');
+                this.copied = true;
+                setTimeout(() => { this.copied = false; }, 2000);
+            });
+        },
+
+        startPolling() {
+            // 每 15 秒轮询一次支付状态
+            this.pollInterval = setInterval(async () => {
+                try {
+                    const resp = await fetch('/billing/crypto-status?order_no=' + encodeURIComponent({{ order_no | tojson }}));
+                    if (resp.ok) {
+                        const data = await resp.json();
+                        if (data.status) {
+                            this.status = data.status;
+                        }
+                        if (this.status === 'completed' || this.status === 'expired' || this.status === 'failed') {
+                            this.stopPolling();
+                        }
+                    }
+                } catch (e) {
+                    console.error('Poll error:', e);
+                }
+            }, 15000);
+        },
+
+        stopPolling() {
+            if (this.pollInterval) {
+                clearInterval(this.pollInterval);
+                this.pollInterval = null;
+            }
+        },
+
+        startCountdown() {
+            const update = () => {
+                const now = Date.now();
+                const remaining = this.expiresAt - now;
+                if (remaining <= 0) {
+                    this.countdownText = '{{ _("billing.crypto_expired") }}';
+                    this.status = 'expired';
+                    this.stopPolling();
+                    if (this.countdownInterval) {
+                        clearInterval(this.countdownInterval);
+                    }
+                    return;
+                }
+                const minutes = Math.floor(remaining / 60000);
+                const seconds = Math.floor((remaining % 60000) / 1000);
+                this.countdownText = `${minutes}:${seconds.toString().padStart(2, '0')}`;
+            };
+            update();
+            this.countdownInterval = setInterval(update, 1000);
+        }
+    };
+}
+</script>
+{% endblock %}

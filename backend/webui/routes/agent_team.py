@@ -1,4 +1,4 @@
-"""WebUI Agent 专家团队路由（超级管理员专用）"""
+"""WebUI Agent 专家团队路由"""
 
 import json
 import re
@@ -17,6 +17,7 @@ from backend.core.config import (
     DYNAMIC_CONFIG_SENSITIVE_KEYS,
     DYNAMIC_CONFIG_SELECT_OPTIONS,
     get_all_dynamic_config_keys,
+    get_dynamic_config,
     get_dynamic_config_input_type,
     get_settings,
     invalidate_dynamic_config_cache,
@@ -62,6 +63,7 @@ from backend.webui.deps import (
     get_user_preferences,
     paginate,
     render_template,
+    require_auth,
     require_csrf,
     require_super_admin,
     toast_redirect,
@@ -120,6 +122,52 @@ AGENT_TEAM_ACTIVE_STATUSES = [
 ]
 
 _VALID_TASK_PRIORITIES = {"critical", "high", "medium", "low"}
+
+
+def _is_admin(user: dict) -> bool:
+    return user.get("role") in ("admin", "super_admin")
+
+
+def _build_task_owner_filter(user: dict):
+    """非管理员用户只能看到自己创建的任务"""
+    if _is_admin(user):
+        return None
+    return AgentTeamTask.started_by == user["sub"]
+
+
+async def _check_and_consume_agent_quota(
+    db: AsyncSession, user: dict
+) -> tuple[bool, str]:
+    """非管理员用户消费 Agent 配额，管理员跳过"""
+    if _is_admin(user):
+        return True, ""
+    # 延迟导入避免循环引用
+    from backend.services.telegram_service import TelegramService
+
+    service = TelegramService(db)
+    return await service.check_and_consume_agent_quota(
+        github_username=user["sub"],
+    )
+
+
+async def _check_repo_access(user: dict, repo_full_name: str) -> str | None:
+    """非管理员用户校验仓库访问权限，返回错误信息或 None 表示通过。
+
+    校验规则：
+      1. 仓库 owner 必须是用户自己的 GitHub 用户名
+      2. 仓库必须在 Agent 允许列表中（allowlist 为空时不限制）
+    """
+    repo_owner = repo_full_name.split("/")[0] if "/" in repo_full_name else ""
+    github_username = user.get("sub", "")
+    if repo_owner != github_username:
+        return "只能操作自己仓库的 Issue"
+    raw = str(await get_dynamic_config("agent_team_repo_allowlist") or "")
+    allowlist = {
+        item.strip() for item in raw.replace("\n", ",").split(",") if item.strip()
+    }
+    if allowlist and repo_full_name not in allowlist:
+        return "该仓库不在允许列表中，无法创建任务"
+    return None
 
 
 def _clean_optional_text(value: str | None) -> str | None:
@@ -437,14 +485,30 @@ AGENT_TEAM_CONFIG_GROUPS = [
 async def agent_team_page(
     request: Request,
     db: AsyncSession = Depends(get_db),
-    user: dict = Depends(require_super_admin),
+    user: dict = Depends(require_auth),
     user_prefs: dict = Depends(get_user_preferences),
 ):
     """Agent 专家团队独立页面。"""
     lang = detect_language(user_prefs)
-    config_items = await _load_config_items(db, lang=lang)
-    stats = await _load_stats(db)
-    config_groups = _group_config_items(config_items, lang=lang)
+    is_admin = _is_admin(user)
+    stats = await _load_stats(db, user=user)
+    config_items = await _load_config_items(db, lang=lang) if is_admin else []
+    config_groups = _group_config_items(config_items, lang=lang) if is_admin else []
+    agent_quota = None
+    if not is_admin:
+        # 延迟导入避免循环引用
+        from backend.services.telegram_service import TelegramService
+
+        quota_info = await TelegramService(db).get_user_quota_info(user["sub"])
+        if quota_info:
+            agent_quota = {
+                "daily_used": quota_info["agent_daily"]["used"],
+                "daily_limit": quota_info["agent_daily"]["limit"],
+                "weekly_used": quota_info["agent_weekly"]["used"],
+                "weekly_limit": quota_info["agent_weekly"]["limit"],
+                "monthly_used": quota_info["agent_monthly"]["used"],
+                "monthly_limit": quota_info["agent_monthly"]["limit"],
+            }
     return render_template(
         "agent_team.html",
         request,
@@ -457,6 +521,8 @@ async def agent_team_page(
         stats=stats,
         workspace_summary=_load_workspace_summary(),
         status_options=[status.value for status in AgentTeamTaskStatus],
+        is_admin=is_admin,
+        agent_quota=agent_quota,
     )
 
 
@@ -464,7 +530,7 @@ async def agent_team_page(
 async def task_list_fragment(
     request: Request,
     db: AsyncSession = Depends(get_db),
-    user: dict = Depends(require_super_admin),
+    user: dict = Depends(require_auth),
     user_prefs: dict = Depends(get_user_preferences),
     page: int = 1,
     per_page: int | None = None,
@@ -477,6 +543,9 @@ async def task_list_fragment(
     if per_page is None:
         per_page = user_prefs["items_per_page"]
     filters = []
+    owner_filter = _build_task_owner_filter(user)
+    if owner_filter is not None:
+        filters.append(owner_filter)
     if status and status != "all":
         if status == "active":
             filters.append(AgentTeamTask.status.in_(AGENT_TEAM_ACTIVE_STATUSES))
@@ -553,7 +622,7 @@ async def task_detail_fragment(
     task_id: int,
     request: Request,
     db: AsyncSession = Depends(get_db),
-    user: dict = Depends(require_super_admin),
+    user: dict = Depends(require_auth),
     user_prefs: dict = Depends(get_user_preferences),
 ):
     """任务详情片段。"""
@@ -572,6 +641,10 @@ async def task_detail_fragment(
     if task is None:
         return JSONResponse(
             {"success": False, "message": "任务不存在"}, status_code=404
+        )
+    if not _is_admin(user) and task.started_by != user["sub"]:
+        return JSONResponse(
+            {"success": False, "message": "无权查看此任务"}, status_code=403
         )
 
     # selectinload 不支持在当前 SQLAlchemy 版本中稳定地继续链式排序，模板侧按序展示即可。
@@ -710,9 +783,13 @@ async def save_agent_team_config(
 async def list_repo_branches(
     owner: str,
     name: str,
-    _=Depends(require_super_admin),
+    user: dict = Depends(require_auth),
 ):
     """获取仓库分支列表，供任务创建弹窗选择基础分支。"""
+    if not _is_admin(user):
+        err = await _check_repo_access(user, f"{owner}/{name}")
+        if err:
+            return JSONResponse({"success": False, "message": err}, status_code=403)
     try:
         from backend.core.github_app import GitHubAppClient
 
@@ -923,13 +1000,27 @@ def _parse_issue_ref(ref: str) -> tuple[str, int]:
 @router.post("/tasks/preview-from-issue")
 async def preview_task_from_issue(
     db: AsyncSession = Depends(get_db),
-    user: dict = Depends(require_super_admin),
+    user: dict = Depends(require_auth),
     csrf_token: str = Depends(require_csrf),
     issue_ref: str = Form(...),
 ):
     """从指定 Issue 构建可编辑任务草稿。"""
     try:
         repo_full_name, issue_number = _parse_issue_ref(issue_ref)
+    except ValueError as e:
+        logger.warning("Invalid issue ref in preview-from-issue: {}", e)
+        return JSONResponse(
+            {"success": False, "message": "Invalid issue reference format"},
+            status_code=200,
+        )
+    if not _is_admin(user):
+        err = await _check_repo_access(user, repo_full_name)
+        if err:
+            return JSONResponse(
+                {"success": False, "message": err},
+                status_code=200,
+            )
+    try:
         draft = await AgentTeamCandidateService().build_manual_issue_task_draft(
             db, repo_full_name, issue_number
         )
@@ -950,7 +1041,7 @@ async def preview_task_from_issue(
 async def create_task_from_issue(
     background_tasks: BackgroundTasks,
     db: AsyncSession = Depends(get_db),
-    user: dict = Depends(require_super_admin),
+    user: dict = Depends(require_auth),
     csrf_token: str = Depends(require_csrf),
     issue_ref: str = Form(...),
     title: str = Form(""),
@@ -976,6 +1067,18 @@ async def create_task_from_issue(
             {"success": False, "message": str(e)},
             status_code=200,
         )
+    if not _is_admin(user):
+        err = await _check_repo_access(user, repo_full_name)
+        if err:
+            return JSONResponse(
+                {"success": False, "message": err},
+                status_code=200,
+            )
+
+    # Agent 配额消费（仓库权限校验通过后再扣费）
+    ok, msg = await _check_and_consume_agent_quota(db, user)
+    if not ok:
+        return JSONResponse({"success": False, "message": msg}, status_code=200)
 
     try:
         config = await load_agent_team_ai_config()
@@ -1079,7 +1182,7 @@ async def retry_task(
     task_id: int,
     background_tasks: BackgroundTasks,
     db: AsyncSession = Depends(get_db),
-    user: dict = Depends(require_super_admin),
+    user: dict = Depends(require_auth),
     csrf_token: str = Depends(require_csrf),
 ):
     """重试失败或卡住的任务。"""
@@ -1088,6 +1191,10 @@ async def retry_task(
     if task is None:
         return JSONResponse(
             {"success": False, "message": "任务不存在"}, status_code=404
+        )
+    if not _is_admin(user) and task.started_by != user["sub"]:
+        return JSONResponse(
+            {"success": False, "message": "无权操作此任务"}, status_code=403
         )
 
     retryable_statuses = {"failed", "cancelled", "abandoned", "queued"}
@@ -1099,6 +1206,11 @@ async def retry_task(
             },
             status_code=200,
         )
+
+    # Agent 配额消费（确认任务可重试后再扣费）
+    ok, msg = await _check_and_consume_agent_quota(db, user)
+    if not ok:
+        return JSONResponse({"success": False, "message": msg}, status_code=200)
 
     try:
         config = await load_agent_team_ai_config()
@@ -1139,7 +1251,7 @@ async def resume_task(
     task_id: int,
     background_tasks: BackgroundTasks,
     db: AsyncSession = Depends(get_db),
-    user: dict = Depends(require_super_admin),
+    user: dict = Depends(require_auth),
     csrf_token: str = Depends(require_csrf),
 ):
     """从已持久化 messages 和工作区继续运行任务。"""
@@ -1148,6 +1260,10 @@ async def resume_task(
     if task is None:
         return JSONResponse(
             {"success": False, "message": "任务不存在"}, status_code=404
+        )
+    if not _is_admin(user) and task.started_by != user["sub"]:
+        return JSONResponse(
+            {"success": False, "message": "无权操作此任务"}, status_code=403
         )
 
     if task.status not in {"failed", "cancelled"}:
@@ -1208,7 +1324,7 @@ async def resume_task(
 async def cancel_task(
     task_id: int,
     db: AsyncSession = Depends(get_db),
-    user: dict = Depends(require_super_admin),
+    user: dict = Depends(require_auth),
     csrf_token: str = Depends(require_csrf),
 ):
     """取消任务。"""
@@ -1217,6 +1333,10 @@ async def cancel_task(
     if task is None:
         return JSONResponse(
             {"success": False, "message": "任务不存在"}, status_code=404
+        )
+    if not _is_admin(user) and task.started_by != user["sub"]:
+        return JSONResponse(
+            {"success": False, "message": "无权操作此任务"}, status_code=403
         )
 
     cancellable = {
@@ -1259,7 +1379,7 @@ async def cancel_task(
 async def delete_task(
     task_id: int,
     db: AsyncSession = Depends(get_db),
-    user: dict = Depends(require_super_admin),
+    user: dict = Depends(require_auth),
     csrf_token: str = Depends(require_csrf),
 ):
     """删除任务及其迭代/反馈/变更文件记录。"""
@@ -1268,6 +1388,10 @@ async def delete_task(
     if task is None:
         return JSONResponse(
             {"success": False, "message": "任务不存在"}, status_code=404
+        )
+    if not _is_admin(user) and task.started_by != user["sub"]:
+        return JSONResponse(
+            {"success": False, "message": "无权操作此任务"}, status_code=403
         )
 
     protected_statuses = set(AGENT_TEAM_ACTIVE_STATUSES) - {
@@ -1465,31 +1589,33 @@ def _group_config_items(config_items: list[dict], lang: str = "zh-CN") -> list[d
     return groups
 
 
-async def _load_stats(db: AsyncSession) -> dict:
-    total = await db.scalar(select(func.count(AgentTeamTask.id)))
+async def _load_stats(db: AsyncSession, user: dict | None = None) -> dict:
+    owner_filter = _build_task_owner_filter(user) if user else None
+    base = [owner_filter] if owner_filter else []
+    total = await db.scalar(select(func.count(AgentTeamTask.id)).where(*base))
     active = await db.scalar(
         select(func.count(AgentTeamTask.id)).where(
-            AgentTeamTask.status.in_(AGENT_TEAM_ACTIVE_STATUSES)
+            AgentTeamTask.status.in_(AGENT_TEAM_ACTIVE_STATUSES), *base
         )
     )
     completed = await db.scalar(
-        select(func.count(AgentTeamTask.id)).where(AgentTeamTask.status == "completed")
+        select(func.count(AgentTeamTask.id)).where(AgentTeamTask.status == "completed", *base)
     )
     failed = await db.scalar(
-        select(func.count(AgentTeamTask.id)).where(AgentTeamTask.status == "failed")
+        select(func.count(AgentTeamTask.id)).where(AgentTeamTask.status == "failed", *base)
     )
     queued = await db.scalar(
-        select(func.count(AgentTeamTask.id)).where(AgentTeamTask.status == "queued")
+        select(func.count(AgentTeamTask.id)).where(AgentTeamTask.status == "queued", *base)
     )
     waiting_human = await db.scalar(
         select(func.count(AgentTeamTask.id)).where(
-            AgentTeamTask.status == "waiting_human"
+            AgentTeamTask.status == "waiting_human", *base
         )
     )
     status_rows = await db.execute(
-        select(AgentTeamTask.status, func.count(AgentTeamTask.id)).group_by(
-            AgentTeamTask.status
-        )
+        select(AgentTeamTask.status, func.count(AgentTeamTask.id))
+        .where(*base)
+        .group_by(AgentTeamTask.status)
     )
     return {
         "total": total or 0,
@@ -1549,24 +1675,28 @@ def _format_bytes(value: int) -> str:
 
 @router.get("/api/active-tasks")
 async def list_active_tasks(
-    _=Depends(require_super_admin),
+    user: dict = Depends(require_auth),
     db: AsyncSession = Depends(get_db),
 ):
     """获取活跃任务列表（供 Live View 下拉框使用，含最近完成的任务以便回看对话）。"""
+    owner_filter = _build_task_owner_filter(user)
+    base_filters = [
+        AgentTeamTask.status.in_(AGENT_TEAM_ACTIVE_STATUSES)
+        | (
+            AgentTeamTask.status.in_([
+                AgentTeamTaskStatus.COMPLETED.value,
+                AgentTeamTaskStatus.FAILED.value,
+                AgentTeamTaskStatus.CANCELLED.value,
+                AgentTeamTaskStatus.PR_OPENED.value,
+            ])
+            & AgentTeamTask.completed_at.isnot(None)
+        )
+    ]
+    if owner_filter is not None:
+        base_filters.append(owner_filter)
     rows = (await db.execute(
         select(AgentTeamTask)
-        .where(
-            AgentTeamTask.status.in_(AGENT_TEAM_ACTIVE_STATUSES)
-            | (
-                AgentTeamTask.status.in_([
-                    AgentTeamTaskStatus.COMPLETED.value,
-                    AgentTeamTaskStatus.FAILED.value,
-                    AgentTeamTaskStatus.CANCELLED.value,
-                    AgentTeamTaskStatus.PR_OPENED.value,
-                ])
-                & AgentTeamTask.completed_at.isnot(None)
-            )
-        )
+        .where(*base_filters)
         .order_by(desc(AgentTeamTask.updated_at))
         .limit(30)
     )).scalars().all()
@@ -1591,13 +1721,15 @@ async def task_stream_data(
     task_id: int,
     after_id: int = 0,
     limit: int = 50,
-    _=Depends(require_super_admin),
+    user: dict = Depends(require_auth),
     db: AsyncSession = Depends(get_db),
 ):
     """获取任务的消息流数据（messages + tool_calls + sessions + prompts）。"""
     task = await db.get(AgentTeamTask, task_id)
     if not task:
         return JSONResponse({"success": False, "error": "Task not found"}, status_code=404)
+    if not _is_admin(user) and task.started_by != user["sub"]:
+        return JSONResponse({"success": False, "error": "Forbidden"}, status_code=403)
 
     # Sessions for this task
     session_rows = (await db.execute(
@@ -1707,13 +1839,15 @@ async def submit_user_prompt(
     task_id: int,
     request: Request,
     content: str = Form(...),
-    _=Depends(require_super_admin),
+    user: dict = Depends(require_auth),
     db: AsyncSession = Depends(get_db),
 ):
-    """提交管理员引导 Prompt（pending 状态，下次 AI 请求时注入）。"""
+    """提交用户引导 Prompt（pending 状态，下次 AI 请求时注入）。"""
     task = await db.get(AgentTeamTask, task_id)
     if not task:
         return JSONResponse({"success": False, "error": "Task not found"}, status_code=404)
+    if not _is_admin(user) and task.started_by != user["sub"]:
+        return JSONResponse({"success": False, "error": "Forbidden"}, status_code=403)
 
     if task.status not in AGENT_TEAM_ACTIVE_STATUSES:
         return JSONResponse(
@@ -1759,13 +1893,15 @@ async def submit_user_prompt(
 @router.get("/api/tasks/{task_id}/prompts")
 async def list_user_prompts(
     task_id: int,
-    _=Depends(require_super_admin),
+    user: dict = Depends(require_auth),
     db: AsyncSession = Depends(get_db),
 ):
-    """获取任务的管理员引导 Prompt 列表。"""
+    """获取任务的用户引导 Prompt 列表。"""
     task = await db.get(AgentTeamTask, task_id)
     if not task:
         return JSONResponse({"success": False, "error": "Task not found"}, status_code=404)
+    if not _is_admin(user) and task.started_by != user["sub"]:
+        return JSONResponse({"success": False, "error": "Forbidden"}, status_code=403)
 
     rows = (await db.execute(
         select(AgentTeamUserPrompt)

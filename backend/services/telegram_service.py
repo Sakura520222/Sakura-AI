@@ -226,6 +226,79 @@ class TelegramService:
         await self.session.commit()
         return True, ""
 
+    async def check_and_consume_agent_quota(
+        self, github_username: str, repo_name: str = "", task_id: int = 0
+    ):
+        """检查并消费 Agent 配额"""
+        from sqlalchemy import update
+        from sqlalchemy.sql import and_
+
+        user = await self.get_user_by_github_username(github_username)
+        if not user:
+            return False, "用户未注册"
+
+        role_lower = user.role.lower().strip() if user.role else ""
+        if role_lower in ["admin", "super_admin"]:
+            return True, ""
+
+        if await is_payment_enabled():
+            await PaymentService(self.session).expire_due_subscriptions(user.id)
+        await QuotaService(self.session).reset_user_quotas_if_expired(
+            user, include_pr=False, include_issue=False, include_agent=True
+        )
+
+        stmt = (
+            update(TelegramUser)
+            .where(
+                and_(
+                    TelegramUser.id == user.id,
+                    TelegramUser.agent_daily_used < TelegramUser.agent_daily_quota,
+                    TelegramUser.agent_weekly_used < TelegramUser.agent_weekly_quota,
+                    TelegramUser.agent_monthly_used < TelegramUser.agent_monthly_quota,
+                )
+            )
+            .values(
+                agent_daily_used=TelegramUser.agent_daily_used + 1,
+                agent_weekly_used=TelegramUser.agent_weekly_used + 1,
+                agent_monthly_used=TelegramUser.agent_monthly_used + 1,
+            )
+        )
+
+        result = await self.session.execute(stmt)
+
+        if result.rowcount == 0:
+            await self.session.refresh(user)
+
+            if user.agent_daily_used >= user.agent_daily_quota:
+                return (
+                    False,
+                    f"Agent 每日配额已用完 ({user.agent_daily_used}/{user.agent_daily_quota})",
+                )
+            elif user.agent_weekly_used >= user.agent_weekly_quota:
+                return (
+                    False,
+                    f"Agent 每周配额已用完 ({user.agent_weekly_used}/{user.agent_weekly_quota})",
+                )
+            elif user.agent_monthly_used >= user.agent_monthly_quota:
+                return (
+                    False,
+                    f"Agent 每月配额已用完 ({user.agent_monthly_used}/{user.agent_monthly_quota})",
+                )
+            else:
+                return False, "Agent 配额已用完"
+
+        log = QuotaUsageLog(
+            telegram_user_id=user.id,
+            repo_name=repo_name,
+            pr_number=task_id,
+            usage_type="daily",
+            usage_category="agent",
+        )
+        self.session.add(log)
+
+        await self.session.commit()
+        return True, ""
+
     async def add_user(
         self,
         telegram_id: int,
@@ -319,6 +392,18 @@ class TelegramService:
             user.weekly_quota = limit
         elif quota_type == "monthly":
             user.monthly_quota = limit
+        elif quota_type == "issue_daily":
+            user.issue_daily_quota = limit
+        elif quota_type == "issue_weekly":
+            user.issue_weekly_quota = limit
+        elif quota_type == "issue_monthly":
+            user.issue_monthly_quota = limit
+        elif quota_type == "agent_daily":
+            user.agent_daily_quota = limit
+        elif quota_type == "agent_weekly":
+            user.agent_weekly_quota = limit
+        elif quota_type == "agent_monthly":
+            user.agent_monthly_quota = limit
         else:
             return False, "无效的配额类型"
 
@@ -354,6 +439,18 @@ class TelegramService:
             "issue_monthly": {
                 "used": user.issue_monthly_used,
                 "limit": user.issue_monthly_quota,
+            },
+            "agent_daily": {
+                "used": user.agent_daily_used,
+                "limit": user.agent_daily_quota,
+            },
+            "agent_weekly": {
+                "used": user.agent_weekly_used,
+                "limit": user.agent_weekly_quota,
+            },
+            "agent_monthly": {
+                "used": user.agent_monthly_used,
+                "limit": user.agent_monthly_quota,
             },
         }
 
@@ -430,10 +527,13 @@ class TelegramService:
                 daily_quota=settings.init_admin_daily_quota,
                 weekly_quota=settings.init_admin_weekly_quota,
                 monthly_quota=settings.init_admin_monthly_quota,
-                # 管理员 Issue 配额复用管理员 PR 初始配额，避免新增独立配置项。
+                # 管理员 Issue/Agent 配额复用管理员 PR 初始配额
                 issue_daily_quota=settings.init_admin_daily_quota,
                 issue_weekly_quota=settings.init_admin_weekly_quota,
                 issue_monthly_quota=settings.init_admin_monthly_quota,
+                agent_daily_quota=settings.init_admin_agent_daily_quota,
+                agent_weekly_quota=settings.init_admin_agent_weekly_quota,
+                agent_monthly_quota=settings.init_admin_agent_monthly_quota,
             )
         else:
             role = UserRole.USER
@@ -448,6 +548,9 @@ class TelegramService:
                 issue_daily_quota=max(1, int(settings.init_user_issue_daily_quota * multiplier)),
                 issue_weekly_quota=max(1, int(settings.init_user_issue_weekly_quota * multiplier)),
                 issue_monthly_quota=max(1, int(settings.init_user_issue_monthly_quota * multiplier)),
+                agent_daily_quota=max(1, int(settings.init_user_agent_daily_quota * multiplier)),
+                agent_weekly_quota=max(1, int(settings.init_user_agent_weekly_quota * multiplier)),
+                agent_monthly_quota=max(1, int(settings.init_user_agent_monthly_quota * multiplier)),
             )
         try:
             self.session.add(user)
@@ -461,13 +564,15 @@ class TelegramService:
             quota_info = (
                 f"\n📊 管理员配额:\n"
                 f"  PR: {user.daily_quota}/{user.weekly_quota}/{user.monthly_quota}（日/周/月）\n"
-                f"  Issue: {user.issue_daily_quota}/{user.issue_weekly_quota}/{user.issue_monthly_quota}（日/周/月）"
+                f"  Issue: {user.issue_daily_quota}/{user.issue_weekly_quota}/{user.issue_monthly_quota}（日/周/月）\n"
+                f"  Agent: {user.agent_daily_quota}/{user.agent_weekly_quota}/{user.agent_monthly_quota}（日/周/月）"
             )
         else:
             quota_info = (
                 f"\n📊 配额（×{multiplier}）:\n"
                 f"  PR: {user.daily_quota}/{user.weekly_quota}/{user.monthly_quota}（日/周/月）\n"
-                f"  Issue: {user.issue_daily_quota}/{user.issue_weekly_quota}/{user.issue_monthly_quota}（日/周/月）"
+                f"  Issue: {user.issue_daily_quota}/{user.issue_weekly_quota}/{user.issue_monthly_quota}（日/周/月）\n"
+                f"  Agent: {user.agent_daily_quota}/{user.agent_weekly_quota}/{user.agent_monthly_quota}（日/周/月）"
             )
         return True, f"注册成功{quota_info}"
 
