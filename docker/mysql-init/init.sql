@@ -93,7 +93,7 @@ CREATE TABLE IF NOT EXISTS review_queue (
 
 -- 插入默认配置
 INSERT IGNORE INTO app_config (key_name, key_value, description) VALUES
-('app_version', '2.11.0', '应用版本号'),
+('app_version', '2.12.0', '应用版本号'),
 ('max_concurrent_reviews', '5', '最大并发审查数量'),
 ('review_timeout_seconds', '300', '审查超时时间（秒）'),
 ('enable_auto_review', 'true', '是否启用自动审查'),
@@ -112,6 +112,7 @@ CREATE TABLE IF NOT EXISTS sakura_memory_states (
     last_consolidation_count INT NULL,
     is_initialized TINYINT(1) NOT NULL DEFAULT 0,
     knowledge_extracted TINYINT(1) NOT NULL DEFAULT 0,
+    last_extraction_count INT NULL,
     last_sakura_md_sha VARCHAR(40) NULL,
     last_memory_md_sha VARCHAR(40) NULL,
     consolidation_interval INT NOT NULL DEFAULT 5,

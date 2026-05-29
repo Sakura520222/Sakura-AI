@@ -27,6 +27,42 @@ templates = get_templates()
 MAX_SAKURA_FILE_CONTENT_LENGTH = 50_000
 
 
+def _get_knowledge_extraction_status(repo_state: SakuraMemoryState) -> dict:
+    """计算知识提取的诊断状态 / Compute diagnostic status for knowledge extraction
+
+    周期性提取：基于 last_extraction_count 与 min_reflections 间隔判断进度。
+
+    Returns:
+        dict with keys: status (str), detail (str), min_reflections (int)
+        status: "disabled" | "pending" | "ready"
+    """
+    from backend.core.config import get_settings
+
+    settings = get_settings()
+    enabled = settings.sakura_knowledge_extraction_enabled
+    interval = settings.sakura_extraction_min_reflections or 10
+
+    if not enabled:
+        return {"status": "disabled", "detail": "已禁用", "min_reflections": interval}
+
+    count = repo_state.reflection_count
+    last_extraction = repo_state.last_extraction_count or 0
+    since_last = count - last_extraction
+
+    if since_last >= interval:
+        return {
+            "status": "ready",
+            "detail": f"待触发（{since_last} ≥ {interval}）",
+            "min_reflections": interval,
+        }
+
+    return {
+        "status": "pending",
+        "detail": f"进行中（{since_last}/{interval}）",
+        "min_reflections": interval,
+    }
+
+
 def _get_repo(repo_full_name: str):
     """获取 GitHub repo 对象"""
     from backend.core.github_app import GitHubAppClient
@@ -124,6 +160,9 @@ async def view_file(
     # 读取文件内容
     content = await _read_sakura_file(repo_full_name, f".sakura/{file_path}")
 
+    # 知识提取诊断状态
+    ke_status = _get_knowledge_extraction_status(repo_state) if repo_state else None
+
     return render_template(
         "sakura_memory.html",
         request,
@@ -134,6 +173,7 @@ async def view_file(
         repos=all_repos,
         selected_repo=repo_full_name,
         repo_state=repo_state,
+        ke_status=ke_status,
         files=files,
         file_content=content,
         file_path=file_path,
@@ -181,6 +221,9 @@ async def view_repo_memory(
     # 获取文件列表
     files = await _list_sakura_files(repo_full_name)
 
+    # 知识提取诊断状态
+    ke_status = _get_knowledge_extraction_status(repo_state)
+
     return render_template(
         "sakura_memory.html",
         request,
@@ -191,6 +234,7 @@ async def view_repo_memory(
         repos=all_repos,
         selected_repo=repo_full_name,
         repo_state=repo_state,
+        ke_status=ke_status,
         files=files,
         file_content=None,
         file_path=None,

@@ -1,0 +1,76 @@
+# .understandignore — patterns for files/dirs to exclude from analysis
+# Syntax: same as .gitignore (globs, # comments, ! negation, trailing / for dirs)
+# Lines below are suggestions — uncomment to activate.
+# Use ! prefix to force-include something excluded by defaults.
+#
+# Built-in defaults (always excluded unless negated):
+#   node_modules/, .git/, dist/, build/, obj/, *.lock, *.min.js, etc.
+#
+# --- From .gitignore (uncomment to exclude) ---
+
+# *.py[cod]
+# *$py.class
+# *.so
+# .Python
+# develop-eggs/
+# downloads/
+# eggs/
+# .eggs/
+# lib/
+# lib64/
+# parts/
+# sdist/
+# var/
+# wheels/
+# *.egg-info/
+# .installed.cfg
+# *.egg
+# ENV/
+# env/
+# .env
+# .env.local
+# .env.*.local
+# logs/
+# *.log.*
+# *.swp
+# *.swo
+# *~
+# .DS_Store
+# *.db
+# *.sqlite
+# *.sqlite3
+# docker/ssl/
+# *.pem
+# *.key
+# .coverage
+# htmlcov/
+# .pytest_cache/
+# config/connection.json
+# .sakura/dev/
+# *.tmp
+# *.bak
+# *.swp
+# deploy_key
+# deploy.py
+# .deploy_state.json
+# .claude/
+# CLAUDE.md
+# workplace/
+# Skills/
+# *.pyc
+# .mypy_cache/
+
+# --- Detected directories (uncomment to exclude) ---
+
+# tests/
+# docs/
+# scripts/
+
+# --- Test file patterns (uncomment to exclude) ---
+
+# *.test.*
+# *.spec.*
+# *..snap
+
+# --- Sakure AI memory files ---
+.sakura/memory/

@@ -86,6 +86,7 @@ JWT Token 通过 OAuth 登录流程获取，有效期 24 小时（86400 秒）�
 | 401 | 未提供认证凭证 / 凭证无效或已过期 |
 | 403 | 权限不足（角色不满足要求） |
 | 428 | 需要先完成 MFA 注册（全局或单用户强制 MFA） |
+| 429 | 请求过于频繁或 MFA 连续失败后被临时锁定 |
 | 404 | 资源不存在 |
 | 409 | 资源冲突（如正在索引中） |
 | 500 | 服务器内部错误 |
@@ -101,6 +102,8 @@ JWT Token 通过 OAuth 登录流程获取，有效期 24 小时（86400 秒）�
 | 移动端 OAuth `GET /auth/github/mobile` | 10 次/分钟 |
 | OAuth 回调 `POST /auth/callback` | 5 次/分钟 |
 | 二次验证 `POST /auth/2fa/verify` | 5 次/分钟 |
+| Passkey 二次验证 `POST /auth/2fa/passkey/options` | 默认 10 次/分钟，可通过 `passkeys_authentication_rate_limit` 配置 |
+| Passkey 二次验证 `POST /auth/2fa/passkey/verify` | 默认 10 次/分钟，可通过 `passkeys_authentication_rate_limit` 配置 |
 | 登出 `POST /auth/logout` | 10 次/分钟 |
 | Setup 连接测试 `POST /setup/test-connection` | 10 次/分钟 |
 | Setup 模型列表 `POST /setup/ai-providers/{provider}/models` | 10 次/分钟 |
@@ -191,21 +194,19 @@ JWT Token 通过 OAuth 登录流程获取，有效期 24 小时（86400 秒）�
 | 74 | GET | `/billing/plans` | auth | 获取可用套餐 |
 | 75 | POST | `/billing/redeem` | auth | 兑换配额码 |
 | 76 | GET | `/billing/orders` | auth | 获取订单历史 |
-| 77 | POST | `/billing/admin/plans` | super_admin | 创建套餐 |
-| 78 | PUT | `/billing/admin/plans/{plan_id}` | super_admin | 编辑套餐 |
-| 79 | DELETE | `/billing/admin/plans/{plan_id}` | super_admin | 删除套餐 |
-| 80 | POST | `/billing/admin/codes/generate` | super_admin | 批量生成兑换码 |
-| 81 | PUT | `/billing/admin/codes/{code_id}` | super_admin | 编辑兑换码 |
-| 82 | DELETE | `/billing/admin/codes/{code_id}` | super_admin | 删除兑换码 |
-| 83 | POST | `/billing/admin/grant` | super_admin | 手动为用户充值 |
-| 84 | POST | `/billing/admin/plans/batch-toggle` | super_admin | 批量启用/禁用套餐 |
-| 85 | POST | `/billing/admin/plans/batch-delete` | super_admin | 批量删除套餐 |
-| 86 | POST | `/billing/admin/codes/batch-enable` | super_admin | 批量启用兑换码 |
-| 87 | POST | `/billing/admin/codes/batch-disable` | super_admin | 批量禁用兑换码 |
-| 88 | POST | `/billing/admin/codes/batch-delete` | super_admin | 批量删除兑换码 |
-| 89 | POST | `/auth/2fa/passkey/options` | 免认证 | 创建 API Passkey 认证 options |
-| 90 | POST | `/auth/2fa/passkey/verify` | 免认证 | 验证 API Passkey 认证 |
-| 91 | GET | `/events` | auth | SSE 事件流 |
+| 77 | POST | `/billing/orders` | auth | 创建外部支付订单 |
+| 78 | GET | `/billing/orders/{order_id}` | auth | 查询订单状态 |
+| 79 | POST | `/billing/orders/{order_id}/refund` | super_admin | 直接退款订单 |
+| 80 | POST | `/billing/admin/plans` | super_admin | 创建套餐 |
+| 81 | PUT | `/billing/admin/plans/{plan_id}` | super_admin | 编辑套餐 |
+| 82 | DELETE | `/billing/admin/plans/{plan_id}` | super_admin | 删除套餐（默认软删除，可选硬删除） |
+| 83 | POST | `/billing/admin/codes/generate` | super_admin | 批量生成兑换码 |
+| 84 | PUT | `/billing/admin/codes/{code_id}` | super_admin | 编辑兑换码 |
+| 85 | DELETE | `/billing/admin/codes/{code_id}` | super_admin | 删除兑换码 |
+| 86 | POST | `/billing/admin/grant` | super_admin | 手动为用户充值 |
+| 87 | POST | `/auth/2fa/passkey/options` | 免认证 | 创建 API Passkey 认证 options |
+| 88 | POST | `/auth/2fa/passkey/verify` | 免认证 | 验证 API Passkey 认证 |
+| 89 | GET | `/events` | auth | SSE 事件流 |
 
 ---
 
@@ -374,7 +375,7 @@ JWT Token 通过 OAuth 登录流程获取，有效期 24 小时（86400 秒）�
 }
 ```
 
-客户端收到该响应后，应提示用户输入 TOTP 验证码或恢复码，并调用 `POST /auth/2fa/verify` 换取正式 Token。WebUI 支持 Passkey 作为二次验证方式；API v1 当前提供 TOTP/恢复码验证路径。
+客户端收到该响应后，应根据 `methods` 字段选择验证方式：TOTP/恢复码调用 `POST /auth/2fa/verify`，Passkey 调用 `POST /auth/2fa/passkey/options` 后再提交 `POST /auth/2fa/passkey/verify` 换取正式 Token。
 
 > **Android 接入建议**：获取 `access_token` 后存储到本地安全存储（如 EncryptedSharedPreferences），后续所有请求通过 `Authorization: Bearer <access_token>` 携带。
 
@@ -431,9 +432,9 @@ JWT Token 通过 OAuth 登录流程获取，有效期 24 小时（86400 秒）�
 
 | HTTP 状态码 | 说明 |
 |-------------|------|
-| 400 | 用户未启用二次验证、验证码/恢复码无效，或仅配置了 Passkey 而 API 侧未提供 Passkey 验证路径 |
+| 400 | 用户未启用二次验证、验证码/恢复码无效，或当前用户需使用 Passkey 完成验证 |
 | 401 | `mfa_token` 无效或已过期 |
-| 423 | 账户因连续 MFA 验证失败被临时锁定 |
+| 429 | 账户因连续 MFA 验证失败被临时锁定 |
 
 #### POST /auth/2fa/passkey/options
 
@@ -451,7 +452,10 @@ JWT Token 通过 OAuth 登录流程获取，有效期 24 小时（86400 秒）�
 
 | 字段 | 类型 | 说明 |
 |------|------|------|
-| `data.options` | object | WebAuthn Authentication Options（PublicKeyCredentialRequestOptions JSON）|
+| `data.challenge_id` | string | 服务端保存的 challenge ID，提交验证时需原样带回 |
+| `data.public_key` | object | WebAuthn Authentication Options（PublicKeyCredentialRequestOptions JSON） |
+| `data.rp_id` | string | Relying Party ID |
+| `data.origin` | string | 服务端用于校验的 Origin |
 
 **响应示例**：
 
@@ -460,12 +464,16 @@ JWT Token 通过 OAuth 登录流程获取，有效期 24 小时（86400 秒）�
   "success": true,
   "message": "ok",
   "data": {
-    "options": {
-      "challenge": "base64-encoded-challenge",
+    "challenge_id": "base64url-challenge-id",
+    "public_key": {
+      "challenge": "base64url-challenge",
       "rpId": "example.com",
-      "allowCredentials": [...],
-      "timeout": 60000
-    }
+      "allowCredentials": [],
+      "timeout": 300000,
+      "userVerification": "required"
+    },
+    "rp_id": "example.com",
+    "origin": "https://example.com"
   }
 }
 ```
@@ -483,6 +491,7 @@ JWT Token 通过 OAuth 登录流程获取，有效期 24 小时（86400 秒）�
 | 字段 | 类型 | 必填 | 说明 |
 |------|------|------|------|
 | `mfa_token` | string | 是 | OAuth 回调返回的临时二次验证 Token |
+| `challenge_id` | string | 是 | `POST /auth/2fa/passkey/options` 返回的 challenge ID |
 | `credential` | object | 是 | WebAuthn 认证结果（navigator.credentials.get() 返回值 JSON 序列化）|
 
 **响应字段**：同 `POST /auth/callback` 成功签发 Token 时的响应。
@@ -493,7 +502,7 @@ JWT Token 通过 OAuth 登录流程获取，有效期 24 小时（86400 秒）�
 |-------------|------|
 | 400 | Passkey 认证失败或凭证无效 |
 | 401 | `mfa_token` 无效或已过期 |
-| 423 | 账户因连续 MFA 验证失败被临时锁定 |
+| 429 | 账户因连续 MFA 验证失败被临时锁定 |
 
 ---
 
@@ -617,8 +626,10 @@ JWT Token 通过 OAuth 登录流程获取，有效期 24 小时（86400 秒）�
 | `redis_url` | string | 条件 | Redis 连接 URL（type=redis） |
 | `app_id` | string | 条件 | GitHub App ID（type=github） |
 | `private_key` | string | 条件 | GitHub 私钥（type=github） |
-| `api_key` | string | 条件 | OpenAI API Key（type=openai） |
-| `api_base` | string | 条件 | OpenAI API Base URL（type=openai） |
+| `provider` | string | 否 | AI 厂商 ID（type=openai，默认 `custom`） |
+| `api_key` | string | 条件 | OpenAI 兼容 API Key（type=openai） |
+| `api_base` | string | 条件 | OpenAI 兼容 API Base URL（type=openai） |
+| `model` | string | 否 | 用于辅助查询上下文窗口的模型名（type=openai） |
 | `bot_token` | string | 条件 | Telegram Bot Token（type=telegram） |
 
 **请求示例**：
@@ -655,7 +666,7 @@ JWT Token 通过 OAuth 登录流程获取，有效期 24 小时（86400 秒）�
 
 | 字段 | 类型 | 说明 |
 |------|------|------|
-| `data.providers` | array | AI Provider 元数据列表，包含 `id`、`label`、`base_url`、`default_model`、是否支持模型列表等信息 |
+| `data.providers` | array | AI Provider 元数据列表，包含 `id`、`label`、`base_url`、`default_model`、是否支持模型列表和上下文窗口等信息 |
 
 **响应示例**：
 
@@ -776,9 +787,11 @@ Setup 阶段按 AI 厂商获取模型列表，并尽可能提取上下文窗口�
 | `GITHUB_APP_ID` | string | GitHub App ID |
 | `GITHUB_PRIVATE_KEY` | string | GitHub App 私钥 |
 | `GITHUB_WEBHOOK_SECRET` | string | GitHub Webhook 密钥 |
-| `OPENAI_API_KEY` | string | OpenAI API Key |
-| `OPENAI_API_BASE` | string | OpenAI API Base URL |
-| `OPENAI_MODEL` | string | OpenAI 模型名 |
+| `AI_PROVIDER` | string | AI 厂商 ID |
+| `OPENAI_API_KEY` | string | OpenAI 兼容 API Key |
+| `OPENAI_API_BASE` | string | OpenAI 兼容 API Base URL |
+| `OPENAI_MODEL` | string | OpenAI 兼容模型名 |
+| `SUMMARY_PROVIDER` | string | Summary 使用的 AI 厂商 ID |
 | `TELEGRAM_BOT_TOKEN` | string | Telegram Bot Token |
 | `APP_DOMAIN` | string | 应用域名 |
 | `APP_PORT` | string | 应用端口 |
@@ -797,6 +810,8 @@ Setup 阶段按 AI 厂商获取模型列表，并尽可能提取上下文窗口�
 | `RERANK_BASE_URL` | string | Rerank Base URL |
 | `RERANK_MODEL` | string | Rerank 模型名 |
 | `RERANK_PROVIDER` | string | Rerank 提供商 |
+
+> **说明**：当前 Setup 状态步骤按 `database`、`github`、`ai`、`rag`、`admin` 分组展示，服务端实际必填检查来自 `field_groups` 返回值。
 
 **响应示例**：
 
@@ -1850,7 +1865,18 @@ Issue 分析详情。
 
 | 字段 | 类型 | 说明 |
 |------|------|------|
-| `data.configs` | object | 键值对（键为配置名，值为配置值，敏感值已脱敏） |
+| `data.configs` | object | 键值对（键为配置名，值为配置值，敏感值已脱敏；包括数据库中保存的动态配置） |
+
+常见可配置键包括：
+
+| 配置键 | 说明 |
+|--------|------|
+| `openai_api_key` / `openai_api_base` / `openai_model` | OpenAI 兼容主模型配置 |
+| `output_language` | AI 输出语言配置 |
+| `init_user_daily_quota` / `init_user_weekly_quota` / `init_user_monthly_quota` | 自注册用户基础 PR 配额 |
+| `init_user_issue_daily_quota` / `init_user_issue_weekly_quota` / `init_user_issue_monthly_quota` | 自注册用户基础 Issue 配额 |
+| `init_admin_agent_daily_quota` / `init_admin_agent_weekly_quota` / `init_admin_agent_monthly_quota` | Setup 初始管理员 Agent 配额 |
+| `init_user_agent_daily_quota` / `init_user_agent_weekly_quota` / `init_user_agent_monthly_quota` | 自注册用户基础 Agent 配额 |
 
 **响应示例**：
 
@@ -2616,7 +2642,7 @@ Issue 分析详情。
   "success": true,
   "message": "ok",
   "data": {
-    "version": "2.11.0",
+    "version": "2.12.0",
     "build_date": "2026-05-11"
   }
 }
@@ -2759,6 +2785,8 @@ Issue 分析详情。
 
 Billing 端点仅在付费配额系统启用时可用；未启用时会返回拒绝访问或功能未启用错误。当前 Billing 模块部分响应为直接 JSON，不完全使用统一 `success_response` 包装。
 
+2.12.0 起，Billing API 支持外部支付订单创建和查询，`provider` 可使用 `stripe`、`paddle`、`alipay`、`nowpayments`、`tron`。兑换码和管理员手动发放仍可用于无需外部支付网关的配额发放。
+
 #### GET /billing/plans
 
 列出当前可用套餐。
@@ -2851,6 +2879,99 @@ Billing 端点仅在付费配额系统启用时可用；未启用时会返回拒
 
 ---
 
+#### POST /billing/orders
+
+创建外部支付订单并返回支付跳转地址。适用于 Stripe、Paddle、支付宝、NOWPayments 和 TRON USDT 等已启用网关。
+
+**认证级别**：auth
+
+**请求体**：
+
+| 字段 | 类型 | 必填 | 默认值 | 说明 |
+|------|------|------|--------|------|
+| `plan_id` | int | 是 | - | 要购买的套餐 ID |
+| `provider` | string | 否 | `"stripe"` | 支付网关：`stripe` / `paddle` / `alipay` / `nowpayments` / `tron` |
+
+**响应示例**：
+
+```json
+{
+  "success": true,
+  "order_no": "ORD202605280001",
+  "status": "pending",
+  "amount_cents": 990,
+  "currency": "CNY",
+  "provider": "alipay",
+  "checkout_url": "https://openapi.alipay.com/gateway.do?...",
+  "expires_at": "2026-05-28T12:30:00+00:00"
+}
+```
+
+---
+
+#### GET /billing/orders/{order_id}
+
+查询当前用户自己的订单状态，并返回可继续支付的 checkout URL（如果订单元数据中存在）。
+
+**认证级别**：auth
+
+**路径参数**：
+
+| 参数 | 类型 | 说明 |
+|------|------|------|
+| `order_id` | int | 订单 ID |
+
+**响应示例**：
+
+```json
+{
+  "id": 1,
+  "order_no": "ORD202605280001",
+  "status": "pending",
+  "amount_cents": 990,
+  "currency": "CNY",
+  "payment_provider": "alipay",
+  "provider_tx_id": null,
+  "checkout_url": "https://openapi.alipay.com/gateway.do?...",
+  "paid_at": null,
+  "fulfilled_at": null,
+  "created_at": "2026-05-28T12:00:00",
+  "expires_at": "2026-05-28T12:30:00+00:00"
+}
+```
+
+---
+
+#### POST /billing/orders/{order_id}/refund
+
+超级管理员直接对订单执行退款。WebUI 中还提供用户退款申请与超级管理员审核流程；该 API 端点用于管理员侧直接退款。
+
+**认证级别**：super_admin
+
+**路径参数**：
+
+| 参数 | 类型 | 说明 |
+|------|------|------|
+| `order_id` | int | 订单 ID |
+
+**请求体**：
+
+| 字段 | 类型 | 必填 | 说明 |
+|------|------|------|------|
+| `amount_cents` | int \| null | 否 | 退款金额（分）；为空时按服务逻辑执行默认退款金额 |
+
+**响应示例**：
+
+```json
+{
+  "success": true,
+  "order_no": "ORD202605280001",
+  "status": "refunded"
+}
+```
+
+---
+
 #### POST /billing/admin/plans
 
 创建套餐。
@@ -2911,7 +3032,7 @@ Billing 端点仅在付费配额系统启用时可用；未启用时会返回拒
 
 #### DELETE /billing/admin/plans/{plan_id}
 
-删除套餐（软删除）。
+删除套餐。默认软删除；传入 `hard=true` 时从数据库硬删除。
 
 **认证级别**：super_admin
 
@@ -2921,43 +3042,22 @@ Billing 端点仅在付费配额系统启用时可用；未启用时会返回拒
 |------|------|------|
 | `plan_id` | int | 套餐 ID |
 
+**查询参数**：
+
+| 参数 | 类型 | 默认值 | 说明 |
+|------|------|--------|------|
+| `hard` | bool | `false` | 是否硬删除 |
+
 **响应示例**：
 
 ```json
 {
   "success": true,
-  "message": "套餐已删除"
+  "id": 1,
+  "name": "Pro 月度包",
+  "hard_delete": false
 }
 ```
-
----
-
-#### POST /billing/admin/plans/batch-toggle
-
-批量启用或禁用套餐。
-
-**认证级别**：super_admin
-
-**请求体**：
-
-| 字段 | 类型 | 必填 | 说明 |
-|------|------|------|------|
-| `plan_ids` | int[] | 是 | 套餐 ID 列表 |
-| `enabled` | bool | 是 | `true` 启用，`false` 禁用 |
-
----
-
-#### POST /billing/admin/plans/batch-delete
-
-批量删除套餐。
-
-**认证级别**：super_admin
-
-**请求体**：
-
-| 字段 | 类型 | 必填 | 说明 |
-|------|------|------|------|
-| `plan_ids` | int[] | 是 | 套餐 ID 列表 |
 
 ---
 
@@ -2977,9 +3077,10 @@ Billing 端点仅在付费配额系统启用时可用；未启用时会返回拒
 
 | 字段 | 类型 | 必填 | 说明 |
 |------|------|------|------|
-| `status` | string | 否 | 兑换码状态 |
+| `status` | string | 否 | 兑换码状态：`active` / `disabled` |
 | `expires_at` | string \| null | 否 | 过期时间 |
 | `max_uses` | int | 否 | 最大使用次数 |
+| `plan_id` | int | 否 | 绑定的新套餐 ID |
 
 ---
 
@@ -2995,47 +3096,15 @@ Billing 端点仅在付费配额系统启用时可用；未启用时会返回拒
 |------|------|------|
 | `code_id` | int | 兑换码 ID |
 
----
+**响应示例**：
 
-#### POST /billing/admin/codes/batch-enable
-
-批量启用兑换码。
-
-**认证级别**：super_admin
-
-**请求体**：
-
-| 字段 | 类型 | 必填 | 说明 |
-|------|------|------|------|
-| `code_ids` | int[] | 是 | 兑换码 ID 列表 |
-
----
-
-#### POST /billing/admin/codes/batch-disable
-
-批量禁用兑换码。
-
-**认证级别**：super_admin
-
-**请求体**：
-
-| 字段 | 类型 | 必填 | 说明 |
-|------|------|------|------|
-| `code_ids` | int[] | 是 | 兑换码 ID 列表 |
-
----
-
-#### POST /billing/admin/codes/batch-delete
-
-批量删除兑换码。
-
-**认证级别**：super_admin
-
-**请求体**：
-
-| 字段 | 类型 | 必填 | 说明 |
-|------|------|------|------|
-| `code_ids` | int[] | 是 | 兑换码 ID 列表 |
+```json
+{
+  "success": true,
+  "id": 1,
+  "code": "SAKURA-ABCD"
+}
+```
 
 ---
 
@@ -3148,9 +3217,14 @@ data: {"scan_id": 101, "progress": 50, ...}
   -> 获取 access_token，或在用户启用 MFA 时获取 mfa_token
 
 5. 如返回 message="mfa_required":
-  POST /api/v1/auth/2fa/verify
-  Body: {"mfa_token": "xxx", "code": "123456"}
-  -> 获取正式 access_token
+   - TOTP/恢复码：POST /api/v1/auth/2fa/verify
+     Body: {"mfa_token": "xxx", "code": "123456"}
+   - Passkey：POST /api/v1/auth/2fa/passkey/options
+     Body: {"mfa_token": "xxx"}
+     -> 使用 public_key 发起 WebAuthn 认证
+     POST /api/v1/auth/2fa/passkey/verify
+     Body: {"mfa_token": "xxx", "challenge_id": "xxx", "credential": {...}}
+   -> 获取正式 access_token
 
 6. 后续请求: Authorization: Bearer <access_token>
 ```
@@ -3181,4 +3255,4 @@ val sseSource = EventSource.Factory.create(request, eventListener)
 
 ---
 
-> 文档版本：v1.2 | 最后更新：2026-05-09 | 端点总数：80
+> 文档版本：v1.3 | 最后更新：2026-05-21 | 端点总数：86

@@ -637,24 +637,14 @@ class ReviewWorker:
                 # 准备并行任务
                 tasks = []
 
-                # 任务1: AI审查（使用分批审查模式）
+                # 任务1: AI审查（工具驱动模式）
                 if enable_tools:
                     logger.info(
-                        f"[{task_id}] 使用AI工具增强模式进行审查（支持分批处理）"
+                        f"[{task_id}] 使用AI工具驱动模式进行审查"
                     )
-                    batch_config = get_strategy_config().get_batch_config()
                     tasks.append(
-                        self.ai_reviewer.review_pr_with_tools_batched(
-                            context,
-                            analysis.strategy,
-                            repo,
-                            pr,
-                            max_files_per_batch=batch_config.get(
-                                "max_files_per_batch", 5
-                            ),
-                            max_lines_per_batch=batch_config.get(
-                                "max_lines_per_batch", 2000
-                            ),
+                        self.ai_reviewer.review_pr_with_tools(
+                            context, analysis.strategy, repo, pr
                         )
                     )
                 else:
@@ -1183,9 +1173,13 @@ class ReviewWorker:
             bot_names = (
                 {bot_username, f"{bot_username}[bot]"} if bot_username else set()
             )
-            if review_event == "APPROVE" and author in bot_names:
+            if (
+                review_event in ("APPROVE", "REQUEST_CHANGES")
+                and author in bot_names
+            ):
                 logger.info(
-                    f"[{task_id}] Bot 自身创建的 PR 不能 APPROVE，降级为 COMMENT: "
+                    f"[{task_id}] Bot 自身创建的 PR 不能 "
+                    f"{review_event}，降级为 COMMENT: "
                     f"author={author}"
                 )
                 review_event = "COMMENT"

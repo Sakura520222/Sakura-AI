@@ -1,7 +1,7 @@
 """GitHub Webhook API端点"""
 
 from fastapi import APIRouter, Request, HTTPException, Header
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, PlainTextResponse
 from typing import Dict, Any, Optional
 import asyncio
 import re
@@ -19,6 +19,8 @@ from backend.telegram.notifications import get_notification_sender
 from backend.core.config import get_settings, get_dynamic_config
 
 settings = get_settings()
+
+SCAN_SEVERITY_ORDER = {"critical": 0, "major": 1, "minor": 2, "suggestion": 3}
 
 
 def get_async_session():
@@ -368,6 +370,13 @@ async def handle_issue_comment_event(payload: Dict[str, Any]) -> JSONResponse:
                     return await handle_issue_analyze_command(payload)
                 return JSONResponse(
                     content={"status": "ignored", "reason": "/analyze 仅适用于 Issue"}
+                )
+            # 检查 /agent 命令（仅限 Issue）
+            if re.match(r"^/agent(\s|$)", comment_body):
+                if not issue.get("pull_request"):
+                    return await handle_agent_command(payload)
+                return JSONResponse(
+                    content={"status": "ignored", "reason": "/agent 仅适用于 Issue"}
                 )
             return JSONResponse(
                 content={"status": "ignored", "reason": "not a review command"}
@@ -1375,6 +1384,303 @@ async def handle_issue_analyze_command(payload: Dict[str, Any]) -> JSONResponse:
         )
 
 
+async def _post_issue_comment(
+    github_app: "GitHubAppClient",
+    repo_owner: str,
+    repo_name: str,
+    repo_full_name: str,
+    issue_number: int,
+    message: str,
+) -> None:
+    """发送 Issue 评论（同步 GitHub API 通过 asyncio.to_thread 包装，失败静默）"""
+    try:
+        def _do_post():
+            client = github_app.get_repo_client(repo_owner, repo_name)
+            if client:
+                repo = client.get_repo(repo_full_name)
+                repo.get_issue(issue_number).create_comment(message)
+
+        await asyncio.to_thread(_do_post)
+    except Exception as e:
+        logger.warning("发送 Issue 评论失败: {}#{} - {}", repo_full_name, issue_number, e)
+
+
+async def handle_agent_command(payload: Dict[str, Any]) -> JSONResponse:
+    """处理 /agent 命令：将已分析的 Issue 委派给 Agent 团队执行"""
+    try:
+        comment_body = payload.get("comment", {}).get("body", "").strip()
+
+        # 解析 base_branch 参数
+        base_branch = None
+        branch_match = re.search(r"base:(\S+)", comment_body)
+        if branch_match:
+            base_branch = branch_match.group(1)
+            if ".." in base_branch or not re.match(r"^[a-zA-Z0-9._/\-]+$", base_branch):
+                return JSONResponse(
+                    content={"status": "error", "reason": f"无效的分支名: {base_branch}"}
+                )
+
+        # 过滤 Bot 自身评论
+        bot_username = settings.bot_username
+        commenter = payload.get("comment", {}).get("user", {}).get("login", "")
+        if bot_username and commenter == bot_username:
+            return JSONResponse(
+                content={"status": "ignored", "reason": "bot self-comment"}
+            )
+
+        # 提取仓库和 Issue 信息
+        repo_info = payload.get("repository", {})
+        issue = payload.get("issue", {})
+        repo_owner = repo_info.get("owner", {}).get("login", "")
+        repo_name = repo_info.get("name", "")
+        repo_full_name = repo_info.get("full_name", "")
+        issue_number = issue.get("number")
+
+        if not all([repo_owner, repo_name, repo_full_name, issue_number]):
+            return JSONResponse(
+                status_code=400,
+                content={"status": "error", "message": "无法提取 Issue 信息"},
+            )
+
+        logger.info(
+            "/agent 指令: {}#{}, 评论者: {}, base: {}",
+            repo_full_name, issue_number, commenter, base_branch or "default",
+        )
+
+        # 功能开关检查
+        if not await get_dynamic_config("agent_team_enabled"):
+            return JSONResponse(
+                content={"status": "skipped", "reason": "agent team feature disabled"}
+            )
+
+        # 权限检查：仅 admin/write 用户可触发（同步 GitHub API，用 to_thread 包装）
+        github_app = GitHubAppClient()
+        permission = await asyncio.to_thread(
+            github_app.check_collaborator_permission,
+            repo_owner, repo_name, commenter,
+        )
+        if permission not in ("admin", "write"):
+            logger.info("/agent 权限不足: {} 权限为 {}", commenter, permission)
+            await _post_issue_comment(
+                github_app, repo_owner, repo_name, repo_full_name, issue_number,
+                f"❌ @{commenter}，只有仓库管理员/协作者才能触发 Agent 任务。",
+            )
+            return JSONResponse(
+                content={"status": "denied", "reason": "insufficient permission"}
+            )
+
+        # 前置校验：检查是否有已完成的 Issue 分析记录，或是否为扫描自动创建的报告 Issue
+        # 延迟导入：避免 webhook ↔ database/scan_models 循环依赖
+        from sqlalchemy import select, and_, desc
+        from backend.models.database import IssueAnalysis, IssueAnalysisStatus
+        from backend.models.scan_models import RepoScan, ScanFinding
+
+        scan_report = None
+        scan_findings = []
+        async with get_async_session() as session:
+            existing_analysis = await session.scalar(
+                select(IssueAnalysis)
+                .where(
+                    and_(
+                        IssueAnalysis.repo_owner == repo_owner,
+                        IssueAnalysis.repo_name.in_({repo_name, repo_full_name}),
+                        IssueAnalysis.issue_number == issue_number,
+                        IssueAnalysis.status == IssueAnalysisStatus.COMPLETED.value,
+                    )
+                )
+                .order_by(desc(IssueAnalysis.completed_at))
+                .limit(1)
+            )
+            if not existing_analysis:
+                scan_report = await session.scalar(
+                    select(RepoScan)
+                    .where(
+                        and_(
+                            RepoScan.repo_owner == repo_owner,
+                            RepoScan.repo_name.in_({repo_name, repo_full_name}),
+                            RepoScan.report_issue_number == issue_number,
+                        )
+                    )
+                    .order_by(desc(RepoScan.completed_at), desc(RepoScan.created_at))
+                    .limit(1)
+                )
+                if scan_report:
+                    result = await session.execute(
+                        select(ScanFinding)
+                        .where(ScanFinding.scan_id == scan_report.id)
+                        .order_by(ScanFinding.severity, desc(ScanFinding.confidence))
+                    )
+                    scan_findings = list(result.scalars().all())
+
+        if not existing_analysis and not scan_report:
+            logger.info("/agent 无分析记录或扫描报告: {}#{}", repo_full_name, issue_number)
+            await _post_issue_comment(
+                github_app, repo_owner, repo_name, repo_full_name, issue_number,
+                "❌ 此 Issue 尚未完成 AI 分析，也未匹配到 Sakura 仓库扫描报告。请先使用 `/analyze` 命令分析此 Issue。",
+            )
+            return JSONResponse(
+                content={
+                    "status": "skipped",
+                    "reason": "no completed analysis or scan report",
+                }
+            )
+
+        # 构建提交上下文（与通过 WebUI 创建任务一致）
+        # 延迟导入：避免 webhook ↔ agent_team_submission_context 循环依赖
+        from backend.services.agent_team.submission_context import (
+            build_agent_task_summary,
+            build_issue_context_markdown,
+            format_issue_analysis_context,
+            load_issue_comments_for_context,
+        )
+
+        overrides = {}
+        async with get_async_session() as session:
+            analysis_ctx = format_issue_analysis_context(existing_analysis)
+            issue_comments = await load_issue_comments_for_context(
+                repo_owner=repo_owner,
+                repo_name=repo_name,
+                issue_number=issue_number,
+            )
+            issue_context_md = build_issue_context_markdown(
+                repo_full_name=repo_full_name,
+                issue_number=issue_number,
+                issue_analysis_context=analysis_ctx,
+                issue_comments=issue_comments,
+            )
+            task_summary = existing_analysis.summary if existing_analysis else ""
+            if scan_report:
+                # 延迟导入：避免 webhook ↔ scan_report_service/agent_team_models 循环依赖
+                from backend.services.scan_report_service import ScanReportService
+                from backend.models.agent_team_models import AgentTeamSourceType
+
+                scan_markdown = ScanReportService().generate_issue_body(
+                    scan_report, scan_findings
+                )
+                task_summary = scan_markdown
+                highest = min(
+                    (SCAN_SEVERITY_ORDER.get(f.severity, 4) for f in scan_findings),
+                    default=3,
+                )
+                priority = "critical" if highest == 0 else "high" if highest == 1 else "medium"
+                overrides.update(
+                    {
+                        "source_type": AgentTeamSourceType.SCAN_REPORT_ISSUE.value,
+                        "source_id": scan_report.id,
+                        "source_issue_number": issue_number,
+                        "title": f"处理扫描报告 Issue #{issue_number}",
+                        "priority": priority,
+                        "candidate_score": 90 if highest == 0 else 80 if highest == 1 else 60,
+                    }
+                )
+            agent_task_context = build_agent_task_summary(task_summary or "", issue_context_md)
+            if agent_task_context:
+                overrides["summary"] = agent_task_context
+
+        # 创建 Agent 任务
+        # 延迟导入：避免 webhook ↔ agent_team_candidate_service 循环依赖
+        from backend.services.agent_team.candidate_service import (
+            AgentTeamCandidateService,
+        )
+
+        candidate_service = AgentTeamCandidateService()
+        async with get_async_session() as session:
+            try:
+                task = await candidate_service.create_task_from_manual_issue(
+                    db=session,
+                    repo_full_name=repo_full_name,
+                    issue_number=issue_number,
+                    started_by=commenter,
+                    base_branch=base_branch,
+                    overrides=overrides if overrides else None,
+                )
+            except ValueError as e:
+                logger.warning("/agent 创建任务失败: {}", e)
+                await _post_issue_comment(
+                    github_app, repo_owner, repo_name, repo_full_name, issue_number,
+                    f"❌ 无法创建 Agent 任务：{e}",
+                )
+                return JSONResponse(
+                    content={
+                        "status": "error",
+                        "reason": "Failed to create task",
+                    }
+                )
+
+            task_id = task.id
+
+        # 仓库所有者配额消耗（任务创建成功后，使用实际 task_id）
+        async with get_async_session() as session:
+            service = TelegramService(session)
+            ok, reason = await service.check_and_consume_agent_quota(
+                github_username=repo_owner,
+                repo_name=repo_full_name,
+                task_id=task_id,
+            )
+            if not ok:
+                is_unregistered = "未注册" in reason
+                if is_unregistered:
+                    reply = f"❌ 仓库所有者 @{repo_owner} 尚未注册，无法使用 Agent 任务。请先注册后再试。"
+                else:
+                    reply = f"❌ Agent 配额不足（仓库所有者 @{repo_owner}）：{reason}"
+                logger.warning("/agent 配额检查失败: repo_owner={} - {}", repo_owner, reason)
+                # 延迟导入：避免 webhook ↔ agent_team_models 循环依赖
+                from backend.models.agent_team_models import AgentTeamTask as _ATT
+
+                try:
+                    async with get_async_session() as cleanup_session:
+                        await cleanup_session.execute(
+                            _ATT.__table__.delete().where(_ATT.id == task_id)
+                        )
+                        await cleanup_session.commit()
+                        logger.info("/agent 已清理孤儿任务: task_id={}", task_id)
+                except Exception as cleanup_err:
+                    logger.warning("/agent 清理孤儿任务失败: task_id={} - {}", task_id, cleanup_err)
+                await _post_issue_comment(
+                    github_app, repo_owner, repo_name, repo_full_name, issue_number, reply,
+                )
+                return JSONResponse(
+                    content={
+                        "status": "skipped",
+                        "reason": "unregistered" if is_unregistered else "quota exceeded",
+                        "detail": reason,
+                    }
+                )
+
+        # 后台执行任务
+        # 延迟导入：避免 webhook ↔ agent_team_worker 循环依赖
+        from backend.workers.agent_team_worker import submit_agent_team_task
+
+        asyncio.create_task(submit_agent_team_task(task_id))
+
+        # 回复确认评论
+        branch_info = f"，基础分支：`{base_branch}`" if base_branch else ""
+        await _post_issue_comment(
+            github_app, repo_owner, repo_name, repo_full_name, issue_number,
+            f"已创建 Agent 任务（ID: {task_id}）{branch_info}\n\n"
+            f"由 @{commenter} 触发",
+        )
+
+        logger.info(
+            "/agent 任务已创建: {}#{}, task_id={}, base={}",
+            repo_full_name, issue_number, task_id, base_branch or "default",
+        )
+
+        return JSONResponse(
+            content={
+                "status": "accepted",
+                "message": "Agent 任务已创建并开始执行",
+                "task_id": task_id,
+            }
+        )
+
+    except Exception as e:
+        logger.error("处理 /agent 命令时出错: {}", e, exc_info=True)
+        return JSONResponse(
+            status_code=500, content={"status": "error", "message": "内部服务错误"}
+        )
+
+
 async def handle_installation_event(payload: Dict[str, Any]) -> JSONResponse:
     """处理 GitHub App installation 事件，清除安装状态缓存"""
     try:
@@ -1415,7 +1721,372 @@ async def handle_installation_event(payload: Dict[str, Any]) -> JSONResponse:
         )
 
 
-@router.get("/health")
-async def health_check() -> JSONResponse:
-    """健康检查端点"""
-    return JSONResponse(content={"status": "healthy", "service": "Sakura AI Reviewer"})
+@router.post("/stripe")
+async def handle_stripe_webhook(
+    request: Request,
+) -> JSONResponse:
+    """Handle Stripe webhook events (checkout.session.completed, etc.)"""
+    from backend.services.payment import get_gateway, WebhookEventType
+    from backend.services.payment_service import PaymentService, PaymentError
+
+    payload = await request.body()
+    headers = {k.lower(): v for k, v in request.headers.items()}
+
+    try:
+        gateway = await get_gateway("stripe")
+        event = gateway.verify_webhook(payload, headers)
+
+        if event.event_type == WebhookEventType.UNKNOWN:
+            # Return 200 for unmapped but valid events so Stripe doesn't retry
+            return JSONResponse(
+                content={"status": "ignored", "message": "Event type not handled"}
+            )
+
+        async with get_async_session() as db:
+            svc = PaymentService(db)
+            try:
+                if event.event_type == WebhookEventType.PAYMENT_COMPLETED:
+                    order = await svc.confirm_payment(
+                        order_no=event.order_no,
+                        provider_tx_id=event.provider_tx_id,
+                        paid_amount_cents=event.amount_cents,
+                        paid_currency=event.currency,
+                    )
+                    await db.commit()
+                    logger.info(
+                        "Stripe webhook: payment confirmed for order {}",
+                        order.order_no,
+                    )
+                    return JSONResponse(
+                        content={"status": "processed", "event": "payment_completed"}
+                    )
+
+                elif event.event_type == WebhookEventType.PAYMENT_EXPIRED:
+                    order = await svc.cancel_expired_order(event.order_no)
+                    await db.commit()
+                    logger.info(
+                        "Stripe webhook: order expired/cancelled {}",
+                        order.order_no,
+                    )
+                    return JSONResponse(
+                        content={"status": "processed", "event": "payment_expired"}
+                    )
+
+                elif event.event_type == WebhookEventType.PAYMENT_REFUNDED:
+                    # For refund events from Stripe, find order by provider_tx_id
+                    from sqlalchemy import select
+                    from backend.models.payment_models import Order, OrderStatus
+
+                    stmt = select(Order).where(
+                        Order.provider_tx_id == event.provider_tx_id,
+                        Order.status == OrderStatus.FULFILLED.value,
+                    )
+                    order = (await db.execute(stmt)).scalar_one_or_none()
+                    if order:
+                        await svc.process_refund(order_id=order.id)
+                        await db.commit()
+                        logger.info(
+                            "Stripe webhook: refund processed for order {}",
+                            order.order_no,
+                        )
+                    else:
+                        logger.info(
+                            "Stripe webhook: refund event but no actionable order for tx {}",
+                            event.provider_tx_id,
+                        )
+                    return JSONResponse(
+                        content={"status": "processed", "event": "payment_refunded"}
+                    )
+
+                else:
+                    logger.info("Stripe webhook: ignoring event type {}", event.event_type)
+                    return JSONResponse(
+                        content={"status": "ignored", "event": str(event.event_type)}
+                    )
+
+            except PaymentError as e:
+                await db.rollback()
+                logger.warning("Stripe webhook processing error: {}", e)
+                return JSONResponse(
+                    status_code=200,
+                    content={"status": "error", "message": "Payment processing failed"},
+                )
+
+    except ValueError as e:
+        logger.warning("Stripe webhook gateway error: {}", e)
+        return JSONResponse(
+            status_code=400,
+            content={"status": "error", "message": "Invalid request"},
+        )
+    except Exception as e:
+        logger.error("Stripe webhook unexpected error: {} - {}", type(e).__name__, e, exc_info=True)
+        return JSONResponse(
+            status_code=500,
+            content={"status": "error", "message": "Internal server error"},
+        )
+
+
+@router.post("/paddle")
+async def handle_paddle_webhook(
+    request: Request,
+) -> JSONResponse:
+    """Handle Paddle Billing webhook events (transaction.completed, etc.)"""
+    from backend.services.payment import get_gateway, WebhookEventType
+    from backend.services.payment_service import PaymentService, PaymentError
+
+    payload = await request.body()
+    headers = {k.lower(): v for k, v in request.headers.items()}
+
+    try:
+        gateway = await get_gateway("paddle")
+        event = gateway.verify_webhook(payload, headers)
+
+        if event.event_type == WebhookEventType.UNKNOWN:
+            # Return 200 for unmapped but valid events so Paddle doesn't retry
+            return JSONResponse(
+                content={"status": "ignored", "message": "Event type not handled"}
+            )
+
+        async with get_async_session() as db:
+            svc = PaymentService(db)
+            try:
+                if event.event_type == WebhookEventType.PAYMENT_COMPLETED:
+                    order = await svc.confirm_payment(
+                        order_no=event.order_no,
+                        provider_tx_id=event.provider_tx_id,
+                        paid_amount_cents=event.amount_cents,
+                        paid_currency=event.currency,
+                    )
+                    await db.commit()
+                    logger.info(
+                        "Paddle webhook: payment confirmed for order {}",
+                        order.order_no,
+                    )
+                    return JSONResponse(
+                        content={"status": "processed", "event": "payment_completed"}
+                    )
+
+                elif event.event_type == WebhookEventType.PAYMENT_EXPIRED:
+                    if event.order_no:
+                        order = await svc.cancel_expired_order(event.order_no)
+                        await db.commit()
+                        logger.info(
+                            "Paddle webhook: order expired/cancelled {}",
+                            order.order_no,
+                        )
+                    return JSONResponse(
+                        content={"status": "processed", "event": "payment_expired"}
+                    )
+
+                elif event.event_type == WebhookEventType.PAYMENT_REFUNDED:
+                    # For refund events from Paddle, find order by provider_tx_id
+                    from sqlalchemy import select
+                    from backend.models.payment_models import Order, OrderStatus
+
+                    stmt = select(Order).where(
+                        Order.provider_tx_id == event.provider_tx_id,
+                        Order.status == OrderStatus.FULFILLED.value,
+                    )
+                    order = (await db.execute(stmt)).scalar_one_or_none()
+                    if order:
+                        await svc.process_refund(order_id=order.id)
+                        await db.commit()
+                        logger.info(
+                            "Paddle webhook: refund processed for order {}",
+                            order.order_no,
+                        )
+                    else:
+                        logger.info(
+                            "Paddle webhook: refund event but no actionable order for tx {}",
+                            event.provider_tx_id,
+                        )
+                    return JSONResponse(
+                        content={"status": "processed", "event": "payment_refunded"}
+                    )
+
+                else:
+                    logger.info("Paddle webhook: ignoring event type {}", event.event_type)
+                    return JSONResponse(
+                        content={"status": "ignored", "event": str(event.event_type)}
+                    )
+
+            except PaymentError as e:
+                await db.rollback()
+                logger.warning("Paddle webhook processing error: {}", e)
+                return JSONResponse(
+                    status_code=200,
+                    content={"status": "error", "message": "Payment processing failed"},
+                )
+
+    except ValueError as e:
+        logger.warning("Paddle webhook gateway error: {}", e)
+        return JSONResponse(
+            status_code=400,
+            content={"status": "error", "message": "Invalid request"},
+        )
+    except Exception as e:
+        logger.error("Paddle webhook unexpected error: {} - {}", type(e).__name__, e, exc_info=True)
+        return JSONResponse(
+            status_code=500,
+            content={"status": "error", "message": "Internal server error"},
+        )
+
+
+@router.post("/alipay", response_model=None)
+async def handle_alipay_webhook(
+    request: Request,
+):
+    """Handle Alipay async payment notification (当面付回调)
+
+    支付宝回调为 POST form-urlencoded，验签成功后返回纯文本 "success"。
+    """
+    from backend.services.payment import get_gateway, WebhookEventType
+    from backend.services.payment_service import PaymentService, PaymentError
+
+    payload = await request.body()
+    headers = {k.lower(): v for k, v in request.headers.items()}
+
+    try:
+        gateway = await get_gateway("alipay")
+        event = gateway.verify_webhook(payload, headers)
+
+        if event.event_type == WebhookEventType.UNKNOWN:
+            logger.info("Alipay webhook: ignoring unmapped event")
+            return PlainTextResponse("fail")
+
+        async with get_async_session() as db:
+            svc = PaymentService(db)
+            try:
+                if event.event_type == WebhookEventType.PAYMENT_COMPLETED:
+                    order = await svc.confirm_payment(
+                        order_no=event.order_no,
+                        provider_tx_id=event.provider_tx_id,
+                        paid_amount_cents=event.amount_cents,
+                        paid_currency=event.currency,
+                    )
+                    await db.commit()
+                    logger.info(
+                        "Alipay webhook: payment confirmed for order {}",
+                        order.order_no,
+                    )
+                    # 支付宝要求返回 "success" 纯文本
+                    return PlainTextResponse("success")
+
+                elif event.event_type == WebhookEventType.PAYMENT_EXPIRED:
+                    if event.order_no:
+                        order = await svc.cancel_expired_order(event.order_no)
+                        await db.commit()
+                        logger.info(
+                            "Alipay webhook: order closed {}",
+                            order.order_no,
+                        )
+                    return PlainTextResponse("success")
+
+                else:
+                    logger.info(
+                        "Alipay webhook: ignoring event type {}", event.event_type
+                    )
+                    return PlainTextResponse("success")
+
+            except PaymentError as e:
+                await db.rollback()
+                logger.warning("Alipay webhook processing error: {}", e)
+                # 仍返回 success 避免支付宝重复通知
+                return PlainTextResponse("success")
+
+    except ValueError as e:
+        logger.warning("Alipay webhook gateway error: {}", e)
+        return PlainTextResponse("fail")
+    except Exception as e:
+        logger.error("Alipay webhook unexpected error: {} - {}", type(e).__name__, e, exc_info=True)
+        return PlainTextResponse("fail")
+
+
+@router.post("/nowpayments", response_model=None)
+async def handle_nowpayments_webhook(
+    request: Request,
+) -> JSONResponse:
+    """Handle NOWPayments IPN callback (virtual currency payment notification)
+
+    NOWPayments sends POST JSON with x-nowpayments-sig header.
+    Verification uses HMAC-SHA512 with IPN secret.
+    """
+    from backend.services.payment import get_gateway, WebhookEventType
+    from backend.services.payment_service import PaymentService, PaymentError
+
+    payload = await request.body()
+    headers = {k.lower(): v for k, v in request.headers.items()}
+
+    try:
+        gateway = await get_gateway("nowpayments")
+        event = gateway.verify_webhook(payload, headers)
+
+        if event.event_type == WebhookEventType.UNKNOWN:
+            logger.info("NOWPayments webhook: ignoring unmapped event")
+            return JSONResponse(content={"status": "ignored"})
+
+        async with get_async_session() as db:
+            svc = PaymentService(db)
+            try:
+                if event.event_type == WebhookEventType.PAYMENT_COMPLETED:
+                    order = await svc.confirm_payment(
+                        order_no=event.order_no,
+                        provider_tx_id=event.provider_tx_id,
+                        paid_amount_cents=event.amount_cents,
+                        paid_currency=event.currency,
+                    )
+                    await db.commit()
+                    logger.info(
+                        "NOWPayments webhook: payment confirmed for order {}",
+                        order.order_no,
+                    )
+                    return JSONResponse(
+                        content={"status": "processed", "event": "payment_completed"}
+                    )
+
+                elif event.event_type == WebhookEventType.PAYMENT_EXPIRED:
+                    if event.order_no:
+                        order = await svc.cancel_expired_order(event.order_no)
+                        await db.commit()
+                        logger.info(
+                            "NOWPayments webhook: order expired {}",
+                            order.order_no,
+                        )
+                    return JSONResponse(
+                        content={"status": "processed", "event": "payment_expired"}
+                    )
+
+                elif event.event_type == WebhookEventType.PAYMENT_REFUNDED:
+                    logger.info("NOWPayments webhook: refund event received")
+                    return JSONResponse(
+                        content={"status": "processed", "event": "refund"}
+                    )
+
+                else:
+                    logger.info(
+                        "NOWPayments webhook: ignoring event type {}",
+                        event.event_type,
+                    )
+                    return JSONResponse(content={"status": "ignored"})
+
+            except PaymentError as e:
+                await db.rollback()
+                logger.warning("NOWPayments webhook processing error: {}", e)
+                return JSONResponse(
+                    content={"status": "error", "message": "Payment processing failed"}
+                )
+
+    except ValueError as e:
+        logger.warning("NOWPayments webhook gateway error: {}", e)
+        return JSONResponse(content={"status": "error", "message": "Invalid request"})
+    except Exception as e:
+        logger.error(
+            "NOWPayments webhook unexpected error: {} - {}",
+            type(e).__name__,
+            e,
+            exc_info=True,
+        )
+        return JSONResponse(
+            status_code=500,
+            content={"status": "error", "message": "Internal server error"},
+        )

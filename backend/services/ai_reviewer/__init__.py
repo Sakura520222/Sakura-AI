@@ -3,12 +3,11 @@
 此模块保持向后兼容，原有的导入方式继续工作：
     from backend.services.ai_reviewer import AIReviewer
 
-重构后采用模块化架构，将原 2856 行的单文件拆分为多个专门模块：
+重构后采用模块化架构，将原单文件拆分为多个专门模块：
 - constants: 常量定义
 - api_client: AI API 调用
 - prompt_builder: 提示词构建
 - result_parser: 结果解析
-- batch_processor: 批处理逻辑
 - tools: 工具处理
 - compression: 上下文压缩
 - label_recommender: 标签推荐
@@ -20,7 +19,6 @@ from .reviewer import AIReviewer
 
 # 可导出的子模块（供需要细粒度控制的场景使用）
 from .api_client import AIApiClient
-from .batch_processor import BatchProcessor
 from .compression import ContextCompressor
 from .constants import (
     DEFAULT_MAX_TOKENS,
@@ -28,8 +26,6 @@ from .constants import (
     MAX_FILE_LINES,
     DEFAULT_CONTEXT_LINES,
     MAX_CONTEXT_LINES,
-    MAX_FILES_PER_BATCH,
-    MAX_LINES_PER_BATCH,
     SEVERITY_EMOJI,
     EMOJI_TO_SEVERITY,
     SEVERITY_TO_ISSUES_KEY,
@@ -46,7 +42,6 @@ __all__ = [
     "AIApiClient",
     "PromptBuilder",
     "ReviewResultParser",
-    "BatchProcessor",
     "ContextCompressor",
     "LabelRecommender",
     "ToolHandler",
@@ -59,8 +54,6 @@ __all__ = [
     "MAX_FILE_LINES",
     "DEFAULT_CONTEXT_LINES",
     "MAX_CONTEXT_LINES",
-    "MAX_FILES_PER_BATCH",
-    "MAX_LINES_PER_BATCH",
     "SEVERITY_EMOJI",
     "EMOJI_TO_SEVERITY",
     "SEVERITY_TO_ISSUES_KEY",

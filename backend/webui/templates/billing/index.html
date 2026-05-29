@@ -13,7 +13,7 @@
     {% if db_user %}
     <div class="mb-8 glass rounded-2xl border border-sakura-200/50 dark:border-sakura-800/30 shadow-sm p-6">
         <h2 class="text-lg font-semibold text-gray-900 dark:text-white mb-4">{{ _('billing.current_quota') }}</h2>
-        <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+        <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
             <div>
                 <h3 class="text-sm font-medium text-gray-500 dark:text-gray-400 mb-3">{{ _('billing.pr_quota') }}</h3>
                 <div class="space-y-2">
@@ -42,6 +42,27 @@
                         (_('billing.daily'), db_user.issue_daily_quota, db_user.issue_daily_used),
                         (_('billing.weekly'), db_user.issue_weekly_quota, db_user.issue_weekly_used),
                         (_('billing.monthly'), db_user.issue_monthly_quota, db_user.issue_monthly_used)
+                    ] %}
+                    <div class="flex items-center justify-between">
+                        <span class="text-sm text-gray-700 dark:text-gray-300">{{ label }}</span>
+                        <span class="text-sm {{ 'text-red-600' if used >= quota else 'text-gray-900 dark:text-white' }}">
+                            {{ used }} / {{ quota }}
+                        </span>
+                    </div>
+                    <div class="w-full bg-gray-200 dark:bg-gray-700 rounded-full h-2">
+                        <div class="h-2 rounded-full {{ 'bg-red-500' if used >= quota else 'bg-gradient-to-r from-sakura-400 to-sakura-500' }}"
+                             style="width: {{ percentage(used, quota) }}%"></div>
+                    </div>
+                    {% endfor %}
+                </div>
+            </div>
+            <div>
+                <h3 class="text-sm font-medium text-gray-500 dark:text-gray-400 mb-3">{{ _('billing.agent_quota') }}</h3>
+                <div class="space-y-2">
+                    {% for label, quota, used in [
+                        (_('billing.daily'), db_user.agent_daily_quota, db_user.agent_daily_used),
+                        (_('billing.weekly'), db_user.agent_weekly_quota, db_user.agent_weekly_used),
+                        (_('billing.monthly'), db_user.agent_monthly_quota, db_user.agent_monthly_used)
                     ] %}
                     <div class="flex items-center justify-between">
                         <span class="text-sm text-gray-700 dark:text-gray-300">{{ label }}</span>
@@ -123,10 +144,52 @@
                     {% if plan.issue_monthly_add > 0 %}
                     <li>{{ _('billing.monthly') }} {{ _('billing.issue_quota') }} +{{ plan.issue_monthly_add }}</li>
                     {% endif %}
+                    {% if plan.agent_quota_bonus > 0 %}
+                    <li>+{{ plan.agent_quota_bonus }} {{ _('billing.agent_quota') }}（{{ _('billing.one_time') }}）</li>
+                    {% endif %}
+                    {% if plan.agent_daily_add > 0 %}
+                    <li>{{ _('billing.daily') }} {{ _('billing.agent_quota') }} +{{ plan.agent_daily_add }}</li>
+                    {% endif %}
+                    {% if plan.agent_weekly_add > 0 %}
+                    <li>{{ _('billing.weekly') }} {{ _('billing.agent_quota') }} +{{ plan.agent_weekly_add }}</li>
+                    {% endif %}
+                    {% if plan.agent_monthly_add > 0 %}
+                    <li>{{ _('billing.monthly') }} {{ _('billing.agent_quota') }} +{{ plan.agent_monthly_add }}</li>
+                    {% endif %}
                     {% if plan.plan_type == 'subscription' and plan.duration_days %}
                     <li>{{ _('billing.validity_days', days=plan.duration_days) }}</li>
                     {% endif %}
                 </ul>
+                {% if plan.price_cents > 0 %}
+                <form action="/billing/purchase/{{ plan.id }}" method="POST" class="mt-4">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                    {% if available_providers and available_providers|length > 1 %}
+                    <div class="mb-3 space-y-1">
+                        {% for p in available_providers %}
+                        <label class="flex items-center gap-2 text-xs text-gray-600 dark:text-gray-400 cursor-pointer">
+                            <input type="radio" name="provider" value="{{ p.id }}"
+                                   {% if loop.first %}checked{% endif %}
+                                   class="text-sakura-500 focus:ring-sakura-500">
+                            {{ _('billing.provider_' + p.id) }}
+                        </label>
+                        {% endfor %}
+                    </div>
+                    {% elif available_providers and available_providers|length == 1 %}
+                    <input type="hidden" name="provider" value="{{ available_providers[0].id }}">
+                    {% else %}
+                    <p class="text-xs text-gray-400 dark:text-gray-500 mt-2">{{ _('billing.no_payment_provider') }}</p>
+                    {% endif %}
+                    {% if available_providers and available_providers|length > 0 %}
+                    <button type="submit"
+                            class="w-full px-4 py-2 rounded-lg text-sm font-medium
+                                   bg-gradient-to-r from-sakura-500 to-purple-500 hover:from-sakura-600 hover:to-purple-600
+                                   text-white shadow-sm transition-all duration-200
+                                   focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-sakura-500">
+                        {{ _('billing.purchase') }}
+                    </button>
+                    {% endif %}
+                </form>
+                {% endif %}
             </div>
             {% endfor %}
         </div>
@@ -148,6 +211,7 @@
                         <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase">{{ _('billing.amount') }}</th>
                         <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase">{{ _('common.status') }}</th>
                         <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase">{{ _('billing.time') }}</th>
+                        <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase">{{ _('common.actions') }}</th>
                     </tr>
                 </thead>
                 <tbody class="bg-white dark:bg-gray-800 divide-y divide-gray-200 dark:divide-gray-700">
@@ -164,12 +228,64 @@
                             <span class="text-xs px-2 py-1 rounded-full
                                          {{ 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400' if order.status == 'fulfilled' else
                                             'bg-yellow-100 text-yellow-700 dark:bg-yellow-900/30 dark:text-yellow-400' if order.status == 'pending' else
+                                            'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400' if order.status == 'refunded' else
                                             'bg-gray-100 text-gray-700 dark:bg-gray-900/30 dark:text-gray-400' }}">
                                 {{ order.status }}
                             </span>
                         </td>
                         <td class="px-6 py-4 text-sm text-gray-500 dark:text-gray-400">
                             {{ order.created_at.strftime('%Y-%m-%d %H:%M') if order.created_at else '-' }}
+                        </td>
+                        <td class="px-6 py-4 text-sm space-x-3">
+                            {% if order.status == 'fulfilled' and order.amount_cents > 0 %}
+                            {% set refund_request = refund_requests_by_order.get(order.id) if refund_requests_by_order else none %}
+                            {% if refund_request and refund_request.status in ['pending', 'failed'] %}
+                            <span class="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium
+                                         {{ 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400' if refund_request.status == 'failed' else
+                                            'bg-yellow-100 text-yellow-700 dark:bg-yellow-900/30 dark:text-yellow-400' }}">
+                                {{ _('billing.refund_request_status_' ~ refund_request.status) }}
+                            </span>
+                            {% else %}
+                            <form method="POST" action="/billing/orders/{{ order.id }}/refund"
+                                  onsubmit="return confirm('{{ _('billing.confirm_refund_request') }}');"
+                                  class="inline-flex items-center gap-2">
+                                <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                                <input type="text" name="reason" placeholder="{{ _('billing.refund_reason') }}"
+                                       class="w-32 px-2 py-1 text-xs border border-gray-300 dark:border-gray-600 rounded bg-white dark:bg-gray-700 text-gray-900 dark:text-white">
+                                <button type="submit"
+                                        class="text-red-600 hover:text-red-800 dark:text-red-400 dark:hover:text-red-300 text-xs font-medium">
+                                    {{ _('billing.apply_refund') }}
+                                </button>
+                            </form>
+                            {% endif %}
+                            {% elif order.status == 'pending' %}
+                            {% if order.payment_provider in ('nowpayments', 'tron') %}
+                            <a href="/billing/crypto-payment/{{ order.order_no }}"
+                               class="text-sakura-600 hover:text-sakura-800 dark:text-sakura-400 dark:hover:text-sakura-300 text-xs font-medium">
+                                {{ _('billing.crypto_continue_payment') }}
+                            </a>
+                            <span class="text-gray-300 dark:text-gray-600">|</span>
+                            {% endif %}
+                            <form method="POST" action="/billing/orders/{{ order.id }}/cancel"
+                                  onsubmit="return confirm('{{ _('billing.confirm_cancel_order') }}');"
+                                  class="inline">
+                                <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                                <button type="submit"
+                                        class="text-red-600 hover:text-red-800 dark:text-red-400 dark:hover:text-red-300 text-xs font-medium">
+                                    {{ _('billing.cancel_order') }}
+                                </button>
+                            </form>
+                            {% elif order.status in ['cancelled', 'expired', 'refunded'] %}
+                            <form method="POST" action="/billing/orders/{{ order.id }}/delete"
+                                  onsubmit="return confirm('{{ _('billing.confirm_delete_order') }}');"
+                                  class="inline">
+                                <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                                <button type="submit"
+                                        class="text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200 text-xs font-medium">
+                                    {{ _('common.delete') }}
+                                </button>
+                            </form>
+                            {% endif %}
                         </td>
                     </tr>
                     {% endfor %}

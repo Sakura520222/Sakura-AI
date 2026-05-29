@@ -20,7 +20,7 @@
             {% for r in repos %}
             <option value="{{ r.repo_full_name }}" {% if selected_repo == r.repo_full_name %}selected{% endif %}>
                 {{ r.repo_full_name }}
-                ({{ r.reflection_count }} 次反思{% if r.knowledge_extracted %}, 已提取{% endif %})
+                ({{ r.reflection_count }} 次反思{% if r.last_extraction_count is not none %}, 上次提取: #{{ r.last_extraction_count }}{% endif %})
             </option>
             {% endfor %}
         </select>
@@ -40,10 +40,14 @@
         <div class="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 shadow-sm p-4">
             <div class="text-sm text-gray-500 dark:text-gray-400">知识提取</div>
             <div class="text-sm font-medium">
-                {% if repo_state.knowledge_extracted %}
-                <span class="text-green-600">已完成</span>
+                {% if ke_status.status == "disabled" %}
+                <span class="text-gray-500">已禁用</span>
+                {% elif ke_status.status == "ready" %}
+                <span class="text-blue-600">{{ ke_status.detail }}</span>
+                {% elif ke_status.status == "pending" %}
+                <span class="text-yellow-600">{{ ke_status.detail }}</span>
                 {% else %}
-                <span class="text-yellow-600">未提取</span>
+                <span class="text-gray-500">-</span>
                 {% endif %}
             </div>
         </div>
@@ -68,7 +72,7 @@
             <button type="submit"
                     class="px-4 py-2 bg-purple-500 text-white rounded-lg hover:bg-purple-600 transition-colors text-sm font-medium"
                     onclick="return confirm('确定要触发知识提取吗？将从反思文件中提取规则、文档和经验。')">
-            {% if repo_state.knowledge_extracted %}重新提取{% else %}知识提取{% endif %}
+            {% if repo_state.last_extraction_count is not none %}重新提取{% else %}知识提取{% endif %}
             </button>
         </form>
     </div>

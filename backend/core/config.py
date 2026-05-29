@@ -304,6 +304,38 @@ class Settings(BaseSettings):
         description="自注册用户基础每月 Issue 分析配额",
     )
 
+    # Agent 配额
+    init_admin_agent_daily_quota: int = Field(
+        999,
+        ge=1,
+        description="Setup Wizard 创建的初始管理员每日 Agent 配额",
+    )
+    init_admin_agent_weekly_quota: int = Field(
+        9999,
+        ge=1,
+        description="Setup Wizard 创建的初始管理员每周 Agent 配额",
+    )
+    init_admin_agent_monthly_quota: int = Field(
+        99999,
+        ge=1,
+        description="Setup Wizard 创建的初始管理员每月 Agent 配额",
+    )
+    init_user_agent_daily_quota: int = Field(
+        1,
+        ge=1,
+        description="自注册用户基础每日 Agent 配额",
+    )
+    init_user_agent_weekly_quota: int = Field(
+        2,
+        ge=1,
+        description="自注册用户基础每周 Agent 配额",
+    )
+    init_user_agent_monthly_quota: int = Field(
+        5,
+        ge=1,
+        description="自注册用户基础每月 Agent 配额",
+    )
+
     # GitHub App机器人用户名（可选，用于幂等性检查）
     bot_username: Optional[str] = None  # 备用方案，当无法从GitHub API获取时使用
 
@@ -469,6 +501,48 @@ class Settings(BaseSettings):
     )
     payment_default_currency: str = Field("CNY", description="默认货币")
 
+    # Stripe 支付网关
+    stripe_enabled: bool = Field(False, description="启用 Stripe 支付")
+    stripe_api_key: str = Field("", description="Stripe Secret API Key")
+    stripe_webhook_secret: str = Field(
+        "", description="Stripe Webhook Signing Secret"
+    )
+    stripe_currency: str = Field("CNY", description="Stripe 默认货币")
+
+    # Paddle 支付网关
+    paddle_enabled: bool = Field(False, description="启用 Paddle 支付")
+    paddle_api_key: str = Field("", description="Paddle API Key")
+    paddle_webhook_secret: str = Field(
+        "", description="Paddle Webhook Signing Secret"
+    )
+    paddle_currency: str = Field("USD", description="Paddle 默认货币")
+    paddle_vendor_id: str = Field("", description="Paddle Client-side Token (用于前端)")
+
+    # 支付宝电脑网站支付
+    alipay_enabled: bool = Field(False, description="启用支付宝支付")
+    alipay_app_id: str = Field("", description="支付宝 App ID")
+    alipay_private_key: str = Field("", description="支付宝应用私钥（RSA2 PEM）")
+    alipay_public_key: str = Field("", description="支付宝公钥（用于验签）")
+    alipay_currency: str = Field("CNY", description="支付宝默认货币")
+    alipay_sandbox: bool = Field(False, description="启用支付宝沙箱环境")
+
+    # NOWPayments 虚拟币支付（无需 KYC，非托管）
+    nowpayments_enabled: bool = Field(False, description="启用 NOWPayments 虚拟币支付")
+    nowpayments_api_key: str = Field("", description="NOWPayments API Key")
+    nowpayments_ipn_secret: str = Field("", description="NOWPayments IPN Secret Key")
+    nowpayments_pay_currency: str = Field(
+        "usdttrc20", description="接收虚拟币类型（如 usdttrc20, usdterc20）"
+    )
+
+    # 自建 TRON USDT 收款（零手续费，资金直达钱包）
+    tron_enabled: bool = Field(False, description="启用 TRON USDT 直收")
+    tron_wallet_address: str = Field(
+        "", description="TRON 收款钱包地址（Base58 格式）"
+    )
+    tron_api_key: str = Field(
+        "", description="TronGrid API Key（可选，提高频率限制）"
+    )
+
     # ========== 代码索引配置 ==========
     enable_code_index: bool = True  # 是否启用代码索引功能
     auto_index_pr_changes: bool = True  # PR审查时自动索引变更文件
@@ -559,7 +633,7 @@ class Settings(BaseSettings):
     sakura_issue_reflection_model: str = ""  # Issue 反思使用的模型，为空时使用审查模型
     sakura_use_summary_model: bool = False  # 反思/合并任务使用辅助模型凭据以降低成本
     sakura_knowledge_extraction_enabled: bool = True  # 是否启用自动知识提取
-    sakura_extraction_min_reflections: int = 10  # 触发知识提取的最低反思轮数
+    sakura_extraction_min_reflections: int = 10  # 知识提取间隔（每N次反思触发一次）
     sakura_extraction_provider: str = "main"  # 知识提取 AI 厂商: main/summary/custom
     sakura_extraction_api_base: str = ""  # 知识提取 API Base，custom 模式下生效
     sakura_extraction_api_key: str = ""  # 知识提取 API Key，custom 模式下生效
@@ -637,10 +711,6 @@ class StrategyConfig:
     def get_file_filters(self) -> dict:
         """获取文件过滤规则"""
         return self.config.get("file_filters", {})
-
-    def get_batch_config(self) -> dict:
-        """获取批处理配置"""
-        return self.config.get("batch", {})
 
     def determine_strategy(self, file_count: int, line_count: int) -> str:
         """根据PR规模确定审查策略"""
@@ -1067,7 +1137,7 @@ DYNAMIC_CONFIG_GROUPS: OrderedDict[str, dict] = OrderedDict(
                     "sakura_consolidation_partial_commit": "合并时一个文件生成失败是否仍提交成功生成的文件",
                     "sakura_use_summary_model": "启用后反思、合并等后台任务将使用辅助模型的 API 凭据，降低成本",
                     "sakura_knowledge_extraction_enabled": "启用后积累足够反思时自动提取结构化知识到 rules/docs/plans 子目录",
-                    "sakura_extraction_min_reflections": "触发自动知识提取的最低反思轮数（默认 10）",
+                    "sakura_extraction_min_reflections": "知识提取间隔，每积累指定轮数反思后自动触发一次提取（默认 10）",
                     "sakura_extraction_provider": "知识提取 AI 凭据来源：main=主AI，summary=辅助AI，custom=独立配置",
                     "sakura_extraction_api_base": "知识提取 API Base URL，仅 custom 模式生效，留空则使用主 AI",
                     "sakura_extraction_api_key": "知识提取 API Key，仅 custom 模式生效，留空则使用主 AI",
@@ -1216,6 +1286,28 @@ DYNAMIC_CONFIG_GROUPS: OrderedDict[str, dict] = OrderedDict(
                     "payment_enabled",
                     "payment_order_expire_minutes",
                     "payment_default_currency",
+                    "stripe_enabled",
+                    "stripe_api_key",
+                    "stripe_webhook_secret",
+                    "stripe_currency",
+                    "paddle_enabled",
+                    "paddle_api_key",
+                    "paddle_webhook_secret",
+                    "paddle_currency",
+                    "paddle_vendor_id",
+                    "alipay_enabled",
+                    "alipay_app_id",
+                    "alipay_private_key",
+                    "alipay_public_key",
+                    "alipay_currency",
+                    "alipay_sandbox",
+                    "nowpayments_enabled",
+                    "nowpayments_api_key",
+                    "nowpayments_ipn_secret",
+                    "nowpayments_pay_currency",
+                    "tron_enabled",
+                    "tron_wallet_address",
+                    "tron_api_key",
                 ],
             },
         ),
@@ -1247,6 +1339,9 @@ DYNAMIC_CONFIG_GROUPS: OrderedDict[str, dict] = OrderedDict(
                     "init_user_issue_daily_quota": "自注册用户基础每日 Issue 分析配额",
                     "init_user_issue_weekly_quota": "自注册用户基础每周 Issue 分析配额",
                     "init_user_issue_monthly_quota": "自注册用户基础每月 Issue 分析配额",
+                    "init_user_agent_daily_quota": "自注册用户基础每日 Agent 配额",
+                    "init_user_agent_weekly_quota": "自注册用户基础每周 Agent 配额",
+                    "init_user_agent_monthly_quota": "自注册用户基础每月 Agent 配额",
                 },
                 "keys": [
                     "init_admin_daily_quota",
@@ -1258,6 +1353,12 @@ DYNAMIC_CONFIG_GROUPS: OrderedDict[str, dict] = OrderedDict(
                     "init_user_issue_daily_quota",
                     "init_user_issue_weekly_quota",
                     "init_user_issue_monthly_quota",
+                    "init_admin_agent_daily_quota",
+                    "init_admin_agent_weekly_quota",
+                    "init_admin_agent_monthly_quota",
+                    "init_user_agent_daily_quota",
+                    "init_user_agent_weekly_quota",
+                    "init_user_agent_monthly_quota",
                 ],
             },
         ),
@@ -1276,6 +1377,15 @@ DYNAMIC_CONFIG_SENSITIVE_KEYS = frozenset(
         "github_oauth_client_secret",
         "telegram_bot_token",
         "agent_team_api_key",
+    "stripe_api_key",
+    "stripe_webhook_secret",
+    "paddle_api_key",
+    "paddle_webhook_secret",
+    "alipay_private_key",
+    "alipay_public_key",
+    "nowpayments_ipn_secret",
+    "nowpayments_api_key",
+    "tron_api_key",
     }
 )
 
@@ -1373,6 +1483,12 @@ DYNAMIC_CONFIG_RANGES: dict[str, tuple[float, float]] = {
     "init_user_issue_daily_quota": (1, 999999),
     "init_user_issue_weekly_quota": (1, 999999),
     "init_user_issue_monthly_quota": (1, 999999),
+    "init_admin_agent_daily_quota": (1, 999999),
+    "init_admin_agent_weekly_quota": (1, 999999),
+    "init_admin_agent_monthly_quota": (1, 999999),
+    "init_user_agent_daily_quota": (1, 999999),
+    "init_user_agent_weekly_quota": (1, 999999),
+    "init_user_agent_monthly_quota": (1, 999999),
 }
 
 # 字段中文标签
@@ -1427,6 +1543,28 @@ DYNAMIC_CONFIG_LABELS: dict[str, str] = {
     "payment_enabled": "启用付费配额系统",
     "payment_order_expire_minutes": "订单过期时间（分钟）",
     "payment_default_currency": "默认货币",
+    "stripe_enabled": "启用 Stripe 支付",
+    "stripe_api_key": "Stripe API Key",
+    "stripe_webhook_secret": "Stripe Webhook Secret",
+    "stripe_currency": "Stripe 默认货币",
+    "paddle_enabled": "启用 Paddle 支付",
+    "paddle_api_key": "Paddle API Key",
+    "paddle_webhook_secret": "Paddle Webhook Secret",
+    "paddle_currency": "Paddle 默认货币",
+    "paddle_vendor_id": "Paddle Client-side Token",
+    "alipay_enabled": "启用支付宝支付",
+    "alipay_app_id": "支付宝 App ID",
+    "alipay_private_key": "支付宝应用私钥",
+    "alipay_public_key": "支付宝公钥（验签用）",
+    "alipay_currency": "支付宝默认货币",
+    "alipay_sandbox": "启用支付宝沙箱环境",
+    "nowpayments_enabled": "启用 NOWPayments 虚拟币支付",
+    "nowpayments_api_key": "NOWPayments API Key",
+    "nowpayments_ipn_secret": "NOWPayments IPN 密钥",
+    "nowpayments_pay_currency": "虚拟币类型（如 usdttrc20）",
+    "tron_enabled": "启用 TRON USDT 直收",
+    "tron_wallet_address": "TRON 收款钱包地址",
+    "tron_api_key": "TronGrid API Key（可选）",
     # 核心配置标签
     "github_app_id": "GitHub App ID",
     "github_private_key": "GitHub App 私钥",
@@ -1468,7 +1606,7 @@ DYNAMIC_CONFIG_LABELS: dict[str, str] = {
     "sakura_consolidation_partial_commit": "部分提交",
     "sakura_use_summary_model": "使用辅助模型",
     "sakura_knowledge_extraction_enabled": "启用知识提取",
-    "sakura_extraction_min_reflections": "提取触发反思数",
+    "sakura_extraction_min_reflections": "提取间隔反思数",
     "sakura_extraction_provider": "知识提取 AI 凭据",
     "sakura_extraction_api_base": "知识提取 API Base",
     "sakura_extraction_api_key": "知识提取 API Key",
@@ -1552,6 +1690,12 @@ DYNAMIC_CONFIG_LABELS: dict[str, str] = {
     "init_user_issue_daily_quota": "自注册基础每日 Issue 配额",
     "init_user_issue_weekly_quota": "自注册基础每周 Issue 配额",
     "init_user_issue_monthly_quota": "自注册基础每月 Issue 配额",
+    "init_admin_agent_daily_quota": "管理员初始每日 Agent 配额",
+    "init_admin_agent_weekly_quota": "管理员初始每周 Agent 配额",
+    "init_admin_agent_monthly_quota": "管理员初始每月 Agent 配额",
+    "init_user_agent_daily_quota": "自注册基础每日 Agent 配额",
+    "init_user_agent_weekly_quota": "自注册基础每周 Agent 配额",
+    "init_user_agent_monthly_quota": "自注册基础每月 Agent 配额",
     "register_quota_multiplier": "自注册配额倍率",
 }
 

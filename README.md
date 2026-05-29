@@ -8,7 +8,7 @@
 
 [English](README_EN.md) | **中文**
 
-[![Version](https://img.shields.io/badge/Version-2.11.0-blue.svg)](https://github.com/Sakura520222/Sakura-AI-Reviewer/releases)
+[![Version](https://img.shields.io/badge/Version-2.12.0-blue.svg)](https://github.com/Sakura520222/Sakura-AI-Reviewer/releases)
 [![Python](https://img.shields.io/badge/Python-3.11+-blue.svg)](https://www.python.org/)
 [![FastAPI](https://img.shields.io/badge/FastAPI-Latest-green.svg)](https://fastapi.tiangolo.com/)
 [![License](https://img.shields.io/badge/License-AGPLv3-yellow.svg)](LICENSE)
@@ -20,6 +20,14 @@
 ---
 
 ## ✨ 核心特性
+
+### 2.12.0 更新亮点
+
+- **多支付网关与退款闭环**：新增 Stripe、Paddle、支付宝、NOWPayments、TRON USDT 直收等外部支付网关，支持订单创建、状态查询、支付回调、用户退款申请、超级管理员审核与真实退款执行。
+- **Agent 专家团队开放与配额化**：Agent 任务支持仓库协作者通过 Issue 评论 `/agent` 委派，非管理员需满足仓库归属/白名单约束并消耗独立 Agent 日/周/月配额。
+- **移动端认证增强**：移动端 OAuth 支持白名单回调 URI，WebAuthn/Passkey 支持额外 Origin 与 Android App Links 场景，便于原生 Android App 接入。
+- **Sakura 记忆知识提取升级**：项目记忆从一次性提取改为按反思轮次周期性沉淀 rules/docs/plans，长期维护项目规则、架构知识和经验计划。
+- **审查与任务链路简化**：移除旧批处理模块，审查器直接使用 compact diff 工具模式处理大型 PR，并补强扫描报告 Issue 到 Agent 任务的闭环。
 
 ### 审查能力
 
@@ -71,6 +79,8 @@
 
 - **超级管理员手动启动**：从 Issue 分析和仓库扫描发现中筛选候选任务，支持自然语言描述筛选条件，按需启动自动修复流程
 - **手动 Issue 创建任务**：支持粘贴 GitHub Issue 链接或输入 `owner/repo#123`，验证后直接创建 Agent 修复任务
+- **Issue 评论委派**：仓库管理员/写权限协作者可在已分析 Issue 或扫描报告 Issue 中评论 `/agent` 创建修复任务，可附加 `base:<branch>` 指定基础分支
+- **普通用户仓库权限控制**：非管理员只能操作自己名下仓库，且仓库必须匹配 `agent_team_repo_allowlist`；任务创建、重试和 `/agent` 委派均消耗独立 Agent 配额
 - **智能候选筛选**：自动去重、过滤已关闭 Issue、按评分排序，支持 AI 自然语言筛选匹配最合适的候选任务
 - **双 Agent 协作**：内置全栈专家负责计划与代码修改，专业审查负责推送前质量复核
 - **上下文压缩与任务恢复**：长任务自动压缩历史上下文，并持久化会话与消息检查点，支持失败后继续处理
@@ -96,10 +106,11 @@
 - **用户级配置覆盖**：普通用户可在个人设置或 API 中覆盖允许的偏好配置（当前支持 AI 输出语言），按 UserConfig → AppConfig → Settings 默认值逐级回退
 - **AI Provider 注册表**：内置 OpenAI、DeepSeek、Qwen、Z.ai、Doubao、SiliconFlow、Gemini、Anthropic 兼容与自定义 OpenAI 兼容厂商，支持自动获取模型列表和上下文窗口信息
 - **GitHub App 安装管理**：自动处理 GitHub App 安装/卸载事件，同步仓库授权状态
-- **安全中心与多因素认证**：支持 TOTP、恢复码、Passkeys/WebAuthn、全局/单用户强制 MFA、管理员重置 MFA 与安全事件审计、MFA 失败锁定（动态阈值与锁定时长）、API Passkey 二次验证
+- **安全中心与多因素认证**：支持 TOTP、恢复码、Passkeys/WebAuthn、全局/单用户强制 MFA、管理员重置 MFA 与安全事件审计、MFA 失败锁定（动态阈值与锁定时长）、API Passkey 二次验证；移动端 OAuth 支持自定义回调 URI 白名单，WebAuthn 支持多个允许 Origin 与 Android App Links
 - **SSE 实时推送**：基于 Redis Pub/Sub 的多进程实时通信，WebUI 数据即时更新
-- **配额制访问控制**：基于配额的灵活访问管理体系，支持用户自注册，并按 UTC 日/周/月自动重置 PR 与 Issue 用量
-- **付费配额系统**：套餐计划与兑换码完整 CRUD 管理（创建/编辑/删除/批量操作）、管理员手动充值，支持一次性包和订阅模式
+- **配额制访问控制**：基于配额的灵活访问管理体系，支持用户自注册，并按 UTC 日/周/月自动重置 PR、Issue 与 Agent 用量
+- **付费配额系统**：套餐计划与兑换码完整 CRUD 管理（创建/编辑/删除/批量操作）、管理员手动充值，支持一次性包和订阅模式，并可为 PR、Issue、Agent 三类用量发放权益
+- **外部支付与退款**：支持 Stripe、Paddle、支付宝、NOWPayments、TRON USDT 直收、支付回调验签、订单取消/查询、用户退款申请、超级管理员审核和退款通知
 - **管理员操作审计**：完整的操作日志，覆盖配置变更、用户管理等关键操作
 - **WebUI 管理界面**：仪表盘、PR 管理、用户管理、配置管理、队列监控、操作日志、仓库扫描管理、Agent 专家团队与 Agent Skills、Sakura 记忆管理、向量存储与数据库管理，支持 Markdown 内容渲染
 - **批量 Issue 索引**：支持在 WebUI 中批量索引仓库 Issue 并刷新向量缓存，AI 元数据增强嵌入质量
@@ -259,6 +270,7 @@ WebUI：`https://your-domain.com/`
 - **自动分析**：Issue opened/edited/reopened 时自动触发，发布分类、优先级、标签建议
 - **自动打标**：AI 推荐标签，高置信度自动应用到 Issue
 - **手动触发**：在 Issue 中评论 `/analyze`
+- **Agent 委派**：仓库管理员或写权限协作者可在已分析 Issue 或扫描报告 Issue 中评论 `/agent`，将问题交给 Agent 专家团队处理；可使用 `/agent base:develop` 指定基础分支
 - **重复检测**：自动识别重复 Issue 并关联已有 Issue
 
 ### WebUI 管理
@@ -281,7 +293,7 @@ WebUI：`https://your-domain.com/`
 - **辅助模型**：WebUI 配置管理中设置 `summary_model`、`summary_api_base`、`summary_api_key`，用于摘要生成、上下文压缩、标签推荐等轻量任务，留空则自动回退到主模型
 - **PR 自动审查**：WebUI 配置管理中 `enable_auto_review` 控制 PR webhook 是否自动触发审查；关闭后仍可通过命令或手动入口触发
 - **AI API 超时**：WebUI 配置管理中 `ai_api_timeout_seconds` 控制单次请求超时，`ai_api_total_timeout_seconds` 控制一次 AI 调用重试循环的最长总耗时
-- **安全与 MFA**：WebUI 安全中心可开启全局 MFA 要求、为单个用户强制 MFA、重置 TOTP/恢复码、删除 Passkeys，并记录安全审计事件；用户可在个人设置中启用 TOTP、生成恢复码、注册 Passkeys/WebAuthn；支持 MFA 失败锁定（`mfa_lockout_threshold` / `mfa_lockout_duration_minutes`）和 API Passkey 二次验证
+- **安全与 MFA**：WebUI 安全中心可开启全局 MFA 要求、为单个用户强制 MFA、重置 TOTP/恢复码、删除 Passkeys，并记录安全审计事件；用户可在个人设置中启用 TOTP、生成恢复码、注册 Passkeys/WebAuthn；支持 MFA 失败锁定（`mfa_lockout_threshold` / `mfa_lockout_duration_minutes`）、API Passkey 二次验证、`passkeys_allowed_origins` 额外 Origin 和 `mobile_oauth_allowed_redirect_uris` 移动端 OAuth 回调白名单
 - **审查策略**：编辑 `config/strategies.yaml`，支持快速/标准/深度/大PR 四种策略
 - **文件过滤**：在 `config/strategies.yaml` 中配置跳过的文件扩展名和路径
 - **AI 工具**：WebUI 配置管理中 `enable_ai_tools` / `max_tool_iterations`
@@ -291,6 +303,7 @@ WebUI：`https://your-domain.com/`
 - **PR 依赖图**：WebUI 配置管理中 `enable_pr_dependency_graph` / `pr_dependency_graph_mode` / `pr_dependency_graph_max_nodes` / `pr_dependency_graph_max_files`；`ai` 模式使用模型分析依赖，`static` 模式使用静态 import 解析降低成本
 - **大型 PR 上下文治理**：WebUI 配置管理中 `model_context_window` / `context_safety_threshold` / `enable_context_compression` / `context_compression_threshold` / `context_compression_keep_rounds`；当初始 diff 过大时会自动使用 compact diff 工具模式
 - **Token 成本追踪**：WebUI 配置管理中 `review_price_per_1k_prompt` / `review_price_per_1k_completion`，追踪审查 Token 消耗与成本
+- **支付网关**：WebUI 配置管理中 `payment_enabled` 启用付费配额系统，按需配置 `stripe_*`、`paddle_*`、`alipay_*`、`nowpayments_*`、`tron_*` 网关参数；支持外部支付订单、回调验签、退款申请和超级管理员退款审核
 - **RAG 知识库**：WebUI 配置管理中配置嵌入模型（支持 BAAI/bge-m3 等）、重排序模型、ChromaDB 等
 - **PR 代码索引**：WebUI 配置管理中配置代码分块、支持语言、核心目录等
 - **Issue 自动指派**：WebUI 配置管理中 `issue_auto_assign` / `issue_assignee_confidence_threshold`
@@ -304,7 +317,7 @@ WebUI：`https://your-domain.com/`
 - **Git 信息工具**：`config/strategies.yaml` 中 `context_enhancement.git_tools`，配置默认分支和提交返回数量
 - **项目记忆系统**：WebUI 配置管理中 `sakura_memory_enabled` 启用记忆系统，`sakura_reflection_enabled` 启用审查后反思，`sakura_consolidation_interval` 合并触发的反思轮数（默认 5），`sakura_auto_init` 自动初始化 `.sakura/` 目录，`sakura_auto_create_subdirs` 自动创建 rules/docs/plans 子目录，`sakura_knowledge_extraction_enabled` 启用自动知识提取（通过三次串行 LLM 调用分别提取 rules/docs/plans），`sakura_extraction_provider` 配置提取 AI 凭据来源（主AI/辅助AI/独立配置）。WebUI 提供「Sakura 记忆管理」页面，支持查看/编辑/删除记忆文件、手动触发合并和知识提取。详见 [项目记忆系统使用指南](docs/SAKURA_MEMORY_GUIDE.md)
 - **模型上下文**：WebUI 配置管理中配置上下文窗口、自动压缩等，详见 [模型上下文管理](docs/MODEL_CONTEXT_FEATURE.md)
-- **Agent 专家团队**：WebUI Agent Team 页面配置 `agent_team_enabled`、`agent_team_workspace_root`、`agent_team_repo_allowlist`、`agent_team_model_provider`、`agent_team_*` 模型与护栏参数；支持上下文压缩（`agent_team_enable_context_compression` 等）、全栈/审查工具轮数（`agent_team_max_tool_rounds` / `agent_team_reviewer_max_tool_rounds`）、自动安装依赖（`agent_team_auto_install_deps`）、验证命令黑名单和 Draft PR 开关；`agent_team_model_provider=main` 时复用主 AI 配置，也可选择独立 Agent AI 配置；支持 Web 搜索工具和 Token 消耗追踪
+- **Agent 专家团队**：WebUI Agent Team 页面配置 `agent_team_enabled`、`agent_team_workspace_root`、`agent_team_repo_allowlist`、`agent_team_model_provider`、`agent_team_*` 模型与护栏参数；支持上下文压缩（`agent_team_enable_context_compression` 等）、全栈/审查工具轮数（`agent_team_max_tool_rounds` / `agent_team_reviewer_max_tool_rounds`）、自动安装依赖（`agent_team_auto_install_deps`）、验证命令黑名单和 Draft PR 开关；`agent_team_model_provider=main` 时复用主 AI 配置，也可选择独立 Agent AI 配置；普通用户入口会校验仓库归属和 `agent_team_repo_allowlist` 并消耗 Agent 配额，Issue 评论 `/agent` 可从已分析 Issue 或扫描报告 Issue 创建任务；支持 Web 搜索工具和 Token 消耗追踪
 - **Agent Skills**：WebUI Agent Skills 页面安装和启停 Skills；通过 `agent_team_skills_enabled` 控制 Agent 是否可加载技能，通过 `agent_team_skills_root` 配置本地存储根目录
 - **国际化（i18n）**：WebUI 支持中英文界面切换（个人设置页面），AI 输出语言可通过全局配置 `OUTPUT_LANGUAGE` 或用户级配置覆盖（`output_language`，`zh-CN` / `en` / 跟随全局）控制，评论模板自动匹配对应语言
 
@@ -402,8 +415,34 @@ Sakura-AI-Reviewer/
 │   └── bootstrap.py       # Setup Wizard 引导配置
 ├── config/                # YAML 配置文件（strategies.yaml）
 ├── docker/                # Docker Compose 部署
-└── docs/                  # 项目文档
+├── docs/                  # 项目文档
+└── .understand-anything/  # 交互式知识图谱（Understand Anything）
 ```
+
+### 交互式知识图谱
+
+项目使用 [Understand Anything](https://github.com/nichochar/understand-anything) 生成交互式代码知识图谱，包含架构层次、节点关系和学习路径，便于快速理解项目结构。
+
+**生成/更新知识图谱**（在 Claude Code 中执行）：
+
+```
+/understand --language zh
+```
+
+**启动可视化仪表盘**：
+
+```
+/understand-dashboard
+```
+
+启动后会自动在浏览器中打开交互式仪表盘，支持以下功能：
+
+- 浏览架构层次和模块依赖关系
+- 查看节点（文件、函数、类、端点）之间的调用和导入关系
+- 按引导路径逐步了解项目架构
+- 按类型、标签、层级筛选节点
+
+知识图谱数据存储在 `.understand-anything/knowledge-graph.json`，支持增量更新——代码变更后重新执行 `/understand` 即可自动同步。
 
 ---
 
@@ -418,7 +457,7 @@ Sakura-AI-Reviewer/
 | [PR 功能指南](docs/PR_FEATURES_GUIDE.md)                   | PR 变更总结与依赖图配置说明        |
 | [配额系统指南](docs/QUOTA_SYSTEM_GUIDE.md)                 | PR/Issue 配额统计与自动重置机制    |
 | [安全与 MFA 指南](docs/SECURITY_MFA_GUIDE.md)              | TOTP、恢复码、Passkeys/WebAuthn 与安全中心 |
-| [API v1 参考文档](docs/api-v1-reference.md)             | RESTful API 接口文档（移动端对接） |
+| [API v1 参考文档](docs/api-v1-reference.md)             | RESTful API v1.3 接口文档（移动端 OAuth、MFA、SSE、Billing） |
 | [WebUI 设计文档](docs/plans/2026-03-27-webui-design.md) | WebUI 设计规范              |
 | [项目记忆系统使用指南](docs/SAKURA_MEMORY_GUIDE.md) | .sakura/ 目录结构、生命周期、配置说明 |
 | [项目记忆系统设计](docs/plans/2026-04-20-sakura-memory-design.md) | .sakura/ 记忆系统架构与配置 |
