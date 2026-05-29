@@ -70,6 +70,36 @@ class TestCreatePayment:
         assert result.client_secret == "10.5"  # pay_amount
 
     @pytest.mark.asyncio
+    async def test_create_jpy_uses_zero_decimal_main_units(self, gateway):
+        """创建 JPY 支付时 amount_cents 已是最小单位，不应除以 100。"""
+        mock_data = {
+            "payment_id": 5077125058,
+            "payment_status": "waiting",
+            "pay_address": "JPY-address",
+            "pay_amount": 1200,
+            "pay_currency": "usdttrc20",
+            "price_amount": 1200,
+            "price_currency": "jpy",
+        }
+
+        with patch.object(gateway, "_post", return_value=mock_data) as mock_post:
+            result = await gateway.create_payment(
+                order_no="ORDER-JPY",
+                amount_cents=1200,
+                currency="JPY",
+                plan_name="JPY Plan",
+                user_id=42,
+                success_url="https://example.com/api/webhook/nowpayments",
+                cancel_url="https://example.com/billing/",
+            )
+
+        assert result.success is True
+        mock_post.assert_awaited_once()
+        request_body = mock_post.await_args.args[1]
+        assert request_body["price_amount"] == 1200
+        assert request_body["price_currency"] == "jpy"
+
+    @pytest.mark.asyncio
     async def test_create_no_address(self, gateway):
         """API 未返回充值地址"""
         mock_data = {
@@ -151,6 +181,25 @@ class TestVerifyWebhook:
 
         assert event.event_type == WebhookEventType.PAYMENT_EXPIRED
         assert event.amount_cents == 500
+
+    def test_jpy_payment_amount_uses_zero_decimal_minor_units(self, gateway):
+        """JPY 等零小数位货币不应统一乘以 100。"""
+        data = {
+            "payment_id": 5077125058,
+            "payment_status": "finished",
+            "order_id": "ORDER-JPY",
+            "price_amount": 1200,
+            "price_currency": "jpy",
+        }
+        body = json.dumps(data).encode("utf-8")
+        sig = _make_ipn_signature(data, IPN_SECRET)
+        headers = {"x-nowpayments-sig": sig}
+
+        event = gateway.verify_webhook(body, headers)
+
+        assert event.event_type == WebhookEventType.PAYMENT_COMPLETED
+        assert event.amount_cents == 1200
+        assert event.currency == "JPY"
 
     def test_payment_failed(self, gateway):
         """failed 状态回调"""
@@ -252,6 +301,24 @@ class TestGetPaymentStatus:
         assert result.success is True
         assert result.status == "paid"
         assert result.amount_cents == 1000
+
+    @pytest.mark.asyncio
+    async def test_query_jpy_uses_response_currency_minor_units(self, gateway):
+        """查询 JPY 支付状态时使用响应币种的小数位。"""
+        mock_data = {
+            "payment_id": 5077125058,
+            "payment_status": "finished",
+            "price_amount": 1200,
+            "price_currency": "jpy",
+        }
+
+        with patch.object(gateway, "_get", return_value=mock_data):
+            result = await gateway.get_payment_status("5077125058")
+
+        assert result.success is True
+        assert result.status == "paid"
+        assert result.amount_cents == 1200
+        assert result.currency == "JPY"
 
     @pytest.mark.asyncio
     async def test_query_waiting(self, gateway):

@@ -30,6 +30,7 @@ API 流程：
 import hashlib
 import hmac
 import json
+from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 from typing import Optional
 
 import httpx
@@ -50,6 +51,24 @@ class NowPaymentsGateway(PaymentGateway):
 
     API_URL = "https://api.nowpayments.io"
     SANDBOX_URL = "https://api-sandbox.nowpayments.io"
+    CURRENCY_DECIMALS = {
+        "BIF": 0,
+        "CLP": 0,
+        "DJF": 0,
+        "GNF": 0,
+        "JPY": 0,
+        "KMF": 0,
+        "KRW": 0,
+        "MGA": 0,
+        "PYG": 0,
+        "RWF": 0,
+        "UGX": 0,
+        "VND": 0,
+        "VUV": 0,
+        "XAF": 0,
+        "XOF": 0,
+        "XPF": 0,
+    }
 
     def __init__(
         self,
@@ -110,6 +129,28 @@ class NowPaymentsGateway(PaymentGateway):
             f"NOWPayments API error {resp.status_code}: {msg}"
         )
 
+    @classmethod
+    def _currency_decimals(cls, currency: str) -> int:
+        return cls.CURRENCY_DECIMALS.get(currency.upper(), 2)
+
+    @classmethod
+    def _to_minor_units(cls, amount: object, currency: str) -> int:
+        """Convert a main-unit amount to currency-specific minor units."""
+        decimals = cls._currency_decimals(currency)
+        try:
+            value = Decimal(str(amount))
+        except (InvalidOperation, ValueError):
+            return 0
+        scale = Decimal(10) ** decimals
+        return int((value * scale).quantize(Decimal("1"), rounding=ROUND_HALF_UP))
+
+    @classmethod
+    def _from_minor_units(cls, amount: int, currency: str) -> int | float:
+        """Convert currency-specific minor units to JSON-safe main units."""
+        decimals = cls._currency_decimals(currency)
+        value = Decimal(amount) / (Decimal(10) ** decimals)
+        return int(value) if decimals == 0 else float(value)
+
     # ------------------------------------------------------------------
     # IPN 验签
     # ------------------------------------------------------------------
@@ -169,9 +210,10 @@ class NowPaymentsGateway(PaymentGateway):
         NOWPayments 会自动按实时汇率换算成 pay_currency 对应的加密货币。
         success_url 用作 ipn_callback_url。
         """
-        # cents → 原始金额（如 1300 cents → 13.00 CNY）
-        price_amount = amount_cents / 100
-        price_currency = currency.lower()
+        price_currency = currency.upper()
+        # minor units → 原始金额（如 1300 CNY cents → 13.00 CNY；1200 JPY → 1200 JPY）
+        price_amount = self._from_minor_units(amount_cents, price_currency)
+        price_currency = price_currency.lower()
 
         logger.info(
             "NOWPayments create: price_amount={}, price_currency={}, pay_currency={}",
@@ -266,11 +308,8 @@ class NowPaymentsGateway(PaymentGateway):
                 order_id,
             )
 
-            # 金额转换（price_currency 对应的主单位 → cents）
-            try:
-                amount_cents = int(float(price_amount) * 100)
-            except (ValueError, TypeError):
-                amount_cents = 0
+            # 金额转换（price_currency 对应的主单位 → currency-specific minor units）
+            amount_cents = self._to_minor_units(price_amount, price_currency)
 
             # 状态映射
             if payment_status in ("finished", "confirmed", "sending"):
@@ -344,6 +383,7 @@ class NowPaymentsGateway(PaymentGateway):
 
             status = data.get("payment_status", "unknown")
             price_amount = data.get("price_amount", 0)
+            price_currency = str(data.get("price_currency") or "USD").upper()
 
             # 映射到统一状态
             if status in ("finished", "confirmed"):
@@ -359,17 +399,14 @@ class NowPaymentsGateway(PaymentGateway):
             else:
                 unified = "unknown"
 
-            try:
-                amount_cents = int(float(price_amount) * 100)
-            except (ValueError, TypeError):
-                amount_cents = 0
+            amount_cents = self._to_minor_units(price_amount, price_currency)
 
             return PaymentStatusResult(
                 success=True,
                 status=unified,
                 provider_tx_id=str(data.get("payment_id", provider_tx_id)),
                 amount_cents=amount_cents,
-                currency="USD",
+                currency=price_currency,
                 raw_data=data,
             )
 

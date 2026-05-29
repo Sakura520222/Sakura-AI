@@ -745,8 +745,9 @@ class PaymentService:
     ) -> None:
         """Validate webhook amount before fulfilling an order."""
         if paid_amount_cents is None:
-            logger.warning(
-                "Payment confirmation without amount validation: order_no={}, provider={}",
+            logger.error(
+                "BYPASSING amount validation for payment confirmation: "
+                "order_no={}, provider={}",
                 order.order_no,
                 order.payment_provider,
             )
@@ -764,7 +765,7 @@ class PaymentService:
         order_currency = str(order.currency or "").upper()
         webhook_currency = str(paid_currency or order_currency or "").upper()
 
-        if expected_amount > 0 and paid_amount <= 0:
+        if paid_amount <= 0:
             raise PaymentError(
                 f"Payment amount mismatch for order {order.order_no}: "
                 f"expected {expected_amount} {order_currency or 'UNKNOWN'} cents, "
@@ -774,7 +775,8 @@ class PaymentService:
         if order_currency and webhook_currency and webhook_currency != order_currency:
             logger.warning(
                 "Payment currency differs for order {}: expected {} {}, got {} {}; "
-                "skipping strict amount comparison",
+                "skipping strict amount comparison because webhook currency should match "
+                "the order currency and no exchange-rate conversion is performed here",
                 order.order_no,
                 expected_amount,
                 order_currency,
