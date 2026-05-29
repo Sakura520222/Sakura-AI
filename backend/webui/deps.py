@@ -28,7 +28,7 @@ from backend.webui.i18n import make_translation_func, SUPPORTED_LANGUAGES
 @lru_cache()
 def get_templates() -> Jinja2Templates:
     """获取 Jinja2 模板引擎单例"""
-    templates = Jinja2Templates(directory="backend/webui/templates", autoescape=True)
+    templates = Jinja2Templates(directory="backend/webui/templates")
     templates.env.globals["percentage"] = _percentage_filter
     # get_settings() returns the cached singleton updated in place by dynamic config.
     templates.env.globals["settings"] = get_settings()
