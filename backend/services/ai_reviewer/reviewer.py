@@ -299,7 +299,6 @@ class AIReviewer:
 
             # 执行每个工具调用
             for tool_call in tool_calls:
-                tool_name = tool_call.function.name
                 try:
                     # 通知前端：工具开始运行
                     if event_callback:

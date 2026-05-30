@@ -5,8 +5,6 @@ Reuses the exact same schema pattern so the frontend component
 (agent_team_live_view_fragment.html) can render them identically.
 """
 
-import enum
-
 from sqlalchemy import (
     Column,
     Integer,
