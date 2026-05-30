@@ -127,11 +127,13 @@ class ReviewWorker:
 
     @staticmethod
     async def _log_activity(
-        review_id: int,
+        review_id: int | None,
         event_type: str,
         content: dict[str, Any] | None = None,
     ) -> None:
-        """记录审查活动事件（持久化 + SSE 推送）。"""
+        """记录审查活动事件（持久化 + SSE 推送）。review_id 为 None 时静默跳过。"""
+        if not review_id:
+            return
         try:
             from backend.services.activity_event_service import ActivityEventService
 
