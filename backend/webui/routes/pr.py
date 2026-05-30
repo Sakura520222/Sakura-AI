@@ -172,6 +172,7 @@ async def pr_list_fragment(
 
     # 渲染 HTMX 片段
     return templates.TemplateResponse(
+        request,
         "components/pr_list_fragment.html",
         {
             "request": request,
@@ -312,6 +313,7 @@ async def pr_file_list_fragment(
     ).all()
 
     return templates.TemplateResponse(
+        request,
         "components/pr_file_list_fragment.html",
         {
             "request": request,
@@ -357,6 +359,7 @@ async def pr_file_comments_fragment(
     display_path = None if file_path == "__overall__" else file_path
 
     return templates.TemplateResponse(
+        request,
         "components/pr_file_comments_fragment.html",
         {
             "request": request,

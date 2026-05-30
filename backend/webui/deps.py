@@ -86,7 +86,7 @@ def render_template(
     if user_prefs:
         context["user_prefs"] = user_prefs
 
-    return get_templates().TemplateResponse(template_name, context)
+    return get_templates().TemplateResponse(request, template_name, context)
 
 
 def build_review_search_filter(search: str):
@@ -306,6 +306,7 @@ def error_page(
 
     lang = detect_language(user_prefs)
     return get_templates().TemplateResponse(
+        request,
         "error.html",
         {
             "request": request,

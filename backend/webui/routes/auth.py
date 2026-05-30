@@ -100,6 +100,7 @@ def _oauth_error(
 ):
     """统一的 OAuth 错误页面响应"""
     return templates.TemplateResponse(
+        request,
         "login.html",
         {
             "request": request,
