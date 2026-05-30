@@ -64,6 +64,7 @@ class IssueWorker:
     ) -> None:
         """记录 Issue 分析活动事件（持久化 + SSE 推送）。"""
         try:
+            # 延迟导入：避免 worker 模块启动时加载 service 层的完整依赖链
             from backend.services.activity_event_service import ActivityEventService
 
             await ActivityEventService.log_event(

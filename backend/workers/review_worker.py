@@ -135,6 +135,7 @@ class ReviewWorker:
         if not review_id:
             return
         try:
+            # 延迟导入：避免 worker 模块启动时加载 service 层的完整依赖链
             from backend.services.activity_event_service import ActivityEventService
 
             await ActivityEventService.log_event("pr", review_id, event_type, content)
@@ -243,10 +244,6 @@ class ReviewWorker:
                     )
 
                 # 1. 分析PR
-                await self._log_activity(0, "thinking", {
-                    "message": f"分析 PR #{pr_info.get('pr_number')} ...",
-                    "repo_full_name": pr_info.get("repo_full_name"),
-                })
                 analysis = await self.analyzer.analyze_pr(pr_info)
 
                 # 2. 检查是否应该跳过
@@ -363,6 +360,11 @@ class ReviewWorker:
                 # 3. 创建数据库记录
                 review_id = await self._create_review_record(analysis, pr_info, task_id)
 
+                # 记录审查创建前的关键阶段（review_id 此时有效）
+                await self._log_activity(review_id, "thinking", {
+                    "message": f"分析 PR #{pr_info.get('pr_number')} ...",
+                    "repo_full_name": pr_info.get("repo_full_name"),
+                })
                 await self._log_activity(review_id, "status", {
                     "status": "pending",
                     "message": f"PR #{pr_info.get('pr_number')} 审查已创建",

@@ -23,6 +23,7 @@ from backend.webui.deps import (
     render_template,
     build_user_scope_filter,
 )
+from backend.webui.routes.activity_access import verify_task_access
 
 router = APIRouter(prefix="/activity", tags=["WebUI Activity"])
 
@@ -171,10 +172,15 @@ async def get_task_events(
     after_id: int = 0,
     limit: int = 200,
     user: dict = Depends(require_auth),
+    db: AsyncSession = Depends(get_db),
 ):
     """获取指定任务的活动事件列表（支持增量拉取）"""
     if task_type not in ("pr", "issue", "scan"):
         return {"success": False, "error": "Invalid task_type"}
+    # Verify user has access to this task
+    task_info = await verify_task_access(task_type, task_id, user, db)
+    if not task_info:
+        return {"success": False, "error": "Task not found or access denied"}
     events = await ActivityEventService.get_events(
         task_type, task_id, after_id=after_id, limit=limit
     )

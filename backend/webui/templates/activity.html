@@ -378,6 +378,7 @@ function activityMonitor() {
             try {
                 var url = '/activity/api/events/' + this.selectedTask.type + '/' + this.selectedTask.task_id + '?after_id=' + this._lastEventId + '&limit=50';
                 var resp = await fetch(url);
+                if (!resp.ok) return;
                 var data = await resp.json();
                 if (!data.success || !data.events || data.events.length === 0) return;
                 this._processEvents(data.events);
@@ -460,6 +461,7 @@ function activityMonitor() {
             try {
                 var url = '/activity/api/events/' + this.selectedTask.type + '/' + this.selectedTask.task_id + '?after_id=0&limit=200';
                 var resp = await fetch(url);
+                if (!resp.ok) { this.isLoadingEvents = false; return; }
                 var data = await resp.json();
                 if (!data.success) return;
                 this._processEvents(data.events || []);

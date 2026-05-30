@@ -108,6 +108,7 @@ class ScanWorker:
     ) -> None:
         """记录扫描活动事件（持久化 + SSE 推送）。"""
         try:
+            # 延迟导入：避免 worker 模块启动时加载 service 层的完整依赖链
             from backend.services.activity_event_service import ActivityEventService
 
             await ActivityEventService.log_event("scan", scan_id, event_type, content)
@@ -351,7 +352,7 @@ class ScanWorker:
                 report_issue_number=issue_number,
                 report_issue_url=issue_url,
                 estimated_cost=estimated_cost,
-                completed_at=datetime.utcnow(),
+                completed_at=datetime.now(timezone.utc),
             )
             await self._log_activity(scan_id, "result", {
                 "status": "completed",
