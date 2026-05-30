@@ -170,12 +170,16 @@ class IssueWorker:
                     if client:
                         repo = client.get_repo(repo_full_name)
 
-                    # 4. 调用 AI 分析
+                    # 4. 调用 AI 分析（传入事件回调实现实时推送）
+                    async def _issue_event_callback(event_type, data):
+                        await IssueWorker._log_activity(record.id, event_type, data)
+
                     analysis_result = await self.analyzer.analyze_issue(
                         issue_info=issue_info,
                         repo_owner=repo_owner,
                         repo_name=repo_name,
                         repo=repo,
+                        event_callback=_issue_event_callback,
                     )
 
                     # 4.5 记录 AI 分析完成事件

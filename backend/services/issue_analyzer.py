@@ -3,7 +3,7 @@
 import json
 import re
 from datetime import datetime, timedelta
-from typing import Dict, Any, List
+from typing import Any, Callable, Coroutine, Dict, List, Optional
 from loguru import logger
 
 from backend.core.config import (
@@ -359,6 +359,7 @@ class IssueAnalyzer:
         repo_owner: str,
         repo_name: str,
         repo: Any = None,
+        event_callback: Optional[Callable[[str, Dict[str, Any]], Coroutine]] = None,
     ) -> Dict[str, Any]:
         """分析 Issue
 
@@ -367,6 +368,7 @@ class IssueAnalyzer:
             repo_owner: 仓库所有者
             repo_name: 仓库名称
             repo: GitHub 仓库对象（可选，用于工具调用）
+            event_callback: 可选事件回调，用于实时推送工具调用进度到前端。
 
         Returns:
             分析结果字典，包含 token 和 cost 信息
@@ -497,6 +499,16 @@ class IssueAnalyzer:
         while iteration < max_iterations:
             iteration += 1
 
+            # 通知前端：AI 正在思考
+            if event_callback:
+                try:
+                    await event_callback("thinking", {
+                        "message": f"第 {iteration}/{max_iterations} 轮 AI 分析",
+                        "round": iteration,
+                    })
+                except Exception:
+                    pass
+
             try:
                 response = await self.api_client.call_with_retry(
                     model=settings.openai_model,
@@ -596,6 +608,18 @@ class IssueAnalyzer:
 
             # 执行工具调用
             for tool_call in tool_calls:
+                tool_name = tool_call.function.name
+                # 通知前端：工具调用开始
+                if event_callback:
+                    try:
+                        await event_callback("tool_call", {
+                            "tool": tool_name,
+                            "status": "running",
+                            "detail": (tool_call.function.arguments or "")[:200],
+                            "round": iteration,
+                        })
+                    except Exception:
+                        pass
                 try:
                     result = await self.tool_handler.handle_tool_call(
                         tool_call, repo, None
@@ -608,6 +632,17 @@ class IssueAnalyzer:
                         }
                     )
                     logger.info(f"执行工具 {tool_call.function.name} (Issue 分析)")
+                    # 通知前端：工具调用完成
+                    if event_callback:
+                        try:
+                            result_str = json.dumps(result, ensure_ascii=False)
+                            await event_callback("tool_result", {
+                                "tool": tool_name,
+                                "status": "completed",
+                                "detail": result_str[:200] if result_str else "",
+                            })
+                        except Exception:
+                            pass
                 except Exception as e:
                     logger.error(f"工具调用失败: {e}")
                     messages.append(
@@ -619,6 +654,16 @@ class IssueAnalyzer:
                             ),
                         }
                     )
+                    # 通知前端：工具调用失败
+                    if event_callback:
+                        try:
+                            await event_callback("tool_result", {
+                                "tool": tool_name,
+                                "status": "failed",
+                                "detail": str(e)[:200],
+                            })
+                        except Exception:
+                            pass
 
             # 每轮工具调用处理后记录上下文使用率
             current_tokens = estimate_messages_tokens(messages, model_ctx_mgr)

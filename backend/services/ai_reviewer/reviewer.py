@@ -5,7 +5,7 @@
 """
 
 import json
-from typing import Any, Dict, List
+from typing import Any, Callable, Coroutine, Dict, List, Optional
 
 from loguru import logger
 
@@ -194,6 +194,7 @@ class AIReviewer:
         tracker: TokenTracker,
         context: Dict[str, Any],
         tool_handler: ToolHandler | None = None,
+        event_callback: Optional[Callable[[str, Dict[str, Any]], Coroutine]] = None,
     ) -> Dict[str, Any]:
         """执行多轮工具调用循环
 
@@ -206,6 +207,8 @@ class AIReviewer:
             pr: GitHub PR对象
             tracker: TokenTracker
             context: 审查上下文
+            event_callback: 可选事件回调，签名为 async (event_type, data) -> None，
+                            用于实时推送工具调用进度到前端。
 
         Returns:
             审查结果字典
@@ -224,6 +227,16 @@ class AIReviewer:
 
         while iteration < max_iterations:
             iteration += 1
+
+            # 通知前端：AI 正在思考
+            if event_callback:
+                try:
+                    await event_callback("thinking", {
+                        "message": f"AI 审查第 {iteration} 轮...",
+                        "round": iteration,
+                    })
+                except Exception:
+                    pass
 
             # 调用AI API
             response = await self.api_client.call_with_retry(
@@ -280,6 +293,20 @@ class AIReviewer:
 
             # 执行每个工具调用
             for tool_call in tool_calls:
+                tool_name = tool_call.function.name
+                tool_args_raw = tool_call.function.arguments or "{}"
+                # 通知前端：工具调用开始
+                if event_callback:
+                    try:
+                        args_preview = tool_args_raw[:200] if tool_args_raw else ""
+                        await event_callback("tool_call", {
+                            "tool": tool_name,
+                            "status": "running",
+                            "detail": args_preview,
+                            "round": iteration,
+                        })
+                    except Exception:
+                        pass
                 try:
                     result = await active_tool_handler.handle_tool_call(
                         tool_call, repo, pr
@@ -296,6 +323,17 @@ class AIReviewer:
                         tool_call.function.name,
                         tool_call.function.arguments,
                     )
+                    # 通知前端：工具调用完成
+                    if event_callback:
+                        try:
+                            result_str = json.dumps(result, ensure_ascii=False)
+                            await event_callback("tool_result", {
+                                "tool": tool_name,
+                                "status": "completed",
+                                "detail": result_str[:200] if result_str else "",
+                            })
+                        except Exception:
+                            pass
                 except Exception as e:
                     logger.error(
                         "执行工具 {} 失败: {}", tool_call.function.name, str(e)
@@ -307,6 +345,16 @@ class AIReviewer:
                             "content": json.dumps({"error": str(e)}),
                         }
                     )
+                    # 通知前端：工具调用失败
+                    if event_callback:
+                        try:
+                            await event_callback("tool_result", {
+                                "tool": tool_name,
+                                "status": "failed",
+                                "detail": str(e)[:200],
+                            })
+                        except Exception:
+                            pass
 
             # 记录上下文使用率
             current_tokens = self.context_compressor.estimate_messages_tokens(
@@ -372,7 +420,12 @@ class AIReviewer:
         return result
 
     async def review_pr_with_tools(
-        self, context: Dict[str, Any], strategy: str, repo: Any, pr: Any
+        self,
+        context: Dict[str, Any],
+        strategy: str,
+        repo: Any,
+        pr: Any,
+        event_callback: Optional[Callable[[str, Dict[str, Any]], Coroutine]] = None,
     ) -> Dict[str, Any]:
         """使用函数工具审查 PR（唯一审查入口）
 
@@ -384,6 +437,7 @@ class AIReviewer:
             strategy: 审查策略
             repo: GitHub仓库对象
             pr: GitHub PR对象
+            event_callback: 可选事件回调，用于实时推送工具调用进度到前端。
 
         Returns:
             审查结果字典
@@ -462,6 +516,7 @@ class AIReviewer:
                     tracker=tracker,
                     context=context,
                     tool_handler=active_tool_handler,
+                    event_callback=event_callback,
                 )
 
             except PromptTooLongError as e:
@@ -499,6 +554,7 @@ class AIReviewer:
                         tracker=tracker,
                         context=context,
                         tool_handler=active_tool_handler,
+                        event_callback=event_callback,
                     )
                 logger.error(
                     "🚨 上下文超限但压缩未启用 (估算 ~{} tokens)",

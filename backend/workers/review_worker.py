@@ -684,13 +684,21 @@ class ReviewWorker:
                 tasks = []
 
                 # 任务1: AI审查（工具驱动模式）
+                # 构造事件回调，将 AI 审查过程中的工具调用实时推送到前端
+                async def _review_event_callback(event_type, data):
+                    await ReviewWorker._log_activity(review_id, event_type, data)
+
                 if enable_tools:
                     logger.info(
                         f"[{task_id}] 使用AI工具驱动模式进行审查"
                     )
                     tasks.append(
                         self.ai_reviewer.review_pr_with_tools(
-                            context, analysis.strategy, repo, pr
+                            context,
+                            analysis.strategy,
+                            repo,
+                            pr,
+                            event_callback=_review_event_callback,
                         )
                     )
                 else:
