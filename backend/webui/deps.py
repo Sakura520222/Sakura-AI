@@ -277,9 +277,9 @@ def validate_csrf_token(token: str) -> bool:
         return False
 
 
-async def require_csrf(csrf_token: str = Form(...)) -> str:
+async def require_csrf(csrf_token: str = Form(default="")) -> str:
     """FastAPI 依赖：验证 CSRF Token，失败时抛出 403"""
-    if not validate_csrf_token(csrf_token):
+    if not csrf_token or not validate_csrf_token(csrf_token):
         raise HTTPException(status_code=403, detail="CSRF 验证失败")
     return csrf_token
 

@@ -13,7 +13,6 @@ from fastapi import (
     Form,
     HTTPException,
     Query,
-    Header,
     Body,
 )
 from fastapi.responses import RedirectResponse, HTMLResponse, JSONResponse
@@ -49,8 +48,8 @@ from backend.webui.auth import (
 )
 from backend.webui.deps import (
     get_templates,
-    validate_csrf_token,
     get_csrf_serializer,
+    require_csrf,
     require_csrf_header,
     request_origin,
     toast_redirect,
@@ -435,17 +434,13 @@ async def two_factor_page(request: Request):
     )
 
 
-@router.post("/2fa")
+@router.post("/2fa", dependencies=[Depends(require_csrf)])
 @limiter.limit(lambda: get_settings().two_factor_verify_rate_limit)
 async def verify_two_factor(
     request: Request,
     code: str = Form(...),
-    csrf_token: str = Form(...),
 ):
     """验证 TOTP 或恢复码并签发正式登录 Cookie。"""
-    if not validate_csrf_token(csrf_token):
-        raise HTTPException(status_code=403, detail="CSRF 验证失败")
-
     token = request.cookies.get(MFA_PENDING_COOKIE_NAME)
     payload = decode_access_token(token) if token else None
     if not is_mfa_pending_payload(payload):
@@ -636,12 +631,9 @@ async def two_factor_passkey_verify(
     return response
 
 
-@router.post("/logout")
-async def logout(request: Request, csrf_token: str = Form(...)):
+@router.post("/logout", dependencies=[Depends(require_csrf)])
+async def logout(request: Request):
     """登出"""
-    if not validate_csrf_token(csrf_token):
-        raise HTTPException(status_code=403, detail="CSRF 验证失败")
-
     logger.info("WebUI 用户登出")
     response = toast_redirect("/auth/login", "toast.logged_out", lang=detect_language())
     response.delete_cookie("webui_token")
@@ -764,16 +756,12 @@ async def passkey_verify_discover(request: Request, body: dict = Body(...)):
     return response
 
 
-@router.post("/api/theme")
+@router.post("/api/theme", dependencies=[Depends(require_csrf_header)])
 async def set_theme(
     request: Request,
     theme: str = Form(...),
-    x_csrf_token: str = Header("", alias="X-CSRF-Token"),
 ):
     """HTMX 调用的主题切换接口"""
-    if not validate_csrf_token(x_csrf_token):
-        raise HTTPException(status_code=403, detail="CSRF 验证失败")
-
     if theme not in ("light", "dark"):
         return HTMLResponse(status_code=400)
     return HTMLResponse(status_code=204)
