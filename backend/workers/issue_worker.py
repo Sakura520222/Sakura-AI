@@ -56,6 +56,23 @@ class IssueWorker:
         self.github_app = GitHubAppClient()
         self._background_tasks: set[asyncio.Task] = set()
 
+    @staticmethod
+    async def _log_activity(
+        analysis_id: int,
+        event_type: str,
+        content: dict[str, Any] | None = None,
+    ) -> None:
+        """记录 Issue 分析活动事件（持久化 + SSE 推送）。"""
+        try:
+            # 延迟导入：避免 worker 模块启动时加载 service 层的完整依赖链
+            from backend.services.activity_event_service import ActivityEventService
+
+            await ActivityEventService.log_event(
+                "issue", analysis_id, event_type, content
+            )
+        except Exception as exc:
+            logger.debug("Issue 活动事件记录失败: {}", exc)
+
     async def process_issue_analysis(self, issue_info: Dict[str, Any]) -> str:
         """处理 Issue 分析任务
 
@@ -123,6 +140,15 @@ class IssueWorker:
                     record.status = IssueAnalysisStatus.ANALYZING.value
                     await db.commit()
 
+                    await self._log_activity(record.id, "status", {
+                        "status": "analyzing",
+                        "message": f"开始分析 Issue #{issue_number}",
+                        "repo_name": repo_name,
+                    })
+                    await self._log_activity(record.id, "thinking", {
+                        "message": "AI 正在分析 Issue ...",
+                    })
+
                     # 发布 SSE 事件通知前端
                     try:
                         from backend.webui.sse import publish_event
@@ -144,13 +170,47 @@ class IssueWorker:
                     if client:
                         repo = client.get_repo(repo_full_name)
 
-                    # 4. 调用 AI 分析
+                    # 4. 调用 AI 分析（使用 ActivityCheckpointService 记录对话流）
+                    from backend.services.activity_checkpoint_service import (
+                        ActivityCheckpointService,
+                    )
+                    checkpoint = ActivityCheckpointService("issue", record.id)
+                    act_session = await checkpoint.create_session(
+                        iteration_number=1,
+                        role_name="issue_analyzer",
+                    )
+
+                    async def _issue_event_callback(event_type, data):
+                        """Mirrors ConversationCheckpointService usage pattern."""
+                        try:
+                            if event_type == "message":
+                                msg = await checkpoint.append_message(act_session.id, data)
+                                if data.get("role") == "tool" and data.get("tool_call_id"):
+                                    await checkpoint.mark_tool_call_completed(
+                                        act_session.id, data["tool_call_id"], msg.id
+                                    )
+                            elif event_type == "tool_running":
+                                await checkpoint.mark_tool_call_running(
+                                    act_session.id, data
+                                )
+                        except Exception as exc:
+                            logger.debug("issue checkpoint callback failed: {}", exc)
+
                     analysis_result = await self.analyzer.analyze_issue(
                         issue_info=issue_info,
                         repo_owner=repo_owner,
                         repo_name=repo_name,
                         repo=repo,
+                        event_callback=_issue_event_callback,
                     )
+
+                    # 完成 checkpoint session
+                    await checkpoint.complete_session(act_session.id)
+                    await checkpoint.save_session_result(act_session.id, {
+                        "category": analysis_result.get("category", ""),
+                        "priority": analysis_result.get("priority", ""),
+                        "summary": str(analysis_result.get("summary", "")),
+                    })
 
                     # 5. 保存分析结果（更新已有的 PENDING 记录）
                     analysis_record = await issue_service.save_analysis_result(
@@ -253,6 +313,13 @@ class IssueWorker:
                     except Exception as e:
                         logger.warning(f"发布 SSE 事件失败（不影响主流程）: {e}")
 
+                    await self._log_activity(record.id, "result", {
+                        "status": "completed",
+                        "message": f"Issue #{issue_number} 分析完成",
+                        "category": analysis_result.get("category", ""),
+                        "priority": analysis_result.get("priority", ""),
+                    })
+
                     # 8. 自动评论
                     if await get_dynamic_config("issue_auto_comment"):
                         try:
@@ -336,11 +403,6 @@ class IssueWorker:
                             suggested_title = analysis_record.suggested_title
                             original_title = issue_info.get("title", "")
                             if suggested_title and suggested_title != original_title:
-                                if len(suggested_title) > 256:
-                                    logger.info(
-                                        f"[{task_id}] 建议标题超过 256 字符，已截断"
-                                    )
-                                    suggested_title = suggested_title[:256]
                                 success = await asyncio.to_thread(
                                     self.github_app.update_issue_title,
                                     repo_owner,
@@ -482,8 +544,11 @@ class IssueWorker:
                         record = result.scalar_one_or_none()
                         if record:
                             record.status = IssueAnalysisStatus.FAILED.value
-                            record.error_message = str(e)[:1000]
+                            record.error_message = str(e)
                             await db.commit()
+                            await self._log_activity(record.id, "error", {
+                                "message": f"Issue 分析失败: {str(e)}",
+                            })
 
                             # 发布 SSE 事件通知前端（失败）
                             try:

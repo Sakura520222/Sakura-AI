@@ -13,8 +13,7 @@ from sqlalchemy import (
     UniqueConstraint,
     text,
 )
-from sqlalchemy.ext.declarative import declarative_base
-from sqlalchemy.orm import relationship
+from sqlalchemy.orm import declarative_base, relationship
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
 import enum
 
@@ -522,6 +521,8 @@ async def create_tables_async():
 
 def _ensure_model_modules_imported() -> None:
     """导入独立模型模块，确保 metadata 已注册。"""
+    import backend.models.activity_conversation_models  # noqa: F401
+    import backend.models.activity_event_models  # noqa: F401
     import backend.models.agent_skill_models  # noqa: F401
     import backend.models.agent_team_models  # noqa: F401
     import backend.models.payment_models  # noqa: F401
