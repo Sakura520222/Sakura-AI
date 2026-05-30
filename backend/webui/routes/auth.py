@@ -51,6 +51,7 @@ from backend.webui.deps import (
     get_templates,
     validate_csrf_token,
     get_csrf_serializer,
+    require_csrf,
     require_csrf_header,
     request_origin,
     toast_redirect,
@@ -435,17 +436,13 @@ async def two_factor_page(request: Request):
     )
 
 
-@router.post("/2fa")
+@router.post("/2fa", dependencies=[Depends(require_csrf)])
 @limiter.limit(lambda: get_settings().two_factor_verify_rate_limit)
 async def verify_two_factor(
     request: Request,
     code: str = Form(...),
-    csrf_token: str = Form(default=""),
 ):
     """验证 TOTP 或恢复码并签发正式登录 Cookie。"""
-    if not csrf_token or not validate_csrf_token(csrf_token):
-        raise HTTPException(status_code=403, detail="CSRF 验证失败")
-
     token = request.cookies.get(MFA_PENDING_COOKIE_NAME)
     payload = decode_access_token(token) if token else None
     if not is_mfa_pending_payload(payload):
@@ -636,12 +633,9 @@ async def two_factor_passkey_verify(
     return response
 
 
-@router.post("/logout")
-async def logout(request: Request, csrf_token: str = Form(default="")):
+@router.post("/logout", dependencies=[Depends(require_csrf)])
+async def logout(request: Request):
     """登出"""
-    if not csrf_token or not validate_csrf_token(csrf_token):
-        raise HTTPException(status_code=403, detail="CSRF 验证失败")
-
     logger.info("WebUI 用户登出")
     response = toast_redirect("/auth/login", "toast.logged_out", lang=detect_language())
     response.delete_cookie("webui_token")
