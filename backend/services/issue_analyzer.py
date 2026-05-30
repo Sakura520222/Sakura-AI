@@ -169,7 +169,7 @@ class IssueAnalyzer:
                 issue_number,
             )
         except Exception as e:
-            logger.warning(f"GitHub API 获取评论失败: {e}")
+            logger.warning("GitHub API 获取评论失败: {}", e)
             return None
 
         if not comments:
@@ -235,7 +235,7 @@ class IssueAnalyzer:
                 cleaned_text = response_text.strip() if response_text else "解析失败"
                 partial_result["summary"] = cleaned_text
 
-            logger.warning(f"无法解析分析结果 JSON，已降级处理: {text[:200]}...")
+            logger.warning("无法解析分析结果 JSON，已降级处理: {}", text)
             return partial_result
 
     @staticmethod
@@ -401,14 +401,14 @@ class IssueAnalyzer:
             < _COLLABORATOR_CACHE_TTL
         ):
             collaborators = _collaborator_cache[cache_key]["collaborators"]
-            logger.debug(f"使用缓存的协作者列表: {cache_key}")
+            logger.info(f"使用缓存的协作者列表: {cache_key}")
         else:
             collaborators = github_app.get_repo_collaborators(repo_owner, repo_name)
             _collaborator_cache[cache_key] = {
                 "collaborators": collaborators,
                 "updated_at": now,
             }
-            logger.debug(f"从 GitHub 获取协作者列表: {cache_key}")
+            logger.info(f"从 GitHub 获取协作者列表: {cache_key}")
 
         # 获取评论对话（受配置控制）
         comments = None
@@ -419,7 +419,7 @@ class IssueAnalyzer:
                     github_app, repo_owner, repo_name, issue_info.get("issue_number", 0)
                 )
             except Exception as e:
-                logger.warning(f"获取 Issue 评论失败（不影响分析）: {e}")
+                logger.warning("获取 Issue 评论失败（不影响分析）: {}", e)
 
         # 构建提示词
         system_prompt = self._build_system_prompt(
@@ -458,7 +458,7 @@ class IssueAnalyzer:
                         sakura_section += f"\n\n### 项目记忆\n{memory_md}"
                     user_message += sakura_section
         except Exception as e:
-            logger.warning(f".sakura/ 记忆上下文注入失败（不影响分析）: {e}")
+            logger.warning(".sakura/ 记忆上下文注入失败（不影响分析）: {}", e)
 
         # 初始化消息列表
         messages = [
@@ -487,10 +487,11 @@ class IssueAnalyzer:
                             max_iterations = int(cfg.key_value)
                         except (ValueError, TypeError):
                             logger.warning(
-                                f"Invalid issue_max_tool_iterations config: {cfg.key_value}"
+                                "Invalid issue_max_tool_iterations config: {}",
+                                cfg.key_value,
                             )
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.warning("读取 issue_max_tool_iterations 配置失败: {}", exc)
         iteration = 0
         tracker = TokenTracker()
         model_ctx_mgr = get_model_context_manager()
@@ -508,7 +509,7 @@ class IssueAnalyzer:
                     temperature=settings.openai_temperature,
                 )
             except Exception as e:
-                logger.error(f"AI API 调用失败: {e}", exc_info=True)
+                logger.error("AI API 调用失败: {}", e, exc_info=True)
                 return {
                     "category": "other",
                     "priority": "medium",
@@ -600,8 +601,8 @@ class IssueAnalyzer:
             if event_callback:
                 try:
                     await event_callback("message", assistant_msg_dict)
-                except Exception:
-                    pass
+                except Exception as exc:
+                    logger.warning("event_callback failed: {}", exc)
 
             # 执行工具调用
             for tool_call in tool_calls:
@@ -609,8 +610,8 @@ class IssueAnalyzer:
                     if event_callback:
                         try:
                             await event_callback("tool_running", tool_call.id)
-                        except Exception:
-                            pass
+                        except Exception as exc:
+                            logger.warning("event_callback failed: {}", exc)
                     result = await self.tool_handler.handle_tool_call(
                         tool_call, repo, None
                     )
@@ -620,14 +621,14 @@ class IssueAnalyzer:
                         "content": json.dumps(result, ensure_ascii=False),
                     }
                     messages.append(tool_msg)
-                    logger.info(f"执行工具 {tool_call.function.name} (Issue 分析)")
+                    logger.info("执行工具 {} (Issue 分析)", tool_call.function.name)
                     if event_callback:
                         try:
                             await event_callback("message", tool_msg)
-                        except Exception:
-                            pass
+                        except Exception as exc:
+                            logger.warning("event_callback failed: {}", exc)
                 except Exception as e:
-                    logger.error(f"工具调用失败: {e}")
+                    logger.error("工具调用失败: {}", e)
                     error_tool_msg = {
                         "role": "tool",
                         "tool_call_id": tool_call.id,
@@ -639,10 +640,8 @@ class IssueAnalyzer:
                     if event_callback:
                         try:
                             await event_callback("message", error_tool_msg)
-                        except Exception:
-                            pass
-                        except Exception:
-                            pass
+                        except Exception as exc:
+                            logger.warning("event_callback failed: {}", exc)
 
             # 每轮工具调用处理后记录上下文使用率
             current_tokens = estimate_messages_tokens(messages, model_ctx_mgr)
@@ -666,7 +665,7 @@ class IssueAnalyzer:
             )
             last_content = final_response.choices[0].message.content or ""
         except Exception as e:
-            logger.error(f"最终 API 调用失败: {e}")
+            logger.error("最终 API 调用失败: {}", e)
             last_content = ""
 
         if last_content:

@@ -99,8 +99,8 @@
                                     <span x-text="taskStatusLabel(task.status)"></span>
                                 </span>
                             </div>
-                            <p class="mt-0.5 text-xs font-medium text-gray-800 dark:text-gray-200 truncate" x-text="task.title"></p>
-                            <p class="text-[10px] text-gray-500 dark:text-gray-400 truncate" x-text="task.repo_name"></p>
+                            <p class="mt-0.5 text-xs font-medium text-gray-800 dark:text-gray-200 break-words" x-text="task.title"></p>
+                            <p class="text-[10px] text-gray-500 dark:text-gray-400 break-words" x-text="task.repo_name"></p>
                         </div>
                     </div>
                     <!-- 扫描进度条 -->
@@ -143,7 +143,7 @@
                 <svg x-show="selectedTask && selectedTask.type === 'scan'" class="w-4 h-4 text-emerald-600 dark:text-emerald-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z"/></svg>
             </div>
             <div class="min-w-0 flex-1">
-                <p class="text-sm font-semibold text-gray-800 dark:text-gray-200 truncate" x-text="selectedTask ? selectedTask.title : ''"></p>
+                <p class="text-sm font-semibold text-gray-800 dark:text-gray-200 break-words" x-text="selectedTask ? selectedTask.title : ''"></p>
                 <p class="text-xs text-gray-500 dark:text-gray-400" x-text="selectedTask ? selectedTask.repo_name : ''"></p>
             </div>
             <span x-show="selectedTask" class="inline-flex items-center gap-1 px-2 py-1 rounded-full text-[10px] font-medium"
@@ -389,17 +389,26 @@ function activityMonitor() {
         // ---- Data loading ----
         async loadTasks() {
             try {
-                var resp = await fetch('/activity/api/active-tasks');
-                if (!resp.ok) return;
-                var data = await resp.json();
-                if (data.success) {
-                    this.tasks = data.tasks || [];
-                    this.isConnected = true;
-                    if (this.selectedTask) {
-                        var selId = this.selectedTask.id;
-                        var updated = this.tasks.find(function(t) { return t.id === selId; });
-                        if (updated) this.selectedTask = updated;
-                    }
+                var activeResp = await fetch('/activity/api/active-tasks');
+                var recentResp = await fetch('/activity/api/recent-tasks');
+                if (!activeResp.ok || !recentResp.ok) return;
+                var activeData = await activeResp.json();
+                var recentData = await recentResp.json();
+                var mergedById = {};
+                if (recentData.success) {
+                    (recentData.tasks || []).forEach(function(t) { mergedById[t.id] = t; });
+                }
+                if (activeData.success) {
+                    (activeData.tasks || []).forEach(function(t) { mergedById[t.id] = t; });
+                }
+                this.tasks = Object.values(mergedById).sort(function(a, b) {
+                    return String(b.updated_at || '').localeCompare(String(a.updated_at || ''));
+                });
+                this.isConnected = true;
+                if (this.selectedTask) {
+                    var selId = this.selectedTask.id;
+                    var updated = this.tasks.find(function(t) { return t.id === selId; });
+                    if (updated) this.selectedTask = updated;
                 }
             } catch(e) { /* ignore */ }
             this.isLoadingTasks = false;

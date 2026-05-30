@@ -6,12 +6,11 @@ the same SSE events so the Agent Team live-view frontend component
 renders them identically.
 """
 
-import hashlib
 import json
 from typing import Any
 
 from loguru import logger
-from sqlalchemy import select, desc
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.models import database as db_module
@@ -36,12 +35,6 @@ def _normalize_tool_call(tc: Any) -> dict[str, str]:
         "name": getattr(getattr(tc, "function", None), "name", ""),
         "arguments": getattr(getattr(tc, "function", None), "arguments", ""),
     }
-
-
-def _hash_arguments(arguments: str | None) -> str | None:
-    if not arguments:
-        return None
-    return hashlib.sha256(arguments.encode()).hexdigest()[:16]
 
 
 async def _publish(event_type: str, data: dict[str, Any]) -> None:

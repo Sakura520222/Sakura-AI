@@ -209,7 +209,7 @@ class IssueWorker:
                     await checkpoint.save_session_result(act_session.id, {
                         "category": analysis_result.get("category", ""),
                         "priority": analysis_result.get("priority", ""),
-                        "summary": str(analysis_result.get("summary", ""))[:500],
+                        "summary": str(analysis_result.get("summary", "")),
                     })
 
                     # 5. 保存分析结果（更新已有的 PENDING 记录）
@@ -403,11 +403,6 @@ class IssueWorker:
                             suggested_title = analysis_record.suggested_title
                             original_title = issue_info.get("title", "")
                             if suggested_title and suggested_title != original_title:
-                                if len(suggested_title) > 256:
-                                    logger.info(
-                                        f"[{task_id}] 建议标题超过 256 字符，已截断"
-                                    )
-                                    suggested_title = suggested_title[:256]
                                 success = await asyncio.to_thread(
                                     self.github_app.update_issue_title,
                                     repo_owner,
@@ -549,10 +544,10 @@ class IssueWorker:
                         record = result.scalar_one_or_none()
                         if record:
                             record.status = IssueAnalysisStatus.FAILED.value
-                            record.error_message = str(e)[:1000]
+                            record.error_message = str(e)
                             await db.commit()
                             await self._log_activity(record.id, "error", {
-                                "message": f"Issue 分析失败: {str(e)[:500]}",
+                                "message": f"Issue 分析失败: {str(e)}",
                             })
 
                             # 发布 SSE 事件通知前端（失败）

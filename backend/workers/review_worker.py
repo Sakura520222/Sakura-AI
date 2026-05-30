@@ -591,9 +591,7 @@ class ReviewWorker:
                                 for f in analysis.code_files:
                                     part = f"- {f.path} ({f.status})"
                                     if f.patch:
-                                        # 截取 patch 前 300 字符
-                                        preview = f.patch[:300]
-                                        part += f"\n```diff\n{preview}\n```"
+                                        part += f"\n```diff\n{f.patch}\n```"
                                     file_parts.append(part)
                                     total_len += len(part)
                                     if total_len > 4000:
@@ -805,7 +803,7 @@ class ReviewWorker:
                     await checkpoint.save_session_result(act_session.id, {
                         "overall_score": review_result.get("overall_score"),
                         "verdict": review_result.get("verdict", ""),
-                        "summary": str(review_result.get("summary", ""))[:500],
+                        "summary": str(review_result.get("summary", "")),
                     })
                 else:
                     logger.error("[{}] AI审查失败: {}", task_id, str(review_result))
@@ -911,7 +909,7 @@ class ReviewWorker:
 
                 if review_id:
                     await self._log_activity(review_id, "error", {
-                        "message": f"审查失败: {str(e)[:500]}",
+                        "message": f"审查失败: {str(e)}",
                     })
 
                 # 【错误处理】更新占位评论为错误消息

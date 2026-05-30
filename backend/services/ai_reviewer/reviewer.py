@@ -256,8 +256,8 @@ class AIReviewer:
                             "role": "assistant",
                             "content": review_text,
                         })
-                    except Exception:
-                        pass
+                    except Exception as exc:
+                        logger.warning("event_callback failed: {}", exc)
                 result = self.result_parser.parse_review_result(review_text, strategy)
                 result["token_usage"] = tracker.to_dict()
                 logger.info(
@@ -294,8 +294,8 @@ class AIReviewer:
             if event_callback:
                 try:
                     await event_callback("message", assistant_msg_dict)
-                except Exception:
-                    pass
+                except Exception as exc:
+                    logger.warning("event_callback failed: {}", exc)
 
             # 执行每个工具调用
             for tool_call in tool_calls:
@@ -305,8 +305,8 @@ class AIReviewer:
                     if event_callback:
                         try:
                             await event_callback("tool_running", tool_call.id)
-                        except Exception:
-                            pass
+                        except Exception as exc:
+                            logger.warning("event_callback failed: {}", exc)
                     result = await active_tool_handler.handle_tool_call(
                         tool_call, repo, pr
                     )
@@ -325,8 +325,8 @@ class AIReviewer:
                     if event_callback:
                         try:
                             await event_callback("message", tool_msg)
-                        except Exception:
-                            pass
+                        except Exception as exc:
+                            logger.warning("event_callback failed: {}", exc)
                 except Exception as e:
                     error_tool_msg = {
                         "role": "tool",
@@ -341,8 +341,8 @@ class AIReviewer:
                     if event_callback:
                         try:
                             await event_callback("message", error_tool_msg)
-                        except Exception:
-                            pass
+                        except Exception as exc:
+                            logger.warning("event_callback failed: {}", exc)
 
             # 记录上下文使用率
             current_tokens = self.context_compressor.estimate_messages_tokens(
