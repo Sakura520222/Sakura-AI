@@ -13,7 +13,6 @@ from fastapi import (
     Form,
     HTTPException,
     Query,
-    Header,
     Body,
 )
 from fastapi.responses import RedirectResponse, HTMLResponse, JSONResponse
@@ -49,7 +48,6 @@ from backend.webui.auth import (
 )
 from backend.webui.deps import (
     get_templates,
-    validate_csrf_token,
     get_csrf_serializer,
     require_csrf,
     require_csrf_header,
@@ -758,16 +756,12 @@ async def passkey_verify_discover(request: Request, body: dict = Body(...)):
     return response
 
 
-@router.post("/api/theme")
+@router.post("/api/theme", dependencies=[Depends(require_csrf_header)])
 async def set_theme(
     request: Request,
     theme: str = Form(...),
-    x_csrf_token: str = Header("", alias="X-CSRF-Token"),
 ):
     """HTMX 调用的主题切换接口"""
-    if not validate_csrf_token(x_csrf_token):
-        raise HTTPException(status_code=403, detail="CSRF 验证失败")
-
     if theme not in ("light", "dark"):
         return HTMLResponse(status_code=400)
     return HTMLResponse(status_code=204)
