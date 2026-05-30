@@ -170,9 +170,31 @@ class IssueWorker:
                     if client:
                         repo = client.get_repo(repo_full_name)
 
-                    # 4. 调用 AI 分析（传入事件回调实现实时推送）
+                    # 4. 调用 AI 分析（使用 ActivityCheckpointService 记录对话流）
+                    from backend.services.activity_checkpoint_service import (
+                        ActivityCheckpointService,
+                    )
+                    checkpoint = ActivityCheckpointService("issue", record.id)
+                    act_session = await checkpoint.create_session(
+                        iteration_number=1,
+                        role_name="issue_analyzer",
+                    )
+
                     async def _issue_event_callback(event_type, data):
-                        await IssueWorker._log_activity(record.id, event_type, data)
+                        """Mirrors ConversationCheckpointService usage pattern."""
+                        try:
+                            if event_type == "message":
+                                msg = await checkpoint.append_message(act_session.id, data)
+                                if data.get("role") == "tool" and data.get("tool_call_id"):
+                                    await checkpoint.mark_tool_call_completed(
+                                        act_session.id, data["tool_call_id"], msg.id
+                                    )
+                            elif event_type == "tool_running":
+                                await checkpoint.mark_tool_call_running(
+                                    act_session.id, data
+                                )
+                        except Exception as exc:
+                            logger.debug("issue checkpoint callback failed: {}", exc)
 
                     analysis_result = await self.analyzer.analyze_issue(
                         issue_info=issue_info,
@@ -182,12 +204,12 @@ class IssueWorker:
                         event_callback=_issue_event_callback,
                     )
 
-                    # 4.5 记录 AI 分析完成事件
-                    await self._log_activity(record.id, "ai_response", {
-                        "message": "AI 分析完成",
+                    # 完成 checkpoint session
+                    await checkpoint.complete_session(act_session.id)
+                    await checkpoint.save_session_result(act_session.id, {
                         "category": analysis_result.get("category", ""),
                         "priority": analysis_result.get("priority", ""),
-                        "content_preview": str(analysis_result.get("summary", ""))[:500],
+                        "summary": str(analysis_result.get("summary", ""))[:500],
                     })
 
                     # 5. 保存分析结果（更新已有的 PENDING 记录）

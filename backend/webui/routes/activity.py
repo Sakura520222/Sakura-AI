@@ -1,13 +1,19 @@
 """WebUI 实时活动监控路由
 
 聚合 PR 审查、Issues 分析、仓库扫描三种任务的实时状态，
-采用类似 Agent Team 的对话流气泡样式展示。
+复用 Agent Team 的 Session/Message/ToolCheckPoint 模式实现对话流。
 """
 
 from fastapi import APIRouter, Request, Depends
+from fastapi.responses import JSONResponse
 from sqlalchemy import select, desc
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from backend.models.activity_conversation_models import (
+    ActivityMessage,
+    ActivitySession,
+    ActivityToolCall,
+)
 from backend.models.database import (
     PRReview,
     PRStatus,
@@ -290,3 +296,114 @@ async def get_recent_tasks(
     tasks.sort(key=lambda t: t.get("updated_at") or "", reverse=True)
 
     return {"success": True, "tasks": tasks[:50]}
+
+
+@router.get("/api/tasks/{task_type}/{task_id}/stream-data")
+async def activity_stream_data(
+    task_type: str,
+    task_id: int,
+    after_id: int = 0,
+    limit: int = 200,
+    user: dict = Depends(require_auth),
+    db: AsyncSession = Depends(get_db),
+):
+    """获取任务的对话流数据 — 返回格式与 Agent Team task_stream_data 完全一致。
+
+    前端 agent_team_live_view_fragment.html 可直接渲染。
+    """
+    if task_type not in ("pr", "issue", "scan"):
+        return JSONResponse({"success": False, "error": "Invalid task_type"}, status_code=400)
+
+    task_info = await verify_task_access(task_type, task_id, user, db)
+    if not task_info:
+        return JSONResponse({"success": False, "error": "Task not found or access denied"}, status_code=404)
+
+    # Query sessions for this task
+    session_rows = (
+        await db.execute(
+            select(ActivitySession)
+            .where(
+                ActivitySession.source_type == task_type,
+                ActivitySession.source_task_id == task_id,
+            )
+            .order_by(ActivitySession.id)
+        )
+    ).scalars().all()
+    session_ids = [s.id for s in session_rows]
+
+    if not session_ids:
+        return JSONResponse({
+            "success": True,
+            "messages": [],
+            "tool_calls": [],
+            "sessions": [],
+            "has_more": False,
+        })
+
+    # Messages with pagination
+    msg_query = (
+        select(ActivityMessage)
+        .where(
+            ActivityMessage.session_id.in_(session_ids),
+            ActivityMessage.id > after_id,
+        )
+        .order_by(ActivityMessage.id)
+        .limit(limit + 1)
+    )
+    msg_rows = (await db.execute(msg_query)).scalars().all()
+    has_more = len(msg_rows) > limit
+    msg_rows = msg_rows[:limit]
+
+    # Tool calls (status can change without new messages)
+    tc_rows = (
+        await db.execute(
+            select(ActivityToolCall)
+            .where(ActivityToolCall.session_id.in_(session_ids))
+            .order_by(ActivityToolCall.id)
+        )
+    ).scalars().all()
+
+    return JSONResponse({
+        "success": True,
+        "messages": [
+            {
+                "id": m.id,
+                "session_id": m.session_id,
+                "seq": m.seq,
+                "role": m.role,
+                "content": m.content,
+                "tool_call_id": m.tool_call_id,
+                "finish_reason": m.finish_reason,
+                "created_at": m.created_at.isoformat() if m.created_at else None,
+            }
+            for m in msg_rows
+        ],
+        "tool_calls": [
+            {
+                "id": tc.id,
+                "session_id": tc.session_id,
+                "assistant_message_id": tc.assistant_message_id,
+                "tool_call_id": tc.tool_call_id,
+                "name": tc.name,
+                "status": tc.status,
+                "arguments_json": tc.arguments_json,
+                "started_at": tc.started_at.isoformat() if tc.started_at else None,
+                "completed_at": tc.completed_at.isoformat() if tc.completed_at else None,
+                "error_message": tc.error_message,
+            }
+            for tc in tc_rows
+        ],
+        "sessions": [
+            {
+                "id": s.id,
+                "iteration_number": s.iteration_number,
+                "role_name": s.role_name,
+                "status": s.status,
+                "started_at": s.started_at.isoformat() if s.started_at else None,
+                "completed_at": s.completed_at.isoformat() if s.completed_at else None,
+            }
+            for s in session_rows
+        ],
+        "has_more": has_more,
+        "task_status": task_info.get("status", ""),
+    })

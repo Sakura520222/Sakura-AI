@@ -662,13 +662,37 @@ class ReviewWorker:
 
                 # 7. 并行执行AI审查和标签推荐
                 await self._update_review_status(review_id, PRStatus.REVIEWING)
-                await self._log_activity(review_id, "status", {
-                    "status": "reviewing",
-                    "message": "开始 AI 审查",
-                })
-                await self._log_activity(review_id, "thinking", {
-                    "message": "AI 正在审查 PR ...",
-                })
+
+                # 创建 activity checkpoint session（和 Agent Team 相同模式）
+                from backend.services.activity_checkpoint_service import (
+                    ActivityCheckpointService,
+                )
+                checkpoint = ActivityCheckpointService("pr", review_id)
+                act_session = await checkpoint.create_session(
+                    iteration_number=1,
+                    role_name="reviewer",
+                    model=settings.openai_model,
+                )
+
+                # 构造事件回调：将 AI 审查过程中的消息通过 checkpoint 持久化
+                async def _review_event_callback(event_type, data):
+                    """Mirrors ConversationCheckpointService usage pattern."""
+                    try:
+                        if event_type == "message":
+                            # data is the full message dict (assistant with tool_calls, or tool result)
+                            msg = await checkpoint.append_message(act_session.id, data)
+                            # For tool messages, mark the corresponding tool call
+                            if data.get("role") == "tool" and data.get("tool_call_id"):
+                                await checkpoint.mark_tool_call_completed(
+                                    act_session.id, data["tool_call_id"], msg.id
+                                )
+                        elif event_type == "tool_running":
+                            # data is the tool_call_id string
+                            await checkpoint.mark_tool_call_running(
+                                act_session.id, data
+                            )
+                    except Exception as exc:
+                        logger.debug("checkpoint callback failed: {}", exc)
 
                 # 检查是否启用标签推荐功能
                 enable_label_recommendation = _get_label_rec_setting("enabled", True)
@@ -682,11 +706,6 @@ class ReviewWorker:
 
                 # 准备并行任务
                 tasks = []
-
-                # 任务1: AI审查（工具驱动模式）
-                # 构造事件回调，将 AI 审查过程中的工具调用实时推送到前端
-                async def _review_event_callback(event_type, data):
-                    await ReviewWorker._log_activity(review_id, event_type, data)
 
                 if enable_tools:
                     logger.info(
@@ -781,13 +800,16 @@ class ReviewWorker:
                 if not isinstance(review_result, Exception):
                     # 8. 保存审查结果
                     await self._save_review_results(review_id, review_result, analysis)
-                    await self._log_activity(review_id, "ai_response", {
-                        "message": "AI 审查完成",
+                    # 完成 checkpoint session
+                    await checkpoint.complete_session(act_session.id)
+                    await checkpoint.save_session_result(act_session.id, {
                         "overall_score": review_result.get("overall_score"),
-                        "content_preview": str(review_result.get("summary", ""))[:500],
+                        "verdict": review_result.get("verdict", ""),
+                        "summary": str(review_result.get("summary", ""))[:500],
                     })
                 else:
                     logger.error("[{}] AI审查失败: {}", task_id, str(review_result))
+                    await checkpoint.fail_session(act_session.id, str(review_result))
                     raise review_result
 
                 # 获取标签推荐结果

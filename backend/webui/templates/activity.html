@@ -62,7 +62,7 @@
             <!-- 加载中 -->
             <div x-show="isLoadingTasks" class="flex items-center justify-center py-10">
                 <div class="flex items-center gap-2 text-gray-400">
-                    <svg class="animate-spin h-5 w-5" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg>
+                    <svg class="animate-spin h-5 w-5" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/><path class="opacity-75" fill="currentColor" d="M4 12a8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg>
                     <span class="text-sm">{{ _('common.loading') }}</span>
                 </div>
             </div>
@@ -131,7 +131,7 @@
         </div>
     </div>
 
-    <!-- ========== 右栏：对话流视图 ========== -->
+    <!-- ========== 右栏：对话流视图（复用 Agent Team live view 模式） ========== -->
     <div class="flex-1 flex flex-col rounded-2xl border border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-900/50 min-w-0 min-h-0 overflow-hidden">
 
         <!-- 右栏头部 -->
@@ -151,7 +151,6 @@
                 <span x-show="selectedTask && isActiveStatus(selectedTask.status)" class="w-1.5 h-1.5 rounded-full bg-current animate-pulse"></span>
                 <span x-text="selectedTask ? taskStatusLabel(selectedTask.status) : ''"></span>
             </span>
-            <!-- 查看详情链接 -->
             <a x-show="selectedTask && selectedTask.type === 'pr'"
                :href="'/pr/' + (selectedTask ? selectedTask.task_id : '')"
                class="text-xs text-blue-600 dark:text-blue-400 hover:underline">{{ _('activity.view_detail') }}</a>
@@ -163,125 +162,94 @@
                class="text-xs text-emerald-600 dark:text-emerald-400 hover:underline">{{ _('activity.view_detail') }}</a>
         </div>
 
-        <!-- 空状态：未选择任务 -->
+        <!-- 空状态 -->
         <div x-show="!selectedTask" class="flex-1 flex flex-col items-center justify-center text-gray-400 dark:text-gray-500">
             <svg class="w-20 h-20 mb-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1" d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z"/></svg>
             <p class="text-sm font-medium">{{ _('activity.stream_empty_title') }}</p>
             <p class="text-xs mt-1">{{ _('activity.stream_empty_hint') }}</p>
         </div>
 
-        <!-- 对话流消息区域 -->
+        <!-- ===== 对话消息区域（和 Agent Team agent_team_live_view_fragment 完全一致） ===== -->
         <div x-show="selectedTask" id="activity-stream-messages" class="flex-1 overflow-y-auto p-4 space-y-3 min-h-0 scroll-smooth">
 
-            <!-- 加载事件中 -->
-            <div x-show="isLoadingEvents" class="flex items-center justify-center py-16">
+            <!-- 加载 -->
+            <div x-show="isLoadingStream" class="flex items-center justify-center py-16">
                 <div class="flex items-center gap-2 text-gray-400">
-                    <svg class="animate-spin h-5 w-5" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg>
+                    <svg class="animate-spin h-5 w-5" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/><path class="opacity-75" fill="currentColor" d="M4 12a8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg>
                     <span class="text-sm">{{ _('common.loading') }}</span>
                 </div>
             </div>
 
-            <!-- 事件列表 -->
-            <template x-for="item in displayEvents" :key="item.key">
-
-                <!-- 状态变更事件 -->
-                <div x-show="item.type === 'status'" class="flex justify-center py-1">
-                    <span class="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-medium"
-                          :class="item.content && item.content.status === 'completed' ? 'bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-300' : item.content && item.content.status === 'failed' ? 'bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-300' : 'bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-400'">
-                        <span class="w-1.5 h-1.5 rounded-full"
-                              :class="item.content && item.content.status === 'completed' ? 'bg-green-500' : item.content && item.content.status === 'failed' ? 'bg-red-500' : 'bg-sakura-500'"></span>
-                        <span x-text="item.label"></span>
-                    </span>
-                </div>
-
-                <!-- AI 思考中 -->
-                <div x-show="item.type === 'thinking'" class="flex justify-start">
-                    <div class="flex items-center gap-2 px-4 py-2 rounded-2xl bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 text-sm text-gray-500 dark:text-gray-400">
-                        <svg class="animate-spin h-4 w-4" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg>
-                        <span x-text="item.label"></span>
+            <!-- 消息列表 -->
+            <template x-for="item in displayItems" :key="item.key">
+                <div>
+                    <!-- Session divider -->
+                    <div x-show="item.type === 'session'" class="flex items-center gap-3 py-2">
+                        <div class="flex-1 h-px bg-gray-200 dark:bg-gray-700"></div>
+                        <span class="text-xs font-semibold px-3 py-1 rounded-full"
+                              :class="item.role === 'issue_analyzer' ? 'bg-purple-100 dark:bg-purple-900/30 text-purple-700 dark:text-purple-300' : 'bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300'"
+                              x-text="item.label"></span>
+                        <div class="flex-1 h-px bg-gray-200 dark:bg-gray-700"></div>
                     </div>
-                </div>
 
-                <!-- AI 响应 -->
-                <div x-show="item.type === 'ai_response'" class="flex justify-start">
-                    <div class="max-w-[90%] rounded-2xl px-4 py-3 text-sm bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 text-gray-700 dark:text-gray-300 prose prose-sm dark:prose-invert max-w-none"
-                         :class="item.collapsed ? 'max-h-32 overflow-hidden' : ''">
-                        <div x-show="item.label" class="text-xs font-semibold text-sakura-600 dark:text-sakura-400 mb-1" x-text="item.label"></div>
-                        <div x-show="item.content" x-html="item.htmlContent"></div>
-                        <div x-show="item.score !== null && item.score !== undefined" class="mt-2 inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-amber-100 dark:bg-amber-900/30 text-amber-700 dark:text-amber-300">
-                            {{ _('activity.score') }}: <span x-text="item.score"></span>/10
+                    <!-- Assistant message -->
+                    <div x-show="item.type === 'assistant'" class="flex justify-start gap-1">
+                        <div class="max-w-[85%] rounded-2xl px-4 py-3 text-sm bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 text-gray-700 dark:text-gray-300 prose prose-sm dark:prose-invert max-w-none"
+                             :class="item.collapsed ? 'max-h-24 overflow-hidden' : ''">
+                            <div x-show="item.content" x-html="item.htmlContent"></div>
+                            <div x-show="item.toolCalls && item.toolCalls.length > 0" class="mt-3 space-y-2">
+                                <template x-for="tc in (item.toolCalls || [])" :key="tc.id">
+                                    <div class="rounded-xl border px-3 py-2 not-prose"
+                                         :class="tc.status === 'failed' ? 'bg-red-50 dark:bg-red-900/20 border-red-200 dark:border-red-800' : tc.status === 'completed' ? 'bg-emerald-50 dark:bg-emerald-900/20 border-emerald-200 dark:border-emerald-800' : 'bg-amber-50 dark:bg-amber-900/20 border-amber-200 dark:border-amber-800'">
+                                        <div class="flex items-center gap-2 text-xs font-semibold">
+                                            <span x-show="tc.status === 'running' || tc.status === 'pending'" class="inline-flex w-2 h-2 rounded-full bg-amber-500 animate-pulse"></span>
+                                            <span x-show="tc.status === 'completed'" class="text-emerald-600 dark:text-emerald-400">&#10003;</span>
+                                            <span x-show="tc.status === 'failed'" class="text-red-600 dark:text-red-400">&#10007;</span>
+                                            <span class="text-gray-800 dark:text-gray-100" x-text="tc.title"></span>
+                                            <span class="text-gray-400 dark:text-gray-500" x-text="tc.statusLabel"></span>
+                                        </div>
+                                        <div x-show="tc.detailRows && tc.detailRows.length > 0" class="mt-2 space-y-1">
+                                            <template x-for="row in (tc.detailRows || [])" :key="row.label + row.value">
+                                                <div class="grid grid-cols-[4.5rem_1fr] gap-2 text-xs text-gray-600 dark:text-gray-400">
+                                                    <span class="font-medium text-gray-500 dark:text-gray-500" x-text="row.label"></span>
+                                                    <span class="break-all" x-text="row.value"></span>
+                                                </div>
+                                            </template>
+                                        </div>
+                                        <div x-show="tc.error" class="mt-2 text-xs text-red-600 dark:text-red-400 break-all" x-text="tc.error"></div>
+                                    </div>
+                                </template>
+                            </div>
                         </div>
+                        <button x-show="item.isLong" @click="toggleCollapse(item.key)" class="self-end text-xs text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 shrink-0">
+                            <span x-show="item.collapsed">{{ _('activity.expand') }}</span>
+                            <span x-show="!item.collapsed">{{ _('activity.collapse') }}</span>
+                        </button>
                     </div>
-                    <button x-show="item.isLong" @click="toggleCollapse(item.key)" class="self-end text-xs text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 shrink-0 ml-1">
-                        <span x-show="item.collapsed">{{ _('activity.expand') }}</span>
-                        <span x-show="!item.collapsed">{{ _('activity.collapse') }}</span>
-                    </button>
-                </div>
 
-                <!-- 工具调用 -->
-                <div x-show="item.type === 'tool_call'" class="flex justify-start">
-                    <div class="max-w-[90%] rounded-xl border px-3 py-2"
-                         :class="item.toolStatus === 'failed' ? 'bg-red-50 dark:bg-red-900/20 border-red-200 dark:border-red-800' : item.toolStatus === 'completed' ? 'bg-emerald-50 dark:bg-emerald-900/20 border-emerald-200 dark:border-emerald-800' : 'bg-amber-50 dark:bg-amber-900/20 border-amber-200 dark:border-amber-800'">
-                        <div class="flex items-center gap-2 text-xs font-semibold">
-                            <span x-show="item.toolStatus === 'running'" class="inline-flex w-2 h-2 rounded-full bg-amber-500 animate-pulse"></span>
-                            <span x-show="item.toolStatus === 'completed'" class="text-emerald-600 dark:text-emerald-400">&#10003;</span>
-                            <span x-show="item.toolStatus === 'failed'" class="text-red-600 dark:text-red-400">&#10007;</span>
-                            <span class="text-gray-800 dark:text-gray-100" x-text="item.label"></span>
+                    <!-- Tool result -->
+                    <div x-show="item.type === 'tool_result'" class="flex justify-start gap-1">
+                        <div class="max-w-[85%] rounded-xl px-3 py-2 text-xs border"
+                             :class="item.status === 'failed' ? 'bg-red-50 dark:bg-red-900/20 border-red-200 dark:border-red-800 text-red-700 dark:text-red-300' : 'bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-400 border-gray-200 dark:border-gray-700'">
+                            <div class="flex items-center gap-2 font-semibold text-gray-700 dark:text-gray-300">
+                                <span x-show="item.status === 'completed'" class="text-emerald-600 dark:text-emerald-400">&#10003;</span>
+                                <span x-show="item.status === 'failed'" class="text-red-600 dark:text-red-400">&#10007;</span>
+                                <span x-text="item.label"></span>
+                            </div>
+                            <div x-show="item.detail && !item.collapsed" class="mt-1 text-gray-500 dark:text-gray-500 break-all font-mono" x-text="item.detail"></div>
                         </div>
-                        <div x-show="item.detail" class="mt-1 text-xs text-gray-500 dark:text-gray-400 break-all font-mono" x-text="item.detail"></div>
-                    </div>
-                </div>
-
-                <!-- 工具结果 -->
-                <div x-show="item.type === 'tool_result'" class="flex justify-start">
-                    <div class="max-w-[90%] rounded-xl px-3 py-2 text-xs border"
-                         :class="item.toolStatus === 'failed' ? 'bg-red-50 dark:bg-red-900/20 border-red-200 dark:border-red-800 text-red-700 dark:text-red-300' : 'bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-400 border-gray-200 dark:border-gray-700'">
-                        <div class="flex items-center gap-2 font-semibold text-gray-700 dark:text-gray-300">
-                            <span x-show="item.toolStatus === 'completed'" class="text-emerald-600 dark:text-emerald-400">&#10003;</span>
-                            <span x-show="item.toolStatus === 'failed'" class="text-red-600 dark:text-red-400">&#10007;</span>
-                            <span x-text="item.label"></span>
-                        </div>
-                        <div x-show="item.detail && !item.collapsed" class="mt-1 text-gray-500 dark:text-gray-500 break-all font-mono" x-text="item.detail"></div>
-                    </div>
-                    <button x-show="item.isLong" @click="toggleCollapse(item.key)" class="self-end text-xs text-gray-400 hover:text-gray-600 shrink-0 ml-1">
-                        <span x-show="item.collapsed">{{ _('activity.expand') }}</span>
-                        <span x-show="!item.collapsed">{{ _('activity.collapse') }}</span>
-                    </button>
-                </div>
-
-                <!-- 结果/完成 -->
-                <div x-show="item.type === 'result'" class="flex justify-center py-2">
-                    <div class="inline-flex flex-col items-center gap-1 px-4 py-2 rounded-2xl border text-xs"
-                         :class="item.content && item.content.status === 'completed' ? 'bg-green-50 dark:bg-green-900/20 border-green-200 dark:border-green-800 text-green-800 dark:text-green-200' : 'bg-red-50 dark:bg-red-900/20 border-red-200 dark:border-red-800 text-red-800 dark:text-red-200'">
-                        <div class="flex items-center gap-1.5 font-semibold">
-                            <span x-show="item.content && item.content.status === 'completed'">&#10003;</span>
-                            <span x-show="item.content && item.content.status !== 'completed'">&#10007;</span>
-                            <span x-text="item.label"></span>
-                        </div>
-                        <div x-show="item.content" class="text-center space-y-0.5 mt-1">
-                            <p x-show="item.content.health_score !== undefined && item.content.health_score !== null">{{ _('activity.health_score') }}: <span x-text="item.content.health_score"></span>/100</p>
-                            <p x-show="item.content.total_findings !== undefined && item.content.total_findings !== null">{{ _('activity.findings') }}: <span x-text="item.content.total_findings"></span></p>
-                            <p x-show="item.content.decision">{{ _('activity.decision') }}: <span x-text="item.content.decision"></span></p>
-                        </div>
-                    </div>
-                </div>
-
-                <!-- 错误 -->
-                <div x-show="item.type === 'error'" class="flex justify-start">
-                    <div class="max-w-[90%] rounded-2xl px-4 py-3 text-sm bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 text-red-700 dark:text-red-300">
-                        <div class="flex items-center gap-1.5 font-semibold mb-1">
-                            <span>&#10007;</span>
-                            <span>{{ _('activity.error') }}</span>
-                        </div>
-                        <p class="whitespace-pre-wrap break-all" x-text="item.label"></p>
+                        <button x-show="item.isLong" @click="toggleCollapse(item.key)" class="self-end text-xs text-gray-400 hover:text-gray-600 shrink-0">
+                            <span x-show="item.collapsed">{{ _('activity.expand') }}</span>
+                            <span x-show="!item.collapsed">{{ _('activity.collapse') }}</span>
+                        </button>
                     </div>
                 </div>
             </template>
 
-            <!-- 实时思考指示器 -->
+            <!-- Thinking indicator -->
             <div x-show="selectedTask && isThinking" class="flex justify-start">
                 <div class="flex items-center gap-2 px-4 py-2 rounded-2xl bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 text-sm text-gray-500 dark:text-gray-400">
-                    <svg class="animate-spin h-4 w-4" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg>
+                    <svg class="animate-spin h-4 w-4" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/><path class="opacity-75" fill="currentColor" d="M4 12a8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg>
                     <span>{{ _('activity.thinking') }}</span>
                 </div>
             </div>
@@ -298,22 +266,25 @@ function activityMonitor() {
         tasks: [],
         filter: 'all',
         selectedTask: null,
-        displayEvents: [],
+        displayItems: [],
         isLoadingTasks: false,
-        isLoadingEvents: false,
+        isLoadingStream: false,
         isRefreshing: false,
         isConnected: false,
         isThinking: false,
-        _lastEventId: 0,
-        _rawEvents: [],
-        _sseHandler: null,
+        _lastMsgId: 0,
+        _messages: [],
+        _sessions: [],
+        _toolCalls: {},
+        _sseHandlers: [],
         _userScrolledUp: false,
         _collapsedState: {},
         _pollTimer: null,
+        _incrementalTimer: null,
 
         init() {
             this.loadTasks();
-            this._setupSSEListener();
+            this._setupSSEListeners();
             this._setupScrollDetection();
             var self = this;
             this._pollTimer = setInterval(function() { self.loadTasks(); }, 30000);
@@ -324,47 +295,53 @@ function activityMonitor() {
             if (f === 'all') return this.tasks;
             return this.tasks.filter(function(t) { return t.type === f; });
         },
-
         get activePrCount() {
-            return this.tasks.filter(function(t) { return t.type === 'pr' && isActive(t.status); }).length;
+            return this.tasks.filter(function(t) { return t.type === 'pr' && _isActive(t.status); }).length;
         },
         get activeIssueCount() {
-            return this.tasks.filter(function(t) { return t.type === 'issue' && isActive(t.status); }).length;
+            return this.tasks.filter(function(t) { return t.type === 'issue' && _isActive(t.status); }).length;
         },
         get activeScanCount() {
-            return this.tasks.filter(function(t) { return t.type === 'scan' && isActive(t.status); }).length;
+            return this.tasks.filter(function(t) { return t.type === 'scan' && _isActive(t.status); }).length;
         },
 
         // ---- SSE ----
-        _setupSSEListener() {
+        _setupSSEListeners() {
             var self = this;
-            function handler(e) { self._onSSEEvent(e.detail); }
-            window.addEventListener('sse:activity-event', handler);
-            self._sseHandler = { name: 'sse:activity-event', handler: handler };
-            // Also listen for status changes to refresh task list
+            // Activity checkpoint events (same pattern as agent:*)
+            var events = [
+                'sse:activity:session_started', 'sse:activity:session_completed',
+                'sse:activity:message_added', 'sse:activity:tool_started',
+                'sse:activity:tool_completed', 'sse:activity:tool_failed'
+            ];
+            events.forEach(function(name) {
+                function handler(e) { self._onSSEEvent(name, e.detail); }
+                window.addEventListener(name, handler);
+                self._sseHandlers.push({ name: name, handler: handler });
+            });
+            // Refresh task list on status changes
             function onReviewStatus() { self.loadTasks(); }
             function onIssueStatus() { self.loadTasks(); }
-            function onScanCompleted() { self.loadTasks(); }
             window.addEventListener('sse:review-status', onReviewStatus);
             window.addEventListener('sse:issue-status', onIssueStatus);
-            window.addEventListener('sse:scan-completed', onScanCompleted);
             this.isConnected = true;
         },
 
-        _onSSEEvent(data) {
+        _onSSEEvent(eventName, data) {
             if (!this.selectedTask) return;
+            if (!data) return;
             if (data.task_type !== this.selectedTask.type || String(data.task_id) !== String(this.selectedTask.task_id)) return;
 
-            if (data.event_type === 'thinking') {
-                this.isThinking = true;
-            } else {
+            if (eventName === 'sse:activity:message_added' || eventName === 'sse:activity:tool_started'
+                || eventName === 'sse:activity:tool_completed' || eventName === 'sse:activity:tool_failed') {
                 this.isThinking = false;
+                this._scheduleIncremental();
+            } else if (eventName === 'sse:activity:session_started' || eventName === 'sse:activity:session_completed') {
+                this._scheduleIncremental();
             }
-            this._scheduleIncremental();
         },
 
         _scheduleIncremental() {
-            // Debounce: merge rapid events into one fetch
             if (this._incrementalTimer) return;
             var self = this;
             this._incrementalTimer = setTimeout(function() {
@@ -374,14 +351,15 @@ function activityMonitor() {
         },
 
         async _loadIncremental() {
-            if (!this.selectedTask || this.isLoadingEvents) return;
+            if (!this.selectedTask || this.isLoadingStream) return;
             try {
-                var url = '/activity/api/events/' + this.selectedTask.type + '/' + this.selectedTask.task_id + '?after_id=' + this._lastEventId + '&limit=50';
+                var url = '/activity/api/tasks/' + this.selectedTask.type + '/' + this.selectedTask.task_id + '/stream-data?after_id=' + this._lastMsgId + '&limit=50';
                 var resp = await fetch(url);
                 if (!resp.ok) return;
                 var data = await resp.json();
-                if (!data.success || !data.events || data.events.length === 0) return;
-                this._processEvents(data.events);
+                if (!data.success) return;
+                if ((!data.messages || data.messages.length === 0) && (!data.tool_calls || data.tool_calls.length === 0)) return;
+                this._processStreamData(data);
                 this._rebuildDisplay();
             } catch(e) { /* ignore */ }
         },
@@ -408,7 +386,7 @@ function activityMonitor() {
             });
         },
 
-        // ---- Data Loading ----
+        // ---- Data loading ----
         async loadTasks() {
             try {
                 var resp = await fetch('/activity/api/active-tasks');
@@ -417,7 +395,6 @@ function activityMonitor() {
                 if (data.success) {
                     this.tasks = data.tasks || [];
                     this.isConnected = true;
-                    // Refresh selected task status if still active
                     if (this.selectedTask) {
                         var selId = this.selectedTask.id;
                         var updated = this.tasks.find(function(t) { return t.id === selId; });
@@ -435,7 +412,7 @@ function activityMonitor() {
                 await this.loadTasks();
                 if (this.selectedTask) {
                     this._resetStreamState();
-                    await this._loadFullEvents();
+                    await this._loadFullStream();
                 }
             } finally {
                 this.isRefreshing = false;
@@ -446,127 +423,158 @@ function activityMonitor() {
             this.selectedTask = task;
             this._resetStreamState();
             this._userScrolledUp = false;
-            await this._loadFullEvents();
+            await this._loadFullStream();
         },
 
         _resetStreamState() {
-            this.displayEvents = [];
-            this._lastEventId = 0;
-            this._rawEvents = [];
+            this.displayItems = [];
+            this._lastMsgId = 0;
+            this._messages = [];
+            this._sessions = [];
+            this._toolCalls = {};
             this.isThinking = false;
         },
 
-        async _loadFullEvents() {
-            this.isLoadingEvents = true;
+        async _loadFullStream() {
+            this.isLoadingStream = true;
             try {
-                var url = '/activity/api/events/' + this.selectedTask.type + '/' + this.selectedTask.task_id + '?after_id=0&limit=200';
+                var url = '/activity/api/tasks/' + this.selectedTask.type + '/' + this.selectedTask.task_id + '/stream-data?after_id=0&limit=200';
                 var resp = await fetch(url);
-                if (!resp.ok) { this.isLoadingEvents = false; return; }
+                if (!resp.ok) { this.isLoadingStream = false; return; }
                 var data = await resp.json();
-                if (!data.success) return;
-                this._processEvents(data.events || []);
+                if (!data.success) { this.isLoadingStream = false; return; }
+                this._processStreamData(data);
                 this._rebuildDisplay();
             } catch(e) { /* ignore */ }
-            this.isLoadingEvents = false;
+            this.isLoadingStream = false;
         },
 
-        _processEvents(events) {
+        // ---- Process stream data (same as Agent Team) ----
+        _processStreamData(data) {
             var self = this;
-            events.forEach(function(e) {
-                if (e.id > self._lastEventId) self._lastEventId = e.id;
-                if (!self._rawEvents.find(function(x) { return x.id === e.id; })) {
-                    self._rawEvents.push(e);
-                }
-            });
+            if (data.sessions) {
+                data.sessions.forEach(function(s) {
+                    if (!self._sessions.find(function(x) { return x.id === s.id; })) {
+                        self._sessions.push(s);
+                    }
+                });
+            }
+            if (data.tool_calls) {
+                data.tool_calls.forEach(function(tc) {
+                    self._toolCalls[tc.tool_call_id] = tc;
+                });
+            }
+            if (data.messages) {
+                data.messages.forEach(function(m) {
+                    if (m.id > self._lastMsgId) self._lastMsgId = m.id;
+                    if (!self._messages.find(function(x) { return x.id === m.id; })) {
+                        self._messages.push(m);
+                    }
+                });
+            }
         },
 
+        // ---- Rebuild display (same as Agent Team) ----
         _rebuildDisplay() {
             var items = [];
+            var sessions = this._sessions.slice().sort(function(a, b) { return a.id - b.id; });
+            var messages = this._messages.slice().sort(function(a, b) { return a.id - b.id; });
             var self = this;
 
-            this._rawEvents.forEach(function(e) {
-                var c = e.content || {};
-                var key = 'evt-' + e.id;
+            var bySession = {};
+            messages.forEach(function(m) {
+                if (!bySession[m.session_id]) bySession[m.session_id] = [];
+                bySession[m.session_id].push(m);
+            });
 
-                switch (e.event_type) {
-                    case 'status':
-                        items.push({
-                            type: 'status',
-                            key: key,
-                            label: c.message || (c.status || ''),
-                            content: c,
-                        });
-                        break;
-
-                    case 'thinking':
-                        items.push({
-                            type: 'thinking',
-                            key: key,
-                            label: c.message || '{{ _("activity.thinking") }}',
-                        });
-                        break;
-
-                    case 'ai_response':
-                        var content = c.content_preview || c.message || '';
-                        var htmlContent = '';
-                        try { htmlContent = DOMPurify.sanitize(marked.parse(content)); } catch(ex) { htmlContent = content; }
-                        var isLong = content.length > 500;
-                        items.push({
-                            type: 'ai_response',
-                            key: key,
-                            label: c.message || '',
-                            content: content,
-                            htmlContent: htmlContent,
-                            score: c.overall_score || c.findings_count !== undefined ? c.overall_score : null,
-                            isLong: isLong,
-                            collapsed: isLong ? (self._collapsedState[key] !== undefined ? self._collapsedState[key] : true) : false,
-                        });
-                        break;
-
-                    case 'tool_call':
-                        items.push({
-                            type: 'tool_call',
-                            key: key,
-                            label: describeTool(c.tool) + (c.status === 'running' ? ' ...' : ''),
-                            toolStatus: c.status || 'running',
-                            detail: c.detail || '',
-                        });
-                        break;
-
-                    case 'tool_result':
-                        var detailText = c.detail || '';
-                        items.push({
-                            type: 'tool_result',
-                            key: key,
-                            label: describeTool(c.tool) + ' — ' + toolStatusLabel(c.status),
-                            toolStatus: c.status || 'completed',
-                            detail: detailText,
-                            isLong: detailText.length > 200,
-                            collapsed: self._collapsedState[key] !== undefined ? self._collapsedState[key] : true,
-                        });
-                        break;
-
-                    case 'result':
-                        items.push({
-                            type: 'result',
-                            key: key,
-                            label: c.message || '{{ _("activity.completed") }}',
-                            content: c,
-                        });
-                        break;
-
-                    case 'error':
-                        items.push({
-                            type: 'error',
-                            key: key,
-                            label: c.message || '{{ _("activity.error") }}',
-                        });
-                        break;
+            var tcByMsg = {};
+            Object.values(self._toolCalls).forEach(function(tc) {
+                if (tc.assistant_message_id) {
+                    if (!tcByMsg[tc.assistant_message_id]) tcByMsg[tc.assistant_message_id] = [];
+                    tcByMsg[tc.assistant_message_id].push(tc);
                 }
             });
 
-            this.displayEvents = items;
+            function toTs(iso) { return iso ? new Date(iso).getTime() : 0; }
+
+            sessions.forEach(function(session) {
+                var roleLabel = session.role_name === 'issue_analyzer'
+                    ? '{{ _("activity.type_issue") }} Analyzer'
+                    : session.role_name === 'reviewer'
+                        ? 'AI Reviewer'
+                        : session.role_name;
+                roleLabel = session.iteration_number + ' - ' + roleLabel;
+                items.push({ type: 'session', role: session.role_name, label: roleLabel, key: 'session-' + session.id, _ts: toTs(session.started_at) });
+
+                var sessionMsgs = bySession[session.id] || [];
+                sessionMsgs.forEach(function(m) {
+                    if (m.role === 'system' || m.role === 'user') return;
+
+                    if (m.role === 'assistant') {
+                        var content = m.content || '';
+                        var htmlContent = '';
+                        try { htmlContent = DOMPurify.sanitize(marked.parse(content)); } catch(e) { htmlContent = content; }
+                        var msgToolCalls = tcByMsg[m.id] || null;
+                        var key = 'msg-' + m.id;
+                        var isLong = content.length > 500;
+                        items.push({
+                            type: 'assistant',
+                            content: content,
+                            htmlContent: htmlContent,
+                            toolCalls: msgToolCalls && msgToolCalls.length > 0 ? msgToolCalls.map(function(tc) { return self._buildToolCallView(tc); }) : null,
+                            isLong: isLong,
+                            collapsed: isLong ? (self._collapsedState[key] !== undefined ? self._collapsedState[key] : true) : false,
+                            key: key,
+                            _ts: toTs(m.created_at)
+                        });
+                    } else if (m.role === 'tool') {
+                        var tc = self._toolCalls[m.tool_call_id];
+                        var content = m.content || '';
+                        var key = 'msg-' + m.id;
+                        var isLong = content.length > 0;
+                        var toolView = tc ? self._buildToolCallView(tc) : null;
+                        items.push({
+                            type: 'tool_result',
+                            content: content,
+                            status: tc && tc.status ? tc.status : 'completed',
+                            label: toolView ? toolView.title : '{{ _("activity.tool_unknown") }}',
+                            detail: content.length > 200 ? content.substring(0, 200) + '...' : content,
+                            isLong: isLong,
+                            collapsed: self._collapsedState[key] !== undefined ? self._collapsedState[key] : true,
+                            key: key,
+                            _ts: toTs(m.created_at)
+                        });
+                    }
+                });
+            });
+
+            this.displayItems = items;
             this._scrollToBottom();
+        },
+
+        // ---- Tool call view builder (same as Agent Team) ----
+        _buildToolCallView(tc) {
+            var detailRows = [{ label: '{{ _("agent_team.live_tool_name") }}', value: tc.name || '' }];
+            var args = {};
+            try { args = JSON.parse(tc.arguments_json || '{}'); } catch(e) {}
+            var candidates = [
+                ['{{ _("agent_team.live_tool_path") }}', args.file_path || args.path || args.pattern],
+                ['{{ _("agent_team.live_tool_command") }}', args.command],
+                ['{{ _("agent_team.live_tool_query") }}', args.query || args.pattern],
+            ];
+            candidates.forEach(function(item) {
+                if (item[1] !== undefined && item[1] !== null && String(item[1]) !== '') {
+                    detailRows.push({ label: item[0], value: String(item[1]) });
+                }
+            });
+            return {
+                id: tc.id,
+                status: tc.status || 'running',
+                statusLabel: tc.status || '',
+                title: _describeTool(tc.name) + (tc.status === 'running' || tc.status === 'pending' ? ' ...' : ''),
+                detailRows: detailRows,
+                error: tc.error_message || ''
+            };
         },
 
         toggleCollapse(key) {
@@ -575,15 +583,15 @@ function activityMonitor() {
             } else {
                 this._collapsedState[key] = !this._collapsedState[key];
             }
-            for (var i = 0; i < this.displayEvents.length; i++) {
-                if (this.displayEvents[i].key === key) {
-                    this.displayEvents[i].collapsed = this._collapsedState[key];
+            for (var i = 0; i < this.displayItems.length; i++) {
+                if (this.displayItems[i].key === key) {
+                    this.displayItems[i].collapsed = this._collapsedState[key];
                     break;
                 }
             }
         },
 
-        // ---- Style helpers ----
+        // ---- Style helpers (left panel) ----
         taskBorderColor(type) {
             if (type === 'pr') return 'border-blue-200 dark:border-blue-800 bg-white dark:bg-gray-800/60';
             if (type === 'issue') return 'border-purple-200 dark:border-purple-800 bg-white dark:bg-gray-800/60';
@@ -636,34 +644,25 @@ function activityMonitor() {
             };
             return map[status] || status;
         },
-        isActiveStatus(status) { return isActive(status); },
+        isActiveStatus(status) { return _isActive(status); },
     };
 }
 
-// ---- Global helper functions ----
-function isActive(status) {
+// ---- Global helpers ----
+function _isActive(status) {
     return ['pending', 'queued', 'reviewing', 'analyzing', 'indexing', 'reporting'].indexOf(status) >= 0;
 }
 
-function describeTool(toolName) {
-    if (!toolName) return '{{ _("activity.tool_unknown") }}';
-    var t = String(toolName).toLowerCase();
+function _describeTool(name) {
+    if (!name) return '{{ _("activity.tool_unknown") }}';
+    var t = String(name).toLowerCase();
     if (t === 'index_pr_changes' || t === 'index_repository') return '{{ _("activity.tool_index") }}';
-    if (t === 'read' || t.indexOf('read_file') >= 0) return '{{ _("activity.tool_read") }}';
+    if (t === 'read' || t.indexOf('read_file') >= 0 || t.indexOf('get_file_diff') >= 0) return '{{ _("activity.tool_read") }}';
     if (t === 'bash' || t.indexOf('shell') >= 0 || t.indexOf('command') >= 0) return '{{ _("activity.tool_bash") }}';
     if (t === 'grep' || t === 'glob' || t.indexOf('search') >= 0) return '{{ _("activity.tool_search") }}';
     if (t === 'edit' || t === 'write') return '{{ _("activity.tool_edit") }}';
-    return '{{ _("activity.tool_generic") }}' + ' (' + toolName + ')';
-}
-
-function toolStatusLabel(status) {
-    if (status === 'completed') return '{{ _("activity.tool_completed") }}';
-    if (status === 'failed') return '{{ _("activity.tool_failed") }}';
-    return status || '';
-}
-
-function self_selected_id(vm) {
-    return vm.selectedTask ? vm.selectedTask.id : null;
+    if (t === 'list_changed_files') return '{{ _("activity.tool_read") }}';
+    return name;
 }
 </script>
 {% endblock %}

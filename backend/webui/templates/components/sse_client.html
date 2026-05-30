@@ -91,6 +91,23 @@
             }
         });
 
+        // Activity checkpoint events (same pattern as agent:*)
+        var activityEvents = [
+            'activity:session_started', 'activity:session_completed',
+            'activity:message_added', 'activity:tool_started',
+            'activity:tool_completed', 'activity:tool_failed'
+        ];
+        activityEvents.forEach(function(eventName) {
+            eventSource.addEventListener(eventName, function(e) {
+                try {
+                    var data = JSON.parse(e.data);
+                    window.dispatchEvent(new CustomEvent('sse:' + eventName, { detail: data }));
+                } catch(err) {
+                    // ignore parse errors
+                }
+            });
+        });
+
         eventSource.onopen = function() {
             reconnectDelay = 1000;
             console.log('[SSE] 连接已建立');

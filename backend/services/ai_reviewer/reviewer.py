@@ -228,16 +228,6 @@ class AIReviewer:
         while iteration < max_iterations:
             iteration += 1
 
-            # 通知前端：AI 正在思考
-            if event_callback:
-                try:
-                    await event_callback("thinking", {
-                        "message": f"AI 审查第 {iteration} 轮...",
-                        "round": iteration,
-                    })
-                except Exception:
-                    pass
-
             # 调用AI API
             response = await self.api_client.call_with_retry(
                 model=settings.openai_model,
@@ -259,6 +249,15 @@ class AIReviewer:
             if not tool_calls:
                 # AI完成了审查，返回结果
                 review_text = response.choices[0].message.content or ""
+                # 通知前端：最终 assistant 消息（无工具调用）
+                if event_callback:
+                    try:
+                        await event_callback("message", {
+                            "role": "assistant",
+                            "content": review_text,
+                        })
+                    except Exception:
+                        pass
                 result = self.result_parser.parse_review_result(review_text, strategy)
                 result["token_usage"] = tracker.to_dict()
                 logger.info(
@@ -291,68 +290,57 @@ class AIReviewer:
 
             messages.append(assistant_msg_dict)
 
+            # 通知前端：assistant 消息（包含 tool_calls → 自动创建 ToolCall 行）
+            if event_callback:
+                try:
+                    await event_callback("message", assistant_msg_dict)
+                except Exception:
+                    pass
+
             # 执行每个工具调用
             for tool_call in tool_calls:
                 tool_name = tool_call.function.name
-                tool_args_raw = tool_call.function.arguments or "{}"
-                # 通知前端：工具调用开始
-                if event_callback:
-                    try:
-                        args_preview = tool_args_raw[:200] if tool_args_raw else ""
-                        await event_callback("tool_call", {
-                            "tool": tool_name,
-                            "status": "running",
-                            "detail": args_preview,
-                            "round": iteration,
-                        })
-                    except Exception:
-                        pass
                 try:
+                    # 通知前端：工具开始运行
+                    if event_callback:
+                        try:
+                            await event_callback("tool_running", tool_call.id)
+                        except Exception:
+                            pass
                     result = await active_tool_handler.handle_tool_call(
                         tool_call, repo, pr
                     )
-                    messages.append(
-                        {
-                            "role": "tool",
-                            "tool_call_id": tool_call.id,
-                            "content": json.dumps(result, ensure_ascii=False),
-                        }
-                    )
+                    tool_msg = {
+                        "role": "tool",
+                        "tool_call_id": tool_call.id,
+                        "content": json.dumps(result, ensure_ascii=False),
+                    }
+                    messages.append(tool_msg)
                     logger.info(
                         "执行工具 {}: {}",
                         tool_call.function.name,
                         tool_call.function.arguments,
                     )
-                    # 通知前端：工具调用完成
+                    # 通知前端：tool 消息 → 自动更新 ToolCall 行
                     if event_callback:
                         try:
-                            result_str = json.dumps(result, ensure_ascii=False)
-                            await event_callback("tool_result", {
-                                "tool": tool_name,
-                                "status": "completed",
-                                "detail": result_str[:200] if result_str else "",
-                            })
+                            await event_callback("message", tool_msg)
                         except Exception:
                             pass
                 except Exception as e:
+                    error_tool_msg = {
+                        "role": "tool",
+                        "tool_call_id": tool_call.id,
+                        "content": json.dumps({"error": str(e)}),
+                    }
+                    messages.append(error_tool_msg)
                     logger.error(
                         "执行工具 {} 失败: {}", tool_call.function.name, str(e)
                     )
-                    messages.append(
-                        {
-                            "role": "tool",
-                            "tool_call_id": tool_call.id,
-                            "content": json.dumps({"error": str(e)}),
-                        }
-                    )
-                    # 通知前端：工具调用失败
+                    # 通知前端：tool 错误消息
                     if event_callback:
                         try:
-                            await event_callback("tool_result", {
-                                "tool": tool_name,
-                                "status": "failed",
-                                "detail": str(e)[:200],
-                            })
+                            await event_callback("message", error_tool_msg)
                         except Exception:
                             pass
 
