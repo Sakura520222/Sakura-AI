@@ -538,7 +538,7 @@ function activityMonitor() {
                             content: content,
                             status: tc && tc.status ? tc.status : 'completed',
                             label: toolView ? toolView.title : '{{ _("activity.tool_unknown") }}',
-                            detail: content.length > 200 ? content.substring(0, 200) + '...' : content,
+                            detail: content,
                             isLong: isLong,
                             collapsed: self._collapsedState[key] !== undefined ? self._collapsedState[key] : true,
                             key: key,
