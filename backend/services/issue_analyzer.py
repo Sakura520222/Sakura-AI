@@ -401,14 +401,14 @@ class IssueAnalyzer:
             < _COLLABORATOR_CACHE_TTL
         ):
             collaborators = _collaborator_cache[cache_key]["collaborators"]
-            logger.info(f"使用缓存的协作者列表: {cache_key}")
+            logger.info("使用缓存的协作者列表: {}", cache_key)
         else:
             collaborators = github_app.get_repo_collaborators(repo_owner, repo_name)
             _collaborator_cache[cache_key] = {
                 "collaborators": collaborators,
                 "updated_at": now,
             }
-            logger.info(f"从 GitHub 获取协作者列表: {cache_key}")
+            logger.info("从 GitHub 获取协作者列表: {}", cache_key)
 
         # 获取评论对话（受配置控制）
         comments = None
