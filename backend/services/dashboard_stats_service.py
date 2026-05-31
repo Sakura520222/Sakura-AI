@@ -85,7 +85,7 @@ async def fetch_token_trend(
     db: AsyncSession,
     thirty_days_ago: datetime,
     labels: list[str],
-    scope_filter: Any | None = None,
+    scope_user: str | None = None,
 ) -> list[int]:
     """获取最近 30 天全模块 Token 消耗趋势。
 
@@ -93,14 +93,23 @@ async def fetch_token_trend(
         db: 数据库 session
         thirty_days_ago: 30 天前的时间戳
         labels: 日期标签列表（用于确定数组长度）
-        scope_filter: 用户权限过滤条件（仅应用于 PRReview）
+        scope_user: 非 admin 用户的 GitHub 用户名，用于权限过滤；
+            None 表示管理员或无需过滤。
 
     Returns:
         长度与 labels 一致的 token 总量列表。
     """
+    from sqlalchemy import or_
+
     token_data = [0] * len(labels)
 
-    # ── PR 审查 token 趋势（支持用户权限过滤）──
+    # ── PR 审查 token 趋势（repo_owner / author 均可匹配）──
+    pr_scope = None
+    if scope_user is not None:
+        pr_scope = or_(
+            PRReview.repo_owner == scope_user,
+            PRReview.author == scope_user,
+        )
     pr_query = (
         select(
             func.date(PRReview.created_at).label("day"),
@@ -113,21 +122,39 @@ async def fetch_token_trend(
         .where(PRReview.status == "completed")
         .group_by(func.date(PRReview.created_at))
     )
-    if scope_filter is not None:
-        pr_query = pr_query.where(scope_filter)
+    if pr_scope is not None:
+        pr_query = pr_query.where(pr_scope)
     for row in (await db.execute(pr_query)).all():
         if row.day:
             idx = (row.day - thirty_days_ago.date()).days
             if 0 <= idx < len(labels):
                 token_data[idx] += int(row.tokens)
 
-    # ── 其他模块 token 趋势（无权限过滤，全局数据）──
-    for model_cls, date_col in [
-        (IssueAnalysis, IssueAnalysis.completed_at),
-        (AgentTeamTask, AgentTeamTask.completed_at),
-        (RepoScan, RepoScan.completed_at),
-    ]:
-        rows = (await db.execute(
+    # ── 其他模块 token 趋势（按 repo_owner 过滤）──
+    # IssueAnalysis 同时有 repo_owner 和 author，可以同 PRReview 一样双向匹配；
+    # AgentTeamTask / RepoScan 仅有 repo_owner，按 repo_owner 过滤。
+    module_scopes: list[tuple[type, Any, Any | None]] = [
+        (
+            IssueAnalysis,
+            IssueAnalysis.completed_at,
+            or_(
+                IssueAnalysis.repo_owner == scope_user,
+                IssueAnalysis.author == scope_user,
+            ) if scope_user else None,
+        ),
+        (
+            AgentTeamTask,
+            AgentTeamTask.completed_at,
+            (AgentTeamTask.repo_owner == scope_user) if scope_user else None,
+        ),
+        (
+            RepoScan,
+            RepoScan.completed_at,
+            (RepoScan.repo_owner == scope_user) if scope_user else None,
+        ),
+    ]
+    for model_cls, date_col, scope in module_scopes:
+        q = (
             select(
                 func.date(date_col).label("day"),
                 (
@@ -138,7 +165,10 @@ async def fetch_token_trend(
             .where(date_col >= thirty_days_ago)
             .where(model_cls.status == "completed")
             .group_by(func.date(date_col))
-        )).all()
+        )
+        if scope is not None:
+            q = q.where(scope)
+        rows = (await db.execute(q)).all()
         for row in rows:
             if row.day:
                 idx = (row.day - thirty_days_ago.date()).days

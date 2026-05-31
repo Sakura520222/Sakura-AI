@@ -436,8 +436,9 @@ async def get_chart_data(
     repo_labels = [r.repo_name for r in repo_rows]
     repo_counts = [r.cnt for r in repo_rows]
 
-    # 4. Token 消耗趋势（合并所有模块）
-    token_data = await fetch_token_trend(db, thirty_days_ago, labels, scope_filter)
+    # 4. Token 消耗趋势（合并所有模块，按用户权限过滤）
+    scope_user = None if scope_filter is None else user["sub"]
+    token_data = await fetch_token_trend(db, thirty_days_ago, labels, scope_user)
 
     result = {
         "trend": {
