@@ -99,6 +99,7 @@ async def issue_list_fragment(
     )
 
     return templates.TemplateResponse(
+        request,
         "components/issue_list_fragment.html",
         {
             "request": request,
@@ -128,6 +129,7 @@ async def issue_stats(
     scope_filter = build_user_scope_filter(user, IssueAnalysis)
     stats = await issue_service.get_issue_stats(db, scope_filter=scope_filter)
     return templates.TemplateResponse(
+        request,
         "components/issue_stats_cards.html",
         {
             "request": request,
@@ -216,6 +218,7 @@ async def issue_detail_fragment(
         return HTMLResponse(content="<p>记录不存在或无权访问</p>")
 
     return templates.TemplateResponse(
+        request,
         "components/issue_detail_fragment.html",
         {
             "request": request,

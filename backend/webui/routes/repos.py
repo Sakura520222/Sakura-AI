@@ -405,6 +405,7 @@ async def repo_list_fragment(
         installations = []
 
     return templates.TemplateResponse(
+        request,
         "components/repo_list_fragment.html",
         {
             "request": request,
