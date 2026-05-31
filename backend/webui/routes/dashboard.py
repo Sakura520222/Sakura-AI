@@ -333,6 +333,7 @@ async def get_recent_reviews_html(
     """返回最近审查的 HTML 片段（供仪表盘 HTMX 加载）"""
     reviews = await _fetch_recent_reviews(db, user)
     return templates.TemplateResponse(
+        request,
         "components/recent_reviews.html",
         {
             "request": request,

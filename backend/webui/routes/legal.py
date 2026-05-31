@@ -21,7 +21,7 @@ def _render_public(template_name: str, request: Request, **context):
     context["_"] = make_translation_func(lang)
     context["lang"] = lang
     context["request"] = request
-    return templates.TemplateResponse(template_name, context)
+    return templates.TemplateResponse(request, template_name, context)
 
 
 @router.get("/terms")

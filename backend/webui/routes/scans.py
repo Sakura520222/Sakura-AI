@@ -86,6 +86,7 @@ async def scan_list_fragment(
     )
 
     return templates.TemplateResponse(
+        request,
         "components/scan_list_fragment.html",
         {
             "request": request,
@@ -141,6 +142,7 @@ async def scan_stats(
     last_scan_time = last_scan_result.scalar_one_or_none()
 
     return templates.TemplateResponse(
+        request,
         "components/scan_stats_cards.html",
         {
             "request": request,

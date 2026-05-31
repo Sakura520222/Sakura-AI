@@ -175,7 +175,7 @@ def test_render_template_injects_correct_lang():
     # 用 MagicMock 替换 TemplateResponse 以拦截调用
     captured = {}
 
-    def mock_template_response(template_name, context):
+    def mock_template_response(request, template_name, context):
         captured.update(context)
         return MagicMock()
 
@@ -199,7 +199,7 @@ def test_render_template_with_user_prefs_in_context():
 
     captured = {}
 
-    def mock_template_response(template_name, context):
+    def mock_template_response(request, template_name, context):
         captured.update(context)
         return MagicMock()
 

@@ -94,6 +94,7 @@ async def user_list_fragment(
     )
 
     return templates.TemplateResponse(
+        request,
         "components/user_list_fragment.html",
         {
             "request": request,

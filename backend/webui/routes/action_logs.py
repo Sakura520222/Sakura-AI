@@ -107,6 +107,7 @@ async def action_log_list_fragment(
     logs = result.all()
 
     return templates.TemplateResponse(
+        request,
         "components/action_log_list_fragment.html",
         {
             "request": request,
