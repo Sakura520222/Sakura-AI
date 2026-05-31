@@ -312,13 +312,7 @@ async def refresh_cache(user: dict = Depends(require_api_auth)):
 @router.get("/system-info")
 async def get_system_info(user: dict = Depends(require_api_auth)):
     """获取系统运行信息（启动时间、启动耗时、运行时长）"""
-    from backend.main import get_startup_info, _format_duration, __version__
+    # 延迟导入：避免 api.v1 → main 循环依赖（main 已在模块级导入 api.v1）
+    from backend.main import get_system_info_dict
 
-    info = get_startup_info()
-    uptime_seconds = info["uptime_seconds"]
-    info["uptime_formatted"] = _format_duration(uptime_seconds)
-    info["startup_duration_formatted"] = _format_duration(
-        info["startup_duration_seconds"]
-    )
-    info["version"] = __version__
-    return success_response(data=info)
+    return success_response(data=get_system_info_dict())

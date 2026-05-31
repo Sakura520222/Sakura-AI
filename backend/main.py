@@ -61,6 +61,18 @@ def get_startup_info() -> dict:
     }
 
 
+def get_system_info_dict() -> dict:
+    """返回系统信息（含格式化字段），供 Dashboard API/WebUI 使用。"""
+    info = get_startup_info()
+    uptime_seconds = info["uptime_seconds"]
+    info["uptime_formatted"] = _format_duration(uptime_seconds)
+    info["startup_duration_formatted"] = _format_duration(
+        info["startup_duration_seconds"]
+    )
+    info["version"] = __version__
+    return info
+
+
 def _format_duration(seconds: float) -> str:
     """将秒数格式化为人类可读的时长字符串。"""
     if seconds < 1:

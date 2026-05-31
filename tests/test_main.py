@@ -12,6 +12,7 @@ from backend.core.config import Settings
 from backend.main import _get_webui_error_user
 from backend.main import _get_allowed_origins, _should_start_background_tasks
 from backend.main import get_startup_info, _format_duration
+from backend.main import get_system_info_dict
 
 
 class RequestStub:
@@ -159,3 +160,37 @@ def test_get_startup_info_returns_valid_data_after_startup():
     assert info["startup_duration_seconds"] == 3.45
     # uptime 应大约为 120 秒（允许 ±1 秒误差）
     assert 119 <= info["uptime_seconds"] <= 121
+
+
+def test_get_system_info_dict_contains_formatted_fields():
+    """get_system_info_dict 应包含所有格式化字段和版本号"""
+    now = time.time()
+    fake_finished = now - 3600  # 1 小时前启动完成
+    fake_duration = 2.5  # 启动耗时 2.5 秒
+
+    with patch.object(main, "_startup_finished_at", fake_finished), patch.object(
+        main, "_startup_duration", fake_duration
+    ):
+        info = get_system_info_dict()
+
+    assert info["startup_time"] is not None
+    assert info["startup_duration_seconds"] == 2.5
+    assert info["startup_duration_formatted"] == "2.5s"
+    assert 3599 <= info["uptime_seconds"] <= 3601
+    assert info["uptime_formatted"] is not None and "h" in info["uptime_formatted"]
+    assert info["version"] is not None
+
+
+def test_get_system_info_dict_before_startup():
+    """lifespan 未执行时，get_system_info_dict 应返回合理的默认值"""
+    with patch.object(main, "_startup_finished_at", 0.0), patch.object(
+        main, "_startup_duration", 0.0
+    ):
+        info = get_system_info_dict()
+
+    assert info["startup_time"] is None
+    assert info["startup_duration_seconds"] == 0.0
+    assert info["startup_duration_formatted"] == "0ms"
+    assert info["uptime_seconds"] == 0
+    assert info["uptime_formatted"] == "0ms"
+    assert info["version"] is not None

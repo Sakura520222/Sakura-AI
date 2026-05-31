@@ -65,7 +65,7 @@
     <!-- 系统信息 -->
     <div x-data="systemInfoInit()" x-init="loadSystemInfo()" class="glass rounded-2xl p-5 border border-sakura-200/50 dark:border-sakura-800/30 shadow-sm">
         <div class="flex items-center gap-2 mb-3">
-            <svg class="w-5 h-5 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <svg class="w-5 h-5 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 3v2m6-2v2M9 19v2m6-2v2M5 9H3m2 6H3m18-6h-2m2 6h-2M7 19h10a2 2 0 002-2V7a2 2 0 00-2-2H7a2 2 0 00-2 2v10a2 2 0 002 2z"/>
             </svg>
             <h2 class="text-lg font-semibold">{{ _('dashboard.system_info') }}</h2>
