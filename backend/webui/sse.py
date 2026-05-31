@@ -2,7 +2,9 @@
 
 import asyncio
 import json
-from typing import Dict, List, Any
+from typing import Any, Dict, List
+
+import redis.exceptions  # 仅异常类型引用，不触发连接初始化
 from loguru import logger
 
 
@@ -101,15 +103,21 @@ async def start_redis_listener(_attempt: int = 1):
         # 成功连接后重置重试计数
         _attempt = 1
 
-        async for message in pubsub.listen():
-            if message["type"] == "pmessage":
-                try:
-                    event = json.loads(message["data"])
-                    channel = event.get("channel", "webui:events")
-                    # 转发给本地 SSE 订阅者（避免重复广播到 Redis）
-                    await sse_manager.publish(channel, event)
-                except (json.JSONDecodeError, KeyError) as e:
-                    logger.warning(f"解析 SSE 事件失败: {e}")
+        # 外层循环：Redis 空闲读超时只重新进入 listen()；真实连接异常交给外层重连
+        while True:
+            try:
+                async for message in pubsub.listen():
+                    if message["type"] == "pmessage":
+                        try:
+                            event = json.loads(message["data"])
+                            channel = event.get("channel", "webui:events")
+                            # 转发给本地 SSE 订阅者（避免重复广播到 Redis）
+                            await sse_manager.publish(channel, event)
+                        except (json.JSONDecodeError, KeyError) as e:
+                            logger.warning(f"解析 SSE 事件失败: {e}")
+            except (redis.exceptions.TimeoutError, TimeoutError) as e:
+                logger.debug(f"Redis listen 空闲读超时，继续等待消息: {e}")
+                continue
     except asyncio.CancelledError:
         logger.info("Redis Pub/Sub 监听已停止")
         raise
