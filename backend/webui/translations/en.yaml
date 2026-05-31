@@ -428,6 +428,9 @@ dashboard:
   this_month: "This Month"
   this_week: "This Week"
   today: "Today"
+  startup_duration: "Startup Duration"
+  uptime: "Uptime"
+  started_at: "Started At"
 
 # ========== PR Reviews ==========
 pr:

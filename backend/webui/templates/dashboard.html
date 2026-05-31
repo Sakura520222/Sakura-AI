@@ -43,6 +43,26 @@
         <p class="mt-1 text-sm text-gray-500 dark:text-gray-400">{{ _('dashboard.pr_review_overview') }}</p>
     </div>
 
+    <!-- 系统运行信息 -->
+    <div id="startup-info-bar" class="flex flex-wrap items-center gap-4 text-xs text-gray-500 dark:text-gray-400" x-data="startupInfo()" x-init="load()">
+        <template x-if="loaded">
+            <div class="flex flex-wrap items-center gap-4">
+                <span class="inline-flex items-center gap-1.5">
+                    <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10" stroke-width="2"/><path stroke-linecap="round" stroke-width="2" d="M12 6v6l4 2"/></svg>
+                    <span x-text="'{{ _('dashboard.startup_duration') }}: ' + (data.startup_duration_formatted || '-')"></span>
+                </span>
+                <span class="inline-flex items-center gap-1.5">
+                    <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"/></svg>
+                    <span x-text="'{{ _('dashboard.uptime') }}: ' + (uptimeFormatted || '-')"></span>
+                </span>
+                <span class="inline-flex items-center gap-1.5">
+                    <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"/></svg>
+                    <span x-text="'{{ _('dashboard.started_at') }}: ' + startedAtFormatted"></span>
+                </span>
+            </div>
+        </template>
+    </div>
+
     <!-- 统计卡片 -->
     {% include "components/stats_cards.html" %}
 
@@ -68,6 +88,41 @@
 {{ super() }}
 {% include "components/dashboard_charts_inline.html" %}
 <script>
+function startupInfo() {
+    return {
+        loaded: false,
+        data: {},
+        uptimeFormatted: '-',
+        startedAtFormatted: '-',
+        _timer: null,
+        load() {
+            fetch('/api/startup-info')
+                .then(r => r.json())
+                .then(d => {
+                    this.data = d;
+                    this.loaded = true;
+                    this._updateDisplay();
+                    // 每分钟刷新运行时长
+                    this._timer = setInterval(() => this._updateDisplay(), 60000);
+                })
+                .catch(() => {});
+        },
+        _updateDisplay() {
+            if (this.data.started_at) {
+                var started = new Date(this.data.started_at);
+                this.startedAtFormatted = started.toLocaleString();
+                // 计算实时 uptime
+                var elapsed = Math.floor((Date.now() - started.getTime()) / 1000);
+                var h = Math.floor(elapsed / 3600);
+                var m = Math.floor((elapsed % 3600) / 60);
+                var s = elapsed % 60;
+                this.uptimeFormatted = h > 0 ? h + 'h ' + m + 'm ' + s + 's'
+                    : m > 0 ? m + 'm ' + s + 's' : s + 's';
+            }
+        }
+    };
+}
+
 function dashboardInit() {
     // 加载统计数据
     fetch('/api/stats')

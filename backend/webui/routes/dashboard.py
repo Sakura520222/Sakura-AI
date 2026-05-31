@@ -3,7 +3,7 @@
 import asyncio
 import time
 from collections import OrderedDict
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 from fastapi import APIRouter, Request, Depends
@@ -288,8 +288,12 @@ async def get_stats(
 
     # 合并所有模块的 token / cost
     module_stats = await fetch_module_token_stats(db)
-    total_prompt = int(stats_row.total_prompt_tokens or 0) + module_stats["total_prompt"]
-    total_completion = int(stats_row.total_completion_tokens or 0) + module_stats["total_completion"]
+    total_prompt = (
+        int(stats_row.total_prompt_tokens or 0) + module_stats["total_prompt"]
+    )
+    total_completion = (
+        int(stats_row.total_completion_tokens or 0) + module_stats["total_completion"]
+    )
     total_cost = int(stats_row.total_estimated_cost or 0) + module_stats["total_cost"]
 
     result = {
@@ -463,6 +467,35 @@ async def get_chart_data(
     if len(_chart_cache) >= _MAX_CHART_CACHE_SIZE:
         _chart_cache.popitem(last=False)
     _chart_cache[uid] = (result, time.time())
+    return result
+
+
+@router.get("/api/startup-info")
+async def get_startup_info(request: Request):
+    """获取应用启动信息（启动时间、启动耗时、运行时长）"""
+    now = datetime.now(timezone.utc)
+    started_at: datetime | None = getattr(request.app.state, "app_started_at", None)
+    startup_duration: float | None = getattr(
+        request.app.state, "startup_duration", None
+    )
+
+    result: dict = {}
+    if started_at:
+        uptime_seconds = (now - started_at).total_seconds()
+        result["started_at"] = started_at.isoformat()
+        result["uptime_seconds"] = round(uptime_seconds, 1)
+        # 人类可读的运行时长
+        hours, remainder = divmod(int(uptime_seconds), 3600)
+        minutes, seconds = divmod(remainder, 60)
+        if hours > 0:
+            result["uptime_formatted"] = f"{hours}h {minutes}m {seconds}s"
+        elif minutes > 0:
+            result["uptime_formatted"] = f"{minutes}m {seconds}s"
+        else:
+            result["uptime_formatted"] = f"{seconds}s"
+    if startup_duration is not None:
+        result["startup_duration"] = startup_duration
+        result["startup_duration_formatted"] = f"{startup_duration:.2f}s"
     return result
 
 
