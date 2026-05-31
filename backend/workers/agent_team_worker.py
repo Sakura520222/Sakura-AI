@@ -257,7 +257,16 @@ class AgentTeamWorker:
                 )
 
                 pr_service = AgentTeamPRService()
-                commit_message = self._build_commit_message(task, outcome)
+                fallback_msg = self._build_commit_message(task, outcome)
+                commit_message = await pr_service.generate_commit_message(
+                    task_title=task.title,
+                    task_summary=task.summary or "",
+                    modified_files=outcome.modified_files or [],
+                    fullstack_summary=outcome.fullstack_result.summary
+                    if outcome.fullstack_result
+                    else "",
+                    fallback_message=fallback_msg,
+                )
                 await pr_service.commit_and_push(
                     workspace=str(workspace),
                     branch_name=workspace_info.branch_name,
@@ -634,10 +643,21 @@ class AgentTeamWorker:
                 current_phase="pushing",
             )
             pr_service = AgentTeamPRService()
+            fallback_msg = self._build_commit_message(task, outcome)
+            commit_message = await pr_service.generate_commit_message(
+                task_title=task.title,
+                task_summary=task.summary or "",
+                modified_files=outcome.modified_files or [],
+                fullstack_summary=outcome.fullstack_result.summary
+                if outcome.fullstack_result
+                else "",
+                review_feedback=review_feedback,
+                fallback_message=fallback_msg,
+            )
             new_sha = await pr_service.commit_and_push(
                 workspace=str(workspace_info.workspace),
                 branch_name=task.branch_name,
-                commit_message=self._build_commit_message(task, outcome),
+                commit_message=commit_message,
                 repo_owner=task.repo_owner,
                 repo_name=task.repo_name,
             )

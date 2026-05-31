@@ -156,6 +156,9 @@ async def test_agent_worker_leaves_draft_pr_opened_without_submitting_review(mon
         async def generate_pr_title(self, **kwargs):
             return "feat(agent): fix closed loop"
 
+        async def generate_commit_message(self, **kwargs):
+            return kwargs.get("fallback_message") or "feat(agent): auto"
+
         async def commit_and_push(self, **kwargs):
             pushed.append(kwargs)
             return "commit-sha"
@@ -289,6 +292,9 @@ async def test_external_review_iteration_pushes_same_branch_and_waits_for_synchr
 
         async def generate_pr_body(self, **kwargs):
             return kwargs.get("fallback_body") or "ai body"
+
+        async def generate_commit_message(self, **kwargs):
+            return kwargs.get("fallback_message") or "feat(agent): auto"
 
         async def commit_and_push(self, **kwargs):
             pushed.append(kwargs)
