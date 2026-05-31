@@ -307,3 +307,12 @@ async def refresh_cache(user: dict = Depends(require_api_auth)):
     _stats_cache.pop(uid, None)
     _chart_cache.pop(uid, None)
     return success_response(message="缓存已刷新")
+
+
+@router.get("/system-info")
+async def get_system_info(user: dict = Depends(require_api_auth)):
+    """获取系统运行信息（启动时间、启动耗时、运行时长）"""
+    # 延迟导入：避免 api.v1 → main 循环依赖（main 已在模块级导入 api.v1）
+    from backend.main import get_system_info_dict
+
+    return success_response(data=get_system_info_dict())
