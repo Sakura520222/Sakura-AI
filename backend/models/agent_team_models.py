@@ -90,6 +90,7 @@ class AgentTeamTask(Base):
     rate_limit_reset_at = Column(TIMESTAMP, nullable=True)
     last_checkpoint_at = Column(TIMESTAMP, nullable=True)
     pr_number = Column(BigInteger, nullable=True, index=True)
+    pr_head_sha = Column(String(64), nullable=True, index=True)
     pr_url = Column(String(500), nullable=True)
 
     iteration_count = Column(Integer, default=0, nullable=False)
@@ -312,6 +313,9 @@ class AgentTeamFeedback(Base):
     """Agent 任务反馈记录"""
 
     __tablename__ = "agent_team_feedback"
+    __table_args__ = (
+        UniqueConstraint("task_id", "source", "external_id", name="uq_agent_feedback_external"),
+    )
     id = Column(Integer, primary_key=True, autoincrement=True)
     task_id = Column(
         Integer,

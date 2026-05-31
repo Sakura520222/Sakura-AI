@@ -138,6 +138,7 @@ class PRReview(Base):
     author = Column(String(100))
     title = Column(String(500))
     branch = Column(String(100))
+    head_sha = Column(String(64), nullable=True, index=True)
 
     # PR统计信息
     file_count = Column(Integer)
