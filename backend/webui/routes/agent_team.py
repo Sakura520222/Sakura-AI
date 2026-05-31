@@ -1353,6 +1353,9 @@ async def cancel_task(
         "self_reviewing",
         "validating",
         "iterating",
+        "pr_opened",
+        "external_reviewing",
+        "waiting_human",
     }
     if task.status not in cancellable:
         return JSONResponse(
