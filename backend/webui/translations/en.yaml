@@ -425,6 +425,8 @@ dashboard:
   token_trend: "Token Usage Trend (Last 30 Days)"
   io_tokens: "Input / Output Tokens"
   estimated_cost: "Estimated Cost"
+  startup_time: "Startup Time"
+  uptime: "Uptime"
   this_month: "This Month"
   this_week: "This Week"
   today: "Today"

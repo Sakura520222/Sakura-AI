@@ -43,6 +43,23 @@
         <p class="mt-1 text-sm text-gray-500 dark:text-gray-400">{{ _('dashboard.pr_review_overview') }}</p>
     </div>
 
+    <!-- 启动信息 -->
+    <div id="startup-info-bar"
+         class="flex flex-wrap items-center gap-4 px-4 py-2.5 bg-gray-50 dark:bg-gray-800/50 rounded-xl border border-gray-200/60 dark:border-gray-700/40 text-xs text-gray-500 dark:text-gray-400">
+        <div class="flex items-center gap-1.5">
+            <svg class="w-3.5 h-3.5 text-green-500" fill="currentColor" viewBox="0 0 20 20">
+                <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clip-rule="evenodd"/>
+            </svg>
+            <span>{{ _('dashboard.startup_time') }}: <strong id="startup-duration" class="text-gray-700 dark:text-gray-300">-</strong></span>
+        </div>
+        <div class="flex items-center gap-1.5">
+            <svg class="w-3.5 h-3.5 text-blue-500" fill="currentColor" viewBox="0 0 20 20">
+                <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm1-12a1 1 0 10-2 0v4a1 1 0 00.293.707l2.828 2.829a1 1 0 101.415-1.415L11 9.586V6z" clip-rule="evenodd"/>
+            </svg>
+            <span>{{ _('dashboard.uptime') }}: <strong id="uptime-display" class="text-gray-700 dark:text-gray-300">-</strong></span>
+        </div>
+    </div>
+
     <!-- 统计卡片 -->
     {% include "components/stats_cards.html" %}
 
@@ -68,7 +85,26 @@
 {{ super() }}
 {% include "components/dashboard_charts_inline.html" %}
 <script>
+function _loadStartupInfo() {
+    fetch('/api/startup-info')
+        .then(r => r.json())
+        .then(data => {
+            var durationEl = document.getElementById('startup-duration');
+            var uptimeEl = document.getElementById('uptime-display');
+            if (durationEl && data.startup_duration != null) {
+                durationEl.textContent = data.startup_duration.toFixed(2) + 's';
+            }
+            if (uptimeEl && data.uptime_formatted) {
+                uptimeEl.textContent = data.uptime_formatted;
+            }
+        })
+        .catch(function() {});
+}
+
 function dashboardInit() {
+    // 加载启动信息
+    _loadStartupInfo();
+
     // 加载统计数据
     fetch('/api/stats')
         .then(r => r.json())

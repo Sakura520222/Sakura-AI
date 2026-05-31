@@ -288,8 +288,12 @@ async def get_stats(
 
     # 合并所有模块的 token / cost
     module_stats = await fetch_module_token_stats(db)
-    total_prompt = int(stats_row.total_prompt_tokens or 0) + module_stats["total_prompt"]
-    total_completion = int(stats_row.total_completion_tokens or 0) + module_stats["total_completion"]
+    total_prompt = (
+        int(stats_row.total_prompt_tokens or 0) + module_stats["total_prompt"]
+    )
+    total_completion = (
+        int(stats_row.total_completion_tokens or 0) + module_stats["total_completion"]
+    )
     total_cost = int(stats_row.total_estimated_cost or 0) + module_stats["total_cost"]
 
     result = {
@@ -473,3 +477,36 @@ async def refresh_cache(user: dict = Depends(require_auth)):
     _stats_cache.pop(uid, None)
     _chart_cache.pop(uid, None)
     return {"status": "ok"}
+
+
+def _format_duration(seconds: float) -> str:
+    """将秒数格式化为可读的时长字符串（如 '3天 2小时 5分 12秒'）"""
+    seconds = int(seconds)
+    if seconds < 60:
+        return f"{seconds}s"
+    minutes, secs = divmod(seconds, 60)
+    if minutes < 60:
+        return f"{minutes}m {secs}s"
+    hours, minutes = divmod(minutes, 60)
+    if hours < 24:
+        return f"{hours}h {minutes}m {secs}s"
+    days, hours = divmod(hours, 24)
+    return f"{days}d {hours}h {minutes}m"
+
+
+@router.get("/api/startup-info")
+async def get_startup_info(request: Request, user: dict = Depends(require_auth)):
+    """获取应用启动信息（启动耗时、运行时长等）"""
+    started_at = getattr(request.app.state, "started_at", None)
+    startup_duration = getattr(request.app.state, "startup_duration", None)
+
+    uptime_seconds = round(time.time() - started_at, 1) if started_at else None
+
+    return {
+        "startup_duration": startup_duration,
+        "started_at": started_at,
+        "uptime_seconds": uptime_seconds,
+        "uptime_formatted": _format_duration(uptime_seconds)
+        if uptime_seconds
+        else None,
+    }
