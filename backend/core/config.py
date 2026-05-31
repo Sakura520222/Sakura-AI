@@ -673,6 +673,9 @@ class Settings(BaseSettings):
     agent_team_max_runtime_minutes: int = 60
     agent_team_branch_index_delay: float = 2.0
     agent_team_draft_pr: bool = True
+    agent_team_pr_closed_loop_enabled: bool = True
+    agent_team_pr_review_pass_score: int = 8
+    agent_team_pr_review_blocking_severities: str = "critical,major"
     agent_team_max_files_changed: int = 8
     agent_team_max_lines_changed: int = 500
     agent_team_run_tests: bool = True
@@ -1191,6 +1194,9 @@ DYNAMIC_CONFIG_GROUPS: OrderedDict[str, dict] = OrderedDict(
                     "agent_team_context_summary_max_tokens": "Agent 专家团队历史摘要最大输出 Token 数",
                     "agent_team_max_tool_rounds": "全栈专家单次执行允许的工具调用最大轮次",
                     "agent_team_reviewer_max_tool_rounds": "专业审查单次执行允许的工具调用最大轮次",
+                    "agent_team_pr_closed_loop_enabled": "启用后，Agent 创建的 PR 会根据 Sakura PR 审查结果自动判定通过、继续迭代或等待人工处理",
+                    "agent_team_pr_review_pass_score": "Agent PR 审查通过分数阈值（1-10），低于该分数会进入迭代",
+                    "agent_team_pr_review_blocking_severities": "会阻塞 Agent PR 通过的审查严重级别，多个值用逗号分隔",
                     "agent_team_auto_install_deps": "Agent 克隆仓库后自动检测并安装 pyproject.toml 或 requirements.txt 中的依赖",
                     "agent_team_skills_enabled": "启用后，Agent 可按需加载已安装 Skills 的完整内容",
                     "agent_team_skills_root": "Agent Skills 本地存储根目录，默认 ./Skills",
@@ -1221,6 +1227,9 @@ DYNAMIC_CONFIG_GROUPS: OrderedDict[str, dict] = OrderedDict(
                     "agent_team_reviewer_max_tool_rounds",
                     "agent_team_max_runtime_minutes",
                     "agent_team_draft_pr",
+                    "agent_team_pr_closed_loop_enabled",
+                    "agent_team_pr_review_pass_score",
+                    "agent_team_pr_review_blocking_severities",
                     "agent_team_max_files_changed",
                     "agent_team_max_lines_changed",
                     "agent_team_run_tests",
@@ -1472,6 +1481,7 @@ DYNAMIC_CONFIG_RANGES: dict[str, tuple[float, float]] = {
     "agent_team_context_summary_max_tokens": (500, 8192),
     "agent_team_max_tool_rounds": (1, 1000),
     "agent_team_reviewer_max_tool_rounds": (5, 500),
+    "agent_team_pr_review_pass_score": (1, 10),
     "max_concurrent_issues": (1, 500),
     # 初始用户配额
     "init_admin_daily_quota": (1, 999999),
@@ -1673,6 +1683,9 @@ DYNAMIC_CONFIG_LABELS: dict[str, str] = {
     "agent_team_reviewer_max_tool_rounds": "审查工具调用最大轮次",
     "agent_team_max_runtime_minutes": "单任务最长运行时间（分钟）",
     "agent_team_draft_pr": "创建 Draft PR",
+    "agent_team_pr_closed_loop_enabled": "启用 Agent PR 闭环",
+    "agent_team_pr_review_pass_score": "Agent PR 审查通过分数",
+    "agent_team_pr_review_blocking_severities": "Agent PR 阻塞严重级别",
     "agent_team_max_files_changed": "最大修改文件数",
     "agent_team_max_lines_changed": "最大修改行数",
     "agent_team_run_tests": "自动运行验证命令",
