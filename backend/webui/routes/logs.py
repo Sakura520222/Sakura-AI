@@ -113,6 +113,7 @@ async def logs_list_fragment(
     )
 
     return templates.TemplateResponse(
+        request,
         "components/log_list_fragment.html",
         {
             "request": request,
@@ -154,6 +155,7 @@ async def log_detail_fragment(
     comments = comments_result.scalars().all()
 
     return templates.TemplateResponse(
+        request,
         "components/log_detail_fragment.html",
         {
             "request": request,

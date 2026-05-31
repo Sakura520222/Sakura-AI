@@ -93,6 +93,7 @@ async def queue_stats_fragment(
     avg_duration = _format_duration(avg_seconds) if avg_seconds else "-"
 
     return templates.TemplateResponse(
+        request,
         "components/queue_stats_cards.html",
         {
             "request": request,
@@ -168,6 +169,7 @@ async def queue_list_fragment(
     )
 
     return templates.TemplateResponse(
+        request,
         "components/queue_list_fragment.html",
         {
             "request": request,
