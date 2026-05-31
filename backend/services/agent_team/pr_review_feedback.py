@@ -196,47 +196,21 @@ class AgentTeamPRReviewFeedbackService:
         )
 
     async def _find_task(self, session: Any, review: PRReview) -> AgentTeamTask | None:
+        # NOTE: PRReview.pr_id stores the GitHub *node* ID (e.g. 3776490879),
+        # while AgentTeamTask.pr_number stores the human-readable PR number (e.g. 376).
+        # Match by repo + branch instead, which is unique per active task.
         statement = (
             select(AgentTeamTask)
             .where(
                 AgentTeamTask.repo_owner == review.repo_owner,
                 AgentTeamTask.repo_name == review.repo_name,
-                AgentTeamTask.pr_number == review.pr_id,
                 AgentTeamTask.branch_name == review.branch,
             )
             .order_by(AgentTeamTask.updated_at.desc())
             .limit(1)
         )
         result = await session.execute(statement)
-        task = result.scalars().first()
-        if task is None:
-            import logging
-            logging.getLogger(__name__).warning(
-                "Agent PR 闭环 task_not_found: "
-                "review.repo_owner=%s, review.repo_name=%s, review.pr_id=%s, review.branch=%s",
-                review.repo_owner, review.repo_name, review.pr_id, review.branch,
-            )
-            # Fallback: try matching without branch_name (in case branch is NULL)
-            if review.pr_id:
-                fallback_stmt = (
-                    select(AgentTeamTask)
-                    .where(
-                        AgentTeamTask.repo_owner == review.repo_owner,
-                        AgentTeamTask.repo_name == review.repo_name,
-                        AgentTeamTask.pr_number == review.pr_id,
-                    )
-                    .order_by(AgentTeamTask.updated_at.desc())
-                    .limit(1)
-                )
-                fallback_result = await session.execute(fallback_stmt)
-                task = fallback_result.scalars().first()
-                if task:
-                    import logging as _logging
-                    _logging.getLogger(__name__).info(
-                        "Agent PR 闭环通过 pr_number 回退匹配到 task_id=%s (task.branch_name=%s, review.branch=%s)",
-                        task.id, task.branch_name, review.branch,
-                    )
-        return task
+        return result.scalars().first()
 
     async def _feedback_exists(
         self,
