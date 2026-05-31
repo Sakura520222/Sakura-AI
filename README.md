@@ -433,7 +433,7 @@ Sakura-AI-Reviewer/
 
 ### 交互式知识图谱
 
-项目使用 [Understand Anything](https://github.com/nichochar/understand-anything) 生成交互式代码知识图谱，包含架构层次、节点关系和学习路径，便于快速理解项目结构。
+项目使用 [Understand Anything](https://github.com/Lum1104/Understand-Anything) 生成交互式代码知识图谱，包含架构层次、节点关系和学习路径，便于快速理解项目结构。
 
 **生成/更新知识图谱**（在 Claude Code 中执行）：
 
