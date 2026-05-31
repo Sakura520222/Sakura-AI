@@ -214,8 +214,15 @@ class SakuraConsolidationAgent(SakuraAgentBase):
             max_iterations,
         )
 
+        initial_user_message = (
+            f"请开始合并 {target_file}：先按系统指令读取必要文件，"
+            f"再只更新 {target_file}，完成后简要总结。"
+        )
         await self._run_agent_conversation(
-            system_prompt, effective_model, max_iterations
+            system_prompt,
+            effective_model,
+            max_iterations,
+            initial_user_message=initial_user_message,
         )
 
         changes = self._collect_changes()
