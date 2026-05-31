@@ -539,6 +539,7 @@ class AgentTeamWorker:
                 initial_feedback=review_feedback,
                 cancel_check=cancel_event.is_set,
                 iteration_offset=task.iteration_count or 0,
+                skip_internal_review=True,
             )
 
             new_iteration_count = (task.iteration_count or 0) + outcome.iterations
