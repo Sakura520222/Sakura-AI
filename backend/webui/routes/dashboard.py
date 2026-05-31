@@ -3,7 +3,7 @@
 import asyncio
 import time
 from collections import OrderedDict
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 from fastapi import APIRouter, Request, Depends
@@ -358,7 +358,7 @@ async def get_chart_data(
             _chart_cache.move_to_end(uid)
             return cached_data
 
-    now = datetime.utcnow()
+    now = datetime.now(timezone.utc)
     thirty_days_ago = now - timedelta(days=30)
 
     # 构建用户过滤条件

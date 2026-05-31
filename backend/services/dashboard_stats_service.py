@@ -9,7 +9,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any
 
-from sqlalchemy import select, func
+from sqlalchemy import select, func, or_
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.models.database import IssueAnalysis, PRReview
@@ -31,8 +31,6 @@ async def fetch_module_token_stats(
     Returns:
         {"total_prompt": int, "total_completion": int, "total_cost": int}
     """
-    from sqlalchemy import or_
-
     # ── 构建各模块的 scope 过滤条件 ──
     # PRReview / IssueAnalysis 有 repo_owner + author，双向匹配
     # AgentTeamTask / RepoScan 仅有 repo_owner
@@ -114,8 +112,6 @@ async def fetch_token_trend(
     Returns:
         长度与 labels 一致的 token 总量列表。
     """
-    from sqlalchemy import or_
-
     token_data = [0] * len(labels)
 
     # ── PR 审查 token 趋势（repo_owner / author 均可匹配）──
@@ -155,17 +151,17 @@ async def fetch_token_trend(
             or_(
                 IssueAnalysis.repo_owner == scope_user,
                 IssueAnalysis.author == scope_user,
-            ) if scope_user else None,
+            ) if scope_user is not None else None,
         ),
         (
             AgentTeamTask,
             AgentTeamTask.completed_at,
-            (AgentTeamTask.repo_owner == scope_user) if scope_user else None,
+            (AgentTeamTask.repo_owner == scope_user) if scope_user is not None else None,
         ),
         (
             RepoScan,
             RepoScan.completed_at,
-            (RepoScan.repo_owner == scope_user) if scope_user else None,
+            (RepoScan.repo_owner == scope_user) if scope_user is not None else None,
         ),
     ]
     for model_cls, date_col, scope in module_scopes:
