@@ -20,6 +20,8 @@ from loguru import logger
 
 from backend.core.config import get_settings
 from backend.models.agent_team_models import (
+    AgentTeamFeedback,
+    AgentTeamFeedbackSource,
     AgentTeamIteration,
     AgentTeamPatchFile,
     AgentTeamTask,
@@ -166,11 +168,23 @@ class AgentTeamWorker:
                 cancel_check=cancel_event.is_set,
             )
 
+            # 提前计算 estimated_cost（供成功/失败两分支共用）
+            s = get_settings()
+            cost_tracker = TokenTracker()
+            cost_tracker.add_tokens(outcome.prompt_tokens, outcome.completion_tokens)
+            estimated_cost = cost_tracker.calculate_cost(
+                s.review_price_per_1k_prompt, s.review_price_per_1k_completion,
+            )
+
             logger.info(
-                "Agent 迭代循环完成: success={}, iterations={}, tool_calls={}",
+                "Agent 迭代循环完成: success={}, iterations={}, tool_calls={}, "
+                "tokens={}+{}, cost={}",
                 outcome.success,
                 outcome.iterations,
                 outcome.total_tool_calls,
+                outcome.prompt_tokens,
+                outcome.completion_tokens,
+                estimated_cost,
             )
 
             # 迭代循环被取消
@@ -243,7 +257,20 @@ class AgentTeamWorker:
                 )
 
                 pr_service = AgentTeamPRService()
-                commit_message = self._build_commit_message(task, outcome)
+                fallback_msg = self._build_commit_message(task, outcome)
+                commit_message = await pr_service.generate_commit_message(
+                    task_title=task.title,
+                    task_summary=task.summary or "",
+                    modified_files=outcome.modified_files or [],
+                    fullstack_summary=outcome.fullstack_result.summary
+                    if outcome.fullstack_result
+                    else "",
+                    fallback_message=fallback_msg,
+                )
+                if commit_message == fallback_msg:
+                    logger.info("Agent commit message: 使用 fallback 模板 (AI 生成未返回)")
+                else:
+                    logger.info("Agent commit message: 使用 AI 生成结果")
                 await pr_service.commit_and_push(
                     workspace=str(workspace),
                     branch_name=workspace_info.branch_name,
@@ -339,28 +366,18 @@ class AgentTeamWorker:
                     draft=is_draft,
                 )
 
-                # ── Phase 6: PR_OPENED → COMPLETED ──
+                # ── Phase 6: PR_OPENED / COMPLETED ──
+                closed_loop_enabled = await self._resolve_bool_config(
+                    "agent_team_pr_closed_loop_enabled",
+                    get_settings().agent_team_pr_closed_loop_enabled,
+                )
                 await self._update_task(
                     task_id,
                     status=AgentTeamTaskStatus.PR_OPENED.value,
                     current_phase="pr_opened",
                     pr_number=pr_result.pr_number,
                     pr_url=pr_result.pr_url,
-                )
-
-                # 短暂等待后标记为 completed（外部 PR 审查将通过 webhook 异步处理）
-                s = get_settings()
-                cost_tracker = TokenTracker()
-                cost_tracker.prompt_tokens = outcome.prompt_tokens
-                cost_tracker.completion_tokens = outcome.completion_tokens
-                estimated_cost = cost_tracker.calculate_cost(
-                    s.review_price_per_1k_prompt, s.review_price_per_1k_completion,
-                )
-                await self._update_task(
-                    task_id,
-                    status=AgentTeamTaskStatus.COMPLETED.value,
-                    current_phase="completed",
-                    completed_at=_utc_now(),
+                    pr_head_sha=getattr(pr_result, "head_sha", "") or None,
                     estimated_cost=estimated_cost,
                     error_message=None,
                     failed_phase=None,
@@ -368,23 +385,36 @@ class AgentTeamWorker:
                     rate_limit_reset_at=None,
                 )
 
+                if not closed_loop_enabled:
+                    await self._update_task(
+                        task_id,
+                        status=AgentTeamTaskStatus.COMPLETED.value,
+                        current_phase="completed",
+                        completed_at=_utc_now(),
+                        estimated_cost=estimated_cost,
+                        error_message=None,
+                        failed_phase=None,
+                        failed_role=None,
+                        rate_limit_reset_at=None,
+                    )
+
                 logger.info(
-                    "Agent 任务完成: task_id={}, pr=#{} ({})",
+                    "Agent PR 已创建: task_id={}, pr=#{} ({}) | "
+                    "closed_loop={}, iterations={}, tool_calls={}, tokens={}+{}, cost={}",
                     task_id,
                     pr_result.pr_number,
                     pr_result.pr_url,
+                    closed_loop_enabled,
+                    outcome.iterations,
+                    outcome.total_tool_calls,
+                    outcome.prompt_tokens,
+                    outcome.completion_tokens,
+                    estimated_cost,
                 )
             else:
                 # 迭代未能通过审查
                 reason = _format_failure_reason(outcome.reason, outcome.modified_files)
 
-                s = get_settings()
-                cost_tracker = TokenTracker()
-                cost_tracker.prompt_tokens = outcome.prompt_tokens
-                cost_tracker.completion_tokens = outcome.completion_tokens
-                estimated_cost = cost_tracker.calculate_cost(
-                    s.review_price_per_1k_prompt, s.review_price_per_1k_completion,
-                )
                 await self._update_task(
                     task_id,
                     status=AgentTeamTaskStatus.FAILED.value,
@@ -393,7 +423,17 @@ class AgentTeamWorker:
                     failed_phase="iteration_failed",
                     estimated_cost=estimated_cost,
                 )
-                logger.warning("Agent 任务失败: task_id={}, reason={}", task_id, reason)
+                logger.warning(
+                    "Agent 任务失败: task_id={}, reason={} | "
+                    "iterations={}, tool_calls={}, tokens={}+{}, cost={}",
+                    task_id,
+                    reason,
+                    outcome.iterations,
+                    outcome.total_tool_calls,
+                    outcome.prompt_tokens,
+                    outcome.completion_tokens,
+                    estimated_cost,
+                )
 
         except Exception as e:
             logger.error(
@@ -409,11 +449,340 @@ class AgentTeamWorker:
             )
         finally:
             _cancel_events.pop(task_id, None)
-            await self._expire_pending_prompts(task_id)
+            await self._expire_pending_prompts_if_terminal(task_id)
 
         return task_id
 
+    async def process_external_review_iteration(self, task_id: int, review_id: int) -> int:
+        """根据 Sakura PR Review 反馈继续同一分支的 Agent 闭环迭代。"""
+        config = await load_agent_team_ai_config()
+        config.validate()
+
+        cancel_event = _cancel_events.get(task_id)
+        if cancel_event is None:
+            cancel_event = asyncio.Event()
+            _cancel_events[task_id] = cancel_event
+
+        terminal = False
+        try:
+            task = await self._load_task(task_id)
+            if task.status != AgentTeamTaskStatus.ITERATING.value:
+                logger.info(
+                    "跳过 Agent PR 闭环迭代: task_id={}, status={}",
+                    task_id,
+                    task.status,
+                )
+                return task_id
+
+            if not task.workspace_path or not task.branch_name or not task.pr_number:
+                terminal = True
+                await self._update_task(
+                    task_id,
+                    status=AgentTeamTaskStatus.WAITING_HUMAN.value,
+                    current_phase="waiting_human",
+                    error_message="缺少可继续 PR 闭环的 workspace/branch/pr 信息",
+                )
+                return task_id
+
+            remaining_iterations = max(
+                0,
+                (task.max_iterations or 0) - (task.iteration_count or 0),
+            )
+            if remaining_iterations <= 0:
+                terminal = True
+                await self._update_task(
+                    task_id,
+                    status=AgentTeamTaskStatus.WAITING_HUMAN.value,
+                    current_phase="waiting_human",
+                    error_message="Sakura PR Review 未通过，且已达到 Agent 最大迭代轮数",
+                )
+                return task_id
+
+            review_feedback = await self._load_sakura_pr_review_feedback(
+                task_id,
+                review_id,
+            )
+
+            git_service = AgentTeamGitWorkspaceService()
+            workspace_info = await git_service.resume_workspace(
+                task.repo_owner,
+                task.repo_name,
+                task.workspace_path,
+                task.branch_name,
+                task.base_branch,
+                task.base_commit_sha,
+            )
+
+            if cancel_event.is_set():
+                terminal = True
+                await self._update_task(
+                    task_id,
+                    status=AgentTeamTaskStatus.CANCELLED.value,
+                    current_phase="cancelled",
+                    error_message="任务在 PR 闭环恢复阶段被取消",
+                )
+                return task_id
+
+            (
+                skills_summary,
+                skills_context,
+                _skills_snapshot,
+            ) = await load_skills_context()
+            sakura_info = await load_sakura_memory(task.repo_owner, task.repo_name)
+            task_context = build_agent_task_summary(task.summary or "")
+
+            checkpoint = ConversationCheckpointService(task_id)
+            loop_service = IterationLoopService(
+                workspace_info.workspace,
+                task_id=task_id,
+                checkpoint=checkpoint,
+                resume_index=task.resume_count or 0,
+            )
+            outcome = await loop_service.run(
+                task_title=task.title,
+                task_summary=task_context,
+                source_type=task.source_type,
+                source_issue_number=task.source_issue_number,
+                max_iterations=remaining_iterations,
+                sakura_memory=sakura_info["text"],
+                skills_summary=skills_summary,
+                skills_context=skills_context,
+                github_repo=sakura_info["github_repo"],
+                sakura_ref=sakura_info["sakura_ref"],
+                initial_feedback=review_feedback,
+                cancel_check=cancel_event.is_set,
+                iteration_offset=task.iteration_count or 0,
+                skip_internal_review=True,
+            )
+
+            new_iteration_count = (task.iteration_count or 0) + outcome.iterations
+            prompt_tokens = (task.prompt_tokens or 0) + outcome.prompt_tokens
+            completion_tokens = (task.completion_tokens or 0) + outcome.completion_tokens
+            s = get_settings()
+            cost_tracker = TokenTracker()
+            cost_tracker.add_tokens(prompt_tokens, completion_tokens)
+            estimated_cost = cost_tracker.calculate_cost(
+                s.review_price_per_1k_prompt,
+                s.review_price_per_1k_completion,
+            )
+
+            if not outcome.success and cancel_event.is_set():
+                terminal = True
+                await self._update_task(
+                    task_id,
+                    status=AgentTeamTaskStatus.CANCELLED.value,
+                    current_phase="cancelled",
+                    iteration_count=new_iteration_count,
+                    prompt_tokens=prompt_tokens,
+                    completion_tokens=completion_tokens,
+                    estimated_cost=estimated_cost,
+                    error_message="任务在 PR 闭环迭代阶段被取消",
+                )
+                return task_id
+
+            await self._save_iteration(
+                task_id=task_id,
+                iteration_number=new_iteration_count,
+                fullstack_result=outcome.fullstack_result,
+                review_result=outcome.review_result,
+                modified_files=outcome.modified_files,
+                workspace=workspace_info.workspace,
+            )
+            await self._update_task(
+                task_id,
+                iteration_count=new_iteration_count,
+                prompt_tokens=prompt_tokens,
+                completion_tokens=completion_tokens,
+                current_phase="iteration_complete",
+            )
+
+            if not outcome.modified_files:
+                terminal = True
+                await self._update_task(
+                    task_id,
+                    status=AgentTeamTaskStatus.WAITING_HUMAN.value,
+                    current_phase="waiting_human",
+                    estimated_cost=estimated_cost,
+                    error_message="Agent 未根据 Sakura PR Review 产生新修改",
+                )
+                return task_id
+
+            if not outcome.success:
+                terminal = True
+                await self._update_task(
+                    task_id,
+                    status=AgentTeamTaskStatus.WAITING_HUMAN.value,
+                    current_phase="waiting_human",
+                    estimated_cost=estimated_cost,
+                    error_message=_format_failure_reason(
+                        outcome.reason,
+                        outcome.modified_files,
+                    ),
+                )
+                return task_id
+
+            await self._update_task(
+                task_id,
+                status=AgentTeamTaskStatus.VALIDATING.value,
+                current_phase="validating",
+            )
+            max_files = int(await self._get_config("agent_team_max_files_changed") or 30)
+            if len(outcome.modified_files) > max_files:
+                terminal = True
+                await self._update_task(
+                    task_id,
+                    status=AgentTeamTaskStatus.FAILED.value,
+                    current_phase="validation_failed",
+                    estimated_cost=estimated_cost,
+                    error_message=(
+                        f"修改文件数 {len(outcome.modified_files)} 超过限制 {max_files}"
+                    ),
+                    failed_phase="validation_failed",
+                )
+                return task_id
+
+            await self._update_task(
+                task_id,
+                status=AgentTeamTaskStatus.PUSHING.value,
+                current_phase="pushing",
+            )
+            pr_service = AgentTeamPRService()
+            fallback_msg = self._build_commit_message(task, outcome)
+            commit_message = await pr_service.generate_commit_message(
+                task_title=task.title,
+                task_summary=task.summary or "",
+                modified_files=outcome.modified_files or [],
+                fullstack_summary=outcome.fullstack_result.summary
+                if outcome.fullstack_result
+                else "",
+                review_feedback=review_feedback,
+                fallback_message=fallback_msg,
+            )
+            if commit_message == fallback_msg:
+                logger.info("Agent PR 闭环 commit message: 使用 fallback 模板")
+            else:
+                logger.info("Agent PR 闭环 commit message: 使用 AI 生成结果")
+            new_sha = await pr_service.commit_and_push(
+                workspace=str(workspace_info.workspace),
+                branch_name=task.branch_name,
+                commit_message=commit_message,
+                repo_owner=task.repo_owner,
+                repo_name=task.repo_name,
+            )
+
+            try:
+                fallback_body = pr_service.build_pr_body(
+                    task_title=task.title,
+                    task_summary=task.summary or "",
+                    fullstack_analysis=outcome.fullstack_result.summary
+                    if outcome.fullstack_result
+                    else "",
+                    fullstack_plan="",
+                    review_summary=outcome.review_result.summary
+                    if outcome.review_result
+                    else "",
+                    iteration_count=new_iteration_count,
+                    source_type=task.source_type,
+                    source_issue_number=task.source_issue_number,
+                )
+                body = await pr_service.generate_pr_body(
+                    task_title=task.title,
+                    task_summary=task.summary or "",
+                    fullstack_analysis=outcome.fullstack_result.summary
+                    if outcome.fullstack_result
+                    else "",
+                    review_summary=outcome.review_result.summary
+                    if outcome.review_result
+                    else "",
+                    review_verdict=outcome.review_result.verdict
+                    if outcome.review_result
+                    else "",
+                    review_score=outcome.review_result.score
+                    if outcome.review_result
+                    else 0,
+                    review_findings=[],
+                    modified_files=outcome.modified_files or [],
+                    iteration_count=new_iteration_count,
+                    source_type=task.source_type,
+                    source_issue_number=task.source_issue_number,
+                    fallback_body=fallback_body,
+                )
+                await pr_service.update_pull_request_body(
+                    repo_owner=task.repo_owner,
+                    repo_name=task.repo_name,
+                    pr_number=task.pr_number,
+                    body=body,
+                )
+            except Exception as exc:
+                logger.warning("更新 Agent PR body 失败，将继续等待 synchronize webhook: {}", exc)
+
+            await self._update_task(
+                task_id,
+                status=AgentTeamTaskStatus.EXTERNAL_REVIEWING.value,
+                current_phase="external_reviewing",
+                pr_head_sha=new_sha,
+                iteration_count=new_iteration_count,
+                prompt_tokens=prompt_tokens,
+                completion_tokens=completion_tokens,
+                estimated_cost=estimated_cost,
+                error_message=None,
+                failed_phase=None,
+                failed_role=None,
+                rate_limit_reset_at=None,
+            )
+            return task_id
+        except Exception as e:
+            terminal = True
+            logger.error(
+                "Agent PR 闭环迭代异常: task_id={}, review_id={}, error={}",
+                task_id,
+                review_id,
+                e,
+                exc_info=True,
+            )
+            await self._update_task(
+                task_id,
+                status=AgentTeamTaskStatus.FAILED.value,
+                current_phase="error",
+                error_message=f"{type(e).__name__}: {e}",
+                failed_phase="error",
+                rate_limit_reset_at=_parse_rate_limit_reset_at(str(e)),
+            )
+            return task_id
+        finally:
+            _cancel_events.pop(task_id, None)
+            if terminal:
+                await self._expire_pending_prompts_if_terminal(task_id)
+
     # ── 辅助方法 ──────────────────────────────────────────
+
+    async def _expire_pending_prompts_if_terminal(self, task_id: int) -> None:
+        try:
+            task = await self._load_task(task_id)
+        except Exception as exc:
+            logger.debug("检查 Agent pending prompts 过期状态失败: {}", exc)
+            return
+        if task.status in {
+            AgentTeamTaskStatus.COMPLETED.value,
+            AgentTeamTaskStatus.FAILED.value,
+            AgentTeamTaskStatus.CANCELLED.value,
+            AgentTeamTaskStatus.ABANDONED.value,
+        }:
+            await self._expire_pending_prompts(task_id)
+
+    async def _load_sakura_pr_review_feedback(self, task_id: int, review_id: int) -> str:
+        """读取 Sakura PR Review 反馈内容。"""
+        from sqlalchemy import select
+
+        async with db_module.async_session() as session:
+            result = await session.execute(
+                select(AgentTeamFeedback.content).where(
+                    AgentTeamFeedback.task_id == task_id,
+                    AgentTeamFeedback.source == AgentTeamFeedbackSource.SAKURA_PR_REVIEW.value,
+                    AgentTeamFeedback.external_id == f"pr_review:{review_id}",
+                )
+            )
+            return result.scalar_one_or_none() or ""
 
     async def _expire_pending_prompts(self, task_id: int) -> None:
         """任务结束时将未消费的 pending prompts 标记为 expired。"""
@@ -624,6 +993,10 @@ async def submit_agent_team_task(task_id: int) -> int:
 
 async def resume_agent_team_task(task_id: int) -> int:
     return await get_worker().process_task(task_id, resume=True)
+
+
+async def submit_agent_team_pr_review_iteration(task_id: int, review_id: int) -> int:
+    return await get_worker().process_external_review_iteration(task_id, review_id)
 
 
 def request_task_cancel(task_id: int) -> None:

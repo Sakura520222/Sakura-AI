@@ -1,7 +1,7 @@
 """Shell 工具 - 在工作区内执行命令
 
 通过已有的 AgentTeamShellExecutor 执行。
-支持超时和输出截断。
+支持超时并返回完整命令输出。
 安全策略：黑名单模式，默认允许所有命令，仅拦截高危命令。
 """
 
@@ -19,9 +19,10 @@ from backend.services.agent_team.tools.base import BaseTool, ToolContext, ToolRe
 # Shell 元字符/模式，出现则拒绝执行以防止命令注入
 # 单独的 $ 不拦截，仅拦截 $(...) 和 ${...} 等命令替换模式
 # 命令链接 && || ; 和后台 & 仍拦截，防止命令注入
-# 管道 | 允许（在 is_agent_command_allowed 中对每段做黑名单校验）
-_SHELL_META_CHARS = frozenset({"&&", "||", ";", "`", "&"})
+# fd 重定向 2>&1 不拦截；管道 | 允许并按命令段做黑名单校验。
+_SHELL_META_TOKENS = ("&&", "||", ";", "`")
 _SHELL_SUBST_PATTERNS = ("$('", "$(", "${")
+_ALLOWED_FD_REDIRECTS = frozenset({"1>&2", "2>&1"})
 
 # 默认拦截的高危命令（首 token 匹配）
 _DEFAULT_BLOCKED_COMMANDS = frozenset({
@@ -70,16 +71,19 @@ def _extract_unquoted(command: str) -> str:
     return "".join(result)
 
 
-def _contains_shell_meta(command: str) -> bool:
-    """检查命令的非引号部分是否包含 Shell 元字符或命令替换模式。"""
+def _shell_meta_block_reason(command: str) -> str | None:
+    """检查命令的非引号部分是否包含不允许的 Shell 元字符。"""
     unquoted = _extract_unquoted(command)
-    for meta in _SHELL_META_CHARS:
+    for meta in _SHELL_META_TOKENS:
         if meta in unquoted:
-            return True
+            return f"包含未允许的 shell 元字符: {meta}"
     for pattern in _SHELL_SUBST_PATTERNS:
         if pattern in unquoted:
-            return True
-    return False
+            return f"包含未允许的 shell 命令替换模式: {pattern}"
+    for token in unquoted.split():
+        if "&" in token and token not in _ALLOWED_FD_REDIRECTS:
+            return "包含未允许的 shell 元字符: &"
+    return None
 
 
 def _has_redundant_cd_prefix(command: str) -> bool:
@@ -97,23 +101,23 @@ def _command_name(first_token: str) -> str:
     return name[:-4] if name.endswith(".exe") else name
 
 
-def _is_segment_blocked(tokens: list[str], blocklist: set[str]) -> bool:
+def _segment_block_reason(tokens: list[str], blocklist: set[str]) -> str | None:
     """检查命令段是否被黑名单或危险参数策略拦截。"""
     name = _command_name(tokens[0])
     if name in blocklist:
-        return True
+        return f"命令位于黑名单: {name}"
     if name == "rm" and any(
         token == "--recursive" or (token.startswith("-") and "r" in token.lower())
         for token in tokens[1:]
     ):
-        return True
+        return "递归 rm 命令被拦截"
     if name == "chmod" and any(token in {"777", "a+w", "ugo+w"} for token in tokens[1:]):
-        return True
+        return "高权限 chmod 命令被拦截"
     if name in {"python", "python3", "py", "node", "ruby", "perl"} and any(
         token in {"-c", "-e"} for token in tokens[1:]
     ):
-        return True
-    return False
+        return f"解释器内联执行被拦截: {name}"
+    return None
 
 
 def _parse_pipe_segments(tokens: list[str]) -> list[list[str]] | None:
@@ -133,27 +137,23 @@ def _parse_pipe_segments(tokens: list[str]) -> list[list[str]] | None:
     return segments if segments else None
 
 
-async def is_agent_command_allowed(command: str) -> bool:
-    """检查 Agent 命令是否允许执行（黑名单模式）。
-
-    默认允许所有命令，仅拦截黑名单中的高危命令。
-    管道 | 两侧的命令段分别进行黑名单校验。
-    管道和重定向不拦截，由 shell_executor 的路径校验提供隔离。
-    """
+def _agent_command_block_reason(command: str) -> str | None:
+    """返回 Agent 命令被安全策略拦截的原因。"""
     command = command.strip()
     if not command:
-        return False
+        return "Shell 命令不能为空"
 
-    if _contains_shell_meta(command):
-        return False
+    meta_reason = _shell_meta_block_reason(command)
+    if meta_reason:
+        return meta_reason
 
     try:
         tokens = shlex.split(command)
-    except ValueError:
-        return False
+    except ValueError as exc:
+        return f"Shell 命令解析失败: {exc}"
 
     if not tokens:
-        return False
+        return "Shell 命令不能为空"
 
     # 构建黑名单：默认 + 用户配置
     blocklist = set(_DEFAULT_BLOCKED_COMMANDS)
@@ -168,13 +168,24 @@ async def is_agent_command_allowed(command: str) -> bool:
     # 按管道分段，每段独立校验
     segments = _parse_pipe_segments(tokens)
     if segments is None:
-        return False
+        return "管道格式不合法"
 
     for segment in segments:
-        if _is_segment_blocked(segment, blocklist):
-            logger.warning("Shell 命令被黑名单拦截: {}", segment[0])
-            return False
-    return True
+        reason = _segment_block_reason(segment, blocklist)
+        if reason:
+            logger.warning("Shell 命令被安全策略拦截: {}", reason)
+            return reason
+    return None
+
+
+async def is_agent_command_allowed(command: str) -> bool:
+    """检查 Agent 命令是否允许执行（黑名单模式）。
+
+    默认允许所有命令，仅拦截黑名单中的高危命令。
+    管道 | 两侧的命令段分别进行黑名单校验。
+    管道和重定向不拦截，由 shell_executor 的路径校验提供隔离。
+    """
+    return _agent_command_block_reason(command) is None
 
 
 class ShellTool(BaseTool):
@@ -238,8 +249,9 @@ class ShellTool(BaseTool):
                 ),
             )
 
-        if not await is_agent_command_allowed(command):
-            return ToolResult(success=False, error="命令被安全策略拦截")
+        block_reason = _agent_command_block_reason(command)
+        if block_reason:
+            return ToolResult(success=False, error=f"命令被安全策略拦截: {block_reason}")
 
         executor = AgentTeamShellExecutor(ctx.workspace, ctx.workspace_service)
 
@@ -250,20 +262,9 @@ class ShellTool(BaseTool):
                 success=False, error=f"命令执行失败: {type(exc).__name__}: {exc}"
             )
 
-        stdout = result.stdout
-        stderr = result.stderr
-
-        # 截断大输出
-        max_stdout = 8000
-        max_stderr = 3000
-        truncated_stdout = len(stdout) > max_stdout
-        truncated_stderr = len(stderr) > max_stderr
-        stdout = stdout[:max_stdout]
-        stderr = stderr[:max_stderr]
-
         logger.info(
-            "ShellTool: {} (rc={}, {}ms)",
-            command[:60],
+            "ShellTool: {} (rc={}, {})",
+            command,
             result.returncode,
             "timed_out" if result.timed_out else "ok",
         )
@@ -272,10 +273,8 @@ class ShellTool(BaseTool):
             success=True,
             output={
                 "returncode": result.returncode,
-                "stdout": stdout,
-                "stderr": stderr,
+                "stdout": result.stdout,
+                "stderr": result.stderr,
                 "timed_out": result.timed_out,
-                "truncated_stdout": truncated_stdout,
-                "truncated_stderr": truncated_stderr,
             },
         )

@@ -53,6 +53,7 @@ class PRCreationResult:
     pr_url: str
     commit_sha: str
     branch_name: str
+    head_sha: str = ""
 
 
 @dataclass(frozen=True)
@@ -358,6 +359,7 @@ class AgentTeamPRService:
                     pr_url=pr.html_url,
                     commit_sha="",
                     branch_name=head_branch,
+                    head_sha=getattr(getattr(pr, "head", None), "sha", "") or "",
                 )
             except GithubException as e:
                 last_error = e
@@ -375,6 +377,27 @@ class AgentTeamPRService:
                 raise
 
         raise last_error  # type: ignore[misc]
+
+    async def update_pull_request_body(
+        self,
+        repo_owner: str,
+        repo_name: str,
+        pr_number: int,
+        body: str,
+    ) -> None:
+        """通过 GitHub API 更新 Pull Request 描述。"""
+        github_app = GitHubAppClient()
+        client = github_app.get_repo_client(repo_owner, repo_name)
+        if not client:
+            raise RuntimeError(f"无法获取 GitHub 客户端: {repo_owner}/{repo_name}")
+
+        repo = client.get_repo(f"{repo_owner}/{repo_name}")
+
+        def _sync() -> None:
+            pr = repo.get_pull(pr_number)
+            pr.edit(body=body)
+
+        await asyncio.to_thread(_sync)
 
     def build_pr_body(
         self,
@@ -608,3 +631,82 @@ class AgentTeamPRService:
         except Exception as e:
             logger.warning("AI 生成 PR 标题失败，使用原始标题: {}", e)
             return task_title
+
+    async def generate_commit_message(
+        self,
+        task_title: str,
+        task_summary: str,
+        modified_files: list[str],
+        fullstack_summary: str = "",
+        review_feedback: str = "",
+        fallback_message: str = "",
+    ) -> str:
+        """使用辅助 AI 生成 Conventional Commits 风格的提交信息。
+
+        生成失败时回退到 fallback_message。
+        """
+        if not modified_files:
+            return fallback_message or f"feat(agent): {task_title}"
+
+        try:
+            from backend.services.agent_team.ai_client import (
+                create_agent_team_summary_client,
+            )
+
+            client, model, _config = await create_agent_team_summary_client()
+
+            files_text = ", ".join(modified_files[:20])
+            if len(modified_files) > 20:
+                files_text += f" ... (共 {len(modified_files)} 个文件)"
+
+            system_prompt = (
+                "你是一个代码提交信息生成助手。根据任务描述、实际修改文件和审查反馈，"
+                "生成规范的 Git 提交信息。\n\n"
+                "要求：\n"
+                "- 使用 Conventional Commits 格式\n"
+                "- 第一行: type(scope): 简短描述（不超过 72 字符）\n"
+                "- type 从 feat/fix/refactor/docs/style/test/chore 中选择\n"
+                "- scope 可选，表示影响范围\n"
+                "- 空一行后写 body：用 1-3 句英文描述实际改动内容\n"
+                "- 如果有审查反馈，在 body 末尾说明本次提交针对的反馈\n"
+                "- 不加 emoji\n"
+                "- 只返回提交信息文本，不要代码块包裹"
+            )
+            user_prompt = (
+                f"任务标题: {task_title}\n"
+                f"任务描述: {task_summary}\n"
+                f"修改文件: {files_text}\n"
+            )
+            if fullstack_summary:
+                user_prompt += f"全栈专家总结: {fullstack_summary}\n"
+            if review_feedback:
+                user_prompt += f"外部审查反馈: {review_feedback}\n"
+
+            response = await client.call_with_retry(
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_prompt},
+                ],
+                model=model,
+                temperature=0.1,
+                max_tokens=300,
+                timeout=15.0,
+            )
+
+            if not response.choices:
+                logger.warning("AI 生成 commit message 返回空结果，使用硬编码模板")
+                return fallback_message or f"feat(agent): {task_title}"
+
+            raw = response.choices[0].message.content.strip()
+            msg = re.sub(r"^```\w*\n?", "", raw)
+            msg = re.sub(r"\n?```$", "", msg).strip()
+
+            if not msg or len(msg) < 10:
+                logger.warning("AI 生成的 commit message 过短，使用硬编码模板")
+                return fallback_message or f"feat(agent): {task_title}"
+
+            return msg
+
+        except Exception as e:
+            logger.warning("AI 生成 commit message 失败，使用硬编码模板: {}", e)
+            return fallback_message or f"feat(agent): {task_title}"

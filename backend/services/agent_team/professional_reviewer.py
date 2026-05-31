@@ -260,6 +260,12 @@ class ProfessionalReviewAgent:
         tool_calls_count = 0
         token_tracker = TokenTracker()
 
+        # 延迟导入：避免 agent_team → ai_reviewer → model_context 循环依赖
+        from backend.core.model_context import get_model_context_manager
+        from backend.services.ai_reviewer.message_utils import estimate_messages_tokens
+
+        model_ctx_mgr = get_model_context_manager()
+
         for round_num in range(1, max_tool_rounds + 1):
             if cancel_check and cancel_check():
                 return ReviewResult(
@@ -313,6 +319,11 @@ class ProfessionalReviewAgent:
                 tool_choice="auto",
             )
             token_tracker.accumulate(response)
+
+            # 每轮记录上下文使用率
+            safe_ctx = model_ctx_mgr.calculate_safe_context(config.review_model, 0.8)
+            current_tokens = estimate_messages_tokens(self.messages, model_ctx_mgr)
+            token_tracker.log_context_usage(current_tokens, safe_ctx, round_num)
 
             if not response.choices:
                 return ReviewResult(

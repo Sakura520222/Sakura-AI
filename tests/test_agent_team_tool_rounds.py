@@ -142,6 +142,60 @@ async def test_iteration_loop_reviews_changes_when_fullstack_hits_tool_round_lim
     assert outcome.review_result.summary == "reviewed main.py"
 
 
+@pytest.mark.asyncio
+async def test_iteration_loop_passes_initial_feedback_to_fullstack(monkeypatch, tmp_path):
+    captured = {}
+
+    @dataclass
+    class FakeFullstackAgent:
+        workspace: str
+        workspace_service: object
+
+        async def execute(self, **kwargs):
+            captured["feedback"] = kwargs["feedback"]
+            return FullStackResult(
+                success=True,
+                summary="fixed external review",
+                modified_files=["main.py"],
+                tool_calls_count=1,
+            )
+
+    @dataclass
+    class FakeReviewer:
+        workspace: str
+        workspace_service: object
+
+        async def review(self, **kwargs):
+            return ReviewResult(
+                verdict="pass",
+                score=9,
+                summary="passed",
+                passed=True,
+                tool_calls_count=1,
+            )
+
+    monkeypatch.setattr(
+        "backend.services.agent_team.iteration_loop.FullStackExpertAgent",
+        FakeFullstackAgent,
+    )
+    monkeypatch.setattr(
+        "backend.services.agent_team.iteration_loop.ProfessionalReviewAgent",
+        FakeReviewer,
+    )
+
+    workspace_service = AgentTeamWorkspaceService(tmp_path)
+    loop = IterationLoopService(str(tmp_path), workspace_service)
+    outcome = await loop.run(
+        task_title="Fix bug",
+        task_summary="Summary",
+        max_iterations=1,
+        initial_feedback="Sakura PR Review says fix auth.py",
+    )
+
+    assert outcome.success is True
+    assert captured["feedback"] == "Sakura PR Review says fix auth.py"
+
+
 @dataclass
 class _FakeBrokenFullstackAgent:
     workspace: str
