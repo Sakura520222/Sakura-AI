@@ -287,6 +287,9 @@ async def test_external_review_iteration_pushes_same_branch_and_waits_for_synchr
         def build_pr_body(self, **kwargs):
             return "updated body"
 
+        async def generate_pr_body(self, **kwargs):
+            return kwargs.get("fallback_body") or "ai body"
+
         async def commit_and_push(self, **kwargs):
             pushed.append(kwargs)
             return "new-sha"
