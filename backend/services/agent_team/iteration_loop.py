@@ -94,6 +94,7 @@ class IterationLoopService:
         cancel_check: Callable[[], bool] | None = None,
         initial_feedback: str = "",
         iteration_offset: int = 0,
+        skip_internal_review: bool = False,
     ) -> IterationOutcome:
         """运行迭代循环。"""
         total_tool_calls = 0
@@ -230,6 +231,24 @@ class IterationLoopService:
                 fs_result.summary[:100],
             )
             await self.conversation_context.record_fullstack_turn(iteration, fs_result)
+
+            # 闭环迭代时跳过内部审查，直接交给外部 Sakura PR Review
+            if skip_internal_review:
+                logger.info(
+                    "闭环迭代模式：跳过内部审查，直接交给外部 Sakura PR Review"
+                )
+                return IterationOutcome(
+                    success=True,
+                    reason="闭环迭代：跳过内部审查",
+                    iterations=iteration,
+                    fullstack_result=fs_result,
+                    review_result=None,
+                    modified_files=fs_result.modified_files,
+                    total_tool_calls=total_tool_calls,
+                    prompt_tokens=tracker.prompt_tokens,
+                    completion_tokens=tracker.completion_tokens,
+                )
+
             reviewer_handoff_context = await self.conversation_context.build_handoff_context(
                 "reviewer", iteration + 1
             )
