@@ -17,46 +17,61 @@ from backend.models.agent_team_models import AgentTeamTask
 from backend.models.scan_models import RepoScan
 
 
-async def fetch_module_token_stats(db: AsyncSession) -> dict[str, int]:
+async def fetch_module_token_stats(
+    db: AsyncSession,
+    scope_user: str | None = None,
+) -> dict[str, int]:
     """聚合所有模块（PR / Issue / Agent / Scan）的累计 token 和 cost。
+
+    Args:
+        db: 数据库 session
+        scope_user: 非 admin 用户的 GitHub 用户名，用于权限过滤；
+            None 表示管理员或无需过滤。
 
     Returns:
         {"total_prompt": int, "total_completion": int, "total_cost": int}
     """
+    from sqlalchemy import or_
+
+    # ── 构建各模块的 scope 过滤条件 ──
+    # PRReview / IssueAnalysis 有 repo_owner + author，双向匹配
+    # AgentTeamTask / RepoScan 仅有 repo_owner
+    def _scope_for(model, *, has_author: bool = True):
+        if scope_user is None:
+            return None
+        conditions = [model.repo_owner == scope_user]
+        if has_author:
+            conditions.append(model.author == scope_user)
+        return or_(*conditions) if len(conditions) > 1 else conditions[0]
+
+    def _aggregate(model, scope):
+        q = select(
+            func.coalesce(func.sum(model.prompt_tokens), 0).label("p"),
+            func.coalesce(func.sum(model.completion_tokens), 0).label("c"),
+            func.coalesce(func.sum(model.estimated_cost), 0).label("e"),
+        ).where(model.status == "completed")
+        if scope is not None:
+            q = q.where(scope)
+        return q
+
     # PR 审查聚合
     pr_row = (await db.execute(
-        select(
-            func.coalesce(func.sum(PRReview.prompt_tokens), 0).label("p"),
-            func.coalesce(func.sum(PRReview.completion_tokens), 0).label("c"),
-            func.coalesce(func.sum(PRReview.estimated_cost), 0).label("e"),
-        ).where(PRReview.status == "completed")
+        _aggregate(PRReview, _scope_for(PRReview, has_author=True))
     )).one()
 
     # Issue 分析聚合
     issue_row = (await db.execute(
-        select(
-            func.coalesce(func.sum(IssueAnalysis.prompt_tokens), 0).label("p"),
-            func.coalesce(func.sum(IssueAnalysis.completion_tokens), 0).label("c"),
-            func.coalesce(func.sum(IssueAnalysis.estimated_cost), 0).label("e"),
-        ).where(IssueAnalysis.status == "completed")
+        _aggregate(IssueAnalysis, _scope_for(IssueAnalysis, has_author=True))
     )).one()
 
     # Agent 任务聚合
     agent_row = (await db.execute(
-        select(
-            func.coalesce(func.sum(AgentTeamTask.prompt_tokens), 0).label("p"),
-            func.coalesce(func.sum(AgentTeamTask.completion_tokens), 0).label("c"),
-            func.coalesce(func.sum(AgentTeamTask.estimated_cost), 0).label("e"),
-        ).where(AgentTeamTask.status == "completed")
+        _aggregate(AgentTeamTask, _scope_for(AgentTeamTask, has_author=False))
     )).one()
 
     # 仓库扫描聚合
     scan_row = (await db.execute(
-        select(
-            func.coalesce(func.sum(RepoScan.prompt_tokens), 0).label("p"),
-            func.coalesce(func.sum(RepoScan.completion_tokens), 0).label("c"),
-            func.coalesce(func.sum(RepoScan.estimated_cost), 0).label("e"),
-        ).where(RepoScan.status == "completed")
+        _aggregate(RepoScan, _scope_for(RepoScan, has_author=False))
     )).one()
 
     return {
