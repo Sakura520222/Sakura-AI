@@ -8,7 +8,7 @@
 
 **English** | [中文](README.md)
 
-[![Version](https://img.shields.io/badge/Version-2.12.0-blue.svg)](https://github.com/Sakura520222/Sakura-AI-Reviewer/releases)
+[![Version](https://img.shields.io/badge/Version-2.12.1-blue.svg)](https://github.com/Sakura520222/Sakura-AI-Reviewer/releases)
 [![Python](https://img.shields.io/badge/Python-3.11+-blue.svg)](https://www.python.org/)
 [![FastAPI](https://img.shields.io/badge/FastAPI-Latest-green.svg)](https://fastapi.tiangolo.com/)
 [![License](https://img.shields.io/badge/License-AGPLv3-yellow.svg)](LICENSE)
@@ -32,14 +32,6 @@
 ---
 
 ## ✨ Core Features
-
-### 2.12.0 Highlights
-
-- **Multi-provider payments and refund workflow**: Adds Stripe, Paddle, Alipay, NOWPayments, and direct TRON USDT gateways, with order creation, status polling, signed webhooks, user refund requests, super-admin review, and real refund execution.
-- **Quota-controlled Agent Team access**: Agent tasks can be delegated from Issue comments with `/agent`; non-admin users must pass repository ownership/allowlist checks and consume dedicated Agent daily/weekly/monthly quotas.
-- **Mobile authentication improvements**: Mobile OAuth supports allowlisted redirect URIs, while WebAuthn/Passkeys support extra allowed origins and Android App Links scenarios for native Android integration.
-- **Sakura Memory extraction cadence**: Knowledge extraction now runs periodically by reflection count, continuously distilling reusable rules, docs, and plans into `.sakura/rules`, `.sakura/docs`, and `.sakura/plans`.
-- **Simplified review and task loop**: Removes the old batch processing module, relies on compact diff tool mode for large PRs, and closes the loop from repository scan report Issues to Agent tasks.
 
 ### Review Capabilities
 
