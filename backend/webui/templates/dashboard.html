@@ -167,6 +167,7 @@ function systemInfoInit() {
             }
         },
 
+        // 注意：格式与 backend/main.py._format_duration 保持一致（一位小数）
         _formatDuration(seconds) {
             if (seconds < 1) return Math.floor(seconds * 1000) + 'ms';
             if (seconds < 60) return seconds.toFixed(1) + 's';
