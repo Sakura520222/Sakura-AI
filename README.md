@@ -107,11 +107,12 @@
 - **Token 消耗追踪**：实时追踪 Agent Team 中所有 AI API 调用的 token 消耗量与预估成本
 - **目标分支选择**：创建任务时支持选择目标分支（develop/main 等），灵活控制合入方向
 - **手动 Issue 任务预览/编辑**：WebUI 中支持预览和编辑 Issue 分析结果后再创建 Agent 任务
-- **PR 创建闭环**：支持 AI 生成 Conventional Commits 风格 PR 标题和描述、创建 Draft PR，并通过 Sakura PR 审查与人工反馈继续迭代；不会自动合并 PR
+- **PR 创建闭环**：支持 AI 生成 Conventional Commits 风格 PR 标题、描述和提交信息，创建 Draft PR，并通过 Sakura PR 审查与人工反馈继续迭代；不会自动合并 PR
   - Agent Team 初始创建的是 Draft PR；Draft opened webhook 不会触发 Sakura PR Review
   - 当 Draft PR 被标记为 Ready for review 后，GitHub `ready_for_review` webhook 会自动触发 Sakura PR Review
   - Bot 自己创建的 PR 在 GitHub 侧只能发表普通评论；Agent 闭环使用 Sakura 内部结构化审查结果判定是否继续
   - 存在 critical / major 等配置为阻塞的审查项，或分数低于 `agent_team_pr_review_pass_score` 时，Agent 会在同一 `sakura-agent/*` 分支继续迭代
+  - 首轮迭代包含内部 Professional Reviewer 审查；闭环后续迭代跳过内部审查，直接交给外部 Sakura PR Review，节省 token 和时间
   - Agent push 新 commit 后，GitHub `synchronize` webhook 会自动触发下一轮 Sakura PR Review
   - 自动迭代受 `agent_team_max_iterations_per_task` 限制；达到上限或无法安全继续时进入 `waiting_human`
   - `agent_team_pr_closed_loop_enabled` 可关闭闭环并恢复创建 PR 即完成的旧行为

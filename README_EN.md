@@ -107,11 +107,12 @@
 - **Token Usage Tracking**: Real-time tracking of token consumption and estimated costs across all AI API calls in Agent Team
 - **Base Branch Selection**: Choose the target branch (develop/main, etc.) when creating tasks for flexible merge direction control
 - **Manual Issue Task Preview/Edit**: Preview and edit Issue analysis results in WebUI before creating an Agent task
-- **PR Creation Loop**: Supports AI-generated Conventional Commits-style PR titles and descriptions, Draft PR creation, then iterates through Sakura PR Review and human feedback; PRs are never merged automatically
+- **PR Creation Loop**: Supports AI-generated Conventional Commits-style PR titles, descriptions, and commit messages, Draft PR creation, then iterates through Sakura PR Review and human feedback; PRs are never merged automatically
   - Agent Team initially opens a Draft PR; the draft opened webhook does not start Sakura PR Review
   - When the Draft PR becomes Ready for review, GitHub `ready_for_review` webhook automatically starts Sakura PR Review
   - Because the PR is created by the bot itself, GitHub only receives ordinary comments; the Agent loop uses Sakura internal structured review results
   - Blocking severities such as critical / major, or a score below `agent_team_pr_review_pass_score`, make the Agent continue iterating on the same `sakura-agent/*` branch
+  - The first iteration includes an internal Professional Reviewer pass; subsequent closed-loop iterations skip internal review and go directly to external Sakura PR Review, saving tokens and time
   - After the Agent pushes a new commit, GitHub `synchronize` webhook automatically starts the next Sakura PR Review
   - Automatic iterations are capped by `agent_team_max_iterations_per_task`; when the cap is reached or continuation is unsafe, the task moves to `waiting_human`
   - `agent_team_pr_closed_loop_enabled` can disable the closed loop and restore the previous behavior where PR creation marks the task complete
