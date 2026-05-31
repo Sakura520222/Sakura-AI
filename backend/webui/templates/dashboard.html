@@ -61,6 +61,34 @@
             </div>
         </div>
     </div>
+
+    <!-- 系统信息 -->
+    <div x-data="systemInfoInit()" x-init="loadSystemInfo()" class="glass rounded-2xl p-5 border border-sakura-200/50 dark:border-sakura-800/30 shadow-sm">
+        <div class="flex items-center gap-2 mb-3">
+            <svg class="w-5 h-5 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 3v2m6-2v2M9 19v2m6-2v2M5 9H3m2 6H3m18-6h-2m2 6h-2M7 19h10a2 2 0 002-2V7a2 2 0 00-2-2H7a2 2 0 00-2 2v10a2 2 0 002 2z"/>
+            </svg>
+            <h2 class="text-lg font-semibold">{{ _('dashboard.system_info') }}</h2>
+        </div>
+        <div class="grid grid-cols-2 sm:grid-cols-4 gap-4 text-sm">
+            <div>
+                <p class="text-gray-500 dark:text-gray-400">{{ _('dashboard.version') }}</p>
+                <p class="font-medium mt-0.5" x-text="version || '-'"></p>
+            </div>
+            <div>
+                <p class="text-gray-500 dark:text-gray-400">{{ _('dashboard.startup_time') }}</p>
+                <p class="font-medium mt-0.5" x-text="startupTime || '-'"></p>
+            </div>
+            <div>
+                <p class="text-gray-500 dark:text-gray-400">{{ _('dashboard.startup_duration') }}</p>
+                <p class="font-medium mt-0.5" x-text="startupDuration || '-'"></p>
+            </div>
+            <div>
+                <p class="text-gray-500 dark:text-gray-400">{{ _('dashboard.uptime') }}</p>
+                <p class="font-medium mt-0.5 text-green-600 dark:text-green-400" x-text="uptime || '-'"></p>
+            </div>
+        </div>
+    </div>
 </div>
 {% endblock %}
 
@@ -105,5 +133,50 @@ document.addEventListener('sse:review-status', function() {
             .catch(function() { container.innerHTML = getErrorHTML(); });
     }
 });
+
+// 系统信息组件
+function systemInfoInit() {
+    return {
+        version: '',
+        startupTime: '',
+        startupDuration: '',
+        uptime: '',
+        _uptimeBase: 0,
+        _interval: null,
+
+        loadSystemInfo() {
+            fetch('/api/system-info')
+                .then(r => r.json())
+                .then(data => {
+                    this.version = data.version || '';
+                    this.startupTime = data.startup_time || '';
+                    this.startupDuration = data.startup_duration_formatted || '';
+                    this._uptimeBase = data.uptime_seconds || 0;
+                    this._updateUptime();
+                    // 每秒刷新运行时长
+                    if (this._interval) clearInterval(this._interval);
+                    this._interval = setInterval(() => this._updateUptime(), 1000);
+                })
+                .catch(err => console.error('加载系统信息失败:', err));
+        },
+
+        _updateUptime() {
+            if (this._uptimeBase > 0) {
+                this.uptime = this._formatDuration(this._uptimeBase);
+                this._uptimeBase += 1;
+            }
+        },
+
+        _formatDuration(seconds) {
+            if (seconds < 60) return seconds + 's';
+            var minutes = Math.floor(seconds / 60);
+            var secs = seconds % 60;
+            if (minutes < 60) return minutes + 'm ' + secs + 's';
+            var hours = Math.floor(minutes / 60);
+            var mins = minutes % 60;
+            return hours + 'h ' + mins + 'm ' + secs + 's';
+        }
+    };
+}
 </script>
 {% endblock %}

@@ -6,6 +6,7 @@ from fastapi.responses import RedirectResponse, JSONResponse
 from contextlib import asynccontextmanager
 from loguru import logger
 import sys
+import time
 import asyncio
 
 from backend import __version__
@@ -37,6 +38,43 @@ logger.add("logs/app.log", rotation="500 MB", retention="10 days", level="DEBUG"
 
 settings = get_settings()
 
+# 启动耗时记录（由 lifespan 写入，/health 端点读取）
+_startup_started_at: float = 0.0
+_startup_finished_at: float = 0.0
+_startup_duration: float = 0.0
+
+
+def get_startup_info() -> dict:
+    """返回启动时间与运行时长信息，供 /health 端点使用。"""
+    now = time.time()
+    uptime_seconds = now - _startup_finished_at if _startup_finished_at else 0.0
+    return {
+        "startup_time": (
+            time.strftime(
+                "%Y-%m-%dT%H:%M:%SZ", time.gmtime(_startup_finished_at)
+            )
+            if _startup_finished_at
+            else None
+        ),
+        "startup_duration_seconds": round(_startup_duration, 2),
+        "uptime_seconds": round(uptime_seconds),
+    }
+
+
+def _format_duration(seconds: float) -> str:
+    """将秒数格式化为人类可读的时长字符串。"""
+    if seconds < 1:
+        return f"{seconds * 1000:.0f}ms"
+    if seconds < 60:
+        return f"{seconds:.1f}s"
+    minutes = int(seconds // 60)
+    secs = seconds % 60
+    if minutes < 60:
+        return f"{minutes}m {secs:.0f}s"
+    hours = minutes // 60
+    mins = minutes % 60
+    return f"{hours}h {mins}m {secs:.0f}s"
+
 
 def _get_allowed_origins(app_settings: Settings) -> list[str]:
     """构造 CORS origin 列表。开发模式下放行本地调试地址。"""
@@ -64,7 +102,10 @@ def _should_start_background_tasks(app_settings: Settings) -> bool:
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """应用生命周期管理"""
+    global _startup_started_at, _startup_finished_at, _startup_duration
+
     # 启动时
+    _startup_started_at = time.time()
     logger.info("🚀 Sakura AI Reviewer 启动中...")
 
     telegram_task = None
@@ -183,6 +224,14 @@ async def lifespan(app: FastAPI):
         logger.warning("🔧 Bootstrap 模式：仅 Setup Wizard 可用")
         logger.info("请访问 /setup 完成初始配置")
 
+    # 记录启动完成时间
+    _startup_finished_at = time.time()
+    _startup_duration = _startup_finished_at - _startup_started_at
+    logger.info(
+        "✅ Sakura AI Reviewer 启动完成，耗时 {}",
+        _format_duration(_startup_duration),
+    )
+
     yield
 
     # 关闭时
@@ -254,7 +303,13 @@ app.add_middleware(BootstrapMiddleware)
 @app.get("/health")
 async def health():
     """健康检查"""
-    return {"status": "healthy", "service": "Sakura AI Reviewer"}
+    startup_info = get_startup_info()
+    return {
+        "status": "healthy",
+        "service": "Sakura AI Reviewer",
+        "version": __version__,
+        **startup_info,
+    }
 
 
 # 注册路由
