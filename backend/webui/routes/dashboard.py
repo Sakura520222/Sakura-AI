@@ -3,7 +3,7 @@
 import asyncio
 import time
 from collections import OrderedDict
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 from fastapi import APIRouter, Request, Depends
@@ -473,3 +473,37 @@ async def refresh_cache(user: dict = Depends(require_auth)):
     _stats_cache.pop(uid, None)
     _chart_cache.pop(uid, None)
     return {"status": "ok"}
+
+
+def _format_uptime(seconds: float) -> str:
+    """将秒数格式化为人类可读的运行时间字符串（如 '3天 2小时 15分'）。"""
+    days, remainder = divmod(int(seconds), 86400)
+    hours, remainder = divmod(remainder, 3600)
+    minutes, _ = divmod(remainder, 60)
+    parts: list[str] = []
+    if days > 0:
+        parts.append(f"{days}d")
+    if hours > 0:
+        parts.append(f"{hours}h")
+    parts.append(f"{minutes}m")
+    return " ".join(parts)
+
+
+@router.get("/api/system-info")
+async def get_system_info(request: Request, user: dict = Depends(require_auth)):
+    """获取系统运行信息（启动耗时、运行时间等）"""
+    startup_dur = getattr(request.app.state, "startup_duration_seconds", None)
+    started_at = getattr(request.app.state, "started_at", None)
+
+    result: dict = {
+        "startup_duration_seconds": round(startup_dur, 2) if startup_dur else None,
+        "started_at": started_at.isoformat() if started_at else None,
+        "uptime_seconds": None,
+        "uptime_display": None,
+    }
+    if started_at is not None:
+        now = datetime.now(tz=timezone.utc)
+        uptime = (now - started_at).total_seconds()
+        result["uptime_seconds"] = round(uptime, 1)
+        result["uptime_display"] = _format_uptime(uptime)
+    return result

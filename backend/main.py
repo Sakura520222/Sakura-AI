@@ -6,7 +6,9 @@ from fastapi.responses import RedirectResponse, JSONResponse
 from contextlib import asynccontextmanager
 from loguru import logger
 import sys
+import time
 import asyncio
+from datetime import datetime, timezone
 
 from backend import __version__
 from backend.core.config import Settings, get_settings
@@ -64,7 +66,9 @@ def _should_start_background_tasks(app_settings: Settings) -> bool:
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """应用生命周期管理"""
-    # 启动时
+    # 启动时 — 记录启动起始时间
+    _startup_monotonic = time.monotonic()
+    _startup_wall = time.time()
     logger.info("🚀 Sakura AI Reviewer 启动中...")
 
     telegram_task = None
@@ -183,6 +187,14 @@ async def lifespan(app: FastAPI):
         logger.warning("🔧 Bootstrap 模式：仅 Setup Wizard 可用")
         logger.info("请访问 /setup 完成初始配置")
 
+    # 启动完成 — 计算并记录启动耗时
+    _startup_duration = time.monotonic() - _startup_monotonic
+    app.state.startup_duration_seconds = _startup_duration
+    app.state.started_at = datetime.fromtimestamp(_startup_wall, tz=timezone.utc)
+    logger.info(
+        "✅ 启动完成，耗时 {:.2f} 秒", _startup_duration
+    )
+
     yield
 
     # 关闭时
@@ -252,9 +264,18 @@ app.add_middleware(BootstrapMiddleware)
 
 # 健康检查
 @app.get("/health")
-async def health():
+async def health(request: Request):
     """健康检查"""
-    return {"status": "healthy", "service": "Sakura AI Reviewer"}
+    result = {"status": "healthy", "service": "Sakura AI Reviewer"}
+    startup_dur = getattr(request.app.state, "startup_duration_seconds", None)
+    started_at = getattr(request.app.state, "started_at", None)
+    if startup_dur is not None:
+        result["startup_duration_seconds"] = round(startup_dur, 2)
+    if started_at is not None:
+        result["started_at"] = started_at.isoformat()
+        now = datetime.now(tz=timezone.utc)
+        result["uptime_seconds"] = round((now - started_at).total_seconds(), 1)
+    return result
 
 
 # 注册路由

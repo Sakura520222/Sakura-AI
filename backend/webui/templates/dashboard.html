@@ -46,6 +46,33 @@
     <!-- 统计卡片 -->
     {% include "components/stats_cards.html" %}
 
+    <!-- 系统运行信息 -->
+    <div id="system-info-bar" class="flex flex-wrap items-center gap-4 px-4 py-2.5 rounded-xl bg-gray-50 dark:bg-gray-800/50 border border-gray-200/50 dark:border-gray-700/50 text-xs text-gray-500 dark:text-gray-400">
+        <div class="flex items-center gap-1.5">
+            <svg class="w-3.5 h-3.5 text-green-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"/>
+            </svg>
+            <span>{{ _('dashboard.uptime') }}:</span>
+            <span class="font-medium text-gray-700 dark:text-gray-300" id="system-uptime">-</span>
+        </div>
+        <span class="text-gray-300 dark:text-gray-600">|</span>
+        <div class="flex items-center gap-1.5">
+            <svg class="w-3.5 h-3.5 text-blue-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"/>
+            </svg>
+            <span>{{ _('dashboard.startup_duration') }}:</span>
+            <span class="font-medium text-gray-700 dark:text-gray-300" id="system-startup-duration">-</span>
+        </div>
+        <span class="text-gray-300 dark:text-gray-600">|</span>
+        <div class="flex items-center gap-1.5">
+            <svg class="w-3.5 h-3.5 text-purple-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"/>
+            </svg>
+            <span>{{ _('dashboard.started_at') }}:</span>
+            <span class="font-medium text-gray-700 dark:text-gray-300" id="system-started-at">-</span>
+        </div>
+    </div>
+
     <!-- 图表区域 -->
     {% include "components/dashboard_charts.html" %}
 
@@ -88,6 +115,23 @@ function dashboardInit() {
                 ((data.total_estimated_cost || 0) / 100).toFixed(2);
         })
         .catch(err => console.error('加载统计数据失败:', err));
+
+    // 加载系统运行信息
+    fetch('/api/system-info')
+        .then(r => r.json())
+        .then(data => {
+            if (data.uptime_display) {
+                document.getElementById('system-uptime').textContent = data.uptime_display;
+            }
+            if (data.startup_duration_seconds != null) {
+                document.getElementById('system-startup-duration').textContent = data.startup_duration_seconds + 's';
+            }
+            if (data.started_at) {
+                var d = new Date(data.started_at);
+                document.getElementById('system-started-at').textContent = d.toLocaleString();
+            }
+        })
+        .catch(err => console.error('加载系统信息失败:', err));
 
     // 加载图表
     initDashboardCharts();

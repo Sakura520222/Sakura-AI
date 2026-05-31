@@ -1,5 +1,7 @@
 """API v1 路由"""
 
+from datetime import datetime, timezone
+
 from fastapi import APIRouter, Request
 
 from backend.api.v1.deps import limiter
@@ -47,4 +49,13 @@ api_v1_router.include_router(billing.router)
 @limiter.limit("10/second")
 async def api_health(request: Request):
     """API v1 健康检查"""
-    return {"status": "ok", "version": "v1"}
+    result = {"status": "ok", "version": "v1"}
+    startup_dur = getattr(request.app.state, "startup_duration_seconds", None)
+    started_at = getattr(request.app.state, "started_at", None)
+    if startup_dur is not None:
+        result["startup_duration_seconds"] = round(startup_dur, 2)
+    if started_at is not None:
+        result["started_at"] = started_at.isoformat()
+        now = datetime.now(tz=timezone.utc)
+        result["uptime_seconds"] = round((now - started_at).total_seconds(), 1)
+    return result
