@@ -428,6 +428,11 @@ dashboard:
   this_month: "本月"
   this_week: "本周"
   today: "今天"
+  system_info: "系统信息"
+  version: "版本"
+  startup_time: "启动时间"
+  startup_duration: "启动耗时"
+  uptime: "运行时长"
 
 # ========== PR 审查 / PR Reviews ==========
 pr:
