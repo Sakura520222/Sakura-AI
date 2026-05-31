@@ -103,7 +103,7 @@ async def test_review_worker_bridge_exception_does_not_fail_review(monkeypatch):
         raise RuntimeError("bridge down")
 
     monkeypatch.setattr(
-        "backend.services.agent_team.pr_review_feedback.AgentTeamPRReviewFeedbackService.handle_review_completed",
+        "backend.services.agent_team.pr_review_feedback.AgentTeamPRReviewFeedbackService.handle_review_completed_with_result",
         fake_handle,
     )
 
