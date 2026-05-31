@@ -1,82 +1,82 @@
 # Sakura AI Reviewer 项目概述
 
 ## 1. 项目简介
-基于大语言模型的智能 GitHub PR 代码审查、Issue 分析、仓库扫描与 Agent 自动修复平台，具备主动探索代码库和 `.sakura/` 项目记忆能力。
+基于大语言模型的智能 GitHub PR 代码审查、Issue 分析、仓库扫描与 Agent 自动修复平台，具备主动探索代码库、RAG/代码索引、历史上下文和 `.sakura/` 项目记忆能力。
 
 **技术栈**：Python 3.11+、FastAPI、Jinja2/HTMX/Alpine、MySQL、Redis、ChromaDB、Docker、GitHub App/OAuth、Telegram Bot
 
 ## 2. 架构设计
-- 分层架构：API/Webhook/WebUI、服务层、模型/存储层分离。
+- 分层架构：API/Webhook/WebUI、服务层、模型/存储层分离；API 与 WebUI 常共享业务数据，公共构造逻辑宜进入 service/helper，而非继续膨胀 `main.py`。
 - 配置体系：WebUI 动态配置优先，Settings 默认值兜底；用户配置可覆盖部分全局偏好。
 - AI 审查引擎：工具调用、RAG、代码索引、历史上下文、compact diff 大 PR 模式。
-- Agent 架构：`SakuraAgentBase` 会话循环 + 具体 Agent 子类，受控工作区、工具执行、PR 创建闭环。
-- WebUI 实时链路：Redis Pub/Sub → SSE → 前端；属于运行时稳定性热点。
+- Agent 架构：`SakuraAgentBase` 会话循环 + 具体 Agent 子类；受控工作区、工具执行、PR 创建与审查反馈迭代闭环。
+- WebUI 实时链路：Redis Pub/Sub → SSE → 前端；长连接、后台 worker、webhook 状态机是稳定性热点。
 - 安全与计费：MFA/Passkey、安全审计、配额、外部支付与退款闭环。
 
 ## 3. 仓库信息
 - 仓库名: Sakura520222/Sakura-AI-Reviewer
-- 语言统计: Python: 2931333, HTML: 842114, Shell: 16140, Dockerfile: 1637
-- 累计反思 385 次
+- 语言统计: Python: 2934871, HTML: 842114, Shell: 16140, Dockerfile: 1637
+- 累计反思 395 次
 
 ## 4. 审查核心原则
-- 行数少 ≠ 风险低；公共依赖、基类、长循环、安全参数、支付/计费变更必须扩大关联扫描。
-- 增量审查先校验 PR 描述、提交信息、文件清单、实际 diff 是否一致；描述漂移必须指出。
-- `request_changes` 必须对应明确、可执行、与本 PR 相关的 major/blocking 问题；无 major 不得阻断。
-- 历史问题只能在有提交、文件位置或重新扫描证据时标记“已修复”；否则写“本轮未验证”。
-- 主要评论只发布具体可操作问题；正向评价、摘要、“critical: 无”等不得生成结构化评论。
+- 行数少 ≠ 风险低；公共依赖、基类、长循环、安全参数、支付/计费、DB schema、webhook/worker 状态机必须扩大关联扫描。
+- 审查开始先核对 PR 描述、提交信息、文件清单、实际 diff；描述声称文档/迁移/测试/依赖/API/health 已更新但 diff 无证据，至少标 minor，核心上线条件缺失可 major。
+- 增量审查必须声明范围：本轮验证了什么、未重新验证什么；历史问题只有在有提交/文件位置/重新扫描证据时才写“已修复”，否则写“本轮未验证”。
+- `request_changes` 必须对应明确、可执行、与本 PR 相关的 major/blocking；approve 时不得残留未解释的 major/critical。
+- 结构化评论只发布具体、可定位、可操作问题；摘要、评分、正向评价、checklist、“critical: 无”等不得转成 review comment；同一根因只保留一条。
 
 ## 5. 硬规则（major/critical）
 1. async 路由中的同步 I/O 必须 `asyncio.to_thread()` 包装。
-2. 函数体内延迟导入必须注释原因；模块级异常类导入不机械套用该规则。
+2. 函数体内延迟导入必须注释原因；若路由/服务依赖 `backend.main`，优先考虑抽到 `core/runtime.py`、`services/system_info.py` 等独立模块。
 3. 配置废弃必须从代码、WebUI、动态配置键、文档/测试全链路清理。
-4. 新增状态枚举必须检查 DB ENUM/迁移、历史数据、API、前端显示。
-5. 测试函数必须以 `test_` 命名；安全/状态码修复必须有行为测试。
-6. 数据库迁移、依赖/驱动切换、支付状态变更必须输出兼容性与事务检查。
-7. 未修复历史问题必须关联 issue 或明确后续跟踪。
-8. 同一问题严重程度必须唯一；存在未修复 major 时不得直接 approve，除非说明非阻断依据。
+4. 新增状态枚举/任务状态必须检查 DB ENUM/迁移、历史数据、API、前端显示、状态转移矩阵。
+5. 数据库模型新增列、索引、唯一约束、枚举值必须检查迁移、nullable/default、历史数据、事务与并发冲突处理。
+6. 测试函数必须以 `test_` 命名；安全/状态码/schema/观测 API 修复应有行为测试。
+7. 支付、计费、依赖/驱动切换、DB schema 变更必须输出兼容性、事务与回滚检查。
+8. 同一问题严重程度必须全篇唯一；硬规则若降级为非阻断，必须解释业务约束或防护依据。
 
-## 6. 长连接与异常处理规则
-- SSE、WebSocket、Redis Pub/Sub、消息队列、后台 worker 等长期循环中，禁止 `except ...: continue` 无日志、无退避、无退出条件。
-- 内层只处理明确可恢复的空闲超时；连接断开、BrokenPipe、ConnectionReset、宽泛 `OSError/Exception` 必须传播到外层重连/退避逻辑。
-- 若外层已有重连/资源重建/指数退避，内层新增异常处理必须证明不会绕过外层恢复机制。
-- 高频预期异常单次可 `debug`，连续失败、触发重连、状态降级必须 `warning`。
-- 第三方异常继承关系必须验证 MRO，禁止仅凭名称推断。
-- 修改 SSE/PubSub 循环必须检查取消传播、客户端断开、unsubscribe/close/aclose、重新订阅与 tight loop CPU 风险。
+## 6. 长连接、Webhook 与状态机规则
+- SSE、WebSocket、Redis Pub/Sub、消息队列、后台 worker 长循环禁止 `except ...: continue` 无日志、无退避、无退出条件。
+- 内层只处理明确可恢复的空闲超时；连接断开、BrokenPipe、ConnectionReset、宽泛 `OSError/Exception` 必须传播到外层重连/退避。
+- webhook 变更固定检查签名验证覆盖新增分支、action 过滤、缺字段安全失败、重复投递幂等、乱序/延迟事件、sha/timestamp/status 防护。
+- worker/task/status 变更需列状态转移矩阵：进入、退出、失败、取消、重复事件、乱序事件、终态资源清理。
+- `_cancel_events`、`_background_tasks`、pending prompts 等资源字典新增 early return/finally 时必须检查清理路径；finally 内 await/DB 更新也需防止掩盖原异常。
 
-## 7. FastAPI/WebUI 安全规则
-- CSRF、认证、权限参数不得依赖 `Form(...)` / `Header(...)` 必填校验来表达安全失败；若期望 401/403，应使用默认值并在依赖内显式校验。
-- 区分表单 CSRF `require_csrf` 与 Header CSRF `require_csrf_header`：缺失 header 若使用 `Header(...)` 会在 HTTP 参数解析层返回 422。
-- 安全依赖测试分两层：直接函数测试覆盖空/无效/有效值；TestClient 覆盖缺失字段/header 的真实状态码。
-- WebUI CSRF 应优先统一走依赖注入；禁止新增路由直接调用 `validate_csrf_token()`，除非注释说明。
-- 认证相关路由（登录、登出、2FA、安全设置、API key）需检查 CSRF、session、redirect、状态码、错误响应泄露。
+## 7. FastAPI/WebUI/观测 API 规则
+- CSRF、认证、权限参数不得依赖 `Form(...)` / `Header(...)` 必填校验表达安全失败；期望 401/403 时用默认值并在依赖内显式校验。
+- 新增 `backend/webui/routes` 下 API 必须确认函数级、router 级、include_router 级、中间件级认证链路；未确认时写“需确认”，不要直接定性漏洞。
+- `/health`、版本化 health、Dashboard/system-info 字段变更需检查字段同步、信息暴露、外部监控兼容、OpenAPI/文档/测试。
+- 启动/运行时间：duration/latency 用 `time.monotonic()`/`perf_counter()`，绝对时间用 timezone-aware datetime；字段名区分 started/completed/duration/uptime；多 worker 语义需说明。
+- `app.state` 读取用 `getattr(..., None)` 防御；前端 fetch 需处理非 2xx、失败、null/undefined、认证失效，渲染优先 `textContent`。
+- WebUI 新字段必须检查 i18n；装饰 SVG 默认 `aria-hidden="true" focusable="false"`。
 
 ## 8. Agent/Shell 工具安全规则
-- Agent 基类核心控制流变更必须列出所有调用方，检查返回值、异常传播、日志、循环结束、副作用语义。
+- Agent 基类核心控制流变更必须列出所有调用方，检查返回值、异常传播、日志、循环结束、副作用语义；`break`/`return` 可能改变日志和状态契约。
 - Agent conversation 推荐 `[system, user]` 起始消息；仅靠 system prompt 启动任务需说明并测试消息序列。
 - LLM 失败、空响应、最大迭代、重试/降级路径的日志语义属于可观测性契约，应测试关键日志存在/不存在。
 - Shell 白名单不等于整条命令安全；必须检查 `$()`、反引号、process substitution、`;`、`&&`、`||`、`|`、后台 `&`。
 - Shell/Agent tool 输出必须双层限额：执行阶段防内存膨胀，进入模型上下文前防 token/成本/注入风险。
 - 日志中的命令、URL、header、环境变量必须默认脱敏并限长，避免 token/password/key/secret 泄露。
 
-## 9. 依赖、框架与模板规则
+## 9. 依赖、格式化与模板规则
 - 框架 API 迁移不仅搜索旧调用点，还必须确认新实参上下文存在、最低版本满足、主框架/传递依赖兼容。
-- PR 描述声称修改 `requirements.txt`、配置、迁移、文档、测试但 diff 不存在对应文件，至少标 minor；若是核心修复则 major。
 - FastAPI/Starlette/Pydantic 等强耦合依赖需检查兼容矩阵、Docker/fresh install、锁文件或约束。
 - WebUI 模板响应优先使用统一 `render_template()` / `error_page()`；直接 `TemplateResponse()` 需确认 HTMX 片段等合理例外。
+- 前后端重复格式化时间、金额、大小、百分比、状态文案时，必须核对单位、round/floor/int、边界值、空值；展示精度差异先判断是否同一业务链路/契约，通常 minor/suggestion。
+- 私有同名工具函数（如 `_format_duration`）需按模块、调用方、展示场景核对，不得只凭函数名判定一致性。
 
 ## 10. 测试与报告质量
 - 安全解析辅助函数必须直接单测边界矩阵，不能只依赖集成测试。
-- 机械性 API 替换需同时验证旧调用点清零和新增参数类型/可用性。
+- fake/mock 行为必须贴近生产查询；复杂 SQL fake 应补轻量集成测试或真实 sqlite session。
+- 格式化函数、观测 API、状态机、webhook 幂等适合补边界测试：0/None/falsy、<1s、60s、乱序、重复、唯一约束冲突。
 - 新增测试断言应覆盖关键字段和失败消息；但缺消息通常是 minor，不应误标 major。
-- 审查报告避免“完美解决”“无遗留风险”等绝对化表述，改用“已解决当前已知关键问题”。
-- 重复根因合并为一个评论，减少噪音；评分、严重程度、最终决策必须一致。
+- 审查报告避免“完美解决”“无遗留风险”等绝对表述；评分、严重程度、最终决策必须一致。
 
-## 11. 最新反思沉淀（PR #363–#372）
-- PR 描述漂移是高频漏检：SSE/依赖、CSRF、TemplateResponse、Agent 变更均出现描述与 diff 不一致，必须前置校验。
-- Redis Pub/Sub/SSE 是运行时稳定性热点，重点审查异常分类、退避、资源释放、取消传播、重连与日志频率。
-- FastAPI 安全状态码修复必须验证真实 HTTP 行为，区分框架 422 与业务 403。
-- ShellTool 输出、日志和命令解析都是安全边界；完整命令日志与无限制 tool 输出应按安全风险审查。
-- Agent 会话循环的小控制流改动（如 `break`→`return`）也会改变日志/状态契约，需扫描子类和调用方。
-- 审查系统自身输出需质控：非问题不得标 critical，major 与 approve/request_changes 不得矛盾。
+## 11. 最新反思沉淀（PR #372–#378）
+- PR 描述漂移仍是高频漏检：SSE/依赖、health API、文档更新、Agent 变更均出现描述与 diff 不一致，必须前置校验。
+- 启动耗时/系统信息功能需重点审查时间源、timezone、多 worker、health/dashboard 字段契约、认证链路和前端容错。
+- Agent Team PR review 闭环风险集中在任务匹配键（repo/branch/pr/head_sha/status）、状态机矩阵、唯一约束竞态、webhook 幂等乱序和资源清理。
+- 小型 UI 格式化增量要用边界样例验证，但不得把展示精度差异机械升为 major；增量范围声明要清楚。
+- 审查系统自身输出需持续降噪：摘要/正评/评分不得变成评论，approve 与 major/critical 不得冲突。
 
-*最后更新：基于 PR #363–#372 增量审查经验，累计反思 385 次*
+*最后更新：基于 PR #372–#378 增量审查经验，累计反思 395 次*
