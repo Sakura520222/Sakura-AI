@@ -947,11 +947,17 @@ class ReviewWorker:
                 AgentTeamPRReviewFeedbackService,
             )
 
-            handled = await AgentTeamPRReviewFeedbackService().handle_review_completed(
-                review_id
-            )
-            if handled:
-                logger.info("[{}] Agent Team PR 闭环已处理 review_id={}", task_id, review_id)
+            service = AgentTeamPRReviewFeedbackService()
+            result = await service.handle_review_completed_with_result(review_id)
+            if result.handled:
+                logger.info("[{}] Agent Team PR 闭环已处理 review_id={}, action={}", task_id, review_id, result.action)
+            else:
+                logger.info(
+                    "[{}] Agent Team PR 闭环跳过 review_id={}, reason={}",
+                    task_id,
+                    review_id,
+                    result.reason,
+                )
         except Exception as exc:
             logger.warning(
                 "[{}] Agent Team PR 闭环处理失败（不影响 PR Review 完成）: {}",
