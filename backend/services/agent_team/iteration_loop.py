@@ -92,11 +92,12 @@ class IterationLoopService:
         github_repo: Any | None = None,
         sakura_ref: str | None = None,
         cancel_check: Callable[[], bool] | None = None,
+        initial_feedback: str = "",
     ) -> IterationOutcome:
         """运行迭代循环。"""
         total_tool_calls = 0
         tracker = TokenTracker()
-        feedback = ""
+        feedback = initial_feedback
         resume_cursor = self.resume_cursor
         start_iteration = resume_cursor.iteration_number if resume_cursor else 1
 

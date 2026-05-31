@@ -53,6 +53,7 @@ class PRCreationResult:
     pr_url: str
     commit_sha: str
     branch_name: str
+    head_sha: str = ""
 
 
 @dataclass(frozen=True)
@@ -358,6 +359,7 @@ class AgentTeamPRService:
                     pr_url=pr.html_url,
                     commit_sha="",
                     branch_name=head_branch,
+                    head_sha=getattr(getattr(pr, "head", None), "sha", "") or "",
                 )
             except GithubException as e:
                 last_error = e
@@ -375,6 +377,27 @@ class AgentTeamPRService:
                 raise
 
         raise last_error  # type: ignore[misc]
+
+    async def update_pull_request_body(
+        self,
+        repo_owner: str,
+        repo_name: str,
+        pr_number: int,
+        body: str,
+    ) -> None:
+        """通过 GitHub API 更新 Pull Request 描述。"""
+        github_app = GitHubAppClient()
+        client = github_app.get_repo_client(repo_owner, repo_name)
+        if not client:
+            raise RuntimeError(f"无法获取 GitHub 客户端: {repo_owner}/{repo_name}")
+
+        repo = client.get_repo(f"{repo_owner}/{repo_name}")
+
+        def _sync() -> None:
+            pr = repo.get_pull(pr_number)
+            pr.edit(body=body)
+
+        await asyncio.to_thread(_sync)
 
     def build_pr_body(
         self,
