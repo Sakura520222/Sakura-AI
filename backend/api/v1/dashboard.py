@@ -120,8 +120,9 @@ async def get_stats(
 
     avg_score = float(round(stats_row.avg_score, 1)) if stats_row.avg_score else 0.0
 
-    # 合并所有模块的 token / cost
-    module_stats = await fetch_module_token_stats(db)
+    # 合并所有模块的 token / cost（按用户权限过滤）
+    module_scope_user = None if scope_filter is None else user["sub"]
+    module_stats = await fetch_module_token_stats(db, module_scope_user)
     total_prompt = int(stats_row.total_prompt_tokens or 0) + module_stats["total_prompt"]
     total_completion = int(stats_row.total_completion_tokens or 0) + module_stats["total_completion"]
     total_cost = int(stats_row.total_estimated_cost or 0) + module_stats["total_cost"]
@@ -270,8 +271,9 @@ async def get_chart_data(
         repo_query = repo_query.where(scope_filter)
     repo_rows = (await db.execute(repo_query)).all()
 
-    # 4. Token 消耗趋势（合并所有模块）
-    token_data = await fetch_token_trend(db, thirty_days_ago, labels, scope_filter)
+    # 4. Token 消耗趋势（合并所有模块，按用户权限过滤）
+    scope_user = None if scope_filter is None else user["sub"]
+    token_data = await fetch_token_trend(db, thirty_days_ago, labels, scope_user)
 
     result = {
         "trend": {

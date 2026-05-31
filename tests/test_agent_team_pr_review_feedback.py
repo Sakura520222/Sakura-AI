@@ -150,12 +150,12 @@ class _FakeAsyncSession:
     async def execute(self, statement):
         entity = statement.column_descriptions[0].get("entity")
         if entity is AgentTeamTask:
+            # 与生产 _find_task() 一致：仅按 repo_owner + repo_name + branch_name 匹配
             tasks = [
                 task
                 for task in self.state.tasks
                 if task.repo_owner == self.state.current_review.repo_owner
                 and task.repo_name == self.state.current_review.repo_name
-                and task.pr_number == self.state.current_review.pr_id
                 and task.branch_name == self.state.current_review.branch
             ]
             tasks.sort(key=lambda task: task.updated_at, reverse=True)

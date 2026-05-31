@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime, timezone
 import enum
 from typing import Any
 
@@ -17,7 +16,7 @@ from backend.models.agent_team_models import (
     AgentTeamTask,
     AgentTeamTaskStatus,
 )
-from backend.models.database import PRReview, PRStatus, ReviewComment
+from backend.models.database import PRReview, PRStatus, ReviewComment, utc_now
 
 
 class AgentPRReviewOutcome(str, enum.Enum):
@@ -154,7 +153,7 @@ class AgentTeamPRReviewFeedbackService:
             if outcome == AgentPRReviewOutcome.PASSED:
                 task.status = AgentTeamTaskStatus.COMPLETED.value
                 task.current_phase = AgentTeamTaskStatus.COMPLETED.value
-                task.completed_at = datetime.now(timezone.utc).replace(tzinfo=None)
+                task.completed_at = utc_now()  # MySQL TIMESTAMP 列自动去除时区
                 task.error_message = None
                 await session.commit()
                 return AgentPRReviewFeedbackResult(
