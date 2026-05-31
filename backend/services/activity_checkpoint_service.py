@@ -81,13 +81,14 @@ class ActivityCheckpointService:
             await db.commit()
             await db.refresh(session)
 
-        await _publish("activity:session_started", {
-            "task_type": self.source_type,
-            "task_id": self.source_task_id,
-            "session_id": session.id,
-            "iteration": iteration_number,
-            "role_name": role_name,
-        })
+            # session.id 已由 refresh 填充，在块内发布事件确保数据一致性
+            await _publish("activity:session_started", {
+                "task_type": self.source_type,
+                "task_id": self.source_task_id,
+                "session_id": session.id,
+                "iteration": iteration_number,
+                "role_name": role_name,
+            })
         return session
 
     async def complete_session(

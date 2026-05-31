@@ -8,7 +8,7 @@
 
 [English](README_EN.md) | **中文**
 
-[![Version](https://img.shields.io/badge/Version-2.12.0-blue.svg)](https://github.com/Sakura520222/Sakura-AI-Reviewer/releases)
+[![Version](https://img.shields.io/badge/Version-2.12.1-blue.svg)](https://github.com/Sakura520222/Sakura-AI-Reviewer/releases)
 [![Python](https://img.shields.io/badge/Python-3.11+-blue.svg)](https://www.python.org/)
 [![FastAPI](https://img.shields.io/badge/FastAPI-Latest-green.svg)](https://fastapi.tiangolo.com/)
 [![License](https://img.shields.io/badge/License-AGPLv3-yellow.svg)](LICENSE)
@@ -32,14 +32,6 @@
 ---
 
 ## ✨ 核心特性
-
-### 2.12.0 更新亮点
-
-- **多支付网关与退款闭环**：新增 Stripe、Paddle、支付宝、NOWPayments、TRON USDT 直收等外部支付网关，支持订单创建、状态查询、支付回调、用户退款申请、超级管理员审核与真实退款执行。
-- **Agent 专家团队开放与配额化**：Agent 任务支持仓库协作者通过 Issue 评论 `/agent` 委派，非管理员需满足仓库归属/白名单约束并消耗独立 Agent 日/周/月配额。
-- **移动端认证增强**：移动端 OAuth 支持白名单回调 URI，WebAuthn/Passkey 支持额外 Origin 与 Android App Links 场景，便于原生 Android App 接入。
-- **Sakura 记忆知识提取升级**：项目记忆从一次性提取改为按反思轮次周期性沉淀 rules/docs/plans，长期维护项目规则、架构知识和经验计划。
-- **审查与任务链路简化**：移除旧批处理模块，审查器直接使用 compact diff 工具模式处理大型 PR，并补强扫描报告 Issue 到 Agent 任务的闭环。
 
 ### 审查能力
 

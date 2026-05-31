@@ -267,6 +267,10 @@ class AgentTeamWorker:
                     else "",
                     fallback_message=fallback_msg,
                 )
+                if commit_message == fallback_msg:
+                    logger.info("Agent commit message: 使用 fallback 模板 (AI 生成未返回)")
+                else:
+                    logger.info("Agent commit message: 使用 AI 生成结果")
                 await pr_service.commit_and_push(
                     workspace=str(workspace),
                     branch_name=workspace_info.branch_name,
@@ -654,6 +658,10 @@ class AgentTeamWorker:
                 review_feedback=review_feedback,
                 fallback_message=fallback_msg,
             )
+            if commit_message == fallback_msg:
+                logger.info("Agent PR 闭环 commit message: 使用 fallback 模板")
+            else:
+                logger.info("Agent PR 闭环 commit message: 使用 AI 生成结果")
             new_sha = await pr_service.commit_and_push(
                 workspace=str(workspace_info.workspace),
                 branch_name=task.branch_name,

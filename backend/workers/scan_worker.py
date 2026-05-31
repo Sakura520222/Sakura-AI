@@ -141,7 +141,7 @@ class ScanWorker:
 
         async with async_session() as session:
             # 排除冷却期内已成功扫描的仓库
-            cutoff = datetime.utcnow() - timedelta(hours=settings.scan_cooldown_hours)
+            cutoff = datetime.now(timezone.utc) - timedelta(hours=settings.scan_cooldown_hours)
             recent_result = await session.execute(
                 select(RepoScan.repo_name).where(
                     RepoScan.status == ScanStatus.COMPLETED.value,
@@ -496,14 +496,16 @@ class ScanWorker:
         repo_path: str,
         commit_sha: str | None,
         budget: ScanTokenBudget,
-    ) -> tuple[list[dict], int | None]:
+    ) -> tuple[list[dict], int | None, int]:
         """使用 AIReviewer 工具链进行全仓扫描
 
         让 AI 自主使用 read_file / list_directory / search_code_context
         浏览整个仓库，真正实现全量扫描。
 
         Returns:
-            (findings, ai_health_score) 元组，ai_health_score 为 AI 评估的评分（可能为 None）
+            (findings, ai_health_score, iteration) 三元组。
+            ai_health_score 为 AI 评估的评分（可能为 None）。
+            iteration 为实际执行的轮次数。
         """
         from backend.services.scan_prompt_builder import (
             collect_code_files,
@@ -964,7 +966,7 @@ class ScanWorker:
                         if hasattr(scan, key):
                             setattr(scan, key, value)
                     if "status" not in kwargs:
-                        scan.updated_at = datetime.utcnow()
+                        scan.updated_at = datetime.now(timezone.utc)
                     await session.commit()
 
         try:
