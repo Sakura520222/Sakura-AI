@@ -168,10 +168,10 @@ function systemInfoInit() {
         },
 
         _formatDuration(seconds) {
-            if (seconds < 1) return Math.round(seconds * 1000) + 'ms';
+            if (seconds < 1) return Math.floor(seconds * 1000) + 'ms';
             if (seconds < 60) return seconds.toFixed(1) + 's';
             var minutes = Math.floor(seconds / 60);
-            var secs = seconds % 60;
+            var secs = Math.floor(seconds % 60);
             if (minutes < 60) return minutes + 'm ' + secs + 's';
             var hours = Math.floor(minutes / 60);
             var mins = minutes % 60;
