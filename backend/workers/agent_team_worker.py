@@ -538,6 +538,7 @@ class AgentTeamWorker:
                 sakura_ref=sakura_info["sakura_ref"],
                 initial_feedback=review_feedback,
                 cancel_check=cancel_event.is_set,
+                iteration_offset=task.iteration_count or 0,
             )
 
             new_iteration_count = (task.iteration_count or 0) + outcome.iterations
@@ -641,7 +642,7 @@ class AgentTeamWorker:
             )
 
             try:
-                body = pr_service.build_pr_body(
+                fallback_body = pr_service.build_pr_body(
                     task_title=task.title,
                     task_summary=task.summary or "",
                     fullstack_analysis=outcome.fullstack_result.summary
@@ -654,6 +655,28 @@ class AgentTeamWorker:
                     iteration_count=new_iteration_count,
                     source_type=task.source_type,
                     source_issue_number=task.source_issue_number,
+                )
+                body = await pr_service.generate_pr_body(
+                    task_title=task.title,
+                    task_summary=task.summary or "",
+                    fullstack_analysis=outcome.fullstack_result.summary
+                    if outcome.fullstack_result
+                    else "",
+                    review_summary=outcome.review_result.summary
+                    if outcome.review_result
+                    else "",
+                    review_verdict=outcome.review_result.verdict
+                    if outcome.review_result
+                    else "",
+                    review_score=outcome.review_result.score
+                    if outcome.review_result
+                    else 0,
+                    review_findings=[],
+                    modified_files=outcome.modified_files or [],
+                    iteration_count=new_iteration_count,
+                    source_type=task.source_type,
+                    source_issue_number=task.source_issue_number,
+                    fallback_body=fallback_body,
                 )
                 await pr_service.update_pull_request_body(
                     repo_owner=task.repo_owner,

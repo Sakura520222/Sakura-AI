@@ -93,6 +93,7 @@ class IterationLoopService:
         sakura_ref: str | None = None,
         cancel_check: Callable[[], bool] | None = None,
         initial_feedback: str = "",
+        iteration_offset: int = 0,
     ) -> IterationOutcome:
         """运行迭代循环。"""
         total_tool_calls = 0
@@ -100,6 +101,7 @@ class IterationLoopService:
         feedback = initial_feedback
         resume_cursor = self.resume_cursor
         start_iteration = resume_cursor.iteration_number if resume_cursor else 1
+        total_max = max_iterations + iteration_offset
 
         for iteration in range(start_iteration, max_iterations + 1):
             if cancel_check and cancel_check():
@@ -111,10 +113,11 @@ class IterationLoopService:
                     prompt_tokens=tracker.prompt_tokens,
                     completion_tokens=tracker.completion_tokens,
                 )
+            display_iteration = iteration + iteration_offset
             logger.info(
                 "Agent 迭代循环 第 {}/{} 轮 - 任务: {}",
-                iteration,
-                max_iterations,
+                display_iteration,
+                total_max,
                 task_title,
             )
 
