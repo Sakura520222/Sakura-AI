@@ -852,6 +852,7 @@ class ReviewWorker:
                     "decision": decision.value if decision else "unknown",
                     "overall_score": review_result.get("overall_score"),
                 })
+                await self._notify_agent_team_review_completed(review_id, task_id)
 
                 # 11.5 异步触发 .sakura/ 反思 / Trigger .sakura/ reflection async
                 try:
@@ -939,6 +940,31 @@ class ReviewWorker:
                 # Always unregister task to clean up cancel event
                 self._unregister_task(task_key)
 
+    async def _notify_agent_team_review_completed(self, review_id: int, task_id: str) -> None:
+        """通知 Agent Team 处理 PR Review 完成后的闭环反馈。"""
+        try:
+            from backend.services.agent_team.pr_review_feedback import (
+                AgentTeamPRReviewFeedbackService,
+            )
+
+            service = AgentTeamPRReviewFeedbackService()
+            result = await service.handle_review_completed_with_result(review_id)
+            if result.handled:
+                logger.info("[{}] Agent Team PR 闭环已处理 review_id={}, action={}", task_id, review_id, result.action)
+            else:
+                logger.info(
+                    "[{}] Agent Team PR 闭环跳过 review_id={}, reason={}",
+                    task_id,
+                    review_id,
+                    result.reason,
+                )
+        except Exception as exc:
+            logger.warning(
+                "[{}] Agent Team PR 闭环处理失败（不影响 PR Review 完成）: {}",
+                task_id,
+                exc,
+            )
+
     async def _create_review_record(
         self, analysis: PRAnalysis, pr_info: Dict[str, Any], task_id: str
     ) -> int:
@@ -954,6 +980,7 @@ class ReviewWorker:
                     author=pr_info["author"],
                     title=pr_info["title"],
                     branch=pr_info["branch"],
+                    head_sha=pr_info.get("head_sha"),
                     file_count=analysis.total_files,
                     line_count=analysis.total_changes,
                     code_file_count=analysis.code_file_count,
@@ -1087,6 +1114,7 @@ class ReviewWorker:
                     author=pr_info["author"],
                     title=pr_info["title"],
                     branch=pr_info["branch"],
+                    head_sha=pr_info.get("head_sha"),
                     file_count=analysis.total_files,
                     line_count=analysis.total_changes,
                     code_file_count=analysis.code_file_count,
@@ -1114,6 +1142,7 @@ class ReviewWorker:
                     author=pr_info["author"],
                     title=pr_info["title"],
                     branch=pr_info["branch"],
+                    head_sha=pr_info.get("head_sha"),
                     file_count=0,
                     line_count=0,
                     code_file_count=0,
@@ -1415,14 +1444,13 @@ async def submit_review_task(pr_info: Dict[str, Any]) -> str:
     """
     worker = get_worker()
     task_key = ReviewWorker._make_task_key(pr_info)
-
-    # Cancel event was already registered in webhook handler immediately
-    # after action validation, before any async operations.
-    # This ensures cancel_task works even during slow webhook processing.
+    worker._register_task(task_key, force_new=True)
 
     # 在生产环境中，这里应该提交到Celery队列
-    # 为了简化，我们直接异步执行
-    asyncio.create_task(_run_review_task_with_timeout(worker, pr_info, task_key))
+    # 为了简化，我们直接异步执行，并保留后台任务引用避免被 GC。
+    task = asyncio.create_task(_run_review_task_with_timeout(worker, pr_info, task_key))
+    worker._background_tasks.add(task)
+    task.add_done_callback(worker._background_tasks.discard)
 
     # 返回任务标识（owner/repo#pr_number），可用于取消
     return task_key

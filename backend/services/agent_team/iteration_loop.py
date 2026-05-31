@@ -92,13 +92,17 @@ class IterationLoopService:
         github_repo: Any | None = None,
         sakura_ref: str | None = None,
         cancel_check: Callable[[], bool] | None = None,
+        initial_feedback: str = "",
+        iteration_offset: int = 0,
+        skip_internal_review: bool = False,
     ) -> IterationOutcome:
         """运行迭代循环。"""
         total_tool_calls = 0
         tracker = TokenTracker()
-        feedback = ""
+        feedback = initial_feedback
         resume_cursor = self.resume_cursor
         start_iteration = resume_cursor.iteration_number if resume_cursor else 1
+        total_max = max_iterations + iteration_offset
 
         for iteration in range(start_iteration, max_iterations + 1):
             if cancel_check and cancel_check():
@@ -110,10 +114,11 @@ class IterationLoopService:
                     prompt_tokens=tracker.prompt_tokens,
                     completion_tokens=tracker.completion_tokens,
                 )
+            display_iteration = iteration + iteration_offset
             logger.info(
                 "Agent 迭代循环 第 {}/{} 轮 - 任务: {}",
-                iteration,
-                max_iterations,
+                display_iteration,
+                total_max,
                 task_title,
             )
 
@@ -226,6 +231,24 @@ class IterationLoopService:
                 fs_result.summary[:100],
             )
             await self.conversation_context.record_fullstack_turn(iteration, fs_result)
+
+            # 闭环迭代时跳过内部审查，直接交给外部 Sakura PR Review
+            if skip_internal_review:
+                logger.info(
+                    "闭环迭代模式：跳过内部审查，直接交给外部 Sakura PR Review"
+                )
+                return IterationOutcome(
+                    success=True,
+                    reason="闭环迭代：跳过内部审查",
+                    iterations=iteration,
+                    fullstack_result=fs_result,
+                    review_result=None,
+                    modified_files=fs_result.modified_files,
+                    total_tool_calls=total_tool_calls,
+                    prompt_tokens=tracker.prompt_tokens,
+                    completion_tokens=tracker.completion_tokens,
+                )
+
             reviewer_handoff_context = await self.conversation_context.build_handoff_context(
                 "reviewer", iteration + 1
             )
