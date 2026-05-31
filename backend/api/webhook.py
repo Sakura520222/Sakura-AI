@@ -38,6 +38,41 @@ def get_async_session():
     return async_session()
 
 
+async def _mark_agent_task_external_reviewing(pr_info: dict[str, Any]) -> None:
+    """Mark Agent Team PR task as waiting for external review."""
+    branch = pr_info.get("branch") or ""
+    if not branch.startswith("sakura-agent/"):
+        return
+
+    from sqlalchemy import select
+
+    from backend.models.agent_team_models import AgentTeamTask, AgentTeamTaskStatus
+
+    async with get_async_session() as session:
+        result = await session.execute(
+            select(AgentTeamTask).where(
+                AgentTeamTask.repo_owner == pr_info["repo_owner"],
+                AgentTeamTask.repo_name == pr_info["repo_name"],
+                AgentTeamTask.pr_number == pr_info["pr_number"],
+                AgentTeamTask.branch_name == branch,
+            )
+        )
+        task = result.scalar_one_or_none()
+        if not task:
+            return
+        if task.status not in {
+            AgentTeamTaskStatus.PR_OPENED.value,
+            AgentTeamTaskStatus.EXTERNAL_REVIEWING.value,
+        }:
+            return
+
+        task.status = AgentTeamTaskStatus.EXTERNAL_REVIEWING.value
+        task.current_phase = "external_reviewing"
+        if pr_info.get("head_sha"):
+            task.pr_head_sha = pr_info["head_sha"]
+        await session.commit()
+
+
 router = APIRouter()
 
 
@@ -150,13 +185,6 @@ async def handle_pull_request_event(payload: Dict[str, Any]) -> JSONResponse:
                 content={"status": "skipped", "reason": "auto review disabled"}
             )
 
-        # Register cancel event IMMEDIATELY after action validation,
-        # before any async operations (quota check, Telegram, dismiss, etc.)
-        # so that a closed webhook arriving during those operations can cancel the task.
-        from backend.workers.review_worker import ReviewWorker, get_worker
-
-        task_key = ReviewWorker._make_task_key(pr_info)
-        get_worker()._register_task(task_key, force_new=True)
 
         # 过滤 Bot 自身创建的 PR（如 sakura-memory 系统创建的 PR）
         # 但允许 Agent Team 创建的 PR 进入审查
@@ -316,6 +344,7 @@ async def handle_pull_request_event(payload: Dict[str, Any]) -> JSONResponse:
                 )
 
         # 提交审查任务到队列
+        await _mark_agent_task_external_reviewing(pr_info)
         task_key = await submit_review_task(pr_info)
 
         logger.info(
@@ -489,6 +518,7 @@ async def handle_issue_comment_event(payload: Dict[str, Any]) -> JSONResponse:
                 "title": pr.title,
                 "body": pr.body or "",
                 "branch": pr.head.ref,
+                "head_sha": getattr(pr.head, "sha", None),
                 "base_branch": pr.base.ref,
                 "diff_url": pr.diff_url,
                 "patch_url": pr.patch_url,

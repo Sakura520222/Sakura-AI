@@ -6,6 +6,12 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from backend.core.config import (
+    DYNAMIC_CONFIG_LABELS,
+    DYNAMIC_CONFIG_RANGES,
+    DYNAMIC_CONFIG_SELECT_OPTIONS,
+    get_settings,
+)
 from backend.services.agent_team.ai_client import (
     AgentTeamAIConfig,
     load_agent_team_ai_config,
@@ -142,17 +148,26 @@ async def test_load_agent_team_ai_config_uses_independent_agent_values(monkeypat
 
 
 def test_agent_team_provider_options_include_main_ai_choice():
-    from backend.core.config import DYNAMIC_CONFIG_SELECT_OPTIONS
-
     options = DYNAMIC_CONFIG_SELECT_OPTIONS["agent_team_model_provider"]
 
     assert options[0]["value"] == "main"
 
 
 def test_agent_team_max_tokens_range_is_provider_safe():
-    from backend.core.config import DYNAMIC_CONFIG_RANGES
-
     assert DYNAMIC_CONFIG_RANGES["agent_team_max_tokens"] == (1024, 32768)
+
+
+def test_agent_pr_closed_loop_config_registered_for_webui():
+    settings = get_settings()
+    assert settings.agent_team_pr_closed_loop_enabled is True
+    assert settings.agent_team_pr_review_pass_score == 8
+    assert settings.agent_team_pr_review_blocking_severities == "critical,major"
+    assert "agent_team_pr_closed_loop_enabled" in AGENT_TEAM_CONFIG_KEYS
+    assert "agent_team_pr_review_pass_score" in AGENT_TEAM_CONFIG_KEYS
+    assert "agent_team_pr_review_blocking_severities" in AGENT_TEAM_CONFIG_KEYS
+    assert DYNAMIC_CONFIG_LABELS["agent_team_pr_closed_loop_enabled"] == "启用 Agent PR 闭环"
+    assert DYNAMIC_CONFIG_LABELS["agent_team_pr_review_pass_score"] == "Agent PR 审查通过分数"
+    assert DYNAMIC_CONFIG_RANGES["agent_team_pr_review_pass_score"] == (1, 10)
 
 
 def test_agent_team_ai_config_safe_snapshot_masks_key():

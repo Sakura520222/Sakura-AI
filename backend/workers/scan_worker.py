@@ -1,11 +1,12 @@
 """仓库扫描 Worker"""
 
 import asyncio
+import json as _json
 import os
 import shutil
 import tempfile
 from datetime import datetime, timedelta, timezone
-from typing import Optional
+from typing import Any, Optional
 
 from loguru import logger
 from sqlalchemy import select
@@ -13,6 +14,7 @@ from sqlalchemy.exc import OperationalError, InterfaceError
 
 from backend.core.config import get_settings
 from backend.models.scan_models import RepoScan, ScanFinding, ScanStatus
+from backend.services.ai_reviewer.token_tracker import TokenTracker
 
 # 扫描并发控制信号量
 _scan_semaphore: Optional[asyncio.Semaphore] = None
@@ -98,6 +100,21 @@ class ScanWorker:
 
         self.github_app = GitHubAppClient()
 
+    @staticmethod
+    async def _log_activity(
+        scan_id: int,
+        event_type: str,
+        content: dict[str, Any] | None = None,
+    ) -> None:
+        """记录扫描活动事件（持久化 + SSE 推送）。"""
+        try:
+            # 延迟导入：避免 worker 模块启动时加载 service 层的完整依赖链
+            from backend.services.activity_event_service import ActivityEventService
+
+            await ActivityEventService.log_event("scan", scan_id, event_type, content)
+        except Exception as exc:
+            logger.debug("扫描活动事件记录失败: {}", exc)
+
     async def get_scan_candidates(self) -> dict:
         """获取待扫描仓库列表（GitHub App 安装仓库 + 冷却期内未扫描）"""
 
@@ -124,7 +141,7 @@ class ScanWorker:
 
         async with async_session() as session:
             # 排除冷却期内已成功扫描的仓库
-            cutoff = datetime.utcnow() - timedelta(hours=settings.scan_cooldown_hours)
+            cutoff = datetime.now(timezone.utc) - timedelta(hours=settings.scan_cooldown_hours)
             recent_result = await session.execute(
                 select(RepoScan.repo_name).where(
                     RepoScan.status == ScanStatus.COMPLETED.value,
@@ -207,8 +224,15 @@ class ScanWorker:
                 current_phase="indexing",
                 started_at=datetime.now(timezone.utc),
             )
+            await self._log_activity(scan_id, "status", {
+                "status": "indexing",
+                "message": f"开始索引仓库: {repo_name}",
+            })
 
             # 3. Clone 仓库到临时目录
+            await self._log_activity(scan_id, "thinking", {
+                "message": f"正在克隆仓库 {repo_name} ...",
+            })
             repo_path = await self._clone_repo(repo_name)
             if not repo_path:
                 await self._update_scan(
@@ -216,16 +240,29 @@ class ScanWorker:
                     status=ScanStatus.FAILED.value,
                     error_message="克隆仓库失败",
                 )
+                await self._log_activity(scan_id, "error", {
+                    "message": "克隆仓库失败",
+                })
                 return
 
             # 获取 commit SHA
             commit_sha = await self._get_commit_sha(repo_path)
 
             # 4. 索引代码
+            await self._log_activity(scan_id, "tool_call", {
+                "tool": "index_repository",
+                "status": "running",
+                "detail": f"索引 {repo_name} 代码",
+            })
             index_result = await self._index_repository(
                 repo_name, repo_path, commit_sha
             )
             file_count = index_result.get("total_chunks", 0)
+            await self._log_activity(scan_id, "tool_result", {
+                "tool": "index_repository",
+                "status": "completed",
+                "detail": f"已索引 {file_count} 个文件块",
+            })
 
             await self._update_scan(
                 scan_id,
@@ -238,9 +275,13 @@ class ScanWorker:
             await self._update_scan(
                 scan_id, status=ScanStatus.ANALYZING.value, current_phase="analyzing"
             )
+            await self._log_activity(scan_id, "status", {
+                "status": "analyzing",
+                "message": "开始 AI 分析",
+            })
 
             # 6. 使用 AIReviewer 工具链进行全仓扫描
-            all_findings, ai_health_score = await self._full_scan_with_tools(
+            all_findings, ai_health_score, scan_rounds = await self._full_scan_with_tools(
                 scan_id=scan_id,
                 repo_name=repo_name,
                 repo_path=repo_path,
@@ -271,6 +312,12 @@ class ScanWorker:
                 prompt_tokens=budget.prompt_tokens,
                 completion_tokens=budget.completion_tokens,
             )
+            await self._log_activity(scan_id, "status", {
+                "status": "reporting",
+                "message": "生成扫描报告",
+                "total_findings": aggregated["total_findings"],
+                "health_score": aggregated["health_score"],
+            })
 
             # 10. 生成报告（直接传递聚合数据，避免 DB 读取时序问题）
             report_data = {
@@ -288,7 +335,15 @@ class ScanWorker:
             issue_number = report_info.get("issue_number")
             issue_url = report_info.get("issue_url")
 
-            # 11. 完成
+            # 11. 计算 estimated_cost
+            s = get_settings()
+            cost_tracker = TokenTracker()
+            cost_tracker.add_tokens(budget.prompt_tokens, budget.completion_tokens)
+            estimated_cost = cost_tracker.calculate_cost(
+                s.review_price_per_1k_prompt, s.review_price_per_1k_completion,
+            )
+
+            # 12. 完成
             await self._update_scan(
                 scan_id,
                 status=ScanStatus.COMPLETED.value,
@@ -296,13 +351,28 @@ class ScanWorker:
                 progress=100,
                 report_issue_number=issue_number,
                 report_issue_url=issue_url,
-                completed_at=datetime.utcnow(),
+                estimated_cost=estimated_cost,
+                completed_at=datetime.now(timezone.utc),
             )
+            await self._log_activity(scan_id, "result", {
+                "status": "completed",
+                "message": "扫描完成",
+                "total_findings": aggregated["total_findings"],
+                "health_score": aggregated["health_score"],
+                "scan_rounds": scan_rounds,
+                "report_issue_url": issue_url,
+            })
 
             logger.info(
-                f"扫描完成: {repo_name} — "
-                f"发现 {aggregated['total_findings']} 个问题, "
-                f"健康评分 {aggregated['health_score']}/100"
+                "扫描完成: {} | 轮数={}, tokens={}+{}, cost={} | "
+                "发现 {} 个问题, 健康评分 {}/100",
+                repo_name,
+                scan_rounds,
+                budget.prompt_tokens,
+                budget.completion_tokens,
+                estimated_cost,
+                aggregated["total_findings"],
+                aggregated["health_score"],
             )
 
         except Exception as e:
@@ -312,6 +382,9 @@ class ScanWorker:
                 status=ScanStatus.FAILED.value,
                 error_message=str(e)[:2000],
             )
+            await self._log_activity(scan_id, "error", {
+                "message": f"扫描失败: {str(e)[:500]}",
+            })
         finally:
             # 清理临时目录
             if repo_path and os.path.exists(repo_path):
@@ -423,14 +496,16 @@ class ScanWorker:
         repo_path: str,
         commit_sha: str | None,
         budget: ScanTokenBudget,
-    ) -> tuple[list[dict], int | None]:
+    ) -> tuple[list[dict], int | None, int]:
         """使用 AIReviewer 工具链进行全仓扫描
 
         让 AI 自主使用 read_file / list_directory / search_code_context
         浏览整个仓库，真正实现全量扫描。
 
         Returns:
-            (findings, ai_health_score) 元组，ai_health_score 为 AI 评估的评分（可能为 None）
+            (findings, ai_health_score, iteration) 三元组。
+            ai_health_score 为 AI 评估的评分（可能为 None）。
+            iteration 为实际执行的轮次数。
         """
         from backend.services.scan_prompt_builder import (
             collect_code_files,
@@ -571,6 +646,11 @@ class ScanWorker:
         max_iterations = settings.scan_max_iterations
         scan_temperature = settings.scan_temperature
 
+        tracker = TokenTracker()
+        safe_context = reviewer.model_context_mgr.calculate_safe_context(
+            scan_model, settings.scan_context_safety_threshold,
+        ) if reviewer.model_context_mgr else 0
+
         iteration = 0
         while iteration < max_iterations:
             if not budget.can_proceed(estimated_tokens=3000):
@@ -582,6 +662,12 @@ class ScanWorker:
                 f"全仓扫描 第 {iteration}/{max_iterations} 轮 AI 调用 (模型: {scan_model})..."
             )
 
+            # 记录 AI 思考事件
+            await self._log_activity(scan_id, "thinking", {
+                "message": f"第 {iteration}/{max_iterations} 轮 AI 分析",
+                "round": iteration,
+            })
+
             try:
                 response = await reviewer.api_client.call_with_retry(
                     model=scan_model,
@@ -591,13 +677,13 @@ class ScanWorker:
                     temperature=scan_temperature,
                 )
 
-                if budget:
-                    usage = getattr(response, "usage", None)
-                    if usage:
-                        budget.consume(
-                            getattr(usage, "prompt_tokens", 0) or 0,
-                            getattr(usage, "completion_tokens", 0) or 0,
-                        )
+                tracker.accumulate(response)
+                usage = getattr(response, "usage", None)
+                if usage and budget:
+                    budget.consume(
+                        getattr(usage, "prompt_tokens", 0) or 0,
+                        getattr(usage, "completion_tokens", 0) or 0,
+                    )
 
                 # 检查工具调用
                 tool_calls = getattr(response.choices[0].message, "tool_calls", None)
@@ -610,7 +696,14 @@ class ScanWorker:
                         f"{len(result.get('findings', []))} 个问题, "
                         f"评分={result.get('overall_score', '-')}"
                     )
-                    return result.get("findings", []), result.get("overall_score")
+                    await self._log_activity(scan_id, "ai_response", {
+                        "message": "AI 分析完成",
+                        "round": iteration,
+                        "findings_count": len(result.get("findings", [])),
+                        "overall_score": result.get("overall_score"),
+                        "content_preview": (review_text or "")[:500],
+                    })
+                    return result.get("findings", []), result.get("overall_score"), iteration
 
                 # 处理工具调用
                 assistant_message = response.choices[0].message
@@ -634,6 +727,14 @@ class ScanWorker:
                 import json
 
                 for tool_call in tool_calls:
+                    tool_name = tool_call.function.name
+                    tool_args_raw = tool_call.function.arguments[:200]
+                    await self._log_activity(scan_id, "tool_call", {
+                        "tool": tool_name,
+                        "status": "running",
+                        "detail": tool_args_raw,
+                        "round": iteration,
+                    })
                     try:
                         result = await reviewer.tool_handler.handle_tool_call(
                             tool_call,
@@ -650,6 +751,13 @@ class ScanWorker:
                         logger.info(
                             f"执行工具 {tool_call.function.name}: {tool_call.function.arguments[:100]}"
                         )
+                        result_preview = _json.dumps(result, ensure_ascii=False)[:300] if result else ""
+                        await self._log_activity(scan_id, "tool_result", {
+                            "tool": tool_name,
+                            "status": "completed",
+                            "detail": result_preview,
+                            "round": iteration,
+                        })
                     except Exception as e:
                         logger.error(f"执行工具失败: {e}")
                         messages.append(
@@ -659,21 +767,28 @@ class ScanWorker:
                                 "content": json.dumps({"error": str(e)}),
                             }
                         )
+                        await self._log_activity(scan_id, "tool_result", {
+                            "tool": tool_name,
+                            "status": "failed",
+                            "detail": str(e)[:300],
+                            "round": iteration,
+                        })
+
+                # 每轮记录上下文使用率
+                try:
+                    current_tokens = (
+                        reviewer.context_compressor.estimate_messages_tokens(
+                            messages
+                        )
+                    )
+                    tracker.log_context_usage(current_tokens, safe_context, iteration)
+                except Exception:
+                    logger.warning("token estimation failed, skipping", exc_info=True)
+                    current_tokens = 0
 
                 # 上下文压缩检查（使用扫描独立配置）
                 if reviewer.enable_compression:
                     try:
-                        current_tokens = (
-                            reviewer.context_compressor.estimate_messages_tokens(
-                                messages
-                            )
-                        )
-                        safe_context = (
-                            reviewer.model_context_mgr.calculate_safe_context(
-                                scan_model,
-                                settings.scan_context_safety_threshold,
-                            )
-                        )
                         threshold_tokens = int(
                             safe_context * settings.scan_compression_threshold
                         )
@@ -693,7 +808,7 @@ class ScanWorker:
                 break
 
         logger.warning(f"全仓扫描达到最大轮次 ({max_iterations})，停止")
-        return [], None
+        return [], None, iteration
 
     async def _call_ai(
         self, messages: list[dict], budget: ScanTokenBudget | None = None
@@ -851,7 +966,7 @@ class ScanWorker:
                         if hasattr(scan, key):
                             setattr(scan, key, value)
                     if "status" not in kwargs:
-                        scan.updated_at = datetime.utcnow()
+                        scan.updated_at = datetime.now(timezone.utc)
                     await session.commit()
 
         try:

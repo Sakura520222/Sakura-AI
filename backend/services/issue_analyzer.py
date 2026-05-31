@@ -3,7 +3,7 @@
 import json
 import re
 from datetime import datetime, timedelta
-from typing import Dict, Any, List
+from typing import Any, Callable, Coroutine, Dict, List, Optional
 from loguru import logger
 
 from backend.core.config import (
@@ -14,6 +14,9 @@ from backend.core.config import (
 )
 from backend.models.database import AppConfig, async_session
 from backend.services.ai_reviewer.api_client import AIApiClient
+from backend.services.ai_reviewer.token_tracker import TokenTracker
+from backend.services.ai_reviewer.message_utils import estimate_messages_tokens
+from backend.core.model_context import get_model_context_manager
 from backend.services.ai_reviewer.tools import (
     FileToolHandler,
     GitToolHandler,
@@ -166,7 +169,7 @@ class IssueAnalyzer:
                 issue_number,
             )
         except Exception as e:
-            logger.warning(f"GitHub API 获取评论失败: {e}")
+            logger.warning("GitHub API 获取评论失败: {}", e)
             return None
 
         if not comments:
@@ -232,7 +235,7 @@ class IssueAnalyzer:
                 cleaned_text = response_text.strip() if response_text else "解析失败"
                 partial_result["summary"] = cleaned_text
 
-            logger.warning(f"无法解析分析结果 JSON，已降级处理: {text[:200]}...")
+            logger.warning("无法解析分析结果 JSON，已降级处理: {}", text)
             return partial_result
 
     @staticmethod
@@ -356,6 +359,7 @@ class IssueAnalyzer:
         repo_owner: str,
         repo_name: str,
         repo: Any = None,
+        event_callback: Optional[Callable[[str, Dict[str, Any]], Coroutine]] = None,
     ) -> Dict[str, Any]:
         """分析 Issue
 
@@ -364,6 +368,7 @@ class IssueAnalyzer:
             repo_owner: 仓库所有者
             repo_name: 仓库名称
             repo: GitHub 仓库对象（可选，用于工具调用）
+            event_callback: 可选事件回调，用于实时推送工具调用进度到前端。
 
         Returns:
             分析结果字典，包含 token 和 cost 信息
@@ -396,14 +401,14 @@ class IssueAnalyzer:
             < _COLLABORATOR_CACHE_TTL
         ):
             collaborators = _collaborator_cache[cache_key]["collaborators"]
-            logger.debug(f"使用缓存的协作者列表: {cache_key}")
+            logger.info("使用缓存的协作者列表: {}", cache_key)
         else:
             collaborators = github_app.get_repo_collaborators(repo_owner, repo_name)
             _collaborator_cache[cache_key] = {
                 "collaborators": collaborators,
                 "updated_at": now,
             }
-            logger.debug(f"从 GitHub 获取协作者列表: {cache_key}")
+            logger.info("从 GitHub 获取协作者列表: {}", cache_key)
 
         # 获取评论对话（受配置控制）
         comments = None
@@ -414,7 +419,7 @@ class IssueAnalyzer:
                     github_app, repo_owner, repo_name, issue_info.get("issue_number", 0)
                 )
             except Exception as e:
-                logger.warning(f"获取 Issue 评论失败（不影响分析）: {e}")
+                logger.warning("获取 Issue 评论失败（不影响分析）: {}", e)
 
         # 构建提示词
         system_prompt = self._build_system_prompt(
@@ -453,7 +458,7 @@ class IssueAnalyzer:
                         sakura_section += f"\n\n### 项目记忆\n{memory_md}"
                     user_message += sakura_section
         except Exception as e:
-            logger.warning(f".sakura/ 记忆上下文注入失败（不影响分析）: {e}")
+            logger.warning(".sakura/ 记忆上下文注入失败（不影响分析）: {}", e)
 
         # 初始化消息列表
         messages = [
@@ -482,13 +487,15 @@ class IssueAnalyzer:
                             max_iterations = int(cfg.key_value)
                         except (ValueError, TypeError):
                             logger.warning(
-                                f"Invalid issue_max_tool_iterations config: {cfg.key_value}"
+                                "Invalid issue_max_tool_iterations config: {}",
+                                cfg.key_value,
                             )
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.warning("读取 issue_max_tool_iterations 配置失败: {}", exc)
         iteration = 0
-        total_prompt_tokens = 0
-        total_completion_tokens = 0
+        tracker = TokenTracker()
+        model_ctx_mgr = get_model_context_manager()
+        safe_context = model_ctx_mgr.calculate_safe_context(settings.openai_model, 0.8)
 
         while iteration < max_iterations:
             iteration += 1
@@ -502,7 +509,7 @@ class IssueAnalyzer:
                     temperature=settings.openai_temperature,
                 )
             except Exception as e:
-                logger.error(f"AI API 调用失败: {e}", exc_info=True)
+                logger.error("AI API 调用失败: {}", e, exc_info=True)
                 return {
                     "category": "other",
                     "priority": "medium",
@@ -512,8 +519,9 @@ class IssueAnalyzer:
                     "suggested_assignees": [],
                     "suggested_milestone": None,
                     "duplicate_of": None,
-                    "prompt_tokens": 0,
-                    "completion_tokens": 0,
+                    "prompt_tokens": tracker.prompt_tokens,
+                    "completion_tokens": tracker.completion_tokens,
+                    "tool_rounds": iteration,
                     "estimated_cost": 0,
                 }
 
@@ -529,17 +537,14 @@ class IssueAnalyzer:
                     "suggested_assignees": [],
                     "suggested_milestone": None,
                     "duplicate_of": None,
-                    "prompt_tokens": total_prompt_tokens,
-                    "completion_tokens": total_completion_tokens,
+                    "prompt_tokens": tracker.prompt_tokens,
+                    "completion_tokens": tracker.completion_tokens,
+                    "tool_rounds": iteration,
                     "estimated_cost": 0,
                 }
 
             # 累积 token 使用
-            if hasattr(response, "usage") and response.usage:
-                total_prompt_tokens += getattr(response.usage, "prompt_tokens", 0) or 0
-                total_completion_tokens += (
-                    getattr(response.usage, "completion_tokens", 0) or 0
-                )
+            tracker.accumulate(response)
 
             # 检查是否有工具调用
             tool_calls = (
@@ -552,21 +557,20 @@ class IssueAnalyzer:
                 result = self._parse_analysis_result(review_text)
 
                 # 计算成本
-                price_prompt = settings.issue_price_per_1k_prompt
-                price_completion = settings.issue_price_per_1k_completion
-                estimated_cost = (total_prompt_tokens / 1000) * price_prompt + (
-                    total_completion_tokens / 1000
-                ) * price_completion
-
-                result["prompt_tokens"] = total_prompt_tokens
-                result["completion_tokens"] = total_completion_tokens
-                result["estimated_cost"] = (
-                    int(estimated_cost * 100) if estimated_cost else 0
+                result["prompt_tokens"] = tracker.prompt_tokens
+                result["completion_tokens"] = tracker.completion_tokens
+                result["tool_rounds"] = iteration
+                result["estimated_cost"] = tracker.calculate_cost(
+                    settings.issue_price_per_1k_prompt,
+                    settings.issue_price_per_1k_completion,
                 )
 
                 logger.info(
-                    f"Issue #{issue_info.get('issue_number')} 分析完成 "
-                    f"({iteration}轮对话, tokens: {total_prompt_tokens}+{total_completion_tokens})"
+                    "Issue #{} 分析完成 ({}轮对话, tokens: {}+{})",
+                    issue_info.get("issue_number"),
+                    iteration,
+                    tracker.prompt_tokens,
+                    tracker.completion_tokens,
                 )
                 return result
 
@@ -593,31 +597,55 @@ class IssueAnalyzer:
 
             messages.append(assistant_msg_dict)
 
+            # 通知前端：assistant 消息（包含 tool_calls → 自动创建 ToolCall 行）
+            if event_callback:
+                try:
+                    await event_callback("message", assistant_msg_dict)
+                except Exception as exc:
+                    logger.warning("event_callback failed: {}", exc)
+
             # 执行工具调用
             for tool_call in tool_calls:
                 try:
+                    if event_callback:
+                        try:
+                            await event_callback("tool_running", tool_call.id)
+                        except Exception as exc:
+                            logger.warning("event_callback failed: {}", exc)
                     result = await self.tool_handler.handle_tool_call(
                         tool_call, repo, None
                     )
-                    messages.append(
-                        {
-                            "role": "tool",
-                            "tool_call_id": tool_call.id,
-                            "content": json.dumps(result, ensure_ascii=False),
-                        }
-                    )
-                    logger.info(f"执行工具 {tool_call.function.name} (Issue 分析)")
+                    tool_msg = {
+                        "role": "tool",
+                        "tool_call_id": tool_call.id,
+                        "content": json.dumps(result, ensure_ascii=False),
+                    }
+                    messages.append(tool_msg)
+                    logger.info("执行工具 {} (Issue 分析)", tool_call.function.name)
+                    if event_callback:
+                        try:
+                            await event_callback("message", tool_msg)
+                        except Exception as exc:
+                            logger.warning("event_callback failed: {}", exc)
                 except Exception as e:
-                    logger.error(f"工具调用失败: {e}")
-                    messages.append(
-                        {
-                            "role": "tool",
-                            "tool_call_id": tool_call.id,
-                            "content": json.dumps(
-                                {"error": str(e)}, ensure_ascii=False
-                            ),
-                        }
-                    )
+                    logger.error("工具调用失败: {}", e)
+                    error_tool_msg = {
+                        "role": "tool",
+                        "tool_call_id": tool_call.id,
+                        "content": json.dumps(
+                            {"error": str(e)}, ensure_ascii=False
+                        ),
+                    }
+                    messages.append(error_tool_msg)
+                    if event_callback:
+                        try:
+                            await event_callback("message", error_tool_msg)
+                        except Exception as exc:
+                            logger.warning("event_callback failed: {}", exc)
+
+            # 每轮工具调用处理后记录上下文使用率
+            current_tokens = estimate_messages_tokens(messages, model_ctx_mgr)
+            tracker.log_context_usage(current_tokens, safe_context, iteration)
 
         # 达到最大迭代次数，做最后一次 API 调用强制 AI 返回结果
         logger.warning(
@@ -637,7 +665,7 @@ class IssueAnalyzer:
             )
             last_content = final_response.choices[0].message.content or ""
         except Exception as e:
-            logger.error(f"最终 API 调用失败: {e}")
+            logger.error("最终 API 调用失败: {}", e)
             last_content = ""
 
         if last_content:
@@ -654,13 +682,11 @@ class IssueAnalyzer:
                 "duplicate_of": None,
             }
 
-        price_prompt = settings.issue_price_per_1k_prompt
-        price_completion = settings.issue_price_per_1k_completion
-        estimated_cost = (total_prompt_tokens / 1000) * price_prompt + (
-            total_completion_tokens / 1000
-        ) * price_completion
-
-        result["prompt_tokens"] = total_prompt_tokens
-        result["completion_tokens"] = total_completion_tokens
-        result["estimated_cost"] = int(estimated_cost * 100) if estimated_cost else 0
+        result["prompt_tokens"] = tracker.prompt_tokens
+        result["completion_tokens"] = tracker.completion_tokens
+        result["tool_rounds"] = max_iterations
+        result["estimated_cost"] = tracker.calculate_cost(
+            settings.issue_price_per_1k_prompt,
+            settings.issue_price_per_1k_completion,
+        )
         return result

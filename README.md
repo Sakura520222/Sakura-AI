@@ -8,7 +8,7 @@
 
 [English](README_EN.md) | **中文**
 
-[![Version](https://img.shields.io/badge/Version-2.12.0-blue.svg)](https://github.com/Sakura520222/Sakura-AI-Reviewer/releases)
+[![Version](https://img.shields.io/badge/Version-2.12.1-blue.svg)](https://github.com/Sakura520222/Sakura-AI-Reviewer/releases)
 [![Python](https://img.shields.io/badge/Python-3.11+-blue.svg)](https://www.python.org/)
 [![FastAPI](https://img.shields.io/badge/FastAPI-Latest-green.svg)](https://fastapi.tiangolo.com/)
 [![License](https://img.shields.io/badge/License-AGPLv3-yellow.svg)](LICENSE)
@@ -32,14 +32,6 @@
 ---
 
 ## ✨ 核心特性
-
-### 2.12.0 更新亮点
-
-- **多支付网关与退款闭环**：新增 Stripe、Paddle、支付宝、NOWPayments、TRON USDT 直收等外部支付网关，支持订单创建、状态查询、支付回调、用户退款申请、超级管理员审核与真实退款执行。
-- **Agent 专家团队开放与配额化**：Agent 任务支持仓库协作者通过 Issue 评论 `/agent` 委派，非管理员需满足仓库归属/白名单约束并消耗独立 Agent 日/周/月配额。
-- **移动端认证增强**：移动端 OAuth 支持白名单回调 URI，WebAuthn/Passkey 支持额外 Origin 与 Android App Links 场景，便于原生 Android App 接入。
-- **Sakura 记忆知识提取升级**：项目记忆从一次性提取改为按反思轮次周期性沉淀 rules/docs/plans，长期维护项目规则、架构知识和经验计划。
-- **审查与任务链路简化**：移除旧批处理模块，审查器直接使用 compact diff 工具模式处理大型 PR，并补强扫描报告 Issue 到 Agent 任务的闭环。
 
 ### 审查能力
 
@@ -107,7 +99,15 @@
 - **Token 消耗追踪**：实时追踪 Agent Team 中所有 AI API 调用的 token 消耗量与预估成本
 - **目标分支选择**：创建任务时支持选择目标分支（develop/main 等），灵活控制合入方向
 - **手动 Issue 任务预览/编辑**：WebUI 中支持预览和编辑 Issue 分析结果后再创建 Agent 任务
-- **PR 创建闭环**：支持 AI 生成 Conventional Commits 风格 PR 标题和描述、创建普通或 Draft PR，并通过 Sakura PR 审查与人工反馈继续迭代；不会自动合并 PR
+- **PR 创建闭环**：支持 AI 生成 Conventional Commits 风格 PR 标题、描述和提交信息，创建 Draft PR，并通过 Sakura PR 审查与人工反馈继续迭代；不会自动合并 PR
+  - Agent Team 初始创建的是 Draft PR；Draft opened webhook 不会触发 Sakura PR Review
+  - 当 Draft PR 被标记为 Ready for review 后，GitHub `ready_for_review` webhook 会自动触发 Sakura PR Review
+  - Bot 自己创建的 PR 在 GitHub 侧只能发表普通评论；Agent 闭环使用 Sakura 内部结构化审查结果判定是否继续
+  - 存在 critical / major 等配置为阻塞的审查项，或分数低于 `agent_team_pr_review_pass_score` 时，Agent 会在同一 `sakura-agent/*` 分支继续迭代
+  - 首轮迭代包含内部 Professional Reviewer 审查；闭环后续迭代跳过内部审查，直接交给外部 Sakura PR Review，节省 token 和时间
+  - Agent push 新 commit 后，GitHub `synchronize` webhook 会自动触发下一轮 Sakura PR Review
+  - 自动迭代受 `agent_team_max_iterations_per_task` 限制；达到上限或无法安全继续时进入 `waiting_human`
+  - `agent_team_pr_closed_loop_enabled` 可关闭闭环并恢复创建 PR 即完成的旧行为
 
 ### 管理与运维
 
@@ -329,7 +329,7 @@ WebUI：`https://your-domain.com/`
 - **Git 信息工具**：`config/strategies.yaml` 中 `context_enhancement.git_tools`，配置默认分支和提交返回数量
 - **项目记忆系统**：WebUI 配置管理中 `sakura_memory_enabled` 启用记忆系统，`sakura_reflection_enabled` 启用审查后反思，`sakura_consolidation_interval` 合并触发的反思轮数（默认 5），`sakura_auto_init` 自动初始化 `.sakura/` 目录，`sakura_auto_create_subdirs` 自动创建 rules/docs/plans 子目录，`sakura_knowledge_extraction_enabled` 启用自动知识提取（通过三次串行 LLM 调用分别提取 rules/docs/plans），`sakura_extraction_provider` 配置提取 AI 凭据来源（主AI/辅助AI/独立配置）。WebUI 提供「Sakura 记忆管理」页面，支持查看/编辑/删除记忆文件、手动触发合并和知识提取。详见 [项目记忆系统使用指南](docs/SAKURA_MEMORY_GUIDE.md)
 - **模型上下文**：WebUI 配置管理中配置上下文窗口、自动压缩等，详见 [模型上下文管理](docs/MODEL_CONTEXT_FEATURE.md)
-- **Agent 专家团队**：WebUI Agent Team 页面配置 `agent_team_enabled`、`agent_team_workspace_root`、`agent_team_repo_allowlist`、`agent_team_model_provider`、`agent_team_*` 模型与护栏参数；支持上下文压缩（`agent_team_enable_context_compression` 等）、全栈/审查工具轮数（`agent_team_max_tool_rounds` / `agent_team_reviewer_max_tool_rounds`）、自动安装依赖（`agent_team_auto_install_deps`）、验证命令黑名单和 Draft PR 开关；`agent_team_model_provider=main` 时复用主 AI 配置，也可选择独立 Agent AI 配置；普通用户入口会校验仓库归属和 `agent_team_repo_allowlist` 并消耗 Agent 配额，Issue 评论 `/agent` 可从已分析 Issue 或扫描报告 Issue 创建任务；支持 Web 搜索工具和 Token 消耗追踪
+- **Agent 专家团队**：WebUI Agent Team 页面配置 `agent_team_enabled`、`agent_team_workspace_root`、`agent_team_repo_allowlist`、`agent_team_model_provider`、`agent_team_*` 模型与护栏参数；支持上下文压缩（`agent_team_enable_context_compression` 等）、全栈/审查工具轮数（`agent_team_max_tool_rounds` / `agent_team_reviewer_max_tool_rounds`）、自动安装依赖（`agent_team_auto_install_deps`）、验证命令黑名单、Draft PR 开关和 PR 审查闭环（`agent_team_pr_closed_loop_enabled`、`agent_team_max_iterations_per_task`、`agent_team_pr_review_pass_score`）；`agent_team_model_provider=main` 时复用主 AI 配置，也可选择独立 Agent AI 配置；普通用户入口会校验仓库归属和 `agent_team_repo_allowlist` 并消耗 Agent 配额，Issue 评论 `/agent` 可从已分析 Issue 或扫描报告 Issue 创建任务；支持 Web 搜索工具和 Token 消耗追踪
 - **Agent Skills**：WebUI Agent Skills 页面安装和启停 Skills；通过 `agent_team_skills_enabled` 控制 Agent 是否可加载技能，通过 `agent_team_skills_root` 配置本地存储根目录
 - **国际化（i18n）**：WebUI 支持中英文界面切换（个人设置页面），AI 输出语言可通过全局配置 `OUTPUT_LANGUAGE` 或用户级配置覆盖（`output_language`，`zh-CN` / `en` / 跟随全局）控制，评论模板自动匹配对应语言
 

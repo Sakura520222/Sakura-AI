@@ -13,8 +13,7 @@ from sqlalchemy import (
     UniqueConstraint,
     text,
 )
-from sqlalchemy.ext.declarative import declarative_base
-from sqlalchemy.orm import relationship
+from sqlalchemy.orm import declarative_base, relationship
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
 import enum
 
@@ -139,6 +138,7 @@ class PRReview(Base):
     author = Column(String(100))
     title = Column(String(500))
     branch = Column(String(100))
+    head_sha = Column(String(64), nullable=True, index=True)
 
     # PR统计信息
     file_count = Column(Integer)
@@ -522,6 +522,8 @@ async def create_tables_async():
 
 def _ensure_model_modules_imported() -> None:
     """导入独立模型模块，确保 metadata 已注册。"""
+    import backend.models.activity_conversation_models  # noqa: F401
+    import backend.models.activity_event_models  # noqa: F401
     import backend.models.agent_skill_models  # noqa: F401
     import backend.models.agent_team_models  # noqa: F401
     import backend.models.payment_models  # noqa: F401
@@ -566,7 +568,7 @@ async def insert_default_configs_async():
         raise RuntimeError("异步会话工厂未初始化,请先调用 init_async_db()")
 
     default_configs = [
-        AppConfig(key_name="app_version", key_value="2.12.0", description="应用版本号"),
+        AppConfig(key_name="app_version", key_value="2.12.1", description="应用版本号"),
         AppConfig(
             key_name="max_concurrent_reviews",
             key_value="5",
@@ -687,7 +689,7 @@ def init_database(database_url: str):
 
             default_configs = [
                 AppConfig(
-                    key_name="app_version", key_value="2.12.0", description="应用版本号"
+                    key_name="app_version", key_value="2.12.1", description="应用版本号"
                 ),
                 AppConfig(
                     key_name="max_concurrent_reviews",
