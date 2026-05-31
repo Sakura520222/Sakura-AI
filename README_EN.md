@@ -434,7 +434,7 @@ Sakura-AI-Reviewer/
 
 ### Interactive Knowledge Graph
 
-The project uses [Understand Anything](https://github.com/nichochar/understand-anything) to generate an interactive code knowledge graph with architectural layers, node relationships, and guided learning paths for quick onboarding.
+The project uses [Understand Anything](https://github.com/Lum1104/Understand-Anything) to generate an interactive code knowledge graph with architectural layers, node relationships, and guided learning paths for quick onboarding.
 
 **Generate/update the knowledge graph** (run in Claude Code):
 
