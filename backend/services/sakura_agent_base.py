@@ -162,11 +162,11 @@ class SakuraAgentBase:
                 logger.error(
                     "{} LLM 调用失败 (iteration {}): {}", self.log_prefix, i, e
                 )
-                break
+                return
 
             if not response or not response.choices:
                 logger.warning("{} LLM 返回空响应 (iteration {})", self.log_prefix, i)
-                break
+                return
 
             choice = response.choices[0]
             msg = choice.message
