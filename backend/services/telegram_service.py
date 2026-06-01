@@ -1,5 +1,6 @@
 """Telegram Bot 服务层"""
 
+import json
 from typing import Optional, List, Tuple
 from sqlalchemy import select, and_
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -691,8 +692,6 @@ class TelegramService:
         Returns:
             dict: 事件类型 → 是否启用的映射。未显式设置的事件类型默认为 True。
         """
-        import json
-
         user = await self.get_user_by_telegram_id(telegram_id)
         if not user or not user.notification_preferences:
             # 默认：所有事件均启用
@@ -723,8 +722,6 @@ class TelegramService:
         Returns:
             (success, message)
         """
-        import json
-
         # 验证事件类型
         if event_type not in NotificationSender.EVENT_TYPES:
             valid_types = ", ".join(NotificationSender.EVENT_TYPES.keys())

@@ -95,6 +95,7 @@ class AgentTeamWorker:
                 title=task.title,
                 event_type="agent_task_started",
                 method="started",
+                author=task.started_by or "",
                 source_type=task.source_type or "",
             )
 
@@ -266,6 +267,7 @@ class AgentTeamWorker:
                         title=task.title,
                         event_type="agent_task_failed",
                         method="failed",
+                        author=task.started_by or "",
                         error_message=f"修改文件数 {len(outcome.modified_files)} 超过限制 {max_files}",
                         failed_phase="validation_failed",
                     )
@@ -431,6 +433,7 @@ class AgentTeamWorker:
                         title=task.title,
                         event_type="agent_task_completed",
                         method="completed",
+                        author=task.started_by or "",
                         pr_url=pr_result.pr_url,
                         iteration_count=outcome.iterations,
                     )
@@ -479,6 +482,7 @@ class AgentTeamWorker:
                     title=task.title,
                     event_type="agent_task_failed",
                     method="failed",
+                    author=task.started_by or "",
                     error_message=reason,
                     failed_phase="iteration_failed",
                 )
@@ -503,6 +507,7 @@ class AgentTeamWorker:
                 title=task.title if task else f"Task #{task_id}",
                 event_type="agent_task_failed",
                 method="failed",
+                author=task.started_by if task else "",
                 error_message=f"{type(e).__name__}: {e}",
                 failed_phase="error",
             )
@@ -1017,6 +1022,7 @@ class AgentTeamWorker:
         title: str,
         event_type: str,
         method: str,
+        author: str = "",
         **kwargs,
     ) -> None:
         """发送 Agent 任务相关 Telegram 通知（best-effort，失败不阻断业务）。
@@ -1027,6 +1033,7 @@ class AgentTeamWorker:
             title: 任务标题
             event_type: 通知事件类型（用于偏好过滤）
             method: 通知发送方法（started/completed/failed）
+            author: 触发任务的 GitHub 用户名（确保任务创建者也收到通知）
             **kwargs: 传递给具体发送方法的额外参数
         """
         try:
@@ -1043,7 +1050,7 @@ class AgentTeamWorker:
                 async with async_session() as session:
                     service = TelegramService(session)
                     chat_ids = await service.get_notification_targets_with_preference(
-                        repo_full_name, "", event_type
+                        repo_full_name, author, event_type
                     )
             except Exception as exc:
                 logger.debug(

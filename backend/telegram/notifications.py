@@ -430,13 +430,6 @@ class NotificationSender:
         "agent_task_failed": "Agent 任务失败",
     }
 
-    # 事件类型对应的 emoji
-    _AGENT_EVENT_EMOJIS = {
-        "agent_task_started": "🤖",
-        "agent_task_completed": "✅",
-        "agent_task_failed": "❌",
-    }
-
     async def send_agent_task_started(
         self,
         task_id: int,
