@@ -42,8 +42,16 @@
                 </div>
                 {% if workspace.worktree_count is defined and workspace.worktree_count > 0 %}
                 <div class="rounded-xl bg-sakura-50 dark:bg-sakura-900/20 p-3 col-span-3">
-                    <div class="text-xs text-sakura-600 dark:text-sakura-400">🌿 {{ _('agent_team.worktree_count') }}</div>
-                    <div class="mt-1 font-bold text-sakura-700 dark:text-sakura-300">{{ workspace.worktree_count }}</div>
+                    <button type="button"
+                            onclick="toggleWorktrees('{{ workspace.repo_owner }}', '{{ workspace.repo_name }}', this)"
+                            class="w-full flex items-center justify-between">
+                        <div class="flex items-center gap-2">
+                            <span class="text-xs text-sakura-600 dark:text-sakura-400">🌿 {{ _('agent_team.worktree_count') }}</span>
+                            <span class="font-bold text-sakura-700 dark:text-sakura-300">{{ workspace.worktree_count }}</span>
+                        </div>
+                        <svg class="w-4 h-4 text-sakura-500 transition-transform duration-200 worktree-chevron" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/></svg>
+                    </button>
+                    <div class="worktree-detail hidden mt-3 pt-3 border-t border-sakura-200 dark:border-sakura-800/30"></div>
                 </div>
                 {% endif %}
             </div>
