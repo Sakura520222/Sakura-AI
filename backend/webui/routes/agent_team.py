@@ -2094,15 +2094,41 @@ async def submit_user_prompt(
     db.add(prompt)
 
     # 可续跑终态：写入 prompt 后触发 follow-up iteration
+    # 使用乐观锁防止并发请求重复触发 follow-up：
+    # 将状态转换拆为独立的 UPDATE WHERE 语句，通过受影响行数判断是否竞态成功
     is_resumable_terminal = task.status in _RESUMABLE_TERMINAL_STATUSES and bool(
         task.workspace_path and task.branch_name and task.pr_number
     )
     if is_resumable_terminal:
-        task.status = AgentTeamTaskStatus.ITERATING.value
-        task.current_phase = "human_followup"
-        task.updated_at = _utc_now()
+        expected_updated_at = task.updated_at
+        from sqlalchemy import update as sa_update
 
-    await db.commit()
+        optimistic_result = await db.execute(
+            sa_update(AgentTeamTask)
+            .where(
+                AgentTeamTask.id == task_id,
+                AgentTeamTask.status == task.status,
+                AgentTeamTask.updated_at == expected_updated_at,
+            )
+            .values(
+                status=AgentTeamTaskStatus.ITERATING.value,
+                current_phase="human_followup",
+                updated_at=_utc_now(),
+            )
+        )
+        await db.commit()
+        if optimistic_result.rowcount == 0:
+            # 并发冲突：其他请求已抢先转换状态，跳过 follow-up
+            is_resumable_terminal = False
+            logger.info(
+                "submit_user_prompt 乐观锁检测到并发冲突，跳过 follow-up: task_id={}",
+                task_id,
+            )
+        else:
+            await db.refresh(task)
+    else:
+        await db.commit()
+
     await db.refresh(prompt)
 
     # SSE: 通知前端有新 prompt

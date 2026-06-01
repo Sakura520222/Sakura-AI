@@ -130,6 +130,8 @@ class AgentTeamWorkspaceService:
             self.get_worktrees_root_path(repo_owner, repo_name)
             / f"{task_id}-{branch_slug}"
         ).resolve()
+        # 双重校验：1) 确保在 Agent 工作区根目录内；2) 确保在对应仓库目录内
+        # 第二重防止 base_dir 下不同仓库之间的路径穿越
         self.ensure_within_base(worktree)
         repo_root = self.get_repo_root_path(repo_owner, repo_name)
         try:
