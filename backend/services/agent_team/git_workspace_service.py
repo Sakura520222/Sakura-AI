@@ -61,6 +61,7 @@ class AgentTeamGitWorkspaceService:
         source_id: int | None = None,
         base_branch: str | None = None,
         task_id: int | None = None,
+        source_type: str | None = None,
     ) -> GitWorkspaceInfo:
         """准备仓库 base checkout，并为当前 task 创建独立 worktree。"""
         if task_id is None or task_id <= 0:
@@ -71,7 +72,9 @@ class AgentTeamGitWorkspaceService:
             repo_owner, repo_name, repo_full_name
         )
         resolved_branch = base_branch or default_branch
-        branch_name = self.make_branch_name(task_id, source_issue_number, source_id)
+        branch_name = self.make_branch_name(
+            task_id, source_issue_number, source_id, source_type
+        )
         base_workspace = self.workspace_service.ensure_base_workspace(
             repo_owner, repo_name
         )
@@ -184,6 +187,7 @@ class AgentTeamGitWorkspaceService:
         task_id: int | None = None,
         source_issue_number: int | None = None,
         source_id: int | None = None,
+        source_type: str | None = None,
     ) -> str:
         """生成 Agent 分支名。task_id 保证同仓库并发任务不碰撞。"""
         if task_id and task_id > 0:
@@ -191,7 +195,11 @@ class AgentTeamGitWorkspaceService:
         else:
             prefix = "task-manual"
         if source_issue_number:
-            source = f"issue-{source_issue_number}"
+            # PR_REVIEW 类型使用 pr- 前缀，其余使用 issue-
+            if source_type and source_type.lower() == "pr_review":
+                source = f"pr-{source_issue_number}"
+            else:
+                source = f"issue-{source_issue_number}"
         elif source_id:
             source = f"source-{source_id}"
         else:

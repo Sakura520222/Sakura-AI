@@ -314,14 +314,13 @@ class AgentTeamCandidateService:
                 "请在配置中添加该仓库或清空白名单以允许所有仓库。"
             )
 
-        # 查找最新已完成的 PRReview（pr_id 即 PR number）
+        # 查找最新已完成的 PRReview
         review = await db.scalar(
             select(PRReview)
             .where(
                 and_(
                     PRReview.repo_owner == repo_owner,
                     PRReview.repo_name == repo_name,
-                    PRReview.pr_id == pr_number,
                     PRReview.status == PRStatus.COMPLETED.value,
                 )
             )
@@ -330,7 +329,7 @@ class AgentTeamCandidateService:
         )
         if review is None:
             raise ValueError(
-                f"{repo_full_name}#{pr_number} 没有已完成的 PR 审查记录，"
+                f"{repo_full_name} 没有已完成的 PR 审查记录，"
                 "请先触发 PR 审查后再使用 /agent 命令。"
             )
 

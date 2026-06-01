@@ -16,6 +16,20 @@ def test_make_branch_name_for_issue():
     )
 
 
+def test_make_branch_name_for_pr():
+    service = AgentTeamGitWorkspaceService(
+        github_app=object(), workspace_service=object()
+    )
+
+    # PR_REVIEW 类型使用 pr- 前缀
+    assert (
+        service.make_branch_name(
+            task_id=62, source_issue_number=384, source_type="pr_review"
+        )
+        == "sakura-agent/task-62-pr-384"
+    )
+
+
 def test_make_branch_name_for_source():
     service = AgentTeamGitWorkspaceService(
         github_app=object(), workspace_service=object()
