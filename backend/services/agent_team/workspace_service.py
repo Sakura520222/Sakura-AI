@@ -304,8 +304,11 @@ class AgentTeamWorkspaceService:
             modified_at = worktree_dir.stat().st_mtime
         except OSError:
             pass
+        # 排除 .git 目录，限制深度防止大型仓库卡顿
         for item in worktree_dir.rglob("*"):
             try:
+                if ".git" in item.parts:
+                    continue
                 stat = item.stat()
             except OSError:
                 continue

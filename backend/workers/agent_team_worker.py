@@ -984,7 +984,10 @@ class AgentTeamWorker:
         outcome,
         new_iteration_count: int,
     ) -> None:
-        """更新已有 PR body（失败时仅 warn 不中断）。"""
+        """更新已有 PR body。
+
+        尽力而为语义：失败仅 logger.warning，不向调用方传播异常。
+        """
         try:
             fallback_body = pr_service.build_pr_body(
                 task_title=task.title,

@@ -1528,7 +1528,7 @@ async def worktree_list_fragment(
 ):
     """返回指定仓库的 worktree 列表 HTML 片段。"""
     service = AgentTeamWorkspaceService()
-    worktrees = service.list_worktrees(repo_owner, repo_name)
+    worktrees = await asyncio.to_thread(service.list_worktrees, repo_owner, repo_name)
 
     # 查询各 task 的状态，用于标识活跃/孤立 worktree
     task_ids = [w.task_id for w in worktrees if w.task_id is not None]
@@ -1592,7 +1592,8 @@ async def delete_worktree(
     """删除单个 worktree 目录。"""
     service = AgentTeamWorkspaceService()
 
-    # 尝试从目录名提取 task_id，检查是否有活跃任务
+    # 目录名格式为 {task_id}-{branch_slug}，由 prepare_workspace 创建。
+    # 从中提取 task_id 检查是否有活跃任务；若目录为手动创建则跳过此检查。
     wt_match = service._WT_DIR_RE.match(dir_name)
     if wt_match:
         task_id = int(wt_match.group(1))
@@ -1637,7 +1638,7 @@ async def clean_orphan_worktrees(
 ):
     """清理指定仓库的孤立 worktree（对应任务已终结）。"""
     service = AgentTeamWorkspaceService()
-    worktrees = service.list_worktrees(repo_owner, repo_name)
+    worktrees = await asyncio.to_thread(service.list_worktrees, repo_owner, repo_name)
     if not worktrees:
         return JSONResponse({"success": True, "cleaned": 0})
 
