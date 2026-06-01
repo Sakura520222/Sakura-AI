@@ -237,18 +237,14 @@ class AgentTeamWorker:
                 )
 
                 # 检查修改文件数量限制
-                max_files = int(
-                    await self._get_config("agent_team_max_files_changed") or 30
-                )
-
-                if len(outcome.modified_files) > max_files:
+                try:
+                    await self._validate_max_files(outcome.modified_files)
+                except ValueError as exc:
                     await self._update_task(
                         task_id,
                         status=AgentTeamTaskStatus.FAILED.value,
                         current_phase="validation_failed",
-                        error_message=(
-                            f"修改文件数 {len(outcome.modified_files)} 超过限制 {max_files}"
-                        ),
+                        error_message=str(exc),
                     )
                     return task_id
 
@@ -559,16 +555,12 @@ class AgentTeamWorker:
                 skip_internal_review=True,
             )
 
-            new_iteration_count = (task.iteration_count or 0) + outcome.iterations
-            prompt_tokens = (task.prompt_tokens or 0) + outcome.prompt_tokens
-            completion_tokens = (task.completion_tokens or 0) + outcome.completion_tokens
-            s = get_settings()
-            cost_tracker = TokenTracker()
-            cost_tracker.add_tokens(prompt_tokens, completion_tokens)
-            estimated_cost = cost_tracker.calculate_cost(
-                s.review_price_per_1k_prompt,
-                s.review_price_per_1k_completion,
-            )
+            (
+                new_iteration_count,
+                prompt_tokens,
+                completion_tokens,
+                estimated_cost,
+            ) = self._accumulate_iteration_cost(task, outcome)
 
             if not outcome.success and cancel_event.is_set():
                 terminal = True
@@ -630,17 +622,16 @@ class AgentTeamWorker:
                 status=AgentTeamTaskStatus.VALIDATING.value,
                 current_phase="validating",
             )
-            max_files = int(await self._get_config("agent_team_max_files_changed") or 30)
-            if len(outcome.modified_files) > max_files:
+            try:
+                await self._validate_max_files(outcome.modified_files)
+            except ValueError as exc:
                 terminal = True
                 await self._update_task(
                     task_id,
                     status=AgentTeamTaskStatus.FAILED.value,
                     current_phase="validation_failed",
                     estimated_cost=estimated_cost,
-                    error_message=(
-                        f"修改文件数 {len(outcome.modified_files)} 超过限制 {max_files}"
-                    ),
+                    error_message=str(exc),
                     failed_phase="validation_failed",
                 )
                 return task_id
@@ -674,51 +665,7 @@ class AgentTeamWorker:
                 repo_name=task.repo_name,
             )
 
-            try:
-                fallback_body = pr_service.build_pr_body(
-                    task_title=task.title,
-                    task_summary=task.summary or "",
-                    fullstack_analysis=outcome.fullstack_result.summary
-                    if outcome.fullstack_result
-                    else "",
-                    fullstack_plan="",
-                    review_summary=outcome.review_result.summary
-                    if outcome.review_result
-                    else "",
-                    iteration_count=new_iteration_count,
-                    source_type=task.source_type,
-                    source_issue_number=task.source_issue_number,
-                )
-                body = await pr_service.generate_pr_body(
-                    task_title=task.title,
-                    task_summary=task.summary or "",
-                    fullstack_analysis=outcome.fullstack_result.summary
-                    if outcome.fullstack_result
-                    else "",
-                    review_summary=outcome.review_result.summary
-                    if outcome.review_result
-                    else "",
-                    review_verdict=outcome.review_result.verdict
-                    if outcome.review_result
-                    else "",
-                    review_score=outcome.review_result.score
-                    if outcome.review_result
-                    else 0,
-                    review_findings=[],
-                    modified_files=outcome.modified_files or [],
-                    iteration_count=new_iteration_count,
-                    source_type=task.source_type,
-                    source_issue_number=task.source_issue_number,
-                    fallback_body=fallback_body,
-                )
-                await pr_service.update_pull_request_body(
-                    repo_owner=task.repo_owner,
-                    repo_name=task.repo_name,
-                    pr_number=task.pr_number,
-                    body=body,
-                )
-            except Exception as exc:
-                logger.warning("更新 Agent PR body 失败，将继续等待 synchronize webhook: {}", exc)
+            await self._update_pr_body(pr_service, task, outcome, new_iteration_count)
 
             await self._update_task(
                 task_id,
@@ -861,16 +808,12 @@ class AgentTeamWorker:
                 skip_internal_review=True,
             )
 
-            new_iteration_count = (task.iteration_count or 0) + outcome.iterations
-            prompt_tokens = (task.prompt_tokens or 0) + outcome.prompt_tokens
-            completion_tokens = (task.completion_tokens or 0) + outcome.completion_tokens
-            s = get_settings()
-            cost_tracker = TokenTracker()
-            cost_tracker.add_tokens(prompt_tokens, completion_tokens)
-            estimated_cost = cost_tracker.calculate_cost(
-                s.review_price_per_1k_prompt,
-                s.review_price_per_1k_completion,
-            )
+            (
+                new_iteration_count,
+                prompt_tokens,
+                completion_tokens,
+                estimated_cost,
+            ) = self._accumulate_iteration_cost(task, outcome)
 
             if not outcome.success and cancel_event.is_set():
                 terminal = True
@@ -933,17 +876,16 @@ class AgentTeamWorker:
                 status=AgentTeamTaskStatus.VALIDATING.value,
                 current_phase="validating",
             )
-            max_files = int(await self._get_config("agent_team_max_files_changed") or 30)
-            if len(outcome.modified_files) > max_files:
+            try:
+                await self._validate_max_files(outcome.modified_files)
+            except ValueError as exc:
                 terminal = True
                 await self._update_task(
                     task_id,
                     status=AgentTeamTaskStatus.FAILED.value,
                     current_phase="validation_failed",
                     estimated_cost=estimated_cost,
-                    error_message=(
-                        f"修改文件数 {len(outcome.modified_files)} 超过限制 {max_files}"
-                    ),
+                    error_message=str(exc),
                     failed_phase="validation_failed",
                 )
                 return task_id
@@ -972,52 +914,7 @@ class AgentTeamWorker:
                 repo_name=task.repo_name,
             )
 
-            # 更新 PR body
-            try:
-                fallback_body = pr_service.build_pr_body(
-                    task_title=task.title,
-                    task_summary=task.summary or "",
-                    fullstack_analysis=outcome.fullstack_result.summary
-                    if outcome.fullstack_result
-                    else "",
-                    fullstack_plan="",
-                    review_summary=outcome.review_result.summary
-                    if outcome.review_result
-                    else "",
-                    iteration_count=new_iteration_count,
-                    source_type=task.source_type,
-                    source_issue_number=task.source_issue_number,
-                )
-                body = await pr_service.generate_pr_body(
-                    task_title=task.title,
-                    task_summary=task.summary or "",
-                    fullstack_analysis=outcome.fullstack_result.summary
-                    if outcome.fullstack_result
-                    else "",
-                    review_summary=outcome.review_result.summary
-                    if outcome.review_result
-                    else "",
-                    review_verdict=outcome.review_result.verdict
-                    if outcome.review_result
-                    else "",
-                    review_score=outcome.review_result.score
-                    if outcome.review_result
-                    else 0,
-                    review_findings=[],
-                    modified_files=outcome.modified_files or [],
-                    iteration_count=new_iteration_count,
-                    source_type=task.source_type,
-                    source_issue_number=task.source_issue_number,
-                    fallback_body=fallback_body,
-                )
-                await pr_service.update_pull_request_body(
-                    repo_owner=task.repo_owner,
-                    repo_name=task.repo_name,
-                    pr_number=task.pr_number,
-                    body=body,
-                )
-            except Exception as exc:
-                logger.warning("更新 Agent PR body 失败（follow-up）: {}", exc)
+            await self._update_pr_body(pr_service, task, outcome, new_iteration_count)
 
             await self._update_task(
                 task_id,
@@ -1057,6 +954,82 @@ class AgentTeamWorker:
                 await self._expire_pending_prompts_if_terminal(task_id)
 
     # ── 辅助方法 ──────────────────────────────────────────
+
+    def _accumulate_iteration_cost(
+        self, task: AgentTeamTask, outcome
+    ) -> tuple[int, int, int, int]:
+        """计算累计 token 和成本，返回 (new_iteration_count, prompt_tokens, completion_tokens, estimated_cost)。"""
+        new_iteration_count = (task.iteration_count or 0) + outcome.iterations
+        prompt_tokens = (task.prompt_tokens or 0) + outcome.prompt_tokens
+        completion_tokens = (task.completion_tokens or 0) + outcome.completion_tokens
+        s = get_settings()
+        cost_tracker = TokenTracker()
+        cost_tracker.add_tokens(prompt_tokens, completion_tokens)
+        estimated_cost = cost_tracker.calculate_cost(
+            s.review_price_per_1k_prompt,
+            s.review_price_per_1k_completion,
+        )
+        return new_iteration_count, prompt_tokens, completion_tokens, estimated_cost
+
+    async def _validate_max_files(self, modified_files: list[str]) -> None:
+        """校验修改文件数量。超限时抛出 ValueError。"""
+        max_files = int(await self._get_config("agent_team_max_files_changed") or 30)
+        if len(modified_files) > max_files:
+            raise ValueError(f"修改文件数 {len(modified_files)} 超过限制 {max_files}")
+
+    async def _update_pr_body(
+        self,
+        pr_service: AgentTeamPRService,
+        task: AgentTeamTask,
+        outcome,
+        new_iteration_count: int,
+    ) -> None:
+        """更新已有 PR body（失败时仅 warn 不中断）。"""
+        try:
+            fallback_body = pr_service.build_pr_body(
+                task_title=task.title,
+                task_summary=task.summary or "",
+                fullstack_analysis=outcome.fullstack_result.summary
+                if outcome.fullstack_result
+                else "",
+                fullstack_plan="",
+                review_summary=outcome.review_result.summary
+                if outcome.review_result
+                else "",
+                iteration_count=new_iteration_count,
+                source_type=task.source_type,
+                source_issue_number=task.source_issue_number,
+            )
+            body = await pr_service.generate_pr_body(
+                task_title=task.title,
+                task_summary=task.summary or "",
+                fullstack_analysis=outcome.fullstack_result.summary
+                if outcome.fullstack_result
+                else "",
+                review_summary=outcome.review_result.summary
+                if outcome.review_result
+                else "",
+                review_verdict=outcome.review_result.verdict
+                if outcome.review_result
+                else "",
+                review_score=outcome.review_result.score
+                if outcome.review_result
+                else 0,
+                review_findings=[],
+                modified_files=outcome.modified_files or [],
+                iteration_count=new_iteration_count,
+                source_type=task.source_type,
+                source_issue_number=task.source_issue_number,
+                fallback_body=fallback_body,
+            )
+            await pr_service.update_pull_request_body(
+                repo_owner=task.repo_owner,
+                repo_name=task.repo_name,
+                pr_number=task.pr_number,
+                body=body,
+            )
+        except Exception as exc:
+            logger.warning("更新 Agent PR body 失败: {}", exc)
 
     async def _expire_pending_prompts_if_terminal(self, task_id: int) -> None:
         try:
