@@ -1,5 +1,3 @@
-from datetime import datetime
-
 import pytest
 
 from backend.services.agent_team.git_workspace_service import (
@@ -7,42 +5,36 @@ from backend.services.agent_team.git_workspace_service import (
 )
 
 
-def test_make_branch_name_for_issue(monkeypatch):
-    class FixedDatetime:
-        @staticmethod
-        def now(tz=None):
-            return datetime(2026, 5, 9, 12, 34, 56)
-
-    monkeypatch.setattr(
-        "backend.services.agent_team.git_workspace_service.datetime", FixedDatetime
-    )
-
+def test_make_branch_name_for_issue():
     service = AgentTeamGitWorkspaceService(
         github_app=object(), workspace_service=object()
     )
 
     assert (
-        service.make_branch_name(source_issue_number=42)
-        == "sakura-agent/issue-42-20260509-123456"
+        service.make_branch_name(task_id=123, source_issue_number=42)
+        == "sakura-agent/task-123-issue-42"
     )
 
 
-def test_make_branch_name_for_source(monkeypatch):
-    class FixedDatetime:
-        @staticmethod
-        def now(tz=None):
-            return datetime(2026, 5, 9, 12, 34, 56)
-
-    monkeypatch.setattr(
-        "backend.services.agent_team.git_workspace_service.datetime", FixedDatetime
-    )
-
+def test_make_branch_name_for_source():
     service = AgentTeamGitWorkspaceService(
         github_app=object(), workspace_service=object()
     )
 
     assert (
-        service.make_branch_name(source_id=7) == "sakura-agent/source-7-20260509-123456"
+        service.make_branch_name(task_id=123, source_id=7)
+        == "sakura-agent/task-123-source-7"
+    )
+
+
+def test_make_branch_name_uses_task_id_to_avoid_same_second_collision():
+    service = AgentTeamGitWorkspaceService(
+        github_app=object(), workspace_service=object()
+    )
+
+    assert service.make_branch_name(task_id=1, source_issue_number=42) != service.make_branch_name(
+        task_id=2,
+        source_issue_number=42,
     )
 
 

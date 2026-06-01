@@ -106,6 +106,7 @@ class AgentTeamWorker:
                     task.source_issue_number,
                     task.source_id,
                     task.base_branch,
+                    task.id,
                 )
 
             # 取消检查点
@@ -754,6 +755,303 @@ class AgentTeamWorker:
             if terminal:
                 await self._expire_pending_prompts_if_terminal(task_id)
 
+    async def process_human_followup_iteration(self, task_id: int) -> int:
+        """管理员后续要求：复用同一 worktree/branch/PR 继续迭代。
+
+        由 submit_user_prompt 在可续跑终态时调度。
+        """
+        config = await load_agent_team_ai_config()
+        config.validate()
+
+        cancel_event = _cancel_events.get(task_id)
+        if cancel_event is None:
+            cancel_event = asyncio.Event()
+            _cancel_events[task_id] = cancel_event
+
+        terminal = False
+        try:
+            task = await self._load_task(task_id)
+            if task.status != AgentTeamTaskStatus.ITERATING.value:
+                logger.info(
+                    "跳过 Agent follow-up: task_id={}, status={}",
+                    task_id,
+                    task.status,
+                )
+                return task_id
+
+            if not task.workspace_path or not task.branch_name or not task.pr_number:
+                terminal = True
+                await self._update_task(
+                    task_id,
+                    status=AgentTeamTaskStatus.WAITING_HUMAN.value,
+                    current_phase="waiting_human",
+                    error_message="缺少可继续 follow-up 的 workspace/branch/pr 信息",
+                )
+                return task_id
+
+            remaining_iterations = max(
+                0,
+                (task.max_iterations or 0) - (task.iteration_count or 0),
+            )
+            if remaining_iterations <= 0:
+                terminal = True
+                await self._update_task(
+                    task_id,
+                    status=AgentTeamTaskStatus.WAITING_HUMAN.value,
+                    current_phase="waiting_human",
+                    error_message="已达到 Agent 最大迭代轮数，无法继续 follow-up",
+                )
+                return task_id
+
+            # 恢复 workspace
+            git_service = AgentTeamGitWorkspaceService()
+            workspace_info = await git_service.resume_workspace(
+                task.repo_owner,
+                task.repo_name,
+                task.workspace_path,
+                task.branch_name,
+                task.base_branch,
+                task.base_commit_sha,
+            )
+
+            if cancel_event.is_set():
+                terminal = True
+                await self._update_task(
+                    task_id,
+                    status=AgentTeamTaskStatus.CANCELLED.value,
+                    current_phase="cancelled",
+                    error_message="任务在 follow-up 恢复阶段被取消",
+                )
+                return task_id
+
+            (
+                skills_summary,
+                skills_context,
+                _skills_snapshot,
+            ) = await load_skills_context()
+            sakura_info = await load_sakura_memory(task.repo_owner, task.repo_name)
+            task_context = build_agent_task_summary(task.summary or "")
+
+            checkpoint = ConversationCheckpointService(task_id)
+            loop_service = IterationLoopService(
+                workspace_info.workspace,
+                task_id=task_id,
+                checkpoint=checkpoint,
+                resume_index=task.resume_count or 0,
+            )
+
+            # follow-up 的 initial_feedback 留空，由 _consume_pending_prompts 消费管理员要求
+            outcome = await loop_service.run(
+                task_title=task.title,
+                task_summary=task_context,
+                source_type=task.source_type,
+                source_issue_number=task.source_issue_number,
+                max_iterations=remaining_iterations,
+                sakura_memory=sakura_info["text"],
+                skills_summary=skills_summary,
+                skills_context=skills_context,
+                github_repo=sakura_info["github_repo"],
+                sakura_ref=sakura_info["sakura_ref"],
+                cancel_check=cancel_event.is_set,
+                iteration_offset=task.iteration_count or 0,
+                skip_internal_review=True,
+            )
+
+            new_iteration_count = (task.iteration_count or 0) + outcome.iterations
+            prompt_tokens = (task.prompt_tokens or 0) + outcome.prompt_tokens
+            completion_tokens = (task.completion_tokens or 0) + outcome.completion_tokens
+            s = get_settings()
+            cost_tracker = TokenTracker()
+            cost_tracker.add_tokens(prompt_tokens, completion_tokens)
+            estimated_cost = cost_tracker.calculate_cost(
+                s.review_price_per_1k_prompt,
+                s.review_price_per_1k_completion,
+            )
+
+            if not outcome.success and cancel_event.is_set():
+                terminal = True
+                await self._update_task(
+                    task_id,
+                    status=AgentTeamTaskStatus.CANCELLED.value,
+                    current_phase="cancelled",
+                    iteration_count=new_iteration_count,
+                    prompt_tokens=prompt_tokens,
+                    completion_tokens=completion_tokens,
+                    estimated_cost=estimated_cost,
+                    error_message="任务在 follow-up 迭代阶段被取消",
+                )
+                return task_id
+
+            await self._save_iteration(
+                task_id=task_id,
+                iteration_number=new_iteration_count,
+                fullstack_result=outcome.fullstack_result,
+                review_result=outcome.review_result,
+                modified_files=outcome.modified_files,
+                workspace=workspace_info.workspace,
+            )
+            await self._update_task(
+                task_id,
+                iteration_count=new_iteration_count,
+                prompt_tokens=prompt_tokens,
+                completion_tokens=completion_tokens,
+                current_phase="followup_complete",
+            )
+
+            if not outcome.modified_files:
+                terminal = True
+                await self._update_task(
+                    task_id,
+                    status=AgentTeamTaskStatus.WAITING_HUMAN.value,
+                    current_phase="waiting_human",
+                    estimated_cost=estimated_cost,
+                    error_message="Agent 未根据管理员要求产生新修改",
+                )
+                return task_id
+
+            if not outcome.success:
+                terminal = True
+                await self._update_task(
+                    task_id,
+                    status=AgentTeamTaskStatus.WAITING_HUMAN.value,
+                    current_phase="waiting_human",
+                    estimated_cost=estimated_cost,
+                    error_message=_format_failure_reason(
+                        outcome.reason,
+                        outcome.modified_files,
+                    ),
+                )
+                return task_id
+
+            # push 到同一 Agent PR 分支
+            await self._update_task(
+                task_id,
+                status=AgentTeamTaskStatus.VALIDATING.value,
+                current_phase="validating",
+            )
+            max_files = int(await self._get_config("agent_team_max_files_changed") or 30)
+            if len(outcome.modified_files) > max_files:
+                terminal = True
+                await self._update_task(
+                    task_id,
+                    status=AgentTeamTaskStatus.FAILED.value,
+                    current_phase="validation_failed",
+                    estimated_cost=estimated_cost,
+                    error_message=(
+                        f"修改文件数 {len(outcome.modified_files)} 超过限制 {max_files}"
+                    ),
+                    failed_phase="validation_failed",
+                )
+                return task_id
+
+            await self._update_task(
+                task_id,
+                status=AgentTeamTaskStatus.PUSHING.value,
+                current_phase="pushing",
+            )
+            pr_service = AgentTeamPRService()
+            fallback_msg = self._build_commit_message(task, outcome)
+            commit_message = await pr_service.generate_commit_message(
+                task_title=task.title,
+                task_summary=task.summary or "",
+                modified_files=outcome.modified_files or [],
+                fullstack_summary=outcome.fullstack_result.summary
+                if outcome.fullstack_result
+                else "",
+                fallback_message=fallback_msg,
+            )
+            new_sha = await pr_service.commit_and_push(
+                workspace=str(workspace_info.workspace),
+                branch_name=task.branch_name,
+                commit_message=commit_message,
+                repo_owner=task.repo_owner,
+                repo_name=task.repo_name,
+            )
+
+            # 更新 PR body
+            try:
+                fallback_body = pr_service.build_pr_body(
+                    task_title=task.title,
+                    task_summary=task.summary or "",
+                    fullstack_analysis=outcome.fullstack_result.summary
+                    if outcome.fullstack_result
+                    else "",
+                    fullstack_plan="",
+                    review_summary=outcome.review_result.summary
+                    if outcome.review_result
+                    else "",
+                    iteration_count=new_iteration_count,
+                    source_type=task.source_type,
+                    source_issue_number=task.source_issue_number,
+                )
+                body = await pr_service.generate_pr_body(
+                    task_title=task.title,
+                    task_summary=task.summary or "",
+                    fullstack_analysis=outcome.fullstack_result.summary
+                    if outcome.fullstack_result
+                    else "",
+                    review_summary=outcome.review_result.summary
+                    if outcome.review_result
+                    else "",
+                    review_verdict=outcome.review_result.verdict
+                    if outcome.review_result
+                    else "",
+                    review_score=outcome.review_result.score
+                    if outcome.review_result
+                    else 0,
+                    review_findings=[],
+                    modified_files=outcome.modified_files or [],
+                    iteration_count=new_iteration_count,
+                    source_type=task.source_type,
+                    source_issue_number=task.source_issue_number,
+                    fallback_body=fallback_body,
+                )
+                await pr_service.update_pull_request_body(
+                    repo_owner=task.repo_owner,
+                    repo_name=task.repo_name,
+                    pr_number=task.pr_number,
+                    body=body,
+                )
+            except Exception as exc:
+                logger.warning("更新 Agent PR body 失败（follow-up）: {}", exc)
+
+            await self._update_task(
+                task_id,
+                status=AgentTeamTaskStatus.EXTERNAL_REVIEWING.value,
+                current_phase="external_reviewing",
+                pr_head_sha=new_sha,
+                iteration_count=new_iteration_count,
+                prompt_tokens=prompt_tokens,
+                completion_tokens=completion_tokens,
+                estimated_cost=estimated_cost,
+                error_message=None,
+                failed_phase=None,
+                failed_role=None,
+                rate_limit_reset_at=None,
+            )
+            return task_id
+        except Exception as e:
+            terminal = True
+            logger.error(
+                "Agent follow-up 迭代异常: task_id={}, error={}",
+                task_id,
+                e,
+                exc_info=True,
+            )
+            await self._update_task(
+                task_id,
+                status=AgentTeamTaskStatus.FAILED.value,
+                current_phase="error",
+                error_message=f"{type(e).__name__}: {e}",
+                failed_phase="error",
+                rate_limit_reset_at=_parse_rate_limit_reset_at(str(e)),
+            )
+            return task_id
+        finally:
+            _cancel_events.pop(task_id, None)
+            if terminal:
+                await self._expire_pending_prompts_if_terminal(task_id)
+
     # ── 辅助方法 ──────────────────────────────────────────
 
     async def _expire_pending_prompts_if_terminal(self, task_id: int) -> None:
@@ -997,6 +1295,11 @@ async def resume_agent_team_task(task_id: int) -> int:
 
 async def submit_agent_team_pr_review_iteration(task_id: int, review_id: int) -> int:
     return await get_worker().process_external_review_iteration(task_id, review_id)
+
+
+async def submit_agent_team_human_followup(task_id: int) -> int:
+    """管理员在 Live View 提交后续要求后，复用同一 worktree/branch/PR 继续迭代。"""
+    return await get_worker().process_human_followup_iteration(task_id)
 
 
 def request_task_cancel(task_id: int) -> None:
