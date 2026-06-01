@@ -28,11 +28,19 @@ class GitWorkspaceInfo:
 
 _repo_locks: dict[str, asyncio.Lock] = {}
 _repo_locks_guard = asyncio.Lock()
+# 防止 Lock 字典无限增长的简单上限。
+# 实际场景中仓库数量远小于此值，超出时清理最旧的条目。
+_REPO_LOCKS_MAX_SIZE = 256
 
 
 async def _get_repo_lock(repo_full_name: str) -> asyncio.Lock:
     """获取同仓库 clone/fetch/worktree 操作的进程内锁。"""
+    global _repo_locks
     async with _repo_locks_guard:
+        # 超出上限时清理（FIFO 淘汰最旧的 key）
+        if len(_repo_locks) >= _REPO_LOCKS_MAX_SIZE:
+            oldest_key = next(iter(_repo_locks))
+            del _repo_locks[oldest_key]
         lock = _repo_locks.get(repo_full_name)
         if lock is None:
             lock = asyncio.Lock()

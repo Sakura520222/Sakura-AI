@@ -227,6 +227,9 @@ class AgentTeamPRReviewFeedbackService:
         # 当 Agent 修复 PR 合并回源 PR 后，源 PR 的新审查 review.branch 是源 PR 分支，
         # 无法直接匹配 Agent 任务的 branch_name（修复分支）。
         # 此时通过 pr_review 来源 + 同 repo + 非终态查找原 Agent 任务。
+        # 安全性说明：build_pr_review_task_draft 的 duplicate guard 确保同 repo 最多只有
+        # 一个非终态 PR_REVIEW 任务，因此 repo + source_type + 非终态 足以唯一标识。
+        # PRReview.pr_id 是 GitHub node ID，无法直接与 source_issue_number（PR number）关联。
         statement = (
             select(AgentTeamTask)
             .where(
