@@ -1,5 +1,6 @@
 """WebUI Agent 专家团队路由"""
 
+import asyncio
 import json
 import re
 from datetime import datetime, timezone
@@ -36,6 +37,7 @@ from backend.models.agent_team_models import (
     AgentTeamUserPrompt,
 )
 from backend.models.database import AppConfig, IssueAnalysis
+from backend.models.database import utc_now as _utc_now
 from backend.services.agent_team.ai_client import (
     load_agent_team_ai_config,
     resolve_agent_team_max_iterations,
@@ -125,6 +127,36 @@ AGENT_TEAM_ACTIVE_STATUSES = [
 ]
 
 _VALID_TASK_PRIORITIES = {"critical", "high", "medium", "low"}
+
+# 终态但具备 workspace/branch/PR 信息、可续跑的任务状态
+_RESUMABLE_TERMINAL_STATUSES = {
+    AgentTeamTaskStatus.COMPLETED.value,
+    AgentTeamTaskStatus.WAITING_HUMAN.value,
+    AgentTeamTaskStatus.PR_OPENED.value,
+}
+
+
+def _can_send_agent_prompt(task: AgentTeamTask) -> tuple[bool, str]:
+    """判断 Live View 是否允许管理员指导输入。
+
+    Returns:
+        (can_send, disabled_reason) — can_send 为 True 时 disabled_reason 为空。
+    """
+    if task.status in AGENT_TEAM_ACTIVE_STATUSES:
+        return True, ""
+    if task.status in _RESUMABLE_TERMINAL_STATUSES and (
+        task.workspace_path and task.branch_name and task.pr_number
+    ):
+        return True, ""
+    if task.status in {
+        AgentTeamTaskStatus.FAILED.value,
+        AgentTeamTaskStatus.CANCELLED.value,
+        AgentTeamTaskStatus.ABANDONED.value,
+    }:
+        return False, "task_terminal"
+    if task.status in _RESUMABLE_TERMINAL_STATUSES:
+        return False, "missing_workspace_or_pr"
+    return False, "task_inactive"
 
 
 def _is_admin(user: dict) -> bool:
@@ -1666,6 +1698,7 @@ def _workspace_info_to_dict(info) -> dict:
         if info.modified_at
         else None,
         "has_git": info.has_git,
+        "worktree_count": info.worktree_count,
     }
 
 
@@ -1719,6 +1752,14 @@ async def list_active_tasks(
                 "status": t.status,
                 "repo_full_name": t.repo_full_name,
                 "current_phase": t.current_phase,
+                "branch_name": t.branch_name,
+                "base_branch": t.base_branch,
+                "pr_number": t.pr_number,
+                "pr_url": t.pr_url,
+                "iteration_count": t.iteration_count,
+                "max_iterations": t.max_iterations,
+                "updated_at": t.updated_at.isoformat() if t.updated_at else None,
+                "completed_at": t.completed_at.isoformat() if t.completed_at else None,
             }
             for t in rows
         ],
@@ -1749,6 +1790,7 @@ async def task_stream_data(
     session_ids = [s.id for s in session_rows]
 
     if not session_ids:
+        can_send, disabled_reason = _can_send_agent_prompt(task)
         return JSONResponse({
             "success": True,
             "messages": [],
@@ -1756,6 +1798,9 @@ async def task_stream_data(
             "sessions": [],
             "prompts": [],
             "has_more": False,
+            "task_status": task.status,
+            "can_send_prompt": can_send,
+            "prompt_disabled_reason": disabled_reason,
         })
 
     # Messages with pagination (use global id, not per-session seq)
@@ -1786,6 +1831,7 @@ async def task_stream_data(
         .order_by(AgentTeamUserPrompt.created_at)
     )).scalars().all()
 
+    can_send, disabled_reason = _can_send_agent_prompt(task)
     return JSONResponse({
         "success": True,
         "messages": [
@@ -1840,6 +1886,8 @@ async def task_stream_data(
         ],
         "has_more": has_more,
         "task_status": task.status,
+        "can_send_prompt": can_send,
+        "prompt_disabled_reason": disabled_reason,
     })
 
 
@@ -1851,16 +1899,17 @@ async def submit_user_prompt(
     user: dict = Depends(require_auth),
     db: AsyncSession = Depends(get_db),
 ):
-    """提交用户引导 Prompt（pending 状态，下次 AI 请求时注入）。"""
+    """提交用户引导 Prompt（活跃任务注入 / 可续跑终态触发 follow-up）。"""
     task = await db.get(AgentTeamTask, task_id)
     if not task:
         return JSONResponse({"success": False, "error": "Task not found"}, status_code=404)
     if not _is_admin(user) and task.started_by != user["sub"]:
         return JSONResponse({"success": False, "error": "Forbidden"}, status_code=403)
 
-    if task.status not in AGENT_TEAM_ACTIVE_STATUSES:
+    can_send, disabled_reason = _can_send_agent_prompt(task)
+    if not can_send:
         return JSONResponse(
-            {"success": False, "error": "Task is not active"},
+            {"success": False, "error": f"Cannot send prompt: {disabled_reason}"},
             status_code=400,
         )
 
@@ -1879,6 +1928,16 @@ async def submit_user_prompt(
         submitted_by=username or "super_admin",
     )
     db.add(prompt)
+
+    # 可续跑终态：写入 prompt 后触发 follow-up iteration
+    is_resumable_terminal = task.status in _RESUMABLE_TERMINAL_STATUSES and bool(
+        task.workspace_path and task.branch_name and task.pr_number
+    )
+    if is_resumable_terminal:
+        task.status = AgentTeamTaskStatus.ITERATING.value
+        task.current_phase = "human_followup"
+        task.updated_at = _utc_now()
+
     await db.commit()
     await db.refresh(prompt)
 
@@ -1886,16 +1945,37 @@ async def submit_user_prompt(
     try:
         from backend.webui.sse import publish_event
 
-        await publish_event("agent:prompt_received", {
+        sse_data = {
             "task_id": task_id,
             "prompt_id": prompt.id,
-        })
+        }
+        if is_resumable_terminal:
+            sse_data["task_status"] = task.status
+            sse_data["current_phase"] = task.current_phase
+        await publish_event("agent:prompt_received", sse_data)
+        # 续跑终态时额外发 task_updated 让前端刷新状态
+        if is_resumable_terminal:
+            await publish_event("agent:task_updated", {
+                "task_id": task_id,
+                "status": task.status,
+                "current_phase": task.current_phase,
+            })
     except Exception as exc:
         logger.debug("SSE 发布 prompt 通知失败: {}", exc)
+
+    # 可续跑终态：后台调度 follow-up iteration
+    if is_resumable_terminal:
+        try:
+            from backend.workers.agent_team_worker import submit_agent_team_human_followup
+
+            asyncio.create_task(submit_agent_team_human_followup(task_id))
+        except Exception as exc:
+            logger.warning("调度 Agent follow-up iteration 失败: {}", exc)
 
     return JSONResponse({
         "success": True,
         "prompt_id": prompt.id,
+        "task_status": task.status,
     })
 
 

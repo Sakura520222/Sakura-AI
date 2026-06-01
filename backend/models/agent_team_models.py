@@ -42,6 +42,7 @@ class AgentTeamSourceType(str, enum.Enum):
     SCAN_FINDING = "scan_finding"
     SCAN_REPORT_ISSUE = "scan_report_issue"
     MANUAL_ISSUE = "manual_issue"
+    PR_REVIEW = "pr_review"
 
 
 class AgentTeamFeedbackSource(str, enum.Enum):

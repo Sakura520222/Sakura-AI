@@ -5,7 +5,7 @@
             <select x-model="selectedTaskId" @change="onTaskSelected()" class="w-full rounded-xl border-gray-300 dark:border-gray-600 dark:bg-gray-900 text-sm">
                 <option value="">{{ _('agent_team.live_select_task') }}</option>
                 <template x-for="t in activeTasks" :key="t.id">
-                    <option :value="t.id" x-text="'#' + t.id + ' - ' + t.title + ' (' + t.status + ')'"></option>
+                    <option :value="t.id" x-text="'#' + t.id + ' - ' + t.title + ' (' + t.status + ')' + (t.branch_name ? ' [' + t.branch_name + ']' : '')"></option>
                 </template>
             </select>
         </div>
@@ -124,6 +124,24 @@
                     </button>
                 </div>
 
+                <!-- User input (initial task input or injected guidance) -->
+                <div x-show="item.type === 'user_input'" class="flex justify-end">
+                    <div class="max-w-[80%] rounded-2xl px-4 py-3 text-sm bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 text-blue-800 dark:text-blue-200">
+                        <div class="flex items-center gap-2 mb-1">
+                            <span class="text-xs font-semibold" x-text="item.isInitial ? _('agent_team.live_initial_input') : _('agent_team.live_user_guidance')"></span>
+                        </div>
+                        <div x-show="item.isLong" class="mt-1">
+                            <div x-show="item.collapsed" class="whitespace-pre-wrap line-clamp-4" x-text="item.content"></div>
+                            <div x-show="!item.collapsed" class="whitespace-pre-wrap" x-text="item.content"></div>
+                        </div>
+                        <div x-show="!item.isLong" class="whitespace-pre-wrap" x-text="item.content"></div>
+                        <button x-show="item.isLong" @click="toggleCollapse(item.key)" class="mt-1 text-xs text-blue-500 hover:text-blue-600 dark:hover:text-blue-300">
+                            <span x-show="item.collapsed">{{ _('agent_team.live_expand') }}</span>
+                            <span x-show="!item.collapsed">{{ _('agent_team.live_collapse') }}</span>
+                        </button>
+                    </div>
+                </div>
+
                 <!-- User prompt -->
                 <div x-show="item.type === 'prompt'" class="flex justify-end">
                     <div class="max-w-[80%] rounded-2xl px-4 py-3 text-sm bg-orange-50 dark:bg-orange-900/20 border border-orange-200 dark:border-orange-800 text-orange-800 dark:text-orange-200">
@@ -153,12 +171,12 @@
         <textarea x-model="promptText"
                   @keydown.ctrl.enter="sendPrompt()"
                   @keydown.meta.enter="sendPrompt()"
-                  :disabled="!selectedTaskId || !isTaskActive"
+                  :disabled="!selectedTaskId || !canSendPrompt"
                   rows="2"
-                  :placeholder="selectedTaskId && isTaskActive ? _('agent_team.live_prompt_placeholder') : _('agent_team.live_prompt_disabled')"
+                  :placeholder="selectedTaskId && canSendPrompt ? _('agent_team.live_prompt_placeholder') : _('agent_team.live_prompt_disabled')"
                   class="flex-1 rounded-xl border-gray-300 dark:border-gray-600 dark:bg-gray-900 text-sm resize-none focus:ring-2 focus:ring-sakura-500 focus:border-sakura-500 disabled:opacity-50"></textarea>
         <button @click="sendPrompt()"
-                :disabled="!selectedTaskId || !isTaskActive || !promptText.trim() || isSending"
+                :disabled="!selectedTaskId || !canSendPrompt || !promptText.trim() || isSending"
                 class="px-5 py-2 bg-orange-500 hover:bg-orange-600 disabled:bg-gray-300 dark:disabled:bg-gray-700 disabled:cursor-not-allowed text-white text-sm font-semibold rounded-xl transition-colors self-end">
             <span x-show="!isSending">{{ _('agent_team.live_send_guidance') }}</span>
             <span x-show="isSending" class="flex items-center gap-1">
@@ -179,7 +197,8 @@ function agentTeamLiveView() {
         isConnected: false,
         isThinking: false,
         isSending: false,
-        isTaskActive: false,
+        canSendPrompt: false,
+        promptDisabledReason: '',
         promptText: '',
         _lastMsgId: 0,
         _messages: [],
@@ -240,7 +259,6 @@ function agentTeamLiveView() {
             } else if (eventName === 'sse:agent:session_started' || eventName === 'sse:agent:session_completed') {
                 this._scheduleIncremental();
             } else if (eventName === 'sse:agent:task_updated') {
-                this.isTaskActive = this._isActiveStatus(data.status);
                 this.loadActiveTasks();
                 this._pushDisplayItem({ type: 'phase', label: data.current_phase || data.status, key: 'phase-' + Date.now() });
                 this._scrollToBottom();
@@ -285,7 +303,8 @@ function agentTeamLiveView() {
         async onTaskSelected() {
             if (!this.selectedTaskId) {
                 this._resetStreamState(true);
-                this.isTaskActive = false;
+                this.canSendPrompt = false;
+                this.promptDisabledReason = '';
                 return;
             }
             this._resetStreamState(true);
@@ -304,7 +323,8 @@ function agentTeamLiveView() {
                 var resp = await fetch('/agent-team/api/tasks/' + this.selectedTaskId + '/stream-data?after_id=0&limit=200');
                 var data = await resp.json();
                 if (!data.success) return;
-                this.isTaskActive = this._isActiveStatus(data.task_status);
+                this.canSendPrompt = data.can_send_prompt !== false;
+                this.promptDisabledReason = data.prompt_disabled_reason || '';
                 this._processStreamData(data);
                 this._rebuildDisplay();
             } catch(e) { /* ignore */ }
@@ -455,8 +475,27 @@ function agentTeamLiveView() {
                 items.push({ type: 'session', role: session.role_name, label: roleLabel, key: 'session-' + session.id, _ts: toTs(session.started_at) });
 
                 var sessionMsgs = bySession[session.id] || [];
+                var isFirstInSession = true;
                 sessionMsgs.forEach(function(m) {
-                    if (m.role === 'system' || m.role === 'user') return;
+                    if (m.role === 'system') return;
+
+                    if (m.role === 'user') {
+                        var content = m.content || '';
+                        var key = 'msg-' + m.id;
+                        var isLong = content.length > 500;
+                        items.push({
+                            type: 'user_input',
+                            content: content,
+                            isInitial: isFirstInSession,
+                            isLong: isLong,
+                            collapsed: isLong ? (self._collapsedState[key] !== undefined ? self._collapsedState[key] : true) : false,
+                            key: key,
+                            _ts: toTs(m.created_at)
+                        });
+                        isFirstInSession = false;
+                        return;
+                    }
+                    isFirstInSession = false;
 
                     if (m.role === 'assistant') {
                         var content = m.content || '';
@@ -566,10 +605,6 @@ function agentTeamLiveView() {
             this.isSending = false;
         },
 
-        _isActiveStatus(status) {
-            var active = ['queued', 'planning', 'cloning', 'editing', 'self_reviewing', 'validating', 'pushing', 'pr_opened', 'iterating', 'waiting_human'];
-            return active.indexOf(status) >= 0;
-        }
     };
 }
 </script>

@@ -128,7 +128,8 @@ async def test_agent_worker_leaves_draft_pr_opened_without_submitting_review(mon
     submitted_reviews = []
 
     class FakeGitWorkspaceService:
-        async def prepare_workspace(self, repo_owner, repo_name, issue_number, source_id, base_branch):
+        async def prepare_workspace(self, repo_owner, repo_name, issue_number, source_id, base_branch, task_id):
+            assert task_id == 101
             return SimpleNamespace(
                 branch_name="feature/agent-101",
                 default_branch="develop",
