@@ -35,6 +35,7 @@ _EXEC_COMMANDS = {
     "my_subscriptions": "cmd_my_subscriptions",
     "users": "cmd_users",
     "repos": "cmd_repos",
+    "notifications": "cmd_notifications",
 }
 
 # 需要参数的命令 → ForceReply 提示文本
@@ -129,6 +130,11 @@ def build_main_menu(user_role: str) -> InlineKeyboardMarkup:
         [
             InlineKeyboardButton("📌 订阅仓库", callback_data="input:repo_subscribe"),
             InlineKeyboardButton("❌ 取消订阅", callback_data="input:repo_unsubscribe"),
+        ]
+    )
+    rows.append(
+        [
+            InlineKeyboardButton("🔔 通知偏好", callback_data="exec:notifications"),
         ]
     )
 

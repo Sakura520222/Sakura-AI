@@ -91,6 +91,11 @@ class TelegramUser(Base):
     last_reset_agent_weekly = Column(TIMESTAMP, nullable=True)
     last_reset_agent_monthly = Column(TIMESTAMP, nullable=True)
 
+    # 通知偏好（JSON 字段，存储事件类型 → 是否启用的映射）
+    # None/null 表示使用默认值（所有通知均启用）
+    # 示例: {"review_start": true, "review_complete": true, "agent_task_completed": false}
+    notification_preferences = Column(Text, nullable=True)
+
     # 状态
     is_active = Column(Boolean, default=True, nullable=False)
 

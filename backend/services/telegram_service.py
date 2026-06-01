@@ -15,6 +15,7 @@ from backend.models.telegram_models import (
 from backend.core.config import get_settings
 from backend.services.payment_service import PaymentService, is_payment_enabled
 from backend.services.quota_service import QuotaService
+from backend.telegram.notifications import NotificationSender
 
 settings = get_settings()
 
@@ -544,13 +545,27 @@ class TelegramService:
                 role=role.value,
                 daily_quota=max(1, int(settings.init_user_daily_quota * multiplier)),
                 weekly_quota=max(1, int(settings.init_user_weekly_quota * multiplier)),
-                monthly_quota=max(1, int(settings.init_user_monthly_quota * multiplier)),
-                issue_daily_quota=max(1, int(settings.init_user_issue_daily_quota * multiplier)),
-                issue_weekly_quota=max(1, int(settings.init_user_issue_weekly_quota * multiplier)),
-                issue_monthly_quota=max(1, int(settings.init_user_issue_monthly_quota * multiplier)),
-                agent_daily_quota=max(1, int(settings.init_user_agent_daily_quota * multiplier)),
-                agent_weekly_quota=max(1, int(settings.init_user_agent_weekly_quota * multiplier)),
-                agent_monthly_quota=max(1, int(settings.init_user_agent_monthly_quota * multiplier)),
+                monthly_quota=max(
+                    1, int(settings.init_user_monthly_quota * multiplier)
+                ),
+                issue_daily_quota=max(
+                    1, int(settings.init_user_issue_daily_quota * multiplier)
+                ),
+                issue_weekly_quota=max(
+                    1, int(settings.init_user_issue_weekly_quota * multiplier)
+                ),
+                issue_monthly_quota=max(
+                    1, int(settings.init_user_issue_monthly_quota * multiplier)
+                ),
+                agent_daily_quota=max(
+                    1, int(settings.init_user_agent_daily_quota * multiplier)
+                ),
+                agent_weekly_quota=max(
+                    1, int(settings.init_user_agent_weekly_quota * multiplier)
+                ),
+                agent_monthly_quota=max(
+                    1, int(settings.init_user_agent_monthly_quota * multiplier)
+                ),
             )
         try:
             self.session.add(user)
@@ -667,3 +682,121 @@ class TelegramService:
             )
         )
         return list(result.scalars().all())
+
+    # ========== 通知偏好管理 ==========
+
+    async def get_notification_preferences(self, telegram_id: int) -> dict:
+        """获取用户的通知偏好设置。
+
+        Returns:
+            dict: 事件类型 → 是否启用的映射。未显式设置的事件类型默认为 True。
+        """
+        import json
+
+        user = await self.get_user_by_telegram_id(telegram_id)
+        if not user or not user.notification_preferences:
+            # 默认：所有事件均启用
+            return {et: True for et in NotificationSender.EVENT_TYPES}
+
+        try:
+            prefs = json.loads(user.notification_preferences)
+            if not isinstance(prefs, dict):
+                return {et: True for et in NotificationSender.EVENT_TYPES}
+            # 合并默认值：未显式设置的事件类型默认启用
+            result = {}
+            for et in NotificationSender.EVENT_TYPES:
+                result[et] = prefs.get(et, True)
+            return result
+        except (json.JSONDecodeError, TypeError):
+            return {et: True for et in NotificationSender.EVENT_TYPES}
+
+    async def set_notification_preference(
+        self, telegram_id: int, event_type: str, enabled: bool
+    ) -> Tuple[bool, str]:
+        """设置用户单个事件类型的通知偏好。
+
+        Args:
+            telegram_id: 用户 Telegram ID
+            event_type: 事件类型
+            enabled: 是否启用
+
+        Returns:
+            (success, message)
+        """
+        import json
+
+        # 验证事件类型
+        if event_type not in NotificationSender.EVENT_TYPES:
+            valid_types = ", ".join(NotificationSender.EVENT_TYPES.keys())
+            return False, f"无效的事件类型: {event_type}\n支持的类型: {valid_types}"
+
+        user = await self.get_user_by_telegram_id(telegram_id)
+        if not user:
+            return False, "用户未注册"
+
+        # 读取现有偏好
+        try:
+            prefs = (
+                json.loads(user.notification_preferences)
+                if user.notification_preferences
+                else {}
+            )
+            if not isinstance(prefs, dict):
+                prefs = {}
+        except (json.JSONDecodeError, TypeError):
+            prefs = {}
+
+        prefs[event_type] = enabled
+        user.notification_preferences = json.dumps(prefs, ensure_ascii=False)
+
+        try:
+            await self.session.commit()
+        except Exception as e:
+            await self.session.rollback()
+            logger.error(f"保存通知偏好失败: {e}", exc_info=True)
+            return False, f"保存失败: {str(e)}"
+
+        status = "✅ 启用" if enabled else "❌ 禁用"
+        label = NotificationSender.EVENT_TYPES.get(event_type, event_type)
+        return True, f"{status} {label} 通知"
+
+    async def get_notification_targets_with_preference(
+        self, repo_name: str, author: str, event_type: str
+    ) -> List[int]:
+        """获取通知目标（按用户通知偏好过滤）。
+
+        与 get_notification_targets 类似，但额外检查每个用户的
+        notification_preferences 中对应 event_type 是否启用。
+
+        Args:
+            repo_name: 仓库名
+            author: PR/Issue 作者 GitHub 用户名
+            event_type: 通知事件类型
+
+        Returns:
+            过滤后的 chat_id 列表
+        """
+        # 收集所有潜在目标
+        all_chat_ids = await self.get_notification_targets(repo_name, author)
+        if not all_chat_ids:
+            return []
+
+        # 批量查询用户的通知偏好
+        from backend.models.telegram_models import TelegramUser as _TU
+
+        result = await self.session.execute(
+            select(_TU.telegram_id, _TU.notification_preferences).where(
+                _TU.telegram_id.in_(all_chat_ids)
+            )
+        )
+        rows = result.all()
+
+        # 按偏好过滤
+        filtered = []
+        for row in rows:
+            chat_id = row[0]
+            prefs_json = row[1]
+            if NotificationSender.is_event_enabled(prefs_json, event_type):
+                filtered.append(chat_id)
+
+        return filtered

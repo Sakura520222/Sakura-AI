@@ -1,7 +1,8 @@
 """Telegram 通知发送器"""
 
 import asyncio
-from typing import Optional, List
+import json
+from typing import Optional, List, Dict
 from telegram import Bot
 from telegram.helpers import escape_markdown
 from loguru import logger
@@ -247,6 +248,9 @@ class NotificationSender:
     ):
         """扫描完成通知
 
+        注意: 此方法为预留功能，尚未集成到扫描流程中。
+        EVENT_TYPES 中已包含 scan_complete 事件类型，待扫描流程集成后生效。
+
         Args:
             repo_name: 仓库全名
             health_score: 健康评分 (0-100)
@@ -283,7 +287,9 @@ class NotificationSender:
                 if webui_url:
                     text += f"\n[WebUI 查看详情]({webui_url})"
                 else:
-                    logger.warning(f"app_domain 未配置，跳过 WebUI 链接 (scan_id={scan_id})")
+                    logger.warning(
+                        f"app_domain 未配置，跳过 WebUI 链接 (scan_id={scan_id})"
+                    )
 
             if not chat_ids:
                 logger.debug(f"无通知目标，跳过扫描完成通知: {repo_name}")
@@ -410,6 +416,219 @@ class NotificationSender:
             logger.info(f"MFA 通知已发送: event={event_type}, chat_id={chat_id}")
         except Exception as exc:
             logger.error(f"发送 MFA 通知失败: event={event_type}, error={exc}")
+
+    # ========== Agent 任务通知 ==========
+
+    # 通知事件类型（用户可配置偏好）
+    EVENT_TYPES: Dict[str, str] = {
+        "review_start": "PR 审查开始",
+        "review_complete": "PR 审查完成",
+        "issue_analysis": "Issue 分析完成",
+        "scan_complete": "仓库扫描完成",
+        "agent_task_started": "Agent 任务开始",
+        "agent_task_completed": "Agent 任务完成",
+        "agent_task_failed": "Agent 任务失败",
+    }
+
+    # 事件类型对应的 emoji
+    _AGENT_EVENT_EMOJIS = {
+        "agent_task_started": "🤖",
+        "agent_task_completed": "✅",
+        "agent_task_failed": "❌",
+    }
+
+    async def send_agent_task_started(
+        self,
+        task_id: int,
+        repo_name: str,
+        title: str,
+        source_type: str = "",
+        chat_ids: Optional[List[int]] = None,
+    ):
+        """发送 Agent 任务开始通知"""
+        try:
+            safe_repo_name = escape_markdown(repo_name, version=1)
+            safe_title = escape_markdown(title[:100], version=1)
+            source_label = {
+                "issue_analysis": "Issue 分析",
+                "scan_finding": "扫描发现",
+                "scan_report_issue": "扫描报告",
+                "manual_issue": "手动触发",
+            }.get(source_type, source_type or "未知")
+
+            # 延迟导入：避免 telegram 模块与 webui 模块之间产生循环依赖
+            from backend.webui.i18n import i18n as _i18n
+
+            i18n_key = "telegram_agent.task_started"
+            text = _i18n.t(
+                i18n_key,
+                repo_name=safe_repo_name,
+                title=safe_title,
+                source_type=source_label,
+                task_id=task_id,
+            )
+            # Fallback: if translation missing, use hardcoded default
+            if text == i18n_key:
+                text = (
+                    f"🤖 *Agent 任务已启动*\n\n"
+                    f"📦 仓库: {safe_repo_name}\n"
+                    f"📝 标题: {safe_title}\n"
+                    f"📋 来源: {source_label}\n"
+                    f"🆔 任务ID: {task_id}\n\n"
+                    f"⏳ 正在执行中..."
+                )
+
+            footer = _i18n.t("telegram_agent.footer")
+            if footer != "telegram_agent.footer":
+                text += f"\n\n_{escape_markdown(footer, version=1)}_"
+
+            if not chat_ids:
+                logger.debug(f"无通知目标，跳过Agent任务开始通知: task_id={task_id}")
+                return
+
+            await self.send_to_targets(text, chat_ids)
+            logger.info(
+                f"✅ 发送Agent任务开始通知: task_id={task_id} → {len(chat_ids)} 人"
+            )
+
+        except Exception as e:
+            logger.error(f"❌ 发送Agent任务开始通知失败: {e}")
+
+    async def send_agent_task_completed(
+        self,
+        task_id: int,
+        repo_name: str,
+        title: str,
+        pr_url: str = "",
+        iteration_count: int = 0,
+        chat_ids: Optional[List[int]] = None,
+    ):
+        """发送 Agent 任务完成通知"""
+        try:
+            safe_repo_name = escape_markdown(repo_name, version=1)
+            safe_title = escape_markdown(title[:100], version=1)
+
+            # 延迟导入：避免 telegram 模块与 webui 模块之间产生循环依赖
+            from backend.webui.i18n import i18n as _i18n
+
+            i18n_key = "telegram_agent.task_completed"
+            text = _i18n.t(
+                i18n_key,
+                repo_name=safe_repo_name,
+                title=safe_title,
+                iterations=iteration_count,
+                task_id=task_id,
+            )
+            # Fallback: if translation missing, use hardcoded default
+            if text == i18n_key:
+                text = (
+                    f"✅ *Agent 任务已完成*\n\n"
+                    f"📦 仓库: {safe_repo_name}\n"
+                    f"📝 标题: {safe_title}\n"
+                    f"🔄 迭代轮数: {iteration_count}\n"
+                    f"🆔 任务ID: {task_id}\n"
+                )
+
+            if pr_url:
+                text += f"\n[查看 Pull Request]({pr_url})"
+
+            footer = _i18n.t("telegram_agent.footer")
+            if footer != "telegram_agent.footer":
+                text += f"\n_{escape_markdown(footer, version=1)}_"
+
+            if not chat_ids:
+                logger.debug(f"无通知目标，跳过Agent任务完成通知: task_id={task_id}")
+                return
+
+            await self.send_to_targets(text, chat_ids, disable_web_page_preview=True)
+            logger.info(
+                f"✅ 发送Agent任务完成通知: task_id={task_id} → {len(chat_ids)} 人"
+            )
+
+        except Exception as e:
+            logger.error(f"❌ 发送Agent任务完成通知失败: {e}")
+
+    async def send_agent_task_failed(
+        self,
+        task_id: int,
+        repo_name: str,
+        title: str,
+        error_message: str = "",
+        failed_phase: str = "",
+        chat_ids: Optional[List[int]] = None,
+    ):
+        """发送 Agent 任务失败通知"""
+        try:
+            safe_repo_name = escape_markdown(repo_name, version=1)
+            safe_title = escape_markdown(title[:100], version=1)
+            safe_error = escape_markdown(error_message[:300], version=1)
+            phase_label = {
+                "iteration_failed": "迭代审查未通过",
+                "validation_failed": "验证失败",
+                "error": "执行异常",
+            }.get(failed_phase, failed_phase or "未知")
+
+            # 延迟导入：避免 telegram 模块与 webui 模块之间产生循环依赖
+            from backend.webui.i18n import i18n as _i18n
+
+            i18n_key = "telegram_agent.task_failed"
+            text = _i18n.t(
+                i18n_key,
+                repo_name=safe_repo_name,
+                title=safe_title,
+                phase=phase_label,
+                task_id=task_id,
+                error=safe_error,
+            )
+            # Fallback: if translation missing, use hardcoded default
+            if text == i18n_key:
+                text = (
+                    f"❌ *Agent 任务失败*\n\n"
+                    f"📦 仓库: {safe_repo_name}\n"
+                    f"📝 标题: {safe_title}\n"
+                    f"🔍 失败阶段: {phase_label}\n"
+                    f"🆔 任务ID: {task_id}\n"
+                )
+                if safe_error:
+                    text += f"\n💬 原因: {safe_error}"
+
+            footer = _i18n.t("telegram_agent.footer")
+            if footer != "telegram_agent.footer":
+                text += f"\n_{escape_markdown(footer, version=1)}_"
+
+            if not chat_ids:
+                logger.debug(f"无通知目标，跳过Agent任务失败通知: task_id={task_id}")
+                return
+
+            await self.send_to_targets(text, chat_ids)
+            logger.info(
+                f"✅ 发送Agent任务失败通知: task_id={task_id} → {len(chat_ids)} 人"
+            )
+
+        except Exception as e:
+            logger.error(f"❌ 发送Agent任务失败通知失败: {e}")
+
+    @staticmethod
+    def is_event_enabled(preferences_json: Optional[str], event_type: str) -> bool:
+        """检查指定事件类型在用户偏好中是否启用。
+
+        Args:
+            preferences_json: 用户通知偏好 JSON 字符串（None 表示全部启用）
+            event_type: 事件类型
+
+        Returns:
+            True 表示启用，False 表示禁用
+        """
+        if not preferences_json:
+            return True
+        try:
+            prefs = json.loads(preferences_json)
+            if not isinstance(prefs, dict):
+                return True
+            # 未设置的事件类型默认启用
+            return prefs.get(event_type, True)
+        except (json.JSONDecodeError, TypeError):
+            return True
 
 
 # 全局通知发送器实例

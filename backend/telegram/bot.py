@@ -37,6 +37,8 @@ from backend.telegram.handlers import (
     cmd_myorders,
     cmd_gen_codes,
     cmd_grant,
+    cmd_notifications,
+    cmd_notify_set,
 )
 from backend.telegram.notifications import NotificationSender, set_notification_sender
 from backend.telegram.menu import get_callback_handler, get_force_reply_handler
@@ -63,6 +65,8 @@ async def register_bot_commands(bot: Bot):
         BotCommand("repo_subscribe", "📌 订阅仓库"),
         BotCommand("repo_unsubscribe", "❌ 取消订阅"),
         BotCommand("my_subscriptions", "📋 我的订阅"),
+        BotCommand("notifications", "🔔 通知偏好"),
+        BotCommand("notify_set", "⚙️ 设置通知"),
         # 管理员命令
         BotCommand("user_add", "➕ 添加用户"),
         BotCommand("user_remove", "➖ 移除用户"),
@@ -165,6 +169,8 @@ async def start_telegram_bot():
         _telegram_app.add_handler(CommandHandler("myorders", cmd_myorders))
         _telegram_app.add_handler(CommandHandler("gen_codes", cmd_gen_codes))
         _telegram_app.add_handler(CommandHandler("grant", cmd_grant))
+        _telegram_app.add_handler(CommandHandler("notifications", cmd_notifications))
+        _telegram_app.add_handler(CommandHandler("notify_set", cmd_notify_set))
 
         # 注册按钮菜单处理器
         _telegram_app.add_handler(get_callback_handler())

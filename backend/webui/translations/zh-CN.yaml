@@ -1526,6 +1526,13 @@ telegram_refund:
   failed: "⚠️ 退款执行失败\n\n申请ID：{request_id}\n订单号：{order_no}\n用户：{user}\n套餐：{plan}\n金额：{amount}\n错误：{error}\n\n请在 WebUI 中检查并重试或人工处理。"
   footer: "Sakura AI Reviewer 退款通知"
 
+# ========== Telegram Agent 任务通知 / Telegram Agent Task Notifications ====
+telegram_agent:
+  task_started: "🤖 Agent 任务已启动\n\n📦 仓库：{repo_name}\n📝 标题：{title}\n📋 来源：{source_type}\n🆔 任务ID：{task_id}\n\n⏳ 正在执行中..."
+  task_completed: "✅ Agent 任务已完成\n\n📦 仓库：{repo_name}\n📝 标题：{title}\n🔄 迭代轮数：{iterations}\n🆔 任务ID：{task_id}"
+  task_failed: "❌ Agent 任务失败\n\n📦 仓库：{repo_name}\n📝 标题：{title}\n🔍 失败阶段：{phase}\n🆔 任务ID：{task_id}\n💬 原因：{error}"
+  footer: "Sakura AI Reviewer Agent 通知"
+
 # ========== API 错误消息 / API Error Messages ==========
 api:
   invalid_mfa_token: "无效或已过期的二次验证凭证"

@@ -266,22 +266,30 @@ class ReviewWorker:
 
                         indexer = get_pr_code_indexer()
                         logger.info(f"[{task_id}] 开始代码索引...")
-                        await self._log_activity(review_id, "tool_call", {
-                            "tool": "index_pr_changes",
-                            "status": "running",
-                            "detail": pr_info["repo_full_name"],
-                        })
+                        await self._log_activity(
+                            review_id,
+                            "tool_call",
+                            {
+                                "tool": "index_pr_changes",
+                                "status": "running",
+                                "detail": pr_info["repo_full_name"],
+                            },
+                        )
                         await indexer.index_pr_changes(
                             repo_full_name=pr_info["repo_full_name"],
                             pr_number=pr_info["pr_number"],
                             install_id=pr_info.get("install_id", 0),
                         )
                         logger.info(f"[{task_id}] 代码索引完成")
-                        await self._log_activity(review_id, "tool_result", {
-                            "tool": "index_pr_changes",
-                            "status": "completed",
-                            "detail": "代码索引完成",
-                        })
+                        await self._log_activity(
+                            review_id,
+                            "tool_result",
+                            {
+                                "tool": "index_pr_changes",
+                                "status": "completed",
+                                "detail": "代码索引完成",
+                            },
+                        )
                     except Exception as e:
                         logger.warning(
                             "[{}] 代码索引失败（将继续审查）: {}",
@@ -361,16 +369,24 @@ class ReviewWorker:
                 review_id = await self._create_review_record(analysis, pr_info, task_id)
 
                 # 记录审查创建前的关键阶段（review_id 此时有效）
-                await self._log_activity(review_id, "thinking", {
-                    "message": f"分析 PR #{pr_info.get('pr_number')} ...",
-                    "repo_full_name": pr_info.get("repo_full_name"),
-                })
-                await self._log_activity(review_id, "status", {
-                    "status": "pending",
-                    "message": f"PR #{pr_info.get('pr_number')} 审查已创建",
-                    "strategy": analysis.strategy,
-                    "repo_full_name": pr_info.get("repo_full_name"),
-                })
+                await self._log_activity(
+                    review_id,
+                    "thinking",
+                    {
+                        "message": f"分析 PR #{pr_info.get('pr_number')} ...",
+                        "repo_full_name": pr_info.get("repo_full_name"),
+                    },
+                )
+                await self._log_activity(
+                    review_id,
+                    "status",
+                    {
+                        "status": "pending",
+                        "message": f"PR #{pr_info.get('pr_number')} 审查已创建",
+                        "strategy": analysis.strategy,
+                        "repo_full_name": pr_info.get("repo_full_name"),
+                    },
+                )
 
                 # 4. 获取PR对象用于后续操作
                 client = self.github_app.get_repo_client(
@@ -406,9 +422,7 @@ class ReviewWorker:
                         summary = await summary_service.generate_summary(
                             analysis, pr_info, pr
                         )
-                        await summary_service.update_pr_body(
-                            pr, summary
-                        )
+                        await summary_service.update_pr_body(pr, summary)
                         pr_summary_text = summary
                         logger.info(f"[{task_id}] PR 变更总结已更新")
                     except Exception as e:
@@ -665,6 +679,7 @@ class ReviewWorker:
                 from backend.services.activity_checkpoint_service import (
                     ActivityCheckpointService,
                 )
+
                 checkpoint = ActivityCheckpointService("pr", review_id)
                 act_session = await checkpoint.create_session(
                     iteration_number=1,
@@ -706,9 +721,7 @@ class ReviewWorker:
                 tasks = []
 
                 if enable_tools:
-                    logger.info(
-                        f"[{task_id}] 使用AI工具驱动模式进行审查"
-                    )
+                    logger.info(f"[{task_id}] 使用AI工具驱动模式进行审查")
                     tasks.append(
                         self.ai_reviewer.review_pr_with_tools(
                             context,
@@ -800,11 +813,14 @@ class ReviewWorker:
                     await self._save_review_results(review_id, review_result, analysis)
                     # 完成 checkpoint session
                     await checkpoint.complete_session(act_session.id)
-                    await checkpoint.save_session_result(act_session.id, {
-                        "overall_score": review_result.get("overall_score"),
-                        "verdict": review_result.get("verdict", ""),
-                        "summary": str(review_result.get("summary", "")),
-                    })
+                    await checkpoint.save_session_result(
+                        act_session.id,
+                        {
+                            "overall_score": review_result.get("overall_score"),
+                            "verdict": review_result.get("verdict", ""),
+                            "summary": str(review_result.get("summary", "")),
+                        },
+                    )
                 else:
                     logger.error("[{}] AI审查失败: {}", task_id, str(review_result))
                     await checkpoint.fail_session(act_session.id, str(review_result))
@@ -846,12 +862,16 @@ class ReviewWorker:
                     decision=decision,
                     decision_reason=decision_reason,
                 )
-                await self._log_activity(review_id, "result", {
-                    "status": "completed",
-                    "message": "审查完成",
-                    "decision": decision.value if decision else "unknown",
-                    "overall_score": review_result.get("overall_score"),
-                })
+                await self._log_activity(
+                    review_id,
+                    "result",
+                    {
+                        "status": "completed",
+                        "message": "审查完成",
+                        "decision": decision.value if decision else "unknown",
+                        "overall_score": review_result.get("overall_score"),
+                    },
+                )
                 await self._notify_agent_team_review_completed(review_id, task_id)
 
                 # 11.5 异步触发 .sakura/ 反思 / Trigger .sakura/ reflection async
@@ -909,9 +929,13 @@ class ReviewWorker:
                 )
 
                 if review_id:
-                    await self._log_activity(review_id, "error", {
-                        "message": f"审查失败: {str(e)}",
-                    })
+                    await self._log_activity(
+                        review_id,
+                        "error",
+                        {
+                            "message": f"审查失败: {str(e)}",
+                        },
+                    )
 
                 # 【错误处理】更新占位评论为错误消息
                 if review_obj:
@@ -940,7 +964,9 @@ class ReviewWorker:
                 # Always unregister task to clean up cancel event
                 self._unregister_task(task_key)
 
-    async def _notify_agent_team_review_completed(self, review_id: int, task_id: str) -> None:
+    async def _notify_agent_team_review_completed(
+        self, review_id: int, task_id: str
+    ) -> None:
         """通知 Agent Team 处理 PR Review 完成后的闭环反馈。"""
         try:
             from backend.services.agent_team.pr_review_feedback import (
@@ -950,7 +976,12 @@ class ReviewWorker:
             service = AgentTeamPRReviewFeedbackService()
             result = await service.handle_review_completed_with_result(review_id)
             if result.handled:
-                logger.info("[{}] Agent Team PR 闭环已处理 review_id={}, action={}", task_id, review_id, result.action)
+                logger.info(
+                    "[{}] Agent Team PR 闭环已处理 review_id={}, action={}",
+                    task_id,
+                    review_id,
+                    result.action,
+                )
             else:
                 logger.info(
                     "[{}] Agent Team PR 闭环跳过 review_id={}, reason={}",
@@ -1292,10 +1323,7 @@ class ReviewWorker:
             bot_names = (
                 {bot_username, f"{bot_username}[bot]"} if bot_username else set()
             )
-            if (
-                review_event in ("APPROVE", "REQUEST_CHANGES")
-                and author in bot_names
-            ):
+            if review_event in ("APPROVE", "REQUEST_CHANGES") and author in bot_names:
                 logger.info(
                     f"[{task_id}] Bot 自身创建的 PR 不能 "
                     f"{review_event}，降级为 COMMENT: "
@@ -1395,8 +1423,10 @@ class ReviewWorker:
             chat_ids = []
             async with async_session() as session:
                 service = TelegramService(session)
-                chat_ids = await service.get_notification_targets(
-                    pr_info["repo_full_name"], pr_info.get("author", "")
+                chat_ids = await service.get_notification_targets_with_preference(
+                    pr_info["repo_full_name"],
+                    pr_info.get("author", ""),
+                    "review_complete",
                 )
 
             if not chat_ids:

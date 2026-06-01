@@ -1382,3 +1382,72 @@ async def cmd_grant(update: Update, context: ContextTypes.DEFAULT_TYPE):
         except PaymentError as e:
             await session.rollback()
             await update.message.reply_text(f"❌ 充值失败: {e}")
+
+
+async def cmd_notifications(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """查看和管理通知偏好"""
+    telegram_id = update.effective_user.id
+
+    async with get_async_session() as session:
+        service = TelegramService(session)
+        user = await service.get_user_by_telegram_id(telegram_id)
+
+        if not user:
+            await update.message.reply_text("❌ 您还未注册，请先使用 /sign 注册")
+            return
+
+        from backend.telegram.notifications import NotificationSender
+
+        prefs = await service.get_notification_preferences(telegram_id)
+
+        lines = ["🔔 *通知偏好设置*\n"]
+        for event_type, label in NotificationSender.EVENT_TYPES.items():
+            enabled = prefs.get(event_type, True)
+            status = "✅" if enabled else "❌"
+            lines.append(f"{status} {label}  (`{event_type}`)")
+
+        lines.append("\n💡 使用 /notify_set <事件类型> <on|off> 开关通知")
+        lines.append("示例: /notify_set agent_task_started off")
+
+        text = "\n".join(lines)
+        await update.message.reply_text(text, parse_mode="Markdown")
+
+
+async def cmd_notify_set(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """设置单个通知事件的开关"""
+    telegram_id = update.effective_user.id
+
+    if not context.args or len(context.args) < 2:
+        from backend.telegram.notifications import NotificationSender
+
+        valid_types = "\n".join(
+            f"  `{et}` — {label}"
+            for et, label in NotificationSender.EVENT_TYPES.items()
+        )
+        await update.message.reply_text(
+            f"用法: /notify_set <事件类型> <on|off>\n\n"
+            f"支持的事件类型:\n{valid_types}\n\n"
+            f"示例: /notify_set agent_task_started off",
+            parse_mode="Markdown",
+        )
+        return
+
+    event_type = context.args[0].strip()
+    on_off = context.args[1].strip().lower()
+
+    if on_off not in ("on", "off", "enable", "disable", "true", "false"):
+        await update.message.reply_text("❌ 第二个参数必须是 on 或 off")
+        return
+
+    enabled = on_off in ("on", "enable", "true")
+
+    async with get_async_session() as session:
+        service = TelegramService(session)
+        success, message = await service.set_notification_preference(
+            telegram_id, event_type, enabled
+        )
+
+        if success:
+            await update.message.reply_text(f"✅ {message}")
+        else:
+            await update.message.reply_text(f"❌ {message}")

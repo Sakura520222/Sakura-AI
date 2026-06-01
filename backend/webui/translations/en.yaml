@@ -1526,6 +1526,13 @@ telegram_refund:
   failed: "⚠️ Refund execution failed\n\nRequest ID: {request_id}\nOrder: {order_no}\nUser: {user}\nPlan: {plan}\nAmount: {amount}\nError: {error}\n\nPlease check the WebUI and retry or handle manually."
   footer: "Sakura AI Reviewer Refund Notification"
 
+# ========== Telegram Agent Task Notifications ====
+telegram_agent:
+  task_started: "🤖 Agent Task Started\n\n📦 Repo: {repo_name}\n📝 Title: {title}\n📋 Source: {source_type}\n🆔 Task ID: {task_id}\n\n⏳ Running..."
+  task_completed: "✅ Agent Task Completed\n\n📦 Repo: {repo_name}\n📝 Title: {title}\n🔄 Iterations: {iterations}\n🆔 Task ID: {task_id}"
+  task_failed: "❌ Agent Task Failed\n\n📦 Repo: {repo_name}\n📝 Title: {title}\n🔍 Failed phase: {phase}\n🆔 Task ID: {task_id}\n💬 Reason: {error}"
+  footer: "Sakura AI Reviewer Agent Notification"
+
 # ========== API Error Messages ==========
 api:
   invalid_mfa_token: "Invalid or expired MFA token"

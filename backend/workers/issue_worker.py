@@ -111,7 +111,8 @@ class IssueWorker:
                     # 归档超出上限的旧版本
                     try:
                         max_versions = int(
-                            await get_dynamic_config("issue_max_analysis_versions") or 10
+                            await get_dynamic_config("issue_max_analysis_versions")
+                            or 10
                         )
                     except (ValueError, TypeError):
                         max_versions = 10
@@ -140,14 +141,22 @@ class IssueWorker:
                     record.status = IssueAnalysisStatus.ANALYZING.value
                     await db.commit()
 
-                    await self._log_activity(record.id, "status", {
-                        "status": "analyzing",
-                        "message": f"开始分析 Issue #{issue_number}",
-                        "repo_name": repo_name,
-                    })
-                    await self._log_activity(record.id, "thinking", {
-                        "message": "AI 正在分析 Issue ...",
-                    })
+                    await self._log_activity(
+                        record.id,
+                        "status",
+                        {
+                            "status": "analyzing",
+                            "message": f"开始分析 Issue #{issue_number}",
+                            "repo_name": repo_name,
+                        },
+                    )
+                    await self._log_activity(
+                        record.id,
+                        "thinking",
+                        {
+                            "message": "AI 正在分析 Issue ...",
+                        },
+                    )
 
                     # 发布 SSE 事件通知前端
                     try:
@@ -174,6 +183,7 @@ class IssueWorker:
                     from backend.services.activity_checkpoint_service import (
                         ActivityCheckpointService,
                     )
+
                     checkpoint = ActivityCheckpointService("issue", record.id)
                     act_session = await checkpoint.create_session(
                         iteration_number=1,
@@ -184,8 +194,12 @@ class IssueWorker:
                         """Mirrors ConversationCheckpointService usage pattern."""
                         try:
                             if event_type == "message":
-                                msg = await checkpoint.append_message(act_session.id, data)
-                                if data.get("role") == "tool" and data.get("tool_call_id"):
+                                msg = await checkpoint.append_message(
+                                    act_session.id, data
+                                )
+                                if data.get("role") == "tool" and data.get(
+                                    "tool_call_id"
+                                ):
                                     await checkpoint.mark_tool_call_completed(
                                         act_session.id, data["tool_call_id"], msg.id
                                     )
@@ -206,11 +220,14 @@ class IssueWorker:
 
                     # 完成 checkpoint session
                     await checkpoint.complete_session(act_session.id)
-                    await checkpoint.save_session_result(act_session.id, {
-                        "category": analysis_result.get("category", ""),
-                        "priority": analysis_result.get("priority", ""),
-                        "summary": str(analysis_result.get("summary", "")),
-                    })
+                    await checkpoint.save_session_result(
+                        act_session.id,
+                        {
+                            "category": analysis_result.get("category", ""),
+                            "priority": analysis_result.get("priority", ""),
+                            "summary": str(analysis_result.get("summary", "")),
+                        },
+                    )
 
                     # 5. 保存分析结果（更新已有的 PENDING 记录）
                     analysis_record = await issue_service.save_analysis_result(
@@ -313,12 +330,16 @@ class IssueWorker:
                     except Exception as e:
                         logger.warning(f"发布 SSE 事件失败（不影响主流程）: {e}")
 
-                    await self._log_activity(record.id, "result", {
-                        "status": "completed",
-                        "message": f"Issue #{issue_number} 分析完成",
-                        "category": analysis_result.get("category", ""),
-                        "priority": analysis_result.get("priority", ""),
-                    })
+                    await self._log_activity(
+                        record.id,
+                        "result",
+                        {
+                            "status": "completed",
+                            "message": f"Issue #{issue_number} 分析完成",
+                            "category": analysis_result.get("category", ""),
+                            "priority": analysis_result.get("priority", ""),
+                        },
+                    )
 
                     # 8. 自动评论
                     if await get_dynamic_config("issue_auto_comment"):
@@ -427,8 +448,12 @@ class IssueWorker:
                         from backend.services.telegram_service import TelegramService
 
                         ts = TelegramService(db)
-                        notification_chat_ids = await ts.get_notification_targets(
-                            repo_full_name, issue_info.get("author", "")
+                        notification_chat_ids = (
+                            await ts.get_notification_targets_with_preference(
+                                repo_full_name,
+                                issue_info.get("author", ""),
+                                "issue_analysis",
+                            )
                         )
                     except Exception as e:
                         logger.warning(f"[{task_id}] 获取通知目标失败: {e}")
@@ -508,8 +533,7 @@ class IssueWorker:
                         )
 
                     logger.info(
-                        "[{}] Issue 分析完成: {}#{} | "
-                        "轮数={}, tokens={}+{}, cost={}",
+                        "[{}] Issue 分析完成: {}#{} | 轮数={}, tokens={}+{}, cost={}",
                         task_id,
                         repo_full_name,
                         issue_number,
@@ -546,9 +570,13 @@ class IssueWorker:
                             record.status = IssueAnalysisStatus.FAILED.value
                             record.error_message = str(e)
                             await db.commit()
-                            await self._log_activity(record.id, "error", {
-                                "message": f"Issue 分析失败: {str(e)}",
-                            })
+                            await self._log_activity(
+                                record.id,
+                                "error",
+                                {
+                                    "message": f"Issue 分析失败: {str(e)}",
+                                },
+                            )
 
                             # 发布 SSE 事件通知前端（失败）
                             try:

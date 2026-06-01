@@ -67,6 +67,7 @@ class AgentTeamWorker:
             cancel_event = asyncio.Event()
             _cancel_events[task_id] = cancel_event
 
+        task = None
         try:
             task = await self._load_task(task_id)
             (
@@ -85,6 +86,16 @@ class AgentTeamWorker:
                 current_phase="cloning",
                 started_at=_utc_now(),
                 ai_config_snapshot=json.dumps(ai_config_snapshot, ensure_ascii=False),
+            )
+
+            # 发送 Agent 任务开始通知
+            await self._send_agent_notification(
+                task_id=task_id,
+                repo_full_name=f"{task.repo_owner}/{task.repo_name}",
+                title=task.title,
+                event_type="agent_task_started",
+                method="started",
+                source_type=task.source_type or "",
             )
 
             git_service = AgentTeamGitWorkspaceService()
@@ -173,7 +184,8 @@ class AgentTeamWorker:
             cost_tracker = TokenTracker()
             cost_tracker.add_tokens(outcome.prompt_tokens, outcome.completion_tokens)
             estimated_cost = cost_tracker.calculate_cost(
-                s.review_price_per_1k_prompt, s.review_price_per_1k_completion,
+                s.review_price_per_1k_prompt,
+                s.review_price_per_1k_completion,
             )
 
             logger.info(
@@ -247,6 +259,16 @@ class AgentTeamWorker:
                             f"修改文件数 {len(outcome.modified_files)} 超过限制 {max_files}"
                         ),
                     )
+                    # 发送验证失败通知
+                    await self._send_agent_notification(
+                        task_id=task_id,
+                        repo_full_name=f"{task.repo_owner}/{task.repo_name}",
+                        title=task.title,
+                        event_type="agent_task_failed",
+                        method="failed",
+                        error_message=f"修改文件数 {len(outcome.modified_files)} 超过限制 {max_files}",
+                        failed_phase="validation_failed",
+                    )
                     return task_id
 
                 # ── Phase 4: PUSHING ──
@@ -268,7 +290,9 @@ class AgentTeamWorker:
                     fallback_message=fallback_msg,
                 )
                 if commit_message == fallback_msg:
-                    logger.info("Agent commit message: 使用 fallback 模板 (AI 生成未返回)")
+                    logger.info(
+                        "Agent commit message: 使用 fallback 模板 (AI 生成未返回)"
+                    )
                 else:
                     logger.info("Agent commit message: 使用 AI 生成结果")
                 await pr_service.commit_and_push(
@@ -337,7 +361,9 @@ class AgentTeamWorker:
                     review_findings=[
                         {"severity": f.severity, "file": f.file, "message": f.message}
                         for f in (outcome.review_result.findings or [])
-                    ] if outcome.review_result else [],
+                    ]
+                    if outcome.review_result
+                    else [],
                     modified_files=outcome.modified_files,
                     iteration_count=outcome.iterations,
                     source_type=task.source_type,
@@ -398,6 +424,17 @@ class AgentTeamWorker:
                         rate_limit_reset_at=None,
                     )
 
+                    # 发送 Agent 任务完成通知
+                    await self._send_agent_notification(
+                        task_id=task_id,
+                        repo_full_name=f"{task.repo_owner}/{task.repo_name}",
+                        title=task.title,
+                        event_type="agent_task_completed",
+                        method="completed",
+                        pr_url=pr_result.pr_url,
+                        iteration_count=outcome.iterations,
+                    )
+
                 logger.info(
                     "Agent PR 已创建: task_id={}, pr=#{} ({}) | "
                     "closed_loop={}, iterations={}, tool_calls={}, tokens={}+{}, cost={}",
@@ -435,6 +472,17 @@ class AgentTeamWorker:
                     estimated_cost,
                 )
 
+                # 发送 Agent 任务失败通知
+                await self._send_agent_notification(
+                    task_id=task_id,
+                    repo_full_name=f"{task.repo_owner}/{task.repo_name}",
+                    title=task.title,
+                    event_type="agent_task_failed",
+                    method="failed",
+                    error_message=reason,
+                    failed_phase="iteration_failed",
+                )
+
         except Exception as e:
             logger.error(
                 "Agent 任务异常: task_id={}, error={}", task_id, e, exc_info=True
@@ -447,13 +495,26 @@ class AgentTeamWorker:
                 failed_phase="error",
                 rate_limit_reset_at=_parse_rate_limit_reset_at(str(e)),
             )
+
+            # 发送 Agent 任务异常失败通知
+            await self._send_agent_notification(
+                task_id=task_id,
+                repo_full_name=f"{task.repo_owner}/{task.repo_name}" if task else "",
+                title=task.title if task else f"Task #{task_id}",
+                event_type="agent_task_failed",
+                method="failed",
+                error_message=f"{type(e).__name__}: {e}",
+                failed_phase="error",
+            )
         finally:
             _cancel_events.pop(task_id, None)
             await self._expire_pending_prompts_if_terminal(task_id)
 
         return task_id
 
-    async def process_external_review_iteration(self, task_id: int, review_id: int) -> int:
+    async def process_external_review_iteration(
+        self, task_id: int, review_id: int
+    ) -> int:
         """根据 Sakura PR Review 反馈继续同一分支的 Agent 闭环迭代。"""
         config = await load_agent_team_ai_config()
         config.validate()
@@ -557,7 +618,9 @@ class AgentTeamWorker:
 
             new_iteration_count = (task.iteration_count or 0) + outcome.iterations
             prompt_tokens = (task.prompt_tokens or 0) + outcome.prompt_tokens
-            completion_tokens = (task.completion_tokens or 0) + outcome.completion_tokens
+            completion_tokens = (
+                task.completion_tokens or 0
+            ) + outcome.completion_tokens
             s = get_settings()
             cost_tracker = TokenTracker()
             cost_tracker.add_tokens(prompt_tokens, completion_tokens)
@@ -626,7 +689,9 @@ class AgentTeamWorker:
                 status=AgentTeamTaskStatus.VALIDATING.value,
                 current_phase="validating",
             )
-            max_files = int(await self._get_config("agent_team_max_files_changed") or 30)
+            max_files = int(
+                await self._get_config("agent_team_max_files_changed") or 30
+            )
             if len(outcome.modified_files) > max_files:
                 terminal = True
                 await self._update_task(
@@ -714,7 +779,9 @@ class AgentTeamWorker:
                     body=body,
                 )
             except Exception as exc:
-                logger.warning("更新 Agent PR body 失败，将继续等待 synchronize webhook: {}", exc)
+                logger.warning(
+                    "更新 Agent PR body 失败，将继续等待 synchronize webhook: {}", exc
+                )
 
             await self._update_task(
                 task_id,
@@ -770,7 +837,9 @@ class AgentTeamWorker:
         }:
             await self._expire_pending_prompts(task_id)
 
-    async def _load_sakura_pr_review_feedback(self, task_id: int, review_id: int) -> str:
+    async def _load_sakura_pr_review_feedback(
+        self, task_id: int, review_id: int
+    ) -> str:
         """读取 Sakura PR Review 反馈内容。"""
         from sqlalchemy import select
 
@@ -778,7 +847,8 @@ class AgentTeamWorker:
             result = await session.execute(
                 select(AgentTeamFeedback.content).where(
                     AgentTeamFeedback.task_id == task_id,
-                    AgentTeamFeedback.source == AgentTeamFeedbackSource.SAKURA_PR_REVIEW.value,
+                    AgentTeamFeedback.source
+                    == AgentTeamFeedbackSource.SAKURA_PR_REVIEW.value,
                     AgentTeamFeedback.external_id == f"pr_review:{review_id}",
                 )
             )
@@ -939,6 +1009,85 @@ class AgentTeamWorker:
                     f"审查分数: {outcome.review_result.score}/10 ({outcome.review_result.verdict})"
                 )
         return "\n".join(parts)
+
+    async def _send_agent_notification(
+        self,
+        task_id: int,
+        repo_full_name: str,
+        title: str,
+        event_type: str,
+        method: str,
+        **kwargs,
+    ) -> None:
+        """发送 Agent 任务相关 Telegram 通知（best-effort，失败不阻断业务）。
+
+        Args:
+            task_id: Agent 任务 ID
+            repo_full_name: 仓库全名
+            title: 任务标题
+            event_type: 通知事件类型（用于偏好过滤）
+            method: 通知发送方法（started/completed/failed）
+            **kwargs: 传递给具体发送方法的额外参数
+        """
+        try:
+            from backend.telegram.notifications import get_notification_sender
+            from backend.models.database import async_session
+            from backend.services.telegram_service import TelegramService
+
+            sender = get_notification_sender()
+            if not sender:
+                return
+
+            chat_ids: list[int] = []
+            try:
+                async with async_session() as session:
+                    service = TelegramService(session)
+                    chat_ids = await service.get_notification_targets_with_preference(
+                        repo_full_name, "", event_type
+                    )
+            except Exception as exc:
+                logger.debug(
+                    "获取 Agent 通知目标失败: task_id={}, error={}",
+                    task_id,
+                    exc,
+                )
+
+            if not chat_ids:
+                return
+
+            if method == "started":
+                await sender.send_agent_task_started(
+                    task_id=task_id,
+                    repo_name=repo_full_name,
+                    title=title,
+                    source_type=kwargs.get("source_type", ""),
+                    chat_ids=chat_ids,
+                )
+            elif method == "completed":
+                await sender.send_agent_task_completed(
+                    task_id=task_id,
+                    repo_name=repo_full_name,
+                    title=title,
+                    pr_url=kwargs.get("pr_url", ""),
+                    iteration_count=kwargs.get("iteration_count", 0),
+                    chat_ids=chat_ids,
+                )
+            elif method == "failed":
+                await sender.send_agent_task_failed(
+                    task_id=task_id,
+                    repo_name=repo_full_name,
+                    title=title,
+                    error_message=kwargs.get("error_message", ""),
+                    failed_phase=kwargs.get("failed_phase", ""),
+                    chat_ids=chat_ids,
+                )
+        except Exception as exc:
+            logger.debug(
+                "发送 Agent 任务通知失败: task_id={}, method={}, error={}",
+                task_id,
+                method,
+                exc,
+            )
 
 
 def _parse_rate_limit_reset_at(error_text: str) -> datetime | None:
