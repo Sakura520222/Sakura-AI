@@ -300,8 +300,12 @@ class AgentTeamCandidateService:
     ) -> dict[str, Any]:
         """基于 PR 审查记录构建 Agent 任务草稿，不落库。
 
-        查询最新已完成的 PRReview 及其 ReviewComment，
+        查询该仓库最新已完成的 PRReview 及其 ReviewComment（不限 PR number），
         按 severity → file_path → line_number → id 排序后拼接完整 summary。
+
+        设计说明：匹配范围为仓库级最新审查，而非限定同一 PR number。
+        前提假设：同仓库同时刻仅有一个活跃 PR 的 /agent 任务（由 duplicate guard 保证）。
+        若 PR #A 已有审查但 PR #B 触发 /agent，将使用 PR #A 的审查结果作为上下文。
         """
         if "/" not in repo_full_name:
             raise ValueError("仓库全名格式无效，应为 owner/repo")

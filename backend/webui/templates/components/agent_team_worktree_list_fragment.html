@@ -3,7 +3,9 @@
     {% if has_orphans %}
     <div class="flex justify-end mb-2">
         <button type="button"
-                onclick="cleanOrphanWorktrees('{{ repo_owner }}', '{{ repo_name }}')"
+                data-repo-owner="{{ repo_owner }}"
+                data-repo-name="{{ repo_name }}"
+                onclick="cleanOrphanWorktrees(this.dataset.repoOwner, this.dataset.repoName)"
                 class="px-3 py-1.5 rounded-lg text-xs font-semibold bg-amber-50 hover:bg-amber-100 text-amber-700 dark:bg-amber-900/20 dark:hover:bg-amber-900/35 dark:text-amber-300 transition-colors">
             🧹 {{ _('agent_team.clean_orphan_worktrees') }} ({{ orphan_count }})
         </button>
@@ -39,7 +41,10 @@
                 </div>
             </div>
             <button type="button"
-                    onclick="deleteWorktree('{{ repo_owner }}', '{{ repo_name }}', '{{ wt.dir_name }}')"
+                    data-repo-owner="{{ repo_owner }}"
+                    data-repo-name="{{ repo_name }}"
+                    data-dir-name="{{ wt.dir_name }}"
+                    onclick="deleteWorktree(this.dataset.repoOwner, this.dataset.repoName, this.dataset.dirName)"
                     {% if wt.is_active %}disabled{% endif %}
                     class="shrink-0 px-2.5 py-1 rounded-lg text-xs font-semibold transition-colors
                            {% if wt.is_active %}
