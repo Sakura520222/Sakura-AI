@@ -237,7 +237,10 @@ class AgentTeamWorkspaceService:
         try:
             candidate.relative_to(workspace_path)
         except ValueError as exc:
-            raise WorkspaceSecurityError(f"路径跳出仓库工作区: {candidate}") from exc
+            raise WorkspaceSecurityError(
+                f"路径跳出仓库工作区: candidate={candidate}, "
+                f"workspace={workspace_path}, base_dir={self.base_dir}"
+            ) from exc
         return candidate
 
     def make_branch_slug(self, branch_name: str) -> str:

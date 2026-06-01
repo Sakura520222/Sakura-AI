@@ -107,6 +107,7 @@ class AgentTeamWorker:
                     task.source_id,
                     task.base_branch,
                     task.id,
+                    task.source_type,
                 )
 
             # 取消检查点
@@ -150,6 +151,7 @@ class AgentTeamWorker:
             resume_cursor = await checkpoint.get_resume_cursor() if resume else None
             loop_service = IterationLoopService(
                 workspace,
+                workspace_service=git_service.workspace_service,
                 task_id=task_id,
                 checkpoint=checkpoint,
                 resume_cursor=resume_cursor,
@@ -535,6 +537,7 @@ class AgentTeamWorker:
             checkpoint = ConversationCheckpointService(task_id)
             loop_service = IterationLoopService(
                 workspace_info.workspace,
+                workspace_service=git_service.workspace_service,
                 task_id=task_id,
                 checkpoint=checkpoint,
                 resume_index=task.resume_count or 0,
@@ -835,6 +838,7 @@ class AgentTeamWorker:
             checkpoint = ConversationCheckpointService(task_id)
             loop_service = IterationLoopService(
                 workspace_info.workspace,
+                workspace_service=git_service.workspace_service,
                 task_id=task_id,
                 checkpoint=checkpoint,
                 resume_index=task.resume_count or 0,
