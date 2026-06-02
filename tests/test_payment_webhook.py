@@ -116,7 +116,7 @@ class TestStripeWebhookEndpoint:
         ), patch(
             "backend.services.payment_service.PaymentService.cancel_expired_order",
             new_callable=AsyncMock,
-            return_value=mock_order,
+            return_value=mock_order,  # non-None → triggers commit
         ):
             from backend.api.webhook import handle_stripe_webhook
             from fastapi import Request

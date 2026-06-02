@@ -1793,8 +1793,9 @@ async def handle_stripe_webhook(
 
                 elif event.event_type == WebhookEventType.PAYMENT_EXPIRED:
                     if event.order_no:
-                        await svc.cancel_expired_order(event.order_no)
-                        await db.commit()
+                        result = await svc.cancel_expired_order(event.order_no)
+                        if result:
+                            await db.commit()
                     logger.info(
                         "Stripe webhook: order expired/cancelled {}",
                         event.order_no,
@@ -1899,8 +1900,9 @@ async def handle_paddle_webhook(
 
                 elif event.event_type == WebhookEventType.PAYMENT_EXPIRED:
                     if event.order_no:
-                        await svc.cancel_expired_order(event.order_no)
-                        await db.commit()
+                        result = await svc.cancel_expired_order(event.order_no)
+                        if result:
+                            await db.commit()
                     logger.info(
                         "Paddle webhook: order expired/cancelled {}",
                         event.order_no,
@@ -2005,8 +2007,9 @@ async def handle_alipay_webhook(
 
                 elif event.event_type == WebhookEventType.PAYMENT_EXPIRED:
                     if event.order_no:
-                        await svc.cancel_expired_order(event.order_no)
-                        await db.commit()
+                        result = await svc.cancel_expired_order(event.order_no)
+                        if result:
+                            await db.commit()
                     logger.info(
                         "Alipay webhook: order closed {}",
                         event.order_no,
@@ -2077,8 +2080,9 @@ async def handle_nowpayments_webhook(
 
                 elif event.event_type == WebhookEventType.PAYMENT_EXPIRED:
                     if event.order_no:
-                        await svc.cancel_expired_order(event.order_no)
-                        await db.commit()
+                        result = await svc.cancel_expired_order(event.order_no)
+                        if result:
+                            await db.commit()
                     logger.info(
                         "NOWPayments webhook: order expired {}",
                         event.order_no,
