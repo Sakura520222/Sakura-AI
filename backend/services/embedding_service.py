@@ -73,7 +73,7 @@ class EmbeddingService:
                 raise ValueError(f"不支持的嵌入提供商: {self.provider}")
 
         except Exception as e:
-            logger.error(f"❌ 嵌入服务初始化失败: {e}")
+            logger.error("❌ 嵌入服务初始化失败: {}", e)
             raise
 
     async def embed_texts(self, texts: List[str]) -> List[List[float]]:
@@ -101,7 +101,7 @@ class EmbeddingService:
                 raise ValueError(f"不支持的嵌入提供商: {self.provider}")
 
         except Exception as e:
-            logger.error(f"❌ 生成嵌入向量失败: {e}")
+            logger.error("❌ 生成嵌入向量失败: {}", e)
             raise
 
     @staticmethod
@@ -148,8 +148,10 @@ class EmbeddingService:
 
         except Exception as e:
             logger.error(
-                f"❌ Embedding API 请求失败 ({settings.embedding_base_url}): "
-                f"{type(e).__name__}: {e}"
+                "❌ Embedding API 请求失败 ({}): {}: {}",
+                settings.embedding_base_url,
+                type(e).__name__,
+                e,
             )
             raise
 
@@ -180,7 +182,7 @@ class EmbeddingService:
             )
             raise RuntimeError("sentence-transformers 未安装")
         except Exception as e:
-            logger.error(f"❌ HuggingFace 嵌入失败: {e}")
+            logger.error("❌ HuggingFace 嵌入失败: {}", e)
             raise
 
     async def embed_query(self, query: str) -> List[float]:
@@ -240,7 +242,7 @@ class RerankerService:
                 self.client = None
 
         except Exception as e:
-            logger.warning(f"⚠️  重排序服务初始化失败: {e}，已禁用")
+            logger.warning("⚠️  重排序服务初始化失败: {}，已禁用", e)
             self.client = None
 
     async def rerank(
@@ -282,7 +284,7 @@ class RerankerService:
                 return docs[:top_k]
 
         except Exception as e:
-            logger.warning(f"⚠️  重排序失败: {e}，返回原始结果")
+            logger.warning("⚠️  重排序失败: {}，返回原始结果", e)
             return docs[:top_k]
 
     async def _rerank_via_siliconflow(
@@ -337,10 +339,10 @@ class RerankerService:
             return reranked_docs
 
         except httpx.HTTPError as e:
-            logger.warning(f"SiliconFlow Rerank API 请求失败: {e}")
+            logger.warning("SiliconFlow Rerank API 请求失败: {}", e)
             return docs[:top_k]
         except Exception as e:
-            logger.warning(f"SiliconFlow 重排序失败: {e}")
+            logger.warning("SiliconFlow 重排序失败: {}", e)
             return docs[:top_k]
 
     async def close(self):

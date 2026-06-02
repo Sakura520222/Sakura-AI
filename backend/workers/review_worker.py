@@ -58,7 +58,7 @@ async def _load_max_concurrent() -> int:
         val = await get_dynamic_config("max_concurrent_reviews")
         return int(val) if val is not None else get_settings().max_concurrent_reviews
     except Exception as e:
-        logger.warning(f"读取 max_concurrent_reviews 配置失败，使用默认值: {e}")
+        logger.warning("读取 max_concurrent_reviews 配置失败，使用默认值: {}", e)
         return get_settings().max_concurrent_reviews
 
 
@@ -69,7 +69,7 @@ def _get_label_rec_setting(key: str, default=None):
 
         return get_label_config().get_recommendation_settings().get(key, default)
     except (OSError, AttributeError) as e:
-        logger.debug(f"读取标签推荐配置 [{key}] 失败，使用降级值: {e}")
+        logger.debug("读取标签推荐配置 [{}] 失败，使用降级值: {}", key, e)
         return default
 
 
@@ -648,7 +648,9 @@ class ReviewWorker:
                             )
                     except Exception as e:
                         logger.warning(
-                            f"[{task_id}] 语义 Issue 关联失败（不影响审查）: {e}",
+                            "[{}] 语义 Issue 关联失败（不影响审查）: {}",
+                            task_id,
+                            e,
                             exc_info=True,
                         )
 

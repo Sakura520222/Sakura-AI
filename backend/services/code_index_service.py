@@ -114,7 +114,7 @@ class CodeIndexService:
                             removed_count += 1
                             logger.info(f"已清理删除文件的索引: {file_path}")
                     except Exception as e:
-                        logger.error(f"清理删除文件索引失败 ({file_path}): {e}")
+                        logger.error("清理删除文件索引失败 ({}): {}", file_path, e)
                         failed_count += 1
                     consecutive_failures = 0
                     continue
@@ -202,7 +202,7 @@ class CodeIndexService:
                     )
 
                 except Exception as e:
-                    logger.error(f"❌ 索引文件 {file_path} 失败: {e}")
+                    logger.error("❌ 索引文件 {} 失败: {}", file_path, e)
                     failed_count += 1
                     consecutive_failures += 1
 
@@ -342,7 +342,7 @@ class CodeIndexService:
                     indexed_count += 1
 
                 except Exception as e:
-                    logger.error(f"❌ 索引文件 {file_path} 失败: {e}")
+                    logger.error("❌ 索引文件 {} 失败: {}", file_path, e)
                     failed_count += 1
 
             # 差异清理：比对当前文件列表与数据库索引，清理已删除文件
@@ -594,7 +594,7 @@ class CodeIndexService:
                     indexed_count += 1
 
                 except Exception as e:
-                    logger.error(f"增量索引文件 {file_path} 失败: {e}")
+                    logger.error("增量索引文件 {} 失败: {}", file_path, e)
                     failed_count += 1
 
             # 处理删除的文件
@@ -608,7 +608,7 @@ class CodeIndexService:
                         existing.is_deleted = 1
                         cleaned_count += 1
                 except Exception as e:
-                    logger.error(f"清理删除文件索引失败 ({file_path}): {e}")
+                    logger.error("清理删除文件索引失败 ({}): {}", file_path, e)
                     failed_count += 1
 
             # 更新索引状态
@@ -711,7 +711,7 @@ class CodeIndexService:
             return added, modified, deleted
 
         except Exception as e:
-            logger.error(f"获取变更文件列表失败: {e}")
+            logger.error("获取变更文件列表失败: {}", e)
             return None
 
     def _is_supported_code_file(self, file_path: str) -> bool:
@@ -760,7 +760,7 @@ class CodeIndexService:
             return True
 
         except Exception as e:
-            logger.error(f"❌ 删除文件索引失败 (file: {file_path}): {e}")
+            logger.error("❌ 删除文件索引失败 (file: {}): {}", file_path, e)
             return False
 
     async def _cleanup_stale_file_chunks(
@@ -788,7 +788,7 @@ class CodeIndexService:
                 logger.debug(f"已清理文件 {file_path} 的 {deleted_count} 个旧代码块")
             return deleted_count
         except Exception as e:
-            logger.warning(f"清理旧代码块失败 ({file_path}): {e}")
+            logger.warning("清理旧代码块失败 ({}): {}", file_path, e)
             return 0
 
     def _collect_code_files(
