@@ -70,7 +70,7 @@ class CodeIndexService:
         Returns:
             索引结果统计
         """
-        logger.info(f"开始索引PR #{pr_number}的代码文件，仓库: {repo_full_name}")
+        logger.info("开始索引PR #{}的代码文件，仓库: {}", pr_number, repo_full_name)
 
         indexed_count = 0
         skipped_count = 0
@@ -112,7 +112,7 @@ class CodeIndexService:
                         if existing:
                             existing.is_deleted = 1
                             removed_count += 1
-                            logger.info(f"已清理删除文件的索引: {file_path}")
+                            logger.info("已清理删除文件的索引: {}", file_path)
                     except Exception as e:
                         logger.error("清理删除文件索引失败 ({}): {}", file_path, e)
                         failed_count += 1
@@ -120,7 +120,7 @@ class CodeIndexService:
                     continue
 
                 if not content:
-                    logger.warning(f"文件 {file_path} 没有内容，跳过索引")
+                    logger.warning("文件 {} 没有内容，跳过索引", file_path)
                     skipped_count += 1
                     consecutive_failures = 0
                     continue
@@ -138,7 +138,7 @@ class CodeIndexService:
                         and existing.file_hash == file_hash
                         and not existing.is_deleted
                     ):
-                        logger.debug(f"文件 {file_path} 未变化，跳过索引")
+                        logger.debug("文件 {} 未变化，跳过索引", file_path)
                         skipped_count += 1
                         continue
 
@@ -157,7 +157,7 @@ class CodeIndexService:
                     )
 
                     if not chunks:
-                        logger.warning(f"文件 {file_path} 解析后没有生成代码块")
+                        logger.warning("文件 {} 解析后没有生成代码块", file_path)
                         skipped_count += 1
                         continue
 
@@ -249,7 +249,7 @@ class CodeIndexService:
         Returns:
             索引结果统计
         """
-        logger.info(f"开始索引仓库代码，仓库: {repo_full_name}, 路径: {repo_path}")
+        logger.info("开始索引仓库代码，仓库: {}，路径: {}", repo_full_name, repo_path)
 
         indexed_count = 0
         skipped_count = 0
@@ -258,13 +258,13 @@ class CodeIndexService:
 
         repo_path_obj = Path(repo_path)
         if not repo_path_obj.exists():
-            logger.error(f"仓库路径不存在: {repo_path}")
+            logger.error("仓库路径不存在: {}", repo_path)
             return {"indexed": 0, "skipped": 0, "failed": 0, "total_chunks": 0}
 
         # 收集要索引的文件
         code_files = self._collect_code_files(repo_path_obj, paths)
 
-        logger.info(f"找到 {len(code_files)} 个代码文件")
+        logger.info("找到 {} 个代码文件", len(code_files))
 
         async with async_session() as session:
             for file_path in code_files:
@@ -367,7 +367,7 @@ class CodeIndexService:
                         )
                         indexed_file.is_deleted = 1
                         cleaned_count += 1
-                        logger.debug(f"清理已删除文件的索引: {indexed_file.file_path}")
+                        logger.debug("清理已删除文件的索引: {}", indexed_file.file_path)
                     except Exception as e:
                         logger.error(
                             f"清理文件索引失败 ({indexed_file.file_path}): {e}"
@@ -477,13 +477,13 @@ class CodeIndexService:
         Returns:
             更新结果统计
         """
-        logger.info(f"开始增量更新索引，仓库: {repo_full_name}")
+        logger.info("开始增量更新索引，仓库: {}", repo_full_name)
 
         # 获取上一次索引的 commit hash
         last_commit_hash = await self._get_last_commit_hash(repo_full_name)
 
         if not last_commit_hash:
-            logger.info(f"仓库 {repo_full_name} 无历史索引记录，执行全量索引")
+            logger.info("仓库 {} 无历史索引记录，执行全量索引", repo_full_name)
             return await self.index_repository_code(
                 repo_full_name=repo_full_name,
                 repo_path=repo_path,
@@ -497,7 +497,7 @@ class CodeIndexService:
 
         if changed_files is None:
             # git diff 失败，回退到全量索引
-            logger.warning(f"获取变更文件列表失败，回退到全量索引: {repo_full_name}")
+            logger.warning("获取变更文件列表失败，回退到全量索引: {}", repo_full_name)
             return await self.index_repository_code(
                 repo_full_name=repo_full_name,
                 repo_path=repo_path,
@@ -676,7 +676,7 @@ class CodeIndexService:
             stdout, stderr = await proc.communicate()
 
             if proc.returncode != 0:
-                logger.warning(f"git diff 执行失败: {stderr.decode()[:200]}")
+                logger.warning("git diff 执行失败: {}", stderr.decode()[:200])
                 return None
 
             added, modified, deleted = [], [], []
@@ -756,7 +756,7 @@ class CodeIndexService:
                     code_file.is_deleted = 1
                     await session.commit()
 
-            logger.info(f"✅ 已删除文件 {file_path} 的索引 ({deleted_count} 个代码块)")
+            logger.info("✅ 已删除文件 {} 的索引 ({} 个代码块)", file_path, deleted_count)
             return True
 
         except Exception as e:
@@ -785,7 +785,7 @@ class CodeIndexService:
                 repo_full_name, file_path
             )
             if deleted_count > 0:
-                logger.debug(f"已清理文件 {file_path} 的 {deleted_count} 个旧代码块")
+                logger.debug("已清理文件 {} 的 {} 个旧代码块", file_path, deleted_count)
             return deleted_count
         except Exception as e:
             logger.warning("清理旧代码块失败 ({}): {}", file_path, e)
