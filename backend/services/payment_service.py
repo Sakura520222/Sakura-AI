@@ -866,17 +866,32 @@ class PaymentService:
         )
         return order
 
-    async def cancel_expired_order(self, order_no: str) -> Order:
-        """Cancel an expired PENDING order"""
+    async def cancel_expired_order(
+        self, order_no: str
+    ) -> Optional[Order]:
+        """Cancel an expired PENDING order (idempotent).
+
+        Returns the cancelled order, or ``None`` when the order is already
+        gone or already in a terminal state — callers should treat this as
+        success because the desired end-state (order not active) is already
+        reached.
+        """
         stmt = select(Order).where(Order.order_no == order_no)
         order = (await self.session.execute(stmt)).scalar_one_or_none()
         if not order:
-            raise PaymentError(f"Order not found: {order_no}")
+            logger.info(
+                "cancel_expired_order: order not found, already gone: {}",
+                order_no,
+            )
+            return None
 
         if order.status != OrderStatus.PENDING.value:
-            raise PaymentError(
-                f"Cannot cancel order in status: {order.status}"
+            logger.info(
+                "cancel_expired_order: order {} already in status {}, skip",
+                order_no,
+                order.status,
             )
+            return None
 
         order.status = OrderStatus.CANCELLED.value
         await self._log_payment(

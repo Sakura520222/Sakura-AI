@@ -1792,11 +1792,12 @@ async def handle_stripe_webhook(
                     )
 
                 elif event.event_type == WebhookEventType.PAYMENT_EXPIRED:
-                    order = await svc.cancel_expired_order(event.order_no)
-                    await db.commit()
+                    if event.order_no:
+                        await svc.cancel_expired_order(event.order_no)
+                        await db.commit()
                     logger.info(
                         "Stripe webhook: order expired/cancelled {}",
-                        order.order_no,
+                        event.order_no,
                     )
                     return JSONResponse(
                         content={"status": "processed", "event": "payment_expired"}
@@ -1898,12 +1899,12 @@ async def handle_paddle_webhook(
 
                 elif event.event_type == WebhookEventType.PAYMENT_EXPIRED:
                     if event.order_no:
-                        order = await svc.cancel_expired_order(event.order_no)
+                        await svc.cancel_expired_order(event.order_no)
                         await db.commit()
-                        logger.info(
-                            "Paddle webhook: order expired/cancelled {}",
-                            order.order_no,
-                        )
+                    logger.info(
+                        "Paddle webhook: order expired/cancelled {}",
+                        event.order_no,
+                    )
                     return JSONResponse(
                         content={"status": "processed", "event": "payment_expired"}
                     )
@@ -2004,12 +2005,12 @@ async def handle_alipay_webhook(
 
                 elif event.event_type == WebhookEventType.PAYMENT_EXPIRED:
                     if event.order_no:
-                        order = await svc.cancel_expired_order(event.order_no)
+                        await svc.cancel_expired_order(event.order_no)
                         await db.commit()
-                        logger.info(
-                            "Alipay webhook: order closed {}",
-                            order.order_no,
-                        )
+                    logger.info(
+                        "Alipay webhook: order closed {}",
+                        event.order_no,
+                    )
                     return PlainTextResponse("success")
 
                 else:
@@ -2076,12 +2077,12 @@ async def handle_nowpayments_webhook(
 
                 elif event.event_type == WebhookEventType.PAYMENT_EXPIRED:
                     if event.order_no:
-                        order = await svc.cancel_expired_order(event.order_no)
+                        await svc.cancel_expired_order(event.order_no)
                         await db.commit()
-                        logger.info(
-                            "NOWPayments webhook: order expired {}",
-                            order.order_no,
-                        )
+                    logger.info(
+                        "NOWPayments webhook: order expired {}",
+                        event.order_no,
+                    )
                     return JSONResponse(
                         content={"status": "processed", "event": "payment_expired"}
                     )
