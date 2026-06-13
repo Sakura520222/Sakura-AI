@@ -149,3 +149,56 @@ class TestAiDecisionBlockOnCriticalConfig:
         decision, reason = engine.make_decision(result, "owner/repo")
         assert decision == ReviewDecision.APPROVE
         assert "可以合并" in reason
+
+
+class TestReviewBodyFormatting:
+    def test_minor_and_suggestions_include_entries(self, engine):
+        engine.policy["review_templates"] = {
+            "approve": "{summary}\n{comment_summary}"
+        }
+        result = _review_result(score=9, minor_count=1, suggestion_count=1)
+
+        body = engine.format_review_body(
+            ReviewDecision.APPROVE,
+            result,
+            "可以合并",
+            output_language="zh-CN",
+        )
+
+        assert "### 🔵 次要问题 (1个)" in body
+        assert "- minor-0" in body
+        assert "### 💡 优化建议 (1条)" in body
+        assert "- suggestion-0" in body
+
+    def test_empty_issue_values_do_not_create_blank_sections(self, engine):
+        engine.policy["review_templates"] = {
+            "approve": "{summary}\n{comment_summary}"
+        }
+        result = _review_result(score=9)
+        result["issues"]["suggestions"] = ["", "   "]
+
+        body = engine.format_review_body(
+            ReviewDecision.APPROVE,
+            result,
+            "可以合并",
+            output_language="zh-CN",
+        )
+
+        assert "优化建议" not in body
+
+    def test_english_sections_render_entries(self, engine):
+        engine.policy["review_templates_en"] = {
+            "approve": "{summary}\n{comment_summary}"
+        }
+        result = _review_result(score=9, suggestion_count=4)
+
+        body = engine.format_review_body(
+            ReviewDecision.APPROVE,
+            result,
+            "Approved",
+            output_language="en",
+        )
+
+        assert "### 💡 Suggestions (4 suggestions)" in body
+        assert "- suggestion-0" in body
+        assert "- ...and 1 more" in body

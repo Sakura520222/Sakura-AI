@@ -344,42 +344,60 @@ class DecisionEngine:
             issues = review_result.get("issues", {})
             comment_parts = []
 
-            # 严重问题：显示标题和具体内容（最多3个）
-            if issues.get("critical"):
-                critical_issues = issues["critical"][:3]  # 最多显示3个
-                comment_parts.append(
-                    f"\n### 🔴 严重问题 ({len(issues['critical'])}个)\n"
+            section_config = (
+                (
+                    "critical",
+                    "🔴",
+                    "Critical Issues" if output_lang == "en" else "严重问题",
+                    "issues" if output_lang == "en" else "个",
+                ),
+                (
+                    "major",
+                    "🟡",
+                    "Major Issues" if output_lang == "en" else "重要问题",
+                    "issues" if output_lang == "en" else "个",
+                ),
+                (
+                    "minor",
+                    "🔵",
+                    "Minor Issues" if output_lang == "en" else "次要问题",
+                    "issues" if output_lang == "en" else "个",
+                ),
+                (
+                    "suggestions",
+                    "💡",
+                    "Suggestions" if output_lang == "en" else "优化建议",
+                    "suggestions" if output_lang == "en" else "条",
+                ),
+            )
+
+            for key, icon, title, unit in section_config:
+                values = [
+                    str(issue).strip()
+                    for issue in issues.get(key, [])
+                    if str(issue).strip()
+                ]
+                if not values:
+                    continue
+
+                count_text = (
+                    f"{len(values)} {unit}"
+                    if output_lang == "en"
+                    else f"{len(values)}{unit}"
                 )
-                for issue in critical_issues:
-                    # 截断过长的描述
-                    issue_str = issue[:150] + "..." if len(issue) > 150 else issue
-                    comment_parts.append(f"- {issue_str}\n")
-                if len(issues["critical"]) > 3:
-                    comment_parts.append(
-                        f"- ...还有 {len(issues['critical']) - 3} 个严重问题\n"
+                comment_parts.append(f"\n### {icon} {title} ({count_text})\n")
+                for issue in values[:3]:
+                    issue_text = issue[:150] + "..." if len(issue) > 150 else issue
+                    comment_parts.append(f"- {issue_text}\n")
+
+                remaining = len(values) - 3
+                if remaining > 0:
+                    remaining_text = (
+                        f"- ...and {remaining} more\n"
+                        if output_lang == "en"
+                        else f"- ...还有 {remaining} 条\n"
                     )
-
-            # 重要问题：显示标题和具体内容（最多3个）
-            if issues.get("major"):
-                major_issues = issues["major"][:3]  # 最多显示3个
-                comment_parts.append(f"\n### 🟡 重要问题 ({len(issues['major'])}个)\n")
-                for issue in major_issues:
-                    issue_str = issue[:150] + "..." if len(issue) > 150 else issue
-                    comment_parts.append(f"- {issue_str}\n")
-                if len(issues["major"]) > 3:
-                    comment_parts.append(
-                        f"- ...还有 {len(issues['major']) - 3} 个重要问题\n"
-                    )
-
-            # 次要问题：只显示标题
-            if issues.get("minor"):
-                comment_parts.append(f"\n### 🔵 次要问题 ({len(issues['minor'])}个)\n")
-
-            # 优化建议：只显示标题
-            if issues.get("suggestions"):
-                comment_parts.append(
-                    f"\n### 💡 优化建议 ({len(issues['suggestions'])}条)\n"
-                )
+                    comment_parts.append(remaining_text)
 
             comment_summary = "\n".join(comment_parts)
 
