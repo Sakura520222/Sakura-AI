@@ -37,9 +37,8 @@ class IssueAnalyzer:
 
     def __init__(self):
         settings = get_settings()
-        self.api_client = AIApiClient(
-            base_url=settings.openai_api_base, api_key=settings.openai_api_key
-        )
+        self._ai_client_config = None
+        self._refresh_ai_client()
         file_tool = FileToolHandler()
         search_tool = SearchToolHandler()
         git_tool = GitToolHandler()
@@ -70,6 +69,41 @@ class IssueAnalyzer:
         )
         self.tool_manager = ToolManager()
         self.tools = self.tool_manager.get_all_tools_definitions()
+
+    def _refresh_runtime_config(self) -> None:
+        """刷新运行中可切换的工具配置。"""
+        settings = get_settings()
+        if settings.web_search_enabled:
+            if self.tool_handler.web_search_tool is None:
+                from backend.services.ai_reviewer.tools.web_search_tool import (
+                    WebSearchToolHandler,
+                )
+
+                self.tool_handler.web_search_tool = WebSearchToolHandler()
+        else:
+            self.tool_handler.web_search_tool = None
+
+        if settings.web_search_enabled and settings.fetch_url_enabled:
+            if self.tool_handler.fetch_url_tool is None:
+                from backend.services.ai_reviewer.tools.fetch_url_tool import (
+                    FetchUrlToolHandler,
+                )
+
+                self.tool_handler.fetch_url_tool = FetchUrlToolHandler()
+        else:
+            self.tool_handler.fetch_url_tool = None
+
+    def _refresh_ai_client(self) -> None:
+        """刷新动态 AI 配置，避免长生命周期 Worker 持有旧凭据。"""
+        settings = get_settings()
+        config = (settings.openai_api_base, settings.openai_api_key)
+        if self._ai_client_config == config:
+            return
+        self.api_client = AIApiClient(
+            base_url=settings.openai_api_base,
+            api_key=settings.openai_api_key,
+        )
+        self._ai_client_config = config
 
     def _build_system_prompt(
         self,
@@ -373,6 +407,8 @@ class IssueAnalyzer:
         Returns:
             分析结果字典，包含 token 和 cost 信息
         """
+        self._refresh_ai_client()
+        self._refresh_runtime_config()
         if self.tool_handler.fetch_url_tool:
             await self.tool_handler.fetch_url_tool.reset_session()
 

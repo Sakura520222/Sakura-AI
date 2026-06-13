@@ -15,8 +15,6 @@ import threading
 
 from backend.core.config import get_settings
 
-settings = get_settings()
-
 # 嵌入文本最大字符数（防御性兜底，确保不超过 BGE-M3 的 8192 token 限制）
 # 中文约 1 token ≈ 1.5 字符，8000 字符 ≈ 5300 tokens，留足余量
 MAX_EMBEDDING_CHARS = 8000
@@ -30,11 +28,34 @@ class EmbeddingService:
 
     def __init__(self):
         """初始化嵌入服务"""
-        self.provider = settings.embedding_provider.lower()
+        self.provider = ""
         self.client = None
-        self._init_client()
+        self._client_config = None
+        self._retired_clients = []
+        self._hf_model = None
+        self._refresh_client()
 
-    def _init_client(self):
+    def _refresh_client(self):
+        """配置变化时刷新客户端，旧客户端延迟到服务关闭时释放。"""
+        settings = get_settings()
+        config = (
+            settings.embedding_provider.lower(),
+            settings.embedding_base_url,
+            settings.embedding_api_key,
+            settings.embedding_model,
+        )
+        if self._client_config == config:
+            return
+
+        if self.client is not None:
+            self._retired_clients.append(self.client)
+        self.provider = config[0]
+        self.client = None
+        self._hf_model = None
+        self._init_client(settings)
+        self._client_config = config
+
+    def _init_client(self, settings):
         """根据配置初始化对应的客户端"""
         try:
             if self.provider == "siliconflow":
@@ -88,6 +109,7 @@ class EmbeddingService:
         if not texts:
             return []
 
+        self._refresh_client()
         try:
             if self.provider in ["siliconflow", "openai", "ollama"]:
                 # 使用 OpenAI 兼容 API
@@ -121,6 +143,7 @@ class EmbeddingService:
         支持：SiliconFlow、OpenAI、Ollama
         """
         try:
+            settings = get_settings()
             batch_size = settings.embedding_batch_size
             all_embeddings = []
 
@@ -164,7 +187,8 @@ class EmbeddingService:
             from sentence_transformers import SentenceTransformer
 
             # 懒加载模型（只在第一次使用时加载）
-            if not hasattr(self, "_hf_model"):
+            settings = get_settings()
+            if self._hf_model is None:
                 logger.info("🔄 加载 HuggingFace 模型: {}", settings.embedding_model)
                 self._hf_model = SentenceTransformer(settings.embedding_model)
                 logger.info("✅ HuggingFace 模型加载完成")
@@ -199,9 +223,12 @@ class EmbeddingService:
 
     async def close(self):
         """关闭客户端连接，释放资源"""
-        if self.client and hasattr(self.client, "close"):
-            await self.client.close()
-            logger.debug("嵌入服务客户端已关闭")
+        clients = [self.client, *self._retired_clients]
+        for client in clients:
+            if client and hasattr(client, "close"):
+                await client.close()
+        self._retired_clients.clear()
+        logger.debug("嵌入服务客户端已关闭")
 
 
 class RerankerService:
@@ -213,11 +240,32 @@ class RerankerService:
 
     def __init__(self):
         """初始化重排序服务"""
-        self.provider = settings.rerank_provider.lower()
+        self.provider = ""
         self.client = None
-        self._init_client()
+        self._client_config = None
+        self._retired_clients = []
+        self._refresh_client()
 
-    def _init_client(self):
+    def _refresh_client(self):
+        """配置变化时刷新客户端，旧客户端延迟到服务关闭时释放。"""
+        settings = get_settings()
+        config = (
+            settings.rerank_provider.lower(),
+            settings.rerank_base_url,
+            settings.rerank_api_key,
+            settings.rerank_model,
+        )
+        if self._client_config == config:
+            return
+
+        if self.client is not None:
+            self._retired_clients.append(self.client)
+        self.provider = config[0]
+        self.client = None
+        self._init_client(settings)
+        self._client_config = config
+
+    def _init_client(self, settings):
         """根据配置初始化对应的客户端"""
         try:
             if self.provider == "siliconflow":
@@ -266,6 +314,8 @@ class RerankerService:
         if not docs:
             return []
 
+        self._refresh_client()
+        settings = get_settings()
         # 使用配置的默认值
         top_k = top_k or settings.rerank_top_k
         score_threshold = score_threshold or settings.rerank_score_threshold
@@ -296,6 +346,7 @@ class RerankerService:
     ) -> List[Dict[str, any]]:
         """通过 SiliconFlow Rerank API 重排序"""
         try:
+            settings = get_settings()
             # 提取文档内容
             texts = [doc["content"] for doc in docs]
 
@@ -347,9 +398,12 @@ class RerankerService:
 
     async def close(self):
         """关闭客户端连接"""
-        if self.client:
-            await self.client.aclose()
-            logger.debug("重排序服务客户端已关闭")
+        clients = [self.client, *self._retired_clients]
+        for client in clients:
+            if client:
+                await client.aclose()
+        self._retired_clients.clear()
+        logger.debug("重排序服务客户端已关闭")
 
 
 # 全局单例

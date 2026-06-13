@@ -43,6 +43,8 @@ class AIModelsRequest(BaseModel):
 
     api_key: str | None = None
     api_base: str | None = None
+    # 配置项名（openai_api_key / summary_api_key），用于回退数据库读取真实 Key
+    key_name: str | None = None
 
 
 def _mask_sensitive(value: str, key: str) -> str:
@@ -53,6 +55,41 @@ def _mask_sensitive(value: str, key: str) -> str:
             return value[:4] + "****" + value[-4:]
         return "****"
     return value
+
+
+def _is_masked_value(value: str) -> bool:
+    """判断配置值是否为脱敏后的占位值（前端配置页回显的掩码）。"""
+    return "****" in value
+
+
+async def _resolve_provider_credentials(
+    api_key: str,
+    api_base: str,
+    key_name: str | None,
+    db: AsyncSession,
+) -> tuple[str, str]:
+    """解析获取模型列表所需的真实 api_key / api_base。
+
+    配置页表单回显的敏感字段为脱敏占位值（含 ``****``），不可直接用于请求；
+    当传入空值或脱敏占位值时，回退读取数据库中的真实值。
+    ``key_name`` 须以 ``_api_key`` 结尾，用于定位正确的配置项，默认 openai_api_key。
+    """
+    key_name = (key_name or "").strip()
+    if not key_name.endswith("_api_key"):
+        key_name = "openai_api_key"
+    base_name = key_name.removesuffix("_api_key") + "_api_base"
+
+    if not api_key or _is_masked_value(api_key):
+        result = await db.execute(
+            select(AppConfig.key_value).where(AppConfig.key_name == key_name)
+        )
+        api_key = result.scalar_one_or_none() or ""
+    if not api_base:
+        result = await db.execute(
+            select(AppConfig.key_value).where(AppConfig.key_name == base_name)
+        )
+        api_base = result.scalar_one_or_none() or ""
+    return api_key, api_base
 
 
 @router.get("/ai-providers")
@@ -70,19 +107,17 @@ async def get_ai_provider_models(
     db: AsyncSession = Depends(get_db),
     user: dict = Depends(require_api_super_admin),
 ):
-    """按厂商获取模型列表。若未传 API Key，则尝试使用数据库中保存的真实 Key。"""
-    api_key = (body.api_key or "").strip()
-    api_base = (body.api_base or "").strip()
-    if not api_key:
-        result = await db.execute(
-            select(AppConfig.key_value).where(AppConfig.key_name == "openai_api_key")
-        )
-        api_key = result.scalar_one_or_none() or ""
-    if not api_base:
-        result = await db.execute(
-            select(AppConfig.key_value).where(AppConfig.key_name == "openai_api_base")
-        )
-        api_base = result.scalar_one_or_none() or ""
+    """按厂商获取模型列表。
+
+    配置页表单回显的 API Key 为脱敏占位值，故空值或脱敏值时回退数据库真实值；
+    ``body.key_name`` 指定配置项（openai_api_key / summary_api_key）。
+    """
+    api_key, api_base = await _resolve_provider_credentials(
+        (body.api_key or "").strip(),
+        (body.api_base or "").strip(),
+        body.key_name,
+        db,
+    )
 
     result = await setup_service.fetch_provider_models(provider, api_key, api_base)
     return success_response(data=result)

@@ -55,20 +55,9 @@ class AIReviewer:
         settings = get_settings()
 
         # 初始化各组件
-        self.api_client = AIApiClient(
-            base_url=settings.openai_api_base, api_key=settings.openai_api_key
-        )
-
-        # 初始化辅助模型（摘要、压缩等轻量任务）
-        self.summary_model = settings.summary_model or settings.openai_model
-        if not settings.summary_api_base and not settings.summary_api_key:
-            self.summary_api_client = self.api_client
-        else:
-            summary_api_base = settings.summary_api_base or settings.openai_api_base
-            summary_api_key = settings.summary_api_key or settings.openai_api_key
-            self.summary_api_client = AIApiClient(
-                base_url=summary_api_base, api_key=summary_api_key
-            )
+        self._ai_client_config = None
+        self._summary_client_config = None
+        self._refresh_ai_clients()
         self.prompt_builder = PromptBuilder()
         self.result_parser = ReviewResultParser()
 
@@ -129,6 +118,74 @@ class AIReviewer:
         # 存储工具定义（用于向后兼容）
         self.tools = self.tool_manager.get_all_tools_definitions()
 
+    def _refresh_runtime_config(self) -> None:
+        """刷新不应被长生命周期审查器固化的运行时配置。"""
+        settings = get_settings()
+        self.enable_compression = settings.enable_context_compression
+        self.compression_threshold = settings.context_compression_threshold
+        self.keep_rounds = settings.context_compression_keep_rounds
+        self.context_compressor.keep_rounds = self.keep_rounds
+
+        if settings.web_search_enabled:
+            if self.tool_handler.web_search_tool is None:
+                from backend.services.ai_reviewer.tools.web_search_tool import (
+                    WebSearchToolHandler,
+                )
+
+                self.tool_handler.web_search_tool = WebSearchToolHandler()
+        else:
+            self.tool_handler.web_search_tool = None
+
+        if settings.web_search_enabled and settings.fetch_url_enabled:
+            if self.tool_handler.fetch_url_tool is None:
+                from backend.services.ai_reviewer.tools.fetch_url_tool import (
+                    FetchUrlToolHandler,
+                )
+
+                self.tool_handler.fetch_url_tool = FetchUrlToolHandler()
+        else:
+            self.tool_handler.fetch_url_tool = None
+
+    def _refresh_ai_clients(self) -> None:
+        """刷新动态 AI 配置，避免长生命周期 Worker 持有旧凭据。"""
+        settings = get_settings()
+        main_config = (settings.openai_api_base, settings.openai_api_key)
+        if self._ai_client_config != main_config:
+            self.api_client = AIApiClient(
+                base_url=settings.openai_api_base,
+                api_key=settings.openai_api_key,
+            )
+            self._ai_client_config = main_config
+
+        self.summary_model = settings.summary_model or settings.openai_model
+        summary_uses_main = (
+            not settings.summary_api_base and not settings.summary_api_key
+        )
+        summary_config = (
+            "main",
+            main_config,
+        ) if summary_uses_main else (
+            "custom",
+            settings.summary_api_base or settings.openai_api_base,
+            settings.summary_api_key or settings.openai_api_key,
+        )
+        if self._summary_client_config != summary_config:
+            if summary_uses_main:
+                self.summary_api_client = self.api_client
+            else:
+                self.summary_api_client = AIApiClient(
+                    base_url=settings.summary_api_base or settings.openai_api_base,
+                    api_key=settings.summary_api_key or settings.openai_api_key,
+                )
+            self._summary_client_config = summary_config
+
+        if hasattr(self, "context_compressor"):
+            self.context_compressor.api_client = self.summary_api_client
+            self.context_compressor.model = self.summary_model
+        if hasattr(self, "label_recommender"):
+            self.label_recommender.api_client = self.summary_api_client
+            self.label_recommender.model = self.summary_model
+
     async def review_pr(self, context: Dict[str, Any], strategy: str) -> Dict[str, Any]:
         """审查PR（标准模式，不使用工具）
 
@@ -140,6 +197,8 @@ class AIReviewer:
             审查结果字典
         """
         try:
+            self._refresh_ai_clients()
+            self._refresh_runtime_config()
             logger.info("开始AI审查，策略: {}", strategy)
 
             settings = get_settings()
@@ -429,6 +488,8 @@ class AIReviewer:
         Returns:
             审查结果字典
         """
+        self._refresh_ai_clients()
+        self._refresh_runtime_config()
         if self.tool_handler.fetch_url_tool:
             await self.tool_handler.fetch_url_tool.reset_session()
         try:
@@ -570,6 +631,8 @@ class AIReviewer:
             审查结果字典
         """
         try:
+            self._refresh_ai_clients()
+            self._refresh_runtime_config()
             settings = get_settings()
             strategy_config_data = get_strategy_config().get_strategy(strategy)
             system_prompt = strategy_config_data.get("prompt", "")
@@ -621,6 +684,8 @@ class AIReviewer:
         Returns:
             推荐标签列表，格式：[{"name": str, "confidence": float, "reason": str}]
         """
+        self._refresh_ai_clients()
+        self._refresh_runtime_config()
         return await self.label_recommender.recommend_labels(
             context, available_labels, pr_info, existing_labels=existing_labels
         )
