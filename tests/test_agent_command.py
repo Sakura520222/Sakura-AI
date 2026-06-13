@@ -214,7 +214,7 @@ async def test_agent_command_ignored_on_pr():
 
     assert response.status_code == 200
     # /agent PR 命令由 handle_pr_agent_command 处理，功能禁用时返回 "skipped"
-    assert b"skipped" in response.body or b"ignored" in response.body
+    assert b"skipped" in response.body, f"Expected 'skipped' but got: {response.body}"
 
 
 @pytest.mark.asyncio

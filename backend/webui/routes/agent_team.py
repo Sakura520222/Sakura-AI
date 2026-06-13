@@ -1613,7 +1613,7 @@ async def delete_worktree(
             )
 
     try:
-        deleted = service.delete_worktree(repo_owner, repo_name, dir_name)
+        deleted = await asyncio.to_thread(service.delete_worktree, repo_owner, repo_name, dir_name)
     except ValueError as exc:
         return JSONResponse({"success": False, "message": str(exc)}, status_code=400)
 
@@ -1661,7 +1661,7 @@ async def clean_orphan_worktrees(
         if task_status in active_statuses:
             continue
         try:
-            service.delete_worktree(repo_owner, repo_name, w.dir_name)
+            await asyncio.to_thread(service.delete_worktree, repo_owner, repo_name, w.dir_name)
             cleaned += 1
         except Exception as exc:
             logger.warning("清理孤立 worktree 失败: {} - {}", w.dir_name, exc)
