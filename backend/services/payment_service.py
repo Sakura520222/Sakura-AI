@@ -905,6 +905,24 @@ class PaymentService:
         logger.info("Order cancelled: order_no={}", order_no)
         return order
 
+    async def cancel_and_commit_if_needed(
+        self, order_no: str
+    ) -> Optional[Order]:
+        """Cancel an expired order and commit when it was actually cancelled.
+
+        Thin wrapper around :meth:`cancel_expired_order` shared by webhook
+        handlers: commits the session only when the order is genuinely
+        cancelled (non-None result). When the order is already gone or in a
+        terminal state the session is left uncommitted, so callers can build
+        their response regardless. Returns the cancelled order, or ``None``.
+        """
+        if not order_no:
+            return None
+        result = await self.cancel_expired_order(order_no)
+        if result:
+            await self.session.commit()
+        return result
+
     async def cancel_order(self, order_no: str, user_id: int) -> Order:
         """用户主动取消 pending 订单，同时通知网关"""
         stmt = select(Order).where(

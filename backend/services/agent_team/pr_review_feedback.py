@@ -13,6 +13,7 @@ from backend.models import database as db_module
 from backend.models.agent_team_models import (
     AgentTeamFeedback,
     AgentTeamFeedbackSource,
+    AgentTeamSourceType,
     AgentTeamTask,
     AgentTeamTaskStatus,
 )
@@ -195,15 +196,54 @@ class AgentTeamPRReviewFeedbackService:
         )
 
     async def _find_task(self, session: Any, review: PRReview) -> AgentTeamTask | None:
+        # 策略 1: Agent 修复 PR 的直接审查 → 通过 branch_name 匹配
         # NOTE: PRReview.pr_id stores the GitHub *node* ID (e.g. 3776490879),
         # while AgentTeamTask.pr_number stores the human-readable PR number (e.g. 376).
-        # Match by repo + branch instead, which is unique per active task.
+        # Match by repo + branch first, which uniquely identifies an active Agent task.
         statement = (
             select(AgentTeamTask)
             .where(
                 AgentTeamTask.repo_owner == review.repo_owner,
                 AgentTeamTask.repo_name == review.repo_name,
                 AgentTeamTask.branch_name == review.branch,
+                AgentTeamTask.status.notin_(
+                    [
+                        AgentTeamTaskStatus.FAILED.value,
+                        AgentTeamTaskStatus.CANCELLED.value,
+                        AgentTeamTaskStatus.ABANDONED.value,
+                        AgentTeamTaskStatus.COMPLETED.value,
+                    ]
+                ),
+            )
+            .order_by(AgentTeamTask.updated_at.desc())
+            .limit(1)
+        )
+        result = await session.execute(statement)
+        task = result.scalars().first()
+        if task is not None:
+            return task
+
+        # 策略 2: 源 PR 被再次审查时回环到同一 Agent 任务
+        # 当 Agent 修复 PR 合并回源 PR 后，源 PR 的新审查 review.branch 是源 PR 分支，
+        # 无法直接匹配 Agent 任务的 branch_name（修复分支）。
+        # 此时通过 pr_review 来源 + 同 repo + 非终态查找原 Agent 任务。
+        # 安全性说明：build_pr_review_task_draft 的 duplicate guard 确保同 repo 最多只有
+        # 一个非终态 PR_REVIEW 任务，因此 repo + source_type + 非终态 足以唯一标识。
+        # PRReview.pr_id 是 GitHub node ID，无法直接与 source_issue_number（PR number）关联。
+        statement = (
+            select(AgentTeamTask)
+            .where(
+                AgentTeamTask.repo_owner == review.repo_owner,
+                AgentTeamTask.repo_name == review.repo_name,
+                AgentTeamTask.source_type == AgentTeamSourceType.PR_REVIEW.value,
+                AgentTeamTask.status.notin_(
+                    [
+                        AgentTeamTaskStatus.FAILED.value,
+                        AgentTeamTaskStatus.CANCELLED.value,
+                        AgentTeamTaskStatus.ABANDONED.value,
+                        AgentTeamTaskStatus.COMPLETED.value,
+                    ]
+                ),
             )
             .order_by(AgentTeamTask.updated_at.desc())
             .limit(1)

@@ -20,7 +20,14 @@ from backend.models.agent_team_models import (
     AgentTeamTask,
     AgentTeamTaskStatus,
 )
-from backend.models.database import IssueAnalysis, IssueAnalysisStatus
+from backend.models.database import (
+    CommentSeverity,
+    IssueAnalysis,
+    IssueAnalysisStatus,
+    PRReview,
+    PRStatus,
+    ReviewComment,
+)
 from backend.models.scan_models import RepoScan, ScanFinding
 from backend.services.agent_team.ai_client import create_agent_team_client
 
@@ -274,6 +281,207 @@ class AgentTeamCandidateService:
         task = AgentTeamTask(
             **values,
             started_by=started_by,
+            ai_config_snapshot=json.dumps(
+                ai_config_snapshot or {}, ensure_ascii=False
+            ),
+        )
+        db.add(task)
+        await db.commit()
+        await db.refresh(task)
+        return task
+
+    # ── PR 审查 /agent 任务 ──────────────────────────────────────
+
+    async def build_pr_review_task_draft(
+        self,
+        db: AsyncSession,
+        repo_full_name: str,
+        pr_number: int,
+    ) -> dict[str, Any]:
+        """基于 PR 审查记录构建 Agent 任务草稿，不落库。
+
+        查询该仓库最新已完成的 PRReview 及其 ReviewComment（不限 PR number），
+        按 severity → file_path → line_number → id 排序后拼接完整 summary。
+
+        设计说明：匹配范围为仓库级最新审查，而非限定同一 PR number。
+        前提假设：同仓库同时刻仅有一个活跃 PR 的 /agent 任务（由 duplicate guard 保证）。
+        若 PR #A 已有审查但 PR #B 触发 /agent，将使用 PR #A 的审查结果作为上下文。
+        """
+        if "/" not in repo_full_name:
+            raise ValueError("仓库全名格式无效，应为 owner/repo")
+        repo_owner, repo_name = repo_full_name.split("/", 1)
+
+        allowlist = await self._load_repo_allowlist()
+        if allowlist and repo_full_name not in allowlist:
+            raise ValueError(
+                f"仓库 {repo_full_name} 不在 Agent 允许列表中，"
+                "请在配置中添加该仓库或清空白名单以允许所有仓库。"
+            )
+
+        # 查找最新已完成的 PRReview
+        review = await db.scalar(
+            select(PRReview)
+            .where(
+                and_(
+                    PRReview.repo_owner == repo_owner,
+                    PRReview.repo_name == repo_name,
+                    PRReview.status == PRStatus.COMPLETED.value,
+                )
+            )
+            .order_by(desc(PRReview.id))
+            .limit(1)
+        )
+        if review is None:
+            raise ValueError(
+                f"{repo_full_name} 没有已完成的 PR 审查记录，"
+                "请先触发 PR 审查后再使用 /agent 命令。"
+            )
+
+        # duplicate guard: 同 repo + pr_review + 同源 PR number 仅允许一个非终态任务
+        existing = await db.scalar(
+            select(func.count(AgentTeamTask.id)).where(
+                and_(
+                    AgentTeamTask.repo_full_name == repo_full_name,
+                    AgentTeamTask.source_type == AgentTeamSourceType.PR_REVIEW.value,
+                    AgentTeamTask.source_issue_number == pr_number,
+                    AgentTeamTask.status.notin_(
+                        [
+                            AgentTeamTaskStatus.FAILED.value,
+                            AgentTeamTaskStatus.CANCELLED.value,
+                            AgentTeamTaskStatus.ABANDONED.value,
+                        ]
+                    ),
+                )
+            )
+        )
+        if existing and existing > 0:
+            raise ValueError(
+                f"{repo_full_name}#{pr_number} 已存在进行中的 Agent 修复任务 "
+                f"(共 {existing} 条)，请先等待完成或取消已有任务。"
+                "同一 PR 仅允许一个 /agent 任务（支持多轮迭代）。"
+            )
+
+        # 查询所有评论，按 severity 权重 → file_path → line_number → id 排序
+        _SEVERITY_ORDER = {
+            CommentSeverity.CRITICAL.value: 0,
+            CommentSeverity.MAJOR.value: 1,
+            CommentSeverity.MINOR.value: 2,
+            CommentSeverity.SUGGESTION.value: 3,
+        }
+
+        comments = (
+            (
+                await db.execute(
+                    select(ReviewComment)
+                    .where(ReviewComment.review_id == review.id)
+                    .order_by(ReviewComment.id)
+                )
+            )
+            .scalars()
+            .all()
+        )
+
+        def _comment_sort_key(c: ReviewComment) -> tuple[int, str, int, int]:
+            sev = _SEVERITY_ORDER.get(c.severity or "", 99)
+            fp = c.file_path or ""
+            ln = c.line_number or 0
+            return (sev, fp, ln, c.id)
+
+        comments = sorted(comments, key=_comment_sort_key)
+
+        # 构造完整 markdown summary（不截断）
+        parts: list[str] = []
+        parts.append(f"## PR 审查报告: {repo_full_name}#{pr_number}")
+        parts.append("")
+        if review.title:
+            parts.append(f"**PR 标题**: {review.title}")
+        if review.branch:
+            parts.append(f"**分支**: {review.branch}")
+        if review.overall_score is not None:
+            parts.append(f"**综合评分**: {review.overall_score}/10")
+        if review.review_summary:
+            parts.append("")
+            parts.append("### 审查摘要")
+            parts.append(review.review_summary)
+
+        if comments:
+            parts.append("")
+            parts.append(f"### 审查意见（共 {len(comments)} 条）")
+            parts.append("")
+            for i, c in enumerate(comments, 1):
+                severity_label = (c.severity or "suggestion").upper()
+                location = ""
+                if c.file_path:
+                    location = f" `{c.file_path}"
+                    if c.line_number:
+                        location += f":{c.line_number}"
+                    location += "`"
+                parts.append(f"#### {i}. [{severity_label}]{location}")
+                parts.append("")
+                parts.append(c.content or "")
+                parts.append("")
+        else:
+            parts.append("")
+            parts.append("（该 PR 审查未产生具体评论）")
+
+        summary = "\n".join(parts)
+
+        # 决定最高 severity 作为 priority
+        if comments:
+            top_severity = comments[0].severity or "suggestion"
+            priority = {
+                CommentSeverity.CRITICAL.value: "critical",
+                CommentSeverity.MAJOR.value: "high",
+                CommentSeverity.MINOR.value: "medium",
+                CommentSeverity.SUGGESTION.value: "low",
+            }.get(top_severity, "medium")
+        else:
+            priority = "medium"
+
+        title = f"修复 PR #{pr_number} 审查意见" + (
+            f" — {review.title}" if review.title else ""
+        )
+
+        return {
+            "source_type": AgentTeamSourceType.PR_REVIEW.value,
+            "source_id": review.id,
+            "source_issue_number": pr_number,
+            "repo_full_name": repo_full_name,
+            "repo_owner": repo_owner,
+            "repo_name": repo_name,
+            "title": title,
+            "summary": summary,
+            "priority": priority,
+            "candidate_score": _PRIORITY_SCORE.get(priority, 30),
+            "status": AgentTeamTaskStatus.QUEUED.value,
+            "max_iterations": await self._load_max_iterations_per_task(),
+        }
+
+    async def create_task_from_pr_review(
+        self,
+        db: AsyncSession,
+        repo_full_name: str,
+        pr_number: int,
+        started_by: str,
+        ai_config_snapshot: dict | None = None,
+        base_branch: str | None = None,
+        head_sha: str | None = None,
+        overrides: dict | None = None,
+    ) -> AgentTeamTask:
+        """从 PR 审查的 /agent 命令创建 Agent 修复任务。
+
+        - source_type = PR_REVIEW
+        - source_issue_number = PR number
+        - pr_head_sha 记录触发时的 PR head commit，用于后续增量判断
+        - 同一 PR 仅允许一个非终态任务（已由 draft 方法 guard）
+        """
+        values = await self.build_pr_review_task_draft(db, repo_full_name, pr_number)
+        values["base_branch"] = base_branch
+        values.update(overrides or {})
+        task = AgentTeamTask(
+            **values,
+            started_by=started_by,
+            pr_head_sha=head_sha,
             ai_config_snapshot=json.dumps(
                 ai_config_snapshot or {}, ensure_ascii=False
             ),

@@ -146,6 +146,7 @@ CREATE TABLE IF NOT EXISTS agent_team_tasks (
     rate_limit_reset_at TIMESTAMP NULL,
     last_checkpoint_at TIMESTAMP NULL,
     pr_number BIGINT,
+    pr_head_sha VARCHAR(64),
     pr_url VARCHAR(500),
     iteration_count INT NOT NULL DEFAULT 0,
     max_iterations INT NOT NULL DEFAULT 3,
@@ -168,6 +169,7 @@ CREATE TABLE IF NOT EXISTS agent_team_tasks (
     INDEX idx_agent_team_tasks_candidate_score (candidate_score),
     INDEX idx_agent_team_tasks_status (status),
     INDEX idx_agent_team_tasks_pr_number (pr_number),
+    INDEX idx_agent_team_tasks_pr_head_sha (pr_head_sha),
     INDEX idx_agent_team_tasks_created_at (created_at)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
