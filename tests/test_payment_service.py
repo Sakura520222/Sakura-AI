@@ -767,7 +767,7 @@ class TestCancelExpiredOrder:
 
         assert cancelled.status == OrderStatus.CANCELLED.value
 
-    async def test_cancel_non_pending_order_raises(self, svc, mock_session):
+    async def test_cancel_non_pending_order_returns_none(self, svc, mock_session):
         from backend.models.payment_models import Order
 
         order = Order(
@@ -782,9 +782,16 @@ class TestCancelExpiredOrder:
         mock_result.scalar_one_or_none.return_value = order
         mock_session.execute.return_value = mock_result
 
-        with pytest.raises(PaymentError, match="Cannot cancel order"):
-            await svc.cancel_expired_order("ORD_FULFILLED")
+        result = await svc.cancel_expired_order("ORD_FULFILLED")
+        assert result is None
 
+    async def test_cancel_expired_order_not_found(self, svc, mock_session):
+        mock_result = MagicMock()
+        mock_result.scalar_one_or_none.return_value = None
+        mock_session.execute.return_value = mock_result
+
+        result = await svc.cancel_expired_order("ORD_NONEXISTENT")
+        assert result is None
 
 @pytest.mark.asyncio
 class TestProcessRefund:
