@@ -447,13 +447,15 @@ async def payment_result(
     order_no = request.query_params.get("order_no", "")
     status = request.query_params.get("status", "failed")
 
-    # If user cancelled, mark the order as cancelled
+    # If user cancelled, mark the order as cancelled (idempotent — no-op if already gone)
     if status == "cancel" and order_no:
         try:
             svc = PaymentService(db)
-            await svc.cancel_expired_order(order_no)
-            await db.commit()
-        except Exception:
+            result = await svc.cancel_expired_order(order_no)
+            if result:
+                await db.commit()
+        except Exception as e:
+            logger.warning("Failed to cancel order {}: {}", order_no, e)
             await db.rollback()
 
     return render_template(
