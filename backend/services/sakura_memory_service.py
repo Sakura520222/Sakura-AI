@@ -250,19 +250,34 @@ class SakuraMemoryService:
     def __init__(self):
         """初始化服务 / Initialize service"""
         self.write_service = get_github_write_service()
+        self._ai_client_config = None
+        self._refresh_ai_client()
+
+    def _refresh_ai_client(self) -> None:
+        """刷新主/辅助模型选择与凭据。"""
         settings = get_settings()
         if settings.sakura_use_summary_model:
-            self.api_client = AIApiClient(
-                base_url=settings.summary_api_base or settings.openai_api_base,
-                api_key=settings.summary_api_key or settings.openai_api_key,
-            )
-            self._default_model = settings.summary_model or settings.openai_model
+            base_url = settings.summary_api_base or settings.openai_api_base
+            api_key = settings.summary_api_key or settings.openai_api_key
+            model = settings.summary_model or settings.openai_model
         else:
+            base_url = settings.openai_api_base
+            api_key = settings.openai_api_key
+            model = settings.openai_model
+
+        config = (
+            settings.sakura_use_summary_model,
+            base_url,
+            api_key,
+            model,
+        )
+        if self._ai_client_config != config:
             self.api_client = AIApiClient(
-                base_url=settings.openai_api_base,
-                api_key=settings.openai_api_key,
+                base_url=base_url,
+                api_key=api_key,
             )
-            self._default_model = settings.openai_model
+            self._ai_client_config = config
+        self._default_model = model
 
     def _get_config(self) -> dict:
         """获取 sakura_memory 配置，优先使用 DB/WebUI 配置 / Get config, DB/WebUI overrides yaml"""
@@ -1429,6 +1444,7 @@ class SakuraMemoryService:
         Returns:
             LLM 生成的文本内容
         """
+        self._refresh_ai_client()
         messages = [{"role": "user", "content": prompt}]
         response = await self.api_client.call_with_retry(
             messages=messages,

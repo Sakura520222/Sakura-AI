@@ -61,6 +61,34 @@ class ToolHandler:
             diff_tool=diff_tool,
         )
 
+    def apply_web_tool_settings(self, settings) -> None:
+        """根据运行时配置同步 web_search / fetch_url 工具实例（幂等）。
+
+        web_search 仅在 ``settings.web_search_enabled`` 为真时持有实例；
+        fetch_url 仅在 web_search 与 fetch_url 均启用时持有实例，禁用则置 None，
+        避免长生命周期 Worker 持有过期工具。已在 AIReviewer / IssueAnalyzer 的
+        初始化与运行时刷新中复用，新增 web 工具时只需修改此处。
+        """
+        if settings.web_search_enabled:
+            if self.web_search_tool is None:
+                from backend.services.ai_reviewer.tools.web_search_tool import (
+                    WebSearchToolHandler,
+                )
+
+                self.web_search_tool = WebSearchToolHandler()
+        else:
+            self.web_search_tool = None
+
+        if settings.web_search_enabled and settings.fetch_url_enabled:
+            if self.fetch_url_tool is None:
+                from backend.services.ai_reviewer.tools.fetch_url_tool import (
+                    FetchUrlToolHandler,
+                )
+
+                self.fetch_url_tool = FetchUrlToolHandler()
+        else:
+            self.fetch_url_tool = None
+
     async def handle_tool_call(
         self, tool_call: Any, repo: Any, pr: Any
     ) -> Dict[str, Any]:
