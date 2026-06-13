@@ -112,6 +112,16 @@ class TestAiDecision:
         decision, reason = engine.make_decision(result, "owner/repo")
         assert decision == ReviewDecision.REQUEST_CHANGES
 
+    def test_missing_validated_score_requires_manual_review(self, engine):
+        result = _review_result(
+            score=None,
+            ai_decision="approve",
+            ai_decision_reason="Looks good",
+        )
+        decision, reason = engine.make_decision(result, "owner/repo")
+        assert decision == ReviewDecision.COMMENT
+        assert "人工复审" in reason
+
 
 class TestTrustAiDecisionConfig:
     def test_trust_ai_decision_false_ignores_ai(self, engine):

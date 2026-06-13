@@ -33,16 +33,6 @@ SEVERITY_EMOJI: Dict[str, str] = {
     "suggestion": "💡",
 }
 
-EMOJI_TO_SEVERITY: Dict[str, str] = {v: k for k, v in SEVERITY_EMOJI.items()}
-
-# 严重程度到问题字典的映射
-SEVERITY_TO_ISSUES_KEY: Dict[str, str] = {
-    "critical": "critical",
-    "major": "major",
-    "minor": "minor",
-    "suggestion": "suggestions",  # 单数转复数
-}
-
 # 问题类别
 ISSUE_CATEGORIES = ["critical", "major", "minor", "suggestions"]
 
@@ -81,22 +71,6 @@ MAX_TOOL_ITERATIONS = 20  # 最大工具调用轮次
 LABEL_RECOMMENDATION_TEMPERATURE = 0.3  # 标签推荐温度
 MAX_LABEL_RECOMMENDATIONS = 5  # 最大推荐标签数
 DEFAULT_LABEL_CONFIDENCE = 0.6  # 默认标签置信度
-
-# =============================================================================
-# 行内评论配置
-# =============================================================================
-INLINE_COMMENT_PATTERN = (
-    r"###\s*[🔴🟡💡⚠️]\s+([^\s:]+):([\d\-\s,]+?)\s*\n(.*?)(?=###\s*[🔴🟡💡⚠️]|##|\Z)"
-)
-
-# =============================================================================
-# 结构化 JSON 输出配置
-# =============================================================================
-JSON_BLOCK_START_MARKER = "<!-- SAKURA_REVIEW_JSON_START -->"
-JSON_BLOCK_END_MARKER = "<!-- SAKURA_REVIEW_JSON_END -->"
-JSON_SCHEMA_VERSION = 1
-VALID_SEVERITIES = {"critical", "major", "minor", "suggestion"}
-VALID_DECISIONS = {"approve", "request_changes", "comment"}
 
 # =============================================================================
 # 日志消息模板

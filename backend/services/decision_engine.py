@@ -94,17 +94,17 @@ class DecisionEngine:
             if not policy.get("enabled", False):
                 return (ReviewDecision.COMMENT, "自动批准功能未启用，仅提供评论")
 
-            # 提取评分和问题统计（使用ScoreExtractor支持fallback）
-            from backend.services.score_extractor import score_extractor
-
+            # 主 PR 审查只信任已通过结构化协议校验的评分。
             score = review_result.get("overall_score")
             if score is None:
-                logger.warning("overall_score为None，尝试从summary提取评分")
-                score = score_extractor.extract_score(review_result)
-
-            if score is None:
-                logger.warning("无法提取评分，使用默认值0")
-                score = 0
+                logger.warning("缺少已验证评分，降级为人工复审")
+                return (
+                    ReviewDecision.COMMENT,
+                    output_text(
+                        "缺少有效的结构化评分，建议人工复审",
+                        "The structured score is missing or invalid; manual review is required",
+                    ),
+                )
 
             issues = review_result.get("issues", {})
 
@@ -118,10 +118,6 @@ class DecisionEngine:
                 f"critical={critical_count}, major={major_count}, "
                 f"minor={minor_count}, suggestions={suggestion_count}"
             )
-
-            # 如果没有评分，记录警告
-            if review_result.get("overall_score") is None:
-                logger.warning("AI未返回评分，使用默认值0进行决策")
 
             # AI 建议决策路径
             ai_decision = review_result.get("ai_decision")
