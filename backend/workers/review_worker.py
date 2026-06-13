@@ -41,7 +41,7 @@ async def _get_review_semaphore() -> asyncio.Semaphore:
     if _review_semaphore is None:
         max_concurrent = await _load_max_concurrent()
         _review_semaphore = asyncio.Semaphore(max_concurrent)
-        logger.info(f"审查并发信号量初始化: 最大 {max_concurrent} 个并发任务")
+        logger.info("审查并发信号量初始化: 最大 {} 个并发任务", max_concurrent)
     return _review_semaphore
 
 
@@ -58,7 +58,7 @@ async def _load_max_concurrent() -> int:
         val = await get_dynamic_config("max_concurrent_reviews")
         return int(val) if val is not None else get_settings().max_concurrent_reviews
     except Exception as e:
-        logger.warning(f"读取 max_concurrent_reviews 配置失败，使用默认值: {e}")
+        logger.warning("读取 max_concurrent_reviews 配置失败，使用默认值: {}", e)
         return get_settings().max_concurrent_reviews
 
 
@@ -69,7 +69,7 @@ def _get_label_rec_setting(key: str, default=None):
 
         return get_label_config().get_recommendation_settings().get(key, default)
     except (OSError, AttributeError) as e:
-        logger.debug(f"读取标签推荐配置 [{key}] 失败，使用降级值: {e}")
+        logger.debug("读取标签推荐配置 [{}] 失败，使用降级值: {}", key, e)
         return default
 
 
@@ -186,7 +186,7 @@ class ReviewWorker:
         event = self._cancel_events.get(task_key)
         if event and not event.is_set():
             event.set()
-            logger.info(f"[cancel] 已设置取消信号: {task_key}")
+            logger.info("[cancel] 已设置取消信号: {}", task_key)
             return True
         return False
 
@@ -208,7 +208,7 @@ class ReviewWorker:
         Deletes placeholder comment and updates DB status to CANCELLED.
         Safe to call when review_obj/review_id are None (early checkpoints).
         """
-        logger.info(f"[{task_id}] 任务已被取消，{reason}: {task_key}")
+        logger.info("[{}] 任务已被取消，{}: {}", task_id, reason, task_key)
         if review_obj:
             await self.comment_service.delete_placeholder_comment(review_obj)
         if review_id:
@@ -248,7 +248,7 @@ class ReviewWorker:
 
                 # 2. 检查是否应该跳过
                 if analysis.should_skip:
-                    logger.info(f"[{task_id}] 跳过审查: {analysis.skip_reason}")
+                    logger.info("[{}] 跳过审查: {}", task_id, analysis.skip_reason)
                     await self._save_skip_record(analysis, pr_info)
                     return task_id
 
@@ -265,7 +265,7 @@ class ReviewWorker:
                         from backend.services.pr_code_indexer import get_pr_code_indexer
 
                         indexer = get_pr_code_indexer()
-                        logger.info(f"[{task_id}] 开始代码索引...")
+                        logger.info("[{}] 开始代码索引...", task_id)
                         await self._log_activity(review_id, "tool_call", {
                             "tool": "index_pr_changes",
                             "status": "running",
@@ -276,7 +276,7 @@ class ReviewWorker:
                             pr_number=pr_info["pr_number"],
                             install_id=pr_info.get("install_id", 0),
                         )
-                        logger.info(f"[{task_id}] 代码索引完成")
+                        logger.info("[{}] 代码索引完成", task_id)
                         await self._log_activity(review_id, "tool_result", {
                             "tool": "index_pr_changes",
                             "status": "completed",
@@ -410,7 +410,7 @@ class ReviewWorker:
                             pr, summary
                         )
                         pr_summary_text = summary
-                        logger.info(f"[{task_id}] PR 变更总结已更新")
+                        logger.info("[{}] PR 变更总结已更新", task_id)
                     except Exception as e:
                         logger.warning("[{}] PR 变更总结生成失败: {}", task_id, str(e))
 
@@ -428,7 +428,7 @@ class ReviewWorker:
                         await depgraph_service.generate_dependency_graph(
                             analysis, pr_info, pr
                         )
-                        logger.info(f"[{task_id}] PR 依赖图已生成并注入")
+                        logger.info("[{}] PR 依赖图已生成并注入", task_id)
                     except Exception as e:
                         logger.warning(
                             f"[{task_id}] PR 依赖图生成失败（不影响审查）: {e}"
@@ -439,7 +439,7 @@ class ReviewWorker:
                 )
 
                 # 5. 【第一阶段】创建占位评论
-                logger.info(f"[{task_id}] 创建占位评论...")
+                logger.info("[{}] 创建占位评论...", task_id)
                 review_obj = await self.comment_service.create_placeholder_comment(
                     pr, analysis.strategy, output_language=output_language
                 )
@@ -648,7 +648,9 @@ class ReviewWorker:
                             )
                     except Exception as e:
                         logger.warning(
-                            f"[{task_id}] 语义 Issue 关联失败（不影响审查）: {e}",
+                            "[{}] 语义 Issue 关联失败（不影响审查）: {}",
+                            task_id,
+                            e,
                             exc_info=True,
                         )
 
@@ -719,12 +721,12 @@ class ReviewWorker:
                         )
                     )
                 else:
-                    logger.info(f"[{task_id}] 使用标准模式进行审查")
+                    logger.info("[{}] 使用标准模式进行审查", task_id)
                     tasks.append(self.ai_reviewer.review_pr(context, analysis.strategy))
 
                 # 任务2: AI标签推荐（并行）
                 if enable_label_recommendation:
-                    logger.info(f"[{task_id}] 并行启动AI标签推荐...")
+                    logger.info("[{}] 并行启动AI标签推荐...", task_id)
 
                     async def run_label_recommendation():
                         try:
@@ -777,7 +779,7 @@ class ReviewWorker:
                                 )
                                 return label_results
                             else:
-                                logger.info(f"[{task_id}] AI未推荐任何标签")
+                                logger.info("[{}] AI未推荐任何标签", task_id)
                                 return None
 
                         except Exception as label_error:
@@ -822,11 +824,11 @@ class ReviewWorker:
 
                 # 9. 【第二阶段】删除占位评论，准备创建最终Review
                 if review_obj:
-                    logger.info(f"[{task_id}] 删除占位评论...")
+                    logger.info("[{}] 删除占位评论...", task_id)
                     await self.comment_service.delete_placeholder_comment(review_obj)
 
                 # 10. 【新增】决策引擎：做出审查决定并提交到GitHub（包含行内评论）
-                logger.info(f"[{task_id}] 执行决策引擎...")
+                logger.info("[{}] 执行决策引擎...", task_id)
                 decision, decision_reason = await self._make_and_submit_decision(
                     pr_info,
                     review_result,
@@ -883,7 +885,7 @@ class ReviewWorker:
                         )
                         self._background_tasks.add(task)
                         task.add_done_callback(self._background_tasks.discard)
-                        logger.info(f"[{task_id}] 已触发 .sakura/ 反思任务")
+                        logger.info("[{}] 已触发 .sakura/ 反思任务", task_id)
                 except Exception as e:
                     logger.warning(
                         "[{}] 触发 .sakura/ 反思失败（不影响审查）: {}",
@@ -922,7 +924,7 @@ class ReviewWorker:
                             pr,
                             output_language=output_language,
                         )
-                        logger.info(f"[{task_id}] 已更新占位评论为错误状态")
+                        logger.info("[{}] 已更新占位评论为错误状态", task_id)
                     except Exception as update_error:
                         logger.error(
                             "[{}] 更新错误消息失败: {}",
@@ -990,7 +992,7 @@ class ReviewWorker:
                 session.add(record)
                 await session.commit()
                 await session.refresh(record)
-                logger.info(f"[{task_id}] 创建审查记录: {record.id}")
+                logger.info("[{}] 创建审查记录: {}", task_id, record.id)
                 return record.id
 
         return await _db_retry(_do)
@@ -1152,7 +1154,7 @@ class ReviewWorker:
                 )
                 session.add(record)
                 await session.commit()
-                logger.info(f"[{task_id}] 保存错误记录")
+                logger.info("[{}] 保存错误记录", task_id)
 
         await _db_retry(_do)
 
@@ -1266,7 +1268,7 @@ class ReviewWorker:
                     # Incremental review: old reviews already dismissed in webhook handler,
                     # skip idempotency check to allow new review submission
                     enable_idempotency = False
-                    logger.info(f"[{task_id}] 增量审查模式，跳过幂等性检查")
+                    logger.info("[{}] 增量审查模式，跳过幂等性检查", task_id)
                 else:
                     # Full review fallback (force push etc.):
                     # dismiss again in case webhook dismiss was missed or failed
@@ -1282,7 +1284,7 @@ class ReviewWorker:
                             f"[{task_id}] 已撤回 {dismissed} 条旧 Review，将提交全量审查"
                         )
                     else:
-                        logger.debug(f"[{task_id}] 全量审查模式，无旧 Review 需撤回")
+                        logger.debug("[{}] 全量审查模式，无旧 Review 需撤回", task_id)
 
             # 使用 submit_review_with_inline_comments 方法（带重试机制）
             max_retries = 1  # 失败后重试1次
@@ -1340,9 +1342,9 @@ class ReviewWorker:
                     enable_idempotency_check=enable_idempotency,
                 )
                 if success:
-                    logger.info(f"[{task_id}] ✅ 降级成功: 已提交无行内评论的Review")
+                    logger.info("[{}] ✅ 降级成功: 已提交无行内评论的Review", task_id)
                 else:
-                    logger.error(f"[{task_id}] 重试 {max_retries} 次后仍然失败")
+                    logger.error("[{}] 重试 {} 次后仍然失败", task_id, max_retries)
 
             if success:
                 if inline_comments:
