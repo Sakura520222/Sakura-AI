@@ -335,6 +335,8 @@ class PromptBuilder:
             "- Return exactly one SAKURA_REVIEW envelope and no text outside it.",
             "- Put every tag on its own line, except the documented scalar tags.",
             "- Do not place a reserved protocol tag on its own line inside a text field.",
+            "- Every actionable defect or optional improvement mentioned in SUMMARY must "
+            "also be represented as a complete FINDING.",
             "- FINDINGS may be empty. FILE=NONE requires both line fields to be NONE.",
             "- A file finding requires a repository-relative path and positive start/end "
             "lines from the PR diff.",

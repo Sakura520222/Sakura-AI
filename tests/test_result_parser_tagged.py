@@ -99,6 +99,19 @@ def test_accepts_single_outer_code_fence_without_repair(parser, fence):
     assert len(result["inline_comments"]) == 1
 
 
+def test_extracts_unique_envelope_from_presentation_text(parser):
+    result = parser.parse_review_result(
+        "Now I have enough evidence. I will compose the review.\n"
+        f"{_review(findings=_finding())}\n"
+        "Review complete.",
+        "standard",
+    )
+
+    assert result["parse_source"] == "tagged"
+    assert len(result["inline_comments"]) == 1
+    assert result["inline_comments"][0]["file_path"] == "src/main.py"
+
+
 def test_parses_overall_finding_and_none_suggestion(parser):
     finding = _finding(
         severity="suggestion",
@@ -122,8 +135,6 @@ def test_parses_overall_finding_and_none_suggestion(parser):
     [
         "Score: 8/10\n### 🔴 src/main.py:42\nBug",
         '{"overall_score": 8, "issues": []}',
-        "prefix\n" + _review(),
-        _review() + "\nsuffix",
         _review().replace("<VERSION>1</VERSION>", ""),
         _review().replace("<DECISION>request_changes</DECISION>", "<DECISION>reject</DECISION>"),
         _review().replace("<SCORE>6</SCORE>", "<SCORE>11</SCORE>"),

@@ -56,12 +56,21 @@ Actionable fix|NONE
 `FINDINGS` may be empty. `FILE=NONE` requires both line fields to be `NONE`.
 A file finding requires both positive line values, with start not greater than
 end. GitHub submission performs an additional diff safety-zone validation.
+Every actionable item mentioned in `SUMMARY` must also be emitted as a
+`FINDING`; Markdown file-and-line references in `SUMMARY` do not create inline
+comments.
 
 ## Validation And Failure Handling
 
 The parser validates field order, uniqueness, version, enums, score range,
 required text, and file/line combinations. Critical findings cap the score at
 3, and major findings cap it at 6.
+
+The output contract still forbids surrounding text. As a provider-compatibility
+measure, the parser deterministically extracts a single complete envelope from
+an outer Markdown fence or short presentation preamble/epilogue. It rejects
+responses containing zero or multiple envelopes and never infers findings from
+surrounding prose.
 
 An invalid first response triggers one format-only retry at temperature zero,
 without tools. The original assistant response is included so the model can

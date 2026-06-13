@@ -64,13 +64,7 @@ class TaggedReviewParser:
         if not isinstance(text, str) or not text.strip():
             raise ReviewProtocolError("empty review response")
 
-        lines = self._unwrap_code_fence(text)
-        if lines[0].strip() != "<SAKURA_REVIEW>" or lines[-1].strip() != "</SAKURA_REVIEW>":
-            raise ReviewProtocolError("response must contain exactly one SAKURA_REVIEW envelope")
-        if sum(line.strip() == "<SAKURA_REVIEW>" for line in lines) != 1:
-            raise ReviewProtocolError("duplicate SAKURA_REVIEW envelope")
-        if sum(line.strip() == "</SAKURA_REVIEW>" for line in lines) != 1:
-            raise ReviewProtocolError("duplicate SAKURA_REVIEW closing tag")
+        lines = self._extract_unique_envelope(text)
 
         root_lines = lines[1:-1]
         fields, finding_blocks = self._parse_root(root_lines)
@@ -103,12 +97,13 @@ class TaggedReviewParser:
         }
 
     @staticmethod
-    def _unwrap_code_fence(text: str) -> list[str]:
-        """Accept a single Markdown fence around the complete envelope.
+    def _extract_unique_envelope(text: str) -> list[str]:
+        """Extract one complete envelope without changing its contents.
 
         Some providers reliably wrap structured text in ```xml or ```text even
-        when instructed not to. Removing only that outer presentation wrapper
-        is deterministic and does not reinterpret or repair review contents.
+        when instructed not to, or prepend a short completion preamble. Removing
+        only those presentation wrappers is deterministic and does not infer,
+        reinterpret, or repair any review field.
         """
         lines = text.strip().splitlines()
         if len(lines) >= 3 and lines[0].strip() in {
@@ -126,7 +121,22 @@ class TaggedReviewParser:
                 lines.pop()
         if not lines:
             raise ReviewProtocolError("empty review response")
-        return lines
+
+        opening = [
+            index
+            for index, line in enumerate(lines)
+            if line.strip() == "<SAKURA_REVIEW>"
+        ]
+        closing = [
+            index
+            for index, line in enumerate(lines)
+            if line.strip() == "</SAKURA_REVIEW>"
+        ]
+        if len(opening) != 1 or len(closing) != 1 or closing[0] <= opening[0]:
+            raise ReviewProtocolError(
+                "response must contain exactly one SAKURA_REVIEW envelope"
+            )
+        return lines[opening[0] : closing[0] + 1]
 
     def _parse_root(
         self, lines: list[str]

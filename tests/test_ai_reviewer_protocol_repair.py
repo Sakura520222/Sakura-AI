@@ -69,6 +69,22 @@ async def test_invalid_response_is_repaired_once():
 
 
 @pytest.mark.asyncio
+async def test_presentation_preamble_does_not_trigger_repair():
+    reviewer = _reviewer_with_response("repair must not be called")
+
+    result = await reviewer._parse_or_repair_review(
+        f"Now I have all the evidence needed.\n{VALID_REVIEW}\nReview complete.",
+        [{"role": "system", "content": "system"}, {"role": "user", "content": "data"}],
+        "quick",
+        TokenTracker(),
+    )
+
+    assert result["parse_source"] == "tagged"
+    assert result["ai_decision"] == "approve"
+    assert reviewer.api_client.calls == []
+
+
+@pytest.mark.asyncio
 async def test_second_invalid_response_falls_back_to_comment():
     reviewer = _reviewer_with_response("still invalid")
 
