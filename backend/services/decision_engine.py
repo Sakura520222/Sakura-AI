@@ -411,6 +411,42 @@ class DecisionEngine:
                 **(template_vars or {}),
             )
 
+            # 行内评论始终镜像到 Review Body。即使模板没有使用 comment_summary，
+            # 或评论无法附着到 GitHub Diff，审查内容也不会丢失。
+            inline_comments = review_result.get(
+                "review_body_inline_comments",
+                review_result.get("inline_comments", []),
+            )
+            if inline_comments:
+                inline_title = (
+                    "Inline Comments" if output_lang == "en" else "行内评论"
+                )
+                inline_unit = (
+                    "comment" if len(inline_comments) == 1 else "comments"
+                ) if output_lang == "en" else "条"
+                count_text = (
+                    f"{len(inline_comments)} {inline_unit}"
+                    if output_lang == "en"
+                    else f"{len(inline_comments)}{inline_unit}"
+                )
+                inline_parts = [f"### 📍 {inline_title} ({count_text})"]
+                for comment in inline_comments:
+                    file_path = str(comment.get("file_path") or "unknown")
+                    end_line = comment.get("line_number")
+                    start_line = comment.get("start_line")
+                    if start_line and end_line and start_line != end_line:
+                        location = f"{file_path}:{start_line}-{end_line}"
+                    elif end_line:
+                        location = f"{file_path}:{end_line}"
+                    else:
+                        location = file_path
+                    severity = str(comment.get("severity", "suggestion"))
+                    comment_body = str(comment.get("body", "")).strip()
+                    inline_parts.append(
+                        f"#### `{location}` · `{severity}`\n\n{comment_body}"
+                    )
+                body += "\n\n" + "\n\n".join(inline_parts)
+
             # 如果有标签结果，添加到评论末尾
             if label_results:
                 from backend.services.label_service import label_service

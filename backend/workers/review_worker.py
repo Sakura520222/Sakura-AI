@@ -163,6 +163,9 @@ class ReviewWorker:
                 filtered_comments.append(comment)
 
         normalized_result = dict(review_result)
+        normalized_result["review_body_inline_comments"] = list(
+            review_result.get("review_body_inline_comments", inline_comments)
+        )
         normalized_result["inline_comments"] = validated_comments
         if not filtered_comments:
             return normalized_result

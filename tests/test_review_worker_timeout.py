@@ -79,6 +79,7 @@ def test_normalize_review_result_filters_out_of_diff_finding_and_issue():
     )
 
     assert normalized["inline_comments"] == []
+    assert normalized["review_body_inline_comments"] == review_result["inline_comments"]
     assert normalized["issues"]["suggestions"] == []
 
 

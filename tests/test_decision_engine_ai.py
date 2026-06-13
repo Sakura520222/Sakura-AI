@@ -202,3 +202,52 @@ class TestReviewBodyFormatting:
         assert "### 💡 Suggestions (4 suggestions)" in body
         assert "- suggestion-0" in body
         assert "- ...and 1 more" in body
+
+    def test_inline_comments_are_appended_when_template_omits_summary(self, engine):
+        engine.policy["review_templates"] = {"approve": "{summary}"}
+        result = _review_result(score=9)
+        result["inline_comments"] = [
+            {
+                "file_path": "backend/example.py",
+                "start_line": 10,
+                "line_number": 12,
+                "severity": "minor",
+                "body": "**边界错误**\n\n循环会多执行一次。",
+            }
+        ]
+
+        body = engine.format_review_body(
+            ReviewDecision.APPROVE,
+            result,
+            "可以合并",
+            output_language="zh-CN",
+        )
+
+        assert "### 📍 行内评论 (1条)" in body
+        assert "#### `backend/example.py:10-12` · `minor`" in body
+        assert "**边界错误**" in body
+        assert "循环会多执行一次。" in body
+
+    def test_filtered_inline_comments_remain_visible_in_review_body(self, engine):
+        engine.policy["review_templates_en"] = {"approve": "{summary}"}
+        result = _review_result(score=9)
+        result["inline_comments"] = []
+        result["review_body_inline_comments"] = [
+            {
+                "file_path": "backend/example.py",
+                "line_number": 59,
+                "severity": "suggestion",
+                "body": "**Repeated conversion**\n\nAvoid calling int() twice.",
+            }
+        ]
+
+        body = engine.format_review_body(
+            ReviewDecision.APPROVE,
+            result,
+            "Approved",
+            output_language="en",
+        )
+
+        assert "### 📍 Inline Comments (1 comment)" in body
+        assert "#### `backend/example.py:59` · `suggestion`" in body
+        assert "Avoid calling int() twice." in body
