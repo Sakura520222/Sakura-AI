@@ -84,11 +84,13 @@
 - **超级管理员手动启动**：从 Issue 分析和仓库扫描发现中筛选候选任务，支持自然语言描述筛选条件，按需启动自动修复流程
 - **手动 Issue 创建任务**：支持粘贴 GitHub Issue 链接或输入 `owner/repo#123`，验证后直接创建 Agent 修复任务
 - **Issue 评论委派**：仓库管理员/写权限协作者可在已分析 Issue 或扫描报告 Issue 中评论 `/agent` 创建修复任务，可附加 `base:<branch>` 指定基础分支
+- **PR 评论一键修复**：在 PR 审查评论中发送 `/agent`，基于该 PR 的审查意见自动创建 Agent 修复任务，新开独立修复分支并提交修复 PR；同一 PR 仅允许一个 `/agent` 任务（支持多轮迭代），可附加 `base:<branch>` 指定基础分支
+- **多分支并行工作区**：每个 Agent 任务使用独立 Git worktree 隔离，支持同一仓库多个任务并行执行，互不干扰
 - **普通用户仓库权限控制**：非管理员只能操作自己名下仓库，且仓库必须匹配 `agent_team_repo_allowlist`；任务创建、重试和 `/agent` 委派均消耗独立 Agent 配额
 - **智能候选筛选**：自动去重、过滤已关闭 Issue、按评分排序，支持 AI 自然语言筛选匹配最合适的候选任务
 - **双 Agent 协作**：内置全栈专家负责计划与代码修改，专业审查负责推送前质量复核
 - **上下文压缩与任务恢复**：长任务自动压缩历史上下文，并持久化会话与消息检查点，支持失败后继续处理
-- **独立 Git 工作区**：在 `agent_team_workspace_root` 下 clone/fetch/checkout 专用分支，避免污染服务运行目录
+- **独立 Git 工作区**：在 `agent_team_workspace_root` 下使用 base checkout + per-task Git worktree 隔离，每个任务独立分支，避免污染服务运行目录
 - **受控工具执行**：文件读写、搜索、shell 验证命令均限制在工作区内，验证命令受黑名单控制（阻止危险命令，允许其余命令）
 - **自动依赖与验证**：可自动检测并安装 `pyproject.toml` / `requirements.txt` 依赖，随后运行白名单内测试或 lint 命令
 - **Sakura 知识集成**：Agent 可通过专用工具浏览和读取 `.sakura/` 知识目录与反思文件，利用项目积累的审查经验辅助代码修复
@@ -100,6 +102,7 @@
 - **目标分支选择**：创建任务时支持选择目标分支（develop/main 等），灵活控制合入方向
 - **手动 Issue 任务预览/编辑**：WebUI 中支持预览和编辑 Issue 分析结果后再创建 Agent 任务
 - **PR 创建闭环**：支持 AI 生成 Conventional Commits 风格 PR 标题、描述和提交信息，创建 Draft PR，并通过 Sakura PR 审查与人工反馈继续迭代；不会自动合并 PR
+  - 支持两种任务来源：Issue 分析/扫描报告（`/agent` Issue 评论）和 PR 审查意见（`/agent` PR 评论，`source_type=pr_review`）
   - Agent Team 初始创建的是 Draft PR；Draft opened webhook 不会触发 Sakura PR Review
   - 当 Draft PR 被标记为 Ready for review 后，GitHub `ready_for_review` webhook 会自动触发 Sakura PR Review
   - Bot 自己创建的 PR 在 GitHub 侧只能发表普通评论；Agent 闭环使用 Sakura 内部结构化审查结果判定是否继续
@@ -283,6 +286,7 @@ WebUI：`https://your-domain.com/`
 - **自动打标**：AI 推荐标签，高置信度自动应用到 Issue
 - **手动触发**：在 Issue 中评论 `/analyze`
 - **Agent 委派**：仓库管理员或写权限协作者可在已分析 Issue 或扫描报告 Issue 中评论 `/agent`，将问题交给 Agent 专家团队处理；可使用 `/agent base:develop` 指定基础分支
+- **PR /agent 一键修复**：在 PR 审查页面评论 `/agent`，基于该 PR 审查意见创建 Agent 修复任务，自动新开修复分支并提交修复 PR；同一源 PR 仅允许一个 `/agent` 任务（支持多轮迭代闭环）
 - **重复检测**：自动识别重复 Issue 并关联已有 Issue
 
 ### WebUI 管理

@@ -594,6 +594,71 @@ function deleteWorkspace(repoOwner, repoName) {
         runDelete();
     }
 }
+function toggleWorktrees(repoOwner, repoName, btn) {
+    const container = btn.closest('.rounded-xl');
+    const detail = container.querySelector('.worktree-detail');
+    const chevron = container.querySelector('.worktree-chevron');
+    if (!detail) return;
+    if (!detail.classList.contains('hidden')) {
+        detail.classList.add('hidden');
+        if (chevron) chevron.style.transform = '';
+        return;
+    }
+    detail.classList.remove('hidden');
+    if (chevron) chevron.style.transform = 'rotate(180deg)';
+    detail.innerHTML = getLoadingHTML();
+    fetch(`/agent-team/workspaces/${encodeURIComponent(repoOwner)}/${encodeURIComponent(repoName)}/worktrees-fragment`, {headers: {'HX-Request': 'true'}})
+        .then(r => { if (!r.ok) throw new Error('failed'); return r.text(); })
+        .then(html => { detail.innerHTML = html; })
+        .catch(() => { detail.innerHTML = getErrorHTML('{{ _('agent_team.request_failed') }}'); });
+}
+function deleteWorktree(repoOwner, repoName, dirName) {
+    const runDelete = () => {
+        fetch('/agent-team/workspaces/worktrees/delete', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/x-www-form-urlencoded'},
+            body: new URLSearchParams({csrf_token: '{{ csrf_token }}', repo_owner: repoOwner, repo_name: repoName, dir_name: dirName})
+        }).then(r => r.json()).then(data => {
+            if (data.success) {
+                window.dispatchEvent(new CustomEvent('show-toast', {detail: {message: '{{ _('agent_team.worktree_deleted') }}', type: 'success'}}));
+                refreshWorkspaces();
+            } else {
+                window.dispatchEvent(new CustomEvent('show-toast', {detail: {message: data.message || '{{ _('agent_team.request_failed') }}', type: 'error'}}));
+            }
+        }).catch(() => {
+            window.dispatchEvent(new CustomEvent('show-toast', {detail: {message: '{{ _('agent_team.request_failed') }}', type: 'error'}}));
+        });
+    };
+    if (window.confirmDialog && typeof window.confirmDialog.ask === 'function') {
+        window.confirmDialog.ask({title: '{{ _('agent_team.delete_worktree') }}', message: '{{ _('agent_team.confirm_delete_worktree') }}', confirmText: '{{ _('agent_team.delete_worktree') }}', type: 'danger'}).then(ok => { if (ok) runDelete(); });
+    } else if (window.confirm('{{ _('agent_team.confirm_delete_worktree') }}')) {
+        runDelete();
+    }
+}
+function cleanOrphanWorktrees(repoOwner, repoName) {
+    const runClean = () => {
+        fetch('/agent-team/workspaces/worktrees/clean-orphans', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/x-www-form-urlencoded'},
+            body: new URLSearchParams({csrf_token: '{{ csrf_token }}', repo_owner: repoOwner, repo_name: repoName})
+        }).then(r => r.json()).then(data => {
+            if (data.success) {
+                const msg = '{{ _('agent_team.orphan_worktrees_cleaned') }}'.replace('{count}', data.cleaned);
+                window.dispatchEvent(new CustomEvent('show-toast', {detail: {message: msg, type: 'success'}}));
+                refreshWorkspaces();
+            } else {
+                window.dispatchEvent(new CustomEvent('show-toast', {detail: {message: data.message || '{{ _('agent_team.request_failed') }}', type: 'error'}}));
+            }
+        }).catch(() => {
+            window.dispatchEvent(new CustomEvent('show-toast', {detail: {message: '{{ _('agent_team.request_failed') }}', type: 'error'}}));
+        });
+    };
+    if (window.confirmDialog && typeof window.confirmDialog.ask === 'function') {
+        window.confirmDialog.ask({title: '{{ _('agent_team.clean_orphan_worktrees') }}', message: '{{ _('agent_team.confirm_clean_orphan_worktrees') }}', confirmText: '{{ _('agent_team.clean_orphan_worktrees') }}', type: 'danger'}).then(ok => { if (ok) runClean(); });
+    } else if (window.confirm('{{ _('agent_team.confirm_clean_orphan_worktrees') }}')) {
+        runClean();
+    }
+}
 function loadTaskDetail(taskId) {
     const target = document.getElementById('agent-task-detail');
     if (!target) return;

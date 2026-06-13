@@ -451,9 +451,7 @@ async def payment_result(
     if status == "cancel" and order_no:
         try:
             svc = PaymentService(db)
-            result = await svc.cancel_expired_order(order_no)
-            if result:
-                await db.commit()
+            await svc.cancel_and_commit_if_needed(order_no)
         except Exception as e:
             logger.warning("Failed to cancel order {}: {}", order_no, e)
             await db.rollback()

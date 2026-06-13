@@ -430,9 +430,7 @@ class ReviewWorker:
                         )
                         logger.info("[{}] PR 依赖图已生成并注入", task_id)
                     except Exception as e:
-                        logger.warning(
-                            f"[{task_id}] PR 依赖图生成失败（不影响审查）: {e}"
-                        )
+                        logger.warning("[{}] PR 依赖图生成失败（不影响审查）: {}", task_id, e)
 
                 output_language = await get_user_dynamic_config(
                     "output_language", pr_info.get("user_id")
