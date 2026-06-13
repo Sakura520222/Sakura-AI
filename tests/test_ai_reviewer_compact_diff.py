@@ -100,6 +100,22 @@ def test_system_prompt_is_english_and_normalizes_invalid_language(review_context
     assert "emoji" not in prompt.lower()
 
 
+def test_incremental_prompt_does_not_promote_historical_suggestions(review_context):
+    review_context["changed_lines_map"] = {"backend/example.py": {335, 336}}
+    review_context["review_history_summary"] = (
+        "A previous suggestion referenced backend/example.py:59."
+    )
+
+    prompt = PromptBuilder().build_system_prompt(
+        "Focus on correctness.",
+        review_context,
+    )
+
+    assert "Historical findings are context" in prompt
+    assert "Do not repeat a historical minor or suggestion" in prompt
+    assert "Do not cite historical line numbers" in prompt
+
+
 @pytest.mark.asyncio
 async def test_diff_tool_lists_and_returns_file_diff():
     diff_tool = DiffToolHandler()

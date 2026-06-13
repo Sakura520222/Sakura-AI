@@ -368,6 +368,21 @@ class PromptBuilder:
                 ]
             )
 
+        if context.get("review_history_summary"):
+            sections.extend(
+                [
+                    "",
+                    "## Incremental review history",
+                    "- Historical findings are context, not current findings by themselves.",
+                    "- Do not repeat a historical minor or suggestion unless the current diff "
+                    "provides fresh evidence on an allowed changed line.",
+                    "- A still-valid historical critical or major issue outside the current "
+                    "diff may be reported only as an overall finding with FILE=NONE.",
+                    "- Do not cite historical line numbers in SUMMARY, DECISION_REASON, or "
+                    "FINDINGS as if they were changed by this increment.",
+                ]
+            )
+
         return "\n".join(sections)
 
     def build_label_recommendation_message(

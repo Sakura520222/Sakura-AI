@@ -1,10 +1,12 @@
 """Review worker dynamic timeout coverage."""
 
 import asyncio
+from types import SimpleNamespace
 
 import pytest
 
 from backend.core.config import get_settings
+from backend.services.comment_service import CommentService
 from backend.workers import review_worker
 from backend.workers.review_worker import (
     ReviewWorker,
@@ -39,6 +41,78 @@ class _TimeoutWorker:
 
     async def _save_error_record(self, pr_info, error, task_id):
         self.saved_errors.append((pr_info, error, task_id))
+
+
+def _review_worker_for_normalization():
+    worker = ReviewWorker.__new__(ReviewWorker)
+    worker.comment_service = CommentService()
+    return worker
+
+
+def test_normalize_review_result_filters_out_of_diff_finding_and_issue():
+    worker = _review_worker_for_normalization()
+    analysis = SimpleNamespace(
+        changed_lines_map={"backend/example.py": {335, 336}},
+        hunk_boundaries={},
+    )
+    review_result = {
+        "inline_comments": [
+            {
+                "file_path": "backend/example.py",
+                "line_number": 59,
+                "body": "**Repeated conversion**\n\nAvoid calling int() twice.",
+                "severity": "suggestion",
+            }
+        ],
+        "issues": {
+            "critical": [],
+            "major": [],
+            "minor": [],
+            "suggestions": ["Repeated conversion"],
+        },
+    }
+
+    normalized = worker._normalize_review_result_for_diff(
+        review_result,
+        analysis,
+        "task1",
+    )
+
+    assert normalized["inline_comments"] == []
+    assert normalized["issues"]["suggestions"] == []
+
+
+def test_normalize_review_result_preserves_valid_finding_and_issue():
+    worker = _review_worker_for_normalization()
+    analysis = SimpleNamespace(
+        changed_lines_map={"backend/example.py": {335, 336}},
+        hunk_boundaries={},
+    )
+    review_result = {
+        "inline_comments": [
+            {
+                "file_path": "backend/example.py",
+                "line_number": 335,
+                "body": "**Current defect**\n\nThe changed code is incorrect.",
+                "severity": "minor",
+            }
+        ],
+        "issues": {
+            "critical": [],
+            "major": [],
+            "minor": ["Current defect"],
+            "suggestions": [],
+        },
+    }
+
+    normalized = worker._normalize_review_result_for_diff(
+        review_result,
+        analysis,
+        "task1",
+    )
+
+    assert normalized["inline_comments"][0]["line_number"] == 335
+    assert normalized["issues"]["minor"] == ["Current defect"]
 
 
 @pytest.mark.asyncio

@@ -126,6 +126,72 @@ class ReviewWorker:
         self._cancel_events: Dict[str, asyncio.Event] = {}
 
     @staticmethod
+    def _inline_comment_issue_title(comment: Dict[str, Any]) -> str | None:
+        """Extract the issue title encoded by the tagged review protocol."""
+        body = str(comment.get("body", ""))
+        first_line = body.splitlines()[0].strip() if body else ""
+        if len(first_line) >= 4 and first_line.startswith("**") and first_line.endswith(
+            "**"
+        ):
+            return first_line[2:-2].strip() or None
+        return None
+
+    def _normalize_review_result_for_diff(
+        self,
+        review_result: Dict[str, Any],
+        analysis: PRAnalysis | None,
+        task_id: str,
+    ) -> Dict[str, Any]:
+        """Filter invalid inline findings and keep issue counts in sync."""
+        inline_comments = review_result.get("inline_comments", [])
+        if (
+            not inline_comments
+            or not analysis
+            or not getattr(analysis, "changed_lines_map", None)
+        ):
+            return review_result
+
+        validated_comments = []
+        filtered_comments = []
+        for comment in inline_comments:
+            validated = self.comment_service._validate_inline_comments(
+                [comment], analysis
+            )
+            if validated:
+                validated_comments.extend(validated)
+            else:
+                filtered_comments.append(comment)
+
+        normalized_result = dict(review_result)
+        normalized_result["inline_comments"] = validated_comments
+        if not filtered_comments:
+            return normalized_result
+
+        issues = {
+            key: list(values)
+            for key, values in review_result.get("issues", {}).items()
+        }
+        issue_keys = {
+            "critical": "critical",
+            "major": "major",
+            "minor": "minor",
+            "suggestion": "suggestions",
+        }
+        for comment in filtered_comments:
+            issue_key = issue_keys.get(comment.get("severity", "suggestion"))
+            issue_title = self._inline_comment_issue_title(comment)
+            if issue_key and issue_title and issue_title in issues.get(issue_key, []):
+                issues[issue_key].remove(issue_title)
+        normalized_result["issues"] = issues
+
+        logger.info(
+            "[{}] 在落库和决策前过滤掉 {} 条无效行内评论",
+            task_id,
+            len(filtered_comments),
+        )
+        return normalized_result
+
+    @staticmethod
     async def _log_activity(
         review_id: int | None,
         event_type: str,
@@ -796,6 +862,11 @@ class ReviewWorker:
                 # 解析结果
                 review_result = results[0]
                 if not isinstance(review_result, Exception):
+                    review_result = self._normalize_review_result_for_diff(
+                        review_result,
+                        analysis,
+                        task_id,
+                    )
                     # 8. 保存审查结果
                     await self._save_review_results(review_id, review_result, analysis)
                     # 完成 checkpoint session
@@ -1182,6 +1253,12 @@ class ReviewWorker:
             (决策类型, 决策理由)
         """
         try:
+            review_result = self._normalize_review_result_for_diff(
+                review_result,
+                analysis,
+                task_id,
+            )
+
             # 1. 获取决策引擎
             decision_engine = get_decision_engine()
 
