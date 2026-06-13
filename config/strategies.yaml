@@ -252,80 +252,80 @@ review_policy:
   # Review评论模板（中文，默认）
   review_templates:
     approve: |
-      # 🌸 Sakura AI 审查报告 - {strategy_name}
+      ## 🌸 Sakura AI 审查报告 - {strategy_name}
       
-      ## ✅ **审查通过**
+      ### ✅ **审查通过**
       
       {summary}
       
-      # 代码质量评分：{score}/10
-      ## AI审查决策：批准合并
+      ## 代码质量评分：{score}/10
+      ### AI审查决策：批准合并
       
       {comment_summary}
     
     request_changes: |
-      # 🌸 Sakura AI 审查报告 - {strategy_name}
+      ## 🌸 Sakura AI 审查报告 - {strategy_name}
       
-      ## ❌ **请求变更**
+      ### ❌ **请求变更**
       
       {summary}
       
-      # 代码质量评分：{score}/10
-      ## AI审查决策：需要修复后重新提交
+      ## 代码质量评分：{score}/10
+      ### AI审查决策：需要修复后重新提交
       
       **阻断原因**：{decision_reason}
       
       {comment_summary}
     
     comment: |
-      # 🌸 Sakura AI 审查报告 - {strategy_name}
+      ## 🌸 Sakura AI 审查报告 - {strategy_name}
 
-      ## 💬 **审查评论**
+      ### 💬 **审查评论**
 
       {summary}
 
-      # 代码质量评分：{score}/10
-      ## AI审查决策：请人工复审
+      ## 代码质量评分：{score}/10
+      ### AI审查决策：请人工复审
 
       {comment_summary}
 
   # Review评论模板（英文）
   review_templates_en:
     approve: |
-      # 🌸 Sakura AI Review Report - {strategy_name}
+      ## 🌸 Sakura AI Review Report - {strategy_name}
       
-      ## ✅ **Approved**
+      ### ✅ **Approved**
       
       {summary}
       
-      # Code Quality Score: {score}/10
-      ## AI Decision: Approve merge
+      ## Code Quality Score: {score}/10
+      ### AI Decision: Approve merge
       
       {comment_summary}
     
     request_changes: |
-      # 🌸 Sakura AI Review Report - {strategy_name}
+      ## 🌸 Sakura AI Review Report - {strategy_name}
       
-      ## ❌ **Changes Requested**
+      ### ❌ **Changes Requested**
       
       {summary}
       
-      # Code Quality Score: {score}/10
-      ## AI Decision: Changes required before resubmitting
+      ## Code Quality Score: {score}/10
+      ### AI Decision: Changes required before resubmitting
       
       **Block Reason**: {decision_reason}
       
       {comment_summary}
     
     comment: |
-      # 🌸 Sakura AI Review Report - {strategy_name}
+      ## 🌸 Sakura AI Review Report - {strategy_name}
 
-      ## 💬 **Review Comment**
+      ### 💬 **Review Comment**
 
       {summary}
 
-      # Code Quality Score: {score}/10
-      ## AI Decision: Manual review requested
+      ## Code Quality Score: {score}/10
+      ### AI Decision: Manual review requested
 
       {comment_summary}
 
