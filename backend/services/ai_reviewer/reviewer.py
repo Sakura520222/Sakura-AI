@@ -67,33 +67,20 @@ class AIReviewer:
         git_tool = GitToolHandler()
         search_files_tool = SearchFilesToolHandler()
         sakura_tool = SakuraToolHandler()
-        web_search_tool = None
-        if settings.web_search_enabled:
-            from backend.services.ai_reviewer.tools.web_search_tool import (
-                WebSearchToolHandler,
-            )
-
-            web_search_tool = WebSearchToolHandler()
-        fetch_url_tool = None
-        if web_search_tool is not None and settings.fetch_url_enabled:
-            from backend.services.ai_reviewer.tools.fetch_url_tool import (
-                FetchUrlToolHandler,
-            )
-
-            fetch_url_tool = FetchUrlToolHandler()
-
         # PR diff 工具（按需查看文件 diff，用于 prompt 精简模式）
         # 注意：每次精简模式会创建临时 DiffToolHandler 实例，避免并发安全问题
         self.tool_handler = ToolHandler(
             file_tool,
             search_tool,
-            web_search_tool,
+            None,
             git_tool,
             search_files_tool,
             sakura_tool,
-            fetch_url_tool,
+            None,
             diff_tool=None,
         )
+        # web_search / fetch_url 按配置动态填充，与 _refresh_runtime_config 复用同一逻辑
+        self.tool_handler.apply_web_tool_settings(settings)
         self.tool_manager = ToolManager()
 
         # 初始化上下文压缩
@@ -126,25 +113,7 @@ class AIReviewer:
         self.keep_rounds = settings.context_compression_keep_rounds
         self.context_compressor.keep_rounds = self.keep_rounds
 
-        if settings.web_search_enabled:
-            if self.tool_handler.web_search_tool is None:
-                from backend.services.ai_reviewer.tools.web_search_tool import (
-                    WebSearchToolHandler,
-                )
-
-                self.tool_handler.web_search_tool = WebSearchToolHandler()
-        else:
-            self.tool_handler.web_search_tool = None
-
-        if settings.web_search_enabled and settings.fetch_url_enabled:
-            if self.tool_handler.fetch_url_tool is None:
-                from backend.services.ai_reviewer.tools.fetch_url_tool import (
-                    FetchUrlToolHandler,
-                )
-
-                self.tool_handler.fetch_url_tool = FetchUrlToolHandler()
-        else:
-            self.tool_handler.fetch_url_tool = None
+        self.tool_handler.apply_web_tool_settings(settings)
 
     def _refresh_ai_clients(self) -> None:
         """刷新动态 AI 配置，避免长生命周期 Worker 持有旧凭据。"""
@@ -157,6 +126,9 @@ class AIReviewer:
             )
             self._ai_client_config = main_config
 
+        # summary_model 不纳入 summary_config 元组：model 是每次调用的入参
+        # （call_with_retry(model=...)），与客户端凭据无关，仅在此刷新属性即可，
+        # 避免 model 变化时重建客户端；凭据变化仍由下方元组比较触发重建。
         self.summary_model = settings.summary_model or settings.openai_model
         summary_uses_main = (
             not settings.summary_api_base and not settings.summary_api_key

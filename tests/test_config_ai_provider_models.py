@@ -13,17 +13,15 @@ from backend.api.v1.config import _is_masked_value, _resolve_provider_credential
 
 
 def _key_name_from_stmt(stmt) -> str | None:
-    """从 select(...).where(AppConfig.key_name == X) 语句中提取配置项名 X。"""
-    where = stmt.whereclause
-    if where is None:
-        return None
-    clauses = getattr(where, "clauses", None) or [where]
-    for clause in clauses:
-        right = getattr(clause, "right", None)
-        if right is not None:
-            value = getattr(right, "value", None)
-            if value is not None:
-                return value
+    """从 select(...).where(AppConfig.key_name == X) 语句中提取配置项名 X。
+
+    通过公开的 ``compile().params`` 读取 WHERE 条件绑定的字面量值，避免反射
+    whereclause / clauses / right.value 等 SQLAlchemy 内部属性（其结构在版本
+    升级时可能变化）。
+    """
+    for value in stmt.compile().params.values():
+        if isinstance(value, str) and value:
+            return value
     return None
 
 

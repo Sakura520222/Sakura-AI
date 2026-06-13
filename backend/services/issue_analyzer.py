@@ -44,54 +44,24 @@ class IssueAnalyzer:
         git_tool = GitToolHandler()
         search_files_tool = SearchFilesToolHandler()
         sakura_tool = SakuraToolHandler()
-        web_search_tool = None
-        if settings.web_search_enabled:
-            from backend.services.ai_reviewer.tools.web_search_tool import (
-                WebSearchToolHandler,
-            )
-
-            web_search_tool = WebSearchToolHandler()
-        fetch_url_tool = None
-        if web_search_tool is not None and settings.fetch_url_enabled:
-            from backend.services.ai_reviewer.tools.fetch_url_tool import (
-                FetchUrlToolHandler,
-            )
-
-            fetch_url_tool = FetchUrlToolHandler()
         self.tool_handler = ToolHandler(
             file_tool,
             search_tool,
-            web_search_tool,
+            None,
             git_tool,
             search_files_tool,
             sakura_tool,
-            fetch_url_tool,
+            None,
         )
+        # web_search / fetch_url 按配置动态填充，与 _refresh_runtime_config 复用同一逻辑
+        self.tool_handler.apply_web_tool_settings(settings)
         self.tool_manager = ToolManager()
         self.tools = self.tool_manager.get_all_tools_definitions()
 
     def _refresh_runtime_config(self) -> None:
         """刷新运行中可切换的工具配置。"""
         settings = get_settings()
-        if settings.web_search_enabled:
-            if self.tool_handler.web_search_tool is None:
-                from backend.services.ai_reviewer.tools.web_search_tool import (
-                    WebSearchToolHandler,
-                )
-
-                self.tool_handler.web_search_tool = WebSearchToolHandler()
-        else:
-            self.tool_handler.web_search_tool = None
-
-        if settings.web_search_enabled and settings.fetch_url_enabled:
-            if self.tool_handler.fetch_url_tool is None:
-                from backend.services.ai_reviewer.tools.fetch_url_tool import (
-                    FetchUrlToolHandler,
-                )
-
-                self.tool_handler.fetch_url_tool = FetchUrlToolHandler()
-        else:
-            self.tool_handler.fetch_url_tool = None
+        self.tool_handler.apply_web_tool_settings(settings)
 
     def _refresh_ai_client(self) -> None:
         """刷新动态 AI 配置，避免长生命周期 Worker 持有旧凭据。"""

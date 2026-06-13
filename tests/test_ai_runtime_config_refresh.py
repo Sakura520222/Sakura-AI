@@ -2,7 +2,10 @@
 
 from types import SimpleNamespace
 
+import pytest
+
 from backend.services.ai_reviewer import reviewer as reviewer_module
+from backend.services.ai_reviewer.tools import ToolHandler
 from backend.services import embedding_service as embedding_module
 from backend.services.issue_analyzer import IssueAnalyzer
 from backend.services import issue_analyzer as issue_analyzer_module
@@ -85,8 +88,13 @@ def test_reviewer_refreshes_runtime_tool_and_compression_config(monkeypatch):
 
     reviewer = reviewer_module.AIReviewer.__new__(reviewer_module.AIReviewer)
     reviewer.context_compressor = SimpleNamespace(keep_rounds=1)
-    reviewer.tool_handler = SimpleNamespace(
+    reviewer.tool_handler = ToolHandler(
+        file_tool=None,
+        search_tool=None,
         web_search_tool=object(),
+        git_tool=None,
+        search_files_tool=None,
+        sakura_tool=None,
         fetch_url_tool=object(),
     )
 
@@ -174,3 +182,118 @@ def test_sakura_memory_refreshes_main_and_summary_credentials(monkeypatch):
     assert service.api_client.base_url == "https://summary.example/v1"
     assert service.api_client.api_key == "summary-key"
     assert service._default_model == "summary-model"
+
+
+def test_reviewer_runtime_config_creates_web_tools_when_enabled(monkeypatch):
+    """web_search / fetch_url 启用时按需创建工具，且刷新幂等不重建已有实例。"""
+    settings = SimpleNamespace(
+        enable_context_compression=True,
+        context_compression_threshold=0.85,
+        context_compression_keep_rounds=2,
+        web_search_enabled=True,
+        fetch_url_enabled=True,
+    )
+    monkeypatch.setattr(reviewer_module, "get_settings", lambda: settings)
+
+    reviewer = reviewer_module.AIReviewer.__new__(reviewer_module.AIReviewer)
+    reviewer.context_compressor = SimpleNamespace(keep_rounds=1)
+    reviewer.tool_handler = ToolHandler(
+        file_tool=None,
+        search_tool=None,
+        web_search_tool=None,
+        git_tool=None,
+        search_files_tool=None,
+        sakura_tool=None,
+        fetch_url_tool=None,
+    )
+
+    reviewer._refresh_runtime_config()
+    assert reviewer.tool_handler.web_search_tool is not None
+    assert reviewer.tool_handler.fetch_url_tool is not None
+
+    # 配置不变再次刷新，已有实例应保持同一对象（幂等）
+    web_before = reviewer.tool_handler.web_search_tool
+    fetch_before = reviewer.tool_handler.fetch_url_tool
+    reviewer._refresh_runtime_config()
+    assert reviewer.tool_handler.web_search_tool is web_before
+    assert reviewer.tool_handler.fetch_url_tool is fetch_before
+
+
+def test_embedding_service_skips_rebuild_when_config_unchanged(monkeypatch):
+    """配置未变化时 _refresh_client 命中缓存，不重建客户端（cache-hit 路径）。"""
+    settings = SimpleNamespace(
+        embedding_provider="openai",
+        embedding_base_url="https://emb.example/v1",
+        embedding_api_key="emb-key",
+        embedding_model="emb-model",
+    )
+    monkeypatch.setattr(embedding_module, "get_settings", lambda: settings)
+    monkeypatch.setattr(embedding_module, "AsyncOpenAI", _FakeEmbeddingClient)
+
+    embedding = embedding_module.EmbeddingService()
+    client_before = embedding.client
+    embedding._refresh_client()  # 配置不变
+    assert embedding.client is client_before
+    assert embedding._retired_clients == []
+
+
+@pytest.mark.asyncio
+async def test_embedding_service_close_releases_retired_clients(monkeypatch):
+    """close() 关闭当前与退役客户端，并清空 _retired_clients。"""
+    settings = SimpleNamespace(
+        embedding_provider="openai",
+        embedding_base_url="https://emb.example/v1",
+        embedding_api_key="emb-key",
+        embedding_model="emb-model",
+    )
+    monkeypatch.setattr(embedding_module, "get_settings", lambda: settings)
+
+    closed = []
+
+    class _ClosableEmbeddingClient(_FakeEmbeddingClient):
+        async def close(self):
+            closed.append(self)
+
+    monkeypatch.setattr(embedding_module, "AsyncOpenAI", _ClosableEmbeddingClient)
+
+    embedding = embedding_module.EmbeddingService()
+    first = embedding.client
+    settings.embedding_api_key = "new-key"
+    embedding._refresh_client()
+    assert first in embedding._retired_clients
+
+    await embedding.close()
+    assert embedding._retired_clients == []
+    assert embedding.client in closed
+    assert first in closed
+
+
+@pytest.mark.asyncio
+async def test_reranker_service_close_releases_retired_clients(monkeypatch):
+    """close() 关闭当前与退役 httpx 客户端，并清空 _retired_clients。"""
+    settings = SimpleNamespace(
+        rerank_provider="siliconflow",
+        rerank_base_url="https://rerank.example",
+        rerank_api_key="rerank-key",
+        rerank_model="rerank-model",
+    )
+    monkeypatch.setattr(embedding_module, "get_settings", lambda: settings)
+
+    closed = []
+
+    class _ClosableRerankerClient(_FakeRerankerClient):
+        async def aclose(self):
+            closed.append(self)
+
+    monkeypatch.setattr(embedding_module.httpx, "AsyncClient", _ClosableRerankerClient)
+
+    reranker = embedding_module.RerankerService()
+    first = reranker.client
+    settings.rerank_api_key = "new-key"
+    reranker._refresh_client()
+    assert first in reranker._retired_clients
+
+    await reranker.close()
+    assert reranker._retired_clients == []
+    assert reranker.client in closed
+    assert first in closed

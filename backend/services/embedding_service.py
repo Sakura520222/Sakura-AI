@@ -36,7 +36,13 @@ class EmbeddingService:
         self._refresh_client()
 
     def _refresh_client(self):
-        """配置变化时刷新客户端，旧客户端延迟到服务关闭时释放。"""
+        """配置变化时刷新客户端，旧客户端延迟到服务关闭时释放。
+
+        本方法被 async 的 ``embed_texts`` 同步调用，须保持轻量：当前仅做配置
+        比较与客户端对象构造（AsyncOpenAI 构造不建连），HuggingFace 模型在
+        ``_embed_via_huggingface`` 中懒加载，故不阻塞事件循环；若未来
+        ``_init_client`` 引入耗时初始化需改用 ``asyncio.to_thread``。
+        """
         settings = get_settings()
         config = (
             settings.embedding_provider.lower(),
@@ -400,7 +406,7 @@ class RerankerService:
         """关闭客户端连接"""
         clients = [self.client, *self._retired_clients]
         for client in clients:
-            if client:
+            if client and hasattr(client, "aclose"):
                 await client.aclose()
         self._retired_clients.clear()
         logger.debug("重排序服务客户端已关闭")

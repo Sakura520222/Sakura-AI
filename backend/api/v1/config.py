@@ -58,8 +58,16 @@ def _mask_sensitive(value: str, key: str) -> str:
 
 
 def _is_masked_value(value: str) -> bool:
-    """判断配置值是否为脱敏后的占位值（前端配置页回显的掩码）。"""
+    """判断配置值是否为脱敏后的占位值（前端配置页回显的掩码）。
+
+    掩码标记 ``****`` 与前端 ``config_general.html`` 的 ``apiKey.includes('****')``
+    判断保持一致；若修改 ``_mask_sensitive`` 的掩码格式，前端需同步更新。
+    """
     return "****" in value
+
+
+# 获取模型列表允许回退读取的凭据配置项白名单
+_PROVIDER_KEY_NAMES = frozenset({"openai_api_key", "summary_api_key"})
 
 
 async def _resolve_provider_credentials(
@@ -72,10 +80,12 @@ async def _resolve_provider_credentials(
 
     配置页表单回显的敏感字段为脱敏占位值（含 ``****``），不可直接用于请求；
     当传入空值或脱敏占位值时，回退读取数据库中的真实值。
-    ``key_name`` 须以 ``_api_key`` 结尾，用于定位正确的配置项，默认 openai_api_key。
+    ``key_name`` 限 openai_api_key / summary_api_key，用于定位正确的配置项，默认 openai_api_key。
     """
+    # 白名单校验：合法 key_name 仅 openai_api_key / summary_api_key，
+    # 避免任意 endswith("_api_key") 的值（如 openai_api_key___api_key）绕过
     key_name = (key_name or "").strip()
-    if not key_name.endswith("_api_key"):
+    if key_name not in _PROVIDER_KEY_NAMES:
         key_name = "openai_api_key"
     base_name = key_name.removesuffix("_api_key") + "_api_base"
 
