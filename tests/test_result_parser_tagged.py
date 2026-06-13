@@ -88,6 +88,17 @@ def test_parses_review_without_findings(parser):
     assert all(not values for values in result["issues"].values())
 
 
+@pytest.mark.parametrize("fence", ["```", "```xml", "```text", "```plaintext"])
+def test_accepts_single_outer_code_fence_without_repair(parser, fence):
+    result = parser.parse_review_result(
+        f"{fence}\n{_review(findings=_finding())}\n```",
+        "standard",
+    )
+
+    assert result["parse_source"] == "tagged"
+    assert len(result["inline_comments"]) == 1
+
+
 def test_parses_overall_finding_and_none_suggestion(parser):
     finding = _finding(
         severity="suggestion",
@@ -127,6 +138,11 @@ def test_rejects_duplicate_envelope(parser):
     text = _review() + "\n" + _review()
     with pytest.raises(ReviewProtocolError):
         parser.parse_review_result(text, "standard")
+
+
+def test_rejects_unterminated_outer_code_fence(parser):
+    with pytest.raises(ReviewProtocolError):
+        parser.parse_review_result(f"```xml\n{_review()}", "standard")
 
 
 def test_rejects_file_finding_without_lines(parser):

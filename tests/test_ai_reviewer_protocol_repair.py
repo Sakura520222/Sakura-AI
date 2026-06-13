@@ -62,6 +62,8 @@ async def test_invalid_response_is_repaired_once():
     repair_call = reviewer.api_client.calls[0]
     assert repair_call["temperature"] == 0
     assert "tools" not in repair_call
+    assert len(repair_call["messages"]) == 3
+    assert repair_call["messages"][0]["role"] == "system"
     assert repair_call["messages"][-2]["role"] == "assistant"
     assert repair_call["messages"][-1]["role"] == "user"
 
@@ -86,6 +88,29 @@ async def test_second_invalid_response_falls_back_to_comment():
         "minor": [],
         "suggestions": [],
     }
+
+
+@pytest.mark.asyncio
+async def test_repair_cannot_silently_drop_findings():
+    reviewer = _reviewer_with_response(VALID_REVIEW)
+    malformed_with_finding = """prefix
+<SAKURA_REVIEW>
+<FINDINGS>
+<FINDING>
+broken
+</FINDING>
+</FINDINGS>
+</SAKURA_REVIEW>"""
+
+    result = await reviewer._parse_or_repair_review(
+        malformed_with_finding,
+        [{"role": "system", "content": "system"}, {"role": "user", "content": "data"}],
+        "standard",
+        TokenTracker(),
+    )
+
+    assert result["parse_source"] == "protocol_error"
+    assert result["ai_decision"] == "comment"
 
 
 @pytest.mark.asyncio

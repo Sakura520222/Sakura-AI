@@ -64,7 +64,7 @@ class TaggedReviewParser:
         if not isinstance(text, str) or not text.strip():
             raise ReviewProtocolError("empty review response")
 
-        lines = text.strip().splitlines()
+        lines = self._unwrap_code_fence(text)
         if lines[0].strip() != "<SAKURA_REVIEW>" or lines[-1].strip() != "</SAKURA_REVIEW>":
             raise ReviewProtocolError("response must contain exactly one SAKURA_REVIEW envelope")
         if sum(line.strip() == "<SAKURA_REVIEW>" for line in lines) != 1:
@@ -101,6 +101,32 @@ class TaggedReviewParser:
             "summary": summary,
             "findings": findings,
         }
+
+    @staticmethod
+    def _unwrap_code_fence(text: str) -> list[str]:
+        """Accept a single Markdown fence around the complete envelope.
+
+        Some providers reliably wrap structured text in ```xml or ```text even
+        when instructed not to. Removing only that outer presentation wrapper
+        is deterministic and does not reinterpret or repair review contents.
+        """
+        lines = text.strip().splitlines()
+        if len(lines) >= 3 and lines[0].strip() in {
+            "```",
+            "```xml",
+            "```text",
+            "```plaintext",
+        }:
+            if lines[-1].strip() != "```":
+                raise ReviewProtocolError("unterminated outer code fence")
+            lines = lines[1:-1]
+            while lines and not lines[0].strip():
+                lines.pop(0)
+            while lines and not lines[-1].strip():
+                lines.pop()
+        if not lines:
+            raise ReviewProtocolError("empty review response")
+        return lines
 
     def _parse_root(
         self, lines: list[str]

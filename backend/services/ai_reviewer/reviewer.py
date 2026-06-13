@@ -175,10 +175,21 @@ class AIReviewer:
         try:
             return self.result_parser.parse_review_result(review_text, strategy)
         except ReviewProtocolError as first_error:
-            logger.warning("审查协议解析失败，尝试修复一次: {}", first_error)
+            stripped = review_text.strip()
+            logger.warning(
+                "审查协议解析失败，尝试修复一次: {} | length={} prefix={!r} suffix={!r}",
+                first_error,
+                len(review_text),
+                stripped[:80],
+                stripped[-80:],
+            )
 
+        system_message = next(
+            (message for message in messages if message.get("role") == "system"),
+            None,
+        )
         repair_messages = [
-            *messages,
+            *([system_message] if system_message else []),
             {"role": "assistant", "content": review_text},
             {"role": "user", "content": REPAIR_INSTRUCTION},
         ]
@@ -199,7 +210,18 @@ class AIReviewer:
                     )
                 except Exception as exc:
                     logger.warning("event_callback failed: {}", exc)
-            return self.result_parser.parse_review_result(repaired_text, strategy)
+            result = self.result_parser.parse_review_result(repaired_text, strategy)
+            original_finding_count = sum(
+                line.strip() == "<FINDING>" for line in review_text.splitlines()
+            )
+            repaired_finding_count = len(result["comments"]) + len(
+                result["inline_comments"]
+            )
+            if repaired_finding_count < original_finding_count:
+                raise ReviewProtocolError(
+                    "format repair dropped one or more FINDING blocks"
+                )
+            return result
         except Exception as repair_error:
             logger.error("审查协议修复失败，降级为人工复审: {}", repair_error)
             return safe_protocol_failure(repair_error)
