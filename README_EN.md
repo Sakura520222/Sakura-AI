@@ -8,7 +8,7 @@
 
 **English** | [中文](README.md)
 
-[![Version](https://img.shields.io/badge/Version-2.12.1-blue.svg)](https://github.com/Sakura520222/Sakura-AI-Reviewer/releases)
+[![Version](https://img.shields.io/badge/Version-2.12.2-blue.svg)](https://github.com/Sakura520222/Sakura-AI-Reviewer/releases)
 [![Python](https://img.shields.io/badge/Python-3.11+-blue.svg)](https://www.python.org/)
 [![FastAPI](https://img.shields.io/badge/FastAPI-Latest-green.svg)](https://fastapi.tiangolo.com/)
 [![License](https://img.shields.io/badge/License-AGPLv3-yellow.svg)](LICENSE)
@@ -33,6 +33,13 @@
 
 ## ✨ Core Features
 
+### 2.12.2 Highlights
+
+- **Tagged Review Protocol**: The main PR reviewer now adopts a strict line-oriented `<SAKURA_REVIEW>` envelope protocol as its output contract, replacing the legacy JSON-block / emoji / score-regex parsing paths; envelope validation (field order and uniqueness, version and enums, score range) is enforced with severity score caps (critical ≤ 3, major ≤ 6); an invalid first response triggers a single format-only repair retry at temperature 0 without tools, and a second failure degrades to a safe comment with no score or findings to block accidental approvals and erroneous low-score rejections. See the [Review Protocol spec](docs/PR_REVIEW_PROTOCOL.md).
+- **Runtime AI Credential Refresh**: AIReviewer / IssueAnalyzer / SakuraMemoryService gain `_refresh_ai_client`, which validates and refreshes AI client credentials at runtime so WebUI config changes take effect immediately; Web Search and Fetch URL tools are now loaded dynamically through a unified ToolHandler, reducing redundant initialization.
+- **Agent Team Workspace & Live View Enhancements**: The WebUI exposes worktree list / detail / delete endpoints (with file count, size, and mtime), and task list/detail pages now show branch info and worktree counts; Live View switches to backend-driven `can_send_prompt` decisions with initial input display, and supports resumable follow-ups for completed / waiting_human terminal tasks; PR review feedback adds a two-phase branch + source-PR fallback match.
+- **Payment Robustness**: Payment gateway webhooks now operate directly off the event order number, `cancel_expired_order` is idempotent (a missing order is treated as success), and the transaction is committed only when cancellation succeeds.
+
 ### Review Capabilities
 
 - **AI Reasoning Mode**: Leverages AI reasoning for in-depth code analysis, proactively invoking tools to inspect project structure and arbitrary files
@@ -42,6 +49,7 @@
 - **Structured Review Reports**: Overall score + categorized issues (🔴Critical / 🟡Important / 💡Suggestion) + `<details>` collapsible sections
 - **Incremental Review Learning**: AI automatically summarizes historical review records, identifies scoring trends and issue hotspots, continuously improving review quality
 - **Smart Review Approval**: Automatically decides APPROVE / REQUEST_CHANGES / COMMENT based on AI scores
+- **Strict Review Output Contract**: Reviewer output is governed by a strict envelope protocol with field validation and severity score caps; invalid responses are auto-repaired or safely degraded to prevent accidental approvals and erroneous low-score rejections
 - **PR Change Summary**: AI auto-generates PR change summaries with incremental updates when the PR is updated
 - **PR Dependency Graph**: Supports both AI analysis and static import analysis modes to generate Mermaid-format visual dependency graphs
 - **Token Consumption Tracking**: Real-time tracking of token usage and estimated costs across all AI API calls during review
@@ -469,6 +477,7 @@ Graph data is stored in `.understand-anything/knowledge-graph.json` and supports
 |----------------------------------------------------------------|-------------------------------------------------|
 | [Telegram Bot Integration Guide](docs/TELEGRAM_SETUP.md)       | Bot setup, permission system, command reference |
 | [Review Approval Feature](docs/APPROVAL_FEATURE_SUMMARY.md)    | Smart review approval system details            |
+| [Review Protocol Spec](docs/PR_REVIEW_PROTOCOL.md)             | `<SAKURA_REVIEW>` tagged review output protocol, field validation, repair & degradation |
 | [Manual Review Feature](docs/MANUAL_REVIEW_FEATURE.md)         | Super admin manual review triggering            |
 | [Model Context Management](docs/MODEL_CONTEXT_FEATURE.md)      | AI model context and compression features       |
 | [PR Features Guide](docs/PR_FEATURES_GUIDE.md)                 | PR change summary and dependency graph configuration |

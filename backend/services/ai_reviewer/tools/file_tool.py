@@ -92,14 +92,12 @@ class FileToolHandler:
         """
         try:
             # 检查是否应该跳过该路径
-            skip_paths = get_strategy_config().get_file_filters().get("skip_paths", [])
-            for skip_path in skip_paths:
-                if file_path.startswith(skip_path.rstrip("/")):
-                    logger.info(f"跳过读取文件（在skip_paths中）: {file_path}")
-                    return {
-                        "file_path": file_path,
-                        "error": "该路径在跳过列表中，无法访问",
-                    }
+            if get_strategy_config().is_path_skipped(file_path):
+                logger.info(f"跳过读取文件（在skip_paths中）: {file_path}")
+                return {
+                    "file_path": file_path,
+                    "error": "该路径在跳过列表中，无法访问",
+                }
 
             # 参数互斥校验
             if start_line is not None and search_pattern is not None:
@@ -355,16 +353,14 @@ class FileToolHandler:
         """
         try:
             # 检查是否应该跳过该路径
-            skip_paths = get_strategy_config().get_file_filters().get("skip_paths", [])
-            for skip_path in skip_paths:
-                if directory.startswith(skip_path.rstrip("/")):
-                    logger.info(f"跳过列出目录（在skip_paths中）: {directory}")
-                    return {
-                        "directory": directory,
-                        "error": "该路径在跳过列表中，无法访问",
-                        "items": [],
-                        "count": 0,
-                    }
+            if get_strategy_config().is_path_skipped(directory):
+                logger.info(f"跳过列出目录（在skip_paths中）: {directory}")
+                return {
+                    "directory": directory,
+                    "error": "该路径在跳过列表中，无法访问",
+                    "items": [],
+                    "count": 0,
+                }
 
             # 智能分支选择
             contents = None
@@ -418,23 +414,19 @@ class FileToolHandler:
 
             if isinstance(contents, list):
                 items = []
-                # 过滤掉skip_paths中的项目
+                # 过滤掉skip_paths中的项目 / Filter out items in skip_paths
+                strategy_cfg = get_strategy_config()
                 for item in contents:
-                    should_skip = False
-                    for skip_path in skip_paths:
-                        if item.path.startswith(skip_path.rstrip("/")):
-                            should_skip = True
-                            break
-
-                    if not should_skip:
-                        items.append(
-                            {
-                                "name": item.name,
-                                "path": item.path,
-                                "type": item.type,
-                                "size": item.size if item.type == "file" else None,
-                            }
-                        )
+                    if strategy_cfg.is_path_skipped(item.path):
+                        continue
+                    items.append(
+                        {
+                            "name": item.name,
+                            "path": item.path,
+                            "type": item.type,
+                            "size": item.size if item.type == "file" else None,
+                        }
+                    )
 
                 return {
                     "directory": directory,
@@ -446,16 +438,15 @@ class FileToolHandler:
                     "branch": tried_branches[0] if tried_branches else "unknown",
                 }
             else:
-                # 单个文件 - 也需要检查skip_paths
-                for skip_path in skip_paths:
-                    if contents.path.startswith(skip_path.rstrip("/")):
-                        return {
-                            "directory": directory,
-                            "error": "该路径在跳过列表中",
-                            "items": [],
-                            "count": 0,
-                            "tried_branches": tried_branches,
-                        }
+                # 单个文件 - 也需要检查skip_paths / Single file: also check skip_paths
+                if get_strategy_config().is_path_skipped(contents.path):
+                    return {
+                        "directory": directory,
+                        "error": "该路径在跳过列表中",
+                        "items": [],
+                        "count": 0,
+                        "tried_branches": tried_branches,
+                    }
 
                 # 单个文件
                 return {
