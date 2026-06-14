@@ -22,6 +22,11 @@ from .compression import ContextCompressor
 from .constants import MAX_TOOL_ITERATIONS
 from .label_recommender import LabelRecommender
 from .prompt_builder import PromptBuilder
+from .review_protocol import (
+    REPAIR_INSTRUCTION,
+    ReviewProtocolError,
+    safe_protocol_failure,
+)
 from .result_parser import ReviewResultParser
 from .token_tracker import TokenTracker
 from .tools import (
@@ -158,6 +163,71 @@ class AIReviewer:
             self.label_recommender.api_client = self.summary_api_client
             self.label_recommender.model = self.summary_model
 
+    async def _parse_or_repair_review(
+        self,
+        review_text: str,
+        messages: List[Dict[str, Any]],
+        strategy: str,
+        tracker: TokenTracker,
+        event_callback: Optional[Callable[[str, Dict[str, Any]], Coroutine]] = None,
+    ) -> Dict[str, Any]:
+        """Parse a final review and make one format-only repair attempt if needed."""
+        try:
+            return self.result_parser.parse_review_result(review_text, strategy)
+        except ReviewProtocolError as first_error:
+            stripped = review_text.strip()
+            logger.warning(
+                "审查协议解析失败，尝试修复一次: {} | length={} prefix={!r} suffix={!r}",
+                first_error,
+                len(review_text),
+                stripped[:80],
+                stripped[-80:],
+            )
+
+        system_message = next(
+            (message for message in messages if message.get("role") == "system"),
+            None,
+        )
+        repair_messages = [
+            *([system_message] if system_message else []),
+            {"role": "assistant", "content": review_text},
+            {"role": "user", "content": REPAIR_INSTRUCTION},
+        ]
+        try:
+            settings = get_settings()
+            response = await self.api_client.call_with_retry(
+                model=settings.openai_model,
+                messages=repair_messages,
+                temperature=0,
+            )
+            tracker.accumulate(response)
+            repaired_text = response.choices[0].message.content or ""
+            if event_callback:
+                try:
+                    await event_callback(
+                        "message",
+                        {"role": "assistant", "content": repaired_text},
+                    )
+                except Exception as exc:
+                    logger.warning("event_callback failed: {}", exc)
+            result = self.result_parser.parse_review_result(repaired_text, strategy)
+            original_finding_count = sum(
+                line.strip() == "<FINDING>" for line in review_text.splitlines()
+            )
+            repaired_finding_count = len(result["comments"]) + len(
+                result["inline_comments"]
+            )
+            if repaired_finding_count != original_finding_count:
+                logger.warning(
+                    "审查协议修复后的 finding 数量发生变化: original_tags={} repaired_valid={}",
+                    original_finding_count,
+                    repaired_finding_count,
+                )
+            return result
+        except Exception as repair_error:
+            logger.error("审查协议修复失败，降级为人工复审: {}", repair_error)
+            return safe_protocol_failure(repair_error)
+
     async def review_pr(self, context: Dict[str, Any], strategy: str) -> Dict[str, Any]:
         """审查PR（标准模式，不使用工具）
 
@@ -191,20 +261,27 @@ class AIReviewer:
                 context, strategy, include_tools=False
             )
 
+            messages = [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_message},
+            ]
+
             # 调用AI API
             response = await self.api_client.call_with_retry(
                 model=settings.openai_model,
-                messages=[
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": user_message},
-                ],
+                messages=messages,
                 temperature=settings.openai_temperature,
             )
             tracker.accumulate(response)
 
             # 解析结果
             review_text = response.choices[0].message.content
-            result = self.result_parser.parse_review_result(review_text, strategy)
+            result = await self._parse_or_repair_review(
+                review_text,
+                messages,
+                strategy,
+                tracker,
+            )
             result["token_usage"] = tracker.to_dict()
 
             logger.info("AI审查完成，策略: {}", strategy)
@@ -289,7 +366,13 @@ class AIReviewer:
                         })
                     except Exception as exc:
                         logger.warning("event_callback failed: {}", exc)
-                result = self.result_parser.parse_review_result(review_text, strategy)
+                result = await self._parse_or_repair_review(
+                    review_text,
+                    messages,
+                    strategy,
+                    tracker,
+                    event_callback,
+                )
                 result["token_usage"] = tracker.to_dict()
                 logger.info(
                     "AI审查完成（使用了{}轮对话），策略: {}",
@@ -421,8 +504,8 @@ class AIReviewer:
             {
                 "role": "user",
                 "content": (
-                    "已达到最大工具调用次数，请基于你当前已掌握的所有信息，"
-                    "立即返回最终的代码审查结果。"
+                    "Finalize the review now using the system output contract and the "
+                    "evidence already gathered. Do not call more tools."
                 ),
             }
         )
@@ -433,7 +516,13 @@ class AIReviewer:
         )
         tracker.accumulate(last_response)
         review_text = last_response.choices[0].message.content or ""
-        result = self.result_parser.parse_review_result(review_text, strategy)
+        result = await self._parse_or_repair_review(
+            review_text,
+            messages,
+            strategy,
+            tracker,
+            event_callback,
+        )
         result["token_usage"] = tracker.to_dict()
         return result
 
