@@ -272,6 +272,54 @@ class DecisionEngine:
             ),
         )
 
+    @staticmethod
+    def _format_inline_comment_section(
+        inline_comments: Any,
+        output_lang: str,
+    ) -> str:
+        """Format mirrored inline comments without trusting their shape."""
+        if not inline_comments:
+            return ""
+        if not isinstance(inline_comments, list):
+            inline_comments = [inline_comments]
+
+        inline_title = "Inline Comments" if output_lang == "en" else "行内评论"
+        inline_unit = (
+            ("comment" if len(inline_comments) == 1 else "comments")
+            if output_lang == "en"
+            else "条"
+        )
+        count_text = (
+            f"{len(inline_comments)} {inline_unit}"
+            if output_lang == "en"
+            else f"{len(inline_comments)}{inline_unit}"
+        )
+        inline_parts = [f"### 📍 {inline_title} ({count_text})"]
+
+        for comment in inline_comments:
+            if isinstance(comment, dict):
+                file_path = str(comment.get("file_path") or "unknown")
+                end_line = comment.get("line_number")
+                start_line = comment.get("start_line")
+                if start_line and end_line and start_line != end_line:
+                    location = f"{file_path}:{start_line}-{end_line}"
+                elif end_line:
+                    location = f"{file_path}:{end_line}"
+                else:
+                    location = file_path
+                severity = str(comment.get("severity", "suggestion"))
+                comment_body = str(comment.get("body", "")).strip()
+            else:
+                location = "unknown"
+                severity = "suggestion"
+                comment_body = str(comment).strip()
+
+            inline_parts.append(
+                f"#### `{location}` · `{severity}`\n\n{comment_body}"
+            )
+
+        return "\n\n".join(inline_parts)
+
     def format_review_body(
         self,
         decision: ReviewDecision,
@@ -295,6 +343,7 @@ class DecisionEngine:
         Returns:
             格式化后的评论内容
         """
+        output_lang = output_language or "zh-CN"
         try:
             # 根据 output_language 选择模板 / Select template based on output_language
             output_lang = (
@@ -315,14 +364,10 @@ class DecisionEngine:
             )
             template = templates.get(template_key, fallback_template)
 
-            # 准备变量（改进评分显示逻辑）
+            # 展示层与决策层一致：只信任协议校验后的评分。
             score = review_result.get("overall_score")
-            if score is None or score == "N/A":
-                # 尝试提取评分（最后一道防线）
-                from backend.services.score_extractor import score_extractor
-
-                extracted = score_extractor.extract_score(review_result)
-                score = extracted if extracted is not None else "N/A"
+            if score is None:
+                score = "N/A"
 
             no_summary_text = (
                 "No summary available" if output_lang == "en" else "暂无摘要"
@@ -411,42 +456,6 @@ class DecisionEngine:
                 **(template_vars or {}),
             )
 
-            # 行内评论始终镜像到 Review Body。即使模板没有使用 comment_summary，
-            # 或评论无法附着到 GitHub Diff，审查内容也不会丢失。
-            inline_comments = review_result.get(
-                "review_body_inline_comments",
-                review_result.get("inline_comments", []),
-            )
-            if inline_comments:
-                inline_title = (
-                    "Inline Comments" if output_lang == "en" else "行内评论"
-                )
-                inline_unit = (
-                    "comment" if len(inline_comments) == 1 else "comments"
-                ) if output_lang == "en" else "条"
-                count_text = (
-                    f"{len(inline_comments)} {inline_unit}"
-                    if output_lang == "en"
-                    else f"{len(inline_comments)}{inline_unit}"
-                )
-                inline_parts = [f"### 📍 {inline_title} ({count_text})"]
-                for comment in inline_comments:
-                    file_path = str(comment.get("file_path") or "unknown")
-                    end_line = comment.get("line_number")
-                    start_line = comment.get("start_line")
-                    if start_line and end_line and start_line != end_line:
-                        location = f"{file_path}:{start_line}-{end_line}"
-                    elif end_line:
-                        location = f"{file_path}:{end_line}"
-                    else:
-                        location = file_path
-                    severity = str(comment.get("severity", "suggestion"))
-                    comment_body = str(comment.get("body", "")).strip()
-                    inline_parts.append(
-                        f"#### `{location}` · `{severity}`\n\n{comment_body}"
-                    )
-                body += "\n\n" + "\n\n".join(inline_parts)
-
             # 如果有标签结果，添加到评论末尾
             if label_results:
                 from backend.services.label_service import label_service
@@ -454,24 +463,31 @@ class DecisionEngine:
                 label_section = label_service.format_label_results(label_results)
                 body += "\n\n" + label_section
 
-            return body
-
         except Exception as e:
             logger.error(f"格式化审查评论失败: {e}")
-            # 返回简单格式（尝试提取评分）
-            from backend.services.score_extractor import score_extractor
-
             score = review_result.get("overall_score")
-            if score is None:
-                score = score_extractor.extract_score(review_result)
             score_display = f"{score}/10" if score is not None else "N/A"
 
-            return (
+            body = (
                 f"**AI审查决策**: {decision.value}\n\n"
                 f"**理由**: {decision_reason}\n\n"
                 f"**评分**: {score_display}\n\n"
                 f"{review_result.get('summary', '')}"
             )
+
+        # 行内评论始终镜像到 Review Body。即使模板未使用 comment_summary、
+        # 模板格式化降级，或评论无法附着到 GitHub Diff，审查内容也不会丢失。
+        inline_comments = review_result.get(
+            "review_body_inline_comments",
+            review_result.get("inline_comments", []),
+        )
+        inline_section = self._format_inline_comment_section(
+            inline_comments,
+            output_lang,
+        )
+        if inline_section:
+            body += "\n\n" + inline_section
+        return body
 
 
 # 全局实例

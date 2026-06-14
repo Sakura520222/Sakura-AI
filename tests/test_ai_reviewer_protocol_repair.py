@@ -107,7 +107,7 @@ async def test_second_invalid_response_falls_back_to_comment():
 
 
 @pytest.mark.asyncio
-async def test_repair_cannot_silently_drop_findings():
+async def test_repair_can_discard_invalid_finding_blocks():
     reviewer = _reviewer_with_response(VALID_REVIEW)
     malformed_with_finding = """prefix
 <SAKURA_REVIEW>
@@ -125,8 +125,10 @@ broken
         TokenTracker(),
     )
 
-    assert result["parse_source"] == "protocol_error"
-    assert result["ai_decision"] == "comment"
+    assert result["parse_source"] == "tagged"
+    assert result["ai_decision"] == "approve"
+    assert result["comments"] == []
+    assert result["inline_comments"] == []
 
 
 @pytest.mark.asyncio

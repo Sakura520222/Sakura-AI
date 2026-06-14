@@ -9,6 +9,12 @@ from typing import Any
 PROTOCOL_VERSION = "1"
 VALID_SEVERITIES = {"critical", "major", "minor", "suggestion"}
 VALID_DECISIONS = {"approve", "request_changes", "comment"}
+SEVERITY_TO_ISSUE_KEY = {
+    "critical": "critical",
+    "major": "major",
+    "minor": "minor",
+    "suggestion": "suggestions",
+}
 
 REPAIR_INSTRUCTION = """Your previous response did not match the required SAKURA_REVIEW protocol.
 Reformat the same review conclusions only. Do not add, remove, or reconsider findings.
@@ -317,15 +323,9 @@ def to_review_result(parsed: dict[str, Any]) -> dict[str, Any]:
         "ai_decision_reason": parsed["decision_reason"],
     }
 
-    issue_keys = {
-        "critical": "critical",
-        "major": "major",
-        "minor": "minor",
-        "suggestion": "suggestions",
-    }
     for finding in parsed["findings"]:
         issue_text = finding.title
-        result["issues"][issue_keys[finding.severity]].append(issue_text)
+        result["issues"][SEVERITY_TO_ISSUE_KEY[finding.severity]].append(issue_text)
         body_parts = [f"**{finding.title}**", finding.description]
         if finding.suggestion:
             body_parts.append(f"**Suggestion:** {finding.suggestion}")

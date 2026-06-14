@@ -251,3 +251,38 @@ class TestReviewBodyFormatting:
         assert "### 📍 Inline Comments (1 comment)" in body
         assert "#### `backend/example.py:59` · `suggestion`" in body
         assert "Avoid calling int() twice." in body
+
+    def test_unvalidated_summary_score_is_not_displayed(self, engine):
+        engine.policy["review_templates"] = {
+            "comment": "{summary}\n评分: {score}/10"
+        }
+        result = _review_result(score=None)
+        result["summary"] = "旧格式摘要声称评分：7"
+
+        body = engine.format_review_body(
+            ReviewDecision.COMMENT,
+            result,
+            "建议人工复审",
+            output_language="zh-CN",
+        )
+
+        assert "评分: N/A/10" in body
+        assert "评分: 7/10" not in body
+
+    def test_malformed_inline_comment_is_still_mirrored(self, engine):
+        engine.policy["review_templates"] = {"approve": "{missing_variable}"}
+        result = _review_result(score=9)
+        result["summary"] = "Summary"
+        result["review_body_inline_comments"] = ["raw malformed comment"]
+
+        body = engine.format_review_body(
+            ReviewDecision.APPROVE,
+            result,
+            "可以合并",
+            output_language="zh-CN",
+        )
+
+        assert "**AI审查决策**: approve" in body
+        assert "### 📍 行内评论 (1条)" in body
+        assert "#### `unknown` · `suggestion`" in body
+        assert "raw malformed comment" in body

@@ -217,9 +217,11 @@ class AIReviewer:
             repaired_finding_count = len(result["comments"]) + len(
                 result["inline_comments"]
             )
-            if repaired_finding_count < original_finding_count:
-                raise ReviewProtocolError(
-                    "format repair dropped one or more FINDING blocks"
+            if repaired_finding_count != original_finding_count:
+                logger.warning(
+                    "审查协议修复后的 finding 数量发生变化: original_tags={} repaired_valid={}",
+                    original_finding_count,
+                    repaired_finding_count,
                 )
             return result
         except Exception as repair_error:

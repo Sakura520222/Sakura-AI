@@ -116,6 +116,59 @@ def test_normalize_review_result_preserves_valid_finding_and_issue():
     assert normalized["issues"]["minor"] == ["Current defect"]
 
 
+def test_normalize_review_result_validates_inline_comments_in_one_batch(monkeypatch):
+    worker = _review_worker_for_normalization()
+    analysis = SimpleNamespace(
+        changed_lines_map={"backend/example.py": {335}},
+        hunk_boundaries={},
+    )
+    review_result = {
+        "inline_comments": [
+            {
+                "file_path": "backend/example.py",
+                "line_number": 335,
+                "body": "**Valid finding**\n\nKeep this comment.",
+                "severity": "minor",
+            },
+            {
+                "file_path": "backend/example.py",
+                "line_number": 59,
+                "body": "**Invalid finding**\n\nFilter this comment.",
+                "severity": "suggestion",
+            },
+        ],
+        "issues": {
+            "critical": [],
+            "major": [],
+            "minor": ["Valid finding"],
+            "suggestions": ["Invalid finding"],
+        },
+    }
+    calls = []
+    original_validate = worker.comment_service._validate_inline_comments
+
+    def tracked_validate(comments, current_analysis):
+        calls.append(list(comments))
+        return original_validate(comments, current_analysis)
+
+    monkeypatch.setattr(
+        worker.comment_service,
+        "_validate_inline_comments",
+        tracked_validate,
+    )
+
+    normalized = worker._normalize_review_result_for_diff(
+        review_result,
+        analysis,
+        "task1",
+    )
+
+    assert calls == [review_result["inline_comments"]]
+    assert len(normalized["inline_comments"]) == 1
+    assert normalized["issues"]["minor"] == ["Valid finding"]
+    assert normalized["issues"]["suggestions"] == []
+
+
 @pytest.mark.asyncio
 async def test_review_task_timeout_uses_dynamic_setting():
     settings = get_settings()
