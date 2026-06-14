@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING, Optional
 from loguru import logger
 
 from backend.core.config import get_settings
+from backend.services.ai_reviewer.constants import SEVERITY_EMOJI
 from backend.webui.deps import get_webui_url
 
 if TYPE_CHECKING:
@@ -17,12 +18,6 @@ settings = get_settings()
 
 # 严重性排序权重
 _SEVERITY_ORDER = {"critical": 0, "major": 1, "minor": 2, "suggestion": 3}
-_SEVERITY_EMOJI = {
-    "critical": "🔴",
-    "major": "🟡",
-    "minor": "🟠",
-    "suggestion": "💡",
-}
 
 
 class ScanReportService:
@@ -131,7 +126,7 @@ class ScanReportService:
                 if not items:
                     continue
 
-                emoji = _SEVERITY_EMOJI.get(sev, "•")
+                emoji = SEVERITY_EMOJI.get(sev, "💡")
                 lines.append(f"### {emoji} {sev.upper()}\n")
 
                 for idx, f in enumerate(items, 1):

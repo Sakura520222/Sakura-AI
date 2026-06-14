@@ -2,21 +2,24 @@
 
 import asyncio
 import subprocess
-from typing import Dict, Any, Optional
+from collections import Counter
 from datetime import datetime
-from loguru import logger
+from typing import Any, Dict, Optional
 import uuid
+
+from loguru import logger
+from sqlalchemy.exc import InterfaceError, OperationalError
 
 from backend.core.config import get_settings, get_strategy_config, get_dynamic_config
 from backend.core.config import get_user_dynamic_config
 from backend.core.github_app import GitHubAppClient
-from backend.services.pr_analyzer import PRAnalyzer, PRAnalysis
 from backend.services.ai_reviewer import AIReviewer
+from backend.services.ai_reviewer.review_protocol import SEVERITY_TO_ISSUE_KEY
 from backend.services.ai_reviewer.token_tracker import TokenTracker
 from backend.services.comment_service import CommentService
-from backend.services.label_service import label_service
 from backend.services.decision_engine import get_decision_engine
-from sqlalchemy.exc import OperationalError, InterfaceError
+from backend.services.label_service import label_service
+from backend.services.pr_analyzer import PRAnalysis, PRAnalyzer
 
 from backend.models.database import (
     PRReview,
@@ -124,6 +127,81 @@ class ReviewWorker:
         # Thread-safety: dict operations are atomic under GIL; asyncio.Event
         # is signal-only (set/check), safe for concurrent async coroutines.
         self._cancel_events: Dict[str, asyncio.Event] = {}
+
+    @staticmethod
+    def _inline_comment_issue_title(comment: Dict[str, Any]) -> str | None:
+        """Extract the issue title encoded by the tagged review protocol."""
+        body = str(comment.get("body", ""))
+        first_line = body.splitlines()[0].strip() if body else ""
+        if len(first_line) >= 4 and first_line.startswith("**") and first_line.endswith(
+            "**"
+        ):
+            return first_line[2:-2].strip() or None
+        return None
+
+    def _normalize_review_result_for_diff(
+        self,
+        review_result: Dict[str, Any],
+        analysis: PRAnalysis | None,
+        task_id: str,
+    ) -> Dict[str, Any]:
+        """Filter invalid inline findings and keep issue counts in sync."""
+        inline_comments = review_result.get("inline_comments", [])
+        if (
+            not inline_comments
+            or not analysis
+            or not getattr(analysis, "changed_lines_map", None)
+        ):
+            return review_result
+
+        validated_comments = self.comment_service._validate_inline_comments(
+            inline_comments, analysis
+        )
+        validated_issue_counts = Counter(
+            (
+                comment.get("severity", "suggestion"),
+                self._inline_comment_issue_title(comment),
+            )
+            for comment in validated_comments
+        )
+        filtered_comments = []
+        for comment in inline_comments:
+            issue_identity = (
+                comment.get("severity", "suggestion"),
+                self._inline_comment_issue_title(comment),
+            )
+            if validated_issue_counts[issue_identity]:
+                validated_issue_counts[issue_identity] -= 1
+            else:
+                filtered_comments.append(comment)
+
+        normalized_result = dict(review_result)
+        normalized_result["review_body_inline_comments"] = list(
+            review_result.get("review_body_inline_comments", inline_comments)
+        )
+        normalized_result["inline_comments"] = validated_comments
+        if not filtered_comments:
+            return normalized_result
+
+        issues = {
+            key: list(values)
+            for key, values in review_result.get("issues", {}).items()
+        }
+        for comment in filtered_comments:
+            issue_key = SEVERITY_TO_ISSUE_KEY.get(
+                comment.get("severity", "suggestion")
+            )
+            issue_title = self._inline_comment_issue_title(comment)
+            if issue_key and issue_title and issue_title in issues.get(issue_key, []):
+                issues[issue_key].remove(issue_title)
+        normalized_result["issues"] = issues
+
+        logger.info(
+            "[{}] 在落库和决策前过滤掉 {} 条无效行内评论",
+            task_id,
+            len(filtered_comments),
+        )
+        return normalized_result
 
     @staticmethod
     async def _log_activity(
@@ -796,6 +874,11 @@ class ReviewWorker:
                 # 解析结果
                 review_result = results[0]
                 if not isinstance(review_result, Exception):
+                    review_result = self._normalize_review_result_for_diff(
+                        review_result,
+                        analysis,
+                        task_id,
+                    )
                     # 8. 保存审查结果
                     await self._save_review_results(review_id, review_result, analysis)
                     # 完成 checkpoint session
@@ -1220,30 +1303,6 @@ class ReviewWorker:
                         f"[{task_id}] 行内评论功能已关闭，跳过 {len(inline_comments)} 条行内评论"
                     )
                 inline_comments = []
-
-            # 5.1 验证和过滤行内评论（使用 Diff 安全区）
-            # 这一步确保文件路径正确匹配 PR 中的实际路径，避免 "Path could not be resolved" 错误
-            if inline_comments and analysis and analysis.changed_lines_map:
-                logger.info(
-                    f"[{task_id}] 开始验证 {len(inline_comments)} 条行内评论..."
-                )
-                validated_comments = self.comment_service._validate_inline_comments(
-                    inline_comments, analysis
-                )
-
-                if len(validated_comments) < len(inline_comments):
-                    filtered_count = len(inline_comments) - len(validated_comments)
-                    logger.info(
-                        f"[{task_id}] 过滤掉 {filtered_count} 条无效的行内评论（路径不匹配或行号不在 Diff 安全区）"
-                    )
-
-                # 只使用验证通过的评论
-                inline_comments = validated_comments
-
-                if not inline_comments:
-                    logger.warning(
-                        f"[{task_id}] 所有行内评论都被过滤，将只提交整体评论"
-                    )
 
             # 6. 提交Review到GitHub（包含行内评论）
             # 检查是否启用幂等性检查
