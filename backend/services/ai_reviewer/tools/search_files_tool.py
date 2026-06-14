@@ -9,7 +9,7 @@ from urllib.parse import urlencode
 
 from loguru import logger
 
-from backend.core.config import get_strategy_config
+from backend.core.config import get_strategy_config, path_matches_skip
 from backend.services.ai_reviewer.constants import MAX_FILE_SIZE_BYTES
 from backend.services.ai_reviewer.tools.file_tool import format_search_results
 
@@ -243,12 +243,7 @@ class SearchFilesToolHandler:
             file_path = item.get("path", "")
 
             # 跳过 skip_paths / Skip paths in skip list
-            should_skip = False
-            for skip_path in skip_paths:
-                if file_path.startswith(skip_path.rstrip("/")):
-                    should_skip = True
-                    break
-            if should_skip:
+            if path_matches_skip(file_path, skip_paths):
                 continue
 
             # 跳过二进制文件 / Skip binary files
@@ -384,12 +379,7 @@ class SearchFilesToolHandler:
                     continue
 
             # 跳过 skip_paths / Skip paths in skip list
-            should_skip = False
-            for skip_path in skip_paths:
-                if path.startswith(skip_path.rstrip("/")):
-                    should_skip = True
-                    break
-            if should_skip:
+            if path_matches_skip(path, skip_paths):
                 continue
 
             # 跳过二进制文件 / Skip binary files
