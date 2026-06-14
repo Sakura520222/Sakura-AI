@@ -34,13 +34,22 @@ _REPO_LOCKS_MAX_SIZE = 256
 
 
 async def _get_repo_lock(repo_full_name: str) -> asyncio.Lock:
-    """获取同仓库 clone/fetch/worktree 操作的进程内锁。"""
+    """获取同仓库 clone/fetch/worktree 操作的进程内锁。
+
+    Known trade-off: 字典达到 ``_REPO_LOCKS_MAX_SIZE`` 时按 FIFO 淘汰最旧条目。
+    若被淘汰的 Lock 恰好仍被 ``async with`` 持有，下一次同仓库请求会拿到新的
+    Lock 实例，导致同仓库两个 git 操作短暂并发。256 的阈值使该竞态在实际
+    部署中极难触发；驱逐时额外跳过 ``locked()`` 的活跃锁以进一步降低风险，
+    极端情况下（全部活跃）允许暂时超限，优先避免并发。
+    """
     global _repo_locks
     async with _repo_locks_guard:
-        # 超出上限时清理（FIFO 淘汰最旧的 key）
+        # 超出上限时清理：FIFO 遍历，跳过仍被持有的活跃锁以避免竞态
         if len(_repo_locks) >= _REPO_LOCKS_MAX_SIZE:
-            oldest_key = next(iter(_repo_locks))
-            del _repo_locks[oldest_key]
+            for oldest_key in list(_repo_locks):
+                if not _repo_locks[oldest_key].locked():
+                    del _repo_locks[oldest_key]
+                    break
         lock = _repo_locks.get(repo_full_name)
         if lock is None:
             lock = asyncio.Lock()
