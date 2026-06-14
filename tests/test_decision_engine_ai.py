@@ -224,9 +224,46 @@ class TestReviewBodyFormatting:
         )
 
         assert "### 📍 行内评论" not in body
-        assert "#### `backend/example.py:10-12` · `minor`" in body
+        assert "#### 🔵 `backend/example.py:10-12` · `minor`" in body
         assert "**边界错误**" in body
         assert "循环会多执行一次。" in body
+
+    def test_inline_comment_entry_prefixed_with_severity_emoji(self, engine):
+        """Each inline comment heading is prefixed with its severity emoji."""
+        engine.policy["review_templates"] = {"approve": "{summary}"}
+        result = _review_result(score=9)
+        result["inline_comments"] = [
+            {
+                "file_path": "backend/example.py",
+                "line_number": 10,
+                "severity": "minor",
+                "body": "**问题**\n\n描述。",
+            }
+        ]
+
+        body = engine.format_review_body(
+            ReviewDecision.APPROVE,
+            result,
+            "可以合并",
+            output_language="zh-CN",
+        )
+
+        # 每条行内评论标题前缀对应 severity 的 emoji / Each inline
+        # comment heading is prefixed with its severity emoji.
+        assert "#### 🔵 `backend/example.py:10` · `minor`" in body
+
+    def test_severity_emoji_constant_unified(self):
+        """权威 severity→emoji 映射值统一 / Canonical severity→emoji mapping.
+
+        所有模块（comment_service / scan_report_service / decision_engine）
+        都从此常量取 emoji，值变更会波及全局，需锁定。
+        """
+        from backend.services.ai_reviewer.constants import SEVERITY_EMOJI
+
+        assert SEVERITY_EMOJI["critical"] == "🔴"
+        assert SEVERITY_EMOJI["major"] == "🟡"
+        assert SEVERITY_EMOJI["minor"] == "🔵"
+        assert SEVERITY_EMOJI["suggestion"] == "💡"
 
     def test_filtered_inline_comments_remain_visible_in_review_body(self, engine):
         engine.policy["review_templates_en"] = {"approve": "{summary}"}
@@ -249,7 +286,7 @@ class TestReviewBodyFormatting:
         )
 
         assert "### 📍 Inline Comments" not in body
-        assert "#### `backend/example.py:59` · `suggestion`" in body
+        assert "#### 💡 `backend/example.py:59` · `suggestion`" in body
         assert "Avoid calling int() twice." in body
 
     def test_inline_comments_rendered_inside_details_block(self, engine):
@@ -309,7 +346,7 @@ class TestReviewBodyFormatting:
         # 模板未渲染 {summary}，但行内评论仍必须镜像到 body /
         # Even without {summary}, inline comments must still be mirrored.
         assert "### 📍 行内评论" not in body
-        assert "#### `backend/example.py:42` · `suggestion`" in body
+        assert "#### 💡 `backend/example.py:42` · `suggestion`" in body
 
     def test_unvalidated_summary_score_is_not_displayed(self, engine):
         engine.policy["review_templates"] = {
@@ -343,5 +380,5 @@ class TestReviewBodyFormatting:
 
         assert "**AI审查决策**: approve" in body
         assert "### 📍 行内评论" not in body
-        assert "#### `unknown` · `suggestion`" in body
+        assert "#### 💡 `unknown` · `suggestion`" in body
         assert "raw malformed comment" in body

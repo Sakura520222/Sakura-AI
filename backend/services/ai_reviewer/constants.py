@@ -26,11 +26,18 @@ MAX_CONTEXT_LINES = 200  # 搜索匹配时的最大上下文行数
 # =============================================================================
 # 严重程度映射
 # =============================================================================
+# severity → emoji 的权威映射，全局唯一来源。同时覆盖 severity 单数
+# （critical/major/minor/suggestion）与 issue category 复数别名
+# （suggestions），让 comment_service / scan_report_service /
+# decision_engine 等所有调用方都能直接查表 / Canonical severity→emoji
+# mapping. Covers both singular severity values and the plural
+# issue-category alias ("suggestions") so every caller can look up directly.
 SEVERITY_EMOJI: Dict[str, str] = {
     "critical": "🔴",
     "major": "🟡",
-    "minor": "⚠️",
+    "minor": "🔵",
     "suggestion": "💡",
+    "suggestions": "💡",
 }
 
 # 问题类别

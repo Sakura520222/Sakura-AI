@@ -6,6 +6,7 @@ from loguru import logger
 from backend.models.database import ReviewDecision
 from backend.core.config import get_settings, get_strategy_config
 from backend.core.language_utils import output_text
+from backend.services.ai_reviewer.constants import SEVERITY_EMOJI
 
 
 class DecisionEngine:
@@ -305,8 +306,9 @@ class DecisionEngine:
                 severity = "suggestion"
                 comment_body = str(comment).strip()
 
+            emoji = SEVERITY_EMOJI.get(severity.lower(), "💡")
             inline_parts.append(
-                f"#### `{location}` · `{severity}`\n\n{comment_body}"
+                f"#### {emoji} `{location}` · `{severity}`\n\n{comment_body}"
             )
 
         return "\n\n".join(inline_parts)
@@ -408,25 +410,25 @@ class DecisionEngine:
             section_config = (
                 (
                     "critical",
-                    "🔴",
+                    SEVERITY_EMOJI["critical"],
                     "Critical Issues" if output_lang == "en" else "严重问题",
                     "issues" if output_lang == "en" else "个",
                 ),
                 (
                     "major",
-                    "🟡",
+                    SEVERITY_EMOJI["major"],
                     "Major Issues" if output_lang == "en" else "重要问题",
                     "issues" if output_lang == "en" else "个",
                 ),
                 (
                     "minor",
-                    "🔵",
+                    SEVERITY_EMOJI["minor"],
                     "Minor Issues" if output_lang == "en" else "次要问题",
                     "issues" if output_lang == "en" else "个",
                 ),
                 (
                     "suggestions",
-                    "💡",
+                    SEVERITY_EMOJI["suggestions"],
                     "Suggestions" if output_lang == "en" else "优化建议",
                     "suggestions" if output_lang == "en" else "条",
                 ),
