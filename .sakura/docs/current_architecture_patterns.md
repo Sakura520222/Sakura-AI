@@ -31,4 +31,13 @@ Worker/Analyzer -> callback -> CheckpointService -> DB + SSE -> WebUI
 `SakuraAgentBase` 提供核心对话循环，具体 agent 实现任务。基类控制流变更会影响所有子类，应作为公共契约变更审查。
 
 ## 配置中心分散风险
-配置项常需同步 Settings、动态配置 labels/ranges/options、WebUI route。长期建议引入单一配置 schema，减少人工“四一致”检查。
+配置项常需同步 Settings、动态配置 labels/ranges/options、WebUI route。长期建议引入单一配置 schema，减少人工"四一致"检查。
+
+## Agent Team多Worktree隔离
+`per-repo` 异步锁 + `per-task worktree` 实现任务间代码隔离。Git仓库clone和锁为模块级单例。变更集中在各层实现优化，不跨越层边界：webhook.py (API层) → review_worker.py (Worker层) → git_workspace_service.py (服务层)。
+
+## AI输出协议演进
+项目正从"灵活但易错"的解析（JSON+emoji）向"严格但可靠"的协议（行导向、标签化）演进。核心逻辑集中在 `review_protocol.py`，`result_parser.py` 作为薄适配层。协议变更属于架构级变更，需要完整的新旧映射和废弃策略。
+
+## 决策引擎作为核心枢纽
+`decision_engine.py` 变更时必须扫描所有调用方（review_worker/template_builder/API）是否适配新数据语义。"数据保留/镜像"模式须配套废弃计划。作为审查核心枢纽，其变更影响范围最广。
