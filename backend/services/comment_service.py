@@ -5,6 +5,7 @@ from typing import Dict, Any, Optional
 from loguru import logger
 
 from backend.core.config import get_settings, get_strategy_config
+from backend.services.ai_reviewer.constants import SEVERITY_EMOJI
 from backend.services.label_service import label_service
 
 
@@ -431,12 +432,7 @@ Please check system logs or contact the administrator.
                     severity = comment_data.get("severity", "suggestion")
 
                     # 添加严重程度标记
-                    severity_emoji = {
-                        "critical": "🔴",
-                        "major": "🟡",
-                        "suggestion": "💡",
-                        "minor": "🔵",
-                    }.get(severity, "💡")
+                    severity_emoji = SEVERITY_EMOJI.get(severity, "💡")
 
                     formatted_body = f"{severity_emoji} {body}"
 

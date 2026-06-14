@@ -1,5 +1,6 @@
 """WebUI Agent 专家团队路由"""
 
+import asyncio
 import json
 import re
 from datetime import datetime, timezone
@@ -36,6 +37,7 @@ from backend.models.agent_team_models import (
     AgentTeamUserPrompt,
 )
 from backend.models.database import AppConfig, IssueAnalysis
+from backend.models.database import utc_now as _utc_now
 from backend.services.agent_team.ai_client import (
     load_agent_team_ai_config,
     resolve_agent_team_max_iterations,
@@ -125,6 +127,36 @@ AGENT_TEAM_ACTIVE_STATUSES = [
 ]
 
 _VALID_TASK_PRIORITIES = {"critical", "high", "medium", "low"}
+
+# 终态但具备 workspace/branch/PR 信息、可续跑的任务状态
+_RESUMABLE_TERMINAL_STATUSES = {
+    AgentTeamTaskStatus.COMPLETED.value,
+    AgentTeamTaskStatus.WAITING_HUMAN.value,
+    AgentTeamTaskStatus.PR_OPENED.value,
+}
+
+
+def _can_send_agent_prompt(task: AgentTeamTask) -> tuple[bool, str]:
+    """判断 Live View 是否允许管理员指导输入。
+
+    Returns:
+        (can_send, disabled_reason) — can_send 为 True 时 disabled_reason 为空。
+    """
+    if task.status in AGENT_TEAM_ACTIVE_STATUSES:
+        return True, ""
+    if task.status in _RESUMABLE_TERMINAL_STATUSES and (
+        task.workspace_path and task.branch_name and task.pr_number
+    ):
+        return True, ""
+    if task.status in {
+        AgentTeamTaskStatus.FAILED.value,
+        AgentTeamTaskStatus.CANCELLED.value,
+        AgentTeamTaskStatus.ABANDONED.value,
+    }:
+        return False, "task_terminal"
+    if task.status in _RESUMABLE_TERMINAL_STATUSES:
+        return False, "missing_workspace_or_pr"
+    return False, "task_inactive"
 
 
 def _is_admin(user: dict) -> bool:
@@ -1482,6 +1514,171 @@ async def delete_workspace(
     )
 
 
+# ── Worktree 管理 ──────────────────────────────────────────
+
+
+@router.get("/workspaces/{repo_owner}/{repo_name}/worktrees-fragment")
+async def worktree_list_fragment(
+    request: Request,
+    repo_owner: str,
+    repo_name: str,
+    db: AsyncSession = Depends(get_db),
+    user: dict = Depends(require_super_admin),
+    user_prefs: dict = Depends(get_user_preferences),
+):
+    """返回指定仓库的 worktree 列表 HTML 片段。"""
+    service = AgentTeamWorkspaceService()
+    worktrees = await asyncio.to_thread(service.list_worktrees, repo_owner, repo_name)
+
+    # 查询各 task 的状态，用于标识活跃/孤立 worktree
+    task_ids = [w.task_id for w in worktrees if w.task_id is not None]
+    task_status_map: dict[int, str] = {}
+    if task_ids:
+        rows = (
+            await db.execute(
+                select(AgentTeamTask.id, AgentTeamTask.status).where(
+                    AgentTeamTask.id.in_(task_ids)
+                )
+            )
+        ).all()
+        task_status_map = {row.id: row.status for row in rows}
+
+    active_statuses = set(AGENT_TEAM_ACTIVE_STATUSES)
+
+    worktree_items = []
+    for w in worktrees:
+        task_status = task_status_map.get(w.task_id, "") if w.task_id else ""
+        is_active = task_status in active_statuses
+        worktree_items.append({
+            "dir_name": w.dir_name,
+            "task_id": w.task_id,
+            "branch_slug": w.branch_slug,
+            "file_count": w.file_count,
+            "total_size_bytes": w.total_size_bytes,
+            "size_label": _format_bytes(w.total_size_bytes),
+            "modified_at": datetime.fromtimestamp(w.modified_at, tz=timezone.utc)
+            if w.modified_at
+            else None,
+            "task_status": task_status,
+            "is_active": is_active,
+        })
+
+    orphans = [w for w in worktree_items if not w["is_active"]]
+    has_orphans = len(orphans) > 0
+
+    return render_template(
+        "components/agent_team_worktree_list_fragment.html",
+        request,
+        user_prefs=user_prefs,
+        current_user=user,
+        csrf_token=get_csrf_serializer().dumps({}),
+        repo_owner=repo_owner,
+        repo_name=repo_name,
+        worktrees=worktree_items,
+        has_orphans=has_orphans,
+        orphan_count=len(orphans),
+    )
+
+
+@router.post("/workspaces/worktrees/delete")
+async def delete_worktree(
+    db: AsyncSession = Depends(get_db),
+    user: dict = Depends(require_super_admin),
+    csrf_token: str = Depends(require_csrf),
+    repo_owner: str = Form(...),
+    repo_name: str = Form(...),
+    dir_name: str = Form(...),
+):
+    """删除单个 worktree 目录。"""
+    service = AgentTeamWorkspaceService()
+
+    # 目录名格式为 {task_id}-{branch_slug}，由 prepare_workspace 创建。
+    # 从中提取 task_id 检查是否有活跃任务；若目录为手动创建则跳过此检查。
+    wt_match = service._WT_DIR_RE.match(dir_name)
+    if wt_match:
+        task_id = int(wt_match.group(1))
+        active_count = await db.scalar(
+            select(func.count(AgentTeamTask.id)).where(
+                AgentTeamTask.id == task_id,
+                AgentTeamTask.status.in_(AGENT_TEAM_ACTIVE_STATUSES),
+            )
+        )
+        if active_count:
+            return JSONResponse(
+                {
+                    "success": False,
+                    "message": f"任务 #{task_id} 仍在运行中，无法删除其 worktree",
+                },
+                status_code=200,
+            )
+
+    try:
+        deleted = await asyncio.to_thread(service.delete_worktree, repo_owner, repo_name, dir_name)
+    except ValueError as exc:
+        return JSONResponse({"success": False, "message": str(exc)}, status_code=400)
+
+    await log_admin_action(
+        db,
+        user["user_id"],
+        "agent_team_worktree_delete",
+        "agent_team_worktree",
+        f"{repo_owner}/{repo_name}/{dir_name}",
+        {"repo_owner": repo_owner, "repo_name": repo_name, "dir_name": dir_name, "path": str(deleted)},
+    )
+    return JSONResponse({"success": True, "dir_name": dir_name})
+
+
+@router.post("/workspaces/worktrees/clean-orphans")
+async def clean_orphan_worktrees(
+    db: AsyncSession = Depends(get_db),
+    user: dict = Depends(require_super_admin),
+    csrf_token: str = Depends(require_csrf),
+    repo_owner: str = Form(...),
+    repo_name: str = Form(...),
+):
+    """清理指定仓库的孤立 worktree（对应任务已终结）。"""
+    service = AgentTeamWorkspaceService()
+    worktrees = await asyncio.to_thread(service.list_worktrees, repo_owner, repo_name)
+    if not worktrees:
+        return JSONResponse({"success": True, "cleaned": 0})
+
+    task_ids = [w.task_id for w in worktrees if w.task_id is not None]
+    task_status_map: dict[int, str] = {}
+    if task_ids:
+        rows = (
+            await db.execute(
+                select(AgentTeamTask.id, AgentTeamTask.status).where(
+                    AgentTeamTask.id.in_(task_ids)
+                )
+            )
+        ).all()
+        task_status_map = {row.id: row.status for row in rows}
+
+    active_statuses = set(AGENT_TEAM_ACTIVE_STATUSES)
+    cleaned = 0
+    for w in worktrees:
+        task_status = task_status_map.get(w.task_id, "") if w.task_id else ""
+        if task_status in active_statuses:
+            continue
+        try:
+            await asyncio.to_thread(service.delete_worktree, repo_owner, repo_name, w.dir_name)
+            cleaned += 1
+        except Exception as exc:
+            logger.warning("清理孤立 worktree 失败: {} - {}", w.dir_name, exc)
+
+    if cleaned:
+        await log_admin_action(
+            db,
+            user["user_id"],
+            "agent_team_worktree_clean_orphans",
+            "agent_team_worktree",
+            f"{repo_owner}/{repo_name}",
+            {"repo_owner": repo_owner, "repo_name": repo_name, "cleaned": cleaned},
+        )
+
+    return JSONResponse({"success": True, "cleaned": cleaned})
+
+
 async def _run_agent_task_background(task_id: int) -> None:
     """后台执行 Agent 任务，避免阻塞 WebUI 请求。"""
     try:
@@ -1666,6 +1863,7 @@ def _workspace_info_to_dict(info) -> dict:
         if info.modified_at
         else None,
         "has_git": info.has_git,
+        "worktree_count": info.worktree_count,
     }
 
 
@@ -1719,6 +1917,14 @@ async def list_active_tasks(
                 "status": t.status,
                 "repo_full_name": t.repo_full_name,
                 "current_phase": t.current_phase,
+                "branch_name": t.branch_name,
+                "base_branch": t.base_branch,
+                "pr_number": t.pr_number,
+                "pr_url": t.pr_url,
+                "iteration_count": t.iteration_count,
+                "max_iterations": t.max_iterations,
+                "updated_at": t.updated_at.isoformat() if t.updated_at else None,
+                "completed_at": t.completed_at.isoformat() if t.completed_at else None,
             }
             for t in rows
         ],
@@ -1749,6 +1955,7 @@ async def task_stream_data(
     session_ids = [s.id for s in session_rows]
 
     if not session_ids:
+        can_send, disabled_reason = _can_send_agent_prompt(task)
         return JSONResponse({
             "success": True,
             "messages": [],
@@ -1756,6 +1963,9 @@ async def task_stream_data(
             "sessions": [],
             "prompts": [],
             "has_more": False,
+            "task_status": task.status,
+            "can_send_prompt": can_send,
+            "prompt_disabled_reason": disabled_reason,
         })
 
     # Messages with pagination (use global id, not per-session seq)
@@ -1786,6 +1996,7 @@ async def task_stream_data(
         .order_by(AgentTeamUserPrompt.created_at)
     )).scalars().all()
 
+    can_send, disabled_reason = _can_send_agent_prompt(task)
     return JSONResponse({
         "success": True,
         "messages": [
@@ -1840,6 +2051,8 @@ async def task_stream_data(
         ],
         "has_more": has_more,
         "task_status": task.status,
+        "can_send_prompt": can_send,
+        "prompt_disabled_reason": disabled_reason,
     })
 
 
@@ -1851,16 +2064,17 @@ async def submit_user_prompt(
     user: dict = Depends(require_auth),
     db: AsyncSession = Depends(get_db),
 ):
-    """提交用户引导 Prompt（pending 状态，下次 AI 请求时注入）。"""
+    """提交用户引导 Prompt（活跃任务注入 / 可续跑终态触发 follow-up）。"""
     task = await db.get(AgentTeamTask, task_id)
     if not task:
         return JSONResponse({"success": False, "error": "Task not found"}, status_code=404)
     if not _is_admin(user) and task.started_by != user["sub"]:
         return JSONResponse({"success": False, "error": "Forbidden"}, status_code=403)
 
-    if task.status not in AGENT_TEAM_ACTIVE_STATUSES:
+    can_send, disabled_reason = _can_send_agent_prompt(task)
+    if not can_send:
         return JSONResponse(
-            {"success": False, "error": "Task is not active"},
+            {"success": False, "error": f"Cannot send prompt: {disabled_reason}"},
             status_code=400,
         )
 
@@ -1879,23 +2093,80 @@ async def submit_user_prompt(
         submitted_by=username or "super_admin",
     )
     db.add(prompt)
-    await db.commit()
+
+    # 可续跑终态：写入 prompt 后触发 follow-up iteration
+    # 使用乐观锁防止并发请求重复触发 follow-up：
+    # 将状态转换拆为独立的 UPDATE WHERE 语句，通过受影响行数判断是否竞态成功
+    is_resumable_terminal = task.status in _RESUMABLE_TERMINAL_STATUSES and bool(
+        task.workspace_path and task.branch_name and task.pr_number
+    )
+    if is_resumable_terminal:
+        expected_updated_at = task.updated_at
+        from sqlalchemy import update as sa_update
+
+        optimistic_result = await db.execute(
+            sa_update(AgentTeamTask)
+            .where(
+                AgentTeamTask.id == task_id,
+                AgentTeamTask.status == task.status,
+                AgentTeamTask.updated_at == expected_updated_at,
+            )
+            .values(
+                status=AgentTeamTaskStatus.ITERATING.value,
+                current_phase="human_followup",
+                updated_at=_utc_now(),
+            )
+        )
+        await db.commit()
+        if optimistic_result.rowcount == 0:
+            # 并发冲突：其他请求已抢先转换状态，跳过 follow-up
+            is_resumable_terminal = False
+            logger.info(
+                "submit_user_prompt 乐观锁检测到并发冲突，跳过 follow-up: task_id={}",
+                task_id,
+            )
+        else:
+            await db.refresh(task)
+    else:
+        await db.commit()
+
     await db.refresh(prompt)
 
     # SSE: 通知前端有新 prompt
     try:
         from backend.webui.sse import publish_event
 
-        await publish_event("agent:prompt_received", {
+        sse_data = {
             "task_id": task_id,
             "prompt_id": prompt.id,
-        })
+        }
+        if is_resumable_terminal:
+            sse_data["task_status"] = task.status
+            sse_data["current_phase"] = task.current_phase
+        await publish_event("agent:prompt_received", sse_data)
+        # 续跑终态时额外发 task_updated 让前端刷新状态
+        if is_resumable_terminal:
+            await publish_event("agent:task_updated", {
+                "task_id": task_id,
+                "status": task.status,
+                "current_phase": task.current_phase,
+            })
     except Exception as exc:
         logger.debug("SSE 发布 prompt 通知失败: {}", exc)
+
+    # 可续跑终态：后台调度 follow-up iteration
+    if is_resumable_terminal:
+        try:
+            from backend.workers.agent_team_worker import submit_agent_team_human_followup
+
+            asyncio.create_task(submit_agent_team_human_followup(task_id))
+        except Exception as exc:
+            logger.warning("调度 Agent follow-up iteration 失败: {}", exc)
 
     return JSONResponse({
         "success": True,
         "prompt_id": prompt.id,
+        "task_status": task.status,
     })
 
 

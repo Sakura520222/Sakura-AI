@@ -26,21 +26,18 @@ MAX_CONTEXT_LINES = 200  # 搜索匹配时的最大上下文行数
 # =============================================================================
 # 严重程度映射
 # =============================================================================
+# severity → emoji 的权威映射，全局唯一来源。同时覆盖 severity 单数
+# （critical/major/minor/suggestion）与 issue category 复数别名
+# （suggestions），让 comment_service / scan_report_service /
+# decision_engine 等所有调用方都能直接查表 / Canonical severity→emoji
+# mapping. Covers both singular severity values and the plural
+# issue-category alias ("suggestions") so every caller can look up directly.
 SEVERITY_EMOJI: Dict[str, str] = {
     "critical": "🔴",
     "major": "🟡",
-    "minor": "⚠️",
+    "minor": "🔵",
     "suggestion": "💡",
-}
-
-EMOJI_TO_SEVERITY: Dict[str, str] = {v: k for k, v in SEVERITY_EMOJI.items()}
-
-# 严重程度到问题字典的映射
-SEVERITY_TO_ISSUES_KEY: Dict[str, str] = {
-    "critical": "critical",
-    "major": "major",
-    "minor": "minor",
-    "suggestion": "suggestions",  # 单数转复数
+    "suggestions": "💡",
 }
 
 # 问题类别
@@ -81,22 +78,6 @@ MAX_TOOL_ITERATIONS = 20  # 最大工具调用轮次
 LABEL_RECOMMENDATION_TEMPERATURE = 0.3  # 标签推荐温度
 MAX_LABEL_RECOMMENDATIONS = 5  # 最大推荐标签数
 DEFAULT_LABEL_CONFIDENCE = 0.6  # 默认标签置信度
-
-# =============================================================================
-# 行内评论配置
-# =============================================================================
-INLINE_COMMENT_PATTERN = (
-    r"###\s*[🔴🟡💡⚠️]\s+([^\s:]+):([\d\-\s,]+?)\s*\n(.*?)(?=###\s*[🔴🟡💡⚠️]|##|\Z)"
-)
-
-# =============================================================================
-# 结构化 JSON 输出配置
-# =============================================================================
-JSON_BLOCK_START_MARKER = "<!-- SAKURA_REVIEW_JSON_START -->"
-JSON_BLOCK_END_MARKER = "<!-- SAKURA_REVIEW_JSON_END -->"
-JSON_SCHEMA_VERSION = 1
-VALID_SEVERITIES = {"critical", "major", "minor", "suggestion"}
-VALID_DECISIONS = {"approve", "request_changes", "comment"}
 
 # =============================================================================
 # 日志消息模板

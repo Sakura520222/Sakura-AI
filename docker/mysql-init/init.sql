@@ -93,7 +93,7 @@ CREATE TABLE IF NOT EXISTS review_queue (
 
 -- 插入默认配置
 INSERT IGNORE INTO app_config (key_name, key_value, description) VALUES
-('app_version', '2.12.1', '应用版本号'),
+('app_version', '2.12.2', '应用版本号'),
 ('max_concurrent_reviews', '5', '最大并发审查数量'),
 ('review_timeout_seconds', '300', '审查超时时间（秒）'),
 ('enable_auto_review', 'true', '是否启用自动审查'),
@@ -146,6 +146,7 @@ CREATE TABLE IF NOT EXISTS agent_team_tasks (
     rate_limit_reset_at TIMESTAMP NULL,
     last_checkpoint_at TIMESTAMP NULL,
     pr_number BIGINT,
+    pr_head_sha VARCHAR(64),
     pr_url VARCHAR(500),
     iteration_count INT NOT NULL DEFAULT 0,
     max_iterations INT NOT NULL DEFAULT 3,
@@ -168,6 +169,7 @@ CREATE TABLE IF NOT EXISTS agent_team_tasks (
     INDEX idx_agent_team_tasks_candidate_score (candidate_score),
     INDEX idx_agent_team_tasks_status (status),
     INDEX idx_agent_team_tasks_pr_number (pr_number),
+    INDEX idx_agent_team_tasks_pr_head_sha (pr_head_sha),
     INDEX idx_agent_team_tasks_created_at (created_at)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 

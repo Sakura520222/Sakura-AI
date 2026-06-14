@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
+import asyncio
 import os
 from dataclasses import dataclass
-from datetime import datetime, timezone
 from pathlib import Path
 
 from backend.core.github_app import GitHubAppClient
@@ -24,6 +24,37 @@ class GitWorkspaceInfo:
     branch_name: str
     default_branch: str
     commit_sha: str
+
+
+_repo_locks: dict[str, asyncio.Lock] = {}
+_repo_locks_guard = asyncio.Lock()
+# 防止 Lock 字典无限增长的简单上限。
+# 实际场景中仓库数量远小于此值，超出时清理最旧的条目。
+_REPO_LOCKS_MAX_SIZE = 256
+
+
+async def _get_repo_lock(repo_full_name: str) -> asyncio.Lock:
+    """获取同仓库 clone/fetch/worktree 操作的进程内锁。
+
+    Known trade-off: 字典达到 ``_REPO_LOCKS_MAX_SIZE`` 时按 FIFO 淘汰最旧条目。
+    若被淘汰的 Lock 恰好仍被 ``async with`` 持有，下一次同仓库请求会拿到新的
+    Lock 实例，导致同仓库两个 git 操作短暂并发。256 的阈值使该竞态在实际
+    部署中极难触发；驱逐时额外跳过 ``locked()`` 的活跃锁以进一步降低风险，
+    极端情况下（全部活跃）允许暂时超限，优先避免并发。
+    """
+    global _repo_locks
+    async with _repo_locks_guard:
+        # 超出上限时清理：FIFO 遍历，跳过仍被持有的活跃锁以避免竞态
+        if len(_repo_locks) >= _REPO_LOCKS_MAX_SIZE:
+            for oldest_key in list(_repo_locks):
+                if not _repo_locks[oldest_key].locked():
+                    del _repo_locks[oldest_key]
+                    break
+        lock = _repo_locks.get(repo_full_name)
+        if lock is None:
+            lock = asyncio.Lock()
+            _repo_locks[repo_full_name] = lock
+        return lock
 
 
 class AgentTeamGitWorkspaceService:
@@ -46,54 +77,89 @@ class AgentTeamGitWorkspaceService:
         source_issue_number: int | None = None,
         source_id: int | None = None,
         base_branch: str | None = None,
+        task_id: int | None = None,
+        source_type: str | None = None,
     ) -> GitWorkspaceInfo:
-        """准备仓库工作区并切换到 Agent 分支。"""
+        """准备仓库 base checkout，并为当前 task 创建独立 worktree。"""
+        if task_id is None or task_id <= 0:
+            raise RuntimeError("准备 Agent 工作区需要有效的 task_id")
+
         repo_full_name = f"{repo_owner}/{repo_name}"
-        workspace = self.workspace_service.ensure_workspace(repo_owner, repo_name)
         default_branch, clone_url = await self._get_repo_info(
             repo_owner, repo_name, repo_full_name
         )
         resolved_branch = base_branch or default_branch
-        executor = AgentTeamShellExecutor(workspace, self.workspace_service)
-
-        if not (workspace / ".git").exists():
-            await self._run_checked_args(
-                executor,
-                ["git", "clone", "--branch", resolved_branch, clone_url, "."],
-                "clone repository",
-            )
-        else:
-            await self._run_checked_args(
-                executor,
-                ["git", "remote", "set-url", "origin", clone_url],
-                "set remote url",
-            )
-            await self._run_checked_args(
-                executor, ["git", "fetch", "origin", "--prune"], "fetch repository"
-            )
-            await self._run_checked_args(
-                executor,
-                ["git", "checkout", resolved_branch],
-                "checkout base branch",
-            )
-            await self._run_checked_args(
-                executor,
-                ["git", "reset", "--hard", f"origin/{resolved_branch}"],
-                "reset base branch",
-            )
-
-        branch_name = self.make_branch_name(source_issue_number, source_id)
-        await self._run_checked_args(
-            executor, ["git", "checkout", "-B", branch_name], "checkout agent branch"
+        branch_name = self.make_branch_name(
+            task_id, source_issue_number, source_id, source_type
         )
+        base_workspace = self.workspace_service.ensure_base_workspace(
+            repo_owner, repo_name
+        )
+        worktree = self.workspace_service.get_task_worktree_path(
+            repo_owner, repo_name, task_id, branch_name
+        )
+
+        repo_lock = await _get_repo_lock(repo_full_name)
+        async with repo_lock:
+            base_executor = AgentTeamShellExecutor(base_workspace, self.workspace_service)
+            if not (base_workspace / ".git").exists():
+                await self._run_checked_args(
+                    base_executor,
+                    ["git", "clone", "--branch", resolved_branch, clone_url, "."],
+                    "clone repository",
+                )
+            else:
+                await self._run_checked_args(
+                    base_executor,
+                    ["git", "remote", "set-url", "origin", clone_url],
+                    "set remote url",
+                )
+                await self._run_checked_args(
+                    base_executor,
+                    ["git", "fetch", "origin", "--prune"],
+                    "fetch repository",
+                )
+                await self._run_checked_args(
+                    base_executor,
+                    ["git", "checkout", resolved_branch],
+                    "checkout base branch",
+                )
+                await self._run_checked_args(
+                    base_executor,
+                    ["git", "reset", "--hard", f"origin/{resolved_branch}"],
+                    "reset base branch",
+                )
+
+            if worktree.exists():
+                await self._run_checked_args(
+                    base_executor,
+                    ["git", "worktree", "remove", "--force", str(worktree)],
+                    "remove stale task worktree",
+                )
+            worktree.parent.mkdir(parents=True, exist_ok=True)
+            await self._run_checked_args(
+                base_executor,
+                [
+                    "git",
+                    "worktree",
+                    "add",
+                    "-B",
+                    branch_name,
+                    str(worktree),
+                    f"origin/{resolved_branch}",
+                ],
+                "create task worktree",
+            )
+
+        worktree_executor = AgentTeamShellExecutor(worktree, self.workspace_service)
         commit_sha = (
             await self._run_checked_args(
-                executor, ["git", "rev-parse", "HEAD"], "read commit sha"
+                worktree_executor, ["git", "rev-parse", "HEAD"], "read commit sha"
             )
         ).stdout.strip()
-        await self._install_workspace_dependencies(executor, workspace)
+        await self._install_workspace_dependencies(worktree_executor, worktree)
         return GitWorkspaceInfo(
-            workspace=workspace,
+            workspace=worktree,
             branch_name=branch_name,
             default_branch=resolved_branch,
             commit_sha=commit_sha,
@@ -135,18 +201,27 @@ class AgentTeamGitWorkspaceService:
 
     def make_branch_name(
         self,
+        task_id: int | None = None,
         source_issue_number: int | None = None,
         source_id: int | None = None,
+        source_type: str | None = None,
     ) -> str:
-        """生成 Agent 分支名。"""
-        timestamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
+        """生成 Agent 分支名。task_id 保证同仓库并发任务不碰撞。"""
+        if task_id and task_id > 0:
+            prefix = f"task-{task_id}"
+        else:
+            prefix = "task-manual"
         if source_issue_number:
-            source = f"issue-{source_issue_number}"
+            # PR_REVIEW 类型使用 pr- 前缀，其余使用 issue-
+            if source_type and source_type.lower() == "pr_review":
+                source = f"pr-{source_issue_number}"
+            else:
+                source = f"issue-{source_issue_number}"
         elif source_id:
             source = f"source-{source_id}"
         else:
             source = "manual"
-        return f"{self.BRANCH_PREFIX}/{source}-{timestamp}"
+        return f"{self.BRANCH_PREFIX}/{prefix}-{source}"
 
     async def resume_workspace(
         self,
@@ -158,9 +233,8 @@ class AgentTeamGitWorkspaceService:
         base_commit_sha: str | None = None,
     ) -> GitWorkspaceInfo:
         """恢复既有 Agent 工作区，不重置未提交改动。"""
-        expected_workspace = self.workspace_service.get_workspace_path(repo_owner, repo_name)
         workspace = self.workspace_service.ensure_within_base(workspace_path)
-        if workspace != expected_workspace:
+        if not self.workspace_service.is_path_inside_repo(repo_owner, repo_name, workspace):
             raise RuntimeError("续跑工作区与任务仓库不匹配")
         if not workspace.exists() or not (workspace / ".git").exists():
             raise RuntimeError("续跑工作区不存在或不是 Git 仓库")
