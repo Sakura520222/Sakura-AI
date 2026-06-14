@@ -321,13 +321,15 @@ function configGeneral() {
             const apiKeyKey = modelKey === 'openai_model' ? 'openai_api_key' : 'summary_api_key';
             const baseKey = modelKey === 'openai_model' ? 'openai_api_base' : 'summary_api_base';
             const provider = document.querySelector(`[name="${providerKey}"]`)?.value || 'custom';
-            const apiKey = document.querySelector(`[name="${apiKeyKey}"]`)?.value || '';
+            let apiKey = document.querySelector(`[name="${apiKeyKey}"]`)?.value || '';
             const apiBase = document.querySelector(`[name="${baseKey}"]`)?.value || '';
+            // 配置页回显的是脱敏占位值（含 ****），不可直接用于请求；清空后由后端回退数据库真实值
+            if (apiKey.includes('****')) apiKey = '';
             try {
                 const resp = await fetch(`/api/v1/config/ai-providers/${encodeURIComponent(provider || 'custom')}/models`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ api_key: apiKey, api_base: apiBase }),
+                    body: JSON.stringify({ api_key: apiKey, api_base: apiBase, key_name: apiKeyKey }),
                 });
                 const data = await resp.json();
                 const result = data.data || data;

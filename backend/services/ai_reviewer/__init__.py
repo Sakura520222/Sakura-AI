@@ -27,8 +27,6 @@ from .constants import (
     DEFAULT_CONTEXT_LINES,
     MAX_CONTEXT_LINES,
     SEVERITY_EMOJI,
-    EMOJI_TO_SEVERITY,
-    SEVERITY_TO_ISSUES_KEY,
 )
 from .label_recommender import LabelRecommender
 from .prompt_builder import PromptBuilder
@@ -55,6 +53,4 @@ __all__ = [
     "DEFAULT_CONTEXT_LINES",
     "MAX_CONTEXT_LINES",
     "SEVERITY_EMOJI",
-    "EMOJI_TO_SEVERITY",
-    "SEVERITY_TO_ISSUES_KEY",
 ]

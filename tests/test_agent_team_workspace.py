@@ -33,6 +33,33 @@ def test_workspace_path_shape_and_creation(tmp_path):
     assert workspace.exists()
 
 
+def test_workspace_base_and_task_worktree_paths(tmp_path):
+    service = AgentTeamWorkspaceService(tmp_path / "workplace")
+
+    repo_root = service.ensure_repo_root("owner", "repo")
+    base_workspace = service.ensure_base_workspace("owner", "repo")
+    worktrees_root = service.ensure_worktrees_root("owner", "repo")
+    task_worktree = service.get_task_worktree_path(
+        "owner",
+        "repo",
+        123,
+        "sakura-agent/task-123-issue-42",
+    )
+
+    assert repo_root == (tmp_path / "workplace" / "owner" / "repo").resolve()
+    assert base_workspace == (repo_root / "base").resolve()
+    assert worktrees_root == (repo_root / "worktrees").resolve()
+    assert task_worktree == (repo_root / "worktrees" / "123-sakura-agent-task-123-issue-42").resolve()
+    assert service.is_path_inside_repo("owner", "repo", task_worktree) is True
+
+
+def test_task_worktree_rejects_invalid_task_id(tmp_path):
+    service = AgentTeamWorkspaceService(tmp_path / "workplace")
+
+    with pytest.raises(WorkspaceSecurityError):
+        service.get_task_worktree_path("owner", "repo", 0, "branch")
+
+
 @pytest.mark.parametrize(
     ("owner", "repo"),
     [

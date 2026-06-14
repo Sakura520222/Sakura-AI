@@ -22,6 +22,11 @@ from .compression import ContextCompressor
 from .constants import MAX_TOOL_ITERATIONS
 from .label_recommender import LabelRecommender
 from .prompt_builder import PromptBuilder
+from .review_protocol import (
+    REPAIR_INSTRUCTION,
+    ReviewProtocolError,
+    safe_protocol_failure,
+)
 from .result_parser import ReviewResultParser
 from .token_tracker import TokenTracker
 from .tools import (
@@ -55,20 +60,9 @@ class AIReviewer:
         settings = get_settings()
 
         # 初始化各组件
-        self.api_client = AIApiClient(
-            base_url=settings.openai_api_base, api_key=settings.openai_api_key
-        )
-
-        # 初始化辅助模型（摘要、压缩等轻量任务）
-        self.summary_model = settings.summary_model or settings.openai_model
-        if not settings.summary_api_base and not settings.summary_api_key:
-            self.summary_api_client = self.api_client
-        else:
-            summary_api_base = settings.summary_api_base or settings.openai_api_base
-            summary_api_key = settings.summary_api_key or settings.openai_api_key
-            self.summary_api_client = AIApiClient(
-                base_url=summary_api_base, api_key=summary_api_key
-            )
+        self._ai_client_config = None
+        self._summary_client_config = None
+        self._refresh_ai_clients()
         self.prompt_builder = PromptBuilder()
         self.result_parser = ReviewResultParser()
 
@@ -78,33 +72,20 @@ class AIReviewer:
         git_tool = GitToolHandler()
         search_files_tool = SearchFilesToolHandler()
         sakura_tool = SakuraToolHandler()
-        web_search_tool = None
-        if settings.web_search_enabled:
-            from backend.services.ai_reviewer.tools.web_search_tool import (
-                WebSearchToolHandler,
-            )
-
-            web_search_tool = WebSearchToolHandler()
-        fetch_url_tool = None
-        if web_search_tool is not None and settings.fetch_url_enabled:
-            from backend.services.ai_reviewer.tools.fetch_url_tool import (
-                FetchUrlToolHandler,
-            )
-
-            fetch_url_tool = FetchUrlToolHandler()
-
         # PR diff 工具（按需查看文件 diff，用于 prompt 精简模式）
         # 注意：每次精简模式会创建临时 DiffToolHandler 实例，避免并发安全问题
         self.tool_handler = ToolHandler(
             file_tool,
             search_tool,
-            web_search_tool,
+            None,
             git_tool,
             search_files_tool,
             sakura_tool,
-            fetch_url_tool,
+            None,
             diff_tool=None,
         )
+        # web_search / fetch_url 按配置动态填充，与 _refresh_runtime_config 复用同一逻辑
+        self.tool_handler.apply_web_tool_settings(settings)
         self.tool_manager = ToolManager()
 
         # 初始化上下文压缩
@@ -129,6 +110,124 @@ class AIReviewer:
         # 存储工具定义（用于向后兼容）
         self.tools = self.tool_manager.get_all_tools_definitions()
 
+    def _refresh_runtime_config(self) -> None:
+        """刷新不应被长生命周期审查器固化的运行时配置。"""
+        settings = get_settings()
+        self.enable_compression = settings.enable_context_compression
+        self.compression_threshold = settings.context_compression_threshold
+        self.keep_rounds = settings.context_compression_keep_rounds
+        self.context_compressor.keep_rounds = self.keep_rounds
+
+        self.tool_handler.apply_web_tool_settings(settings)
+
+    def _refresh_ai_clients(self) -> None:
+        """刷新动态 AI 配置，避免长生命周期 Worker 持有旧凭据。"""
+        settings = get_settings()
+        main_config = (settings.openai_api_base, settings.openai_api_key)
+        if self._ai_client_config != main_config:
+            self.api_client = AIApiClient(
+                base_url=settings.openai_api_base,
+                api_key=settings.openai_api_key,
+            )
+            self._ai_client_config = main_config
+
+        # summary_model 不纳入 summary_config 元组：model 是每次调用的入参
+        # （call_with_retry(model=...)），与客户端凭据无关，仅在此刷新属性即可，
+        # 避免 model 变化时重建客户端；凭据变化仍由下方元组比较触发重建。
+        self.summary_model = settings.summary_model or settings.openai_model
+        summary_uses_main = (
+            not settings.summary_api_base and not settings.summary_api_key
+        )
+        summary_config = (
+            "main",
+            main_config,
+        ) if summary_uses_main else (
+            "custom",
+            settings.summary_api_base or settings.openai_api_base,
+            settings.summary_api_key or settings.openai_api_key,
+        )
+        if self._summary_client_config != summary_config:
+            if summary_uses_main:
+                self.summary_api_client = self.api_client
+            else:
+                self.summary_api_client = AIApiClient(
+                    base_url=settings.summary_api_base or settings.openai_api_base,
+                    api_key=settings.summary_api_key or settings.openai_api_key,
+                )
+            self._summary_client_config = summary_config
+
+        if hasattr(self, "context_compressor"):
+            self.context_compressor.api_client = self.summary_api_client
+            self.context_compressor.model = self.summary_model
+        if hasattr(self, "label_recommender"):
+            self.label_recommender.api_client = self.summary_api_client
+            self.label_recommender.model = self.summary_model
+
+    async def _parse_or_repair_review(
+        self,
+        review_text: str,
+        messages: List[Dict[str, Any]],
+        strategy: str,
+        tracker: TokenTracker,
+        event_callback: Optional[Callable[[str, Dict[str, Any]], Coroutine]] = None,
+    ) -> Dict[str, Any]:
+        """Parse a final review and make one format-only repair attempt if needed."""
+        try:
+            return self.result_parser.parse_review_result(review_text, strategy)
+        except ReviewProtocolError as first_error:
+            stripped = review_text.strip()
+            logger.warning(
+                "审查协议解析失败，尝试修复一次: {} | length={} prefix={!r} suffix={!r}",
+                first_error,
+                len(review_text),
+                stripped[:80],
+                stripped[-80:],
+            )
+
+        system_message = next(
+            (message for message in messages if message.get("role") == "system"),
+            None,
+        )
+        repair_messages = [
+            *([system_message] if system_message else []),
+            {"role": "assistant", "content": review_text},
+            {"role": "user", "content": REPAIR_INSTRUCTION},
+        ]
+        try:
+            settings = get_settings()
+            response = await self.api_client.call_with_retry(
+                model=settings.openai_model,
+                messages=repair_messages,
+                temperature=0,
+            )
+            tracker.accumulate(response)
+            repaired_text = response.choices[0].message.content or ""
+            if event_callback:
+                try:
+                    await event_callback(
+                        "message",
+                        {"role": "assistant", "content": repaired_text},
+                    )
+                except Exception as exc:
+                    logger.warning("event_callback failed: {}", exc)
+            result = self.result_parser.parse_review_result(repaired_text, strategy)
+            original_finding_count = sum(
+                line.strip() == "<FINDING>" for line in review_text.splitlines()
+            )
+            repaired_finding_count = len(result["comments"]) + len(
+                result["inline_comments"]
+            )
+            if repaired_finding_count != original_finding_count:
+                logger.warning(
+                    "审查协议修复后的 finding 数量发生变化: original_tags={} repaired_valid={}",
+                    original_finding_count,
+                    repaired_finding_count,
+                )
+            return result
+        except Exception as repair_error:
+            logger.error("审查协议修复失败，降级为人工复审: {}", repair_error)
+            return safe_protocol_failure(repair_error)
+
     async def review_pr(self, context: Dict[str, Any], strategy: str) -> Dict[str, Any]:
         """审查PR（标准模式，不使用工具）
 
@@ -140,6 +239,8 @@ class AIReviewer:
             审查结果字典
         """
         try:
+            self._refresh_ai_clients()
+            self._refresh_runtime_config()
             logger.info("开始AI审查，策略: {}", strategy)
 
             settings = get_settings()
@@ -160,20 +261,27 @@ class AIReviewer:
                 context, strategy, include_tools=False
             )
 
+            messages = [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_message},
+            ]
+
             # 调用AI API
             response = await self.api_client.call_with_retry(
                 model=settings.openai_model,
-                messages=[
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": user_message},
-                ],
+                messages=messages,
                 temperature=settings.openai_temperature,
             )
             tracker.accumulate(response)
 
             # 解析结果
             review_text = response.choices[0].message.content
-            result = self.result_parser.parse_review_result(review_text, strategy)
+            result = await self._parse_or_repair_review(
+                review_text,
+                messages,
+                strategy,
+                tracker,
+            )
             result["token_usage"] = tracker.to_dict()
 
             logger.info("AI审查完成，策略: {}", strategy)
@@ -258,7 +366,13 @@ class AIReviewer:
                         })
                     except Exception as exc:
                         logger.warning("event_callback failed: {}", exc)
-                result = self.result_parser.parse_review_result(review_text, strategy)
+                result = await self._parse_or_repair_review(
+                    review_text,
+                    messages,
+                    strategy,
+                    tracker,
+                    event_callback,
+                )
                 result["token_usage"] = tracker.to_dict()
                 logger.info(
                     "AI审查完成（使用了{}轮对话），策略: {}",
@@ -390,8 +504,8 @@ class AIReviewer:
             {
                 "role": "user",
                 "content": (
-                    "已达到最大工具调用次数，请基于你当前已掌握的所有信息，"
-                    "立即返回最终的代码审查结果。"
+                    "Finalize the review now using the system output contract and the "
+                    "evidence already gathered. Do not call more tools."
                 ),
             }
         )
@@ -402,7 +516,13 @@ class AIReviewer:
         )
         tracker.accumulate(last_response)
         review_text = last_response.choices[0].message.content or ""
-        result = self.result_parser.parse_review_result(review_text, strategy)
+        result = await self._parse_or_repair_review(
+            review_text,
+            messages,
+            strategy,
+            tracker,
+            event_callback,
+        )
         result["token_usage"] = tracker.to_dict()
         return result
 
@@ -429,6 +549,8 @@ class AIReviewer:
         Returns:
             审查结果字典
         """
+        self._refresh_ai_clients()
+        self._refresh_runtime_config()
         if self.tool_handler.fetch_url_tool:
             await self.tool_handler.fetch_url_tool.reset_session()
         try:
@@ -570,6 +692,8 @@ class AIReviewer:
             审查结果字典
         """
         try:
+            self._refresh_ai_clients()
+            self._refresh_runtime_config()
             settings = get_settings()
             strategy_config_data = get_strategy_config().get_strategy(strategy)
             system_prompt = strategy_config_data.get("prompt", "")
@@ -621,6 +745,8 @@ class AIReviewer:
         Returns:
             推荐标签列表，格式：[{"name": str, "confidence": float, "reason": str}]
         """
+        self._refresh_ai_clients()
+        self._refresh_runtime_config()
         return await self.label_recommender.recommend_labels(
             context, available_labels, pr_info, existing_labels=existing_labels
         )

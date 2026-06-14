@@ -369,14 +369,13 @@ class CodeIndexService:
                         cleaned_count += 1
                         logger.debug("清理已删除文件的索引: {}", indexed_file.file_path)
                     except Exception as e:
-                        logger.error(
-                            f"清理文件索引失败 ({indexed_file.file_path}): {e}"
-                        )
+                        logger.error("清理文件索引失败 ({}): {}", indexed_file.file_path, e)
 
             if cleaned_count > 0:
                 logger.info(
-                    f"仓库 {repo_full_name} 差异清理完成: "
-                    f"清理了 {cleaned_count} 个已删除文件的索引"
+                    "仓库 {} 差异清理完成: 清理了 {} 个已删除文件的索引",
+                    repo_full_name,
+                    cleaned_count,
                 )
 
             # 更新索引状态

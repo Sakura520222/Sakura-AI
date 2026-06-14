@@ -8,7 +8,7 @@
 
 [English](README_EN.md) | **中文**
 
-[![Version](https://img.shields.io/badge/Version-2.12.1-blue.svg)](https://github.com/Sakura520222/Sakura-AI-Reviewer/releases)
+[![Version](https://img.shields.io/badge/Version-2.12.2-blue.svg)](https://github.com/Sakura520222/Sakura-AI-Reviewer/releases)
 [![Python](https://img.shields.io/badge/Python-3.11+-blue.svg)](https://www.python.org/)
 [![FastAPI](https://img.shields.io/badge/FastAPI-Latest-green.svg)](https://fastapi.tiangolo.com/)
 [![License](https://img.shields.io/badge/License-AGPLv3-yellow.svg)](LICENSE)
@@ -33,6 +33,13 @@
 
 ## ✨ 核心特性
 
+### 2.12.2 更新亮点
+
+- **标签化审查协议**：主 PR 审查器改用严格的行式 `<SAKURA_REVIEW>` 信封协议作为输出契约，统一替换旧的 JSON 块 / emoji / 分数正则解析；新增信封校验（字段顺序与唯一性、版本与枚举、分数范围）并设严重等级分数上限（critical ≤ 3、major ≤ 6）；首次响应无效时在 temperature 0、无工具条件下做一次格式修复重试，二次失败则降级为不带分数与发现的安全评论，避免误批准或误低分拒绝。详见 [审查协议规范](docs/PR_REVIEW_PROTOCOL.md)。
+- **AI 凭证运行时刷新**：AIReviewer / IssueAnalyzer / SakuraMemoryService 新增 `_refresh_ai_client`，运行时自动校验并刷新 AI 客户端凭证，WebUI 配置变更即时生效；Web Search 与 Fetch URL 工具改为通过 ToolHandler 统一动态加载，减少冗余初始化。
+- **Agent Team 工作区与 Live View 增强**：WebUI 暴露 worktree 列表 / 详情 / 删除接口（含文件数、体积、修改时间），任务列表与详情页展示分支信息和 worktree 数量；Live View 改为后端驱动的 `can_send_prompt` 判定并展示初始输入，支持对 completed / waiting_human 终态任务的可恢复跟进；PR 审查反馈新增 branch + 源 PR 两阶段匹配。
+- **支付链路健壮性**：各支付网关 webhook 直接基于事件订单号处理，`cancel_expired_order` 幂等化（订单不存在视为成功），仅在取消成功时提交事务。
+
 ### 审查能力
 
 - **AI 推理模式**：利用 AI 推理能力进行深度代码分析，主动调用工具查看项目结构和任意文件
@@ -42,6 +49,7 @@
 - **结构化审查报告**：整体评分 + 分类问题（🔴严重/🟡重要/💡优化）+ `<details>` 折叠详情
 - **增量审查学习**：AI 自动总结历史审查记录，识别评分趋势和问题热点，逐步提升审查质量
 - **智能审查批准**：基于 AI 评分自动决策 APPROVE / REQUEST_CHANGES / COMMENT
+- **严格审查输出契约**：审查器输出受严格信封协议约束并经字段校验与严重等级分数上限保护，无效响应自动修复或安全降级，杜绝误批准与误低分拒绝
 - **PR 变更自动总结**：AI 自动生成 PR 变更摘要，并在 PR 更新时增量更新总结内容
 - **PR 依赖图生成**：支持 AI 分析与静态 import 分析双模式，生成 Mermaid 格式可视化依赖关系图
 - **Token 消耗追踪**：实时追踪审查中所有 AI API 调用的 token 消耗量与预估成本
@@ -84,11 +92,13 @@
 - **超级管理员手动启动**：从 Issue 分析和仓库扫描发现中筛选候选任务，支持自然语言描述筛选条件，按需启动自动修复流程
 - **手动 Issue 创建任务**：支持粘贴 GitHub Issue 链接或输入 `owner/repo#123`，验证后直接创建 Agent 修复任务
 - **Issue 评论委派**：仓库管理员/写权限协作者可在已分析 Issue 或扫描报告 Issue 中评论 `/agent` 创建修复任务，可附加 `base:<branch>` 指定基础分支
+- **PR 评论一键修复**：在 PR 审查评论中发送 `/agent`，基于该 PR 的审查意见自动创建 Agent 修复任务，新开独立修复分支并提交修复 PR；同一 PR 仅允许一个 `/agent` 任务（支持多轮迭代），可附加 `base:<branch>` 指定基础分支
+- **多分支并行工作区**：每个 Agent 任务使用独立 Git worktree 隔离，支持同一仓库多个任务并行执行，互不干扰
 - **普通用户仓库权限控制**：非管理员只能操作自己名下仓库，且仓库必须匹配 `agent_team_repo_allowlist`；任务创建、重试和 `/agent` 委派均消耗独立 Agent 配额
 - **智能候选筛选**：自动去重、过滤已关闭 Issue、按评分排序，支持 AI 自然语言筛选匹配最合适的候选任务
 - **双 Agent 协作**：内置全栈专家负责计划与代码修改，专业审查负责推送前质量复核
 - **上下文压缩与任务恢复**：长任务自动压缩历史上下文，并持久化会话与消息检查点，支持失败后继续处理
-- **独立 Git 工作区**：在 `agent_team_workspace_root` 下 clone/fetch/checkout 专用分支，避免污染服务运行目录
+- **独立 Git 工作区**：在 `agent_team_workspace_root` 下使用 base checkout + per-task Git worktree 隔离，每个任务独立分支，避免污染服务运行目录
 - **受控工具执行**：文件读写、搜索、shell 验证命令均限制在工作区内，验证命令受黑名单控制（阻止危险命令，允许其余命令）
 - **自动依赖与验证**：可自动检测并安装 `pyproject.toml` / `requirements.txt` 依赖，随后运行白名单内测试或 lint 命令
 - **Sakura 知识集成**：Agent 可通过专用工具浏览和读取 `.sakura/` 知识目录与反思文件，利用项目积累的审查经验辅助代码修复
@@ -100,6 +110,7 @@
 - **目标分支选择**：创建任务时支持选择目标分支（develop/main 等），灵活控制合入方向
 - **手动 Issue 任务预览/编辑**：WebUI 中支持预览和编辑 Issue 分析结果后再创建 Agent 任务
 - **PR 创建闭环**：支持 AI 生成 Conventional Commits 风格 PR 标题、描述和提交信息，创建 Draft PR，并通过 Sakura PR 审查与人工反馈继续迭代；不会自动合并 PR
+  - 支持两种任务来源：Issue 分析/扫描报告（`/agent` Issue 评论）和 PR 审查意见（`/agent` PR 评论，`source_type=pr_review`）
   - Agent Team 初始创建的是 Draft PR；Draft opened webhook 不会触发 Sakura PR Review
   - 当 Draft PR 被标记为 Ready for review 后，GitHub `ready_for_review` webhook 会自动触发 Sakura PR Review
   - Bot 自己创建的 PR 在 GitHub 侧只能发表普通评论；Agent 闭环使用 Sakura 内部结构化审查结果判定是否继续
@@ -283,6 +294,7 @@ WebUI：`https://your-domain.com/`
 - **自动打标**：AI 推荐标签，高置信度自动应用到 Issue
 - **手动触发**：在 Issue 中评论 `/analyze`
 - **Agent 委派**：仓库管理员或写权限协作者可在已分析 Issue 或扫描报告 Issue 中评论 `/agent`，将问题交给 Agent 专家团队处理；可使用 `/agent base:develop` 指定基础分支
+- **PR /agent 一键修复**：在 PR 审查页面评论 `/agent`，基于该 PR 审查意见创建 Agent 修复任务，自动新开修复分支并提交修复 PR；同一源 PR 仅允许一个 `/agent` 任务（支持多轮迭代闭环）
 - **重复检测**：自动识别重复 Issue 并关联已有 Issue
 
 ### WebUI 管理
@@ -464,6 +476,7 @@ Sakura-AI-Reviewer/
 |-----------------------------------------------------|-------------------------|
 | [Telegram Bot 集成指南](docs/TELEGRAM_SETUP.md)         | Bot 设置、权限体系、命令参考        |
 | [审查批准功能](docs/APPROVAL_FEATURE_SUMMARY.md)          | 智能审查批准系统详细说明            |
+| [审查协议规范](docs/PR_REVIEW_PROTOCOL.md)                | `<SAKURA_REVIEW>` 标签化审查输出协议、字段校验与修复降级 |
 | [手动审查功能](docs/MANUAL_REVIEW_FEATURE.md)             | 超级管理员手动触发审查             |
 | [模型上下文管理](docs/MODEL_CONTEXT_FEATURE.md)            | AI 模型上下文和压缩功能           |
 | [PR 功能指南](docs/PR_FEATURES_GUIDE.md)                   | PR 变更总结与依赖图配置说明        |

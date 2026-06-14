@@ -314,7 +314,12 @@ class FullStackExpertAgent:
                 target_model=config.model,
                 compressor_model=config.summary_model,
             ).build_model_messages(self.messages, token_tracker)
-            await _publish_ai_request("fullstack", round_num)
+            await _publish_ai_request(
+                "fullstack",
+                round_num,
+                task_id=self.checkpoint.task_id if self.checkpoint else None,
+                session_id=self.session_id,
+            )
             response = await client.call_with_retry(
                 messages=model_messages,
                 model=config.model,
@@ -531,14 +536,24 @@ def build_fullstack_user_message(
     return "".join(parts)
 
 
-async def _publish_ai_request(role: str, round_num: int) -> None:
+async def _publish_ai_request(
+    role: str,
+    round_num: int,
+    task_id: int | None = None,
+    session_id: int | None = None,
+) -> None:
     """发布 AI 请求 SSE 事件（延迟导入避免循环依赖）。"""
     try:
         from backend.webui.sse import publish_event
 
-        await publish_event("agent:ai_request", {
+        payload: dict[str, Any] = {
             "role": role,
             "round_num": round_num,
-        })
+        }
+        if task_id is not None:
+            payload["task_id"] = task_id
+        if session_id is not None:
+            payload["session_id"] = session_id
+        await publish_event("agent:ai_request", payload)
     except Exception:
         pass

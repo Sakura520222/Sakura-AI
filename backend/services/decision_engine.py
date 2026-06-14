@@ -6,6 +6,7 @@ from loguru import logger
 from backend.models.database import ReviewDecision
 from backend.core.config import get_settings, get_strategy_config
 from backend.core.language_utils import output_text
+from backend.services.ai_reviewer.constants import SEVERITY_EMOJI
 
 
 class DecisionEngine:
@@ -94,17 +95,17 @@ class DecisionEngine:
             if not policy.get("enabled", False):
                 return (ReviewDecision.COMMENT, "自动批准功能未启用，仅提供评论")
 
-            # 提取评分和问题统计（使用ScoreExtractor支持fallback）
-            from backend.services.score_extractor import score_extractor
-
+            # 主 PR 审查只信任已通过结构化协议校验的评分。
             score = review_result.get("overall_score")
             if score is None:
-                logger.warning("overall_score为None，尝试从summary提取评分")
-                score = score_extractor.extract_score(review_result)
-
-            if score is None:
-                logger.warning("无法提取评分，使用默认值0")
-                score = 0
+                logger.warning("缺少已验证评分，降级为人工复审")
+                return (
+                    ReviewDecision.COMMENT,
+                    output_text(
+                        "缺少有效的结构化评分，建议人工复审",
+                        "The structured score is missing or invalid; manual review is required",
+                    ),
+                )
 
             issues = review_result.get("issues", {})
 
@@ -118,10 +119,6 @@ class DecisionEngine:
                 f"critical={critical_count}, major={major_count}, "
                 f"minor={minor_count}, suggestions={suggestion_count}"
             )
-
-            # 如果没有评分，记录警告
-            if review_result.get("overall_score") is None:
-                logger.warning("AI未返回评分，使用默认值0进行决策")
 
             # AI 建议决策路径
             ai_decision = review_result.get("ai_decision")
@@ -276,6 +273,46 @@ class DecisionEngine:
             ),
         )
 
+    @staticmethod
+    def _format_inline_comment_section(inline_comments: Any) -> str:
+        """Format mirrored inline comments without trusting their shape.
+
+        不渲染 section 标题：行内评论并入 <details> 展开块后，每条评论自带
+        的 #### 标题已足够定位 / No section heading is rendered; each
+        comment's own #### heading suffices once folded into <details>.
+        """
+        if not inline_comments:
+            return ""
+        if not isinstance(inline_comments, list):
+            inline_comments = [inline_comments]
+
+        inline_parts = []
+
+        for comment in inline_comments:
+            if isinstance(comment, dict):
+                file_path = str(comment.get("file_path") or "unknown")
+                end_line = comment.get("line_number")
+                start_line = comment.get("start_line")
+                if start_line and end_line and start_line != end_line:
+                    location = f"{file_path}:{start_line}-{end_line}"
+                elif end_line:
+                    location = f"{file_path}:{end_line}"
+                else:
+                    location = file_path
+                severity = str(comment.get("severity", "suggestion"))
+                comment_body = str(comment.get("body", "")).strip()
+            else:
+                location = "unknown"
+                severity = "suggestion"
+                comment_body = str(comment).strip()
+
+            emoji = SEVERITY_EMOJI.get(severity.lower(), "💡")
+            inline_parts.append(
+                f"#### {emoji} `{location}` · `{severity}`\n\n{comment_body}"
+            )
+
+        return "\n\n".join(inline_parts)
+
     def format_review_body(
         self,
         decision: ReviewDecision,
@@ -299,13 +336,29 @@ class DecisionEngine:
         Returns:
             格式化后的评论内容
         """
+        # 解析最终输出语言：get_settings 失败时回退到入参或默认值 /
+        # Resolve the final output language, falling back to the argument
+        # or default when get_settings is unavailable.
         try:
-            # 根据 output_language 选择模板 / Select template based on output_language
             output_lang = (
                 output_language
                 if output_language is not None
                 else get_settings().output_language
             )
+        except Exception:
+            output_lang = output_language or "zh-CN"
+
+        # 预先格式化行内评论：正常路径并入 <details> 展开块，降级路径在
+        # except 中追加，确保镜像始终不丢失 / Inline comments are pre-formatted
+        # so they can be folded into the <details> block on the happy path and
+        # appended on the fallback path without losing the mirror.
+        inline_comments = review_result.get(
+            "review_body_inline_comments",
+            review_result.get("inline_comments", []),
+        )
+        inline_section = self._format_inline_comment_section(inline_comments)
+        try:
+            # 根据 output_language 选择模板 / Select template based on output_language
             if output_lang == "en":
                 templates = self.policy.get("review_templates_en", {})
             else:
@@ -319,14 +372,10 @@ class DecisionEngine:
             )
             template = templates.get(template_key, fallback_template)
 
-            # 准备变量（改进评分显示逻辑）
+            # 展示层与决策层一致：只信任协议校验后的评分。
             score = review_result.get("overall_score")
-            if score is None or score == "N/A":
-                # 尝试提取评分（最后一道防线）
-                from backend.services.score_extractor import score_extractor
-
-                extracted = score_extractor.extract_score(review_result)
-                score = extracted if extracted is not None else "N/A"
+            if score is None:
+                score = "N/A"
 
             no_summary_text = (
                 "No summary available" if output_lang == "en" else "暂无摘要"
@@ -337,10 +386,20 @@ class DecisionEngine:
                 else "查看详细审查报告"
             )
             summary = review_result.get("summary", no_summary_text)
-            if summary.strip():
+            # 行内评论并入展开块，与详细摘要一同折叠展示，避免详细内容
+            # 在 body 顶层拉长评论 / Inline comments are folded into the
+            # <details> block so the verbose content stays collapsed.
+            if summary.strip() and inline_section:
+                detail_inner = f"{summary}\n\n{inline_section}"
+            elif inline_section:
+                detail_inner = inline_section
+            else:
+                detail_inner = summary
+
+            if detail_inner.strip():
                 summary = (
                     f"<details><summary>📋 {view_detail_text}</summary>\n\n"
-                    f"{summary}\n\n"
+                    f"{detail_inner}\n\n"
                     f"</details>"
                 )
 
@@ -348,42 +407,60 @@ class DecisionEngine:
             issues = review_result.get("issues", {})
             comment_parts = []
 
-            # 严重问题：显示标题和具体内容（最多3个）
-            if issues.get("critical"):
-                critical_issues = issues["critical"][:3]  # 最多显示3个
-                comment_parts.append(
-                    f"\n### 🔴 严重问题 ({len(issues['critical'])}个)\n"
+            section_config = (
+                (
+                    "critical",
+                    SEVERITY_EMOJI["critical"],
+                    "Critical Issues" if output_lang == "en" else "严重问题",
+                    "issues" if output_lang == "en" else "个",
+                ),
+                (
+                    "major",
+                    SEVERITY_EMOJI["major"],
+                    "Major Issues" if output_lang == "en" else "重要问题",
+                    "issues" if output_lang == "en" else "个",
+                ),
+                (
+                    "minor",
+                    SEVERITY_EMOJI["minor"],
+                    "Minor Issues" if output_lang == "en" else "次要问题",
+                    "issues" if output_lang == "en" else "个",
+                ),
+                (
+                    "suggestions",
+                    SEVERITY_EMOJI["suggestions"],
+                    "Suggestions" if output_lang == "en" else "优化建议",
+                    "suggestions" if output_lang == "en" else "条",
+                ),
+            )
+
+            for key, icon, title, unit in section_config:
+                values = [
+                    str(issue).strip()
+                    for issue in issues.get(key, [])
+                    if str(issue).strip()
+                ]
+                if not values:
+                    continue
+
+                count_text = (
+                    f"{len(values)} {unit}"
+                    if output_lang == "en"
+                    else f"{len(values)}{unit}"
                 )
-                for issue in critical_issues:
-                    # 截断过长的描述
-                    issue_str = issue[:150] + "..." if len(issue) > 150 else issue
-                    comment_parts.append(f"- {issue_str}\n")
-                if len(issues["critical"]) > 3:
-                    comment_parts.append(
-                        f"- ...还有 {len(issues['critical']) - 3} 个严重问题\n"
+                comment_parts.append(f"\n### {icon} {title} ({count_text})\n")
+                for issue in values[:3]:
+                    issue_text = issue[:150] + "..." if len(issue) > 150 else issue
+                    comment_parts.append(f"- {issue_text}\n")
+
+                remaining = len(values) - 3
+                if remaining > 0:
+                    remaining_text = (
+                        f"- ...and {remaining} more\n"
+                        if output_lang == "en"
+                        else f"- ...还有 {remaining} 条\n"
                     )
-
-            # 重要问题：显示标题和具体内容（最多3个）
-            if issues.get("major"):
-                major_issues = issues["major"][:3]  # 最多显示3个
-                comment_parts.append(f"\n### 🟡 重要问题 ({len(issues['major'])}个)\n")
-                for issue in major_issues:
-                    issue_str = issue[:150] + "..." if len(issue) > 150 else issue
-                    comment_parts.append(f"- {issue_str}\n")
-                if len(issues["major"]) > 3:
-                    comment_parts.append(
-                        f"- ...还有 {len(issues['major']) - 3} 个重要问题\n"
-                    )
-
-            # 次要问题：只显示标题
-            if issues.get("minor"):
-                comment_parts.append(f"\n### 🔵 次要问题 ({len(issues['minor'])}个)\n")
-
-            # 优化建议：只显示标题
-            if issues.get("suggestions"):
-                comment_parts.append(
-                    f"\n### 💡 优化建议 ({len(issues['suggestions'])}条)\n"
-                )
+                    comment_parts.append(remaining_text)
 
             comment_summary = "\n".join(comment_parts)
 
@@ -397,6 +474,13 @@ class DecisionEngine:
                 **(template_vars or {}),
             )
 
+            # 模板未渲染 {summary} 时 <details> 块不存在，行内评论回退到
+            # body 末尾追加，保证镜像始终不丢失 / When the template omits
+            # {summary}, no <details> block is rendered; fall back to
+            # appending inline comments so the mirror is never lost.
+            if inline_section and "</details>" not in body:
+                body += "\n\n" + inline_section
+
             # 如果有标签结果，添加到评论末尾
             if label_results:
                 from backend.services.label_service import label_service
@@ -404,24 +488,24 @@ class DecisionEngine:
                 label_section = label_service.format_label_results(label_results)
                 body += "\n\n" + label_section
 
-            return body
-
         except Exception as e:
             logger.error(f"格式化审查评论失败: {e}")
-            # 返回简单格式（尝试提取评分）
-            from backend.services.score_extractor import score_extractor
-
             score = review_result.get("overall_score")
-            if score is None:
-                score = score_extractor.extract_score(review_result)
             score_display = f"{score}/10" if score is not None else "N/A"
 
-            return (
+            body = (
                 f"**AI审查决策**: {decision.value}\n\n"
                 f"**理由**: {decision_reason}\n\n"
                 f"**评分**: {score_display}\n\n"
                 f"{review_result.get('summary', '')}"
             )
+            # 降级路径无法构造 <details> 块，行内评论直接追加，确保不丢失 /
+            # On the fallback path there is no <details> block to fold into,
+            # so inline comments are appended directly to preserve the mirror.
+            if inline_section:
+                body += "\n\n" + inline_section
+
+        return body
 
 
 # 全局实例

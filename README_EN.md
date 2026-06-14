@@ -8,7 +8,7 @@
 
 **English** | [中文](README.md)
 
-[![Version](https://img.shields.io/badge/Version-2.12.1-blue.svg)](https://github.com/Sakura520222/Sakura-AI-Reviewer/releases)
+[![Version](https://img.shields.io/badge/Version-2.12.2-blue.svg)](https://github.com/Sakura520222/Sakura-AI-Reviewer/releases)
 [![Python](https://img.shields.io/badge/Python-3.11+-blue.svg)](https://www.python.org/)
 [![FastAPI](https://img.shields.io/badge/FastAPI-Latest-green.svg)](https://fastapi.tiangolo.com/)
 [![License](https://img.shields.io/badge/License-AGPLv3-yellow.svg)](LICENSE)
@@ -33,6 +33,13 @@
 
 ## ✨ Core Features
 
+### 2.12.2 Highlights
+
+- **Tagged Review Protocol**: The main PR reviewer now adopts a strict line-oriented `<SAKURA_REVIEW>` envelope protocol as its output contract, replacing the legacy JSON-block / emoji / score-regex parsing paths; envelope validation (field order and uniqueness, version and enums, score range) is enforced with severity score caps (critical ≤ 3, major ≤ 6); an invalid first response triggers a single format-only repair retry at temperature 0 without tools, and a second failure degrades to a safe comment with no score or findings to block accidental approvals and erroneous low-score rejections. See the [Review Protocol spec](docs/PR_REVIEW_PROTOCOL.md).
+- **Runtime AI Credential Refresh**: AIReviewer / IssueAnalyzer / SakuraMemoryService gain `_refresh_ai_client`, which validates and refreshes AI client credentials at runtime so WebUI config changes take effect immediately; Web Search and Fetch URL tools are now loaded dynamically through a unified ToolHandler, reducing redundant initialization.
+- **Agent Team Workspace & Live View Enhancements**: The WebUI exposes worktree list / detail / delete endpoints (with file count, size, and mtime), and task list/detail pages now show branch info and worktree counts; Live View switches to backend-driven `can_send_prompt` decisions with initial input display, and supports resumable follow-ups for completed / waiting_human terminal tasks; PR review feedback adds a two-phase branch + source-PR fallback match.
+- **Payment Robustness**: Payment gateway webhooks now operate directly off the event order number, `cancel_expired_order` is idempotent (a missing order is treated as success), and the transaction is committed only when cancellation succeeds.
+
 ### Review Capabilities
 
 - **AI Reasoning Mode**: Leverages AI reasoning for in-depth code analysis, proactively invoking tools to inspect project structure and arbitrary files
@@ -42,6 +49,7 @@
 - **Structured Review Reports**: Overall score + categorized issues (🔴Critical / 🟡Important / 💡Suggestion) + `<details>` collapsible sections
 - **Incremental Review Learning**: AI automatically summarizes historical review records, identifies scoring trends and issue hotspots, continuously improving review quality
 - **Smart Review Approval**: Automatically decides APPROVE / REQUEST_CHANGES / COMMENT based on AI scores
+- **Strict Review Output Contract**: Reviewer output is governed by a strict envelope protocol with field validation and severity score caps; invalid responses are auto-repaired or safely degraded to prevent accidental approvals and erroneous low-score rejections
 - **PR Change Summary**: AI auto-generates PR change summaries with incremental updates when the PR is updated
 - **PR Dependency Graph**: Supports both AI analysis and static import analysis modes to generate Mermaid-format visual dependency graphs
 - **Token Consumption Tracking**: Real-time tracking of token usage and estimated costs across all AI API calls during review
@@ -84,11 +92,13 @@
 - **Super-admin Manual Launch**: Select candidate tasks from Issue analysis and repository scan findings, with natural language filtering, and start automated fix workflows on demand
 - **Manual Issue Task Creation**: Paste a GitHub Issue URL or enter `owner/repo#123`; the system validates it and creates an Agent fix task directly
 - **Issue Comment Delegation**: Repository admins or write collaborators can comment `/agent` on analyzed Issues or scan report Issues to create fix tasks, optionally adding `base:<branch>` to select the base branch
+- **PR Comment One-Click Fix**: Comment `/agent` on a PR review to create an Agent fix task based on that PR's review findings, automatically creating a new fix branch and submitting a fix PR; only one `/agent` task per source PR (supports multi-round iteration)
+- **Multi-branch Parallel Workspaces**: Each Agent task uses an isolated Git worktree, supporting multiple concurrent tasks in the same repository without interference
 - **Non-admin Repository Access Control**: Non-admin users may only operate repositories they own and that match `agent_team_repo_allowlist`; task creation, retry, and `/agent` delegation consume dedicated Agent quotas
 - **Smart Candidate Filtering**: Automatic deduplication, closed-issue filtering, score-based sorting, and AI natural language selection to match the most suitable candidate tasks
 - **Two-agent Collaboration**: A full-stack expert plans and edits code, while a professional reviewer performs pre-push quality review
 - **Context Compression & Resume**: Long-running tasks compress historical context automatically and persist conversation/message checkpoints for recovery
-- **Isolated Git Workspaces**: Clone/fetch/checkout dedicated branches under `agent_team_workspace_root` without polluting the service runtime directory
+- **Isolated Git Workspaces**: Uses base checkout + per-task Git worktree isolation under `agent_team_workspace_root`, each task on its own branch, without polluting the service runtime directory
 - **Controlled Tool Execution**: File operations, search, and shell validation commands are scoped to the workspace; validation commands are controlled by a blacklist (blocking dangerous commands while allowing the rest)
 - **Dependency Auto-install & Validation**: Can detect and install dependencies from `pyproject.toml` / `requirements.txt`, then run allowlisted tests or lint commands
 - **Sakura Knowledge Integration**: Agents can browse and read `.sakura/` knowledge directory and reflection files via dedicated tools, leveraging accumulated review experience to assist code fixes
@@ -100,6 +110,7 @@
 - **Base Branch Selection**: Choose the target branch (develop/main, etc.) when creating tasks for flexible merge direction control
 - **Manual Issue Task Preview/Edit**: Preview and edit Issue analysis results in WebUI before creating an Agent task
 - **PR Creation Loop**: Supports AI-generated Conventional Commits-style PR titles, descriptions, and commit messages, Draft PR creation, then iterates through Sakura PR Review and human feedback; PRs are never merged automatically
+  - Supports two task sources: Issue analysis/scan reports (`/agent` Issue comment) and PR review findings (`/agent` PR comment, `source_type=pr_review`)
   - Agent Team initially opens a Draft PR; the draft opened webhook does not start Sakura PR Review
   - When the Draft PR becomes Ready for review, GitHub `ready_for_review` webhook automatically starts Sakura PR Review
   - Because the PR is created by the bot itself, GitHub only receives ordinary comments; the Agent loop uses Sakura internal structured review results
@@ -284,6 +295,7 @@ Create a PR in a repository with the App installed, and the AI will automaticall
 - **Auto-labeling**: AI recommends labels; high-confidence labels are applied automatically
 - **Manual trigger**: Comment `/analyze` in an Issue
 - **Agent delegation**: Repository admins or write collaborators can comment `/agent` on analyzed Issues or scan report Issues to hand the work to Agent Expert Team; use `/agent base:develop` to choose the base branch
+- **PR /agent One-Click Fix**: Comment `/agent` on a PR review page to create an Agent fix task based on that PR's review findings, automatically creating a new fix branch and submitting a fix PR; only one `/agent` task per source PR (supports multi-round closed-loop iteration)
 - **Duplicate detection**: Automatically identifies duplicate Issues and links to existing ones
 
 ### WebUI Management
@@ -465,6 +477,7 @@ Graph data is stored in `.understand-anything/knowledge-graph.json` and supports
 |----------------------------------------------------------------|-------------------------------------------------|
 | [Telegram Bot Integration Guide](docs/TELEGRAM_SETUP.md)       | Bot setup, permission system, command reference |
 | [Review Approval Feature](docs/APPROVAL_FEATURE_SUMMARY.md)    | Smart review approval system details            |
+| [Review Protocol Spec](docs/PR_REVIEW_PROTOCOL.md)             | `<SAKURA_REVIEW>` tagged review output protocol, field validation, repair & degradation |
 | [Manual Review Feature](docs/MANUAL_REVIEW_FEATURE.md)         | Super admin manual review triggering            |
 | [Model Context Management](docs/MODEL_CONTEXT_FEATURE.md)      | AI model context and compression features       |
 | [PR Features Guide](docs/PR_FEATURES_GUIDE.md)                 | PR change summary and dependency graph configuration |
