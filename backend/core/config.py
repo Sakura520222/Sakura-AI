@@ -731,6 +731,15 @@ class StrategyConfig:
         # 如果没有匹配的策略，使用large策略
         return "large"
 
+    def is_path_skipped(self, target_path: str) -> bool:
+        """判断路径是否命中策略配置的 skip_paths。
+
+        Delegates to :func:`path_matches_skip` for whole-segment matching
+        so ``.git/`` no longer over-matches ``.github``.
+        """
+        skip_paths = self.get_file_filters().get("skip_paths", [])
+        return path_matches_skip(target_path, skip_paths)
+
     def should_skip_file(self, file_path: str) -> bool:
         """判断是否应该跳过该文件"""
         filters = self.get_file_filters()
@@ -741,13 +750,8 @@ class StrategyConfig:
             if file_path.endswith(ext):
                 return True
 
-        # 检查路径
-        skip_paths = filters.get("skip_paths", [])
-        for path in skip_paths:
-            if path in file_path:
-                return True
-
-        return False
+        # 检查路径（完整路径段匹配，避免子串误伤）
+        return self.is_path_skipped(file_path)
 
     def is_code_file(self, file_path: str) -> bool:
         """判断是否为代码文件"""
@@ -799,6 +803,21 @@ def get_settings() -> Settings:
 def get_strategy_config() -> StrategyConfig:
     """获取策略配置单例"""
     return StrategyConfig()
+
+
+def path_matches_skip(target_path: str, skip_paths: list) -> bool:
+    """判断路径是否命中 skip_paths 列表。
+
+    Matches by whole path segment: a config entry like ``.git/`` matches
+    ``.git`` and ``.git/...`` but NOT ``.github`` or ``.gitignore``. This
+    avoids the old ``startswith(".git")`` substring trap that silently
+    swallowed the entire ``.github/`` tree.
+    """
+    for skip_path in skip_paths:
+        norm = skip_path.rstrip("/")
+        if target_path == norm or target_path.startswith(norm + "/"):
+            return True
+    return False
 
 
 def reload_strategy_config() -> StrategyConfig:
