@@ -1433,25 +1433,141 @@ async def _post_issue_comment(
         logger.warning("发送 Issue 评论失败: {}#{} - {}", repo_full_name, issue_number, e)
 
 
+def _parse_agent_base_branch(
+    comment_body: str,
+) -> tuple[str | None, JSONResponse | None]:
+    """解析 ``base:(\\S+)`` 参数。返回 (base_branch, error_response)。
+
+    error_response 非 None 表示分支名校验失败，调用方应直接返回该响应。
+    """
+    base_branch = None
+    branch_match = re.search(r"base:(\S+)", comment_body)
+    if branch_match:
+        base_branch = branch_match.group(1)
+        if ".." in base_branch or not re.match(r"^[a-zA-Z0-9._/\-]+$", base_branch):
+            return None, JSONResponse(
+                content={"status": "error", "reason": f"无效的分支名: {base_branch}"}
+            )
+    return base_branch, None
+
+
+def _is_bot_self_comment(commenter: str) -> bool:
+    """判断是否为 Bot 自身评论（需忽略）。"""
+    bot_username = settings.bot_username
+    return bool(bot_username and commenter == bot_username)
+
+
+async def _check_agent_team_enabled() -> JSONResponse | None:
+    """检查 Agent 团队功能开关。返回错误响应或 None（通过）。"""
+    if not await get_dynamic_config("agent_team_enabled"):
+        return JSONResponse(
+            content={"status": "skipped", "reason": "agent team feature disabled"}
+        )
+    return None
+
+
+async def _check_agent_permission(
+    github_app: "GitHubAppClient",
+    repo_owner: str,
+    repo_name: str,
+    repo_full_name: str,
+    commenter: str,
+    issue_number: int,
+    log_prefix: str = "/agent",
+) -> JSONResponse | None:
+    """校验评论者权限（admin/write）。返回错误响应或 None（通过）。"""
+    permission = await asyncio.to_thread(
+        github_app.check_collaborator_permission,
+        repo_owner,
+        repo_name,
+        commenter,
+    )
+    if permission not in ("admin", "write"):
+        logger.info("{} 权限不足: {} 权限为 {}", log_prefix, commenter, permission)
+        await _post_issue_comment(
+            github_app,
+            repo_owner,
+            repo_name,
+            repo_full_name,
+            issue_number,
+            f"❌ @{commenter}，只有仓库管理员/协作者才能触发 Agent 任务。",
+        )
+        return JSONResponse(
+            content={"status": "denied", "reason": "insufficient permission"}
+        )
+    return None
+
+
+async def _consume_agent_quota_or_cleanup(
+    github_app: "GitHubAppClient",
+    repo_owner: str,
+    repo_name: str,
+    repo_full_name: str,
+    task_id: int,
+    issue_number: int,
+    log_prefix: str = "/agent",
+) -> JSONResponse | None:
+    """消耗仓库所有者 Agent 配额；失败时清理孤儿任务并回复。
+
+    返回 None 表示配额消耗成功；返回 JSONResponse 表示失败（调用方应直接返回）。
+    """
+    async with get_async_session() as session:
+        service = TelegramService(session)
+        ok, reason = await service.check_and_consume_agent_quota(
+            github_username=repo_owner,
+            repo_name=repo_full_name,
+            task_id=task_id,
+        )
+    if ok:
+        return None
+
+    is_unregistered = "未注册" in reason
+    if is_unregistered:
+        reply = f"❌ 仓库所有者 @{repo_owner} 尚未注册，无法使用 Agent 任务。请先注册后再试。"
+    else:
+        reply = f"❌ Agent 配额不足（仓库所有者 @{repo_owner}）：{reason}"
+    logger.warning("{} 配额检查失败: repo_owner={} - {}", log_prefix, repo_owner, reason)
+
+    # 延迟导入：避免 webhook ↔ agent_team_models 循环依赖
+    from backend.models.agent_team_models import AgentTeamTask as _ATT
+
+    try:
+        async with get_async_session() as cleanup_session:
+            await cleanup_session.execute(
+                _ATT.__table__.delete().where(_ATT.id == task_id)
+            )
+            await cleanup_session.commit()
+            logger.info("{} 已清理孤儿任务: task_id={}", log_prefix, task_id)
+    except Exception as cleanup_err:
+        logger.warning(
+            "{} 清理孤儿任务失败: task_id={} - {}", log_prefix, task_id, cleanup_err
+        )
+
+    await _post_issue_comment(
+        github_app, repo_owner, repo_name, repo_full_name, issue_number, reply
+    )
+    return JSONResponse(
+        content={
+            "status": "skipped",
+            "reason": "unregistered" if is_unregistered else "quota exceeded",
+            "detail": reason,
+        }
+    )
+
+
 async def handle_agent_command(payload: Dict[str, Any]) -> JSONResponse:
     """处理 /agent 命令：将已分析的 Issue 委派给 Agent 团队执行"""
     try:
         comment_body = payload.get("comment", {}).get("body", "").strip()
 
         # 解析 base_branch 参数
-        base_branch = None
-        branch_match = re.search(r"base:(\S+)", comment_body)
-        if branch_match:
-            base_branch = branch_match.group(1)
-            if ".." in base_branch or not re.match(r"^[a-zA-Z0-9._/\-]+$", base_branch):
-                return JSONResponse(
-                    content={"status": "error", "reason": f"无效的分支名: {base_branch}"}
-                )
+        base_branch, err = _parse_agent_base_branch(comment_body)
+        if err:
+            return err
 
         # 过滤 Bot 自身评论
-        bot_username = settings.bot_username
         commenter = payload.get("comment", {}).get("user", {}).get("login", "")
-        if bot_username and commenter == bot_username:
+        if _is_bot_self_comment(commenter):
             return JSONResponse(
                 content={"status": "ignored", "reason": "bot self-comment"}
             )
@@ -1476,26 +1592,15 @@ async def handle_agent_command(payload: Dict[str, Any]) -> JSONResponse:
         )
 
         # 功能开关检查
-        if not await get_dynamic_config("agent_team_enabled"):
-            return JSONResponse(
-                content={"status": "skipped", "reason": "agent team feature disabled"}
-            )
+        if err := await _check_agent_team_enabled():
+            return err
 
-        # 权限检查：仅 admin/write 用户可触发（同步 GitHub API，用 to_thread 包装）
+        # 权限检查：仅 admin/write 用户可触发
         github_app = GitHubAppClient()
-        permission = await asyncio.to_thread(
-            github_app.check_collaborator_permission,
-            repo_owner, repo_name, commenter,
-        )
-        if permission not in ("admin", "write"):
-            logger.info("/agent 权限不足: {} 权限为 {}", commenter, permission)
-            await _post_issue_comment(
-                github_app, repo_owner, repo_name, repo_full_name, issue_number,
-                f"❌ @{commenter}，只有仓库管理员/协作者才能触发 Agent 任务。",
-            )
-            return JSONResponse(
-                content={"status": "denied", "reason": "insufficient permission"}
-            )
+        if err := await _check_agent_permission(
+            github_app, repo_owner, repo_name, repo_full_name, commenter, issue_number,
+        ):
+            return err
 
         # 前置校验：检查是否有已完成的 Issue 分析记录，或是否为扫描自动创建的报告 Issue
         # 延迟导入：避免 webhook ↔ database/scan_models 循环依赖
@@ -1638,42 +1743,10 @@ async def handle_agent_command(payload: Dict[str, Any]) -> JSONResponse:
             task_id = task.id
 
         # 仓库所有者配额消耗（任务创建成功后，使用实际 task_id）
-        async with get_async_session() as session:
-            service = TelegramService(session)
-            ok, reason = await service.check_and_consume_agent_quota(
-                github_username=repo_owner,
-                repo_name=repo_full_name,
-                task_id=task_id,
-            )
-            if not ok:
-                is_unregistered = "未注册" in reason
-                if is_unregistered:
-                    reply = f"❌ 仓库所有者 @{repo_owner} 尚未注册，无法使用 Agent 任务。请先注册后再试。"
-                else:
-                    reply = f"❌ Agent 配额不足（仓库所有者 @{repo_owner}）：{reason}"
-                logger.warning("/agent 配额检查失败: repo_owner={} - {}", repo_owner, reason)
-                # 延迟导入：避免 webhook ↔ agent_team_models 循环依赖
-                from backend.models.agent_team_models import AgentTeamTask as _ATT
-
-                try:
-                    async with get_async_session() as cleanup_session:
-                        await cleanup_session.execute(
-                            _ATT.__table__.delete().where(_ATT.id == task_id)
-                        )
-                        await cleanup_session.commit()
-                        logger.info("/agent 已清理孤儿任务: task_id={}", task_id)
-                except Exception as cleanup_err:
-                    logger.warning("/agent 清理孤儿任务失败: task_id={} - {}", task_id, cleanup_err)
-                await _post_issue_comment(
-                    github_app, repo_owner, repo_name, repo_full_name, issue_number, reply,
-                )
-                return JSONResponse(
-                    content={
-                        "status": "skipped",
-                        "reason": "unregistered" if is_unregistered else "quota exceeded",
-                        "detail": reason,
-                    }
-                )
+        if err := await _consume_agent_quota_or_cleanup(
+            github_app, repo_owner, repo_name, repo_full_name, task_id, issue_number,
+        ):
+            return err
 
         # 后台执行任务
         # 延迟导入：避免 webhook ↔ agent_team_worker 循环依赖
@@ -1724,19 +1797,13 @@ async def handle_pr_agent_command(payload: Dict[str, Any]) -> JSONResponse:
         comment_body = payload.get("comment", {}).get("body", "").strip()
 
         # 解析 base_branch 参数（可选）
-        base_branch = None
-        branch_match = re.search(r"base:(\S+)", comment_body)
-        if branch_match:
-            base_branch = branch_match.group(1)
-            if ".." in base_branch or not re.match(r"^[a-zA-Z0-9._/\-]+$", base_branch):
-                return JSONResponse(
-                    content={"status": "error", "reason": f"无效的分支名: {base_branch}"}
-                )
+        base_branch, err = _parse_agent_base_branch(comment_body)
+        if err:
+            return err
 
         # 过滤 Bot 自身评论
-        bot_username = settings.bot_username
         commenter = payload.get("comment", {}).get("user", {}).get("login", "")
-        if bot_username and commenter == bot_username:
+        if _is_bot_self_comment(commenter):
             return JSONResponse(
                 content={"status": "ignored", "reason": "bot self-comment"}
             )
@@ -1761,26 +1828,16 @@ async def handle_pr_agent_command(payload: Dict[str, Any]) -> JSONResponse:
         )
 
         # 功能开关检查
-        if not await get_dynamic_config("agent_team_enabled"):
-            return JSONResponse(
-                content={"status": "skipped", "reason": "agent team feature disabled"}
-            )
+        if err := await _check_agent_team_enabled():
+            return err
 
         # 权限检查
         github_app = GitHubAppClient()
-        permission = await asyncio.to_thread(
-            github_app.check_collaborator_permission,
-            repo_owner, repo_name, commenter,
-        )
-        if permission not in ("admin", "write"):
-            logger.info("/agent PR 权限不足: {} 权限为 {}", commenter, permission)
-            await _post_issue_comment(
-                github_app, repo_owner, repo_name, repo_full_name, pr_number,
-                f"❌ @{commenter}，只有仓库管理员/协作者才能触发 Agent 任务。",
-            )
-            return JSONResponse(
-                content={"status": "denied", "reason": "insufficient permission"}
-            )
+        if err := await _check_agent_permission(
+            github_app, repo_owner, repo_name, repo_full_name, commenter, pr_number,
+            log_prefix="/agent PR",
+        ):
+            return err
 
         # 获取 PR head_sha（供 create_task_from_pr_review 记录）
         def _get_pr_head_sha():
@@ -1813,50 +1870,20 @@ async def handle_pr_agent_command(payload: Dict[str, Any]) -> JSONResponse:
                 logger.warning("/agent PR 创建任务失败: {}", e)
                 await _post_issue_comment(
                     github_app, repo_owner, repo_name, repo_full_name, pr_number,
-                    f"❌ 无法创建 Agent 修复任务：{e}",
+                    "❌ 无法创建 Agent 修复任务，请稍后重试或联系仓库管理员。",
                 )
                 return JSONResponse(
-                    content={"status": "error", "reason": str(e)}
+                    content={"status": "error", "reason": "failed to create agent task"}
                 )
 
             task_id = task.id
 
         # 仓库所有者配额消耗
-        async with get_async_session() as session:
-            service = TelegramService(session)
-            ok, reason = await service.check_and_consume_agent_quota(
-                github_username=repo_owner,
-                repo_name=repo_full_name,
-                task_id=task_id,
-            )
-            if not ok:
-                is_unregistered = "未注册" in reason
-                if is_unregistered:
-                    reply = f"❌ 仓库所有者 @{repo_owner} 尚未注册，无法使用 Agent 任务。请先注册后再试。"
-                else:
-                    reply = f"❌ Agent 配额不足（仓库所有者 @{repo_owner}）：{reason}"
-                logger.warning("/agent PR 配额检查失败: repo_owner={} - {}", repo_owner, reason)
-                from backend.models.agent_team_models import AgentTeamTask as _ATT
-
-                try:
-                    async with get_async_session() as cleanup_session:
-                        await cleanup_session.execute(
-                            _ATT.__table__.delete().where(_ATT.id == task_id)
-                        )
-                        await cleanup_session.commit()
-                        logger.info("/agent PR 已清理孤儿任务: task_id={}", task_id)
-                except Exception as cleanup_err:
-                    logger.warning("/agent PR 清理孤儿任务失败: task_id={} - {}", task_id, cleanup_err)
-                await _post_issue_comment(
-                    github_app, repo_owner, repo_name, repo_full_name, pr_number, reply,
-                )
-                return JSONResponse(
-                    content={
-                        "status": "skipped",
-                        "reason": "unregistered" if is_unregistered else "quota exceeded",
-                        "detail": reason,
-                    }
-                )
+        if err := await _consume_agent_quota_or_cleanup(
+            github_app, repo_owner, repo_name, repo_full_name, task_id, pr_number,
+            log_prefix="/agent PR",
+        ):
+            return err
 
         # 后台执行任务
         from backend.workers.agent_team_worker import submit_agent_team_task

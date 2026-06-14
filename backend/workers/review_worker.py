@@ -157,49 +157,49 @@ class ReviewWorker:
         validated_comments = self.comment_service._validate_inline_comments(
             inline_comments, analysis
         )
-        validated_issue_counts = Counter(
-            (
-                comment.get("severity", "suggestion"),
-                self._inline_comment_issue_title(comment),
-            )
-            for comment in validated_comments
-        )
-        filtered_comments = []
-        for comment in inline_comments:
-            issue_identity = (
-                comment.get("severity", "suggestion"),
-                self._inline_comment_issue_title(comment),
-            )
-            if validated_issue_counts[issue_identity]:
-                validated_issue_counts[issue_identity] -= 1
-            else:
-                filtered_comments.append(comment)
 
         normalized_result = dict(review_result)
         normalized_result["review_body_inline_comments"] = list(
             review_result.get("review_body_inline_comments", inline_comments)
         )
         normalized_result["inline_comments"] = validated_comments
-        if not filtered_comments:
+
+        # 验证后数量未减少，无需同步 issues 计数
+        if len(validated_comments) == len(inline_comments):
             return normalized_result
+
+        # 按计数差识别被过滤的评论，用于从 issues 同步移除对应标题。
+        # 直接用 Counter 差集而非按列表顺序消耗配额，避免同标题评论在
+        # 有效/无效混合时错配（validated_comments 是新 dict，无法用 id 匹配）。
+        original_counts = Counter(
+            (c.get("severity", "suggestion"), self._inline_comment_issue_title(c))
+            for c in inline_comments
+        )
+        validated_counts = Counter(
+            (c.get("severity", "suggestion"), self._inline_comment_issue_title(c))
+            for c in validated_comments
+        )
+        removed_counts = original_counts - validated_counts
 
         issues = {
             key: list(values)
             for key, values in review_result.get("issues", {}).items()
         }
-        for comment in filtered_comments:
-            issue_key = SEVERITY_TO_ISSUE_KEY.get(
-                comment.get("severity", "suggestion")
-            )
-            issue_title = self._inline_comment_issue_title(comment)
-            if issue_key and issue_title and issue_title in issues.get(issue_key, []):
-                issues[issue_key].remove(issue_title)
+        for (severity, title), count in removed_counts.items():
+            if not title:
+                continue
+            issue_key = SEVERITY_TO_ISSUE_KEY.get(severity)
+            if not issue_key:
+                continue
+            for _ in range(count):
+                if title in issues.get(issue_key, []):
+                    issues[issue_key].remove(title)
         normalized_result["issues"] = issues
 
         logger.info(
             "[{}] 在落库和决策前过滤掉 {} 条无效行内评论",
             task_id,
-            len(filtered_comments),
+            sum(removed_counts.values()),
         )
         return normalized_result
 

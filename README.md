@@ -8,7 +8,7 @@
 
 [English](README_EN.md) | **中文**
 
-[![Version](https://img.shields.io/badge/Version-2.12.1-blue.svg)](https://github.com/Sakura520222/Sakura-AI-Reviewer/releases)
+[![Version](https://img.shields.io/badge/Version-2.12.2-blue.svg)](https://github.com/Sakura520222/Sakura-AI-Reviewer/releases)
 [![Python](https://img.shields.io/badge/Python-3.11+-blue.svg)](https://www.python.org/)
 [![FastAPI](https://img.shields.io/badge/FastAPI-Latest-green.svg)](https://fastapi.tiangolo.com/)
 [![License](https://img.shields.io/badge/License-AGPLv3-yellow.svg)](LICENSE)
@@ -33,6 +33,13 @@
 
 ## ✨ 核心特性
 
+### 2.12.2 更新亮点
+
+- **标签化审查协议**：主 PR 审查器改用严格的行式 `<SAKURA_REVIEW>` 信封协议作为输出契约，统一替换旧的 JSON 块 / emoji / 分数正则解析；新增信封校验（字段顺序与唯一性、版本与枚举、分数范围）并设严重等级分数上限（critical ≤ 3、major ≤ 6）；首次响应无效时在 temperature 0、无工具条件下做一次格式修复重试，二次失败则降级为不带分数与发现的安全评论，避免误批准或误低分拒绝。详见 [审查协议规范](docs/PR_REVIEW_PROTOCOL.md)。
+- **AI 凭证运行时刷新**：AIReviewer / IssueAnalyzer / SakuraMemoryService 新增 `_refresh_ai_client`，运行时自动校验并刷新 AI 客户端凭证，WebUI 配置变更即时生效；Web Search 与 Fetch URL 工具改为通过 ToolHandler 统一动态加载，减少冗余初始化。
+- **Agent Team 工作区与 Live View 增强**：WebUI 暴露 worktree 列表 / 详情 / 删除接口（含文件数、体积、修改时间），任务列表与详情页展示分支信息和 worktree 数量；Live View 改为后端驱动的 `can_send_prompt` 判定并展示初始输入，支持对 completed / waiting_human 终态任务的可恢复跟进；PR 审查反馈新增 branch + 源 PR 两阶段匹配。
+- **支付链路健壮性**：各支付网关 webhook 直接基于事件订单号处理，`cancel_expired_order` 幂等化（订单不存在视为成功），仅在取消成功时提交事务。
+
 ### 审查能力
 
 - **AI 推理模式**：利用 AI 推理能力进行深度代码分析，主动调用工具查看项目结构和任意文件
@@ -42,6 +49,7 @@
 - **结构化审查报告**：整体评分 + 分类问题（🔴严重/🟡重要/💡优化）+ `<details>` 折叠详情
 - **增量审查学习**：AI 自动总结历史审查记录，识别评分趋势和问题热点，逐步提升审查质量
 - **智能审查批准**：基于 AI 评分自动决策 APPROVE / REQUEST_CHANGES / COMMENT
+- **严格审查输出契约**：审查器输出受严格信封协议约束并经字段校验与严重等级分数上限保护，无效响应自动修复或安全降级，杜绝误批准与误低分拒绝
 - **PR 变更自动总结**：AI 自动生成 PR 变更摘要，并在 PR 更新时增量更新总结内容
 - **PR 依赖图生成**：支持 AI 分析与静态 import 分析双模式，生成 Mermaid 格式可视化依赖关系图
 - **Token 消耗追踪**：实时追踪审查中所有 AI API 调用的 token 消耗量与预估成本
@@ -468,6 +476,7 @@ Sakura-AI-Reviewer/
 |-----------------------------------------------------|-------------------------|
 | [Telegram Bot 集成指南](docs/TELEGRAM_SETUP.md)         | Bot 设置、权限体系、命令参考        |
 | [审查批准功能](docs/APPROVAL_FEATURE_SUMMARY.md)          | 智能审查批准系统详细说明            |
+| [审查协议规范](docs/PR_REVIEW_PROTOCOL.md)                | `<SAKURA_REVIEW>` 标签化审查输出协议、字段校验与修复降级 |
 | [手动审查功能](docs/MANUAL_REVIEW_FEATURE.md)             | 超级管理员手动触发审查             |
 | [模型上下文管理](docs/MODEL_CONTEXT_FEATURE.md)            | AI 模型上下文和压缩功能           |
 | [PR 功能指南](docs/PR_FEATURES_GUIDE.md)                   | PR 变更总结与依赖图配置说明        |
