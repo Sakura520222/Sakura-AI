@@ -1813,10 +1813,10 @@ async def handle_pr_agent_command(payload: Dict[str, Any]) -> JSONResponse:
                 logger.warning("/agent PR 创建任务失败: {}", e)
                 await _post_issue_comment(
                     github_app, repo_owner, repo_name, repo_full_name, pr_number,
-                    f"❌ 无法创建 Agent 修复任务：{e}",
+                    "❌ 无法创建 Agent 修复任务，请稍后重试或联系仓库管理员。",
                 )
                 return JSONResponse(
-                    content={"status": "error", "reason": str(e)}
+                    content={"status": "error", "reason": "failed to create agent task"}
                 )
 
             task_id = task.id
