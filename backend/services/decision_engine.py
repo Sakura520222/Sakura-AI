@@ -273,28 +273,19 @@ class DecisionEngine:
         )
 
     @staticmethod
-    def _format_inline_comment_section(
-        inline_comments: Any,
-        output_lang: str,
-    ) -> str:
-        """Format mirrored inline comments without trusting their shape."""
+    def _format_inline_comment_section(inline_comments: Any) -> str:
+        """Format mirrored inline comments without trusting their shape.
+
+        不渲染 section 标题：行内评论并入 <details> 展开块后，每条评论自带
+        的 #### 标题已足够定位 / No section heading is rendered; each
+        comment's own #### heading suffices once folded into <details>.
+        """
         if not inline_comments:
             return ""
         if not isinstance(inline_comments, list):
             inline_comments = [inline_comments]
 
-        inline_title = "Inline Comments" if output_lang == "en" else "行内评论"
-        inline_unit = (
-            ("comment" if len(inline_comments) == 1 else "comments")
-            if output_lang == "en"
-            else "条"
-        )
-        count_text = (
-            f"{len(inline_comments)} {inline_unit}"
-            if output_lang == "en"
-            else f"{len(inline_comments)}{inline_unit}"
-        )
-        inline_parts = [f"### 📍 {inline_title} ({count_text})"]
+        inline_parts = []
 
         for comment in inline_comments:
             if isinstance(comment, dict):
@@ -343,14 +334,29 @@ class DecisionEngine:
         Returns:
             格式化后的评论内容
         """
-        output_lang = output_language or "zh-CN"
+        # 解析最终输出语言：get_settings 失败时回退到入参或默认值 /
+        # Resolve the final output language, falling back to the argument
+        # or default when get_settings is unavailable.
         try:
-            # 根据 output_language 选择模板 / Select template based on output_language
             output_lang = (
                 output_language
                 if output_language is not None
                 else get_settings().output_language
             )
+        except Exception:
+            output_lang = output_language or "zh-CN"
+
+        # 预先格式化行内评论：正常路径并入 <details> 展开块，降级路径在
+        # except 中追加，确保镜像始终不丢失 / Inline comments are pre-formatted
+        # so they can be folded into the <details> block on the happy path and
+        # appended on the fallback path without losing the mirror.
+        inline_comments = review_result.get(
+            "review_body_inline_comments",
+            review_result.get("inline_comments", []),
+        )
+        inline_section = self._format_inline_comment_section(inline_comments)
+        try:
+            # 根据 output_language 选择模板 / Select template based on output_language
             if output_lang == "en":
                 templates = self.policy.get("review_templates_en", {})
             else:
@@ -378,10 +384,20 @@ class DecisionEngine:
                 else "查看详细审查报告"
             )
             summary = review_result.get("summary", no_summary_text)
-            if summary.strip():
+            # 行内评论并入展开块，与详细摘要一同折叠展示，避免详细内容
+            # 在 body 顶层拉长评论 / Inline comments are folded into the
+            # <details> block so the verbose content stays collapsed.
+            if summary.strip() and inline_section:
+                detail_inner = f"{summary}\n\n{inline_section}"
+            elif inline_section:
+                detail_inner = inline_section
+            else:
+                detail_inner = summary
+
+            if detail_inner.strip():
                 summary = (
                     f"<details><summary>📋 {view_detail_text}</summary>\n\n"
-                    f"{summary}\n\n"
+                    f"{detail_inner}\n\n"
                     f"</details>"
                 )
 
@@ -456,6 +472,13 @@ class DecisionEngine:
                 **(template_vars or {}),
             )
 
+            # 模板未渲染 {summary} 时 <details> 块不存在，行内评论回退到
+            # body 末尾追加，保证镜像始终不丢失 / When the template omits
+            # {summary}, no <details> block is rendered; fall back to
+            # appending inline comments so the mirror is never lost.
+            if inline_section and "</details>" not in body:
+                body += "\n\n" + inline_section
+
             # 如果有标签结果，添加到评论末尾
             if label_results:
                 from backend.services.label_service import label_service
@@ -474,19 +497,12 @@ class DecisionEngine:
                 f"**评分**: {score_display}\n\n"
                 f"{review_result.get('summary', '')}"
             )
+            # 降级路径无法构造 <details> 块，行内评论直接追加，确保不丢失 /
+            # On the fallback path there is no <details> block to fold into,
+            # so inline comments are appended directly to preserve the mirror.
+            if inline_section:
+                body += "\n\n" + inline_section
 
-        # 行内评论始终镜像到 Review Body。即使模板未使用 comment_summary、
-        # 模板格式化降级，或评论无法附着到 GitHub Diff，审查内容也不会丢失。
-        inline_comments = review_result.get(
-            "review_body_inline_comments",
-            review_result.get("inline_comments", []),
-        )
-        inline_section = self._format_inline_comment_section(
-            inline_comments,
-            output_lang,
-        )
-        if inline_section:
-            body += "\n\n" + inline_section
         return body
 
 

@@ -223,7 +223,7 @@ class TestReviewBodyFormatting:
             output_language="zh-CN",
         )
 
-        assert "### 📍 行内评论 (1条)" in body
+        assert "### 📍 行内评论" not in body
         assert "#### `backend/example.py:10-12` · `minor`" in body
         assert "**边界错误**" in body
         assert "循环会多执行一次。" in body
@@ -248,9 +248,68 @@ class TestReviewBodyFormatting:
             output_language="en",
         )
 
-        assert "### 📍 Inline Comments (1 comment)" in body
+        assert "### 📍 Inline Comments" not in body
         assert "#### `backend/example.py:59` · `suggestion`" in body
         assert "Avoid calling int() twice." in body
+
+    def test_inline_comments_rendered_inside_details_block(self, engine):
+        """Inline comments must render inside the <details> block, not after it."""
+        engine.policy["review_templates"] = {
+            "approve": "{summary}\n\n{comment_summary}"
+        }
+        result = _review_result(score=9)
+        result["summary"] = "## 审查总结\n\n代码质量良好。"
+        result["inline_comments"] = [
+            {
+                "file_path": "backend/example.py",
+                "line_number": 42,
+                "severity": "suggestion",
+                "body": "**小建议**\n\n可简化此逻辑。",
+            }
+        ]
+
+        body = engine.format_review_body(
+            ReviewDecision.APPROVE,
+            result,
+            "可以合并",
+            output_language="zh-CN",
+        )
+
+        # 行内评论应位于 <details> 展开块之内；标题已移除，改用评论正文定位 /
+        # Inline comments must render inside the <details> block. Locate by
+        # the comment body text since the section heading is no longer rendered.
+        details_close_idx = body.index("</details>")
+        inline_idx = body.index("可简化此逻辑。")
+        assert inline_idx < details_close_idx, (
+            "inline comments should render inside the <details> block"
+        )
+
+    def test_inline_comments_survive_when_template_omits_summary_placeholder(
+        self, engine
+    ):
+        """Inline comments must still mirror when the template lacks {summary}."""
+        engine.policy["review_templates"] = {"approve": "评分: {score}/10"}
+        result = _review_result(score=9)
+        result["inline_comments"] = [
+            {
+                "file_path": "backend/example.py",
+                "line_number": 42,
+                "severity": "suggestion",
+                "body": "**提示**\n\n可优化。",
+            }
+        ]
+
+        body = engine.format_review_body(
+            ReviewDecision.APPROVE,
+            result,
+            "可以合并",
+            output_language="zh-CN",
+        )
+
+        # 模板未渲染 {summary}，但行内评论仍必须镜像到 body /
+        # Even without {summary}, inline comments must still be mirrored.
+        assert "### 📍 行内评论" not in body
+        assert "#### `backend/example.py:42` · `suggestion`" in body
 
     def test_unvalidated_summary_score_is_not_displayed(self, engine):
         engine.policy["review_templates"] = {
@@ -283,6 +342,6 @@ class TestReviewBodyFormatting:
         )
 
         assert "**AI审查决策**: approve" in body
-        assert "### 📍 行内评论 (1条)" in body
+        assert "### 📍 行内评论" not in body
         assert "#### `unknown` · `suggestion`" in body
         assert "raw malformed comment" in body
