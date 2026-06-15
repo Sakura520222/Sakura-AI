@@ -112,6 +112,35 @@ def test_trim_files_prioritizes_current_incremental_changes(service):
     assert [file.path for file in selected] == ["src/new.py", "src/old-large.py"]
 
 
+def test_trim_files_excludes_removed_and_deleted_files(service):
+    # GitHub File.status 对删除文件返回 "removed"，而非字面量 "deleted"，
+    # 两种取值都应被裁剪逻辑排除。
+    graph_files = [
+        make_file("src/added.py", status="added", changes=200),
+        make_file("src/removed.py", status="removed", changes=999),
+        make_file("src/deleted.py", status="deleted", changes=888),
+        make_file("src/modified.py", status="modified", changes=1),
+    ]
+    settings = SimpleNamespace(pr_dependency_graph_max_files=50)
+
+    selected = service._trim_files(graph_files, settings)
+
+    assert [file.path for file in selected] == ["src/added.py", "src/modified.py"]
+
+
+def test_select_content_files_excludes_removed_files(service):
+    current_file = make_file("src/new.py")
+    deleted_file = make_file("src/gone.py", status="removed")
+    analysis = make_analysis(
+        [current_file, deleted_file], is_incremental=True
+    )
+    graph_files = [current_file, deleted_file]
+
+    content_files = service._select_content_files(analysis, graph_files)
+
+    assert content_files == [current_file]
+
+
 def test_build_prompts_uses_cumulative_file_counts(service):
     settings = SimpleNamespace(pr_dependency_graph_max_nodes=25)
     strategy_config = MagicMock()

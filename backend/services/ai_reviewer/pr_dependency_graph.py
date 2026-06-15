@@ -302,6 +302,15 @@ class PRDependencyGraphService:
         )
         return code_files, total_file_count
 
+    # GitHub File.status 对删除文件返回 "removed"（透传 GitHub API 原始值），
+    # 而非字面量 "deleted"；统一用集合匹配避免漏判。
+    _DELETED_STATUSES: frozenset[str] = frozenset({"deleted", "removed"})
+
+    @classmethod
+    def _is_deleted_file(cls, status: str) -> bool:
+        """判断文件是否为删除状态（兼容 GitHub 的 "removed" 与字面量 "deleted"）。"""
+        return status in cls._DELETED_STATUSES
+
     @staticmethod
     def _trim_files(
         code_files: List[PRFileInfo],
@@ -309,7 +318,9 @@ class PRDependencyGraphService:
         priority_paths: Set[str] | None = None,
     ) -> List[PRFileInfo]:
         """大型 PR 裁剪：按变更量排序取 top N 文件"""
-        files = [f for f in code_files if f.status != "deleted"]
+        files = [
+            f for f in code_files if not PRDependencyGraphService._is_deleted_file(f.status)
+        ]
         max_files = settings.pr_dependency_graph_max_files
         if len(files) > max_files:
             priority_paths = priority_paths or set()
@@ -339,7 +350,8 @@ class PRDependencyGraphService:
         return [
             file
             for file in analysis.code_files
-            if file.status != "deleted" and file.path in graph_paths
+            if not PRDependencyGraphService._is_deleted_file(file.status)
+            and file.path in graph_paths
         ]
 
     @staticmethod
@@ -681,9 +693,9 @@ class PRDependencyGraphService:
         settings: Any,
         previous_graph: str | None = None,
         *,
-        file_count: int | None = None,
-        code_file_count: int | None = None,
-        analyzed_file_count: int | None = None,
+        file_count: int,
+        code_file_count: int,
+        analyzed_file_count: int,
     ) -> tuple[str, str]:
         """构建系统提示词和用户消息"""
         config = get_strategy_config()
@@ -703,18 +715,14 @@ class PRDependencyGraphService:
             "文件依赖关系:\n{import_context}",
         )
 
-        fallback_file_count = len(pr_info.get("code_files", []))
+        # 三个计数控件均为必填：唯一调用方 generate_dependency_graph 始终从
+        # analysis/graph_files 提供真实值；pr_info（webhook 构造）从不携带 code_files，
+        # 不再用恒为 0 的误导性回退。
         user_message = user_template.format(
             title=pr_info.get("title", ""),
-            file_count=file_count
-            if file_count is not None
-            else fallback_file_count,
-            code_file_count=code_file_count
-            if code_file_count is not None
-            else fallback_file_count,
-            analyzed_file_count=analyzed_file_count
-            if analyzed_file_count is not None
-            else fallback_file_count,
+            file_count=file_count,
+            code_file_count=code_file_count,
+            analyzed_file_count=analyzed_file_count,
             import_context=import_context,
         )
 
