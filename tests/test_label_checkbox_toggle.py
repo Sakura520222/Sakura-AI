@@ -331,3 +331,51 @@ class TestWebhookRouting:
         response = await handle_pull_request_review_event(payload)
         body = response.body.decode()
         assert "ignored" in body
+
+    @pytest.mark.anyio
+    async def test_label_toggle_permission_unknown_returns_retryable(self, monkeypatch):
+        """Permission check unavailable should not revert checkbox or post denial."""
+        import json
+
+        from backend.api import webhook
+
+        # Stub label_service so the function reaches the permission check
+        class _StubLabelService:
+            def is_sakura_label_comment(self, _body):
+                return True
+
+            def parse_checkbox_changes(self, _old, _new):
+                return ({"bug"}, set())
+
+            async def handle_label_checkbox_toggle(self, **kwargs):
+                return {"applied": [], "removed": [], "failed": []}
+
+        monkeypatch.setattr(
+            "backend.services.label_service.label_service", _StubLabelService()
+        )
+
+        class _FakeGitHubApp:
+            def check_collaborator_permission(self, *_args, **_kwargs):
+                return "unknown"
+
+            def get_repo_client(self, *_args, **_kwargs):
+                return None
+
+        monkeypatch.setattr(webhook, "GitHubAppClient", lambda: _FakeGitHubApp())
+
+        response = await webhook._handle_label_checkbox_toggle_inner(
+            repo_owner="owner",
+            repo_name="repo",
+            pr_number=42,
+            old_body="<!-- sakura-label-section -->\n- [ ] **bug**",
+            new_body="<!-- sakura-label-section -->\n- [x] **bug**",
+            editor_login="outside_user",
+            pr_author_login="pr_author",
+            comment_source="issue_comment",
+            comment_id=100,
+        )
+
+        body = json.loads(response.body.decode())
+        assert response.status_code == 503
+        assert body["status"] == "error"
+        assert body["reason"] == "permission check unavailable"
