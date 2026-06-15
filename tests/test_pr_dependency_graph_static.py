@@ -1,4 +1,5 @@
-from unittest.mock import AsyncMock
+from types import SimpleNamespace
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -8,7 +9,7 @@ from backend.core.config import (
     DYNAMIC_CONFIG_SELECT_OPTIONS,
 )
 from backend.services.ai_reviewer.pr_dependency_graph import PRDependencyGraphService
-from backend.services.pr_analyzer import PRFileInfo
+from backend.services.pr_analyzer import PRAnalysis, PRFileInfo
 
 
 @pytest.fixture
@@ -16,15 +17,180 @@ def service():
     return PRDependencyGraphService(api_client=AsyncMock(), model="test-model")
 
 
-def make_file(path: str, status: str = "modified") -> PRFileInfo:
+def make_file(
+    path: str, status: str = "modified", changes: int = 1
+) -> PRFileInfo:
     return PRFileInfo(
         path=path,
         status=status,
-        additions=1,
+        additions=changes,
         deletions=0,
-        changes=1,
+        changes=changes,
         is_code_file=True,
     )
+
+
+def make_analysis(
+    code_files: list[PRFileInfo], *, is_incremental: bool = False
+) -> PRAnalysis:
+    return PRAnalysis(
+        pr_id=1,
+        pr_number=2,
+        repo_full_name="owner/repo",
+        total_files=len(code_files),
+        total_additions=sum(file.additions for file in code_files),
+        total_deletions=sum(file.deletions for file in code_files),
+        total_changes=sum(file.changes for file in code_files),
+        code_files=code_files,
+        code_file_count=len(code_files),
+        code_changes=sum(file.changes for file in code_files),
+        strategy="small",
+        should_skip=False,
+        is_incremental=is_incremental,
+    )
+
+
+def make_github_file(path: str, status: str = "modified", changes: int = 1):
+    return SimpleNamespace(
+        filename=path,
+        status=status,
+        additions=changes,
+        deletions=0,
+        changes=changes,
+    )
+
+
+def test_incremental_graph_uses_all_pr_file_metadata(service):
+    analysis = make_analysis([make_file("src/new.py")], is_incremental=True)
+    pr = MagicMock()
+    pr.changed_files = 3
+    pr.get_files.return_value = [
+        make_github_file("src/old.py"),
+        make_github_file("src/new.py"),
+        make_github_file("README.md"),
+    ]
+    strategy_config = MagicMock()
+    strategy_config.should_skip_file.return_value = False
+    strategy_config.is_code_file.side_effect = lambda path: path.endswith(".py")
+
+    with patch(
+        "backend.services.ai_reviewer.pr_dependency_graph.get_strategy_config",
+        return_value=strategy_config,
+    ):
+        graph_files, total_file_count = service._get_graph_files_sync(analysis, pr)
+
+    assert [file.path for file in graph_files] == ["src/old.py", "src/new.py"]
+    assert total_file_count == 3
+    pr.get_files.assert_called_once_with()
+
+
+def test_incremental_graph_only_fetches_current_change_contents(service):
+    current_file = make_file("src/new.py")
+    analysis = make_analysis([current_file], is_incremental=True)
+    graph_files = [make_file("src/old.py"), current_file]
+
+    content_files = service._select_content_files(analysis, graph_files)
+
+    assert content_files == [current_file]
+
+
+def test_trim_files_prioritizes_current_incremental_changes(service):
+    current_file = make_file("src/new.py", changes=1)
+    graph_files = [
+        make_file("src/old-large.py", changes=100),
+        make_file("src/old-medium.py", changes=50),
+        current_file,
+    ]
+    settings = SimpleNamespace(pr_dependency_graph_max_files=2)
+
+    selected = service._trim_files(
+        graph_files,
+        settings,
+        priority_paths={current_file.path},
+    )
+
+    assert [file.path for file in selected] == ["src/new.py", "src/old-large.py"]
+
+
+def test_build_prompts_uses_cumulative_file_counts(service):
+    settings = SimpleNamespace(pr_dependency_graph_max_nodes=25)
+    strategy_config = MagicMock()
+    strategy_config.config = {
+        "pr_dependency_graph": {
+            "user_template": (
+                "{file_count}/{code_file_count}/{analyzed_file_count}\n"
+                "{import_context}"
+            )
+        }
+    }
+
+    with patch(
+        "backend.services.ai_reviewer.pr_dependency_graph.get_strategy_config",
+        return_value=strategy_config,
+    ):
+        _, user_message = service._build_prompts(
+            "imports",
+            {"title": "Incremental graph"},
+            settings,
+            file_count=8,
+            code_file_count=6,
+            analyzed_file_count=4,
+        )
+
+    assert user_message == "8/6/4\nimports"
+
+
+@pytest.mark.asyncio
+async def test_generate_incremental_graph_wires_full_metadata_to_prompt(service):
+    current_file = make_file("src/new.py")
+    historical_file = make_file("src/old.py")
+    analysis = make_analysis([current_file], is_incremental=True)
+    settings = SimpleNamespace(
+        pr_dependency_graph_max_files=50,
+        pr_dependency_graph_max_nodes=25,
+    )
+    service._get_graph_files_sync = MagicMock(
+        return_value=([historical_file, current_file], 3)
+    )
+    service._fetch_file_contents_sync = MagicMock(
+        return_value={"src/new.py": "from src.old import helper\n"}
+    )
+    service._get_graph_mode = AsyncMock(return_value="ai")
+    service._build_import_context = MagicMock(return_value="full import context")
+    service._build_prompts = MagicMock(return_value=("system", "user"))
+    service._validate_mermaid = MagicMock(return_value="graph TD\nN1 --> N2")
+    service.update_pr_body_with_graph = AsyncMock()
+    service.api_client.call_with_retry = AsyncMock(
+        return_value=SimpleNamespace(
+            choices=[
+                SimpleNamespace(
+                    message=SimpleNamespace(content="graph TD\nN1 --> N2")
+                )
+            ]
+        )
+    )
+    pr = MagicMock()
+
+    with patch(
+        "backend.services.ai_reviewer.pr_dependency_graph.get_settings",
+        return_value=settings,
+    ):
+        graph = await service.generate_dependency_graph(
+            analysis,
+            {"title": "Incremental graph", "body": ""},
+            pr,
+        )
+
+    assert graph == "graph TD\nN1 --> N2"
+    fetched_files = service._fetch_file_contents_sync.call_args.args[0]
+    assert fetched_files == [current_file]
+    context_files = service._build_import_context.call_args.args[0]
+    assert context_files == [historical_file, current_file]
+    assert service._build_prompts.call_args.kwargs == {
+        "file_count": 3,
+        "code_file_count": 2,
+        "analyzed_file_count": 2,
+    }
 
 
 def test_static_mermaid_links_python_imports(service):
