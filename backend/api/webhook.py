@@ -749,6 +749,15 @@ async def _handle_label_checkbox_toggle_inner(
             github_app.check_collaborator_permission,
             repo_owner, repo_name, editor_login,
         )
+        if permission == "unknown":
+            logger.warning(
+                f"[{comment_source}] 无法校验用户 {editor_login} 在 "
+                f"{repo_owner}/{repo_name} 的权限，跳过标签切换"
+            )
+            return JSONResponse(
+                status_code=503,
+                content={"status": "error", "reason": "permission check unavailable"},
+            )
         is_collaborator = permission in ("admin", "write")
 
     if not is_pr_author and not is_collaborator and not is_review_body_edit:
