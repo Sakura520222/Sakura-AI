@@ -54,6 +54,60 @@ def test_reviewer_refreshes_clients_after_dynamic_config_change(monkeypatch):
     assert reviewer.label_recommender.model == "new-model"
 
 
+def test_reviewer_refreshes_summary_client_when_auxiliary_config_changes(monkeypatch):
+    """辅助模型独立配置变化后，_refresh_ai_clients 重建 summary_api_client。
+
+    覆盖 summary_api_base/key 非空（独立 provider）场景：修改辅助模型凭据后，
+    summary_api_client 应重建为新凭据并始终与主 AI api_client 解耦；
+    summary_model 跟随最新 settings；主 AI client 不受影响。
+    对应 WebUI 即时修改辅助 AI 配置后辅助任务（PR 总结/依赖图/历史上下文）
+    必须使用新 provider 的回归保护。
+    """
+    settings = SimpleNamespace(
+        openai_api_base="https://main.example/v1",
+        openai_api_key="main-key",
+        openai_model="main-model",
+        summary_api_base="https://aux-old.example/v1",
+        summary_api_key="aux-old-key",
+        summary_model="aux-old-model",
+    )
+    monkeypatch.setattr(reviewer_module, "get_settings", lambda: settings)
+    monkeypatch.setattr(reviewer_module, "AIApiClient", _FakeAIApiClient)
+
+    reviewer = reviewer_module.AIReviewer.__new__(reviewer_module.AIReviewer)
+    reviewer._ai_client_config = None
+    reviewer._summary_client_config = None
+    reviewer.context_compressor = SimpleNamespace(api_client=None, model=None)
+    reviewer.label_recommender = SimpleNamespace(api_client=None, model=None)
+
+    reviewer._refresh_ai_clients()
+    # 独立 provider：summary_api_client 与主 api_client 解耦
+    assert reviewer.summary_api_client is not reviewer.api_client
+    assert reviewer.summary_api_client.base_url == "https://aux-old.example/v1"
+    assert reviewer.summary_api_client.api_key == "aux-old-key"
+    assert reviewer.summary_model == "aux-old-model"
+    old_summary_client = reviewer.summary_api_client
+
+    # 仅修改辅助模型凭据（主 AI 不变）
+    settings.summary_api_base = "https://aux-new.example/v1"
+    settings.summary_api_key = "aux-new-key"
+    settings.summary_model = "aux-new-model"
+    reviewer._refresh_ai_clients()
+
+    # summary_api_client 重建为新凭据，主 api_client 保持不变
+    assert reviewer.summary_api_client is not old_summary_client
+    assert reviewer.summary_api_client.base_url == "https://aux-new.example/v1"
+    assert reviewer.summary_api_client.api_key == "aux-new-key"
+    assert reviewer.summary_model == "aux-new-model"
+    assert reviewer.api_client.base_url == "https://main.example/v1"
+    assert reviewer.api_client.api_key == "main-key"
+    # context_compressor / label_recommender 跟随最新辅助凭据
+    assert reviewer.context_compressor.api_client is reviewer.summary_api_client
+    assert reviewer.context_compressor.model == "aux-new-model"
+    assert reviewer.label_recommender.api_client is reviewer.summary_api_client
+    assert reviewer.label_recommender.model == "aux-new-model"
+
+
 def test_issue_analyzer_refreshes_client_after_dynamic_config_change(monkeypatch):
     settings = SimpleNamespace(
         openai_api_base="https://old.example/v1",

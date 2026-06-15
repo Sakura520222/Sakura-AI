@@ -469,6 +469,21 @@ class ReviewWorker:
                         "跳过 PR 总结和 AI 审查",
                     )
 
+                # Refresh AI clients before auxiliary tasks that run ahead of
+                # review_pr_with_tools — the only internal refresh point of
+                # AIReviewer. PR summary / dependency graph / history-context
+                # services read self.ai_reviewer.summary_api_client directly,
+                # so without an explicit refresh here they reuse the client
+                # left over from the previous review. Changing the auxiliary
+                # (summary) provider/model in the WebUI then has no effect on
+                # these tasks: they keep calling the stale provider and the
+                # new model name is rejected as "model not found".
+                # 刷新 AI 客户端：辅助任务在 review_pr_with_tools 之前执行，
+                # 必须在此显式刷新，否则会复用上一次审查遗留的 summary_api_client
+                # （旧辅助模型 provider），导致 WebUI 即时修改辅助 AI 配置后，
+                # PR 总结 / 依赖图 / 历史上下文仍使用旧 provider 并报“找不到模型”。
+                self.ai_reviewer._refresh_ai_clients()
+
                 # 4.5 PR 变更总结（如果启用）
                 pr_summary_text = None
                 if settings.enable_pr_summary:
