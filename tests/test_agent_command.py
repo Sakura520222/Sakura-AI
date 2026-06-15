@@ -1,5 +1,7 @@
 """Unit tests for /agent command in webhook handler."""
 
+import json
+
 import pytest
 
 from backend.api import webhook
@@ -163,6 +165,14 @@ async def _async_noop(*a, **kw):
     return None
 
 
+class _PostCommentRecorder:
+    def __init__(self):
+        self.messages = []
+
+    async def __call__(self, *args):
+        self.messages.append(args[-1])
+
+
 async def _async_true(*a, **kw):
     """返回 True 的异步函数，用于 mock 功能开关启用"""
     return True
@@ -254,6 +264,24 @@ async def test_agent_command_denied_for_insufficient_permission(monkeypatch):
 
     assert response.status_code == 200
     assert b"denied" in response.body
+
+
+@pytest.mark.asyncio
+async def test_agent_command_permission_unknown_returns_retryable_message(monkeypatch):
+    payload = _base_payload()
+    recorder = _PostCommentRecorder()
+    _make_base_mocks(monkeypatch, permission="unknown")
+    monkeypatch.setattr(webhook, "_post_issue_comment", recorder)
+
+    response = await webhook.handle_agent_command(payload)
+    body = json.loads(response.body.decode())
+
+    assert response.status_code == 503
+    assert body["status"] == "error"
+    assert body["reason"] == "permission check unavailable"
+    assert recorder.messages == [
+        "⚠️ @collaborator，暂时无法连接 GitHub 校验权限，请稍后重试。"
+    ]
 
 
 @pytest.mark.asyncio
