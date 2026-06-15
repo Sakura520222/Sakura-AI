@@ -126,18 +126,36 @@ class PRDependencyGraphService:
         """
         settings = get_settings()
 
+        graph_files, total_file_count = await asyncio.to_thread(
+            self._get_graph_files_sync, analysis, pr
+        )
+
         # 大型 PR 裁剪
-        analysis_files = self._trim_files(analysis, settings)
+        priority_paths = (
+            {file.path for file in analysis.code_files}
+            if analysis.is_incremental
+            else None
+        )
+        analysis_files = self._trim_files(
+            graph_files, settings, priority_paths=priority_paths
+        )
+
+        # 增量审查只读取本轮变更文件内容；历史文件通过完整文件列表和旧图保留上下文。
+        content_files = self._select_content_files(analysis, analysis_files)
 
         # 获取文件内容
         file_contents = await asyncio.to_thread(
-            self._fetch_file_contents_sync, analysis_files, pr
+            self._fetch_file_contents_sync, content_files, pr
         )
-        if not file_contents:
+
+        graph_mode = await self._get_graph_mode()
+        previous_graph = self._extract_previous_graph(pr_info.get("body", ""))
+        if not file_contents and not (
+            graph_mode == "ai" and analysis.is_incremental and previous_graph
+        ):
             logger.info("无法获取任何变更文件内容，跳过依赖图生成")
             return None
 
-        graph_mode = await self._get_graph_mode()
         if graph_mode == "static":
             mermaid_graph = self._generate_static_mermaid(
                 analysis_files,
@@ -162,12 +180,15 @@ class PRDependencyGraphService:
             logger.info("变更文件间无 import 依赖关系，跳过依赖图生成")
             return None
 
-        # 提取上一次的依赖图（增量更新时用于保持上下文连贯）
-        previous_graph = self._extract_previous_graph(pr_info.get("body", ""))
-
         # AI 生成 Mermaid
         system_prompt, user_message = self._build_prompts(
-            import_context, pr_info, settings, previous_graph
+            import_context,
+            pr_info,
+            settings,
+            previous_graph,
+            file_count=total_file_count,
+            code_file_count=len(graph_files),
+            analyzed_file_count=len(analysis_files),
         )
 
         response = await self.api_client.call_with_retry(
@@ -243,14 +264,83 @@ class PRDependencyGraphService:
         return mode
 
     @staticmethod
-    def _trim_files(analysis: PRAnalysis, settings: Any) -> List[PRFileInfo]:
+    def _get_graph_files_sync(
+        analysis: PRAnalysis, pr: Any
+    ) -> tuple[List[PRFileInfo], int]:
+        """获取依赖图使用的累计代码文件元信息。"""
+        if not analysis.is_incremental:
+            return list(analysis.code_files), analysis.total_files
+
+        strategy_config = get_strategy_config()
+        pr_files = list(pr.get_files())
+        code_files: List[PRFileInfo] = []
+        for file in pr_files:
+            if strategy_config.should_skip_file(file.filename):
+                continue
+            if not strategy_config.is_code_file(file.filename):
+                continue
+            code_files.append(
+                PRFileInfo(
+                    path=file.filename,
+                    status=file.status,
+                    additions=file.additions,
+                    deletions=file.deletions,
+                    changes=file.changes,
+                    patch=None,
+                    is_code_file=True,
+                )
+            )
+
+        changed_files = getattr(pr, "changed_files", None)
+        total_file_count = (
+            changed_files if isinstance(changed_files, int) else len(pr_files)
+        )
+        logger.info(
+            "增量依赖图使用 PR 累计文件元信息: 总文件数 {}, 代码文件数 {}",
+            total_file_count,
+            len(code_files),
+        )
+        return code_files, total_file_count
+
+    @staticmethod
+    def _trim_files(
+        code_files: List[PRFileInfo],
+        settings: Any,
+        priority_paths: Set[str] | None = None,
+    ) -> List[PRFileInfo]:
         """大型 PR 裁剪：按变更量排序取 top N 文件"""
-        files = [f for f in analysis.code_files if f.status != "deleted"]
+        files = [f for f in code_files if f.status != "deleted"]
         max_files = settings.pr_dependency_graph_max_files
         if len(files) > max_files:
-            files = sorted(files, key=lambda f: f.changes, reverse=True)[:max_files]
+            priority_paths = priority_paths or set()
+            priority_files = sorted(
+                (file for file in files if file.path in priority_paths),
+                key=lambda file: file.changes,
+                reverse=True,
+            )
+            remaining_files = sorted(
+                (file for file in files if file.path not in priority_paths),
+                key=lambda file: file.changes,
+                reverse=True,
+            )
+            files = (priority_files + remaining_files)[:max_files]
             logger.info(f"PR 变更文件数超过限制，只分析 top {max_files} 个文件")
         return files
+
+    @staticmethod
+    def _select_content_files(
+        analysis: PRAnalysis, graph_files: List[PRFileInfo]
+    ) -> List[PRFileInfo]:
+        """选择需要获取内容的文件，增量模式仅包含本轮变更。"""
+        if not analysis.is_incremental:
+            return graph_files
+
+        graph_paths = {file.path for file in graph_files}
+        return [
+            file
+            for file in analysis.code_files
+            if file.status != "deleted" and file.path in graph_paths
+        ]
 
     @staticmethod
     def _fetch_file_contents_sync(files: List[PRFileInfo], pr: Any) -> Dict[str, str]:
@@ -590,6 +680,10 @@ class PRDependencyGraphService:
         pr_info: Dict[str, Any],
         settings: Any,
         previous_graph: str | None = None,
+        *,
+        file_count: int | None = None,
+        code_file_count: int | None = None,
+        analyzed_file_count: int | None = None,
     ) -> tuple[str, str]:
         """构建系统提示词和用户消息"""
         config = get_strategy_config()
@@ -609,9 +703,18 @@ class PRDependencyGraphService:
             "文件依赖关系:\n{import_context}",
         )
 
+        fallback_file_count = len(pr_info.get("code_files", []))
         user_message = user_template.format(
             title=pr_info.get("title", ""),
-            file_count=len(pr_info.get("code_files", [])),
+            file_count=file_count
+            if file_count is not None
+            else fallback_file_count,
+            code_file_count=code_file_count
+            if code_file_count is not None
+            else fallback_file_count,
+            analyzed_file_count=analyzed_file_count
+            if analyzed_file_count is not None
+            else fallback_file_count,
             import_context=import_context,
         )
 
