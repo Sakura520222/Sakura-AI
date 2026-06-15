@@ -765,15 +765,15 @@ class GitHubAppClient:
             username: GitHub用户名
 
         Returns:
-            权限级别字符串 (admin, write, read, none)，出错返回 "none"
+            权限级别字符串 (admin, write, read, none)，无法校验时返回 "unknown"
         """
         try:
             client = self.get_repo_client(repo_owner, repo_name)
             if not client:
                 logger.warning(
-                    f"无法获取 {repo_owner}/{repo_name} 的客户端，跳过权限检查"
+                    f"无法获取 {repo_owner}/{repo_name} 的客户端，无法完成权限检查"
                 )
-                return "none"
+                return "unknown"
 
             repo = client.get_repo(f"{repo_owner}/{repo_name}")
             permission = repo.get_collaborator_permission(username)
@@ -783,8 +783,12 @@ class GitHubAppClient:
             return permission
 
         except Exception as e:
-            logger.warning(f"检查用户权限失败 (user={username}): {e}")
-            return "none"
+            logger.warning(
+                f"检查用户权限失败，无法确认权限 "
+                f"(repo={repo_owner}/{repo_name}, user={username}): {e}",
+                exc_info=True,
+            )
+            return "unknown"
 
     def submit_review(
         self,

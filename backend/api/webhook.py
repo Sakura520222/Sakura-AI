@@ -458,6 +458,15 @@ async def handle_issue_comment_event(payload: Dict[str, Any]) -> JSONResponse:
             permission = github_app.check_collaborator_permission(
                 repo_owner, repo_name, commenter_login
             )
+            if permission == "unknown":
+                return await _permission_check_unavailable_response(
+                    github_app,
+                    repo_owner,
+                    repo_name,
+                    repo_full_name,
+                    pr_number,
+                    commenter_login,
+                )
             is_collaborator = permission in ("admin", "write")
 
         if not is_pr_author and not is_collaborator:
@@ -1002,6 +1011,17 @@ async def handle_revoke_command(payload: Dict[str, Any]) -> JSONResponse:
             repo_owner, repo_name, commenter_login
         )
 
+        if permission == "unknown":
+            return await _permission_check_unavailable_response(
+                github_app,
+                repo_owner,
+                repo_name,
+                repo_full_name,
+                pr_number,
+                commenter_login,
+                log_prefix="/revoke",
+            )
+
         if permission != "admin":
             logger.info(
                 f"用户 {commenter_login} 无权撤回评论 (权限: {permission}, 需要 admin)"
@@ -1433,6 +1453,36 @@ async def _post_issue_comment(
         logger.warning("发送 Issue 评论失败: {}#{} - {}", repo_full_name, issue_number, e)
 
 
+async def _permission_check_unavailable_response(
+    github_app: "GitHubAppClient",
+    repo_owner: str,
+    repo_name: str,
+    repo_full_name: str,
+    issue_number: int,
+    commenter: str,
+    log_prefix: str = "权限检查",
+) -> JSONResponse:
+    """权限校验不可用时返回可重试错误，避免误报用户无权限。"""
+    logger.warning(
+        "{} 无法校验用户 {} 在 {} 的权限，请稍后重试",
+        log_prefix,
+        commenter,
+        repo_full_name,
+    )
+    await _post_issue_comment(
+        github_app,
+        repo_owner,
+        repo_name,
+        repo_full_name,
+        issue_number,
+        f"⚠️ @{commenter}，暂时无法连接 GitHub 校验权限，请稍后重试。",
+    )
+    return JSONResponse(
+        status_code=503,
+        content={"status": "error", "reason": "permission check unavailable"},
+    )
+
+
 def _parse_agent_base_branch(
     comment_body: str,
 ) -> tuple[str | None, JSONResponse | None]:
@@ -1482,6 +1532,17 @@ async def _check_agent_permission(
         repo_name,
         commenter,
     )
+    if permission == "unknown":
+        return await _permission_check_unavailable_response(
+            github_app,
+            repo_owner,
+            repo_name,
+            repo_full_name,
+            issue_number,
+            commenter,
+            log_prefix=log_prefix,
+        )
+
     if permission not in ("admin", "write"):
         logger.info("{} 权限不足: {} 权限为 {}", log_prefix, commenter, permission)
         await _post_issue_comment(
