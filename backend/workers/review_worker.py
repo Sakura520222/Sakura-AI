@@ -2,7 +2,6 @@
 
 import asyncio
 import subprocess
-from collections import Counter
 from datetime import datetime
 from typing import Any, Dict, Optional
 import uuid
@@ -14,7 +13,6 @@ from backend.core.config import get_settings, get_strategy_config, get_dynamic_c
 from backend.core.config import get_user_dynamic_config
 from backend.core.github_app import GitHubAppClient
 from backend.services.ai_reviewer import AIReviewer
-from backend.services.ai_reviewer.review_protocol import SEVERITY_TO_ISSUE_KEY
 from backend.services.ai_reviewer.token_tracker import TokenTracker
 from backend.services.comment_service import CommentService
 from backend.services.decision_engine import get_decision_engine
@@ -128,24 +126,13 @@ class ReviewWorker:
         # is signal-only (set/check), safe for concurrent async coroutines.
         self._cancel_events: Dict[str, asyncio.Event] = {}
 
-    @staticmethod
-    def _inline_comment_issue_title(comment: Dict[str, Any]) -> str | None:
-        """Extract the issue title encoded by the tagged review protocol."""
-        body = str(comment.get("body", ""))
-        first_line = body.splitlines()[0].strip() if body else ""
-        if len(first_line) >= 4 and first_line.startswith("**") and first_line.endswith(
-            "**"
-        ):
-            return first_line[2:-2].strip() or None
-        return None
-
     def _normalize_review_result_for_diff(
         self,
         review_result: Dict[str, Any],
         analysis: PRAnalysis | None,
         task_id: str,
     ) -> Dict[str, Any]:
-        """Filter invalid inline findings and keep issue counts in sync."""
+        """Filter GitHub-submittable inline comments without changing findings."""
         inline_comments = review_result.get("inline_comments", [])
         if (
             not inline_comments
@@ -164,42 +151,14 @@ class ReviewWorker:
         )
         normalized_result["inline_comments"] = validated_comments
 
-        # 验证后数量未减少，无需同步 issues 计数
+        # 验证后数量未减少，无需额外日志
         if len(validated_comments) == len(inline_comments):
             return normalized_result
 
-        # 按计数差识别被过滤的评论，用于从 issues 同步移除对应标题。
-        # 直接用 Counter 差集而非按列表顺序消耗配额，避免同标题评论在
-        # 有效/无效混合时错配（validated_comments 是新 dict，无法用 id 匹配）。
-        original_counts = Counter(
-            (c.get("severity", "suggestion"), self._inline_comment_issue_title(c))
-            for c in inline_comments
-        )
-        validated_counts = Counter(
-            (c.get("severity", "suggestion"), self._inline_comment_issue_title(c))
-            for c in validated_comments
-        )
-        removed_counts = original_counts - validated_counts
-
-        issues = {
-            key: list(values)
-            for key, values in review_result.get("issues", {}).items()
-        }
-        for (severity, title), count in removed_counts.items():
-            if not title:
-                continue
-            issue_key = SEVERITY_TO_ISSUE_KEY.get(severity)
-            if not issue_key:
-                continue
-            for _ in range(count):
-                if title in issues.get(issue_key, []):
-                    issues[issue_key].remove(title)
-        normalized_result["issues"] = issues
-
         logger.info(
-            "[{}] 在落库和决策前过滤掉 {} 条无效行内评论",
+            "[{}] 过滤掉 {} 条无法作为 GitHub 行内评论提交的评论，报告汇总保留原始 findings",
             task_id,
-            sum(removed_counts.values()),
+            len(inline_comments) - len(validated_comments),
         )
         return normalized_result
 

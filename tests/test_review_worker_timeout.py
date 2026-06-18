@@ -49,7 +49,7 @@ def _review_worker_for_normalization():
     return worker
 
 
-def test_normalize_review_result_filters_out_of_diff_finding_and_issue():
+def test_normalize_review_result_filters_out_of_diff_inline_comment_but_preserves_issue():
     worker = _review_worker_for_normalization()
     analysis = SimpleNamespace(
         changed_lines_map={"backend/example.py": {335, 336}},
@@ -60,15 +60,15 @@ def test_normalize_review_result_filters_out_of_diff_finding_and_issue():
             {
                 "file_path": "backend/example.py",
                 "line_number": 59,
-                "body": "**Repeated conversion**\n\nAvoid calling int() twice.",
-                "severity": "suggestion",
+                "body": "**Executor join blocks heartbeat**\n\nAvoid blocking the executor.",
+                "severity": "major",
             }
         ],
         "issues": {
             "critical": [],
-            "major": [],
+            "major": ["Executor join blocks heartbeat"],
             "minor": [],
-            "suggestions": ["Repeated conversion"],
+            "suggestions": [],
         },
     }
 
@@ -80,7 +80,7 @@ def test_normalize_review_result_filters_out_of_diff_finding_and_issue():
 
     assert normalized["inline_comments"] == []
     assert normalized["review_body_inline_comments"] == review_result["inline_comments"]
-    assert normalized["issues"]["suggestions"] == []
+    assert normalized["issues"]["major"] == ["Executor join blocks heartbeat"]
 
 
 def test_normalize_review_result_preserves_valid_finding_and_issue():
@@ -166,7 +166,7 @@ def test_normalize_review_result_validates_inline_comments_in_one_batch(monkeypa
     assert calls == [review_result["inline_comments"]]
     assert len(normalized["inline_comments"]) == 1
     assert normalized["issues"]["minor"] == ["Valid finding"]
-    assert normalized["issues"]["suggestions"] == []
+    assert normalized["issues"]["suggestions"] == ["Invalid finding"]
 
 
 @pytest.mark.asyncio
