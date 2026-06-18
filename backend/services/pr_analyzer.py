@@ -72,6 +72,11 @@ class PRAnalysis:
     # 格式：{"file.py": [(10, 20), (50, 65)], ...}
     hunk_boundaries: Dict[str, List[Tuple[int, int]]] = None
 
+    # 原代码缩进映射：每个 PR 后行号 → 该行的前导空白
+    # 格式：{"file.py": {10: "    ", 11: "        "}, ...}
+    # 用于一键应用 suggestion 块的缩进兜底对齐（AI 偶尔丢失缩进时按原代码补齐）
+    original_indent_map: Dict[str, Dict[int, str]] = None
+
     # 增量审查标记
     is_incremental: bool = False
 
@@ -208,8 +213,10 @@ class PRAnalyzer:
                     len(code_files), code_changes
                 )
 
-            # 提取 diff 安全区白名单和 hunk 边界
-            changed_lines_map, hunk_boundaries = self._extract_changed_lines(code_files)
+            # 提取 diff 安全区白名单、hunk 边界和原代码缩进
+            changed_lines_map, hunk_boundaries, original_indent_map = (
+                self._extract_changed_lines(code_files)
+            )
 
             analysis = PRAnalysis(
                 pr_id=pr_info["pr_id"],
@@ -227,6 +234,7 @@ class PRAnalyzer:
                 skip_reason=skip_reason,
                 changed_lines_map=changed_lines_map,
                 hunk_boundaries=hunk_boundaries,
+                original_indent_map=original_indent_map,
                 is_incremental=is_incremental,
                 new_commits=new_commits,
             )
@@ -245,25 +253,32 @@ class PRAnalyzer:
 
     def _extract_changed_lines(
         self, code_files: List[PRFileInfo]
-    ) -> Tuple[Dict[str, set], Dict[str, List[Tuple[int, int]]]]:
-        """从文件 patch 中提取变更的行号（Diff 安全区）和 hunk 边界
+    ) -> Tuple[
+        Dict[str, set],
+        Dict[str, List[Tuple[int, int]]],
+        Dict[str, Dict[int, str]],
+    ]:
+        """从文件 patch 中提取变更的行号（Diff 安全区）、hunk 边界和原代码缩进
 
         解析 unified diff 格式，提取所有变更行的行号和每个 hunk 的行范围。
         安全区白名单用于验证 AI 给出的行号是否在 diff 范围内，
-        hunk 边界用于检测跨 hunk 的多行评论（GitHub API 不允许）。
+        hunk 边界用于检测跨 hunk 的多行评论（GitHub API 不允许），
+        原代码缩进用于一键应用 suggestion 块的缩进兜底对齐。
 
         Args:
             code_files: 代码文件列表
 
         Returns:
-            元组：(changed_lines, hunk_boundaries)
+            元组：(changed_lines, hunk_boundaries, original_indent)
             - changed_lines: 字典，key 为文件路径，value 为变更行号的集合
             - hunk_boundaries: 字典，key 为文件路径，value 为 hunk (起始行, 结束行) 列表
+            - original_indent: 字典，key 为文件路径，value 为 {行号: 前导空白}
         """
         import re
 
         changed_lines = {}
         hunk_boundaries = {}
+        original_indent: Dict[str, Dict[int, str]] = {}
 
         for file_info in code_files:
             if not file_info.patch:
@@ -278,6 +293,7 @@ class PRAnalyzer:
             # -removed_line
             lines = file_info.patch.split("\n")
             file_changed_lines = set()
+            file_original_indent: Dict[int, str] = {}
 
             i = 0
             hunk_count = 0
@@ -327,6 +343,10 @@ class PRAnalyzer:
                         ):
                             # 新增行
                             file_changed_lines.add(current_line)
+                            # 记录原代码缩进（去掉 diff 前缀 '+' 后的前导空白）
+                            file_original_indent[current_line] = (
+                                self._leading_whitespace(hunk_line[1:])
+                            )
                             added_lines += 1
                             logger.debug(f"    + 第{current_line}行: {hunk_line[:50]}")
                             current_line += 1
@@ -341,6 +361,10 @@ class PRAnalyzer:
                             # 上下文行（不是 \ No newline at end of file）
                             # 也添加上下文行，给 AI 更多评论空间
                             file_changed_lines.add(current_line)
+                            # 记录原代码缩进（去掉 diff 上下文前缀后的前导空白）
+                            file_original_indent[current_line] = (
+                                self._leading_whitespace(hunk_line[1:])
+                            )
                             context_lines += 1
                             logger.debug(
                                 f"      第{current_line}行 (上下文): {hunk_line[:50]}"
@@ -365,6 +389,7 @@ class PRAnalyzer:
 
             if file_changed_lines:
                 changed_lines[file_info.path] = file_changed_lines
+                original_indent[file_info.path] = file_original_indent
                 sorted_lines = sorted(file_changed_lines)
                 logger.info(
                     f"✅ 文件 {file_info.path} 共 {hunk_count} 个 hunk, 提取行号 {len(sorted_lines)} 个: {sorted_lines[:15]}{'...' if len(sorted_lines) > 15 else ''}"
@@ -373,7 +398,12 @@ class PRAnalyzer:
                 logger.warning(f"⚠️  文件 {file_info.path} 未提取到任何行号")
 
         logger.info(f"🎯 构建 Diff 安全区完成，覆盖 {len(changed_lines)} 个文件")
-        return changed_lines, hunk_boundaries
+        return changed_lines, hunk_boundaries, original_indent
+
+    @staticmethod
+    def _leading_whitespace(text: str) -> str:
+        """提取文本行的前导空白（空格与制表符），用于缩进兜底对齐。"""
+        return text[: len(text) - len(text.lstrip(" \t"))]
 
     def _should_skip_review(
         self, code_file_count: int, code_changes: int, total_files: int

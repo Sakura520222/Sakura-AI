@@ -1,6 +1,7 @@
 """评论服务 - 负责将审查结果发布到GitHub PR"""
 
 import asyncio
+import re
 from typing import Dict, Any, Optional
 from loguru import logger
 
@@ -582,10 +583,55 @@ Please check system logs or contact the administrator.
             }
             if start_line:
                 validated_comment["start_line"] = start_line
+            # 5. 一键应用 suggestion 块的缩进兜底（AI 偶尔丢失缩进，按原代码补齐）
+            self._realign_suggestion_indentation(validated_comment, analysis)
             validated.append(validated_comment)
             logger.debug("✓ 验证通过: {}:{}", matched_path, line_number)
 
         return validated
+
+    def _realign_suggestion_indentation(self, comment: dict, analysis: Any) -> None:
+        """一键应用 suggestion 块的缩进兜底（原地修改 comment["body"]）。
+
+        GitHub 渲染 suggestion 块时逐字替换被评论的代码行：块内写什么缩进，应用
+        后就是什么缩进。当 AI 在 SUGGESTION 里输出顶格代码（丢失原代码缩进）时，
+        一键应用会破坏代码缩进。这里在无破坏的前提下按原代码起始行缩进补齐：
+        仅当 suggestion 块的最小缩进小于原代码起始行缩进时，把差值补到每一行，
+        保持内部相对缩进不变。
+
+        若缺少原代码缩进信息（如该行不在 diff 内，或 analysis 未升级），安全跳过，
+        原样保留，绝不破坏 AI 写下的正确缩进。
+        """
+        indent_map = getattr(analysis, "original_indent_map", None) or {}
+        file_indent = indent_map.get(comment.get("file_path")) or {}
+        if not file_indent:
+            return
+
+        body = comment.get("body", "")
+        match = re.search(r"```suggestion\n(.*?)\n```", body, re.DOTALL)
+        if not match:
+            return  # overall finding 的文本建议等，无 suggestion 代码块
+
+        start_line = comment.get("start_line") or comment.get("line_number")
+        base_indent = file_indent.get(start_line)
+        if not base_indent:
+            return  # 该行无原代码缩进信息，无法对齐，原样保留
+
+        code = match.group(1)
+        code_lines = code.split("\n")
+        non_blank = [ln for ln in code_lines if ln.strip()]
+        if not non_blank:
+            return
+        min_indent = min(len(ln) - len(ln.lstrip(" \t")) for ln in non_blank)
+        base_len = len(base_indent)
+        if base_len <= min_indent:
+            return  # 缩进未丢失（AI 已写对或更深），原样保留
+
+        # 补齐差值：与原代码缩进字符一致（空格或制表符），空行保持空白
+        pad_char = "\t" if "\t" in base_indent else " "
+        pad = pad_char * (base_len - min_indent)
+        realigned = "\n".join((pad + ln) if ln.strip() else ln for ln in code_lines)
+        comment["body"] = body[: match.start(1)] + realigned + body[match.end(1) :]
 
     def _match_file_path(self, ai_path: str, pr_files: set) -> Optional[str]:
         """智能匹配文件路径
