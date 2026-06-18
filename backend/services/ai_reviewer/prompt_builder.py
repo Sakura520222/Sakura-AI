@@ -37,7 +37,7 @@ Short title
 Evidence-based description
 </DESCRIPTION>
 <SUGGESTION>
-Actionable fix|NONE
+Exact replacement code for START_LINE..END_LINE (file findings) | actionable fix (overall findings) | NONE
 </SUGGESTION>
 </FINDING>
 </FINDINGS>
@@ -330,6 +330,20 @@ class PromptBuilder:
             f"- Write only natural-language field contents in {language_name}.",
             "- Protocol tags, enum values, file paths, and NONE must remain exactly as "
             "specified in English.",
+            "",
+            "## Suggestions",
+            "- For file findings, SUGGESTION must contain the exact replacement code "
+            "for the START_LINE..END_LINE range. It is rendered as a one-click GitHub "
+            "suggestion that replaces those lines when applied.",
+            "- Provide only the lines that should replace the range. Do not include "
+            "line numbers, surrounding context, fences, or explanation inside the code.",
+            "- Verify the replacement compiles, matches the file language and "
+            "indentation, and is minimal. A correct fix lets the author apply it in "
+            "one click; a wrong or partial replacement wastes their time.",
+            "- If you cannot provide a safe, self-contained replacement, set "
+            "SUGGESTION to NONE and explain the fix in DESCRIPTION instead.",
+            "- For overall findings (FILE=NONE), SUGGESTION is a natural-language "
+            "actionable fix, or NONE.",
             "",
             "## Output contract",
             "- Return exactly one SAKURA_REVIEW envelope and no text outside it.",

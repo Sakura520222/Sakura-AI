@@ -34,7 +34,7 @@ def _finding(
     file_path: str = "src/main.py",
     start_line: str = "42",
     end_line: str = "43",
-    suggestion: str = "Validate the input before use.",
+    suggestion: str = "value = sanitize(value)",
 ) -> str:
     return f"""<FINDING>
 <SEVERITY>{severity}</SEVERITY>
@@ -72,7 +72,7 @@ def test_parses_complete_tagged_review(parser):
     assert result["inline_comments"][0]["file_path"] == "src/main.py"
     assert result["inline_comments"][0]["start_line"] == 42
     assert result["inline_comments"][0]["line_number"] == 43
-    assert "**Suggestion:** Validate the input before use." in (
+    assert "```suggestion\nvalue = sanitize(value)\n```" in (
         result["inline_comments"][0]["body"]
     )
 
@@ -128,6 +128,25 @@ def test_parses_overall_finding_and_none_suggestion(parser):
     assert result["comments"][0]["severity"] == "suggestion"
     assert result["inline_comments"] == []
     assert "Suggestion:" not in result["comments"][0]["content"]
+
+
+def test_overall_finding_keeps_text_suggestion(parser):
+    finding = _finding(
+        severity="suggestion",
+        file_path="NONE",
+        start_line="NONE",
+        end_line="NONE",
+        suggestion="Consider adding a retry decorator.",
+    )
+    result = parser.parse_review_result(
+        _review(score=9, decision="comment", findings=finding),
+        "standard",
+    )
+
+    assert result["inline_comments"] == []
+    # Overall findings render suggestion as text, not a GitHub suggestion block
+    assert "**Suggestion:**" in result["comments"][0]["content"]
+    assert "```suggestion" not in result["comments"][0]["content"]
 
 
 @pytest.mark.parametrize(
