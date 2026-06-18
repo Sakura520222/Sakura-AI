@@ -332,16 +332,32 @@ class PromptBuilder:
             "specified in English.",
             "",
             "## Suggestions",
-            "- For file findings, SUGGESTION must contain the exact replacement code "
-            "for the START_LINE..END_LINE range. It is rendered as a one-click GitHub "
-            "suggestion that replaces those lines when applied.",
+            "- For file findings, prefer giving the author a one-click fix: put the "
+            "exact replacement code for the START_LINE..END_LINE range in SUGGESTION. "
+            "It is rendered as a GitHub suggestion that replaces those lines when "
+            "applied, so the author can fix the issue in one click.",
+            "- Provide one-click code whenever the fix is local and mechanical, e.g. "
+            "adding or fixing a modifier/annotation (such as volatile/final/override), "
+            "renaming an identifier, changing a constant or literal, correcting a "
+            "condition or format string, tightening a comparison, adding a missing "
+            "null/size/permission guard, or simplifying a small expression. Read the "
+            "surrounding lines first so the replacement is correct.",
+            "- Reserve SUGGESTION = NONE only for fixes that are not a single "
+            "self-contained replacement: cross-file changes, new methods/types, API "
+            "changes requiring caller updates, large refactors, or where the right fix "
+            "needs human judgement. Then explain the fix in DESCRIPTION instead.",
             "- Provide only the lines that should replace the range. Do not include "
             "line numbers, surrounding context, fences, or explanation inside the code.",
+            "- Close every SUGGESTION block with </SUGGESTION> on its own line. When "
+            "SUGGESTION holds multi-line replacement code, verify the closing tag is "
+            "present before starting the next FINDING.",
+            "- Keep the indentation of every replacement line identical to the "
+            "original source at that location, including the first line; GitHub "
+            "renders the suggestion verbatim, so misaligned indentation produces a "
+            "broken diff.",
             "- Verify the replacement compiles, matches the file language and "
             "indentation, and is minimal. A correct fix lets the author apply it in "
             "one click; a wrong or partial replacement wastes their time.",
-            "- If you cannot provide a safe, self-contained replacement, set "
-            "SUGGESTION to NONE and explain the fix in DESCRIPTION instead.",
             "- For overall findings (FILE=NONE), SUGGESTION is a natural-language "
             "actionable fix, or NONE.",
             "",

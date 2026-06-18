@@ -5,6 +5,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
+from loguru import logger
+
 
 PROTOCOL_VERSION = "1"
 VALID_SEVERITIES = {"critical", "major", "minor", "suggestion"}
@@ -207,7 +209,10 @@ class TaggedReviewParser:
 
         title = fields["TITLE"].strip()
         description = fields["DESCRIPTION"].strip()
-        suggestion_value = fields["SUGGESTION"].strip()
+        # Preserve SUGGESTION indentation (including the first line); stripping
+        # here would eat the first line's indentation and misalign the one-click
+        # suggestion. Normalize only when checking for the NONE sentinel.
+        suggestion_value = fields["SUGGESTION"]
         if not title or not description:
             raise ReviewProtocolError("finding title and description must not be empty")
 
@@ -218,7 +223,9 @@ class TaggedReviewParser:
             end_line=end_line,
             title=title,
             description=description,
-            suggestion=None if suggestion_value == "NONE" else suggestion_value,
+            suggestion=None
+            if suggestion_value.strip() == "NONE"
+            else suggestion_value,
         )
 
     def _consume_field(
@@ -254,8 +261,37 @@ class TaggedReviewParser:
             content.append(lines[index])
             index += 1
         if index >= len(lines):
-            raise ReviewProtocolError(f"missing {single_suffix}")
-        return "\n".join(content).strip(), index + 1
+            # Tolerate a missing closing tag on a trailing multiline field.
+            # In practice this is SUGGESTION (the last finding field): the
+            # model sometimes emits replacement code and omits </SUGGESTION>.
+            # Other multiline fields hit a reserved-tag line first, so this
+            # branch only rescues a benign truncation instead of masking
+            # structural corruption. Accept the collected content so the
+            # finding (and its one-click suggestion) survives rather than
+            # forcing the whole review into manual re-review.
+            logger.warning(
+                "tolerated missing </{}>; accepted {} content line(s)",
+                field,
+                len(content),
+            )
+            return self._strip_blank_lines(content), index
+        return self._strip_blank_lines(content), index + 1
+
+    @staticmethod
+    def _strip_blank_lines(lines: list[str]) -> str:
+        """Join lines, dropping only leading/trailing blank lines.
+
+        A bare ``str.strip()`` on the joined text would also strip the
+        first content line's indentation, which misaligns a multi-line
+        SUGGESTION replacement against the original source when GitHub
+        renders it. Preserve per-line indentation and trim blank lines only.
+        """
+        body = list(lines)
+        while body and not body[0].strip():
+            body.pop(0)
+        while body and not body[-1].strip():
+            body.pop()
+        return "\n".join(body)
 
     @staticmethod
     def _consume_block(
@@ -338,7 +374,7 @@ def to_review_result(parsed: dict[str, Any]) -> dict[str, Any]:
             if finding.file_path is not None:
                 # GitHub one-click suggestion: replaces START_LINE..END_LINE
                 body_parts.append(
-                    f"```suggestion\n{finding.suggestion}\n```"
+                    f"**Suggestion:**\n```suggestion\n{finding.suggestion}\n```"
                 )
             else:
                 body_parts.append(f"**Suggestion:** {finding.suggestion}")

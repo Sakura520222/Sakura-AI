@@ -230,3 +230,63 @@ def test_rejects_score_inconsistent_with_severity(parser):
     text = _review(score=9, findings=_finding(severity="critical"))
     with pytest.raises(ReviewProtocolError):
         parser.parse_review_result(text, "standard")
+
+
+def test_tolerates_missing_suggestion_closing_tag(parser):
+    """SUGGESTION 含多行替换代码但漏写 </SUGGESTION> 时，容错保住 finding 与一键块。
+
+    回归用例：模型在 SUGGESTION 输出替换代码后直接 </FINDING>，漏掉闭合标签。
+    修复前会报 ``missing </SUGGESTION>`` 并让整次审查降级为人工复审。
+    """
+    findings = """<FINDING>
+<SEVERITY>minor</SEVERITY>
+<FILE>src/ClientState.java</FILE>
+<START_LINE>59</START_LINE>
+<END_LINE>71</END_LINE>
+<TITLE>Fields missing volatile</TITLE>
+<DESCRIPTION>These static fields are read across threads.</DESCRIPTION>
+<SUGGESTION>
+public static volatile boolean serverShutdown;
+public static volatile boolean isLobbyInitiatedConnection;
+</FINDING>
+"""
+    result = parser.parse_review_result(_review(findings=findings), "standard")
+
+    assert result["parse_source"] == "tagged"
+    assert result["overall_score"] == 6
+    assert len(result["inline_comments"]) == 1
+    body = result["inline_comments"][0]["body"]
+    # 替换代码被保留并渲染为一键 GitHub suggestion 块
+    assert "```suggestion" in body
+    assert "volatile boolean serverShutdown" in body
+
+
+def test_preserves_multiline_suggestion_indentation(parser):
+    """多行替换代码的首行缩进必须保留，与原代码对齐（不被 strip 吃掉）。"""
+    findings = """<FINDING>
+<SEVERITY>major</SEVERITY>
+<FILE>src/ClientState.java</FILE>
+<START_LINE>59</START_LINE>
+<END_LINE>63</END_LINE>
+<TITLE>Fields missing volatile</TITLE>
+<DESCRIPTION>These static fields are read across threads.</DESCRIPTION>
+<SUGGESTION>
+    /** shut down flag */
+    public static volatile boolean isLobbyInitiatedConnection = false;
+</SUGGESTION>
+</FINDING>
+"""
+    result = parser.parse_review_result(_review(findings=findings), "standard")
+
+    body = result["inline_comments"][0]["body"]
+    # 首行缩进保留，与第二行对齐（回归：strip 曾把首行 4 空格吃掉导致顶格）
+    assert "    /** shut down flag */\n    public static volatile boolean" in body
+
+
+def test_file_finding_suggestion_renders_with_prefix(parser):
+    """file finding 的一键块前应有 Suggestion: 前缀。"""
+    result = parser.parse_review_result(_review(findings=_finding()), "standard")
+
+    body = result["inline_comments"][0]["body"]
+    assert "**Suggestion:**" in body
+    assert "```suggestion" in body
