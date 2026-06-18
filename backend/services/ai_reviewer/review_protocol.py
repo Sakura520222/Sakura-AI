@@ -328,7 +328,13 @@ def to_review_result(parsed: dict[str, Any]) -> dict[str, Any]:
         result["issues"][SEVERITY_TO_ISSUE_KEY[finding.severity]].append(issue_text)
         body_parts = [f"**{finding.title}**", finding.description]
         if finding.suggestion:
-            body_parts.append(f"**Suggestion:** {finding.suggestion}")
+            if finding.file_path is not None:
+                # GitHub one-click suggestion: replaces START_LINE..END_LINE
+                body_parts.append(
+                    f"```suggestion\n{finding.suggestion}\n```"
+                )
+            else:
+                body_parts.append(f"**Suggestion:** {finding.suggestion}")
         body = "\n\n".join(body_parts)
 
         if finding.file_path is None:
