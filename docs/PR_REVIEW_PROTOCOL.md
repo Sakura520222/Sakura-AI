@@ -72,6 +72,11 @@ an outer Markdown fence or short presentation preamble/epilogue. It rejects
 responses containing zero or multiple envelopes and never infers findings from
 surrounding prose.
 
+The required output shape remains line-oriented block tags for
+`DECISION_REASON`, `SUMMARY`, `TITLE`, `DESCRIPTION`, and `SUGGESTION`.
+As a compatibility measure, the parser also accepts provider-style single-line
+text fields such as `<SUGGESTION>NONE</SUGGESTION>`.
+
 An invalid first response triggers one format-only retry at temperature zero,
 without tools. The original assistant response is included so the model can
 reformat the same conclusions. A second invalid response produces a safe

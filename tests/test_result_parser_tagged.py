@@ -77,6 +77,37 @@ def test_parses_complete_tagged_review(parser):
     )
 
 
+def test_accepts_single_line_text_fields_from_provider_xml_style(parser):
+    text = """<SAKURA_REVIEW>
+<VERSION>1</VERSION>
+<SCORE>6</SCORE>
+<DECISION>request_changes</DECISION>
+<DECISION_REASON>The decision is supported by the findings.</DECISION_REASON>
+<SUMMARY>The review summary.</SUMMARY>
+<FINDINGS>
+<FINDING>
+<SEVERITY>major</SEVERITY>
+<FILE>src/main.py</FILE>
+<START_LINE>42</START_LINE>
+<END_LINE>43</END_LINE>
+<TITLE>Unchecked input</TITLE>
+<DESCRIPTION>The changed code uses untrusted input without validation.</DESCRIPTION>
+<SUGGESTION>NONE</SUGGESTION>
+</FINDING>
+</FINDINGS>
+</SAKURA_REVIEW>"""
+
+    result = parser.parse_review_result(text, "standard")
+
+    assert result["parse_source"] == "tagged"
+    assert result["overall_score"] == 6
+    assert result["inline_comments"][0]["file_path"] == "src/main.py"
+    assert result["inline_comments"][0]["body"] == (
+        "**Unchecked input**\n\n"
+        "The changed code uses untrusted input without validation."
+    )
+
+
 def test_parses_review_without_findings(parser):
     result = parser.parse_review_result(
         _review(score=10, decision="approve"),

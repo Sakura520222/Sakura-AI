@@ -20,6 +20,7 @@ REPAIR_INSTRUCTION = """Your previous response did not match the required SAKURA
 Reformat the same review conclusions only. Do not add, remove, or reconsider findings.
 Return exactly one <SAKURA_REVIEW> envelope and no text outside it.
 Use VERSION 1, a SCORE from 1 to 10, a valid DECISION, and complete FINDING fields.
+Put DECISION_REASON, SUMMARY, TITLE, DESCRIPTION, and SUGGESTION opening and closing tags on separate lines.
 Keep protocol tags and enum values in English. Preserve the requested language only inside natural-language fields."""
 
 
@@ -236,6 +237,12 @@ class TaggedReviewParser:
             if "<" in value or ">" in value:
                 raise ReviewProtocolError(f"reserved tag syntax in {field}")
             return value.strip(), index + 1
+
+        if stripped.startswith(single_prefix) and stripped.endswith(single_suffix):
+            value = stripped[len(single_prefix) : -len(single_suffix)].strip()
+            if self._is_reserved_tag_line(value):
+                raise ReviewProtocolError(f"reserved protocol tag inside {field}")
+            return value, index + 1
 
         if stripped != single_prefix:
             raise ReviewProtocolError(f"expected {single_prefix}")

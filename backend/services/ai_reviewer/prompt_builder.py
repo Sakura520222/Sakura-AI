@@ -348,6 +348,8 @@ class PromptBuilder:
             "## Output contract",
             "- Return exactly one SAKURA_REVIEW envelope and no text outside it.",
             "- Put every tag on its own line, except the documented scalar tags.",
+            "- DECISION_REASON, SUMMARY, TITLE, DESCRIPTION, and SUGGESTION are "
+            "block tags; do not write them as single-line XML fields.",
             "- Do not place a reserved protocol tag on its own line inside a text field.",
             "- Every actionable defect or optional improvement mentioned in SUMMARY must "
             "also be represented as a complete FINDING.",
