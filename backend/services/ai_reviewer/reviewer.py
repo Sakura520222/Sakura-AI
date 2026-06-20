@@ -41,6 +41,30 @@ from .tools import (
 )
 
 
+def _dump_protocol_failure(strategy: str, review_text: str) -> None:
+    """Persist the full malformed protocol payload for offline diagnosis.
+
+    The warning log only keeps an 80-char prefix/suffix, which has repeatedly
+    been too little to root-cause why a model output broke the tagged protocol.
+    Writing the whole payload lets the exact failure mode be determined after
+    the fact instead of guessing from truncated snippets.
+    """
+    try:
+        from datetime import datetime
+        from pathlib import Path
+
+        dump_dir = Path("logs") / "protocol_failures"
+        dump_dir.mkdir(parents=True, exist_ok=True)
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
+        path = dump_dir / f"{timestamp}_{strategy}.txt"
+        path.write_text(review_text, encoding="utf-8")
+        logger.warning(
+            "已保存完整协议失败载荷（{} 字符）到 {}", len(review_text), path
+        )
+    except Exception as exc:
+        logger.warning("保存协议失败载荷失败: {}", exc)
+
+
 class AIReviewer:
     """AI审查器 - 组合各功能模块
 
@@ -176,6 +200,7 @@ class AIReviewer:
             return self.result_parser.parse_review_result(review_text, strategy)
         except ReviewProtocolError as first_error:
             stripped = review_text.strip()
+            _dump_protocol_failure(strategy, review_text)
             logger.warning(
                 "审查协议解析失败，尝试修复一次: {} | length={} prefix={!r} suffix={!r}",
                 first_error,

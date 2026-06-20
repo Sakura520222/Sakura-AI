@@ -226,10 +226,55 @@ def test_rejects_reserved_tag_line_inside_text(parser):
         parser.parse_review_result(text, "standard")
 
 
-def test_rejects_score_inconsistent_with_severity(parser):
-    text = _review(score=9, findings=_finding(severity="critical"))
-    with pytest.raises(ReviewProtocolError):
-        parser.parse_review_result(text, "standard")
+@pytest.mark.parametrize(
+    "score, severity, expected",
+    [
+        (9, "critical", 3),
+        (8, "major", 6),
+        (3, "critical", 3),
+    ],
+)
+def test_clamps_score_to_severity_ceiling(parser, score, severity, expected):
+    """score 超过 severity 上限时 clamp 到上限，而非降级整个审查。"""
+    result = parser.parse_review_result(
+        _review(score=score, findings=_finding(severity=severity)), "standard"
+    )
+    assert result["overall_score"] == expected
+
+
+def test_tolerates_blank_lines_between_fields(parser):
+    """字段之间的空行（DECISION_REASON/SUMMARY、finding 字段间）应被跳过。"""
+    text = """<SAKURA_REVIEW>
+<VERSION>1</VERSION>
+<SCORE>6</SCORE>
+<DECISION>request_changes</DECISION>
+
+<DECISION_REASON>
+reason here
+</DECISION_REASON>
+
+<SUMMARY>
+summary here
+</SUMMARY>
+
+<FINDINGS>
+<FINDING>
+<SEVERITY>major</SEVERITY>
+
+<FILE>src/A.java</FILE>
+<START_LINE>1</START_LINE>
+<END_LINE>2</END_LINE>
+<TITLE>title</TITLE>
+<DESCRIPTION>desc</DESCRIPTION>
+<SUGGESTION>fix();</SUGGESTION>
+</FINDING>
+</FINDINGS>
+</SAKURA_REVIEW>"""
+    result = parser.parse_review_result(text, "standard")
+
+    assert result["overall_score"] == 6
+    assert len(result["inline_comments"]) == 1
+    assert result["inline_comments"][0]["file_path"] == "src/A.java"
 
 
 def test_tolerates_missing_suggestion_closing_tag(parser):
@@ -290,3 +335,71 @@ def test_file_finding_suggestion_renders_with_prefix(parser):
     body = result["inline_comments"][0]["body"]
     assert "**Suggestion:**" in body
     assert "```suggestion" in body
+
+
+def test_tolerates_blank_lines_between_findings(parser):
+    """finding 块之间的空行应被跳过，而非触发 FINDINGS may contain only FINDING blocks。"""
+    findings = """<FINDING>
+<SEVERITY>major</SEVERITY>
+<FILE>src/A.java</FILE>
+<START_LINE>1</START_LINE>
+<END_LINE>2</END_LINE>
+<TITLE>first</TITLE>
+<DESCRIPTION>desc one</DESCRIPTION>
+<SUGGESTION>fix1();</SUGGESTION>
+</FINDING>
+
+<FINDING>
+<SEVERITY>minor</SEVERITY>
+<FILE>src/B.java</FILE>
+<START_LINE>3</START_LINE>
+<END_LINE>4</END_LINE>
+<TITLE>second</TITLE>
+<DESCRIPTION>desc two</DESCRIPTION>
+<SUGGESTION>fix2();</SUGGESTION>
+</FINDING>
+"""
+    result = parser.parse_review_result(_review(findings=findings), "standard")
+
+    assert len(result["inline_comments"]) == 2
+    assert result["inline_comments"][0]["file_path"] == "src/A.java"
+    assert result["inline_comments"][1]["file_path"] == "src/B.java"
+
+
+def test_tolerates_compact_suggestion_on_same_line(parser):
+    """SUGGESTION 开/闭标签与代码同行（紧凑格式）应正确解析并保留缩进。"""
+    findings = """<FINDING>
+<SEVERITY>major</SEVERITY>
+<FILE>src/A.java</FILE>
+<START_LINE>1</START_LINE>
+<END_LINE>5</END_LINE>
+<TITLE>compact</TITLE>
+<DESCRIPTION>desc</DESCRIPTION>
+<SUGGESTION>    public void foo() {
+        bar();
+    }</SUGGESTION>
+</FINDING>
+"""
+    result = parser.parse_review_result(_review(findings=findings), "standard")
+
+    body = result["inline_comments"][0]["body"]
+    assert "```suggestion" in body
+    assert "    public void foo() {\n        bar();\n    }" in body
+
+
+def test_preserves_single_line_suggestion_indentation(parser):
+    """全单行 <SUGGESTION>    code</SUGGESTION> 的首行缩进应保留。"""
+    findings = """<FINDING>
+<SEVERITY>suggestion</SEVERITY>
+<FILE>src/A.java</FILE>
+<START_LINE>1</START_LINE>
+<END_LINE>1</END_LINE>
+<TITLE>single line</TITLE>
+<DESCRIPTION>desc</DESCRIPTION>
+<SUGGESTION>    public static volatile String currentServerIp = null;</SUGGESTION>
+</FINDING>
+"""
+    result = parser.parse_review_result(_review(findings=findings), "standard")
+
+    body = result["inline_comments"][0]["body"]
+    assert "    public static volatile String currentServerIp = null;" in body
