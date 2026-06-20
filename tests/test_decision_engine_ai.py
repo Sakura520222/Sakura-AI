@@ -201,7 +201,7 @@ class TestReviewBodyFormatting:
 
         assert "### 💡 Suggestions (4 suggestions)" in body
         assert "- suggestion-0" in body
-        assert "- ...and 1 more" in body
+        assert "- suggestion-3" in body
 
     def test_inline_comments_are_appended_when_template_omits_summary(self, engine):
         engine.policy["review_templates"] = {"approve": "{summary}"}

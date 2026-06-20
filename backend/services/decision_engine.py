@@ -449,18 +449,9 @@ class DecisionEngine:
                     else f"{len(values)}{unit}"
                 )
                 comment_parts.append(f"\n### {icon} {title} ({count_text})\n")
-                for issue in values[:3]:
-                    issue_text = issue[:150] + "..." if len(issue) > 150 else issue
-                    comment_parts.append(f"- {issue_text}\n")
-
-                remaining = len(values) - 3
-                if remaining > 0:
-                    remaining_text = (
-                        f"- ...and {remaining} more\n"
-                        if output_lang == "en"
-                        else f"- ...还有 {remaining} 条\n"
-                    )
-                    comment_parts.append(remaining_text)
+                # 完整展示每条问题，不做数量截断或单条文字截断
+                for issue in values:
+                    comment_parts.append(f"- {issue}\n")
 
             comment_summary = "\n".join(comment_parts)
 
