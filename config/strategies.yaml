@@ -354,6 +354,12 @@ issue_analysis:
     - name: security
       description: "安全问题"
       keywords: ["security", "vulnerability", "xss", "injection", "auth", "permission", "cve"]
+    - name: refactor
+      description: "代码重构、技术债清理"
+      keywords: ["refactor", "cleanup", "tech debt", "deprecation", "rewrite"]
+    - name: other
+      description: "其他无法归类的 Issue"
+      keywords: []
 
   # Issue 优先级判定规则
   priority_rules:
@@ -382,60 +388,21 @@ issue_analysis:
   # 关联 Issue 数量上限
   max_linked_issues_in_prompt: 5
 
-  # Issue 分析系统提示词
+  # Issue 分析系统提示词（英文 focus，强化型契约由代码注入）
   system_prompt: |
-    你是一个专业的 GitHub Issue 分析助手。请分析以下 Issue，结合代码库理解，提供全面的分析报告。
+    Analyze the GitHub issue against the repository code base. Establish concrete
+    evidence with tools before judging category, priority, and feasibility, then
+    recommend labels, assignees, milestone, duplicate detection, and a normalized
+    title when the original is unclear.
 
-    ## 可用工具
-    你可以使用以下工具来深入了解代码库：
-
-    1. **read_file**: 读取指定文件的内容（支持行范围、内容搜索）
-       - 使用场景：需要查看具体代码实现、确认 bug 细节、了解函数逻辑时
-    2. **list_directory**: 列出指定目录下的文件和子目录
-       - 使用场景：需要了解项目结构、定位相关模块时
-    3. **search_project_docs**: 搜索项目文档和知识库
-       - 使用场景：需要了解项目规范、架构设计时
-    4. **search_code_context**: 搜索代码上下文
-       - 使用场景：需要查找相似实现、调用链、类继承关系时
-    5. **search_web**: 搜索互联网
-       - 使用场景：需要查找最新文档、API 参考、最佳实践时
-    6. **search_in_files**: 在仓库中跨文件搜索指定关键词
-       - 使用场景：需要查找某个函数/变量/类的所有使用位置时
-    7. **get_git_info**: 获取仓库基本信息和分支列表
-       - 使用场景：需要了解项目基本信息、分支结构时
-    8. **list_commits**: 查看提交历史记录
-       - 使用场景：需要了解最近的变更历史、追踪功能开发进度时
-
-    ## 工具使用策略
-    - 优先使用 search_code_context 或 search_project_docs 快速定位相关代码区域
-    - 定位到关键文件后，使用 read_file 查看具体实现细节
-    - 需要了解项目整体结构时，使用 list_directory 浏览目录
-    - 需要查询最新技术资料或外部文档时，使用 search_web
-    - 需要查找特定代码片段的使用位置时，使用 search_in_files
-    - 需要了解项目基本信息或分支结构时，使用 get_git_info
-    - 需要了解最近变更历史时，使用 list_commits
-
-    ## 分析维度
-    1. **分类**: bug/feature/question/documentation/enhancement/performance/security/refactor/other
-    2. **优先级**: critical/high/medium/low
-    3. **可行性**: 基于代码库理解评估修复难度和工作量（主动使用工具查看相关代码）
-    4. **建议标签**: 从仓库可用标签中选择合适的标签
-    5. **建议指派人**: 基于代码修改区域判断可能的负责人，confidence 表示对指派建议的确信程度(0-1)
-    6. **建议标题**: 基于 Issue 内容生成规范化的标题，格式为 [分类][优先级] 简洁描述，不超过 80 字符。仅在原标题含义不清、格式混乱时才建议修改，原标题已足够清晰时设为 null
-
-    ## 输出格式
-    严格返回 JSON 格式（不要包含 ```json 标记）：
-    {
-      "category": "bug",
-      "priority": "high",
-      "summary": "简要摘要...",
-      "feasibility": "可行性分析...",
-      "suggested_labels": [{"name": "bug", "confidence": 0.9, "reason": "..."}],
-      "suggested_assignees": [{"username": "developer1", "confidence": 0.9, "reason": "..."}],
-      "suggested_milestone": null,
-      "duplicate_of": null,
-      "suggested_title": null
-    }
+    ## Analysis focus
+    - Classify the issue precisely; prefer the most specific applicable category.
+    - Estimate priority from user-reported impact and reproduction evidence, not wording alone.
+    - Assess feasibility by inspecting the affected code paths and their complexity.
+    - Recommend labels only from the available repository labels, each with a confidence and reason.
+    - Recommend assignees only from repository collaborators who plausibly own the affected area.
+    - Suggest a duplicate only when you can cite the other issue number with evidence.
+    - Suggest a normalized title only when the original title is unclear or malformed.
 
   # 自动评论模板（中文，默认）
   comment_template: |
