@@ -222,6 +222,21 @@ async def test_find_active_review_only_returns_pending_or_reviewing(queue_store)
 
 
 @pytest.mark.asyncio
+async def test_enqueue_skips_stale_zombie_review(queue_store, monkeypatch):
+    """超过 review_timeout_seconds 仍 PENDING/REVIEWING 的 review 视为僵尸，
+    增量不应挂到它身上（否则永远 pending 死锁）。"""
+    _add_review(queue_store, "reviewing", created_offset=-2)
+    service = PRReviewIncrementalQueueService()
+    # 直接模拟 _is_stale_review 判定 active review 为僵尸
+    monkeypatch.setattr(service, "_is_stale_review", lambda _review: True)
+
+    result = await service.enqueue_from_webhook(_pr_info(head_sha="stale-head"))
+
+    assert result is None
+    assert len(queue_store["queue"]) == 0
+
+
+@pytest.mark.asyncio
 async def test_consume_pending_merges_events_and_marks_consumed(queue_store):
     _add_queue(queue_store, base_sha="base1", head_sha="head2", created_offset=1)
     _add_queue(queue_store, base_sha="head2", head_sha="head3", created_offset=2)

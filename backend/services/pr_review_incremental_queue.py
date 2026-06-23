@@ -8,6 +8,7 @@ from typing import Any
 from loguru import logger
 from sqlalchemy import desc, select
 
+from backend.core.config import get_settings
 from backend.models import database as db_module
 from backend.models.database import PRReview, PRReviewIncrementalQueue, PRStatus
 
@@ -32,6 +33,20 @@ class PRReviewIncrementalQueueService:
     def _head_sha(pr_info: dict[str, Any]) -> str | None:
         head_sha = pr_info.get("head_sha") or pr_info.get("after")
         return str(head_sha) if head_sha else None
+
+    @staticmethod
+    def _is_stale_review(review: PRReview) -> bool:
+        """判断 active review 是否已超时成为僵尸（worker 很可能已死）。
+
+        超过整体审查超时 review_timeout_seconds 仍处于 PENDING/REVIEWING 的 review，
+        其 worker 极可能已异常退出或被取消但状态未收尾。此时不应再把新增量挂到它
+        身上，否则增量会永远 pending（死锁）。
+        """
+        if not review.created_at:
+            return False
+        timeout_seconds = get_settings().review_timeout_seconds
+        age = (datetime.utcnow() - review.created_at).total_seconds()
+        return age > timeout_seconds
 
     async def find_active_review(self, pr_info: dict[str, Any]) -> PRReview | None:
         """Find the latest pending/reviewing DB review for this PR."""
@@ -64,6 +79,21 @@ class PRReviewIncrementalQueueService:
         """Persist a synchronize event when an active review exists."""
         active_review = await self.find_active_review(pr_info)
         if active_review is None:
+            return None
+
+        # 僵尸 review 检测：超时仍 PENDING/REVIEWING 视为 worker 已死，
+        # 不挂载新增量，否则增量会永远 pending（死锁）。
+        # 返回 None 让 webhook 改走 submit_review_task，新审查会消费 pending 增量。
+        if self._is_stale_review(active_review):
+            logger.warning(
+                "PR 增量检测到僵尸 review (id={}, status={}, created_at={})，"
+                "视为无 active review: {}#{}",
+                active_review.id,
+                active_review.status,
+                active_review.created_at,
+                self._repo_full_name(pr_info),
+                pr_info.get("pr_number"),
+            )
             return None
 
         head_sha = self._head_sha(pr_info)
