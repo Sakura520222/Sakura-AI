@@ -70,6 +70,52 @@ def _dump_protocol_failure(strategy: str, review_text: str) -> None:
         logger.warning("保存协议失败载荷失败: {}", exc)
 
 
+def _coerce_tool_call_to_dict(tc: Any) -> Dict[str, Any]:
+    """把 tool_call 统一为 OpenAI 标准 dict 形态。
+
+    tool_calls 可能是 OpenAI SDK 对象（内存新响应）、dict（规范化形态）或字符串
+    （checkpoint 经 json.dumps(default=str) 持久化后恢复的损坏形态）。发送给 AI
+    API 与持久化前都必须是标准 dict，否则上游反序列化失败。
+    """
+    if isinstance(tc, dict):
+        function = tc.get("function") or {}
+        if isinstance(function, dict):
+            return {
+                "id": tc.get("id", ""),
+                "type": tc.get("type") or "function",
+                "function": {
+                    "name": function.get("name", ""),
+                    "arguments": function.get("arguments", ""),
+                },
+            }
+        return {
+            "id": tc.get("id", ""),
+            "type": tc.get("type") or "function",
+            "function": {"name": str(function), "arguments": ""},
+        }
+    function = getattr(tc, "function", None)
+    return {
+        "id": getattr(tc, "id", "") or "",
+        "type": getattr(tc, "type", None) or "function",
+        "function": {
+            "name": getattr(function, "name", "") if function is not None else "",
+            "arguments": getattr(function, "arguments", "")
+            if function is not None
+            else "",
+        },
+    }
+
+
+def _normalize_tool_calls_inplace(messages: List[Dict[str, Any]]) -> None:
+    """把 messages 中所有 tool_calls 原地规范化为标准 OpenAI dict。"""
+    for message in messages:
+        tool_calls = message.get("tool_calls")
+        if isinstance(tool_calls, list):
+            message["tool_calls"] = [
+                _coerce_tool_call_to_dict(tc) for tc in tool_calls
+            ]
+
+
 class AIReviewer:
     """AI审查器 - 组合各功能模块
 
@@ -362,6 +408,9 @@ class AIReviewer:
         safe_context = self.model_context_mgr.calculate_safe_context(
             settings.openai_model, settings.context_safety_threshold
         )
+        # 增量审查恢复的历史 tool_calls 可能是字符串（checkpoint 持久化损坏），
+        # 发送给 AI 前统一规范化为标准 dict，避免上游反序列化失败（400）
+        _normalize_tool_calls_inplace(messages)
         iteration = 0
 
         while iteration < max_iterations:
@@ -423,7 +472,7 @@ class AIReviewer:
             assistant_msg_dict = {
                 "role": "assistant",
                 "content": assistant_message.content,
-                "tool_calls": tool_calls,
+                "tool_calls": [_coerce_tool_call_to_dict(tc) for tc in tool_calls],
             }
 
             # DeepSeek-R1 特有：必须包含 reasoning_content
