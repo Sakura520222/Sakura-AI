@@ -360,7 +360,7 @@ async def handle_pull_request_event(
             )
             if queued:
                 logger.info(
-                    "[webhook] synchronize 增量已入队，不启动并行审查: {}#{} head={}",
+                    "[webhook] synchronize 增量已入队 {}#{} head={}",
                     pr_info["repo_full_name"],
                     pr_info["pr_number"],
                     pr_info.get("head_sha") or pr_info.get("after"),
