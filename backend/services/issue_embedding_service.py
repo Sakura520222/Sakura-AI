@@ -616,8 +616,6 @@ class IssueEmbeddingService:
                 ],
                 model=model,
                 temperature=0.1,
-                max_tokens=500,
-                timeout=30.0,
             )
 
             # 解析 AI 响应
