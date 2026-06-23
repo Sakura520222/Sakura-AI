@@ -198,8 +198,7 @@ class PRDependencyGraphService:
                 {"role": "user", "content": user_message},
             ],
             temperature=0.2,
-            timeout=60.0,
-            max_tokens=2000,
+            max_tokens=16000,
         )
 
         if (

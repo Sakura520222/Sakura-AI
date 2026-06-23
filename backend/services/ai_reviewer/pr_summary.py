@@ -54,8 +54,7 @@ class PRSummaryService:
                 {"role": "user", "content": user_message},
             ],
             temperature=0.3,
-            timeout=60.0,
-            max_tokens=1000,
+            max_tokens=16000,
         )
 
         if (
