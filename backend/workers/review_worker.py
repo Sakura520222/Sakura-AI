@@ -997,6 +997,18 @@ class ReviewWorker:
                     await self._log_activity(review_id, "error", {
                         "message": f"审查失败: {str(e)}",
                     })
+                    # 收尾当前 review 状态，避免 worker 死后留僵尸
+                    # （_save_error_record 只新建 FAILED 记录，不动当前 review）
+                    try:
+                        await self._update_review_status(
+                            review_id, PRStatus.FAILED
+                        )
+                    except Exception as status_error:
+                        logger.warning(
+                            "[{}] 异常路径更新审查状态为失败失败: {}",
+                            task_id,
+                            status_error,
+                        )
 
                 # 【错误处理】更新占位评论为错误消息
                 if review_obj:
@@ -1020,6 +1032,21 @@ class ReviewWorker:
                     await self._save_error_record(pr_info, str(e), task_id)
                 except Exception as save_error:
                     logger.error("保存错误记录失败: {}", str(save_error))
+                raise
+            except asyncio.CancelledError:
+                # 超时（_run_review_task_with_timeout 的 wait_for）或外部取消：
+                # except Exception 不接 CancelledError，需单独收尾 review 状态，防止僵尸。
+                if review_id:
+                    try:
+                        await self._update_review_status(
+                            review_id, PRStatus.FAILED
+                        )
+                    except Exception as status_error:
+                        logger.warning(
+                            "[{}] 取消路径更新审查状态为失败失败: {}",
+                            task_id,
+                            status_error,
+                        )
                 raise
             finally:
                 # Always unregister task to clean up cancel event
@@ -1165,7 +1192,7 @@ class ReviewWorker:
                 record = await session.get(PRReview, review_id)
                 if record:
                     record.status = status
-                    if status in (PRStatus.COMPLETED, PRStatus.CANCELLED):
+                    if status in (PRStatus.COMPLETED, PRStatus.CANCELLED, PRStatus.FAILED):
                         record.completed_at = datetime.utcnow()
                     if overall_score is not None:
                         record.overall_score = overall_score
