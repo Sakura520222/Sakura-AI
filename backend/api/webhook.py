@@ -174,6 +174,31 @@ async def handle_pull_request_event(
                     )
             except Exception as e:
                 logger.warning(f"[webhook] 取消审查任务失败: {e}")
+
+            # 清理该 PR 的 pending 增量队列，避免永久残留 / PR 重开后污染新审查上下文
+            try:
+                from backend.services.pr_review_incremental_queue import (
+                    PRReviewIncrementalQueueService,
+                )
+
+                cancelled_queue = (
+                    await PRReviewIncrementalQueueService().cancel_pending_for_pr(
+                        pr_info["repo_full_name"],
+                        int(pr_info["pr_number"]),
+                    )
+                )
+                if cancelled_queue:
+                    logger.info(
+                        "[webhook] PR closed event：已取消 {} 条 pending 增量 "
+                        "{}#{}".format(
+                            cancelled_queue,
+                            pr_info["repo_full_name"],
+                            pr_info["pr_number"],
+                        )
+                    )
+            except Exception as e:
+                logger.warning(f"[webhook] 清理增量队列失败: {e}")
+
             return JSONResponse(
                 content={"status": "accepted", "action": "cancelled", "task": task_key}
             )

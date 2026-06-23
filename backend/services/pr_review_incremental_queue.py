@@ -283,6 +283,40 @@ class PRReviewIncrementalQueueService:
                 session_id,
             )
 
+    async def cancel_pending_for_pr(
+        self,
+        repo_full_name: str,
+        pr_number: int,
+    ) -> int:
+        """PR 关闭/合并时，将其所有 pending 增量标记为 cancelled。
+
+        避免 pending 增量永久残留，以及 PR 重开时被新审查误消费（过时上下文污染）。
+
+        Returns:
+            被取消的增量条数
+        """
+        async with db_module.async_session() as db:
+            result = await db.execute(
+                select(PRReviewIncrementalQueue).where(
+                    PRReviewIncrementalQueue.repo_full_name == repo_full_name,
+                    PRReviewIncrementalQueue.pr_number == pr_number,
+                    PRReviewIncrementalQueue.status == "pending",
+                )
+            )
+            pending = list(result.scalars().all())
+            if not pending:
+                return 0
+            for item in pending:
+                item.status = "cancelled"
+            await db.commit()
+            logger.info(
+                "PR 关闭，取消 {} 条 pending 增量: {}#{}",
+                len(pending),
+                repo_full_name,
+                pr_number,
+            )
+            return len(pending)
+
     def _build_incremental_user_message(
         self,
         *,

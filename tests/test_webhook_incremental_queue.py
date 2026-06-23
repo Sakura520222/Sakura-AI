@@ -185,3 +185,53 @@ async def test_synchronize_without_active_review_submits_new_task(monkeypatch):
     finally:
         settings.enable_auto_review = old_auto_review
         settings.bot_username = old_bot_username
+
+
+@pytest.mark.asyncio
+async def test_closed_event_cancels_pending_incremental_queue(monkeypatch):
+    """PR closed 事件应清理该 PR 的 pending 增量队列，避免永久残留 / 重开污染。"""
+    settings = get_settings()
+    old_auto_review, old_bot_username = _enable_auto_review(settings)
+    cancelled_tasks = []
+    cancelled_queue = []
+
+    class _FakeWorker:
+        @staticmethod
+        def _make_task_key(pr_info):
+            return "owner/repo#7"
+
+        def cancel_task(self, task_key):
+            cancelled_tasks.append(task_key)
+            return True
+
+    class _QueueService:
+        async def cancel_pending_for_pr(self, repo_full_name, pr_number):
+            cancelled_queue.append((repo_full_name, pr_number))
+            return 2
+
+    def fake_get_worker():
+        return _FakeWorker()
+
+    try:
+        _patch_common(monkeypatch)
+        import backend.workers.review_worker as rw
+
+        monkeypatch.setattr(rw, "ReviewWorker", _FakeWorker)
+        monkeypatch.setattr(rw, "get_worker", fake_get_worker)
+        monkeypatch.setattr(
+            "backend.services.pr_review_incremental_queue.PRReviewIncrementalQueueService",
+            _QueueService,
+        )
+
+        response = await webhook.handle_pull_request_event(
+            _payload(action="closed"),
+        )
+
+        assert response.status_code == 200
+        body = json.loads(response.body)
+        assert body["action"] == "cancelled"
+        assert cancelled_tasks == ["owner/repo#7"]
+        assert cancelled_queue == [("owner/repo", 7)]
+    finally:
+        settings.enable_auto_review = old_auto_review
+        settings.bot_username = old_bot_username
