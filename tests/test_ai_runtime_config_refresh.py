@@ -101,9 +101,10 @@ def test_reviewer_refreshes_summary_client_when_auxiliary_config_changes(monkeyp
     assert reviewer.summary_model == "aux-new-model"
     assert reviewer.api_client.base_url == "https://main.example/v1"
     assert reviewer.api_client.api_key == "main-key"
-    # context_compressor / label_recommender 跟随最新辅助凭据
-    assert reviewer.context_compressor.api_client is reviewer.summary_api_client
-    assert reviewer.context_compressor.model == "aux-new-model"
+    # context_compressor 跟随主 AI（PR 审查压缩改用主模型，上下文窗口更大）
+    assert reviewer.context_compressor.api_client is reviewer.api_client
+    assert reviewer.context_compressor.model == "main-model"
+    # label_recommender 继续跟随辅助凭据
     assert reviewer.label_recommender.api_client is reviewer.summary_api_client
     assert reviewer.label_recommender.model == "aux-new-model"
 

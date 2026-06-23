@@ -41,6 +41,11 @@ from .tools import (
 )
 
 
+PendingUserMessageCallback = Callable[
+    [], Coroutine[Any, Any, Dict[str, Any] | None]
+]
+
+
 def _dump_protocol_failure(strategy: str, review_text: str) -> None:
     """Persist the full malformed protocol payload for offline diagnosis.
 
@@ -117,8 +122,8 @@ class AIReviewer:
         self.compression_threshold = settings.context_compression_threshold
         self.keep_rounds = settings.context_compression_keep_rounds
         self.context_compressor = ContextCompressor(
-            api_client=self.summary_api_client,
-            model=self.summary_model,
+            api_client=self.api_client,
+            model=settings.openai_model,
             keep_rounds=self.keep_rounds,
         )
         self.model_context_mgr = get_model_context_manager()
@@ -181,8 +186,8 @@ class AIReviewer:
             self._summary_client_config = summary_config
 
         if hasattr(self, "context_compressor"):
-            self.context_compressor.api_client = self.summary_api_client
-            self.context_compressor.model = self.summary_model
+            self.context_compressor.api_client = self.api_client
+            self.context_compressor.model = settings.openai_model
         if hasattr(self, "label_recommender"):
             self.label_recommender.api_client = self.summary_api_client
             self.label_recommender.model = self.summary_model
@@ -328,6 +333,7 @@ class AIReviewer:
         context: Dict[str, Any],
         tool_handler: ToolHandler | None = None,
         event_callback: Optional[Callable[[str, Dict[str, Any]], Coroutine]] = None,
+        pending_user_message_callback: Optional[PendingUserMessageCallback] = None,
     ) -> Dict[str, Any]:
         """执行多轮工具调用循环
 
@@ -360,6 +366,12 @@ class AIReviewer:
 
         while iteration < max_iterations:
             iteration += 1
+
+            await self._append_pending_user_message_if_any(
+                messages,
+                pending_user_message_callback,
+                event_callback,
+            )
 
             # 调用AI API
             response = await self.api_client.call_with_retry(
@@ -534,6 +546,11 @@ class AIReviewer:
                 ),
             }
         )
+        await self._append_pending_user_message_if_any(
+            messages,
+            pending_user_message_callback,
+            event_callback,
+        )
         last_response = await self.api_client.call_with_retry(
             model=settings.openai_model,
             messages=messages,
@@ -551,6 +568,51 @@ class AIReviewer:
         result["token_usage"] = tracker.to_dict()
         return result
 
+    async def _append_pending_user_message_if_any(
+        self,
+        messages: List[Dict[str, Any]],
+        pending_user_message_callback: Optional[PendingUserMessageCallback],
+        event_callback: Optional[Callable[[str, Dict[str, Any]], Coroutine]] = None,
+    ) -> None:
+        """Append a queued incremental user message before an AI request."""
+        if not pending_user_message_callback:
+            return
+
+        try:
+            message = await pending_user_message_callback()
+        except Exception as exc:
+            logger.warning("pending_user_message_callback failed: {}", exc)
+            return
+
+        if not message:
+            return
+        if message.get("role") != "user":
+            logger.warning(
+                "pending_user_message_callback returned non-user message: {}",
+                message.get("role"),
+            )
+            return
+
+        messages.append(message)
+        if event_callback:
+            try:
+                await event_callback("message", message)
+            except Exception as exc:
+                logger.warning("event_callback failed: {}", exc)
+
+    async def _emit_initial_messages(
+        self,
+        messages: List[Dict[str, Any]],
+        event_callback: Optional[Callable[[str, Dict[str, Any]], Coroutine]] = None,
+    ) -> None:
+        if not event_callback:
+            return
+        for message in messages:
+            try:
+                await event_callback("message", message)
+            except Exception as exc:
+                logger.warning("event_callback failed: {}", exc)
+
     async def review_pr_with_tools(
         self,
         context: Dict[str, Any],
@@ -558,6 +620,8 @@ class AIReviewer:
         repo: Any,
         pr: Any,
         event_callback: Optional[Callable[[str, Dict[str, Any]], Coroutine]] = None,
+        pending_user_message_callback: Optional[PendingUserMessageCallback] = None,
+        initial_messages: Optional[List[Dict[str, Any]]] = None,
     ) -> Dict[str, Any]:
         """使用函数工具审查 PR（唯一审查入口）
 
@@ -603,10 +667,20 @@ class AIReviewer:
                 context, strategy, include_tools=True, compact=True
             )
 
-            messages = [
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_message},
-            ]
+            current_system_message = {"role": "system", "content": system_prompt}
+            current_user_message = {"role": "user", "content": user_message}
+            if initial_messages:
+                messages = [dict(message) for message in initial_messages]
+                messages_to_persist = [current_user_message]
+                if not any(message.get("role") == "system" for message in messages):
+                    messages.insert(0, current_system_message)
+                    messages_to_persist.insert(0, current_system_message)
+                messages.append(current_user_message)
+            else:
+                messages = [current_system_message, current_user_message]
+                messages_to_persist = messages
+
+            await self._emit_initial_messages(messages_to_persist, event_callback)
 
             # 动态获取启用的工具列表（已包含 diff 工具）
             if (
@@ -651,6 +725,7 @@ class AIReviewer:
                     context=context,
                     tool_handler=active_tool_handler,
                     event_callback=event_callback,
+                    pending_user_message_callback=pending_user_message_callback,
                 )
 
             except PromptTooLongError as e:
@@ -689,6 +764,7 @@ class AIReviewer:
                         context=context,
                         tool_handler=active_tool_handler,
                         event_callback=event_callback,
+                        pending_user_message_callback=pending_user_message_callback,
                     )
                 logger.error(
                     "🚨 上下文超限但压缩未启用 (估算 ~{} tokens)",

@@ -10,7 +10,7 @@ import json
 from typing import Any
 
 from loguru import logger
-from sqlalchemy import select
+from sqlalchemy import desc, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.models import database as db_module
@@ -138,6 +138,66 @@ class ActivityCheckpointService:
             )
             await db.commit()
             return msg
+
+    async def load_messages(self, session_id: int) -> list[dict[str, Any]]:
+        """Load persisted messages in original OpenAI-compatible shape."""
+        async with db_module.async_session() as db:
+            result = await db.execute(
+                select(ActivityMessage)
+                .where(ActivityMessage.session_id == session_id)
+                .order_by(ActivityMessage.seq)
+            )
+            rows = result.scalars().all()
+
+        messages: list[dict[str, Any]] = []
+        for row in rows:
+            try:
+                payload = json.loads(row.message_json)
+            except (TypeError, json.JSONDecodeError):
+                payload = {
+                    "role": row.role,
+                    "content": row.content,
+                }
+                if row.tool_call_id:
+                    payload["tool_call_id"] = row.tool_call_id
+            if isinstance(payload, dict):
+                messages.append(payload)
+        return messages
+
+    async def get_latest_completed_session(
+        self,
+        source_task_id: int | None = None,
+        role_name: str = "reviewer",
+    ) -> ActivitySession | None:
+        """Return the latest completed session for this activity source."""
+        async with db_module.async_session() as db:
+            result = await db.execute(
+                select(ActivitySession)
+                .where(
+                    ActivitySession.source_type == self.source_type,
+                    ActivitySession.source_task_id
+                    == (source_task_id or self.source_task_id),
+                    ActivitySession.role_name == role_name,
+                    ActivitySession.status == "completed",
+                )
+                .order_by(
+                    desc(ActivitySession.completed_at),
+                    desc(ActivitySession.id),
+                )
+            )
+            return result.scalars().first()
+
+    async def copy_messages_to_session(
+        self,
+        source_session_id: int,
+        target_session_id: int,
+    ) -> int:
+        """Copy full message history into another activity session."""
+        copied = 0
+        for message in await self.load_messages(source_session_id):
+            await self.append_message(target_session_id, message)
+            copied += 1
+        return copied
 
     async def _append_message_in_db(
         self,

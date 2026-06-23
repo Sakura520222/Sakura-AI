@@ -81,6 +81,7 @@ async def handle_github_webhook(
     request: Request,
     x_hub_signature: str = Header(None, alias="X-Hub-Signature-256"),
     x_github_event: str = Header(None, alias="X-GitHub-Event"),
+    x_github_delivery: str = Header(None, alias="X-GitHub-Delivery"),
 ) -> JSONResponse:
     """
     处理GitHub Webhook事件
@@ -114,7 +115,10 @@ async def handle_github_webhook(
 
         # 处理PR事件
         if x_github_event == "pull_request":
-            return await handle_pull_request_event(payload_data)
+            return await handle_pull_request_event(
+                payload_data,
+                delivery_id=x_github_delivery,
+            )
         elif x_github_event == "issues":
             return await handle_issue_event(payload_data)
         elif x_github_event == "issue_comment":
@@ -136,7 +140,10 @@ async def handle_github_webhook(
         )
 
 
-async def handle_pull_request_event(payload: Dict[str, Any]) -> JSONResponse:
+async def handle_pull_request_event(
+    payload: Dict[str, Any],
+    delivery_id: str | None = None,
+) -> JSONResponse:
     """处理Pull Request事件"""
     try:
         # 提取PR信息
@@ -342,6 +349,28 @@ async def handle_pull_request_event(payload: Dict[str, Any]) -> JSONResponse:
                 logger.warning(
                     f"[webhook] synchronize 事件 dismiss 旧 Review 失败（不影响后续审查）: {e}"
                 )
+
+            from backend.services.pr_review_incremental_queue import (
+                PRReviewIncrementalQueueService,
+            )
+
+            queued = await PRReviewIncrementalQueueService().enqueue_from_webhook(
+                pr_info,
+                delivery_id=delivery_id,
+            )
+            if queued:
+                logger.info(
+                    "[webhook] synchronize 增量已入队，不启动并行审查: {}#{} head={}",
+                    pr_info["repo_full_name"],
+                    pr_info["pr_number"],
+                    pr_info.get("head_sha") or pr_info.get("after"),
+                )
+                return JSONResponse(content={
+                    "status": "accepted",
+                    "action": "queued_incremental",
+                    "pr": f"{pr_info['repo_full_name']}#{pr_info['pr_number']}",
+                    "head_sha": pr_info.get("head_sha") or pr_info.get("after"),
+                })
 
         # 提交审查任务到队列
         await _mark_agent_task_external_reviewing(pr_info)

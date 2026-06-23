@@ -7,6 +7,7 @@ from typing import Any, Dict, Optional
 import uuid
 
 from loguru import logger
+from sqlalchemy import desc, select
 from sqlalchemy.exc import InterfaceError, OperationalError
 
 from backend.core.config import get_settings, get_strategy_config, get_dynamic_config
@@ -536,33 +537,6 @@ class ReviewWorker:
                         exc_info=True,
                     )
 
-                # 6.3 注入历史审查上下文（仅在增量审查时）
-                if analysis.is_incremental:
-                    try:
-                        from backend.services.history_context_service import (
-                            HistoryContextService,
-                        )
-
-                        history_service = HistoryContextService(
-                            self.ai_reviewer.summary_api_client,
-                            model=self.ai_reviewer.summary_model,
-                        )
-                        history_summary = await history_service.fetch_history_summary(
-                            pr_id=analysis.pr_id,
-                            repo_name=pr_info["repo_name"],
-                            repo_owner=pr_info["repo_owner"],
-                        )
-                        if history_summary:
-                            context["review_history_summary"] = history_summary
-                            logger.info(
-                                f"[{task_id}] 已注入历史审查上下文，摘要长度: {len(history_summary)} 字符"
-                            )
-                    except Exception as e:
-                        logger.warning(
-                            f"[{task_id}] 历史审查上下文注入失败（不影响审查）: {e}",
-                            exc_info=True,
-                        )
-
                 # 6.5 解析并注入 Issue 上下文（如果启用）
                 if (
                     hasattr(settings, "enable_pr_issue_linking")
@@ -723,10 +697,39 @@ class ReviewWorker:
                     role_name="reviewer",
                     model=settings.openai_model,
                 )
+                initial_messages: list[dict[str, Any]] = []
+                if analysis.is_incremental:
+                    initial_messages = await self._restore_incremental_activity_history(
+                        checkpoint,
+                        act_session,
+                        pr_info,
+                        review_id,
+                        task_id,
+                    )
+
+                from backend.services.pr_review_incremental_queue import (
+                    PRReviewIncrementalQueueService,
+                )
+
+                queue_service = PRReviewIncrementalQueueService()
+                pending_incremental = None
+
+                async def _pending_incremental_message():
+                    nonlocal pending_incremental
+                    if pending_incremental is not None:
+                        return None
+                    pending_incremental = await queue_service.prepare_pending_for_review(
+                        pr_info=pr_info,
+                        repo=repo,
+                    )
+                    if pending_incremental is None:
+                        return None
+                    return pending_incremental.message
 
                 # 构造事件回调：将 AI 审查过程中的消息通过 checkpoint 持久化
                 async def _review_event_callback(event_type, data):
                     """Mirrors ConversationCheckpointService usage pattern."""
+                    nonlocal pending_incremental
                     try:
                         if event_type == "message":
                             # data is the full message dict (assistant with tool_calls, or tool result)
@@ -736,6 +739,18 @@ class ReviewWorker:
                                 await checkpoint.mark_tool_call_completed(
                                     act_session.id, data["tool_call_id"], msg.id
                                 )
+                            if (
+                                pending_incremental is not None
+                                and data is pending_incremental.message
+                            ):
+                                await queue_service.mark_consumed(
+                                    pending_incremental.queue_ids,
+                                    review_id=review_id,
+                                    session_id=act_session.id,
+                                    consumed_message_id=msg.id,
+                                )
+                                pending_incremental = None
+                            return msg
                         elif event_type == "tool_running":
                             # data is the tool_call_id string
                             await checkpoint.mark_tool_call_running(
@@ -768,6 +783,12 @@ class ReviewWorker:
                             repo,
                             pr,
                             event_callback=_review_event_callback,
+                            pending_user_message_callback=(
+                                _pending_incremental_message
+                                if analysis.is_incremental
+                                else None
+                            ),
+                            initial_messages=initial_messages or None,
                         )
                     )
                 else:
@@ -996,6 +1017,75 @@ class ReviewWorker:
             finally:
                 # Always unregister task to clean up cancel event
                 self._unregister_task(task_key)
+
+    async def _find_previous_completed_review(
+        self,
+        pr_info: Dict[str, Any],
+        current_review_id: int,
+    ) -> PRReview | None:
+        pr_id = pr_info.get("pr_id")
+        if pr_id is None:
+            return None
+
+        AsyncSession = get_async_session()
+        async with AsyncSession() as session:
+            result = await session.execute(
+                select(PRReview)
+                .where(
+                    PRReview.repo_owner == pr_info["repo_owner"],
+                    PRReview.repo_name == pr_info["repo_name"],
+                    PRReview.pr_id == pr_id,
+                    PRReview.id != current_review_id,
+                    PRReview.status == PRStatus.COMPLETED.value,
+                )
+                .order_by(desc(PRReview.completed_at), desc(PRReview.id))
+            )
+            return result.scalars().first()
+
+    async def _restore_incremental_activity_history(
+        self,
+        checkpoint,
+        act_session,
+        pr_info: Dict[str, Any],
+        review_id: int,
+        task_id: str,
+    ) -> list[dict[str, Any]]:
+        previous_review = await self._find_previous_completed_review(
+            pr_info,
+            review_id,
+        )
+        if previous_review is None:
+            logger.info(
+                "[{}] 增量审查未找到上一轮已完成 PRReview，使用当前增量上下文",
+                task_id,
+            )
+            return []
+
+        source_session = await checkpoint.get_latest_completed_session(
+            source_task_id=previous_review.id,
+            role_name="reviewer",
+        )
+        if source_session is None:
+            logger.info(
+                "[{}] 上一轮 PRReview({}) 没有 completed reviewer session",
+                task_id,
+                previous_review.id,
+            )
+            return []
+
+        messages = await checkpoint.load_messages(source_session.id)
+        copied = await checkpoint.copy_messages_to_session(
+            source_session.id,
+            act_session.id,
+        )
+        logger.info(
+            "[{}] 已恢复上一轮 reviewer 会话: review_id={} session_id={} messages={}",
+            task_id,
+            previous_review.id,
+            source_session.id,
+            copied,
+        )
+        return messages
 
     async def _notify_agent_team_review_completed(self, review_id: int, task_id: str) -> None:
         """通知 Agent Team 处理 PR Review 完成后的闭环反馈。"""
