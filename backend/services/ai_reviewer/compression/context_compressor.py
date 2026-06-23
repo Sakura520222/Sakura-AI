@@ -261,7 +261,6 @@ the main reviewer.
                 {"role": "user", "content": compress_prompt},
             ],
             temperature=0.3,
-            timeout=60.0,
             max_tokens=max_tokens,
         )
 

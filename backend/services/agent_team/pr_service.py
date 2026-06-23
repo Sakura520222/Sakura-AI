@@ -537,9 +537,7 @@ class AgentTeamPRService:
                     {"role": "user", "content": user_prompt},
                 ],
                 model=model,
-                temperature=0.2,
-                max_tokens=1500,
-                timeout=30.0,
+                temperature=0.1,
             )
 
             if not response.choices:
@@ -619,8 +617,6 @@ class AgentTeamPRService:
                 ],
                 model=model,
                 temperature=0.1,
-                max_tokens=100,
-                timeout=15.0,
             )
 
             if not response.choices:
@@ -698,8 +694,6 @@ class AgentTeamPRService:
                 ],
                 model=model,
                 temperature=0.1,
-                max_tokens=300,
-                timeout=15.0,
             )
 
             if not response.choices:
