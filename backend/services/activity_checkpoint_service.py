@@ -194,9 +194,12 @@ class ActivityCheckpointService:
     ) -> int:
         """Copy full message history into another activity session."""
         copied = 0
-        for message in await self.load_messages(source_session_id):
-            await self.append_message(target_session_id, message)
-            copied += 1
+        messages = await self.load_messages(source_session_id)
+        async with db_module.async_session() as db:
+            for message in messages:
+                await self._append_message_in_db(db, target_session_id, message)
+                copied += 1
+            await db.commit()
         return copied
 
     async def _append_message_in_db(
