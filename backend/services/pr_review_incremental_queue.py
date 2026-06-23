@@ -317,6 +317,28 @@ class PRReviewIncrementalQueueService:
             )
             return len(pending)
 
+    async def list_pending(
+        self,
+        pr_info: dict[str, Any],
+    ) -> list[PRReviewIncrementalQueue]:
+        """返回该 PR 所有 pending 增量（按入队时间排序）。"""
+        repo_full_name = self._repo_full_name(pr_info)
+        pr_number = int(pr_info["pr_number"])
+        async with db_module.async_session() as db:
+            result = await db.execute(
+                select(PRReviewIncrementalQueue)
+                .where(
+                    PRReviewIncrementalQueue.repo_full_name == repo_full_name,
+                    PRReviewIncrementalQueue.pr_number == pr_number,
+                    PRReviewIncrementalQueue.status == "pending",
+                )
+                .order_by(
+                    PRReviewIncrementalQueue.created_at,
+                    PRReviewIncrementalQueue.id,
+                )
+            )
+            return list(result.scalars().all())
+
     def _build_incremental_user_message(
         self,
         *,

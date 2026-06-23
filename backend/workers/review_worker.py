@@ -1629,7 +1629,7 @@ async def _run_review_task_with_timeout(
     """按配置限制单个审查任务的整体执行时间"""
     timeout_seconds = get_settings().review_timeout_seconds
     try:
-        return await asyncio.wait_for(
+        result = await asyncio.wait_for(
             worker.process_review_task(pr_info),
             timeout=timeout_seconds,
         )
@@ -1650,3 +1650,50 @@ async def _run_review_task_with_timeout(
                 str(save_error),
             )
         raise RuntimeError(f"{message}: {task_key}") from exc
+
+    # 兜底：非增量审查顺利完成后，若仍有 pending 增量（审查期间到达的新提交，
+    # 本次未消费），触发一个增量审查去消费。此时 process_review_task 的 finally
+    # 已 unregister task_key，触发新任务不会与当前任务的 cancel event 冲突。
+    try:
+        await _drain_pending_incremental(pr_info)
+    except Exception as exc:
+        logger.warning("兜底消费 pending 增量失败: {}", exc)
+
+    return result
+
+
+async def _drain_pending_incremental(pr_info: Dict[str, Any]) -> None:
+    """非增量审查完成后的兜底：触发增量审查消费残留 pending 增量。
+
+    首次/完整审查（opened/reopened/ready_for_review/full_review 等非 synchronize
+    事件）不会消费增量队列；若审查期间到达了新提交（synchronize 入队给本次 active
+    review），这些增量会残留 pending、本轮不被审查。这里在审查顺利结束后检查并
+    触发一个增量审查去消费，避免新提交被困在队列里。
+
+    增量审查（synchronize）自身已消费 pending，不在此兜底，避免循环；失败的审查
+    走 except 分支不触发，避免 compare 失败时反复触发。
+    """
+    if pr_info.get("action") == "synchronize":
+        return
+
+    from backend.services.pr_review_incremental_queue import (
+        PRReviewIncrementalQueueService,
+    )
+
+    pending = await PRReviewIncrementalQueueService().list_pending(pr_info)
+    if not pending:
+        return
+
+    drain_pr_info = {
+        **pr_info,
+        "action": "synchronize",
+        "before": pending[0].base_sha or pr_info.get("before"),
+        "after": pending[-1].head_sha,
+    }
+    logger.info(
+        "完整审查完成后发现 {} 条 pending 增量，触发增量审查消费: {}#{}",
+        len(pending),
+        pr_info.get("repo_full_name"),
+        pr_info.get("pr_number"),
+    )
+    await submit_review_task(drain_pr_info)
