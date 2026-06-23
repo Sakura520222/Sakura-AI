@@ -34,7 +34,7 @@ def _finding(
     file_path: str = "src/main.py",
     start_line: str = "42",
     end_line: str = "43",
-    suggestion: str = "Validate the input before use.",
+    suggestion: str = "value = sanitize(value)",
 ) -> str:
     return f"""<FINDING>
 <SEVERITY>{severity}</SEVERITY>
@@ -72,8 +72,39 @@ def test_parses_complete_tagged_review(parser):
     assert result["inline_comments"][0]["file_path"] == "src/main.py"
     assert result["inline_comments"][0]["start_line"] == 42
     assert result["inline_comments"][0]["line_number"] == 43
-    assert "**Suggestion:** Validate the input before use." in (
+    assert "```suggestion\nvalue = sanitize(value)\n```" in (
         result["inline_comments"][0]["body"]
+    )
+
+
+def test_accepts_single_line_text_fields_from_provider_xml_style(parser):
+    text = """<SAKURA_REVIEW>
+<VERSION>1</VERSION>
+<SCORE>6</SCORE>
+<DECISION>request_changes</DECISION>
+<DECISION_REASON>The decision is supported by the findings.</DECISION_REASON>
+<SUMMARY>The review summary.</SUMMARY>
+<FINDINGS>
+<FINDING>
+<SEVERITY>major</SEVERITY>
+<FILE>src/main.py</FILE>
+<START_LINE>42</START_LINE>
+<END_LINE>43</END_LINE>
+<TITLE>Unchecked input</TITLE>
+<DESCRIPTION>The changed code uses untrusted input without validation.</DESCRIPTION>
+<SUGGESTION>NONE</SUGGESTION>
+</FINDING>
+</FINDINGS>
+</SAKURA_REVIEW>"""
+
+    result = parser.parse_review_result(text, "standard")
+
+    assert result["parse_source"] == "tagged"
+    assert result["overall_score"] == 6
+    assert result["inline_comments"][0]["file_path"] == "src/main.py"
+    assert result["inline_comments"][0]["body"] == (
+        "**Unchecked input**\n\n"
+        "The changed code uses untrusted input without validation."
     )
 
 
@@ -130,6 +161,25 @@ def test_parses_overall_finding_and_none_suggestion(parser):
     assert "Suggestion:" not in result["comments"][0]["content"]
 
 
+def test_overall_finding_keeps_text_suggestion(parser):
+    finding = _finding(
+        severity="suggestion",
+        file_path="NONE",
+        start_line="NONE",
+        end_line="NONE",
+        suggestion="Consider adding a retry decorator.",
+    )
+    result = parser.parse_review_result(
+        _review(score=9, decision="comment", findings=finding),
+        "standard",
+    )
+
+    assert result["inline_comments"] == []
+    # Overall findings render suggestion as text, not a GitHub suggestion block
+    assert "**Suggestion:**" in result["comments"][0]["content"]
+    assert "```suggestion" not in result["comments"][0]["content"]
+
+
 @pytest.mark.parametrize(
     "text",
     [
@@ -176,7 +226,180 @@ def test_rejects_reserved_tag_line_inside_text(parser):
         parser.parse_review_result(text, "standard")
 
 
-def test_rejects_score_inconsistent_with_severity(parser):
-    text = _review(score=9, findings=_finding(severity="critical"))
-    with pytest.raises(ReviewProtocolError):
-        parser.parse_review_result(text, "standard")
+@pytest.mark.parametrize(
+    "score, severity, expected",
+    [
+        (9, "critical", 3),
+        (8, "major", 6),
+        (3, "critical", 3),
+    ],
+)
+def test_clamps_score_to_severity_ceiling(parser, score, severity, expected):
+    """score 超过 severity 上限时 clamp 到上限，而非降级整个审查。"""
+    result = parser.parse_review_result(
+        _review(score=score, findings=_finding(severity=severity)), "standard"
+    )
+    assert result["overall_score"] == expected
+
+
+def test_tolerates_blank_lines_between_fields(parser):
+    """字段之间的空行（DECISION_REASON/SUMMARY、finding 字段间）应被跳过。"""
+    text = """<SAKURA_REVIEW>
+<VERSION>1</VERSION>
+<SCORE>6</SCORE>
+<DECISION>request_changes</DECISION>
+
+<DECISION_REASON>
+reason here
+</DECISION_REASON>
+
+<SUMMARY>
+summary here
+</SUMMARY>
+
+<FINDINGS>
+<FINDING>
+<SEVERITY>major</SEVERITY>
+
+<FILE>src/A.java</FILE>
+<START_LINE>1</START_LINE>
+<END_LINE>2</END_LINE>
+<TITLE>title</TITLE>
+<DESCRIPTION>desc</DESCRIPTION>
+<SUGGESTION>fix();</SUGGESTION>
+</FINDING>
+</FINDINGS>
+</SAKURA_REVIEW>"""
+    result = parser.parse_review_result(text, "standard")
+
+    assert result["overall_score"] == 6
+    assert len(result["inline_comments"]) == 1
+    assert result["inline_comments"][0]["file_path"] == "src/A.java"
+
+
+def test_tolerates_missing_suggestion_closing_tag(parser):
+    """SUGGESTION 含多行替换代码但漏写 </SUGGESTION> 时，容错保住 finding 与一键块。
+
+    回归用例：模型在 SUGGESTION 输出替换代码后直接 </FINDING>，漏掉闭合标签。
+    修复前会报 ``missing </SUGGESTION>`` 并让整次审查降级为人工复审。
+    """
+    findings = """<FINDING>
+<SEVERITY>minor</SEVERITY>
+<FILE>src/ClientState.java</FILE>
+<START_LINE>59</START_LINE>
+<END_LINE>71</END_LINE>
+<TITLE>Fields missing volatile</TITLE>
+<DESCRIPTION>These static fields are read across threads.</DESCRIPTION>
+<SUGGESTION>
+public static volatile boolean serverShutdown;
+public static volatile boolean isLobbyInitiatedConnection;
+</FINDING>
+"""
+    result = parser.parse_review_result(_review(findings=findings), "standard")
+
+    assert result["parse_source"] == "tagged"
+    assert result["overall_score"] == 6
+    assert len(result["inline_comments"]) == 1
+    body = result["inline_comments"][0]["body"]
+    # 替换代码被保留并渲染为一键 GitHub suggestion 块
+    assert "```suggestion" in body
+    assert "volatile boolean serverShutdown" in body
+
+
+def test_preserves_multiline_suggestion_indentation(parser):
+    """多行替换代码的首行缩进必须保留，与原代码对齐（不被 strip 吃掉）。"""
+    findings = """<FINDING>
+<SEVERITY>major</SEVERITY>
+<FILE>src/ClientState.java</FILE>
+<START_LINE>59</START_LINE>
+<END_LINE>63</END_LINE>
+<TITLE>Fields missing volatile</TITLE>
+<DESCRIPTION>These static fields are read across threads.</DESCRIPTION>
+<SUGGESTION>
+    /** shut down flag */
+    public static volatile boolean isLobbyInitiatedConnection = false;
+</SUGGESTION>
+</FINDING>
+"""
+    result = parser.parse_review_result(_review(findings=findings), "standard")
+
+    body = result["inline_comments"][0]["body"]
+    # 首行缩进保留，与第二行对齐（回归：strip 曾把首行 4 空格吃掉导致顶格）
+    assert "    /** shut down flag */\n    public static volatile boolean" in body
+
+
+def test_file_finding_suggestion_renders_with_prefix(parser):
+    """file finding 的一键块前应有 Suggestion: 前缀。"""
+    result = parser.parse_review_result(_review(findings=_finding()), "standard")
+
+    body = result["inline_comments"][0]["body"]
+    assert "**Suggestion:**" in body
+    assert "```suggestion" in body
+
+
+def test_tolerates_blank_lines_between_findings(parser):
+    """finding 块之间的空行应被跳过，而非触发 FINDINGS may contain only FINDING blocks。"""
+    findings = """<FINDING>
+<SEVERITY>major</SEVERITY>
+<FILE>src/A.java</FILE>
+<START_LINE>1</START_LINE>
+<END_LINE>2</END_LINE>
+<TITLE>first</TITLE>
+<DESCRIPTION>desc one</DESCRIPTION>
+<SUGGESTION>fix1();</SUGGESTION>
+</FINDING>
+
+<FINDING>
+<SEVERITY>minor</SEVERITY>
+<FILE>src/B.java</FILE>
+<START_LINE>3</START_LINE>
+<END_LINE>4</END_LINE>
+<TITLE>second</TITLE>
+<DESCRIPTION>desc two</DESCRIPTION>
+<SUGGESTION>fix2();</SUGGESTION>
+</FINDING>
+"""
+    result = parser.parse_review_result(_review(findings=findings), "standard")
+
+    assert len(result["inline_comments"]) == 2
+    assert result["inline_comments"][0]["file_path"] == "src/A.java"
+    assert result["inline_comments"][1]["file_path"] == "src/B.java"
+
+
+def test_tolerates_compact_suggestion_on_same_line(parser):
+    """SUGGESTION 开/闭标签与代码同行（紧凑格式）应正确解析并保留缩进。"""
+    findings = """<FINDING>
+<SEVERITY>major</SEVERITY>
+<FILE>src/A.java</FILE>
+<START_LINE>1</START_LINE>
+<END_LINE>5</END_LINE>
+<TITLE>compact</TITLE>
+<DESCRIPTION>desc</DESCRIPTION>
+<SUGGESTION>    public void foo() {
+        bar();
+    }</SUGGESTION>
+</FINDING>
+"""
+    result = parser.parse_review_result(_review(findings=findings), "standard")
+
+    body = result["inline_comments"][0]["body"]
+    assert "```suggestion" in body
+    assert "    public void foo() {\n        bar();\n    }" in body
+
+
+def test_preserves_single_line_suggestion_indentation(parser):
+    """全单行 <SUGGESTION>    code</SUGGESTION> 的首行缩进应保留。"""
+    findings = """<FINDING>
+<SEVERITY>suggestion</SEVERITY>
+<FILE>src/A.java</FILE>
+<START_LINE>1</START_LINE>
+<END_LINE>1</END_LINE>
+<TITLE>single line</TITLE>
+<DESCRIPTION>desc</DESCRIPTION>
+<SUGGESTION>    public static volatile String currentServerIp = null;</SUGGESTION>
+</FINDING>
+"""
+    result = parser.parse_review_result(_review(findings=findings), "standard")
+
+    body = result["inline_comments"][0]["body"]
+    assert "    public static volatile String currentServerIp = null;" in body

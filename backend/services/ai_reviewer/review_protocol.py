@@ -5,6 +5,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
+from loguru import logger
+
 
 PROTOCOL_VERSION = "1"
 VALID_SEVERITIES = {"critical", "major", "minor", "suggestion"}
@@ -20,6 +22,7 @@ REPAIR_INSTRUCTION = """Your previous response did not match the required SAKURA
 Reformat the same review conclusions only. Do not add, remove, or reconsider findings.
 Return exactly one <SAKURA_REVIEW> envelope and no text outside it.
 Use VERSION 1, a SCORE from 1 to 10, a valid DECISION, and complete FINDING fields.
+Put DECISION_REASON, SUMMARY, TITLE, DESCRIPTION, and SUGGESTION opening and closing tags on separate lines.
 Keep protocol tags and enum values in English. Preserve the requested language only inside natural-language fields."""
 
 
@@ -93,7 +96,7 @@ class TaggedReviewParser:
             raise ReviewProtocolError("SUMMARY must not be empty")
 
         findings = [self._parse_finding(block) for block in finding_blocks]
-        self._validate_score_consistency(score, findings)
+        score = self._validate_score_consistency(score, findings)
         return {
             "score": score,
             "decision": decision,
@@ -152,11 +155,20 @@ class TaggedReviewParser:
         index = 0
 
         for field in self._root_fields:
+            # Tolerate blank lines between root fields (readability spacing).
+            while index < len(lines) and not lines[index].strip():
+                index += 1
             if field == "FINDINGS":
                 if index >= len(lines) or lines[index].strip() != "<FINDINGS>":
                     raise ReviewProtocolError("expected <FINDINGS>")
                 index += 1
                 while index < len(lines) and lines[index].strip() != "</FINDINGS>":
+                    if not lines[index].strip():
+                        # Tolerate blank lines between FINDING blocks: the model
+                        # often inserts them for readability, and rejecting them
+                        # forces an otherwise-valid review into manual re-review.
+                        index += 1
+                        continue
                     if lines[index].strip() != "<FINDING>":
                         raise ReviewProtocolError("FINDINGS may contain only FINDING blocks")
                     block, index = self._consume_block(lines, index, "FINDING")
@@ -178,6 +190,9 @@ class TaggedReviewParser:
         fields: dict[str, str] = {}
         index = 0
         for field in self._finding_fields:
+            # Tolerate blank lines between finding fields (readability spacing).
+            while index < len(lines) and not lines[index].strip():
+                index += 1
             value, index = self._consume_field(lines, index, field)
             fields[field] = value
         if index != len(lines):
@@ -206,7 +221,10 @@ class TaggedReviewParser:
 
         title = fields["TITLE"].strip()
         description = fields["DESCRIPTION"].strip()
-        suggestion_value = fields["SUGGESTION"].strip()
+        # Preserve SUGGESTION indentation (including the first line); stripping
+        # here would eat the first line's indentation and misalign the one-click
+        # suggestion. Normalize only when checking for the NONE sentinel.
+        suggestion_value = fields["SUGGESTION"]
         if not title or not description:
             raise ReviewProtocolError("finding title and description must not be empty")
 
@@ -217,7 +235,9 @@ class TaggedReviewParser:
             end_line=end_line,
             title=title,
             description=description,
-            suggestion=None if suggestion_value == "NONE" else suggestion_value,
+            suggestion=None
+            if suggestion_value.strip() == "NONE"
+            else suggestion_value,
         )
 
     def _consume_field(
@@ -237,18 +257,76 @@ class TaggedReviewParser:
                 raise ReviewProtocolError(f"reserved tag syntax in {field}")
             return value.strip(), index + 1
 
-        if stripped != single_prefix:
+        # Full single-line form: <TAG>value</TAG>. Do not .strip() the value —
+        # SUGGESTION code needs its leading indentation preserved to align with
+        # the original source; natural-language fields are normalized later in
+        # _parse_finding as needed.
+        if stripped.startswith(single_prefix) and stripped.endswith(single_suffix):
+            value = stripped[len(single_prefix) : -len(single_suffix)]
+            if self._is_reserved_tag_line(value.strip()):
+                raise ReviewProtocolError(f"reserved protocol tag inside {field}")
+            return value, index + 1
+
+        # Opening tag may sit on its own line or share the line with the first
+        # content line (compact form "<TAG>first line"). Both are accepted.
+        if not stripped.startswith(single_prefix):
             raise ReviewProtocolError(f"expected {single_prefix}")
+        after_open = stripped[len(single_prefix) :]
         index += 1
         content: list[str] = []
-        while index < len(lines) and lines[index].strip() != single_suffix:
-            if self._is_reserved_tag_line(lines[index].strip()):
+        if after_open.strip():
+            content.append(after_open)
+
+        closed = False
+        while index < len(lines):
+            current = lines[index]
+            stripped_current = current.strip()
+            if stripped_current == single_suffix:
+                index += 1
+                closed = True
+                break
+            if stripped_current.endswith(single_suffix):
+                # Compact closing: "last line</TAG>"
+                content.append(current[: current.rfind(single_suffix)])
+                index += 1
+                closed = True
+                break
+            if self._is_reserved_tag_line(stripped_current):
                 raise ReviewProtocolError(f"reserved protocol tag inside {field}")
-            content.append(lines[index])
+            content.append(current)
             index += 1
-        if index >= len(lines):
-            raise ReviewProtocolError(f"missing {single_suffix}")
-        return "\n".join(content).strip(), index + 1
+
+        if not closed:
+            # Tolerate a missing closing tag on a trailing multiline field.
+            # In practice this is SUGGESTION (the last finding field): the
+            # model sometimes emits replacement code and omits </SUGGESTION>.
+            # Other multiline fields hit a reserved-tag line first, so this
+            # branch only rescues a benign truncation instead of masking
+            # structural corruption. Accept the collected content so the
+            # finding (and its one-click suggestion) survives rather than
+            # forcing the whole review into manual re-review.
+            logger.warning(
+                "tolerated missing </{}>; accepted {} content line(s)",
+                field,
+                len(content),
+            )
+        return self._strip_blank_lines(content), index
+
+    @staticmethod
+    def _strip_blank_lines(lines: list[str]) -> str:
+        """Join lines, dropping only leading/trailing blank lines.
+
+        A bare ``str.strip()`` on the joined text would also strip the
+        first content line's indentation, which misaligns a multi-line
+        SUGGESTION replacement against the original source when GitHub
+        renders it. Preserve per-line indentation and trim blank lines only.
+        """
+        body = list(lines)
+        while body and not body[0].strip():
+            body.pop(0)
+        while body and not body[-1].strip():
+            body.pop()
+        return "\n".join(body)
 
     @staticmethod
     def _consume_block(
@@ -302,12 +380,30 @@ class TaggedReviewParser:
     @staticmethod
     def _validate_score_consistency(
         score: int, findings: list[TaggedFinding]
-    ) -> None:
+    ) -> int:
+        """Clamp SCORE to the ceiling implied by finding severities.
+
+        The model sometimes assigns a score exceeding its own severities
+        (e.g. SCORE=7 with a major finding). Rejecting here would force the
+        whole review into manual re-review and lose every finding, so clamp
+        the score down to the severity ceiling with a warning instead.
+        """
         severities = {finding.severity for finding in findings}
-        if "critical" in severities and score > 3:
-            raise ReviewProtocolError("critical findings require SCORE <= 3")
-        if "major" in severities and score > 6:
-            raise ReviewProtocolError("major findings require SCORE <= 6")
+        ceiling = 10
+        if "critical" in severities:
+            ceiling = min(ceiling, 3)
+        if "major" in severities:
+            ceiling = min(ceiling, 6)
+        if score > ceiling:
+            logger.warning(
+                "score {} exceeds ceiling {} for severities {}; clamped to {}",
+                score,
+                ceiling,
+                severities,
+                ceiling,
+            )
+            return ceiling
+        return score
 
 
 def to_review_result(parsed: dict[str, Any]) -> dict[str, Any]:
@@ -328,7 +424,13 @@ def to_review_result(parsed: dict[str, Any]) -> dict[str, Any]:
         result["issues"][SEVERITY_TO_ISSUE_KEY[finding.severity]].append(issue_text)
         body_parts = [f"**{finding.title}**", finding.description]
         if finding.suggestion:
-            body_parts.append(f"**Suggestion:** {finding.suggestion}")
+            if finding.file_path is not None:
+                # GitHub one-click suggestion: replaces START_LINE..END_LINE
+                body_parts.append(
+                    f"**Suggestion:**\n```suggestion\n{finding.suggestion}\n```"
+                )
+            else:
+                body_parts.append(f"**Suggestion:** {finding.suggestion}")
         body = "\n\n".join(body_parts)
 
         if finding.file_path is None:
