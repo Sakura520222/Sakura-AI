@@ -237,6 +237,34 @@ async def test_enqueue_skips_stale_zombie_review(queue_store, monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_cancel_pending_for_pr_marks_all_pending_cancelled(queue_store):
+    """PR 关闭时，该 PR 所有 pending 增量应标记 cancelled，且不影响其他 PR。"""
+    _add_queue(queue_store, base_sha="base1", head_sha="head2")
+    _add_queue(queue_store, base_sha="head2", head_sha="head3")
+
+    # 另一个 PR 的 pending 增量，不应被误清
+    other_pr = _add_queue(queue_store, base_sha="base1", head_sha="headX")
+    other_pr.pr_number = 999
+    other_pr.repo_full_name = "owner/other"
+
+    # 已消费的增量也不应被动
+    consumed = _add_queue(queue_store, base_sha="base1", head_sha="headC")
+    consumed.status = "consumed"
+
+    service = PRReviewIncrementalQueueService()
+    count = await service.cancel_pending_for_pr("owner/repo", 7)
+
+    assert count == 2
+    items = list(queue_store["queue"].values())
+    statuses = {item.head_sha: item.status for item in items}
+    assert statuses["head2"] == "cancelled"
+    assert statuses["head3"] == "cancelled"
+    # 其他 PR / 已消费的不受影响
+    assert statuses["headX"] == "pending"
+    assert statuses["headC"] == "consumed"
+
+
+@pytest.mark.asyncio
 async def test_consume_pending_merges_events_and_marks_consumed(queue_store):
     _add_queue(queue_store, base_sha="base1", head_sha="head2", created_offset=1)
     _add_queue(queue_store, base_sha="head2", head_sha="head3", created_offset=2)
