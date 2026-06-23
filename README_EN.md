@@ -81,6 +81,7 @@
 ### Issue Analysis
 
 - **Intelligent Issue Analysis**: Auto-classification, priority assessment, label recommendation, duplicate detection, linked PR discovery
+- **Strict Issue Output Contract**: Issue analysis uses the `<SAKURA_ISSUE_ANALYSIS>` envelope protocol with field validation; invalid responses are repaired once or safely degraded
 - **Auto-labeling**: AI categorizes and recommends labels; high-confidence labels are applied automatically
 - **Auto-assignment**: AI analyzes issue content and automatically assigns it to appropriate repository collaborators
 - **Title Rewriting**: AI automatically improves vague or inaccurate issue titles
