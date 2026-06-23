@@ -743,13 +743,20 @@ class ReviewWorker:
                                 pending_incremental is not None
                                 and data is pending_incremental.message
                             ):
-                                await queue_service.mark_consumed(
-                                    pending_incremental.queue_ids,
-                                    review_id=review_id,
-                                    session_id=act_session.id,
-                                    consumed_message_id=msg.id,
-                                )
-                                pending_incremental = None
+                                try:
+                                    await queue_service.mark_consumed(
+                                        pending_incremental.queue_ids,
+                                        review_id=review_id,
+                                        session_id=act_session.id,
+                                        consumed_message_id=msg.id,
+                                    )
+                                    pending_incremental = None
+                                except Exception as consume_exc:
+                                    logger.warning(
+                                        "mark_consumed failed, queue items remain pending: {}",
+                                        consume_exc,
+                                    )
+                                    pending_incremental = None
                             return msg
                         elif event_type == "tool_running":
                             # data is the tool_call_id string
