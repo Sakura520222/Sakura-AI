@@ -147,17 +147,21 @@ def test_find_check_run_for_sha_found(app_with_repo):
     cr_target = MagicMock()
     cr_target.name = "Sakura AI Review"
     cr_target.id = 555
-    repo.get_check_runs_for_ref.return_value = [cr_other, cr_target]
+    commit = MagicMock()
+    commit.get_check_runs.return_value = [cr_other, cr_target]
+    repo.get_commit.return_value = commit
 
     assert app.find_check_run_for_sha("o", "r", "sha", "Sakura AI Review") == 555
-    repo.get_check_runs_for_ref.assert_called_once_with(ref="sha")
+    repo.get_commit.assert_called_once_with("sha")
 
 
 def test_find_check_run_for_sha_not_found(app_with_repo):
     app, _client, repo = app_with_repo
     cr = MagicMock()
     cr.name = "other"
-    repo.get_check_runs_for_ref.return_value = [cr]
+    commit = MagicMock()
+    commit.get_check_runs.return_value = [cr]
+    repo.get_commit.return_value = commit
 
     assert app.find_check_run_for_sha("o", "r", "sha", "Sakura AI Review") is None
 
@@ -170,5 +174,7 @@ def test_find_check_run_for_sha_no_client_returns_none():
 
 def test_find_check_run_for_sha_exception_returns_none(app_with_repo):
     app, _client, repo = app_with_repo
-    repo.get_check_runs_for_ref.side_effect = RuntimeError("x")
+    commit = MagicMock()
+    commit.get_check_runs.side_effect = RuntimeError("x")
+    repo.get_commit.return_value = commit
     assert app.find_check_run_for_sha("o", "r", "sha", "n") is None
