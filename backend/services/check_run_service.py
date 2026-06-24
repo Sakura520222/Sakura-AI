@@ -31,6 +31,13 @@ class CheckRunService:
         "reviewing": ("AI 审查进行中", "AI review in progress"),
         "reporting": ("正在生成报告", "Generating report"),
     }
+    # 阶段标题（用于 output.title，随阶段变化让 Checks 面板直观显示当前阶段）
+    _STAGE_TITLE: dict[str, tuple[str, str]] = {
+        "indexing": ("Sakura AI 正在索引代码", "Sakura AI Indexing Code"),
+        "summary": ("Sakura AI 正在生成总结", "Sakura AI Generating Summary"),
+        "reviewing": ("Sakura AI 正在审查", "Sakura AI Reviewing"),
+        "reporting": ("Sakura AI 正在生成报告", "Sakura AI Generating Report"),
+    }
     # 阶段名词（用于"已完成"清单）：stage -> (zh, en)
     _STAGE_NAME: dict[str, tuple[str, str]] = {
         "indexing": ("代码索引", "Code indexing"),
@@ -179,7 +186,10 @@ class CheckRunService:
             is_en = self._is_english(output_language)
             desc_zh, desc_en = self._STAGE_DESC.get(stage, (stage, stage))
             stage_desc = desc_en if is_en else desc_zh
-            title = "Reviewing" if is_en else "Sakura AI 正在审查"
+            title_zh, title_en = self._STAGE_TITLE.get(
+                stage, ("Sakura AI 正在审查", "Sakura AI Reviewing")
+            )
+            title = title_en if is_en else title_zh
             summary = stage_desc
 
             if is_en:

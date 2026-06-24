@@ -135,6 +135,22 @@ async def test_report_progress_text_includes_completed_stages(svc):
 
 
 @pytest.mark.asyncio
+async def test_report_progress_title_changes_per_stage(svc):
+    """title 随阶段变化（让 Checks 面板直观显示当前阶段，而非统一'正在审查'）。"""
+    svc._app.cleanup_stale_check_runs.return_value = 1
+
+    for stage, expected_title in [
+        ("indexing", "Sakura AI 正在索引代码"),
+        ("summary", "Sakura AI 正在生成总结"),
+        ("reviewing", "Sakura AI 正在审查"),
+        ("reporting", "Sakura AI 正在生成报告"),
+    ]:
+        await svc.report_progress("o", "r", "sha", stage=stage, output_language="zh")
+        kw = svc._app.update_check_run.call_args.kwargs
+        assert kw["output_title"] == expected_title, f"stage={stage}"
+
+
+@pytest.mark.asyncio
 async def test_report_progress_english_completed(svc):
     svc._app.cleanup_stale_check_runs.return_value = 1
 
