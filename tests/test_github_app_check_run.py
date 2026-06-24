@@ -144,8 +144,10 @@ def test_find_check_run_for_sha_found(app_with_repo):
     app, _client, repo = app_with_repo
     cr_other = MagicMock()
     cr_other.name = "other"
+    cr_other.status = "in_progress"
     cr_target = MagicMock()
     cr_target.name = "Sakura AI Review"
+    cr_target.status = "in_progress"
     cr_target.id = 555
     commit = MagicMock()
     commit.get_check_runs.return_value = [cr_other, cr_target]
@@ -153,6 +155,44 @@ def test_find_check_run_for_sha_found(app_with_repo):
 
     assert app.find_check_run_for_sha("o", "r", "sha", "Sakura AI Review") == 555
     repo.get_commit.assert_called_once_with("sha")
+
+
+def test_find_check_run_for_sha_returns_latest_active(app_with_repo):
+    """多个 active run 时返回 id 最大（最新创建）的那个。"""
+    app, _client, repo = app_with_repo
+    cr_old = MagicMock()
+    cr_old.name = "Sakura AI Review"
+    cr_old.status = "in_progress"
+    cr_old.id = 100
+    cr_new = MagicMock()
+    cr_new.name = "Sakura AI Review"
+    cr_new.status = "queued"
+    cr_new.id = 200
+    commit = MagicMock()
+    commit.get_check_runs.return_value = [cr_old, cr_new]
+    repo.get_commit.return_value = commit
+
+    assert app.find_check_run_for_sha("o", "r", "sha", "Sakura AI Review") == 200
+
+
+def test_find_check_run_for_sha_skips_completed(app_with_repo):
+    """已 completed 的 run 被跳过（conclusion 无法清空回 null，复用无法还原成干净的 in_progress）。
+
+    回归 pr_log.log 暴露的 bug：/full-review 重新审查同一 commit 时，find 命中
+    上次遗留的 completed run，update 其 status 但 conclusion=success 仍在，
+    面板永远显示对勾。修复后 find 跳过 completed，返回 None 触发创建新 run。
+    """
+    app, _client, repo = app_with_repo
+    cr_done = MagicMock()
+    cr_done.name = "Sakura AI Review"
+    cr_done.status = "completed"
+    cr_done.id = 999
+    commit = MagicMock()
+    commit.get_check_runs.return_value = [cr_done]
+    repo.get_commit.return_value = commit
+
+    # 唯一的 run 已完成 → 跳过 → 返回 None（调用方将创建新 run）
+    assert app.find_check_run_for_sha("o", "r", "sha", "Sakura AI Review") is None
 
 
 def test_find_check_run_for_sha_not_found(app_with_repo):
