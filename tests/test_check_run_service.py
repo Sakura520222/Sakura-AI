@@ -299,3 +299,39 @@ async def test_exception_in_app_is_swallowed(svc):
         comment_count=1,
         output_language="zh",
     )
+
+
+# ---------------- 端到端幂等回归（日志 #403 实测 bug） ----------------
+
+
+@pytest.mark.asyncio
+async def test_full_lifecycle_creates_once_then_updates(svc):
+    """模拟完整审查生命周期，验证 find 命中后只 create 一次、其余全 update。
+
+    回归日志 pr_log.log 暴露的 bug：find_check_run_for_sha 因 API 错误永远
+    miss，导致一次审查创建 6 个 Check Run。修复后 find 命中应走 update。
+    """
+    # 首次 find miss（queued 创建），此后 find 命中（返回已创建的 id）
+    svc._app.find_check_run_for_sha.side_effect = [None, 100, 100, 100, 100]
+    svc._app.create_check_run.return_value = {"id": 100}
+
+    await svc.report_queued("o", "r", "sha", pr_number=1, output_language="zh")
+    await svc.report_progress("o", "r", "sha", stage="indexing", output_language="zh")
+    await svc.report_progress("o", "r", "sha", stage="reviewing", output_language="zh")
+    await svc.report_progress("o", "r", "sha", stage="reporting", output_language="zh")
+    await svc.report_completed(
+        "o",
+        "r",
+        "sha",
+        decision=ReviewDecision.APPROVE,
+        overall_score=9,
+        comment_count=0,
+        output_language="zh",
+    )
+
+    # 期望：只 create 一次（queued），其余 4 次全部 update，绝不重复 create
+    assert svc._app.create_check_run.call_count == 1
+    assert svc._app.update_check_run.call_count == 4
+    # 所有 update 都指向同一个 check run id（existing_id 是位置参数 args[2]）
+    for call in svc._app.update_check_run.call_args_list:
+        assert call.args[2] == 100

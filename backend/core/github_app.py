@@ -1167,7 +1167,10 @@ class GitHubAppClient:
                 return None
 
             repo = client.get_repo(f"{repo_owner}/{repo_name}")
-            for check_run in repo.get_check_runs_for_ref(ref=head_sha):
+            # PyGithub 2.x：Repository 无 get_check_runs(ref) 列表方法，
+            # 需经 Commit.get_check_runs() 列举某 commit 上的所有 Check Run。
+            commit = repo.get_commit(head_sha)
+            for check_run in commit.get_check_runs():
                 if check_run.name == name:
                     logger.debug(
                         f"找到已有 Check Run {name} for "
