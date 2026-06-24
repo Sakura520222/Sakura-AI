@@ -238,8 +238,91 @@ async def test_review_worker_bridge_exception_does_not_fail_review(monkeypatch):
 
     worker = ReviewWorker()
     await worker._notify_agent_team_review_completed(123, "task1")
-
     assert called == [123]
+
+
+def _review_worker_for_reflection_history():
+    """构造一个仅满足反思历史摘要获取依赖的 ReviewWorker。"""
+    worker = ReviewWorker.__new__(ReviewWorker)
+    worker.ai_reviewer = SimpleNamespace(
+        summary_api_client=object(),
+        summary_model="summary-model",
+    )
+    return worker
+
+
+class _RecordingHistoryService:
+    """记录 fetch_history_summary 调用与返回值的假服务。"""
+
+    def __init__(self, returns="HISTORY-SUMMARY"):
+        self._returns = returns
+        self.calls = []
+
+    async def fetch_history_summary(self, **kwargs):
+        self.calls.append(kwargs)
+        return self._returns
+
+
+@pytest.mark.asyncio
+async def test_reflection_history_summary_fetched_when_incremental(monkeypatch):
+    """增量审查时，反思历史摘要应调用 HistoryContextService.fetch_history_summary。"""
+    worker = _review_worker_for_reflection_history()
+    recording = _RecordingHistoryService()
+    monkeypatch.setattr(
+        "backend.services.history_context_service.HistoryContextService",
+        lambda api_client, model: recording,
+    )
+
+    analysis = SimpleNamespace(is_incremental=True, pr_id=42)
+    pr_info = {"repo_name": "repo", "repo_owner": "owner"}
+
+    summary = await worker._fetch_reflection_history_summary(analysis, pr_info, "task1")
+
+    assert summary == "HISTORY-SUMMARY"
+    assert recording.calls == [
+        {"pr_id": 42, "repo_name": "repo", "repo_owner": "owner"}
+    ]
+
+
+@pytest.mark.asyncio
+async def test_reflection_history_summary_skipped_when_not_incremental(monkeypatch):
+    """非增量审查时不应调用历史摘要服务，直接返回 None。"""
+    worker = _review_worker_for_reflection_history()
+    recording = _RecordingHistoryService()
+    monkeypatch.setattr(
+        "backend.services.history_context_service.HistoryContextService",
+        lambda api_client, model: recording,
+    )
+
+    analysis = SimpleNamespace(is_incremental=False, pr_id=42)
+    summary = await worker._fetch_reflection_history_summary(
+        analysis, {"repo_name": "repo", "repo_owner": "owner"}, "task1"
+    )
+
+    assert summary is None
+    assert recording.calls == []
+
+
+@pytest.mark.asyncio
+async def test_reflection_history_summary_returns_none_on_failure(monkeypatch):
+    """历史摘要获取异常时应吞掉异常并返回 None，不影响反思。"""
+    worker = _review_worker_for_reflection_history()
+
+    class _FailingService:
+        async def fetch_history_summary(self, **kwargs):
+            raise RuntimeError("db down")
+
+    monkeypatch.setattr(
+        "backend.services.history_context_service.HistoryContextService",
+        lambda api_client, model: _FailingService(),
+    )
+
+    analysis = SimpleNamespace(is_incremental=True, pr_id=42)
+    summary = await worker._fetch_reflection_history_summary(
+        analysis, {"repo_name": "repo", "repo_owner": "owner"}, "task1"
+    )
+
+    assert summary is None
 
 
 @pytest.mark.asyncio
