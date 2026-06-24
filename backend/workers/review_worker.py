@@ -291,11 +291,29 @@ class ReviewWorker:
                     return task_id
 
                 # Cancel checkpoint: before code indexing
-                # Note: review_id is still None here (_create_review_record runs later)
                 if self._check_cancelled(task_key):
                     return await self._cancel_and_cleanup(
                         task_id, task_key, None, None, "跳过代码索引"
                     )
+
+                # 3. 创建数据库记录（尽早落库 PENDING）：增量队列的
+                # find_active_review 依赖 PRReview 行的存在来判定"是否有活跃审查"。
+                # 若延后到代码索引之后（索引耗时数十秒），此窗口内到达的
+                # synchronize webhook 会查不到 active review，enqueue 返回 None，
+                # 从而误触发第二个完整审查，造成并发 + 限流雪崩。
+                review_id = await self._create_review_record(analysis, pr_info, task_id)
+
+                # 记录审查创建前的关键阶段（review_id 此时有效）
+                await self._log_activity(review_id, "thinking", {
+                    "message": f"分析 PR #{pr_info.get('pr_number')} ...",
+                    "repo_full_name": pr_info.get("repo_full_name"),
+                })
+                await self._log_activity(review_id, "status", {
+                    "status": "pending",
+                    "message": f"PR #{pr_info.get('pr_number')} 审查已创建",
+                    "strategy": analysis.strategy,
+                    "repo_full_name": pr_info.get("repo_full_name"),
+                })
 
                 # 2.5 代码索引（在 AI 审查前完成，确保 search_code_context 工具可用）
                 if settings.auto_index_pr_changes and settings.enable_code_index:
@@ -395,20 +413,7 @@ class ReviewWorker:
                             f"[{task_id}] 文档自动索引失败（将继续审查）: {e}"
                         )
 
-                # 3. 创建数据库记录
-                review_id = await self._create_review_record(analysis, pr_info, task_id)
-
-                # 记录审查创建前的关键阶段（review_id 此时有效）
-                await self._log_activity(review_id, "thinking", {
-                    "message": f"分析 PR #{pr_info.get('pr_number')} ...",
-                    "repo_full_name": pr_info.get("repo_full_name"),
-                })
-                await self._log_activity(review_id, "status", {
-                    "status": "pending",
-                    "message": f"PR #{pr_info.get('pr_number')} 审查已创建",
-                    "strategy": analysis.strategy,
-                    "repo_full_name": pr_info.get("repo_full_name"),
-                })
+                # 3. 创建数据库记录（已在代码索引前尽早完成，见上方）
 
                 # 4. 获取PR对象用于后续操作
                 client = self.github_app.get_repo_client(
