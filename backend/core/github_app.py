@@ -1194,6 +1194,59 @@ class GitHubAppClient:
             )
             return None
 
+    def cleanup_stale_check_runs(
+        self,
+        repo_owner: str,
+        repo_name: str,
+        head_sha: str,
+        name: str,
+    ) -> Optional[int]:
+        """收敛同 commit 同名 Check Run，返回最新 active run id。
+
+        同一 commit 上可能存在多个同名 active（queued/in_progress）Check Run
+        （如历史重复创建 bug 的产物，会一直显示悬挂转圈）。保留 id 最大（最新）
+        的 active run，将其余 active run 结束为 completed + neutral（停止转圈，
+        显示为灰圆历史）。已 completed 的 run 视为正常历史，不动。
+
+        创建者归属：仅本 GitHub App 创建的 run 可被 update（GitHub Actions 等
+        其他来源的 run 由各自所有者管理）。此方法对所有同名 run 调 edit，若对方
+        无权修改会失败并记 warning，不影响其余清理。
+
+        Returns:
+            最新的 active run id；无 active run 时返回 None（调用方创建新的）。
+        """
+        try:
+            client = self.get_repo_client(repo_owner, repo_name)
+            if not client:
+                return None
+
+            repo = client.get_repo(f"{repo_owner}/{repo_name}")
+            commit = repo.get_commit(head_sha)
+            active = [
+                cr
+                for cr in commit.get_check_runs()
+                if cr.name == name and cr.status != "completed"
+            ]
+            if not active:
+                return None
+            active.sort(key=lambda cr: cr.id, reverse=True)
+            latest_id = active[0].id
+            for stale in active[1:]:
+                try:
+                    stale.edit(status="completed", conclusion="neutral")
+                    logger.info(
+                        f"已收敛悬挂 Check Run {name} id={stale.id} "
+                        f"({repo_owner}/{repo_name}@{head_sha}) -> completed+neutral"
+                    )
+                except Exception as e:
+                    logger.warning(f"收敛悬挂 Check Run id={stale.id} 失败: {e}")
+            return latest_id
+        except Exception as e:
+            logger.warning(
+                f"收敛 Check Run 失败 {repo_owner}/{repo_name}@{head_sha}: {e}"
+            )
+            return None
+
     def get_issue(self, repo_owner: str, repo_name: str, issue_number: int):
         """获取 Issue 详情"""
         client = self.get_repo_client(repo_owner, repo_name)

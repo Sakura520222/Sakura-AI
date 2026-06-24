@@ -218,3 +218,63 @@ def test_find_check_run_for_sha_exception_returns_none(app_with_repo):
     commit.get_check_runs.side_effect = RuntimeError("x")
     repo.get_commit.return_value = commit
     assert app.find_check_run_for_sha("o", "r", "sha", "n") is None
+
+
+# ---------------- cleanup_stale_check_runs ----------------
+
+
+def test_cleanup_stale_keeps_latest_and_finalizes_others(app_with_repo):
+    """多个 active run：保留 id 最大者，其余 update 成 completed+neutral。"""
+    app, _client, repo = app_with_repo
+    cr_stale1 = MagicMock()
+    cr_stale1.name = "Sakura AI Review"
+    cr_stale1.status = "in_progress"
+    cr_stale1.id = 100
+    cr_stale2 = MagicMock()
+    cr_stale2.name = "Sakura AI Review"
+    cr_stale2.status = "queued"
+    cr_stale2.id = 200
+    cr_latest = MagicMock()
+    cr_latest.name = "Sakura AI Review"
+    cr_latest.status = "in_progress"
+    cr_latest.id = 300
+    commit = MagicMock()
+    commit.get_check_runs.return_value = [cr_stale1, cr_stale2, cr_latest]
+    repo.get_commit.return_value = commit
+
+    latest_id = app.cleanup_stale_check_runs("o", "r", "sha", "Sakura AI Review")
+
+    assert latest_id == 300
+    cr_stale1.edit.assert_called_once_with(status="completed", conclusion="neutral")
+    cr_stale2.edit.assert_called_once_with(status="completed", conclusion="neutral")
+    cr_latest.edit.assert_not_called()  # 最新的保留不动
+
+
+def test_cleanup_stale_skips_completed_runs(app_with_repo):
+    """已 completed 的 run 视为历史，不清理；无 active 时返回 None。"""
+    app, _client, repo = app_with_repo
+    cr_done = MagicMock()
+    cr_done.name = "Sakura AI Review"
+    cr_done.status = "completed"
+    cr_done.id = 999
+    commit = MagicMock()
+    commit.get_check_runs.return_value = [cr_done]
+    repo.get_commit.return_value = commit
+
+    assert app.cleanup_stale_check_runs("o", "r", "sha", "Sakura AI Review") is None
+    cr_done.edit.assert_not_called()
+
+
+def test_cleanup_stale_single_active_returned(app_with_repo):
+    """仅一个 active run 时直接返回其 id，不调 edit。"""
+    app, _client, repo = app_with_repo
+    cr = MagicMock()
+    cr.name = "Sakura AI Review"
+    cr.status = "in_progress"
+    cr.id = 555
+    commit = MagicMock()
+    commit.get_check_runs.return_value = [cr]
+    repo.get_commit.return_value = commit
+
+    assert app.cleanup_stale_check_runs("o", "r", "sha", "Sakura AI Review") == 555
+    cr.edit.assert_not_called()
