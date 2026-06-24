@@ -164,6 +164,10 @@ class AIReviewer:
         self.tool_manager = ToolManager()
 
         # 初始化上下文压缩
+        # 压缩使用主审查 model（settings.openai_model）而非 summary model：
+        # _compress_early_history 需要忠实压缩含 tool_call 的多轮对话历史
+        # （见 context_compressor._extract_tool_call_fields），summary model 通常
+        # 更弱、难以可靠处理 tool_call 结构，故与主审查共用同一 model/客户端。
         self.enable_compression = settings.enable_context_compression
         self.compression_threshold = settings.context_compression_threshold
         self.keep_rounds = settings.context_compression_keep_rounds
