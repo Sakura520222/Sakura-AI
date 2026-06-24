@@ -1171,7 +1171,6 @@ class ReviewWorker:
                         pr_info["repo_owner"],
                         pr_info["repo_name"],
                         _fail_sha,
-                        error_message=str(e),
                         output_language=output_language,
                     )
 
@@ -1216,7 +1215,6 @@ class ReviewWorker:
                         pr_info["repo_owner"],
                         pr_info["repo_name"],
                         _cancel_fail_sha,
-                        error_message="review timeout or cancelled",
                         output_language=output_language,
                     )
                 raise

@@ -1149,51 +1149,6 @@ class GitHubAppClient:
             )
             return False
 
-    def find_check_run_for_sha(
-        self,
-        repo_owner: str,
-        repo_name: str,
-        head_sha: str,
-        name: str,
-    ) -> Optional[int]:
-        """按 head_sha + name 查找最新的、未完成的 Check Run ID。
-
-        跳过已 completed 的 run：conclusion 虽可通过 PATCH 改为其他完成值
-        （success/failure/neutral 等），但无法清空回 null，因此无法把已完成
-        run 还原成干净的 queued/in_progress；复用它只更新 status 会造成
-        status=in_progress 而 conclusion 仍挂旧值的不一致状态，面板仍按旧
-        conclusion 渲染（如对勾）。重新审查要显示转圈，只能创建新 run。
-        在剩余 active（queued/in_progress）run 中返回 id 最大者（GitHub id
-        递增，最大即最新创建）。全部已完成或不存在时返回 None，调用方将创建新 run。
-        """
-        try:
-            client = self.get_repo_client(repo_owner, repo_name)
-            if not client:
-                return None
-
-            repo = client.get_repo(f"{repo_owner}/{repo_name}")
-            # PyGithub 2.x：Repository 无 get_check_runs(ref) 列表方法，
-            # 需经 Commit.get_check_runs() 列举某 commit 上的所有 Check Run。
-            commit = repo.get_commit(head_sha)
-            active_ids = [
-                cr.id
-                for cr in commit.get_check_runs()
-                if cr.name == name and cr.status != "completed"
-            ]
-            if active_ids:
-                latest_id = max(active_ids)
-                logger.debug(
-                    f"找到 active Check Run {name} for "
-                    f"{repo_owner}/{repo_name}@{head_sha} (id={latest_id})"
-                )
-                return latest_id
-            return None
-        except Exception as e:
-            logger.warning(
-                f"查找 Check Run 失败 {repo_owner}/{repo_name}@{head_sha}: {e}"
-            )
-            return None
-
     def cleanup_stale_check_runs(
         self,
         repo_owner: str,
