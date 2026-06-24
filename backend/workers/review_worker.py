@@ -960,29 +960,9 @@ class ReviewWorker:
                         # 历史摘要不再注入审查 prompt；此处仅供独立运行的反思
                         # 任务提供历史上下文，并在后台 task 内获取以免阻塞收尾。
                         async def _reflect_with_history() -> None:
-                            history_summary = None
-                            if analysis.is_incremental:
-                                try:
-                                    from backend.services.history_context_service import (
-                                        HistoryContextService,
-                                    )
-
-                                    history_service = HistoryContextService(
-                                        self.ai_reviewer.summary_api_client,
-                                        model=self.ai_reviewer.summary_model,
-                                    )
-                                    history_summary = (
-                                        await history_service.fetch_history_summary(
-                                            pr_id=analysis.pr_id,
-                                            repo_name=pr_info["repo_name"],
-                                            repo_owner=pr_info["repo_owner"],
-                                        )
-                                    )
-                                except Exception as hist_exc:
-                                    logger.warning(
-                                        f"[{task_id}] 反思历史摘要获取失败（不影响反思）: {hist_exc}",
-                                        exc_info=True,
-                                    )
+                            history_summary = await self._fetch_reflection_history_summary(
+                                analysis, pr_info, task_id
+                            )
                             await sakura_memory_service.reflect(
                                 repo=pr.base.repo,
                                 repo_full_name=pr_info["repo_full_name"],
@@ -1149,6 +1129,39 @@ class ReviewWorker:
             copied,
         )
         return messages
+
+    async def _fetch_reflection_history_summary(
+        self,
+        analysis: PRAnalysis,
+        pr_info: Dict[str, Any],
+        task_id: str,
+    ) -> str | None:
+        """为 .sakura/ 反思获取增量历史摘要。
+
+        审查会话已经恢复完整历史消息，不再把摘要注入 prompt；反思是独立任务，
+        需要单独获取历史摘要作为上下文。失败时返回 None，不影响主审查或反思流程。
+        """
+        if not analysis.is_incremental:
+            return None
+
+        try:
+            from backend.services.history_context_service import HistoryContextService
+
+            history_service = HistoryContextService(
+                self.ai_reviewer.summary_api_client,
+                model=self.ai_reviewer.summary_model,
+            )
+            return await history_service.fetch_history_summary(
+                pr_id=analysis.pr_id,
+                repo_name=pr_info["repo_name"],
+                repo_owner=pr_info["repo_owner"],
+            )
+        except Exception as hist_exc:
+            logger.warning(
+                f"[{task_id}] 反思历史摘要获取失败（不影响反思）: {hist_exc}",
+                exc_info=True,
+            )
+            return None
 
     async def _notify_agent_team_review_completed(self, review_id: int, task_id: str) -> None:
         """通知 Agent Team 处理 PR Review 完成后的闭环反馈。"""
