@@ -842,6 +842,25 @@ async def save_general_config(
             changed["enable_auto_review"] = {"old": cfg.key_value, "new": val}
             cfg.key_value = val
 
+        # enable_check_runs (checkbox: "true" if checked, absent if unchecked)
+        raw = form.get("enable_check_runs")
+        val = "true" if raw == "true" else "false"
+        result = await db.execute(
+            select(AppConfig).where(AppConfig.key_name == "enable_check_runs")
+        )
+        cfg = result.scalar_one_or_none()
+        if cfg is None:
+            cfg = AppConfig(
+                key_name="enable_check_runs",
+                key_value=val,
+                description="是否启用 GitHub Check Runs 审查进度可视化",
+            )
+            db.add(cfg)
+            changed["enable_check_runs"] = {"old": "(无)", "new": val}
+        elif cfg.key_value != val:
+            changed["enable_check_runs"] = {"old": cfg.key_value, "new": val}
+            cfg.key_value = val
+
         # ========== Web 搜索配置 ==========
         web_search_keys = [
             "web_search_enabled",

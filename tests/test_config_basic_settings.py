@@ -18,6 +18,7 @@ def test_basic_review_config_fields_support_live_update():
         "max_concurrent_reviews",
         "review_timeout_seconds",
         "enable_auto_review",
+        "enable_check_runs",
     }
     assert required_fields.issubset(Settings.model_fields)
 
@@ -27,10 +28,12 @@ def test_basic_review_config_fields_support_live_update():
         update_settings_field("max_concurrent_reviews", "7")
         update_settings_field("review_timeout_seconds", "45")
         update_settings_field("enable_auto_review", "false")
+        update_settings_field("enable_check_runs", "false")
 
         assert settings.max_concurrent_reviews == 7
         assert settings.review_timeout_seconds == 45
         assert settings.enable_auto_review is False
+        assert settings.enable_check_runs is False
     finally:
         for key, value in old_values.items():
             setattr(settings, key, value)

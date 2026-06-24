@@ -110,6 +110,7 @@ common:
   max_concurrent_issues_desc: "Max concurrent Issue analysis tasks"
   review_timeout_desc: "Maximum total runtime allowed for one PR review task, from start to finish (seconds)"
   enable_auto_review_desc: "Automatically review new PRs triggered by webhooks; manual commands are unaffected"
+  enable_check_runs_desc: "Sync PR review progress to the GitHub Checks panel"
   issue_auto_labels_desc: "Auto-apply AI-recommended labels to Issues"
   issue_auto_assign_desc: "Auto-assign AI-recommended assignees to Issues"
   issue_max_iterations_desc: "Max AI tool call iterations for Issue analysis"

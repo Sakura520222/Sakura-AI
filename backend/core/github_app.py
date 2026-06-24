@@ -1021,6 +1021,166 @@ class GitHubAppClient:
             # 备选方案：从配置文件读取
             return getattr(settings, "bot_username", None)
 
+    @staticmethod
+    def _build_check_run_output(
+        title: Optional[str],
+        summary: Optional[str],
+        text: Optional[str],
+    ) -> Optional[dict]:
+        """构建 Check Run output dict，仅包含非空字段。
+
+        GitHub API 要求 output 至少包含 title + summary；title/summary 的完整性
+        由调用方（CheckRunService）保证，底层方法保持灵活。
+        """
+        output: dict = {}
+        if title:
+            output["title"] = title
+        if summary:
+            output["summary"] = summary
+        if text:
+            output["text"] = text
+        return output or None
+
+    def create_check_run(
+        self,
+        repo_owner: str,
+        repo_name: str,
+        name: str,
+        head_sha: str,
+        status: str = "queued",
+        conclusion: Optional[str] = None,
+        output_title: Optional[str] = None,
+        output_summary: Optional[str] = None,
+        output_text: Optional[str] = None,
+    ) -> Optional[dict]:
+        """创建 GitHub Check Run。
+
+        Args:
+            repo_owner: 仓库所有者
+            repo_name: 仓库名称
+            name: Check Run 名称
+            head_sha: 绑定的 commit SHA
+            status: queued / in_progress / completed
+            conclusion: success / failure / neutral / cancelled（completed 时有意义）
+            output_title/summary/text: Check Run 输出内容（可选）
+
+        Returns:
+            {"id": int, "status": str, "conclusion": str|None}，失败返回 None。
+        """
+        try:
+            client = self.get_repo_client(repo_owner, repo_name)
+            if not client:
+                logger.error(
+                    f"无法获取 {repo_owner}/{repo_name} 的客户端，跳过创建 Check Run"
+                )
+                return None
+
+            repo = client.get_repo(f"{repo_owner}/{repo_name}")
+            kwargs: dict = {"name": name, "head_sha": head_sha, "status": status}
+            if conclusion:
+                kwargs["conclusion"] = conclusion
+            output = self._build_check_run_output(
+                output_title, output_summary, output_text
+            )
+            if output:
+                kwargs["output"] = output
+
+            check_run = repo.create_check_run(**kwargs)
+            logger.info(
+                f"已创建 Check Run {name} for {repo_owner}/{repo_name}@{head_sha} "
+                f"(id={check_run.id}, status={status})"
+            )
+            return {"id": check_run.id, "status": status, "conclusion": conclusion}
+        except Exception as e:
+            logger.error(
+                f"创建 Check Run 失败 {repo_owner}/{repo_name}@{head_sha}: {e}",
+                exc_info=True,
+            )
+            return None
+
+    def update_check_run(
+        self,
+        repo_owner: str,
+        repo_name: str,
+        check_run_id: int,
+        status: Optional[str] = None,
+        conclusion: Optional[str] = None,
+        output_title: Optional[str] = None,
+        output_summary: Optional[str] = None,
+        output_text: Optional[str] = None,
+    ) -> bool:
+        """更新指定 Check Run。
+
+        Returns:
+            是否成功。
+        """
+        try:
+            client = self.get_repo_client(repo_owner, repo_name)
+            if not client:
+                logger.error(
+                    f"无法获取 {repo_owner}/{repo_name} 的客户端，跳过更新 Check Run"
+                )
+                return False
+
+            repo = client.get_repo(f"{repo_owner}/{repo_name}")
+            check_run = repo.get_check_run(check_run_id)
+            kwargs: dict = {}
+            if status:
+                kwargs["status"] = status
+            if conclusion:
+                kwargs["conclusion"] = conclusion
+            output = self._build_check_run_output(
+                output_title, output_summary, output_text
+            )
+            if output:
+                kwargs["output"] = output
+
+            if kwargs:
+                check_run.edit(**kwargs)
+            logger.info(
+                f"已更新 Check Run id={check_run_id} "
+                f"(status={status}, conclusion={conclusion})"
+            )
+            return True
+        except Exception as e:
+            logger.error(
+                f"更新 Check Run 失败 {repo_owner}/{repo_name} id={check_run_id}: {e}",
+                exc_info=True,
+            )
+            return False
+
+    def find_check_run_for_sha(
+        self,
+        repo_owner: str,
+        repo_name: str,
+        head_sha: str,
+        name: str,
+    ) -> Optional[int]:
+        """按 head_sha + name 查找已存在的 Check Run ID。
+
+        遍历该 commit 上的所有 Check Run，返回 name 匹配的第一个（API 默认按
+        最新优先返回）。未找到返回 None。
+        """
+        try:
+            client = self.get_repo_client(repo_owner, repo_name)
+            if not client:
+                return None
+
+            repo = client.get_repo(f"{repo_owner}/{repo_name}")
+            for check_run in repo.get_check_runs_for_ref(ref=head_sha):
+                if check_run.name == name:
+                    logger.debug(
+                        f"找到已有 Check Run {name} for "
+                        f"{repo_owner}/{repo_name}@{head_sha} (id={check_run.id})"
+                    )
+                    return check_run.id
+            return None
+        except Exception as e:
+            logger.warning(
+                f"查找 Check Run 失败 {repo_owner}/{repo_name}@{head_sha}: {e}"
+            )
+            return None
+
     def get_issue(self, repo_owner: str, repo_name: str, issue_number: int):
         """获取 Issue 详情"""
         client = self.get_repo_client(repo_owner, repo_name)

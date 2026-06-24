@@ -102,6 +102,10 @@ class Settings(BaseSettings):
         True,
         description="是否启用 Webhook 自动审查",
     )
+    enable_check_runs: bool = Field(
+        True,
+        description="是否启用 GitHub Check Runs 审查进度可视化",
+    )
 
     # AI API 调用配置
     ai_api_timeout_seconds: float = Field(
@@ -504,17 +508,13 @@ class Settings(BaseSettings):
     # Stripe 支付网关
     stripe_enabled: bool = Field(False, description="启用 Stripe 支付")
     stripe_api_key: str = Field("", description="Stripe Secret API Key")
-    stripe_webhook_secret: str = Field(
-        "", description="Stripe Webhook Signing Secret"
-    )
+    stripe_webhook_secret: str = Field("", description="Stripe Webhook Signing Secret")
     stripe_currency: str = Field("CNY", description="Stripe 默认货币")
 
     # Paddle 支付网关
     paddle_enabled: bool = Field(False, description="启用 Paddle 支付")
     paddle_api_key: str = Field("", description="Paddle API Key")
-    paddle_webhook_secret: str = Field(
-        "", description="Paddle Webhook Signing Secret"
-    )
+    paddle_webhook_secret: str = Field("", description="Paddle Webhook Signing Secret")
     paddle_currency: str = Field("USD", description="Paddle 默认货币")
     paddle_vendor_id: str = Field("", description="Paddle Client-side Token (用于前端)")
 
@@ -536,12 +536,8 @@ class Settings(BaseSettings):
 
     # 自建 TRON USDT 收款（零手续费，资金直达钱包）
     tron_enabled: bool = Field(False, description="启用 TRON USDT 直收")
-    tron_wallet_address: str = Field(
-        "", description="TRON 收款钱包地址（Base58 格式）"
-    )
-    tron_api_key: str = Field(
-        "", description="TronGrid API Key（可选，提高频率限制）"
-    )
+    tron_wallet_address: str = Field("", description="TRON 收款钱包地址（Base58 格式）")
+    tron_api_key: str = Field("", description="TronGrid API Key（可选，提高频率限制）")
 
     # ========== 代码索引配置 ==========
     enable_code_index: bool = True  # 是否启用代码索引功能
@@ -1405,15 +1401,15 @@ DYNAMIC_CONFIG_SENSITIVE_KEYS = frozenset(
         "github_oauth_client_secret",
         "telegram_bot_token",
         "agent_team_api_key",
-    "stripe_api_key",
-    "stripe_webhook_secret",
-    "paddle_api_key",
-    "paddle_webhook_secret",
-    "alipay_private_key",
-    "alipay_public_key",
-    "nowpayments_ipn_secret",
-    "nowpayments_api_key",
-    "tron_api_key",
+        "stripe_api_key",
+        "stripe_webhook_secret",
+        "paddle_api_key",
+        "paddle_webhook_secret",
+        "alipay_private_key",
+        "alipay_public_key",
+        "nowpayments_ipn_secret",
+        "nowpayments_api_key",
+        "tron_api_key",
     }
 )
 
@@ -2000,6 +1996,7 @@ BASIC_CONFIG_KEYS = frozenset(
         "max_concurrent_reviews",
         "review_timeout_seconds",
         "enable_auto_review",
+        "enable_check_runs",
         "web_search_enabled",
         "web_search_provider",
         "web_search_api_key",
