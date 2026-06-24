@@ -718,13 +718,25 @@ class AIReviewer:
 
             current_system_message = {"role": "system", "content": system_prompt}
             current_user_message = {"role": "user", "content": user_message}
+            current_system_message = {"role": "system", "content": system_prompt}
+            current_user_message = {"role": "user", "content": user_message}
             if initial_messages:
                 messages = [dict(message) for message in initial_messages]
-                messages_to_persist = [current_user_message]
-                if not any(message.get("role") == "system" for message in messages):
+                # 用当前 system prompt 替换恢复的历史 system 消息，
+                # 确保 output_language、strategy 等配置变更在增量审查中生效
+                for i, msg in enumerate(messages):
+                    if msg.get("role") == "system":
+                        messages[i] = current_system_message
+                        break
+                else:
                     messages.insert(0, current_system_message)
-                    messages_to_persist.insert(0, current_system_message)
+                messages_to_persist = [current_user_message]
                 messages.append(current_user_message)
+            else:
+                messages = [current_system_message, current_user_message]
+                messages_to_persist = messages
+
+            await self._emit_initial_messages(messages_to_persist, event_callback)
             else:
                 messages = [current_system_message, current_user_message]
                 messages_to_persist = messages
