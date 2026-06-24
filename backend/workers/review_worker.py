@@ -954,18 +954,47 @@ class ReviewWorker:
                         review_result["decision"] = (
                             decision.value if decision else "unknown"
                         )
-                        task = asyncio.create_task(
-                            sakura_memory_service.reflect(
+
+                        # 增量审查时为反思获取历史摘要。审查会话本身已通过
+                        # _restore_incremental_activity_history 恢复完整历史，
+                        # 历史摘要不再注入审查 prompt；此处仅供独立运行的反思
+                        # 任务提供历史上下文，并在后台 task 内获取以免阻塞收尾。
+                        async def _reflect_with_history() -> None:
+                            history_summary = None
+                            if analysis.is_incremental:
+                                try:
+                                    from backend.services.history_context_service import (
+                                        HistoryContextService,
+                                    )
+
+                                    history_service = HistoryContextService(
+                                        self.ai_reviewer.summary_api_client,
+                                        model=self.ai_reviewer.summary_model,
+                                    )
+                                    history_summary = (
+                                        await history_service.fetch_history_summary(
+                                            pr_id=analysis.pr_id,
+                                            repo_name=pr_info["repo_name"],
+                                            repo_owner=pr_info["repo_owner"],
+                                        )
+                                    )
+                                except Exception as hist_exc:
+                                    logger.warning(
+                                        f"[{task_id}] 反思历史摘要获取失败（不影响反思）: {hist_exc}",
+                                        exc_info=True,
+                                    )
+                            await sakura_memory_service.reflect(
                                 repo=pr.base.repo,
                                 repo_full_name=pr_info["repo_full_name"],
                                 pr=pr,
                                 review_result=review_result,
                                 analysis=analysis,
                                 pr_info=pr_info,
-                                history_summary=context.get("review_history_summary"),
+                                history_summary=history_summary,
                                 review_id=review_id,
                             )
-                        )
+
+                        task = asyncio.create_task(_reflect_with_history())
                         self._background_tasks.add(task)
                         task.add_done_callback(self._background_tasks.discard)
                         logger.info("[{}] 已触发 .sakura/ 反思任务", task_id)
