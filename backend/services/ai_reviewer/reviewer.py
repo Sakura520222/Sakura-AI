@@ -718,8 +718,6 @@ class AIReviewer:
 
             current_system_message = {"role": "system", "content": system_prompt}
             current_user_message = {"role": "user", "content": user_message}
-            current_system_message = {"role": "system", "content": system_prompt}
-            current_user_message = {"role": "user", "content": user_message}
             if initial_messages:
                 messages = [dict(message) for message in initial_messages]
                 # 用当前 system prompt 替换恢复的历史 system 消息，
@@ -732,11 +730,6 @@ class AIReviewer:
                     messages.insert(0, current_system_message)
                 messages_to_persist = [current_user_message]
                 messages.append(current_user_message)
-            else:
-                messages = [current_system_message, current_user_message]
-                messages_to_persist = messages
-
-            await self._emit_initial_messages(messages_to_persist, event_callback)
             else:
                 messages = [current_system_message, current_user_message]
                 messages_to_persist = messages
