@@ -319,8 +319,8 @@ class PromptBuilder:
             "",
             "## Suggestions",
             "- For file findings, prefer giving the author a one-click fix: put the "
-            "exact replacement code for the START_LINE..END_LINE range in SUGGESTION. "
-            "It is rendered as a GitHub suggestion that replaces those lines when "
+            "replacement code for the START_LINE..END_LINE range in SUGGESTION. It "
+            "is rendered as a GitHub suggestion that replaces those lines when "
             "applied, so the author can fix the issue in one click.",
             "- Provide one-click code whenever the fix is local and mechanical, e.g. "
             "adding or fixing a modifier/annotation (such as volatile/final/override), "
@@ -328,12 +328,34 @@ class PromptBuilder:
             "condition or format string, tightening a comparison, adding a missing "
             "null/size/permission guard, or simplifying a small expression. Read the "
             "surrounding lines first so the replacement is correct.",
-            "- Reserve SUGGESTION = NONE only for fixes that are not a single "
+            "- SUGGESTION must be the COMPLETE verbatim replacement for the ENTIRE "
+            "START_LINE..END_LINE range — every line that should exist at that "
+            "location after the fix, including lines you do not change. GitHub "
+            "deletes the whole range and inserts your block in its place, so any "
+            "line you omit is permanently lost. Think 'what should this exact range "
+            "look like after the fix', NOT 'which lines did I edit'.",
+            "- Copy unchanged lines inside the range into SUGGESTION word-for-word "
+            "at their original position, with identical indentation. Never abbreviate "
+            "or elide them with a comment such as '... unchanged ...'.",
+            "- Before emitting, re-read the original START_LINE..END_LINE range and "
+            "confirm every line you intend to keep is present in SUGGESTION. The "
+            "classic mistake is to anchor a wide range but write only the changed "
+            "lines, silently deleting the kept ones — e.g. anchoring a span that "
+            "covers 'add an import above + edit code below', yet omitting the "
+            "unchanged block body that sits between them.",
+            "- Prefer the SMALLEST contiguous range that fully contains your change; "
+            "a tight range leaves almost no room to drop a line. If the fix touches "
+            "non-contiguous locations (e.g. add an import at the top AND edit code "
+            "further down), do NOT stretch one range to cover both — either split "
+            "into separate single-range FINDINGS, or set SUGGESTION = NONE and "
+            "describe the steps in DESCRIPTION.",
+            "- Reserve SUGGESTION = NONE for fixes that are not a single "
             "self-contained replacement: cross-file changes, new methods/types, API "
-            "changes requiring caller updates, large refactors, or where the right fix "
-            "needs human judgement. Then explain the fix in DESCRIPTION instead.",
-            "- Provide only the lines that should replace the range. Do not include "
-            "line numbers, surrounding context, fences, or explanation inside the code.",
+            "changes requiring caller updates, large refactors, non-contiguous edits, "
+            "or where the right fix needs human judgement. Then explain the fix in "
+            "DESCRIPTION instead.",
+            "- Do not include line numbers, code fences, context outside the range, "
+            "or explanation inside SUGGESTION.",
             "- Close every SUGGESTION block with </SUGGESTION> on its own line. When "
             "SUGGESTION holds multi-line replacement code, verify the closing tag is "
             "present before starting the next FINDING.",
