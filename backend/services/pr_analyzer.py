@@ -284,7 +284,7 @@ class PRAnalyzer:
             if not file_info.patch:
                 continue
 
-            logger.info(f"🔍 开始解析 {file_info.path} 的 patch")
+            logger.debug(f"开始解析 {file_info.path} 的 patch")
 
             # 解析 patch 提取行号
             # unified diff 格式：
@@ -315,8 +315,8 @@ class PRAnalyzer:
                     new_start = int(hunk_match.group(3))
                     new_count = int(hunk_match.group(4)) if hunk_match.group(4) else 1
 
-                    logger.info(
-                        f"  📦 Hunk #{hunk_count}: 原文件第{old_start}-{old_start + old_count - 1}行 → PR后第{new_start}-{new_start + new_count - 1}行"
+                    logger.debug(
+                        f"Hunk #{hunk_count}: 原文件第{old_start}-{old_start + old_count - 1}行 → PR后第{new_start}-{new_start + new_count - 1}行"
                     )
 
                     current_line = new_start
@@ -373,8 +373,8 @@ class PRAnalyzer:
 
                         i += 1
 
-                    logger.info(
-                        f"  ✓ Hunk #{hunk_count} 解析完成: +{added_lines} -{removed_lines} 行, 包含{context_lines}行上下文, PR后行号范围: {new_start}-{current_line - 1}"
+                    logger.debug(
+                        f"Hunk #{hunk_count} 解析完成: +{added_lines} -{removed_lines} 行, 包含{context_lines}行上下文, PR后行号范围: {new_start}-{current_line - 1}"
                     )
 
                     # 记录 hunk 边界
@@ -390,9 +390,9 @@ class PRAnalyzer:
             if file_changed_lines:
                 changed_lines[file_info.path] = file_changed_lines
                 original_indent[file_info.path] = file_original_indent
-                sorted_lines = sorted(file_changed_lines)
                 logger.info(
-                    f"✅ 文件 {file_info.path} 共 {hunk_count} 个 hunk, 提取行号 {len(sorted_lines)} 个: {sorted_lines[:15]}{'...' if len(sorted_lines) > 15 else ''}"
+                    f"✅ 文件 {file_info.path}: {hunk_count} 个 hunk, "
+                    f"提取 {len(file_changed_lines)} 个行号"
                 )
             else:
                 logger.warning(f"⚠️  文件 {file_info.path} 未提取到任何行号")
