@@ -96,7 +96,7 @@ class CheckRunService:
             logger.debug("CheckRunService: head_sha 为空，跳过 Check Run 操作")
             return None
         existing_id = await asyncio.to_thread(
-            self._app.find_check_run_for_sha,
+            self._app.cleanup_stale_check_runs,
             repo_owner,
             repo_name,
             head_sha,
