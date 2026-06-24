@@ -49,3 +49,28 @@ def test_user_message_no_longer_injects_history_summary():
     )
     assert "## 历史审查上下文" not in message
     assert "stale summary that must not leak" not in message
+
+
+def test_system_prompt_suggestion_must_be_complete_range_replacement():
+    """SUGGESTION 必须是整个 START_LINE..END_LINE 范围的完整逐行原文。
+
+    锁定：防止重新引入「只给改动行」的误导措辞——那种措辞会让 AI 漏掉
+    范围内本应保留的行，GitHub Apply suggestion 后整段被替换、保留行被
+    永久删除（见 webhook.py#382-398 复盘：锚定大范围却只写改动行，
+    导致 if queued: 块体被删）。
+    """
+    pb = PromptBuilder()
+    context = {"analysis": SimpleNamespace(is_incremental=False)}
+    prompt = pb.build_system_prompt("focus", context, include_tools=True)
+
+    # 完整原文语义：整个范围的逐行替换，漏行即永久丢失
+    assert "ENTIRE" in prompt
+    assert "permanently lost" in prompt
+    # 范围内未改行必须原样照抄
+    assert "unchanged lines" in prompt
+    # 最小连续范围 + 非连续改动拆分/NONE
+    assert "SMALLEST contiguous range" in prompt
+    assert "non-contiguous" in prompt
+
+    # 误导性旧措辞必须已移除（它让 AI 误以为只写改动行即可）
+    assert "Provide only the lines that should replace the range" not in prompt
