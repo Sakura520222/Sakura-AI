@@ -59,7 +59,7 @@ async def test_disabled_returns_early(monkeypatch):
 
     await service.report_queued("o", "r", "sha", pr_number=1)
 
-    service._app.find_check_run_for_sha.assert_not_called()
+    service._app.cleanup_stale_check_runs.assert_not_called()
     service._app.create_check_run.assert_not_called()
 
 
@@ -68,7 +68,7 @@ async def test_disabled_returns_early(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_report_queued_creates_when_not_found_zh(svc):
-    svc._app.find_check_run_for_sha.return_value = None
+    svc._app.cleanup_stale_check_runs.return_value = None
     svc._app.create_check_run.return_value = {"id": 1}
 
     await svc.report_queued("o", "r", "sha", pr_number=5, output_language="zh")
@@ -89,7 +89,7 @@ async def test_report_queued_creates_when_not_found_zh(svc):
 
 @pytest.mark.asyncio
 async def test_report_queued_updates_when_found(svc):
-    svc._app.find_check_run_for_sha.return_value = 99
+    svc._app.cleanup_stale_check_runs.return_value = 99
 
     await svc.report_queued("o", "r", "sha", pr_number=1, output_language="zh")
 
@@ -100,7 +100,7 @@ async def test_report_queued_updates_when_found(svc):
 
 @pytest.mark.asyncio
 async def test_report_queued_english(svc):
-    svc._app.find_check_run_for_sha.return_value = None
+    svc._app.cleanup_stale_check_runs.return_value = None
     svc._app.create_check_run.return_value = {"id": 1}
 
     await svc.report_queued("o", "r", "sha", pr_number=5, output_language="en")
@@ -115,7 +115,7 @@ async def test_report_queued_english(svc):
 
 @pytest.mark.asyncio
 async def test_report_progress_text_includes_completed_stages(svc):
-    svc._app.find_check_run_for_sha.return_value = 1
+    svc._app.cleanup_stale_check_runs.return_value = 1
 
     await svc.report_progress(
         "o",
@@ -136,7 +136,7 @@ async def test_report_progress_text_includes_completed_stages(svc):
 
 @pytest.mark.asyncio
 async def test_report_progress_english_completed(svc):
-    svc._app.find_check_run_for_sha.return_value = 1
+    svc._app.cleanup_stale_check_runs.return_value = 1
 
     await svc.report_progress(
         "o",
@@ -158,7 +158,7 @@ async def test_report_progress_english_completed(svc):
 
 @pytest.mark.asyncio
 async def test_report_completed_approve_success(svc):
-    svc._app.find_check_run_for_sha.return_value = 1
+    svc._app.cleanup_stale_check_runs.return_value = 1
 
     await svc.report_completed(
         "o",
@@ -180,7 +180,7 @@ async def test_report_completed_approve_success(svc):
 
 @pytest.mark.asyncio
 async def test_report_completed_request_changes_neutral(svc):
-    svc._app.find_check_run_for_sha.return_value = 1
+    svc._app.cleanup_stale_check_runs.return_value = 1
 
     await svc.report_completed(
         "o",
@@ -199,7 +199,7 @@ async def test_report_completed_request_changes_neutral(svc):
 
 @pytest.mark.asyncio
 async def test_report_completed_comment_neutral(svc):
-    svc._app.find_check_run_for_sha.return_value = 1
+    svc._app.cleanup_stale_check_runs.return_value = 1
 
     await svc.report_completed(
         "o",
@@ -219,7 +219,7 @@ async def test_report_completed_comment_neutral(svc):
 
 @pytest.mark.asyncio
 async def test_report_completed_includes_summary_excerpt(svc):
-    svc._app.find_check_run_for_sha.return_value = 1
+    svc._app.cleanup_stale_check_runs.return_value = 1
 
     await svc.report_completed(
         "o",
@@ -241,7 +241,7 @@ async def test_report_completed_includes_summary_excerpt(svc):
 
 @pytest.mark.asyncio
 async def test_report_failed_uses_failure_conclusion(svc):
-    svc._app.find_check_run_for_sha.return_value = 1
+    svc._app.cleanup_stale_check_runs.return_value = 1
 
     await svc.report_failed(
         "o", "r", "sha", error_message="ConnectionError(...)", output_language="zh"
@@ -257,7 +257,7 @@ async def test_report_failed_uses_failure_conclusion(svc):
 
 @pytest.mark.asyncio
 async def test_report_cancelled(svc):
-    svc._app.find_check_run_for_sha.return_value = 1
+    svc._app.cleanup_stale_check_runs.return_value = 1
 
     await svc.report_cancelled("o", "r", "sha", output_language="zh")
 
@@ -269,7 +269,7 @@ async def test_report_cancelled(svc):
 @pytest.mark.asyncio
 async def test_report_skipped_creates_when_not_found(svc):
     # should_skip 发生在 report_queued 之前，check run 可能不存在
-    svc._app.find_check_run_for_sha.return_value = None
+    svc._app.cleanup_stale_check_runs.return_value = None
     svc._app.create_check_run.return_value = {"id": 1}
 
     await svc.report_skipped("o", "r", "sha", reason="无代码变更", output_language="zh")
@@ -286,7 +286,7 @@ async def test_report_skipped_creates_when_not_found(svc):
 
 @pytest.mark.asyncio
 async def test_exception_in_app_is_swallowed(svc):
-    svc._app.find_check_run_for_sha.side_effect = RuntimeError("github down")
+    svc._app.cleanup_stale_check_runs.side_effect = RuntimeError("github down")
 
     # 不应抛出
     await svc.report_queued("o", "r", "sha", pr_number=1, output_language="zh")
@@ -312,7 +312,7 @@ async def test_full_lifecycle_creates_once_then_updates(svc):
     miss，导致一次审查创建 6 个 Check Run。修复后 find 命中应走 update。
     """
     # 首次 find miss（queued 创建），此后 find 命中（返回已创建的 id）
-    svc._app.find_check_run_for_sha.side_effect = [None, 100, 100, 100, 100]
+    svc._app.cleanup_stale_check_runs.side_effect = [None, 100, 100, 100, 100]
     svc._app.create_check_run.return_value = {"id": 100}
 
     await svc.report_queued("o", "r", "sha", pr_number=1, output_language="zh")
