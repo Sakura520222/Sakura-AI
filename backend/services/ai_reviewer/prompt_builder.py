@@ -112,20 +112,6 @@ class PromptBuilder:
             "",
         ]
 
-        # 注入历史审查摘要（仅在增量审查时存在）
-        history_summary = context.get("review_history_summary")
-        if history_summary:
-            message_parts.append("## 历史审查上下文")
-            message_parts.append(
-                "这是对该 PR 的增量审查。以下是之前审查的历史摘要，"
-                "**请特别关注：**\n"
-                "1. 之前提出的严重/重要问题是否在本次变更中已修复\n"
-                "2. 如果已修复，在评论中明确说明「问题已修复」\n"
-                "3. 如果未修复，继续标记为问题\n\n"
-            )
-            message_parts.append(history_summary)
-            message_parts.append("")
-
         # 注入 PR 变更总结（如果启用）
         pr_summary = context.get("pr_summary")
         if pr_summary:
@@ -409,7 +395,10 @@ class PromptBuilder:
                 ]
             )
 
-        if context.get("review_history_summary"):
+        # 增量审查指导规则：基于 analysis.is_incremental 触发（历史会话已通过
+        # _restore_incremental_activity_history 恢复，无需依赖历史摘要文本）。
+        analysis = context.get("analysis")
+        if analysis and getattr(analysis, "is_incremental", False):
             sections.extend(
                 [
                     "",
