@@ -191,10 +191,19 @@ class ActivityCheckpointService:
         self,
         source_session_id: int,
         target_session_id: int,
+        messages: list[dict[str, Any]] | None = None,
     ) -> int:
-        """Copy full message history into another activity session."""
+        """Copy full message history into another activity session.
+
+        Args:
+            source_session_id: 源会话 ID。
+            target_session_id: 目标会话 ID。
+            messages: 可选的预加载消息列表。传入时跳过内部 load_messages 查询，
+                避免调用方已加载过同一会话时的重复 DB 往返；为 None 时内部自行加载。
+        """
         copied = 0
-        messages = await self.load_messages(source_session_id)
+        if messages is None:
+            messages = await self.load_messages(source_session_id)
         async with db_module.async_session() as db:
             for message in messages:
                 await self._append_message_in_db(db, target_session_id, message)

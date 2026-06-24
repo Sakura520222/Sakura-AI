@@ -1125,6 +1125,7 @@ class ReviewWorker:
         copied = await checkpoint.copy_messages_to_session(
             source_session.id,
             act_session.id,
+            messages=messages,
         )
         logger.info(
             "[{}] 已恢复上一轮 reviewer 会话: review_id={} session_id={} messages={}",

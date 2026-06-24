@@ -379,10 +379,16 @@ async def handle_pull_request_event(
                 PRReviewIncrementalQueueService,
             )
 
-            queued = await PRReviewIncrementalQueueService().enqueue_from_webhook(
-                pr_info,
-                delivery_id=delivery_id,
-            )
+            try:
+                queued = await PRReviewIncrementalQueueService().enqueue_from_webhook(
+                    pr_info,
+                    delivery_id=delivery_id,
+                )
+            except Exception as e:
+                logger.warning(
+                    "[webhook] synchronize 增量入队失败（将走完整审查）: {}", e
+                )
+                queued = None
             if queued:
                 logger.info(
                     "[webhook] synchronize 增量已入队 {}#{} head={}",
