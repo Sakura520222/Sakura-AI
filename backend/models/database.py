@@ -181,6 +181,43 @@ class PRReview(Base):
         return f"<PRReview(id={self.id}, pr_id={self.pr_id}, repo={self.repo_name}, strategy={self.strategy})>"
 
 
+class PRReviewIncrementalQueue(Base):
+    """PR 审查运行期间收到的 synchronize 增量队列。"""
+
+    __tablename__ = "pr_review_incremental_queue"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    repo_owner = Column(String(100), nullable=False, index=True)
+    repo_name = Column(String(255), nullable=False, index=True)
+    repo_full_name = Column(String(255), nullable=False, index=True)
+    pr_number = Column(Integer, nullable=False, index=True)
+    base_sha = Column(String(64), nullable=True)
+    head_sha = Column(String(64), nullable=False, index=True)
+    delivery_id = Column(String(128), nullable=True, index=True)
+    status = Column(String(50), default="pending", nullable=False, index=True)
+    active_review_id = Column(
+        Integer,
+        ForeignKey("pr_reviews.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    consumed_review_id = Column(
+        Integer,
+        ForeignKey("pr_reviews.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    consumed_session_id = Column(Integer, nullable=True)
+    consumed_message_id = Column(Integer, nullable=True)
+    created_at = Column(TIMESTAMP, default=datetime.utcnow, nullable=False, index=True)
+    consumed_at = Column(TIMESTAMP, nullable=True)
+
+    def __repr__(self):
+        return (
+            "<PRReviewIncrementalQueue("
+            f"id={self.id}, pr={self.repo_full_name}#{self.pr_number}, "
+            f"head={self.head_sha}, status={self.status})>"
+        )
+
+
 class ReviewComment(Base):
     """审查评论表"""
 

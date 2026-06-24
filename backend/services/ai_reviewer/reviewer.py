@@ -41,6 +41,11 @@ from .tools import (
 )
 
 
+PendingUserMessageCallback = Callable[
+    [], Coroutine[Any, Any, Dict[str, Any] | None]
+]
+
+
 def _dump_protocol_failure(strategy: str, review_text: str) -> None:
     """Persist the full malformed protocol payload for offline diagnosis.
 
@@ -63,6 +68,52 @@ def _dump_protocol_failure(strategy: str, review_text: str) -> None:
         )
     except Exception as exc:
         logger.warning("保存协议失败载荷失败: {}", exc)
+
+
+def _coerce_tool_call_to_dict(tc: Any) -> Dict[str, Any]:
+    """把 tool_call 统一为 OpenAI 标准 dict 形态。
+
+    tool_calls 可能是 OpenAI SDK 对象（内存新响应）、dict（规范化形态）或字符串
+    （checkpoint 经 json.dumps(default=str) 持久化后恢复的损坏形态）。发送给 AI
+    API 与持久化前都必须是标准 dict，否则上游反序列化失败。
+    """
+    if isinstance(tc, dict):
+        function = tc.get("function") or {}
+        if isinstance(function, dict):
+            return {
+                "id": tc.get("id", ""),
+                "type": tc.get("type") or "function",
+                "function": {
+                    "name": function.get("name", ""),
+                    "arguments": function.get("arguments", ""),
+                },
+            }
+        return {
+            "id": tc.get("id", ""),
+            "type": tc.get("type") or "function",
+            "function": {"name": str(function), "arguments": ""},
+        }
+    function = getattr(tc, "function", None)
+    return {
+        "id": getattr(tc, "id", "") or "",
+        "type": getattr(tc, "type", None) or "function",
+        "function": {
+            "name": getattr(function, "name", "") if function is not None else "",
+            "arguments": getattr(function, "arguments", "")
+            if function is not None
+            else "",
+        },
+    }
+
+
+def _normalize_tool_calls_inplace(messages: List[Dict[str, Any]]) -> None:
+    """把 messages 中所有 tool_calls 原地规范化为标准 OpenAI dict。"""
+    for message in messages:
+        tool_calls = message.get("tool_calls")
+        if isinstance(tool_calls, list):
+            message["tool_calls"] = [
+                _coerce_tool_call_to_dict(tc) for tc in tool_calls
+            ]
 
 
 class AIReviewer:
@@ -113,12 +164,16 @@ class AIReviewer:
         self.tool_manager = ToolManager()
 
         # 初始化上下文压缩
+        # 压缩使用主审查 model（settings.openai_model）而非 summary model：
+        # _compress_early_history 需要忠实压缩含 tool_call 的多轮对话历史
+        # （见 context_compressor._extract_tool_call_fields），summary model 通常
+        # 更弱、难以可靠处理 tool_call 结构，故与主审查共用同一 model/客户端。
         self.enable_compression = settings.enable_context_compression
         self.compression_threshold = settings.context_compression_threshold
         self.keep_rounds = settings.context_compression_keep_rounds
         self.context_compressor = ContextCompressor(
-            api_client=self.summary_api_client,
-            model=self.summary_model,
+            api_client=self.api_client,
+            model=settings.openai_model,
             keep_rounds=self.keep_rounds,
         )
         self.model_context_mgr = get_model_context_manager()
@@ -181,8 +236,8 @@ class AIReviewer:
             self._summary_client_config = summary_config
 
         if hasattr(self, "context_compressor"):
-            self.context_compressor.api_client = self.summary_api_client
-            self.context_compressor.model = self.summary_model
+            self.context_compressor.api_client = self.api_client
+            self.context_compressor.model = settings.openai_model
         if hasattr(self, "label_recommender"):
             self.label_recommender.api_client = self.summary_api_client
             self.label_recommender.model = self.summary_model
@@ -328,6 +383,7 @@ class AIReviewer:
         context: Dict[str, Any],
         tool_handler: ToolHandler | None = None,
         event_callback: Optional[Callable[[str, Dict[str, Any]], Coroutine]] = None,
+        pending_user_message_callback: Optional[PendingUserMessageCallback] = None,
     ) -> Dict[str, Any]:
         """执行多轮工具调用循环
 
@@ -356,10 +412,19 @@ class AIReviewer:
         safe_context = self.model_context_mgr.calculate_safe_context(
             settings.openai_model, settings.context_safety_threshold
         )
+        # 增量审查恢复的历史 tool_calls 可能是字符串（checkpoint 持久化损坏），
+        # 发送给 AI 前统一规范化为标准 dict，避免上游反序列化失败（400）
+        _normalize_tool_calls_inplace(messages)
         iteration = 0
 
         while iteration < max_iterations:
             iteration += 1
+
+            await self._append_pending_user_message_if_any(
+                messages,
+                pending_user_message_callback,
+                event_callback,
+            )
 
             # 调用AI API
             response = await self.api_client.call_with_retry(
@@ -411,7 +476,7 @@ class AIReviewer:
             assistant_msg_dict = {
                 "role": "assistant",
                 "content": assistant_message.content,
-                "tool_calls": tool_calls,
+                "tool_calls": [_coerce_tool_call_to_dict(tc) for tc in tool_calls],
             }
 
             # DeepSeek-R1 特有：必须包含 reasoning_content
@@ -534,6 +599,11 @@ class AIReviewer:
                 ),
             }
         )
+        await self._append_pending_user_message_if_any(
+            messages,
+            pending_user_message_callback,
+            event_callback,
+        )
         last_response = await self.api_client.call_with_retry(
             model=settings.openai_model,
             messages=messages,
@@ -551,6 +621,51 @@ class AIReviewer:
         result["token_usage"] = tracker.to_dict()
         return result
 
+    async def _append_pending_user_message_if_any(
+        self,
+        messages: List[Dict[str, Any]],
+        pending_user_message_callback: Optional[PendingUserMessageCallback],
+        event_callback: Optional[Callable[[str, Dict[str, Any]], Coroutine]] = None,
+    ) -> None:
+        """Append a queued incremental user message before an AI request."""
+        if not pending_user_message_callback:
+            return
+
+        try:
+            message = await pending_user_message_callback()
+        except Exception as exc:
+            logger.warning("pending_user_message_callback failed: {}", exc)
+            return
+
+        if not message:
+            return
+        if message.get("role") != "user":
+            logger.warning(
+                "pending_user_message_callback returned non-user message: {}",
+                message.get("role"),
+            )
+            return
+
+        messages.append(message)
+        if event_callback:
+            try:
+                await event_callback("message", message)
+            except Exception as exc:
+                logger.warning("event_callback failed: {}", exc)
+
+    async def _emit_initial_messages(
+        self,
+        messages: List[Dict[str, Any]],
+        event_callback: Optional[Callable[[str, Dict[str, Any]], Coroutine]] = None,
+    ) -> None:
+        if not event_callback:
+            return
+        for message in messages:
+            try:
+                await event_callback("message", message)
+            except Exception as exc:
+                logger.warning("event_callback failed: {}", exc)
+
     async def review_pr_with_tools(
         self,
         context: Dict[str, Any],
@@ -558,6 +673,8 @@ class AIReviewer:
         repo: Any,
         pr: Any,
         event_callback: Optional[Callable[[str, Dict[str, Any]], Coroutine]] = None,
+        pending_user_message_callback: Optional[PendingUserMessageCallback] = None,
+        initial_messages: Optional[List[Dict[str, Any]]] = None,
     ) -> Dict[str, Any]:
         """使用函数工具审查 PR（唯一审查入口）
 
@@ -603,10 +720,25 @@ class AIReviewer:
                 context, strategy, include_tools=True, compact=True
             )
 
-            messages = [
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_message},
-            ]
+            current_system_message = {"role": "system", "content": system_prompt}
+            current_user_message = {"role": "user", "content": user_message}
+            if initial_messages:
+                messages = [dict(message) for message in initial_messages]
+                # 用当前 system prompt 替换恢复的历史 system 消息，
+                # 确保 output_language、strategy 等配置变更在增量审查中生效
+                for i, msg in enumerate(messages):
+                    if msg.get("role") == "system":
+                        messages[i] = current_system_message
+                        break
+                else:
+                    messages.insert(0, current_system_message)
+                messages_to_persist = [current_user_message]
+                messages.append(current_user_message)
+            else:
+                messages = [current_system_message, current_user_message]
+                messages_to_persist = messages
+
+            await self._emit_initial_messages(messages_to_persist, event_callback)
 
             # 动态获取启用的工具列表（已包含 diff 工具）
             if (
@@ -651,6 +783,7 @@ class AIReviewer:
                     context=context,
                     tool_handler=active_tool_handler,
                     event_callback=event_callback,
+                    pending_user_message_callback=pending_user_message_callback,
                 )
 
             except PromptTooLongError as e:
@@ -689,6 +822,7 @@ class AIReviewer:
                         context=context,
                         tool_handler=active_tool_handler,
                         event_callback=event_callback,
+                        pending_user_message_callback=pending_user_message_callback,
                     )
                 logger.error(
                     "🚨 上下文超限但压缩未启用 (估算 ~{} tokens)",

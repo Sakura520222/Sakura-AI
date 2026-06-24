@@ -81,6 +81,7 @@ async def handle_github_webhook(
     request: Request,
     x_hub_signature: str = Header(None, alias="X-Hub-Signature-256"),
     x_github_event: str = Header(None, alias="X-GitHub-Event"),
+    x_github_delivery: str = Header(None, alias="X-GitHub-Delivery"),
 ) -> JSONResponse:
     """
     处理GitHub Webhook事件
@@ -114,7 +115,10 @@ async def handle_github_webhook(
 
         # 处理PR事件
         if x_github_event == "pull_request":
-            return await handle_pull_request_event(payload_data)
+            return await handle_pull_request_event(
+                payload_data,
+                delivery_id=x_github_delivery,
+            )
         elif x_github_event == "issues":
             return await handle_issue_event(payload_data)
         elif x_github_event == "issue_comment":
@@ -136,7 +140,10 @@ async def handle_github_webhook(
         )
 
 
-async def handle_pull_request_event(payload: Dict[str, Any]) -> JSONResponse:
+async def handle_pull_request_event(
+    payload: Dict[str, Any],
+    delivery_id: str | None = None,
+) -> JSONResponse:
     """处理Pull Request事件"""
     try:
         # 提取PR信息
@@ -167,6 +174,31 @@ async def handle_pull_request_event(payload: Dict[str, Any]) -> JSONResponse:
                     )
             except Exception as e:
                 logger.warning(f"[webhook] 取消审查任务失败: {e}")
+
+            # 清理该 PR 的 pending 增量队列，避免永久残留 / PR 重开后污染新审查上下文
+            try:
+                from backend.services.pr_review_incremental_queue import (
+                    PRReviewIncrementalQueueService,
+                )
+
+                cancelled_queue = (
+                    await PRReviewIncrementalQueueService().cancel_pending_for_pr(
+                        pr_info["repo_full_name"],
+                        int(pr_info["pr_number"]),
+                    )
+                )
+                if cancelled_queue:
+                    logger.info(
+                        "[webhook] PR closed event：已取消 {} 条 pending 增量 "
+                        "{}#{}".format(
+                            cancelled_queue,
+                            pr_info["repo_full_name"],
+                            pr_info["pr_number"],
+                        )
+                    )
+            except Exception as e:
+                logger.warning(f"[webhook] 清理增量队列失败: {e}")
+
             return JSONResponse(
                 content={"status": "accepted", "action": "cancelled", "task": task_key}
             )
@@ -342,6 +374,34 @@ async def handle_pull_request_event(payload: Dict[str, Any]) -> JSONResponse:
                 logger.warning(
                     f"[webhook] synchronize 事件 dismiss 旧 Review 失败（不影响后续审查）: {e}"
                 )
+
+            from backend.services.pr_review_incremental_queue import (
+                PRReviewIncrementalQueueService,
+            )
+
+            try:
+                queued = await PRReviewIncrementalQueueService().enqueue_from_webhook(
+                    pr_info,
+                    delivery_id=delivery_id,
+                )
+            except Exception as e:
+                logger.warning(
+                    "[webhook] synchronize 增量入队失败（将走完整审查）: {}", e
+                )
+                queued = None
+            if queued:
+                logger.info(
+                    "[webhook] synchronize 增量已入队 {}#{} head={}",
+                    pr_info["repo_full_name"],
+                    pr_info["pr_number"],
+                    pr_info.get("head_sha") or pr_info.get("after"),
+                )
+                return JSONResponse(content={
+                    "status": "accepted",
+                    "action": "queued_incremental",
+                    "pr": f"{pr_info['repo_full_name']}#{pr_info['pr_number']}",
+                    "head_sha": pr_info.get("head_sha") or pr_info.get("after"),
+                })
 
         # 提交审查任务到队列
         await _mark_agent_task_external_reviewing(pr_info)
