@@ -259,15 +259,13 @@ async def test_report_completed_includes_summary_excerpt(svc):
 async def test_report_failed_uses_failure_conclusion(svc):
     svc._app.cleanup_stale_check_runs.return_value = 1
 
-    await svc.report_failed(
-        "o", "r", "sha", error_message="ConnectionError(...)", output_language="zh"
-    )
+    await svc.report_failed("o", "r", "sha", output_language="zh")
 
     kw = svc._app.update_check_run.call_args.kwargs
     assert kw["status"] == "completed"
     assert kw["conclusion"] == "failure"
-    # 错误原文不直接写入 output（脱敏）
-    assert "ConnectionError" not in (kw["output_summary"] or "")
+    # output 为固定脱敏文案，不含任何错误原文
+    assert kw["output_summary"] == "审查过程出错（脱敏）"
     _assert_no_emoji(kw["output_title"], kw["output_summary"])
 
 
@@ -351,3 +349,50 @@ async def test_full_lifecycle_creates_once_then_updates(svc):
     # 所有 update 都指向同一个 check run id（existing_id 是位置参数 args[2]）
     for call in svc._app.update_check_run.call_args_list:
         assert call.args[2] == 100
+
+
+@pytest.mark.asyncio
+async def test_caching_skips_cleanup_after_queued(svc):
+    """缓存优化：report_queued 缓存 id 后，后续 progress 复用缓存，不再调 cleanup。"""
+    svc._app.cleanup_stale_check_runs.return_value = None  # 首次无 active
+    svc._app.create_check_run.return_value = {"id": 42}
+
+    await svc.report_queued("o", "r", "sha", pr_number=1, output_language="zh")
+    await svc.report_progress("o", "r", "sha", stage="indexing", output_language="zh")
+    await svc.report_progress("o", "r", "sha", stage="reviewing", output_language="zh")
+
+    # cleanup 只在首次（report_queued）调一次，后续 progress 复用缓存跳过
+    assert svc._app.cleanup_stale_check_runs.call_count == 1
+    assert svc._app.create_check_run.call_count == 1
+    # 2 次 update（2 个 progress）；report_queued 走 create 分支不调 update
+    assert svc._app.update_check_run.call_count == 2
+    for call in svc._app.update_check_run.call_args_list:
+        assert call.args[2] == 42
+
+
+@pytest.mark.asyncio
+async def test_finalize_clears_cache_for_next_review(svc):
+    """终态（completed）后清缓存，下次审查同 sha 重新 cleanup/create（不复用旧 run）。"""
+    svc._app.cleanup_stale_check_runs.return_value = None
+    svc._app.create_check_run.return_value = {"id": 42}
+
+    await svc.report_queued("o", "r", "sha", pr_number=1, output_language="zh")
+    assert svc._check_run_ids.get("sha") == 42
+
+    await svc.report_completed(
+        "o",
+        "r",
+        "sha",
+        decision=ReviewDecision.APPROVE,
+        overall_score=9,
+        comment_count=0,
+        output_language="zh",
+    )
+    # completed 是终态 → 清缓存
+    assert "sha" not in svc._check_run_ids
+
+    # 下次审查同 sha：无缓存 → 重新 cleanup（第 2 次）
+    svc._app.create_check_run.return_value = {"id": 43}
+    await svc.report_queued("o", "r", "sha", pr_number=1, output_language="zh")
+    assert svc._app.cleanup_stale_check_runs.call_count == 2
+    assert svc._check_run_ids.get("sha") == 43

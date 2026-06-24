@@ -60,6 +60,10 @@ class CheckRunService:
 
     def __init__(self) -> None:
         self._app = GitHubAppClient()
+        # head_sha -> check_run_id 缓存：中间态（queued/in_progress）复用以跳过
+        # GitHub 查询；终态（completed/failed/cancelled/skipped）后清除，确保下次
+        # 审查同 sha 重新定位（不复用已结束的 run）。
+        self._check_run_ids: dict[str, int] = {}
 
     # ------------------------------------------------------------------ utils
 
@@ -93,15 +97,43 @@ class CheckRunService:
         output_title: Optional[str] = None,
         output_summary: Optional[str] = None,
         output_text: Optional[str] = None,
+        finalize: bool = False,
     ) -> Optional[int]:
-        """按 head_sha + name 定位 Check Run：命中则 update，未命中则 create。
+        """按 head_sha + name 定位 Check Run 并更新；未命中则创建。
 
-        返回 Check Run id 或 None（所有底层异常由 GitHubAppClient 吞掉）。
-        head_sha 为空时直接返回 None（GitHub 创建 Check Run 必须绑定 commit）。
+        带实例级 id 缓存：中间态（queued/in_progress，finalize=False）update 后
+        缓存 id，后续同 sha 调用直接复用缓存 update，跳过 cleanup 的 GitHub 查询
+        （单次审查从 ~6 次 cleanup 降到 1 次）。终态（finalize=True）update 后清
+        缓存，确保下次审查同 sha 重新 cleanup/create，不复用已结束的 run。
+
+        head_sha 为空时返回 None（所有底层异常由 GitHubAppClient 吞掉）。
         """
         if not head_sha:
             logger.debug("CheckRunService: head_sha 为空，跳过 Check Run 操作")
             return None
+
+        # 1. 优先复用缓存的 check_run_id（跳过 GitHub 查询）
+        cached_id = self._check_run_ids.get(head_sha)
+        if cached_id is not None:
+            ok = await asyncio.to_thread(
+                self._app.update_check_run,
+                repo_owner,
+                repo_name,
+                cached_id,
+                status=status,
+                conclusion=conclusion,
+                output_title=output_title,
+                output_summary=output_summary,
+                output_text=output_text,
+            )
+            if ok:
+                if finalize:
+                    self._check_run_ids.pop(head_sha, None)
+                return cached_id
+            # 缓存 id 失效（check run 被外部改动）→ 清缓存，回退 cleanup/create
+            self._check_run_ids.pop(head_sha, None)
+
+        # 2. cleanup：查最新 active run（顺带收敛悬挂），命中则 update + 缓存
         existing_id = await asyncio.to_thread(
             self._app.cleanup_stale_check_runs,
             repo_owner,
@@ -109,7 +141,7 @@ class CheckRunService:
             head_sha,
             self.CHECK_RUN_NAME,
         )
-        if existing_id:
+        if existing_id is not None:
             await asyncio.to_thread(
                 self._app.update_check_run,
                 repo_owner,
@@ -121,7 +153,13 @@ class CheckRunService:
                 output_summary=output_summary,
                 output_text=output_text,
             )
+            if finalize:
+                self._check_run_ids.pop(head_sha, None)
+            else:
+                self._check_run_ids[head_sha] = existing_id
             return existing_id
+
+        # 3. 无 active run：create（create 时直接设状态/output）
         result = await asyncio.to_thread(
             self._app.create_check_run,
             repo_owner,
@@ -134,7 +172,13 @@ class CheckRunService:
             output_summary=output_summary,
             output_text=output_text,
         )
-        return result.get("id") if result else None
+        new_id = result.get("id") if result else None
+        if new_id is not None:
+            if finalize:
+                self._check_run_ids.pop(head_sha, None)
+            else:
+                self._check_run_ids[head_sha] = new_id
+        return new_id
 
     # ------------------------------------------------------------------ API
 
@@ -266,6 +310,7 @@ class CheckRunService:
                 output_title=title,
                 output_summary=summary,
                 output_text=summary_excerpt or None,
+                finalize=True,
             )
         except Exception as exc:
             logger.debug("CheckRunService.report_completed 失败: {}", exc)
@@ -276,17 +321,19 @@ class CheckRunService:
         repo_name: str,
         head_sha: str,
         *,
-        error_message: str,
         output_language: Optional[str] = None,
     ) -> None:
-        """审查失败（completed + failure）。错误信息脱敏，不直接写入 output。"""
+        """审查失败（completed + failure）。错误信息脱敏，不直接写入 output。
+
+        完整异常由调用方在 worker 侧用 exc_info 记录；本方法只在 Check Run
+        标注脱敏的失败结论，避免敏感信息（API key/认证等）进入 output 或日志。
+        """
         if not get_settings().enable_check_runs:
             return
         try:
             is_en = self._is_english(output_language)
             title = "Review Failed" if is_en else "Sakura AI 审查失败"
             summary = "Review errored (sanitized)" if is_en else "审查过程出错（脱敏）"
-            logger.debug("CheckRunService.report_failed 原始错误: {}", error_message)
             await self._find_or_create(
                 repo_owner,
                 repo_name,
@@ -295,6 +342,7 @@ class CheckRunService:
                 conclusion="failure",
                 output_title=title,
                 output_summary=summary,
+                finalize=True,
             )
         except Exception as exc:
             logger.debug("CheckRunService.report_failed 失败: {}", exc)
