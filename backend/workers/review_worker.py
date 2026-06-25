@@ -244,27 +244,28 @@ class ReviewWorker:
         reason: str,
         pr_info: Optional[Dict[str, Any]] = None,
         output_language: Optional[str] = None,
+        head_sha: Optional[str] = None,
     ):
         """Common cleanup for all cancel checkpoints.
 
         Deletes placeholder comment and updates DB status to CANCELLED.
         Safe to call when review_obj/review_id are None (early checkpoints).
-        Also updates the GitHub Check Run to cancelled when pr_info is available.
+        Also updates the GitHub Check Run to cancelled; head_sha 显式传入以跟踪
+        增量消费后的最新 head（pr_info["head_sha"] 是审查开始时的静态值，增量
+        推进后会过时，用它会在旧 commit 留下悬挂 check run）。
         """
         logger.info("[{}] 任务已被取消，{}: {}", task_id, reason, task_key)
         if review_obj:
             await self.comment_service.delete_placeholder_comment(review_obj)
         if review_id:
             await self._update_review_status(review_id, PRStatus.CANCELLED)
-        if pr_info:
-            head_sha = pr_info.get("head_sha")
-            if head_sha:
-                await self.check_run_service.report_cancelled(
-                    pr_info["repo_owner"],
-                    pr_info["repo_name"],
-                    head_sha,
-                    output_language=output_language,
-                )
+        if pr_info and head_sha:
+            await self.check_run_service.report_cancelled(
+                pr_info["repo_owner"],
+                pr_info["repo_name"],
+                head_sha,
+                output_language=output_language,
+            )
         return task_id
 
     async def process_review_task(self, pr_info: Dict[str, Any]) -> str:
@@ -300,6 +301,7 @@ class ReviewWorker:
                         "PR 已关闭/合并，跳过审查",
                         pr_info=pr_info,
                         output_language=output_language,
+                        head_sha=head_sha,
                     )
 
                 # 1. 分析PR
@@ -333,6 +335,7 @@ class ReviewWorker:
                         "跳过代码索引",
                         pr_info=pr_info,
                         output_language=output_language,
+                        head_sha=head_sha,
                     )
 
                 # 3. 创建数据库记录（尽早落库 PENDING）：增量队列的
