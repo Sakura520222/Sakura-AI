@@ -16,7 +16,7 @@ from backend.core.github_app import (
 from backend.workers.review_worker import submit_review_task
 from backend.services.telegram_service import TelegramService
 from backend.telegram.notifications import get_notification_sender
-from backend.core.config import get_settings, get_dynamic_config
+from backend.core.config import get_settings, get_dynamic_config, get_user_dynamic_config
 
 settings = get_settings()
 
@@ -390,6 +390,28 @@ async def handle_pull_request_event(
                 )
                 queued = None
             if queued:
+                # 立即在新 head 上创建 check run（queued），让 PR Checks 面板在
+                # 当前审查消费增量前就能看到新 commit 的 check（否则消费前新
+                # commit 无 check 显示）。当前审查消费增量时会迁移到该 head。
+                try:
+                    from backend.services.check_run_service import CheckRunService
+
+                    inc_head = pr_info.get("head_sha") or pr_info.get("after")
+                    if inc_head:
+                        inc_lang = await get_user_dynamic_config(
+                            "output_language", pr_info.get("user_id")
+                        )
+                        await CheckRunService().report_queued(
+                            pr_info["repo_owner"],
+                            pr_info["repo_name"],
+                            inc_head,
+                            pr_number=pr_info["pr_number"],
+                            output_language=inc_lang,
+                        )
+                except Exception as e:
+                    logger.warning(
+                        "[webhook] 增量入队创建 Check Run 失败（不影响审查）: {}", e
+                    )
                 logger.info(
                     "[webhook] synchronize 增量已入队 {}#{} head={}",
                     pr_info["repo_full_name"],

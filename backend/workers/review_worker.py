@@ -276,6 +276,7 @@ class ReviewWorker:
         review_obj = None  # 用于保存 GitHub Review 对象
         review_id = None  # 用于保存数据库审查记录 ID
         output_language = None  # 用户级输出语言；异常路径会复用该值
+        head_sha = pr_info.get("head_sha")  # 审查绑定的 head；增量消费后切换到新 commit
 
         # Cancel event was already registered in submit_review_task
         # before asyncio.create_task, so cancel_task works immediately
@@ -348,7 +349,6 @@ class ReviewWorker:
                 )
                 # Check Run 进度追踪：记录已完成的阶段，供后续 report_progress 展示
                 check_run_stages: list[str] = []
-                head_sha = pr_info.get("head_sha")
 
                 # 创建 GitHub Check Run（queued），将审查进度可视化到 Checks 面板
                 if head_sha:
@@ -830,7 +830,7 @@ class ReviewWorker:
                 pending_incremental = None
 
                 async def _pending_incremental_message():
-                    nonlocal pending_incremental
+                    nonlocal pending_incremental, head_sha
                     if pending_incremental is not None:
                         return None
                     pending_incremental = (
@@ -841,6 +841,28 @@ class ReviewWorker:
                     )
                     if pending_incremental is None:
                         return None
+                    # 增量消费：PR head 已推进到新 commit。GitHub 不允许修改已创建
+                    # check run 的 head_sha，因此收尾旧 head 的 check run（标注为被
+                    # 增量取代），后续 report 切换到新 head，使审查完成 conclusion
+                    # 体现在 PR 最新 commit 上（否则 check 留在旧 commit，面板看不到）。
+                    new_head = getattr(pending_incremental, "head_sha", None)
+                    if new_head and new_head != head_sha:
+                        old_head = head_sha
+                        head_sha = new_head
+                        if old_head:
+                            await self.check_run_service.report_cancelled(
+                                pr_info["repo_owner"],
+                                pr_info["repo_name"],
+                                old_head,
+                                output_language=output_language,
+                            )
+                        await self.check_run_service.report_progress(
+                            pr_info["repo_owner"],
+                            pr_info["repo_name"],
+                            head_sha,
+                            stage="reviewing",
+                            output_language=output_language,
+                        )
                     return pending_incremental.message
 
                 # 构造事件回调：将 AI 审查过程中的消息通过 checkpoint 持久化
@@ -1165,7 +1187,7 @@ class ReviewWorker:
                             status_error,
                         )
 
-                _fail_sha = pr_info.get("head_sha")
+                _fail_sha = head_sha  # 增量消费后 head_sha 可能已切换到新 commit
                 if _fail_sha:
                     await self.check_run_service.report_failed(
                         pr_info["repo_owner"],
@@ -1209,7 +1231,7 @@ class ReviewWorker:
                             task_id,
                             status_error,
                         )
-                _cancel_fail_sha = pr_info.get("head_sha")
+                _cancel_fail_sha = head_sha  # 增量消费后 head_sha 可能已切换到新 commit
                 if _cancel_fail_sha:
                     await self.check_run_service.report_failed(
                         pr_info["repo_owner"],

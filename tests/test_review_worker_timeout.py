@@ -2,6 +2,7 @@
 
 import asyncio
 from types import SimpleNamespace
+from unittest.mock import AsyncMock
 
 import pytest
 
@@ -551,6 +552,230 @@ async def test_incremental_review_restores_messages_and_passes_pending_callback(
         }
         assert captured["marked_consumed"][0] == ([1],)
         assert captured["marked_consumed"][1]["consumed_message_id"] is not None
+    finally:
+        for key, value in old_values.items():
+            setattr(settings, key, value)
+
+
+@pytest.mark.asyncio
+async def test_incremental_review_migrates_check_run_to_new_head(monkeypatch):
+    """增量消费时 PR head 变化，check run 应迁移到新 head。
+
+    回归 pr_log.log 场景：审查中收到新提交，PR head 推进到新 commit，但 check run
+    仍绑定旧 commit，导致 PR Checks 面板（最新 commit）看不到 Sakura check。
+    修复后 _pending_incremental_message 检测 head 变化，收尾旧 head（cancelled），
+    在新 head 创建 check run，使审查完成 conclusion 体现在最新 commit 上。
+    """
+    settings = get_settings()
+    old_values = {
+        "auto_index_pr_changes": settings.auto_index_pr_changes,
+        "enable_code_index": settings.enable_code_index,
+        "enable_rag": settings.enable_rag,
+        "enable_pr_summary": settings.enable_pr_summary,
+        "enable_pr_dependency_graph": settings.enable_pr_dependency_graph,
+        "enable_ai_tools": getattr(settings, "enable_ai_tools", True),
+        "sakura_memory_enabled": settings.sakura_memory_enabled,
+        "sakura_reflection_enabled": settings.sakura_reflection_enabled,
+        "enable_pr_issue_linking": getattr(settings, "enable_pr_issue_linking", False),
+        "enable_semantic_issue_linking": getattr(
+            settings, "enable_semantic_issue_linking", False
+        ),
+    }
+    settings.auto_index_pr_changes = False
+    settings.enable_code_index = False
+    settings.enable_rag = False
+    settings.enable_pr_summary = False
+    settings.enable_pr_dependency_graph = False
+    settings.enable_ai_tools = True
+    settings.sakura_memory_enabled = False
+    settings.sakura_reflection_enabled = False
+    settings.enable_pr_issue_linking = False
+    settings.enable_semantic_issue_linking = False
+
+    OLD_SHA = "old_sha_aaa"
+    NEW_SHA = "new_sha_bbb"
+
+    class FakeAnalyzer:
+        async def analyze_pr(self, pr_info):
+            return SimpleNamespace(
+                pr_id=pr_info["pr_id"],
+                pr_number=pr_info["pr_number"],
+                repo_full_name=pr_info["repo_full_name"],
+                total_files=1,
+                total_changes=2,
+                code_file_count=1,
+                code_files=[],
+                strategy="standard",
+                should_skip=False,
+                is_incremental=True,
+                changed_lines_map={},
+                hunk_boundaries={},
+            )
+
+        async def prepare_review_context(self, analysis, pr):
+            return {"files": [], "analysis": analysis}
+
+    class FakeCommentService:
+        async def create_placeholder_comment(self, pr, strategy, output_language=None):
+            return SimpleNamespace(id=1)
+
+        async def delete_placeholder_comment(self, review_obj):
+            return None
+
+    class FakeGitHubApp:
+        def get_repo_client(self, repo_owner, repo_name):
+            return SimpleNamespace(
+                get_repo=lambda rf: SimpleNamespace(
+                    get_pull=lambda pn: SimpleNamespace(
+                        base=SimpleNamespace(repo=SimpleNamespace())
+                    )
+                )
+            )
+
+    class FakeCheckpoint:
+        def __init__(self, *a, **kw):
+            pass
+
+        async def create_session(self, **kw):
+            return SimpleNamespace(id=55)
+
+        async def append_message(self, sid, data):
+            return SimpleNamespace(id=100)
+
+        async def mark_tool_call_completed(self, *a, **kw):
+            return None
+
+        async def mark_tool_call_running(self, *a, **kw):
+            return None
+
+        async def complete_session(self, sid, **kw):
+            return None
+
+        async def save_session_result(self, sid, payload):
+            return None
+
+        async def fail_session(self, sid, msg):
+            return None
+
+    class FakeQueueService:
+        async def prepare_pending_for_review(self, **kwargs):
+            return SimpleNamespace(
+                message={"role": "user", "content": "queued increment"},
+                queue_ids=[1],
+                head_sha=NEW_SHA,
+            )
+
+        async def mark_consumed(self, *a, **kw):
+            return None
+
+    class FakeAIReviewer:
+        def _refresh_ai_clients(self):
+            return None
+
+        async def review_pr_with_tools(self, *args, **kwargs):
+            # 触发 pending_callback → 增量消费 → check run 迁移
+            await kwargs["pending_user_message_callback"]()
+            return {
+                "summary": "ok",
+                "overall_score": 8,
+                "verdict": "approve",
+                "comments": [],
+                "inline_comments": [],
+                "token_usage": {},
+            }
+
+    async def fake_noop(*a, **kw):
+        return None
+
+    async def fake_dynamic_config(*a, **kw):
+        return None
+
+    async def fake_create_review_record(*a, **kw):
+        return 99
+
+    async def fake_make_decision(*a, **kw):
+        return ReviewDecision.APPROVE, "ok"
+
+    async def fail_history(*a, **kw):
+        raise AssertionError("history should not be used")
+
+    class FailingHistory:
+        fetch_history_summary = fail_history
+
+    class FakeSakuraMemory:
+        async def get_sakura_context(self, **kw):
+            return None
+
+    try:
+        monkeypatch.setattr(review_worker, "GitHubAppClient", FakeGitHubApp)
+        monkeypatch.setattr(review_worker, "PRAnalyzer", FakeAnalyzer)
+        monkeypatch.setattr(review_worker, "AIReviewer", FakeAIReviewer)
+        monkeypatch.setattr(review_worker, "CommentService", FakeCommentService)
+        monkeypatch.setattr(review_worker, "_get_label_rec_setting", lambda *_: False)
+        monkeypatch.setattr(review_worker, "get_user_dynamic_config", fake_dynamic_config)
+        monkeypatch.setattr(ReviewWorker, "_log_activity", staticmethod(fake_noop))
+        monkeypatch.setattr(
+            "backend.services.activity_checkpoint_service.ActivityCheckpointService",
+            FakeCheckpoint,
+        )
+        monkeypatch.setattr(
+            "backend.services.pr_review_incremental_queue.PRReviewIncrementalQueueService",
+            FakeQueueService,
+        )
+        monkeypatch.setattr(
+            "backend.services.history_context_service.HistoryContextService",
+            FailingHistory,
+        )
+        monkeypatch.setattr(
+            "backend.services.sakura_memory_service.get_sakura_memory_service",
+            lambda: FakeSakuraMemory(),
+        )
+
+        worker = ReviewWorker()
+        worker.check_run_service = SimpleNamespace(
+            report_queued=AsyncMock(),
+            report_progress=AsyncMock(),
+            report_completed=AsyncMock(),
+            report_failed=AsyncMock(),
+            report_cancelled=AsyncMock(),
+            report_skipped=AsyncMock(),
+        )
+        monkeypatch.setattr(worker, "_restore_incremental_activity_history", fake_noop)
+        monkeypatch.setattr(worker, "_create_review_record", fake_create_review_record)
+        monkeypatch.setattr(worker, "_update_review_status", fake_noop)
+        monkeypatch.setattr(worker, "_save_review_results", fake_noop)
+        monkeypatch.setattr(worker, "_make_and_submit_decision", fake_make_decision)
+        monkeypatch.setattr(worker, "_notify_agent_team_review_completed", fake_noop)
+        monkeypatch.setattr(worker, "_send_review_complete_notification", fake_noop)
+
+        pr_info = {
+            "repo_owner": "owner",
+            "repo_name": "repo",
+            "repo_full_name": "owner/repo",
+            "pr_id": 1001,
+            "pr_number": 7,
+            "author": "alice",
+            "title": "PR",
+            "branch": "feature",
+            "user_id": 42,
+            "action": "synchronize",
+            "head_sha": OLD_SHA,
+        }
+
+        await worker.process_review_task(pr_info)
+
+        # 旧 head 收尾为 cancelled（增量取代）
+        worker.check_run_service.report_cancelled.assert_awaited()
+        assert worker.check_run_service.report_cancelled.call_args.args[2] == OLD_SHA
+
+        # 新 head 上创建了 check run（迁移的 reviewing + 后续 reporting）
+        progress_heads = [
+            c.args[2] for c in worker.check_run_service.report_progress.await_args_list
+        ]
+        assert NEW_SHA in progress_heads
+
+        # 最终 completed 体现在新 head（PR 最新 commit）
+        assert worker.check_run_service.report_completed.call_args.args[2] == NEW_SHA
     finally:
         for key, value in old_values.items():
             setattr(settings, key, value)
