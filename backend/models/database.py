@@ -622,6 +622,11 @@ async def insert_default_configs_async():
             description="是否启用 Webhook 自动审查",
         ),
         AppConfig(
+            key_name="enable_check_runs",
+            key_value="true",
+            description="是否启用 GitHub Check Runs 审查进度可视化",
+        ),
+        AppConfig(
             key_name="web_search_enabled",
             key_value="true",
             description="启用 Web 搜索工具",
@@ -742,6 +747,11 @@ def init_database(database_url: str):
                     key_name="enable_auto_review",
                     key_value="true",
                     description="是否启用 Webhook 自动审查",
+                ),
+                AppConfig(
+                    key_name="enable_check_runs",
+                    key_value="true",
+                    description="是否启用 GitHub Check Runs 审查进度可视化",
                 ),
                 AppConfig(
                     key_name="web_search_enabled",
