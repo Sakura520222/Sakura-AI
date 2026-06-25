@@ -17,6 +17,7 @@ from backend.models.database import PRReview, PRReviewIncrementalQueue, PRStatus
 class PreparedIncrementalMessage:
     message: dict[str, Any]
     queue_ids: list[int]
+    head_sha: str | None = None
 
 
 class PRReviewIncrementalQueueService:
@@ -240,6 +241,7 @@ class PRReviewIncrementalQueueService:
             return PreparedIncrementalMessage(
                 message=message,
                 queue_ids=[int(item.id) for item in pending if item.id is not None],
+                head_sha=str(head_sha),
             )
 
     async def mark_consumed(
