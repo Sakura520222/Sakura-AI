@@ -66,6 +66,7 @@ async def test_cancel_and_cleanup_reports_cancelled_with_head_sha():
         "reason",
         pr_info=pr_info,
         output_language="zh",
+        head_sha="abc",
     )
 
     # review_id=None → 不更新 DB 状态
@@ -88,6 +89,7 @@ async def test_cancel_and_cleanup_updates_status_and_reports_when_review_id():
         42,
         "reason",
         pr_info=pr_info,
+        head_sha="abc",
     )
 
     worker._update_review_status.assert_awaited_once()

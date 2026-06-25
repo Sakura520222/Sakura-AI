@@ -520,6 +520,7 @@ class ReviewWorker:
                         "跳过 PR 总结和 AI 审查",
                         pr_info=pr_info,
                         output_language=output_language,
+                        head_sha=head_sha,
                     )
 
                 # Refresh AI clients before auxiliary tasks that run ahead of
@@ -789,6 +790,7 @@ class ReviewWorker:
                         "跳过 AI 审查",
                         pr_info=pr_info,
                         output_language=output_language,
+                        head_sha=head_sha,
                     )
 
                 # 7. 并行执行AI审查和标签推荐
