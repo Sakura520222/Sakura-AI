@@ -139,6 +139,13 @@ READ_FILE_TOOL = {
                     ),
                     "default": 20,
                 },
+                "branch": {
+                    "type": "string",
+                    "description": (
+                        "可选：非 PR 场景（如 Issue 分析）下指定读取的分支名；"
+                        "PR 审查场景忽略此参数，仍使用 PR HEAD/base。"
+                    ),
+                },
             },
             "required": ["file_path"],
         },
@@ -156,7 +163,14 @@ LIST_DIRECTORY_TOOL = {
                 "directory": {
                     "type": "string",
                     "description": "要列出的目录路径（相对于项目根目录）",
-                }
+                },
+                "branch": {
+                    "type": "string",
+                    "description": (
+                        "可选：非 PR 场景（如 Issue 分析）下指定列出的分支名；"
+                        "PR 审查场景忽略此参数，仍使用 PR HEAD/base。"
+                    ),
+                },
             },
             "required": ["directory"],
         },
@@ -310,6 +324,13 @@ SEARCH_IN_FILES_TOOL = {
                     "type": "integer",
                     "description": "最大返回匹配结果数",
                     "default": 20,
+                },
+                "branch": {
+                    "type": "string",
+                    "description": (
+                        "可选：非 PR 场景（如 Issue 分析）下指定搜索的分支名；"
+                        "PR 审查场景忽略此参数，仍使用 PR HEAD。"
+                    ),
                 },
             },
             "required": ["keyword"],
