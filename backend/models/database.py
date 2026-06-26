@@ -218,6 +218,99 @@ class PRReviewIncrementalQueue(Base):
         )
 
 
+class CIFailure(Base):
+    """外部 CI 失败记录 / External CI failure record.
+
+    由 check_run.completed / workflow_job.completed webhook 写入，
+    审查启动时按 repo + head_sha 查询注入。
+    """
+
+    __tablename__ = "ci_failures"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    repo_owner = Column(String(100), nullable=False, index=True)
+    repo_name = Column(String(255), nullable=False, index=True)
+    repo_full_name = Column(String(255), nullable=False, index=True)
+    pr_number = Column(Integer, nullable=False, index=True)
+    head_sha = Column(String(64), nullable=False, index=True)
+
+    # 事件来源 / Event source: "check_run" | "workflow_job"
+    source = Column(String(32), nullable=False, index=True)
+    # Check/Job 名称（如 "tests", "lint", "build"）/ Check or Job name
+    name = Column(String(255), nullable=False)
+    # 失败结论 / Failure conclusion: failure | timed_out | cancelled | action_required
+    conclusion = Column(String(32), nullable=False)
+
+    # CI 输出摘要 / CI output (title + summary + text 片段)
+    output_title = Column(String(512), nullable=True)
+    output_summary = Column(Text, nullable=True)
+    output_text = Column(Text, nullable=True)
+    # 失败 step 列表（workflow_job 专用）/ Failed steps (workflow_job only)
+    # JSON: [{"name": str, "conclusion": str}, ...]
+    failed_steps_json = Column(Text, nullable=True)
+    # 文件级标注 / File-level annotations
+    # JSON: [{"path": str, "start_line": int, "message": str, "level": str}, ...]
+    annotations_json = Column(Text, nullable=True)
+    # CI 详情页链接 / CI details URL
+    details_url = Column(String(1024), nullable=True)
+    # GitHub 侧对象 id（去重）/ GitHub-side object id (deduplication)
+    external_id = Column(String(64), nullable=True, index=True)
+
+    created_at = Column(TIMESTAMP, default=datetime.utcnow, nullable=False, index=True)
+
+    __table_args__ = (
+        UniqueConstraint(
+            "repo_full_name",
+            "head_sha",
+            "source",
+            "external_id",
+            name="uq_ci_failures_dedup",
+        ),
+    )
+
+    def __repr__(self):
+        return (
+            "<CIFailure("
+            f"id={self.id}, pr={self.repo_full_name}#{self.pr_number}, "
+            f"source={self.source}, name={self.name}, "
+            f"conclusion={self.conclusion})>"
+        )
+
+
+class HeadShaPRMap(Base):
+    """head_sha → pr_number 映射缓存 / head_sha to PR number mapping cache.
+
+    由 pull_request.opened/synchronize/reopened 维护，供 CI webhook 三层降级
+    解析 pr_number 时查表兜底（check_run.pull_requests 在 Fork 场景为空）。
+    """
+
+    __tablename__ = "head_sha_pr_map"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    repo_full_name = Column(String(255), nullable=False, index=True)
+    head_sha = Column(String(64), nullable=False, index=True)
+    pr_number = Column(Integer, nullable=False)
+    repo_owner = Column(String(100), nullable=False)
+    repo_name = Column(String(255), nullable=False)
+    updated_at = Column(
+        TIMESTAMP,
+        default=datetime.utcnow,
+        onupdate=datetime.utcnow,
+        nullable=False,
+    )
+
+    __table_args__ = (
+        UniqueConstraint("repo_full_name", "head_sha", name="uq_head_sha_pr_map"),
+    )
+
+    def __repr__(self):
+        return (
+            "<HeadShaPRMap("
+            f"repo={self.repo_full_name}, head={self.head_sha}, "
+            f"pr={self.pr_number})>"
+        )
+
+
 class ReviewComment(Base):
     """审查评论表"""
 
