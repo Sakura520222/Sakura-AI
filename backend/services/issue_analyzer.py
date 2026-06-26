@@ -655,7 +655,22 @@ class IssueAnalyzer:
                         "content": json.dumps(result, ensure_ascii=False),
                     }
                     messages.append(tool_msg)
-                    logger.info("执行工具 {} (Issue 分析)", tool_call.function.name)
+                    # 在 INFO 日志里暴露本次工具调用的目标分支，便于追踪 Issue 分析读取的分支
+                    # 仅 read_file / list_directory / search_in_files 的结果含分支元数据
+                    branch_info = ""
+                    if isinstance(result, dict):
+                        branch_used = result.get("branch_used")
+                        if branch_used:
+                            branch_requested = result.get("branch_requested")
+                            if branch_requested and branch_requested != branch_used:
+                                branch_info = (
+                                    f", 请求分支={branch_requested}, 实际={branch_used}"
+                                )
+                            else:
+                                branch_info = f", 分支={branch_used}"
+                    logger.info(
+                        "执行工具 {} (Issue 分析{})", tool_call.function.name, branch_info
+                    )
                     if event_callback:
                         try:
                             await event_callback("message", tool_msg)
