@@ -201,7 +201,9 @@ class ReviewWorker:
         try:
             from backend.services.ci_failure_service import CIFailureService
 
-            head_sha = pr_info.get("head_sha") or pr_info.get("after")
+            # 增量审查（synchronize）时 after 是新 head，优先取以读取新提交的 CI 失败；
+            # 首次审查（opened）无 after，回退到 head_sha。
+            head_sha = pr_info.get("after") or pr_info.get("head_sha")
             if not head_sha:
                 return
             ci_failures = await CIFailureService().fetch_for_review(

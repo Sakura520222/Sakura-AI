@@ -95,15 +95,14 @@ class _MemoryDb:
 
     async def execute(self, statement):
         entity = statement.column_descriptions[0].get("entity")
-        params = statement.compile().params
         if entity is CIFailure:
             rows = list(self.store["ci_failures"].values())
-            rows = [row for row in rows if self._matches(row, params)]
+            rows = self._apply_where(rows, statement)
             rows = sorted(rows, key=lambda row: row.created_at or datetime.min, reverse=True)
             return _Result(rows)
         if entity is HeadShaPRMap:
             rows = list(self.store["head_maps"].values())
-            rows = [row for row in rows if self._matches(row, params)]
+            rows = self._apply_where(rows, statement)
             return _Result(rows)
         return _Result([])
 
@@ -112,6 +111,45 @@ class _MemoryDb:
             self.store["ci_failures"].pop(obj.id, None)
         elif isinstance(obj, HeadShaPRMap):
             self.store["head_maps"].pop(obj.id, None)
+
+    @staticmethod
+    def _apply_where(rows, statement):
+        """解析 whereclause 的比较操作符（eq/ne/lt/le/gt/ge），支持范围查询。"""
+        from sqlalchemy.sql import operators
+
+        where = statement.whereclause
+        if where is None:
+            return rows
+        clauses = getattr(where, "clauses", None) or [where]
+        for clause in clauses:
+            col = getattr(clause, "left", None)
+            right = getattr(clause, "right", None)
+            op = getattr(clause, "operator", None)
+            attr = getattr(col, "key", None)
+            if attr is None or right is None:
+                continue
+            value = getattr(right, "value", right)
+
+            def keep(row, attr=attr, op=op, value=value):
+                cell = getattr(row, attr)
+                if op == operators.eq:
+                    return cell == value
+                if op == operators.ne:
+                    return cell != value
+                if cell is None or value is None:
+                    return False
+                if op == operators.lt:
+                    return cell < value
+                if op == operators.le:
+                    return cell <= value
+                if op == operators.gt:
+                    return cell > value
+                if op == operators.ge:
+                    return cell >= value
+                return True
+
+            rows = [row for row in rows if keep(row)]
+        return rows
 
     def _find_ci_failure(self, repo_full_name, head_sha, source, external_id):
         for item in self.store["ci_failures"].values():
@@ -129,21 +167,6 @@ class _MemoryDb:
             if item.repo_full_name == repo_full_name and item.head_sha == head_sha:
                 return item
         return None
-
-    @staticmethod
-    def _matches(row, params):
-        mapping = {
-            "repo_full_name_1": "repo_full_name",
-            "repo_full_name_2": "repo_full_name",
-            "head_sha_1": "head_sha",
-            "pr_number_1": "pr_number",
-            "source_1": "source",
-            "external_id_1": "external_id",
-        }
-        for param_name, attr_name in mapping.items():
-            if param_name in params and getattr(row, attr_name) != params[param_name]:
-                return False
-        return True
 
 
 class _MemorySessionFactory:
@@ -295,12 +318,10 @@ async def test_fetch_for_review_applies_record_and_annotation_limits_without_tru
             output_summary="summary",
             output_text=long_message,
             annotations_json=json.dumps(
-                [
-                    {"path": "a.py", "start_line": 1, "message": long_message},
-                    {"path": "b.py", "start_line": 2, "message": "hidden"},
-                ],
+                [{"path": "a.py", "start_line": 1, "message": long_message}],
                 ensure_ascii=False,
             ),
+            annotations_total=2,  # 原始 2 条，record 时已限额存储 1 条
             external_id=str(index),
             created_at=_utcnow_naive() + timedelta(seconds=index),
         )
@@ -315,6 +336,34 @@ async def test_fetch_for_review_applies_record_and_annotation_limits_without_tru
 
 
 @pytest.mark.asyncio
+async def test_record_caps_annotations_at_storage_time(ci_store):
+    """record 时即按 max_annotations_per_record 限额存储，原始总数记入 annotations_total。"""
+    service = CIFailureService()
+    service._app = MagicMock()
+    service._app.get_check_run_annotations.return_value = [
+        {"path": f"f{i}.py", "start_line": i, "message": f"err {i}"}
+        for i in range(5)
+    ]
+    payload = {
+        "id": 303,
+        "name": "lint",
+        "head_sha": "sha3",
+        "conclusion": "failure",
+        "output": {"title": "t", "summary": "s"},
+    }
+
+    await service.record_check_run_failure(
+        "owner", "repo", "owner/repo", 7, "sha3", payload
+    )
+
+    failure = list(ci_store["ci_failures"].values())[0]
+    # 配置 max_annotations_per_record=1，存储 1 条
+    stored = json.loads(failure.annotations_json)
+    assert len(stored) == 1
+    assert failure.annotations_total == 5  # 原始 5 条
+
+
+@pytest.mark.asyncio
 async def test_head_sha_map_upsert_and_lookup(ci_store):
     service = CIFailureService()
 
@@ -323,6 +372,46 @@ async def test_head_sha_map_upsert_and_lookup(ci_store):
 
     assert len(ci_store["head_maps"]) == 1
     assert await service.lookup_pr_number("owner/repo", "sha1") == 8
+
+
+@pytest.mark.asyncio
+async def test_delete_failures_on_success_rerun(ci_store):
+    """同一 check name 重跑成功后，应清除该 (repo, head_sha, name) 的旧失败记录。"""
+    service = CIFailureService()
+    ci_store["ci_failures"][1] = CIFailure(
+        id=1,
+        repo_owner="owner",
+        repo_name="repo",
+        repo_full_name="owner/repo",
+        pr_number=7,
+        head_sha="sha1",
+        source="check_run",
+        name="lint",
+        conclusion="failure",
+        external_id="100",
+        created_at=_utcnow_naive(),
+    )
+    ci_store["ci_failures"][2] = CIFailure(
+        id=2,
+        repo_owner="owner",
+        repo_name="repo",
+        repo_full_name="owner/repo",
+        pr_number=7,
+        head_sha="sha1",
+        source="check_run",
+        name="tests",
+        conclusion="failure",
+        external_id="200",
+        created_at=_utcnow_naive(),
+    )
+
+    deleted = await service.delete_failures(
+        "owner/repo", "sha1", "check_run", "lint"
+    )
+
+    assert deleted == 1
+    remaining_names = [r.name for r in ci_store["ci_failures"].values()]
+    assert remaining_names == ["tests"]
 
 
 @pytest.mark.asyncio

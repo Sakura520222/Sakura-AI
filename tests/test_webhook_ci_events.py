@@ -20,6 +20,7 @@ def _ci_service_factory():
     instance.record_workflow_job_failure = AsyncMock()
     instance.upsert_head_sha_pr_map = AsyncMock()
     instance.cleanup_for_pr = AsyncMock(return_value=0)
+    instance.delete_failures = AsyncMock(return_value=0)
     return instance
 
 
@@ -153,6 +154,10 @@ async def test_check_run_ignores_success_conclusion(mock_ci):
     assert body["status"] == "ignored"
     assert body["reason"] == "non-failure conclusion"
     mock_ci.record_check_run_failure.assert_not_called()
+    # 成功重跑应清除同名旧失败记录
+    mock_ci.delete_failures.assert_awaited_once_with(
+        "owner/repo", "s", "check_run", "lint"
+    )
 
 
 @pytest.mark.asyncio
@@ -226,6 +231,9 @@ async def test_workflow_job_ignores_success_conclusion(mock_ci):
     assert body["status"] == "ignored"
     assert body["reason"] == "non-failure conclusion"
     mock_ci.record_workflow_job_failure.assert_not_called()
+    mock_ci.delete_failures.assert_awaited_once_with(
+        "owner/repo", "sha2", "workflow_job", "tests"
+    )
 
 
 @pytest.mark.asyncio

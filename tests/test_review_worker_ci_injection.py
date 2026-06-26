@@ -8,7 +8,8 @@ from backend.workers.review_worker import ReviewWorker
 
 
 @pytest.mark.asyncio
-async def test_inject_external_ci_failures_adds_context_key(monkeypatch):
+async def test_inject_external_ci_failures_prefers_after_for_incremental(monkeypatch):
+    """增量审查（synchronize）时 after 是新 head，应优先取 after 读取新提交的 CI 失败。"""
     fetch = AsyncMock(return_value=[{"name": "lint", "source": "check_run"}])
     monkeypatch.setattr(
         "backend.services.ci_failure_service.CIFailureService",
@@ -18,8 +19,8 @@ async def test_inject_external_ci_failures_adds_context_key(monkeypatch):
     context = {}
     pr_info = {
         "repo_full_name": "owner/repo",
-        "head_sha": "sha1",
-        "after": "sha-after",
+        "head_sha": "old-sha",
+        "after": "new-sha",
     }
 
     await worker._inject_external_ci_failures(context, pr_info, "task-1")
@@ -27,11 +28,12 @@ async def test_inject_external_ci_failures_adds_context_key(monkeypatch):
     assert context["external_ci_failures"] == [
         {"name": "lint", "source": "check_run"}
     ]
-    fetch.assert_awaited_once_with("owner/repo", "sha1")
+    fetch.assert_awaited_once_with("owner/repo", "new-sha")
 
 
 @pytest.mark.asyncio
-async def test_inject_external_ci_failures_uses_after_when_head_sha_missing(monkeypatch):
+async def test_inject_external_ci_failures_falls_back_to_head_sha(monkeypatch):
+    """首次审查（opened）无 after，回退到 head_sha。"""
     fetch = AsyncMock(return_value=[])
     monkeypatch.setattr(
         "backend.services.ci_failure_service.CIFailureService",
@@ -39,12 +41,12 @@ async def test_inject_external_ci_failures_uses_after_when_head_sha_missing(monk
     )
     worker = object.__new__(ReviewWorker)
     context = {}
-    pr_info = {"repo_full_name": "owner/repo", "after": "sha-after"}
+    pr_info = {"repo_full_name": "owner/repo", "head_sha": "sha1"}
 
     await worker._inject_external_ci_failures(context, pr_info, "task-1")
 
     assert "external_ci_failures" not in context
-    fetch.assert_awaited_once_with("owner/repo", "sha-after")
+    fetch.assert_awaited_once_with("owner/repo", "sha1")
 
 
 @pytest.mark.asyncio
