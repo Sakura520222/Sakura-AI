@@ -118,12 +118,15 @@ class ToolHandler:
                     end_line=arguments.get("end_line"),
                     search_pattern=arguments.get("search_pattern"),
                     context_lines=arguments.get("context_lines"),
+                    branch=arguments.get("branch"),
                 )
             elif function_name == "list_directory":
                 directory = arguments.get("directory")
                 if not directory:
                     return {"error": "缺少必填参数: directory"}
-                return await self.file_tool.list_directory(directory, repo, pr)
+                return await self.file_tool.list_directory(
+                    directory, repo, pr, branch=arguments.get("branch")
+                )
             elif function_name == "search_project_docs":
                 return await self.search_tool.search_project_docs(
                     arguments.get("query", ""),
@@ -168,6 +171,7 @@ class ToolHandler:
                     directory=arguments.get("directory"),
                     context_lines=arguments.get("context_lines"),
                     max_results=arguments.get("max_results"),
+                    branch=arguments.get("branch"),
                 )
             elif function_name == "get_git_info":
                 if not self.git_tool:

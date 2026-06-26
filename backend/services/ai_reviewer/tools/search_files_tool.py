@@ -97,10 +97,17 @@ class SearchFilesToolHandler:
         directory: Optional[str] = None,
         context_lines: Optional[int] = None,
         max_results: Optional[int] = None,
+        branch: Optional[str] = None,
     ) -> Dict[str, Any]:
         """在仓库中跨文件搜索指定关键词
 
         主路径使用 GitHub Search API，回退到逐文件搜索。
+
+        - PR 场景：使用 ``pr.head.sha`` 作为 ref，忽略 ``branch``。
+        - 非 PR 场景：优先使用显式 ``branch``，失败或不可访问时回退默认分支。
+
+        零匹配是有效结果，不会触发回退；仅当搜索过程因 ref 不可访问或
+        API 读取失败时才回退下一个候选 ref。
 
         Args:
             keyword: 搜索关键词
@@ -110,6 +117,7 @@ class SearchFilesToolHandler:
             directory: 限定搜索目录
             context_lines: 匹配行上下文行数
             max_results: 最大返回匹配结果数
+            branch: 非 PR 场景下指定搜索的分支名（可选）
 
         Returns:
             搜索结果字典
@@ -132,49 +140,65 @@ class SearchFilesToolHandler:
             # 读取 skip_paths / Read skip paths
             skip_paths = get_strategy_config().get_file_filters().get("skip_paths", [])
 
-            # 确定引用 ref / Determine ref
-            ref = None
+            # 构造候选 ref / Build candidate refs
+            # PR 场景：pr.head.sha；非 PR 场景：显式 branch -> 默认分支
+            normalized_branch = (branch or "").strip() or None
+            branch_requested: Optional[str] = None
+            candidate_refs: List[str] = []
+
             if pr is not None:
-                ref = pr.head.sha
+                candidate_refs.append(pr.head.sha)
             else:
-                ref = repo.default_branch
+                branch_requested = normalized_branch
+                if normalized_branch:
+                    candidate_refs.append(normalized_branch)
+                default_branch = getattr(repo, "default_branch", None)
+                if default_branch:
+                    candidate_refs.append(default_branch)
 
-            if config["use_search_api"]:
-                try:
-                    from github.Repository import Repository
+            tried_branches: List[str] = []
+            last_result: Optional[Dict[str, Any]] = None
 
-                    if not isinstance(repo, Repository):
-                        raise NotImplementedError(
-                            "当前 repo 对象不支持 GitHub Search API"
-                        )
-                    return await self._search_via_api(
-                        keyword,
-                        repo,
-                        ref,
-                        skip_paths,
-                        skip_binary,
-                        file_extension,
-                        directory,
-                        effective_context_lines,
-                        effective_max_results,
+            for ref in candidate_refs:
+                tried_branches.append(ref)
+                result = await self._dispatch_search_round(
+                    keyword,
+                    repo,
+                    ref,
+                    skip_paths,
+                    skip_binary,
+                    file_extension,
+                    directory,
+                    effective_context_lines,
+                    effective_max_results,
+                    config,
+                )
+
+                if result is not None and "error" not in result:
+                    # 搜索成功（含零匹配），不回退 / Search succeeded (incl. zero matches)
+                    result["branch_requested"] = branch_requested
+                    result["branch_used"] = ref
+                    result["tried_branches"] = list(tried_branches)
+                    return result
+
+                last_result = result
+                if pr is None and normalized_branch and ref == normalized_branch:
+                    logger.warning(
+                        f"分支 {normalized_branch} 搜索失败或不可访问，回退到默认分支"
                     )
-                except ImportError:
-                    logger.warning("无法导入 PyGithub，回退到逐文件搜索")
-                except Exception as e:
-                    logger.warning(f"GitHub Search API 失败，回退到逐文件搜索: {e}")
 
-            return await self._search_per_file(
-                keyword,
-                repo,
-                ref,
-                skip_paths,
-                skip_binary,
-                file_extension,
-                directory,
-                effective_context_lines,
-                effective_max_results,
-                config["max_files_to_search"],
-            )
+            # 所有候选 ref 均失败 / All candidate refs failed
+            if last_result is None:
+                last_result = {
+                    "keyword": keyword,
+                    "error": "无可用分支进行搜索",
+                    "results": [],
+                    "total_matches": 0,
+                }
+            last_result["branch_requested"] = branch_requested
+            last_result["branch_used"] = None
+            last_result["tried_branches"] = list(tried_branches)
+            return last_result
 
         except Exception as e:
             logger.error(f"跨文件搜索 '{keyword}' 时发生错误: {e}", exc_info=True)
@@ -184,6 +208,73 @@ class SearchFilesToolHandler:
                 "results": [],
                 "total_matches": 0,
             }
+
+    async def _dispatch_search_round(
+        self,
+        keyword: str,
+        repo: Any,
+        ref: str,
+        skip_paths: List[str],
+        skip_binary: bool,
+        file_extension: Optional[str],
+        directory: Optional[str],
+        effective_context_lines: int,
+        effective_max_results: int,
+        config: dict,
+    ) -> Dict[str, Any]:
+        """对单个 ref 执行一轮搜索：优先 Search API，失败回退逐文件搜索。
+
+        Args:
+            keyword: 搜索关键词
+            repo: GitHub 仓库对象
+            ref: Git 引用 (SHA or branch)
+            skip_paths: 需要跳过的路径前缀列表
+            skip_binary: 是否跳过二进制文件
+            file_extension: 限定文件后缀
+            directory: 限定搜索目录
+            effective_context_lines: 上下文行数
+            effective_max_results: 最大返回结果数
+            config: 工具配置字典
+
+        Returns:
+            搜索结果字典；ref 不可访问或搜索失败时含 ``error`` 字段
+        """
+        if config["use_search_api"]:
+            try:
+                from github.Repository import Repository
+
+                if not isinstance(repo, Repository):
+                    raise NotImplementedError(
+                        "当前 repo 对象不支持 GitHub Search API"
+                    )
+                return await self._search_via_api(
+                    keyword,
+                    repo,
+                    ref,
+                    skip_paths,
+                    skip_binary,
+                    file_extension,
+                    directory,
+                    effective_context_lines,
+                    effective_max_results,
+                )
+            except ImportError:
+                logger.warning("无法导入 PyGithub，回退到逐文件搜索")
+            except Exception as e:
+                logger.warning(f"GitHub Search API 失败，回退到逐文件搜索: {e}")
+
+        return await self._search_per_file(
+            keyword,
+            repo,
+            ref,
+            skip_paths,
+            skip_binary,
+            file_extension,
+            directory,
+            effective_context_lines,
+            effective_max_results,
+            config["max_files_to_search"],
+        )
 
     async def _search_via_api(
         self,
@@ -235,6 +326,7 @@ class SearchFilesToolHandler:
         all_results: List[Dict[str, Any]] = []
         keyword_lower = keyword.lower()
         files_searched = 0
+        fetch_failures = 0
 
         for item in data.get("items", []):
             if len(all_results) >= effective_max_results:
@@ -293,7 +385,28 @@ class SearchFilesToolHandler:
 
             except Exception as e:
                 logger.debug(f"搜索文件 {file_path} 时出错，跳过: {e}")
+                fetch_failures += 1
                 continue
+
+        # ref 不可访问检测 / Ref-inaccessible detection
+        # Search API 找到匹配文件但全部 get_contents 失败，通常意味着 ref 无效，
+        # 让上层回退到默认分支；零匹配（api_items == 0）不在此列，不触发回退。
+        api_items = len(data.get("items", []))
+        if api_items > 0 and files_searched > 0 and fetch_failures == files_searched:
+            logger.warning(
+                f"ref '{ref}' 可能不可访问：Search API 返回 {api_items} 个匹配但全部读取失败"
+            )
+            return {
+                "keyword": keyword,
+                "error": (
+                    f"ref '{ref}' 可能不可访问：Search API 返回 {api_items} 个匹配但全部读取失败"
+                ),
+                "results": [],
+                "total_matches": 0,
+                "files_searched": files_searched,
+                "ref": ref,
+                "search_method": "github_search_api",
+            }
 
         # 截断到 max_results / Truncate to max_results
         total_matches = sum(r["match_count"] for r in all_results)
