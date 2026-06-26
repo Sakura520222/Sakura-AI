@@ -42,6 +42,18 @@ class _FakeTreeEntry:
         self.type = type_
 
 
+class _FakeRequester:
+    """模拟 PyGithub requester.requestJsonAndCheck，返回固定 Search API 响应。"""
+
+    def __init__(self, data):
+        self._data = data
+        self.call_count = 0
+
+    def requestJsonAndCheck(self, method, url):
+        self.call_count += 1
+        return (None, self._data)
+
+
 class _FakeTree:
     def __init__(self, paths):
         self.tree = [_FakeTreeEntry(p) for p in paths]
@@ -54,6 +66,7 @@ class _FakeRepo:
         branches: {ref: {path: _FakeContent | list}}，用于 get_contents。
         trees: {ref: [paths]}，用于 get_git_tree（per_file 搜索路径）。
         default_branch: 默认分支名。
+        requester: _FakeRequester，用于 Search API 路径的 requestJsonAndCheck。
     """
 
     def __init__(
@@ -62,11 +75,13 @@ class _FakeRepo:
         trees=None,
         default_branch="main",
         full_name="owner/repo",
+        requester=None,
     ):
         self.branches = branches or {}
         self.trees = trees or {}
         self.default_branch = default_branch
         self.full_name = full_name
+        self._requester = requester
 
     def get_contents(self, path, ref=None):
         effective_ref = ref or self.default_branch
@@ -109,7 +124,14 @@ class _FileStrategyConfig:
 
 
 class _SearchStrategyConfig:
-    """SearchFilesToolHandler 依赖的策略配置替身（强制 per_file 路径）。"""
+    """SearchFilesToolHandler 依赖的策略配置替身。
+
+    Args:
+        use_search_api: 是否走 GitHub Search API 主路径（False 强制 per_file）。
+    """
+
+    def __init__(self, use_search_api: bool = False):
+        self._use_search_api = use_search_api
 
     def get_context_enhancement_config(self):
         return {
@@ -117,7 +139,7 @@ class _SearchStrategyConfig:
                 "default_context_lines": 3,
                 "default_max_results": 20,
                 "skip_binary": True,
-                "use_search_api": False,
+                "use_search_api": self._use_search_api,
                 "max_files_to_search": 100,
             }
         }
@@ -138,7 +160,19 @@ def file_strategy(monkeypatch):
 
 @pytest.fixture
 def search_strategy(monkeypatch):
-    cfg = _SearchStrategyConfig()
+    """per_file 路径配置（use_search_api=False）。"""
+    cfg = _SearchStrategyConfig(use_search_api=False)
+    monkeypatch.setattr(
+        "backend.services.ai_reviewer.tools.search_files_tool.get_strategy_config",
+        lambda: cfg,
+    )
+    return cfg
+
+
+@pytest.fixture
+def search_strategy_api(monkeypatch):
+    """Search API 主路径配置（use_search_api=True）。"""
+    cfg = _SearchStrategyConfig(use_search_api=True)
     monkeypatch.setattr(
         "backend.services.ai_reviewer.tools.search_files_tool.get_strategy_config",
         lambda: cfg,
@@ -375,6 +409,99 @@ async def test_search_in_files_zero_matches_does_not_fall_back(search_strategy):
     assert result["branch_used"] == "feature/x"
     assert result["total_matches"] == 0
     assert result["tried_branches"] == ["feature/x"]
+
+
+# ── Search API 路径（ref-inaccessible 检测 + 降级）──────────
+
+
+@pytest.mark.asyncio
+async def test_search_via_api_ref_inaccessible_when_all_reads_fail():
+    """Search API 返回匹配文件但全部 get_contents 失败时，返回 error 标记 ref 不可访问。"""
+    requester = _FakeRequester({"items": [{"path": "a.py"}, {"path": "b.py"}]})
+    repo = _FakeRepo(branches={}, default_branch="main", requester=requester)
+    handler = SearchFilesToolHandler()
+
+    result = await handler._search_via_api(
+        "keyword", repo, "feature/missing", [], True, None, None, 3, 20
+    )
+
+    assert "error" in result
+    assert "feature/missing" in result["error"]
+    assert result["files_searched"] == 2
+    assert result["search_method"] == "github_search_api"
+
+
+@pytest.mark.asyncio
+async def test_search_via_api_normal_match_does_not_flag_inaccessible():
+    """ref 有效且能读取到匹配文件时正常返回，不误判为 ref 不可访问。"""
+    requester = _FakeRequester({"items": [{"path": "a.py"}]})
+    repo = _FakeRepo(
+        branches={"feature/x": {"a.py": _FakeContent("a.py", "keyword here\n")}},
+        default_branch="main",
+        requester=requester,
+    )
+    handler = SearchFilesToolHandler()
+
+    result = await handler._search_via_api(
+        "keyword", repo, "feature/x", [], True, None, None, 3, 20
+    )
+
+    assert "error" not in result
+    assert any(r["file_path"] == "a.py" for r in result["results"])
+
+
+@pytest.mark.asyncio
+async def test_dispatch_search_round_falls_back_to_per_file_when_api_unavailable(
+    search_strategy,
+):
+    """repo 不支持 Search API（非 Repository）时，_dispatch_search_round 降级到 per_file。"""
+    repo = _FakeRepo(
+        branches={"main": {"a.py": _FakeContent("a.py", "keyword\n")}},
+        trees={"main": _FakeTree(["a.py"])},
+        default_branch="main",
+    )
+    handler = SearchFilesToolHandler()
+    config = handler._get_config()
+    config["use_search_api"] = True  # 触发 API 尝试 → isinstance 失败 → 降级 per_file
+
+    result = await handler._dispatch_search_round(
+        "keyword", repo, "main", [], True, None, None, 3, 20, config
+    )
+
+    assert "error" not in result
+    assert result["search_method"] == "per_file_traversal"
+    assert any(r["file_path"] == "a.py" for r in result["results"])
+
+
+@pytest.mark.asyncio
+async def test_search_in_files_api_ref_inaccessible_triggers_external_fallback(
+    search_strategy_api, monkeypatch
+):
+    """Search API 路径下 ref 不可访问时，error 触发 search_in_files 外部回退到默认分支。"""
+    import github.Repository
+
+    # 让 isinstance(repo, Repository) 通过，使 _dispatch_search_round 走 API 路径
+    monkeypatch.setattr(github.Repository, "Repository", _FakeRepo)
+
+    requester = _FakeRequester({"items": [{"path": "a.py"}]})
+    repo = _FakeRepo(
+        branches={"main": {"a.py": _FakeContent("a.py", "keyword here\n")}},
+        trees={"main": _FakeTree(["a.py"])},
+        default_branch="main",
+        requester=requester,
+    )
+    handler = SearchFilesToolHandler()
+
+    result = await handler.search_in_files(
+        "keyword", repo, pr=None, branch="feature/missing"
+    )
+
+    # feature/missing 经 API → ref-inaccessible error → 外部回退 main → API 成功
+    assert result["branch_used"] == "main"
+    assert result["branch_requested"] == "feature/missing"
+    assert result["tried_branches"] == ["feature/missing", "main"]
+    assert any(r["file_path"] == "a.py" for r in result["results"])
+    assert requester.call_count == 2  # 两个候选 ref 各调用一次 Search API
 
 
 # ── ToolHandler 透传 ──────────────────────────────────────
