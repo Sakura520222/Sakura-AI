@@ -250,7 +250,10 @@ class CIFailure(Base):
     failed_steps_json = Column(Text, nullable=True)
     # 文件级标注 / File-level annotations
     # JSON: [{"path": str, "start_line": int, "message": str, "level": str}, ...]
+    # 存储时按 max_annotations_per_record 限额，原始总数见 annotations_total
     annotations_json = Column(Text, nullable=True)
+    # annotations 的原始总数（存储限额前的完整数量）/ Original annotation count before cap
+    annotations_total = Column(Integer, nullable=False, default=0)
     # CI 详情页链接 / CI details URL
     details_url = Column(String(1024), nullable=True)
     # GitHub 侧对象 id（去重）/ GitHub-side object id (deduplication)

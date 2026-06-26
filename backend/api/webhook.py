@@ -191,24 +191,42 @@ async def handle_check_run_event(payload: Dict[str, Any]) -> JSONResponse:
             return JSONResponse(content={"status": "ignored", "action": action})
 
         check_run = payload.get("check_run") or {}
-
-        # 过滤自身 Check Run（避免把 Sakura 审查状态当外部失败）
-        if check_run.get("name", "") == "Sakura AI Review":
-            return JSONResponse(
-                content={"status": "ignored", "reason": "self check run"}
-            )
-
+        name = check_run.get("name", "")
         conclusion = check_run.get("conclusion", "")
-        if conclusion not in {"failure", "timed_out", "cancelled", "action_required"}:
-            return JSONResponse(
-                content={"status": "ignored", "reason": "non-failure conclusion"}
-            )
-
+        head_sha = check_run.get("head_sha", "") or ""
         repo_info = payload.get("repository") or {}
         repo_owner = repo_info.get("owner", {}).get("login", "")
         repo_name = repo_info.get("name", "")
         repo_full_name = repo_info.get("full_name", "")
-        head_sha = check_run.get("head_sha", "")
+        logger.info(
+            "[check_run] completed 收到: name={!r}, conclusion={!r}, head_sha={!r}".format(
+                name, conclusion, head_sha[:8]
+            )
+        )
+
+        # 过滤自身 Check Run（避免把 Sakura 审查状态当外部失败）
+        if name == "Sakura AI Review":
+            logger.info("[check_run] 跳过自身 Check Run")
+            return JSONResponse(
+                content={"status": "ignored", "reason": "self check run"}
+            )
+
+        if conclusion not in {"failure", "timed_out", "cancelled", "action_required"}:
+            logger.info(
+                "[check_run] 跳过非失败 conclusion: name={!r}, conclusion={!r}".format(
+                    name, conclusion
+                )
+            )
+            # 重跑成功：清除同 (repo, head_sha, name) 的旧失败记录，避免注入过时失败
+            if repo_full_name and head_sha:
+                from backend.services.ci_failure_service import CIFailureService
+
+                await CIFailureService().delete_failures(
+                    repo_full_name, head_sha, "check_run", name
+                )
+            return JSONResponse(
+                content={"status": "ignored", "reason": "non-failure conclusion"}
+            )
 
         if not all([repo_owner, repo_name, repo_full_name, head_sha]):
             logger.warning("check_run payload 缺少必要字段")
@@ -241,11 +259,14 @@ async def handle_check_run_event(payload: Dict[str, Any]) -> JSONResponse:
             head_sha,
             check_run,
         )
+        logger.info(
+            "[check_run] 已采集失败: name={!r}, pr_number={}".format(name, pr_number)
+        )
         return JSONResponse(
             content={
                 "status": "accepted",
                 "pr_number": pr_number,
-                "check_run": check_run.get("name"),
+                "check_run": name,
             }
         )
     except Exception as e:
@@ -268,17 +289,35 @@ async def handle_workflow_job_event(payload: Dict[str, Any]) -> JSONResponse:
             return JSONResponse(content={"status": "ignored", "action": action})
 
         workflow_job = payload.get("workflow_job") or {}
+        wf_name = workflow_job.get("name", "")
         conclusion = workflow_job.get("conclusion", "")
+        head_sha = workflow_job.get("head_sha", "") or ""
+        repo_info = payload.get("repository") or {}
+        repo_full_name = repo_info.get("full_name", "")
+        logger.info(
+            "[workflow_job] completed 收到: name={!r}, conclusion={!r}, head_sha={!r}".format(
+                wf_name, conclusion, head_sha[:8]
+            )
+        )
         if conclusion not in {"failure", "timed_out", "cancelled", "action_required"}:
+            logger.info(
+                "[workflow_job] 跳过非失败 conclusion: name={!r}, conclusion={!r}".format(
+                    wf_name, conclusion
+                )
+            )
+            # 重跑成功：清除同 (repo, head_sha, name) 的旧失败记录
+            if repo_full_name and head_sha:
+                from backend.services.ci_failure_service import CIFailureService
+
+                await CIFailureService().delete_failures(
+                    repo_full_name, head_sha, "workflow_job", wf_name
+                )
             return JSONResponse(
                 content={"status": "ignored", "reason": "non-failure conclusion"}
             )
 
-        repo_info = payload.get("repository") or {}
         repo_owner = repo_info.get("owner", {}).get("login", "")
         repo_name = repo_info.get("name", "")
-        repo_full_name = repo_info.get("full_name", "")
-        head_sha = workflow_job.get("head_sha", "")
 
         if not all([repo_owner, repo_name, repo_full_name, head_sha]):
             logger.warning("workflow_job payload 缺少必要字段")
@@ -307,11 +346,16 @@ async def handle_workflow_job_event(payload: Dict[str, Any]) -> JSONResponse:
             head_sha,
             workflow_job,
         )
+        logger.info(
+            "[workflow_job] 已采集失败: name={!r}, pr_number={}".format(
+                wf_name, pr_number
+            )
+        )
         return JSONResponse(
             content={
                 "status": "accepted",
                 "pr_number": pr_number,
-                "workflow_job": workflow_job.get("name"),
+                "workflow_job": wf_name,
             }
         )
     except Exception as e:

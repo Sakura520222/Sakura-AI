@@ -82,6 +82,11 @@ class CIFailureService:
                 external_id,
             )
             output = check_run_payload.get("output") or {}
+            # record 时即按配置限额存储 annotations（条数切片，非文本截断），
+            # 避免 CI 发大量 annotations 导致 TEXT 列超限；原始总数记入 annotations_total
+            max_annotations = int(self._config().get("max_annotations_per_record", 8))
+            annotations_total = len(annotations) if annotations else 0
+            stored_annotations = (annotations or [])[:max_annotations]
             await self._upsert_failure(
                 repo_owner=repo_owner,
                 repo_name=repo_name,
@@ -95,10 +100,21 @@ class CIFailureService:
                 output_title=output.get("title"),
                 output_summary=output.get("summary"),
                 output_text=output.get("text"),
-                annotations=annotations,
+                annotations=stored_annotations,
+                annotations_total=annotations_total,
                 failed_steps=None,
                 details_url=check_run_payload.get("details_url")
                 or check_run_payload.get("html_url"),
+            )
+            logger.info(
+                "[ci_failure] record check_run: name={!r}, pr={}, "
+                "annotations={}/{} (stored/total), output_summary={!r}".format(
+                    name,
+                    pr_number,
+                    len(stored_annotations),
+                    annotations_total,
+                    (output.get("summary") or "")[:80],
+                )
             )
         except Exception as exc:
             logger.debug("CIFailureService.record_check_run_failure 失败: {}", exc)
@@ -141,8 +157,13 @@ class CIFailureService:
                 output_summary=None,
                 output_text=None,
                 annotations=None,
+                annotations_total=0,
                 failed_steps=failed_steps,
                 details_url=workflow_job_payload.get("html_url"),
+            )
+            logger.info(
+                "[ci_failure] record workflow_job: name={!r}, pr={}, "
+                "failed_steps={}".format(name, pr_number, len(failed_steps))
             )
         except Exception as exc:
             logger.debug("CIFailureService.record_workflow_job_failure 失败: {}", exc)
@@ -163,6 +184,7 @@ class CIFailureService:
         output_summary: Optional[str],
         output_text: Optional[str],
         annotations: Optional[list],
+        annotations_total: int,
         failed_steps: Optional[list],
         details_url: Optional[str],
     ) -> None:
@@ -194,6 +216,7 @@ class CIFailureService:
                 row.output_text = output_text
                 row.failed_steps_json = failed_steps_json
                 row.annotations_json = annotations_json
+                row.annotations_total = annotations_total
                 row.details_url = details_url
             else:
                 session.add(
@@ -212,6 +235,7 @@ class CIFailureService:
                         output_text=output_text,
                         failed_steps_json=failed_steps_json,
                         annotations_json=annotations_json,
+                        annotations_total=annotations_total,
                         details_url=details_url,
                     )
                 )
@@ -232,37 +256,49 @@ class CIFailureService:
         try:
             cfg = self._config()
             max_records = int(cfg.get("max_records", 10))
-            max_annotations = int(cfg.get("max_annotations_per_record", 8))
+            retention_days = int(cfg.get("retention_days", 7))
+            cutoff = _utcnow_naive() - timedelta(days=retention_days)
             async with db_module.async_session() as session:
                 result = await session.execute(
                     select(CIFailure)
                     .where(
                         CIFailure.repo_full_name == repo_full_name,
                         CIFailure.head_sha == head_sha,
+                        CIFailure.created_at >= cutoff,
                     )
-                    .order_by(CIFailure.created_at)
+                    .order_by(CIFailure.created_at.desc())
                 )
                 rows = list(result.scalars().all())
             if not rows:
                 return []
             omitted_records = max(0, len(rows) - max_records)
             shown = rows[:max_records]
+            logger.info(
+                "[ci_failure] fetch_for_review: repo={}, head_sha={!r}, "
+                "total={}, shown={}, names={}".format(
+                    repo_full_name,
+                    head_sha[:8],
+                    len(rows),
+                    len(shown),
+                    [r.name for r in shown],
+                )
+            )
             return [
-                self._row_to_dict(row, max_annotations, omitted_records)
-                for row in shown
+                self._row_to_dict(row, omitted_records) for row in shown
             ]
         except Exception as exc:
             logger.debug("CIFailureService.fetch_for_review 失败: {}", exc)
             return []
 
-    def _row_to_dict(
-        self, row: CIFailure, max_annotations: int, omitted_records: int
-    ) -> dict:
-        """单条记录转 dict。annotations 做条数限额（非文本截断）。"""
+    def _row_to_dict(self, row: CIFailure, omitted_records: int) -> dict:
+        """单条记录转 dict。
+
+        annotations 已在 record 时按 max_annotations_per_record 限额存储，
+        这里用 annotations_total（原始总数）计算省略数，不做任何文本截断。
+        """
         annotations = self._load_json(row.annotations_json) or []
-        omitted_annotations = max(0, len(annotations) - max_annotations)
-        # 条数限额（列表切片，非文本截断）；保留的 annotation 文本字段全量
-        shown_annotations = annotations[:max_annotations]
+        total = int(getattr(row, "annotations_total", 0) or len(annotations))
+        omitted_annotations = max(0, total - len(annotations))
         return {
             "source": row.source,
             "name": row.name,
@@ -271,7 +307,7 @@ class CIFailureService:
             "output_summary": row.output_summary,
             "output_text": row.output_text,
             "failed_steps": self._load_json(row.failed_steps_json) or [],
-            "annotations": shown_annotations,
+            "annotations": annotations,
             "details_url": row.details_url,
             "omitted_annotations": omitted_annotations,
             "omitted_records": omitted_records,
@@ -344,10 +380,41 @@ class CIFailureService:
 
     # ------------------------------------------------------------------ cleanup
 
+    async def delete_failures(
+        self,
+        repo_full_name: str,
+        head_sha: str,
+        source: str,
+        name: str,
+    ) -> int:
+        """删除同 (repo, head_sha, source, name) 的失败记录。
+
+        用于 CI 重跑成功后清除旧的失败记录，避免向 AI 注入过时失败。
+        返回删除条数。
+        """
+        try:
+            async with db_module.async_session() as session:
+                result = await session.execute(
+                    select(CIFailure).where(
+                        CIFailure.repo_full_name == repo_full_name,
+                        CIFailure.head_sha == head_sha,
+                        CIFailure.source == source,
+                        CIFailure.name == name,
+                    )
+                )
+                rows = list(result.scalars().all())
+                for row in rows:
+                    await session.delete(row)
+                await session.commit()
+                return len(rows)
+        except Exception as exc:
+            logger.debug("CIFailureService.delete_failures 失败: {}", exc)
+            return 0
+
     async def cleanup_for_pr(
         self, repo_full_name: str, pr_number: int
     ) -> int:
-        """PR closed/merged 时清理该 PR 的全部失败记录。返回清理条数。"""
+        """PR closed/merged 时清理该 PR 的全部失败记录与 head_sha 映射。返回清理失败记录条数。"""
         try:
             async with db_module.async_session() as session:
                 result = await session.execute(
@@ -358,6 +425,15 @@ class CIFailureService:
                 )
                 rows = list(result.scalars().all())
                 for row in rows:
+                    await session.delete(row)
+                # 同步清理该 PR 的 head_sha → pr_number 映射（避免表无限增长）
+                map_result = await session.execute(
+                    select(HeadShaPRMap).where(
+                        HeadShaPRMap.repo_full_name == repo_full_name,
+                        HeadShaPRMap.pr_number == pr_number,
+                    )
+                )
+                for row in list(map_result.scalars().all()):
                     await session.delete(row)
                 await session.commit()
                 return len(rows)
@@ -371,17 +447,14 @@ class CIFailureService:
         cutoff = _utcnow_naive() - timedelta(days=retention_days)
         try:
             async with db_module.async_session() as session:
-                result = await session.execute(select(CIFailure))
+                result = await session.execute(
+                    select(CIFailure).where(CIFailure.created_at < cutoff)
+                )
                 rows = list(result.scalars().all())
-                expired = [
-                    row
-                    for row in rows
-                    if row.created_at and row.created_at < cutoff
-                ]
-                for row in expired:
+                for row in rows:
                     await session.delete(row)
                 await session.commit()
-                return len(expired)
+                return len(rows)
         except Exception as exc:
             logger.debug("CIFailureService.cleanup_expired 失败: {}", exc)
             return 0

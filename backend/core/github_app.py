@@ -1271,8 +1271,11 @@ class GitHubAppClient:
             client = self.get_repo_client(repo_owner, repo_name)
             if not client:
                 return None
-            # PyGithub requester 调用 commit→pulls 端点
-            _, data = client._requester.requestJson(
+            # PyGithub 无 commit→pulls 的公开封装，用内部 requester 调 REST。
+            # _requester 为私有 API，PyGithub 升级时需验证兼容性。
+            # requestJsonAndCheck 返回 (headers, data) 两元组（data 已解析为 list/dict），
+            # 不同于 requestJson 的 (status, headers, body:str) 三元组。
+            _, data = client._requester.requestJsonAndCheck(
                 "GET",
                 f"/repos/{repo_owner}/{repo_name}/commits/{head_sha}/pulls",
             )
