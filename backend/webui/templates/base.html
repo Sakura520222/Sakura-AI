@@ -495,8 +495,11 @@
         <!-- 侧边栏 -->
         {% include "components/sidebar.html" %}
 
-        <!-- 页面内容 -->
-        <main class="flex-1 ml-0 lg:ml-64 p-6 min-h-[calc(100vh-4rem)] relative z-10">
+        <!-- 页面内容
+             min-w-0 / max-w-full / overflow-x-hidden: 防止长内容（宽表格列、
+             长 URL、代码块）把 <main> 乃至整页横向撑开；内部 overflow-x-auto
+             容器（如各列表表格）仍可独立横向滚动。 -->
+        <main class="flex-1 min-w-0 max-w-full overflow-x-hidden ml-0 lg:ml-64 p-6 min-h-[calc(100vh-4rem)] relative z-10">
             {% block content %}{% endblock %}
         </main>
     </div>
