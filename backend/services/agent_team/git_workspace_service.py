@@ -92,6 +92,7 @@ class AgentTeamGitWorkspaceService:
         branch_name = self.make_branch_name(
             task_id, source_issue_number, source_id, source_type
         )
+        repo_root = self.workspace_service.get_repo_root_path(repo_owner, repo_name)
         base_workspace = self.workspace_service.ensure_base_workspace(
             repo_owner, repo_name
         )
@@ -102,6 +103,7 @@ class AgentTeamGitWorkspaceService:
         repo_lock = await _get_repo_lock(repo_full_name)
         async with repo_lock:
             base_executor = AgentTeamShellExecutor(base_workspace, self.workspace_service)
+            repo_executor = AgentTeamShellExecutor(repo_root, self.workspace_service)
             if not (base_workspace / ".git").exists():
                 await self._run_checked_args(
                     base_executor,
@@ -132,13 +134,14 @@ class AgentTeamGitWorkspaceService:
 
             if worktree.exists():
                 await self._run_checked_args(
-                    base_executor,
+                    repo_executor,
                     ["git", "worktree", "remove", "--force", str(worktree)],
                     "remove stale task worktree",
+                    cwd=base_workspace,
                 )
             worktree.parent.mkdir(parents=True, exist_ok=True)
             await self._run_checked_args(
-                base_executor,
+                repo_executor,
                 [
                     "git",
                     "worktree",
@@ -149,6 +152,7 @@ class AgentTeamGitWorkspaceService:
                     f"origin/{resolved_branch}",
                 ],
                 "create task worktree",
+                cwd=base_workspace,
             )
 
         worktree_executor = AgentTeamShellExecutor(worktree, self.workspace_service)
@@ -368,8 +372,9 @@ class AgentTeamGitWorkspaceService:
         executor: AgentTeamShellExecutor,
         args: list[str],
         action: str,
+        cwd: str | Path = ".",
     ) -> ShellCommandResult:
-        result = await executor.run_args(args)
+        result = await executor.run_args(args, cwd=cwd)
         if result.returncode != 0:
             raise RuntimeError(
                 f"Git 工作区操作失败 ({action}): {result.stderr or result.stdout}"
