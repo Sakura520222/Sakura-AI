@@ -1,5 +1,8 @@
 """Agent 专家团队工作区与 Shell 执行安全测试"""
 
+import subprocess
+from pathlib import Path
+
 import pytest
 
 from backend.services.agent_team.git_workspace_service import (
@@ -19,6 +22,18 @@ from backend.services.agent_team.tools.shell_tool import (
     is_agent_command_allowed,
 )
 from backend.workers.agent_team_worker import _merge_modified_files
+
+
+def _run_git(cwd: Path, *args: str) -> str:
+    """执行测试用 Git 命令并返回 stdout。"""
+    result = subprocess.run(
+        ["git", *args],
+        cwd=cwd,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    return result.stdout.strip()
 
 
 def test_workspace_path_shape_and_creation(tmp_path):
@@ -58,6 +73,62 @@ def test_task_worktree_rejects_invalid_task_id(tmp_path):
 
     with pytest.raises(WorkspaceSecurityError):
         service.get_task_worktree_path("owner", "repo", 0, "branch")
+
+
+@pytest.mark.asyncio
+async def test_prepare_workspace_creates_worktree_next_to_base_checkout(tmp_path):
+    """prepare_workspace 应允许 Git 在 base 同级 worktrees 下创建 task 工作区。"""
+    workspace_service = AgentTeamWorkspaceService(tmp_path / "workplace")
+    base_workspace = workspace_service.ensure_base_workspace("owner", "repo")
+    _run_git(base_workspace, "init")
+    _run_git(base_workspace, "config", "user.name", "Tester")
+    _run_git(base_workspace, "config", "user.email", "tester@example.com")
+    _run_git(base_workspace, "checkout", "-B", "main")
+    (base_workspace / "README.md").write_text("# Repo\n", encoding="utf-8")
+    _run_git(base_workspace, "add", "README.md")
+    _run_git(base_workspace, "commit", "-m", "init")
+    _run_git(base_workspace, "update-ref", "refs/remotes/origin/main", "HEAD")
+
+    class LocalGitWorkspaceService(AgentTeamGitWorkspaceService):
+        async def _get_repo_info(self, repo_owner, repo_name, repo_full_name):
+            return "main", "https://example.com/owner/repo.git"
+
+        async def _install_workspace_dependencies(self, executor, workspace):
+            return None
+
+        async def _run_checked_args(self, executor, args, action, **kwargs):
+            if action in {
+                "set remote url",
+                "fetch repository",
+                "checkout base branch",
+                "reset base branch",
+            }:
+                return ShellCommandResult(
+                    command=" ".join(args),
+                    cwd=str(executor.workspace),
+                    returncode=0,
+                    stdout="",
+                    stderr="",
+                )
+            return await super()._run_checked_args(executor, args, action, **kwargs)
+
+    git_service = LocalGitWorkspaceService(workspace_service=workspace_service)
+
+    info = await git_service.prepare_workspace(
+        "owner",
+        "repo",
+        source_issue_number=42,
+        task_id=123,
+    )
+
+    assert info.workspace == workspace_service.get_task_worktree_path(
+        "owner",
+        "repo",
+        123,
+        info.branch_name,
+    )
+    assert (info.workspace / ".git").exists()
+    assert (info.workspace / "README.md").read_text(encoding="utf-8") == "# Repo\n"
 
 
 @pytest.mark.parametrize(
