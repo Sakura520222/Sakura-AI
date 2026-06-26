@@ -44,6 +44,46 @@ def format_search_results(
     return "\n".join(result_parts)
 
 
+class _ContentsFetchResult:
+    """``repo.get_contents`` 调用结果，附带分支回退元数据。
+
+    用于 read_file / list_directory 共用的非 PR 分支回退逻辑。
+
+    Attributes:
+        contents: GitHub content 对象（list 或单文件）；失败时为 None。
+        branch_requested: AI 显式请求的分支名（PR 场景或未传时为 None）。
+        branch_used: 实际读取成功的分支标识（PR 场景为 "HEAD"/"base"，
+            非 PR 场景为真实分支名）；全部失败时为 None。
+        tried_branches: 已尝试的所有分支标识列表，按尝试顺序记录。
+        error: 失败时的简短错误描述（不含最终返回结构）；成功时为 None。
+    """
+
+    __slots__ = (
+        "contents",
+        "branch_requested",
+        "branch_used",
+        "tried_branches",
+        "error",
+    )
+
+    def __init__(self) -> None:
+        self.contents: Any = None
+        self.branch_requested: Optional[str] = None
+        self.branch_used: Optional[str] = None
+        self.tried_branches: List[str] = []
+        self.error: Optional[str] = None
+
+    @property
+    def ok(self) -> bool:
+        return self.contents is not None and self.error is None
+
+
+def _normalize_branch(branch: Optional[str]) -> Optional[str]:
+    """规整分支名：去除首尾空白，空字符串视为未传。"""
+    normalized = (branch or "").strip()
+    return normalized or None
+
+
 class FileToolHandler:
     """文件工具处理器
 
@@ -61,6 +101,97 @@ class FileToolHandler:
             "max_context_lines": int(ce.get("max_context_lines", MAX_CONTEXT_LINES)),
         }
 
+    def _fetch_contents(
+        self,
+        path: str,
+        repo: Any,
+        pr: Any,
+        branch: Optional[str],
+        *,
+        path_kind: str = "路径",
+    ) -> _ContentsFetchResult:
+        """统一执行 ``repo.get_contents``，按场景选择 ref 并回退。
+
+        - PR 场景：优先 HEAD，失败回退 base；不消费 ``branch``。
+        - 非 PR 场景：优先显式 ``branch``，失败回退 ``repo.default_branch``。
+
+        Args:
+            path: 文件或目录路径。
+            repo: GitHub 仓库对象。
+            pr: GitHub PR 对象（非 PR 场景为 None）。
+            branch: AI 显式请求的分支名（仅非 PR 场景生效）。
+            path_kind: 路径类型描述（"文件"/"目录"），用于日志。
+
+        Returns:
+            :class:`_ContentsFetchResult`，包含内容与分支回退元数据。
+        """
+        result = _ContentsFetchResult()
+
+        if pr is not None:
+            # PR 场景：优先从 HEAD 分支读取，失败则尝试 base 分支
+            try:
+                result.contents = repo.get_contents(path, pr.head.sha)
+                result.tried_branches.append("HEAD")
+                result.branch_used = "HEAD"
+                logger.debug(f"从PR的HEAD分支读取{path_kind}成功: {path}")
+                return result
+            except Exception as head_error:
+                logger.warning(
+                    f"从PR的HEAD分支读取{path_kind}失败: {path}, 错误: {head_error}"
+                )
+                result.tried_branches.append("HEAD")
+
+            try:
+                result.contents = repo.get_contents(path, pr.base.sha)
+                result.tried_branches.append("base")
+                result.branch_used = "base"
+                logger.debug(f"从PR的base分支读取{path_kind}成功: {path}")
+                return result
+            except Exception as base_error:
+                logger.warning(
+                    f"从PR的base分支读取{path_kind}也失败: {path}, 错误: {base_error}"
+                )
+                result.tried_branches.append("base")
+                result.error = f"{path_kind}在PR的HEAD和base分支中都不存在"
+                return result
+
+        # 非 PR 场景（如 Issue 分析）：显式分支 -> 仓库默认分支
+        normalized_branch = _normalize_branch(branch)
+        result.branch_requested = normalized_branch
+        default_branch = getattr(repo, "default_branch", None)
+
+        candidate_refs: List[str] = []
+        if normalized_branch:
+            candidate_refs.append(normalized_branch)
+        if default_branch:
+            candidate_refs.append(default_branch)
+
+        last_error: Optional[str] = None
+        for ref in candidate_refs:
+            result.tried_branches.append(ref)
+            try:
+                result.contents = repo.get_contents(path, ref)
+                result.branch_used = ref
+                logger.debug(f"从分支 {ref} 读取{path_kind}成功: {path}")
+                return result
+            except Exception as e:
+                last_error = str(e)
+                logger.warning(
+                    f"从分支 {ref} 读取{path_kind}失败: {path}, 错误: {e}"
+                )
+                if normalized_branch and ref == normalized_branch:
+                    logger.warning(
+                        f"分支 {normalized_branch} 读取{path_kind} {path} 失败，尝试回退到默认分支"
+                    )
+                continue
+
+        tried_desc = ", ".join(candidate_refs) if candidate_refs else "无可用分支"
+        if last_error is not None:
+            result.error = f"{path_kind}不存在或无法访问（已尝试: {tried_desc}）: {last_error}"
+        else:
+            result.error = f"无法获取{path_kind}内容：未找到可用分支"
+        return result
+
     async def read_file(
         self,
         file_path: str,
@@ -70,6 +201,7 @@ class FileToolHandler:
         end_line: Optional[int] = None,
         search_pattern: Optional[str] = None,
         context_lines: Optional[int] = None,
+        branch: Optional[str] = None,
     ) -> Dict[str, Any]:
         """读取文件内容的工具实现
 
@@ -86,6 +218,7 @@ class FileToolHandler:
             end_line: 结束行号（从1开始，包含，可选）
             search_pattern: 搜索文本（可选，与行范围互斥）
             context_lines: 搜索上下文行数（可选，默认从配置读取）
+            branch: 非 PR 场景下指定读取的分支名（可选）；PR 场景忽略此参数
 
         Returns:
             文件内容字典
@@ -137,56 +270,28 @@ class FileToolHandler:
                     0, min(context_lines, limits["max_context_lines"])
                 )
 
-            # 智能分支选择
-            content_file = None
-            tried_branches = []
+            # 智能分支选择 / Intelligent branch selection
+            # PR 场景：HEAD -> base；非 PR 场景：显式 branch -> 默认分支
+            fetch = self._fetch_contents(
+                file_path, repo, pr, branch, path_kind="文件"
+            )
+            content_file = fetch.contents
+            branch_requested = fetch.branch_requested
+            branch_used = fetch.branch_used
+            tried_branches = fetch.tried_branches
 
-            if pr is not None:
-                # PR 场景：优先从 HEAD 分支读取，失败则尝试 base 分支
-                try:
-                    content_file = repo.get_contents(file_path, pr.head.sha)
-                    tried_branches.append("HEAD")
-                    logger.debug(f"✅ 从PR的HEAD分支读取文件成功: {file_path}")
-                except Exception as head_error:
-                    logger.debug(
-                        f"⚠️  从PR的HEAD分支读取失败: {file_path}, 错误: {head_error}"
-                    )
-
-                    try:
-                        content_file = repo.get_contents(file_path, pr.base.sha)
-                        tried_branches.append("base")
-                        logger.debug(f"✅ 从PR的base分支读取文件成功: {file_path}")
-                    except Exception as base_error:
-                        logger.debug(
-                            f"⚠️  从PR的base分支读取也失败: {file_path}, 错误: {base_error}"
-                        )
-
-                        return {
-                            "file_path": file_path,
-                            "error": "文件在PR的HEAD和base分支中都不存在",
-                            "hint": "这可能是一个新增的文件，请基于PR diff中的patch进行审查",
-                            "tried_branches": tried_branches,
-                        }
-            else:
-                # 非 PR 场景（如 Issue 分析）：从仓库默认分支读取
-                try:
-                    content_file = repo.get_contents(file_path)
-                    tried_branches.append("default")
-                    logger.debug(f"✅ 从默认分支读取文件成功: {file_path}")
-                except Exception as e:
-                    logger.debug(f"⚠️  从默认分支读取文件失败: {file_path}, 错误: {e}")
-
-                    return {
-                        "file_path": file_path,
-                        "error": f"文件不存在或无法访问: {str(e)}",
-                        "hint": "请确认文件路径是否正确，或检查仓库访问权限",
-                        "tried_branches": tried_branches,
-                    }
-
-            if not content_file:
+            if not fetch.ok:
+                hint = (
+                    "这可能是一个新增的文件，请基于PR diff中的patch进行审查"
+                    if pr is not None
+                    else "请确认文件路径是否正确，或检查仓库访问权限"
+                )
                 return {
                     "file_path": file_path,
-                    "error": "无法获取文件内容",
+                    "error": fetch.error or "无法获取文件内容",
+                    "hint": hint,
+                    "branch_requested": branch_requested,
+                    "branch_used": branch_used,
                     "tried_branches": tried_branches,
                 }
 
@@ -196,6 +301,8 @@ class FileToolHandler:
                     "file_path": file_path,
                     "error": "该路径是目录而非文件，请使用 list_directory 工具",
                     "hint": f"目录包含 {len(content_file)} 个项目",
+                    "branch_requested": branch_requested,
+                    "branch_used": branch_used,
                     "tried_branches": tried_branches,
                 }
 
@@ -206,6 +313,8 @@ class FileToolHandler:
                     "size": content_file.size,
                     "content": None,
                     "tried_branches": tried_branches,
+                    "branch_requested": branch_requested,
+                    "branch_used": branch_used,
                     "hint": "请基于PR diff中的patch进行审查，避免读取完整文件",
                 }
 
@@ -227,7 +336,10 @@ class FileToolHandler:
                         "file_path": file_path,
                         "error": f"start_line {start_line} 超出文件范围",
                         "total_lines": total_lines,
-                        "branch": tried_branches[0] if tried_branches else "unknown",
+                        "branch": branch_used or "unknown",
+                        "branch_requested": branch_requested,
+                        "branch_used": branch_used,
+                        "tried_branches": tried_branches,
                     }
 
                 selected_lines = lines[start_idx:end_idx]
@@ -245,7 +357,10 @@ class FileToolHandler:
                     "total_lines": total_lines,
                     "returned_lines": len(selected_lines),
                     "size": content_file.size,
-                    "branch": tried_branches[0] if tried_branches else "unknown",
+                    "branch": branch_used or "unknown",
+                    "branch_requested": branch_requested,
+                    "branch_used": branch_used,
+                    "tried_branches": tried_branches,
                 }
 
             # 模式2: 内容搜索
@@ -265,7 +380,10 @@ class FileToolHandler:
                         "match_count": 0,
                         "content": None,
                         "message": f"未找到包含 '{search_pattern}' 的行",
-                        "branch": tried_branches[0] if tried_branches else "unknown",
+                        "branch": branch_used or "unknown",
+                        "branch_requested": branch_requested,
+                        "branch_used": branch_used,
+                        "tried_branches": tried_branches,
                     }
 
                 numbered_content = format_search_results(
@@ -282,7 +400,10 @@ class FileToolHandler:
                     "context_lines": effective_context_lines,
                     "returned_lines": len(numbered_content.split("\n")),
                     "size": content_file.size,
-                    "branch": tried_branches[0] if tried_branches else "unknown",
+                    "branch": branch_used or "unknown",
+                    "branch_requested": branch_requested,
+                    "branch_used": branch_used,
+                    "tried_branches": tried_branches,
                     "hint": (
                         f"共找到 {len(matches)} 处匹配。"
                         f"如需查看更多上下文，可增大 context_lines 参数（当前 {effective_context_lines}）。"
@@ -313,7 +434,10 @@ class FileToolHandler:
                         f"请使用 start_line/end_line 读取后续部分，"
                         f"或使用 search_pattern 搜索特定内容。"
                     ),
-                    "branch": tried_branches[0] if tried_branches else "unknown",
+                    "branch": branch_used or "unknown",
+                    "branch_requested": branch_requested,
+                    "branch_used": branch_used,
+                    "tried_branches": tried_branches,
                 }
 
             # 正常大小文件 - 也添加行号
@@ -327,7 +451,10 @@ class FileToolHandler:
                 "size": content_file.size,
                 "total_lines": total_lines,
                 "returned_lines": total_lines,
-                "branch": tried_branches[0] if tried_branches else "unknown",
+                "branch": branch_used or "unknown",
+                "branch_requested": branch_requested,
+                "branch_used": branch_used,
+                "tried_branches": tried_branches,
             }
 
         except Exception as e:
@@ -339,7 +466,11 @@ class FileToolHandler:
             }
 
     async def list_directory(
-        self, directory: str, repo: Any, pr: Any
+        self,
+        directory: str,
+        repo: Any,
+        pr: Any,
+        branch: Optional[str] = None,
     ) -> Dict[str, Any]:
         """列出目录内容的工具实现
 
@@ -347,6 +478,7 @@ class FileToolHandler:
             directory: 目录路径
             repo: GitHub仓库对象
             pr: GitHub PR对象
+            branch: 非 PR 场景下指定列出的分支名（可选）；PR 场景忽略此参数
 
         Returns:
             目录内容字典
@@ -362,55 +494,32 @@ class FileToolHandler:
                     "count": 0,
                 }
 
-            # 智能分支选择
-            contents = None
-            tried_branches = []
+            # 智能分支选择 / Intelligent branch selection
+            # PR 场景：HEAD -> base；非 PR 场景：显式 branch -> 默认分支
+            fetch = self._fetch_contents(
+                directory, repo, pr, branch, path_kind="目录"
+            )
+            contents = fetch.contents
+            branch_requested = fetch.branch_requested
+            branch_used = fetch.branch_used
+            tried_branches = fetch.tried_branches
 
-            if pr is not None:
-                # PR 场景：优先从 HEAD 分支读取，失败则尝试 base 分支
-                try:
-                    contents = repo.get_contents(directory, pr.head.sha)
-                    tried_branches.append("HEAD")
-                    logger.debug(f"✅ 从PR的HEAD分支列出目录成功: {directory}")
-                except Exception as head_error:
-                    logger.debug(
-                        f"⚠️  从PR的HEAD分支列出目录失败: {directory}, 错误: {head_error}"
-                    )
-
-                    try:
-                        contents = repo.get_contents(directory, pr.base.sha)
-                        tried_branches.append("base")
-                        logger.debug(f"✅ 从PR的base分支列出目录成功: {directory}")
-                    except Exception as base_error:
-                        logger.debug(
-                            f"⚠️  从PR的base分支列出目录也失败: {directory}, 错误: {base_error}"
-                        )
-
-                        return {
-                            "directory": directory,
-                            "error": "目录在PR的HEAD和base分支中都不存在",
-                            "hint": "这可能是一个新增的目录，请基于PR diff中的patch进行审查",
-                            "items": [],
-                            "count": 0,
-                            "tried_branches": tried_branches,
-                        }
-            else:
-                # 非 PR 场景（如 Issue 分析）：从仓库默认分支读取
-                try:
-                    contents = repo.get_contents(directory)
-                    tried_branches.append("default")
-                    logger.debug(f"✅ 从默认分支列出目录成功: {directory}")
-                except Exception as e:
-                    logger.debug(f"⚠️  从默认分支列出目录失败: {directory}, 错误: {e}")
-
-                    return {
-                        "directory": directory,
-                        "error": f"目录不存在或无法访问: {str(e)}",
-                        "hint": "请确认目录路径是否正确，或检查仓库访问权限",
-                        "items": [],
-                        "count": 0,
-                        "tried_branches": tried_branches,
-                    }
+            if not fetch.ok:
+                hint = (
+                    "这可能是一个新增的目录，请基于PR diff中的patch进行审查"
+                    if pr is not None
+                    else "请确认目录路径是否正确，或检查仓库访问权限"
+                )
+                return {
+                    "directory": directory,
+                    "error": fetch.error or "无法获取目录内容",
+                    "hint": hint,
+                    "items": [],
+                    "count": 0,
+                    "branch_requested": branch_requested,
+                    "branch_used": branch_used,
+                    "tried_branches": tried_branches,
+                }
 
             if isinstance(contents, list):
                 items = []
@@ -435,7 +544,10 @@ class FileToolHandler:
                     "filtered": (
                         len(contents) - len(items) if len(items) < len(contents) else 0
                     ),
-                    "branch": tried_branches[0] if tried_branches else "unknown",
+                    "branch": branch_used or "unknown",
+                    "branch_requested": branch_requested,
+                    "branch_used": branch_used,
+                    "tried_branches": tried_branches,
                 }
             else:
                 # 单个文件 - 也需要检查skip_paths / Single file: also check skip_paths
@@ -445,6 +557,8 @@ class FileToolHandler:
                         "error": "该路径在跳过列表中",
                         "items": [],
                         "count": 0,
+                        "branch_requested": branch_requested,
+                        "branch_used": branch_used,
                         "tried_branches": tried_branches,
                     }
 
@@ -460,7 +574,10 @@ class FileToolHandler:
                         }
                     ],
                     "count": 1,
-                    "branch": tried_branches[0] if tried_branches else "unknown",
+                    "branch": branch_used or "unknown",
+                    "branch_requested": branch_requested,
+                    "branch_used": branch_used,
+                    "tried_branches": tried_branches,
                 }
 
         except Exception as e:
