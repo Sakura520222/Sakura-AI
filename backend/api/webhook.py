@@ -125,6 +125,10 @@ async def handle_github_webhook(
             return await handle_issue_comment_event(payload_data)
         elif x_github_event == "pull_request_review":
             return await handle_pull_request_review_event(payload_data)
+        elif x_github_event == "check_run":
+            return await handle_check_run_event(payload_data)
+        elif x_github_event == "workflow_job":
+            return await handle_workflow_job_event(payload_data)
         elif x_github_event == "installation":
             return await handle_installation_event(payload_data)
         else:
@@ -135,6 +139,183 @@ async def handle_github_webhook(
         raise
     except Exception as e:
         logger.error(f"处理Webhook时出错: {e}", exc_info=True)
+        return JSONResponse(
+            status_code=500, content={"status": "error", "message": "内部服务错误"}
+        )
+
+
+async def resolve_pr_number_for_ci(
+    repo_owner: str,
+    repo_name: str,
+    repo_full_name: str,
+    head_sha: str,
+    payload_prs: list,
+) -> Optional[int]:
+    """CI 失败事件三层降级解析 pr_number / Resolve pr_number (three-tier fallback).
+
+    ① payload.pull_requests 字段（Fork 场景为空）
+    ② head_sha_pr_map 映射表（由 pull_request 事件维护）
+    ③ GET /commits/{sha}/pulls API 兜底
+    三层都失败返回 None（调用方忽略该 CI 事件）。
+    """
+    # ① payload 自带字段
+    for pr in payload_prs or []:
+        number = pr.get("number")
+        if number is not None:
+            return int(number)
+
+    # ② 映射表兜底
+    from backend.services.ci_failure_service import CIFailureService
+
+    pr_number = await CIFailureService().lookup_pr_number(repo_full_name, head_sha)
+    if pr_number:
+        return pr_number
+
+    # ③ API 兜底
+    github_app = GitHubAppClient()
+    return await asyncio.to_thread(
+        github_app.get_pr_number_for_commit, repo_owner, repo_name, head_sha
+    )
+
+
+async def handle_check_run_event(payload: Dict[str, Any]) -> JSONResponse:
+    """处理 check_run.completed 事件：采集外部 CI（Checks API 类）失败详情。
+
+    过滤自身 Sakura Check Run；非 completed 动作忽略；解不出 pr_number 忽略。
+    所有异常吞掉，不影响其他 webhook 事件。
+    """
+    try:
+        action = payload.get("action")
+        if action != "completed":
+            logger.info(f"忽略 check_run 动作: {action}")
+            return JSONResponse(content={"status": "ignored", "action": action})
+
+        check_run = payload.get("check_run") or {}
+
+        # 过滤自身 Check Run（避免把 Sakura 审查状态当外部失败）
+        if check_run.get("name", "") == "Sakura AI Review":
+            return JSONResponse(
+                content={"status": "ignored", "reason": "self check run"}
+            )
+
+        conclusion = check_run.get("conclusion", "")
+        if conclusion not in {"failure", "timed_out", "cancelled", "action_required"}:
+            return JSONResponse(
+                content={"status": "ignored", "reason": "non-failure conclusion"}
+            )
+
+        repo_info = payload.get("repository") or {}
+        repo_owner = repo_info.get("owner", {}).get("login", "")
+        repo_name = repo_info.get("name", "")
+        repo_full_name = repo_info.get("full_name", "")
+        head_sha = check_run.get("head_sha", "")
+
+        if not all([repo_owner, repo_name, repo_full_name, head_sha]):
+            logger.warning("check_run payload 缺少必要字段")
+            return JSONResponse(
+                content={"status": "ignored", "reason": "missing fields"}
+            )
+
+        pr_number = await resolve_pr_number_for_ci(
+            repo_owner,
+            repo_name,
+            repo_full_name,
+            head_sha,
+            check_run.get("pull_requests") or [],
+        )
+        if not pr_number:
+            logger.info(
+                f"check_run 事件无法关联 PR（head_sha={head_sha}），忽略"
+            )
+            return JSONResponse(
+                content={"status": "ignored", "reason": "no associated PR"}
+            )
+
+        from backend.services.ci_failure_service import CIFailureService
+
+        await CIFailureService().record_check_run_failure(
+            repo_owner,
+            repo_name,
+            repo_full_name,
+            pr_number,
+            head_sha,
+            check_run,
+        )
+        return JSONResponse(
+            content={
+                "status": "accepted",
+                "pr_number": pr_number,
+                "check_run": check_run.get("name"),
+            }
+        )
+    except Exception as e:
+        logger.error(f"处理 check_run 事件失败: {e}", exc_info=True)
+        return JSONResponse(
+            status_code=500, content={"status": "error", "message": "内部服务错误"}
+        )
+
+
+async def handle_workflow_job_event(payload: Dict[str, Any]) -> JSONResponse:
+    """处理 workflow_job.completed 事件：采集 GitHub Actions Job 失败详情。
+
+    workflow_job payload 无 pull_requests 字段，pr_number 走映射表/API 兜底。
+    所有异常吞掉，不影响其他 webhook 事件。
+    """
+    try:
+        action = payload.get("action")
+        if action != "completed":
+            logger.info(f"忽略 workflow_job 动作: {action}")
+            return JSONResponse(content={"status": "ignored", "action": action})
+
+        workflow_job = payload.get("workflow_job") or {}
+        conclusion = workflow_job.get("conclusion", "")
+        if conclusion not in {"failure", "timed_out", "cancelled", "action_required"}:
+            return JSONResponse(
+                content={"status": "ignored", "reason": "non-failure conclusion"}
+            )
+
+        repo_info = payload.get("repository") or {}
+        repo_owner = repo_info.get("owner", {}).get("login", "")
+        repo_name = repo_info.get("name", "")
+        repo_full_name = repo_info.get("full_name", "")
+        head_sha = workflow_job.get("head_sha", "")
+
+        if not all([repo_owner, repo_name, repo_full_name, head_sha]):
+            logger.warning("workflow_job payload 缺少必要字段")
+            return JSONResponse(
+                content={"status": "ignored", "reason": "missing fields"}
+            )
+
+        pr_number = await resolve_pr_number_for_ci(
+            repo_owner, repo_name, repo_full_name, head_sha, []
+        )
+        if not pr_number:
+            logger.info(
+                f"workflow_job 事件无法关联 PR（head_sha={head_sha}），忽略"
+            )
+            return JSONResponse(
+                content={"status": "ignored", "reason": "no associated PR"}
+            )
+
+        from backend.services.ci_failure_service import CIFailureService
+
+        await CIFailureService().record_workflow_job_failure(
+            repo_owner,
+            repo_name,
+            repo_full_name,
+            pr_number,
+            head_sha,
+            workflow_job,
+        )
+        return JSONResponse(
+            content={
+                "status": "accepted",
+                "pr_number": pr_number,
+                "workflow_job": workflow_job.get("name"),
+            }
+        )
+    except Exception as e:
+        logger.error(f"处理 workflow_job 事件失败: {e}", exc_info=True)
         return JSONResponse(
             status_code=500, content={"status": "error", "message": "内部服务错误"}
         )
@@ -199,6 +380,29 @@ async def handle_pull_request_event(
             except Exception as e:
                 logger.warning(f"[webhook] 清理增量队列失败: {e}")
 
+            # 清理该 PR 的外部 CI 失败记录，并顺带清理过期记录。
+            # 失败不影响 PR closed 事件处理。
+            try:
+                from backend.services.ci_failure_service import CIFailureService
+
+                ci_service = CIFailureService()
+                cleaned = await ci_service.cleanup_for_pr(
+                    pr_info["repo_full_name"], int(pr_info["pr_number"])
+                )
+                expired = await ci_service.cleanup_expired()
+                if cleaned or expired:
+                    logger.info(
+                        "[webhook] PR closed event：已清理外部 CI 失败记录 "
+                        "pr_records={} expired_records={} {}#{}".format(
+                            cleaned,
+                            expired,
+                            pr_info["repo_full_name"],
+                            pr_info["pr_number"],
+                        )
+                    )
+            except Exception as e:
+                logger.warning(f"[webhook] 清理外部 CI 失败记录失败: {e}")
+
             return JSONResponse(
                 content={"status": "accepted", "action": "cancelled", "task": task_key}
             )
@@ -208,6 +412,25 @@ async def handle_pull_request_event(
         if action not in supported_actions:
             logger.info(f"忽略PR动作: {action}")
             return JSONResponse(content={"status": "ignored", "action": action})
+
+        # 维护 head_sha → pr_number 映射，供 CI webhook 三层降级兜底
+        # （check_run.pull_requests 在 Fork 场景为空，需映射表兜底）
+        try:
+            from backend.services.ci_failure_service import CIFailureService
+
+            head_sha_for_map = pr_info.get("head_sha") or pr_info.get("after")
+            if head_sha_for_map:
+                await CIFailureService().upsert_head_sha_pr_map(
+                    pr_info["repo_owner"],
+                    pr_info["repo_name"],
+                    pr_info["repo_full_name"],
+                    head_sha_for_map,
+                    int(pr_info["pr_number"]),
+                )
+        except Exception as e:
+            logger.warning(
+                f"[webhook] 维护 head_sha 映射失败（不影响审查）: {e}"
+            )
 
         if not get_settings().enable_auto_review:
             logger.info(
