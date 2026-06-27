@@ -53,7 +53,7 @@
 - **行内评论开关**：通过 WebUI 配置 `enable_inline_comments`，控制是否在 PR diff 上发布行内评论，减少审查噪音
 - **可控自动审查**：通过 WebUI 配置 `enable_auto_review` 控制 PR opened/synchronize/reopened 是否自动入队，保留命令和手动触发路径
 - **Check Runs 进度可视化**：将审查生命周期（排队、代码索引、PR 总结、AI 审查、生成报告、完成、失败、取消、跳过）映射到 GitHub Check Runs，在 PR 的 Checks 面板实时展示进度；conclusion 采用纯展示语义（仅审查自身出错为 failure，不阻止合并）
-- **外部 CI 失败注入**：订阅 `check_run.completed` 与 `workflow_job.completed`，采集其他 CI（如 GitHub Actions、Codecov、lint App）的失败结论、失败步骤和 Checks annotations，并在下一次 PR 审查请求中作为不可信证据注入 AI 上下文
+- **外部 CI 失败注入**：订阅 `check_run.completed` 与 `workflow_job.completed`，采集其他 CI（如 GitHub Actions、Codecov、lint App）的失败结论、失败步骤和 Checks annotations，并在下一次 PR 审查请求中作为不可信证据注入 AI 上下文；采集记录会按状态过滤、自动清理，并对同一 PR 下相同 `(source, name)` 的失败保留最新记录，避免重复失败证据干扰审查上下文
 - **审查评论标签交互**：审查报告中包含标签复选框，用户可在 GitHub PR 页面直接勾选/取消标签，AI 自动应用或移除对应标签
 - **AI 生成 PR 描述**：Agent 创建 PR 时 AI 自动生成包含元数据标记的 PR 描述，后续审查可精确识别和更新 AI 注入区域
 
