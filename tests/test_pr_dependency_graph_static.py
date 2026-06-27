@@ -365,6 +365,31 @@ def test_static_mermaid_respects_max_nodes(service):
     assert "OMITTED" in graph
 
 
+def test_static_incremental_merges_previous_graph_edges(service):
+    # 增量审查时，历史节点与历史边来自 previous_graph，本轮变更文件提供新内容。
+    code_files = [make_file("src/new.py")]
+    file_contents = {"src/new.py": "from src.existing import X\n"}
+    previous_graph = (
+        'graph TD\n    N1["src/existing.py"]\n    N2["src/other.py"]\n'
+        '    N1 --> N2\n'
+    )
+
+    graph = service._generate_static_mermaid(
+        code_files,
+        file_contents,
+        max_nodes=25,
+        previous_graph=previous_graph,
+    )
+
+    # 历史节点与新节点都应保留
+    assert "src/existing.py" in graph
+    assert "src/other.py" in graph
+    assert "src/new.py" in graph
+    # 历史边 (existing -> other) 必须保留；new -> existing 不会产生，因为
+    # import 仅解析到本轮可用文件，历史节点不参与 import 解析。
+    assert graph.count("-->") >= 1
+
+
 def test_normalize_path_only_removes_leading_current_dir_segments():
     assert PRDependencyGraphService._normalize_path("./test.") == "test."
     assert PRDependencyGraphService._normalize_path("mymodule/./config.py") == (
@@ -386,6 +411,16 @@ def test_escape_mermaid_label_handles_special_characters(service):
     assert "&lt;Widget&gt;" in graph
     assert "&#123;v1&#125;&#124;&#40;&#35;&#37;&#41;'" in graph
     assert '".tsx' not in graph
+
+
+def test_unescape_mermaid_label_reverses_escape():
+    # previous_graph 节点 label 经过 _escape_mermaid_label 转义，
+    # 解析时需要反向还原为原始路径。
+    escaped = "src&#91;v1&#93;/pkg&#123;x&#125;.py"
+    assert (
+        PRDependencyGraphService._unescape_mermaid_label(escaped)
+        == "src[v1]/pkg{x}.py"
+    )
 
 
 def test_normalize_import_handles_empty_and_dot_edges():
