@@ -390,6 +390,34 @@ def test_static_incremental_merges_previous_graph_edges(service):
     assert graph.count("-->") >= 1
 
 
+def test_static_incremental_truncation_prioritizes_connected_nodes(service):
+    # max_nodes 紧张时复用 _select_static_graph_nodes 的「连通优先」策略：
+    # 有依赖边的节点（含历史边端点）优先保留，本轮变更文件若未解析到依赖边
+    # 会被挤出。默认 max_nodes=25 通常不触发，此用例固化边界行为。
+    code_files = [make_file("src/new.py")]
+    file_contents = {"src/new.py": "from src.existing import X\n"}
+    previous_graph = (
+        "graph TD\n"
+        '    N1["src/existing.py"]\n    N2["src/other.py"]\n'
+        '    N3["src/another.py"]\n'
+        "    N1 --> N2\n    N2 --> N3\n"
+    )
+
+    graph = service._generate_static_mermaid(
+        code_files,
+        file_contents,
+        max_nodes=2,
+        previous_graph=previous_graph,
+    )
+
+    # 两个连通历史节点保留，第三个历史节点与无边的本轮文件被截断
+    assert "src/existing.py" in graph
+    assert "src/other.py" in graph
+    assert "src/another.py" not in graph
+    assert "src/new.py" not in graph
+    assert "OMITTED" in graph
+
+
 def test_normalize_path_only_removes_leading_current_dir_segments():
     assert PRDependencyGraphService._normalize_path("./test.") == "test."
     assert PRDependencyGraphService._normalize_path("mymodule/./config.py") == (
@@ -421,6 +449,46 @@ def test_unescape_mermaid_label_reverses_escape():
         PRDependencyGraphService._unescape_mermaid_label(escaped)
         == "src[v1]/pkg{x}.py"
     )
+
+
+def test_parse_previous_graph_returns_empty_for_blank_input():
+    for blank in ("", "   \n\t"):
+        nodes, edges = PRDependencyGraphService._parse_previous_graph(blank)
+        assert nodes == {}
+        assert edges == set()
+
+
+def test_parse_previous_graph_nodes_without_edges():
+    previous_graph = 'graph TD\n    N1["src/a.py"]\n    N2["src/b.py"]\n'
+
+    nodes, edges = PRDependencyGraphService._parse_previous_graph(previous_graph)
+
+    assert nodes == {"N1": "src/a.py", "N2": "src/b.py"}
+    assert edges == set()
+
+
+def test_parse_previous_graph_omitted_marker_does_not_pollute_edges():
+    # 静态生成器裁剪时写入的 OMITTED 展示节点不参与依赖边；解析后真实边应完整
+    # 保留，OMITTED 不应出现在任何边端点。
+    previous_graph = (
+        "graph TD\n"
+        '    N1["src/a.py"]\n    N2["src/b.py"]\n'
+        '    N1 --> N2\n'
+        '    OMITTED["... 3 more dependencies omitted"]\n'
+    )
+
+    _, edges = PRDependencyGraphService._parse_previous_graph(previous_graph)
+
+    assert edges == {("src/a.py", "src/b.py")}
+
+
+def test_parse_previous_graph_unescapes_label_entities():
+    # 节点 label 中的 HTML 实体（_escape_mermaid_label 产物）应被还原为原始路径。
+    previous_graph = 'graph TD\n    N1["src&#91;v1&#93;/pkg&#123;x&#125;.py"]\n'
+
+    nodes, _ = PRDependencyGraphService._parse_previous_graph(previous_graph)
+
+    assert nodes == {"N1": "src[v1]/pkg{x}.py"}
 
 
 def test_normalize_import_handles_empty_and_dot_edges():

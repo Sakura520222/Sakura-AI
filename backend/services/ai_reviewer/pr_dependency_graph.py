@@ -481,17 +481,20 @@ class PRDependencyGraphService:
 
         # 合并历史图节点与边：增量审查只读取本轮变更文件内容，历史依赖通过
         # previous_graph 文本补全，避免为历史文件额外发起 GitHub API 调用。
+        # 历史节点按 previous_graph 中出现顺序追加，保证 max_nodes 截断结果稳定。
         candidate_paths = list(path_aliases.keys())
         if previous_graph:
-            _, historical_edges = self._parse_previous_graph(previous_graph)
+            node_id_to_path, historical_edges = self._parse_previous_graph(
+                previous_graph
+            )
             if historical_edges:
                 edges |= historical_edges
+                endpoints = {path for edge in historical_edges for path in edge}
                 existing_paths = set(candidate_paths)
-                for source, target in historical_edges:
-                    for path in (source, target):
-                        if path not in existing_paths:
-                            candidate_paths.append(path)
-                            existing_paths.add(path)
+                for path in node_id_to_path.values():
+                    if path in endpoints and path not in existing_paths:
+                        candidate_paths.append(path)
+                        existing_paths.add(path)
 
         selected_nodes = self._select_static_graph_nodes(
             candidate_paths,
