@@ -502,7 +502,7 @@ pr_dependency_graph:
     请根据以下 PR 变更信息生成依赖关系图：
 
     PR 标题: {title}
-    变更文件数: {file_count}
+    总文件数: {file_count}  代码文件数: {code_file_count}  本轮分析文件数: {analyzed_file_count}
 
     文件依赖关系:
     {import_context}
