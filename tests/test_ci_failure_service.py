@@ -336,6 +336,59 @@ async def test_fetch_for_review_applies_record_and_annotation_limits_without_tru
 
 
 @pytest.mark.asyncio
+async def test_fetch_dedupes_same_name_keep_latest(ci_store):
+    """同名 CI 失败多次触发（不同 external_id）时，fetch 只保留最新一条。"""
+    service = CIFailureService()
+    base = _utcnow_naive()
+    for index, (summary, offset) in enumerate([("old", 0), ("new", 10)]):
+        ci_store["ci_failures"][index + 1] = CIFailure(
+            id=index + 1,
+            repo_owner="owner",
+            repo_name="repo",
+            repo_full_name="owner/repo",
+            pr_number=7,
+            head_sha="sha1",
+            source="check_run",
+            name="Gitflow",
+            conclusion="failure",
+            output_summary=summary,
+            external_id=str(index),
+            created_at=base + timedelta(seconds=offset),
+        )
+
+    result = await service.fetch_for_review("owner/repo", "sha1")
+
+    assert len(result) == 1
+    assert result[0]["output_summary"] == "new"
+
+
+@pytest.mark.asyncio
+async def test_fetch_keeps_same_name_across_different_sources(ci_store):
+    """同 name 但不同 source（check_run vs workflow_job）不去重，各自保留。"""
+    service = CIFailureService()
+    base = _utcnow_naive()
+    for index, source in enumerate(["check_run", "workflow_job"]):
+        ci_store["ci_failures"][index + 1] = CIFailure(
+            id=index + 1,
+            repo_owner="owner",
+            repo_name="repo",
+            repo_full_name="owner/repo",
+            pr_number=7,
+            head_sha="sha1",
+            source=source,
+            name="Gitflow",
+            conclusion="failure",
+            external_id=str(index),
+            created_at=base + timedelta(seconds=index),
+        )
+
+    result = await service.fetch_for_review("owner/repo", "sha1")
+
+    assert len(result) == 2
+    assert {r["source"] for r in result} == {"check_run", "workflow_job"}
+
+
+@pytest.mark.asyncio
 async def test_record_caps_annotations_at_storage_time(ci_store):
     """record 时即按 max_annotations_per_record 限额存储，原始总数记入 annotations_total。"""
     service = CIFailureService()

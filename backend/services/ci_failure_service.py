@@ -271,21 +271,30 @@ class CIFailureService:
                 rows = list(result.scalars().all())
             if not rows:
                 return []
-            omitted_records = max(0, len(rows) - max_records)
-            shown = rows[:max_records]
+            # 按 (source, name) 去重：同名 CI 失败多次触发（不同 external_id）时
+            # 只保留最新一条（rows 已按 created_at desc 排序，首次出现即最新）
+            seen_keys: set[tuple[str, str]] = set()
+            deduped = []
+            for row in rows:
+                key = (row.source, row.name)
+                if key in seen_keys:
+                    continue
+                seen_keys.add(key)
+                deduped.append(row)
+            omitted_records = max(0, len(deduped) - max_records)
+            shown = deduped[:max_records]
             logger.info(
                 "[ci_failure] fetch_for_review: repo={}, head_sha={!r}, "
-                "total={}, shown={}, names={}".format(
+                "total={}, deduped={}, shown={}, names={}".format(
                     repo_full_name,
                     head_sha[:8],
                     len(rows),
+                    len(deduped),
                     len(shown),
                     [r.name for r in shown],
                 )
             )
-            return [
-                self._row_to_dict(row, omitted_records) for row in shown
-            ]
+            return [self._row_to_dict(row, omitted_records) for row in shown]
         except Exception as exc:
             logger.debug("CIFailureService.fetch_for_review 失败: {}", exc)
             return []
