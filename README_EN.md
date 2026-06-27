@@ -8,7 +8,7 @@
 
 **English** | [中文](README.md)
 
-[![Version](https://img.shields.io/badge/Version-2.12.2-blue.svg)](https://github.com/Sakura520222/Sakura-AI-Reviewer/releases)
+[![Version](https://img.shields.io/badge/Version-2.13.0-blue.svg)](https://github.com/Sakura520222/Sakura-AI-Reviewer/releases)
 [![Python](https://img.shields.io/badge/Python-3.11+-blue.svg)](https://www.python.org/)
 [![FastAPI](https://img.shields.io/badge/FastAPI-Latest-green.svg)](https://fastapi.tiangolo.com/)
 [![License](https://img.shields.io/badge/License-AGPLv3-yellow.svg)](LICENSE)
@@ -32,13 +32,6 @@
 ---
 
 ## ✨ Core Features
-
-### 2.12.2 Highlights
-
-- **Tagged Review Protocol**: The main PR reviewer now adopts a strict line-oriented `<SAKURA_REVIEW>` envelope protocol as its output contract, replacing the legacy JSON-block / emoji / score-regex parsing paths; envelope validation (field order and uniqueness, version and enums, score range) is enforced with severity score caps (critical ≤ 3, major ≤ 6); an invalid first response triggers a single format-only repair retry at temperature 0 without tools, and a second failure degrades to a safe comment with no score or findings to block accidental approvals and erroneous low-score rejections. See the [Review Protocol spec](docs/PR_REVIEW_PROTOCOL.md).
-- **Runtime AI Credential Refresh**: AIReviewer / IssueAnalyzer / SakuraMemoryService gain `_refresh_ai_client`, which validates and refreshes AI client credentials at runtime so WebUI config changes take effect immediately; Web Search and Fetch URL tools are now loaded dynamically through a unified ToolHandler, reducing redundant initialization.
-- **Agent Team Workspace & Live View Enhancements**: The WebUI exposes worktree list / detail / delete endpoints (with file count, size, and mtime), and task list/detail pages now show branch info and worktree counts; Live View switches to backend-driven `can_send_prompt` decisions with initial input display, and supports resumable follow-ups for completed / waiting_human terminal tasks; PR review feedback adds a two-phase branch + source-PR fallback match.
-- **Payment Robustness**: Payment gateway webhooks now operate directly off the event order number, `cancel_expired_order` is idempotent (a missing order is treated as success), and the transaction is committed only when cancellation succeeds.
 
 ### Review Capabilities
 
