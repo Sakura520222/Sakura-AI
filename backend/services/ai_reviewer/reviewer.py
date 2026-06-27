@@ -5,6 +5,7 @@
 """
 
 import json
+import re
 from typing import Any, Callable, Coroutine, Dict, List, Optional
 
 from loguru import logger
@@ -92,6 +93,24 @@ def _coerce_tool_call_to_dict(tc: Any) -> Dict[str, Any]:
             "id": tc.get("id", ""),
             "type": tc.get("type") or "function",
             "function": {"name": str(function), "arguments": ""},
+        }
+    if isinstance(tc, str):
+        # Checkpoint 经 json.dumps(default=str) 持久化后，SDK tool_call 对象会变成
+        # 其 repr 字符串（如 "ChatCompletionMessageToolCall(id='call_x', ...)"）。
+        # 尽力从中恢复 id 与 function.name，避免与后续 tool 消息的 tool_call_id
+        # 失配导致增量审查请求被上游拒绝（400）。无法解析时回退空 id。
+        recovered_id = ""
+        recovered_name = ""
+        id_match = re.search(r"\bid\s*=\s*['\"]([^'\"]*)['\"]", tc)
+        if id_match:
+            recovered_id = id_match.group(1)
+        name_match = re.search(r"\bname\s*=\s*['\"]([^'\"]*)['\"]", tc)
+        if name_match:
+            recovered_name = name_match.group(1)
+        return {
+            "id": recovered_id,
+            "type": "function",
+            "function": {"name": recovered_name, "arguments": ""},
         }
     function = getattr(tc, "function", None)
     return {

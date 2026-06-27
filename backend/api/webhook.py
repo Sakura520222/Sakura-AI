@@ -536,6 +536,43 @@ async def handle_pull_request_event(
             )
             return JSONResponse(content={"status": "skipped", "reason": "PR not open"})
 
+        # Synchronize 去重：在配额扣费前按 delivery_id 去重，避免 GitHub 重试投递
+        # 导致同一增量被重复扣费（enqueue_from_webhook 内部也会去重，但那发生在
+        # check_and_consume_quota 之后）。/ Dedup synchronize by delivery_id BEFORE
+        # charging quota so GitHub retries don't double-bill.
+        if action == "synchronize" and delivery_id:
+            try:
+                from backend.services.pr_review_incremental_queue import (
+                    PRReviewIncrementalQueueService,
+                )
+
+                duplicate = await PRReviewIncrementalQueueService().find_by_delivery_id(
+                    delivery_id
+                )
+                if duplicate is not None:
+                    logger.info(
+                        "[webhook] synchronize 重复投递 delivery_id={} 已入队"
+                        "（status={}），跳过且不重复扣费: {}#{}",
+                        delivery_id,
+                        duplicate.status,
+                        pr_info["repo_full_name"],
+                        pr_info["pr_number"],
+                    )
+                    return JSONResponse(
+                        content={
+                            "status": "deduplicated",
+                            "action": "synchronize",
+                            "pr": f"{pr_info['repo_full_name']}#{pr_info['pr_number']}",
+                            "head_sha": pr_info.get("head_sha")
+                            or pr_info.get("after"),
+                        }
+                    )
+            except Exception as e:
+                logger.warning(
+                    "[webhook] synchronize delivery_id 去重检查失败（继续正常流程）: {}",
+                    e,
+                )
+
         # Telegram 权限检查
         notification_sender = get_notification_sender()
         async with get_async_session() as session:

@@ -789,7 +789,9 @@ class PRDependencyGraphService:
         user_template = depgraph_cfg.get(
             "user_template",
             "请根据以下 PR 变更信息生成依赖关系图：\n\n"
-            "PR 标题: {title}\n变更文件数: {file_count}\n\n"
+            "PR 标题: {title}\n"
+            "总文件数: {file_count}  代码文件数: {code_file_count}  "
+            "本轮分析文件数: {analyzed_file_count}\n\n"
             "文件依赖关系:\n{import_context}",
         )
 
