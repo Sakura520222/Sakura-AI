@@ -53,7 +53,7 @@
 - **Smart Review Approval**: Automatically decides APPROVE / REQUEST_CHANGES / COMMENT based on AI scores
 - **Strict Review Output Contract**: Reviewer output is governed by a strict envelope protocol with field validation and severity score caps; invalid responses are auto-repaired or safely degraded to prevent accidental approvals and erroneous low-score rejections
 - **PR Change Summary**: AI auto-generates PR change summaries with incremental updates when the PR is updated
-- **PR Dependency Graph**: Supports both AI analysis and static import analysis modes to generate Mermaid-format visual dependency graphs
+- **PR Dependency Graph**: Supports both AI analysis and static import analysis modes to generate Mermaid-format visual dependency graphs; incremental reviews build on the previous graph, preserving historical dependency nodes and edges
 - **Token Consumption Tracking**: Real-time tracking of token usage and estimated costs across all AI API calls during review
 - **One-click Revoke**: Admins can use `/revoke` to instantly withdraw all AI comments and reviews
 - **Auxiliary Model Support**: Independently configure lightweight models for summarization, label recommendation, and other tasks to reduce inference costs
