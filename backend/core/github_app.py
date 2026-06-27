@@ -1202,6 +1202,95 @@ class GitHubAppClient:
             )
             return None
 
+    def get_check_run_annotations(
+        self,
+        repo_owner: str,
+        repo_name: str,
+        check_run_id: str,
+    ) -> list:
+        """获取指定 Check Run 的文件级 annotations。
+
+        用于外部 CI 失败详情采集（check_run.completed 后主动拉取结构化标注）。
+        失败时返回空列表，调用方安全降级（不写入 annotations 字段）。
+
+        Args:
+            repo_owner: 仓库所有者
+            repo_name: 仓库名称
+            check_run_id: Check Run id（字符串形式）
+
+        Returns:
+            annotation dict 列表：[{"path", "start_line", "end_line",
+            "annotation_level", "title", "message", "raw_details"}, ...]
+        """
+        try:
+            client = self.get_repo_client(repo_owner, repo_name)
+            if not client:
+                return []
+            repo = client.get_repo(f"{repo_owner}/{repo_name}")
+            check_run = repo.get_check_run(int(check_run_id))
+            return [
+                {
+                    "path": getattr(a, "path", ""),
+                    "start_line": getattr(a, "start_line", None),
+                    "end_line": getattr(a, "end_line", None),
+                    "annotation_level": getattr(a, "annotation_level", ""),
+                    "title": getattr(a, "title", ""),
+                    "message": getattr(a, "message", ""),
+                    "raw_details": getattr(a, "raw_details", ""),
+                }
+                for a in check_run.get_annotations()
+            ]
+        except Exception as e:
+            logger.warning(
+                f"获取 Check Run annotations 失败 "
+                f"{repo_owner}/{repo_name} check_run_id={check_run_id}: {e}"
+            )
+            return []
+
+    def get_pr_number_for_commit(
+        self,
+        repo_owner: str,
+        repo_name: str,
+        head_sha: str,
+    ) -> Optional[int]:
+        """GET /repos/{o}/{r}/commits/{sha}/pulls 兜底封装。
+
+        CI 失败事件三层降级的第三层：当 check_run.pull_requests 为空且映射表
+        未命中时（典型 Fork 场景），调此端点解 pr_number。PyGithub 无直接 API，
+        用 requester 调 REST。失败返回 None（调用方忽略该 CI 事件）。
+
+        Args:
+            repo_owner: 仓库所有者
+            repo_name: 仓库名称
+            head_sha: commit SHA
+
+        Returns:
+            关联的 PR 编号；无关联或失败返回 None。
+        """
+        try:
+            client = self.get_repo_client(repo_owner, repo_name)
+            if not client:
+                return None
+            # PyGithub 无 commit→pulls 的公开封装，用内部 requester 调 REST。
+            # _requester 为私有 API，PyGithub 升级时需验证兼容性。
+            # requestJsonAndCheck 返回 (headers, data) 两元组（data 已解析为 list/dict），
+            # 不同于 requestJson 的 (status, headers, body:str) 三元组。
+            _, data = client._requester.requestJsonAndCheck(
+                "GET",
+                f"/repos/{repo_owner}/{repo_name}/commits/{head_sha}/pulls",
+            )
+            if isinstance(data, list):
+                for pr in data:
+                    number = pr.get("number") if isinstance(pr, dict) else None
+                    if number is not None:
+                        return int(number)
+            return None
+        except Exception as e:
+            logger.debug(
+                f"commit pulls 兜底失败 {repo_owner}/{repo_name}@{head_sha}: {e}"
+            )
+            return None
+
     def get_issue(self, repo_owner: str, repo_name: str, issue_number: int):
         """获取 Issue 详情"""
         client = self.get_repo_client(repo_owner, repo_name)

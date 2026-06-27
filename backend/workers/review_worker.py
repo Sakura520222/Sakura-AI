@@ -187,6 +187,41 @@ class ReviewWorker:
         """Generate unique task key: owner/repo#pr_number"""
         return f"{pr_info['repo_full_name']}#{pr_info['pr_number']}"
 
+    async def _inject_external_ci_failures(
+        self,
+        context: Dict[str, Any],
+        pr_info: Dict[str, Any],
+        task_id: str,
+    ) -> None:
+        """注入外部 CI 失败上下文（失败不影响主审查流程）。
+
+        CI 失败由 check_run/workflow_job webhook 事件驱动预先采集到数据库；
+        这里在审查启动时按 repo + head_sha 读取快照并放入 context。
+        """
+        try:
+            from backend.services.ci_failure_service import CIFailureService
+
+            # 增量审查（synchronize）时 after 是新 head，优先取以读取新提交的 CI 失败；
+            # 首次审查（opened）无 after，回退到 head_sha。
+            head_sha = pr_info.get("after") or pr_info.get("head_sha")
+            if not head_sha:
+                return
+            ci_failures = await CIFailureService().fetch_for_review(
+                pr_info["repo_full_name"], head_sha
+            )
+            if ci_failures:
+                context["external_ci_failures"] = ci_failures
+                logger.info(
+                    "[{}] 已注入 {} 条外部 CI 失败记录",
+                    task_id,
+                    len(ci_failures),
+                )
+        except Exception as e:
+            logger.warning(
+                f"[{task_id}] 外部 CI 失败注入失败（不影响审查）: {e}",
+                exc_info=True,
+            )
+
     def _register_task(self, task_key: str, force_new: bool = False) -> asyncio.Event:
         """Register a review task and return its cancel event.
 
@@ -638,6 +673,9 @@ class ReviewWorker:
                         f"[{task_id}] .sakura/ 记忆上下文注入失败（不影响审查）: {e}",
                         exc_info=True,
                     )
+
+                # 6.3 注入外部 CI 失败（由 check_run/workflow_job webhook 预先采集）
+                await self._inject_external_ci_failures(context, pr_info, task_id)
 
                 # 6.5 解析并注入 Issue 上下文（如果启用）
                 if (

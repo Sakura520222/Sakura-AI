@@ -131,6 +131,18 @@ context_enhancement:
     default_branch_count: 20    # 默认返回分支数量
     default_commit_count: 10    # 默认返回提交数量
 
+  # 外部 CI 失败注入配置 / External CI failure injection config
+  # 由 check_run.completed / workflow_job.completed webhook 采集，审查时注入上下文
+  ci_failure_injection:
+    # 是否启用 / Enable
+    enabled: true
+    # 失败记录保留天数（TTL）/ Retention days
+    retention_days: 7
+    # 单次审查最多注入的失败记录数 / Max failure records per review
+    max_records: 10
+    # 单条失败最多展示的 annotations 数（超出部分计数提示，不截断文本）/ Max annotations per failure
+    max_annotations_per_record: 8
+
   # .sakura/ 记忆系统配置 / .sakura/ memory system config
   sakura_memory:
     # 是否启用记忆系统 / Enable memory system

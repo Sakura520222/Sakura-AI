@@ -60,6 +60,7 @@
 - **Inline Comments Toggle**: Control whether inline comments are posted on PR diffs via WebUI config `enable_inline_comments`, reducing review noise
 - **Controlled Auto Review**: Use WebUI config `enable_auto_review` to control whether PR opened/synchronize/reopened events enqueue reviews automatically while keeping command and manual triggers available
 - **Check Runs Progress Visualization**: Maps the review lifecycle (queued, code indexing, PR summary, AI review, report generation, completed, failed, cancelled, skipped) to GitHub Check Runs and shows progress in real time on the PR Checks panel; conclusion uses display-only semantics (only a review error yields failure, never blocking merges)
+- **External CI Failure Injection**: Subscribes to `check_run.completed` and `workflow_job.completed`, collects failure conclusions, failed steps, and Checks annotations from other CI systems (such as GitHub Actions, Codecov, and lint Apps), then injects them as untrusted evidence into the next PR review request
 - **Review Comment Label Interaction**: Review reports include label checkboxes — users can check/uncheck labels directly on the GitHub PR page, and the AI automatically applies or removes corresponding labels
 - **AI-generated PR Descriptions**: When agents create PRs, AI auto-generates descriptions with metadata markers, allowing subsequent reviews to precisely identify and update AI-injected areas
 
@@ -234,9 +235,9 @@ cd Sakura-AI-Reviewer
 
 1. Go to [GitHub Apps settings](https://github.com/settings/apps) and click **New GitHub App**
 2. Fill in the name and Homepage URL
-3. **Repository permissions**: Pull requests `Read and write`, Contents `Read and write`, Issues `Read and write` (optional)
+3. **Repository permissions**: Pull requests `Read and write`, Contents `Read and write`, Checks `Read and write`, Actions `Read`, Issues `Read and write` (optional)
 4. **Webhook URL**: `https://your-domain.com:8000/api/webhook/github`, enter Webhook secret
-5. **Webhook events**: Check Pull requests, Pull request reviews, Issues (optional), Issue comments (optional)
+5. **Webhook events**: Check Pull requests, Pull request reviews, Check runs, Workflow jobs, Issues (optional), Issue comments (optional)
 6. After creation, click **Generate a private key** at the bottom of the App page, download the `.pem` file (paste the full private key content in Setup Wizard)
 7. Click **Install App** on the left sidebar, select the repositories to enable review
 
@@ -322,6 +323,7 @@ Global configuration follows this priority: **Database app_config (WebUI) > Sett
 - **Auxiliary Model**: Set `summary_model`, `summary_api_base`, `summary_api_key` in WebUI configuration for lightweight tasks like summarization and label recommendation; auto-falls back to main model if left empty
 - **PR Auto Review**: `enable_auto_review` in WebUI configuration controls whether PR webhook events automatically trigger reviews; command and manual triggers remain available when disabled
 - **Check Runs Visualization**: `enable_check_runs` in WebUI configuration controls whether review progress is synced to the GitHub Checks panel (enabled by default; requires the GitHub App to be granted `checks:write` permission)
+- **External CI Failure Injection**: `context_enhancement.ci_failure_injection` in `config/strategies.yaml` controls whether external CI failures are injected, how long records are retained, the maximum number of failure records per review, and the maximum annotations per failure; this feature requires the GitHub App to subscribe to `check_run` / `workflow_job` webhooks and have Checks / Actions read permissions
 - **AI API Timeout**: `ai_api_timeout_seconds` controls the per-request timeout, and `ai_api_total_timeout_seconds` controls the maximum total duration of one AI call retry loop
 - **Security & MFA**: The WebUI Security Center can enforce MFA globally or per user, reset TOTP/recovery codes, delete Passkeys, and record security audit events; users can enable TOTP, generate recovery codes, and register Passkeys/WebAuthn in personal settings; supports MFA failure lockout (`mfa_lockout_threshold` / `mfa_lockout_duration_minutes`), API Passkey second-factor authentication, extra `passkeys_allowed_origins`, and the `mobile_oauth_allowed_redirect_uris` mobile OAuth redirect allowlist
 - **Review Strategy**: Edit `config/strategies.yaml`, supports quick/standard/deep/large-PR four strategies
