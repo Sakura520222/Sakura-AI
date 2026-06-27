@@ -8,7 +8,7 @@
 
 [English](README_EN.md) | **中文**
 
-[![Version](https://img.shields.io/badge/Version-2.12.2-blue.svg)](https://github.com/Sakura520222/Sakura-AI-Reviewer/releases)
+[![Version](https://img.shields.io/badge/Version-2.13.0-blue.svg)](https://github.com/Sakura520222/Sakura-AI-Reviewer/releases)
 [![Python](https://img.shields.io/badge/Python-3.11+-blue.svg)](https://www.python.org/)
 [![FastAPI](https://img.shields.io/badge/FastAPI-Latest-green.svg)](https://fastapi.tiangolo.com/)
 [![License](https://img.shields.io/badge/License-AGPLv3-yellow.svg)](LICENSE)
@@ -32,13 +32,6 @@
 ---
 
 ## ✨ 核心特性
-
-### 2.12.2 更新亮点
-
-- **标签化审查协议**：主 PR 审查器改用严格的行式 `<SAKURA_REVIEW>` 信封协议作为输出契约，统一替换旧的 JSON 块 / emoji / 分数正则解析；新增信封校验（字段顺序与唯一性、版本与枚举、分数范围）并设严重等级分数上限（critical ≤ 3、major ≤ 6）；首次响应无效时在 temperature 0、无工具条件下做一次格式修复重试，二次失败则降级为不带分数与发现的安全评论，避免误批准或误低分拒绝。详见 [审查协议规范](docs/PR_REVIEW_PROTOCOL.md)。
-- **AI 凭证运行时刷新**：AIReviewer / IssueAnalyzer / SakuraMemoryService 新增 `_refresh_ai_client`，运行时自动校验并刷新 AI 客户端凭证，WebUI 配置变更即时生效；Web Search 与 Fetch URL 工具改为通过 ToolHandler 统一动态加载，减少冗余初始化。
-- **Agent Team 工作区与 Live View 增强**：WebUI 暴露 worktree 列表 / 详情 / 删除接口（含文件数、体积、修改时间），任务列表与详情页展示分支信息和 worktree 数量；Live View 改为后端驱动的 `can_send_prompt` 判定并展示初始输入，支持对 completed / waiting_human 终态任务的可恢复跟进；PR 审查反馈新增 branch + 源 PR 两阶段匹配。
-- **支付链路健壮性**：各支付网关 webhook 直接基于事件订单号处理，`cancel_expired_order` 幂等化（订单不存在视为成功），仅在取消成功时提交事务。
 
 ### 审查能力
 
