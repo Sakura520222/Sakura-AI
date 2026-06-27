@@ -104,6 +104,80 @@ INSERT IGNORE INTO app_config (key_name, key_value, description) VALUES
 ('max_concurrent_issues', '3', '最大并发 Issue 分析数量'),
 ('enable_inline_comments', 'true', '是否启用行内评论');
 
+-- 创建 PR 增量审查队列表（审查运行期间收到的 synchronize 增量）
+CREATE TABLE IF NOT EXISTS pr_review_incremental_queue (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    repo_owner VARCHAR(100) NOT NULL,
+    repo_name VARCHAR(255) NOT NULL,
+    repo_full_name VARCHAR(255) NOT NULL,
+    pr_number INT NOT NULL,
+    base_sha VARCHAR(64) NULL,
+    head_sha VARCHAR(64) NOT NULL,
+    delivery_id VARCHAR(128) NULL,
+    status VARCHAR(50) NOT NULL DEFAULT 'pending',
+    active_review_id INT NULL,
+    consumed_review_id INT NULL,
+    consumed_session_id INT NULL,
+    consumed_message_id INT NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL,
+    consumed_at TIMESTAMP NULL,
+    FOREIGN KEY (active_review_id) REFERENCES pr_reviews(id) ON DELETE SET NULL,
+    FOREIGN KEY (consumed_review_id) REFERENCES pr_reviews(id) ON DELETE SET NULL,
+    INDEX idx_pr_review_incremental_queue_repo_owner (repo_owner),
+    INDEX idx_pr_review_incremental_queue_repo_name (repo_name),
+    INDEX idx_pr_review_incremental_queue_repo_full_name (repo_full_name),
+    INDEX idx_pr_review_incremental_queue_pr_number (pr_number),
+    INDEX idx_pr_review_incremental_queue_head_sha (head_sha),
+    INDEX idx_pr_review_incremental_queue_delivery_id (delivery_id),
+    INDEX idx_pr_review_incremental_queue_status (status),
+    INDEX idx_pr_review_incremental_queue_created_at (created_at)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- 创建外部 CI 失败记录表（check_run/workflow_job webhook 预采集）
+CREATE TABLE IF NOT EXISTS ci_failures (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    repo_owner VARCHAR(100) NOT NULL,
+    repo_name VARCHAR(255) NOT NULL,
+    repo_full_name VARCHAR(255) NOT NULL,
+    pr_number INT NOT NULL,
+    head_sha VARCHAR(64) NOT NULL,
+    source VARCHAR(32) NOT NULL,
+    name VARCHAR(255) NOT NULL,
+    conclusion VARCHAR(32) NOT NULL,
+    output_title VARCHAR(512) NULL,
+    output_summary TEXT NULL,
+    output_text TEXT NULL,
+    failed_steps_json TEXT NULL,
+    annotations_json TEXT NULL,
+    annotations_total INT NOT NULL DEFAULT 0,
+    details_url VARCHAR(1024) NULL,
+    external_id VARCHAR(64) NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL,
+    UNIQUE KEY uq_ci_failures_dedup (repo_full_name, head_sha, source, external_id),
+    INDEX idx_ci_failures_repo_owner (repo_owner),
+    INDEX idx_ci_failures_repo_name (repo_name),
+    INDEX idx_ci_failures_repo_full_name (repo_full_name),
+    INDEX idx_ci_failures_pr_number (pr_number),
+    INDEX idx_ci_failures_head_sha (head_sha),
+    INDEX idx_ci_failures_source (source),
+    INDEX idx_ci_failures_external_id (external_id),
+    INDEX idx_ci_failures_created_at (created_at)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- 创建 head_sha → pr_number 映射缓存表（CI webhook 三层降级兜底）
+CREATE TABLE IF NOT EXISTS head_sha_pr_map (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    repo_full_name VARCHAR(255) NOT NULL,
+    head_sha VARCHAR(64) NOT NULL,
+    pr_number INT NOT NULL,
+    repo_owner VARCHAR(100) NOT NULL,
+    repo_name VARCHAR(255) NOT NULL,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP NOT NULL,
+    UNIQUE KEY uq_head_sha_pr_map (repo_full_name, head_sha),
+    INDEX idx_head_sha_pr_map_repo_full_name (repo_full_name),
+    INDEX idx_head_sha_pr_map_head_sha (head_sha)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
 -- 创建 Sakura 记忆系统状态表
 CREATE TABLE IF NOT EXISTS sakura_memory_states (
     id INT AUTO_INCREMENT PRIMARY KEY,

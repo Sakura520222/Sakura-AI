@@ -155,6 +155,24 @@ class PRReviewIncrementalQueueService:
             )
             return item
 
+    async def find_by_delivery_id(
+        self, delivery_id: str | None
+    ) -> PRReviewIncrementalQueue | None:
+        """按 delivery_id 查找已入队的增量（用于配额扣费前去重）。
+
+        GitHub 会重试 webhook 投递；同一 delivery_id 若已入队（任意状态），
+        重试不应再次扣费或重复入队。
+        """
+        if not delivery_id:
+            return None
+        async with db_module.async_session() as db:
+            result = await db.execute(
+                select(PRReviewIncrementalQueue).where(
+                    PRReviewIncrementalQueue.delivery_id == delivery_id
+                )
+            )
+            return result.scalars().first()
+
     async def consume_pending_for_review(
         self,
         *,
@@ -284,6 +302,42 @@ class PRReviewIncrementalQueueService:
                 pending[-1].head_sha,
                 session_id,
             )
+
+    async def mark_skipped_for_pr(
+        self, repo_full_name: str, pr_number: int
+    ) -> int:
+        """将 PR 的所有 pending 增量标记为 skipped（终态，无需 review 行）。
+
+        用于 drained synchronize 任务命中 should_skip（如纯文档增量）时收尾：
+        避免队列行与新 head 的 queued check run 永久残留 pending。区别于
+        cancel_pending_for_pr（PR 关闭语义）与 mark_consumed（已挂载到 review）。
+
+        Returns:
+            被标记为 skipped 的增量条数
+        """
+        async with db_module.async_session() as db:
+            result = await db.execute(
+                select(PRReviewIncrementalQueue).where(
+                    PRReviewIncrementalQueue.repo_full_name == repo_full_name,
+                    PRReviewIncrementalQueue.pr_number == pr_number,
+                    PRReviewIncrementalQueue.status == "pending",
+                )
+            )
+            pending = list(result.scalars().all())
+            if not pending:
+                return 0
+            consumed_at = datetime.utcnow()
+            for item in pending:
+                item.status = "skipped"
+                item.consumed_at = consumed_at
+            await db.commit()
+            logger.info(
+                "已跳过 {} 条 PR 增量队列（drain skip）: {}#{}",
+                len(pending),
+                repo_full_name,
+                pr_number,
+            )
+            return len(pending)
 
     async def cancel_pending_for_pr(
         self,

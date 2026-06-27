@@ -227,8 +227,13 @@ class IssueAnalyzer:
         available_labels: List[str],
         collaborators: List[str],
         comments: List[Dict[str, Any]] | None = None,
+        project_knowledge: str = "",
     ) -> str:
-        """构建用户消息"""
+        """构建用户消息
+
+        project_knowledge（.sakura/ 项目知识）放在 END 标记之前，作为不可信证据的
+        一部分，避免仓库侧可写文档在标记外注入指令覆盖分析协议或语言规则。
+        """
         parts = [
             "=== BEGIN UNTRUSTED ISSUE EVIDENCE ===",
             f"## Issue #{issue_info.get('issue_number', '?')}",
@@ -262,6 +267,11 @@ class IssueAnalyzer:
                 else:
                     parts.append(f"\n### @{author}\n{body_text}")
 
+        # .sakura/ 项目知识作为不可信证据放入边界内，避免仓库侧可写文档在标记外
+        # 注入指令覆盖分析协议 / .sakura knowledge goes inside the untrusted boundary
+        # so writable repo docs can't inject instructions outside the marked evidence.
+        if project_knowledge:
+            parts.append(project_knowledge)
         parts.append("=== END UNTRUSTED ISSUE EVIDENCE ===")
         return "\n".join(parts)
 
@@ -446,18 +456,10 @@ class IssueAnalyzer:
             except Exception as e:
                 logger.warning("获取 Issue 评论失败（不影响分析）: {}", e)
 
-        # 构建提示词
-        system_prompt = self._build_system_prompt(
-            repo_full_name,
-            available_labels,
-            issue_info.get("issue_number"),
-            output_language=output_language or "",
-        )
-        user_message = self._build_user_message(
-            issue_info, available_labels, collaborators, comments
-        )
-
-        # 注入 .sakura/ 记忆上下文 / Inject .sakura/ memory context
+        # 注入 .sakura/ 记忆上下文（先获取，再放入用户消息的 untrusted 边界内）
+        # / Inject .sakura/ memory context first so it lands inside the untrusted
+        # evidence boundary of the user message (defense against writable repo docs).
+        sakura_section = ""
         try:
             from backend.services.sakura_memory_service import get_sakura_memory_service
 
@@ -481,9 +483,23 @@ class IssueAnalyzer:
                         sakura_section += f"\n### 项目概述\n{sakura_md}"
                     if memory_md:
                         sakura_section += f"\n\n### 项目记忆\n{memory_md}"
-                    user_message += sakura_section
         except Exception as e:
             logger.warning(".sakura/ 记忆上下文注入失败（不影响分析）: {}", e)
+
+        # 构建提示词
+        system_prompt = self._build_system_prompt(
+            repo_full_name,
+            available_labels,
+            issue_info.get("issue_number"),
+            output_language=output_language or "",
+        )
+        user_message = self._build_user_message(
+            issue_info,
+            available_labels,
+            collaborators,
+            comments,
+            project_knowledge=sakura_section,
+        )
 
         # 初始化消息列表
         messages = [
