@@ -161,6 +161,7 @@ class PRDependencyGraphService:
                 analysis_files,
                 file_contents,
                 max_nodes=settings.pr_dependency_graph_max_nodes,
+                previous_graph=previous_graph,
             )
             mermaid_graph = self._validate_mermaid(mermaid_graph)
             if not mermaid_graph:
@@ -441,8 +442,13 @@ class PRDependencyGraphService:
         code_files: List[PRFileInfo],
         file_contents: Dict[str, str],
         max_nodes: int,
+        previous_graph: str | None = None,
     ) -> str:
-        """基于 import 关系静态生成 Mermaid 依赖图。"""
+        """基于 import 关系静态生成 Mermaid 依赖图。
+
+        增量审查时传入 previous_graph，合并历史节点与依赖边，使静态图覆盖
+        全量 PR 依赖而非仅本轮变更文件。
+        """
         available_files = [
             f
             for f in code_files
@@ -473,8 +479,25 @@ class PRDependencyGraphService:
                 if target_path and target_path != source_path:
                     edges.add((source_path, target_path))
 
+        # 合并历史图节点与边：增量审查只读取本轮变更文件内容，历史依赖通过
+        # previous_graph 文本补全，避免为历史文件额外发起 GitHub API 调用。
+        # 历史节点按 previous_graph 中出现顺序追加，保证 max_nodes 截断结果稳定。
+        candidate_paths = list(path_aliases.keys())
+        if previous_graph:
+            node_id_to_path, historical_edges = self._parse_previous_graph(
+                previous_graph
+            )
+            if historical_edges:
+                edges |= historical_edges
+                endpoints = {path for edge in historical_edges for path in edge}
+                existing_paths = set(candidate_paths)
+                for path in node_id_to_path.values():
+                    if path in endpoints and path not in existing_paths:
+                        candidate_paths.append(path)
+                        existing_paths.add(path)
+
         selected_nodes = self._select_static_graph_nodes(
-            list(path_aliases.keys()),
+            candidate_paths,
             edges,
             max_nodes,
         )
@@ -684,6 +707,62 @@ class PRDependencyGraphService:
         }
         normalized = label.replace("\\", "/")
         return "".join(replacements.get(char, char) for char in normalized)
+
+    @staticmethod
+    def _unescape_mermaid_label(label: str) -> str:
+        """反转义 Mermaid 节点 label（_escape_mermaid_label 的逆操作）。
+
+        '"' 与 '\\' 的转义不可逆，还原时保留字面量。用于从 previous_graph
+        还原节点 label 为原始文件路径。
+        """
+        reverse = {
+            "&amp;": "&",
+            "&lt;": "<",
+            "&gt;": ">",
+            "&#123;": "{",
+            "&#125;": "}",
+            "&#91;": "[",
+            "&#93;": "]",
+            "&#124;": "|",
+            "&#40;": "(",
+            "&#41;": ")",
+            "&#35;": "#",
+            "&#37;": "%",
+        }
+        return re.sub(
+            r"&#?\w+;",
+            lambda match: reverse.get(match.group(0), match.group(0)),
+            label,
+        )
+
+    @classmethod
+    def _parse_previous_graph(
+        cls, previous_graph: str
+    ) -> tuple[Dict[str, str], Set[tuple[str, str]]]:
+        """解析历史 Mermaid 图的节点定义与依赖边。
+
+        仅识别静态/AI 生成图常见的 ``N1["label"]`` 节点定义与 ``N1 --> N2`` 边，
+        用于增量审查时合并历史依赖上下文。label 经 _unescape_mermaid_label 还原，
+        路径经 _normalize_path 统一分隔符。
+
+        Returns:
+            (node_id -> normalized_path 映射, 归一化后的边集合)
+        """
+        node_id_to_path: Dict[str, str] = {}
+        for match in re.finditer(r'(\w+)\s*\["([^\]]*)"\]', previous_graph):
+            node_id, label = match.group(1), match.group(2)
+            node_id_to_path[node_id] = cls._normalize_path(
+                cls._unescape_mermaid_label(label)
+            )
+
+        edges: Set[tuple[str, str]] = set()
+        for match in re.finditer(r"(\w+)\s*-->\s*(\w+)", previous_graph):
+            source = node_id_to_path.get(match.group(1))
+            target = node_id_to_path.get(match.group(2))
+            if source and target and source != target:
+                edges.add((source, target))
+
+        return node_id_to_path, edges
 
     @staticmethod
     def _build_prompts(
