@@ -55,7 +55,9 @@ def _fake_settings():
     )
 
 
-def _passing_outcome(*, modified_files=None, iterations=1, prompt_tokens=100, completion_tokens=50):
+def _passing_outcome(
+    *, modified_files=None, iterations=1, prompt_tokens=100, completion_tokens=50
+):
     files = modified_files or ["backend/example.py"]
     return IterationOutcome(
         success=True,
@@ -119,7 +121,9 @@ def _make_task(**overrides):
 
 
 @pytest.mark.asyncio
-async def test_agent_worker_leaves_draft_pr_opened_without_submitting_review(monkeypatch, tmp_path):
+async def test_agent_worker_leaves_draft_pr_opened_without_submitting_review(
+    monkeypatch, tmp_path
+):
     task = _make_task()
     updates = []
     saved_iterations = []
@@ -130,7 +134,16 @@ async def test_agent_worker_leaves_draft_pr_opened_without_submitting_review(mon
     class FakeGitWorkspaceService:
         workspace_service = SimpleNamespace()  # IterationLoopService 需要此属性
 
-        async def prepare_workspace(self, repo_owner, repo_name, issue_number, source_id, base_branch, task_id, source_type=None):
+        async def prepare_workspace(
+            self,
+            repo_owner,
+            repo_name,
+            issue_number,
+            source_id,
+            base_branch,
+            task_id,
+            source_type=None,
+        ):
             assert task_id == 101
             return SimpleNamespace(
                 branch_name="feature/agent-101",
@@ -198,16 +211,30 @@ async def test_agent_worker_leaves_draft_pr_opened_without_submitting_review(mon
     monkeypatch.setattr(worker_module, "load_skills_context", _fake_skills_context)
     monkeypatch.setattr(worker_module, "load_sakura_memory", _fake_sakura_memory)
     monkeypatch.setattr(worker_module, "get_settings", _fake_settings)
-    monkeypatch.setattr(worker_module, "AgentTeamGitWorkspaceService", FakeGitWorkspaceService)
+    monkeypatch.setattr(
+        worker_module, "AgentTeamGitWorkspaceService", FakeGitWorkspaceService
+    )
     monkeypatch.setattr(worker_module, "IterationLoopService", FakeLoopService)
     monkeypatch.setattr(worker_module, "AgentTeamPRService", FakePRService)
     monkeypatch.setattr(worker_module.AgentTeamWorker, "_load_task", fake_load_task)
     monkeypatch.setattr(worker_module.AgentTeamWorker, "_update_task", fake_update_task)
-    monkeypatch.setattr(worker_module.AgentTeamWorker, "_save_iteration", fake_save_iteration)
-    monkeypatch.setattr(worker_module.AgentTeamWorker, "_expire_pending_prompts", _fake_expire_pending_prompts)
-    monkeypatch.setattr(worker_module.AgentTeamWorker, "_resolve_max_iterations", _fake_max_iterations)
-    monkeypatch.setattr(worker_module.AgentTeamWorker, "_resolve_bool_config", fake_resolve_bool_config)
-    monkeypatch.setattr(worker_module.AgentTeamWorker, "_get_config", _fake_max_files_config)
+    monkeypatch.setattr(
+        worker_module.AgentTeamWorker, "_save_iteration", fake_save_iteration
+    )
+    monkeypatch.setattr(
+        worker_module.AgentTeamWorker,
+        "_expire_pending_prompts",
+        _fake_expire_pending_prompts,
+    )
+    monkeypatch.setattr(
+        worker_module.AgentTeamWorker, "_resolve_max_iterations", _fake_max_iterations
+    )
+    monkeypatch.setattr(
+        worker_module.AgentTeamWorker, "_resolve_bool_config", fake_resolve_bool_config
+    )
+    monkeypatch.setattr(
+        worker_module.AgentTeamWorker, "_get_config", _fake_max_files_config
+    )
     monkeypatch.setattr(
         "backend.workers.review_worker.submit_review_task",
         fake_submit_review,
@@ -236,7 +263,9 @@ async def test_agent_worker_leaves_draft_pr_opened_without_submitting_review(mon
 
 
 @pytest.mark.asyncio
-async def test_external_review_iteration_pushes_same_branch_and_waits_for_synchronize_webhook(monkeypatch, tmp_path):
+async def test_external_review_iteration_pushes_same_branch_and_waits_for_synchronize_webhook(
+    monkeypatch, tmp_path
+):
     task = _make_task(
         status=AgentTeamTaskStatus.ITERATING.value,
         current_phase=AgentTeamTaskStatus.ITERATING.value,
@@ -274,7 +303,14 @@ async def test_external_review_iteration_pushes_same_branch_and_waits_for_synchr
             base_commit_sha,
         ):
             resumes.append(
-                (repo_owner, repo_name, workspace_path, branch_name, base_branch, base_commit_sha)
+                (
+                    repo_owner,
+                    repo_name,
+                    workspace_path,
+                    branch_name,
+                    base_branch,
+                    base_commit_sha,
+                )
             )
             return SimpleNamespace(
                 branch_name=branch_name,
@@ -334,15 +370,29 @@ async def test_external_review_iteration_pushes_same_branch_and_waits_for_synchr
     monkeypatch.setattr(worker_module, "load_skills_context", _fake_skills_context)
     monkeypatch.setattr(worker_module, "load_sakura_memory", _fake_sakura_memory)
     monkeypatch.setattr(worker_module, "get_settings", _fake_settings)
-    monkeypatch.setattr(worker_module, "AgentTeamGitWorkspaceService", FakeGitWorkspaceService)
+    monkeypatch.setattr(
+        worker_module, "AgentTeamGitWorkspaceService", FakeGitWorkspaceService
+    )
     monkeypatch.setattr(worker_module, "IterationLoopService", FakeLoopService)
     monkeypatch.setattr(worker_module, "AgentTeamPRService", FakePRService)
     monkeypatch.setattr(worker_module.AgentTeamWorker, "_load_task", fake_load_task)
     monkeypatch.setattr(worker_module.AgentTeamWorker, "_update_task", fake_update_task)
-    monkeypatch.setattr(worker_module.AgentTeamWorker, "_save_iteration", fake_save_iteration)
-    monkeypatch.setattr(worker_module.AgentTeamWorker, "_expire_pending_prompts", _fake_expire_pending_prompts)
-    monkeypatch.setattr(worker_module.AgentTeamWorker, "_load_sakura_pr_review_feedback", fake_load_feedback)
-    monkeypatch.setattr(worker_module.AgentTeamWorker, "_get_config", _fake_max_files_config)
+    monkeypatch.setattr(
+        worker_module.AgentTeamWorker, "_save_iteration", fake_save_iteration
+    )
+    monkeypatch.setattr(
+        worker_module.AgentTeamWorker,
+        "_expire_pending_prompts",
+        _fake_expire_pending_prompts,
+    )
+    monkeypatch.setattr(
+        worker_module.AgentTeamWorker,
+        "_load_sakura_pr_review_feedback",
+        fake_load_feedback,
+    )
+    monkeypatch.setattr(
+        worker_module.AgentTeamWorker, "_get_config", _fake_max_files_config
+    )
     monkeypatch.setattr(
         "backend.workers.review_worker.submit_review_task",
         fake_submit_review,

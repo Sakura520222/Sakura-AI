@@ -197,9 +197,7 @@ class PromptBuilder:
                 source = failure.get("source", "unknown")
                 name = failure.get("name", "unknown")
                 message_parts.append(f"### {index}. {name} ({source})")
-                message_parts.append(
-                    f"- 结论: {failure.get('conclusion', 'unknown')}"
-                )
+                message_parts.append(f"- 结论: {failure.get('conclusion', 'unknown')}")
                 details_url = failure.get("details_url")
                 if details_url:
                     message_parts.append(f"- 详情链接: {details_url}")
@@ -221,9 +219,7 @@ class PromptBuilder:
                         if isinstance(step, dict):
                             step_name = step.get("name", "unknown")
                             step_conclusion = step.get("conclusion", "unknown")
-                            message_parts.append(
-                                f"  - {step_name} ({step_conclusion})"
-                            )
+                            message_parts.append(f"  - {step_name} ({step_conclusion})")
                         else:
                             message_parts.append(f"  - {step}")
 
@@ -241,9 +237,7 @@ class PromptBuilder:
                         message_parts.append(f"{prefix} {msg}".rstrip())
                 omitted_annotations = int(failure.get("omitted_annotations") or 0)
                 if omitted_annotations:
-                    message_parts.append(
-                        f"- 另有 {omitted_annotations} 条标注未展示"
-                    )
+                    message_parts.append(f"- 另有 {omitted_annotations} 条标注未展示")
                 omitted_records = max(
                     omitted_records, int(failure.get("omitted_records") or 0)
                 )
@@ -339,9 +333,7 @@ class PromptBuilder:
     ) -> str:
         """Build the trusted, compact control prompt for PR reviews."""
         language = output_language if output_language in {"zh-CN", "en"} else "zh-CN"
-        language_name = (
-            "Simplified Chinese" if language == "zh-CN" else "English"
-        )
+        language_name = "Simplified Chinese" if language == "zh-CN" else "English"
         strategy_focus = base_prompt.strip() or (
             "Review correctness, security, regressions, and maintainability."
         )

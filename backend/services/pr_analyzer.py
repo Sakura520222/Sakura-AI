@@ -432,7 +432,9 @@ class PRAnalyzer:
 
         return False, None
 
-    async def get_project_structure(self, repo: any, max_files: int | None = None) -> List[str]:
+    async def get_project_structure(
+        self, repo: any, max_files: int | None = None
+    ) -> List[str]:
         """获取项目的目录结构（将 PyGithub 同步调用移到线程池）"""
         if max_files is None:
             max_files = self._get_max_structure_files()
@@ -582,9 +584,7 @@ class PRAnalyzer:
                     context["files"].append(file_context)
 
                 if len(analysis.code_files) > max_files:
-                    context["remaining_files"] = (
-                        len(analysis.code_files) - max_files
-                    )
+                    context["remaining_files"] = len(analysis.code_files) - max_files
 
             # 对于超大PR，只包含概览
             elif strategy_name == "large":

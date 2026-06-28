@@ -113,10 +113,7 @@ class _MemoryDb:
                 session
                 for session in self.store["sessions"].values()
                 if (source_type is None or session.source_type == source_type)
-                and (
-                    source_task_id is None
-                    or session.source_task_id == source_task_id
-                )
+                and (source_task_id is None or session.source_task_id == source_task_id)
                 and (role_name is None or session.role_name == role_name)
                 and (status is None or session.status == status)
             ]
@@ -175,7 +172,9 @@ def memory_checkpoint(monkeypatch):
     async def fake_get_tool_call(db, session_id, tool_call_id):
         return _find_tool_call(db.store, session_id, tool_call_id)
 
-    monkeypatch.setattr("backend.services.activity_checkpoint_service._publish", fake_publish)
+    monkeypatch.setattr(
+        "backend.services.activity_checkpoint_service._publish", fake_publish
+    )
     monkeypatch.setattr(
         ActivityCheckpointService,
         "_get_tool_call",
@@ -331,7 +330,9 @@ async def test_activity_checkpoint_mark_tool_call_failed(memory_checkpoint):
 
 
 @pytest.mark.asyncio
-async def test_activity_checkpoint_append_message_missing_session_raises(memory_checkpoint):
+async def test_activity_checkpoint_append_message_missing_session_raises(
+    memory_checkpoint,
+):
     service = ActivityCheckpointService("issue", 456)
 
     with pytest.raises(ValueError, match="ActivitySession not found"):

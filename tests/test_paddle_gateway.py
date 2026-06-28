@@ -66,7 +66,9 @@ def gateway():
     return PaddleGateway(api_key="test_12345", webhook_secret="whsec_test_paddle")
 
 
-def _make_paddle_signature(payload: bytes, secret: str, timestamp: str = "1700000000") -> str:
+def _make_paddle_signature(
+    payload: bytes, secret: str, timestamp: str = "1700000000"
+) -> str:
     """Helper: 生成合法的 Paddle webhook 签名"""
     payload_str = payload.decode("utf-8") if isinstance(payload, bytes) else payload
     signed_payload = f"{timestamp}:{payload_str}"
@@ -106,6 +108,7 @@ class TestPaddleGatewayCreatePayment:
         assert result.success is True
         assert result.provider_tx_id == "txn_01test123"
         from urllib.parse import urlparse
+
         assert urlparse(result.checkout_url).hostname == "checkout.paddle.com"
 
     @pytest.mark.asyncio
@@ -134,7 +137,10 @@ class TestPaddleGatewayVerifyWebhook:
             "data": {
                 "id": "txn_01completed",
                 "attributes": {
-                    "custom_data": {"order_no": "ORD20240101000000ABCD1234", "user_id": "1"},
+                    "custom_data": {
+                        "order_no": "ORD20240101000000ABCD1234",
+                        "user_id": "1",
+                    },
                     "details": {"totals": {"total": "1000"}},
                     "currency_code": "USD",
                 },
@@ -372,8 +378,11 @@ class TestPaddleGatewayEnvironment:
 
         gw = PaddleGateway(api_key="test_abc123", webhook_secret="secret")
         result = await gw.create_payment(
-            order_no="ORD123", amount_cents=1000, currency="USD",
-            plan_name="Test", user_id=1,
+            order_no="ORD123",
+            amount_cents=1000,
+            currency="USD",
+            plan_name="Test",
+            user_id=1,
             success_url="https://example.com/s",
             cancel_url="https://example.com/c",
         )
@@ -397,8 +406,11 @@ class TestPaddleGatewayEnvironment:
 
         gw = PaddleGateway(api_key="live_abc123", webhook_secret="secret")
         result = await gw.create_payment(
-            order_no="ORD123", amount_cents=1000, currency="USD",
-            plan_name="Test", user_id=1,
+            order_no="ORD123",
+            amount_cents=1000,
+            currency="USD",
+            plan_name="Test",
+            user_id=1,
             success_url="https://example.com/s",
             cancel_url="https://example.com/c",
         )

@@ -20,7 +20,9 @@ from pathlib import Path
 
 import pytest
 
-TEMPLATES_DIR = Path(__file__).resolve().parent.parent / "backend" / "webui" / "templates"
+TEMPLATES_DIR = (
+    Path(__file__).resolve().parent.parent / "backend" / "webui" / "templates"
+)
 BASE_HTML = TEMPLATES_DIR / "base.html"
 
 

@@ -287,12 +287,8 @@ class RefundRequest(Base):
     )
 
     order = relationship("Order", lazy="selectin")
-    user = relationship(
-        "TelegramUser", foreign_keys=[user_id], lazy="selectin"
-    )
-    reviewer = relationship(
-        "TelegramUser", foreign_keys=[reviewed_by], lazy="selectin"
-    )
+    user = relationship("TelegramUser", foreign_keys=[user_id], lazy="selectin")
+    reviewer = relationship("TelegramUser", foreign_keys=[reviewed_by], lazy="selectin")
 
     __table_args__ = (
         Index("idx_refund_request_order", "order_id"),

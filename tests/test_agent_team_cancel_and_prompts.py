@@ -8,7 +8,9 @@ from backend.services.agent_team.fullstack_expert import FullStackResult
 from backend.services.agent_team.iteration_loop import IterationLoopService
 from backend.services.agent_team.professional_reviewer import ReviewResult
 from backend.services.agent_team.workspace_service import AgentTeamWorkspaceService
-from backend.services.agent_team.git_workspace_service import AgentTeamGitWorkspaceService
+from backend.services.agent_team.git_workspace_service import (
+    AgentTeamGitWorkspaceService,
+)
 
 
 # ── Fake agents ──────────────────────────────────────────────
@@ -230,7 +232,10 @@ async def test_consume_pending_prompts_returns_empty_without_db(tmp_path):
 
 
 def test_request_task_cancel_sets_event():
-    from backend.workers.agent_team_worker import request_task_cancel, is_task_cancel_requested
+    from backend.workers.agent_team_worker import (
+        request_task_cancel,
+        is_task_cancel_requested,
+    )
 
     task_id = -1  # sentinel for test
     request_task_cancel(task_id)

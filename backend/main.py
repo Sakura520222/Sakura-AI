@@ -50,9 +50,7 @@ def get_startup_info() -> dict:
     uptime_seconds = now - _startup_finished_at if _startup_finished_at else 0.0
     return {
         "startup_time": (
-            time.strftime(
-                "%Y-%m-%dT%H:%M:%SZ", time.gmtime(_startup_finished_at)
-            )
+            time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(_startup_finished_at))
             if _startup_finished_at
             else None
         ),
@@ -310,6 +308,7 @@ app.add_middleware(
 
 # Bootstrap 中间件（CORS 之后、路由之前）
 app.add_middleware(BootstrapMiddleware)
+
 
 # 健康检查
 @app.get("/health")

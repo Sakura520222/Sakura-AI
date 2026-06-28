@@ -305,8 +305,15 @@ class FullStackExpertAgent:
                 try:
                     guidance = await guidance_callback()
                     if guidance:
-                        await self._append_message({"role": "user", "content": guidance})
-                        await self._append_message({"role": "assistant", "content": "收到管理员指导，我将按照要求调整执行方向。"})
+                        await self._append_message(
+                            {"role": "user", "content": guidance}
+                        )
+                        await self._append_message(
+                            {
+                                "role": "assistant",
+                                "content": "收到管理员指导，我将按照要求调整执行方向。",
+                            }
+                        )
                 except Exception:
                     pass
 
@@ -442,7 +449,9 @@ class FullStackExpertAgent:
             logger.info("全栈专家调用工具: {} (round={})", fn_name, round_num)
 
             if self.checkpoint and self.session_id:
-                await self.checkpoint.mark_tool_call_running(self.session_id, tool_call.id)
+                await self.checkpoint.mark_tool_call_running(
+                    self.session_id, tool_call.id
+                )
             try:
                 if terminal_output is None:
                     result = await self.tool_executor.execute_tool_call(tool_call, ctx)

@@ -63,7 +63,9 @@ class AgentTeamContextCompressor:
             safe_context,
             self.target_model,
         )
-        return await self.compress_messages(messages, keep_rounds, summary_max_tokens, token_tracker)
+        return await self.compress_messages(
+            messages, keep_rounds, summary_max_tokens, token_tracker
+        )
 
     async def compress_messages(
         self,

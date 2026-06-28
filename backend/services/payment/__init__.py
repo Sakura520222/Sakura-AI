@@ -8,7 +8,11 @@ from backend.services.payment.gateway_base import (
     RefundResult,
     PaymentStatusResult,
 )
-from backend.services.payment.gateway_factory import get_gateway, get_supported_providers, SUPPORTED_PROVIDERS
+from backend.services.payment.gateway_factory import (
+    get_gateway,
+    get_supported_providers,
+    SUPPORTED_PROVIDERS,
+)
 
 __all__ = [
     "PaymentGateway",
@@ -33,4 +37,10 @@ PROVIDER_MANUAL = "manual"
 PROVIDER_REDEEM_CODE = "redeem_code"
 
 # Providers that require external payment gateway integration
-EXTERNAL_PAYMENT_PROVIDERS = {PROVIDER_STRIPE, PROVIDER_PADDLE, PROVIDER_ALIPAY, PROVIDER_NOWPAYMENTS, PROVIDER_TRON}
+EXTERNAL_PAYMENT_PROVIDERS = {
+    PROVIDER_STRIPE,
+    PROVIDER_PADDLE,
+    PROVIDER_ALIPAY,
+    PROVIDER_NOWPAYMENTS,
+    PROVIDER_TRON,
+}

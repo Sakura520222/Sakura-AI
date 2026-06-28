@@ -102,7 +102,9 @@ class AgentTeamGitWorkspaceService:
 
         repo_lock = await _get_repo_lock(repo_full_name)
         async with repo_lock:
-            base_executor = AgentTeamShellExecutor(base_workspace, self.workspace_service)
+            base_executor = AgentTeamShellExecutor(
+                base_workspace, self.workspace_service
+            )
             repo_executor = AgentTeamShellExecutor(repo_root, self.workspace_service)
             if not (base_workspace / ".git").exists():
                 await self._run_checked_args(
@@ -191,16 +193,21 @@ class AgentTeamGitWorkspaceService:
             from loguru import logger
 
             logger.info("Agent 工作区创建独立 venv: {}", venv_dir)
-            await executor.run("python -m venv .venv", timeout_seconds=settings.agent_team_timeout_seconds)
+            await executor.run(
+                "python -m venv .venv",
+                timeout_seconds=settings.agent_team_timeout_seconds,
+            )
 
         pip_cmd = str(venv_dir / ("Scripts" if os.name == "nt" else "bin") / "pip")
         if has_pyproject:
             await executor.run(
-                f"{pip_cmd} install -e . --quiet", timeout_seconds=settings.agent_team_timeout_seconds
+                f"{pip_cmd} install -e . --quiet",
+                timeout_seconds=settings.agent_team_timeout_seconds,
             )
         elif has_requirements:
             await executor.run(
-                f"{pip_cmd} install -r requirements.txt --quiet", timeout_seconds=settings.agent_team_timeout_seconds
+                f"{pip_cmd} install -r requirements.txt --quiet",
+                timeout_seconds=settings.agent_team_timeout_seconds,
             )
 
     def make_branch_name(
@@ -238,7 +245,9 @@ class AgentTeamGitWorkspaceService:
     ) -> GitWorkspaceInfo:
         """恢复既有 Agent 工作区，不重置未提交改动。"""
         workspace = self.workspace_service.ensure_within_base(workspace_path)
-        if not self.workspace_service.is_path_inside_repo(repo_owner, repo_name, workspace):
+        if not self.workspace_service.is_path_inside_repo(
+            repo_owner, repo_name, workspace
+        ):
             raise RuntimeError("续跑工作区与任务仓库不匹配")
         if not workspace.exists() or not (workspace / ".git").exists():
             raise RuntimeError("续跑工作区不存在或不是 Git 仓库")
@@ -259,7 +268,10 @@ class AgentTeamGitWorkspaceService:
                 executor, ["git", "remote", "get-url", "origin"], "read remote url"
             )
         ).stdout.strip()
-        if f"/{repo_owner}/{repo_name}" not in remote_url and f"{repo_owner}/{repo_name}.git" not in remote_url:
+        if (
+            f"/{repo_owner}/{repo_name}" not in remote_url
+            and f"{repo_owner}/{repo_name}.git" not in remote_url
+        ):
             raise RuntimeError("续跑工作区 remote 与任务仓库不匹配")
 
         if base_commit_sha:

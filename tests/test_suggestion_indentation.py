@@ -142,7 +142,7 @@ def test_extracts_original_indent_map_from_patch():
         "@@ -1,3 +1,4 @@\n"
         " class Demo {\n"
         "     void run() {\n"
-        "+        System.out.println(\"x\");\n"
+        '+        System.out.println("x");\n'
         "     }\n"
     )
     code_files = [
@@ -159,7 +159,7 @@ def test_extracts_original_indent_map_from_patch():
 
     _, _, indent_map = analyzer._extract_changed_lines(code_files)
 
-    assert indent_map["Demo.java"][1] == ""           # class Demo {
-    assert indent_map["Demo.java"][2] == "    "       # void run() {
-    assert indent_map["Demo.java"][3] == "        "   # println (added)
-    assert indent_map["Demo.java"][4] == "    "       # }
+    assert indent_map["Demo.java"][1] == ""  # class Demo {
+    assert indent_map["Demo.java"][2] == "    "  # void run() {
+    assert indent_map["Demo.java"][3] == "        "  # println (added)
+    assert indent_map["Demo.java"][4] == "    "  # }

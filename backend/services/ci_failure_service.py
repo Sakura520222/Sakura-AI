@@ -243,9 +243,7 @@ class CIFailureService:
 
     # ------------------------------------------------------------------ fetch
 
-    async def fetch_for_review(
-        self, repo_full_name: str, head_sha: str
-    ) -> list[dict]:
+    async def fetch_for_review(self, repo_full_name: str, head_sha: str) -> list[dict]:
         """审查时调用：按 repo + head_sha 查询失败记录，返回结构化 dict 列表。
 
         条数限额（max_records / max_annotations_per_record）+ 计数提示；
@@ -420,9 +418,7 @@ class CIFailureService:
             logger.debug("CIFailureService.delete_failures 失败: {}", exc)
             return 0
 
-    async def cleanup_for_pr(
-        self, repo_full_name: str, pr_number: int
-    ) -> int:
+    async def cleanup_for_pr(self, repo_full_name: str, pr_number: int) -> int:
         """PR closed/merged 时清理该 PR 的全部失败记录与 head_sha 映射。返回清理失败记录条数。"""
         try:
             async with db_module.async_session() as session:

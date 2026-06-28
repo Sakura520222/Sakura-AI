@@ -319,7 +319,9 @@ class PRDependencyGraphService:
     ) -> List[PRFileInfo]:
         """大型 PR 裁剪：按变更量排序取 top N 文件"""
         files = [
-            f for f in code_files if not PRDependencyGraphService._is_deleted_file(f.status)
+            f
+            for f in code_files
+            if not PRDependencyGraphService._is_deleted_file(f.status)
         ]
         max_files = settings.pr_dependency_graph_max_files
         if len(files) > max_files:

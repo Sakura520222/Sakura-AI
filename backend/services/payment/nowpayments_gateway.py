@@ -101,9 +101,7 @@ class NowPaymentsGateway(PaymentGateway):
     async def _get(self, path: str) -> dict:
         """GET 请求"""
         async with httpx.AsyncClient(timeout=30.0) as client:
-            resp = await client.get(
-                f"{self._base_url}{path}", headers=self._headers
-            )
+            resp = await client.get(f"{self._base_url}{path}", headers=self._headers)
             if resp.status_code >= 400:
                 raise self._api_error(resp)
             return resp.json()
@@ -126,9 +124,7 @@ class NowPaymentsGateway(PaymentGateway):
             msg = body.get("message", "") or str(body)
         except Exception:
             msg = resp.text[:500]
-        return ValueError(
-            f"NOWPayments API error {resp.status_code}: {msg}"
-        )
+        return ValueError(f"NOWPayments API error {resp.status_code}: {msg}")
 
     @classmethod
     def _currency_decimals(cls, currency: str) -> int:
@@ -184,7 +180,9 @@ class NowPaymentsGateway(PaymentGateway):
         try:
             data = json.loads(body)
             sorted_data = json.dumps(
-                data, sort_keys=True, separators=(",", ":"),
+                data,
+                sort_keys=True,
+                separators=(",", ":"),
                 ensure_ascii=False,
             )
             expected = hmac.new(
@@ -298,17 +296,11 @@ class NowPaymentsGateway(PaymentGateway):
             signature = headers.get("x-nowpayments-sig", "")
             if not signature:
                 logger.warning("NOWPayments IPN: missing signature")
-                return WebhookEvent(
-                    event_type=WebhookEventType.UNKNOWN, raw_event={}
-                )
+                return WebhookEvent(event_type=WebhookEventType.UNKNOWN, raw_event={})
 
-            if self._ipn_secret and not self._verify_ipn_signature(
-                payload, signature
-            ):
+            if self._ipn_secret and not self._verify_ipn_signature(payload, signature):
                 logger.warning("NOWPayments IPN: signature verification failed")
-                return WebhookEvent(
-                    event_type=WebhookEventType.UNKNOWN, raw_event={}
-                )
+                return WebhookEvent(event_type=WebhookEventType.UNKNOWN, raw_event={})
 
             data = json.loads(payload)
             payment_status = data.get("payment_status", "")
@@ -340,13 +332,9 @@ class NowPaymentsGateway(PaymentGateway):
                 "partially_paid",
             ):
                 # 中间状态，暂不处理
-                return WebhookEvent(
-                    event_type=WebhookEventType.UNKNOWN, raw_event=data
-                )
+                return WebhookEvent(event_type=WebhookEventType.UNKNOWN, raw_event=data)
             else:
-                return WebhookEvent(
-                    event_type=WebhookEventType.UNKNOWN, raw_event=data
-                )
+                return WebhookEvent(event_type=WebhookEventType.UNKNOWN, raw_event=data)
 
             return WebhookEvent(
                 event_type=event_type,
@@ -390,9 +378,7 @@ class NowPaymentsGateway(PaymentGateway):
     # 支付状态查询
     # ------------------------------------------------------------------
 
-    async def get_payment_status(
-        self, provider_tx_id: str
-    ) -> PaymentStatusResult:
+    async def get_payment_status(self, provider_tx_id: str) -> PaymentStatusResult:
         """查询支付状态"""
         try:
             data = await self._get(f"/v1/payment/{provider_tx_id}")

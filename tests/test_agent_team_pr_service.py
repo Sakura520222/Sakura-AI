@@ -21,7 +21,9 @@ async def test_commit_changes_via_api_creates_remote_branch_from_base_sha():
 
     sha = await service._commit_changes_via_api(
         repo=repo,
-        changes=[_ApiCommitChange(path="main.py", mode="100644", content=b"print(1)\n")],
+        changes=[
+            _ApiCommitChange(path="main.py", mode="100644", content=b"print(1)\n")
+        ],
         branch_name="sakura-agent/test",
         commit_message="chore: agent update",
         base_sha="base-sha",

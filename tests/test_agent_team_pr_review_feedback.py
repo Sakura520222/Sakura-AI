@@ -23,7 +23,9 @@ def _review(score=9, decision="comment"):
 
 
 def _comment(severity="minor"):
-    return SimpleNamespace(severity=severity, file_path="a.py", line_number=1, content="note")
+    return SimpleNamespace(
+        severity=severity, file_path="a.py", line_number=1, content="note"
+    )
 
 
 def test_comment_only_high_score_without_blockers_completes():
@@ -81,7 +83,11 @@ def test_agent_team_feedback_has_review_external_id_uniqueness():
 def test_extract_pr_info_includes_head_sha():
     payload = {
         "action": "ready_for_review",
-        "repository": {"name": "repo", "full_name": "owner/repo", "owner": {"login": "owner"}},
+        "repository": {
+            "name": "repo",
+            "full_name": "owner/repo",
+            "owner": {"login": "owner"},
+        },
         "installation": {"id": 123},
         "sender": {"login": "sakura-bot"},
         "pull_request": {
@@ -236,7 +242,13 @@ def memory_bridge(monkeypatch):
     return state
 
 
-def _task(task_id=101, status=AgentTeamTaskStatus.EXTERNAL_REVIEWING.value, iteration_count=0, max_iterations=3, head_sha="head-1"):
+def _task(
+    task_id=101,
+    status=AgentTeamTaskStatus.EXTERNAL_REVIEWING.value,
+    iteration_count=0,
+    max_iterations=3,
+    head_sha="head-1",
+):
     return AgentTeamTask(
         id=task_id,
         source_type="manual_issue",
@@ -272,7 +284,13 @@ def _completed_review(review_id=201, score=9, head_sha="head-1"):
     )
 
 
-def _review_comment(review_id=201, severity="minor", content="Looks good", file_path="app.py", line_number=12):
+def _review_comment(
+    review_id=201,
+    severity="minor",
+    content="Looks good",
+    file_path="app.py",
+    line_number=12,
+):
     return ReviewComment(
         review_id=review_id,
         severity=severity,
@@ -283,7 +301,9 @@ def _review_comment(review_id=201, severity="minor", content="Looks good", file_
 
 
 @pytest.mark.asyncio
-async def test_comment_only_passed_review_completes_external_reviewing_task(memory_bridge):
+async def test_comment_only_passed_review_completes_external_reviewing_task(
+    memory_bridge,
+):
     task = _task()
     review = _completed_review(score=9)
     comments = [_review_comment(content="Keep the helpful detail intact")]
@@ -291,7 +311,11 @@ async def test_comment_only_passed_review_completes_external_reviewing_task(memo
     memory_bridge.reviews[review.id] = review
     memory_bridge.comments.extend(comments)
 
-    result = await AgentTeamPRReviewFeedbackService().handle_review_completed_with_result(review.id)
+    result = (
+        await AgentTeamPRReviewFeedbackService().handle_review_completed_with_result(
+            review.id
+        )
+    )
 
     assert result.handled is True
     assert result.task_id == task.id
@@ -309,7 +333,9 @@ async def test_comment_only_passed_review_completes_external_reviewing_task(memo
 
 
 @pytest.mark.asyncio
-async def test_comment_only_blocking_review_creates_feedback_and_schedules_iteration(memory_bridge):
+async def test_comment_only_blocking_review_creates_feedback_and_schedules_iteration(
+    memory_bridge,
+):
     task = _task()
     review = _completed_review(score=9)
     blocking_comment = _review_comment(
@@ -320,7 +346,11 @@ async def test_comment_only_blocking_review_creates_feedback_and_schedules_itera
     memory_bridge.reviews[review.id] = review
     memory_bridge.comments.append(blocking_comment)
 
-    result = await AgentTeamPRReviewFeedbackService().handle_review_completed_with_result(review.id)
+    result = (
+        await AgentTeamPRReviewFeedbackService().handle_review_completed_with_result(
+            review.id
+        )
+    )
 
     assert result.handled is True
     assert result.action == "scheduled_iteration"
@@ -332,7 +362,10 @@ async def test_comment_only_blocking_review_creates_feedback_and_schedules_itera
     assert len(memory_bridge.feedback) == 1
     assert memory_bridge.feedback[0].author == "Sakura PR Review"
     assert memory_bridge.feedback[0].resolved == 0
-    assert "Must fix the security regression before merge." in memory_bridge.feedback[0].content
+    assert (
+        "Must fix the security regression before merge."
+        in memory_bridge.feedback[0].content
+    )
 
 
 @pytest.mark.asyncio
@@ -351,7 +384,11 @@ async def test_duplicate_review_completion_is_idempotent(memory_bridge):
     memory_bridge.reviews[review.id] = review
     memory_bridge.feedback.append(existing)
 
-    result = await AgentTeamPRReviewFeedbackService().handle_review_completed_with_result(review.id)
+    result = (
+        await AgentTeamPRReviewFeedbackService().handle_review_completed_with_result(
+            review.id
+        )
+    )
 
     assert result.handled is False
     assert result.task_id == task.id
@@ -370,7 +407,11 @@ async def test_stale_review_head_sha_is_ignored(memory_bridge):
     memory_bridge.tasks.append(task)
     memory_bridge.reviews[review.id] = review
 
-    result = await AgentTeamPRReviewFeedbackService().handle_review_completed_with_result(review.id)
+    result = (
+        await AgentTeamPRReviewFeedbackService().handle_review_completed_with_result(
+            review.id
+        )
+    )
 
     assert result.handled is False
     assert result.task_id == task.id
@@ -383,9 +424,13 @@ async def test_stale_review_head_sha_is_ignored(memory_bridge):
 
 
 @pytest.mark.asyncio
-async def test_blocking_review_at_iteration_limit_moves_task_to_waiting_human(memory_bridge):
+async def test_blocking_review_at_iteration_limit_moves_task_to_waiting_human(
+    memory_bridge,
+):
     task = _task(iteration_count=3, max_iterations=3)
-    task.updated_at = datetime.now(timezone.utc).replace(tzinfo=None) + timedelta(seconds=1)
+    task.updated_at = datetime.now(timezone.utc).replace(tzinfo=None) + timedelta(
+        seconds=1
+    )
     review = _completed_review(score=9)
     memory_bridge.tasks.append(task)
     memory_bridge.reviews[review.id] = review
@@ -396,7 +441,11 @@ async def test_blocking_review_at_iteration_limit_moves_task_to_waiting_human(me
         )
     )
 
-    result = await AgentTeamPRReviewFeedbackService().handle_review_completed_with_result(review.id)
+    result = (
+        await AgentTeamPRReviewFeedbackService().handle_review_completed_with_result(
+            review.id
+        )
+    )
 
     assert result.handled is True
     assert result.task_id == task.id

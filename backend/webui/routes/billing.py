@@ -94,6 +94,7 @@ async def billing_index(
     )
 
     from backend.services.payment.gateway_factory import get_configured_providers
+
     available_providers = await get_configured_providers()
 
     return render_template(
@@ -219,9 +220,7 @@ async def purchase_plan(
                 pay_amount=crypto_info.get("pay_amount", ""),
                 pay_currency_display=currency_display,
                 price_amount=crypto_info.get("price_amount", ""),
-                price_currency=crypto_info.get(
-                    "price_currency", "usd"
-                ),
+                price_currency=crypto_info.get("price_currency", "usd"),
                 expires_at=expires_at,
                 user_prefs=user_prefs,
             )
@@ -364,9 +363,7 @@ async def crypto_payment_status(
             "cancelled": "expired",
             "refunded": "failed",
         }
-        return JSONResponse(
-            {"status": db_status_map.get(order.status, order.status)}
-        )
+        return JSONResponse({"status": db_status_map.get(order.status, order.status)})
 
     # 对于 pending 状态，查询链上状态
     if order.payment_provider == "nowpayments" and order.provider_tx_id:
@@ -374,13 +371,9 @@ async def crypto_payment_status(
             from backend.services.payment import get_gateway
 
             gateway = await get_gateway("nowpayments")
-            api_result = await gateway.get_payment_status(
-                order.provider_tx_id
-            )
+            api_result = await gateway.get_payment_status(order.provider_tx_id)
             if api_result.success and api_result.raw_data:
-                raw_status = api_result.raw_data.get(
-                    "payment_status", ""
-                )
+                raw_status = api_result.raw_data.get("payment_status", "")
                 # NOWPayments 状态 → 前端状态
                 nowpay_map = {
                     "waiting": "waiting",
@@ -393,12 +386,8 @@ async def crypto_payment_status(
                     "failed": "failed",
                     "refunded": "failed",
                 }
-                front_status = nowpay_map.get(
-                    raw_status, "waiting"
-                )
-                return JSONResponse(
-                    {"status": front_status}
-                )
+                front_status = nowpay_map.get(raw_status, "waiting")
+                return JSONResponse({"status": front_status})
         except Exception:
             pass  # 查询失败时 fallback 到数据库状态
 
@@ -489,7 +478,9 @@ async def user_refund_order(
             "/billing/",
             "toast.refund_request_submitted",
             lang=detect_language(),
-            order_no=refund_request.order.order_no if refund_request.order else order_id,
+            order_no=refund_request.order.order_no
+            if refund_request.order
+            else order_id,
         )
     except PaymentError as e:
         await db.rollback()
@@ -667,7 +658,9 @@ async def admin_approve_refund_request(
             target_type="refund_request",
             target_id=str(request_id),
             detail={
-                "order_no": refund_request.order.order_no if refund_request.order else None,
+                "order_no": refund_request.order.order_no
+                if refund_request.order
+                else None,
                 "amount_cents": refund_request.amount_cents,
                 "status": refund_request.status,
                 "review_note": review_note,
@@ -727,7 +720,9 @@ async def admin_reject_refund_request(
             target_type="refund_request",
             target_id=str(request_id),
             detail={
-                "order_no": refund_request.order.order_no if refund_request.order else None,
+                "order_no": refund_request.order.order_no
+                if refund_request.order
+                else None,
                 "amount_cents": refund_request.amount_cents,
                 "status": refund_request.status,
                 "review_note": review_note,

@@ -65,7 +65,10 @@ class TestCreatePayment:
 
         assert result.success is True
         from urllib.parse import urlparse
-        assert urlparse(result.checkout_url).hostname == "openapi-sandbox.dl.alipaydev.com"
+
+        assert (
+            urlparse(result.checkout_url).hostname == "openapi-sandbox.dl.alipaydev.com"
+        )
 
     @pytest.mark.asyncio
     async def test_sign_error(self, gateway):

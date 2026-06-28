@@ -525,16 +525,15 @@ async def batch_index_issues(
                 skipped += 1
                 skipped_names.append(repo_name)
                 continue
-            task = asyncio.create_task(
-                _run_issues_index(repo_name, user["user_id"])
-            )
+            task = asyncio.create_task(_run_issues_index(repo_name, user["user_id"]))
             _active_index_tasks[f"{repo_name}:issues"] = task
             queued += 1
             queued_names.append(repo_name)
 
     logger.info(
         "WebUI 批量 Issues 索引: queued={}, skipped={}, repos=[{}], locked=[{}], by={}",
-        queued, skipped,
+        queued,
+        skipped,
         ", ".join(queued_names) or "-",
         ", ".join(skipped_names) or "-",
         user["sub"],

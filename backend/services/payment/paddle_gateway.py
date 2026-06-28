@@ -83,7 +83,11 @@ class PaddleGateway(PaymentGateway):
             # 在实际使用中，这会在 FastAPI 的线程池中执行。
             # 选择环境：test_mode 标识 sandbox
             # 注意：sandbox API key 通常以 test_ 开头
-            env = Environment.SANDBOX if self._api_key.startswith("test_") else Environment.PRODUCTION
+            env = (
+                Environment.SANDBOX
+                if self._api_key.startswith("test_")
+                else Environment.PRODUCTION
+            )
             paddle = Client(self._api_key, options=Options(env))
 
             # 构建 custom_data，用于 webhook 回调时关联订单
@@ -94,13 +98,16 @@ class PaddleGateway(PaymentGateway):
             # Paddle 金额格式：字符串，无小数点（最小货币单位，如 cents）
             amount_str = str(amount_cents)
 
-            transaction = await asyncio.to_thread(paddle.transactions.create,
+            transaction = await asyncio.to_thread(
+                paddle.transactions.create,
                 CreateTransaction(
                     items=[
                         TransactionCreateItemWithPrice(
                             price=TransactionNonCatalogPriceWithProduct(
                                 description=f"Order {order_no}",
-                                unit_price=Money(amount_str, CurrencyCode(currency.upper())),
+                                unit_price=Money(
+                                    amount_str, CurrencyCode(currency.upper())
+                                ),
                                 product=TransactionNonCatalogProduct(
                                     name=plan_name,
                                     tax_category=TaxCategory.Standard,
@@ -113,7 +120,7 @@ class PaddleGateway(PaymentGateway):
                     currency_code=CurrencyCode(currency.upper()),
                     custom_data=CustomData(custom),
                     checkout={"url": success_url},
-                )
+                ),
             )
 
             checkout_url = transaction.checkout.url if transaction.checkout else ""
@@ -138,7 +145,9 @@ class PaddleGateway(PaymentGateway):
                 },
             )
         except ImportError:
-            logger.error("paddle-python-sdk is not installed. Run: pip install paddle-python-sdk")
+            logger.error(
+                "paddle-python-sdk is not installed. Run: pip install paddle-python-sdk"
+            )
             return PaymentIntentResult(
                 success=False,
                 error_message="paddle-python-sdk is not installed",
@@ -203,7 +212,9 @@ class PaddleGateway(PaymentGateway):
             logger.warning("Paddle webhook: invalid JSON payload: {}", e)
             return WebhookEvent(event_type=WebhookEventType.UNKNOWN)
 
-        event_type_str = body.get("event_type", "") or body.get("meta", {}).get("event_name", "")
+        event_type_str = body.get("event_type", "") or body.get("meta", {}).get(
+            "event_name", ""
+        )
         data = body.get("data", {})
         attrs = data.get("attributes", data)  # Paddle Billing 使用 data.attributes
 
@@ -276,16 +287,24 @@ class PaddleGateway(PaymentGateway):
             )
             from paddle_billing.Entities.Shared import AdjustmentType
 
-            env = Environment.SANDBOX if self._api_key.startswith("test_") else Environment.PRODUCTION
+            env = (
+                Environment.SANDBOX
+                if self._api_key.startswith("test_")
+                else Environment.PRODUCTION
+            )
             paddle = Client(self._api_key, options=Options(env))
 
             refund_reason = reason or "requested_by_customer"
 
             if amount_cents is not None:
                 # 部分退款：需要获取 transaction items
-                transaction = await asyncio.to_thread(paddle.transactions.get, provider_tx_id)
+                transaction = await asyncio.to_thread(
+                    paddle.transactions.get, provider_tx_id
+                )
                 items = []
-                for item in transaction.details.line_items if transaction.details else []:
+                for item in (
+                    transaction.details.line_items if transaction.details else []
+                ):
                     items.append(
                         CreateAdjustmentItem(
                             item_id=item.id,
@@ -308,7 +327,7 @@ class PaddleGateway(PaymentGateway):
                         items=items,
                         reason=refund_reason,
                         transaction_id=provider_tx_id,
-                    )
+                    ),
                 )
             else:
                 # 全额退款
@@ -318,7 +337,7 @@ class PaddleGateway(PaymentGateway):
                         action=Action.Refund,
                         reason=refund_reason,
                         transaction_id=provider_tx_id,
-                    )
+                    ),
                 )
 
             logger.info(
@@ -359,15 +378,19 @@ class PaddleGateway(PaymentGateway):
         try:
             from paddle_billing import Client, Environment, Options
 
-            env = Environment.SANDBOX if self._api_key.startswith("test_") else Environment.PRODUCTION
+            env = (
+                Environment.SANDBOX
+                if self._api_key.startswith("test_")
+                else Environment.PRODUCTION
+            )
             paddle = Client(self._api_key, options=Options(env))
 
-            transaction = await asyncio.to_thread(paddle.transactions.get, provider_tx_id)
+            transaction = await asyncio.to_thread(
+                paddle.transactions.get, provider_tx_id
+            )
 
             # 提取金额
-            detail_totals = (
-                transaction.details.totals if transaction.details else None
-            )
+            detail_totals = transaction.details.totals if transaction.details else None
             amount_str = (
                 detail_totals.total if detail_totals and detail_totals.total else "0"
             )
@@ -377,9 +400,7 @@ class PaddleGateway(PaymentGateway):
                 amount_cents = 0
 
             currency = (
-                str(transaction.currency_code)
-                if transaction.currency_code
-                else ""
+                str(transaction.currency_code) if transaction.currency_code else ""
             )
 
             return PaymentStatusResult(
@@ -393,9 +414,7 @@ class PaddleGateway(PaymentGateway):
                     "status": str(transaction.status) if transaction.status else "",
                     "currency_code": currency,
                     "checkout_url": (
-                        transaction.checkout.url
-                        if transaction.checkout
-                        else None
+                        transaction.checkout.url if transaction.checkout else None
                     ),
                 },
             )
@@ -424,9 +443,15 @@ class PaddleGateway(PaymentGateway):
                 TransactionCancel,
             )
 
-            env = Environment.SANDBOX if self._api_key.startswith("test_") else Environment.PRODUCTION
+            env = (
+                Environment.SANDBOX
+                if self._api_key.startswith("test_")
+                else Environment.PRODUCTION
+            )
             paddle = Client(self._api_key, options=Options(env))
-            await asyncio.to_thread(paddle.transactions.cancel, provider_tx_id, TransactionCancel())
+            await asyncio.to_thread(
+                paddle.transactions.cancel, provider_tx_id, TransactionCancel()
+            )
             logger.info(
                 "Paddle transaction cancelled: tx_id={}",
                 provider_tx_id,

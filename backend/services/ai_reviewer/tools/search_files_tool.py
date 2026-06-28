@@ -252,9 +252,7 @@ class SearchFilesToolHandler:
                 from github.Repository import Repository
 
                 if not isinstance(repo, Repository):
-                    raise NotImplementedError(
-                        "当前 repo 对象不支持 GitHub Search API"
-                    )
+                    raise NotImplementedError("当前 repo 对象不支持 GitHub Search API")
                 result = await self._search_via_api(
                     keyword,
                     repo,

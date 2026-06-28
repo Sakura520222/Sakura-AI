@@ -28,12 +28,21 @@ async def resolve_int_config(key: str, fallback: int) -> int:
     try:
         parsed = int(value)
     except (TypeError, ValueError) as exc:
-        logger.warning("配置 {} 值 {} 无法转为整数，使用默认值 {}: {}", key, value, fallback, exc)
+        logger.warning(
+            "配置 {} 值 {} 无法转为整数，使用默认值 {}: {}", key, value, fallback, exc
+        )
         return fallback
     min_value, max_value = DYNAMIC_CONFIG_RANGES.get(key, (parsed, parsed))
     if min_value <= parsed <= max_value:
         return parsed
-    logger.warning("配置 {} 值 {} 超出范围 {}-{}，使用默认值 {}", key, parsed, min_value, max_value, fallback)
+    logger.warning(
+        "配置 {} 值 {} 超出范围 {}-{}，使用默认值 {}",
+        key,
+        parsed,
+        min_value,
+        max_value,
+        fallback,
+    )
     return fallback
 
 
@@ -45,12 +54,21 @@ async def resolve_float_config(key: str, fallback: float) -> float:
     try:
         parsed = float(value)
     except (TypeError, ValueError) as exc:
-        logger.warning("配置 {} 值 {} 无法转为浮点数，使用默认值 {}: {}", key, value, fallback, exc)
+        logger.warning(
+            "配置 {} 值 {} 无法转为浮点数，使用默认值 {}: {}", key, value, fallback, exc
+        )
         return fallback
     min_value, max_value = DYNAMIC_CONFIG_RANGES.get(key, (parsed, parsed))
     if min_value <= parsed <= max_value:
         return parsed
-    logger.warning("配置 {} 值 {} 超出范围 {}-{}，使用默认值 {}", key, parsed, min_value, max_value, fallback)
+    logger.warning(
+        "配置 {} 值 {} 超出范围 {}-{}，使用默认值 {}",
+        key,
+        parsed,
+        min_value,
+        max_value,
+        fallback,
+    )
     return fallback
 
 
@@ -73,9 +91,7 @@ async def resolve_clamped_int_config(
         if raw is None:
             return fallback
         value = int(raw)
-        min_value, max_value = DYNAMIC_CONFIG_RANGES.get(
-            config_key, (value, value)
-        )
+        min_value, max_value = DYNAMIC_CONFIG_RANGES.get(config_key, (value, value))
         if min_value <= value <= max_value:
             return value
         raise ValueError(f"value {value} outside range {min_value}-{max_value}")

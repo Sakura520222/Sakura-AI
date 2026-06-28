@@ -47,4 +47,6 @@ async def pricing(request: Request, db: AsyncSession = Depends(get_db)):
     """公开套餐价格页面（无需登录）"""
     svc = PaymentService(db)
     plans = await svc.list_plans(active_only=True)
-    return _render_public("legal/pricing.html", request, plans=plans, page_title="Pricing")
+    return _render_public(
+        "legal/pricing.html", request, plans=plans, page_title="Pricing"
+    )

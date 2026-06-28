@@ -204,11 +204,7 @@ async def get_recent_tasks(
     limit = 20
 
     # --- 最近 PR 审查（含已完成） ---
-    pr_query = (
-        select(PRReview)
-        .order_by(desc(PRReview.updated_at))
-        .limit(limit)
-    )
+    pr_query = select(PRReview).order_by(desc(PRReview.updated_at)).limit(limit)
     scope_filter = build_user_scope_filter(user, PRReview)
     if scope_filter is not None:
         pr_query = pr_query.where(scope_filter)
@@ -233,9 +229,7 @@ async def get_recent_tasks(
 
     # --- 最近 Issue 分析（含已完成） ---
     issue_query = (
-        select(IssueAnalysis)
-        .order_by(desc(IssueAnalysis.updated_at))
-        .limit(limit)
+        select(IssueAnalysis).order_by(desc(IssueAnalysis.updated_at)).limit(limit)
     )
     scope_filter = build_user_scope_filter(user, IssueAnalysis)
     if scope_filter is not None:
@@ -262,11 +256,7 @@ async def get_recent_tasks(
         )
 
     # --- 最近仓库扫描（含已完成） ---
-    scan_query = (
-        select(RepoScan)
-        .order_by(desc(RepoScan.updated_at))
-        .limit(limit)
-    )
+    scan_query = select(RepoScan).order_by(desc(RepoScan.updated_at)).limit(limit)
     if user.get("role") not in ("admin", "super_admin"):
         scan_query = scan_query.where(RepoScan.repo_owner == user["sub"])
 
@@ -312,33 +302,44 @@ async def activity_stream_data(
     前端 agent_team_live_view_fragment.html 可直接渲染。
     """
     if task_type not in ("pr", "issue", "scan"):
-        return JSONResponse({"success": False, "error": "Invalid task_type"}, status_code=400)
+        return JSONResponse(
+            {"success": False, "error": "Invalid task_type"}, status_code=400
+        )
 
     task_info = await verify_task_access(task_type, task_id, user, db)
     if not task_info:
-        return JSONResponse({"success": False, "error": "Task not found or access denied"}, status_code=404)
+        return JSONResponse(
+            {"success": False, "error": "Task not found or access denied"},
+            status_code=404,
+        )
 
     # Query sessions for this task
     session_rows = (
-        await db.execute(
-            select(ActivitySession)
-            .where(
-                ActivitySession.source_type == task_type,
-                ActivitySession.source_task_id == task_id,
+        (
+            await db.execute(
+                select(ActivitySession)
+                .where(
+                    ActivitySession.source_type == task_type,
+                    ActivitySession.source_task_id == task_id,
+                )
+                .order_by(ActivitySession.id)
             )
-            .order_by(ActivitySession.id)
         )
-    ).scalars().all()
+        .scalars()
+        .all()
+    )
     session_ids = [s.id for s in session_rows]
 
     if not session_ids:
-        return JSONResponse({
-            "success": True,
-            "messages": [],
-            "tool_calls": [],
-            "sessions": [],
-            "has_more": False,
-        })
+        return JSONResponse(
+            {
+                "success": True,
+                "messages": [],
+                "tool_calls": [],
+                "sessions": [],
+                "has_more": False,
+            }
+        )
 
     # Messages with pagination
     msg_query = (
@@ -356,54 +357,64 @@ async def activity_stream_data(
 
     # Tool calls (status can change without new messages)
     tc_rows = (
-        await db.execute(
-            select(ActivityToolCall)
-            .where(ActivityToolCall.session_id.in_(session_ids))
-            .order_by(ActivityToolCall.id)
+        (
+            await db.execute(
+                select(ActivityToolCall)
+                .where(ActivityToolCall.session_id.in_(session_ids))
+                .order_by(ActivityToolCall.id)
+            )
         )
-    ).scalars().all()
+        .scalars()
+        .all()
+    )
 
-    return JSONResponse({
-        "success": True,
-        "messages": [
-            {
-                "id": m.id,
-                "session_id": m.session_id,
-                "seq": m.seq,
-                "role": m.role,
-                "content": m.content,
-                "tool_call_id": m.tool_call_id,
-                "finish_reason": m.finish_reason,
-                "created_at": m.created_at.isoformat() if m.created_at else None,
-            }
-            for m in msg_rows
-        ],
-        "tool_calls": [
-            {
-                "id": tc.id,
-                "session_id": tc.session_id,
-                "assistant_message_id": tc.assistant_message_id,
-                "tool_call_id": tc.tool_call_id,
-                "name": tc.name,
-                "status": tc.status,
-                "arguments_json": tc.arguments_json,
-                "started_at": tc.started_at.isoformat() if tc.started_at else None,
-                "completed_at": tc.completed_at.isoformat() if tc.completed_at else None,
-                "error_message": tc.error_message,
-            }
-            for tc in tc_rows
-        ],
-        "sessions": [
-            {
-                "id": s.id,
-                "iteration_number": s.iteration_number,
-                "role_name": s.role_name,
-                "status": s.status,
-                "started_at": s.started_at.isoformat() if s.started_at else None,
-                "completed_at": s.completed_at.isoformat() if s.completed_at else None,
-            }
-            for s in session_rows
-        ],
-        "has_more": has_more,
-        "task_status": task_info.get("status", ""),
-    })
+    return JSONResponse(
+        {
+            "success": True,
+            "messages": [
+                {
+                    "id": m.id,
+                    "session_id": m.session_id,
+                    "seq": m.seq,
+                    "role": m.role,
+                    "content": m.content,
+                    "tool_call_id": m.tool_call_id,
+                    "finish_reason": m.finish_reason,
+                    "created_at": m.created_at.isoformat() if m.created_at else None,
+                }
+                for m in msg_rows
+            ],
+            "tool_calls": [
+                {
+                    "id": tc.id,
+                    "session_id": tc.session_id,
+                    "assistant_message_id": tc.assistant_message_id,
+                    "tool_call_id": tc.tool_call_id,
+                    "name": tc.name,
+                    "status": tc.status,
+                    "arguments_json": tc.arguments_json,
+                    "started_at": tc.started_at.isoformat() if tc.started_at else None,
+                    "completed_at": tc.completed_at.isoformat()
+                    if tc.completed_at
+                    else None,
+                    "error_message": tc.error_message,
+                }
+                for tc in tc_rows
+            ],
+            "sessions": [
+                {
+                    "id": s.id,
+                    "iteration_number": s.iteration_number,
+                    "role_name": s.role_name,
+                    "status": s.status,
+                    "started_at": s.started_at.isoformat() if s.started_at else None,
+                    "completed_at": s.completed_at.isoformat()
+                    if s.completed_at
+                    else None,
+                }
+                for s in session_rows
+            ],
+            "has_more": has_more,
+            "task_status": task_info.get("status", ""),
+        }
+    )

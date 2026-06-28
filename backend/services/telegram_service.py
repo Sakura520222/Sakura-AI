@@ -544,13 +544,27 @@ class TelegramService:
                 role=role.value,
                 daily_quota=max(1, int(settings.init_user_daily_quota * multiplier)),
                 weekly_quota=max(1, int(settings.init_user_weekly_quota * multiplier)),
-                monthly_quota=max(1, int(settings.init_user_monthly_quota * multiplier)),
-                issue_daily_quota=max(1, int(settings.init_user_issue_daily_quota * multiplier)),
-                issue_weekly_quota=max(1, int(settings.init_user_issue_weekly_quota * multiplier)),
-                issue_monthly_quota=max(1, int(settings.init_user_issue_monthly_quota * multiplier)),
-                agent_daily_quota=max(1, int(settings.init_user_agent_daily_quota * multiplier)),
-                agent_weekly_quota=max(1, int(settings.init_user_agent_weekly_quota * multiplier)),
-                agent_monthly_quota=max(1, int(settings.init_user_agent_monthly_quota * multiplier)),
+                monthly_quota=max(
+                    1, int(settings.init_user_monthly_quota * multiplier)
+                ),
+                issue_daily_quota=max(
+                    1, int(settings.init_user_issue_daily_quota * multiplier)
+                ),
+                issue_weekly_quota=max(
+                    1, int(settings.init_user_issue_weekly_quota * multiplier)
+                ),
+                issue_monthly_quota=max(
+                    1, int(settings.init_user_issue_monthly_quota * multiplier)
+                ),
+                agent_daily_quota=max(
+                    1, int(settings.init_user_agent_daily_quota * multiplier)
+                ),
+                agent_weekly_quota=max(
+                    1, int(settings.init_user_agent_weekly_quota * multiplier)
+                ),
+                agent_monthly_quota=max(
+                    1, int(settings.init_user_agent_monthly_quota * multiplier)
+                ),
             )
         try:
             self.session.add(user)

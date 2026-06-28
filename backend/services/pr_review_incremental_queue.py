@@ -303,9 +303,7 @@ class PRReviewIncrementalQueueService:
                 session_id,
             )
 
-    async def mark_skipped_for_pr(
-        self, repo_full_name: str, pr_number: int
-    ) -> int:
+    async def mark_skipped_for_pr(self, repo_full_name: str, pr_number: int) -> int:
         """将 PR 的所有 pending 增量标记为 skipped（终态，无需 review 行）。
 
         用于 drained synchronize 任务命中 should_skip（如纯文档增量）时收尾：
