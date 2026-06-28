@@ -69,9 +69,7 @@ class GitDiffTool(BaseTool):
             return await self._run_summary(executor)
         return await self._run_full(executor, file_paths, ctx)
 
-    async def _run_summary(
-        self, executor: AgentTeamShellExecutor
-    ) -> ToolResult:
+    async def _run_summary(self, executor: AgentTeamShellExecutor) -> ToolResult:
         """git diff --stat + git status --short"""
         stat_result = await executor.run_args(["git", "diff", "--stat"])
         status_result = await executor.run_args(["git", "status", "--short"])
@@ -122,9 +120,7 @@ class GitDiffTool(BaseTool):
 
         result = await executor.run_args(git_args)
         if result.returncode != 0:
-            return ToolResult(
-                success=False, error=f"git diff 失败: {result.stderr}"
-            )
+            return ToolResult(success=False, error=f"git diff 失败: {result.stderr}")
 
         diff_output = result.stdout.strip()
         if not diff_output:

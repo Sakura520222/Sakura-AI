@@ -10,7 +10,10 @@ from backend.models.agent_team_models import AgentTeamConversationContext
 from backend.models import database as db_module
 from backend.services.ai_reviewer.message_utils import estimate_messages_tokens
 from backend.services.agent_team.fullstack_expert import FullStackResult
-from backend.services.agent_team.professional_reviewer import ReviewFinding, ReviewResult
+from backend.services.agent_team.professional_reviewer import (
+    ReviewFinding,
+    ReviewResult,
+)
 
 
 class AgentTeamConversationContextService:
@@ -75,7 +78,9 @@ class AgentTeamConversationContextService:
                 parts.append("未解决事项:\n" + "\n".join(f"- {x}" for x in unresolved))
             modified_files = _loads_list(item.modified_files_json)
             if modified_files:
-                parts.append("相关文件:\n" + "\n".join(f"- `{x}`" for x in modified_files))
+                parts.append(
+                    "相关文件:\n" + "\n".join(f"- `{x}`" for x in modified_files)
+                )
         return "\n\n".join(parts)
 
     async def build_role_memory(

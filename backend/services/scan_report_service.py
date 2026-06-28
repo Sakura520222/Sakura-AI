@@ -218,9 +218,7 @@ class ScanReportService:
         if webui_url:
             lines.append(f"[WebUI 查看详情]({webui_url})")
         else:
-            logger.warning(
-                f"app_domain 未配置，跳过 WebUI 链接 (scan_id={scan.id})"
-            )
+            logger.warning(f"app_domain 未配置，跳过 WebUI 链接 (scan_id={scan.id})")
 
         return "\n".join(lines)
 

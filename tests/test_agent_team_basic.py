@@ -165,8 +165,14 @@ def test_agent_pr_closed_loop_config_registered_for_webui():
     assert "agent_team_pr_closed_loop_enabled" in AGENT_TEAM_CONFIG_KEYS
     assert "agent_team_pr_review_pass_score" in AGENT_TEAM_CONFIG_KEYS
     assert "agent_team_pr_review_blocking_severities" in AGENT_TEAM_CONFIG_KEYS
-    assert DYNAMIC_CONFIG_LABELS["agent_team_pr_closed_loop_enabled"] == "启用 Agent PR 闭环"
-    assert DYNAMIC_CONFIG_LABELS["agent_team_pr_review_pass_score"] == "Agent PR 审查通过分数"
+    assert (
+        DYNAMIC_CONFIG_LABELS["agent_team_pr_closed_loop_enabled"]
+        == "启用 Agent PR 闭环"
+    )
+    assert (
+        DYNAMIC_CONFIG_LABELS["agent_team_pr_review_pass_score"]
+        == "Agent PR 审查通过分数"
+    )
     assert DYNAMIC_CONFIG_RANGES["agent_team_pr_review_pass_score"] == (1, 10)
 
 

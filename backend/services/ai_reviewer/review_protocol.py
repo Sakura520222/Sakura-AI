@@ -147,9 +147,7 @@ class TaggedReviewParser:
             )
         return lines[opening[0] : closing[0] + 1]
 
-    def _parse_root(
-        self, lines: list[str]
-    ) -> tuple[dict[str, str], list[list[str]]]:
+    def _parse_root(self, lines: list[str]) -> tuple[dict[str, str], list[list[str]]]:
         fields: dict[str, str] = {}
         findings: list[list[str]] = []
         index = 0
@@ -170,7 +168,9 @@ class TaggedReviewParser:
                         index += 1
                         continue
                     if lines[index].strip() != "<FINDING>":
-                        raise ReviewProtocolError("FINDINGS may contain only FINDING blocks")
+                        raise ReviewProtocolError(
+                            "FINDINGS may contain only FINDING blocks"
+                        )
                     block, index = self._consume_block(lines, index, "FINDING")
                     findings.append(block)
                 if index >= len(lines):
@@ -235,9 +235,7 @@ class TaggedReviewParser:
             end_line=end_line,
             title=title,
             description=description,
-            suggestion=None
-            if suggestion_value.strip() == "NONE"
-            else suggestion_value,
+            suggestion=None if suggestion_value.strip() == "NONE" else suggestion_value,
         )
 
     def _consume_field(
@@ -250,7 +248,9 @@ class TaggedReviewParser:
         single_suffix = f"</{field}>"
         stripped = lines[index].strip()
         if field not in self._multiline_fields:
-            if not stripped.startswith(single_prefix) or not stripped.endswith(single_suffix):
+            if not stripped.startswith(single_prefix) or not stripped.endswith(
+                single_suffix
+            ):
                 raise ReviewProtocolError(f"{field} must be on one line")
             value = stripped[len(single_prefix) : -len(single_suffix)]
             if "<" in value or ">" in value:
@@ -360,7 +360,9 @@ class TaggedReviewParser:
         try:
             line = int(value)
         except ValueError as exc:
-            raise ReviewProtocolError(f"{field} must be a positive integer or NONE") from exc
+            raise ReviewProtocolError(
+                f"{field} must be a positive integer or NONE"
+            ) from exc
         if line < 1:
             raise ReviewProtocolError(f"{field} must be positive")
         return line
@@ -378,9 +380,7 @@ class TaggedReviewParser:
         return any(line in {f"<{name}>", f"</{name}>"} for name in names)
 
     @staticmethod
-    def _validate_score_consistency(
-        score: int, findings: list[TaggedFinding]
-    ) -> int:
+    def _validate_score_consistency(score: int, findings: list[TaggedFinding]) -> int:
         """Clamp SCORE to the ceiling implied by finding severities.
 
         The model sometimes assigns a score exceeding its own severities

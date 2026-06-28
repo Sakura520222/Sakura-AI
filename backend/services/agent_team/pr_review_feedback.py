@@ -75,10 +75,14 @@ def classify_agent_pr_review_outcome(
         return AgentPRReviewOutcome.NEEDS_ITERATION
     if review.overall_score is not None and int(review.overall_score) < pass_score:
         return AgentPRReviewOutcome.NEEDS_ITERATION
-    if review.overall_score is None and not comments and not getattr(
-        review,
-        "review_summary",
-        None,
+    if (
+        review.overall_score is None
+        and not comments
+        and not getattr(
+            review,
+            "review_summary",
+            None,
+        )
     ):
         return AgentPRReviewOutcome.WAITING_HUMAN
     return AgentPRReviewOutcome.PASSED
@@ -165,14 +169,15 @@ class AgentTeamPRReviewFeedbackService:
 
             iteration_count = int(getattr(task, "iteration_count", 0) or 0)
             max_iterations = int(getattr(task, "max_iterations", 0) or 0)
-            at_iteration_limit = max_iterations > 0 and iteration_count >= max_iterations
+            at_iteration_limit = (
+                max_iterations > 0 and iteration_count >= max_iterations
+            )
             if outcome == AgentPRReviewOutcome.WAITING_HUMAN or at_iteration_limit:
                 task.status = AgentTeamTaskStatus.WAITING_HUMAN.value
                 task.current_phase = AgentTeamTaskStatus.WAITING_HUMAN.value
                 if at_iteration_limit:
                     task.error_message = (
-                        "达到 Agent 最大迭代轮数，"
-                        "请人工处理 Sakura PR Review 反馈。"
+                        "达到 Agent 最大迭代轮数，请人工处理 Sakura PR Review 反馈。"
                     )
                 else:
                     task.error_message = "Sakura PR Review 结果需要人工确认。"
@@ -261,7 +266,8 @@ class AgentTeamPRReviewFeedbackService:
             select(AgentTeamFeedback)
             .where(
                 AgentTeamFeedback.task_id == task_id,
-                AgentTeamFeedback.source == AgentTeamFeedbackSource.SAKURA_PR_REVIEW.value,
+                AgentTeamFeedback.source
+                == AgentTeamFeedbackSource.SAKURA_PR_REVIEW.value,
                 AgentTeamFeedback.external_id == external_id,
             )
             .limit(1)
@@ -281,7 +287,9 @@ class AgentTeamPRReviewFeedbackService:
     async def _load_pass_score(self) -> int:
         fallback = 8
         try:
-            fallback = int(getattr(get_settings(), "agent_team_pr_review_pass_score", 8))
+            fallback = int(
+                getattr(get_settings(), "agent_team_pr_review_pass_score", 8)
+            )
         except (TypeError, ValueError):
             fallback = 8
 

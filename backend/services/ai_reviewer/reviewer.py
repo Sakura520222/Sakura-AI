@@ -42,9 +42,7 @@ from .tools import (
 )
 
 
-PendingUserMessageCallback = Callable[
-    [], Coroutine[Any, Any, Dict[str, Any] | None]
-]
+PendingUserMessageCallback = Callable[[], Coroutine[Any, Any, Dict[str, Any] | None]]
 
 
 def _dump_protocol_failure(strategy: str, review_text: str) -> None:
@@ -64,9 +62,7 @@ def _dump_protocol_failure(strategy: str, review_text: str) -> None:
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
         path = dump_dir / f"{timestamp}_{strategy}.txt"
         path.write_text(review_text, encoding="utf-8")
-        logger.warning(
-            "已保存完整协议失败载荷（{} 字符）到 {}", len(review_text), path
-        )
+        logger.warning("已保存完整协议失败载荷（{} 字符）到 {}", len(review_text), path)
     except Exception as exc:
         logger.warning("保存协议失败载荷失败: {}", exc)
 
@@ -130,9 +126,7 @@ def _normalize_tool_calls_inplace(messages: List[Dict[str, Any]]) -> None:
     for message in messages:
         tool_calls = message.get("tool_calls")
         if isinstance(tool_calls, list):
-            message["tool_calls"] = [
-                _coerce_tool_call_to_dict(tc) for tc in tool_calls
-            ]
+            message["tool_calls"] = [_coerce_tool_call_to_dict(tc) for tc in tool_calls]
 
 
 class AIReviewer:
@@ -237,12 +231,16 @@ class AIReviewer:
             not settings.summary_api_base and not settings.summary_api_key
         )
         summary_config = (
-            "main",
-            main_config,
-        ) if summary_uses_main else (
-            "custom",
-            settings.summary_api_base or settings.openai_api_base,
-            settings.summary_api_key or settings.openai_api_key,
+            (
+                "main",
+                main_config,
+            )
+            if summary_uses_main
+            else (
+                "custom",
+                settings.summary_api_base or settings.openai_api_base,
+                settings.summary_api_key or settings.openai_api_key,
+            )
         )
         if self._summary_client_config != summary_config:
             if summary_uses_main:
@@ -469,10 +467,13 @@ class AIReviewer:
                 # 通知前端：最终 assistant 消息（无工具调用）
                 if event_callback:
                     try:
-                        await event_callback("message", {
-                            "role": "assistant",
-                            "content": review_text,
-                        })
+                        await event_callback(
+                            "message",
+                            {
+                                "role": "assistant",
+                                "content": review_text,
+                            },
+                        )
                     except Exception as exc:
                         logger.warning("event_callback failed: {}", exc)
                 result = await self._parse_or_repair_review(
@@ -567,9 +568,7 @@ class AIReviewer:
                             logger.warning("event_callback failed: {}", exc)
 
             # 记录上下文使用率
-            current_tokens = self.context_compressor.estimate_messages_tokens(
-                messages
-            )
+            current_tokens = self.context_compressor.estimate_messages_tokens(messages)
             tracker.log_context_usage(current_tokens, safe_context, iteration)
 
             # 检查上下文是否超限，触发压缩
@@ -597,8 +596,8 @@ class AIReviewer:
                     )
 
                     # 压缩后再次记录上下文使用率
-                    post_compress_tokens = self.context_compressor.estimate_messages_tokens(
-                        messages
+                    post_compress_tokens = (
+                        self.context_compressor.estimate_messages_tokens(messages)
                     )
                     tracker.log_context_usage(
                         post_compress_tokens, safe_context, iteration
@@ -817,9 +816,7 @@ class AIReviewer:
                     safe_context = self.model_context_mgr.calculate_safe_context(
                         settings.openai_model, settings.context_safety_threshold
                     )
-                    threshold_tokens = int(
-                        safe_context * self.compression_threshold
-                    )
+                    threshold_tokens = int(safe_context * self.compression_threshold)
                     compressed_messages = (
                         await self.context_compressor.compress_conversation_history(
                             messages,

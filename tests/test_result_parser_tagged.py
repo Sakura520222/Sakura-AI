@@ -72,8 +72,9 @@ def test_parses_complete_tagged_review(parser):
     assert result["inline_comments"][0]["file_path"] == "src/main.py"
     assert result["inline_comments"][0]["start_line"] == 42
     assert result["inline_comments"][0]["line_number"] == 43
-    assert "```suggestion\nvalue = sanitize(value)\n```" in (
-        result["inline_comments"][0]["body"]
+    assert (
+        "```suggestion\nvalue = sanitize(value)\n```"
+        in (result["inline_comments"][0]["body"])
     )
 
 
@@ -186,7 +187,9 @@ def test_overall_finding_keeps_text_suggestion(parser):
         "Score: 8/10\n### 🔴 src/main.py:42\nBug",
         '{"overall_score": 8, "issues": []}',
         _review().replace("<VERSION>1</VERSION>", ""),
-        _review().replace("<DECISION>request_changes</DECISION>", "<DECISION>reject</DECISION>"),
+        _review().replace(
+            "<DECISION>request_changes</DECISION>", "<DECISION>reject</DECISION>"
+        ),
         _review().replace("<SCORE>6</SCORE>", "<SCORE>11</SCORE>"),
     ],
 )

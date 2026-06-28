@@ -213,7 +213,12 @@ async def test_submit_review_task_registers_cancel_event(monkeypatch):
     monkeypatch.setattr(review_worker, "_run_review_task_with_timeout", fake_runner)
     monkeypatch.setattr(asyncio, "create_task", fake_create_task)
 
-    pr_info = {"repo_full_name": "owner/repo", "repo_owner": "owner", "repo_name": "repo", "pr_number": 1}
+    pr_info = {
+        "repo_full_name": "owner/repo",
+        "repo_owner": "owner",
+        "repo_name": "repo",
+        "pr_number": 1,
+    }
     task_key = await submit_review_task(pr_info)
 
     worker = review_worker.get_worker()
@@ -488,7 +493,9 @@ async def test_incremental_review_restores_messages_and_passes_pending_callback(
         monkeypatch.setattr(review_worker, "AIReviewer", FakeAIReviewer)
         monkeypatch.setattr(review_worker, "CommentService", FakeCommentService)
         monkeypatch.setattr(review_worker, "_get_label_rec_setting", lambda *_: False)
-        monkeypatch.setattr(review_worker, "get_user_dynamic_config", fake_dynamic_config)
+        monkeypatch.setattr(
+            review_worker, "get_user_dynamic_config", fake_dynamic_config
+        )
         monkeypatch.setattr(
             ReviewWorker,
             "_log_activity",
@@ -712,7 +719,9 @@ async def test_incremental_review_migrates_check_run_to_new_head(monkeypatch):
         monkeypatch.setattr(review_worker, "AIReviewer", FakeAIReviewer)
         monkeypatch.setattr(review_worker, "CommentService", FakeCommentService)
         monkeypatch.setattr(review_worker, "_get_label_rec_setting", lambda *_: False)
-        monkeypatch.setattr(review_worker, "get_user_dynamic_config", fake_dynamic_config)
+        monkeypatch.setattr(
+            review_worker, "get_user_dynamic_config", fake_dynamic_config
+        )
         monkeypatch.setattr(ReviewWorker, "_log_activity", staticmethod(fake_noop))
         monkeypatch.setattr(
             "backend.services.activity_checkpoint_service.ActivityCheckpointService",
@@ -923,10 +932,10 @@ async def test_review_record_created_before_code_indexing(monkeypatch):
         monkeypatch.setattr(review_worker, "AIReviewer", FakeAIReviewer)
         monkeypatch.setattr(review_worker, "CommentService", FakeCommentService)
         monkeypatch.setattr(review_worker, "_get_label_rec_setting", lambda *_: False)
-        monkeypatch.setattr(review_worker, "get_user_dynamic_config", fake_dynamic_config)
         monkeypatch.setattr(
-            ReviewWorker, "_log_activity", staticmethod(fake_noop)
+            review_worker, "get_user_dynamic_config", fake_dynamic_config
         )
+        monkeypatch.setattr(ReviewWorker, "_log_activity", staticmethod(fake_noop))
         monkeypatch.setattr(
             "backend.services.activity_checkpoint_service.ActivityCheckpointService",
             FakeCheckpoint,
@@ -944,9 +953,7 @@ async def test_review_record_created_before_code_indexing(monkeypatch):
         monkeypatch.setattr(worker, "_create_review_record", fake_create_review_record)
         monkeypatch.setattr(worker, "_update_review_status", fake_noop)
         monkeypatch.setattr(worker, "_save_review_results", fake_noop)
-        monkeypatch.setattr(
-            worker, "_make_and_submit_decision", fake_make_decision
-        )
+        monkeypatch.setattr(worker, "_make_and_submit_decision", fake_make_decision)
         monkeypatch.setattr(worker, "_notify_agent_team_review_completed", fake_noop)
         monkeypatch.setattr(worker, "_send_review_complete_notification", fake_noop)
 

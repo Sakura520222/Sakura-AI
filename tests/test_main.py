@@ -80,7 +80,9 @@ def test_background_tasks_can_be_skipped_for_local_development():
 
 
 @pytest.mark.anyio
-async def test_rate_limit_handler_returns_sync_slowapi_response_without_await(monkeypatch):
+async def test_rate_limit_handler_returns_sync_slowapi_response_without_await(
+    monkeypatch,
+):
     expected = JSONResponse({"detail": "rate limit"}, status_code=429)
 
     def fake_rate_limit_exceeded_handler(_request, _exc):
@@ -135,8 +137,9 @@ def test_format_duration_hours():
 
 def test_get_startup_info_returns_none_when_not_started():
     """lifespan 未执行时，startup_info 中 startup_time 应为 None"""
-    with patch.object(main, "_startup_finished_at", 0.0), patch.object(
-        main, "_startup_duration", 0.0
+    with (
+        patch.object(main, "_startup_finished_at", 0.0),
+        patch.object(main, "_startup_duration", 0.0),
     ):
         info = get_startup_info()
     assert info["startup_time"] is None
@@ -150,8 +153,9 @@ def test_get_startup_info_returns_valid_data_after_startup():
     fake_finished = now - 120  # 2 分钟前启动完成
     fake_duration = 3.45  # 启动耗时 3.45 秒
 
-    with patch.object(main, "_startup_finished_at", fake_finished), patch.object(
-        main, "_startup_duration", fake_duration
+    with (
+        patch.object(main, "_startup_finished_at", fake_finished),
+        patch.object(main, "_startup_duration", fake_duration),
     ):
         info = get_startup_info()
 
@@ -168,8 +172,9 @@ def test_get_system_info_dict_contains_formatted_fields():
     fake_finished = now - 3600  # 1 小时前启动完成
     fake_duration = 2.5  # 启动耗时 2.5 秒
 
-    with patch.object(main, "_startup_finished_at", fake_finished), patch.object(
-        main, "_startup_duration", fake_duration
+    with (
+        patch.object(main, "_startup_finished_at", fake_finished),
+        patch.object(main, "_startup_duration", fake_duration),
     ):
         info = get_system_info_dict()
 
@@ -183,8 +188,9 @@ def test_get_system_info_dict_contains_formatted_fields():
 
 def test_get_system_info_dict_before_startup():
     """lifespan 未执行时，get_system_info_dict 应返回合理的默认值"""
-    with patch.object(main, "_startup_finished_at", 0.0), patch.object(
-        main, "_startup_duration", 0.0
+    with (
+        patch.object(main, "_startup_finished_at", 0.0),
+        patch.object(main, "_startup_duration", 0.0),
     ):
         info = get_system_info_dict()
 

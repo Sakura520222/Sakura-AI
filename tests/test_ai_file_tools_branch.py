@@ -100,9 +100,7 @@ class _FakeToolCall:
     """模拟 OpenAI tool_call 对象。"""
 
     def __init__(self, name, arguments):
-        self.function = SimpleNamespace(
-            name=name, arguments=json.dumps(arguments)
-        )
+        self.function = SimpleNamespace(name=name, arguments=json.dumps(arguments))
         self.id = f"call_{name}"
 
 
@@ -283,9 +281,7 @@ async def test_list_directory_non_pr_with_branch(file_strategy):
                     _FakeContent("src/sub", "", type_="dir"),
                 ]
             },
-            "main": {
-                "src": [_FakeContent("src/old.py", "", type_="file")]
-            },
+            "main": {"src": [_FakeContent("src/old.py", "", type_="file")]},
         },
         default_branch="main",
     )
@@ -302,11 +298,7 @@ async def test_list_directory_non_pr_with_branch(file_strategy):
 async def test_list_directory_non_pr_invalid_branch_falls_back(file_strategy):
     """非 PR 场景 branch 不可访问时，回退默认分支。"""
     repo = _FakeRepo(
-        branches={
-            "main": {
-                "src": [_FakeContent("src/old.py", "", type_="file")]
-            }
-        },
+        branches={"main": {"src": [_FakeContent("src/old.py", "", type_="file")]}},
         default_branch="main",
     )
     handler = FileToolHandler()
@@ -324,9 +316,7 @@ async def test_list_directory_non_pr_invalid_branch_falls_back(file_strategy):
 async def test_list_directory_non_pr_no_branch_uses_default(file_strategy):
     """非 PR 场景不传 branch 时，列出默认分支目录。"""
     repo = _FakeRepo(
-        branches={
-            "main": {"src": [_FakeContent("src/old.py", "", type_="file")]}
-        },
+        branches={"main": {"src": [_FakeContent("src/old.py", "", type_="file")]}},
         default_branch="main",
     )
     handler = FileToolHandler()
@@ -357,9 +347,7 @@ async def test_search_in_files_non_pr_with_branch(search_strategy):
         default_branch="main",
     )
     handler = SearchFilesToolHandler()
-    result = await handler.search_in_files(
-        "keyword", repo, pr=None, branch="feature/x"
-    )
+    result = await handler.search_in_files("keyword", repo, pr=None, branch="feature/x")
 
     assert result["branch_used"] == "feature/x"
     assert result["branch_requested"] == "feature/x"
@@ -402,9 +390,7 @@ async def test_search_in_files_zero_matches_does_not_fall_back(search_strategy):
         default_branch="main",
     )
     handler = SearchFilesToolHandler()
-    result = await handler.search_in_files(
-        "keyword", repo, pr=None, branch="feature/x"
-    )
+    result = await handler.search_in_files("keyword", repo, pr=None, branch="feature/x")
 
     assert result["branch_used"] == "feature/x"
     assert result["total_matches"] == 0

@@ -140,9 +140,7 @@ class IssueAnalyzer:
         )
 
         language = output_language if output_language in {"zh-CN", "en"} else "zh-CN"
-        language_name = (
-            "Simplified Chinese" if language == "zh-CN" else "English"
-        )
+        language_name = "Simplified Chinese" if language == "zh-CN" else "English"
 
         sections: List[str] = [
             "You are Sakura, a precise senior GitHub issue analyst.",
@@ -333,7 +331,9 @@ class IssueAnalyzer:
             for item in issue_config.get("categories", [])
             if isinstance(item, dict) and item.get("name")
         }
-        return TaggedIssueAnalysisParser(valid_categories=categories).parse(response_text)
+        return TaggedIssueAnalysisParser(valid_categories=categories).parse(
+            response_text
+        )
 
     async def _parse_or_repair_analysis(
         self,
@@ -685,7 +685,9 @@ class IssueAnalyzer:
                             else:
                                 branch_info = f", 分支={branch_used}"
                     logger.info(
-                        "执行工具 {} (Issue 分析{})", tool_call.function.name, branch_info
+                        "执行工具 {} (Issue 分析{})",
+                        tool_call.function.name,
+                        branch_info,
                     )
                     if event_callback:
                         try:
@@ -697,9 +699,7 @@ class IssueAnalyzer:
                     error_tool_msg = {
                         "role": "tool",
                         "tool_call_id": tool_call.id,
-                        "content": json.dumps(
-                            {"error": str(e)}, ensure_ascii=False
-                        ),
+                        "content": json.dumps({"error": str(e)}, ensure_ascii=False),
                     }
                     messages.append(error_tool_msg)
                     if event_callback:

@@ -17,9 +17,7 @@ def service():
     return PRDependencyGraphService(api_client=AsyncMock(), model="test-model")
 
 
-def make_file(
-    path: str, status: str = "modified", changes: int = 1
-) -> PRFileInfo:
+def make_file(path: str, status: str = "modified", changes: int = 1) -> PRFileInfo:
     return PRFileInfo(
         path=path,
         status=status,
@@ -131,9 +129,7 @@ def test_trim_files_excludes_removed_and_deleted_files(service):
 def test_select_content_files_excludes_removed_files(service):
     current_file = make_file("src/new.py")
     deleted_file = make_file("src/gone.py", status="removed")
-    analysis = make_analysis(
-        [current_file, deleted_file], is_incremental=True
-    )
+    analysis = make_analysis([current_file, deleted_file], is_incremental=True)
     graph_files = [current_file, deleted_file]
 
     content_files = service._select_content_files(analysis, graph_files)
@@ -147,8 +143,7 @@ def test_build_prompts_uses_cumulative_file_counts(service):
     strategy_config.config = {
         "pr_dependency_graph": {
             "user_template": (
-                "{file_count}/{code_file_count}/{analyzed_file_count}\n"
-                "{import_context}"
+                "{file_count}/{code_file_count}/{analyzed_file_count}\n{import_context}"
             )
         }
     }
@@ -192,9 +187,7 @@ async def test_generate_incremental_graph_wires_full_metadata_to_prompt(service)
     service.api_client.call_with_retry = AsyncMock(
         return_value=SimpleNamespace(
             choices=[
-                SimpleNamespace(
-                    message=SimpleNamespace(content="graph TD\nN1 --> N2")
-                )
+                SimpleNamespace(message=SimpleNamespace(content="graph TD\nN1 --> N2"))
             ]
         )
     )
@@ -370,8 +363,7 @@ def test_static_incremental_merges_previous_graph_edges(service):
     code_files = [make_file("src/new.py")]
     file_contents = {"src/new.py": "from src.existing import X\n"}
     previous_graph = (
-        'graph TD\n    N1["src/existing.py"]\n    N2["src/other.py"]\n'
-        '    N1 --> N2\n'
+        'graph TD\n    N1["src/existing.py"]\n    N2["src/other.py"]\n    N1 --> N2\n'
     )
 
     graph = service._generate_static_mermaid(
@@ -446,8 +438,7 @@ def test_unescape_mermaid_label_reverses_escape():
     # 解析时需要反向还原为原始路径。
     escaped = "src&#91;v1&#93;/pkg&#123;x&#125;.py"
     assert (
-        PRDependencyGraphService._unescape_mermaid_label(escaped)
-        == "src[v1]/pkg{x}.py"
+        PRDependencyGraphService._unescape_mermaid_label(escaped) == "src[v1]/pkg{x}.py"
     )
 
 
@@ -473,7 +464,7 @@ def test_parse_previous_graph_omitted_marker_does_not_pollute_edges():
     previous_graph = (
         "graph TD\n"
         '    N1["src/a.py"]\n    N2["src/b.py"]\n'
-        '    N1 --> N2\n'
+        "    N1 --> N2\n"
         '    OMITTED["... 3 more dependencies omitted"]\n'
     )
 

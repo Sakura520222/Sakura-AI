@@ -226,7 +226,9 @@ class AgentTeamMessage(Base):
     """Agent OpenAI-compatible 消息日志。"""
 
     __tablename__ = "agent_team_messages"
-    __table_args__ = (UniqueConstraint("session_id", "seq", name="uq_agent_message_seq"),)
+    __table_args__ = (
+        UniqueConstraint("session_id", "seq", name="uq_agent_message_seq"),
+    )
 
     id = Column(Integer, primary_key=True, autoincrement=True)
     session_id = Column(
@@ -315,7 +317,9 @@ class AgentTeamFeedback(Base):
 
     __tablename__ = "agent_team_feedback"
     __table_args__ = (
-        UniqueConstraint("task_id", "source", "external_id", name="uq_agent_feedback_external"),
+        UniqueConstraint(
+            "task_id", "source", "external_id", name="uq_agent_feedback_external"
+        ),
     )
     id = Column(Integer, primary_key=True, autoincrement=True)
     task_id = Column(

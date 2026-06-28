@@ -91,9 +91,7 @@ class AIApiClient:
         """
         # 关闭 SDK 内置重试，避免与 _retry_loop 叠乘放大超时
         # （SDK 默认 max_retries=2，会使单次调用变成 3 次 HTTP 请求）
-        self.client = AsyncOpenAI(
-            base_url=base_url, api_key=api_key, max_retries=0
-        )
+        self.client = AsyncOpenAI(base_url=base_url, api_key=api_key, max_retries=0)
 
     @staticmethod
     def _estimate_prompt_tokens(messages: List[Dict[str, Any]]) -> int:

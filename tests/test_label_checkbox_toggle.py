@@ -17,6 +17,7 @@ from backend.services.label_service import LabelService
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 def _make_label_service() -> LabelService:
     """Create a LabelService instance bypassing singleton init."""
     svc = object.__new__(LabelService)
@@ -26,6 +27,7 @@ def _make_label_service() -> LabelService:
 # ---------------------------------------------------------------------------
 # is_sakura_label_comment
 # ---------------------------------------------------------------------------
+
 
 class TestIsSakuraLabelComment:
     def test_positive(self):
@@ -43,6 +45,7 @@ class TestIsSakuraLabelComment:
 # ---------------------------------------------------------------------------
 # parse_label_checkboxes
 # ---------------------------------------------------------------------------
+
 
 class TestParseLabelCheckboxes:
     def test_checked_checkbox(self):
@@ -109,6 +112,7 @@ class TestParseLabelCheckboxes:
 # parse_checkbox_changes
 # ---------------------------------------------------------------------------
 
+
 class TestParseCheckboxChanges:
     def test_check_one_label(self):
         svc = _make_label_service()
@@ -173,6 +177,7 @@ class TestParseCheckboxChanges:
 # ---------------------------------------------------------------------------
 # format_label_results (marker presence)
 # ---------------------------------------------------------------------------
+
 
 class TestFormatLabelResults:
     def test_marker_present_in_output(self):

@@ -145,7 +145,6 @@ class ReviewResult:
     completion_tokens: int = 0
 
 
-
 class ProfessionalReviewAgent:
     """专业审查 Agent - 通过工具调用自主审查代码。"""
 
@@ -290,7 +289,9 @@ class ProfessionalReviewAgent:
                 tool_calls_count += len(pending_tool_calls)
                 if terminal_output is not None:
                     return _review_result_from_terminal(
-                        terminal_output, tool_calls_count, token_tracker,
+                        terminal_output,
+                        tool_calls_count,
+                        token_tracker,
                     )
                 continue
 
@@ -299,8 +300,15 @@ class ProfessionalReviewAgent:
                 try:
                     guidance = await guidance_callback()
                     if guidance:
-                        await self._append_message({"role": "user", "content": guidance})
-                        await self._append_message({"role": "assistant", "content": "收到管理员指导，我将按照要求调整审查方向。"})
+                        await self._append_message(
+                            {"role": "user", "content": guidance}
+                        )
+                        await self._append_message(
+                            {
+                                "role": "assistant",
+                                "content": "收到管理员指导，我将按照要求调整审查方向。",
+                            }
+                        )
                 except Exception:
                     pass
 
@@ -421,7 +429,9 @@ class ProfessionalReviewAgent:
             logger.info("专业审查调用工具: {} (round={})", fn_name, round_num)
 
             if self.checkpoint and self.session_id:
-                await self.checkpoint.mark_tool_call_running(self.session_id, tool_call.id)
+                await self.checkpoint.mark_tool_call_running(
+                    self.session_id, tool_call.id
+                )
             try:
                 if terminal_output is None:
                     result = await self.tool_executor.execute_tool_call(tool_call, ctx)
@@ -472,7 +482,9 @@ class ProfessionalReviewAgent:
         if fullstack_summary:
             parts.append(f"\n## 全栈专家修改总结\n{fullstack_summary}\n")
         if diff_summary:
-            parts.append(f"\n## Diff 摘要（所有修改的累积）\n```\n{diff_summary}\n```\n")
+            parts.append(
+                f"\n## Diff 摘要（所有修改的累积）\n```\n{diff_summary}\n```\n"
+            )
         if modified_files:
             files_list = "\n".join(f"- `{f}`" for f in modified_files)
             parts.append(f"\n## 已修改的文件\n{files_list}\n")

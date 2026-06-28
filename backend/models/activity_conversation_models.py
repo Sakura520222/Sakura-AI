@@ -117,6 +117,4 @@ class ActivityToolCall(Base):
     assistant_message = relationship(
         "ActivityMessage", foreign_keys=[assistant_message_id]
     )
-    result_message = relationship(
-        "ActivityMessage", foreign_keys=[result_message_id]
-    )
+    result_message = relationship("ActivityMessage", foreign_keys=[result_message_id])

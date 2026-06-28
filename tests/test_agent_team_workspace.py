@@ -64,7 +64,10 @@ def test_workspace_base_and_task_worktree_paths(tmp_path):
     assert repo_root == (tmp_path / "workplace" / "owner" / "repo").resolve()
     assert base_workspace == (repo_root / "base").resolve()
     assert worktrees_root == (repo_root / "worktrees").resolve()
-    assert task_worktree == (repo_root / "worktrees" / "123-sakura-agent-task-123-issue-42").resolve()
+    assert (
+        task_worktree
+        == (repo_root / "worktrees" / "123-sakura-agent-task-123-issue-42").resolve()
+    )
     assert service.is_path_inside_repo("owner", "repo", task_worktree) is True
 
 

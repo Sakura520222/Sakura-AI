@@ -25,25 +25,62 @@ _SHELL_SUBST_PATTERNS = ("$('", "$(", "${")
 _ALLOWED_FD_REDIRECTS = frozenset({"1>&2", "2>&1"})
 
 # 默认拦截的高危命令（首 token 匹配）
-_DEFAULT_BLOCKED_COMMANDS = frozenset({
-    # 网络外泄（Agent 有独立的 fetch_url 工具）
-    "curl", "wget", "nc", "ncat", "telnet",
-    "ssh", "scp", "sftp", "rsync",
-    # 系统管理
-    "sudo", "su", "passwd", "chown",
-    # Shell/解释器嵌套执行
-    "bash", "sh", "zsh", "fish", "cmd", "powershell", "pwsh", "eval",
-    # 进程控制
-    "kill", "pkill", "killall",
-    # 系统包管理（pip/npm/yarn 等工作区级别包管理不拦截）
-    "apt", "apt-get", "yum", "dnf", "brew", "pacman", "snap", "flatpak",
-    # 服务管理
-    "systemctl", "service", "crontab", "launchctl",
-    # 磁盘/系统
-    "dd", "mkfs", "fdisk", "mount", "umount",
-    # 容器
-    "docker", "podman", "kubectl",
-})
+_DEFAULT_BLOCKED_COMMANDS = frozenset(
+    {
+        # 网络外泄（Agent 有独立的 fetch_url 工具）
+        "curl",
+        "wget",
+        "nc",
+        "ncat",
+        "telnet",
+        "ssh",
+        "scp",
+        "sftp",
+        "rsync",
+        # 系统管理
+        "sudo",
+        "su",
+        "passwd",
+        "chown",
+        # Shell/解释器嵌套执行
+        "bash",
+        "sh",
+        "zsh",
+        "fish",
+        "cmd",
+        "powershell",
+        "pwsh",
+        "eval",
+        # 进程控制
+        "kill",
+        "pkill",
+        "killall",
+        # 系统包管理（pip/npm/yarn 等工作区级别包管理不拦截）
+        "apt",
+        "apt-get",
+        "yum",
+        "dnf",
+        "brew",
+        "pacman",
+        "snap",
+        "flatpak",
+        # 服务管理
+        "systemctl",
+        "service",
+        "crontab",
+        "launchctl",
+        # 磁盘/系统
+        "dd",
+        "mkfs",
+        "fdisk",
+        "mount",
+        "umount",
+        # 容器
+        "docker",
+        "podman",
+        "kubectl",
+    }
+)
 
 
 def _extract_unquoted(command: str) -> str:
@@ -111,7 +148,9 @@ def _segment_block_reason(tokens: list[str], blocklist: set[str]) -> str | None:
         for token in tokens[1:]
     ):
         return "递归 rm 命令被拦截"
-    if name == "chmod" and any(token in {"777", "a+w", "ugo+w"} for token in tokens[1:]):
+    if name == "chmod" and any(
+        token in {"777", "a+w", "ugo+w"} for token in tokens[1:]
+    ):
         return "高权限 chmod 命令被拦截"
     if name in {"python", "python3", "py", "node", "ruby", "perl"} and any(
         token in {"-c", "-e"} for token in tokens[1:]
@@ -160,9 +199,7 @@ def _agent_command_block_reason(command: str) -> str | None:
     raw = getattr(get_settings(), "agent_team_test_command_blocklist", "")
     if raw:
         blocklist.update(
-            item.strip().lower()
-            for item in str(raw).split(",")
-            if item.strip()
+            item.strip().lower() for item in str(raw).split(",") if item.strip()
         )
 
     # 按管道分段，每段独立校验
@@ -251,7 +288,9 @@ class ShellTool(BaseTool):
 
         block_reason = _agent_command_block_reason(command)
         if block_reason:
-            return ToolResult(success=False, error=f"命令被安全策略拦截: {block_reason}")
+            return ToolResult(
+                success=False, error=f"命令被安全策略拦截: {block_reason}"
+            )
 
         executor = AgentTeamShellExecutor(ctx.workspace, ctx.workspace_service)
 

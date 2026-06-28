@@ -128,9 +128,9 @@ def test_registration_quota_multiplier_has_own_dynamic_group():
     assert DYNAMIC_CONFIG_GROUPS["registration_quota"]["keys"] == [
         "register_quota_multiplier"
     ]
-    assert "register_quota_multiplier" not in DYNAMIC_CONFIG_GROUPS["init_quota"][
-        "keys"
-    ]
+    assert (
+        "register_quota_multiplier" not in DYNAMIC_CONFIG_GROUPS["init_quota"]["keys"]
+    )
     assert "register_quota_multiplier" in get_all_db_config_keys()
 
 

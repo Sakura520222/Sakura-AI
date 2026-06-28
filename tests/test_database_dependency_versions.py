@@ -13,9 +13,9 @@ SQLALCHEMY_AIOMYSQL_PRE_PING_FIX_VERSION = Version("2.0.26")
 def _load_requirement(package_name: str) -> Requirement:
     """从 requirements.txt 读取指定依赖。"""
     normalized_name = package_name.lower()
-    for raw_line in (REPO_ROOT / "requirements.txt").read_text(
-        encoding="utf-8"
-    ).splitlines():
+    for raw_line in (
+        (REPO_ROOT / "requirements.txt").read_text(encoding="utf-8").splitlines()
+    ):
         line = raw_line.split("#", 1)[0].strip()
         if not line:
             continue

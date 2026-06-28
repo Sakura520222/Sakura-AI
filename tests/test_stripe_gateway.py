@@ -74,8 +74,8 @@ class TestStripeGatewayCreatePayment:
     async def test_create_payment_stripe_error(self, mock_stripe, gateway):
         import stripe as real_stripe
 
-        mock_stripe.checkout.Session.create.side_effect = (
-            real_stripe.error.StripeError("API error")
+        mock_stripe.checkout.Session.create.side_effect = real_stripe.error.StripeError(
+            "API error"
         )
         mock_stripe.error = real_stripe.error
 
@@ -95,7 +95,9 @@ class TestStripeGatewayCreatePayment:
 
 class TestStripeGatewayVerifyWebhook:
     @patch("backend.services.payment.stripe_gateway.stripe")
-    def test_verify_webhook_completed(self, mock_stripe, gateway, mock_session_completed_event):
+    def test_verify_webhook_completed(
+        self, mock_stripe, gateway, mock_session_completed_event
+    ):
         mock_stripe.Webhook.construct_event.return_value = mock_session_completed_event
 
         result = gateway.verify_webhook(
@@ -109,7 +111,9 @@ class TestStripeGatewayVerifyWebhook:
         assert result.amount_cents == 1000
 
     @patch("backend.services.payment.stripe_gateway.stripe")
-    def test_verify_webhook_expired(self, mock_stripe, gateway, mock_session_expired_event):
+    def test_verify_webhook_expired(
+        self, mock_stripe, gateway, mock_session_expired_event
+    ):
         mock_stripe.Webhook.construct_event.return_value = mock_session_expired_event
 
         result = gateway.verify_webhook(

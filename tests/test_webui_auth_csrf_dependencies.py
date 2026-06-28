@@ -8,7 +8,11 @@ from backend.webui.routes.auth import router
 
 def _route(path: str, method: str) -> APIRoute:
     for route in router.routes:
-        if isinstance(route, APIRoute) and route.path == path and method in route.methods:
+        if (
+            isinstance(route, APIRoute)
+            and route.path == path
+            and method in route.methods
+        ):
             return route
     msg = f"Route {method} {path} not found"
     raise AssertionError(msg)

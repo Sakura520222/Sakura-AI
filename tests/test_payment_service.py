@@ -469,10 +469,12 @@ class TestConfirmPayment:
         mock_result = MagicMock()
         mock_result.scalar_one_or_none.return_value = order
         mock_session.execute.return_value = mock_result
-        mock_session.get = AsyncMock(side_effect=lambda model, pk: {
-            id(sample_user): sample_user,
-            id(plan): plan,
-        }.get(id(model) if hasattr(model, '__hash__') else pk))
+        mock_session.get = AsyncMock(
+            side_effect=lambda model, pk: {
+                id(sample_user): sample_user,
+                id(plan): plan,
+            }.get(id(model) if hasattr(model, "__hash__") else pk)
+        )
 
         # Override get to return user and plan by type
         async def mock_get(model, pk):
@@ -793,6 +795,7 @@ class TestCancelExpiredOrder:
         result = await svc.cancel_expired_order("ORD_NONEXISTENT")
         assert result is None
 
+
 @pytest.mark.asyncio
 class TestProcessRefund:
     async def test_process_refund_not_fulfilled_raises(self, svc, mock_session):
@@ -862,9 +865,7 @@ class TestRefundRequests:
         mock_session.flush.assert_awaited()
         mock_notify.assert_awaited_once_with(mock_session, refund_request)
 
-    async def test_submit_refund_request_rejects_foreign_order(
-        self, svc, mock_session
-    ):
+    async def test_submit_refund_request_rejects_foreign_order(self, svc, mock_session):
         order = Order(
             id=1,
             order_no="ORD_FOREIGN",
@@ -894,9 +895,7 @@ class TestRefundRequests:
         with pytest.raises(PaymentError, match="Only fulfilled"):
             await svc.submit_refund_request(order_id=order.id, user_id=1)
 
-    async def test_submit_refund_request_rejects_free_order(
-        self, svc, mock_session
-    ):
+    async def test_submit_refund_request_rejects_free_order(self, svc, mock_session):
         order = Order(
             id=1,
             order_no="ORD_FREE_REFUND",

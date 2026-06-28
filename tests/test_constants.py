@@ -30,7 +30,10 @@ class TestFingerprintToApkKeyHash:
     def test_known_value(self):
         # 验证命令: python -c "import base64; print(base64.urlsafe_b64encode(b'\x00'*32).rstrip(b'=').decode())"
         fp = "00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00"
-        assert _fingerprint_to_apk_key_hash(fp) == "android:apk-key-hash:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+        assert (
+            _fingerprint_to_apk_key_hash(fp)
+            == "android:apk-key-hash:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+        )
 
     def test_empty_string_raises(self):
         with pytest.raises(ValueError, match="64 个十六进制字符"):
@@ -38,13 +41,19 @@ class TestFingerprintToApkKeyHash:
 
     def test_invalid_hex_raises(self):
         with pytest.raises(ValueError, match="非法十六进制字符"):
-            _fingerprint_to_apk_key_hash("ZZ:ZZ:ZZ:ZZ:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00")
+            _fingerprint_to_apk_key_hash(
+                "ZZ:ZZ:ZZ:ZZ:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00:00"
+            )
 
     def test_wrong_length_raises(self):
         with pytest.raises(ValueError, match="64 个十六进制字符"):
             _fingerprint_to_apk_key_hash("AB:CD:EF")
 
     def test_derived_origins_match_fingerprints(self):
-        assert len(ANDROID_APK_KEY_HASH_ORIGINS) == len(ANDROID_SHA256_CERT_FINGERPRINTS)
-        for fp, origin in zip(ANDROID_SHA256_CERT_FINGERPRINTS, ANDROID_APK_KEY_HASH_ORIGINS):
+        assert len(ANDROID_APK_KEY_HASH_ORIGINS) == len(
+            ANDROID_SHA256_CERT_FINGERPRINTS
+        )
+        for fp, origin in zip(
+            ANDROID_SHA256_CERT_FINGERPRINTS, ANDROID_APK_KEY_HASH_ORIGINS
+        ):
             assert origin == _fingerprint_to_apk_key_hash(fp)
