@@ -39,17 +39,17 @@ class RuffRunner:
                     python_path = venv_path / "bin" / "python"
 
                 if python_path.exists():
-                    print(f"✓ 找到 venv: {venv_path}")
+                    print(f"[OK] 找到 venv: {venv_path}")
                     return python_path
 
         # 没找到 venv，使用系统 Python
-        print("⚠ 未找到 venv，使用系统 Python")
+        print("[!] 未找到 venv，使用系统 Python")
         return Path(sys.executable)
 
     def _run_command(self, cmd: list, description: str) -> tuple[int, str, str]:
         """运行命令并返回结果"""
         print(f"\n{'=' * 60}")
-        print(f"🔧 {description}")
+        print(description)
         print(f"{'=' * 60}")
         print(f"命令: {' '.join(cmd)}\n")
 
@@ -99,10 +99,10 @@ class RuffRunner:
 时间: {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}
 模式: 检查（不修改）
 
-{stdout if stdout else "✓ 没有发现问题"}
+{stdout if stdout else "[OK] 没有发现问题"}
 """
         log_file = self._save_log(log_content, "check")
-        print(f"\n📝 日志已保存到: {log_file}")
+        print(f"\n日志已保存到: {log_file}")
 
         return returncode == 0
 
@@ -131,10 +131,10 @@ class RuffRunner:
 时间: {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}
 模式: 自动修复
 
-{stdout if stdout else "✓ 没有需要修复的问题"}
+{stdout if stdout else "[OK] 没有需要修复的问题"}
 """
         log_file = self._save_log(log_content, "fix")
-        print(f"\n📝 日志已保存到: {log_file}")
+        print(f"\n日志已保存到: {log_file}")
 
         return returncode == 0
 
@@ -155,10 +155,10 @@ class RuffRunner:
 时间: {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}
 模式: 格式化
 
-{stdout if stdout else "✓ 代码已经是格式化的"}
+{stdout if stdout else "[OK] 代码已经是格式化的"}
 """
         log_file = self._save_log(log_content, "format")
-        print(f"\n📝 日志已保存到: {log_file}")
+        print(f"\n日志已保存到: {log_file}")
 
         return returncode == 0
 
@@ -189,10 +189,10 @@ class RuffRunner:
 模式: 检查指定路径
 路径: {" ".join(paths)}
 
-{stdout if stdout else "✓ 没有发现问题"}
+{stdout if stdout else "[OK] 没有发现问题"}
 """
         log_file = self._save_log(log_content, f"check_{'_'.join(paths)}")
-        print(f"\n📝 日志已保存到: {log_file}")
+        print(f"\n日志已保存到: {log_file}")
 
         return returncode == 0
 
@@ -223,7 +223,7 @@ def main():
     runner = RuffRunner()
 
     print(f"\n{'=' * 60}")
-    print("🚀 Ruff 代码检查工具")
+    print("Ruff 代码检查工具")
     print(f"{'=' * 60}")
     print(f"项目根目录: {runner.project_root}")
     print(f"Python 路径: {runner.venv_python}")
@@ -241,7 +241,7 @@ def main():
             runner.check()
     else:
         # 默认：完整模式（检查 → 修复 → 格式化）
-        print("\n📋 执行完整模式：检查 → 修复 → 格式化\n")
+        print("\n执行完整模式：检查 → 修复 → 格式化\n")
 
         # 1. 检查
         runner.check()
@@ -253,7 +253,7 @@ def main():
         runner.format()
 
         print("\n" + "=" * 60)
-        print("✅ 完整模式执行完成！")
+        print("[OK] 完整模式执行完成！")
         print("=" * 60)
 
 
