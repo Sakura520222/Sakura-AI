@@ -73,9 +73,7 @@ class TronGateway(PaymentGateway):
     # ------------------------------------------------------------------
 
     @staticmethod
-    def _calculate_unique_amount(
-        base_usdt: float, order_no: str
-    ) -> float:
+    def _calculate_unique_amount(base_usdt: float, order_no: str) -> float:
         """为订单计算唯一的 USDT 支付金额
 
         在基础金额上附加一个基于 order_no 的微量后缀（0.000001~0.009999），
@@ -96,9 +94,7 @@ class TronGateway(PaymentGateway):
     # TronGrid API
     # ------------------------------------------------------------------
 
-    async def _get_trc20_transfers(
-        self, address: str, limit: int = 20
-    ) -> list[dict]:
+    async def _get_trc20_transfers(self, address: str, limit: int = 20) -> list[dict]:
         """查询最近 TRC-20 USDT 转账到指定地址"""
         url = f"{self.TRONGRID_API}/v1/accounts/{address}/transactions/trc20"
         params = {
@@ -108,13 +104,9 @@ class TronGateway(PaymentGateway):
         }
         try:
             async with httpx.AsyncClient(timeout=15.0) as client:
-                resp = await client.get(
-                    url, params=params, headers=self._headers
-                )
+                resp = await client.get(url, params=params, headers=self._headers)
                 if resp.status_code >= 400:
-                    logger.warning(
-                        "TronGrid API error: status={}", resp.status_code
-                    )
+                    logger.warning("TronGrid API error: status={}", resp.status_code)
                     return []
                 data = resp.json()
                 return data.get("data", [])
@@ -219,9 +211,7 @@ class TronGateway(PaymentGateway):
         # provider_tx_id 实际是 order_no
         # 调用方应通过 metadata 获取 unique_usdt 金额
         # 此处查询最近转账，由上层根据金额匹配
-        transfers = await self._get_trc20_transfers(
-            self._wallet_address, limit=20
-        )
+        transfers = await self._get_trc20_transfers(self._wallet_address, limit=20)
 
         return PaymentStatusResult(
             success=True,
@@ -242,9 +232,7 @@ class TronGateway(PaymentGateway):
 
         遍历最近的 USDT 转账记录，查找与 expected_usdt 匹配的转入。
         """
-        transfers = await self._get_trc20_transfers(
-            self._wallet_address, limit=50
-        )
+        transfers = await self._get_trc20_transfers(self._wallet_address, limit=50)
 
         for tx in transfers:
             # 检查是否是转入

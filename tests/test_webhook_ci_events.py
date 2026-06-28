@@ -61,17 +61,13 @@ async def test_resolve_prefers_payload_pull_requests(mock_ci):
 @pytest.mark.asyncio
 async def test_resolve_falls_back_to_head_sha_map(mock_ci):
     mock_ci.lookup_pr_number = AsyncMock(return_value=7)
-    result = await resolve_pr_number_for_ci(
-        "owner", "repo", "owner/repo", "sha", []
-    )
+    result = await resolve_pr_number_for_ci("owner", "repo", "owner/repo", "sha", [])
     assert result == 7
 
 
 @pytest.mark.asyncio
 async def test_resolve_returns_none_when_all_tiers_fail(mock_ci):
-    result = await resolve_pr_number_for_ci(
-        "owner", "repo", "owner/repo", "sha", []
-    )
+    result = await resolve_pr_number_for_ci("owner", "repo", "owner/repo", "sha", [])
     assert result is None
 
 

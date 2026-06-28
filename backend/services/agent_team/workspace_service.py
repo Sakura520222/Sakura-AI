@@ -137,7 +137,9 @@ class AgentTeamWorkspaceService:
         try:
             worktree.relative_to(repo_root)
         except ValueError as exc:
-            raise WorkspaceSecurityError(f"worktree 不在仓库工作区内: {worktree}") from exc
+            raise WorkspaceSecurityError(
+                f"worktree 不在仓库工作区内: {worktree}"
+            ) from exc
         return worktree
 
     def is_path_inside_repo(
@@ -205,7 +207,9 @@ class AgentTeamWorkspaceService:
         worktrees_root = workspace / self.WORKTREES_DIR_NAME
         worktree_count = 0
         if worktrees_root.exists():
-            worktree_count = sum(1 for item in worktrees_root.iterdir() if item.is_dir())
+            worktree_count = sum(
+                1 for item in worktrees_root.iterdir() if item.is_dir()
+            )
 
         has_git = (workspace / ".git").exists() or (
             workspace / self.BASE_DIR_NAME / ".git"
@@ -234,9 +238,7 @@ class AgentTeamWorkspaceService:
 
     _WT_DIR_RE = re.compile(r"^(\d+)-(.+)$")
 
-    def list_worktrees(
-        self, repo_owner: str, repo_name: str
-    ) -> list[WorktreeInfo]:
+    def list_worktrees(self, repo_owner: str, repo_name: str) -> list[WorktreeInfo]:
         """列出仓库下所有 worktree 的详细信息。"""
         worktrees_root = self.get_worktrees_root_path(repo_owner, repo_name)
         if not worktrees_root.exists():
@@ -270,9 +272,7 @@ class AgentTeamWorkspaceService:
             return None
         return self._build_worktree_info(target)
 
-    def delete_worktree(
-        self, repo_owner: str, repo_name: str, dir_name: str
-    ) -> Path:
+    def delete_worktree(self, repo_owner: str, repo_name: str, dir_name: str) -> Path:
         """删除单个 worktree 目录。"""
         self._validate_worktree_dir_name(dir_name)
         worktrees_root = self.get_worktrees_root_path(repo_owner, repo_name)
@@ -335,9 +335,7 @@ class AgentTeamWorkspaceService:
     def _validate_worktree_dir_name(dir_name: str) -> None:
         """校验 worktree 目录名格式。"""
         if not dir_name or not _SAFE_SEGMENT_RE.match(dir_name):
-            raise WorkspaceSecurityError(
-                f"无效的 worktree 目录名: {dir_name}"
-            )
+            raise WorkspaceSecurityError(f"无效的 worktree 目录名: {dir_name}")
 
     def ensure_within_base(self, path: str | Path) -> Path:
         """确保路径位于 Agent 工作区根目录内。"""

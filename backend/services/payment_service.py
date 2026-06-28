@@ -507,9 +507,7 @@ class PaymentService:
         from backend.services.payment import EXTERNAL_PAYMENT_PROVIDERS
 
         if provider in EXTERNAL_PAYMENT_PROVIDERS:
-            checkout_url = await self._create_external_payment(
-                order, plan, user_id
-            )
+            checkout_url = await self._create_external_payment(order, plan, user_id)
             order._checkout_url = checkout_url
 
             # 虚拟币支付：提取充值信息供前端展示
@@ -620,9 +618,7 @@ class PaymentService:
         )
 
         if not result.success:
-            raise PaymentError(
-                f"Failed to create payment: {result.error_message}"
-            )
+            raise PaymentError(f"Failed to create payment: {result.error_message}")
 
         order.provider_tx_id = result.provider_tx_id
         metadata = {
@@ -636,12 +632,8 @@ class PaymentService:
             metadata["pay_amount"] = str(result.raw_data.get("pay_amount", ""))
             metadata["pay_currency"] = result.raw_data.get("pay_currency", "")
             metadata["payment_id"] = str(result.raw_data.get("payment_id", ""))
-            metadata["price_amount"] = str(
-                result.raw_data.get("price_amount", "")
-            )
-            metadata["price_currency"] = result.raw_data.get(
-                "price_currency", "usd"
-            )
+            metadata["price_amount"] = str(result.raw_data.get("price_amount", ""))
+            metadata["price_currency"] = result.raw_data.get("price_currency", "usd")
             metadata["is_crypto"] = True
 
         if order.metadata_json:
@@ -866,9 +858,7 @@ class PaymentService:
         )
         return order
 
-    async def cancel_expired_order(
-        self, order_no: str
-    ) -> Optional[Order]:
+    async def cancel_expired_order(self, order_no: str) -> Optional[Order]:
         """Cancel an expired PENDING order (idempotent).
 
         Returns the cancelled order, or ``None`` when the order is already
@@ -905,9 +895,7 @@ class PaymentService:
         logger.info("Order cancelled: order_no={}", order_no)
         return order
 
-    async def cancel_and_commit_if_needed(
-        self, order_no: str
-    ) -> Optional[Order]:
+    async def cancel_and_commit_if_needed(self, order_no: str) -> Optional[Order]:
         """Cancel an expired order and commit when it was actually cancelled.
 
         Thin wrapper around :meth:`cancel_expired_order` shared by webhook
@@ -936,9 +924,7 @@ class PaymentService:
             raise PaymentError(f"Order not found: {order_no}")
 
         if order.status != OrderStatus.PENDING.value:
-            raise PaymentError(
-                f"Cannot cancel order in status: {order.status}"
-            )
+            raise PaymentError(f"Cannot cancel order in status: {order.status}")
 
         # 尝试通知支付网关取消
         if order.provider_tx_id and order.payment_provider:
@@ -954,9 +940,7 @@ class PaymentService:
                         result.error_message,
                     )
             except Exception as e:
-                logger.warning(
-                    "Gateway cancel error for {}: {}", order_no, e
-                )
+                logger.warning("Gateway cancel error for {}: {}", order_no, e)
 
         order.status = OrderStatus.CANCELLED.value
         await self._log_payment(
@@ -1001,7 +985,9 @@ class PaymentService:
         ):
             gateway = await get_gateway(order.payment_provider)
             # 全额退款时使用订单原始金额
-            refund_amount = amount_cents if amount_cents is not None else order.amount_cents
+            refund_amount = (
+                amount_cents if amount_cents is not None else order.amount_cents
+            )
             refund_result = await gateway.refund(
                 provider_tx_id=order.provider_tx_id,
                 amount_cents=refund_amount,
@@ -1052,9 +1038,7 @@ class PaymentService:
                     UserSubscription.status == SubscriptionStatus.ACTIVE.value,
                 )
             )
-            subscription = (
-                await self.session.execute(stmt)
-            ).scalar_one_or_none()
+            subscription = (await self.session.execute(stmt)).scalar_one_or_none()
             if subscription:
                 subscription.status = SubscriptionStatus.EXPIRED.value
                 await self.session.flush()
@@ -1514,7 +1498,8 @@ class PaymentService:
             user_id=user_id,
             plan_id=plan.id,
             status=SubscriptionStatus.ACTIVE.value,
-            expires_at=datetime.now(timezone.utc) + timedelta(days=plan.duration_days or 30),
+            expires_at=datetime.now(timezone.utc)
+            + timedelta(days=plan.duration_days or 30),
             applied_pr_quota_bonus=values["pr_quota_bonus"],
             applied_pr_daily_add=values["pr_daily_add"],
             applied_pr_weekly_add=values["pr_weekly_add"],
@@ -1541,16 +1526,10 @@ class PaymentService:
 
         user.daily_quota = max(
             0,
-            user.daily_quota
-            - values["pr_quota_bonus"]
-            - values["pr_daily_add"],
+            user.daily_quota - values["pr_quota_bonus"] - values["pr_daily_add"],
         )
-        user.weekly_quota = max(
-            0, user.weekly_quota - values["pr_weekly_add"]
-        )
-        user.monthly_quota = max(
-            0, user.monthly_quota - values["pr_monthly_add"]
-        )
+        user.weekly_quota = max(0, user.weekly_quota - values["pr_weekly_add"])
+        user.monthly_quota = max(0, user.monthly_quota - values["pr_monthly_add"])
 
         user.issue_daily_quota = max(
             0,
@@ -1611,9 +1590,7 @@ class PaymentService:
                 subscription, "applied_agent_quota_bonus", None
             ),
             "agent_daily_add": getattr(subscription, "applied_agent_daily_add", None),
-            "agent_weekly_add": getattr(
-                subscription, "applied_agent_weekly_add", None
-            ),
+            "agent_weekly_add": getattr(subscription, "applied_agent_weekly_add", None),
             "agent_monthly_add": getattr(
                 subscription, "applied_agent_monthly_add", None
             ),

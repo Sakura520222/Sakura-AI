@@ -98,7 +98,9 @@ class _MemoryDb:
         if entity is CIFailure:
             rows = list(self.store["ci_failures"].values())
             rows = self._apply_where(rows, statement)
-            rows = sorted(rows, key=lambda row: row.created_at or datetime.min, reverse=True)
+            rows = sorted(
+                rows, key=lambda row: row.created_at or datetime.min, reverse=True
+            )
             return _Result(rows)
         if entity is HeadShaPRMap:
             rows = list(self.store["head_maps"].values())
@@ -301,7 +303,9 @@ async def test_record_workflow_job_failure_stores_failed_steps(ci_store):
 
 
 @pytest.mark.asyncio
-async def test_fetch_for_review_applies_record_and_annotation_limits_without_truncating_text(ci_store):
+async def test_fetch_for_review_applies_record_and_annotation_limits_without_truncating_text(
+    ci_store,
+):
     service = CIFailureService()
     long_message = "x" * 1200
     for index in range(3):
@@ -394,8 +398,7 @@ async def test_record_caps_annotations_at_storage_time(ci_store):
     service = CIFailureService()
     service._app = MagicMock()
     service._app.get_check_run_annotations.return_value = [
-        {"path": f"f{i}.py", "start_line": i, "message": f"err {i}"}
-        for i in range(5)
+        {"path": f"f{i}.py", "start_line": i, "message": f"err {i}"} for i in range(5)
     ]
     payload = {
         "id": 303,
@@ -458,9 +461,7 @@ async def test_delete_failures_on_success_rerun(ci_store):
         created_at=_utcnow_naive(),
     )
 
-    deleted = await service.delete_failures(
-        "owner/repo", "sha1", "check_run", "lint"
-    )
+    deleted = await service.delete_failures("owner/repo", "sha1", "check_run", "lint")
 
     assert deleted == 1
     remaining_names = [r.name for r in ci_store["ci_failures"].values()]

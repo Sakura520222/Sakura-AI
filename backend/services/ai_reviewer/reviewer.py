@@ -5,6 +5,7 @@
 """
 
 import json
+import re
 from typing import Any, Callable, Coroutine, Dict, List, Optional
 
 from loguru import logger
@@ -41,9 +42,7 @@ from .tools import (
 )
 
 
-PendingUserMessageCallback = Callable[
-    [], Coroutine[Any, Any, Dict[str, Any] | None]
-]
+PendingUserMessageCallback = Callable[[], Coroutine[Any, Any, Dict[str, Any] | None]]
 
 
 def _dump_protocol_failure(strategy: str, review_text: str) -> None:
@@ -63,9 +62,7 @@ def _dump_protocol_failure(strategy: str, review_text: str) -> None:
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
         path = dump_dir / f"{timestamp}_{strategy}.txt"
         path.write_text(review_text, encoding="utf-8")
-        logger.warning(
-            "已保存完整协议失败载荷（{} 字符）到 {}", len(review_text), path
-        )
+        logger.warning("已保存完整协议失败载荷（{} 字符）到 {}", len(review_text), path)
     except Exception as exc:
         logger.warning("保存协议失败载荷失败: {}", exc)
 
@@ -93,6 +90,24 @@ def _coerce_tool_call_to_dict(tc: Any) -> Dict[str, Any]:
             "type": tc.get("type") or "function",
             "function": {"name": str(function), "arguments": ""},
         }
+    if isinstance(tc, str):
+        # Checkpoint 经 json.dumps(default=str) 持久化后，SDK tool_call 对象会变成
+        # 其 repr 字符串（如 "ChatCompletionMessageToolCall(id='call_x', ...)"）。
+        # 尽力从中恢复 id 与 function.name，避免与后续 tool 消息的 tool_call_id
+        # 失配导致增量审查请求被上游拒绝（400）。无法解析时回退空 id。
+        recovered_id = ""
+        recovered_name = ""
+        id_match = re.search(r"\bid\s*=\s*['\"]([^'\"]*)['\"]", tc)
+        if id_match:
+            recovered_id = id_match.group(1)
+        name_match = re.search(r"\bname\s*=\s*['\"]([^'\"]*)['\"]", tc)
+        if name_match:
+            recovered_name = name_match.group(1)
+        return {
+            "id": recovered_id,
+            "type": "function",
+            "function": {"name": recovered_name, "arguments": ""},
+        }
     function = getattr(tc, "function", None)
     return {
         "id": getattr(tc, "id", "") or "",
@@ -111,9 +126,7 @@ def _normalize_tool_calls_inplace(messages: List[Dict[str, Any]]) -> None:
     for message in messages:
         tool_calls = message.get("tool_calls")
         if isinstance(tool_calls, list):
-            message["tool_calls"] = [
-                _coerce_tool_call_to_dict(tc) for tc in tool_calls
-            ]
+            message["tool_calls"] = [_coerce_tool_call_to_dict(tc) for tc in tool_calls]
 
 
 class AIReviewer:
@@ -218,12 +231,16 @@ class AIReviewer:
             not settings.summary_api_base and not settings.summary_api_key
         )
         summary_config = (
-            "main",
-            main_config,
-        ) if summary_uses_main else (
-            "custom",
-            settings.summary_api_base or settings.openai_api_base,
-            settings.summary_api_key or settings.openai_api_key,
+            (
+                "main",
+                main_config,
+            )
+            if summary_uses_main
+            else (
+                "custom",
+                settings.summary_api_base or settings.openai_api_base,
+                settings.summary_api_key or settings.openai_api_key,
+            )
         )
         if self._summary_client_config != summary_config:
             if summary_uses_main:
@@ -450,10 +467,13 @@ class AIReviewer:
                 # 通知前端：最终 assistant 消息（无工具调用）
                 if event_callback:
                     try:
-                        await event_callback("message", {
-                            "role": "assistant",
-                            "content": review_text,
-                        })
+                        await event_callback(
+                            "message",
+                            {
+                                "role": "assistant",
+                                "content": review_text,
+                            },
+                        )
                     except Exception as exc:
                         logger.warning("event_callback failed: {}", exc)
                 result = await self._parse_or_repair_review(
@@ -548,9 +568,7 @@ class AIReviewer:
                             logger.warning("event_callback failed: {}", exc)
 
             # 记录上下文使用率
-            current_tokens = self.context_compressor.estimate_messages_tokens(
-                messages
-            )
+            current_tokens = self.context_compressor.estimate_messages_tokens(messages)
             tracker.log_context_usage(current_tokens, safe_context, iteration)
 
             # 检查上下文是否超限，触发压缩
@@ -578,8 +596,8 @@ class AIReviewer:
                     )
 
                     # 压缩后再次记录上下文使用率
-                    post_compress_tokens = self.context_compressor.estimate_messages_tokens(
-                        messages
+                    post_compress_tokens = (
+                        self.context_compressor.estimate_messages_tokens(messages)
                     )
                     tracker.log_context_usage(
                         post_compress_tokens, safe_context, iteration
@@ -798,9 +816,7 @@ class AIReviewer:
                     safe_context = self.model_context_mgr.calculate_safe_context(
                         settings.openai_model, settings.context_safety_threshold
                     )
-                    threshold_tokens = int(
-                        safe_context * self.compression_threshold
-                    )
+                    threshold_tokens = int(safe_context * self.compression_threshold)
                     compressed_messages = (
                         await self.context_compressor.compress_conversation_history(
                             messages,

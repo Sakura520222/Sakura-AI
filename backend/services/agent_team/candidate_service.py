@@ -108,7 +108,9 @@ class AgentTeamCandidateService:
             result = candidates[:limit]
         else:
             candidates: list[AgentCandidate] = []
-            candidates.extend(await self._collect_issue_candidates(db, allowlist, limit))
+            candidates.extend(
+                await self._collect_issue_candidates(db, allowlist, limit)
+            )
             candidates.extend(await self._collect_scan_candidates(db, allowlist, limit))
             # 同一 Issue 多条分析记录去重
             candidates = self._deduplicate_candidates(candidates)
@@ -191,8 +193,7 @@ class AgentTeamCandidateService:
 
         if issue is None:
             raise ValueError(
-                f"Issue 不存在或 GitHub App 无权访问: "
-                f"{repo_full_name}#{issue_number}"
+                f"Issue 不存在或 GitHub App 无权访问: {repo_full_name}#{issue_number}"
             )
         if issue.state != "open":
             raise ValueError(
@@ -235,7 +236,11 @@ class AgentTeamCandidateService:
         )
 
         if existing_analysis:
-            title = existing_analysis.suggested_title or issue.title or f"Issue #{issue_number}"
+            title = (
+                existing_analysis.suggested_title
+                or issue.title
+                or f"Issue #{issue_number}"
+            )
             summary = existing_analysis.summary or issue.body or ""
             priority = existing_analysis.priority or "medium"
             source_type = AgentTeamSourceType.ISSUE_ANALYSIS.value
@@ -275,15 +280,15 @@ class AgentTeamCandidateService:
         overrides: dict | None = None,
     ) -> AgentTeamTask:
         """从管理员手动指定的 GitHub Issue 直接创建 Agent 任务。"""
-        values = await self.build_manual_issue_task_draft(db, repo_full_name, issue_number)
+        values = await self.build_manual_issue_task_draft(
+            db, repo_full_name, issue_number
+        )
         values["base_branch"] = base_branch
         values.update(overrides or {})
         task = AgentTeamTask(
             **values,
             started_by=started_by,
-            ai_config_snapshot=json.dumps(
-                ai_config_snapshot or {}, ensure_ascii=False
-            ),
+            ai_config_snapshot=json.dumps(ai_config_snapshot or {}, ensure_ascii=False),
         )
         db.add(task)
         await db.commit()
@@ -482,9 +487,7 @@ class AgentTeamCandidateService:
             **values,
             started_by=started_by,
             pr_head_sha=head_sha,
-            ai_config_snapshot=json.dumps(
-                ai_config_snapshot or {}, ensure_ascii=False
-            ),
+            ai_config_snapshot=json.dumps(ai_config_snapshot or {}, ensure_ascii=False),
         )
         db.add(task)
         await db.commit()

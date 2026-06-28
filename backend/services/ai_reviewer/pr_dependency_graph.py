@@ -319,7 +319,9 @@ class PRDependencyGraphService:
     ) -> List[PRFileInfo]:
         """大型 PR 裁剪：按变更量排序取 top N 文件"""
         files = [
-            f for f in code_files if not PRDependencyGraphService._is_deleted_file(f.status)
+            f
+            for f in code_files
+            if not PRDependencyGraphService._is_deleted_file(f.status)
         ]
         max_files = settings.pr_dependency_graph_max_files
         if len(files) > max_files:
@@ -745,24 +747,70 @@ class PRDependencyGraphService:
         用于增量审查时合并历史依赖上下文。label 经 _unescape_mermaid_label 还原，
         路径经 _normalize_path 统一分隔符。
 
+        逐行用 ``str.find``/``strip`` 手工定界（不用正则），单行 O(行长)、总体
+        线性，从根本上规避正则多项式回溯（CodeQL ReDoS）。每个节点/边需独占一行
+        （Sakura 生成格式）。两遍扫描：先收齐节点，再解析边，使边能解析到完整
+        节点映射。
+
         Returns:
             (node_id -> normalized_path 映射, 归一化后的边集合)
         """
         node_id_to_path: Dict[str, str] = {}
-        for match in re.finditer(r'(\w+)\s*\["([^\]]*)"\]', previous_graph):
-            node_id, label = match.group(1), match.group(2)
-            node_id_to_path[node_id] = cls._normalize_path(
-                cls._unescape_mermaid_label(label)
-            )
+        for line in previous_graph.splitlines():
+            node = cls._parse_node_line(line)
+            if node is not None:
+                node_id, label = node
+                node_id_to_path[node_id] = cls._normalize_path(
+                    cls._unescape_mermaid_label(label)
+                )
 
         edges: Set[tuple[str, str]] = set()
-        for match in re.finditer(r"(\w+)\s*-->\s*(\w+)", previous_graph):
-            source = node_id_to_path.get(match.group(1))
-            target = node_id_to_path.get(match.group(2))
-            if source and target and source != target:
-                edges.add((source, target))
+        for line in previous_graph.splitlines():
+            edge = cls._parse_edge_line(line)
+            if edge is not None:
+                source = node_id_to_path.get(edge[0])
+                target = node_id_to_path.get(edge[1])
+                if source and target and source != target:
+                    edges.add((source, target))
 
         return node_id_to_path, edges
+
+    @staticmethod
+    def _parse_node_line(line: str) -> tuple[str, str] | None:
+        """从 ``<id>["<label>"]`` 行提取 (id, label)；不匹配返回 None。
+
+        用 ``str.find`` 定界（无正则），单行 O(行长)。id 经 strip 后须非空且不含
+        空白/括号/引号（等价于原 ``[^\\[\\]\\s"]+`` 语义）。
+        """
+        start = line.find('["')
+        if start <= 0:
+            return None
+        end = line.find('"]', start + 2)
+        if end == -1:
+            return None
+        node_id = line[:start].strip()
+        label = line[start + 2:end]
+        if not node_id or any(c.isspace() or c in '[]"' for c in node_id):
+            return None
+        return node_id, label
+
+    @staticmethod
+    def _parse_edge_line(line: str) -> tuple[str, str] | None:
+        """从 ``<id> --> <id>`` 行提取 (source_id, target_id)；不匹配返回 None。
+
+        用 ``str.find`` 定界（无正则），单行 O(行长)。两端 id 经 strip 后须非空
+        且不含空白/括号/引号。
+        """
+        arrow = line.find("-->")
+        if arrow <= 0:
+            return None
+        source = line[:arrow].strip()
+        target = line[arrow + 3:].strip()
+        if not source or not target:
+            return None
+        if any(c.isspace() or c in '[]"' for c in source + target):
+            return None
+        return source, target
 
     @staticmethod
     def _build_prompts(
@@ -789,7 +837,9 @@ class PRDependencyGraphService:
         user_template = depgraph_cfg.get(
             "user_template",
             "请根据以下 PR 变更信息生成依赖关系图：\n\n"
-            "PR 标题: {title}\n变更文件数: {file_count}\n\n"
+            "PR 标题: {title}\n"
+            "总文件数: {file_count}  代码文件数: {code_file_count}  "
+            "本轮分析文件数: {analyzed_file_count}\n\n"
             "文件依赖关系:\n{import_context}",
         )
 

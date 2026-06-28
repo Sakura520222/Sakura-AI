@@ -355,9 +355,7 @@ def _format_agent_conversation_contexts(
             "source_role": context.source_role,
             "target_role": context.target_role,
             "summary": context.summary,
-            "unresolved_items": _format_context_items(
-                context.unresolved_items_json
-            ),
+            "unresolved_items": _format_context_items(context.unresolved_items_json),
             "modified_files": _format_context_items(context.modified_files_json),
             "token_estimate": context.token_estimate,
             "created_at": context.created_at,
@@ -388,9 +386,7 @@ async def _load_task_issue_comments(task: AgentTeamTask) -> list[dict]:
     )
 
 
-async def _build_manual_issue_submission_context(
-    db: AsyncSession, draft: dict
-) -> dict:
+async def _build_manual_issue_submission_context(db: AsyncSession, draft: dict) -> dict:
     analysis = await load_issue_analysis_for_context(
         db,
         source_type=draft.get("source_type"),
@@ -449,7 +445,10 @@ async def _build_manual_issue_submission_context(
             sakura_memory=sakura_memory,
             skills_summary=skills_summary,
         ),
-        "runtime_context": {"sakura_memory": sakura_memory, "skills_summary": skills_summary},
+        "runtime_context": {
+            "sakura_memory": sakura_memory,
+            "skills_summary": skills_summary,
+        },
     }
 
 
@@ -835,7 +834,10 @@ async def list_repo_branches(
         client = github_app.get_repo_client(owner, name)
         if not client:
             return JSONResponse(
-                {"success": False, "message": f"无法获取 GitHub 客户端: {owner}/{name}"},
+                {
+                    "success": False,
+                    "message": f"无法获取 GitHub 客户端: {owner}/{name}",
+                },
                 status_code=200,
             )
         repo = client.get_repo(f"{owner}/{name}")
@@ -843,11 +845,13 @@ async def list_repo_branches(
         branches = []
         for branch in repo.get_branches()[:100]:
             branches.append(branch.name)
-        return JSONResponse({
-            "success": True,
-            "default_branch": default_branch,
-            "branches": branches,
-        })
+        return JSONResponse(
+            {
+                "success": True,
+                "default_branch": default_branch,
+                "branches": branches,
+            }
+        )
     except Exception as exc:
         return JSONResponse(
             {"success": False, "message": f"获取分支列表失败: {exc}"},
@@ -1011,9 +1015,7 @@ def _parse_issue_ref(ref: str) -> tuple[str, int]:
     ref = ref.strip()
 
     # GitHub Issue URL
-    m = re.match(
-        r"(?:https?://)?github\.com/([^/]+/[^/]+)/issues/(\d+)", ref
-    )
+    m = re.match(r"(?:https?://)?github\.com/([^/]+/[^/]+)/issues/(\d+)", ref)
     if m:
         return m.group(1), int(m.group(2))
 
@@ -1153,7 +1155,8 @@ async def create_task_from_issue(
         return JSONResponse({"success": False, "message": str(e)}, status_code=200)
 
     draft_for_context = {
-        "source_type": overrides.get("source_type") or AgentTeamSourceType.MANUAL_ISSUE.value,
+        "source_type": overrides.get("source_type")
+        or AgentTeamSourceType.MANUAL_ISSUE.value,
         "source_id": overrides.get("source_id"),
         "source_issue_number": overrides.get("source_issue_number") or issue_number,
         "repo_full_name": overrides.get("repo_full_name") or repo_full_name,
@@ -1166,7 +1169,9 @@ async def create_task_from_issue(
         full_name = draft_for_context["repo_full_name"] or repo_full_name
         parts = full_name.split("/", 1) if "/" in full_name else []
         if len(parts) == 2:
-            draft_for_context["repo_owner"] = draft_for_context["repo_owner"] or parts[0]
+            draft_for_context["repo_owner"] = (
+                draft_for_context["repo_owner"] or parts[0]
+            )
             draft_for_context["repo_name"] = draft_for_context["repo_name"] or parts[1]
     submission_context = await _build_manual_issue_submission_context(
         db, draft_for_context
@@ -1549,19 +1554,21 @@ async def worktree_list_fragment(
     for w in worktrees:
         task_status = task_status_map.get(w.task_id, "") if w.task_id else ""
         is_active = task_status in active_statuses
-        worktree_items.append({
-            "dir_name": w.dir_name,
-            "task_id": w.task_id,
-            "branch_slug": w.branch_slug,
-            "file_count": w.file_count,
-            "total_size_bytes": w.total_size_bytes,
-            "size_label": _format_bytes(w.total_size_bytes),
-            "modified_at": datetime.fromtimestamp(w.modified_at, tz=timezone.utc)
-            if w.modified_at
-            else None,
-            "task_status": task_status,
-            "is_active": is_active,
-        })
+        worktree_items.append(
+            {
+                "dir_name": w.dir_name,
+                "task_id": w.task_id,
+                "branch_slug": w.branch_slug,
+                "file_count": w.file_count,
+                "total_size_bytes": w.total_size_bytes,
+                "size_label": _format_bytes(w.total_size_bytes),
+                "modified_at": datetime.fromtimestamp(w.modified_at, tz=timezone.utc)
+                if w.modified_at
+                else None,
+                "task_status": task_status,
+                "is_active": is_active,
+            }
+        )
 
     orphans = [w for w in worktree_items if not w["is_active"]]
     has_orphans = len(orphans) > 0
@@ -1613,7 +1620,9 @@ async def delete_worktree(
             )
 
     try:
-        deleted = await asyncio.to_thread(service.delete_worktree, repo_owner, repo_name, dir_name)
+        deleted = await asyncio.to_thread(
+            service.delete_worktree, repo_owner, repo_name, dir_name
+        )
     except ValueError as exc:
         return JSONResponse({"success": False, "message": str(exc)}, status_code=400)
 
@@ -1623,7 +1632,12 @@ async def delete_worktree(
         "agent_team_worktree_delete",
         "agent_team_worktree",
         f"{repo_owner}/{repo_name}/{dir_name}",
-        {"repo_owner": repo_owner, "repo_name": repo_name, "dir_name": dir_name, "path": str(deleted)},
+        {
+            "repo_owner": repo_owner,
+            "repo_name": repo_name,
+            "dir_name": dir_name,
+            "path": str(deleted),
+        },
     )
     return JSONResponse({"success": True, "dir_name": dir_name})
 
@@ -1661,7 +1675,9 @@ async def clean_orphan_worktrees(
         if task_status in active_statuses:
             continue
         try:
-            await asyncio.to_thread(service.delete_worktree, repo_owner, repo_name, w.dir_name)
+            await asyncio.to_thread(
+                service.delete_worktree, repo_owner, repo_name, w.dir_name
+            )
             cleaned += 1
         except Exception as exc:
             logger.warning("清理孤立 worktree 失败: {} - {}", w.dir_name, exc)
@@ -1805,13 +1821,19 @@ async def _load_stats(db: AsyncSession, user: dict | None = None) -> dict:
         )
     )
     completed = await db.scalar(
-        select(func.count(AgentTeamTask.id)).where(AgentTeamTask.status == "completed", *base)
+        select(func.count(AgentTeamTask.id)).where(
+            AgentTeamTask.status == "completed", *base
+        )
     )
     failed = await db.scalar(
-        select(func.count(AgentTeamTask.id)).where(AgentTeamTask.status == "failed", *base)
+        select(func.count(AgentTeamTask.id)).where(
+            AgentTeamTask.status == "failed", *base
+        )
     )
     queued = await db.scalar(
-        select(func.count(AgentTeamTask.id)).where(AgentTeamTask.status == "queued", *base)
+        select(func.count(AgentTeamTask.id)).where(
+            AgentTeamTask.status == "queued", *base
+        )
     )
     waiting_human = await db.scalar(
         select(func.count(AgentTeamTask.id)).where(
@@ -1890,45 +1912,57 @@ async def list_active_tasks(
     base_filters = [
         AgentTeamTask.status.in_(AGENT_TEAM_ACTIVE_STATUSES)
         | (
-            AgentTeamTask.status.in_([
-                AgentTeamTaskStatus.COMPLETED.value,
-                AgentTeamTaskStatus.FAILED.value,
-                AgentTeamTaskStatus.CANCELLED.value,
-                AgentTeamTaskStatus.PR_OPENED.value,
-            ])
+            AgentTeamTask.status.in_(
+                [
+                    AgentTeamTaskStatus.COMPLETED.value,
+                    AgentTeamTaskStatus.FAILED.value,
+                    AgentTeamTaskStatus.CANCELLED.value,
+                    AgentTeamTaskStatus.PR_OPENED.value,
+                ]
+            )
             & AgentTeamTask.completed_at.isnot(None)
         )
     ]
     if owner_filter is not None:
         base_filters.append(owner_filter)
-    rows = (await db.execute(
-        select(AgentTeamTask)
-        .where(*base_filters)
-        .order_by(desc(AgentTeamTask.updated_at))
-        .limit(30)
-    )).scalars().all()
+    rows = (
+        (
+            await db.execute(
+                select(AgentTeamTask)
+                .where(*base_filters)
+                .order_by(desc(AgentTeamTask.updated_at))
+                .limit(30)
+            )
+        )
+        .scalars()
+        .all()
+    )
 
-    return JSONResponse({
-        "success": True,
-        "tasks": [
-            {
-                "id": t.id,
-                "title": t.title,
-                "status": t.status,
-                "repo_full_name": t.repo_full_name,
-                "current_phase": t.current_phase,
-                "branch_name": t.branch_name,
-                "base_branch": t.base_branch,
-                "pr_number": t.pr_number,
-                "pr_url": t.pr_url,
-                "iteration_count": t.iteration_count,
-                "max_iterations": t.max_iterations,
-                "updated_at": t.updated_at.isoformat() if t.updated_at else None,
-                "completed_at": t.completed_at.isoformat() if t.completed_at else None,
-            }
-            for t in rows
-        ],
-    })
+    return JSONResponse(
+        {
+            "success": True,
+            "tasks": [
+                {
+                    "id": t.id,
+                    "title": t.title,
+                    "status": t.status,
+                    "repo_full_name": t.repo_full_name,
+                    "current_phase": t.current_phase,
+                    "branch_name": t.branch_name,
+                    "base_branch": t.base_branch,
+                    "pr_number": t.pr_number,
+                    "pr_url": t.pr_url,
+                    "iteration_count": t.iteration_count,
+                    "max_iterations": t.max_iterations,
+                    "updated_at": t.updated_at.isoformat() if t.updated_at else None,
+                    "completed_at": t.completed_at.isoformat()
+                    if t.completed_at
+                    else None,
+                }
+                for t in rows
+            ],
+        }
+    )
 
 
 @router.get("/api/tasks/{task_id}/stream-data")
@@ -1942,31 +1976,41 @@ async def task_stream_data(
     """获取任务的消息流数据（messages + tool_calls + sessions + prompts）。"""
     task = await db.get(AgentTeamTask, task_id)
     if not task:
-        return JSONResponse({"success": False, "error": "Task not found"}, status_code=404)
+        return JSONResponse(
+            {"success": False, "error": "Task not found"}, status_code=404
+        )
     if not _is_admin(user) and task.started_by != user["sub"]:
         return JSONResponse({"success": False, "error": "Forbidden"}, status_code=403)
 
     # Sessions for this task
-    session_rows = (await db.execute(
-        select(AgentTeamSession)
-        .where(AgentTeamSession.task_id == task_id)
-        .order_by(AgentTeamSession.id)
-    )).scalars().all()
+    session_rows = (
+        (
+            await db.execute(
+                select(AgentTeamSession)
+                .where(AgentTeamSession.task_id == task_id)
+                .order_by(AgentTeamSession.id)
+            )
+        )
+        .scalars()
+        .all()
+    )
     session_ids = [s.id for s in session_rows]
 
     if not session_ids:
         can_send, disabled_reason = _can_send_agent_prompt(task)
-        return JSONResponse({
-            "success": True,
-            "messages": [],
-            "tool_calls": [],
-            "sessions": [],
-            "prompts": [],
-            "has_more": False,
-            "task_status": task.status,
-            "can_send_prompt": can_send,
-            "prompt_disabled_reason": disabled_reason,
-        })
+        return JSONResponse(
+            {
+                "success": True,
+                "messages": [],
+                "tool_calls": [],
+                "sessions": [],
+                "prompts": [],
+                "has_more": False,
+                "task_status": task.status,
+                "can_send_prompt": can_send,
+                "prompt_disabled_reason": disabled_reason,
+            }
+        )
 
     # Messages with pagination (use global id, not per-session seq)
     msg_query = (
@@ -1983,77 +2027,95 @@ async def task_stream_data(
     msg_rows = msg_rows[:limit]
 
     # Tool calls can change status without producing a new message.
-    tool_call_rows = (await db.execute(
-        select(AgentTeamToolCall)
-        .where(AgentTeamToolCall.session_id.in_(session_ids))
-        .order_by(AgentTeamToolCall.id)
-    )).scalars().all()
+    tool_call_rows = (
+        (
+            await db.execute(
+                select(AgentTeamToolCall)
+                .where(AgentTeamToolCall.session_id.in_(session_ids))
+                .order_by(AgentTeamToolCall.id)
+            )
+        )
+        .scalars()
+        .all()
+    )
 
     # User prompts
-    prompt_rows = (await db.execute(
-        select(AgentTeamUserPrompt)
-        .where(AgentTeamUserPrompt.task_id == task_id)
-        .order_by(AgentTeamUserPrompt.created_at)
-    )).scalars().all()
+    prompt_rows = (
+        (
+            await db.execute(
+                select(AgentTeamUserPrompt)
+                .where(AgentTeamUserPrompt.task_id == task_id)
+                .order_by(AgentTeamUserPrompt.created_at)
+            )
+        )
+        .scalars()
+        .all()
+    )
 
     can_send, disabled_reason = _can_send_agent_prompt(task)
-    return JSONResponse({
-        "success": True,
-        "messages": [
-            {
-                "id": m.id,
-                "session_id": m.session_id,
-                "seq": m.seq,
-                "role": m.role,
-                "content": m.content,
-                "tool_call_id": m.tool_call_id,
-                "finish_reason": m.finish_reason,
-                "created_at": m.created_at.isoformat() if m.created_at else None,
-            }
-            for m in msg_rows
-        ],
-        "tool_calls": [
-            {
-                "id": tc.id,
-                "session_id": tc.session_id,
-                "assistant_message_id": tc.assistant_message_id,
-                "tool_call_id": tc.tool_call_id,
-                "name": tc.name,
-                "status": tc.status,
-                "arguments_json": tc.arguments_json,
-                "started_at": tc.started_at.isoformat() if tc.started_at else None,
-                "completed_at": tc.completed_at.isoformat() if tc.completed_at else None,
-                "error_message": tc.error_message,
-            }
-            for tc in tool_call_rows
-        ],
-        "sessions": [
-            {
-                "id": s.id,
-                "iteration_number": s.iteration_number,
-                "role_name": s.role_name,
-                "status": s.status,
-                "started_at": s.started_at.isoformat() if s.started_at else None,
-                "completed_at": s.completed_at.isoformat() if s.completed_at else None,
-            }
-            for s in session_rows
-        ],
-        "prompts": [
-            {
-                "id": p.id,
-                "content": p.content,
-                "status": p.status,
-                "submitted_by": p.submitted_by,
-                "created_at": p.created_at.isoformat() if p.created_at else None,
-                "consumed_at": p.consumed_at.isoformat() if p.consumed_at else None,
-            }
-            for p in prompt_rows
-        ],
-        "has_more": has_more,
-        "task_status": task.status,
-        "can_send_prompt": can_send,
-        "prompt_disabled_reason": disabled_reason,
-    })
+    return JSONResponse(
+        {
+            "success": True,
+            "messages": [
+                {
+                    "id": m.id,
+                    "session_id": m.session_id,
+                    "seq": m.seq,
+                    "role": m.role,
+                    "content": m.content,
+                    "tool_call_id": m.tool_call_id,
+                    "finish_reason": m.finish_reason,
+                    "created_at": m.created_at.isoformat() if m.created_at else None,
+                }
+                for m in msg_rows
+            ],
+            "tool_calls": [
+                {
+                    "id": tc.id,
+                    "session_id": tc.session_id,
+                    "assistant_message_id": tc.assistant_message_id,
+                    "tool_call_id": tc.tool_call_id,
+                    "name": tc.name,
+                    "status": tc.status,
+                    "arguments_json": tc.arguments_json,
+                    "started_at": tc.started_at.isoformat() if tc.started_at else None,
+                    "completed_at": tc.completed_at.isoformat()
+                    if tc.completed_at
+                    else None,
+                    "error_message": tc.error_message,
+                }
+                for tc in tool_call_rows
+            ],
+            "sessions": [
+                {
+                    "id": s.id,
+                    "iteration_number": s.iteration_number,
+                    "role_name": s.role_name,
+                    "status": s.status,
+                    "started_at": s.started_at.isoformat() if s.started_at else None,
+                    "completed_at": s.completed_at.isoformat()
+                    if s.completed_at
+                    else None,
+                }
+                for s in session_rows
+            ],
+            "prompts": [
+                {
+                    "id": p.id,
+                    "content": p.content,
+                    "status": p.status,
+                    "submitted_by": p.submitted_by,
+                    "created_at": p.created_at.isoformat() if p.created_at else None,
+                    "consumed_at": p.consumed_at.isoformat() if p.consumed_at else None,
+                }
+                for p in prompt_rows
+            ],
+            "has_more": has_more,
+            "task_status": task.status,
+            "can_send_prompt": can_send,
+            "prompt_disabled_reason": disabled_reason,
+        }
+    )
 
 
 @router.post("/api/tasks/{task_id}/prompts")
@@ -2067,7 +2129,9 @@ async def submit_user_prompt(
     """提交用户引导 Prompt（活跃任务注入 / 可续跑终态触发 follow-up）。"""
     task = await db.get(AgentTeamTask, task_id)
     if not task:
-        return JSONResponse({"success": False, "error": "Task not found"}, status_code=404)
+        return JSONResponse(
+            {"success": False, "error": "Task not found"}, status_code=404
+        )
     if not _is_admin(user) and task.started_by != user["sub"]:
         return JSONResponse({"success": False, "error": "Forbidden"}, status_code=403)
 
@@ -2080,7 +2144,9 @@ async def submit_user_prompt(
 
     content = content.strip()
     if not content:
-        return JSONResponse({"success": False, "error": "Content is empty"}, status_code=400)
+        return JSONResponse(
+            {"success": False, "error": "Content is empty"}, status_code=400
+        )
 
     username = ""
     if request and hasattr(request, "state") and hasattr(request.state, "user"):
@@ -2146,28 +2212,35 @@ async def submit_user_prompt(
         await publish_event("agent:prompt_received", sse_data)
         # 续跑终态时额外发 task_updated 让前端刷新状态
         if is_resumable_terminal:
-            await publish_event("agent:task_updated", {
-                "task_id": task_id,
-                "status": task.status,
-                "current_phase": task.current_phase,
-            })
+            await publish_event(
+                "agent:task_updated",
+                {
+                    "task_id": task_id,
+                    "status": task.status,
+                    "current_phase": task.current_phase,
+                },
+            )
     except Exception as exc:
         logger.debug("SSE 发布 prompt 通知失败: {}", exc)
 
     # 可续跑终态：后台调度 follow-up iteration
     if is_resumable_terminal:
         try:
-            from backend.workers.agent_team_worker import submit_agent_team_human_followup
+            from backend.workers.agent_team_worker import (
+                submit_agent_team_human_followup,
+            )
 
             asyncio.create_task(submit_agent_team_human_followup(task_id))
         except Exception as exc:
             logger.warning("调度 Agent follow-up iteration 失败: {}", exc)
 
-    return JSONResponse({
-        "success": True,
-        "prompt_id": prompt.id,
-        "task_status": task.status,
-    })
+    return JSONResponse(
+        {
+            "success": True,
+            "prompt_id": prompt.id,
+            "task_status": task.status,
+        }
+    )
 
 
 @router.get("/api/tasks/{task_id}/prompts")
@@ -2179,27 +2252,37 @@ async def list_user_prompts(
     """获取任务的用户引导 Prompt 列表。"""
     task = await db.get(AgentTeamTask, task_id)
     if not task:
-        return JSONResponse({"success": False, "error": "Task not found"}, status_code=404)
+        return JSONResponse(
+            {"success": False, "error": "Task not found"}, status_code=404
+        )
     if not _is_admin(user) and task.started_by != user["sub"]:
         return JSONResponse({"success": False, "error": "Forbidden"}, status_code=403)
 
-    rows = (await db.execute(
-        select(AgentTeamUserPrompt)
-        .where(AgentTeamUserPrompt.task_id == task_id)
-        .order_by(AgentTeamUserPrompt.created_at)
-    )).scalars().all()
+    rows = (
+        (
+            await db.execute(
+                select(AgentTeamUserPrompt)
+                .where(AgentTeamUserPrompt.task_id == task_id)
+                .order_by(AgentTeamUserPrompt.created_at)
+            )
+        )
+        .scalars()
+        .all()
+    )
 
-    return JSONResponse({
-        "success": True,
-        "prompts": [
-            {
-                "id": p.id,
-                "content": p.content,
-                "status": p.status,
-                "submitted_by": p.submitted_by,
-                "created_at": p.created_at.isoformat() if p.created_at else None,
-                "consumed_at": p.consumed_at.isoformat() if p.consumed_at else None,
-            }
-            for p in rows
-        ],
-    })
+    return JSONResponse(
+        {
+            "success": True,
+            "prompts": [
+                {
+                    "id": p.id,
+                    "content": p.content,
+                    "status": p.status,
+                    "submitted_by": p.submitted_by,
+                    "created_at": p.created_at.isoformat() if p.created_at else None,
+                    "consumed_at": p.consumed_at.isoformat() if p.consumed_at else None,
+                }
+                for p in rows
+            ],
+        }
+    )

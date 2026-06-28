@@ -370,6 +370,7 @@ class CheckRunService:
                 conclusion="cancelled",
                 output_title=title,
                 output_summary=summary,
+                finalize=True,
             )
         except Exception as exc:
             logger.debug("CheckRunService.report_cancelled 失败: {}", exc)
@@ -398,6 +399,7 @@ class CheckRunService:
                 conclusion="neutral",
                 output_title=title,
                 output_summary=summary,
+                finalize=True,
             )
         except Exception as exc:
             logger.debug("CheckRunService.report_skipped 失败: {}", exc)

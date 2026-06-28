@@ -47,7 +47,9 @@ class TestCurrencyConversion:
         assert gateway._to_minor_units("13.00", "CNY") == 1300
 
     def test_to_minor_units_none_returns_zero_and_logs_warning(self, gateway):
-        with patch("backend.services.payment.nowpayments_gateway.logger") as mock_logger:
+        with patch(
+            "backend.services.payment.nowpayments_gateway.logger"
+        ) as mock_logger:
             result = gateway._to_minor_units(None, "USD")
 
         assert result == 0
@@ -58,7 +60,9 @@ class TestCurrencyConversion:
         )
 
     def test_to_minor_units_invalid_string_returns_zero_and_logs_warning(self, gateway):
-        with patch("backend.services.payment.nowpayments_gateway.logger") as mock_logger:
+        with patch(
+            "backend.services.payment.nowpayments_gateway.logger"
+        ) as mock_logger:
             result = gateway._to_minor_units("not-a-number", "USD")
 
         assert result == 0
@@ -68,11 +72,15 @@ class TestCurrencyConversion:
             "USD",
         )
 
-    def test_to_minor_units_preserves_negative_amount_for_caller_validation(self, gateway):
+    def test_to_minor_units_preserves_negative_amount_for_caller_validation(
+        self, gateway
+    ):
         assert gateway._to_minor_units("-1.23", "USD") == -123
 
     def test_to_minor_units_handles_large_decimal_exactly(self, gateway):
-        assert gateway._to_minor_units("9999999999999999.99", "USD") == 999999999999999999
+        assert (
+            gateway._to_minor_units("9999999999999999.99", "USD") == 999999999999999999
+        )
 
     def test_from_minor_units_jpy(self, gateway):
         assert gateway._from_minor_units(1200, "JPY") == 1200
@@ -385,9 +393,7 @@ class TestGetPaymentStatus:
     @pytest.mark.asyncio
     async def test_query_error(self, gateway):
         """查询错误"""
-        with patch.object(
-            gateway, "_get", side_effect=Exception("Not found")
-        ):
+        with patch.object(gateway, "_get", side_effect=Exception("Not found")):
             result = await gateway.get_payment_status("nonexist")
 
         assert result.success is False

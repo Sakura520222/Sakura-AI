@@ -16,7 +16,11 @@ from backend.core.github_app import (
 from backend.workers.review_worker import submit_review_task
 from backend.services.telegram_service import TelegramService
 from backend.telegram.notifications import get_notification_sender
-from backend.core.config import get_settings, get_dynamic_config, get_user_dynamic_config
+from backend.core.config import (
+    get_settings,
+    get_dynamic_config,
+    get_user_dynamic_config,
+)
 
 settings = get_settings()
 
@@ -242,9 +246,7 @@ async def handle_check_run_event(payload: Dict[str, Any]) -> JSONResponse:
             check_run.get("pull_requests") or [],
         )
         if not pr_number:
-            logger.info(
-                f"check_run 事件无法关联 PR（head_sha={head_sha}），忽略"
-            )
+            logger.info(f"check_run 事件无法关联 PR（head_sha={head_sha}），忽略")
             return JSONResponse(
                 content={"status": "ignored", "reason": "no associated PR"}
             )
@@ -329,9 +331,7 @@ async def handle_workflow_job_event(payload: Dict[str, Any]) -> JSONResponse:
             repo_owner, repo_name, repo_full_name, head_sha, []
         )
         if not pr_number:
-            logger.info(
-                f"workflow_job 事件无法关联 PR（head_sha={head_sha}），忽略"
-            )
+            logger.info(f"workflow_job 事件无法关联 PR（head_sha={head_sha}），忽略")
             return JSONResponse(
                 content={"status": "ignored", "reason": "no associated PR"}
             )
@@ -472,9 +472,7 @@ async def handle_pull_request_event(
                     int(pr_info["pr_number"]),
                 )
         except Exception as e:
-            logger.warning(
-                f"[webhook] 维护 head_sha 映射失败（不影响审查）: {e}"
-            )
+            logger.warning(f"[webhook] 维护 head_sha 映射失败（不影响审查）: {e}")
 
         if not get_settings().enable_auto_review:
             logger.info(
@@ -483,7 +481,6 @@ async def handle_pull_request_event(
             return JSONResponse(
                 content={"status": "skipped", "reason": "auto review disabled"}
             )
-
 
         # 过滤 Bot 自身创建的 PR（如 sakura-memory 系统创建的 PR）
         # 但允许 Agent Team 创建的 PR 进入审查
@@ -535,6 +532,42 @@ async def handle_pull_request_event(
                 f"PR未打开，跳过审查: {pr_info['repo_full_name']}#{pr_info['pr_number']}"
             )
             return JSONResponse(content={"status": "skipped", "reason": "PR not open"})
+
+        # Synchronize 去重：在配额扣费前按 delivery_id 去重，避免 GitHub 重试投递
+        # 导致同一增量被重复扣费（enqueue_from_webhook 内部也会去重，但那发生在
+        # check_and_consume_quota 之后）。/ Dedup synchronize by delivery_id BEFORE
+        # charging quota so GitHub retries don't double-bill.
+        if action == "synchronize" and delivery_id:
+            try:
+                from backend.services.pr_review_incremental_queue import (
+                    PRReviewIncrementalQueueService,
+                )
+
+                duplicate = await PRReviewIncrementalQueueService().find_by_delivery_id(
+                    delivery_id
+                )
+                if duplicate is not None:
+                    logger.info(
+                        "[webhook] synchronize 重复投递 delivery_id={} 已入队"
+                        "（status={}），跳过且不重复扣费: {}#{}",
+                        delivery_id,
+                        duplicate.status,
+                        pr_info["repo_full_name"],
+                        pr_info["pr_number"],
+                    )
+                    return JSONResponse(
+                        content={
+                            "status": "deduplicated",
+                            "action": "synchronize",
+                            "pr": f"{pr_info['repo_full_name']}#{pr_info['pr_number']}",
+                            "head_sha": pr_info.get("head_sha") or pr_info.get("after"),
+                        }
+                    )
+            except Exception as e:
+                logger.warning(
+                    "[webhook] synchronize delivery_id 去重检查失败（继续正常流程）: {}",
+                    e,
+                )
 
         # Telegram 权限检查
         notification_sender = get_notification_sender()
@@ -685,12 +718,14 @@ async def handle_pull_request_event(
                     pr_info["pr_number"],
                     pr_info.get("head_sha") or pr_info.get("after"),
                 )
-                return JSONResponse(content={
-                    "status": "accepted",
-                    "action": "queued_incremental",
-                    "pr": f"{pr_info['repo_full_name']}#{pr_info['pr_number']}",
-                    "head_sha": pr_info.get("head_sha") or pr_info.get("after"),
-                })
+                return JSONResponse(
+                    content={
+                        "status": "accepted",
+                        "action": "queued_incremental",
+                        "pr": f"{pr_info['repo_full_name']}#{pr_info['pr_number']}",
+                        "head_sha": pr_info.get("head_sha") or pr_info.get("after"),
+                    }
+                )
 
         # 提交审查任务到队列
         await _mark_agent_task_external_reviewing(pr_info)
@@ -1096,7 +1131,9 @@ async def _handle_label_checkbox_toggle_inner(
         github_app = GitHubAppClient()
         permission = await asyncio.to_thread(
             github_app.check_collaborator_permission,
-            repo_owner, repo_name, editor_login,
+            repo_owner,
+            repo_name,
+            editor_login,
         )
         if permission == "unknown":
             logger.warning(
@@ -1130,9 +1167,7 @@ async def _handle_label_checkbox_toggle_inner(
                     if comment_source == "issue_comment":
                         comment_obj = repo.get_issue(pr_number).get_comment(comment_id)
                     else:
-                        comment_obj = repo.get_pull(pr_number).get_review(
-                            comment_id
-                        )
+                        comment_obj = repo.get_pull(pr_number).get_review(comment_id)
                     comment_obj.edit(old_body)
                     logger.info(
                         f"[{comment_source}] 已恢复评论 #{comment_id} 的原始复选框状态"
@@ -1582,7 +1617,9 @@ async def handle_issue_event(payload: Dict[str, Any]) -> JSONResponse:
                                 )
                                 await _session.commit()
                         except Exception as _e:
-                            logger.warning(f"同步 Issue reopened 状态到数据库失败: {_e}")
+                            logger.warning(
+                                f"同步 Issue reopened 状态到数据库失败: {_e}"
+                            )
                 else:
                     logger.debug("跳过 Pull Request 的 Issue 向量同步")
             except Exception as e:
@@ -1800,6 +1837,7 @@ async def _post_issue_comment(
 ) -> None:
     """发送 Issue 评论（同步 GitHub API 通过 asyncio.to_thread 包装，失败静默）"""
     try:
+
         def _do_post():
             client = github_app.get_repo_client(repo_owner, repo_name)
             if client:
@@ -1808,7 +1846,9 @@ async def _post_issue_comment(
 
         await asyncio.to_thread(_do_post)
     except Exception as e:
-        logger.warning("发送 Issue 评论失败: {}#{} - {}", repo_full_name, issue_number, e)
+        logger.warning(
+            "发送 Issue 评论失败: {}#{} - {}", repo_full_name, issue_number, e
+        )
 
 
 async def _permission_check_unavailable_response(
@@ -1945,7 +1985,9 @@ async def _consume_agent_quota_or_cleanup(
         reply = f"❌ 仓库所有者 @{repo_owner} 尚未注册，无法使用 Agent 任务。请先注册后再试。"
     else:
         reply = f"❌ Agent 配额不足（仓库所有者 @{repo_owner}）：{reason}"
-    logger.warning("{} 配额检查失败: repo_owner={} - {}", log_prefix, repo_owner, reason)
+    logger.warning(
+        "{} 配额检查失败: repo_owner={} - {}", log_prefix, repo_owner, reason
+    )
 
     # 延迟导入：避免 webhook ↔ agent_team_models 循环依赖
     from backend.models.agent_team_models import AgentTeamTask as _ATT
@@ -2007,7 +2049,10 @@ async def handle_agent_command(payload: Dict[str, Any]) -> JSONResponse:
 
         logger.info(
             "/agent 指令: {}#{}, 评论者: {}, base: {}",
-            repo_full_name, issue_number, commenter, base_branch or "default",
+            repo_full_name,
+            issue_number,
+            commenter,
+            base_branch or "default",
         )
 
         # 功能开关检查
@@ -2017,7 +2062,12 @@ async def handle_agent_command(payload: Dict[str, Any]) -> JSONResponse:
         # 权限检查：仅 admin/write 用户可触发
         github_app = GitHubAppClient()
         if err := await _check_agent_permission(
-            github_app, repo_owner, repo_name, repo_full_name, commenter, issue_number,
+            github_app,
+            repo_owner,
+            repo_name,
+            repo_full_name,
+            commenter,
+            issue_number,
         ):
             return err
 
@@ -2065,9 +2115,15 @@ async def handle_agent_command(payload: Dict[str, Any]) -> JSONResponse:
                     scan_findings = list(result.scalars().all())
 
         if not existing_analysis and not scan_report:
-            logger.info("/agent 无分析记录或扫描报告: {}#{}", repo_full_name, issue_number)
+            logger.info(
+                "/agent 无分析记录或扫描报告: {}#{}", repo_full_name, issue_number
+            )
             await _post_issue_comment(
-                github_app, repo_owner, repo_name, repo_full_name, issue_number,
+                github_app,
+                repo_owner,
+                repo_name,
+                repo_full_name,
+                issue_number,
                 "❌ 此 Issue 尚未完成 AI 分析，也未匹配到 Sakura 仓库扫描报告。请先使用 `/analyze` 命令分析此 Issue。",
             )
             return JSONResponse(
@@ -2114,7 +2170,9 @@ async def handle_agent_command(payload: Dict[str, Any]) -> JSONResponse:
                     (SCAN_SEVERITY_ORDER.get(f.severity, 4) for f in scan_findings),
                     default=3,
                 )
-                priority = "critical" if highest == 0 else "high" if highest == 1 else "medium"
+                priority = (
+                    "critical" if highest == 0 else "high" if highest == 1 else "medium"
+                )
                 overrides.update(
                     {
                         "source_type": AgentTeamSourceType.SCAN_REPORT_ISSUE.value,
@@ -2122,10 +2180,16 @@ async def handle_agent_command(payload: Dict[str, Any]) -> JSONResponse:
                         "source_issue_number": issue_number,
                         "title": f"处理扫描报告 Issue #{issue_number}",
                         "priority": priority,
-                        "candidate_score": 90 if highest == 0 else 80 if highest == 1 else 60,
+                        "candidate_score": 90
+                        if highest == 0
+                        else 80
+                        if highest == 1
+                        else 60,
                     }
                 )
-            agent_task_context = build_agent_task_summary(task_summary or "", issue_context_md)
+            agent_task_context = build_agent_task_summary(
+                task_summary or "", issue_context_md
+            )
             if agent_task_context:
                 overrides["summary"] = agent_task_context
 
@@ -2149,7 +2213,11 @@ async def handle_agent_command(payload: Dict[str, Any]) -> JSONResponse:
             except ValueError as e:
                 logger.warning("/agent 创建任务失败: {}", e)
                 await _post_issue_comment(
-                    github_app, repo_owner, repo_name, repo_full_name, issue_number,
+                    github_app,
+                    repo_owner,
+                    repo_name,
+                    repo_full_name,
+                    issue_number,
                     f"❌ 无法创建 Agent 任务：{e}",
                 )
                 return JSONResponse(
@@ -2163,7 +2231,12 @@ async def handle_agent_command(payload: Dict[str, Any]) -> JSONResponse:
 
         # 仓库所有者配额消耗（任务创建成功后，使用实际 task_id）
         if err := await _consume_agent_quota_or_cleanup(
-            github_app, repo_owner, repo_name, repo_full_name, task_id, issue_number,
+            github_app,
+            repo_owner,
+            repo_name,
+            repo_full_name,
+            task_id,
+            issue_number,
         ):
             return err
 
@@ -2176,14 +2249,20 @@ async def handle_agent_command(payload: Dict[str, Any]) -> JSONResponse:
         # 回复确认评论
         branch_info = f"，基础分支：`{base_branch}`" if base_branch else ""
         await _post_issue_comment(
-            github_app, repo_owner, repo_name, repo_full_name, issue_number,
-            f"已创建 Agent 任务（ID: {task_id}）{branch_info}\n\n"
-            f"由 @{commenter} 触发",
+            github_app,
+            repo_owner,
+            repo_name,
+            repo_full_name,
+            issue_number,
+            f"已创建 Agent 任务（ID: {task_id}）{branch_info}\n\n由 @{commenter} 触发",
         )
 
         logger.info(
             "/agent 任务已创建: {}#{}, task_id={}, base={}",
-            repo_full_name, issue_number, task_id, base_branch or "default",
+            repo_full_name,
+            issue_number,
+            task_id,
+            base_branch or "default",
         )
 
         return JSONResponse(
@@ -2243,7 +2322,10 @@ async def handle_pr_agent_command(payload: Dict[str, Any]) -> JSONResponse:
 
         logger.info(
             "/agent PR 指令: {}#{}, 评论者: {}, base: {}",
-            repo_full_name, pr_number, commenter, base_branch or "default",
+            repo_full_name,
+            pr_number,
+            commenter,
+            base_branch or "default",
         )
 
         # 功能开关检查
@@ -2253,7 +2335,12 @@ async def handle_pr_agent_command(payload: Dict[str, Any]) -> JSONResponse:
         # 权限检查
         github_app = GitHubAppClient()
         if err := await _check_agent_permission(
-            github_app, repo_owner, repo_name, repo_full_name, commenter, pr_number,
+            github_app,
+            repo_owner,
+            repo_name,
+            repo_full_name,
+            commenter,
+            pr_number,
             log_prefix="/agent PR",
         ):
             return err
@@ -2288,7 +2375,11 @@ async def handle_pr_agent_command(payload: Dict[str, Any]) -> JSONResponse:
             except ValueError as e:
                 logger.warning("/agent PR 创建任务失败: {}", e)
                 await _post_issue_comment(
-                    github_app, repo_owner, repo_name, repo_full_name, pr_number,
+                    github_app,
+                    repo_owner,
+                    repo_name,
+                    repo_full_name,
+                    pr_number,
                     "❌ 无法创建 Agent 修复任务，请稍后重试或联系仓库管理员。",
                 )
                 return JSONResponse(
@@ -2299,7 +2390,12 @@ async def handle_pr_agent_command(payload: Dict[str, Any]) -> JSONResponse:
 
         # 仓库所有者配额消耗
         if err := await _consume_agent_quota_or_cleanup(
-            github_app, repo_owner, repo_name, repo_full_name, task_id, pr_number,
+            github_app,
+            repo_owner,
+            repo_name,
+            repo_full_name,
+            task_id,
+            pr_number,
             log_prefix="/agent PR",
         ):
             return err
@@ -2312,7 +2408,11 @@ async def handle_pr_agent_command(payload: Dict[str, Any]) -> JSONResponse:
         # 回复确认评论
         branch_info = f"，基础分支：`{base_branch}`" if base_branch else ""
         await _post_issue_comment(
-            github_app, repo_owner, repo_name, repo_full_name, pr_number,
+            github_app,
+            repo_owner,
+            repo_name,
+            repo_full_name,
+            pr_number,
             f"🤖 Agent 修复任务已创建（ID: {task_id}）{branch_info}\n\n"
             f"将基于 PR #{pr_number} 的审查意见创建独立修复分支并提交 PR。\n"
             f"由 @{commenter} 触发",
@@ -2320,7 +2420,10 @@ async def handle_pr_agent_command(payload: Dict[str, Any]) -> JSONResponse:
 
         logger.info(
             "/agent PR 任务已创建: {}#{}, task_id={}, base={}",
-            repo_full_name, pr_number, task_id, base_branch or "default",
+            repo_full_name,
+            pr_number,
+            task_id,
+            base_branch or "default",
         )
 
         return JSONResponse(
@@ -2455,7 +2558,9 @@ async def handle_stripe_webhook(
                     )
 
                 else:
-                    logger.info("Stripe webhook: ignoring event type {}", event.event_type)
+                    logger.info(
+                        "Stripe webhook: ignoring event type {}", event.event_type
+                    )
                     return JSONResponse(
                         content={"status": "ignored", "event": str(event.event_type)}
                     )
@@ -2475,7 +2580,12 @@ async def handle_stripe_webhook(
             content={"status": "error", "message": "Invalid request"},
         )
     except Exception as e:
-        logger.error("Stripe webhook unexpected error: {} - {}", type(e).__name__, e, exc_info=True)
+        logger.error(
+            "Stripe webhook unexpected error: {} - {}",
+            type(e).__name__,
+            e,
+            exc_info=True,
+        )
         return JSONResponse(
             status_code=500,
             content={"status": "error", "message": "Internal server error"},
@@ -2559,7 +2669,9 @@ async def handle_paddle_webhook(
                     )
 
                 else:
-                    logger.info("Paddle webhook: ignoring event type {}", event.event_type)
+                    logger.info(
+                        "Paddle webhook: ignoring event type {}", event.event_type
+                    )
                     return JSONResponse(
                         content={"status": "ignored", "event": str(event.event_type)}
                     )
@@ -2579,7 +2691,12 @@ async def handle_paddle_webhook(
             content={"status": "error", "message": "Invalid request"},
         )
     except Exception as e:
-        logger.error("Paddle webhook unexpected error: {} - {}", type(e).__name__, e, exc_info=True)
+        logger.error(
+            "Paddle webhook unexpected error: {} - {}",
+            type(e).__name__,
+            e,
+            exc_info=True,
+        )
         return JSONResponse(
             status_code=500,
             content={"status": "error", "message": "Internal server error"},
@@ -2650,7 +2767,12 @@ async def handle_alipay_webhook(
         logger.warning("Alipay webhook gateway error: {}", e)
         return PlainTextResponse("fail")
     except Exception as e:
-        logger.error("Alipay webhook unexpected error: {} - {}", type(e).__name__, e, exc_info=True)
+        logger.error(
+            "Alipay webhook unexpected error: {} - {}",
+            type(e).__name__,
+            e,
+            exc_info=True,
+        )
         return PlainTextResponse("fail")
 
 

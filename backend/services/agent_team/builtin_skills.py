@@ -14,10 +14,10 @@ BUILTIN_SKILLS: list[dict[str, str]] = [
         "name": "Ruff Lint & Format",
         "content": (
             "---\n"
-            'name: Ruff Lint & Format\n'
-            'slug: ruff-lint\n'
-            'description: 使用 Ruff 进行 Python 代码检查、自动修复和格式化\n'
-            'when_to_use: 修改 Python 文件后，需要检查代码质量或修复格式问题时使用\n'
+            "name: Ruff Lint & Format\n"
+            "slug: ruff-lint\n"
+            "description: 使用 Ruff 进行 Python 代码检查、自动修复和格式化\n"
+            "when_to_use: 修改 Python 文件后，需要检查代码质量或修复格式问题时使用\n"
             'allowed-tools: ["run_command"]\n'
             "---\n"
             "\n"
@@ -51,9 +51,7 @@ async def install_builtin_skills(
     installed = 0
     for skill_def in BUILTIN_SKILLS:
         slug = skill_def["slug"]
-        existing = await db.scalar(
-            select(AgentSkill.id).where(AgentSkill.slug == slug)
-        )
+        existing = await db.scalar(select(AgentSkill.id).where(AgentSkill.slug == slug))
         if existing is not None:
             continue
         content = skill_def["content"].encode("utf-8")

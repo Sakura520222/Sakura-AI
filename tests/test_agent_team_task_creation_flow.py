@@ -135,9 +135,7 @@ def test_format_issue_analysis_context_parses_json_fields():
     assert context["repo_full_name"] == "owner/repo"
     assert context["summary"] == "Stored summary"
     assert context["suggested_labels"] == [{"name": "bug"}]
-    assert context["suggested_assignees"] == [
-        {"username": "bob", "reason": "Knows it"}
-    ]
+    assert context["suggested_assignees"] == [{"username": "bob", "reason": "Knows it"}]
     assert context["related_prs"] == [{"number": 7, "title": "Fix", "state": "open"}]
     assert '"Detail summary"' in context["analysis_detail_json"]
 
@@ -212,7 +210,9 @@ def test_format_agent_conversation_contexts_parses_items():
 
     assert [item["iteration_number"] for item in formatted] == [1, 2]
     assert formatted[0]["unresolved_items"] == []
-    assert formatted[0]["modified_files"] == [{"text": "tests/test_app.py", "meta": None}]
+    assert formatted[0]["modified_files"] == [
+        {"text": "tests/test_app.py", "meta": None}
+    ]
     assert formatted[1]["unresolved_items"] == [
         {"text": "Handle edge case", "meta": "medium"}
     ]
@@ -277,7 +277,9 @@ class DraftDb:
 
 
 @pytest.mark.asyncio
-async def test_build_manual_issue_task_draft_reuses_analysis_without_creating_task(monkeypatch):
+async def test_build_manual_issue_task_draft_reuses_analysis_without_creating_task(
+    monkeypatch,
+):
     service = AgentTeamCandidateService()
     db = DraftDb()
 
@@ -362,7 +364,9 @@ async def test_preview_task_from_issue_returns_draft(monkeypatch):
     )
     assert "## system" in payload["submission_context"]["full_submission_preview"]
     assert "## user" in payload["submission_context"]["full_submission_preview"]
-    assert "## GitHub Issue 上下文" in payload["submission_context"]["agent_task_context"]
+    assert (
+        "## GitHub Issue 上下文" in payload["submission_context"]["agent_task_context"]
+    )
 
 
 @pytest.mark.asyncio
@@ -466,7 +470,9 @@ async def test_create_task_from_issue_passes_edited_overrides(monkeypatch):
     async def fake_log_admin_action(*args, **kwargs):
         return None
 
-    monkeypatch.setattr("backend.webui.routes.agent_team.load_agent_team_ai_config", fake_config)
+    monkeypatch.setattr(
+        "backend.webui.routes.agent_team.load_agent_team_ai_config", fake_config
+    )
     monkeypatch.setattr(
         "backend.webui.routes.agent_team.AgentTeamCandidateService.create_task_from_manual_issue",
         fake_create,

@@ -8,7 +8,7 @@
 
 [English](README_EN.md) | **中文**
 
-[![Version](https://img.shields.io/badge/Version-2.12.2-blue.svg)](https://github.com/Sakura520222/Sakura-AI-Reviewer/releases)
+[![Version](https://img.shields.io/badge/Version-2.13.0-blue.svg)](https://github.com/Sakura520222/Sakura-AI-Reviewer/releases)
 [![Python](https://img.shields.io/badge/Python-3.11+-blue.svg)](https://www.python.org/)
 [![FastAPI](https://img.shields.io/badge/FastAPI-Latest-green.svg)](https://fastapi.tiangolo.com/)
 [![License](https://img.shields.io/badge/License-AGPLv3-yellow.svg)](LICENSE)
@@ -33,13 +33,6 @@
 
 ## ✨ 核心特性
 
-### 2.12.2 更新亮点
-
-- **标签化审查协议**：主 PR 审查器改用严格的行式 `<SAKURA_REVIEW>` 信封协议作为输出契约，统一替换旧的 JSON 块 / emoji / 分数正则解析；新增信封校验（字段顺序与唯一性、版本与枚举、分数范围）并设严重等级分数上限（critical ≤ 3、major ≤ 6）；首次响应无效时在 temperature 0、无工具条件下做一次格式修复重试，二次失败则降级为不带分数与发现的安全评论，避免误批准或误低分拒绝。详见 [审查协议规范](docs/PR_REVIEW_PROTOCOL.md)。
-- **AI 凭证运行时刷新**：AIReviewer / IssueAnalyzer / SakuraMemoryService 新增 `_refresh_ai_client`，运行时自动校验并刷新 AI 客户端凭证，WebUI 配置变更即时生效；Web Search 与 Fetch URL 工具改为通过 ToolHandler 统一动态加载，减少冗余初始化。
-- **Agent Team 工作区与 Live View 增强**：WebUI 暴露 worktree 列表 / 详情 / 删除接口（含文件数、体积、修改时间），任务列表与详情页展示分支信息和 worktree 数量；Live View 改为后端驱动的 `can_send_prompt` 判定并展示初始输入，支持对 completed / waiting_human 终态任务的可恢复跟进；PR 审查反馈新增 branch + 源 PR 两阶段匹配。
-- **支付链路健壮性**：各支付网关 webhook 直接基于事件订单号处理，`cancel_expired_order` 幂等化（订单不存在视为成功），仅在取消成功时提交事务。
-
 ### 审查能力
 
 - **AI 推理模式**：利用 AI 推理能力进行深度代码分析，主动调用工具查看项目结构和任意文件
@@ -60,7 +53,7 @@
 - **行内评论开关**：通过 WebUI 配置 `enable_inline_comments`，控制是否在 PR diff 上发布行内评论，减少审查噪音
 - **可控自动审查**：通过 WebUI 配置 `enable_auto_review` 控制 PR opened/synchronize/reopened 是否自动入队，保留命令和手动触发路径
 - **Check Runs 进度可视化**：将审查生命周期（排队、代码索引、PR 总结、AI 审查、生成报告、完成、失败、取消、跳过）映射到 GitHub Check Runs，在 PR 的 Checks 面板实时展示进度；conclusion 采用纯展示语义（仅审查自身出错为 failure，不阻止合并）
-- **外部 CI 失败注入**：订阅 `check_run.completed` 与 `workflow_job.completed`，采集其他 CI（如 GitHub Actions、Codecov、lint App）的失败结论、失败步骤和 Checks annotations，并在下一次 PR 审查请求中作为不可信证据注入 AI 上下文
+- **外部 CI 失败注入**：订阅 `check_run.completed` 与 `workflow_job.completed`，采集其他 CI（如 GitHub Actions、Codecov、lint App）的失败结论、失败步骤和 Checks annotations，并在下一次 PR 审查请求中作为不可信证据注入 AI 上下文；采集记录会按状态过滤、自动清理，并对同一 PR 下相同 `(source, name)` 的失败保留最新记录，避免重复失败证据干扰审查上下文
 - **审查评论标签交互**：审查报告中包含标签复选框，用户可在 GitHub PR 页面直接勾选/取消标签，AI 自动应用或移除对应标签
 - **AI 生成 PR 描述**：Agent 创建 PR 时 AI 自动生成包含元数据标记的 PR 描述，后续审查可精确识别和更新 AI 注入区域
 
@@ -346,7 +339,7 @@ WebUI：`https://your-domain.com/`
 - **Web 搜索工具**：WebUI 配置管理中 `web_search_provider`（`duckduckgo` 免费或 `tavily` 高级）
 - **跨文件搜索**：`config/strategies.yaml` 中 `context_enhancement.search_in_files`，配置 GitHub Search API 优先策略、上下文行数、最大结果数等
 - **Git 信息工具**：`config/strategies.yaml` 中 `context_enhancement.git_tools`，配置默认分支和提交返回数量
-- **项目记忆系统**：WebUI 配置管理中 `sakura_memory_enabled` 启用记忆系统，`sakura_reflection_enabled` 启用审查后反思，`sakura_consolidation_interval` 合并触发的反思轮数（默认 5），`sakura_auto_init` 自动初始化 `.sakura/` 目录，`sakura_auto_create_subdirs` 自动创建 rules/docs/plans 子目录，`sakura_knowledge_extraction_enabled` 启用自动知识提取（通过三次串行 LLM 调用分别提取 rules/docs/plans），`sakura_extraction_provider` 配置提取 AI 凭据来源（主AI/辅助AI/独立配置）。WebUI 提供「Sakura 记忆管理」页面，支持查看/编辑/删除记忆文件、手动触发合并和知识提取。详见 [项目记忆系统使用指南](docs/SAKURA_MEMORY_GUIDE.md)
+- **项目记忆系统**：WebUI 配置管理中 `sakura_memory_enabled` 启用记忆系统，`sakura_reflection_enabled` 启用审查后反思，`sakura_consolidation_interval` 合并触发的反思轮数（默认 5），`sakura_auto_init` 自动初始化 `.sakura/` 目录，`sakura_auto_create_subdirs` 自动创建 rules/docs/plans 子目录，`sakura_knowledge_extraction_enabled` 启用自动知识提取（通过三次串行 LLM 调用分别提取 rules/docs/plans），`sakura_extraction_provider` 配置提取 AI 凭据来源（主AI/辅助AI/独立配置）。WebUI 提供「Sakura 记忆管理」页面，支持查看/编辑/删除记忆文件、手动触发合并和知识提取。`config/strategies.yaml` 的 `context_enhancement.sakura_memory.reflection` 可配置反思 prompt 包含的最大评论条数（`max_comments`）、变更文件条数（`max_changed_files`）和新增提交条数（`max_new_commits`），默认 30/30/20；评论正文与 PR 描述完整传入、不截断。详见 [项目记忆系统使用指南](docs/SAKURA_MEMORY_GUIDE.md)
 - **模型上下文**：WebUI 配置管理中配置上下文窗口、自动压缩等，详见 [模型上下文管理](docs/MODEL_CONTEXT_FEATURE.md)
 - **Agent 专家团队**：WebUI Agent Team 页面配置 `agent_team_enabled`、`agent_team_workspace_root`、`agent_team_repo_allowlist`、`agent_team_model_provider`、`agent_team_*` 模型与护栏参数；支持上下文压缩（`agent_team_enable_context_compression` 等）、全栈/审查工具轮数（`agent_team_max_tool_rounds` / `agent_team_reviewer_max_tool_rounds`）、自动安装依赖（`agent_team_auto_install_deps`）、验证命令黑名单、Draft PR 开关和 PR 审查闭环（`agent_team_pr_closed_loop_enabled`、`agent_team_max_iterations_per_task`、`agent_team_pr_review_pass_score`）；`agent_team_model_provider=main` 时复用主 AI 配置，也可选择独立 Agent AI 配置；普通用户入口会校验仓库归属和 `agent_team_repo_allowlist` 并消耗 Agent 配额，Issue 评论 `/agent` 可从已分析 Issue 或扫描报告 Issue 创建任务；支持 Web 搜索工具和 Token 消耗追踪
 - **Agent Skills**：WebUI Agent Skills 页面安装和启停 Skills；通过 `agent_team_skills_enabled` 控制 Agent 是否可加载技能，通过 `agent_team_skills_root` 配置本地存储根目录
@@ -491,9 +484,7 @@ Sakura-AI-Reviewer/
 | [安全与 MFA 指南](docs/SECURITY_MFA_GUIDE.md)              | TOTP、恢复码、Passkeys/WebAuthn 与安全中心 |
 | [API v1 参考文档](docs/api-v1-reference.md)             | RESTful API v1.3 接口文档（移动端 OAuth、MFA、SSE、Billing） |
 | [WebUI 设计文档](docs/plans/2026-03-27-webui-design.md) | WebUI 设计规范              |
-| [项目记忆系统使用指南](docs/SAKURA_MEMORY_GUIDE.md) | .sakura/ 目录结构、生命周期、配置说明 |
-| [项目记忆系统设计](docs/plans/2026-04-20-sakura-memory-design.md) | .sakura/ 记忆系统架构与配置 |
-| [Agent 专家团队模式](docs/plans/agent_expert_team_mode.md) | Agent 自动修复、受控工作区与 PR 创建流程 |
+| [项目记忆系统使用指南](docs/SAKURA_MEMORY_GUIDE.md) | .sakura/ 目录结构、生命周期与配置说明 |
 | [Agent Skills 实现](docs/agent-skills-python-implementation.md) | Skills 安装、索引、启停与工具集成说明 |
 | [Agent 文件工具实现](docs/agent-file-tools-python-implementation.md) | Agent 工作区文件工具、安全边界与实现细节 |
 | [Agents 项目指南](AGENTS.md)                               | 自动化代理与贡献者项目约定         |

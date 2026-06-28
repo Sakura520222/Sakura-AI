@@ -8,7 +8,7 @@
 
 **English** | [中文](README.md)
 
-[![Version](https://img.shields.io/badge/Version-2.12.2-blue.svg)](https://github.com/Sakura520222/Sakura-AI-Reviewer/releases)
+[![Version](https://img.shields.io/badge/Version-2.13.0-blue.svg)](https://github.com/Sakura520222/Sakura-AI-Reviewer/releases)
 [![Python](https://img.shields.io/badge/Python-3.11+-blue.svg)](https://www.python.org/)
 [![FastAPI](https://img.shields.io/badge/FastAPI-Latest-green.svg)](https://fastapi.tiangolo.com/)
 [![License](https://img.shields.io/badge/License-AGPLv3-yellow.svg)](LICENSE)
@@ -33,13 +33,6 @@
 
 ## ✨ Core Features
 
-### 2.12.2 Highlights
-
-- **Tagged Review Protocol**: The main PR reviewer now adopts a strict line-oriented `<SAKURA_REVIEW>` envelope protocol as its output contract, replacing the legacy JSON-block / emoji / score-regex parsing paths; envelope validation (field order and uniqueness, version and enums, score range) is enforced with severity score caps (critical ≤ 3, major ≤ 6); an invalid first response triggers a single format-only repair retry at temperature 0 without tools, and a second failure degrades to a safe comment with no score or findings to block accidental approvals and erroneous low-score rejections. See the [Review Protocol spec](docs/PR_REVIEW_PROTOCOL.md).
-- **Runtime AI Credential Refresh**: AIReviewer / IssueAnalyzer / SakuraMemoryService gain `_refresh_ai_client`, which validates and refreshes AI client credentials at runtime so WebUI config changes take effect immediately; Web Search and Fetch URL tools are now loaded dynamically through a unified ToolHandler, reducing redundant initialization.
-- **Agent Team Workspace & Live View Enhancements**: The WebUI exposes worktree list / detail / delete endpoints (with file count, size, and mtime), and task list/detail pages now show branch info and worktree counts; Live View switches to backend-driven `can_send_prompt` decisions with initial input display, and supports resumable follow-ups for completed / waiting_human terminal tasks; PR review feedback adds a two-phase branch + source-PR fallback match.
-- **Payment Robustness**: Payment gateway webhooks now operate directly off the event order number, `cancel_expired_order` is idempotent (a missing order is treated as success), and the transaction is committed only when cancellation succeeds.
-
 ### Review Capabilities
 
 - **AI Reasoning Mode**: Leverages AI reasoning for in-depth code analysis, proactively invoking tools to inspect project structure and arbitrary files
@@ -60,7 +53,7 @@
 - **Inline Comments Toggle**: Control whether inline comments are posted on PR diffs via WebUI config `enable_inline_comments`, reducing review noise
 - **Controlled Auto Review**: Use WebUI config `enable_auto_review` to control whether PR opened/synchronize/reopened events enqueue reviews automatically while keeping command and manual triggers available
 - **Check Runs Progress Visualization**: Maps the review lifecycle (queued, code indexing, PR summary, AI review, report generation, completed, failed, cancelled, skipped) to GitHub Check Runs and shows progress in real time on the PR Checks panel; conclusion uses display-only semantics (only a review error yields failure, never blocking merges)
-- **External CI Failure Injection**: Subscribes to `check_run.completed` and `workflow_job.completed`, collects failure conclusions, failed steps, and Checks annotations from other CI systems (such as GitHub Actions, Codecov, and lint Apps), then injects them as untrusted evidence into the next PR review request
+- **External CI Failure Injection**: Subscribes to `check_run.completed` and `workflow_job.completed`, collects failure conclusions, failed steps, and Checks annotations from other CI systems (such as GitHub Actions, Codecov, and lint Apps), then injects them as untrusted evidence into the next PR review request; collected records are status-filtered, cleaned up automatically, and deduplicated so failures from the same `(source, name)` on the same PR keep the latest record and avoid repeated evidence polluting review context
 - **Review Comment Label Interaction**: Review reports include label checkboxes — users can check/uncheck labels directly on the GitHub PR page, and the AI automatically applies or removes corresponding labels
 - **AI-generated PR Descriptions**: When agents create PRs, AI auto-generates descriptions with metadata markers, allowing subsequent reviews to precisely identify and update AI-injected areas
 
@@ -347,7 +340,7 @@ Global configuration follows this priority: **Database app_config (WebUI) > Sett
 - **Web Search Tool**: `web_search_provider` in WebUI configuration (`duckduckgo` free or `tavily` premium)
 - **Cross-file Search**: `context_enhancement.search_in_files` in `config/strategies.yaml` — configure GitHub Search API priority, context lines, max results, etc.
 - **Git Info Tool**: `context_enhancement.git_tools` in `config/strategies.yaml` — configure default branch and commit return counts
-- **Project Memory System**: `sakura_memory_enabled` to enable memory system, `sakura_reflection_enabled` to enable post-review reflection, `sakura_consolidation_interval` for consolidation trigger threshold (default 5), `sakura_auto_init` to auto-initialize `.sakura/` directory, `sakura_auto_create_subdirs` to auto-create rules/docs/plans subdirectories, `sakura_knowledge_extraction_enabled` to enable automatic knowledge extraction (extracts rules/docs/plans via three serial LLM calls), `sakura_extraction_provider` to configure extraction AI credentials (main/summary/custom) — all in WebUI configuration. WebUI provides a "Sakura Memory" management page for viewing/editing/deleting memory files and manually triggering consolidation and knowledge extraction. See [Project Memory Guide](docs/SAKURA_MEMORY_GUIDE.md) (Chinese)
+- **Project Memory System**: `sakura_memory_enabled` to enable memory system, `sakura_reflection_enabled` to enable post-review reflection, `sakura_consolidation_interval` for consolidation trigger threshold (default 5), `sakura_auto_init` to auto-initialize `.sakura/` directory, `sakura_auto_create_subdirs` to auto-create rules/docs/plans subdirectories, `sakura_knowledge_extraction_enabled` to enable automatic knowledge extraction (extracts rules/docs/plans via three serial LLM calls), `sakura_extraction_provider` to configure extraction AI credentials (main/summary/custom) — all in WebUI configuration. WebUI provides a "Sakura Memory" management page for viewing/editing/deleting memory files and manually triggering consolidation and knowledge extraction. `context_enhancement.sakura_memory.reflection` in `config/strategies.yaml` configures the max comments (`max_comments`), changed files (`max_changed_files`), and new commits (`max_new_commits`) included in the reflection prompt (defaults 30/30/20); comment text and PR description are passed in full without truncation. See [Project Memory Guide](docs/SAKURA_MEMORY_GUIDE.md) (Chinese)
 - **Model Context**: Configure context window, auto-compression in WebUI configuration, see [Model Context Management](docs/MODEL_CONTEXT_FEATURE.md)
 - **Agent Expert Team**: Configure `agent_team_enabled`, `agent_team_workspace_root`, `agent_team_repo_allowlist`, `agent_team_model_provider`, and other `agent_team_*` model/guardrail settings on the WebUI Agent Team page; supports context compression (`agent_team_enable_context_compression`, etc.), full-stack/reviewer tool-round limits (`agent_team_max_tool_rounds` / `agent_team_reviewer_max_tool_rounds`), dependency auto-install (`agent_team_auto_install_deps`), validation command blacklists, the Draft PR switch, and the PR review closed loop (`agent_team_pr_closed_loop_enabled`, `agent_team_max_iterations_per_task`, `agent_team_pr_review_pass_score`); `agent_team_model_provider=main` reuses the main AI configuration, while independent Agent AI configuration is also supported; non-admin entry points validate repository ownership and `agent_team_repo_allowlist`, consume Agent quotas, and `/agent` comments can create tasks from analyzed Issues or scan report Issues; supports web search tools and token usage tracking
 - **Agent Skills**: Install and toggle Skills on the WebUI Agent Skills page; `agent_team_skills_enabled` controls whether agents may load skills, and `agent_team_skills_root` configures the local storage root
@@ -492,9 +485,7 @@ Graph data is stored in `.understand-anything/knowledge-graph.json` and supports
 | [Security & MFA Guide](docs/SECURITY_MFA_GUIDE.md)             | TOTP, recovery codes, Passkeys/WebAuthn, and Security Center |
 | [API v1 Reference](docs/api-v1-reference.md)                   | RESTful API v1.3 docs (mobile OAuth, MFA, SSE, Billing) |
 | [WebUI Design Document](docs/plans/2026-03-27-webui-design.md) | WebUI design specification                      |
-| [Project Memory Guide](docs/SAKURA_MEMORY_GUIDE.md) | .sakura/ directory structure, lifecycle, configuration (Chinese) |
-| [Project Memory System Design](docs/plans/2026-04-20-sakura-memory-design.md) | .sakura/ memory system architecture & config |
-| [Agent Expert Team Mode](docs/plans/agent_expert_team_mode.md) | Agent automated fixes, controlled workspaces, and PR creation flow |
+| [Project Memory Guide](docs/SAKURA_MEMORY_GUIDE.md) | .sakura/ directory structure, lifecycle, and configuration |
 | [Agent Skills Implementation](docs/agent-skills-python-implementation.md) | Skill installation, indexing, toggling, and tool integration |
 | [Agent File Tools Implementation](docs/agent-file-tools-python-implementation.md) | Agent workspace file tools, security boundaries, and implementation details |
 | [Agents Project Guide](AGENTS.md)                              | Project conventions for automation agents and contributors |

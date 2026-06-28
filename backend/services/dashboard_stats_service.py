@@ -31,6 +31,7 @@ async def fetch_module_token_stats(
     Returns:
         {"total_prompt": int, "total_completion": int, "total_cost": int}
     """
+
     # ── 构建各模块的 scope 过滤条件 ──
     # PRReview / IssueAnalysis 有 repo_owner + author，双向匹配
     # AgentTeamTask / RepoScan 仅有 repo_owner
@@ -53,24 +54,28 @@ async def fetch_module_token_stats(
         return q
 
     # PR 审查聚合
-    pr_row = (await db.execute(
-        _aggregate(PRReview, _scope_for(PRReview, has_author=True))
-    )).one()
+    pr_row = (
+        await db.execute(_aggregate(PRReview, _scope_for(PRReview, has_author=True)))
+    ).one()
 
     # Issue 分析聚合
-    issue_row = (await db.execute(
-        _aggregate(IssueAnalysis, _scope_for(IssueAnalysis, has_author=True))
-    )).one()
+    issue_row = (
+        await db.execute(
+            _aggregate(IssueAnalysis, _scope_for(IssueAnalysis, has_author=True))
+        )
+    ).one()
 
     # Agent 任务聚合
-    agent_row = (await db.execute(
-        _aggregate(AgentTeamTask, _scope_for(AgentTeamTask, has_author=False))
-    )).one()
+    agent_row = (
+        await db.execute(
+            _aggregate(AgentTeamTask, _scope_for(AgentTeamTask, has_author=False))
+        )
+    ).one()
 
     # 仓库扫描聚合
-    scan_row = (await db.execute(
-        _aggregate(RepoScan, _scope_for(RepoScan, has_author=False))
-    )).one()
+    scan_row = (
+        await db.execute(_aggregate(RepoScan, _scope_for(RepoScan, has_author=False)))
+    ).one()
 
     return {
         "total_prompt": (
@@ -151,12 +156,16 @@ async def fetch_token_trend(
             or_(
                 IssueAnalysis.repo_owner == scope_user,
                 IssueAnalysis.author == scope_user,
-            ) if scope_user is not None else None,
+            )
+            if scope_user is not None
+            else None,
         ),
         (
             AgentTeamTask,
             AgentTeamTask.completed_at,
-            (AgentTeamTask.repo_owner == scope_user) if scope_user is not None else None,
+            (AgentTeamTask.repo_owner == scope_user)
+            if scope_user is not None
+            else None,
         ),
         (
             RepoScan,

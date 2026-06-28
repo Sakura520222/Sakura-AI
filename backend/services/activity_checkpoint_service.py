@@ -82,13 +82,16 @@ class ActivityCheckpointService:
             await db.refresh(session)
 
             # session.id 已由 refresh 填充，在块内发布事件确保数据一致性
-            await _publish("activity:session_started", {
-                "task_type": self.source_type,
-                "task_id": self.source_task_id,
-                "session_id": session.id,
-                "iteration": iteration_number,
-                "role_name": role_name,
-            })
+            await _publish(
+                "activity:session_started",
+                {
+                    "task_type": self.source_type,
+                    "task_id": self.source_task_id,
+                    "session_id": session.id,
+                    "iteration": iteration_number,
+                    "role_name": role_name,
+                },
+            )
         return session
 
     async def complete_session(
@@ -254,23 +257,24 @@ class ActivityCheckpointService:
                     )
                 )
 
-        await _publish("activity:message_added", {
-            "task_type": self.source_type,
-            "task_id": self.source_task_id,
-            "session_id": session_id,
-            "msg_id": msg.id,
-            "role": msg.role,
-            "seq": seq,
-        })
+        await _publish(
+            "activity:message_added",
+            {
+                "task_type": self.source_type,
+                "task_id": self.source_task_id,
+                "session_id": session_id,
+                "msg_id": msg.id,
+                "role": msg.role,
+                "seq": seq,
+            },
+        )
         return msg
 
     # ------------------------------------------------------------------
     # Tool call status
     # ------------------------------------------------------------------
 
-    async def mark_tool_call_running(
-        self, session_id: int, tool_call_id: str
-    ) -> None:
+    async def mark_tool_call_running(self, session_id: int, tool_call_id: str) -> None:
         async with db_module.async_session() as db:
             tc = await self._get_tool_call(db, session_id, tool_call_id)
             if tc is None:
@@ -280,13 +284,16 @@ class ActivityCheckpointService:
             await db.commit()
             tool_name = tc.name
 
-        await _publish("activity:tool_started", {
-            "task_type": self.source_type,
-            "task_id": self.source_task_id,
-            "session_id": session_id,
-            "tool_call_id": tool_call_id,
-            "tool_name": tool_name,
-        })
+        await _publish(
+            "activity:tool_started",
+            {
+                "task_type": self.source_type,
+                "task_id": self.source_task_id,
+                "session_id": session_id,
+                "tool_call_id": tool_call_id,
+                "tool_name": tool_name,
+            },
+        )
 
     async def mark_tool_call_completed(
         self,
@@ -305,13 +312,16 @@ class ActivityCheckpointService:
             await db.commit()
             tool_name = tc.name
 
-        await _publish("activity:tool_completed", {
-            "task_type": self.source_type,
-            "task_id": self.source_task_id,
-            "session_id": session_id,
-            "tool_call_id": tool_call_id,
-            "tool_name": tool_name,
-        })
+        await _publish(
+            "activity:tool_completed",
+            {
+                "task_type": self.source_type,
+                "task_id": self.source_task_id,
+                "session_id": session_id,
+                "tool_call_id": tool_call_id,
+                "tool_name": tool_name,
+            },
+        )
 
     async def mark_tool_call_failed(
         self,
@@ -328,14 +338,17 @@ class ActivityCheckpointService:
             await db.commit()
             tool_name = tc.name
 
-        await _publish("activity:tool_failed", {
-            "task_type": self.source_type,
-            "task_id": self.source_task_id,
-            "session_id": session_id,
-            "tool_call_id": tool_call_id,
-            "tool_name": tool_name,
-            "error": error_message,
-        })
+        await _publish(
+            "activity:tool_failed",
+            {
+                "task_type": self.source_type,
+                "task_id": self.source_task_id,
+                "session_id": session_id,
+                "tool_call_id": tool_call_id,
+                "tool_name": tool_name,
+                "error": error_message,
+            },
+        )
 
     # ------------------------------------------------------------------
     # Internal helpers
@@ -360,12 +373,15 @@ class ActivityCheckpointService:
                 session.completed_at = utc_now()
             await db.commit()
 
-        await _publish("activity:session_completed", {
-            "task_type": self.source_type,
-            "task_id": self.source_task_id,
-            "session_id": session_id,
-            "status": status,
-        })
+        await _publish(
+            "activity:session_completed",
+            {
+                "task_type": self.source_type,
+                "task_id": self.source_task_id,
+                "session_id": session_id,
+                "status": status,
+            },
+        )
 
     @staticmethod
     async def _get_tool_call(

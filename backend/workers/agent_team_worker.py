@@ -176,7 +176,8 @@ class AgentTeamWorker:
             cost_tracker = TokenTracker()
             cost_tracker.add_tokens(outcome.prompt_tokens, outcome.completion_tokens)
             estimated_cost = cost_tracker.calculate_cost(
-                s.review_price_per_1k_prompt, s.review_price_per_1k_completion,
+                s.review_price_per_1k_prompt,
+                s.review_price_per_1k_completion,
             )
 
             logger.info(
@@ -267,7 +268,9 @@ class AgentTeamWorker:
                     fallback_message=fallback_msg,
                 )
                 if commit_message == fallback_msg:
-                    logger.info("Agent commit message: 使用 fallback 模板 (AI 生成未返回)")
+                    logger.info(
+                        "Agent commit message: 使用 fallback 模板 (AI 生成未返回)"
+                    )
                 else:
                     logger.info("Agent commit message: 使用 AI 生成结果")
                 await pr_service.commit_and_push(
@@ -336,7 +339,9 @@ class AgentTeamWorker:
                     review_findings=[
                         {"severity": f.severity, "file": f.file, "message": f.message}
                         for f in (outcome.review_result.findings or [])
-                    ] if outcome.review_result else [],
+                    ]
+                    if outcome.review_result
+                    else [],
                     modified_files=outcome.modified_files,
                     iteration_count=outcome.iterations,
                     source_type=task.source_type,
@@ -452,7 +457,9 @@ class AgentTeamWorker:
 
         return task_id
 
-    async def process_external_review_iteration(self, task_id: int, review_id: int) -> int:
+    async def process_external_review_iteration(
+        self, task_id: int, review_id: int
+    ) -> int:
         """根据 Sakura PR Review 反馈继续同一分支的 Agent 闭环迭代。"""
         config = await load_agent_team_ai_config()
         config.validate()
@@ -1048,7 +1055,9 @@ class AgentTeamWorker:
         }:
             await self._expire_pending_prompts(task_id)
 
-    async def _load_sakura_pr_review_feedback(self, task_id: int, review_id: int) -> str:
+    async def _load_sakura_pr_review_feedback(
+        self, task_id: int, review_id: int
+    ) -> str:
         """读取 Sakura PR Review 反馈内容。"""
         from sqlalchemy import select
 
@@ -1056,7 +1065,8 @@ class AgentTeamWorker:
             result = await session.execute(
                 select(AgentTeamFeedback.content).where(
                     AgentTeamFeedback.task_id == task_id,
-                    AgentTeamFeedback.source == AgentTeamFeedbackSource.SAKURA_PR_REVIEW.value,
+                    AgentTeamFeedback.source
+                    == AgentTeamFeedbackSource.SAKURA_PR_REVIEW.value,
                     AgentTeamFeedback.external_id == f"pr_review:{review_id}",
                 )
             )

@@ -61,15 +61,22 @@ async def test_english_comment_has_no_chinese_fallbacks(monkeypatch):
         async def commit(self):
             return None
 
-    await service.post_analysis_comment(
-        "owner", "repo", 42, _analysis(), _NoCommit()
-    )
+    await service.post_analysis_comment("owner", "repo", 42, _analysis(), _NoCommit())
 
     body = posted["body"]
     assert body.startswith("EN\n")
     # English template must not leak Chinese fallback strings.
-    for forbidden in ("暂无评估", "暂无摘要", "无建议", "可能与", "相关 PR", "建议标题"):
-        assert forbidden not in body, f"English comment leaked Chinese text: {forbidden}"
+    for forbidden in (
+        "暂无评估",
+        "暂无摘要",
+        "无建议",
+        "可能与",
+        "相关 PR",
+        "建议标题",
+    ):
+        assert forbidden not in body, (
+            f"English comment leaked Chinese text: {forbidden}"
+        )
 
 
 @pytest.mark.asyncio
@@ -104,9 +111,7 @@ async def test_chinese_comment_keeps_localized_fallbacks(monkeypatch):
         async def commit(self):
             return None
 
-    await service.post_analysis_comment(
-        "owner", "repo", 42, _analysis(), _NoCommit()
-    )
+    await service.post_analysis_comment("owner", "repo", 42, _analysis(), _NoCommit())
 
     body = posted["body"]
     assert body.startswith("ZH\n")

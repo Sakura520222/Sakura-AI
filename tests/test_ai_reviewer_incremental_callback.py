@@ -152,6 +152,8 @@ async def test_run_tool_loop_normalizes_restored_string_tool_calls(monkeypatch):
         m for m in sent_messages if m.get("role") == "assistant" and m.get("tool_calls")
     )
     tc = restored_assistant["tool_calls"][0]
-    assert isinstance(tc, dict), f"恢复的字符串 tool_call 必须规范化为 dict，实际 {type(tc)}"
+    assert isinstance(tc, dict), (
+        f"恢复的字符串 tool_call 必须规范化为 dict，实际 {type(tc)}"
+    )
     assert tc.get("type") == "function"
     assert isinstance(tc.get("function"), dict)

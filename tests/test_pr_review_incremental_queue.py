@@ -68,11 +68,15 @@ class _MemoryDb:
             rows = [
                 row
                 for row in rows
-                if self._matches(row, params, {
-                    "repo_owner_1": "repo_owner",
-                    "repo_name_1": "repo_name",
-                    "pr_id_1": "pr_id",
-                })
+                if self._matches(
+                    row,
+                    params,
+                    {
+                        "repo_owner_1": "repo_owner",
+                        "repo_name_1": "repo_name",
+                        "pr_id_1": "pr_id",
+                    },
+                )
             ]
             status_filter = params.get("status_1")
             if status_filter is not None:
@@ -89,13 +93,17 @@ class _MemoryDb:
             rows = [
                 row
                 for row in rows
-                if self._matches(row, params, {
-                    "delivery_id_1": "delivery_id",
-                    "repo_full_name_1": "repo_full_name",
-                    "pr_number_1": "pr_number",
-                    "head_sha_1": "head_sha",
-                    "status_1": "status",
-                })
+                if self._matches(
+                    row,
+                    params,
+                    {
+                        "delivery_id_1": "delivery_id",
+                        "repo_full_name_1": "repo_full_name",
+                        "pr_number_1": "pr_number",
+                        "head_sha_1": "head_sha",
+                        "status_1": "status",
+                    },
+                )
             ]
             rows = sorted(
                 rows,

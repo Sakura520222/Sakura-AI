@@ -131,7 +131,9 @@ async def test_agent_draft_opened_is_skipped_without_review(monkeypatch):
         return "owner/repo#1"
 
     try:
-        monkeypatch.setattr("backend.workers.review_worker.get_worker", lambda: fake_worker)
+        monkeypatch.setattr(
+            "backend.workers.review_worker.get_worker", lambda: fake_worker
+        )
         monkeypatch.setattr(webhook, "submit_review_task", fake_submit_review_task)
 
         response = await webhook.handle_pull_request_event(
@@ -164,7 +166,9 @@ async def test_agent_ready_for_review_auto_submits_review_and_marks_external_rev
         marked.append(pr_info.copy())
 
     try:
-        monkeypatch.setattr("backend.workers.review_worker.get_worker", lambda: fake_worker)
+        monkeypatch.setattr(
+            "backend.workers.review_worker.get_worker", lambda: fake_worker
+        )
         monkeypatch.setattr(webhook, "get_notification_sender", lambda: None)
         monkeypatch.setattr(webhook, "get_async_session", lambda: _FakeSession())
         monkeypatch.setattr(webhook, "TelegramService", _FakeTelegramService)
@@ -205,38 +209,38 @@ async def test_closed_action_cancels_active_review_task(monkeypatch):
             return True
 
     monkeypatch.setattr(
-        'backend.workers.review_worker.get_worker', lambda: _FakeCancelWorker()
+        "backend.workers.review_worker.get_worker", lambda: _FakeCancelWorker()
     )
 
     payload = {
-        'action': 'closed',
-        'repository': {
-            'name': 'repo',
-            'full_name': 'owner/repo',
-            'owner': {'login': 'owner'},
+        "action": "closed",
+        "repository": {
+            "name": "repo",
+            "full_name": "owner/repo",
+            "owner": {"login": "owner"},
         },
-        'installation': {'id': 123},
-        'sender': {'login': 'alice'},
-        'pull_request': {
-            'id': 999,
-            'number': 7,
-            'user': {'login': 'alice'},
-            'title': 'Fix bug',
-            'body': '',
-            'head': {'ref': 'feature/fix', 'sha': 'abc123'},
-            'base': {'ref': 'develop'},
-            'diff_url': '',
-            'patch_url': '',
-            'html_url': '',
-            'state': 'closed',
-            'draft': False,
-            'merged': False,
+        "installation": {"id": 123},
+        "sender": {"login": "alice"},
+        "pull_request": {
+            "id": 999,
+            "number": 7,
+            "user": {"login": "alice"},
+            "title": "Fix bug",
+            "body": "",
+            "head": {"ref": "feature/fix", "sha": "abc123"},
+            "base": {"ref": "develop"},
+            "diff_url": "",
+            "patch_url": "",
+            "html_url": "",
+            "state": "closed",
+            "draft": False,
+            "merged": False,
         },
     }
 
     response = await webhook.handle_pull_request_event(payload)
     body = json.loads(response.body)
-    assert body['status'] == 'accepted'
-    assert body['action'] == 'cancelled'
+    assert body["status"] == "accepted"
+    assert body["action"] == "cancelled"
     assert len(cancelled_keys) == 1
-    assert cancelled_keys[0] == 'owner/repo#7'
+    assert cancelled_keys[0] == "owner/repo#7"

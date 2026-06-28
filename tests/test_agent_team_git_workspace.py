@@ -46,7 +46,9 @@ def test_make_branch_name_uses_task_id_to_avoid_same_second_collision():
         github_app=object(), workspace_service=object()
     )
 
-    assert service.make_branch_name(task_id=1, source_issue_number=42) != service.make_branch_name(
+    assert service.make_branch_name(
+        task_id=1, source_issue_number=42
+    ) != service.make_branch_name(
         task_id=2,
         source_issue_number=42,
     )

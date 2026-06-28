@@ -153,9 +153,7 @@ class TestAiDecisionBlockOnCriticalConfig:
 
 class TestReviewBodyFormatting:
     def test_minor_and_suggestions_include_entries(self, engine):
-        engine.policy["review_templates"] = {
-            "approve": "{summary}\n{comment_summary}"
-        }
+        engine.policy["review_templates"] = {"approve": "{summary}\n{comment_summary}"}
         result = _review_result(score=9, minor_count=1, suggestion_count=1)
 
         body = engine.format_review_body(
@@ -171,9 +169,7 @@ class TestReviewBodyFormatting:
         assert "- suggestion-0" in body
 
     def test_empty_issue_values_do_not_create_blank_sections(self, engine):
-        engine.policy["review_templates"] = {
-            "approve": "{summary}\n{comment_summary}"
-        }
+        engine.policy["review_templates"] = {"approve": "{summary}\n{comment_summary}"}
         result = _review_result(score=9)
         result["issues"]["suggestions"] = ["", "   "]
 
@@ -354,9 +350,7 @@ class TestReviewBodyFormatting:
         assert "#### 💡 `backend/example.py:42` · `suggestion`" in body
 
     def test_unvalidated_summary_score_is_not_displayed(self, engine):
-        engine.policy["review_templates"] = {
-            "comment": "{summary}\n评分: {score}/10"
-        }
+        engine.policy["review_templates"] = {"comment": "{summary}\n评分: {score}/10"}
         result = _review_result(score=None)
         result["summary"] = "旧格式摘要声称评分：7"
 

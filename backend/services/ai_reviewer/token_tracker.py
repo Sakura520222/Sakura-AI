@@ -16,6 +16,7 @@ from loguru import logger
 @dataclass
 class ContextSnapshot:
     """单次上下文使用率快照"""
+
     iteration: int
     current_tokens: int
     safe_threshold: int
@@ -63,7 +64,9 @@ class TokenTracker:
             safe_threshold: 安全上下文阈值
             iteration: 当前轮次
         """
-        percentage = (current_tokens / safe_threshold * 100) if safe_threshold > 0 else 0
+        percentage = (
+            (current_tokens / safe_threshold * 100) if safe_threshold > 0 else 0
+        )
         current_k = current_tokens / 1000
         safe_k = safe_threshold / 1000
 
@@ -78,12 +81,18 @@ class TokenTracker:
         if percentage >= 90:
             logger.warning(
                 "📊 上下文使用率: {:.1f}K / {:.1f}K ({:.0f}%) | 轮次: {} ⚠️ 接近上限",
-                current_k, safe_k, percentage, iteration,
+                current_k,
+                safe_k,
+                percentage,
+                iteration,
             )
         else:
             logger.info(
                 "📊 上下文使用率: {:.1f}K / {:.1f}K ({:.0f}%) | 轮次: {}",
-                current_k, safe_k, percentage, iteration,
+                current_k,
+                safe_k,
+                percentage,
+                iteration,
             )
 
     def merge(self, other: TokenTracker) -> None:
