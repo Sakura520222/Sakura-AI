@@ -60,9 +60,7 @@ class AlipayGateway(PaymentGateway):
         self._app_private_key = webhook_secret
         self._alipay_public_key = alipay_public_key
         self._sandbox = sandbox
-        self._gateway_url = (
-            self.GATEWAY_SANDBOX_URL if sandbox else self.GATEWAY_URL
-        )
+        self._gateway_url = self.GATEWAY_SANDBOX_URL if sandbox else self.GATEWAY_URL
 
     # ------------------------------------------------------------------
     # 内部辅助：RSA2 签名
@@ -94,16 +92,10 @@ class AlipayGateway(PaymentGateway):
         if key_type == "private":
             # 优先尝试 PKCS#8（通用格式）
             return (
-                "-----BEGIN PRIVATE KEY-----\n"
-                + body
-                + "\n-----END PRIVATE KEY-----"
+                "-----BEGIN PRIVATE KEY-----\n" + body + "\n-----END PRIVATE KEY-----"
             )
         else:
-            return (
-                "-----BEGIN PUBLIC KEY-----\n"
-                + body
-                + "\n-----END PUBLIC KEY-----"
-            )
+            return "-----BEGIN PUBLIC KEY-----\n" + body + "\n-----END PUBLIC KEY-----"
 
     @staticmethod
     def _load_private_key(raw: str):
@@ -190,9 +182,7 @@ class AlipayGateway(PaymentGateway):
         from cryptography.hazmat.primitives.asymmetric import padding
 
         # 排序拼接
-        unsigned_string = "&".join(
-            f"{k}={v}" for k, v in sorted(params.items()) if v
-        )
+        unsigned_string = "&".join(f"{k}={v}" for k, v in sorted(params.items()) if v)
 
         private_key = AlipayGateway._load_private_key(private_key_pem)
 
@@ -347,7 +337,10 @@ class AlipayGateway(PaymentGateway):
             body = payload.decode("utf-8")
             params = parse_qs(body)
             # parse_qs 返回 list 值，转为单值
-            flat_params = {k: v[0] if isinstance(v, list) and len(v) == 1 else v for k, v in params.items()}
+            flat_params = {
+                k: v[0] if isinstance(v, list) and len(v) == 1 else v
+                for k, v in params.items()
+            }
 
             sign = flat_params.get("sign", "")
             if not sign:
@@ -535,7 +528,8 @@ class AlipayGateway(PaymentGateway):
         except Exception as e:
             logger.opt(exception=True).error("Alipay get_payment_status error: {}", e)
             return PaymentStatusResult(
-                success=False, error_message=str(e),
+                success=False,
+                error_message=str(e),
             )
 
     async def cancel_payment(
@@ -590,9 +584,7 @@ class AlipayGateway(PaymentGateway):
                 )
             return RefundResult(
                 success=False,
-                error_message=resp.get(
-                    "sub_msg", resp.get("msg", "Unknown error")
-                ),
+                error_message=resp.get("sub_msg", resp.get("msg", "Unknown error")),
             )
         except Exception as e:
             logger.opt(exception=True).error("Alipay close error: {}", e)

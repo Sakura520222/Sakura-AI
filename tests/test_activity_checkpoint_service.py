@@ -19,6 +19,20 @@ class _Result:
     def __init__(self, value):
         self.value = value
 
+    def scalars(self):
+        return self
+
+    def all(self):
+        if isinstance(self.value, list):
+            return self.value
+        if self.value is None:
+            return []
+        return [self.value]
+
+    def first(self):
+        values = self.all()
+        return values[0] if values else None
+
     def scalar_one_or_none(self):
         return self.value
 
@@ -69,6 +83,47 @@ class _MemoryDb:
         return None
 
     async def execute(self, _statement):
+        entity = None
+        try:
+            entity = _statement.column_descriptions[0].get("entity")
+        except (AttributeError, IndexError, KeyError):
+            entity = None
+
+        params = {}
+        try:
+            params = _statement.compile().params
+        except Exception:
+            params = {}
+
+        if entity is ActivityMessage:
+            session_id = params.get("session_id_1")
+            rows = [
+                msg
+                for msg in self.store["messages"].values()
+                if session_id is None or msg.session_id == session_id
+            ]
+            return _Result(sorted(rows, key=lambda msg: msg.seq))
+
+        if entity is ActivitySession:
+            source_type = params.get("source_type_1")
+            source_task_id = params.get("source_task_id_1")
+            role_name = params.get("role_name_1")
+            status = params.get("status_1")
+            rows = [
+                session
+                for session in self.store["sessions"].values()
+                if (source_type is None or session.source_type == source_type)
+                and (source_task_id is None or session.source_task_id == source_task_id)
+                and (role_name is None or session.role_name == role_name)
+                and (status is None or session.status == status)
+            ]
+            rows = sorted(
+                rows,
+                key=lambda session: (session.completed_at or 0, session.id or 0),
+                reverse=True,
+            )
+            return _Result(rows)
+
         return _Result(None)
 
 
@@ -117,7 +172,9 @@ def memory_checkpoint(monkeypatch):
     async def fake_get_tool_call(db, session_id, tool_call_id):
         return _find_tool_call(db.store, session_id, tool_call_id)
 
-    monkeypatch.setattr("backend.services.activity_checkpoint_service._publish", fake_publish)
+    monkeypatch.setattr(
+        "backend.services.activity_checkpoint_service._publish", fake_publish
+    )
     monkeypatch.setattr(
         ActivityCheckpointService,
         "_get_tool_call",
@@ -154,6 +211,42 @@ def test_normalize_tool_call_supports_object():
         "name": "search",
         "arguments": '{"query":"x"}',
     }
+
+
+@pytest.mark.asyncio
+async def test_activity_checkpoint_loads_messages_in_sequence(memory_checkpoint):
+    store, _published = memory_checkpoint
+    service = ActivityCheckpointService("pr", 101)
+    session = await service.create_session(role_name="reviewer")
+    await service.append_message(session.id, {"role": "system", "content": "sys"})
+    await service.append_message(session.id, {"role": "user", "content": "first"})
+
+    messages = await service.load_messages(session.id)
+
+    assert messages == [
+        {"role": "system", "content": "sys"},
+        {"role": "user", "content": "first"},
+    ]
+    assert store["sessions"][session.id].last_seq == 2
+
+
+@pytest.mark.asyncio
+async def test_activity_checkpoint_copies_messages_to_new_session(memory_checkpoint):
+    store, _published = memory_checkpoint
+    service = ActivityCheckpointService("pr", 101)
+    source = await service.create_session(role_name="reviewer")
+    target = await service.create_session(role_name="reviewer")
+    await service.append_message(source.id, {"role": "system", "content": "sys"})
+    await service.append_message(source.id, {"role": "assistant", "content": "old"})
+
+    copied = await service.copy_messages_to_session(source.id, target.id)
+
+    assert copied == 2
+    assert await service.load_messages(target.id) == [
+        {"role": "system", "content": "sys"},
+        {"role": "assistant", "content": "old"},
+    ]
+    assert store["sessions"][target.id].last_seq == 2
 
 
 @pytest.mark.asyncio
@@ -237,7 +330,9 @@ async def test_activity_checkpoint_mark_tool_call_failed(memory_checkpoint):
 
 
 @pytest.mark.asyncio
-async def test_activity_checkpoint_append_message_missing_session_raises(memory_checkpoint):
+async def test_activity_checkpoint_append_message_missing_session_raises(
+    memory_checkpoint,
+):
     service = ActivityCheckpointService("issue", 456)
 
     with pytest.raises(ValueError, match="ActivitySession not found"):

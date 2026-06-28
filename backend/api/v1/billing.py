@@ -222,9 +222,7 @@ async def get_order(
 
     from backend.models.payment_models import Order
 
-    stmt = select(Order).where(
-        Order.id == order_id, Order.user_id == user["user_id"]
-    )
+    stmt = select(Order).where(Order.id == order_id, Order.user_id == user["user_id"])
     result = await db.execute(stmt)
     order = result.scalar_one_or_none()
     if not order:

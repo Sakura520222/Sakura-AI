@@ -202,8 +202,8 @@ class IssueService:
         """发布分析评论到 Issue"""
         config = get_strategy_config().get_issue_analysis_config()
         # 根据 output_language 选择模板 / Select template based on output_language
-        output_lang = get_settings().output_language
-        if output_lang == "en":
+        is_english = get_settings().output_language == "en"
+        if is_english:
             template = config.get("comment_template_en", "")
             if not template:
                 template = config.get("comment_template", "")
@@ -235,27 +235,44 @@ class IssueService:
         except (json.JSONDecodeError, TypeError):
             pass
 
+        if is_english:
+            no_feasibility = "No assessment"
+            no_summary = "No summary"
+            no_suggestion = "No suggestions"
+            duplicate_hint = "\n⚠️ Possibly duplicates #{}\n"
+            related_prs_label = "Related PRs"
+            suggested_title_label = "Suggested title"
+        else:
+            no_feasibility = "暂无评估"
+            no_summary = "暂无摘要"
+            no_suggestion = "无建议"
+            duplicate_hint = "\n⚠️ 可能与 #{} 重复\n"
+            related_prs_label = "相关 PR"
+            suggested_title_label = "建议标题"
+
         related_info = ""
         if analysis.duplicate_of:
-            related_info += f"\n⚠️ 可能与 #{analysis.duplicate_of} 重复\n"
+            related_info += duplicate_hint.format(analysis.duplicate_of)
         try:
             prs = json.loads(analysis.related_prs) if analysis.related_prs else []
             if prs:
-                related_info += f"\n🔗 相关 PR: {', '.join('#' + str(p.get('number', '')) for p in prs[:5])}\n"
+                related_info += f"\n🔗 {related_prs_label}: {', '.join('#' + str(p.get('number', '')) for p in prs[:5])}\n"
         except (json.JSONDecodeError, TypeError):
             pass
 
         suggested_title_section = ""
         if analysis.suggested_title:
-            suggested_title_section = f"\n- **建议标题**: `{analysis.suggested_title}`"
+            suggested_title_section = (
+                f"\n- **{suggested_title_label}**: `{analysis.suggested_title}`"
+            )
 
         body = template.format(
             category=analysis.category or "unknown",
             priority=analysis.priority or "unknown",
-            feasibility=analysis.feasibility or "暂无评估",
-            summary=analysis.summary or "暂无摘要",
-            labels=", ".join(labels) if labels else "无建议",
-            assignees=", ".join(assignees) if assignees else "无建议",
+            feasibility=analysis.feasibility or no_feasibility,
+            summary=analysis.summary or no_summary,
+            labels=", ".join(labels) if labels else no_suggestion,
+            assignees=", ".join(assignees) if assignees else no_suggestion,
             related_info=related_info,
             suggested_title_section=suggested_title_section,
         )

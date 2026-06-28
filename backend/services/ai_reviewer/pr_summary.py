@@ -54,8 +54,7 @@ class PRSummaryService:
                 {"role": "user", "content": user_message},
             ],
             temperature=0.3,
-            timeout=60.0,
-            max_tokens=1000,
+            max_tokens=16000,
         )
 
         if (
@@ -208,15 +207,11 @@ class PRSummaryService:
         clean = re.sub(summary_pattern, "", clean, flags=re.DOTALL)
 
         # 移除依赖图标记区域
-        depgraph_pattern = (
-            r"<!--\s*sakura-ai-depgraph-start\s*-->.*?<!--\s*sakura-ai-depgraph-end\s*-->"
-        )
+        depgraph_pattern = r"<!--\s*sakura-ai-depgraph-start\s*-->.*?<!--\s*sakura-ai-depgraph-end\s*-->"
         clean = re.sub(depgraph_pattern, "", clean, flags=re.DOTALL)
 
         # 移除 Issue 关联标记区域
-        issue_links_pattern = (
-            r"<!--\s*sakura-ai-issue-links-start\s*-->.*?<!--\s*sakura-ai-issue-links-end\s*-->"
-        )
+        issue_links_pattern = r"<!--\s*sakura-ai-issue-links-start\s*-->.*?<!--\s*sakura-ai-issue-links-end\s*-->"
         clean = re.sub(issue_links_pattern, "", clean, flags=re.DOTALL)
 
         return clean.strip()

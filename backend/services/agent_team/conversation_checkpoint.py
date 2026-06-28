@@ -57,12 +57,15 @@ class ConversationCheckpointService:
             await session.commit()
             await session.refresh(agent_session)
 
-        await _publish("agent:session_started", {
-            "task_id": self.task_id,
-            "session_id": agent_session.id,
-            "iteration": iteration_number,
-            "role_name": role_name,
-        })
+        await _publish(
+            "agent:session_started",
+            {
+                "task_id": self.task_id,
+                "session_id": agent_session.id,
+                "iteration": iteration_number,
+                "role_name": role_name,
+            },
+        )
         return agent_session
 
     async def load_messages(self, session_id: int) -> list[dict[str, Any]]:
@@ -138,13 +141,16 @@ class ConversationCheckpointService:
                     )
                 )
 
-        await _publish("agent:message_added", {
-            "task_id": self.task_id,
-            "session_id": session_id,
-            "msg_id": msg.id,
-            "role": msg.role,
-            "seq": seq,
-        })
+        await _publish(
+            "agent:message_added",
+            {
+                "task_id": self.task_id,
+                "session_id": session_id,
+                "msg_id": msg.id,
+                "role": msg.role,
+                "seq": seq,
+            },
+        )
         return msg
 
     async def mark_tool_call_running(self, session_id: int, tool_call_id: str) -> None:
@@ -157,12 +163,15 @@ class ConversationCheckpointService:
             await session.commit()
             tool_name = tool_call.name
 
-        await _publish("agent:tool_started", {
-            "task_id": self.task_id,
-            "session_id": session_id,
-            "tool_call_id": tool_call_id,
-            "tool_name": tool_name,
-        })
+        await _publish(
+            "agent:tool_started",
+            {
+                "task_id": self.task_id,
+                "session_id": session_id,
+                "tool_call_id": tool_call_id,
+                "tool_name": tool_name,
+            },
+        )
 
     async def mark_tool_call_completed(
         self,
@@ -181,12 +190,15 @@ class ConversationCheckpointService:
             await session.commit()
             tool_name = tool_call.name
 
-        await _publish("agent:tool_completed", {
-            "task_id": self.task_id,
-            "session_id": session_id,
-            "tool_call_id": tool_call_id,
-            "tool_name": tool_name,
-        })
+        await _publish(
+            "agent:tool_completed",
+            {
+                "task_id": self.task_id,
+                "session_id": session_id,
+                "tool_call_id": tool_call_id,
+                "tool_name": tool_name,
+            },
+        )
 
     async def mark_tool_call_failed(
         self,
@@ -203,13 +215,16 @@ class ConversationCheckpointService:
             await session.commit()
             tool_name = tool_call.name
 
-        await _publish("agent:tool_failed", {
-            "task_id": self.task_id,
-            "session_id": session_id,
-            "tool_call_id": tool_call_id,
-            "tool_name": tool_name,
-            "error": error_message,
-        })
+        await _publish(
+            "agent:tool_failed",
+            {
+                "task_id": self.task_id,
+                "session_id": session_id,
+                "tool_call_id": tool_call_id,
+                "tool_name": tool_name,
+                "error": error_message,
+            },
+        )
 
     async def complete_session(
         self,
@@ -219,7 +234,9 @@ class ConversationCheckpointService:
         await self._set_session_status(session_id, "completed", tool_calls_count)
 
     async def fail_session(self, session_id: int, error_message: str) -> None:
-        await self._set_session_status(session_id, "failed", error_message=error_message)
+        await self._set_session_status(
+            session_id, "failed", error_message=error_message
+        )
 
     async def get_resume_cursor(self) -> ResumeCursor | None:
         async with db_module.async_session() as session:
@@ -283,9 +300,7 @@ class ConversationCheckpointService:
             )
             await session.commit()
 
-    async def load_session_result(
-        self, session_id: int
-    ) -> dict[str, Any] | None:
+    async def load_session_result(self, session_id: int) -> dict[str, Any] | None:
         """Load a previously persisted structured result from the session."""
         async with db_module.async_session() as session:
             agent_session = await session.get(AgentTeamSession, session_id)
@@ -315,12 +330,15 @@ class ConversationCheckpointService:
             await session.commit()
             role_name = agent_session.role_name
 
-        await _publish("agent:session_completed", {
-            "task_id": self.task_id,
-            "session_id": session_id,
-            "role_name": role_name,
-            "status": status,
-        })
+        await _publish(
+            "agent:session_completed",
+            {
+                "task_id": self.task_id,
+                "session_id": session_id,
+                "role_name": role_name,
+                "status": status,
+            },
+        )
 
     async def _get_tool_call(
         self,

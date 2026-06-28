@@ -153,9 +153,7 @@ class TestAiDecisionBlockOnCriticalConfig:
 
 class TestReviewBodyFormatting:
     def test_minor_and_suggestions_include_entries(self, engine):
-        engine.policy["review_templates"] = {
-            "approve": "{summary}\n{comment_summary}"
-        }
+        engine.policy["review_templates"] = {"approve": "{summary}\n{comment_summary}"}
         result = _review_result(score=9, minor_count=1, suggestion_count=1)
 
         body = engine.format_review_body(
@@ -171,9 +169,7 @@ class TestReviewBodyFormatting:
         assert "- suggestion-0" in body
 
     def test_empty_issue_values_do_not_create_blank_sections(self, engine):
-        engine.policy["review_templates"] = {
-            "approve": "{summary}\n{comment_summary}"
-        }
+        engine.policy["review_templates"] = {"approve": "{summary}\n{comment_summary}"}
         result = _review_result(score=9)
         result["issues"]["suggestions"] = ["", "   "]
 
@@ -201,7 +197,7 @@ class TestReviewBodyFormatting:
 
         assert "### 💡 Suggestions (4 suggestions)" in body
         assert "- suggestion-0" in body
-        assert "- ...and 1 more" in body
+        assert "- suggestion-3" in body
 
     def test_inline_comments_are_appended_when_template_omits_summary(self, engine):
         engine.policy["review_templates"] = {"approve": "{summary}"}
@@ -265,29 +261,34 @@ class TestReviewBodyFormatting:
         assert SEVERITY_EMOJI["minor"] == "🔵"
         assert SEVERITY_EMOJI["suggestion"] == "💡"
 
-    def test_filtered_inline_comments_remain_visible_in_review_body(self, engine):
-        engine.policy["review_templates_en"] = {"approve": "{summary}"}
+    def test_filtered_major_inline_comment_remains_visible_in_review_body_summary(
+        self, engine
+    ):
+        engine.policy["review_templates"] = {"approve": "{summary}\n{comment_summary}"}
         result = _review_result(score=9)
         result["inline_comments"] = []
+        result["issues"]["major"] = ["Executor join blocks heartbeat"]
         result["review_body_inline_comments"] = [
             {
                 "file_path": "backend/example.py",
                 "line_number": 59,
-                "severity": "suggestion",
-                "body": "**Repeated conversion**\n\nAvoid calling int() twice.",
+                "severity": "major",
+                "body": "**Executor join blocks heartbeat**\n\nAvoid blocking the executor.",
             }
         ]
 
         body = engine.format_review_body(
             ReviewDecision.APPROVE,
             result,
-            "Approved",
-            output_language="en",
+            "可以合并",
+            output_language="zh-CN",
         )
 
-        assert "### 📍 Inline Comments" not in body
-        assert "#### 💡 `backend/example.py:59` · `suggestion`" in body
-        assert "Avoid calling int() twice." in body
+        assert "### 📍 行内评论" not in body
+        assert "#### 🟡 `backend/example.py:59` · `major`" in body
+        assert "Avoid blocking the executor." in body
+        assert "### 🟡 重要问题 (1个)" in body
+        assert "- Executor join blocks heartbeat" in body
 
     def test_inline_comments_rendered_inside_details_block(self, engine):
         """Inline comments must render inside the <details> block, not after it."""
@@ -349,9 +350,7 @@ class TestReviewBodyFormatting:
         assert "#### 💡 `backend/example.py:42` · `suggestion`" in body
 
     def test_unvalidated_summary_score_is_not_displayed(self, engine):
-        engine.policy["review_templates"] = {
-            "comment": "{summary}\n评分: {score}/10"
-        }
+        engine.policy["review_templates"] = {"comment": "{summary}\n评分: {score}/10"}
         result = _review_result(score=None)
         result["summary"] = "旧格式摘要声称评分：7"
 

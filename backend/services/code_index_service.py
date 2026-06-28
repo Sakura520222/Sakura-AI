@@ -369,7 +369,9 @@ class CodeIndexService:
                         cleaned_count += 1
                         logger.debug("清理已删除文件的索引: {}", indexed_file.file_path)
                     except Exception as e:
-                        logger.error("清理文件索引失败 ({}): {}", indexed_file.file_path, e)
+                        logger.error(
+                            "清理文件索引失败 ({}): {}", indexed_file.file_path, e
+                        )
 
             if cleaned_count > 0:
                 logger.info(
@@ -755,7 +757,9 @@ class CodeIndexService:
                     code_file.is_deleted = 1
                     await session.commit()
 
-            logger.info("✅ 已删除文件 {} 的索引 ({} 个代码块)", file_path, deleted_count)
+            logger.info(
+                "✅ 已删除文件 {} 的索引 ({} 个代码块)", file_path, deleted_count
+            )
             return True
 
         except Exception as e:

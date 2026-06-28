@@ -10,7 +10,9 @@ from backend.core.config import Settings
 
 
 def _github_mobile_authorize_endpoint():
-    return getattr(auth.github_mobile_authorize, "__wrapped__", auth.github_mobile_authorize)
+    return getattr(
+        auth.github_mobile_authorize, "__wrapped__", auth.github_mobile_authorize
+    )
 
 
 @pytest.mark.anyio
@@ -47,7 +49,9 @@ async def test_github_mobile_authorize_accepts_configured_custom_redirect(monkey
 
 
 @pytest.mark.anyio
-async def test_github_mobile_authorize_rejects_unconfigured_custom_redirect(monkeypatch):
+async def test_github_mobile_authorize_rejects_unconfigured_custom_redirect(
+    monkeypatch,
+):
     settings = Settings(
         github_oauth_client_id="client-id",
         github_oauth_redirect_uri="https://example.com/auth/callback",

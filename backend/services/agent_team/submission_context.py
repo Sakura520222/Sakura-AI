@@ -70,8 +70,7 @@ def format_issue_analysis_context(analysis: IssueAnalysis | None) -> dict | None
         or detail.get("suggested_labels", []),
         "suggested_assignees": json_list(analysis.suggested_assignees)
         or detail.get("suggested_assignees", []),
-        "related_prs": json_list(analysis.related_prs)
-        or detail.get("related_prs", []),
+        "related_prs": json_list(analysis.related_prs) or detail.get("related_prs", []),
         "duplicate_of": analysis.duplicate_of or detail.get("duplicate_of"),
         "status": analysis.status,
         "error_message": analysis.error_message,
@@ -86,7 +85,9 @@ def format_issue_analysis_context(analysis: IssueAnalysis | None) -> dict | None
     }
 
 
-def format_issue_comments(comments: list, bot_username: str | None = None) -> list[dict]:
+def format_issue_comments(
+    comments: list, bot_username: str | None = None
+) -> list[dict]:
     """Convert GitHub issue comments into dictionaries for prompts and templates."""
     bot_login = (bot_username or "").lower()
     formatted = []
@@ -381,7 +382,9 @@ def build_issue_context_markdown(
     return "".join(parts).strip()
 
 
-def build_agent_task_summary(task_summary: str, issue_context_markdown: str = "") -> str:
+def build_agent_task_summary(
+    task_summary: str, issue_context_markdown: str = ""
+) -> str:
     """Combine the editable task summary with Issue context sent to the Agent."""
     parts = []
     if task_summary.strip():

@@ -126,23 +126,42 @@ class PRDependencyGraphService:
         """
         settings = get_settings()
 
+        graph_files, total_file_count = await asyncio.to_thread(
+            self._get_graph_files_sync, analysis, pr
+        )
+
         # 大型 PR 裁剪
-        analysis_files = self._trim_files(analysis, settings)
+        priority_paths = (
+            {file.path for file in analysis.code_files}
+            if analysis.is_incremental
+            else None
+        )
+        analysis_files = self._trim_files(
+            graph_files, settings, priority_paths=priority_paths
+        )
+
+        # 增量审查只读取本轮变更文件内容；历史文件通过完整文件列表和旧图保留上下文。
+        content_files = self._select_content_files(analysis, analysis_files)
 
         # 获取文件内容
         file_contents = await asyncio.to_thread(
-            self._fetch_file_contents_sync, analysis_files, pr
+            self._fetch_file_contents_sync, content_files, pr
         )
-        if not file_contents:
+
+        graph_mode = await self._get_graph_mode()
+        previous_graph = self._extract_previous_graph(pr_info.get("body", ""))
+        if not file_contents and not (
+            graph_mode == "ai" and analysis.is_incremental and previous_graph
+        ):
             logger.info("无法获取任何变更文件内容，跳过依赖图生成")
             return None
 
-        graph_mode = await self._get_graph_mode()
         if graph_mode == "static":
             mermaid_graph = self._generate_static_mermaid(
                 analysis_files,
                 file_contents,
                 max_nodes=settings.pr_dependency_graph_max_nodes,
+                previous_graph=previous_graph,
             )
             mermaid_graph = self._validate_mermaid(mermaid_graph)
             if not mermaid_graph:
@@ -162,12 +181,15 @@ class PRDependencyGraphService:
             logger.info("变更文件间无 import 依赖关系，跳过依赖图生成")
             return None
 
-        # 提取上一次的依赖图（增量更新时用于保持上下文连贯）
-        previous_graph = self._extract_previous_graph(pr_info.get("body", ""))
-
         # AI 生成 Mermaid
         system_prompt, user_message = self._build_prompts(
-            import_context, pr_info, settings, previous_graph
+            import_context,
+            pr_info,
+            settings,
+            previous_graph,
+            file_count=total_file_count,
+            code_file_count=len(graph_files),
+            analyzed_file_count=len(analysis_files),
         )
 
         response = await self.api_client.call_with_retry(
@@ -177,8 +199,7 @@ class PRDependencyGraphService:
                 {"role": "user", "content": user_message},
             ],
             temperature=0.2,
-            timeout=60.0,
-            max_tokens=2000,
+            max_tokens=16000,
         )
 
         if (
@@ -243,14 +264,97 @@ class PRDependencyGraphService:
         return mode
 
     @staticmethod
-    def _trim_files(analysis: PRAnalysis, settings: Any) -> List[PRFileInfo]:
+    def _get_graph_files_sync(
+        analysis: PRAnalysis, pr: Any
+    ) -> tuple[List[PRFileInfo], int]:
+        """获取依赖图使用的累计代码文件元信息。"""
+        if not analysis.is_incremental:
+            return list(analysis.code_files), analysis.total_files
+
+        strategy_config = get_strategy_config()
+        pr_files = list(pr.get_files())
+        code_files: List[PRFileInfo] = []
+        for file in pr_files:
+            if strategy_config.should_skip_file(file.filename):
+                continue
+            if not strategy_config.is_code_file(file.filename):
+                continue
+            code_files.append(
+                PRFileInfo(
+                    path=file.filename,
+                    status=file.status,
+                    additions=file.additions,
+                    deletions=file.deletions,
+                    changes=file.changes,
+                    patch=None,
+                    is_code_file=True,
+                )
+            )
+
+        changed_files = getattr(pr, "changed_files", None)
+        total_file_count = (
+            changed_files if isinstance(changed_files, int) else len(pr_files)
+        )
+        logger.info(
+            "增量依赖图使用 PR 累计文件元信息: 总文件数 {}, 代码文件数 {}",
+            total_file_count,
+            len(code_files),
+        )
+        return code_files, total_file_count
+
+    # GitHub File.status 对删除文件返回 "removed"（透传 GitHub API 原始值），
+    # 而非字面量 "deleted"；统一用集合匹配避免漏判。
+    _DELETED_STATUSES: frozenset[str] = frozenset({"deleted", "removed"})
+
+    @classmethod
+    def _is_deleted_file(cls, status: str) -> bool:
+        """判断文件是否为删除状态（兼容 GitHub 的 "removed" 与字面量 "deleted"）。"""
+        return status in cls._DELETED_STATUSES
+
+    @staticmethod
+    def _trim_files(
+        code_files: List[PRFileInfo],
+        settings: Any,
+        priority_paths: Set[str] | None = None,
+    ) -> List[PRFileInfo]:
         """大型 PR 裁剪：按变更量排序取 top N 文件"""
-        files = [f for f in analysis.code_files if f.status != "deleted"]
+        files = [
+            f
+            for f in code_files
+            if not PRDependencyGraphService._is_deleted_file(f.status)
+        ]
         max_files = settings.pr_dependency_graph_max_files
         if len(files) > max_files:
-            files = sorted(files, key=lambda f: f.changes, reverse=True)[:max_files]
+            priority_paths = priority_paths or set()
+            priority_files = sorted(
+                (file for file in files if file.path in priority_paths),
+                key=lambda file: file.changes,
+                reverse=True,
+            )
+            remaining_files = sorted(
+                (file for file in files if file.path not in priority_paths),
+                key=lambda file: file.changes,
+                reverse=True,
+            )
+            files = (priority_files + remaining_files)[:max_files]
             logger.info(f"PR 变更文件数超过限制，只分析 top {max_files} 个文件")
         return files
+
+    @staticmethod
+    def _select_content_files(
+        analysis: PRAnalysis, graph_files: List[PRFileInfo]
+    ) -> List[PRFileInfo]:
+        """选择需要获取内容的文件，增量模式仅包含本轮变更。"""
+        if not analysis.is_incremental:
+            return graph_files
+
+        graph_paths = {file.path for file in graph_files}
+        return [
+            file
+            for file in analysis.code_files
+            if not PRDependencyGraphService._is_deleted_file(file.status)
+            and file.path in graph_paths
+        ]
 
     @staticmethod
     def _fetch_file_contents_sync(files: List[PRFileInfo], pr: Any) -> Dict[str, str]:
@@ -340,8 +444,13 @@ class PRDependencyGraphService:
         code_files: List[PRFileInfo],
         file_contents: Dict[str, str],
         max_nodes: int,
+        previous_graph: str | None = None,
     ) -> str:
-        """基于 import 关系静态生成 Mermaid 依赖图。"""
+        """基于 import 关系静态生成 Mermaid 依赖图。
+
+        增量审查时传入 previous_graph，合并历史节点与依赖边，使静态图覆盖
+        全量 PR 依赖而非仅本轮变更文件。
+        """
         available_files = [
             f
             for f in code_files
@@ -372,8 +481,25 @@ class PRDependencyGraphService:
                 if target_path and target_path != source_path:
                     edges.add((source_path, target_path))
 
+        # 合并历史图节点与边：增量审查只读取本轮变更文件内容，历史依赖通过
+        # previous_graph 文本补全，避免为历史文件额外发起 GitHub API 调用。
+        # 历史节点按 previous_graph 中出现顺序追加，保证 max_nodes 截断结果稳定。
+        candidate_paths = list(path_aliases.keys())
+        if previous_graph:
+            node_id_to_path, historical_edges = self._parse_previous_graph(
+                previous_graph
+            )
+            if historical_edges:
+                edges |= historical_edges
+                endpoints = {path for edge in historical_edges for path in edge}
+                existing_paths = set(candidate_paths)
+                for path in node_id_to_path.values():
+                    if path in endpoints and path not in existing_paths:
+                        candidate_paths.append(path)
+                        existing_paths.add(path)
+
         selected_nodes = self._select_static_graph_nodes(
-            list(path_aliases.keys()),
+            candidate_paths,
             edges,
             max_nodes,
         )
@@ -585,11 +711,117 @@ class PRDependencyGraphService:
         return "".join(replacements.get(char, char) for char in normalized)
 
     @staticmethod
+    def _unescape_mermaid_label(label: str) -> str:
+        """反转义 Mermaid 节点 label（_escape_mermaid_label 的逆操作）。
+
+        '"' 与 '\\' 的转义不可逆，还原时保留字面量。用于从 previous_graph
+        还原节点 label 为原始文件路径。
+        """
+        reverse = {
+            "&amp;": "&",
+            "&lt;": "<",
+            "&gt;": ">",
+            "&#123;": "{",
+            "&#125;": "}",
+            "&#91;": "[",
+            "&#93;": "]",
+            "&#124;": "|",
+            "&#40;": "(",
+            "&#41;": ")",
+            "&#35;": "#",
+            "&#37;": "%",
+        }
+        return re.sub(
+            r"&#?\w+;",
+            lambda match: reverse.get(match.group(0), match.group(0)),
+            label,
+        )
+
+    @classmethod
+    def _parse_previous_graph(
+        cls, previous_graph: str
+    ) -> tuple[Dict[str, str], Set[tuple[str, str]]]:
+        """解析历史 Mermaid 图的节点定义与依赖边。
+
+        仅识别静态/AI 生成图常见的 ``N1["label"]`` 节点定义与 ``N1 --> N2`` 边，
+        用于增量审查时合并历史依赖上下文。label 经 _unescape_mermaid_label 还原，
+        路径经 _normalize_path 统一分隔符。
+
+        逐行用 ``str.find``/``strip`` 手工定界（不用正则），单行 O(行长)、总体
+        线性，从根本上规避正则多项式回溯（CodeQL ReDoS）。每个节点/边需独占一行
+        （Sakura 生成格式）。两遍扫描：先收齐节点，再解析边，使边能解析到完整
+        节点映射。
+
+        Returns:
+            (node_id -> normalized_path 映射, 归一化后的边集合)
+        """
+        node_id_to_path: Dict[str, str] = {}
+        for line in previous_graph.splitlines():
+            node = cls._parse_node_line(line)
+            if node is not None:
+                node_id, label = node
+                node_id_to_path[node_id] = cls._normalize_path(
+                    cls._unescape_mermaid_label(label)
+                )
+
+        edges: Set[tuple[str, str]] = set()
+        for line in previous_graph.splitlines():
+            edge = cls._parse_edge_line(line)
+            if edge is not None:
+                source = node_id_to_path.get(edge[0])
+                target = node_id_to_path.get(edge[1])
+                if source and target and source != target:
+                    edges.add((source, target))
+
+        return node_id_to_path, edges
+
+    @staticmethod
+    def _parse_node_line(line: str) -> tuple[str, str] | None:
+        """从 ``<id>["<label>"]`` 行提取 (id, label)；不匹配返回 None。
+
+        用 ``str.find`` 定界（无正则），单行 O(行长)。id 经 strip 后须非空且不含
+        空白/括号/引号（等价于原 ``[^\\[\\]\\s"]+`` 语义）。
+        """
+        start = line.find('["')
+        if start <= 0:
+            return None
+        end = line.find('"]', start + 2)
+        if end == -1:
+            return None
+        node_id = line[:start].strip()
+        label = line[start + 2:end]
+        if not node_id or any(c.isspace() or c in '[]"' for c in node_id):
+            return None
+        return node_id, label
+
+    @staticmethod
+    def _parse_edge_line(line: str) -> tuple[str, str] | None:
+        """从 ``<id> --> <id>`` 行提取 (source_id, target_id)；不匹配返回 None。
+
+        用 ``str.find`` 定界（无正则），单行 O(行长)。两端 id 经 strip 后须非空
+        且不含空白/括号/引号。
+        """
+        arrow = line.find("-->")
+        if arrow <= 0:
+            return None
+        source = line[:arrow].strip()
+        target = line[arrow + 3:].strip()
+        if not source or not target:
+            return None
+        if any(c.isspace() or c in '[]"' for c in source + target):
+            return None
+        return source, target
+
+    @staticmethod
     def _build_prompts(
         import_context: str,
         pr_info: Dict[str, Any],
         settings: Any,
         previous_graph: str | None = None,
+        *,
+        file_count: int,
+        code_file_count: int,
+        analyzed_file_count: int,
     ) -> tuple[str, str]:
         """构建系统提示词和用户消息"""
         config = get_strategy_config()
@@ -605,13 +837,20 @@ class PRDependencyGraphService:
         user_template = depgraph_cfg.get(
             "user_template",
             "请根据以下 PR 变更信息生成依赖关系图：\n\n"
-            "PR 标题: {title}\n变更文件数: {file_count}\n\n"
+            "PR 标题: {title}\n"
+            "总文件数: {file_count}  代码文件数: {code_file_count}  "
+            "本轮分析文件数: {analyzed_file_count}\n\n"
             "文件依赖关系:\n{import_context}",
         )
 
+        # 三个计数控件均为必填：唯一调用方 generate_dependency_graph 始终从
+        # analysis/graph_files 提供真实值；pr_info（webhook 构造）从不携带 code_files，
+        # 不再用恒为 0 的误导性回退。
         user_message = user_template.format(
             title=pr_info.get("title", ""),
-            file_count=len(pr_info.get("code_files", [])),
+            file_count=file_count,
+            code_file_count=code_file_count,
+            analyzed_file_count=analyzed_file_count,
             import_context=import_context,
         )
 

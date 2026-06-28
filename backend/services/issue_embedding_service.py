@@ -483,9 +483,7 @@ class IssueEmbeddingService:
         try:
             from backend.core.config import get_dynamic_config
 
-            enable_rich = await get_dynamic_config(
-                "issue_vector_store_rich_metadata"
-            )
+            enable_rich = await get_dynamic_config("issue_vector_store_rich_metadata")
             if enable_rich is None:
                 enable_rich = True
 
@@ -616,8 +614,6 @@ class IssueEmbeddingService:
                 ],
                 model=model,
                 temperature=0.1,
-                max_tokens=500,
-                timeout=30.0,
             )
 
             # 解析 AI 响应

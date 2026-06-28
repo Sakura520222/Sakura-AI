@@ -122,8 +122,10 @@ class IterationLoopService:
                 task_title,
             )
 
-            fullstack_handoff_context = await self.conversation_context.build_handoff_context(
-                "fullstack", iteration
+            fullstack_handoff_context = (
+                await self.conversation_context.build_handoff_context(
+                    "fullstack", iteration
+                )
             )
             fullstack_role_memory = await self.conversation_context.build_role_memory(
                 "fullstack", iteration
@@ -188,7 +190,9 @@ class IterationLoopService:
                             },
                         )
                     except Exception as exc:
-                        logger.warning("保存 fullstack 结构化结果失败，将使用消息解析回退: {}", exc)
+                        logger.warning(
+                            "保存 fullstack 结构化结果失败，将使用消息解析回退: {}", exc
+                        )
                 if resume_cursor and resume_cursor.role_name == "fullstack":
                     resume_cursor = None
 
@@ -234,9 +238,7 @@ class IterationLoopService:
 
             # 闭环迭代时跳过内部审查，直接交给外部 Sakura PR Review
             if skip_internal_review:
-                logger.info(
-                    "闭环迭代模式：跳过内部审查，直接交给外部 Sakura PR Review"
-                )
+                logger.info("闭环迭代模式：跳过内部审查，直接交给外部 Sakura PR Review")
                 return IterationOutcome(
                     success=True,
                     reason="闭环迭代：跳过内部审查",
@@ -249,8 +251,10 @@ class IterationLoopService:
                     completion_tokens=tracker.completion_tokens,
                 )
 
-            reviewer_handoff_context = await self.conversation_context.build_handoff_context(
-                "reviewer", iteration + 1
+            reviewer_handoff_context = (
+                await self.conversation_context.build_handoff_context(
+                    "reviewer", iteration + 1
+                )
             )
             reviewer_role_memory = await self.conversation_context.build_role_memory(
                 "reviewer", iteration
@@ -313,10 +317,11 @@ class IterationLoopService:
 
             # 每轮迭代汇总 token 使用
             logger.info(
-                "📊 Agent 第 {}/{} 轮完成 | "
-                "累计 tokens: {}+{}, api_calls={}",
-                iteration, max_iterations,
-                tracker.prompt_tokens, tracker.completion_tokens,
+                "📊 Agent 第 {}/{} 轮完成 | 累计 tokens: {}+{}, api_calls={}",
+                iteration,
+                max_iterations,
+                tracker.prompt_tokens,
+                tracker.completion_tokens,
                 tracker.api_call_count,
             )
 
@@ -522,7 +527,8 @@ class IterationLoopService:
 
             logger.info(
                 "已消费 {} 条管理员 Prompt (task_id={})",
-                len(parts), self.task_id,
+                len(parts),
+                self.task_id,
             )
             return "## 管理员指导\n请遵循以下方向执行任务：\n" + "\n".join(
                 f"- {p}" for p in parts

@@ -203,6 +203,7 @@ def _make_base_mocks(
     import backend.services.agent_team.submission_context as sc_mod
 
     monkeypatch.setattr(sc_mod, "load_issue_comments_for_context", _async_noop)
+
     # asyncio.to_thread 直接调用同步函数（测试环境下无真实事件循环阻塞）
     async def _sync_to_thread(fn, *args):
         return fn(*args)
@@ -302,8 +303,14 @@ async def test_agent_command_creates_task_from_scan_report_issue(monkeypatch):
 
     class CapturingCandidateService:
         async def create_task_from_manual_issue(
-            self, db, repo_full_name, issue_number, started_by,
-            ai_config_snapshot=None, base_branch=None, overrides=None,
+            self,
+            db,
+            repo_full_name,
+            issue_number,
+            started_by,
+            ai_config_snapshot=None,
+            base_branch=None,
+            overrides=None,
         ):
             captured["overrides"] = overrides
             return _FakeTask()
@@ -343,7 +350,9 @@ async def test_agent_command_creates_task_from_scan_report_issue(monkeypatch):
 @pytest.mark.asyncio
 async def test_agent_command_skipped_when_quota_exceeded(monkeypatch):
     payload = _base_payload()
-    _make_base_mocks(monkeypatch, telegram_service_cls=_FakeTelegramServiceQuotaExceeded)
+    _make_base_mocks(
+        monkeypatch, telegram_service_cls=_FakeTelegramServiceQuotaExceeded
+    )
 
     # 记录清理会话的 execute 调用，验证孤儿任务回滚
     class _RecordingSession(_FakeSession):
@@ -390,8 +399,14 @@ async def test_agent_command_parses_base_branch(monkeypatch):
 
     class CapturingCandidateService:
         async def create_task_from_manual_issue(
-            self, db, repo_full_name, issue_number, started_by,
-            ai_config_snapshot=None, base_branch=None, overrides=None,
+            self,
+            db,
+            repo_full_name,
+            issue_number,
+            started_by,
+            ai_config_snapshot=None,
+            base_branch=None,
+            overrides=None,
         ):
             captured["base_branch"] = base_branch
             return _FakeTask()
@@ -425,8 +440,14 @@ async def test_agent_command_default_base_branch_is_none(monkeypatch):
 
     class CapturingCandidateService:
         async def create_task_from_manual_issue(
-            self, db, repo_full_name, issue_number, started_by,
-            ai_config_snapshot=None, base_branch=None, overrides=None,
+            self,
+            db,
+            repo_full_name,
+            issue_number,
+            started_by,
+            ai_config_snapshot=None,
+            base_branch=None,
+            overrides=None,
         ):
             captured["base_branch"] = base_branch
             return _FakeTask()

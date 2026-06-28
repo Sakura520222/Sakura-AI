@@ -181,6 +181,139 @@ class PRReview(Base):
         return f"<PRReview(id={self.id}, pr_id={self.pr_id}, repo={self.repo_name}, strategy={self.strategy})>"
 
 
+class PRReviewIncrementalQueue(Base):
+    """PR 审查运行期间收到的 synchronize 增量队列。"""
+
+    __tablename__ = "pr_review_incremental_queue"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    repo_owner = Column(String(100), nullable=False, index=True)
+    repo_name = Column(String(255), nullable=False, index=True)
+    repo_full_name = Column(String(255), nullable=False, index=True)
+    pr_number = Column(Integer, nullable=False, index=True)
+    base_sha = Column(String(64), nullable=True)
+    head_sha = Column(String(64), nullable=False, index=True)
+    delivery_id = Column(String(128), nullable=True, index=True)
+    status = Column(String(50), default="pending", nullable=False, index=True)
+    active_review_id = Column(
+        Integer,
+        ForeignKey("pr_reviews.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    consumed_review_id = Column(
+        Integer,
+        ForeignKey("pr_reviews.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    consumed_session_id = Column(Integer, nullable=True)
+    consumed_message_id = Column(Integer, nullable=True)
+    created_at = Column(TIMESTAMP, default=datetime.utcnow, nullable=False, index=True)
+    consumed_at = Column(TIMESTAMP, nullable=True)
+
+    def __repr__(self):
+        return (
+            "<PRReviewIncrementalQueue("
+            f"id={self.id}, pr={self.repo_full_name}#{self.pr_number}, "
+            f"head={self.head_sha}, status={self.status})>"
+        )
+
+
+class CIFailure(Base):
+    """外部 CI 失败记录 / External CI failure record.
+
+    由 check_run.completed / workflow_job.completed webhook 写入，
+    审查启动时按 repo + head_sha 查询注入。
+    """
+
+    __tablename__ = "ci_failures"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    repo_owner = Column(String(100), nullable=False, index=True)
+    repo_name = Column(String(255), nullable=False, index=True)
+    repo_full_name = Column(String(255), nullable=False, index=True)
+    pr_number = Column(Integer, nullable=False, index=True)
+    head_sha = Column(String(64), nullable=False, index=True)
+
+    # 事件来源 / Event source: "check_run" | "workflow_job"
+    source = Column(String(32), nullable=False, index=True)
+    # Check/Job 名称（如 "tests", "lint", "build"）/ Check or Job name
+    name = Column(String(255), nullable=False)
+    # 失败结论 / Failure conclusion: failure | timed_out | cancelled | action_required
+    conclusion = Column(String(32), nullable=False)
+
+    # CI 输出摘要 / CI output (title + summary + text 片段)
+    output_title = Column(String(512), nullable=True)
+    output_summary = Column(Text, nullable=True)
+    output_text = Column(Text, nullable=True)
+    # 失败 step 列表（workflow_job 专用）/ Failed steps (workflow_job only)
+    # JSON: [{"name": str, "conclusion": str}, ...]
+    failed_steps_json = Column(Text, nullable=True)
+    # 文件级标注 / File-level annotations
+    # JSON: [{"path": str, "start_line": int, "message": str, "level": str}, ...]
+    # 存储时按 max_annotations_per_record 限额，原始总数见 annotations_total
+    annotations_json = Column(Text, nullable=True)
+    # annotations 的原始总数（存储限额前的完整数量）/ Original annotation count before cap
+    annotations_total = Column(Integer, nullable=False, default=0)
+    # CI 详情页链接 / CI details URL
+    details_url = Column(String(1024), nullable=True)
+    # GitHub 侧对象 id（去重）/ GitHub-side object id (deduplication)
+    external_id = Column(String(64), nullable=True, index=True)
+
+    created_at = Column(TIMESTAMP, default=datetime.utcnow, nullable=False, index=True)
+
+    __table_args__ = (
+        UniqueConstraint(
+            "repo_full_name",
+            "head_sha",
+            "source",
+            "external_id",
+            name="uq_ci_failures_dedup",
+        ),
+    )
+
+    def __repr__(self):
+        return (
+            "<CIFailure("
+            f"id={self.id}, pr={self.repo_full_name}#{self.pr_number}, "
+            f"source={self.source}, name={self.name}, "
+            f"conclusion={self.conclusion})>"
+        )
+
+
+class HeadShaPRMap(Base):
+    """head_sha → pr_number 映射缓存 / head_sha to PR number mapping cache.
+
+    由 pull_request.opened/synchronize/reopened 维护，供 CI webhook 三层降级
+    解析 pr_number 时查表兜底（check_run.pull_requests 在 Fork 场景为空）。
+    """
+
+    __tablename__ = "head_sha_pr_map"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    repo_full_name = Column(String(255), nullable=False, index=True)
+    head_sha = Column(String(64), nullable=False, index=True)
+    pr_number = Column(Integer, nullable=False)
+    repo_owner = Column(String(100), nullable=False)
+    repo_name = Column(String(255), nullable=False)
+    updated_at = Column(
+        TIMESTAMP,
+        default=datetime.utcnow,
+        onupdate=datetime.utcnow,
+        nullable=False,
+    )
+
+    __table_args__ = (
+        UniqueConstraint("repo_full_name", "head_sha", name="uq_head_sha_pr_map"),
+    )
+
+    def __repr__(self):
+        return (
+            "<HeadShaPRMap("
+            f"repo={self.repo_full_name}, head={self.head_sha}, "
+            f"pr={self.pr_number})>"
+        )
+
+
 class ReviewComment(Base):
     """审查评论表"""
 
@@ -568,7 +701,7 @@ async def insert_default_configs_async():
         raise RuntimeError("异步会话工厂未初始化,请先调用 init_async_db()")
 
     default_configs = [
-        AppConfig(key_name="app_version", key_value="2.12.2", description="应用版本号"),
+        AppConfig(key_name="app_version", key_value="2.13.0", description="应用版本号"),
         AppConfig(
             key_name="max_concurrent_reviews",
             key_value="5",
@@ -583,6 +716,11 @@ async def insert_default_configs_async():
             key_name="enable_auto_review",
             key_value="true",
             description="是否启用 Webhook 自动审查",
+        ),
+        AppConfig(
+            key_name="enable_check_runs",
+            key_value="true",
+            description="是否启用 GitHub Check Runs 审查进度可视化",
         ),
         AppConfig(
             key_name="web_search_enabled",
@@ -689,7 +827,7 @@ def init_database(database_url: str):
 
             default_configs = [
                 AppConfig(
-                    key_name="app_version", key_value="2.12.2", description="应用版本号"
+                    key_name="app_version", key_value="2.13.0", description="应用版本号"
                 ),
                 AppConfig(
                     key_name="max_concurrent_reviews",
@@ -705,6 +843,11 @@ def init_database(database_url: str):
                     key_name="enable_auto_review",
                     key_value="true",
                     description="是否启用 Webhook 自动审查",
+                ),
+                AppConfig(
+                    key_name="enable_check_runs",
+                    key_value="true",
+                    description="是否启用 GitHub Check Runs 审查进度可视化",
                 ),
                 AppConfig(
                     key_name="web_search_enabled",

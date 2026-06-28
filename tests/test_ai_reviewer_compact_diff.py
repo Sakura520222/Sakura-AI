@@ -1,3 +1,5 @@
+from types import SimpleNamespace
+
 import pytest
 
 from backend.services.ai_reviewer.api_client import AIApiClient
@@ -102,9 +104,8 @@ def test_system_prompt_is_english_and_normalizes_invalid_language(review_context
 
 def test_incremental_prompt_does_not_promote_historical_suggestions(review_context):
     review_context["changed_lines_map"] = {"backend/example.py": {335, 336}}
-    review_context["review_history_summary"] = (
-        "A previous suggestion referenced backend/example.py:59."
-    )
+    # 增量规则基于 analysis.is_incremental 触发（历史会话由 worker 恢复，不在 prompt 内）
+    review_context["analysis"] = SimpleNamespace(is_incremental=True)
 
     prompt = PromptBuilder().build_system_prompt(
         "Focus on correctness.",
@@ -136,7 +137,9 @@ async def test_diff_tool_lists_and_returns_file_diff():
 
 def test_diff_tools_have_valid_definitions():
     for tool_name in DIFF_TOOLS:
-        assert tool_name in TOOL_NAME_TO_DEFINITION, f"{tool_name} missing from TOOL_NAME_TO_DEFINITION"
+        assert tool_name in TOOL_NAME_TO_DEFINITION, (
+            f"{tool_name} missing from TOOL_NAME_TO_DEFINITION"
+        )
         tool_def = TOOL_NAME_TO_DEFINITION[tool_name]
         assert tool_def["type"] == "function"
         assert "name" in tool_def["function"]

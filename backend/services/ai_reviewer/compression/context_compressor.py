@@ -23,6 +23,30 @@ from backend.services.ai_reviewer.constants import DEFAULT_COMPRESSION_KEEP_ROUN
 from backend.services.ai_reviewer.message_utils import estimate_messages_tokens
 
 
+def _extract_tool_call_fields(tc: Any) -> tuple[str, str, str]:
+    """从 tool_call 提取 (id, name, arguments)，兼容多种形态。
+
+    持久化用 json.dumps(default=str)、恢复用 json.loads，因此 tool_calls 可能是
+    OpenAI SDK 对象、dict（规范化形态）、甚至字符串（SDK 对象被 default=str）。
+    任何形态都不得让压缩主路径崩溃——提取失败时返回空串降级。
+    """
+    if isinstance(tc, dict):
+        function = tc.get("function") or {}
+        if isinstance(function, dict):
+            return (
+                str(tc.get("id", "")),
+                str(function.get("name", "")),
+                str(function.get("arguments", "")),
+            )
+        return str(tc.get("id", "")), str(function), ""
+    function = getattr(tc, "function", None)
+    return (
+        str(getattr(tc, "id", "") or ""),
+        str(getattr(function, "name", "") or "") if function is not None else "",
+        str(getattr(function, "arguments", "") or "") if function is not None else "",
+    )
+
+
 class ContextCompressor:
     """上下文压缩器
 
@@ -189,12 +213,14 @@ class ContextCompressor:
             if tool_calls:
                 conversation_text += f"\n## {role.upper()} (工具调用)\n"
                 for tc in tool_calls:
-                    func = tc.function
-                    conversation_text += f"- 调用工具: {func.name}\n"
-                    conversation_text += f"- 参数: {func.arguments}\n"
+                    # tool_calls 可能是 SDK 对象、dict 或字符串（checkpoint
+                    # 持久化/恢复后的形态），统一健壮提取，避免属性访问崩溃
+                    tc_id, tool_name, tool_arguments = _extract_tool_call_fields(tc)
+                    conversation_text += f"- 调用工具: {tool_name}\n"
+                    conversation_text += f"- 参数: {tool_arguments}\n"
                     # 查找对应的工具结果
                     tool_result = self._find_tool_result_in_history(
-                        early_history, tc.id
+                        early_history, tc_id
                     )
                     if tool_result:
                         conversation_text += f"- 结果: {str(tool_result)[:200]}...\n"
@@ -233,7 +259,6 @@ the main reviewer.
                 {"role": "user", "content": compress_prompt},
             ],
             temperature=0.3,
-            timeout=60.0,
             max_tokens=max_tokens,
         )
 

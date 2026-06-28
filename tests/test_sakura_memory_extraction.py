@@ -7,7 +7,9 @@ from backend.webui.routes import sakura_memory as route_module
 
 
 @pytest.mark.asyncio
-async def test_trigger_extract_uses_public_service_without_private_state_lookup(monkeypatch):
+async def test_trigger_extract_uses_public_service_without_private_state_lookup(
+    monkeypatch,
+):
     class Service:
         def __init__(self):
             self.calls = []

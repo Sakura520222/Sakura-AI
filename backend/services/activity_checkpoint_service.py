@@ -10,7 +10,7 @@ import json
 from typing import Any
 
 from loguru import logger
-from sqlalchemy import select
+from sqlalchemy import desc, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.models import database as db_module
@@ -82,13 +82,16 @@ class ActivityCheckpointService:
             await db.refresh(session)
 
             # session.id 已由 refresh 填充，在块内发布事件确保数据一致性
-            await _publish("activity:session_started", {
-                "task_type": self.source_type,
-                "task_id": self.source_task_id,
-                "session_id": session.id,
-                "iteration": iteration_number,
-                "role_name": role_name,
-            })
+            await _publish(
+                "activity:session_started",
+                {
+                    "task_type": self.source_type,
+                    "task_id": self.source_task_id,
+                    "session_id": session.id,
+                    "iteration": iteration_number,
+                    "role_name": role_name,
+                },
+            )
         return session
 
     async def complete_session(
@@ -139,6 +142,78 @@ class ActivityCheckpointService:
             await db.commit()
             return msg
 
+    async def load_messages(self, session_id: int) -> list[dict[str, Any]]:
+        """Load persisted messages in original OpenAI-compatible shape."""
+        async with db_module.async_session() as db:
+            result = await db.execute(
+                select(ActivityMessage)
+                .where(ActivityMessage.session_id == session_id)
+                .order_by(ActivityMessage.seq)
+            )
+            rows = result.scalars().all()
+
+        messages: list[dict[str, Any]] = []
+        for row in rows:
+            try:
+                payload = json.loads(row.message_json)
+            except (TypeError, json.JSONDecodeError):
+                payload = {
+                    "role": row.role,
+                    "content": row.content,
+                }
+                if row.tool_call_id:
+                    payload["tool_call_id"] = row.tool_call_id
+            if isinstance(payload, dict):
+                messages.append(payload)
+        return messages
+
+    async def get_latest_completed_session(
+        self,
+        source_task_id: int | None = None,
+        role_name: str = "reviewer",
+    ) -> ActivitySession | None:
+        """Return the latest completed session for this activity source."""
+        async with db_module.async_session() as db:
+            result = await db.execute(
+                select(ActivitySession)
+                .where(
+                    ActivitySession.source_type == self.source_type,
+                    ActivitySession.source_task_id
+                    == (source_task_id or self.source_task_id),
+                    ActivitySession.role_name == role_name,
+                    ActivitySession.status == "completed",
+                )
+                .order_by(
+                    desc(ActivitySession.completed_at),
+                    desc(ActivitySession.id),
+                )
+            )
+            return result.scalars().first()
+
+    async def copy_messages_to_session(
+        self,
+        source_session_id: int,
+        target_session_id: int,
+        messages: list[dict[str, Any]] | None = None,
+    ) -> int:
+        """Copy full message history into another activity session.
+
+        Args:
+            source_session_id: 源会话 ID。
+            target_session_id: 目标会话 ID。
+            messages: 可选的预加载消息列表。传入时跳过内部 load_messages 查询，
+                避免调用方已加载过同一会话时的重复 DB 往返；为 None 时内部自行加载。
+        """
+        copied = 0
+        if messages is None:
+            messages = await self.load_messages(source_session_id)
+        async with db_module.async_session() as db:
+            for message in messages:
+                await self._append_message_in_db(db, target_session_id, message)
+                copied += 1
+            await db.commit()
+        return copied
+
     async def _append_message_in_db(
         self,
         db: AsyncSession,
@@ -182,23 +257,24 @@ class ActivityCheckpointService:
                     )
                 )
 
-        await _publish("activity:message_added", {
-            "task_type": self.source_type,
-            "task_id": self.source_task_id,
-            "session_id": session_id,
-            "msg_id": msg.id,
-            "role": msg.role,
-            "seq": seq,
-        })
+        await _publish(
+            "activity:message_added",
+            {
+                "task_type": self.source_type,
+                "task_id": self.source_task_id,
+                "session_id": session_id,
+                "msg_id": msg.id,
+                "role": msg.role,
+                "seq": seq,
+            },
+        )
         return msg
 
     # ------------------------------------------------------------------
     # Tool call status
     # ------------------------------------------------------------------
 
-    async def mark_tool_call_running(
-        self, session_id: int, tool_call_id: str
-    ) -> None:
+    async def mark_tool_call_running(self, session_id: int, tool_call_id: str) -> None:
         async with db_module.async_session() as db:
             tc = await self._get_tool_call(db, session_id, tool_call_id)
             if tc is None:
@@ -208,13 +284,16 @@ class ActivityCheckpointService:
             await db.commit()
             tool_name = tc.name
 
-        await _publish("activity:tool_started", {
-            "task_type": self.source_type,
-            "task_id": self.source_task_id,
-            "session_id": session_id,
-            "tool_call_id": tool_call_id,
-            "tool_name": tool_name,
-        })
+        await _publish(
+            "activity:tool_started",
+            {
+                "task_type": self.source_type,
+                "task_id": self.source_task_id,
+                "session_id": session_id,
+                "tool_call_id": tool_call_id,
+                "tool_name": tool_name,
+            },
+        )
 
     async def mark_tool_call_completed(
         self,
@@ -233,13 +312,16 @@ class ActivityCheckpointService:
             await db.commit()
             tool_name = tc.name
 
-        await _publish("activity:tool_completed", {
-            "task_type": self.source_type,
-            "task_id": self.source_task_id,
-            "session_id": session_id,
-            "tool_call_id": tool_call_id,
-            "tool_name": tool_name,
-        })
+        await _publish(
+            "activity:tool_completed",
+            {
+                "task_type": self.source_type,
+                "task_id": self.source_task_id,
+                "session_id": session_id,
+                "tool_call_id": tool_call_id,
+                "tool_name": tool_name,
+            },
+        )
 
     async def mark_tool_call_failed(
         self,
@@ -256,14 +338,17 @@ class ActivityCheckpointService:
             await db.commit()
             tool_name = tc.name
 
-        await _publish("activity:tool_failed", {
-            "task_type": self.source_type,
-            "task_id": self.source_task_id,
-            "session_id": session_id,
-            "tool_call_id": tool_call_id,
-            "tool_name": tool_name,
-            "error": error_message,
-        })
+        await _publish(
+            "activity:tool_failed",
+            {
+                "task_type": self.source_type,
+                "task_id": self.source_task_id,
+                "session_id": session_id,
+                "tool_call_id": tool_call_id,
+                "tool_name": tool_name,
+                "error": error_message,
+            },
+        )
 
     # ------------------------------------------------------------------
     # Internal helpers
@@ -288,12 +373,15 @@ class ActivityCheckpointService:
                 session.completed_at = utc_now()
             await db.commit()
 
-        await _publish("activity:session_completed", {
-            "task_type": self.source_type,
-            "task_id": self.source_task_id,
-            "session_id": session_id,
-            "status": status,
-        })
+        await _publish(
+            "activity:session_completed",
+            {
+                "task_type": self.source_type,
+                "task_id": self.source_task_id,
+                "session_id": session_id,
+                "status": status,
+            },
+        )
 
     @staticmethod
     async def _get_tool_call(

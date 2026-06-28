@@ -32,9 +32,7 @@ class TestStripeWebhookEndpoint:
     """Test the Stripe webhook handler in webhook.py"""
 
     @pytest.mark.asyncio
-    async def test_webhook_payment_completed(
-        self, mock_db_session, mock_gateway
-    ):
+    async def test_webhook_payment_completed(self, mock_db_session, mock_gateway):
         from backend.services.payment.gateway_base import (
             WebhookEvent,
             WebhookEventType,
@@ -54,18 +52,22 @@ class TestStripeWebhookEndpoint:
         mock_order.order_no = "ORD20240101000000ABCD1234"
         mock_order.status = OrderStatus.FULFILLED.value
 
-        with patch(
-            "backend.api.webhook.get_async_session",
-            return_value=mock_db_session,
-        ), patch(
-            "backend.services.payment.get_gateway",
-            new_callable=AsyncMock,
-            return_value=mock_gateway,
-        ), patch(
-            "backend.services.payment_service.PaymentService.confirm_payment",
-            new_callable=AsyncMock,
-            return_value=mock_order,
-        ) as mock_confirm_payment:
+        with (
+            patch(
+                "backend.api.webhook.get_async_session",
+                return_value=mock_db_session,
+            ),
+            patch(
+                "backend.services.payment.get_gateway",
+                new_callable=AsyncMock,
+                return_value=mock_gateway,
+            ),
+            patch(
+                "backend.services.payment_service.PaymentService.confirm_payment",
+                new_callable=AsyncMock,
+                return_value=mock_order,
+            ) as mock_confirm_payment,
+        ):
             from backend.api.webhook import handle_stripe_webhook
             from fastapi import Request
 
@@ -76,7 +78,9 @@ class TestStripeWebhookEndpoint:
             response = await handle_stripe_webhook(mock_request)
 
             body_text = response.body.decode()
-            assert response.status_code == 200, f"Got {response.status_code}: {body_text}"
+            assert response.status_code == 200, (
+                f"Got {response.status_code}: {body_text}"
+            )
             body = json.loads(body_text)
             assert body["status"] == "processed"
             assert body["event"] == "payment_completed"
@@ -138,7 +142,11 @@ class TestStripeWebhookEndpoint:
 @pytest.mark.parametrize(
     ("handler_name", "provider", "expected_body"),
     [
-        ("handle_paddle_webhook", "paddle", b'{"status":"processed","event":"payment_completed"}'),
+        (
+            "handle_paddle_webhook",
+            "paddle",
+            b'{"status":"processed","event":"payment_completed"}',
+        ),
         ("handle_alipay_webhook", "alipay", b"success"),
         (
             "handle_nowpayments_webhook",
@@ -172,18 +180,22 @@ async def test_payment_completed_webhooks_pass_amount_to_confirmation(
     mock_order.order_no = event.order_no
     mock_order.status = OrderStatus.FULFILLED.value
 
-    with patch(
-        "backend.api.webhook.get_async_session",
-        return_value=mock_db_session,
-    ), patch(
-        "backend.services.payment.get_gateway",
-        new_callable=AsyncMock,
-        return_value=mock_gateway,
-    ), patch(
-        "backend.services.payment_service.PaymentService.confirm_payment",
-        new_callable=AsyncMock,
-        return_value=mock_order,
-    ) as mock_confirm_payment:
+    with (
+        patch(
+            "backend.api.webhook.get_async_session",
+            return_value=mock_db_session,
+        ),
+        patch(
+            "backend.services.payment.get_gateway",
+            new_callable=AsyncMock,
+            return_value=mock_gateway,
+        ),
+        patch(
+            "backend.services.payment_service.PaymentService.confirm_payment",
+            new_callable=AsyncMock,
+            return_value=mock_order,
+        ) as mock_confirm_payment,
+    ):
         mock_request = MagicMock(spec=Request)
         mock_request.body = AsyncMock(return_value=b'{"test": true}')
         mock_request.headers = {}
@@ -249,17 +261,21 @@ async def test_payment_expired_webhooks_commit_when_cancelled(
     mock_order = MagicMock()
     mock_order.order_no = event.order_no
 
-    with patch(
-        "backend.api.webhook.get_async_session",
-        return_value=mock_db_session,
-    ), patch(
-        "backend.services.payment.get_gateway",
-        new_callable=AsyncMock,
-        return_value=mock_gateway,
-    ), patch(
-        "backend.services.payment_service.PaymentService.cancel_expired_order",
-        new_callable=AsyncMock,
-        return_value=mock_order,
+    with (
+        patch(
+            "backend.api.webhook.get_async_session",
+            return_value=mock_db_session,
+        ),
+        patch(
+            "backend.services.payment.get_gateway",
+            new_callable=AsyncMock,
+            return_value=mock_gateway,
+        ),
+        patch(
+            "backend.services.payment_service.PaymentService.cancel_expired_order",
+            new_callable=AsyncMock,
+            return_value=mock_order,
+        ),
     ):
         mock_request = MagicMock(spec=Request)
         mock_request.body = AsyncMock(return_value=b'{"test": true}')
@@ -299,17 +315,21 @@ async def test_payment_expired_webhooks_skip_commit_when_order_gone(
     )
     mock_gateway.verify_webhook.return_value = event
 
-    with patch(
-        "backend.api.webhook.get_async_session",
-        return_value=mock_db_session,
-    ), patch(
-        "backend.services.payment.get_gateway",
-        new_callable=AsyncMock,
-        return_value=mock_gateway,
-    ), patch(
-        "backend.services.payment_service.PaymentService.cancel_expired_order",
-        new_callable=AsyncMock,
-        return_value=None,
+    with (
+        patch(
+            "backend.api.webhook.get_async_session",
+            return_value=mock_db_session,
+        ),
+        patch(
+            "backend.services.payment.get_gateway",
+            new_callable=AsyncMock,
+            return_value=mock_gateway,
+        ),
+        patch(
+            "backend.services.payment_service.PaymentService.cancel_expired_order",
+            new_callable=AsyncMock,
+            return_value=None,
+        ),
     ):
         mock_request = MagicMock(spec=Request)
         mock_request.body = AsyncMock(return_value=b'{"test": true}')

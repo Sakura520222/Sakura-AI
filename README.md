@@ -8,7 +8,7 @@
 
 [English](README_EN.md) | **中文**
 
-[![Version](https://img.shields.io/badge/Version-2.12.2-blue.svg)](https://github.com/Sakura520222/Sakura-AI-Reviewer/releases)
+[![Version](https://img.shields.io/badge/Version-2.13.0-blue.svg)](https://github.com/Sakura520222/Sakura-AI-Reviewer/releases)
 [![Python](https://img.shields.io/badge/Python-3.11+-blue.svg)](https://www.python.org/)
 [![FastAPI](https://img.shields.io/badge/FastAPI-Latest-green.svg)](https://fastapi.tiangolo.com/)
 [![License](https://img.shields.io/badge/License-AGPLv3-yellow.svg)](LICENSE)
@@ -33,13 +33,6 @@
 
 ## ✨ 核心特性
 
-### 2.12.2 更新亮点
-
-- **标签化审查协议**：主 PR 审查器改用严格的行式 `<SAKURA_REVIEW>` 信封协议作为输出契约，统一替换旧的 JSON 块 / emoji / 分数正则解析；新增信封校验（字段顺序与唯一性、版本与枚举、分数范围）并设严重等级分数上限（critical ≤ 3、major ≤ 6）；首次响应无效时在 temperature 0、无工具条件下做一次格式修复重试，二次失败则降级为不带分数与发现的安全评论，避免误批准或误低分拒绝。详见 [审查协议规范](docs/PR_REVIEW_PROTOCOL.md)。
-- **AI 凭证运行时刷新**：AIReviewer / IssueAnalyzer / SakuraMemoryService 新增 `_refresh_ai_client`，运行时自动校验并刷新 AI 客户端凭证，WebUI 配置变更即时生效；Web Search 与 Fetch URL 工具改为通过 ToolHandler 统一动态加载，减少冗余初始化。
-- **Agent Team 工作区与 Live View 增强**：WebUI 暴露 worktree 列表 / 详情 / 删除接口（含文件数、体积、修改时间），任务列表与详情页展示分支信息和 worktree 数量；Live View 改为后端驱动的 `can_send_prompt` 判定并展示初始输入，支持对 completed / waiting_human 终态任务的可恢复跟进；PR 审查反馈新增 branch + 源 PR 两阶段匹配。
-- **支付链路健壮性**：各支付网关 webhook 直接基于事件订单号处理，`cancel_expired_order` 幂等化（订单不存在视为成功），仅在取消成功时提交事务。
-
 ### 审查能力
 
 - **AI 推理模式**：利用 AI 推理能力进行深度代码分析，主动调用工具查看项目结构和任意文件
@@ -47,16 +40,20 @@
 - **自适应审查策略**：根据 PR 规模自动选择快速/标准/深度审查模式
 - **大型 PR 精简审查**：当初始 diff 接近上下文阈值时自动切换 compact diff 模式，AI 通过 `get_file_diff` / `list_changed_files` 按需查看变更
 - **结构化审查报告**：整体评分 + 分类问题（🔴严重/🟡重要/💡优化）+ `<details>` 折叠详情
-- **增量审查学习**：AI 自动总结历史审查记录，识别评分趋势和问题热点，逐步提升审查质量
+- **增量审查续跑**：增量 PR 审查会恢复上一轮 reviewer 的完整 ActivitySession 消息历史，而不是依赖摘要式历史注入
+- **运行中增量入队**：审查进行中收到新的 `synchronize` 提交时不会并行启动新审查；新增变化会入队，并在下一次 AI 请求前合并成一条 user message
+- **按需 diff 控制**：增量队列不引入硬编码 diff 截断，内容量控制继续依赖工具按需读取、现有配置和上下文压缩
 - **智能审查批准**：基于 AI 评分自动决策 APPROVE / REQUEST_CHANGES / COMMENT
 - **严格审查输出契约**：审查器输出受严格信封协议约束并经字段校验与严重等级分数上限保护，无效响应自动修复或安全降级，杜绝误批准与误低分拒绝
 - **PR 变更自动总结**：AI 自动生成 PR 变更摘要，并在 PR 更新时增量更新总结内容
-- **PR 依赖图生成**：支持 AI 分析与静态 import 分析双模式，生成 Mermaid 格式可视化依赖关系图
+- **PR 依赖图生成**：支持 AI 分析与静态 import 分析双模式，生成 Mermaid 格式可视化依赖关系图；增量审查基于上一轮依赖图叠加更新，保留历史依赖节点与边
 - **Token 消耗追踪**：实时追踪审查中所有 AI API 调用的 token 消耗量与预估成本
 - **一键撤回**：管理员使用 `/revoke` 命令一键撤回所有 AI 评论和 Review
-- **辅助模型支持**：独立配置轻量级模型处理摘要、上下文压缩、标签推荐等任务，降低推理成本
+- **辅助模型支持**：独立配置轻量级模型处理摘要、标签推荐等任务，降低推理成本
 - **行内评论开关**：通过 WebUI 配置 `enable_inline_comments`，控制是否在 PR diff 上发布行内评论，减少审查噪音
 - **可控自动审查**：通过 WebUI 配置 `enable_auto_review` 控制 PR opened/synchronize/reopened 是否自动入队，保留命令和手动触发路径
+- **Check Runs 进度可视化**：将审查生命周期（排队、代码索引、PR 总结、AI 审查、生成报告、完成、失败、取消、跳过）映射到 GitHub Check Runs，在 PR 的 Checks 面板实时展示进度；conclusion 采用纯展示语义（仅审查自身出错为 failure，不阻止合并）
+- **外部 CI 失败注入**：订阅 `check_run.completed` 与 `workflow_job.completed`，采集其他 CI（如 GitHub Actions、Codecov、lint App）的失败结论、失败步骤和 Checks annotations，并在下一次 PR 审查请求中作为不可信证据注入 AI 上下文；采集记录会按状态过滤、自动清理，并对同一 PR 下相同 `(source, name)` 的失败保留最新记录，避免重复失败证据干扰审查上下文
 - **审查评论标签交互**：审查报告中包含标签复选框，用户可在 GitHub PR 页面直接勾选/取消标签，AI 自动应用或移除对应标签
 - **AI 生成 PR 描述**：Agent 创建 PR 时 AI 自动生成包含元数据标记的 PR 描述，后续审查可精确识别和更新 AI 注入区域
 
@@ -81,6 +78,7 @@
 ### Issue 分析
 
 - **Issue 智能分析**：自动分类、优先级判定、标签推荐、重复检测、关联 PR 发现
+- **严格 Issue 输出契约**：Issue 分析输出使用 `<SAKURA_ISSUE_ANALYSIS>` 信封协议并进行字段校验，无效响应会自动进行一次格式修复或安全降级
 - **Issue 自动打标**：AI 自动分类并推荐标签，高置信度自动应用
 - **Issue 自动指派**：AI 分析内容并自动指派给合适的仓库协作者
 - **Issue 标题改写**：AI 自动优化模糊或不够准确的 Issue 标题
@@ -229,9 +227,9 @@ cd Sakura-AI-Reviewer
 
 1. 访问 [GitHub Apps 设置](https://github.com/settings/apps)，点击 **New GitHub App**
 2. 填写名称、Homepage URL
-3. **Repository permissions**：Pull requests `Read and write`，Contents `Read and write`，Issues `Read and write`（可选）
+3. **Repository permissions**：Pull requests `Read and write`，Contents `Read and write`，Checks `Read and write`，Actions `Read`，Issues `Read and write`（可选）
 4. **Webhook URL**：`https://your-domain.com:8000/api/webhook/github`，填写 Webhook secret
-5. **Webhook events**：勾选 Pull requests、Pull request reviews、Issues（可选）、Issue comments（可选）
+5. **Webhook events**：勾选 Pull requests、Pull request reviews、Check runs、Workflow jobs、Issues（可选）、Issue comments（可选）
 6. 创建后，在 App 页面底部 **Generate a private key**，下载 `.pem` 文件（Setup Wizard 中需粘贴完整私钥内容）
 7. 点击左侧 **Install App**，选择要启用审查的仓库
 
@@ -314,8 +312,10 @@ WebUI：`https://your-domain.com/`
 > **动态配置**：通过 WebUI 的配置管理页面修改的配置项即时生效，无需重启服务。支持 AI 模型、辅助模型、RAG、Web 搜索、代码索引等多个配置分组。
 
 - **AI 模型**：WebUI 配置管理中选择内置 AI Provider（OpenAI、DeepSeek、Qwen、Z.ai、Doubao、SiliconFlow、Gemini、Anthropic 兼容、自定义 OpenAI 兼容），设置 API 地址、API Key 和模型名称，并可自动拉取模型列表与上下文窗口信息
-- **辅助模型**：WebUI 配置管理中设置 `summary_model`、`summary_api_base`、`summary_api_key`，用于摘要生成、上下文压缩、标签推荐等轻量任务，留空则自动回退到主模型
+- **辅助模型**：WebUI 配置管理中设置 `summary_model`、`summary_api_base`、`summary_api_key`，用于摘要生成、标签推荐等轻量任务，留空则自动回退到主模型
 - **PR 自动审查**：WebUI 配置管理中 `enable_auto_review` 控制 PR webhook 是否自动触发审查；关闭后仍可通过命令或手动入口触发
+- **Check Runs 可视化**：WebUI 配置管理中 `enable_check_runs` 控制是否将审查进度同步到 GitHub Checks 面板（默认开启，需 GitHub App 授予 `checks:write` 权限）
+- **外部 CI 失败注入**：`config/strategies.yaml` 的 `context_enhancement.ci_failure_injection` 控制是否注入外部 CI 失败、记录保留天数、单次审查最多失败记录数和每条失败最多 annotations 数；该功能依赖 GitHub App 订阅 `check_run` / `workflow_job` webhook，并授予 Checks 与 Actions 读取权限
 - **AI API 超时**：WebUI 配置管理中 `ai_api_timeout_seconds` 控制单次请求超时，`ai_api_total_timeout_seconds` 控制一次 AI 调用重试循环的最长总耗时
 - **安全与 MFA**：WebUI 安全中心可开启全局 MFA 要求、为单个用户强制 MFA、重置 TOTP/恢复码、删除 Passkeys，并记录安全审计事件；用户可在个人设置中启用 TOTP、生成恢复码、注册 Passkeys/WebAuthn；支持 MFA 失败锁定（`mfa_lockout_threshold` / `mfa_lockout_duration_minutes`）、API Passkey 二次验证、`passkeys_allowed_origins` 额外 Origin 和 `mobile_oauth_allowed_redirect_uris` 移动端 OAuth 回调白名单
 - **审查策略**：编辑 `config/strategies.yaml`，支持快速/标准/深度/大PR 四种策略
@@ -339,7 +339,7 @@ WebUI：`https://your-domain.com/`
 - **Web 搜索工具**：WebUI 配置管理中 `web_search_provider`（`duckduckgo` 免费或 `tavily` 高级）
 - **跨文件搜索**：`config/strategies.yaml` 中 `context_enhancement.search_in_files`，配置 GitHub Search API 优先策略、上下文行数、最大结果数等
 - **Git 信息工具**：`config/strategies.yaml` 中 `context_enhancement.git_tools`，配置默认分支和提交返回数量
-- **项目记忆系统**：WebUI 配置管理中 `sakura_memory_enabled` 启用记忆系统，`sakura_reflection_enabled` 启用审查后反思，`sakura_consolidation_interval` 合并触发的反思轮数（默认 5），`sakura_auto_init` 自动初始化 `.sakura/` 目录，`sakura_auto_create_subdirs` 自动创建 rules/docs/plans 子目录，`sakura_knowledge_extraction_enabled` 启用自动知识提取（通过三次串行 LLM 调用分别提取 rules/docs/plans），`sakura_extraction_provider` 配置提取 AI 凭据来源（主AI/辅助AI/独立配置）。WebUI 提供「Sakura 记忆管理」页面，支持查看/编辑/删除记忆文件、手动触发合并和知识提取。详见 [项目记忆系统使用指南](docs/SAKURA_MEMORY_GUIDE.md)
+- **项目记忆系统**：WebUI 配置管理中 `sakura_memory_enabled` 启用记忆系统，`sakura_reflection_enabled` 启用审查后反思，`sakura_consolidation_interval` 合并触发的反思轮数（默认 5），`sakura_auto_init` 自动初始化 `.sakura/` 目录，`sakura_auto_create_subdirs` 自动创建 rules/docs/plans 子目录，`sakura_knowledge_extraction_enabled` 启用自动知识提取（通过三次串行 LLM 调用分别提取 rules/docs/plans），`sakura_extraction_provider` 配置提取 AI 凭据来源（主AI/辅助AI/独立配置）。WebUI 提供「Sakura 记忆管理」页面，支持查看/编辑/删除记忆文件、手动触发合并和知识提取。`config/strategies.yaml` 的 `context_enhancement.sakura_memory.reflection` 可配置反思 prompt 包含的最大评论条数（`max_comments`）、变更文件条数（`max_changed_files`）和新增提交条数（`max_new_commits`），默认 30/30/20；评论正文与 PR 描述完整传入、不截断。详见 [项目记忆系统使用指南](docs/SAKURA_MEMORY_GUIDE.md)
 - **模型上下文**：WebUI 配置管理中配置上下文窗口、自动压缩等，详见 [模型上下文管理](docs/MODEL_CONTEXT_FEATURE.md)
 - **Agent 专家团队**：WebUI Agent Team 页面配置 `agent_team_enabled`、`agent_team_workspace_root`、`agent_team_repo_allowlist`、`agent_team_model_provider`、`agent_team_*` 模型与护栏参数；支持上下文压缩（`agent_team_enable_context_compression` 等）、全栈/审查工具轮数（`agent_team_max_tool_rounds` / `agent_team_reviewer_max_tool_rounds`）、自动安装依赖（`agent_team_auto_install_deps`）、验证命令黑名单、Draft PR 开关和 PR 审查闭环（`agent_team_pr_closed_loop_enabled`、`agent_team_max_iterations_per_task`、`agent_team_pr_review_pass_score`）；`agent_team_model_provider=main` 时复用主 AI 配置，也可选择独立 Agent AI 配置；普通用户入口会校验仓库归属和 `agent_team_repo_allowlist` 并消耗 Agent 配额，Issue 评论 `/agent` 可从已分析 Issue 或扫描报告 Issue 创建任务；支持 Web 搜索工具和 Token 消耗追踪
 - **Agent Skills**：WebUI Agent Skills 页面安装和启停 Skills；通过 `agent_team_skills_enabled` 控制 Agent 是否可加载技能，通过 `agent_team_skills_root` 配置本地存储根目录
@@ -484,9 +484,7 @@ Sakura-AI-Reviewer/
 | [安全与 MFA 指南](docs/SECURITY_MFA_GUIDE.md)              | TOTP、恢复码、Passkeys/WebAuthn 与安全中心 |
 | [API v1 参考文档](docs/api-v1-reference.md)             | RESTful API v1.3 接口文档（移动端 OAuth、MFA、SSE、Billing） |
 | [WebUI 设计文档](docs/plans/2026-03-27-webui-design.md) | WebUI 设计规范              |
-| [项目记忆系统使用指南](docs/SAKURA_MEMORY_GUIDE.md) | .sakura/ 目录结构、生命周期、配置说明 |
-| [项目记忆系统设计](docs/plans/2026-04-20-sakura-memory-design.md) | .sakura/ 记忆系统架构与配置 |
-| [Agent 专家团队模式](docs/plans/agent_expert_team_mode.md) | Agent 自动修复、受控工作区与 PR 创建流程 |
+| [项目记忆系统使用指南](docs/SAKURA_MEMORY_GUIDE.md) | .sakura/ 目录结构、生命周期与配置说明 |
 | [Agent Skills 实现](docs/agent-skills-python-implementation.md) | Skills 安装、索引、启停与工具集成说明 |
 | [Agent 文件工具实现](docs/agent-file-tools-python-implementation.md) | Agent 工作区文件工具、安全边界与实现细节 |
 | [Agents 项目指南](AGENTS.md)                               | 自动化代理与贡献者项目约定         |

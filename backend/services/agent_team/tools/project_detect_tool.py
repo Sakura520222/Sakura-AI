@@ -35,7 +35,9 @@ _NODE_PM_FILES: list[tuple[str, str]] = [
 ]
 
 
-def _detect_framework(workspace: Path, language: str, package_json: dict | None) -> list[str]:
+def _detect_framework(
+    workspace: Path, language: str, package_json: dict | None
+) -> list[str]:
     """从依赖文件推断框架。"""
     frameworks: list[str] = []
     if language == "python":
@@ -45,7 +47,10 @@ def _detect_framework(workspace: Path, language: str, package_json: dict | None)
             if _dep_in_python_workspace(workspace, name):
                 frameworks.append(name)
     elif language == "javascript" and package_json:
-        deps = {**package_json.get("dependencies", {}), **package_json.get("devDependencies", {})}
+        deps = {
+            **package_json.get("dependencies", {}),
+            **package_json.get("devDependencies", {}),
+        }
         for fw in ("next", "react", "vue", "express", "nest", "nuxt", "svelte"):
             if fw in deps or f"@{fw}/core" in deps:
                 frameworks.append(fw)
@@ -54,7 +59,11 @@ def _detect_framework(workspace: Path, language: str, package_json: dict | None)
 
 def _dep_in_python_workspace(workspace: Path, dep_name: str) -> bool:
     """检查 Python 依赖是否在工作区中声明。"""
-    for req_file in ("requirements.txt", "requirements/base.txt", "requirements/production.txt"):
+    for req_file in (
+        "requirements.txt",
+        "requirements/base.txt",
+        "requirements/production.txt",
+    ):
         req_path = workspace / req_file
         if req_path.exists():
             content = req_path.read_text(encoding="utf-8", errors="ignore").lower()
@@ -68,17 +77,24 @@ def _dep_in_python_workspace(workspace: Path, dep_name: str) -> bool:
     return False
 
 
-def _detect_test_command(workspace: Path, language: str, package_json: dict | None) -> str:
+def _detect_test_command(
+    workspace: Path, language: str, package_json: dict | None
+) -> str:
     """推断测试命令。"""
     if language == "python":
-        if (workspace / "pytest.ini").exists() or (workspace / "pyproject.toml").exists():
+        if (workspace / "pytest.ini").exists() or (
+            workspace / "pyproject.toml"
+        ).exists():
             return "pytest -q"
         return "python -m unittest"
     if language == "javascript" and package_json:
         scripts = package_json.get("scripts", {})
         if "test" in scripts:
             return "npm test"
-        deps = {**package_json.get("dependencies", {}), **package_json.get("devDependencies", {})}
+        deps = {
+            **package_json.get("dependencies", {}),
+            **package_json.get("devDependencies", {}),
+        }
         if "jest" in deps:
             return "npx jest"
         if "vitest" in deps:
@@ -91,12 +107,17 @@ def _detect_test_command(workspace: Path, language: str, package_json: dict | No
     return ""
 
 
-def _detect_lint_command(workspace: Path, language: str, package_json: dict | None) -> str:
+def _detect_lint_command(
+    workspace: Path, language: str, package_json: dict | None
+) -> str:
     """推断代码检查命令。"""
     if language == "python":
         return "ruff check"
     if language == "javascript" and package_json:
-        deps = {**package_json.get("dependencies", {}), **package_json.get("devDependencies", {})}
+        deps = {
+            **package_json.get("dependencies", {}),
+            **package_json.get("devDependencies", {}),
+        }
         if "eslint" in deps:
             return "npx eslint ."
         return "npm run lint"
