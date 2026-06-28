@@ -747,22 +747,33 @@ class PRDependencyGraphService:
         用于增量审查时合并历史依赖上下文。label 经 _unescape_mermaid_label 还原，
         路径经 _normalize_path 统一分隔符。
 
+        逐行解析：Mermaid 每个节点/边各占一行（Sakura 生成格式），用 ``re.match``
+        仅在行首尝试一次匹配，避免在整段文本上扫描所有起始位置造成多项式回溯
+        （CodeQL ReDoS）。节点 id 用与空白/括号不相交的取反字符类，进一步消除
+        单次匹配内的逐字符回溯。每个语句需独占一行。
+
         Returns:
             (node_id -> normalized_path 映射, 归一化后的边集合)
         """
+        # id 取反字符类 [^\[\]\s"] 与后续 \s* 字符集不相交，消除 \w+\s* 在 \[
+        # 缺失时的回溯；re.match 仅行首匹配一次，单行复杂度 O(行长)，总体线性。
         node_id_to_path: Dict[str, str] = {}
-        for match in re.finditer(r'(\w+)\s*\["([^\]]*)"\]', previous_graph):
-            node_id, label = match.group(1), match.group(2)
-            node_id_to_path[node_id] = cls._normalize_path(
-                cls._unescape_mermaid_label(label)
-            )
+        for line in previous_graph.splitlines():
+            match = re.match(r'\s*([^\[\]\s"]+)\s*\["([^\]]*)"\]', line)
+            if match:
+                node_id, label = match.group(1), match.group(2)
+                node_id_to_path[node_id] = cls._normalize_path(
+                    cls._unescape_mermaid_label(label)
+                )
 
         edges: Set[tuple[str, str]] = set()
-        for match in re.finditer(r"(\w+)\s*-->\s*(\w+)", previous_graph):
-            source = node_id_to_path.get(match.group(1))
-            target = node_id_to_path.get(match.group(2))
-            if source and target and source != target:
-                edges.add((source, target))
+        for line in previous_graph.splitlines():
+            match = re.match(r'\s*([^\[\]\s"]+)\s*-->\s*([^\[\]\s"]+)', line)
+            if match:
+                source = node_id_to_path.get(match.group(1))
+                target = node_id_to_path.get(match.group(2))
+                if source and target and source != target:
+                    edges.add((source, target))
 
         return node_id_to_path, edges
 
