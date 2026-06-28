@@ -747,35 +747,70 @@ class PRDependencyGraphService:
         用于增量审查时合并历史依赖上下文。label 经 _unescape_mermaid_label 还原，
         路径经 _normalize_path 统一分隔符。
 
-        逐行解析：Mermaid 每个节点/边各占一行（Sakura 生成格式），用 ``re.match``
-        仅在行首尝试一次匹配，避免在整段文本上扫描所有起始位置造成多项式回溯
-        （CodeQL ReDoS）。节点 id 用与空白/括号不相交的取反字符类，进一步消除
-        单次匹配内的逐字符回溯。每个语句需独占一行。
+        逐行用 ``str.find``/``strip`` 手工定界（不用正则），单行 O(行长)、总体
+        线性，从根本上规避正则多项式回溯（CodeQL ReDoS）。每个节点/边需独占一行
+        （Sakura 生成格式）。两遍扫描：先收齐节点，再解析边，使边能解析到完整
+        节点映射。
 
         Returns:
             (node_id -> normalized_path 映射, 归一化后的边集合)
         """
-        # id 取反字符类 [^\[\]\s"] 与后续 \s* 字符集不相交，消除 \w+\s* 在 \[
-        # 缺失时的回溯；re.match 仅行首匹配一次，单行复杂度 O(行长)，总体线性。
         node_id_to_path: Dict[str, str] = {}
         for line in previous_graph.splitlines():
-            match = re.match(r'\s*([^\[\]\s"]+)\s*\["([^\]]*)"\]', line)
-            if match:
-                node_id, label = match.group(1), match.group(2)
+            node = cls._parse_node_line(line)
+            if node is not None:
+                node_id, label = node
                 node_id_to_path[node_id] = cls._normalize_path(
                     cls._unescape_mermaid_label(label)
                 )
 
         edges: Set[tuple[str, str]] = set()
         for line in previous_graph.splitlines():
-            match = re.match(r'\s*([^\[\]\s"]+)\s*-->\s*([^\[\]\s"]+)', line)
-            if match:
-                source = node_id_to_path.get(match.group(1))
-                target = node_id_to_path.get(match.group(2))
+            edge = cls._parse_edge_line(line)
+            if edge is not None:
+                source = node_id_to_path.get(edge[0])
+                target = node_id_to_path.get(edge[1])
                 if source and target and source != target:
                     edges.add((source, target))
 
         return node_id_to_path, edges
+
+    @staticmethod
+    def _parse_node_line(line: str) -> tuple[str, str] | None:
+        """从 ``<id>["<label>"]`` 行提取 (id, label)；不匹配返回 None。
+
+        用 ``str.find`` 定界（无正则），单行 O(行长)。id 经 strip 后须非空且不含
+        空白/括号/引号（等价于原 ``[^\\[\\]\\s"]+`` 语义）。
+        """
+        start = line.find('["')
+        if start <= 0:
+            return None
+        end = line.find('"]', start + 2)
+        if end == -1:
+            return None
+        node_id = line[:start].strip()
+        label = line[start + 2:end]
+        if not node_id or any(c.isspace() or c in '[]"' for c in node_id):
+            return None
+        return node_id, label
+
+    @staticmethod
+    def _parse_edge_line(line: str) -> tuple[str, str] | None:
+        """从 ``<id> --> <id>`` 行提取 (source_id, target_id)；不匹配返回 None。
+
+        用 ``str.find`` 定界（无正则），单行 O(行长)。两端 id 经 strip 后须非空
+        且不含空白/括号/引号。
+        """
+        arrow = line.find("-->")
+        if arrow <= 0:
+            return None
+        source = line[:arrow].strip()
+        target = line[arrow + 3:].strip()
+        if not source or not target:
+            return None
+        if any(c.isspace() or c in '[]"' for c in source + target):
+            return None
+        return source, target
 
     @staticmethod
     def _build_prompts(
