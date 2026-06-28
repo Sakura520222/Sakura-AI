@@ -23,6 +23,14 @@ from backend.services.ai_reviewer.api_client import AIApiClient
 
 
 # Reflection prompt template / 反思 Prompt 模板
+# 反思 prompt 默认包含的最大评论条数 / Default max comments in reflection prompt
+_DEFAULT_REFLECTION_MAX_COMMENTS = 30
+# 反思 prompt 默认包含的最大变更文件条数 / Default max changed files
+_DEFAULT_REFLECTION_MAX_CHANGED_FILES = 30
+# 反思 prompt 默认包含的最大新增提交条数 / Default max new commits
+_DEFAULT_REFLECTION_MAX_NEW_COMMITS = 20
+
+
 REFLECTION_PROMPT = """你是一个代码审查反思助手。请对以下审查结果进行深度反思。
 
 ## 审查信息
@@ -303,6 +311,15 @@ class SakuraMemoryService:
                 "model": reflection_model,
                 "prompt_template": yaml_config.get("reflection", {}).get(
                     "prompt_template"
+                ),
+                "max_comments": yaml_config.get("reflection", {}).get(
+                    "max_comments", _DEFAULT_REFLECTION_MAX_COMMENTS
+                ),
+                "max_changed_files": yaml_config.get("reflection", {}).get(
+                    "max_changed_files", _DEFAULT_REFLECTION_MAX_CHANGED_FILES
+                ),
+                "max_new_commits": yaml_config.get("reflection", {}).get(
+                    "max_new_commits", _DEFAULT_REFLECTION_MAX_NEW_COMMITS
                 ),
             },
             "issue_reflection": {
@@ -609,9 +626,11 @@ class SakuraMemoryService:
                 )
             elif is_incremental:
                 review_type = "增量审查"
-                new_commits_summary = (
-                    "\n".join(f"  - {c['sha']}: {c['title']}" for c in new_commits[:10])
-                    or "无新增提交信息"
+                new_commits_summary = self._format_new_commits(
+                    new_commits,
+                    config.get("reflection", {}).get(
+                        "max_new_commits", _DEFAULT_REFLECTION_MAX_NEW_COMMITS
+                    ),
                 )
                 incremental_scope = f"新增 {len(new_commits)} 个提交"
                 incremental_reflection_prompt = (
@@ -635,9 +654,11 @@ class SakuraMemoryService:
                 except Exception:
                     commit_sha = "unknown"
 
-            changed_files = "\n".join(
-                f"- {f.path} ({f.status}, +{f.additions}/-{f.deletions})"
-                for f in (analysis.code_files or [])[:20]
+            changed_files = self._format_changed_files(
+                analysis.code_files or [],
+                config.get("reflection", {}).get(
+                    "max_changed_files", _DEFAULT_REFLECTION_MAX_CHANGED_FILES
+                ),
             )
 
             # 优先从数据库读取准确的评论数据（severity 从 emoji 精确提取）
@@ -646,9 +667,9 @@ class SakuraMemoryService:
             else:
                 comments_summary = ""
                 if "comments" in review_result:
-                    comments_summary = "\n".join(
-                        f"- [{c.get('severity', '?')}] {c.get('content', '')[:100]}"
-                        for c in review_result["comments"][:10]
+                    comments_summary = self._format_review_result_comments(
+                        review_result["comments"],
+                        self._get_reflection_max_comments(),
                     )
 
             def _escape_braces(s: str) -> str:
@@ -656,7 +677,7 @@ class SakuraMemoryService:
 
             pr_description = ""
             try:
-                pr_description = (getattr(pr, "body", None) or "")[:500]
+                pr_description = getattr(pr, "body", None) or ""
             except Exception as e:
                 logger.debug("读取 PR 描述失败，跳过: {}", e)
 
@@ -1282,6 +1303,53 @@ class SakuraMemoryService:
             logger.warning("获取 .sakura/ 上下文失败 ({}): {}", repo_full_name, e)
             return {}
 
+    def _get_reflection_max_comments(self) -> int:
+        """读取反思 prompt 的最大评论条数配置。
+
+        Read configured max comments for reflection prompt.
+        """
+        return self._get_config().get("reflection", {}).get(
+            "max_comments", _DEFAULT_REFLECTION_MAX_COMMENTS
+        )
+
+    @staticmethod
+    def _format_review_result_comments(
+        comments: list, max_count: int
+    ) -> str:
+        """格式化 review_result 中的评论列表供反思 prompt 使用。
+
+        评论正文完整保留，不截断；按 max_count 限制条数。
+        Format review_result comments for reflection prompt — full content,
+        no truncation, capped by max_count.
+        """
+        return "\n".join(
+            f"- [{c.get('severity', '?')}] {c.get('content', '')}"
+            for c in comments[:max_count]
+        )
+
+    @staticmethod
+    def _format_changed_files(files: list, max_count: int) -> str:
+        """格式化变更文件列表供反思 prompt 使用，按 max_count 限制条数。
+
+        Format changed files for reflection prompt, capped by max_count.
+        """
+        return "\n".join(
+            f"- {f.path} ({f.status}, +{f.additions}/-{f.deletions})"
+            for f in files[:max_count]
+        )
+
+    @staticmethod
+    def _format_new_commits(commits: list, max_count: int) -> str:
+        """格式化新增提交列表供反思 prompt 使用，按 max_count 限制条数。
+
+        Format new commits for reflection prompt, capped by max_count.
+        Returns fallback text when empty.
+        """
+        return (
+            "\n".join(f"  - {c['sha']}: {c['title']}" for c in commits[:max_count])
+            or "无新增提交信息"
+        )
+
     async def _fetch_comments_from_db(self, review_id: int) -> str:
         """从数据库读取审查评论（severity 准确，来自 emoji 精确提取）
 
@@ -1307,15 +1375,16 @@ class SakuraMemoryService:
         if not comments:
             return "无评论"
 
+        max_comments = self._get_reflection_max_comments()
         lines = []
-        for comment in comments[:20]:
+        for comment in comments[:max_comments]:
             location = ""
             if comment.file_path:
                 location = f" [{comment.file_path}"
                 if comment.line_number:
                     location += f":{comment.line_number}"
                 location += "]"
-            lines.append(f"- [{comment.severity}]{location}: {comment.content[:150]}")
+            lines.append(f"- [{comment.severity}]{location}: {comment.content}")
         return "\n".join(lines)
 
     async def _read_recent_reflections(

@@ -156,6 +156,12 @@ context_enhancement:
       model: null
       # 反思 Prompt 模板路径（可选覆盖）/ Reflection prompt template path (optional override)
       prompt_template: null
+      # 反思 prompt 中包含的最大评论条数 / Max comments included in reflection prompt
+      max_comments: 30
+      # 反思 prompt 中包含的最大变更文件条数 / Max changed files in reflection prompt
+      max_changed_files: 30
+      # 反思 prompt 中包含的最大新增提交条数 / Max new commits in reflection prompt
+      max_new_commits: 20
 
     # Issue 反思配置 / Issue reflection config
     issue_reflection:
