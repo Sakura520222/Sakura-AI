@@ -262,7 +262,9 @@ class IssueService:
 
         suggested_title_section = ""
         if analysis.suggested_title:
-            suggested_title_section = f"\n- **{suggested_title_label}**: `{analysis.suggested_title}`"
+            suggested_title_section = (
+                f"\n- **{suggested_title_label}**: `{analysis.suggested_title}`"
+            )
 
         body = template.format(
             category=analysis.category or "unknown",

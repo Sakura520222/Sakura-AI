@@ -4,7 +4,11 @@ from dataclasses import dataclass
 
 import pytest
 
-from backend.core.config import DYNAMIC_CONFIG_LABELS, DYNAMIC_CONFIG_RANGES, get_settings
+from backend.core.config import (
+    DYNAMIC_CONFIG_LABELS,
+    DYNAMIC_CONFIG_RANGES,
+    get_settings,
+)
 from backend.services.agent_team.fullstack_expert import FullStackResult
 from backend.services.agent_team.iteration_loop import IterationLoopService
 from backend.services.agent_team.professional_reviewer import ReviewResult
@@ -34,9 +38,18 @@ def test_agent_team_context_compression_config_is_registered_for_webui():
     }
 
     assert expected_keys.issubset(AGENT_TEAM_CONFIG_KEYS)
-    assert DYNAMIC_CONFIG_LABELS["agent_team_enable_context_compression"] == "启用上下文压缩"
-    assert DYNAMIC_CONFIG_RANGES["agent_team_context_compression_threshold"] == (0.1, 1.0)
-    assert DYNAMIC_CONFIG_RANGES["agent_team_context_compression_keep_rounds"] == (1, 20)
+    assert (
+        DYNAMIC_CONFIG_LABELS["agent_team_enable_context_compression"]
+        == "启用上下文压缩"
+    )
+    assert DYNAMIC_CONFIG_RANGES["agent_team_context_compression_threshold"] == (
+        0.1,
+        1.0,
+    )
+    assert DYNAMIC_CONFIG_RANGES["agent_team_context_compression_keep_rounds"] == (
+        1,
+        20,
+    )
     assert DYNAMIC_CONFIG_RANGES["agent_team_context_summary_max_tokens"] == (500, 8192)
     settings = get_settings()
     assert settings.agent_team_enable_context_compression is True
@@ -58,9 +71,7 @@ async def test_resolve_agent_team_max_tool_rounds_uses_dynamic_config(monkeypatc
         lambda: type("Settings", (), {"agent_team_max_tool_rounds": 30})(),
     )
 
-    assert await resolve_clamped_int_config(
-        "agent_team_max_tool_rounds"
-    ) == 75
+    assert await resolve_clamped_int_config("agent_team_max_tool_rounds") == 75
 
 
 @pytest.mark.asyncio
@@ -80,9 +91,7 @@ async def test_resolve_agent_team_max_tool_rounds_falls_back_on_invalid_dynamic_
         lambda: type("Settings", (), {"agent_team_max_tool_rounds": 42})(),
     )
 
-    assert await resolve_clamped_int_config(
-        "agent_team_max_tool_rounds"
-    ) == 42
+    assert await resolve_clamped_int_config("agent_team_max_tool_rounds") == 42
 
 
 @dataclass
@@ -116,7 +125,9 @@ class _FakeReviewer:
 
 
 @pytest.mark.asyncio
-async def test_iteration_loop_reviews_changes_when_fullstack_hits_tool_round_limit(monkeypatch, tmp_path):
+async def test_iteration_loop_reviews_changes_when_fullstack_hits_tool_round_limit(
+    monkeypatch, tmp_path
+):
     monkeypatch.setattr(
         "backend.services.agent_team.iteration_loop.FullStackExpertAgent",
         _FakeFullstackAgent,
@@ -143,7 +154,9 @@ async def test_iteration_loop_reviews_changes_when_fullstack_hits_tool_round_lim
 
 
 @pytest.mark.asyncio
-async def test_iteration_loop_passes_initial_feedback_to_fullstack(monkeypatch, tmp_path):
+async def test_iteration_loop_passes_initial_feedback_to_fullstack(
+    monkeypatch, tmp_path
+):
     captured = {}
 
     @dataclass
@@ -272,7 +285,10 @@ def test_failure_reason_reports_no_valid_change_only_when_no_files_exist():
 
 def test_agent_team_reviewer_max_tool_rounds_is_registered_for_webui():
     assert "agent_team_reviewer_max_tool_rounds" in AGENT_TEAM_CONFIG_KEYS
-    assert DYNAMIC_CONFIG_LABELS["agent_team_reviewer_max_tool_rounds"] == "审查工具调用最大轮次"
+    assert (
+        DYNAMIC_CONFIG_LABELS["agent_team_reviewer_max_tool_rounds"]
+        == "审查工具调用最大轮次"
+    )
     assert DYNAMIC_CONFIG_RANGES["agent_team_reviewer_max_tool_rounds"] == (5, 500)
     assert get_settings().agent_team_reviewer_max_tool_rounds == 20
 
@@ -292,9 +308,7 @@ async def test_resolve_reviewer_max_tool_rounds_uses_dynamic_config(monkeypatch)
         lambda: type("Settings", (), {"agent_team_reviewer_max_tool_rounds": 20})(),
     )
 
-    assert await resolve_clamped_int_config(
-        "agent_team_reviewer_max_tool_rounds"
-    ) == 50
+    assert await resolve_clamped_int_config("agent_team_reviewer_max_tool_rounds") == 50
 
 
 @pytest.mark.asyncio
@@ -311,9 +325,7 @@ async def test_resolve_reviewer_max_tool_rounds_falls_back_on_invalid(monkeypatc
         lambda: type("Settings", (), {"agent_team_reviewer_max_tool_rounds": 20})(),
     )
 
-    assert await resolve_clamped_int_config(
-        "agent_team_reviewer_max_tool_rounds"
-    ) == 20
+    assert await resolve_clamped_int_config("agent_team_reviewer_max_tool_rounds") == 20
 
 
 # ── 新工具注册测试 ──
@@ -384,7 +396,9 @@ class _FakeFullstackAgentWithProgress:
 
 
 @pytest.mark.asyncio
-async def test_iteration_loop_passes_progress_params_to_fullstack(monkeypatch, tmp_path):
+async def test_iteration_loop_passes_progress_params_to_fullstack(
+    monkeypatch, tmp_path
+):
     monkeypatch.setattr(
         "backend.services.agent_team.iteration_loop.FullStackExpertAgent",
         _FakeFullstackAgentWithProgress,
@@ -418,9 +432,15 @@ def test_build_feedback_groups_blocking_and_optional():
         score=5,
         summary="需要修复",
         findings=[
-            ReviewFinding(severity="critical", file="a.py", message="bug", suggestion="fix it"),
-            ReviewFinding(severity="major", file="a.py", message="error", suggestion="handle"),
-            ReviewFinding(severity="minor", file="b.py", message="style", suggestion="rename"),
+            ReviewFinding(
+                severity="critical", file="a.py", message="bug", suggestion="fix it"
+            ),
+            ReviewFinding(
+                severity="major", file="a.py", message="error", suggestion="handle"
+            ),
+            ReviewFinding(
+                severity="minor", file="b.py", message="style", suggestion="rename"
+            ),
             ReviewFinding(severity="suggestion", file="c.py", message="refactor"),
         ],
         passed=False,

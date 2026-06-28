@@ -176,4 +176,6 @@ async def test_compression_handles_restored_non_sdk_tool_calls(tool_call):
         "COMPRESSED_EARLY_HISTORY" in m.get("content", "")
         for m in compressed
         if m.get("role") == "user"
-    ), f"tool_calls 形态 {type(tool_call).__name__} 应被正常压缩为摘要，而非回退 fallback"
+    ), (
+        f"tool_calls 形态 {type(tool_call).__name__} 应被正常压缩为摘要，而非回退 fallback"
+    )

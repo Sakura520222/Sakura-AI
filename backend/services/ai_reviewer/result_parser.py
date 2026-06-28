@@ -51,12 +51,16 @@ class ReviewResultParser:
             if "```json" in text:
                 start = text.find("```json") + 7
                 end = text.find("```", start)
-                json_str = text[start:end].strip() if end > start else text[start:].strip()
+                json_str = (
+                    text[start:end].strip() if end > start else text[start:].strip()
+                )
                 return json.loads(json_str)
             if "```" in text:
                 start = text.find("```") + 3
                 end = text.find("```", start)
-                json_str = text[start:end].strip() if end > start else text[start:].strip()
+                json_str = (
+                    text[start:end].strip() if end > start else text[start:].strip()
+                )
                 return json.loads(json_str)
             return json.loads(text)
         except json.JSONDecodeError:

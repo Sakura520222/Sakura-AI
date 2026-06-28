@@ -137,7 +137,9 @@ async def test_diff_tool_lists_and_returns_file_diff():
 
 def test_diff_tools_have_valid_definitions():
     for tool_name in DIFF_TOOLS:
-        assert tool_name in TOOL_NAME_TO_DEFINITION, f"{tool_name} missing from TOOL_NAME_TO_DEFINITION"
+        assert tool_name in TOOL_NAME_TO_DEFINITION, (
+            f"{tool_name} missing from TOOL_NAME_TO_DEFINITION"
+        )
         tool_def = TOOL_NAME_TO_DEFINITION[tool_name]
         assert tool_def["type"] == "function"
         assert "name" in tool_def["function"]

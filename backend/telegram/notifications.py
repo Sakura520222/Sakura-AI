@@ -283,7 +283,9 @@ class NotificationSender:
                 if webui_url:
                     text += f"\n[WebUI 查看详情]({webui_url})"
                 else:
-                    logger.warning(f"app_domain 未配置，跳过 WebUI 链接 (scan_id={scan_id})")
+                    logger.warning(
+                        f"app_domain 未配置，跳过 WebUI 链接 (scan_id={scan_id})"
+                    )
 
             if not chat_ids:
                 logger.debug(f"无通知目标，跳过扫描完成通知: {repo_name}")

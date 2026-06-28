@@ -57,9 +57,7 @@ class RevertFileTool(BaseTool):
         rel_path = str(resolved).replace("\\", "/")
 
         executor = AgentTeamShellExecutor(ctx.workspace, workspace_service)
-        result = await executor.run_args(
-            ["git", "checkout", "HEAD", "--", rel_path]
-        )
+        result = await executor.run_args(["git", "checkout", "HEAD", "--", rel_path])
 
         if result.returncode != 0:
             return ToolResult(

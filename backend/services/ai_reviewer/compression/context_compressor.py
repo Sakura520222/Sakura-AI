@@ -43,9 +43,7 @@ def _extract_tool_call_fields(tc: Any) -> tuple[str, str, str]:
     return (
         str(getattr(tc, "id", "") or ""),
         str(getattr(function, "name", "") or "") if function is not None else "",
-        str(getattr(function, "arguments", "") or "")
-        if function is not None
-        else "",
+        str(getattr(function, "arguments", "") or "") if function is not None else "",
     )
 
 

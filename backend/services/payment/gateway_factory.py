@@ -19,6 +19,7 @@ _GATEWAY_REGISTRY: dict[str, type[PaymentGateway]] = {
     "tron": TronGateway,
 }
 
+
 # 已注册的支付提供商名称列表（供外部验证用）
 def get_supported_providers() -> tuple[str, ...]:
     """获取当前已注册的支付提供商名称列表"""
@@ -73,9 +74,7 @@ async def get_gateway(
         # NOWPayments uses ipn_secret as webhook secret
         elif provider == "nowpayments":
             if api_key is None:
-                api_key = str(
-                    await get_dynamic_config("nowpayments_api_key") or ""
-                )
+                api_key = str(await get_dynamic_config("nowpayments_api_key") or "")
             if webhook_secret is None:
                 webhook_secret = str(
                     await get_dynamic_config("nowpayments_ipn_secret") or ""
@@ -98,9 +97,7 @@ async def get_gateway(
 
     # Alipay 需要额外的 alipay_public_key 参数
     if provider == "alipay":
-        alipay_public_key = str(
-            await get_dynamic_config("alipay_public_key") or ""
-        )
+        alipay_public_key = str(await get_dynamic_config("alipay_public_key") or "")
         alipay_sandbox = bool(await get_dynamic_config("alipay_sandbox"))
         return gateway_cls(
             api_key=api_key,
@@ -122,16 +119,10 @@ async def get_gateway(
 
     # TronGateway 需要 wallet_address
     if provider == "tron":
-        wallet_address = str(
-            await get_dynamic_config("tron_wallet_address") or ""
-        )
-        tron_api_key = str(
-            await get_dynamic_config("tron_api_key") or ""
-        )
+        wallet_address = str(await get_dynamic_config("tron_wallet_address") or "")
+        tron_api_key = str(await get_dynamic_config("tron_api_key") or "")
         if not wallet_address:
-            raise ValueError(
-                "TronGateway not configured: missing tron_wallet_address"
-            )
+            raise ValueError("TronGateway not configured: missing tron_wallet_address")
         return gateway_cls(
             wallet_address=wallet_address,
             api_key=tron_api_key,

@@ -349,7 +349,34 @@ class ReviewWorker:
                         "output_language", pr_info.get("user_id")
                     )
                     await self._save_skip_record(analysis, pr_info)
-                    _skip_sha = pr_info.get("head_sha")
+                    # 增量（synchronize）命中跳过时，必须终结 pending 增量队列，
+                    # 否则 drained 任务跳过后队列行会永久残留
+                    # （_drain_pending_incremental 对 synchronize 不再兜底）。
+                    if pr_info.get("action") == "synchronize":
+                        try:
+                            from backend.services.pr_review_incremental_queue import (
+                                PRReviewIncrementalQueueService,
+                            )
+
+                            skipped = await PRReviewIncrementalQueueService().mark_skipped_for_pr(
+                                pr_info["repo_full_name"],
+                                int(pr_info["pr_number"]),
+                            )
+                            if skipped:
+                                logger.info(
+                                    "[{}] 增量跳过审查，已终结 {} 条 pending 增量队列",
+                                    task_id,
+                                    skipped,
+                                )
+                        except Exception as e:
+                            logger.warning(
+                                "[{}] mark_skipped_for_pr 失败（队列可能残留）: {}",
+                                task_id,
+                                e,
+                            )
+                    # 增量任务的 head_sha 可能仍是完整审查的旧 head，优先用 after
+                    # （增量新 head）收尾 check run，避免新 head 的 queued check 残留。
+                    _skip_sha = pr_info.get("after") or pr_info.get("head_sha")
                     if _skip_sha:
                         await self.check_run_service.report_skipped(
                             pr_info["repo_owner"],

@@ -176,9 +176,7 @@ class FileToolHandler:
                 return result
             except Exception as e:
                 last_error = str(e)
-                logger.warning(
-                    f"从分支 {ref} 读取{path_kind}失败: {path}, 错误: {e}"
-                )
+                logger.warning(f"从分支 {ref} 读取{path_kind}失败: {path}, 错误: {e}")
                 if normalized_branch and ref == normalized_branch:
                     logger.warning(
                         f"分支 {normalized_branch} 读取{path_kind} {path} 失败，尝试回退到默认分支"
@@ -187,7 +185,9 @@ class FileToolHandler:
 
         tried_desc = ", ".join(candidate_refs) if candidate_refs else "无可用分支"
         if last_error is not None:
-            result.error = f"{path_kind}不存在或无法访问（已尝试: {tried_desc}）: {last_error}"
+            result.error = (
+                f"{path_kind}不存在或无法访问（已尝试: {tried_desc}）: {last_error}"
+            )
         else:
             result.error = f"无法获取{path_kind}内容：未找到可用分支"
         return result
@@ -272,9 +272,7 @@ class FileToolHandler:
 
             # 智能分支选择 / Intelligent branch selection
             # PR 场景：HEAD -> base；非 PR 场景：显式 branch -> 默认分支
-            fetch = self._fetch_contents(
-                file_path, repo, pr, branch, path_kind="文件"
-            )
+            fetch = self._fetch_contents(file_path, repo, pr, branch, path_kind="文件")
             content_file = fetch.contents
             branch_requested = fetch.branch_requested
             branch_used = fetch.branch_used
@@ -496,9 +494,7 @@ class FileToolHandler:
 
             # 智能分支选择 / Intelligent branch selection
             # PR 场景：HEAD -> base；非 PR 场景：显式 branch -> 默认分支
-            fetch = self._fetch_contents(
-                directory, repo, pr, branch, path_kind="目录"
-            )
+            fetch = self._fetch_contents(directory, repo, pr, branch, path_kind="目录")
             contents = fetch.contents
             branch_requested = fetch.branch_requested
             branch_used = fetch.branch_used

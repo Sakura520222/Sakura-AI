@@ -341,6 +341,5 @@ Sakura 为 AI 提供了三个专用工具来访问 `.sakura/` 下的文档和反
 
 ## 相关文档
 
-- [项目记忆系统设计](plans/2026-04-20-sakura-memory-design.md) — 完整的架构设计文档
 - [PR 功能指南](PR_FEATURES_GUIDE.md) — PR 审查相关配置
 - [模型上下文管理](MODEL_CONTEXT_FEATURE.md) — AI 上下文窗口和压缩功能

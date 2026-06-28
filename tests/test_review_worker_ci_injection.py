@@ -25,9 +25,7 @@ async def test_inject_external_ci_failures_prefers_after_for_incremental(monkeyp
 
     await worker._inject_external_ci_failures(context, pr_info, "task-1")
 
-    assert context["external_ci_failures"] == [
-        {"name": "lint", "source": "check_run"}
-    ]
+    assert context["external_ci_failures"] == [{"name": "lint", "source": "check_run"}]
     fetch.assert_awaited_once_with("owner/repo", "new-sha")
 
 

@@ -288,7 +288,11 @@ class AgentTeamPRService:
             "node_modules/",
         ]
         gitignore_path = executor.workspace / ".gitignore"
-        existing = gitignore_path.read_text(encoding="utf-8") if gitignore_path.exists() else ""
+        existing = (
+            gitignore_path.read_text(encoding="utf-8")
+            if gitignore_path.exists()
+            else ""
+        )
         existing_rules = {line.strip() for line in existing.splitlines()}
         missing = [rule for rule in excludes if rule not in existing_rules]
         if missing:
@@ -555,7 +559,9 @@ class AgentTeamPRService:
                 return fallback_body
 
             header = self._build_metadata_header(
-                source_type, source_issue_number, iteration_count,
+                source_type,
+                source_issue_number,
+                iteration_count,
             )
             return header + "\n\n" + body
 

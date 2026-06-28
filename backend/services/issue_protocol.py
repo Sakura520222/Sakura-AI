@@ -77,9 +77,7 @@ class TaggedIssueAnalysisParser:
         if not feasibility:
             raise IssueProtocolError("FEASIBILITY must not be empty")
 
-        suggested_milestone = self._parse_optional_text(
-            fields["SUGGESTED_MILESTONE"]
-        )
+        suggested_milestone = self._parse_optional_text(fields["SUGGESTED_MILESTONE"])
         duplicate_of = self._parse_optional_issue_number(fields["DUPLICATE_OF"])
         suggested_title = self._parse_optional_text(fields["SUGGESTED_TITLE"])
 
@@ -206,7 +204,9 @@ class TaggedIssueAnalysisParser:
         blocks: list[list[str]] = []
         while index < len(lines) and lines[index].strip() != f"</{field}>":
             if lines[index].strip() != f"<{block_name}>":
-                raise IssueProtocolError(f"{field} may contain only {block_name} blocks")
+                raise IssueProtocolError(
+                    f"{field} may contain only {block_name} blocks"
+                )
             block, index = self._consume_block(lines, index, block_name)
             blocks.append(block)
         if index >= len(lines):
@@ -223,7 +223,9 @@ class TaggedIssueAnalysisParser:
         single_suffix = f"</{field}>"
         stripped = lines[index].strip()
         if field not in self._multiline_fields:
-            if not stripped.startswith(single_prefix) or not stripped.endswith(single_suffix):
+            if not stripped.startswith(single_prefix) or not stripped.endswith(
+                single_suffix
+            ):
                 raise IssueProtocolError(f"{field} must be on one line")
             value = stripped[len(single_prefix) : -len(single_suffix)]
             if "<" in value or ">" in value:
@@ -275,7 +277,9 @@ class TaggedIssueAnalysisParser:
         try:
             issue_number = int(value)
         except ValueError as exc:
-            raise IssueProtocolError("DUPLICATE_OF must be a positive integer or NONE") from exc
+            raise IssueProtocolError(
+                "DUPLICATE_OF must be a positive integer or NONE"
+            ) from exc
         if issue_number < 1:
             raise IssueProtocolError("DUPLICATE_OF must be positive")
         return issue_number

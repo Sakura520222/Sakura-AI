@@ -145,6 +145,8 @@ class SearchFilesToolHandler:
             normalized_branch = (branch or "").strip() or None
             branch_requested: Optional[str] = None
             candidate_refs: List[str] = []
+            # GitHub Search API 仅索引默认分支；非默认分支 ref 需在零匹配时回退逐文件搜索
+            default_branch = getattr(repo, "default_branch", None)
 
             if pr is not None:
                 candidate_refs.append(pr.head.sha)
@@ -152,7 +154,6 @@ class SearchFilesToolHandler:
                 branch_requested = normalized_branch
                 if normalized_branch:
                     candidate_refs.append(normalized_branch)
-                default_branch = getattr(repo, "default_branch", None)
                 if default_branch:
                     candidate_refs.append(default_branch)
 
@@ -161,6 +162,8 @@ class SearchFilesToolHandler:
 
             for ref in candidate_refs:
                 tried_branches.append(ref)
+                # ref 不是默认分支时，Search API 看不到其内容，零匹配需回退逐文件确认
+                may_miss_index = ref != default_branch
                 result = await self._dispatch_search_round(
                     keyword,
                     repo,
@@ -172,6 +175,7 @@ class SearchFilesToolHandler:
                     effective_context_lines,
                     effective_max_results,
                     config,
+                    may_miss_index=may_miss_index,
                 )
 
                 if result is not None and "error" not in result:
@@ -221,6 +225,7 @@ class SearchFilesToolHandler:
         effective_context_lines: int,
         effective_max_results: int,
         config: dict,
+        may_miss_index: bool = False,
     ) -> Dict[str, Any]:
         """对单个 ref 执行一轮搜索：优先 Search API，失败回退逐文件搜索。
 
@@ -235,6 +240,9 @@ class SearchFilesToolHandler:
             effective_context_lines: 上下文行数
             effective_max_results: 最大返回结果数
             config: 工具配置字典
+            may_miss_index: 该 ref 是否不被 GitHub Search API 索引（非默认分支）。
+                为 True 时，Search API 零匹配会回退逐文件搜索以确认，避免漏掉
+                分支专属代码；默认分支零匹配仍是有效结果，不回退。
 
         Returns:
             搜索结果字典；ref 不可访问或搜索失败时含 ``error`` 字段
@@ -244,10 +252,8 @@ class SearchFilesToolHandler:
                 from github.Repository import Repository
 
                 if not isinstance(repo, Repository):
-                    raise NotImplementedError(
-                        "当前 repo 对象不支持 GitHub Search API"
-                    )
-                return await self._search_via_api(
+                    raise NotImplementedError("当前 repo 对象不支持 GitHub Search API")
+                result = await self._search_via_api(
                     keyword,
                     repo,
                     ref,
@@ -258,6 +264,30 @@ class SearchFilesToolHandler:
                     effective_context_lines,
                     effective_max_results,
                 )
+                # 非默认分支：Search API 仅索引默认分支，零匹配可能是索引看不到
+                # 而非真的不存在，回退逐文件搜索以确认。
+                if (
+                    may_miss_index
+                    and result is not None
+                    and "error" not in result
+                    and result.get("total_matches", 0) == 0
+                ):
+                    logger.debug(
+                        f"Search API 在非默认分支 ref={ref} 零匹配，回退逐文件搜索"
+                    )
+                    return await self._search_per_file(
+                        keyword,
+                        repo,
+                        ref,
+                        skip_paths,
+                        skip_binary,
+                        file_extension,
+                        directory,
+                        effective_context_lines,
+                        effective_max_results,
+                        config["max_files_to_search"],
+                    )
+                return result
             except ImportError:
                 logger.warning("无法导入 PyGithub，回退到逐文件搜索")
             except Exception as e:
