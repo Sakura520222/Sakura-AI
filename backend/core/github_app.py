@@ -3,6 +3,8 @@
 import hmac
 import hashlib
 from typing import List, Optional, Dict, Any
+
+import httpx
 from github import Github, GithubIntegration
 from loguru import logger
 from backend.core.config import get_settings
@@ -107,6 +109,43 @@ class GitHubAppClient:
             token = self.integration.create_jwt()
             self._app_client = Github(login_or_token=token)
         return self._app_client
+
+    async def exchange_user_code(self, code: str) -> Dict[str, Any]:
+        """GitHub App user-to-server：用授权码交换 user access token。"""
+        return await exchange_user_access_token(
+            settings.star_aid_github_app_client_id,
+            settings.star_aid_github_app_client_secret,
+            code,
+            settings.star_aid_github_app_callback_url or None,
+        )
+
+    async def refresh_user_token(self, refresh_token: str) -> Dict[str, Any]:
+        """GitHub App user-to-server：刷新 user access token。"""
+        return await refresh_user_access_token(
+            settings.star_aid_github_app_client_id,
+            settings.star_aid_github_app_client_secret,
+            refresh_token,
+        )
+
+    async def get_user_access_token(self, user_id: int) -> Optional[str]:
+        """从 star_aid 凭据服务获取可用 user access token。"""
+        from backend.models.database import async_session
+        from backend.services import star_aid_github_service
+
+        if async_session is None:
+            return None
+        async with async_session() as session:
+            token, _ = await star_aid_github_service.get_effective_access_token(
+                session, int(user_id)
+            )
+            return token
+
+    async def get_user_client(self, user_id: int) -> Optional[Github]:
+        """基于 GitHub App user access token 创建 PyGithub 客户端。"""
+        token = await self.get_user_access_token(user_id)
+        if not token:
+            return None
+        return Github(login_or_token=token)
 
     def get_all_installations_with_repos(self) -> list[dict]:
         """获取所有 GitHub App 安装及其仓库列表
@@ -1667,3 +1706,82 @@ async def get_pr_info_from_url(pr_url: str) -> Optional[Dict[str, Any]]:
     except Exception as e:
         logger.error(f"从URL获取PR信息失败: {e}", exc_info=True)
         raise
+
+
+# ========== GitHub App user-to-server token 协议层 ==========
+# 这些函数只负责 OAuth/token 端点的 HTTP 协议，不读取任何业务配置；
+# client_id / client_secret 由调用方（star_aid_github_service）注入，
+# 从而保持 core 层对 star_aid 配置的反向解耦。
+
+GITHUB_LOGIN_OAUTH_TOKEN_URL = "https://github.com/login/oauth/access_token"
+
+
+async def exchange_user_access_token(
+    client_id: str,
+    client_secret: str,
+    code: str,
+    redirect_uri: Optional[str] = None,
+) -> Dict[str, Any]:
+    """GitHub App web application flow：用授权码交换 user access token。
+
+    成功时返回包含 ``access_token`` / ``expires_in`` / ``refresh_token``
+    / ``refresh_token_expires_in`` / ``token_type`` 的字典；授权码无效时
+    GitHub 仍返回 200，但 body 含 ``error`` 字段，由调用方检查。
+
+    Raises:
+        RuntimeError: GitHub 返回非 200 状态码。
+    """
+    data: Dict[str, Any] = {
+        "client_id": client_id,
+        "client_secret": client_secret,
+        "code": code,
+    }
+    if redirect_uri:
+        data["redirect_uri"] = redirect_uri
+
+    async with httpx.AsyncClient() as client:
+        resp = await client.post(
+            GITHUB_LOGIN_OAUTH_TOKEN_URL,
+            data=data,
+            headers={"Accept": "application/json"},
+            timeout=15,
+        )
+
+    if resp.status_code != 200:
+        raise RuntimeError(
+            f"github user token exchange failed: status={resp.status_code}"
+        )
+    return resp.json()
+
+
+async def refresh_user_access_token(
+    client_id: str,
+    client_secret: str,
+    refresh_token: str,
+) -> Dict[str, Any]:
+    """用 refresh_token 刷新 GitHub App user access token。
+
+    GitHub 在每次刷新时会签发新的 refresh_token，旧 refresh_token 随即失效，
+    调用方必须用返回的新 refresh_token 覆盖存储。
+
+    Raises:
+        RuntimeError: GitHub 返回非 200 状态码。
+    """
+    async with httpx.AsyncClient() as client:
+        resp = await client.post(
+            GITHUB_LOGIN_OAUTH_TOKEN_URL,
+            data={
+                "client_id": client_id,
+                "client_secret": client_secret,
+                "grant_type": "refresh_token",
+                "refresh_token": refresh_token,
+            },
+            headers={"Accept": "application/json"},
+            timeout=15,
+        )
+
+    if resp.status_code != 200:
+        raise RuntimeError(
+            f"github user token refresh failed: status={resp.status_code}"
+        )
+    return resp.json()

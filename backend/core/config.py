@@ -247,6 +247,81 @@ class Settings(BaseSettings):
         description="移动端 OAuth 允许的回调 URI（逗号分隔，为空时仅允许默认 redirect_uri）",
     )
 
+    # ========== 仓库互助配置 / Repository mutual-star-aid configuration ==========
+    # 全局入口开关（可被超级管理员通过 WebUI/app_config 动态关闭）
+    star_aid_enabled: bool = Field(
+        True,
+        description="是否启用仓库互助功能（全局入口开关）",
+    )
+    star_aid_auto_star_enabled: bool = Field(
+        True,
+        description="是否执行自动 star（关闭后仅保留手动 star 与展示）",
+    )
+    star_aid_scheduler_enabled: bool = Field(
+        True,
+        description="是否启动仓库互助后台调度器",
+    )
+    star_aid_min_interval_minutes: int = Field(
+        15,
+        ge=1,
+        description="单个成员两次自动 star 之间的最小间隔（分钟）",
+    )
+    star_aid_max_interval_minutes: int = Field(
+        180,
+        ge=1,
+        description="单个成员两次自动 star 之间的最大间隔（分钟）",
+    )
+    star_aid_batch_size: int = Field(
+        5,
+        ge=1,
+        description="每轮调度最多处理的成员数量",
+    )
+    star_aid_user_daily_limit: int = Field(
+        20,
+        ge=0,
+        description="每个用户每日自动 star 上限（0 表示禁用自动 star）",
+    )
+    star_aid_repo_daily_limit: int = Field(
+        50,
+        ge=0,
+        description="每个仓库每日新增自动 star 上限（0 表示不接受新 star）",
+    )
+    star_aid_summary_enabled: bool = Field(
+        True,
+        description="是否为展示仓库生成 AI 摘要",
+    )
+    star_aid_summary_language: str = Field(
+        "",
+        description="AI 摘要语言，为空时跟随 WebUI/系统语言",
+    )
+    star_aid_summary_readme_budget: int = Field(
+        6000,
+        ge=0,
+        description="生成 AI 摘要时传给模型的 README 字符预算（0=不限），控制模型上下文成本",
+    )
+    star_aid_summary_max_tokens: int = Field(
+        16000,
+        ge=1,
+        description="生成 AI 摘要时允许模型输出的最大 token 数；思考模型需要更大值避免 content 为空",
+    )
+    # 以下为部署级凭据，通过环境变量或核心配置提供，不进入普通动态配置组
+    star_aid_token_encryption_key: str = Field(
+        "",
+        description="仓库互助 user token 加密密钥；为空时从 two_factor_encryption_key 或 webui_secret_key 派生",
+    )
+    star_aid_github_app_client_id: str = Field(
+        "",
+        description="仓库互助使用的 GitHub App Client ID（user-to-server flow）",
+    )
+    star_aid_github_app_client_secret: str = Field(
+        "",
+        description="仓库互助使用的 GitHub App Client Secret",
+    )
+    star_aid_github_app_callback_url: str = Field(
+        "",
+        description="仓库互助 GitHub App user-to-server 授权回调地址",
+    )
+
     # Telegram Bot配置
     telegram_bot_token: Optional[str] = None
     telegram_bot_username: Optional[str] = None  # 启动时通过 getMe 自动填充
@@ -1386,6 +1461,41 @@ DYNAMIC_CONFIG_GROUPS: OrderedDict[str, dict] = OrderedDict(
                 ],
             },
         ),
+        (
+            "star_aid",
+            {
+                "label": "仓库互助配置",
+                "icon": "star",
+                "descriptions": {
+                    "star_aid_enabled": "启用仓库互助功能（全局入口开关，关闭后页面只读）",
+                    "star_aid_auto_star_enabled": "是否执行自动 star；关闭后仅保留手动 star 与展示",
+                    "star_aid_scheduler_enabled": "是否启动仓库互助后台调度器",
+                    "star_aid_min_interval_minutes": "单个成员两次自动 star 之间的最小间隔（分钟）",
+                    "star_aid_max_interval_minutes": "单个成员两次自动 star 之间的最大间隔（分钟）",
+                    "star_aid_batch_size": "每轮调度最多处理的成员数量",
+                    "star_aid_user_daily_limit": "每个用户每日自动 star 上限（0 表示禁用自动 star）",
+                    "star_aid_repo_daily_limit": "每个仓库每日新增自动 star 上限（0 表示不接受新 star）",
+                    "star_aid_summary_enabled": "是否为展示仓库生成 AI 摘要",
+                    "star_aid_summary_language": "AI 摘要语言，留空则跟随界面语言",
+                    "star_aid_summary_readme_budget": "生成摘要时传给 AI 的 README 字符预算（0=不限）；过大可能超出模型上下文导致摘要失败",
+                    "star_aid_summary_max_tokens": "生成摘要时允许模型输出的最大 token 数；思考模型需要更大值避免 content 为空",
+                },
+                "keys": [
+                    "star_aid_enabled",
+                    "star_aid_auto_star_enabled",
+                    "star_aid_scheduler_enabled",
+                    "star_aid_min_interval_minutes",
+                    "star_aid_max_interval_minutes",
+                    "star_aid_batch_size",
+                    "star_aid_user_daily_limit",
+                    "star_aid_repo_daily_limit",
+                    "star_aid_summary_enabled",
+                    "star_aid_summary_language",
+                    "star_aid_summary_readme_budget",
+                    "star_aid_summary_max_tokens",
+                ],
+            },
+        ),
     ]
 )
 
@@ -1410,6 +1520,8 @@ DYNAMIC_CONFIG_SENSITIVE_KEYS = frozenset(
         "nowpayments_ipn_secret",
         "nowpayments_api_key",
         "tron_api_key",
+        "star_aid_github_app_client_secret",
+        "star_aid_token_encryption_key",
     }
 )
 
@@ -1451,6 +1563,11 @@ DYNAMIC_CONFIG_SELECT_OPTIONS: dict[str, list[dict]] = {
         {"value": "high", "label": "High"},
         {"value": "medium", "label": "Medium"},
         {"value": "low", "label": "Low"},
+    ],
+    "star_aid_summary_language": [
+        {"value": "", "label": "跟随界面语言"},
+        {"value": "zh-CN", "label": "简体中文"},
+        {"value": "en", "label": "English"},
     ],
 }
 
@@ -1514,6 +1631,14 @@ DYNAMIC_CONFIG_RANGES: dict[str, tuple[float, float]] = {
     "init_user_agent_daily_quota": (1, 999999),
     "init_user_agent_weekly_quota": (1, 999999),
     "init_user_agent_monthly_quota": (1, 999999),
+    # 仓库互助
+    "star_aid_min_interval_minutes": (1, 1440),
+    "star_aid_max_interval_minutes": (1, 10080),
+    "star_aid_batch_size": (1, 100),
+    "star_aid_user_daily_limit": (0, 1000),
+    "star_aid_repo_daily_limit": (0, 10000),
+    "star_aid_summary_readme_budget": (0, 50000),
+    "star_aid_summary_max_tokens": (1, 64000),
 }
 
 # 字段中文标签
@@ -1725,6 +1850,19 @@ DYNAMIC_CONFIG_LABELS: dict[str, str] = {
     "init_user_agent_weekly_quota": "自注册基础每周 Agent 配额",
     "init_user_agent_monthly_quota": "自注册基础每月 Agent 配额",
     "register_quota_multiplier": "自注册配额倍率",
+    # 仓库互助
+    "star_aid_enabled": "启用仓库互助",
+    "star_aid_auto_star_enabled": "启用自动 Star",
+    "star_aid_scheduler_enabled": "启用调度器",
+    "star_aid_min_interval_minutes": "最小间隔（分钟）",
+    "star_aid_max_interval_minutes": "最大间隔（分钟）",
+    "star_aid_batch_size": "每轮处理成员数",
+    "star_aid_user_daily_limit": "用户每日 Star 上限",
+    "star_aid_repo_daily_limit": "仓库每日 Star 上限",
+    "star_aid_summary_enabled": "启用 AI 摘要",
+    "star_aid_summary_language": "摘要语言",
+    "star_aid_summary_readme_budget": "README 字符预算",
+    "star_aid_summary_max_tokens": "摘要最大 Tokens",
 }
 
 # 内存 TTL 缓存（进程级，多 Worker 部署时各进程独立，配置变更仅当前进程可见）
@@ -1987,6 +2125,9 @@ CORE_CONFIG_KEYS = frozenset(
         "passkeys_allowed_origins",
         "database_url",
         "summary_provider",
+        "star_aid_github_app_client_id",
+        "star_aid_github_app_client_secret",
+        "star_aid_github_app_callback_url",
     }
 )
 

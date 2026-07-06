@@ -122,6 +122,7 @@ async def lifespan(app: FastAPI):
     redis_listener_task = None
     scan_scheduler = None
     quota_reset_scheduler = None
+    star_aid_scheduler = None
 
     if not is_bootstrap_mode():
         # 正常模式：完整启动所有服务
@@ -228,6 +229,15 @@ async def lifespan(app: FastAPI):
                     quota_reset_scheduler.start()
                 except Exception as e:
                     logger.error(f"❌ 配额重置调度器启动失败: {e}")
+
+                # 启动仓库互助调度器
+                try:
+                    from backend.services.star_aid_scheduler import StarAidScheduler
+
+                    star_aid_scheduler = StarAidScheduler()
+                    star_aid_scheduler.start()
+                except Exception as e:
+                    logger.error(f"仓库互助调度器启动失败: {e}")
             else:
                 logger.warning("🧪 本地开发模式：已跳过后台任务启动")
     else:
@@ -287,6 +297,10 @@ async def lifespan(app: FastAPI):
     # 停止配额重置调度器
     if quota_reset_scheduler:
         quota_reset_scheduler.stop()
+
+    # 停止仓库互助调度器
+    if star_aid_scheduler:
+        star_aid_scheduler.stop()
 
 
 # 创建FastAPI应用

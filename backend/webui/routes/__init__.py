@@ -21,6 +21,7 @@ from backend.webui.routes import (
     agent_team,
     agent_skills,
     sakura_memory,
+    star_aid,
     system_config,
     vector_db,
     assetlinks,
@@ -54,6 +55,7 @@ webui_router.include_router(agent_team.router)
 webui_router.include_router(assetlinks.router)
 webui_router.include_router(agent_skills.router)
 webui_router.include_router(sakura_memory.router)
+webui_router.include_router(star_aid.router)
 webui_router.include_router(system_config.router)
 webui_router.include_router(vector_db.router)
 webui_router.include_router(legal.router)

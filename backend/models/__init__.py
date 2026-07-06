@@ -38,6 +38,13 @@ from backend.models.payment_models import (
     RefundRequestStatus,
 )
 from backend.models.agent_skill_models import AgentSkill
+from backend.models.star_aid_models import (
+    StarAidMember,
+    StarAidCredential,
+    StarAidRepository,
+    StarAidActionLog,
+    StarAidRepositoryMetric,
+)
 from backend.core.config import get_settings
 import logging
 
@@ -66,6 +73,11 @@ __all__ = [
     "RefundRequest",
     "RefundRequestStatus",
     "AgentSkill",
+    "StarAidMember",
+    "StarAidCredential",
+    "StarAidRepository",
+    "StarAidActionLog",
+    "StarAidRepositoryMetric",
     "RepoScan",
     "ScanFinding",
     "ScanStatus",

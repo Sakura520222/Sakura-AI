@@ -660,6 +660,7 @@ def _ensure_model_modules_imported() -> None:
     import backend.models.agent_skill_models  # noqa: F401
     import backend.models.agent_team_models  # noqa: F401
     import backend.models.payment_models  # noqa: F401
+    import backend.models.star_aid_models  # noqa: F401
 
 
 def _append_dynamic_config_defaults(default_configs: list) -> None:
