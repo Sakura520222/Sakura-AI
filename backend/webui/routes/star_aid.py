@@ -359,11 +359,15 @@ async def sync_repositories(
     db: AsyncSession = Depends(get_db),
 ):
     """从 GitHub App user token 刷新可展示仓库候选。"""
+    lang = detect_language()
+    if not await star_aid_service.is_feature_enabled():
+        return toast_redirect(
+            "/star-aid/", "star_aid.feature_disabled", toast_type="error", lang=lang
+        )
     result = await star_aid_service.refresh_available_repositories(
         db, int(user["user_id"])
     )
     await db.commit()
-    lang = detect_language()
     if result["success"]:
         await _trigger_displayed_summaries(db, int(user["user_id"]))
         return toast_redirect("/star-aid/", "star_aid.sync_success", lang=lang)
@@ -392,12 +396,33 @@ async def refresh_summary_route(
     user: dict = Depends(require_auth),
     db: AsyncSession = Depends(get_db),
 ):
-    """手动刷新单个仓库的 AI 摘要。"""
+    """手动刷新单个仓库的 AI 摘要（仅仓库 owner 或管理员）。"""
+    from backend.models.star_aid_models import StarAidRepository
+
+    lang = detect_language()
+    repo_result = await db.execute(
+        select(StarAidRepository).where(StarAidRepository.id == int(repo_id))
+    )
+    repo = repo_result.scalar_one_or_none()
+    if repo is None:
+        return toast_redirect(
+            "/star-aid/", "star_aid.summary_not_found", toast_type="error", lang=lang
+        )
+    is_admin = user.get("role") in ("admin", "super_admin")
+    if repo.owner_user_id != int(user["user_id"]) and not is_admin:
+        logger.warning(
+            "star_aid summary refresh forbidden: repo_id={}, requester={}",
+            repo_id,
+            user.get("user_id"),
+        )
+        return toast_redirect(
+            "/star-aid/", "star_aid.summary_forbidden", toast_type="error", lang=lang
+        )
+
     result = await star_aid_summary_service.refresh_repository_summary(
         db, int(repo_id), force=True
     )
     await db.commit()
-    lang = detect_language()
     status = result.get("status")
     if status == "ready":
         return toast_redirect(
@@ -451,7 +476,13 @@ async def leave_plan_route(
     )
     await db.commit()
     lang = detect_language()
-    if result.get("success") and unstar_created and result.get("unstar"):
+    if not result.get("success"):
+        msg_key = {
+            "banned": "star_aid.leave_banned",
+            "not_joined": "star_aid.leave_not_joined",
+        }.get(result.get("message"), "star_aid.leave_failed")
+        return toast_redirect("/star-aid/", msg_key, toast_type="error", lang=lang)
+    if unstar_created and result.get("unstar"):
         unstar = result["unstar"]
         if unstar.get("failed", 0) > 0:
             return toast_redirect(
