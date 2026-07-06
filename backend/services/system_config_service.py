@@ -27,6 +27,7 @@ SYSTEM_SENSITIVE_KEYS = frozenset(
         "github_oauth_client_secret",
         "telegram_bot_token",
         "webui_secret_key",
+        "star_aid_github_app_client_secret",
     }
 )
 
@@ -61,6 +62,14 @@ SYSTEM_CONFIG_GROUPS = [
             "github_oauth_client_secret",
             "github_oauth_redirect_uri",
             "mobile_oauth_allowed_redirect_uris",
+        ],
+    },
+    {
+        "id": "star_aid_app",
+        "keys": [
+            "star_aid_github_app_client_id",
+            "star_aid_github_app_client_secret",
+            "star_aid_github_app_callback_url",
         ],
     },
     {
