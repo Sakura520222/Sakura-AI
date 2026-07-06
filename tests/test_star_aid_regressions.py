@@ -228,6 +228,11 @@ async def test_empty_ai_summary_marks_failed_and_retries(monkeypatch):
 
     monkeypatch.setattr(svc.gh, "get_effective_access_token", fake_token)
 
+    async def fake_resolve(session, owner_user_id=None):
+        return "zh-CN"
+
+    monkeypatch.setattr(svc, "_resolve_summary_language", fake_resolve)
+
     result = await svc.refresh_repository_summary(FakeSession(), 1, force=True)
 
     assert result["status"] == "failed"
@@ -236,7 +241,45 @@ async def test_empty_ai_summary_marks_failed_and_retries(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_generate_summary_ignores_reasoning_content_when_content_empty(monkeypatch):
+async def test_resolve_summary_language_uses_owner_preference(monkeypatch):
+    """star_aid_summary_language 配置空时，按仓库 owner 的偏好语言生成摘要。"""
+    from backend.services import star_aid_summary_service as svc
+
+    async def fake_cfg(key):
+        return None  # star_aid_summary_language 未配置
+
+    monkeypatch.setattr(svc, "get_dynamic_config", fake_cfg)
+
+    class FakeResult:
+        def first(self):
+            return ("en",)  # owner 的 WebUIConfig.language
+
+    class FakeSession:
+        async def execute(self, *args, **kwargs):
+            return FakeResult()
+
+    lang = await svc._resolve_summary_language(FakeSession(), owner_user_id=42)
+
+    assert lang == "en"
+
+
+@pytest.mark.asyncio
+async def test_resolve_summary_language_config_overrides_owner_preference(monkeypatch):
+    """star_aid_summary_language 配置非空时，覆盖 owner 偏好语言。"""
+    from backend.services import star_aid_summary_service as svc
+
+    async def fake_cfg(key):
+        return "zh-CN"  # 全局强制中文
+
+    monkeypatch.setattr(svc, "get_dynamic_config", fake_cfg)
+
+    class FakeSession:
+        async def execute(self, *args, **kwargs):
+            raise AssertionError("不应查 owner 偏好（配置已覆盖）")
+
+    lang = await svc._resolve_summary_language(FakeSession(), owner_user_id=42)
+
+    assert lang == "zh-CN"
     """思考模型 content 为空时不应回退用 reasoning_content（那是思考过程，不是摘要）。"""
     from unittest.mock import AsyncMock, MagicMock
 
