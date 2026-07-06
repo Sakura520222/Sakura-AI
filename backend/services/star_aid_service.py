@@ -312,24 +312,45 @@ async def refresh_available_repositories(session, user_id: int) -> dict:
         }
 
     repos = await gh.list_user_public_repositories(token)
+    synced_repo_ids: set[int] = set()
     synced = 0
     for r in repos:
         full_name = r.get("full_name") or ""
+        repo_id = r.get("id")
+        if repo_id is not None:
+            try:
+                synced_repo_ids.add(int(repo_id))
+            except (TypeError, ValueError):
+                pass
         if not full_name:
             continue
         owner, name = _parse_full_name(full_name)
-        existing = await session.execute(
-            select(StarAidRepository).where(StarAidRepository.full_name == full_name)
-        )
-        repo_row = existing.scalar_one_or_none()
         topics = r.get("topics") or []
         pushed_raw = r.get("pushed_at")
         pushed_at = _parse_github_timestamp(pushed_raw)
 
+        # 优先按 repo_id 查找（仓库重命名时 full_name 变、repo_id 不变），
+        # 再按 full_name 兜底；避免重命名后插入撞 repo_id 唯一约束。
+        repo_row = None
+        if repo_id is not None:
+            by_id = await session.execute(
+                select(StarAidRepository).where(
+                    StarAidRepository.repo_id == int(repo_id)
+                )
+            )
+            repo_row = by_id.scalar_one_or_none()
+        if repo_row is None:
+            by_name = await session.execute(
+                select(StarAidRepository).where(
+                    StarAidRepository.full_name == full_name
+                )
+            )
+            repo_row = by_name.scalar_one_or_none()
+
         if repo_row is None:
             repo_row = StarAidRepository(
                 owner_user_id=user_id,
-                repo_id=r.get("id"),
+                repo_id=repo_id,
                 full_name=full_name,
                 owner_login=owner,
                 repo_name=name,
@@ -345,8 +366,12 @@ async def refresh_available_repositories(session, user_id: int) -> dict:
             )
             session.add(repo_row)
         else:
-            # 已存在：刷新 metadata，不动 owner/is_displayed
-            repo_row.repo_id = r.get("id") or repo_row.repo_id
+            # 刷新 metadata；full_name/repo_name 可能因重命名变化
+            repo_row.repo_id = repo_id or repo_row.repo_id
+            repo_row.full_name = full_name
+            repo_row.owner_login = owner or repo_row.owner_login
+            repo_row.repo_name = name or repo_row.repo_name
+            repo_row.html_url = r.get("html_url") or repo_row.html_url
             repo_row.description = r.get("description") or repo_row.description
             repo_row.topics_json = (
                 json.dumps(topics) if topics else repo_row.topics_json
@@ -365,7 +390,28 @@ async def refresh_available_repositories(session, user_id: int) -> dict:
         synced += 1
 
     await session.flush()
-    logger.info("star_aid repos synced: user_id={}, count={}", user_id, synced)
+
+    # 清理：该 owner 本次同步缺失的仓库（改为 private/删除/失权）移出展示池，
+    # 避免页面和调度器继续曝光 stale 仓库。
+    owner_result = await session.execute(
+        select(StarAidRepository).where(
+            StarAidRepository.owner_user_id == user_id
+        )
+    )
+    hidden = 0
+    for repo in owner_result.scalars().all():
+        still_visible = repo.repo_id in synced_repo_ids
+        if not still_visible and repo.is_displayed:
+            repo.is_displayed = False
+            repo.is_public = False
+            hidden += 1
+    await session.flush()
+    logger.info(
+        "star_aid repos synced: user_id={}, count={}, hidden={}",
+        user_id,
+        synced,
+        hidden,
+    )
     return {"success": True, "synced": synced, "message": "ok"}
 
 
@@ -393,6 +439,10 @@ async def select_repositories(
         本次设为展示的仓库数量。
     """
     user_id = int(user_id)
+    # 只有 active 成员能修改展示仓库；未加入/已退出/被封禁用户不得写入公开池
+    member = await get_member(session, user_id)
+    if member is None or member.status != MEMBER_STATUS_ACTIVE:
+        return 0
     selected_set = {fn for fn in selected_full_names if fn}
 
     result = await session.execute(
@@ -427,6 +477,11 @@ async def join_plan(
     member = await get_member(session, user_id)
     if member and member.status == MEMBER_STATUS_BANNED:
         return {"success": False, "message": "banned"}
+
+    # 加入前必须有可用 GitHub App user token，否则进入互助池也只能收 star、无法贡献
+    token, _ = await gh.get_effective_access_token(session, user_id)
+    if token is None:
+        return {"success": False, "message": "reauth_required"}
 
     min_interval = int(await get_dynamic_config("star_aid_min_interval_minutes"))
     max_interval = int(await get_dynamic_config("star_aid_max_interval_minutes"))
@@ -477,6 +532,9 @@ async def leave_plan(
     member = await get_member(session, user_id)
     if member is None or member.status == MEMBER_STATUS_LEFT:
         return {"success": False, "message": "not_joined"}
+    # 被封禁成员不能通过 leave 清除封禁状态（绕过管理员封禁）
+    if member.status == MEMBER_STATUS_BANNED:
+        return {"success": False, "message": "banned"}
 
     now = _now()
     member.status = MEMBER_STATUS_LEFT
@@ -586,6 +644,14 @@ async def ban_member(
     member.ban_reason = reason or None
     member.auto_star_enabled = False
     member.next_scheduled_at = None
+    # 封禁成员的展示仓库移出公开池（不再曝光、不再接收自动 star）
+    repo_result = await session.execute(
+        select(StarAidRepository).where(
+            StarAidRepository.owner_user_id == int(member_user_id)
+        )
+    )
+    for repo in repo_result.scalars().all():
+        repo.is_displayed = False
     await session.flush()
     logger.info(
         "star_aid ban: member={}, admin={}", member_user_id, admin_user_id
@@ -668,7 +734,11 @@ async def _upsert_action_log(
     log.github_status_code = github_status_code
     log.error_code = error_code
     log.error_message = error_message
-    log.created_star = created_star
+    # 保留历史 created_star=True：只在本次明确成功创建时升级，
+    # 不用默认 False 覆盖已有记录（否则 already_done 会把 created_star 改回 False，
+    # 导致退出时漏 unstar）。取消 star 时由调用方单独置 False。
+    if created_star:
+        log.created_star = True
     log.github_request_id = github_request_id
     await session.flush()
 

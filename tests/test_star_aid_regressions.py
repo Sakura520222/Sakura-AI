@@ -309,3 +309,109 @@ async def test_resolve_summary_language_config_overrides_owner_preference(monkey
 
     # content 为空时返回空，触发上层重试/失败，绝不把思考过程当摘要
     assert result == ""
+
+
+@pytest.mark.asyncio
+async def test_leave_plan_rejects_banned_member(monkeypatch):
+    """被封禁成员不能通过 leave 清除封禁状态绕过封禁（P1）。"""
+    from unittest.mock import MagicMock
+
+    from backend.models.star_aid_models import (
+        MEMBER_STATUS_BANNED,
+        StarAidMember,
+    )
+
+    banned = StarAidMember(user_id=7, github_username="x", status=MEMBER_STATUS_BANNED)
+
+    async def fake_get_member(session, user_id):
+        return banned
+
+    monkeypatch.setattr(star_aid_service, "get_member", fake_get_member)
+
+    result = await star_aid_service.leave_plan(MagicMock(), 7)
+
+    assert result == {"success": False, "message": "banned"}
+    assert banned.status == MEMBER_STATUS_BANNED  # 封禁状态未被清除
+
+
+@pytest.mark.asyncio
+async def test_select_repositories_rejects_non_active_member(monkeypatch):
+    """非 active 成员（已退出/被封禁）不得修改展示仓库写入公开池。"""
+    from unittest.mock import AsyncMock, MagicMock
+
+    from backend.models.star_aid_models import MEMBER_STATUS_LEFT, StarAidMember
+
+    left = StarAidMember(user_id=7, github_username="x", status=MEMBER_STATUS_LEFT)
+
+    async def fake_get_member(session, user_id):
+        return left
+
+    monkeypatch.setattr(star_aid_service, "get_member", fake_get_member)
+
+    session = MagicMock()
+    session.execute = AsyncMock(side_effect=AssertionError("非 active 不应查仓库"))
+
+    count = await star_aid_service.select_repositories(session, 7, ["a/b"])
+
+    assert count == 0
+
+
+@pytest.mark.asyncio
+async def test_join_plan_requires_valid_token(monkeypatch):
+    """token 失效时不得加入互助池（避免只收 star 不贡献）。"""
+    from unittest.mock import MagicMock
+
+    async def fake_enabled():
+        return True
+
+    async def fake_get_member(session, user_id):
+        return None
+
+    async def fake_token(session, user_id):
+        return None, MagicMock(reauth_required=True)
+
+    monkeypatch.setattr(star_aid_service, "is_feature_enabled", fake_enabled)
+    monkeypatch.setattr(star_aid_service, "get_member", fake_get_member)
+    monkeypatch.setattr(star_aid_service.gh, "get_effective_access_token", fake_token)
+
+    result = await star_aid_service.join_plan(MagicMock(), 7, "gh-user", ["a/b"])
+
+    assert result == {"success": False, "message": "reauth_required"}
+
+
+@pytest.mark.asyncio
+async def test_upsert_action_log_preserves_existing_created_star():
+    """已记录的 created_star=True 不被后续 already_done 的默认 False 覆盖。"""
+    from backend.models.star_aid_models import StarAidActionLog
+
+    existing = StarAidActionLog(
+        actor_user_id=1,
+        target_repository_id=2,
+        action="manual_star",
+        trigger="manual",
+        status="success",
+        created_star=True,
+    )
+
+    class FakeResult:
+        def scalar_one_or_none(self):
+            return existing
+
+    class FakeSession:
+        async def execute(self, *args, **kwargs):
+            return FakeResult()
+
+        async def flush(self):
+            pass
+
+    await star_aid_service._upsert_action_log(
+        FakeSession(),
+        actor_user_id=1,
+        target_repository_id=2,
+        action="manual_star",
+        trigger="manual",
+        status="already_done",
+        created_star=False,  # 再次点击默认 False
+    )
+
+    assert existing.created_star is True  # 保留历史 True，退出时仍能识别为本功能创建
