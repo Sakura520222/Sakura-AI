@@ -75,11 +75,37 @@ def _get_summary_client() -> tuple[AsyncOpenAI, str]:
     return client, model
 
 
-async def _resolve_summary_language() -> str:
-    """摘要语言：star_aid_summary_language 为空时跟随系统默认语言。"""
+async def _get_user_language(session, user_id: int) -> str | None:
+    """查询用户的 WebUIConfig.language 偏好语言；无记录或非 zh-CN/en 返回 None。"""
+    from backend.models.database import WebUIConfig
+
+    result = await session.execute(
+        select(WebUIConfig.language).where(WebUIConfig.user_id == int(user_id))
+    )
+    row = result.first()
+    if row and row[0]:
+        lang = str(row[0])
+        return lang if lang in ("zh-CN", "en") else None
+    return None
+
+
+async def _resolve_summary_language(
+    session, owner_user_id: int | None = None
+) -> str:
+    """摘要语言优先级：
+
+    1. ``star_aid_summary_language`` 配置（全局覆盖）
+    2. 仓库 owner 的偏好语言（``WebUIConfig.language``）——摘要跟仓库走
+    3. 系统默认语言 ``default_language``
+    4. 兜底 ``zh-CN``
+    """
     configured = await get_dynamic_config("star_aid_summary_language")
     if configured:
         return str(configured)
+    if owner_user_id is not None:
+        owner_lang = await _get_user_language(session, owner_user_id)
+        if owner_lang:
+            return owner_lang
     settings = get_settings()
     lang = settings.default_language or "zh-CN"
     return lang if lang in ("zh-CN", "en") else "zh-CN"
@@ -219,7 +245,7 @@ async def refresh_repository_summary(
         return {"status": "skipped"}
 
     now = datetime.utcnow()
-    lang = await _resolve_summary_language()
+    lang = await _resolve_summary_language(session, repo.owner_user_id)
     topics = json.loads(repo.topics_json) if repo.topics_json else []
 
     # README 输入预算（模型 context 限制），0 表示不限
