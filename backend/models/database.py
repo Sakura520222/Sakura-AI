@@ -30,6 +30,23 @@ async_engine = None
 async_session = None
 
 
+def normalize_database_url(database_url: str) -> str:
+    """将数据库连接字符串规范化为项目支持的异步驱动 URL。"""
+    import logging
+
+    logger = logging.getLogger(__name__)
+
+    if "mysql+aiomysql://" in database_url:
+        database_url = database_url.replace("mysql+aiomysql://", "mysql+asyncmy://", 1)
+        logger.info("已将数据库驱动从 aiomysql 自动转换为 asyncmy")
+
+    if database_url.startswith("mysql://"):
+        return database_url.replace("mysql://", "mysql+asyncmy://", 1)
+    if database_url.startswith("postgresql://"):
+        return database_url.replace("postgresql://", "postgresql+asyncpg://", 1)
+    return database_url
+
+
 class PRStatus(str, enum.Enum):
     """PR审查状态"""
 
@@ -938,24 +955,7 @@ def init_async_db(database_url: str):
     logger = logging.getLogger(__name__)
 
     try:
-        # 向后兼容：将旧版 aiomysql 驱动自动转换为 asyncmy
-        if "mysql+aiomysql://" in database_url:
-            database_url = database_url.replace(
-                "mysql+aiomysql://", "mysql+asyncmy://", 1
-            )
-            logger.info("已将数据库驱动从 aiomysql 自动转换为 asyncmy")
-
-        # 确保使用异步驱动
-        if not database_url.startswith(
-            "mysql+asyncmy://"
-        ) and not database_url.startswith("postgresql+asyncpg://"):
-            # 如果不是异步URL，尝试转换
-            if database_url.startswith("mysql://"):
-                database_url = database_url.replace("mysql://", "mysql+asyncmy://", 1)
-            elif database_url.startswith("postgresql://"):
-                database_url = database_url.replace(
-                    "postgresql://", "postgresql+asyncpg://", 1
-                )
+        database_url = normalize_database_url(database_url)
 
         logger.info(f"初始化异步数据库引擎: {database_url}")
 
