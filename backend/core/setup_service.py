@@ -106,7 +106,7 @@ class SetupService:
         ):
             return {
                 "success": False,
-                "message": "连接字符串必须以 mysql+aiomysql://、mysql+asyncmy:// 或 postgresql+asyncpg:// 开头",
+                "message": "连接字符串必须以 mysql+aiomysql://、mysql+asyncmy://、mysql://、postgresql+asyncpg:// 或 postgresql:// 开头",
             }
 
         # 规范化到实际使用的异步驱动（aiomysql → asyncmy），否则 SQLAlchemy 会尝试
