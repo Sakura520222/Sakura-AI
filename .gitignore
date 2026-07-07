@@ -80,3 +80,4 @@ Skills/
 .venv/
 *.pyc
 .mypy_cache/
+文件.md
