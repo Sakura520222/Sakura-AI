@@ -235,6 +235,8 @@ class AIApiClient:
                 # 检查空响应
                 if not self._is_valid_response(response):
                     if attempt < max_retries - 1:
+                        # 重新计算已耗时，需包含本次调用真实耗时
+                        elapsed = time.monotonic() - start_time
                         delay = self._calculate_delay(attempt)
                         logger.warning(
                             "AI返回空响应，{:.1f}秒后重试 ({}/{}, 已耗时 {:.1f}s)",
@@ -306,6 +308,8 @@ class AIApiClient:
                     ) from e
 
                 if attempt < max_retries - 1:
+                    # 重新计算已耗时，需包含本次调用真实耗时
+                    elapsed = time.monotonic() - start_time
                     delay = self._calculate_delay(attempt)
                     logger.warning(
                         "AI调用失败 [{}]: {}，{:.1f}秒后重试 ({}/{}, 已耗时 {:.1f}s)",
