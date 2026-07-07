@@ -1,8 +1,8 @@
--- Sakura AI Reviewer 数据库初始化脚本
+-- Sakura AI 数据库初始化脚本
 
-CREATE DATABASE IF NOT EXISTS `sakura-pr` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+CREATE DATABASE IF NOT EXISTS `sakura_ai` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
 
-USE `sakura-pr`;
+USE `sakura_ai`;
 
 -- 创建PR审查记录表
 CREATE TABLE IF NOT EXISTS pr_reviews (

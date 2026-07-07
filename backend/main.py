@@ -1,4 +1,4 @@
-"""Sakura AI Reviewer 主应用"""
+"""Sakura AI 主应用"""
 
 from fastapi import FastAPI, Request, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
@@ -116,7 +116,7 @@ async def lifespan(app: FastAPI):
 
     # 启动时
     _startup_started_at = time.time()
-    logger.info("🚀 Sakura AI Reviewer 启动中...")
+    logger.info("🚀 Sakura AI 启动中...")
 
     telegram_task = None
     redis_listener_task = None
@@ -248,14 +248,14 @@ async def lifespan(app: FastAPI):
     _startup_finished_at = time.time()
     _startup_duration = _startup_finished_at - _startup_started_at
     logger.info(
-        "✅ Sakura AI Reviewer 启动完成，耗时 {}",
+        "✅ Sakura AI 启动完成，耗时 {}",
         _format_duration(_startup_duration),
     )
 
     yield
 
     # 关闭时
-    logger.info("👋 Sakura AI Reviewer 关闭中...")
+    logger.info("👋 Sakura AI 关闭中...")
 
     # 关闭服务客户端（嵌入服务和重排序服务）
     from backend.services.embedding_service import (
@@ -305,7 +305,7 @@ async def lifespan(app: FastAPI):
 
 # 创建FastAPI应用
 app = FastAPI(
-    title="Sakura AI Reviewer",
+    title="Sakura AI",
     description="GitHub AI代码审查机器人",
     version=__version__,
     lifespan=lifespan,
@@ -331,7 +331,7 @@ async def health():
     startup_info = get_startup_info()
     return {
         "status": "healthy",
-        "service": "Sakura AI Reviewer",
+        "service": "sakura-ai",
         "version": __version__,
         **startup_info,
     }

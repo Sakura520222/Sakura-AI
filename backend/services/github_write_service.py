@@ -246,7 +246,7 @@ class GitHubWriteService:
             # 3. 创建 PR / Create pull request
             pr_title = message[:72]
             pr_body = (
-                "Automated commit by **Sakura AI Reviewer**.\n\n"
+                "Automated commit by **Sakura AI**.\n\n"
                 f"Files: {', '.join(f'`{p}`' for p in files.keys())}"
             )
             pr = repo.create_pull(

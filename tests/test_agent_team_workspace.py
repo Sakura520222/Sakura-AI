@@ -39,11 +39,11 @@ def _run_git(cwd: Path, *args: str) -> str:
 def test_workspace_path_shape_and_creation(tmp_path):
     service = AgentTeamWorkspaceService(tmp_path / "workplace")
 
-    workspace = service.ensure_workspace("Sakura520222", "Sakura-AI-Reviewer")
+    workspace = service.ensure_workspace("Sakura520222", "Sakura-AI")
 
     assert (
         workspace
-        == (tmp_path / "workplace" / "Sakura520222" / "Sakura-AI-Reviewer").resolve()
+        == (tmp_path / "workplace" / "Sakura520222" / "Sakura-AI").resolve()
     )
     assert workspace.exists()
 

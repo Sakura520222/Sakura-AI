@@ -339,7 +339,7 @@ async def _handle_menu(query, target: str, telegram_id: int, context) -> None:
 
     # 根据目标构造文本和按钮
     if target == "main":
-        text = "🌸 *Sakura AI Reviewer Bot*\n请选择功能："
+        text = "🌸 *Sakura AI Bot*\n请选择功能："
         markup = build_main_menu(role)
     elif target == "help_basic":
         text = _HELP_BASIC

@@ -350,7 +350,7 @@ class SakuraMemoryService:
                 "auto_init": settings.sakura_auto_init,
                 "init_commit_message": yaml_config.get("initialization", {}).get(
                     "init_commit_message",
-                    "chore: initialize .sakura/ directory for Sakura AI Reviewer",
+                    "chore: initialize .sakura/ directory for Sakura AI",
                 ),
             },
             "directory_convention": yaml_config.get("directory_convention", {}),
@@ -530,7 +530,7 @@ class SakuraMemoryService:
 
             commit_msg = init_config.get(
                 "init_commit_message",
-                "chore: initialize .sakura/ directory for Sakura AI Reviewer",
+                "chore: initialize .sakura/ directory for Sakura AI",
             )
             logger.info(
                 f"[sakura] 步骤5: 提交文件到仓库 {repo_full_name}, {len(files)} 个文件"

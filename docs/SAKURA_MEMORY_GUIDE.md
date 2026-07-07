@@ -2,7 +2,7 @@
 
 ## 概述
 
-Sakura AI Reviewer 内置项目记忆系统，通过 `.sakura/` 目录实现自我反思和知识积累。系统会在每次 PR 审查和 Issue 分析后自动记录经验，随审查次数增加，AI 对你的项目理解越来越深，审查质量持续提升。
+Sakura AI 内置项目记忆系统，通过 `.sakura/` 目录实现自我反思和知识积累。系统会在每次 PR 审查和 Issue 分析后自动记录经验，随审查次数增加，AI 对你的项目理解越来越深，审查质量持续提升。
 
 **核心能力：**
 - 🔄 **自动反思**：每次审查后 AI 自主总结经验教训
@@ -97,7 +97,7 @@ Sakura 记忆系统采用三层知识架构，从宏观到微观逐层细化：
 
 提交信息示例：
 ```
-chore: initialize .sakura/ directory for Sakura AI Reviewer
+chore: initialize .sakura/ directory for Sakura AI
 ```
 
 > 💡 如果自动初始化未触发（如 `sakura_auto_init=false`），系统会在首次反思时自动补全初始化。

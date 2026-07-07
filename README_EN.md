@@ -1,19 +1,19 @@
 <div align="center">
 
-# 🌸 Sakura AI Reviewer
+# 🌸 Sakura AI
 
-<img src="res/cover.png" alt="Sakura AI Reviewer Cover" width="100%">
+<img src="res/cover.png" alt="Sakura AI Cover" width="100%">
 
 > AI-powered intelligent GitHub Pull Request code review and Issue analysis bot with proactive codebase exploration capabilities
 
 **English** | [中文](README.md)
 
-[![Version](https://img.shields.io/badge/Version-2.13.0-blue.svg)](https://github.com/Sakura520222/Sakura-AI-Reviewer/releases)
+[![Version](https://img.shields.io/badge/Version-2.13.0-blue.svg)](https://github.com/Sakura520222/Sakura-AI/releases)
 [![Python](https://img.shields.io/badge/Python-3.11+-blue.svg)](https://www.python.org/)
 [![FastAPI](https://img.shields.io/badge/FastAPI-Latest-green.svg)](https://fastapi.tiangolo.com/)
 [![License](https://img.shields.io/badge/License-AGPLv3-yellow.svg)](LICENSE)
 [![Live Demo](https://img.shields.io/badge/🌐_Free_Demo-Online-success.svg)](https://pr-bot.firefly520.top/)
-[![Android App](https://img.shields.io/badge/Android_App-🚧_In_Development-orange.svg)](https://github.com/Sakura520222/Sakura-AI-Reviewer-APP)
+[![Android App](https://img.shields.io/badge/Android_App-🚧_In_Development-orange.svg)](https://github.com/Sakura520222/Sakura-AI-APP)
 
 </div>
 
@@ -200,8 +200,8 @@
 ### Client Applications
 
 - **Native Android App**: 🚧 Under
-  development → [Sakura-AI-Reviewer-APP](https://github.com/Sakura520222/Sakura-AI-Reviewer-APP)
-  Connects to the Sakura-AI-Reviewer backend via the [API v1 interface](docs/api-v1-reference.md) for mobile management
+  development → [Sakura-AI-APP](https://github.com/Sakura520222/Sakura-AI-APP)
+  Connects to the Sakura-AI backend via the [API v1 interface](docs/api-v1-reference.md) for mobile management
 
 ---
 
@@ -218,8 +218,8 @@
 ### 2. Clone the Repository
 
 ```bash
-git clone https://github.com/Sakura520222/Sakura-AI-Reviewer.git
-cd Sakura-AI-Reviewer
+git clone https://github.com/Sakura520222/Sakura-AI.git
+cd Sakura-AI
 ```
 
 > All configuration (GitHub App, AI models, database, etc.) is done through the Setup Wizard web interface after first launch — no manual config file editing needed.
@@ -243,7 +243,7 @@ Install and start MySQL and Redis on the host:
 ```bash
 sudo apt update && sudo apt install mysql-server redis-server -y
 sudo systemctl start mysql && sudo systemctl start redis
-sudo mysql -e "CREATE DATABASE IF NOT EXISTS \`sakura-pr\` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;"
+sudo mysql -e "CREATE DATABASE IF NOT EXISTS \`sakura_ai\` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;"
 sudo mysql -e "CREATE USER IF NOT EXISTS 'root'@'%' IDENTIFIED BY 'your_password';"
 sudo mysql -e "GRANT ALL PRIVILEGES ON *.* TO 'root'@'%';"
 sudo mysql -e "FLUSH PRIVILEGES;"
@@ -271,7 +271,7 @@ After first launch, visit `https://your-domain.com/setup`. The Setup Wizard will
 
 ```bash
 curl http://your-domain.com:8000/health
-# {"status":"healthy","service":"Sakura AI Reviewer"}
+# {"status":"healthy","service":"sakura-ai"}
 ```
 
 WebUI: `https://your-domain.com/`
@@ -398,7 +398,7 @@ python run_ruff.py
 ### Project Structure
 
 ```
-Sakura-AI-Reviewer/
+Sakura-AI/
 ├── backend/
 │   ├── api/               # API routes (webhook, health, v1)
 │   │   └── v1/            #   RESTful API v1 (mobile integration, including user_config/billing)
@@ -528,11 +528,11 @@ Commit messages should follow the English [Conventional Commits](https://www.con
 
 ## 🌟 Star History
 
-<a href="https://star-history.com/#Sakura520222/Sakura-AI-Reviewer&Date">
+<a href="https://star-history.com/#Sakura520222/Sakura-AI&Date">
  <picture>
-   <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/svg?repos=Sakura520222/Sakura-AI-Reviewer&type=Date&theme=dark" />
-   <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/svg?repos=Sakura520222/Sakura-AI-Reviewer&type=Date" />
-   <img alt="Star History Chart" src="https://api.star-history.com/svg?repos=Sakura520222/Sakura-AI-Reviewer&type=Date" />
+   <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/svg?repos=Sakura520222/Sakura-AI&type=Date&theme=dark" />
+   <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/svg?repos=Sakura520222/Sakura-AI&type=Date" />
+   <img alt="Star History Chart" src="https://api.star-history.com/svg?repos=Sakura520222/Sakura-AI&type=Date" />
  </picture>
 </a>
 
@@ -540,10 +540,10 @@ Commit messages should follow the English [Conventional Commits](https://www.con
 
 <div align="center">
 
-**Sakura AI Reviewer** — Smarter, more efficient code reviews
+**Sakura AI** — Smarter, more efficient code reviews
 
 Made with 🌸 by [Sakura520222](https://github.com/Sakura520222)
 
-Feedback: [Issues](https://github.com/Sakura520222/Sakura-AI-Reviewer/issues) · Email: <Sakura520222@outlook.com>
+Feedback: [Issues](https://github.com/Sakura520222/Sakura-AI/issues) · Email: <Sakura520222@outlook.com>
 
 </div>

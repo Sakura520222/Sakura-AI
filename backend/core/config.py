@@ -152,7 +152,7 @@ class Settings(BaseSettings):
         description="是否允许用户启用两步验证",
     )
     two_factor_issuer: str = Field(
-        "Sakura AI Reviewer",
+        "Sakura AI",
         description="TOTP 认证器中显示的发行方名称",
     )
     two_factor_pending_token_expire_minutes: int = Field(
@@ -194,7 +194,7 @@ class Settings(BaseSettings):
         description="WebAuthn Relying Party ID；为空时使用 app_domain",
     )
     passkeys_rp_name: str = Field(
-        "Sakura AI Reviewer",
+        "Sakura AI",
         description="WebAuthn Relying Party 显示名称",
     )
     passkeys_origin: str = Field(
