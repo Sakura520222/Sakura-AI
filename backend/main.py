@@ -331,7 +331,7 @@ async def health():
     startup_info = get_startup_info()
     return {
         "status": "healthy",
-        "service": "sakura-ai",
+        "service": "Sakura AI",
         "version": __version__,
         **startup_info,
     }
