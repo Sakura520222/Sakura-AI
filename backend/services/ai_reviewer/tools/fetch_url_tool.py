@@ -574,7 +574,7 @@ class FetchUrlToolHandler:
                 response = await client.get(
                     current_url,
                     headers={
-                        "User-Agent": "Sakura-AI-Reviewer/1.0",
+                        "User-Agent": "Sakura-AI/1.0",
                         "Accept": ",".join(sorted(self._allowed_content_types)),
                     },
                 )

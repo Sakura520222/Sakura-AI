@@ -1,6 +1,6 @@
 # PR 功能指南
 
-本文档说明 Sakura AI Reviewer 中与 Pull Request 内容增强和审查稳定性相关的功能，覆盖 PR 变更总结、PR 依赖图、自动审查开关、大型 PR compact diff 以及 AI API 超时治理。
+本文档说明 Sakura AI 中与 Pull Request 内容增强和审查稳定性相关的功能，覆盖 PR 变更总结、PR 依赖图、自动审查开关、大型 PR compact diff 以及 AI API 超时治理。
 
 ## 功能概览
 

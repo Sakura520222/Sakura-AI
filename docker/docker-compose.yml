@@ -4,8 +4,8 @@ services:
     build:
       context: ..
       dockerfile: docker/Dockerfile
-    image: sakura-ai-reviewer
-    container_name: sakura-ai-reviewer
+    image: sakura-ai
+    container_name: sakura-ai
     restart: unless-stopped
     network_mode: host  # 使用宿主机网络,可直接访问 localhost
     volumes:
@@ -28,8 +28,8 @@ services:
     build:
       context: ..
       dockerfile: docker/Dockerfile
-    image: sakura-ai-reviewer
-    container_name: pr-reviewer-worker
+    image: sakura-ai
+    container_name: sakura-ai-worker
     restart: unless-stopped
     network_mode: host  # 使用宿主机网络,可直接访问 localhost
     command: celery -A backend.workers.celery_app worker --loglevel=info --concurrency=2

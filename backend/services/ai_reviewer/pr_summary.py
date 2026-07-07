@@ -190,7 +190,7 @@ class PRSummaryService:
         """构建带标记的摘要块"""
         return (
             f"{self.START_MARKER}\n\n"
-            f"## 🌸 Sakura AI Reviewer的总结\n\n{summary}\n\n"
+            f"## 🌸 Sakura AI的总结\n\n{summary}\n\n"
             f"{self.END_MARKER}"
         )
 
@@ -232,6 +232,6 @@ class PRSummaryService:
 
         # 去掉旧标题行（AI 可能生成带后缀的变体，如 "更新版"）
         content = re.sub(
-            r"^## 🌸 Sakura AI Reviewer的总结[^\n]*\n*", "", content
+            r"^## 🌸 Sakura AI的总结[^\n]*\n*", "", content
         ).strip()
         return content if content else None

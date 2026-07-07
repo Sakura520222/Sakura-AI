@@ -149,7 +149,7 @@ class ScanReportService:
 
         lines.append("---")
         lines.append(
-            "*此报告由 [Sakura AI Reviewer](https://github.com/Sakura520222/Sakura-AI-Reviewer) 自动生成*"
+            "*此报告由 [Sakura AI](https://github.com/Sakura520222/Sakura-AI) 自动生成*"
         )
 
         return "\n".join(lines)

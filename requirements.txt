@@ -25,7 +25,6 @@ APScheduler>=3.10.0
 
 # 工具库
 typing-extensions>=4.5.0
-python-dotenv>=1.1.0
 pyyaml>=6.0.1
 pydantic>=2.5.3
 pydantic-settings>=2.1.0

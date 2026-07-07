@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Sakura AI Reviewer 快速启动脚本
+# Sakura AI 快速启动脚本
 #
 # 支持断线续跑：构建/安装步骤在后台 nohup 运行，SSH 断线不中断。
 # 重新运行脚本时会自动跳过已完成的阶段。
@@ -225,20 +225,20 @@ build_runner() {
         $COMPOSE down >> "$BUILD_LOG" 2>&1 || true
 
         info "在临时容器内安装新依赖..."
-        local temp_container="sakura-ai-reviewer-pip-${current_hash:0:8}"
-        local image_tag="sakura-ai-reviewer:pip-${current_hash:0:8}"
+        local temp_container="sakura-ai-pip-${current_hash:0:8}"
+        local image_tag="sakura-ai:pip-${current_hash:0:8}"
         docker rm -f "$temp_container" >/dev/null 2>&1 || true
 
         if docker run --name "$temp_container" \
             -v "$(pwd)/requirements.txt:/app/requirements.txt:ro" \
-            sakura-ai-reviewer:latest \
+            sakura-ai:latest \
             sh -c "pip install -r /app/requirements.txt" >> "$BUILD_LOG" 2>&1; then
 
             info "将依赖写入镜像 $image_tag ..."
             docker commit \
                 --change 'CMD ["uvicorn", "backend.main:app", "--host", "0.0.0.0", "--port", "8000"]' \
                 "$temp_container" "$image_tag" >> "$BUILD_LOG" 2>&1
-            docker tag "$image_tag" sakura-ai-reviewer:latest >> "$BUILD_LOG" 2>&1
+            docker tag "$image_tag" sakura-ai:latest >> "$BUILD_LOG" 2>&1
             docker rm -f "$temp_container" >/dev/null 2>&1 || true
             echo "$current_hash" > "$HASH_FILE"
             ok "依赖安装完成，镜像已更新"
@@ -305,7 +305,7 @@ build_runner() {
 
 show_menu() {
     echo ""
-    echo -e "${BOLD}🚀 Sakura AI Reviewer 启动脚本${RESET}"
+    echo -e "${BOLD}🚀 Sakura AI 启动脚本${RESET}"
     echo -e "${BOLD}==========================${RESET}"
     echo ""
     echo -e "  ${BOLD}[1]${RESET} 启动服务 (自动检测构建)"
@@ -363,7 +363,7 @@ do_start() {
     local rebuild=${1:-false}
 
     echo ""
-    echo -e "${BOLD}🚀 Sakura AI Reviewer 启动脚本${RESET}"
+    echo -e "${BOLD}🚀 Sakura AI 启动脚本${RESET}"
     echo -e "${BOLD}==========================${RESET}"
 
     # Check Docker

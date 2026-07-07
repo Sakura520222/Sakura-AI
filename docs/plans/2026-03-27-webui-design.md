@@ -2,7 +2,7 @@
 
 ## 1. 项目概述
 
-为 Sakura AI Reviewer 项目添加现代化的 WebUI 管理界面。项目当前是一个基于 FastAPI 的 GitHub PR 自动审查服务，通过 GitHub Webhook 接收 PR 事件，使用 Telegram Bot 作为管理界面，无任何 Web 前端。WebUI 将在此基础上提供可视化的 PR 审查管理、用户管理、仓库管理和配置管理功能。
+为 Sakura AI 项目添加现代化的 WebUI 管理界面。项目当前是一个基于 FastAPI 的 GitHub PR 自动审查服务，通过 GitHub Webhook 接收 PR 事件，使用 Telegram Bot 作为管理界面，无任何 Web 前端。WebUI 将在此基础上提供可视化的 PR 审查管理、用户管理、仓库管理和配置管理功能。
 
 ### 设计原则
 
@@ -413,4 +413,4 @@ Issue 自动分析列表（搜索/过滤/分页）+ Issue 详情页 + 重新分�
 文档创建时间：2024-03-27
 最后更新：2026-03-31（P0 ~ P7 全部完成）
 版本：9.0
-作者：Sakura AI Reviewer Team
+作者：Sakura AI Team

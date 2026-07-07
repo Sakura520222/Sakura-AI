@@ -2,7 +2,7 @@
 
 ## 📋 功能概述
 
-Sakura AI Reviewer 现已集成 Telegram Bot，提供以下功能：
+Sakura AI 现已集成 Telegram Bot，提供以下功能：
 
 ### ✨ 核心功能
 
@@ -282,14 +282,14 @@ A: 检查以下几点：
 
 ## 📚 更多信息
 
-- 项目主页：[Sakura AI Reviewer](https://github.com/Sakura520222/Sakura-AI-Reviewer)
-- 问题反馈：[Issues](https://github.com/Sakura520222/Sakura-AI-Reviewer/issues)
+- 项目主页：[Sakura AI](https://github.com/Sakura520222/Sakura-AI)
+- 问题反馈：[Issues](https://github.com/Sakura520222/Sakura-AI/issues)
 
 ---
 
 <div align="center">
 
-**Sakura AI Reviewer** - 让代码审查更智能、更高效
+**Sakura AI** - 让代码审查更智能、更高效
 
 Made with 🌸 by [Sakura520222](https://github.com/Sakura520222)
 

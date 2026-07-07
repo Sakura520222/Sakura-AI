@@ -469,7 +469,7 @@ jobs:
             exit 1
           fi
 
-          echo "✅ Sakura-AI-Reviewer 项目结构验证通过"
+          echo "✅ Sakura-AI 项目结构验证通过"
       
       - name: 设置 Python 3.11
         uses: actions/setup-python@v5
@@ -562,11 +562,11 @@ jobs:
           VERSION="${{ steps.get_version.outputs.VERSION }}"
           TAG_NAME="${{ steps.get_version.outputs.TAG_NAME }}"
           RELEASE_NAME="${TAG_NAME}"
-          RELEASE_DIR="Sakura-AI-Reviewer-${RELEASE_NAME}"
+          RELEASE_DIR="Sakura-AI-${RELEASE_NAME}"
 
           mkdir -p "$RELEASE_DIR"
 
-          echo "📦 正在打包 Sakura-AI-Reviewer 发布资源..."
+          echo "📦 正在打包 Sakura-AI 发布资源..."
 
           echo "📋 打包配置:" > packaging_manifest.txt
           echo "- 版本: ${VERSION}" >> packaging_manifest.txt
@@ -626,7 +626,7 @@ jobs:
           chmod +x "$RELEASE_DIR/start.sh" 2>/dev/null || true
 
           # 创建版本信息文件
-          echo "Sakura AI Reviewer" > "$RELEASE_DIR/VERSION"
+          echo "Sakura AI" > "$RELEASE_DIR/VERSION"
           echo "Version: ${VERSION}" >> "$RELEASE_DIR/VERSION"
           echo "Release Date: $(date +'%Y-%m-%d')" >> "$RELEASE_DIR/VERSION"
           echo "GitHub: https://github.com/${{ github.repository }}" >> "$RELEASE_DIR/VERSION"
@@ -646,14 +646,14 @@ jobs:
           echo "- ${RELEASE_DIR}.tar.gz: ${TAR_SIZE}" >> packaging_manifest.txt
           echo "- ${RELEASE_DIR}.zip: ${ZIP_SIZE}" >> packaging_manifest.txt
 
-          echo "✅ Sakura-AI-Reviewer 资源包创建完成"
+          echo "✅ Sakura-AI 资源包创建完成"
           cat packaging_manifest.txt
       
       - name: 上传发布资源
         if: steps.check_assets.outputs.should_upload == 'true'
         run: |
           TAG_NAME="${{ steps.get_version.outputs.TAG_NAME }}"
-          ASSET_NAME="Sakura-AI-Reviewer-${TAG_NAME}"
+          ASSET_NAME="Sakura-AI-${TAG_NAME}"
 
           echo "正在上传资源到 Release ${TAG_NAME}..."
 
@@ -683,7 +683,7 @@ jobs:
         run: |
           rm -f packaging_manifest.txt
           VERSION="${{ steps.get_version.outputs.VERSION }}"
-          rm -rf "Sakura-AI-Reviewer-v${VERSION}"
-          rm -f "Sakura-AI-Reviewer-v${VERSION}.tar.gz"
-          rm -f "Sakura-AI-Reviewer-v${VERSION}.zip"
+          rm -rf "Sakura-AI-v${VERSION}"
+          rm -f "Sakura-AI-v${VERSION}.tar.gz"
+          rm -f "Sakura-AI-v${VERSION}.zip"
           echo "✅ 临时文件已清理"
