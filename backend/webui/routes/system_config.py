@@ -86,9 +86,17 @@ async def save_system_config(
             if not val:
                 continue
 
-            # 数据库连接字符串验证
+            # 数据库连接字符串验证（接受所有可规范化的异步驱动格式）
             if key == "database_url":
-                if not val.startswith(("mysql+aiomysql://", "postgresql+asyncpg://")):
+                if not val.startswith(
+                    (
+                        "mysql+aiomysql://",
+                        "mysql+asyncmy://",
+                        "mysql://",
+                        "postgresql+asyncpg://",
+                        "postgresql://",
+                    )
+                ):
                     return toast_redirect(
                         "/system-config/",
                         "system_config.invalid_db_url",

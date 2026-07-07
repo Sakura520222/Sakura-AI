@@ -94,24 +94,39 @@ class SetupService:
         if not database_url:
             return {"success": False, "message": "数据库连接字符串不能为空"}
 
-        # 确保使用异步驱动
-        if not database_url.startswith(("mysql+aiomysql://", "postgresql+asyncpg://")):
+        # 与 init_async_db 一致：接受所有可规范化的异步驱动连接串
+        if not database_url.startswith(
+            (
+                "mysql+aiomysql://",
+                "mysql+asyncmy://",
+                "mysql://",
+                "postgresql+asyncpg://",
+                "postgresql://",
+            )
+        ):
             return {
                 "success": False,
-                "message": "连接字符串必须以 mysql+aiomysql:// 或 postgresql+asyncpg:// 开头",
+                "message": "连接字符串必须以 mysql+aiomysql://、mysql+asyncmy:// 或 postgresql+asyncpg:// 开头",
             }
 
+        # 规范化到实际使用的异步驱动（aiomysql → asyncmy），否则 SQLAlchemy 会尝试
+        # 加载未安装的 aiomysql 而报 ModuleNotFoundError
+        from backend.models.database import normalize_database_url
+
+        normalized_url = normalize_database_url(database_url)
+
         try:
-            engine = create_async_engine(database_url)
+            engine = create_async_engine(normalized_url)
             async with engine.connect() as conn:
                 await conn.execute(select(1))
             await engine.dispose()
             return {"success": True, "message": "数据库连接成功"}
         except Exception as e:
             error_msg = str(e)
-            # 脱敏：不暴露完整连接字符串
-            if database_url in error_msg:
-                error_msg = error_msg.replace(database_url, "***")
+            # 脱敏：不暴露完整连接字符串（原始与规范化后的都需脱敏）
+            for secret in (database_url, normalized_url):
+                if secret and secret in error_msg:
+                    error_msg = error_msg.replace(secret, "***")
             return {"success": False, "message": f"连接失败: {error_msg}"}
 
     async def test_redis_connection(self, redis_url: str) -> dict[str, Any]:
