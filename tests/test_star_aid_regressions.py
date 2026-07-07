@@ -162,7 +162,7 @@ def test_repository_can_receive_star_requires_displayable_and_enabled():
 
 @pytest.mark.asyncio
 async def test_auth_callback_silently_handles_github_app_setup_action():
-    """GitHub App 安装/更新触发的 setup callback（无 code/state）不应报授权错误。"""
+    """安装/更新触发的 setup callback（无 code/state）回仪表盘，不报授权错误。"""
     from unittest.mock import MagicMock
 
     resp = await star_aid_route.auth_callback(
@@ -175,9 +175,33 @@ async def test_auth_callback_silently_handles_github_app_setup_action():
     )
 
     assert resp.status_code == 302
-    location = resp.headers["location"]
-    assert location.startswith("/star-aid/")
-    assert "_toast_type=error" not in location
+    assert resp.headers["location"] == "/"
+
+
+@pytest.mark.asyncio
+async def test_auth_callback_setup_install_with_code_redirects_to_dashboard(monkeypatch):
+    """安装审查 App 时 GitHub 附带 user authorization 回调（setup_action=install，带 code 无 state）：
+    应回仪表盘，且不把 code 当成仓库互助授权消费。"""
+    from unittest.mock import MagicMock
+
+    async def _fail_if_called(*args, **kwargs):
+        raise AssertionError("exchange_authorization_code 不应在 setup 回调中被调用")
+
+    monkeypatch.setattr(
+        star_aid_route.gh_service, "exchange_authorization_code", _fail_if_called
+    )
+
+    resp = await star_aid_route.auth_callback(
+        request=MagicMock(),
+        setup_action="install",
+        code="fake-auth-code",
+        state=None,
+        error=None,
+        error_description=None,
+    )
+
+    assert resp.status_code == 302
+    assert resp.headers["location"] == "/"
 
 
 @pytest.mark.asyncio
