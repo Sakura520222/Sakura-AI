@@ -182,14 +182,19 @@ async def auth_callback(
     当前用户一致后保存加密凭据，再按 intent 重定向。
 
     注意：GitHub App 安装/更新权限时会用同一 Callback URL 触发 setup
-    回调（带 ``installation_id`` / ``setup_action``，无 ``code`` / ``state``），
-    这不是授权请求，需静默回到页面，不要当成 state 不匹配报错。
+    回调（带 ``installation_id`` / ``setup_action``；若该 App 启用了
+    Request user authorization，还会带 ``code``，但始终无 ``state``）。
+    这是 GitHub 发起的安装回调，不是用户授权请求，需直接回仪表盘，
+    不要当成 state 不匹配报错，也不要消费该 code。
     """
     lang = detect_language()
 
-    # GitHub App setup callback（安装/更新权限）：不是授权请求，静默回页面
-    if setup_action is not None and not code and not error:
-        return RedirectResponse("/star-aid/", status_code=302)
+    # GitHub App setup callback（安装/更新权限）：
+    # 启用 Request user authorization 时会带 code 但一定无 state。
+    # 这是 GitHub 发起的安装回调，不是用户授权请求——回仪表盘，
+    # 不进仓库互助流程、不消费 code、也不报错。
+    if setup_action is not None and not error:
+        return RedirectResponse("/", status_code=302)
 
     # 用户拒绝了授权
     if error:
