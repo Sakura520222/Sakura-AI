@@ -428,8 +428,7 @@ async def refresh_summary_route(
         return toast_redirect(
             "/star-aid/", "star_aid.summary_refresh_success", lang=lang
         )
-    # 失败：记录并把具体原因带到 toast，便于诊断
-    reason = str(result.get("error") or status or "unknown")
+    # 失败：详情只进日志，用户只看 i18n key（不泄漏 str(exc) 等内部错误）
     logger.warning(
         "star_aid summary refresh not ready: repo_id={}, status={}, error={}",
         repo_id,
@@ -437,7 +436,7 @@ async def refresh_summary_route(
         result.get("error"),
     )
     return toast_redirect(
-        "/star-aid/", f"摘要刷新失败: {reason}", toast_type="error"
+        "/star-aid/", "star_aid.summary_refresh_failed", toast_type="error", lang=lang
     )
 
 
