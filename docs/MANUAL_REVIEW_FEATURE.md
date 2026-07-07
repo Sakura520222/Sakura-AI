@@ -22,7 +22,7 @@
 ### 使用示例
 
 ```
-/review https://github.com/Sakura520222/Sakura-AI-Reviewer/pull/42
+/review https://github.com/Sakura520222/Sakura-AI/pull/42
 ```
 
 ## 权限要求

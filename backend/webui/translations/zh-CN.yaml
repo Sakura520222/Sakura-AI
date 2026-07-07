@@ -1,4 +1,4 @@
-# Sakura AI Reviewer - 中文翻译文件
+# Sakura AI - 中文翻译文件
 # 翻译键使用点分隔的层级结构
 
 # ========== 通用 / Common ==========
@@ -1095,7 +1095,7 @@ security:
 wizard:
   title: "初始配置向导"
   step: "步骤"
-  welcome: "欢迎使用 Sakura AI Reviewer"
+  welcome: "欢迎使用 Sakura AI"
   welcome_desc: "让我们通过几个简单步骤完成初始配置"
   step1_title: "GitHub App 配置"
   step1_desc: "配置 GitHub App 的基本信息"
@@ -1300,7 +1300,7 @@ about:
   database: "数据库"
   ai_model: "AI 模型"
   cache: "缓存"
-  description: "Sakura AI Reviewer 是一个智能的 GitHub PR/Issue 审查机器人，利用 AI 技术自动分析代码质量、发现问题并提供改进建议。"
+  description: "Sakura AI 是一个智能的 GitHub PR/Issue 审查机器人，利用 AI 技术自动分析代码质量、发现问题并提供改进建议。"
 
 # ========== 错误页面 / Error ==========
 error:
@@ -1538,7 +1538,7 @@ telegram_mfa:
   mfa_lockout: "账户已临时锁定"
   mfa_required_by_admin: "已被要求开启 MFA"
   mfa_unrequired_by_admin: "MFA 要求已取消"
-  footer: "Sakura AI Reviewer 安全通知"
+  footer: "Sakura AI 安全通知"
 
 # ========== Telegram 退款通知 / Telegram Refund Notifications ====
 telegram_refund:
@@ -1546,7 +1546,7 @@ telegram_refund:
   approved: "✅ 退款申请已批准\n\n申请ID：{request_id}\n订单号：{order_no}\n套餐：{plan}\n金额：{amount}\n备注：{review_note}\n\n退款已处理完成，请留意原支付渠道到账情况。"
   rejected: "❌ 退款申请已驳回\n\n申请ID：{request_id}\n订单号：{order_no}\n套餐：{plan}\n金额：{amount}\n原因：{reason}\n审核备注：{review_note}"
   failed: "⚠️ 退款执行失败\n\n申请ID：{request_id}\n订单号：{order_no}\n用户：{user}\n套餐：{plan}\n金额：{amount}\n错误：{error}\n\n请在 WebUI 中检查并重试或人工处理。"
-  footer: "Sakura AI Reviewer 退款通知"
+  footer: "Sakura AI 退款通知"
 
 # ========== API 错误消息 / API Error Messages ==========
 api:
@@ -1604,7 +1604,7 @@ comment:
   check_logs: "请检查系统日志或联系管理员"
   overall_score: "整体评分"
   view_detail: "查看详细审查报告"
-  auto_generated: "此评论由 Sakura AI Reviewer 自动生成"
+  auto_generated: "此评论由 Sakura AI 自动生成"
   score_suffix: "/10"
   decision_approve: "批准合并"
   decision_changes: "需要修复后重新提交"
@@ -1622,7 +1622,7 @@ issue_comment:
   suggested_labels: "建议标签"
   suggested_assignees: "建议指派人"
   suggested_title: "建议标题"
-  auto_generated: "此评论由 Sakura AI Reviewer 自动生成"
+  auto_generated: "此评论由 Sakura AI 自动生成"
 
 # ========== 扫描报告 / Scan Report ==========
 scan_report:
@@ -1639,7 +1639,7 @@ scan_report:
   suggestion: "建议修复"
   total_issues: "总问题数"
   critical_issues: "严重问题"
-  auto_generated: "此报告由 Sakura AI Reviewer 自动生成"
+  auto_generated: "此报告由 Sakura AI 自动生成"
 
 # ========== 操作日志 / Action Logs ==========
 action_log:

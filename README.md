@@ -1,19 +1,19 @@
 <div align="center">
 
-# 🌸 Sakura AI Reviewer
+# 🌸 Sakura AI
 
-<img src="res/cover.png" alt="Sakura AI Reviewer Cover" width="100%">
+<img src="res/cover.png" alt="Sakura AI Cover" width="100%">
 
 > 基于 AI 的智能 GitHub Pull Request 代码审查与 Issue 分析机器人，具备主动探索代码库的能力
 
 [English](README_EN.md) | **中文**
 
-[![Version](https://img.shields.io/badge/Version-2.13.0-blue.svg)](https://github.com/Sakura520222/Sakura-AI-Reviewer/releases)
+[![Version](https://img.shields.io/badge/Version-2.13.0-blue.svg)](https://github.com/Sakura520222/Sakura-AI/releases)
 [![Python](https://img.shields.io/badge/Python-3.11+-blue.svg)](https://www.python.org/)
 [![FastAPI](https://img.shields.io/badge/FastAPI-Latest-green.svg)](https://fastapi.tiangolo.com/)
 [![License](https://img.shields.io/badge/License-AGPLv3-yellow.svg)](LICENSE)
 [![Live Demo](https://img.shields.io/badge/🌐_免费体验-Online-success.svg)](https://pr-bot.firefly520.top/)
-[![Android App](https://img.shields.io/badge/Android_App-🚧_开发中-orange.svg)](https://github.com/Sakura520222/Sakura-AI-Reviewer-APP)
+[![Android App](https://img.shields.io/badge/Android_App-🚧_开发中-orange.svg)](https://github.com/Sakura520222/Sakura-AI-APP)
 
 </div>
 
@@ -199,8 +199,8 @@
 
 ### 客户端
 
-- **原生 Android App**：🚧 锐意开发中 → [Sakura-AI-Reviewer-APP](https://github.com/Sakura520222/Sakura-AI-Reviewer-APP)
-  通过 [API v1 接口](docs/api-v1-reference.md) 与 Sakura-AI-Reviewer 后端对接，提供移动端管理体验
+- **原生 Android App**：🚧 锐意开发中 → [Sakura-AI-APP](https://github.com/Sakura520222/Sakura-AI-APP)
+  通过 [API v1 接口](docs/api-v1-reference.md) 与 Sakura-AI 后端对接，提供移动端管理体验
 
 ---
 
@@ -217,8 +217,8 @@
 ### 2. 克隆项目
 
 ```bash
-git clone https://github.com/Sakura520222/Sakura-AI-Reviewer.git
-cd Sakura-AI-Reviewer
+git clone https://github.com/Sakura520222/Sakura-AI.git
+cd Sakura-AI
 ```
 
 > 所有配置（GitHub App、AI 模型、数据库等）通过首次启动后的 Setup Wizard 在 Web 界面完成，无需手动编辑配置文件。
@@ -242,7 +242,7 @@ cd Sakura-AI-Reviewer
 ```bash
 sudo apt update && sudo apt install mysql-server redis-server -y
 sudo systemctl start mysql && sudo systemctl start redis
-sudo mysql -e "CREATE DATABASE IF NOT EXISTS \`sakura-pr\` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;"
+sudo mysql -e "CREATE DATABASE IF NOT EXISTS \`sakura_ai\` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;"
 sudo mysql -e "CREATE USER IF NOT EXISTS 'root'@'%' IDENTIFIED BY 'your_password';"
 sudo mysql -e "GRANT ALL PRIVILEGES ON *.* TO 'root'@'%';"
 sudo mysql -e "FLUSH PRIVILEGES;"
@@ -270,7 +270,7 @@ docker-compose up -d
 
 ```bash
 curl http://your-domain.com:8000/health
-# {"status":"healthy","service":"Sakura AI Reviewer"}
+# {"status":"healthy","service":"sakura-ai"}
 ```
 
 WebUI：`https://your-domain.com/`
@@ -397,7 +397,7 @@ python run_ruff.py
 ### 代码结构
 
 ```
-Sakura-AI-Reviewer/
+Sakura-AI/
 ├── backend/
 │   ├── api/               # API 路由（webhook、health、v1）
 │   │   └── v1/            #   RESTful API v1（移动端对接，含 user_config/billing）
@@ -527,11 +527,11 @@ Sakura-AI-Reviewer/
 
 ## 🌟 Star History
 
-<a href="https://star-history.com/#Sakura520222/Sakura-AI-Reviewer&Date">
+<a href="https://star-history.com/#Sakura520222/Sakura-AI&Date">
  <picture>
-   <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/svg?repos=Sakura520222/Sakura-AI-Reviewer&type=Date&theme=dark" />
-   <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/svg?repos=Sakura520222/Sakura-AI-Reviewer&type=Date" />
-   <img alt="Star History Chart" src="https://api.star-history.com/svg?repos=Sakura520222/Sakura-AI-Reviewer&type=Date" />
+   <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/svg?repos=Sakura520222/Sakura-AI&type=Date&theme=dark" />
+   <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/svg?repos=Sakura520222/Sakura-AI&type=Date" />
+   <img alt="Star History Chart" src="https://api.star-history.com/svg?repos=Sakura520222/Sakura-AI&type=Date" />
  </picture>
 </a>
 
@@ -539,10 +539,10 @@ Sakura-AI-Reviewer/
 
 <div align="center">
 
-**Sakura AI Reviewer** — 让代码审查更智能、更高效
+**Sakura AI** — 让代码审查更智能、更高效
 
 Made with 🌸 by [Sakura520222](https://github.com/Sakura520222)
 
-问题反馈：[Issues](https://github.com/Sakura520222/Sakura-AI-Reviewer/issues) · 邮箱：<Sakura520222@outlook.com>
+问题反馈：[Issues](https://github.com/Sakura520222/Sakura-AI/issues) · 邮箱：<Sakura520222@outlook.com>
 
 </div>

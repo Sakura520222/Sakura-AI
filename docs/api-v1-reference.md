@@ -1,4 +1,4 @@
-# Sakura AI Reviewer API v1 参考文档
+# Sakura AI API v1 参考文档
 
 > 面向 Android 开发者的完整 API 参考。所有端点前缀为 `/api/v1`。
 
@@ -637,7 +637,7 @@ JWT Token 通过 OAuth 登录流程获取，有效期 24 小时（86400 秒）�
 ```json
 {
   "type": "database",
-  "database_url": "mysql+aiomysql://user:pass@localhost:3306/sakura"
+  "database_url": "mysql+aiomysql://user:pass@localhost:3306/sakura_ai"
 }
 ```
 
@@ -750,7 +750,7 @@ Setup 阶段按 AI 厂商获取模型列表，并尽可能提取上下文窗口�
 ```json
 {
   "values": {
-    "DATABASE_URL": "mysql+aiomysql://user:pass@localhost:3306/sakura",
+    "DATABASE_URL": "mysql+aiomysql://user:pass@localhost:3306/sakura_ai",
     "REDIS_URL": "redis://localhost:6379/0"
   }
 }
