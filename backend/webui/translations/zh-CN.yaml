@@ -1339,7 +1339,7 @@ system_config:
   save_hint: "标记为「需重启」的配置修改后需要重启服务才能完全生效，其余配置修改后即时生效。"
   saved: "系统配置已保存并即时生效"
   saved_restart_required: "系统配置已保存，部分配置需重启服务后生效"
-  invalid_db_url: "数据库连接字符串格式错误，需以 mysql+aiomysql:// 或 postgresql+asyncpg:// 开头"
+  invalid_db_url: "数据库连接字符串格式错误，需以 mysql+aiomysql://、mysql+asyncmy://、mysql://、postgresql+asyncpg:// 或 postgresql:// 开头"
   invalid_port: "端口号无效，需为 1-65535 之间的整数"
   invalid_log_level: "日志级别无效，允许值：DEBUG、INFO、WARNING、ERROR、CRITICAL"
   group_database: "数据库 & 缓存"
