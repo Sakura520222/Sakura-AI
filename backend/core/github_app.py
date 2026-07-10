@@ -935,6 +935,7 @@ class GitHubAppClient:
                         "success": True,
                         "inline_published": 0,
                         "fallback_body_only": False,
+                        "skipped_existing": True,
                     }
 
             # 构建行内评论格式
@@ -1075,11 +1076,20 @@ class GitHubAppClient:
 
     @staticmethod
     def _is_rate_limited(exc: Exception) -> bool:
-        """判断异常是否为 GitHub rate-limit（403/429 或 secondary rate limit）。"""
+        """判断异常是否为 GitHub rate-limit。
+
+        429 一定是 rate-limit；403 需 message 含 'rate limit' / 'secondary rate'
+        （'Resource not accessible by integration' 等权限 403 不应重试，否则每次
+        best-effort 检查更新都会 sleep 5s+10s，拖慢整个流程）。
+        """
         status = getattr(exc, "status", None)
-        if status in (403, 429):
+        msg = str(
+            getattr(exc, "data", "") or getattr(exc, "message", "") or ""
+        ).lower()
+        if status == 429:
             return True
-        msg = str(getattr(exc, "data", "") or "").lower()
+        if status == 403:
+            return "rate limit" in msg or "secondary rate" in msg
         return "rate limit" in msg or "secondary rate" in msg
 
     def _call_with_rate_limit(self, fn, *args, **kwargs):
@@ -1291,16 +1301,41 @@ class GitHubAppClient:
 
             repo = client.get_repo(f"{repo_owner}/{repo_name}")
             commit = repo.get_commit(head_sha)
-            active = [
+            all_active = [
                 cr
                 for cr in commit.get_check_runs()
-                if cr.name == name
-                and cr.status != "completed"
-                and (
-                    not external_id
-                    or getattr(cr, "external_id", None) == external_id
-                )
+                if cr.name == name and cr.status != "completed"
             ]
+            if not all_active:
+                return None
+            # external_id 提供时：收敛其他执行遗留的 active（cancelled/superseded），
+            # 仅在匹配的 active 中复用 latest——既防并发/重复 webhook 误终结他人
+            # Check Run，又清理 webhook 预创建等 placeholder，避免 worker 接管时悬挂。
+            if external_id:
+                for stale in all_active:
+                    if getattr(stale, "external_id", None) != external_id:
+                        try:
+                            self._call_with_rate_limit(
+                                stale.edit,
+                                status="completed",
+                                conclusion="cancelled",
+                            )
+                            logger.info(
+                                f"已收敛他执行 Check Run {name} id={stale.id} "
+                                f"({repo_owner}/{repo_name}@{head_sha}) "
+                                f"-> cancelled(superseded)"
+                            )
+                        except Exception as e:
+                            logger.warning(
+                                f"收敛他执行 Check Run id={stale.id} 失败: {e}"
+                            )
+                active = [
+                    cr
+                    for cr in all_active
+                    if getattr(cr, "external_id", None) == external_id
+                ]
+            else:
+                active = all_active
             if not active:
                 return None
             active.sort(key=lambda cr: cr.id, reverse=True)
