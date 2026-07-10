@@ -409,6 +409,10 @@ class ReviewWorker:
         review_id = None  # 用于保存数据库审查记录 ID
         output_language = None  # 用户级输出语言；异常路径会复用该值
         head_sha = pr_info.get("head_sha")  # 审查绑定的 head；增量消费后切换到新 commit
+        # try 外预初始化，防止异常路径（analyze_pr / _create_review_record 等早期失败）
+        # 引用未定义的 check_run_stages，UnboundLocalError 会掩盖原始异常并跳过
+        # 失败 Check Run / error_reference 收敛
+        check_run_stages: list[str] = []
 
         # Cancel event was already registered in submit_review_task
         # before asyncio.create_task, so cancel_task works immediately
@@ -1305,7 +1309,13 @@ class ReviewWorker:
                 # "正在发布"。发布完成后由 finalize_findings 定格。
                 _pre_findings = review_result.get("inline_comments") or []
                 _findings_pre_created = False
-                if _pre_findings and head_sha:
+                # 仅在启用 inline comments 时创建 Findings：禁用时 _make_and_submit_decision
+                # 会清空 inline_comments（total=0），pre-create 反而触发误 failure
+                if (
+                    _pre_findings
+                    and head_sha
+                    and get_settings().enable_inline_comments
+                ):
                     _pre_sev = self._count_severity(_pre_findings)
                     _pre_files = len(
                         {
@@ -2120,11 +2130,19 @@ class ReviewWorker:
             # 发布结果（Findings Check 数据来源）：total = publishable_findings 数，
             # published 取实际 inline 发布数（降级 fallback 时为 0，不算已发布）
             _total = len(inline_comments) if inline_comments else 0
-            _published = _submit_result.get("inline_published", _total if success else 0)
+            # 幂等跳过（review 已存在）：本次未尝试发布，不计 failed（之前已发过）
+            if _submit_result.get("skipped_existing"):
+                _published = _total
+                _failed = 0
+            else:
+                _published = _submit_result.get(
+                    "inline_published", _total if success else 0
+                )
+                _failed = _total - _published
             _publish_result = {
                 "total": _total,
                 "published": _published,
-                "failed": _total - _published,
+                "failed": _failed,
                 "success": bool(success),
             }
             return decision, decision_reason, _publish_result

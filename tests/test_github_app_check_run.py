@@ -168,6 +168,37 @@ def test_cleanup_stale_keeps_latest_and_finalizes_others(app_with_repo):
     cr_latest.edit.assert_not_called()  # 最新的保留不动
 
 
+def test_cleanup_stale_with_external_id_cancels_non_matching(app_with_repo):
+    """external_id 提供时：收敛不匹配的 active（webhook placeholder/其他执行遗留），
+    仅复用匹配的 latest——防 worker 接管时预创建 Check 悬挂（Codex #1/#3）。"""
+    app, _client, repo = app_with_repo
+    cr_match = MagicMock()
+    cr_match.name = "Sakura AI Review"
+    cr_match.status = "in_progress"
+    cr_match.id = 300
+    cr_match.external_id = "sakura-ai:v1:99:review"
+    cr_other = MagicMock()
+    cr_other.name = "Sakura AI Review"
+    cr_other.status = "queued"
+    cr_other.id = 100
+    cr_other.external_id = "sakura-ai:v1:webhook-incremental:review"
+    commit = MagicMock()
+    commit.get_check_runs.return_value = [cr_other, cr_match]
+    repo.get_commit.return_value = commit
+
+    latest_id = app.cleanup_stale_check_runs(
+        "o",
+        "r",
+        "sha",
+        "Sakura AI Review",
+        external_id="sakura-ai:v1:99:review",
+    )
+
+    assert latest_id == 300
+    cr_other.edit.assert_called_once_with(status="completed", conclusion="cancelled")
+    cr_match.edit.assert_not_called()  # 匹配的 latest 保留不动
+
+
 def test_cleanup_stale_skips_completed_runs(app_with_repo):
     """已 completed 的 run 视为历史，不清理；无 active 时返回 None。"""
     app, _client, repo = app_with_repo
