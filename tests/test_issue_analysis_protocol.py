@@ -96,6 +96,19 @@ def test_parses_complete_tagged_issue_analysis():
     assert result["suggested_title"] == "Fix review flow failure"
 
 
+def test_accepts_single_line_none_for_multiline_suggested_title():
+    analyzer = IssueAnalyzer.__new__(IssueAnalyzer)
+    text = _issue_analysis().replace(
+        "<SUGGESTED_TITLE>\nFix review flow failure\n</SUGGESTED_TITLE>",
+        "<SUGGESTED_TITLE>NONE</SUGGESTED_TITLE>",
+    )
+
+    result = analyzer._parse_analysis_result(text)
+
+    assert result["parse_source"] == "tagged_issue"
+    assert result["suggested_title"] is None
+
+
 def test_issue_prompt_keeps_task_data_in_user_evidence_boundary(monkeypatch):
     class _StrategyConfig:
         def get_issue_analysis_config(self):
