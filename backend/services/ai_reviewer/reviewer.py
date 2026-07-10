@@ -571,6 +571,25 @@ class AIReviewer:
             current_tokens = self.context_compressor.estimate_messages_tokens(messages)
             tracker.log_context_usage(current_tokens, safe_context, iteration)
 
+            # 通知 Check Run：本轮进度快照（轮次/工具调用/Token/上下文/模型）。
+            # worker 侧 _review_event_callback 识别 "progress" 事件桥接到 Analysis Check。
+            # 异常仅记日志，不中断审查（与现有 "message"/"tool_running" 回调一致）。
+            if event_callback:
+                try:
+                    await event_callback(
+                        "progress",
+                        {
+                            "iteration": iteration,
+                            "max_iterations": max_iterations,
+                            "token_usage": tracker.to_dict(),
+                            "current_tokens": current_tokens,
+                            "safe_context": safe_context,
+                            "model": settings.openai_model,
+                        },
+                    )
+                except Exception as exc:
+                    logger.warning("event_callback progress failed: {}", exc)
+
             # 检查上下文是否超限，触发压缩
             if self.enable_compression:
                 threshold_tokens = int(safe_context * self.compression_threshold)

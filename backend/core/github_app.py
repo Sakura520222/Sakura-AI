@@ -2,6 +2,7 @@
 
 import hmac
 import hashlib
+import time
 from typing import List, Optional, Dict, Any
 
 import httpx
@@ -930,7 +931,11 @@ class GitHubAppClient:
                         f"跳过重复提交Review: {repo_owner}/{repo_name}#{pr_number}, "
                         f"event={event}"
                     )
-                    return True
+                    return {
+                        "success": True,
+                        "inline_published": 0,
+                        "fallback_body_only": False,
+                    }
 
             # 构建行内评论格式
             comments = []
@@ -966,7 +971,11 @@ class GitHubAppClient:
                 f"✅ 成功提交Review: {repo_owner}/{repo_name}#{pr_number}, "
                 f"event={event}, body_length={len(body)}, inline_comments={len(comments)}"
             )
-            return True
+            return {
+                "success": True,
+                "inline_published": len(comments),
+                "fallback_body_only": False,
+            }
 
         except Exception as e:
             # 安全提取错误信息，避免PyGithub内部的KeyError导致信息丢失
@@ -1021,14 +1030,18 @@ class GitHubAppClient:
                             f"✅ 降级成功: 已提交无行内评论的 Review "
                             f"({repo_owner}/{repo_name}#{pr_number})"
                         )
-                        return True
+                        return {
+                            "success": True,
+                            "inline_published": 0,
+                            "fallback_body_only": True,
+                        }
                     except Exception as fallback_error:
                         logger.error(f"降级提交也失败: {fallback_error}")
             else:
                 logger.error(f"提交Review失败: {error_type}: {str(e)}")
 
             logger.debug("完整异常信息:", exc_info=True)
-            return False
+            return {"success": False, "inline_published": 0, "fallback_body_only": False}
 
     def get_bot_username(self, repo_owner: str = None, repo_name: str = None) -> str:
         """获取机器人用户名（用于幂等性检查）
@@ -1061,24 +1074,60 @@ class GitHubAppClient:
             return getattr(settings, "bot_username", None)
 
     @staticmethod
+    def _is_rate_limited(exc: Exception) -> bool:
+        """判断异常是否为 GitHub rate-limit（403/429 或 secondary rate limit）。"""
+        status = getattr(exc, "status", None)
+        if status in (403, 429):
+            return True
+        msg = str(getattr(exc, "data", "") or "").lower()
+        return "rate limit" in msg or "secondary rate" in msg
+
+    def _call_with_rate_limit(self, fn, *args, **kwargs):
+        """有界退避重试：遇 rate-limit 退避后重试，最多 3 次（5s/10s）。
+
+        Check Run create/update 经 asyncio.to_thread 调用，time.sleep 仅阻塞
+        工作线程，不影响事件循环。最终仍失败则抛出，由调用方 except 吞为 best-effort。
+        """
+        for attempt in range(3):
+            try:
+                return fn(*args, **kwargs)
+            except Exception as exc:
+                if self._is_rate_limited(exc) and attempt < 2:
+                    wait = (attempt + 1) * 5
+                    logger.warning(
+                        "GitHub API rate-limit，{}s 后重试（attempt {}/3）",
+                        wait,
+                        attempt + 1,
+                    )
+                    time.sleep(wait)
+                    continue
+                raise
+        return None  # 不可达，保险
+
+    @staticmethod
     def _build_check_run_output(
         title: Optional[str],
         summary: Optional[str],
         text: Optional[str],
     ) -> Optional[dict]:
-        """构建 Check Run output dict，仅包含非空字段。
+        """构建 Check Run output dict。
 
-        GitHub API 要求 output 至少包含 title + summary；title/summary 的完整性
-        由调用方（CheckRunService）保证，底层方法保持灵活。
+        GitHub API 要求 output 必须同时包含 title 与 summary，缺失任一会触发
+        422 校验失败。本方法在 title 或 summary 缺失时返回 None（跳过 output）
+        并记录 warning，确保 wrapper 不产出非法载荷；text 单独可选。
         """
-        output: dict = {}
-        if title:
-            output["title"] = title
-        if summary:
-            output["summary"] = summary
+        if not title or not summary:
+            logger.warning(
+                "Check Run output 缺少 title 或 summary，跳过 output 字段"
+                "（has_title={}, has_summary={}）",
+                bool(title),
+                bool(summary),
+            )
+            return None
+        output: dict = {"title": title, "summary": summary}
         if text:
             output["text"] = text
-        return output or None
+        return output
 
     def create_check_run(
         self,
@@ -1091,6 +1140,7 @@ class GitHubAppClient:
         output_title: Optional[str] = None,
         output_summary: Optional[str] = None,
         output_text: Optional[str] = None,
+        external_id: Optional[str] = None,
     ) -> Optional[dict]:
         """创建 GitHub Check Run。
 
@@ -1102,6 +1152,7 @@ class GitHubAppClient:
             status: queued / in_progress / completed
             conclusion: success / failure / neutral / cancelled（completed 时有意义）
             output_title/summary/text: Check Run 输出内容（可选）
+            external_id: 跨进程恢复标识（可选，见 CheckRunService external_id 编码）
 
         Returns:
             {"id": int, "status": str, "conclusion": str|None}，失败返回 None。
@@ -1118,13 +1169,15 @@ class GitHubAppClient:
             kwargs: dict = {"name": name, "head_sha": head_sha, "status": status}
             if conclusion:
                 kwargs["conclusion"] = conclusion
+            if external_id:
+                kwargs["external_id"] = external_id
             output = self._build_check_run_output(
                 output_title, output_summary, output_text
             )
             if output:
                 kwargs["output"] = output
 
-            check_run = repo.create_check_run(**kwargs)
+            check_run = self._call_with_rate_limit(repo.create_check_run, **kwargs)
             logger.info(
                 f"已创建 Check Run {name} for {repo_owner}/{repo_name}@{head_sha} "
                 f"(id={check_run.id}, status={status})"
@@ -1147,11 +1200,18 @@ class GitHubAppClient:
         output_title: Optional[str] = None,
         output_summary: Optional[str] = None,
         output_text: Optional[str] = None,
+        external_id: Optional[str] = None,
+        skip_if_completed: bool = False,
     ) -> bool:
         """更新指定 Check Run。
 
+        Args:
+            external_id: 可选，恢复场景补设。
+            skip_if_completed: 为 True 时，先读 Check Run 状态，若已 completed 则
+                跳过更新（落实「不追溯改写已 completed 的副 Check」规则）。
+
         Returns:
-            是否成功。
+            是否成功（跳过时返回 True）。
         """
         try:
             client = self.get_repo_client(repo_owner, repo_name)
@@ -1163,11 +1223,22 @@ class GitHubAppClient:
 
             repo = client.get_repo(f"{repo_owner}/{repo_name}")
             check_run = repo.get_check_run(check_run_id)
+
+            # 状态守卫：已 completed 的 Check Run 不追溯改写
+            if skip_if_completed and check_run.status == "completed":
+                logger.info(
+                    "Check Run id={} 已 completed，跳过更新（不追溯改写）",
+                    check_run_id,
+                )
+                return True
+
             kwargs: dict = {}
             if status:
                 kwargs["status"] = status
             if conclusion:
                 kwargs["conclusion"] = conclusion
+            if external_id:
+                kwargs["external_id"] = external_id
             output = self._build_check_run_output(
                 output_title, output_summary, output_text
             )
@@ -1175,7 +1246,7 @@ class GitHubAppClient:
                 kwargs["output"] = output
 
             if kwargs:
-                check_run.edit(**kwargs)
+                self._call_with_rate_limit(check_run.edit, **kwargs)
             logger.info(
                 f"已更新 Check Run id={check_run_id} "
                 f"(status={status}, conclusion={conclusion})"
@@ -1194,8 +1265,12 @@ class GitHubAppClient:
         repo_name: str,
         head_sha: str,
         name: str,
+        external_id: Optional[str] = None,
     ) -> Optional[int]:
         """收敛同 commit 同名 Check Run，返回最新 active run id。
+
+        external_id 提供时，只复用/收敛 external_id 匹配的 active run（防止并发/
+        重复 webhook 场景下误终结其他执行的 Check Run）；为 None 时按原逻辑（最新 active）。
 
         同一 commit 上可能存在多个同名 active（queued/in_progress）Check Run
         （如历史重复创建 bug 的产物，会一直显示悬挂转圈）。保留 id 最大（最新）
@@ -1219,7 +1294,12 @@ class GitHubAppClient:
             active = [
                 cr
                 for cr in commit.get_check_runs()
-                if cr.name == name and cr.status != "completed"
+                if cr.name == name
+                and cr.status != "completed"
+                and (
+                    not external_id
+                    or getattr(cr, "external_id", None) == external_id
+                )
             ]
             if not active:
                 return None
@@ -1227,10 +1307,12 @@ class GitHubAppClient:
             latest_id = active[0].id
             for stale in active[1:]:
                 try:
-                    stale.edit(status="completed", conclusion="neutral")
+                    self._call_with_rate_limit(
+                        stale.edit, status="completed", conclusion="cancelled"
+                    )
                     logger.info(
                         f"已收敛悬挂 Check Run {name} id={stale.id} "
-                        f"({repo_owner}/{repo_name}@{head_sha}) -> completed+neutral"
+                        f"({repo_owner}/{repo_name}@{head_sha}) -> completed+cancelled(superseded)"
                     )
                 except Exception as e:
                     logger.warning(f"收敛悬挂 Check Run id={stale.id} 失败: {e}")
