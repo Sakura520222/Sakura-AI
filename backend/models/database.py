@@ -750,6 +750,21 @@ async def insert_default_configs_async():
             description="是否启用 GitHub Check Runs 审查进度可视化",
         ),
         AppConfig(
+            key_name="enable_analysis_check",
+            key_value="true",
+            description="是否启用副 Analysis Check（AI 运行时指标），仅工具模式下出现",
+        ),
+        AppConfig(
+            key_name="enable_findings_check",
+            key_value="true",
+            description="是否启用副 Findings Check（发现统计），仅有可发布 findings 时出现",
+        ),
+        AppConfig(
+            key_name="analysis_min_interval_sec",
+            key_value="3",
+            description="Analysis Check 快照写入 GitHub 的最小间隔（秒）",
+        ),
+        AppConfig(
             key_name="web_search_enabled",
             key_value="true",
             description="启用 Web 搜索工具",
@@ -875,6 +890,21 @@ def init_database(database_url: str):
                     key_name="enable_check_runs",
                     key_value="true",
                     description="是否启用 GitHub Check Runs 审查进度可视化",
+                ),
+                AppConfig(
+                    key_name="enable_analysis_check",
+                    key_value="true",
+                    description="是否启用副 Analysis Check（AI 运行时指标），仅工具模式下出现",
+                ),
+                AppConfig(
+                    key_name="enable_findings_check",
+                    key_value="true",
+                    description="是否启用副 Findings Check（发现统计），仅有可发布 findings 时出现",
+                ),
+                AppConfig(
+                    key_name="analysis_min_interval_sec",
+                    key_value="3",
+                    description="Analysis Check 快照写入 GitHub 的最小间隔（秒）",
                 ),
                 AppConfig(
                     key_name="web_search_enabled",

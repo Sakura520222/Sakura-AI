@@ -861,6 +861,72 @@ async def save_general_config(
             changed["enable_check_runs"] = {"old": cfg.key_value, "new": val}
             cfg.key_value = val
 
+        # enable_analysis_check (checkbox: "true" if checked, absent if unchecked)
+        raw = form.get("enable_analysis_check")
+        val = "true" if raw == "true" else "false"
+        result = await db.execute(
+            select(AppConfig).where(AppConfig.key_name == "enable_analysis_check")
+        )
+        cfg = result.scalar_one_or_none()
+        if cfg is None:
+            cfg = AppConfig(
+                key_name="enable_analysis_check",
+                key_value=val,
+                description="是否启用副 Analysis Check（AI 运行时指标），仅工具模式下出现",
+            )
+            db.add(cfg)
+            changed["enable_analysis_check"] = {"old": "(无)", "new": val}
+        elif cfg.key_value != val:
+            changed["enable_analysis_check"] = {"old": cfg.key_value, "new": val}
+            cfg.key_value = val
+
+        # enable_findings_check (checkbox)
+        raw = form.get("enable_findings_check")
+        val = "true" if raw == "true" else "false"
+        result = await db.execute(
+            select(AppConfig).where(AppConfig.key_name == "enable_findings_check")
+        )
+        cfg = result.scalar_one_or_none()
+        if cfg is None:
+            cfg = AppConfig(
+                key_name="enable_findings_check",
+                key_value=val,
+                description="是否启用副 Findings Check（发现统计），仅有可发布 findings 时出现",
+            )
+            db.add(cfg)
+            changed["enable_findings_check"] = {"old": "(无)", "new": val}
+        elif cfg.key_value != val:
+            changed["enable_findings_check"] = {"old": cfg.key_value, "new": val}
+            cfg.key_value = val
+
+        # analysis_min_interval_sec (number, seconds)
+        raw = form.get("analysis_min_interval_sec")
+        if raw is not None:
+            val = _parse_positive_int_config(raw)
+            result = await db.execute(
+                select(AppConfig).where(
+                    AppConfig.key_name == "analysis_min_interval_sec"
+                )
+            )
+            cfg = result.scalar_one_or_none()
+            if cfg is None:
+                cfg = AppConfig(
+                    key_name="analysis_min_interval_sec",
+                    key_value=str(val),
+                    description="Analysis Check 快照写入 GitHub 的最小间隔（秒）",
+                )
+                db.add(cfg)
+                changed["analysis_min_interval_sec"] = {
+                    "old": "(无)",
+                    "new": str(val),
+                }
+            elif cfg.key_value != str(val):
+                changed["analysis_min_interval_sec"] = {
+                    "old": cfg.key_value,
+                    "new": str(val),
+                }
+                cfg.key_value = str(val)
+
         # ========== Web 搜索配置 ==========
         web_search_keys = [
             "web_search_enabled",
