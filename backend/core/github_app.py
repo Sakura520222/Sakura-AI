@@ -1308,12 +1308,13 @@ class GitHubAppClient:
             ]
             if not all_active:
                 return None
-            # external_id 提供时：收敛其他执行遗留的 active（cancelled/superseded），
-            # 仅在匹配的 active 中复用 latest——既防并发/重复 webhook 误终结他人
-            # Check Run，又清理 webhook 预创建等 placeholder，避免 worker 接管时悬挂。
+            # external_id 提供时（worker 接管）：仅收敛 webhook 预创建占位 Check
+            # （review_job_id="webhook-incremental"），让 placeholder 不悬挂；不触碰
+            # 其他合法并行执行的 Check（不同 review_job_id），避免误取消正常审查。
             if external_id:
                 for stale in all_active:
-                    if getattr(stale, "external_id", None) != external_id:
+                    stale_eid = getattr(stale, "external_id", "") or ""
+                    if "webhook-incremental" in stale_eid:
                         try:
                             self._call_with_rate_limit(
                                 stale.edit,
@@ -1321,13 +1322,13 @@ class GitHubAppClient:
                                 conclusion="cancelled",
                             )
                             logger.info(
-                                f"已收敛他执行 Check Run {name} id={stale.id} "
+                                f"已收敛 webhook 占位 Check Run {name} id={stale.id} "
                                 f"({repo_owner}/{repo_name}@{head_sha}) "
                                 f"-> cancelled(superseded)"
                             )
                         except Exception as e:
                             logger.warning(
-                                f"收敛他执行 Check Run id={stale.id} 失败: {e}"
+                                f"收敛 webhook 占位 Check Run id={stale.id} 失败: {e}"
                             )
                 active = [
                     cr
