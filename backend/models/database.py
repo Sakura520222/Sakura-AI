@@ -189,6 +189,15 @@ class PRReview(Base):
     )
     completed_at = Column(TIMESTAMP, nullable=True)
 
+    # Check Run ids（主从式三 Check）：创建成功后持久化，进程重启/换 worker 时
+    # 优先从 DB 恢复，避免重复创建（external_id 作跨进程兜底恢复标识）。
+    review_check_run_id = Column(BigInteger, nullable=True)
+    analysis_check_run_id = Column(BigInteger, nullable=True)
+    findings_check_run_id = Column(BigInteger, nullable=True)
+    # 脱敏故障编号 + 摘要：编号在 Check output 展示，完整堆栈在日志（带 error_reference tag）
+    error_reference = Column(String(16), nullable=True, index=True)
+    error_summary = Column(String(255), nullable=True)
+
     # 关联评论
     comments = relationship(
         "ReviewComment", back_populates="review", cascade="all, delete-orphan"
@@ -741,6 +750,21 @@ async def insert_default_configs_async():
             description="是否启用 GitHub Check Runs 审查进度可视化",
         ),
         AppConfig(
+            key_name="enable_analysis_check",
+            key_value="true",
+            description="是否启用副 Analysis Check（AI 运行时指标），仅工具模式下出现",
+        ),
+        AppConfig(
+            key_name="enable_findings_check",
+            key_value="true",
+            description="是否启用副 Findings Check（发现统计），仅有可发布 findings 时出现",
+        ),
+        AppConfig(
+            key_name="analysis_min_interval_sec",
+            key_value="3",
+            description="Analysis Check 快照写入 GitHub 的最小间隔（秒）",
+        ),
+        AppConfig(
             key_name="web_search_enabled",
             key_value="true",
             description="启用 Web 搜索工具",
@@ -866,6 +890,21 @@ def init_database(database_url: str):
                     key_name="enable_check_runs",
                     key_value="true",
                     description="是否启用 GitHub Check Runs 审查进度可视化",
+                ),
+                AppConfig(
+                    key_name="enable_analysis_check",
+                    key_value="true",
+                    description="是否启用副 Analysis Check（AI 运行时指标），仅工具模式下出现",
+                ),
+                AppConfig(
+                    key_name="enable_findings_check",
+                    key_value="true",
+                    description="是否启用副 Findings Check（发现统计），仅有可发布 findings 时出现",
+                ),
+                AppConfig(
+                    key_name="analysis_min_interval_sec",
+                    key_value="3",
+                    description="Analysis Check 快照写入 GitHub 的最小间隔（秒）",
                 ),
                 AppConfig(
                     key_name="web_search_enabled",
