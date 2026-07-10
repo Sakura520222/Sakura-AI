@@ -106,6 +106,18 @@ class Settings(BaseSettings):
         True,
         description="是否启用 GitHub Check Runs 审查进度可视化",
     )
+    enable_analysis_check: bool = Field(
+        True,
+        description="是否启用副 Analysis Check（AI 运行时指标），仅在工具模式下出现",
+    )
+    enable_findings_check: bool = Field(
+        True,
+        description="是否启用副 Findings Check（发现统计），仅有 publishable findings 时出现",
+    )
+    analysis_min_interval_sec: int = Field(
+        3,
+        description="Analysis Check 快照写入 GitHub 的最小间隔（秒），避免高频更新烧 API 配额",
+    )
 
     # AI API 调用配置
     ai_api_timeout_seconds: float = Field(
@@ -2138,6 +2150,9 @@ BASIC_CONFIG_KEYS = frozenset(
         "review_timeout_seconds",
         "enable_auto_review",
         "enable_check_runs",
+        "enable_analysis_check",
+        "enable_findings_check",
+        "analysis_min_interval_sec",
         "web_search_enabled",
         "web_search_provider",
         "web_search_api_key",

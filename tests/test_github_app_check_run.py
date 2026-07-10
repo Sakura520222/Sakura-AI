@@ -31,8 +31,9 @@ def test_build_check_run_output_full():
 
 
 def test_build_check_run_output_partial():
+    """title 或 summary 缺失时拒绝 output（GitHub API 要求两者并存）。"""
     out = GitHubAppClient._build_check_run_output("t", None, None)
-    assert out == {"title": "t"}
+    assert out is None
 
 
 # ---------------- create_check_run ----------------
@@ -141,7 +142,7 @@ def test_update_check_run_exception_returns_false(app_with_repo):
 
 
 def test_cleanup_stale_keeps_latest_and_finalizes_others(app_with_repo):
-    """多个 active run：保留 id 最大者，其余 update 成 completed+neutral。"""
+    """多个 active run：保留 id 最大者，其余 update 成 completed+cancelled(superseded)。"""
     app, _client, repo = app_with_repo
     cr_stale1 = MagicMock()
     cr_stale1.name = "Sakura AI Review"
@@ -162,8 +163,8 @@ def test_cleanup_stale_keeps_latest_and_finalizes_others(app_with_repo):
     latest_id = app.cleanup_stale_check_runs("o", "r", "sha", "Sakura AI Review")
 
     assert latest_id == 300
-    cr_stale1.edit.assert_called_once_with(status="completed", conclusion="neutral")
-    cr_stale2.edit.assert_called_once_with(status="completed", conclusion="neutral")
+    cr_stale1.edit.assert_called_once_with(status="completed", conclusion="cancelled")
+    cr_stale2.edit.assert_called_once_with(status="completed", conclusion="cancelled")
     cr_latest.edit.assert_not_called()  # 最新的保留不动
 
 

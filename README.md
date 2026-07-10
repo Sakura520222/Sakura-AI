@@ -52,7 +52,7 @@
 - **辅助模型支持**：独立配置轻量级模型处理摘要、标签推荐等任务，降低推理成本
 - **行内评论开关**：通过 WebUI 配置 `enable_inline_comments`，控制是否在 PR diff 上发布行内评论，减少审查噪音
 - **可控自动审查**：通过 WebUI 配置 `enable_auto_review` 控制 PR opened/synchronize/reopened 是否自动入队，保留命令和手动触发路径
-- **Check Runs 进度可视化**：将审查生命周期（排队、代码索引、PR 总结、AI 审查、生成报告、完成、失败、取消、跳过）映射到 GitHub Check Runs，在 PR 的 Checks 面板实时展示进度；conclusion 采用纯展示语义（仅审查自身出错为 failure，不阻止合并）
+- **Check Runs 进度可视化**：将审查生命周期（排队、获取变更、代码索引、PR 总结、AI 审查、生成报告、完成、失败、取消、跳过）映射到主 Check `Sakura AI Review`（5 步流程清单 + 最终决策 conclusion），并在工具模式下按需附加副 Check `Sakura AI - Analysis`（AI 运行时指标：轮次/工具调用/Token/上下文/耗时）与 `Sakura AI - Findings`（发现分级统计 + 发布状态）；建议只将主 Check 纳入分支保护 required status check——副 Check 因可能不出现（标准模式无 Analysis、无 findings 无 Findings），若被配为 required 会阻塞合并；conclusion 采用纯展示语义（仅审查自身出错为 failure，不阻止合并）
 - **外部 CI 失败注入**：订阅 `check_run.completed` 与 `workflow_job.completed`，采集其他 CI（如 GitHub Actions、Codecov、lint App）的失败结论、失败步骤和 Checks annotations，并在下一次 PR 审查请求中作为不可信证据注入 AI 上下文；采集记录会按状态过滤、自动清理，并对同一 PR 下相同 `(source, name)` 的失败保留最新记录，避免重复失败证据干扰审查上下文
 - **审查评论标签交互**：审查报告中包含标签复选框，用户可在 GitHub PR 页面直接勾选/取消标签，AI 自动应用或移除对应标签
 - **AI 生成 PR 描述**：Agent 创建 PR 时 AI 自动生成包含元数据标记的 PR 描述，后续审查可精确识别和更新 AI 注入区域
@@ -314,7 +314,7 @@ WebUI：`https://your-domain.com/`
 - **AI 模型**：WebUI 配置管理中选择内置 AI Provider（OpenAI、DeepSeek、Qwen、Z.ai、Doubao、SiliconFlow、Gemini、Anthropic 兼容、自定义 OpenAI 兼容），设置 API 地址、API Key 和模型名称，并可自动拉取模型列表与上下文窗口信息
 - **辅助模型**：WebUI 配置管理中设置 `summary_model`、`summary_api_base`、`summary_api_key`，用于摘要生成、标签推荐等轻量任务，留空则自动回退到主模型
 - **PR 自动审查**：WebUI 配置管理中 `enable_auto_review` 控制 PR webhook 是否自动触发审查；关闭后仍可通过命令或手动入口触发
-- **Check Runs 可视化**：WebUI 配置管理中 `enable_check_runs` 控制是否将审查进度同步到 GitHub Checks 面板（默认开启，需 GitHub App 授予 `checks:write` 权限）
+- **Check Runs 可视化**：WebUI 配置管理中 `enable_check_runs` 控制是否将审查进度同步到 GitHub Checks 面板（默认开启，需 GitHub App 授予 `checks:write` 权限）；`enable_analysis_check` / `enable_findings_check` 分别控制副 Analysis / Findings Check 是否创建，`analysis_min_interval_sec` 控制 Analysis 快照写入最小间隔（避免高频更新烧 API 配额）；三个 Check 的 external_id 形如 `sakura-ai:v1:<review_job_id>:<check_kind>`，跨进程恢复优先读 DB 持久化的 check_run_id，缺失时按 head_sha + name 列举兜底
 - **外部 CI 失败注入**：`config/strategies.yaml` 的 `context_enhancement.ci_failure_injection` 控制是否注入外部 CI 失败、记录保留天数、单次审查最多失败记录数和每条失败最多 annotations 数；该功能依赖 GitHub App 订阅 `check_run` / `workflow_job` webhook，并授予 Checks 与 Actions 读取权限
 - **AI API 超时**：WebUI 配置管理中 `ai_api_timeout_seconds` 控制单次请求超时，`ai_api_total_timeout_seconds` 控制一次 AI 调用重试循环的最长总耗时
 - **安全与 MFA**：WebUI 安全中心可开启全局 MFA 要求、为单个用户强制 MFA、重置 TOTP/恢复码、删除 Passkeys，并记录安全审计事件；用户可在个人设置中启用 TOTP、生成恢复码、注册 Passkeys/WebAuthn；支持 MFA 失败锁定（`mfa_lockout_threshold` / `mfa_lockout_duration_minutes`）、API Passkey 二次验证、`passkeys_allowed_origins` 额外 Origin 和 `mobile_oauth_allowed_redirect_uris` 移动端 OAuth 回调白名单

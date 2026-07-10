@@ -191,7 +191,9 @@ async def handle_check_run_event(payload: Dict[str, Any]) -> JSONResponse:
     try:
         action = payload.get("action")
         if action != "completed":
-            logger.info(f"忽略 check_run 动作: {action}")
+            # 本期不处理 check_run.rerequested（re-run）：声明不支持，统一忽略。
+            # 未来支持时在此分支按 Sakura check name 重新提交 review。
+            logger.info("忽略 check_run 动作（不支持 rerequested 等）: {}", action)
             return JSONResponse(content={"status": "ignored", "action": action})
 
         check_run = payload.get("check_run") or {}
@@ -208,9 +210,11 @@ async def handle_check_run_event(payload: Dict[str, Any]) -> JSONResponse:
             )
         )
 
-        # 过滤自身 Check Run（避免把 Sakura 审查状态当外部失败）
-        if name == "Sakura AI Review":
-            logger.info("[check_run] 跳过自身 Check Run")
+        # 过滤自身 Check Run（主+副，避免把 Sakura 审查状态当外部失败）
+        from backend.services.check_run_service import CheckRunService
+
+        if name in CheckRunService.OWNED_CHECK_NAMES:
+            logger.info("[check_run] 跳过自身 Check Run: {}", name)
             return JSONResponse(
                 content={"status": "ignored", "reason": "self check run"}
             )
@@ -399,6 +403,22 @@ async def handle_pull_request_event(
                     )
             except Exception as e:
                 logger.warning(f"[webhook] 取消审查任务失败: {e}")
+
+            # 直接收敛该 commit 的 Sakura Check Run（不依赖 worker 存活）。
+            # 覆盖 worker 未启动/已退出/未到检查点的场景，避免悬挂 Check。
+            try:
+                from backend.services.check_run_service import CheckRunService
+
+                _closed_sha = pr_info.get("head_sha") or pr_info.get("after")
+                if _closed_sha:
+                    await CheckRunService().cancel_active_runs_by_sha(
+                        pr_info["repo_owner"],
+                        pr_info["repo_name"],
+                        _closed_sha,
+                        cancel_reason="pr_closed_merged",
+                    )
+            except Exception as e:
+                logger.warning(f"[webhook] 取消 Check Run 失败: {e}")
 
             # 清理该 PR 的 pending 增量队列，避免永久残留 / PR 重开后污染新审查上下文
             try:
@@ -694,7 +714,10 @@ async def handle_pull_request_event(
                 # 当前审查消费增量前就能看到新 commit 的 check（否则消费前新
                 # commit 无 check 显示）。当前审查消费增量时会迁移到该 head。
                 try:
-                    from backend.services.check_run_service import CheckRunService
+                    from backend.services.check_run_service import (
+                        CheckRunService,
+                        ReviewRunKey,
+                    )
 
                     inc_head = pr_info.get("head_sha") or pr_info.get("after")
                     if inc_head:
@@ -702,9 +725,13 @@ async def handle_pull_request_event(
                             "output_language", pr_info.get("user_id")
                         )
                         await CheckRunService().report_queued(
-                            pr_info["repo_owner"],
-                            pr_info["repo_name"],
-                            inc_head,
+                            ReviewRunKey(
+                                repo_full_name=pr_info.get("repo_full_name")
+                                or f"{pr_info['repo_owner']}/{pr_info['repo_name']}",
+                                pr_number=pr_info.get("pr_number", 0),
+                                head_sha=inc_head,
+                                review_job_id="webhook-incremental",
+                            ),
                             pr_number=pr_info["pr_number"],
                             output_language=inc_lang,
                         )

@@ -189,6 +189,15 @@ class PRReview(Base):
     )
     completed_at = Column(TIMESTAMP, nullable=True)
 
+    # Check Run ids（主从式三 Check）：创建成功后持久化，进程重启/换 worker 时
+    # 优先从 DB 恢复，避免重复创建（external_id 作跨进程兜底恢复标识）。
+    review_check_run_id = Column(BigInteger, nullable=True)
+    analysis_check_run_id = Column(BigInteger, nullable=True)
+    findings_check_run_id = Column(BigInteger, nullable=True)
+    # 脱敏故障编号 + 摘要：编号在 Check output 展示，完整堆栈在日志（带 error_reference tag）
+    error_reference = Column(String(16), nullable=True, index=True)
+    error_summary = Column(String(255), nullable=True)
+
     # 关联评论
     comments = relationship(
         "ReviewComment", back_populates="review", cascade="all, delete-orphan"

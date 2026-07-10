@@ -485,7 +485,7 @@ async def test_incremental_review_restores_messages_and_passes_pending_callback(
         return 99
 
     async def fake_make_decision(*_args, **_kwargs):
-        return ReviewDecision.APPROVE, "ok"
+        return ReviewDecision.APPROVE, "ok", None
 
     try:
         monkeypatch.setattr(review_worker, "GitHubAppClient", FakeGitHubApp)
@@ -701,7 +701,7 @@ async def test_incremental_review_migrates_check_run_to_new_head(monkeypatch):
         return 99
 
     async def fake_make_decision(*a, **kw):
-        return ReviewDecision.APPROVE, "ok"
+        return ReviewDecision.APPROVE, "ok", None
 
     async def fail_history(*a, **kw):
         raise AssertionError("history should not be used")
@@ -744,10 +744,18 @@ async def test_incremental_review_migrates_check_run_to_new_head(monkeypatch):
         worker.check_run_service = SimpleNamespace(
             report_queued=AsyncMock(),
             report_progress=AsyncMock(),
+            report_stage_progress=AsyncMock(),
             report_completed=AsyncMock(),
             report_failed=AsyncMock(),
             report_cancelled=AsyncMock(),
             report_skipped=AsyncMock(),
+            report_analysis_snapshot=AsyncMock(),
+            report_findings_snapshot=AsyncMock(),
+            finalize_analysis=AsyncMock(),
+            finalize_findings=AsyncMock(),
+            finalize_review_run=AsyncMock(),
+            cancel_active_runs_by_sha=AsyncMock(),
+            get_cached_check_run_id=AsyncMock(return_value=None),
         )
         monkeypatch.setattr(worker, "_restore_incremental_activity_history", fake_noop)
         monkeypatch.setattr(worker, "_create_review_record", fake_create_review_record)
@@ -773,18 +781,25 @@ async def test_incremental_review_migrates_check_run_to_new_head(monkeypatch):
 
         await worker.process_review_task(pr_info)
 
-        # 旧 head 收尾为 cancelled（增量取代）
-        worker.check_run_service.report_cancelled.assert_awaited()
-        assert worker.check_run_service.report_cancelled.call_args.args[2] == OLD_SHA
+        # 旧 head 收尾为 cancelled（增量取代）：cancel_active_runs_by_sha(owner, repo, sha)
+        worker.check_run_service.cancel_active_runs_by_sha.assert_awaited()
+        assert (
+            worker.check_run_service.cancel_active_runs_by_sha.call_args.args[2]
+            == OLD_SHA
+        )
 
-        # 新 head 上创建了 check run（迁移的 reviewing + 后续 reporting）
+        # 新 head 上创建了 check run：report_stage_progress(run_key, stage=...)
         progress_heads = [
-            c.args[2] for c in worker.check_run_service.report_progress.await_args_list
+            c.args[0].head_sha
+            for c in worker.check_run_service.report_stage_progress.await_args_list
         ]
         assert NEW_SHA in progress_heads
 
-        # 最终 completed 体现在新 head（PR 最新 commit）
-        assert worker.check_run_service.report_completed.call_args.args[2] == NEW_SHA
+        # 最终 completed 体现在新 head：report_completed(run_key, ...)
+        assert (
+            worker.check_run_service.report_completed.call_args.args[0].head_sha
+            == NEW_SHA
+        )
     finally:
         for key, value in old_values.items():
             setattr(settings, key, value)
@@ -917,7 +932,7 @@ async def test_review_record_created_before_code_indexing(monkeypatch):
         return 99
 
     async def fake_make_decision(*_args, **_kwargs):
-        return ReviewDecision.APPROVE, "ok"
+        return ReviewDecision.APPROVE, "ok", None
 
     class FakeSakuraMemoryService:
         async def get_sakura_context(self, **kwargs):
