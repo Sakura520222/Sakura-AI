@@ -190,6 +190,22 @@ class ReviewWorker:
         except Exception as exc:
             logger.debug("审查活动事件记录失败: {}", exc)
 
+    async def _resolve_role_model(self, role: str) -> str | None:
+        """解析角色的可选展示模型，不参与实际 AI 请求。"""
+        try:
+            api_client = getattr(self.ai_reviewer, "api_client", None)
+            resolver = getattr(api_client, "resolve_role_model_context", None)
+            if resolver is None:
+                return None
+            context = await resolver(role)
+            if not context:
+                return None
+            model = context[0]
+            return model or None
+        except Exception as exc:  # noqa: BLE001
+            logger.debug("解析角色展示模型失败: role={} err={}", role, exc)
+            return None
+
     @staticmethod
     def _make_task_key(pr_info: dict[str, Any]) -> str:
         """Generate unique task key: owner/repo#pr_number"""
@@ -706,19 +722,7 @@ class ReviewWorker:
                         head_sha=head_sha,
                     )
 
-                # Refresh AI clients before auxiliary tasks that run ahead of
-                # review_pr_with_tools — the only internal refresh point of
-                # AIReviewer. PR summary / dependency graph / history-context
-                # services read self.ai_reviewer.summary_api_client directly,
-                # so without an explicit refresh here they reuse the client
-                # left over from the previous review. Changing the auxiliary
-                # (summary) provider/model in the WebUI then has no effect on
-                # these tasks: they keep calling the stale provider and the
-                # new model name is rejected as "model not found".
-                # 刷新 AI 客户端：辅助任务在 review_pr_with_tools 之前执行，
-                # 必须在此显式刷新，否则会复用上一次审查遗留的 summary_api_client
-                # （旧辅助模型 provider），导致 WebUI 即时修改辅助 AI 配置后，
-                # PR 总结 / 依赖图 / 历史上下文仍使用旧 provider 并报“找不到模型”。
+                # 保留刷新步骤以兼容长生命周期 AIReviewer，但不读取旧辅助配置。
                 self.ai_reviewer._refresh_ai_clients()
 
                 # 4.5 PR 变更总结（如果启用）
@@ -730,8 +734,8 @@ class ReviewWorker:
                         )
 
                         summary_service = PRSummaryService(
-                            self.ai_reviewer.summary_api_client,
-                            model=self.ai_reviewer.summary_model,
+                            self.ai_reviewer.api_client,
+                            model="",
                         )
                         if head_sha:
                             await self.check_run_service.report_stage_progress(
@@ -758,8 +762,8 @@ class ReviewWorker:
                         )
 
                         depgraph_service = PRDependencyGraphService(
-                            self.ai_reviewer.summary_api_client,
-                            model=self.ai_reviewer.summary_model,
+                            self.ai_reviewer.api_client,
+                            model="",
                         )
                         await depgraph_service.generate_dependency_graph(
                             analysis, pr_info, pr
@@ -1001,7 +1005,7 @@ class ReviewWorker:
                 act_session = await checkpoint.create_session(
                     iteration_number=1,
                     role_name="reviewer",
-                    model=settings.openai_model,
+                    model=await self._resolve_role_model("main"),
                 )
                 initial_messages: list[dict[str, Any]] = []
                 if analysis.is_incremental:
@@ -1696,8 +1700,8 @@ class ReviewWorker:
             from backend.services.history_context_service import HistoryContextService
 
             history_service = HistoryContextService(
-                self.ai_reviewer.summary_api_client,
-                model=self.ai_reviewer.summary_model,
+                self.ai_reviewer.api_client,
+                model="",
             )
             return await history_service.fetch_history_summary(
                 pr_id=analysis.pr_id,

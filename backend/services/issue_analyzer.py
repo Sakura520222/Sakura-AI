@@ -88,8 +88,7 @@ class IssueAnalyzer:
 
     def __init__(self):
         settings = get_settings()
-        self._ai_client_config = None
-        self._refresh_ai_client()
+        self.api_client = AIApiClient()
         file_tool = FileToolHandler()
         search_tool = SearchToolHandler()
         git_tool = GitToolHandler()
@@ -115,16 +114,8 @@ class IssueAnalyzer:
         self.tool_handler.apply_web_tool_settings(settings)
 
     def _refresh_ai_client(self) -> None:
-        """刷新动态 AI 配置，避免长生命周期 Worker 持有旧凭据。"""
-        settings = get_settings()
-        config = (settings.openai_api_base, settings.openai_api_key)
-        if self._ai_client_config == config:
-            return
-        self.api_client = AIApiClient(
-            base_url=settings.openai_api_base,
-            api_key=settings.openai_api_key,
-        )
-        self._ai_client_config = config
+        """保留刷新入口以兼容长生命周期 Worker；账号与角色绑定按请求解析。"""
+        return None
 
     def _build_system_prompt(
         self,
@@ -367,9 +358,8 @@ class IssueAnalyzer:
             {"role": "user", "content": self.REPAIR_INSTRUCTION},
         ]
         try:
-            settings = get_settings()
             response = await self.api_client.call_with_retry(
-                model=settings.openai_model,
+                model="",
                 messages=repair_messages,
                 temperature=0,
                 role="main",
@@ -542,7 +532,7 @@ class IssueAnalyzer:
         role_model, role_context_window = await self.api_client.resolve_role_model_context(
             "main"
         )
-        context_model = role_model or settings.openai_model
+        context_model = role_model
         safe_context = (
             int(role_context_window * 0.8)
             if role_context_window
@@ -554,11 +544,11 @@ class IssueAnalyzer:
 
             try:
                 response = await self.api_client.call_with_retry(
-                    model=settings.openai_model,
+                    model="",
                     messages=messages,
                     tools=enabled_tools,
                     tool_choice="auto",
-                    temperature=settings.openai_temperature,
+                    temperature=settings.ai_temperature,
                     role="main",
                 )
             except Exception as e:
@@ -650,9 +640,7 @@ class IssueAnalyzer:
                 and assistant_message.reasoning_content
             ):
                 strategy_config = get_strategy_config()
-                if strategy_config.is_model_supports_reasoning_content(
-                    settings.openai_model
-                ):
+                if strategy_config.is_model_supports_reasoning_content(context_model or ""):
                     assistant_msg_dict["reasoning_content"] = (
                         assistant_message.reasoning_content
                     )
@@ -736,7 +724,7 @@ class IssueAnalyzer:
         )
         try:
             final_response = await self.api_client.call_with_retry(
-                model=settings.openai_model,
+                model="",
                 messages=messages,
                 temperature=0.3,
                 role="main",

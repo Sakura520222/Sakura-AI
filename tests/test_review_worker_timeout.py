@@ -251,8 +251,7 @@ def _review_worker_for_reflection_history():
     """构造一个仅满足反思历史摘要获取依赖的 ReviewWorker。"""
     worker = ReviewWorker.__new__(ReviewWorker)
     worker.ai_reviewer = SimpleNamespace(
-        summary_api_client=object(),
-        summary_model="summary-model",
+        api_client=object(),
     )
     return worker
 

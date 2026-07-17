@@ -319,9 +319,9 @@ async def test_resolve_summary_language_config_overrides_owner_preference(monkey
     resp.choices = [choice]
 
     client = MagicMock()
-    client.chat.completions.create = AsyncMock(return_value=resp)
+    client.call_with_retry = AsyncMock(return_value=resp)
 
-    monkeypatch.setattr(svc, "_get_summary_client", lambda: (client, "model"))
+    monkeypatch.setattr(svc, "_get_summary_client", lambda: (client, ""))
 
     result = await svc.generate_summary(
         full_name="owner/repo",

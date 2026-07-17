@@ -1,9 +1,8 @@
 """AI API client dynamic configuration coverage."""
 
-from types import SimpleNamespace
-
 import pytest
 
+from backend.core.ai_protocol.errors import AllCandidatesFailedError
 from backend.core.ai_protocol.models import (
     AuthScheme,
     ModelCapabilitySet,
@@ -13,70 +12,28 @@ from backend.core.ai_protocol.models import (
     ProviderDeclaration,
     ReasoningParams,
     ResolvedModel,
+    StopReason,
+    UnifiedResponse,
+    UnifiedUsage,
 )
 from backend.core.ai_protocol.registry import resolve_endpoint
 from backend.core.ai_protocol.resolver import ResolvedChain
-from backend.core.config import get_settings
 from backend.services.ai_reviewer.api_client import AIApiClient
+from backend.services.ai_reviewer.unified_client import FallbackConfig, UnifiedAIClient
 
 
-class _FakeCompletions:
-    def __init__(self):
-        self.kwargs = None
-        self.calls = 0
+class _CapturingAdapter:
+    """Capture the normalized request produced by UnifiedAIClient."""
 
-    async def create(self, **kwargs):
-        self.calls += 1
-        self.kwargs = kwargs
-        raise RuntimeError("boom")
-
-
-class _FakeChat:
-    def __init__(self):
-        self.completions = _FakeCompletions()
-
-
-class _FakeOpenAIClient:
-    def __init__(self):
-        self.chat = _FakeChat()
-
-
-@pytest.mark.asyncio
-async def test_call_with_retry_uses_dynamic_timeout_and_retry(monkeypatch):
-    settings = get_settings()
-    old_values = {
-        "ai_api_timeout_seconds": settings.ai_api_timeout_seconds,
-        "ai_api_max_retries": settings.ai_api_max_retries,
-    }
-    try:
-        settings.ai_api_timeout_seconds = 3.5
-        settings.ai_api_max_retries = 1
-
-        sleep_calls = []
-
-        async def fake_sleep(delay):
-            sleep_calls.append(delay)
-
-        monkeypatch.setattr(
-            "backend.services.ai_reviewer.api_client.asyncio.sleep", fake_sleep
+    async def chat(self, _client, _endpoint, _credential, request, *, timeout=None):
+        self.requests = getattr(self, "requests", [])
+        self.requests.append(request)
+        return UnifiedResponse(
+            content="ok",
+            tool_calls=[],
+            stop_reason=StopReason.END_TURN,
+            usage=UnifiedUsage(input_tokens=5, output_tokens=3),
         )
-
-        api_client = AIApiClient("https://example.invalid/v1", "test-key")
-        fake_client = _FakeOpenAIClient()
-        api_client.client = fake_client
-
-        with pytest.raises(RuntimeError, match="boom"):
-            await api_client.call_with_retry(
-                messages=[{"role": "user", "content": "hi"}],
-                model="test-model",
-            )
-
-        assert fake_client.chat.completions.calls == 1
-        assert fake_client.chat.completions.kwargs["timeout"] == 3.5
-        assert sleep_calls == []
-    finally:
-        for key, value in old_values.items():
-            setattr(settings, key, value)
 
 
 def _resolved_chain(model_id: str, context_window_tokens: int) -> ResolvedChain:
@@ -106,29 +63,67 @@ def _resolved_chain(model_id: str, context_window_tokens: int) -> ResolvedChain:
     return ResolvedChain(role="main", candidates=[candidate])
 
 
+def test_client_rejects_legacy_endpoint_and_credential_constructor():
+    """角色门面不能重新接纳旧 endpoint/key 构造方式。"""
+    with pytest.raises(TypeError):
+        AIApiClient("https://legacy.example/v1", "legacy-key")
+
+
 @pytest.mark.asyncio
-async def test_resolve_role_model_context_uses_primary_candidate_metadata(monkeypatch):
-    """角色已绑定时，应返回实际 primary 模型及其单模型上下文配置。"""
-    api_client = AIApiClient("https://example.invalid/v1", "test-key")
+async def test_call_with_retry_requires_explicit_role():
+    """角色门面拒绝未显式指定角色的调用。"""
+    api_client = AIApiClient()
+
+    with pytest.raises(ValueError, match="role"):
+        await api_client.call_with_retry(
+            messages=[{"role": "user", "content": "hi"}],
+            model="gpt-5.6-terra",
+        )
+
+
+@pytest.mark.asyncio
+async def test_call_with_retry_wraps_role_resolution_errors(monkeypatch):
+    """角色候选链解析异常统一转换为 AllCandidatesFailedError。"""
+    api_client = AIApiClient()
+
+    async def resolve_chain(_role):
+        raise RuntimeError("database unavailable")
+
+    monkeypatch.setattr(api_client, "_resolve_role_chain", resolve_chain)
+
+    with pytest.raises(AllCandidatesFailedError, match="候选链解析失败"):
+        await api_client.call_with_retry(
+            messages=[{"role": "user", "content": "hi"}],
+            model="gpt-5.6-terra",
+            role="main",
+        )
+
+
+@pytest.mark.asyncio
+async def test_resolve_role_model_context_returns_primary_metadata(monkeypatch):
+    """角色已绑定时返回 primary 的真实模型 ID 与上下文窗口。"""
+    api_client = AIApiClient()
     chain = _resolved_chain("gpt-5.6-sol", 512000)
 
-    async def resolve_chain(_):
+    async def resolve_chain(_role):
         return chain
 
     monkeypatch.setattr(api_client, "_resolve_role_chain", resolve_chain)
 
-    model_id, context_window_tokens = await api_client.resolve_role_model_context("main")
-
-    assert model_id == "gpt-5.6-sol"
-    assert context_window_tokens == 512000
+    assert await api_client.resolve_role_model_context("main") == (
+        "gpt-5.6-sol",
+        512000,
+    )
 
 
 @pytest.mark.asyncio
-async def test_resolve_role_model_context_ignores_resolution_error(monkeypatch):
-    """上下文预算探测失败不能阻断统一客户端的旧路径回退。"""
-    api_client = AIApiClient("https://example.invalid/v1", "test-key")
+async def test_resolve_role_model_context_returns_empty_pair_on_resolution_error(
+    monkeypatch,
+):
+    """上下文预算探测失败返回空值，不伪造扁平配置结果。"""
+    api_client = AIApiClient()
 
-    async def resolve_chain(_):
+    async def resolve_chain(_role):
         raise RuntimeError("database unavailable")
 
     monkeypatch.setattr(api_client, "_resolve_role_chain", resolve_chain)
@@ -136,58 +131,38 @@ async def test_resolve_role_model_context_ignores_resolution_error(monkeypatch):
     assert await api_client.resolve_role_model_context("main") == (None, None)
 
 
-def test_calculate_delay_uses_dynamic_initial_delay(monkeypatch):
-    settings = get_settings()
-    old_value = settings.ai_api_initial_retry_delay_seconds
-    try:
-        settings.ai_api_initial_retry_delay_seconds = 2.0
-        monkeypatch.setattr(
-            "backend.services.ai_reviewer.api_client.random.uniform", lambda _a, _b: 1.0
-        )
+@pytest.mark.asyncio
+async def test_call_with_retry_uses_primary_model_in_unified_request(monkeypatch):
+    """门面传入的 model 不覆盖角色 primary 的真实请求模型。"""
+    api_client = AIApiClient()
+    chain = _resolved_chain("gpt-5.6-sol", 512000)
+    adapter = _CapturingAdapter()
+    unified_client = UnifiedAIClient(
+        http_client=object(),
+        fallback_config=FallbackConfig(
+            enabled=False,
+            max_candidates=1,
+            max_retries=1,
+            total_timeout=5.0,
+        ),
+    )
+    api_client._unified_client = unified_client
 
-        api_client = AIApiClient("https://example.invalid/v1", "test-key")
+    async def resolve_chain(_role):
+        return chain
 
-        assert api_client._calculate_delay(0) == 2.0
-        assert api_client._calculate_delay(1) == 4.0
-        assert api_client._calculate_delay(3) == 16.0
-    finally:
-        settings.ai_api_initial_retry_delay_seconds = old_value
-
-
-def test_estimate_prompt_tokens_supports_sdk_tool_call_objects():
-    tool_call = SimpleNamespace(
-        function=SimpleNamespace(
-            name="fetch_url",
-            arguments='{"url":"https://example.com"}',
-        )
+    monkeypatch.setattr(api_client, "_resolve_role_chain", resolve_chain)
+    monkeypatch.setattr(
+        "backend.core.ai_protocol.registry.get_adapter",
+        lambda _family: adapter,
     )
 
-    tokens = AIApiClient._estimate_prompt_tokens(
-        [
-            {"role": "user", "content": "读取网页"},
-            {"role": "assistant", "content": None, "tool_calls": [tool_call]},
-        ]
+    response = await api_client.call_with_retry(
+        messages=[{"role": "user", "content": "hi"}],
+        model="gpt-5.6-terra",
+        role="main",
     )
 
-    assert tokens > 0
-
-
-def test_estimate_prompt_tokens_supports_dict_tool_calls():
-    tokens = AIApiClient._estimate_prompt_tokens(
-        [
-            {
-                "role": "assistant",
-                "content": "",
-                "tool_calls": [
-                    {
-                        "function": {
-                            "name": "search_web",
-                            "arguments": '{"query":"动态配置"}',
-                        }
-                    }
-                ],
-            }
-        ]
-    )
-
-    assert tokens > 0
+    assert response.choices[0].message.content == "ok"
+    assert response.usage.prompt_tokens == 5
+    assert adapter.requests[0].model == "gpt-5.6-sol"
