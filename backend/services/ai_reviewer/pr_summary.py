@@ -55,6 +55,7 @@ class PRSummaryService:
             ],
             temperature=0.3,
             max_tokens=16000,
+            role="summary",
         )
 
         if (

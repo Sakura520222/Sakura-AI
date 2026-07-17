@@ -14,12 +14,8 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import create_async_engine
 
 from backend.core.ai_providers import (
-    build_model_detail_url,
-    build_models_url,
-    extract_context_window_k,
     get_ai_provider,
     list_ai_providers,
-    normalize_model_list_response,
 )
 from backend.core.bootstrap import (
     mark_setup_completed,
@@ -220,52 +216,76 @@ class SetupService:
         provider: str = "custom",
         model: str = "",
     ) -> dict[str, Any]:
-        """测试 OpenAI 兼容 AI API Key，并返回可用模型。"""
+        """测试 AI API Key 并返回可用模型（按协议族适配）.
+
+        支持 OpenAI 兼容、Anthropic 原生、Gemini 原生三类协议族。返回结构
+        与旧版一致以兼容现有前端：{success, message, models, provider,
+        default_model, context_window_k}。
+        """
         if not api_key:
             return {"success": False, "message": "API Key 不能为空"}
 
+        from backend.core.ai_protocol.registry import get_adapter, resolve_endpoint
+        from backend.core.ai_providers import get_builtin_provider
+
+        decl = get_builtin_provider(provider)
+        endpoint = resolve_endpoint(decl, api_base)
+        adapter = get_adapter(decl.family)
         provider_meta = get_ai_provider(provider)
-        models_url = build_models_url(provider, api_base)
 
         try:
             async with httpx.AsyncClient() as client:
-                resp = await client.get(
-                    models_url,
-                    headers={"Authorization": f"Bearer {api_key}"},
-                    timeout=15,
-                )
-                if resp.status_code == 200:
-                    data = resp.json()
-                    model_ids = normalize_model_list_response(data)
-                    model_count = len(model_ids)
-                    context_window_k = None
-                    selected_model = model or provider_meta.default_model
-                    if selected_model and provider_meta.supports_context_window:
-                        context_window_k = await self.fetch_model_context_window(
-                            selected_model, api_key, api_base, provider
+                discovered = await adapter.list_models(client, endpoint, api_key)
+            model_ids = [d.model_id for d in discovered]
+            model_count = len(model_ids)
+            selected_model = model or provider_meta.default_model
+            context_window_k: int | None = None
+            if selected_model:
+                detail = None
+                # 先从发现结果中查找 / look up in discovery results first
+                for d in discovered:
+                    if d.model_id == selected_model:
+                        detail = d
+                        break
+                if detail is None:
+                    try:
+                        detail = await adapter.fetch_model_metadata(
+                            client, endpoint, api_key, selected_model
                         )
-                    return {
-                        "success": True,
-                        "message": f"API Key 有效，可用模型: {model_count} 个",
-                        "models": model_ids,
-                        "provider": provider_meta.to_public_dict(),
-                        "default_model": provider_meta.default_model,
-                        "context_window_k": context_window_k,
-                    }
-                elif resp.status_code == 401:
-                    return {"success": False, "message": "API Key 无效"}
-                else:
-                    return {
-                        "success": False,
-                        "message": f"验证失败 (HTTP {resp.status_code})",
-                    }
-        except httpx.ConnectError:
+                    except Exception as exc:  # noqa: BLE001
+                        logger.debug("模型详情获取失败 / model detail fetch failed: {}", exc)
+                if detail and detail.context_window_tokens:
+                    ctx_tokens = detail.context_window_tokens
+                    # tokens → K tokens（>2000 视为绝对值，否则视为 K）/ to K
+                    context_window_k = (
+                        max(1, round(ctx_tokens / 1000))
+                        if ctx_tokens > 2000
+                        else ctx_tokens
+                    )
             return {
-                "success": False,
-                "message": "无法连接到 API 服务，请检查 API Base URL",
+                "success": True,
+                "message": f"API Key 有效，可用模型: {model_count} 个",
+                "models": sorted(set(model_ids)),
+                "provider": provider_meta.to_public_dict(),
+                "default_model": provider_meta.default_model,
+                "context_window_k": context_window_k,
             }
         except Exception as e:
+            from backend.core.ai_protocol.errors import AIError, classify_context_overflow
+
+            if isinstance(e, AIError):
+                if e.category.value == "auth_invalid":
+                    return {"success": False, "message": "API Key 无效"}
+                if e.category.value == "network":
+                    return {
+                        "success": False,
+                        "message": "无法连接到 API 服务，请检查 API Base URL",
+                    }
+                return {"success": False, "message": f"验证失败: {e}"}
             logger.debug(f"AI API 测试异常: {e}")
+            msg_lower = str(e).lower()
+            if classify_context_overflow(msg_lower):
+                return {"success": False, "message": "验证失败：上下文超限"}
             return {"success": False, "message": "验证异常，请稍后重试"}
 
     async def fetch_provider_models(
@@ -281,27 +301,32 @@ class SetupService:
     async def fetch_model_context_window(
         self, model: str, api_key: str, api_base: str = "", provider: str = "custom"
     ) -> int | None:
-        """尝试从模型详情端点获取上下文窗口大小（K tokens）。"""
+        """尝试从模型详情端点获取上下文窗口大小（K tokens，按协议族适配）."""
         if not model or not api_key:
             return None
         provider_meta = get_ai_provider(provider)
         if not provider_meta.supports_context_window:
             return None
+        from backend.core.ai_protocol.registry import get_adapter, resolve_endpoint
+        from backend.core.ai_providers import get_builtin_provider
+
+        decl = get_builtin_provider(provider)
+        endpoint = resolve_endpoint(decl, api_base)
+        adapter = get_adapter(decl.family)
         try:
             async with httpx.AsyncClient() as client:
-                resp = await client.get(
-                    build_model_detail_url(provider, model, api_base),
-                    headers={"Authorization": f"Bearer {api_key}"},
-                    timeout=10,
+                detail = await adapter.fetch_model_metadata(
+                    client, endpoint, api_key, model
                 )
-            if resp.status_code != 200:
-                return None
-            return extract_context_window_k(resp.json())
         except Exception as e:
             logger.debug(
                 f"获取模型上下文窗口失败: provider={provider}, model={model}, err={e}"
             )
             return None
+        if not detail or not detail.context_window_tokens:
+            return None
+        ctx_tokens = detail.context_window_tokens
+        return max(1, round(ctx_tokens / 1000)) if ctx_tokens > 2000 else ctx_tokens
 
     async def test_telegram_bot(self, bot_token: str) -> dict[str, Any]:
         """测试 Telegram Bot Token"""

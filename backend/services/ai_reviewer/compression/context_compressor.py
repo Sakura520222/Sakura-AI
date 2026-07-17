@@ -260,6 +260,7 @@ the main reviewer.
             ],
             temperature=0.3,
             max_tokens=max_tokens,
+            role="main",
         )
 
         # 记录压缩调用的 token 消耗

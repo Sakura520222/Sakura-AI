@@ -542,6 +542,7 @@ class AgentTeamPRService:
                 ],
                 model=model,
                 temperature=0.1,
+                role="summary",
             )
 
             if not response.choices:
@@ -623,6 +624,7 @@ class AgentTeamPRService:
                 ],
                 model=model,
                 temperature=0.1,
+                role="summary",
             )
 
             if not response.choices:
@@ -700,6 +702,7 @@ class AgentTeamPRService:
                 ],
                 model=model,
                 temperature=0.1,
+                role="summary",
             )
 
             if not response.choices:

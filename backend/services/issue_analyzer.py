@@ -372,6 +372,7 @@ class IssueAnalyzer:
                 model=settings.openai_model,
                 messages=repair_messages,
                 temperature=0,
+                role="main",
             )
             tracker.accumulate(response)
             repaired_text = response.choices[0].message.content or ""
@@ -550,6 +551,7 @@ class IssueAnalyzer:
                     tools=enabled_tools,
                     tool_choice="auto",
                     temperature=settings.openai_temperature,
+                    role="main",
                 )
             except Exception as e:
                 logger.error("AI API 调用失败: {}", e, exc_info=True)
@@ -729,6 +731,7 @@ class IssueAnalyzer:
                 model=settings.openai_model,
                 messages=messages,
                 temperature=0.3,
+                role="main",
             )
             last_content = final_response.choices[0].message.content or ""
         except Exception as e:
