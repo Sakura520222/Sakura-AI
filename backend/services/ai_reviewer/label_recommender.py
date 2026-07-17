@@ -26,12 +26,13 @@ class LabelRecommender:
             api_client: AI API 客户端
             prompt_builder: 提示词构建器
             result_parser: 结果解析器
-            model: 模型名称，None 时回退到 settings.openai_model
+            model: 保留的兼容参数；实际模型由 summary 角色绑定解析
         """
         self.api_client = api_client
         self.prompt_builder = prompt_builder
         self.result_parser = result_parser
-        self.model = model
+        # 模型由 summary 角色绑定解析；保留属性仅兼容旧的 fake client。
+        self.model = model or ""
 
     async def recommend_labels(
         self,
@@ -71,11 +72,8 @@ class LabelRecommender:
                 context, available_labels, pr_info
             )
 
-            # 调用AI API
-            from backend.core.config import get_settings
-
             response = await self.api_client.call_with_retry(
-                model=self.model or get_settings().openai_model,
+                model="",
                 messages=[
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": user_message},

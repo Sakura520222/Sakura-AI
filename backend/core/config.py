@@ -11,8 +11,6 @@ from loguru import logger
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-from backend.core.ai_providers import get_provider_select_options
-
 DEFAULT_FETCH_URL_ALLOWED_CONTENT_TYPES = "text/html,application/xhtml+xml,text/plain"
 
 
@@ -42,19 +40,9 @@ class Settings(BaseSettings):
     github_private_key: str | None = None
     github_webhook_secret: str | None = None
 
-    # OpenAI 兼容 AI 配置
-    ai_provider: str = "openai"
-    openai_api_base: str = "https://api.openai.com/v1"
-    openai_api_key: str | None = None
-    openai_model: str = "gpt-4"
-    openai_temperature: float = 0.3
-    openai_max_tokens: int = 4000
-
-    # 辅助模型配置（摘要、压缩等轻量任务，未设置时回退到主模型）
-    summary_provider: str = ""  # 为空时跟随 ai_provider
-    summary_model: str = ""  # 为空时使用 openai_model
-    summary_api_base: str = ""  # 为空时使用 openai_api_base
-    summary_api_key: str = ""  # 为空时使用 openai_api_key
+    # AI 调用默认参数（模型、端点与凭据仅由 AI 账号和角色绑定提供）
+    ai_temperature: float = 0.3
+    ai_max_tokens: int = 4000
 
     # 模型上下文配置
     model_context_window: int = 0  # 自定义上下文窗口大小（K tokens），0 表示自动检测
@@ -455,7 +443,6 @@ class Settings(BaseSettings):
             "github_app_id",
             "github_private_key",
             "github_webhook_secret",
-            "openai_api_key",
             "database_url",
             "telegram_bot_token",
         ]
@@ -702,8 +689,7 @@ class Settings(BaseSettings):
     scan_auto_create_issue: bool = True  # 是否自动创建 GitHub Issue
     scan_send_telegram: bool = True  # 是否发送 Telegram 通知
     scan_min_severity_for_issue: str = "major"  # 创建 Issue 的最低严重性
-    # 扫描独立对话配置
-    scan_model: str = ""  # 扫描使用的模型，为空时使用 openai_model
+    # 扫描请求策略配置
     scan_max_iterations: int = 200  # 扫描最大工具调用轮次
     scan_context_safety_threshold: float = 0.8  # 扫描上下文安全阈值
     scan_compression_threshold: float = 0.85  # 扫描压缩触发阈值
@@ -712,9 +698,7 @@ class Settings(BaseSettings):
     # ========== Sakura 记忆系统配置 ==========
     sakura_memory_enabled: bool = True  # 是否启用 .sakura/ 记忆系统
     sakura_reflection_enabled: bool = True  # 是否启用审查后反思
-    sakura_reflection_model: str = ""  # 反思使用的模型，为空时使用审查模型
     sakura_consolidation_interval: int = 5  # 触发合并的反思轮数
-    sakura_consolidation_model: str = ""  # 合并使用的模型，为空时使用审查模型
     sakura_max_memory_chars: int = 2000  # memory.md 最大字符数
     sakura_max_sakura_chars: int = 5000  # SAKURA.md 最大字符数
     sakura_auto_init: bool = True  # 是否自动初始化 .sakura/ 目录
@@ -722,14 +706,8 @@ class Settings(BaseSettings):
         False  # 合并时一个文件失败是否仍提交另一个
     )
     sakura_issue_reflection_enabled: bool = True  # 是否启用 Issue 分析后反思
-    sakura_issue_reflection_model: str = ""  # Issue 反思使用的模型，为空时使用审查模型
-    sakura_use_summary_model: bool = False  # 反思/合并任务使用辅助模型凭据以降低成本
     sakura_knowledge_extraction_enabled: bool = True  # 是否启用自动知识提取
     sakura_extraction_min_reflections: int = 10  # 知识提取间隔（每N次反思触发一次）
-    sakura_extraction_provider: str = "main"  # 知识提取 AI 厂商: main/summary/custom
-    sakura_extraction_api_base: str = ""  # 知识提取 API Base，custom 模式下生效
-    sakura_extraction_api_key: str = ""  # 知识提取 API Key，custom 模式下生效
-    sakura_extraction_model: str = ""  # 知识提取模型名称，为空时根据 provider 推导
     sakura_extraction_max_iterations: int = 15  # 每个分类提取时工具调用最大轮数
     sakura_consolidation_max_iterations: int = (
         20  # 合并 Agent 每个文件的最大工具调用轮数
@@ -742,14 +720,6 @@ class Settings(BaseSettings):
     )
     agent_team_workspace_root: str = "./workplace"  # Agent 独立工作区根目录
     agent_team_repo_allowlist: str = ""  # 允许使用的仓库列表，逗号分隔 owner/repo
-    agent_team_model_provider: str = "main"  # Agent AI 厂商，main 表示复用主 AI
-    agent_team_api_base: str = ""  # Agent API Base，选择复用主 AI 时使用主 AI
-    agent_team_api_key: str = ""  # Agent API Key，选择复用主 AI 时使用主 AI
-    agent_team_model: str = ""  # 全栈专家模型，选择复用主 AI 时使用主模型
-    agent_team_review_model: str = ""  # 专业审查模型，选择复用主 AI 时使用主模型
-    agent_team_summary_model: str = (
-        ""  # 摘要/反思辅助模型，选择复用主 AI 时使用辅助/主模型
-    )
     agent_team_temperature: float = 0.2
     agent_team_max_tokens: int = 8192
     agent_team_enable_context_compression: bool = True
@@ -1147,7 +1117,6 @@ DYNAMIC_CONFIG_GROUPS: OrderedDict[str, dict] = OrderedDict(
                     "scan_auto_create_issue": "扫描完成后是否自动在仓库中创建 Issue 报告",
                     "scan_send_telegram": "扫描完成后是否发送 Telegram 通知",
                     "scan_min_severity_for_issue": "达到该严重性及以上时才创建 Issue（critical/major/minor/suggestion）",
-                    "scan_model": "扫描使用的 AI 模型，为空时使用全局模型配置",
                     "scan_max_iterations": "扫描过程中 AI 工具调用的最大轮次数",
                     "scan_context_safety_threshold": "扫描对话上下文安全阈值（0-1），超过后触发压缩",
                     "scan_compression_threshold": "扫描对话压缩触发阈值（0-1），上下文占比达到该值时压缩历史",
@@ -1161,7 +1130,6 @@ DYNAMIC_CONFIG_GROUPS: OrderedDict[str, dict] = OrderedDict(
                     "scan_auto_create_issue",
                     "scan_send_telegram",
                     "scan_min_severity_for_issue",
-                    "scan_model",
                     "scan_max_iterations",
                     "scan_context_safety_threshold",
                     "scan_compression_threshold",
@@ -1177,22 +1145,14 @@ DYNAMIC_CONFIG_GROUPS: OrderedDict[str, dict] = OrderedDict(
                 "descriptions": {
                     "sakura_memory_enabled": "启用 .sakura/ 记忆系统，在 PR 审查中自动积累项目知识",
                     "sakura_reflection_enabled": "启用审查后反思，AI 会分析自身审查质量并总结经验",
-                    "sakura_reflection_model": "反思使用的 AI 模型，留空则使用审查模型",
                     "sakura_issue_reflection_enabled": "启用 Issue 分析后反思，AI 会分析自身分类、标签推荐等质量并总结经验",
-                    "sakura_issue_reflection_model": "Issue 反思使用的 AI 模型，留空则使用审查模型",
                     "sakura_consolidation_interval": "积累多少轮反思后触发知识合并（建议 3-10）",
-                    "sakura_consolidation_model": "合并使用的 AI 模型，留空则使用审查模型",
                     "sakura_max_memory_chars": "memory.md 文件的最大字符数限制",
                     "sakura_max_sakura_chars": "SAKURA.md 文件的最大字符数限制",
                     "sakura_auto_init": "首次审查时自动在仓库中初始化 .sakura/ 目录",
                     "sakura_consolidation_partial_commit": "合并时一个文件生成失败是否仍提交成功生成的文件",
-                    "sakura_use_summary_model": "启用后反思、合并等后台任务将使用辅助模型的 API 凭据，降低成本",
                     "sakura_knowledge_extraction_enabled": "启用后积累足够反思时自动提取结构化知识到 rules/docs/plans 子目录",
                     "sakura_extraction_min_reflections": "知识提取间隔，每积累指定轮数反思后自动触发一次提取（默认 10）",
-                    "sakura_extraction_provider": "知识提取 AI 凭据来源：main=主AI，summary=辅助AI，custom=独立配置",
-                    "sakura_extraction_api_base": "知识提取 API Base URL，仅 custom 模式生效，留空则使用主 AI",
-                    "sakura_extraction_api_key": "知识提取 API Key，仅 custom 模式生效，留空则使用主 AI",
-                    "sakura_extraction_model": "知识提取模型名称，留空则根据凭据来源自动推导",
                     "sakura_extraction_max_iterations": "每个分类提取时工具调用最大轮数（默认 15）",
                     "sakura_consolidation_max_iterations": "合并 Agent 每个文件的最大工具调用轮数（默认 20）",
                     "sakura_auto_create_subdirs": "初始化 .sakura/ 时自动创建 rules/docs/plans 子目录及占位文件",
@@ -1200,23 +1160,15 @@ DYNAMIC_CONFIG_GROUPS: OrderedDict[str, dict] = OrderedDict(
                 "keys": [
                     "sakura_memory_enabled",
                     "sakura_reflection_enabled",
-                    "sakura_reflection_model",
                     "sakura_issue_reflection_enabled",
-                    "sakura_issue_reflection_model",
                     "sakura_consolidation_interval",
-                    "sakura_consolidation_model",
                     "sakura_max_memory_chars",
                     "sakura_max_sakura_chars",
                     "sakura_auto_init",
                     "sakura_auto_create_subdirs",
                     "sakura_consolidation_partial_commit",
-                    "sakura_use_summary_model",
                     "sakura_knowledge_extraction_enabled",
                     "sakura_extraction_min_reflections",
-                    "sakura_extraction_provider",
-                    "sakura_extraction_api_base",
-                    "sakura_extraction_api_key",
-                    "sakura_extraction_model",
                     "sakura_extraction_max_iterations",
                     "sakura_consolidation_max_iterations",
                 ],
@@ -1231,11 +1183,6 @@ DYNAMIC_CONFIG_GROUPS: OrderedDict[str, dict] = OrderedDict(
                     "agent_team_enabled": "启用后，超级管理员可手动使用 Agent 专家团队模式；当前版本不自动定时执行",
                     "agent_team_workspace_root": "Agent 独立工作区根目录，本地默认 ./workplace，Docker 推荐 /app/workplace",
                     "agent_team_repo_allowlist": "允许 Agent 操作的仓库列表，逗号分隔 owner/repo；为空时仅允许候选预览",
-                    "agent_team_model_provider": "Agent 专家团队 AI 厂商；选择“复用主 AI”时使用主 AI 配置",
-                    "agent_team_api_base": "Agent 专家团队 API Base；选择独立厂商时填写",
-                    "agent_team_api_key": "Agent 专家团队 API Key；选择独立厂商时填写，保存后脱敏显示",
-                    "agent_team_model": "全栈专家使用的模型；选择独立厂商时填写",
-                    "agent_team_review_model": "专业审查使用的模型；选择独立厂商时可填写，默认复用全栈专家模型",
                     "agent_team_enable_context_compression": "启用 Agent 专家团队上下文压缩；压缩使用辅助 AI，触发阈值按目标 Agent 模型上下文窗口计算",
                     "agent_team_context_compression_threshold": "Agent 专家团队压缩触发阈值（0-1）",
                     "agent_team_context_summary_max_tokens": "Agent 专家团队历史摘要最大输出 Token 数",
@@ -1253,12 +1200,6 @@ DYNAMIC_CONFIG_GROUPS: OrderedDict[str, dict] = OrderedDict(
                     "agent_team_enabled",
                     "agent_team_workspace_root",
                     "agent_team_repo_allowlist",
-                    "agent_team_model_provider",
-                    "agent_team_api_base",
-                    "agent_team_api_key",
-                    "agent_team_model",
-                    "agent_team_review_model",
-                    "agent_team_summary_model",
                     "agent_team_temperature",
                     "agent_team_max_tokens",
                     "agent_team_enable_context_compression",
@@ -1458,15 +1399,12 @@ DYNAMIC_CONFIG_GROUPS: OrderedDict[str, dict] = OrderedDict(
 # 敏感字段（API Key 等）
 DYNAMIC_CONFIG_SENSITIVE_KEYS = frozenset(
     {
-        "openai_api_key",
-        "summary_api_key",
         "embedding_api_key",
         "rerank_api_key",
         "github_webhook_secret",
         "webui_secret_key",
         "github_oauth_client_secret",
         "telegram_bot_token",
-        "agent_team_api_key",
         "stripe_api_key",
         "stripe_webhook_secret",
         "paddle_api_key",
@@ -1505,12 +1443,6 @@ DYNAMIC_CONFIG_SELECT_OPTIONS: dict[str, list[dict]] = {
     "pr_dependency_graph_mode": [
         {"value": "ai", "label": "AI 生成（使用 LLM 分析）"},
         {"value": "static", "label": "静态分析（正则提取 import）"},
-    ],
-    "agent_team_model_provider": get_provider_select_options(include_main_ai=True),
-    "sakura_extraction_provider": [
-        {"value": "main", "label": "主 AI"},
-        {"value": "summary", "label": "辅助 AI"},
-        {"value": "custom", "label": "独立配置"},
     ],
     "agent_team_min_priority": [
         {"value": "critical", "label": "Critical"},
@@ -1674,7 +1606,6 @@ DYNAMIC_CONFIG_LABELS: dict[str, str] = {
     "scan_auto_create_issue": "自动创建 Issue 报告",
     "scan_send_telegram": "发送 Telegram 通知",
     "scan_min_severity_for_issue": "创建 Issue 最低严重性",
-    "scan_model": "扫描模型名称",
     "scan_max_iterations": "扫描最大轮次",
     "scan_context_safety_threshold": "扫描上下文安全阈值",
     "scan_compression_threshold": "扫描压缩阈值",
@@ -1682,22 +1613,14 @@ DYNAMIC_CONFIG_LABELS: dict[str, str] = {
     # Sakura 记忆系统
     "sakura_memory_enabled": "启用记忆系统",
     "sakura_reflection_enabled": "启用审查反思",
-    "sakura_reflection_model": "反思模型名称",
     "sakura_issue_reflection_enabled": "启用 Issue 反思",
-    "sakura_issue_reflection_model": "Issue 反思模型名称",
     "sakura_consolidation_interval": "合并触发反思轮数",
-    "sakura_consolidation_model": "合并模型名称",
     "sakura_max_memory_chars": "memory.md 最大字符数",
     "sakura_max_sakura_chars": "SAKURA.md 最大字符数",
     "sakura_auto_init": "自动初始化 .sakura/",
     "sakura_consolidation_partial_commit": "部分提交",
-    "sakura_use_summary_model": "使用辅助模型",
     "sakura_knowledge_extraction_enabled": "启用知识提取",
     "sakura_extraction_min_reflections": "提取间隔反思数",
-    "sakura_extraction_provider": "知识提取 AI 凭据",
-    "sakura_extraction_api_base": "知识提取 API Base",
-    "sakura_extraction_api_key": "知识提取 API Key",
-    "sakura_extraction_model": "知识提取模型",
     "sakura_extraction_max_iterations": "提取最大迭代轮数",
     "sakura_consolidation_max_iterations": "合并最大迭代轮数",
     "sakura_auto_create_subdirs": "自动创建子目录",
@@ -1739,12 +1662,6 @@ DYNAMIC_CONFIG_LABELS: dict[str, str] = {
     "agent_team_enabled": "启用 Agent 专家团队",
     "agent_team_workspace_root": "工作区根目录",
     "agent_team_repo_allowlist": "仓库白名单",
-    "agent_team_model_provider": "Agent AI 厂商",
-    "agent_team_api_base": "Agent API Base",
-    "agent_team_api_key": "Agent API Key",
-    "agent_team_model": "全栈专家模型",
-    "agent_team_review_model": "专业审查模型",
-    "agent_team_summary_model": "摘要/反思模型",
     "agent_team_temperature": "温度参数",
     "agent_team_max_tokens": "最大 Tokens",
     "agent_team_enable_context_compression": "启用上下文压缩",
@@ -1854,6 +1771,36 @@ async def get_dynamic_config(key: str) -> Any:
     Returns:
         配置值（已转换类型）
     """
+    if key in (
+        "ai_provider",
+        "openai_api_base",
+        "openai_api_key",
+        "openai_model",
+        "openai_temperature",
+        "openai_max_tokens",
+        "summary_provider",
+        "summary_api_base",
+        "summary_api_key",
+        "summary_model",
+        "agent_team_model_provider",
+        "agent_team_api_base",
+        "agent_team_api_key",
+        "agent_team_model",
+        "agent_team_review_model",
+        "agent_team_summary_model",
+        "scan_model",
+        "sakura_reflection_model",
+        "sakura_issue_reflection_model",
+        "sakura_consolidation_model",
+        "sakura_use_summary_model",
+        "sakura_extraction_provider",
+        "sakura_extraction_api_base",
+        "sakura_extraction_api_key",
+        "sakura_extraction_model",
+    ):
+        # 历史 AppConfig 键保留用于兼容数据库迁移，但不再进入业务配置解析。
+        return None
+
     expected_type = _get_field_type(key)
 
     # 1. 检查内存缓存
@@ -2046,10 +1993,6 @@ CORE_CONFIG_KEYS = frozenset(
         "github_app_id",
         "github_private_key",
         "github_webhook_secret",
-        "ai_provider",
-        "openai_api_key",
-        "openai_api_base",
-        "openai_model",
         "telegram_bot_token",
         "webui_secret_key",
         "app_domain",
@@ -2062,7 +2005,6 @@ CORE_CONFIG_KEYS = frozenset(
         "mobile_oauth_allowed_redirect_uris",
         "passkeys_allowed_origins",
         "database_url",
-        "summary_provider",
         "star_aid_github_app_client_id",
         "star_aid_github_app_client_secret",
         "star_aid_github_app_callback_url",

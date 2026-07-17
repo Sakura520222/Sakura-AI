@@ -62,7 +62,8 @@ class ContextCompressor:
             keep_rounds: 保留的对话轮数
         """
         self.api_client = api_client
-        self.model = model
+        # 模型由 main 角色绑定解析；空字符串保留 fake client 和上下文估算兼容。
+        self.model = model or ""
         self.keep_rounds = keep_rounds
         self.model_context_mgr = get_model_context_manager()
 
@@ -246,7 +247,7 @@ the main reviewer.
 
         # 调用 AI 压缩
         response = await self.api_client.call_with_retry(
-            model=self.model,
+            model="",
             messages=[
                 {
                     "role": "system",

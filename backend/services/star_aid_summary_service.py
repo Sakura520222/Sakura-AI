@@ -1,8 +1,6 @@
 """仓库互助 AI 摘要服务 / Star-aid AI summary service.
 
-为展示仓库生成简短 AI 摘要（80-160 字），输入为 README、description、
-topics、primary language。复用现有 OpenAI 兼容 provider（优先辅助模型
-``summary_*`` 配置，回退主模型 ``openai_*``），不引入新依赖。
+为展示仓库生成简短 AI 摘要。所有摘要请求统一通过 summary 角色解析。
 
 刷新策略（见计划文档第 12 节）：
 
@@ -22,7 +20,7 @@ import json
 from datetime import datetime
 
 from loguru import logger
-from openai import AsyncOpenAI
+from backend.services.ai_reviewer.api_client import AIApiClient
 from sqlalchemy import select
 
 from backend.core.config import get_dynamic_config, get_settings
@@ -67,14 +65,9 @@ def _parse_full_name(full_name: str) -> tuple[str, str]:
     return parts[0], parts[1]
 
 
-def _get_summary_client() -> tuple[AsyncOpenAI, str]:
-    """获取辅助模型 client（优先 summary_*，回退主模型）。"""
-    settings = get_settings()
-    base = settings.summary_api_base or settings.openai_api_base
-    api_key = settings.summary_api_key or settings.openai_api_key
-    model = settings.summary_model or settings.openai_model
-    client = AsyncOpenAI(base_url=base, api_key=api_key or "missing")
-    return client, model
+def _get_summary_client() -> tuple[AIApiClient, str]:
+    """获取角色驱动的摘要 client，不读取旧扁平 provider 配置。"""
+    return AIApiClient(), ""
 
 
 async def _get_user_language(session, user_id: int) -> str | None:
@@ -156,7 +149,7 @@ async def generate_summary(
     是中间推理过程，不是最终摘要，绝不作为摘要返回。若 ``content`` 为空，
     由上层 ``refresh_repository_summary`` 重试或标记 failed。
     """
-    client, model = _get_summary_client()
+    client, _ = _get_summary_client()
     prompt = _build_prompt(
         full_name=full_name,
         description=description,
@@ -165,16 +158,16 @@ async def generate_summary(
         readme_excerpt=readme_excerpt,
         lang=lang,
     )
-    resp = await client.chat.completions.create(
-        model=model,
+    resp = await client.call_with_retry(
+        model="",
         messages=[{"role": "user", "content": prompt}],
         temperature=0.3,
         max_tokens=int(max_tokens),
+        role="summary",
     )
     if not resp.choices:
         logger.warning(
-            "star_aid summary no choices: model={}, usage={}",
-            model,
+            "star_aid summary no choices: usage={}",
             getattr(resp, "usage", None),
         )
         return ""
@@ -186,17 +179,15 @@ async def generate_summary(
     if not content:
         # 诊断：记录空 content 的完整响应元信息，便于定位模型/API 行为
         logger.warning(
-            "star_aid summary empty content: model={}, finish={}, "
+            "star_aid summary empty content: finish={}, "
             "content_len=0, reasoning_len={}, usage={}",
-            model,
             finish_reason,
             len(reasoning),
             getattr(resp, "usage", None),
         )
     else:
         logger.info(
-            "star_aid summary ai ok: model={}, finish={}, content_len={}",
-            model,
+            "star_aid summary ai ok: finish={}, content_len={}",
             finish_reason,
             len(content),
         )

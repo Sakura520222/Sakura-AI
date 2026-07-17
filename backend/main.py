@@ -167,7 +167,6 @@ async def lifespan(app: FastAPI):
             # 打印关键配置（在动态配置加载后，确保显示实际值）
             logger.info(f"📊 日志级别: {settings.log_level}")
             logger.info(f"🌐 应用域名: {settings.app_domain}")
-            logger.info(f"🤖 OpenAI模型: {settings.openai_model}")
 
             # 检测默认 JWT 密钥（必须在动态配置加载后检查）
             if settings.webui_secret_key == "change-me-in-production":

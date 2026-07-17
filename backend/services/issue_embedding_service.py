@@ -16,7 +16,9 @@ from typing import Any
 
 from loguru import logger
 
+from backend.core.ai_protocol.errors import AllCandidatesFailedError
 from backend.core.github_app import GitHubAppClient
+from backend.services.ai_reviewer.api_client import AIApiClient
 from backend.services.embedding_service import (
     get_embedding_service,
     get_reranker_service,
@@ -547,17 +549,8 @@ class IssueEmbeddingService:
             return candidates
 
         try:
-            from backend.core.config import get_settings
-            from backend.services.ai_reviewer.api_client import AIApiClient
-
-            settings = get_settings()
-
-            # 使用辅助模型（更便宜）
-            api_base = settings.summary_api_base or settings.openai_api_base
-            api_key = settings.summary_api_key or settings.openai_api_key
-            model = settings.summary_model or settings.openai_model
-
-            client = AIApiClient(base_url=api_base, api_key=api_key)
+            # 使用 summary 角色；模型、端点和凭据由角色绑定解析。
+            client = AIApiClient()
 
             # 构建候选 issues 文本
             issues_text = ""
@@ -613,7 +606,7 @@ class IssueEmbeddingService:
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": user_prompt},
                 ],
-                model=model,
+                model="",
                 temperature=0.1,
                 role="summary",
             )
@@ -640,6 +633,8 @@ class IssueEmbeddingService:
 
             return verified
 
+        except AllCandidatesFailedError:
+            raise
         except Exception as e:
             logger.warning(f"AI 验证失败，回退使用原始候选: {e}")
             return candidates

@@ -1,15 +1,12 @@
 """角色配置解析 / Role configuration resolution.
 
-从 AppConfig 数据库表读取 ai_role_bindings、ai_provider_configs、
-ai_model_configs、凭据，解析为 ResolvedChain。
+仅从 AppConfig 中的 ai_role_bindings、ai_account.* 与
+ai_model_override.* 解析为 ResolvedChain。缺失或不可用绑定返回 None，由
+角色调用门面转换为明确的配置错误；旧扁平 AI 配置永不参与解析。
 
-Reads ai_role_bindings / ai_provider_configs / ai_model_configs / credentials
-from the AppConfig table and resolves them into a ResolvedChain.
-
-迁移期间（PR-1/2/3）：配置键尚未落库时返回 None，触发 AIApiClient 回退到
-旧 OpenAI SDK 路径，保证零中断。
-During migration (PR-1/2/3), returns None when config keys are not yet
-persisted, which triggers the legacy OpenAI SDK fallback in AIApiClient.
+Resolves only ai_role_bindings, ai_account.*, and ai_model_override.* from
+AppConfig into a ResolvedChain. Missing or unusable bindings return None for
+the role facade to report explicitly; legacy flat AI configuration is ignored.
 """
 
 from __future__ import annotations
@@ -26,11 +23,10 @@ from backend.core.ai_protocol.models import (
     ProtocolFamily,
     ReasoningParams,
     ResolvedModel,
-    RoleBinding,
 )
-from backend.core.ai_protocol.registry import resolve_account_endpoint, resolve_endpoint
+from backend.core.ai_protocol.registry import resolve_account_endpoint
 from backend.core.ai_protocol.endpoint_security import validate_provider_base_url
-from backend.core.ai_protocol.resolver import ResolvedChain, _build_metadata, resolve_role
+from backend.core.ai_protocol.resolver import ResolvedChain, _build_metadata
 from backend.core.ai_providers import get_builtin_provider
 
 # 角色（role）常量 / Role constants
@@ -74,92 +70,6 @@ async def _load_app_config_map(keys: list[str]) -> dict[str, str]:
     except Exception as exc:  # noqa: BLE001
         logger.debug("读取 AI 角色配置失败 / failed to load ai role config: {}", exc)
         return {}
-
-
-def _parse_bindings(config_map: dict[str, str]) -> dict[str, RoleBinding]:
-    """解析 ai_role_bindings.<role>.* / Parse role bindings."""
-    bindings: dict[str, RoleBinding] = {}
-    raw = config_map.get("ai_role_bindings")
-    parsed = _safe_json(raw)
-    if isinstance(parsed, dict):
-        for role in ALL_ROLES:
-            entry = parsed.get(role)
-            if isinstance(entry, dict):
-                primary = entry.get("primary") or {}
-                fallback = entry.get("fallback") or []
-                if isinstance(primary, dict) and primary:
-                    bindings[role] = RoleBinding(
-                        primary=primary,
-                        fallback=[f for f in fallback if isinstance(f, dict)],
-                    )
-    # 兼容旧字段：未配置新结构时，从旧 openai_*/summary_* 字段构造 main/summary
-    if ROLE_MAIN not in bindings:
-        main_provider = config_map.get("ai_provider", "")
-        main_model = config_map.get("openai_model", "")
-        if main_provider and main_model:
-            bindings[ROLE_MAIN] = RoleBinding(
-                primary={"provider": main_provider, "model": main_model}
-            )
-    if ROLE_SUMMARY not in bindings:
-        summary_provider = config_map.get("summary_provider", "")
-        summary_model = config_map.get("summary_model", "")
-        if summary_provider and summary_model:
-            # summary_provider="" 或 "跟随" 视为跟随主模型
-            if summary_provider in ("", "follow", "main"):
-                bindings[ROLE_SUMMARY] = RoleBinding(
-                    primary={"provider": "main", "model": "follow"}
-                )
-            else:
-                bindings[ROLE_SUMMARY] = RoleBinding(
-                    primary={"provider": summary_provider, "model": summary_model}
-                )
-    return bindings
-
-
-def _collect_credentials(
-    config_map: dict[str, str], bindings: dict[str, RoleBinding]
-) -> dict[str, str]:
-    """收集候选提供商对应的 API key / Collect API keys for referenced providers."""
-    refs: list[tuple[str, str]] = []
-    for binding in bindings.values():
-        refs.append((binding.primary.get("provider", ""), binding.primary.get("model", "")))
-        for fb in binding.fallback:
-            refs.append((fb.get("provider", ""), fb.get("model", "")))
-
-    credentials: dict[str, str] = {}
-    # 新键 / new keys
-    for provider_id, _model in refs:
-        if not provider_id or provider_id == "main":
-            continue
-        key = config_map.get(f"ai_credential.{provider_id}")
-        if key:
-            credentials[provider_id] = key
-    # 兼容旧键 / legacy keys
-    if "openai" in {p for p, _ in refs} and "openai" not in credentials:
-        legacy = config_map.get("openai_api_key", "")
-        if legacy:
-            credentials["openai"] = legacy
-    if "openai" in {p for p, _ in refs} and "openai" not in credentials:
-        # 自定义 / custom 也可能复用 openai_api_key
-        pass
-    # custom 提供商：用 openai_api_key 作为凭据
-    for provider_id, _ in refs:
-        if provider_id == "custom" and "custom" not in credentials:
-            legacy = config_map.get("openai_api_key", "")
-            if legacy:
-                credentials["custom"] = legacy
-    return credentials
-
-
-def _collect_base_urls(config_map: dict[str, str]) -> dict[str, str]:
-    """收集自定义 base_url 覆盖（主要针对 custom）/ Collect base_url overrides."""
-    overrides: dict[str, str] = {}
-    custom_base = config_map.get("openai_api_base", "")
-    if custom_base:
-        overrides["custom"] = custom_base
-        # 旧配置若主提供商是某个内置 id 但 base_url 被覆盖，也透传
-        overrides["openai"] = custom_base
-    return overrides
 
 
 def _parse_metadata_overrides(
@@ -288,13 +198,9 @@ async def _resolve_from_accounts(
 ) -> Optional[ResolvedChain]:
     """从持久化账号解析角色链 / Resolve a role chain from saved accounts.
 
-    读取 ai_role_bindings 与 ai_account.* 账号文档，构建 ResolvedChain。
-    若无账号或该角色未绑定，返回 None 交由旧路径回退。
+    只读取 ai_role_bindings 与 ai_account.*；旧扁平 AI 配置键永不参与解析。
     """
     from backend.core.ai_protocol import account_store
-
-    # 首次访问时自动迁移旧扁平配置 / auto-migrate legacy config on first access
-    await account_store.ensure_default_account_from_legacy()
 
     bindings = await account_store.get_role_bindings()
     if not bindings:
@@ -314,7 +220,7 @@ async def _resolve_from_accounts(
             return
         # 跟随上游角色 / follow upstream role
         if account_id == "main" or model_id == "follow":
-            if role != ROLE_MAIN:
+            if role in (ROLE_SUMMARY, ROLE_AGENT_TEAM):
                 upstream = _resolve_from_accounts_sync_cached(
                     ROLE_MAIN, accounts, bindings, overrides
                 )
@@ -336,12 +242,6 @@ async def _resolve_from_accounts(
     _add_assignment(binding.primary.account, binding.primary.model)
     for fb in binding.fallback:
         _add_assignment(fb.account, fb.model)
-
-    if not candidates and role != ROLE_MAIN:
-        upstream = _resolve_from_accounts_sync_cached(
-            ROLE_MAIN, accounts, bindings, overrides
-        )
-        candidates.extend(upstream)
 
     if not candidates:
         return None
@@ -407,6 +307,13 @@ def _build_candidate_from_account(
         )
         return None
     endpoint = resolve_account_endpoint(decl, family=family, base_url=account.api_base)
+    if not endpoint.base_url:
+        logger.warning(
+            "跳过缺少 endpoint 的 AI 账号: account={} provider={}",
+            getattr(account, "id", ""),
+            decl.id,
+        )
+        return None
     metadata = metadata_override or _build_metadata(decl.id, model_id)
     return ResolvedModel(
         provider=decl,
@@ -417,96 +324,12 @@ def _build_candidate_from_account(
 
 
 async def resolve_role_from_config(role: str) -> Optional[ResolvedChain]:
-    """从数据库配置解析角色链 / Resolve a role chain from DB config.
-
-    优先走账号路径（ai_role_bindings + ai_account.*）；若未配置则回退旧扁平键。
-    返回 None 表示配置未就绪，调用方应回退旧路径。
-    Returns None when config is not ready; callers should fall back.
-    """
-    # 优先：账号持久化路径 / account-based path first
+    """仅从账号与角色绑定解析候选链 / Resolve a role chain from accounts."""
     try:
-        chain = await _resolve_from_accounts(role)
+        return await _resolve_from_accounts(role)
     except Exception as exc:  # noqa: BLE001
-        logger.debug("账号解析失败，回退旧路径 / account resolution failed: {}", exc)
-        chain = None
-    if chain is not None:
-        return chain
-
-    # 回退：旧扁平键路径 / legacy flat-key path
-    keys = [
-        "ai_role_bindings",
-        "ai_provider",
-        "openai_model",
-        "openai_api_key",
-        "openai_api_base",
-        "summary_provider",
-        "summary_model",
-        "summary_api_key",
-        "summary_api_base",
-    ]
-    # 动态收集 ai_credential.* / ai_model_override.* 键
-    config_map = await _load_app_config_map(keys)
-
-    # 若既无新绑定也无旧 main 配置，返回 None 触发回退
-    has_new = bool(config_map.get("ai_role_bindings"))
-    has_legacy_main = bool(
-        config_map.get("ai_provider") and config_map.get("openai_model")
-    )
-    if not has_new and not has_legacy_main:
+        logger.warning("账号角色解析失败: role={} err={}", role, exc)
         return None
-
-    # 扩展读取凭据与 override 键
-    extra_keys: list[str] = []
-    for k in list(config_map.keys()):
-        if k.startswith("ai_credential.") or k.startswith("ai_model_override."):
-            extra_keys.append(k)
-    # 额外尝试常见键名（首次可能未命中，补充一次读取）
-    probable_extra = [
-        "ai_credential.openai",
-        "ai_credential.anthropic",
-        "ai_credential.custom",
-    ]
-    extra_map = await _load_app_config_map(list(set(extra_keys + probable_extra)))
-    config_map.update(extra_map)
-
-    bindings = _parse_bindings(config_map)
-    if role not in bindings:
-        return None
-
-    credentials = _collect_credentials(config_map, bindings)
-    base_urls = _collect_base_urls(config_map)
-    metadata_overrides = _parse_metadata_overrides(config_map)
-
-    # 把 base_url 注入 resolve_candidate（通过 monkey-patch 兜底：custom 用 openai_api_base）
-    # 为保持 resolver 纯净，这里在解析后对 custom 候选重建 endpoint
-    upstream = (
-        await resolve_role_from_config(ROLE_MAIN) if role != ROLE_MAIN else None
-    )
-
-    chain = resolve_role(
-        role=role,
-        bindings=bindings,
-        credentials=credentials,
-        upstream_chain=upstream,
-        metadata_overrides=metadata_overrides,
-    )
-
-    # 应用 base_url 覆盖（custom 提供商）/ apply base_url overrides for custom
-    adjusted: list = []
-    for candidate in chain.candidates:
-        if candidate.provider.id in base_urls:
-            decl = candidate.provider
-            new_endpoint = resolve_endpoint(decl, base_urls[candidate.provider.id])
-            from dataclasses import replace as dc_replace
-
-            adjusted.append(
-                dc_replace(candidate, endpoint=new_endpoint)
-            )
-        else:
-            adjusted.append(candidate)
-    chain.candidates = adjusted  # type: ignore[assignment]
-
-    return chain
 
 
 __all__ = [

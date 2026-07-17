@@ -22,16 +22,13 @@ from backend.core.bootstrap import (
 )
 
 # 环境变量字段（大写） → Settings 字段名（小写）
-# 注意：此映射的 values 集合应与 config.py 中 CORE_CONFIG_KEYS 保持同步
+# 注意：此映射的 values 集合应与 config.py 中 CORE_CONFIG_KEYS 保持同步。
+# AI 账号、角色绑定和模型覆盖仅通过 ai_account.* 等新结构管理，Setup
+# 不再把旧的 provider/key/model 字段写入 AppConfig。
 _ENV_TO_SETTINGS_KEY: dict[str, str] = {
     "GITHUB_APP_ID": "github_app_id",
     "GITHUB_PRIVATE_KEY": "github_private_key",
     "GITHUB_WEBHOOK_SECRET": "github_webhook_secret",
-    "AI_PROVIDER": "ai_provider",
-    "OPENAI_API_KEY": "openai_api_key",
-    "OPENAI_API_BASE": "openai_api_base",
-    "OPENAI_MODEL": "openai_model",
-    "SUMMARY_PROVIDER": "summary_provider",
     "TELEGRAM_BOT_TOKEN": "telegram_bot_token",
     "WEBUI_SECRET_KEY": "webui_secret_key",
     "APP_DOMAIN": "app_domain",
@@ -59,25 +56,26 @@ _ENV_TO_SETTINGS_KEY: dict[str, str] = {
     "RERANK_PROVIDER": "rerank_provider",
 }
 
+_LEGACY_CONFIG_KEYS = frozenset(
+    {
+        "ai_provider",
+        "openai_api_key",
+        "openai_api_base",
+        "openai_model",
+        "summary_provider",
+        "summary_api_key",
+        "summary_api_base",
+        "summary_model",
+    }
+)
+
 # 环境变量字段与 Settings 字段的分组（前端步骤用）
 ENV_FIELD_GROUPS = {
     "database": ["DATABASE_URL", "REDIS_URL"],
     "github": ["GITHUB_APP_ID", "GITHUB_PRIVATE_KEY", "GITHUB_WEBHOOK_SECRET"],
-    "ai": [
-        "AI_PROVIDER",
-        "OPENAI_API_KEY",
-        "OPENAI_API_BASE",
-        "OPENAI_MODEL",
-        "TELEGRAM_BOT_TOKEN",
-    ],
-    "rag": [
-        "EMBEDDING_API_KEY",
-        "EMBEDDING_BASE_URL",
-        "EMBEDDING_MODEL",
-        "RERANK_API_KEY",
-        "RERANK_BASE_URL",
-        "RERANK_MODEL",
-    ],
+    "ai": ["TELEGRAM_BOT_TOKEN"],
+    # RAG 配置是可选项，不参与 Setup readiness 判定。
+    "rag": [],
     "admin": ["APP_DOMAIN"],
 }
 
@@ -204,10 +202,6 @@ class SetupService:
     def list_ai_providers(self) -> list[dict[str, Any]]:
         """获取内置 AI 厂商列表。"""
         return list_ai_providers()
-
-    async def test_openai_api(self, api_key: str, api_base: str) -> dict[str, Any]:
-        """测试 OpenAI API Key（兼容旧调用）。"""
-        return await self.test_ai_api(api_key, api_base, provider="custom")
 
     async def test_ai_api(
         self,
@@ -371,8 +365,10 @@ class SetupService:
             # 尝试大写环境变量名映射
             settings_key = _ENV_TO_SETTINGS_KEY.get(env_key)
             if settings_key is None:
-                # 也接受已经是小写的 Settings 字段名（动态配置场景）
+                # 也接受已经是小写的非遗留 Settings 字段名（动态配置场景）
                 settings_key = env_key if env_key.islower() else None
+            if settings_key in _LEGACY_CONFIG_KEYS:
+                continue
             if settings_key is None or env_value is None:
                 continue
             env_value = str(env_value).strip()

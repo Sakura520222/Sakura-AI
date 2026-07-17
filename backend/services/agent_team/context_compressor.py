@@ -112,8 +112,7 @@ class AgentTeamContextCompressor:
         max_tokens: int,
         token_tracker: TokenTracker | None = None,
     ) -> str:
-        client, summary_model, config = await create_agent_team_summary_client()
-        compressor_model = self.compressor_model or summary_model or self.target_model
+        client, summary_role, config = await create_agent_team_summary_client()
         prompt = _build_compression_prompt(messages, max_tokens)
         response = await client.call_with_retry(
             messages=[
@@ -123,11 +122,11 @@ class AgentTeamContextCompressor:
                 },
                 {"role": "user", "content": prompt},
             ],
-            model=compressor_model,
+            model="",
             temperature=0.2,
             timeout=config.timeout_seconds,
             max_tokens=max_tokens,
-            role="summary",
+            role=summary_role,
         )
         if token_tracker is not None:
             token_tracker.accumulate(response)
