@@ -16,6 +16,8 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from typing import Any, AsyncIterator, Optional
 
+from urllib.parse import urlsplit, urlunsplit
+
 import httpx
 
 from backend.core.ai_protocol.errors import AIError
@@ -94,6 +96,116 @@ class ProtocolAdapter(ABC):
     def supports_capability(self, capability: ModelCapabilitySet) -> bool:
         """本协议族是否支持给定能力集（默认 True，由子类覆盖）/ Family-level capability gate."""
         return True
+
+    @staticmethod
+    def _safe_location(location: str) -> str:
+        """删除重定向地址中的查询与片段，避免将凭据写入日志。"""
+        try:
+            parsed = urlsplit(location)
+            hostname = parsed.hostname or ""
+            port = parsed.port
+        except ValueError:
+            return "<invalid>"
+        netloc = f"{hostname}:{port}" if port is not None else hostname
+        return urlunsplit((parsed.scheme, netloc, parsed.path, "", ""))
+
+    def ensure_success_status(
+        self,
+        response: httpx.Response,
+        endpoint: ResolvedEndpoint,
+        *,
+        model: str = "",
+        operation: str = "AI 请求",
+    ) -> None:
+        """确保 HTTP 响应属于 2xx，拒绝未跟随的重定向。"""
+        if 200 <= response.status_code < 300:
+            return
+        location = self._safe_location(response.headers.get("location", ""))
+        details = f"status={response.status_code}"
+        if location:
+            details += f" location={location}"
+        raise self.raise_error(
+            AIErrorCategory.UNKNOWN,
+            f"{operation} 返回非成功 HTTP 状态: {details}",
+            status_code=response.status_code,
+            provider=endpoint.base_url,
+            model=model,
+        )
+
+    def ensure_sse_response(
+        self,
+        response: httpx.Response,
+        endpoint: ResolvedEndpoint,
+        *,
+        model: str = "",
+        operation: str = "AI stream 请求",
+    ) -> None:
+        """验证流式响应状态和 Content-Type，避免网关页面被静默吞掉。"""
+        if not 200 <= response.status_code < 300:
+            try:
+                body = response.json()
+            except ValueError:
+                body = response.text
+            category, message = self.translate_error(response.status_code, body)
+            raise self.raise_error(
+                category,
+                message,
+                status_code=response.status_code,
+                provider=endpoint.base_url,
+                model=model,
+            )
+        content_type = response.headers.get("content-type", "").lower()
+        if "text/event-stream" not in content_type:
+            raise self.raise_error(
+                AIErrorCategory.UNKNOWN,
+                f"{operation} 返回非 SSE 内容: status={response.status_code} "
+                f"content_type={content_type or '<missing>'}",
+                status_code=response.status_code,
+                provider=endpoint.base_url,
+                model=model,
+            )
+
+    def parse_json_response(
+        self,
+        response: httpx.Response,
+        endpoint: ResolvedEndpoint,
+        *,
+        model: str = "",
+        operation: str = "AI 请求",
+        allow_list: bool = False,
+    ) -> Any:
+        """解析成功响应 JSON，并将异常响应归一化为可恢复错误。"""
+        self.ensure_success_status(
+            response,
+            endpoint,
+            model=model,
+            operation=operation,
+        )
+        try:
+            payload = response.json()
+        except ValueError as exc:
+            content_type = response.headers.get("content-type", "<missing>")
+            raise self.raise_error(
+                AIErrorCategory.UNKNOWN,
+                f"{operation} 返回无效 JSON: status={response.status_code} "
+                f"content_type={content_type} content_length={len(response.content)}",
+                status_code=response.status_code,
+                provider=endpoint.base_url,
+                model=model,
+                cause=exc,
+            ) from exc
+        if not isinstance(payload, dict) and not (allow_list and isinstance(payload, list)):
+            expected_root = "对象或数组" if allow_list else "对象"
+            raise self.raise_error(
+                AIErrorCategory.UNKNOWN,
+                f"{operation} 返回 JSON 根节点不是{expected_root}: "
+                f"status={response.status_code} "
+                f"content_type={response.headers.get('content-type', '<missing>')}",
+                status_code=response.status_code,
+                provider=endpoint.base_url,
+                model=model,
+            )
+        return payload
 
     @staticmethod
     def raise_error(

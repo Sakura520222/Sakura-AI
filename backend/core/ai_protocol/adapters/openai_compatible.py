@@ -86,7 +86,12 @@ class OpenAICompatibleAdapter(ProtocolAdapter):
     ) -> list[ModelDiscoveryResult]:
         url = self.resolve_models_url(endpoint)
         resp = await self._get(client, url, credential, endpoint)
-        payload = resp.json()
+        payload = self.parse_json_response(
+            resp,
+            endpoint,
+            operation="OpenAI 兼容模型列表请求",
+            allow_list=True,
+        )
         return self._parse_model_list(payload)
 
     async def fetch_model_metadata(
@@ -99,10 +104,14 @@ class OpenAICompatibleAdapter(ProtocolAdapter):
         url = self.resolve_model_detail_url(endpoint, model_id)
         try:
             resp = await self._get(client, url, credential, endpoint)
+            payload = self.parse_json_response(
+                resp,
+                endpoint,
+                operation="OpenAI 兼容模型详情请求",
+            )
         except AIError as exc:
             logger.debug("OpenAI 兼容模型详情获取失败: model={} err={}", model_id, exc)
             return None
-        payload = resp.json()
         return self._parse_model_detail(payload, model_id)
 
     @staticmethod
@@ -435,7 +444,12 @@ class OpenAICompatibleAdapter(ProtocolAdapter):
                 cause=exc,
             )
         self._raise_for_status(resp, endpoint)
-        payload = resp.json()
+        payload = self.parse_json_response(
+            resp,
+            endpoint,
+            model=request.model,
+            operation="OpenAI 兼容 chat 请求",
+        )
         response = self.parse_response(payload, raw=resp)
         # 空响应检测 / empty-response detection
         if not response.content and not response.tool_calls:
@@ -465,14 +479,12 @@ class OpenAICompatibleAdapter(ProtocolAdapter):
             async with client.stream(
                 "POST", url, json=body, headers=headers, timeout=timeout
             ) as resp:
-                if resp.status_code >= 400:
-                    text = await resp.aread()
-                    self._raise_for_status(
-                        httpx.Response(
-                            resp.status_code, content=text, request=resp.request
-                        ),
-                        endpoint,
-                    )
+                self.ensure_sse_response(
+                    resp,
+                    endpoint,
+                    model=request.model,
+                    operation="OpenAI 兼容 stream 请求",
+                )
                 async for line in resp.aiter_lines():
                     event = self._parse_sse_line(line)
                     if event is not None:
