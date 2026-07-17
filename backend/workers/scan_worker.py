@@ -682,18 +682,29 @@ class ScanWorker:
         from backend.core.config import get_settings
 
         settings = get_settings()
-        scan_model = settings.scan_model or settings.openai_model
+        # 扫描模型由 main 角色绑定解析；旧 scan/openai 模型配置不得参与请求。
         max_iterations = settings.scan_max_iterations
         scan_temperature = settings.scan_temperature
 
         tracker = TokenTracker()
-        safe_context = (
-            reviewer.model_context_mgr.calculate_safe_context(
-                scan_model,
+        role_model, role_context_tokens = await reviewer.api_client.resolve_role_model_context(
+            "main"
+        )
+        if role_context_tokens and role_context_tokens > 0:
+            safe_context = int(
+                role_context_tokens * settings.scan_context_safety_threshold
+            )
+        elif reviewer.model_context_mgr:
+            safe_context = reviewer.model_context_mgr.calculate_safe_context(
+                None,
                 settings.scan_context_safety_threshold,
             )
-            if reviewer.model_context_mgr
-            else 0
+        else:
+            safe_context = 0
+        logger.info(
+            "扫描使用 main 角色绑定: model={}, context_tokens={}",
+            role_model or "<role metadata>",
+            role_context_tokens or "<conservative fallback>",
         )
 
         iteration = 0
@@ -704,7 +715,7 @@ class ScanWorker:
 
             iteration += 1
             logger.info(
-                f"全仓扫描 第 {iteration}/{max_iterations} 轮 AI 调用 (模型: {scan_model})..."
+                f"全仓扫描 第 {iteration}/{max_iterations} 轮 AI 调用 (模型: main role)..."
             )
 
             # 记录 AI 思考事件
@@ -719,7 +730,7 @@ class ScanWorker:
 
             try:
                 response = await reviewer.api_client.call_with_retry(
-                    model=scan_model,
+                    model="",
                     messages=messages,
                     tools=enabled_tools,
                     tool_choice="auto",
@@ -877,57 +888,10 @@ class ScanWorker:
 
             except Exception as e:
                 logger.error(f"全仓扫描 AI 调用失败: {e}")
-                break
+                raise
 
         logger.warning(f"全仓扫描达到最大轮次 ({max_iterations})，停止")
         return [], None, iteration
-
-    async def _call_ai(
-        self, messages: list[dict], budget: ScanTokenBudget | None = None
-    ) -> tuple[str, dict]:
-        """调用 AI API
-
-        Args:
-            messages: OpenAI 消息列表
-            budget: Token 预算管理器，用于限制 max_tokens
-        """
-        try:
-            from openai import AsyncOpenAI
-
-            settings = get_settings()
-            client = AsyncOpenAI(
-                api_key=settings.openai_api_key,
-                base_url=settings.openai_api_base,
-            )
-
-            # 根据剩余预算计算 completion 上限
-            # 预留 prompt 空间后，剩余为 completion 可用额度
-            completion_cap = 4000  # 默认上限
-            if budget and not budget.unlimited:
-                remaining = budget.remaining()
-                if remaining <= 0:
-                    return "", {}
-                completion_cap = min(4000, remaining)
-
-            response = await client.chat.completions.create(
-                model=settings.scan_model or settings.openai_model,
-                messages=messages,
-                temperature=settings.scan_temperature,
-                max_tokens=completion_cap,
-            )
-
-            text = response.choices[0].message.content or ""
-            usage = {}
-            if response.usage:
-                usage = {
-                    "prompt_tokens": response.usage.prompt_tokens,
-                    "completion_tokens": response.usage.completion_tokens,
-                }
-            return text, usage
-
-        except Exception as e:
-            logger.error(f"调用 AI 失败: {e}")
-            return "", {}
 
     def _aggregate_findings(
         self, all_findings: list[dict], ai_health_score: int | None = None

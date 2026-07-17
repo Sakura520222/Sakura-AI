@@ -14,6 +14,8 @@ async def test_consolidation_agent_starts_conversation_with_user_task_message():
     class Client:
         async def call_with_retry(self, **kwargs):
             captured["messages"] = kwargs["messages"]
+            captured["model"] = kwargs["model"]
+            captured["role"] = kwargs["role"]
             return SimpleNamespace(
                 choices=[
                     SimpleNamespace(
@@ -45,6 +47,8 @@ async def test_consolidation_agent_starts_conversation_with_user_task_message():
     assert [message["role"] for message in messages[:2]] == ["system", "user"]
     assert "SAKURA.md" in messages[1]["content"]
     assert "开始" in messages[1]["content"]
+    assert captured["model"] == ""
+    assert captured["role"] == "main"
 
 
 @pytest.mark.asyncio

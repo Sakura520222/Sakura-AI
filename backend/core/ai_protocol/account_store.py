@@ -411,110 +411,6 @@ async def save_role_bindings_raw(payload: dict[str, Any]) -> None:
     )
 
 
-# =============================================================================
-# 旧配置自动迁移 / Legacy-config auto-migration
-# =============================================================================
-
-
-async def ensure_default_account_from_legacy() -> Optional[str]:
-    """若没有任何账号但存在旧扁平配置，则自动迁移创建默认账号.
-
-    Migrate legacy flat keys (ai_provider / openai_*  / summary_*) into a
-    proper ProviderAccount on first access. Returns the new account id, or
-    None when no migration happened.
-    """
-    if await count_accounts() > 0:
-        return None
-
-    legacy_keys = [
-        "ai_provider",
-        "openai_api_base",
-        "openai_api_key",
-        "openai_model",
-        "summary_provider",
-        "summary_api_base",
-        "summary_api_key",
-        "summary_model",
-    ]
-    legacy = await _load_app_config_map(legacy_keys)
-
-    main_provider = (legacy.get("ai_provider") or "").strip()
-    main_key = (legacy.get("openai_api_key") or "").strip()
-    main_model = (legacy.get("openai_model") or "").strip()
-    main_base = (legacy.get("openai_api_base") or "").strip()
-    if not main_provider or (not main_key and not main_base):
-        return None
-
-    # 解析主账号协议族 / resolve main account protocol family
-    from backend.core.ai_providers import get_builtin_provider
-
-    decl = get_builtin_provider(main_provider)
-    main_account = ProviderAccount(
-        id=generate_account_id(),
-        name=f"{decl.label}（主）" if decl.label else "主账号",
-        provider_id=decl.id,
-        protocol=decl.family.value,
-        api_base=main_base,
-        api_key=main_key,
-        default_model=main_model,
-        models=[main_model] if main_model else [],
-        notes="Auto-migrated from legacy config.",
-    )
-    await save_account(main_account)
-
-    # 辅助账号（若与主账号不同）/ summary account if distinct
-    summary_provider = (legacy.get("summary_provider") or "").strip()
-    summary_model = (legacy.get("summary_model") or "").strip()
-    summary_key = (legacy.get("summary_api_key") or "").strip()
-    summary_base = (legacy.get("summary_api_base") or "").strip()
-
-    default_main_model = main_model or (
-        decl.default_models[0] if decl.default_models else ""
-    )
-    bindings: dict[str, RoleBindingConfig] = {
-        "main": RoleBindingConfig(
-            primary=RoleAssignment(
-                account=main_account.id,
-                model=default_main_model,
-            )
-        ),
-        "summary": RoleBindingConfig(
-            primary=RoleAssignment(account="main", model="follow")
-        ),
-        "agent_team": RoleBindingConfig(
-            primary=RoleAssignment(
-                account=main_account.id,
-                model=default_main_model,
-            )
-        ),
-    }
-
-    if summary_provider and summary_provider not in ("", "follow", "main") and summary_model:
-        sdecl = get_builtin_provider(summary_provider)
-        summary_account = ProviderAccount(
-            id=generate_account_id(),
-            name=f"{sdecl.label}（辅助）" if sdecl.label else "辅助账号",
-            provider_id=sdecl.id,
-            protocol=sdecl.family.value,
-            api_base=summary_base,
-            api_key=summary_key or main_key,
-            default_model=summary_model,
-            models=[summary_model],
-            notes="Auto-migrated from legacy summary config.",
-        )
-        await save_account(summary_account)
-        bindings["summary"] = RoleBindingConfig(
-            primary=RoleAssignment(account=summary_account.id, model=summary_model)
-        )
-
-    await save_role_bindings(bindings)
-    logger.info(
-        "已从旧配置自动迁移 {} 个 AI 账号 / auto-migrated AI accounts from legacy config",
-        1 if bindings["summary"].primary.account == "main" else 2,
-    )
-    return main_account.id
-
-
 __all__ = [
     "ProviderAccount",
     "RoleAssignment",
@@ -529,5 +425,4 @@ __all__ = [
     "get_role_bindings_raw",
     "save_role_bindings",
     "save_role_bindings_raw",
-    "ensure_default_account_from_legacy",
 ]
