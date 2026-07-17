@@ -218,8 +218,9 @@ class FullStackExpertAgent:
     ) -> FullStackResult:
         """执行全栈专家任务，AI 自主调用工具直到完成。"""
         client, config = await create_agent_team_client()
+        model, _ = await client.resolve_role_model_context(config.agent_role)
         ctx = self._build_context(skills_context)
-        tool_schemas = get_tool_definitions("fullstack", provider=config.provider)
+        tool_schemas = get_tool_definitions("fullstack")
         max_tool_rounds = await resolve_clamped_int_config(
             "agent_team_max_tool_rounds",
         )
@@ -318,8 +319,7 @@ class FullStackExpertAgent:
                     pass
 
             model_messages = await AgentTeamContextCompressor(
-                target_model=config.model,
-                compressor_model=config.summary_model,
+                target_model=model,
             ).build_model_messages(self.messages, token_tracker)
             await _publish_ai_request(
                 "fullstack",
@@ -329,7 +329,7 @@ class FullStackExpertAgent:
             )
             response = await client.call_with_retry(
                 messages=model_messages,
-                model=config.model,
+                model="",
                 temperature=config.temperature,
                 max_tokens=config.max_tokens,
                 timeout=config.timeout_seconds,
@@ -340,7 +340,7 @@ class FullStackExpertAgent:
             token_tracker.accumulate(response)
 
             # 每轮记录上下文使用率
-            safe_ctx = model_ctx_mgr.calculate_safe_context(config.model, 0.8)
+            safe_ctx = model_ctx_mgr.calculate_safe_context(model, 0.8)
             current_tokens = estimate_messages_tokens(self.messages, model_ctx_mgr)
             token_tracker.log_context_usage(current_tokens, safe_ctx, round_num)
 

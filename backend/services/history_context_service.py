@@ -10,7 +10,9 @@ from loguru import logger
 from sqlalchemy import and_, select
 from sqlalchemy.orm import selectinload
 
+from backend.core.config import get_settings
 from backend.models.database import PRReview, PRStatus
+from backend.services.ai_reviewer.api_client import AIApiClient
 
 # 摘要生成常量
 HISTORY_SUMMARY_TEMPERATURE = 0.2
@@ -21,15 +23,10 @@ MAX_COMMENT_CONTENT_LENGTH = 200
 class HistoryContextService:
     """PR 增量审查历史上下文服务"""
 
-    def __init__(self, api_client, model: str | None = None):
-        """初始化
-
-        Args:
-            api_client: AIApiClient 实例，复用已有的 API 客户端
-            model: 模型名称，None 时回退到 settings.openai_model
-        """
-        self.api_client = api_client
-        self.model = model
+    def __init__(self, _api_client=None, model: str | None = None):
+        """初始化摘要服务；仅通过 summary 角色解析端点、凭据和模型。"""
+        self.api_client = AIApiClient()
+        self.model = ""
 
     async def fetch_history_summary(
         self,
@@ -47,8 +44,6 @@ class HistoryContextService:
         Returns:
             AI 生成的历史审查摘要文本，查询失败返回 None
         """
-        from backend.core.config import get_settings
-
         settings = get_settings()
 
         # 检查是否启用
@@ -198,8 +193,6 @@ class HistoryContextService:
 
     async def _generate_ai_summary(self, history_text: str) -> Optional[str]:
         """调用 AI 生成历史审查的自然语言摘要"""
-        from backend.core.config import get_settings
-
         settings = get_settings()
 
         response = await self.api_client.call_with_retry(
@@ -210,7 +203,7 @@ class HistoryContextService:
                     "content": self._build_summary_user_prompt(history_text),
                 },
             ],
-            model=self.model or settings.openai_model,
+            model="",
             temperature=HISTORY_SUMMARY_TEMPERATURE,
             max_tokens=settings.incremental_history_summary_max_tokens,
             role="summary",

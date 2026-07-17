@@ -9,7 +9,6 @@ from typing import Dict, List, Optional
 
 from loguru import logger
 
-from backend.core.config import get_settings
 from backend.services.ai_reviewer.api_client import AIApiClient
 from backend.services.sakura_agent_base import (
     EDIT_FILE_TOOL,
@@ -45,6 +44,18 @@ CONSOLIDATION_TOOLS = [
 
 # 只允许写入这两个文件
 _WRITABLE_FILES = {"SAKURA.md", "memory.md"}
+
+
+class _SummaryRoleClient:
+    """Force Sakura consolidation calls through the summary role."""
+
+    def __init__(self, client):
+        self._client = client
+
+    async def call_with_retry(self, **kwargs):
+        kwargs["model"] = ""
+        kwargs["role"] = "summary"
+        return await self._client.call_with_retry(**kwargs)
 
 
 # ── System Prompt 模板 ─────────────────────────────────────────────────
@@ -122,29 +133,9 @@ class SakuraConsolidationAgent(SakuraAgentBase):
         return None
 
     def _ensure_client(self):
-        if self._api_client is not None:
-            return
-
-        settings = get_settings()
-        use_summary = getattr(settings, "sakura_use_summary_model", False)
-
-        if use_summary:
-            base_url = settings.summary_api_base or settings.openai_api_base
-            api_key = settings.summary_api_key or settings.openai_api_key
-        else:
-            base_url = settings.openai_api_base
-            api_key = settings.openai_api_key
-
-        self._api_client = AIApiClient(base_url=base_url, api_key=api_key)
-
-        model = getattr(settings, "sakura_consolidation_model", "")
-        if not model:
-            model = (
-                settings.summary_model or settings.openai_model
-                if use_summary
-                else settings.openai_model
-            )
-        self._default_model = model
+        if self._api_client is None:
+            self._api_client = _SummaryRoleClient(AIApiClient())
+        self._default_model = ""
 
     async def _execute_extra_tool(self, name: str, args: dict) -> Optional[str]:
         if name == "read_readme":

@@ -7,7 +7,6 @@
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse, RedirectResponse
 from loguru import logger
-from pydantic import BaseModel
 
 from backend.core.bootstrap import (
     is_bootstrap_mode,
@@ -21,6 +20,20 @@ from backend.webui.deps import get_templates, render_template
 
 router = APIRouter(prefix="/setup", tags=["Setup Wizard"])
 templates = get_templates()
+
+_AI_CONFIG_MIGRATION = {
+    "success": False,
+    "message": "Setup 已移除旧的 LLM supplier 配置流程，请使用 AI 账号与角色绑定配置。",
+    "migration": {
+        "accounts": "ai_account.*",
+        "role_bindings": "ai_role_bindings",
+    },
+}
+
+
+def _legacy_ai_migration_response() -> JSONResponse:
+    """明确告知旧 Setup AI API 的迁移入口，不触发旧 supplier 流程。"""
+    return JSONResponse(_AI_CONFIG_MIGRATION, status_code=410)
 
 
 def _check_bootstrap():
@@ -85,12 +98,7 @@ async def test_connection(request: Request):
             body.get("app_id", ""), body.get("private_key", "")
         )
     elif test_type == "openai":
-        return await setup_service.test_ai_api(
-            body.get("api_key", ""),
-            body.get("api_base", ""),
-            body.get("provider", "custom"),
-            body.get("model", ""),
-        )
+        return _legacy_ai_migration_response()
     elif test_type == "telegram":
         return await setup_service.test_telegram_bot(body.get("token", ""))
     else:
@@ -106,30 +114,17 @@ async def get_ai_providers(request: Request):
         return JSONResponse(
             {"success": False, "message": "Setup 已完成"}, status_code=403
         )
-    return JSONResponse(
-        {"success": True, "providers": setup_service.list_ai_providers()}
-    )
-
-
-class AIModelsBody(BaseModel):
-    """AI 模型列表请求体。"""
-
-    provider: str = "custom"
-    api_key: str = ""
-    api_base: str = ""
+    return _legacy_ai_migration_response()
 
 
 @router.post("/api/ai-models")
-async def get_ai_models(request: Request, body: AIModelsBody):
-    """按厂商获取模型列表。"""
+async def get_ai_models(request: Request):
+    """旧供应商模型 API 的迁移响应。"""
     if not is_bootstrap_mode():
         return JSONResponse(
             {"success": False, "message": "Setup 已完成"}, status_code=403
         )
-    result = await setup_service.fetch_provider_models(
-        body.provider, body.api_key, body.api_base
-    )
-    return JSONResponse(result)
+    return _legacy_ai_migration_response()
 
 
 @router.post("/api/save-step")

@@ -59,7 +59,6 @@ class AgentTeamWorker:
     async def process_task(self, task_id: int, resume: bool = False) -> int:
         """处理 Agent 专家团队任务，完整执行闭环。"""
         config = await load_agent_team_ai_config()
-        config.validate()
 
         # 注册取消信号
         cancel_event = _cancel_events.get(task_id)
@@ -461,8 +460,7 @@ class AgentTeamWorker:
         self, task_id: int, review_id: int
     ) -> int:
         """根据 Sakura PR Review 反馈继续同一分支的 Agent 闭环迭代。"""
-        config = await load_agent_team_ai_config()
-        config.validate()
+        await load_agent_team_ai_config()
 
         cancel_event = _cancel_events.get(task_id)
         if cancel_event is None:
@@ -717,8 +715,7 @@ class AgentTeamWorker:
 
         由 submit_user_prompt 在可续跑终态时调度。
         """
-        config = await load_agent_team_ai_config()
-        config.validate()
+        await load_agent_team_ai_config()
 
         cancel_event = _cancel_events.get(task_id)
         if cancel_event is None:

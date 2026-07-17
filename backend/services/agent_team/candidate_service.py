@@ -7,7 +7,8 @@ import time
 from dataclasses import dataclass
 from typing import Any, Iterable
 
-from openai import BadRequestError
+from backend.core.ai_protocol.errors import AIError
+from backend.core.ai_protocol.models import AIErrorCategory
 from sqlalchemy import and_, desc, func, not_, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -639,9 +640,8 @@ class AgentTeamCandidateService:
     ) -> list[dict[str, Any]]:
         """调用 AI 判断 Issue 是否满足自然语言筛选要求。"""
         client, config = await create_agent_team_client()
-        model = _select_ai_filter_model(
-            config.model, config.review_model, config.summary_model
-        )
+        model, _ = await client.resolve_role_model_context(config.agent_role)
+        model = model or ""
         issue_items = [
             _issue_analysis_to_filter_item(analysis) for analysis in analyses
         ]
@@ -670,17 +670,17 @@ class AgentTeamCandidateService:
         try:
             response = await client.call_with_retry(
                 messages=messages,
-                model=model,
+                model="",
                 temperature=0.1,
                 max_tokens=min(config.max_tokens, 4096),
                 timeout=config.timeout_seconds,
                 role="agent_team",
             )
-        except BadRequestError as exc:
-            if _is_model_not_found_error(exc):
+        except AIError as exc:
+            if exc.category == AIErrorCategory.MODEL_NOT_FOUND:
                 raise ValueError(
-                    f"AI 筛选使用的模型不存在：{model}。请在 Agent 专家团队配置中检查全栈专家模型/专业审查模型，"
-                    "或在使用主 AI 时检查全局模型名称。"
+                    f"Agent Team 角色绑定的模型不存在：{model}。"
+                    "请检查 agent_team 角色绑定和账号模型列表。"
                 ) from exc
             raise
         if not response.choices:
@@ -975,15 +975,6 @@ def _select_ai_filter_model(model: str, review_model: str, summary_model: str) -
     低成本/别名模型但实际供应商不支持时导致“模型不存在”。
     """
     return (model or review_model or summary_model or "").strip()
-
-
-def _is_model_not_found_error(exc: BadRequestError) -> bool:
-    """判断 BadRequestError 是否属于模型不存在/不可用。"""
-    text = str(exc)
-    text_lower = text.lower()
-    return ("模型不存在" in text) or (
-        "model" in text_lower and "not" in text_lower and "exist" in text_lower
-    )
 
 
 def _truncate_text(value: str, limit: int = _AI_FILTER_TEXT_LIMIT) -> str:

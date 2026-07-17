@@ -152,7 +152,7 @@ class SakuraAgentBase:
             try:
                 response = await self._api_client.call_with_retry(
                     messages=messages,
-                    model=model,
+                    model="",
                     tools=tools,
                     tool_choice="auto",
                     temperature=0.3,

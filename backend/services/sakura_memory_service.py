@@ -258,34 +258,12 @@ class SakuraMemoryService:
     def __init__(self):
         """初始化服务 / Initialize service"""
         self.write_service = get_github_write_service()
-        self._ai_client_config = None
         self._refresh_ai_client()
 
     def _refresh_ai_client(self) -> None:
-        """刷新主/辅助模型选择与凭据。"""
-        settings = get_settings()
-        if settings.sakura_use_summary_model:
-            base_url = settings.summary_api_base or settings.openai_api_base
-            api_key = settings.summary_api_key or settings.openai_api_key
-            model = settings.summary_model or settings.openai_model
-        else:
-            base_url = settings.openai_api_base
-            api_key = settings.openai_api_key
-            model = settings.openai_model
-
-        config = (
-            settings.sakura_use_summary_model,
-            base_url,
-            api_key,
-            model,
-        )
-        if self._ai_client_config != config:
-            self.api_client = AIApiClient(
-                base_url=base_url,
-                api_key=api_key,
-            )
-            self._ai_client_config = config
-        self._default_model = model
+        """刷新角色驱动的统一客户端，不读取旧扁平供应商配置。"""
+        self.api_client = AIApiClient()
+        self._default_model = ""
 
     def _get_config(self) -> dict:
         """获取 sakura_memory 配置，优先使用 DB/WebUI 配置 / Get config, DB/WebUI overrides yaml"""
@@ -293,22 +271,11 @@ class SakuraMemoryService:
         yaml_config = ce_config.get("sakura_memory", {})
         settings = get_settings()
 
-        reflection_model = settings.sakura_reflection_model or yaml_config.get(
-            "reflection", {}
-        ).get("model")
-        consolidation_model = settings.sakura_consolidation_model or yaml_config.get(
-            "consolidation", {}
-        ).get("model")
-        issue_reflection_model = (
-            settings.sakura_issue_reflection_model
-            or yaml_config.get("issue_reflection", {}).get("model")
-        )
-
         return {
             "enabled": settings.sakura_memory_enabled,
             "reflection": {
                 "enabled": settings.sakura_reflection_enabled,
-                "model": reflection_model,
+                "model": "",
                 "prompt_template": yaml_config.get("reflection", {}).get(
                     "prompt_template"
                 ),
@@ -324,14 +291,14 @@ class SakuraMemoryService:
             },
             "issue_reflection": {
                 "enabled": settings.sakura_issue_reflection_enabled,
-                "model": issue_reflection_model,
+                "model": "",
                 "prompt_template": yaml_config.get("issue_reflection", {}).get(
                     "prompt_template"
                 ),
             },
             "consolidation": {
                 "interval": settings.sakura_consolidation_interval,
-                "model": consolidation_model,
+                "model": "",
                 "max_memory_chars": settings.sakura_max_memory_chars,
                 "max_sakura_chars": settings.sakura_max_sakura_chars,
                 "cleanup_old_reflections": yaml_config.get("consolidation", {}).get(
@@ -357,14 +324,8 @@ class SakuraMemoryService:
         }
 
     def _get_model(self, config_section: dict) -> str:
-        """获取模型配置，null 表示使用默认审查模型
-
-        Get model config, null means use default review model.
-        """
-        model = config_section.get("model")
-        if model:
-            return model
-        return self._default_model
+        """模型由绑定的业务角色解析；忽略历史模型覆盖配置。"""
+        return ""
 
     async def _get_or_create_state(self, repo_full_name: str) -> SakuraMemoryState:
         """获取或创建仓库的记忆状态 / Get or create memory state for a repo"""
@@ -1517,10 +1478,10 @@ class SakuraMemoryService:
         messages = [{"role": "user", "content": prompt}]
         response = await self.api_client.call_with_retry(
             messages=messages,
-            model=model or self._default_model,
+            model="",
             temperature=0.7,
             max_tokens=4000,
-            role="main",
+            role="summary",
         )
         if not response.choices:
             logger.warning("LLM 返回空响应 / LLM returned empty choices")

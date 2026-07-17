@@ -13,122 +13,75 @@ from backend.services import sakura_memory_service as sakura_memory_module
 
 
 class _FakeAIApiClient:
-    def __init__(self, base_url, api_key):
-        self.base_url = base_url
-        self.api_key = api_key
+    instances = []
+
+    def __init__(self, *args, **kwargs):
+        self.base_url = kwargs.get("base_url") or (args[0] if args else None)
+        self.api_key = kwargs.get("api_key") or (args[1] if len(args) > 1 else None)
+        self.calls = []
+        self.__class__.instances.append(self)
+
+    async def call_with_retry(self, **kwargs):
+        self.calls.append(kwargs)
+        usage = SimpleNamespace(prompt_tokens=1, completion_tokens=1)
+        message = SimpleNamespace(content='{"labels": []}', tool_calls=[])
+        return SimpleNamespace(choices=[SimpleNamespace(message=message)], usage=usage)
 
 
-def test_reviewer_refreshes_clients_after_dynamic_config_change(monkeypatch):
-    settings = SimpleNamespace(
-        openai_api_base="https://old.example/v1",
-        openai_api_key="old-key",
-        openai_model="old-model",
-        summary_api_base="",
-        summary_api_key="",
-        summary_model="",
+def _role_only_settings():
+    return SimpleNamespace(
+        ai_temperature=0.3,
+        enable_context_compression=True,
+        context_compression_threshold=0.85,
+        context_compression_keep_rounds=2,
+        context_safety_threshold=0.8,
+        web_search_enabled=False,
+        fetch_url_enabled=False,
     )
+
+
+def test_reviewer_refresh_uses_role_facade_without_legacy_settings(monkeypatch):
+    """Reviewer 运行时不应读取或传递已删除的扁平 AI 配置。"""
+    settings = _role_only_settings()
+    monkeypatch.setattr(reviewer_module, "get_settings", lambda: settings)
+    _FakeAIApiClient.instances = []
+    monkeypatch.setattr(reviewer_module, "AIApiClient", _FakeAIApiClient)
+
+    reviewer = reviewer_module.AIReviewer.__new__(reviewer_module.AIReviewer)
+    reviewer._refresh_ai_clients()
+
+    assert len(_FakeAIApiClient.instances) == 1
+    assert reviewer.api_client is reviewer.summary_api_client
+    assert not hasattr(reviewer, "_ai_client_config")
+    assert not hasattr(reviewer, "_summary_client_config")
+
+
+def test_reviewer_refresh_keeps_auxiliary_components_on_role_facade(monkeypatch):
+    settings = _role_only_settings()
     monkeypatch.setattr(reviewer_module, "get_settings", lambda: settings)
     monkeypatch.setattr(reviewer_module, "AIApiClient", _FakeAIApiClient)
 
     reviewer = reviewer_module.AIReviewer.__new__(reviewer_module.AIReviewer)
-    reviewer._ai_client_config = None
-    reviewer._summary_client_config = None
-    reviewer.context_compressor = SimpleNamespace(api_client=None, model=None)
-    reviewer.label_recommender = SimpleNamespace(api_client=None, model=None)
-
-    reviewer._refresh_ai_clients()
-    old_client = reviewer.api_client
-
-    settings.openai_api_base = "https://new.example/v1"
-    settings.openai_api_key = "new-key"
-    settings.openai_model = "new-model"
+    reviewer.context_compressor = SimpleNamespace(api_client=None, model="stale")
+    reviewer.label_recommender = SimpleNamespace(api_client=None, model="stale")
     reviewer._refresh_ai_clients()
 
-    assert reviewer.api_client is not old_client
-    assert reviewer.api_client.base_url == "https://new.example/v1"
-    assert reviewer.api_client.api_key == "new-key"
-    assert reviewer.summary_api_client is reviewer.api_client
     assert reviewer.context_compressor.api_client is reviewer.api_client
-    assert reviewer.context_compressor.model == "new-model"
+    assert reviewer.context_compressor.model == ""
     assert reviewer.label_recommender.api_client is reviewer.api_client
-    assert reviewer.label_recommender.model == "new-model"
-
-
-def test_reviewer_refreshes_summary_client_when_auxiliary_config_changes(monkeypatch):
-    """辅助模型独立配置变化后，_refresh_ai_clients 重建 summary_api_client。
-
-    覆盖 summary_api_base/key 非空（独立 provider）场景：修改辅助模型凭据后，
-    summary_api_client 应重建为新凭据并始终与主 AI api_client 解耦；
-    summary_model 跟随最新 settings；主 AI client 不受影响。
-    对应 WebUI 即时修改辅助 AI 配置后辅助任务（PR 总结/依赖图/历史上下文）
-    必须使用新 provider 的回归保护。
-    """
-    settings = SimpleNamespace(
-        openai_api_base="https://main.example/v1",
-        openai_api_key="main-key",
-        openai_model="main-model",
-        summary_api_base="https://aux-old.example/v1",
-        summary_api_key="aux-old-key",
-        summary_model="aux-old-model",
-    )
-    monkeypatch.setattr(reviewer_module, "get_settings", lambda: settings)
-    monkeypatch.setattr(reviewer_module, "AIApiClient", _FakeAIApiClient)
-
-    reviewer = reviewer_module.AIReviewer.__new__(reviewer_module.AIReviewer)
-    reviewer._ai_client_config = None
-    reviewer._summary_client_config = None
-    reviewer.context_compressor = SimpleNamespace(api_client=None, model=None)
-    reviewer.label_recommender = SimpleNamespace(api_client=None, model=None)
-
-    reviewer._refresh_ai_clients()
-    # 独立 provider：summary_api_client 与主 api_client 解耦
-    assert reviewer.summary_api_client is not reviewer.api_client
-    assert reviewer.summary_api_client.base_url == "https://aux-old.example/v1"
-    assert reviewer.summary_api_client.api_key == "aux-old-key"
-    assert reviewer.summary_model == "aux-old-model"
-    old_summary_client = reviewer.summary_api_client
-
-    # 仅修改辅助模型凭据（主 AI 不变）
-    settings.summary_api_base = "https://aux-new.example/v1"
-    settings.summary_api_key = "aux-new-key"
-    settings.summary_model = "aux-new-model"
-    reviewer._refresh_ai_clients()
-
-    # summary_api_client 重建为新凭据，主 api_client 保持不变
-    assert reviewer.summary_api_client is not old_summary_client
-    assert reviewer.summary_api_client.base_url == "https://aux-new.example/v1"
-    assert reviewer.summary_api_client.api_key == "aux-new-key"
-    assert reviewer.summary_model == "aux-new-model"
-    assert reviewer.api_client.base_url == "https://main.example/v1"
-    assert reviewer.api_client.api_key == "main-key"
-    # context_compressor 跟随主 AI（PR 审查压缩改用主模型，上下文窗口更大）
-    assert reviewer.context_compressor.api_client is reviewer.api_client
-    assert reviewer.context_compressor.model == "main-model"
-    # label_recommender 继续跟随辅助凭据
-    assert reviewer.label_recommender.api_client is reviewer.summary_api_client
-    assert reviewer.label_recommender.model == "aux-new-model"
+    assert reviewer.label_recommender.model == ""
 
 
 def test_issue_analyzer_refreshes_client_after_dynamic_config_change(monkeypatch):
-    settings = SimpleNamespace(
-        openai_api_base="https://old.example/v1",
-        openai_api_key="old-key",
+    """IssueAnalyzer 的兼容刷新入口不再读取旧的扁平 AI 凭据。"""
+    monkeypatch.setattr(
+        issue_analyzer_module,
+        "get_settings",
+        lambda: SimpleNamespace(openai_api_base="unused", openai_api_key="unused"),
     )
-    monkeypatch.setattr(issue_analyzer_module, "get_settings", lambda: settings)
-    monkeypatch.setattr(issue_analyzer_module, "AIApiClient", _FakeAIApiClient)
 
     analyzer = IssueAnalyzer.__new__(IssueAnalyzer)
-    analyzer._ai_client_config = None
-    analyzer._refresh_ai_client()
-    old_client = analyzer.api_client
-
-    settings.openai_api_base = "https://new.example/v1"
-    settings.openai_api_key = "new-key"
-    analyzer._refresh_ai_client()
-
-    assert analyzer.api_client is not old_client
-    assert analyzer.api_client.base_url == "https://new.example/v1"
-    assert analyzer.api_client.api_key == "new-key"
+    assert analyzer._refresh_ai_client() is None
 
 
 def test_reviewer_refreshes_runtime_tool_and_compression_config(monkeypatch):
@@ -212,31 +165,13 @@ def test_embedding_and_reranker_services_refresh_dynamic_clients(monkeypatch):
     assert old_reranker_client in reranker._retired_clients
 
 
-def test_sakura_memory_refreshes_main_and_summary_credentials(monkeypatch):
-    settings = SimpleNamespace(
-        sakura_use_summary_model=False,
-        openai_api_base="https://main.example/v1",
-        openai_api_key="main-key",
-        openai_model="main-model",
-        summary_api_base="https://summary.example/v1",
-        summary_api_key="summary-key",
-        summary_model="summary-model",
-    )
-    monkeypatch.setattr(sakura_memory_module, "get_settings", lambda: settings)
-    monkeypatch.setattr(sakura_memory_module, "AIApiClient", _FakeAIApiClient)
-
+def test_sakura_memory_refreshes_main_and_summary_credentials():
+    """Sakura memory retains its role-driven compatibility refresh entry point."""
     service = sakura_memory_module.SakuraMemoryService.__new__(
         sakura_memory_module.SakuraMemoryService
     )
     service._ai_client_config = None
-    service._refresh_ai_client()
-
-    settings.sakura_use_summary_model = True
-    service._refresh_ai_client()
-
-    assert service.api_client.base_url == "https://summary.example/v1"
-    assert service.api_client.api_key == "summary-key"
-    assert service._default_model == "summary-model"
+    assert service._refresh_ai_client() is None
 
 
 def test_reviewer_runtime_config_creates_web_tools_when_enabled(monkeypatch):

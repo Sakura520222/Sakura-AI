@@ -55,8 +55,8 @@ def test_ai_provider_dynamic_config_migrated_to_ai_config_page():
     assert "context" not in DYNAMIC_CONFIG_GROUPS
     assert "ai_provider" not in DYNAMIC_CONFIG_SELECT_OPTIONS
     assert "summary_provider" not in DYNAMIC_CONFIG_SELECT_OPTIONS
-    assert "ai_provider" in CORE_CONFIG_KEYS
-    assert "summary_provider" in CORE_CONFIG_KEYS
+    assert "ai_provider" not in CORE_CONFIG_KEYS
+    assert "summary_provider" not in CORE_CONFIG_KEYS
 
 
 def test_list_ai_providers_default():

@@ -96,9 +96,13 @@ class ModelContextManager:
         4. 保守兜底 128K
         """
         if model_name is None:
-            model_name = self.settings.openai_model
+            logger.warning(
+                "未提供模型上下文信息，使用默认 {}K tokens。",
+                self.CONSERVATIVE_FALLBACK_K,
+            )
+            return self.CONSERVATIVE_FALLBACK_K
 
-        normalized = (model_name or "").lower().strip()
+        normalized = model_name.lower().strip()
 
         # 1. per-model 覆盖
         if normalized and normalized in self._overrides:

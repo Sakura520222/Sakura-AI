@@ -219,12 +219,14 @@ class ProfessionalReviewAgent:
     ) -> ReviewResult:
         """执行审查，AI 自主调用工具直到提交审查。"""
         client, config = await create_agent_team_client()
+        model, _ = await client.resolve_role_model_context(config.agent_role)
+        model = model or ""
         ctx = self._build_context(
             skills_context,
             github_repo=github_repo,
             sakura_ref=sakura_ref,
         )
-        tool_schemas = get_tool_definitions("reviewer", provider=config.provider)
+        tool_schemas = get_tool_definitions("reviewer")
         max_tool_rounds = await resolve_clamped_int_config(
             "agent_team_reviewer_max_tool_rounds",
         )
@@ -313,8 +315,7 @@ class ProfessionalReviewAgent:
                     pass
 
             model_messages = await AgentTeamContextCompressor(
-                target_model=config.review_model,
-                compressor_model=config.summary_model,
+                target_model=model,
             ).build_model_messages(self.messages, token_tracker)
             await _publish_review_ai_request(
                 round_num,
@@ -323,7 +324,7 @@ class ProfessionalReviewAgent:
             )
             response = await client.call_with_retry(
                 messages=model_messages,
-                model=config.review_model,
+                model="",
                 temperature=max(config.temperature - 0.1, 0.0),
                 max_tokens=config.max_tokens,
                 timeout=config.timeout_seconds,
@@ -334,7 +335,7 @@ class ProfessionalReviewAgent:
             token_tracker.accumulate(response)
 
             # 每轮记录上下文使用率
-            safe_ctx = model_ctx_mgr.calculate_safe_context(config.review_model, 0.8)
+            safe_ctx = model_ctx_mgr.calculate_safe_context(model, 0.8)
             current_tokens = estimate_messages_tokens(self.messages, model_ctx_mgr)
             token_tracker.log_context_usage(current_tokens, safe_ctx, round_num)
 

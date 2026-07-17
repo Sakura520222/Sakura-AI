@@ -2,7 +2,6 @@ from types import SimpleNamespace
 
 import pytest
 
-from backend.services.ai_reviewer.api_client import AIApiClient
 from backend.services.ai_reviewer.constants import DIFF_TOOLS, TOOL_NAME_TO_DEFINITION
 from backend.services.ai_reviewer.prompt_builder import PromptBuilder
 from backend.services.ai_reviewer.token_tracker import TokenTracker
@@ -41,13 +40,11 @@ def review_context():
     }
 
 
-def test_api_client_recognizes_prompt_exceeds_max_length():
-    error = Exception(
-        "Error code: 400 - {'error': {'code': '1261', "
-        "'message': 'Prompt exceeds max length'}}"
-    )
+def test_unified_client_handles_context_overflow_by_category():
+    """统一客户端通过协议层 CONTEXT_OVERFLOW 分类处理上下文超限。"""
+    from backend.core.ai_protocol.models import AIErrorCategory
 
-    assert AIApiClient._is_context_overflow_error(error) is True
+    assert AIErrorCategory.CONTEXT_OVERFLOW.value == "context_overflow"
 
 
 def test_prompt_builder_compact_mode_omits_diff(review_context):

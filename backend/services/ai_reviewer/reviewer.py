@@ -147,9 +147,7 @@ class AIReviewer:
         """初始化AI审查器"""
         settings = get_settings()
 
-        # 初始化各组件
-        self._ai_client_config = None
-        self._summary_client_config = None
+        # 初始化各组件。端点、凭据和模型均由角色门面按请求解析。
         self._refresh_ai_clients()
         self.prompt_builder = PromptBuilder()
         self.result_parser = ReviewResultParser()
@@ -176,17 +174,13 @@ class AIReviewer:
         self.tool_handler.apply_web_tool_settings(settings)
         self.tool_manager = ToolManager()
 
-        # 初始化上下文压缩
-        # 压缩使用主审查 model（settings.openai_model）而非 summary model：
-        # _compress_early_history 需要忠实压缩含 tool_call 的多轮对话历史
-        # （见 context_compressor._extract_tool_call_fields），summary model 通常
-        # 更弱、难以可靠处理 tool_call 结构，故与主审查共用同一 model/客户端。
+        # 初始化上下文压缩。实际模型由 main 角色绑定解析。
         self.enable_compression = settings.enable_context_compression
         self.compression_threshold = settings.context_compression_threshold
         self.keep_rounds = settings.context_compression_keep_rounds
         self.context_compressor = ContextCompressor(
             api_client=self.api_client,
-            model=settings.openai_model,
+            model="",
             keep_rounds=self.keep_rounds,
         )
         self.model_context_mgr = get_model_context_manager()
@@ -196,7 +190,7 @@ class AIReviewer:
             api_client=self.summary_api_client,
             prompt_builder=self.prompt_builder,
             result_parser=self.result_parser,
-            model=self.summary_model,
+            model="",
         )
 
         # 存储工具定义（用于向后兼容）
@@ -213,51 +207,17 @@ class AIReviewer:
         self.tool_handler.apply_web_tool_settings(settings)
 
     def _refresh_ai_clients(self) -> None:
-        """刷新动态 AI 配置，避免长生命周期 Worker 持有旧凭据。"""
-        settings = get_settings()
-        main_config = (settings.openai_api_base, settings.openai_api_key)
-        if self._ai_client_config != main_config:
-            self.api_client = AIApiClient(
-                base_url=settings.openai_api_base,
-                api_key=settings.openai_api_key,
-            )
-            self._ai_client_config = main_config
-
-        # summary_model 不纳入 summary_config 元组：model 是每次调用的入参
-        # （call_with_retry(model=...)），与客户端凭据无关，仅在此刷新属性即可，
-        # 避免 model 变化时重建客户端；凭据变化仍由下方元组比较触发重建。
-        self.summary_model = settings.summary_model or settings.openai_model
-        summary_uses_main = (
-            not settings.summary_api_base and not settings.summary_api_key
-        )
-        summary_config = (
-            (
-                "main",
-                main_config,
-            )
-            if summary_uses_main
-            else (
-                "custom",
-                settings.summary_api_base or settings.openai_api_base,
-                settings.summary_api_key or settings.openai_api_key,
-            )
-        )
-        if self._summary_client_config != summary_config:
-            if summary_uses_main:
-                self.summary_api_client = self.api_client
-            else:
-                self.summary_api_client = AIApiClient(
-                    base_url=settings.summary_api_base or settings.openai_api_base,
-                    api_key=settings.summary_api_key or settings.openai_api_key,
-                )
-            self._summary_client_config = summary_config
+        """刷新角色驱动的 AI 门面，不读取旧的扁平供应商配置。"""
+        if not hasattr(self, "api_client"):
+            self.api_client = AIApiClient()
+        self.summary_api_client = self.api_client
 
         if hasattr(self, "context_compressor"):
             self.context_compressor.api_client = self.api_client
-            self.context_compressor.model = settings.openai_model
+            self.context_compressor.model = ""
         if hasattr(self, "label_recommender"):
             self.label_recommender.api_client = self.summary_api_client
-            self.label_recommender.model = self.summary_model
+            self.label_recommender.model = ""
 
     async def _parse_or_repair_review(
         self,
@@ -291,9 +251,8 @@ class AIReviewer:
             {"role": "user", "content": REPAIR_INSTRUCTION},
         ]
         try:
-            settings = get_settings()
             response = await self.api_client.call_with_retry(
-                model=settings.openai_model,
+                model="",
                 messages=repair_messages,
                 temperature=0,
                 role="main",
@@ -366,9 +325,9 @@ class AIReviewer:
 
             # 调用AI API
             response = await self.api_client.call_with_retry(
-                model=settings.openai_model,
+                model="",
                 messages=messages,
-                temperature=settings.openai_temperature,
+                temperature=settings.ai_temperature,
                 role="main",
             )
             tracker.accumulate(response)
@@ -429,7 +388,7 @@ class AIReviewer:
             .get("max_tool_iterations", MAX_TOOL_ITERATIONS)
         )
         safe_context = self.model_context_mgr.calculate_safe_context(
-            settings.openai_model, settings.context_safety_threshold
+            None, settings.context_safety_threshold
         )
         # 增量审查恢复的历史 tool_calls 可能是字符串（checkpoint 持久化损坏），
         # 发送给 AI 前统一规范化为标准 dict，避免上游反序列化失败（400）
@@ -447,11 +406,11 @@ class AIReviewer:
 
             # 调用AI API
             response = await self.api_client.call_with_retry(
-                model=settings.openai_model,
+                model="",
                 messages=messages,
                 tools=enabled_tools,
                 tool_choice="auto",
-                temperature=settings.openai_temperature,
+                temperature=settings.ai_temperature,
                 role="main",
             )
             tracker.accumulate(response)
@@ -508,7 +467,7 @@ class AIReviewer:
                 hasattr(assistant_message, "reasoning_content")
                 and assistant_message.reasoning_content
                 and strategy_config.is_model_supports_reasoning_content(
-                    settings.openai_model
+                    "",
                 )
             ):
                 assistant_msg_dict["reasoning_content"] = (
@@ -587,7 +546,7 @@ class AIReviewer:
                             "token_usage": tracker.to_dict(),
                             "current_tokens": current_tokens,
                             "safe_context": safe_context,
-                            "model": settings.openai_model,
+                            "model": "",
                         },
                     )
                 except Exception as exc:
@@ -645,9 +604,9 @@ class AIReviewer:
             event_callback,
         )
         last_response = await self.api_client.call_with_retry(
-            model=settings.openai_model,
+            model="",
             messages=messages,
-            temperature=settings.openai_temperature,
+            temperature=settings.ai_temperature,
             role="main",
         )
         tracker.accumulate(last_response)
@@ -837,7 +796,7 @@ class AIReviewer:
                 if self.enable_compression:
                     settings = get_settings()
                     safe_context = self.model_context_mgr.calculate_safe_context(
-                        settings.openai_model, settings.context_safety_threshold
+                        None, settings.context_safety_threshold
                     )
                     threshold_tokens = int(safe_context * self.compression_threshold)
                     compressed_messages = (
@@ -909,12 +868,12 @@ class AIReviewer:
 
             # 调用AI API
             response = await self.api_client.call_with_retry(
-                model=settings.openai_model,
+                model="",
                 messages=[
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": user_message},
                 ],
-                temperature=settings.openai_temperature,
+                temperature=settings.ai_temperature,
                 role="main",
             )
 

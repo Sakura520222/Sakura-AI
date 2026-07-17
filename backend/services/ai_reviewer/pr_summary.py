@@ -23,9 +23,8 @@ class PRSummaryService:
     START_MARKER = "<!-- sakura-ai-summary-start -->"
     END_MARKER = "<!-- sakura-ai-summary-end -->"
 
-    def __init__(self, api_client: AIApiClient, model: str):
+    def __init__(self, api_client: AIApiClient, model: str = ""):
         self.api_client = api_client
-        self.model = model
 
     async def generate_summary(
         self, analysis: PRAnalysis, pr_info: Dict[str, Any], pr: Any = None
@@ -48,7 +47,7 @@ class PRSummaryService:
         )
 
         response = await self.api_client.call_with_retry(
-            model=self.model,
+            model="",
             messages=[
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_message},

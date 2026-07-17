@@ -139,7 +139,6 @@ async def get_missing_fields() -> list[str]:
         "github_app_id",
         "github_private_key",
         "github_webhook_secret",
-        "openai_api_key",
         "telegram_bot_token",
     ]
 
@@ -208,7 +207,7 @@ async def get_current_step() -> int:
                             "github_app_id",
                             "github_private_key",
                             "github_webhook_secret",
-                            "openai_api_key",
+                            "telegram_bot_token",
                         ]
                     )
                 )
@@ -227,10 +226,7 @@ async def get_current_step() -> int:
     if not all(f.strip() for f in github_fields):
         return 1
 
-    # Step 2: AI & 通知
-    if not db_values.get("openai_api_key", "").strip():
-        return 2
-
+    # Step 2: AI & 通知。Setup 不强制 AI readiness；账号和角色绑定由配置页管理。
     # Step 3: 管理员
     return 3
 
