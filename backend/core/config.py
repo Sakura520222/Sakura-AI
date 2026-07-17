@@ -136,6 +136,15 @@ class Settings(BaseSettings):
         900.0,
         description="AI API 重试总超时时间（秒）",
     )
+    # 跨协议故障转移开关 / Cross-protocol fallback toggles
+    ai_fallback_enabled: bool = Field(
+        True,
+        description="是否启用跨协议/跨厂商故障转移（重试耗尽后切换备用模型）",
+    )
+    ai_fallback_max_candidates: int = Field(
+        3,
+        description="单次调用最多尝试的候选模型数量（含首选）",
+    )
 
     # 审查策略配置
     max_file_count: int = 100
@@ -963,57 +972,8 @@ def reload_label_config() -> LabelConfig:
 # 可通过 WebUI 动态管理的配置键及其分组信息
 DYNAMIC_CONFIG_GROUPS: OrderedDict[str, dict] = OrderedDict(
     [
-        (
-            "ai_model",
-            {
-                "label": "AI 模型配置",
-                "icon": "cpu",
-                "keys": [
-                    "ai_provider",
-                    "openai_api_base",
-                    "openai_api_key",
-                    "openai_model",
-                ],
-            },
-        ),
-        (
-            "ai_api",
-            {
-                "label": "AI API 调用配置",
-                "icon": "clock",
-                "descriptions": {
-                    "ai_api_timeout_seconds": "传递给 OpenAI 兼容 SDK 的单次请求超时时间，不等同于审查任务整体超时",
-                    "ai_api_max_retries": "单次 AI 调用失败或空响应时允许的最大尝试次数",
-                    "ai_api_initial_retry_delay_seconds": "首次重试前的基础延迟，后续按指数退避增加",
-                    "ai_api_total_timeout_seconds": "一次 AI 调用重试循环允许的最长总耗时",
-                },
-                "keys": [
-                    "ai_api_timeout_seconds",
-                    "ai_api_max_retries",
-                    "ai_api_initial_retry_delay_seconds",
-                    "ai_api_total_timeout_seconds",
-                ],
-            },
-        ),
-        (
-            "summary_model",
-            {
-                "label": "辅助模型配置",
-                "icon": "zap",
-                "descriptions": {
-                    "summary_provider": "辅助模型厂商，留空则跟随主模型",
-                    "summary_model": "用于摘要生成、上下文压缩等轻量任务，留空则使用主模型",
-                    "summary_api_base": "辅助模型的 API 地址，留空则使用主模型地址",
-                    "summary_api_key": "辅助模型的 API Key，留空则使用主模型 Key",
-                },
-                "keys": [
-                    "summary_provider",
-                    "summary_model",
-                    "summary_api_base",
-                    "summary_api_key",
-                ],
-            },
-        ),
+        # AI 模型、辅助模型、AI API 调用策略已迁移到「AI 配置」页（/config/ai），
+        # 不再在全局配置页暴露，避免与多账号持久化配置产生双写与歧义。
         (
             "rag",
             {
@@ -1063,20 +1023,6 @@ DYNAMIC_CONFIG_GROUPS: OrderedDict[str, dict] = OrderedDict(
                     "auto_index_pr_changes",
                     "code_chunk_size",
                     "code_chunk_overlap",
-                ],
-            },
-        ),
-        (
-            "context",
-            {
-                "label": "上下文管理配置",
-                "icon": "compress",
-                "keys": [
-                    "model_context_window",
-                    "context_safety_threshold",
-                    "enable_context_compression",
-                    "context_compression_threshold",
-                    "context_compression_keep_rounds",
                 ],
             },
         ),
@@ -1292,7 +1238,6 @@ DYNAMIC_CONFIG_GROUPS: OrderedDict[str, dict] = OrderedDict(
                     "agent_team_review_model": "专业审查使用的模型；选择独立厂商时可填写，默认复用全栈专家模型",
                     "agent_team_enable_context_compression": "启用 Agent 专家团队上下文压缩；压缩使用辅助 AI，触发阈值按目标 Agent 模型上下文窗口计算",
                     "agent_team_context_compression_threshold": "Agent 专家团队压缩触发阈值（0-1）",
-                    "agent_team_context_compression_keep_rounds": "Agent 专家团队压缩时保留的最近工具调用轮数",
                     "agent_team_context_summary_max_tokens": "Agent 专家团队历史摘要最大输出 Token 数",
                     "agent_team_max_tool_rounds": "全栈专家单次执行允许的工具调用最大轮次",
                     "agent_team_reviewer_max_tool_rounds": "专业审查单次执行允许的工具调用最大轮次",
@@ -1318,7 +1263,6 @@ DYNAMIC_CONFIG_GROUPS: OrderedDict[str, dict] = OrderedDict(
                     "agent_team_max_tokens",
                     "agent_team_enable_context_compression",
                     "agent_team_context_compression_threshold",
-                    "agent_team_context_compression_keep_rounds",
                     "agent_team_context_summary_max_tokens",
                     "agent_team_timeout_seconds",
                     "agent_team_max_concurrent",
@@ -1539,8 +1483,6 @@ DYNAMIC_CONFIG_SENSITIVE_KEYS = frozenset(
 
 # 选择类字段的选项
 DYNAMIC_CONFIG_SELECT_OPTIONS: dict[str, list[dict]] = {
-    "ai_provider": get_provider_select_options(),
-    "summary_provider": get_provider_select_options(include_summary_follow=True),
     "embedding_provider": [
         {"value": "siliconflow", "label": "SiliconFlow"},
         {"value": "openai", "label": "OpenAI"},
@@ -1594,9 +1536,7 @@ DYNAMIC_CONFIG_RANGES: dict[str, tuple[float, float]] = {
     "code_chunk_size": (100, 5000),
     "code_chunk_overlap": (0, 1000),
     "model_context_window": (0, 2000),
-    "context_safety_threshold": (0.1, 1.0),
     "context_compression_threshold": (0.1, 1.0),
-    "context_compression_keep_rounds": (1, 20),
     "max_file_count": (1, 100000),
     "max_line_count": (100, 100000000),
     "incremental_history_max_reviews": (1, 20),
@@ -1621,7 +1561,6 @@ DYNAMIC_CONFIG_RANGES: dict[str, tuple[float, float]] = {
     "sakura_max_sakura_chars": (1000, 20000),
     "agent_team_max_tokens": (1024, 32768),
     "agent_team_context_compression_threshold": (0.1, 1.0),
-    "agent_team_context_compression_keep_rounds": (1, 20),
     "agent_team_context_summary_max_tokens": (500, 8192),
     "agent_team_max_tool_rounds": (1, 1000),
     "agent_team_reviewer_max_tool_rounds": (5, 500),
@@ -1655,18 +1594,6 @@ DYNAMIC_CONFIG_RANGES: dict[str, tuple[float, float]] = {
 
 # 字段中文标签
 DYNAMIC_CONFIG_LABELS: dict[str, str] = {
-    "ai_provider": "AI 厂商",
-    "openai_api_base": "API Base URL",
-    "openai_api_key": "API Key",
-    "openai_model": "模型名称",
-    "ai_api_timeout_seconds": "AI API 请求超时（秒）",
-    "ai_api_max_retries": "AI API 最大重试次数",
-    "ai_api_initial_retry_delay_seconds": "AI API 初始重试延迟（秒）",
-    "ai_api_total_timeout_seconds": "AI API 重试总超时（秒）",
-    "summary_provider": "辅助模型厂商",
-    "summary_model": "辅助模型名称",
-    "summary_api_base": "辅助模型 API 地址",
-    "summary_api_key": "辅助模型 API Key",
     "enable_rag": "启用 RAG",
     "chroma_persist_dir": "ChromaDB 存储路径",
     "embedding_model": "嵌入模型",
@@ -1684,10 +1611,8 @@ DYNAMIC_CONFIG_LABELS: dict[str, str] = {
     "code_chunk_size": "代码块大小",
     "code_chunk_overlap": "代码块重叠",
     "model_context_window": "上下文窗口大小",
-    "context_safety_threshold": "上下文安全阈值",
     "enable_context_compression": "启用上下文压缩",
     "context_compression_threshold": "压缩触发阈值",
-    "context_compression_keep_rounds": "保留对话轮数",
     "max_file_count": "最大文件数",
     "max_line_count": "最大行数",
     "enable_incremental_history_context": "启用增量审查历史上下文",
@@ -1824,7 +1749,6 @@ DYNAMIC_CONFIG_LABELS: dict[str, str] = {
     "agent_team_max_tokens": "最大 Tokens",
     "agent_team_enable_context_compression": "启用上下文压缩",
     "agent_team_context_compression_threshold": "上下文压缩阈值",
-    "agent_team_context_compression_keep_rounds": "压缩保留轮数",
     "agent_team_context_summary_max_tokens": "上下文摘要最大 Tokens",
     "agent_team_timeout_seconds": "任务超时（秒）",
     "agent_team_max_concurrent": "最大并发任务数",
@@ -2176,9 +2100,26 @@ def get_all_dynamic_config_keys() -> list[str]:
     return keys
 
 
+# AI 调用策略与上下文管理配置键：已从全局动态配置页迁移到「AI 配置」页（/config/ai），
+# 但仍需启动时从 DB 加载到 Settings 单例，故在此独立声明。
+AI_STRATEGY_CONFIG_KEYS: tuple[str, ...] = (
+    "ai_api_timeout_seconds",
+    "ai_api_max_retries",
+    "ai_api_initial_retry_delay_seconds",
+    "ai_api_total_timeout_seconds",
+    "ai_fallback_enabled",
+    "ai_fallback_max_candidates",
+    "enable_context_compression",
+    "context_compression_threshold",
+)
+
+
 def get_all_db_config_keys() -> list[str]:
-    """获取所有应从 DB 加载的配置键（动态配置 + 核心配置 + 基础配置）"""
+    """获取所有应从 DB 加载的配置键（动态配置 + AI 策略 + 核心配置 + 基础配置）"""
     keys = get_all_dynamic_config_keys()
+    for key in AI_STRATEGY_CONFIG_KEYS:
+        if key not in keys:
+            keys.append(key)
     for key_group in (CORE_CONFIG_KEYS, BASIC_CONFIG_KEYS):
         for key in key_group:
             if key not in keys:
