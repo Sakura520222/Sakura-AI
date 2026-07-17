@@ -138,7 +138,11 @@
 - **动态配置管理**：通过 WebUI 修改配置即时生效，无需重启服务
 - **AI API 超时治理**：通过 `ai_api_timeout_seconds` 和 `ai_api_total_timeout_seconds` 分别控制单次请求超时与重试循环总耗时
 - **用户级配置覆盖**：普通用户可在个人设置或 API 中覆盖允许的偏好配置（当前支持 AI 输出语言），按 UserConfig → AppConfig → Settings 默认值逐级回退
-- **AI Provider 注册表**：内置 OpenAI、DeepSeek、Qwen、Z.ai、Doubao、SiliconFlow、Gemini、Anthropic 兼容与自定义 OpenAI 兼容厂商，支持自动获取模型列表和上下文窗口信息
+- **AI Provider 注册表**：内置 OpenAI（GPT-5.6 系列）、Anthropic Claude（Fable 5 / Sonnet 5 / Opus 4.8 / Haiku 4.5，原生 Messages API）、Google Gemini 3.5、xAI Grok 4.5、Mistral、DeepSeek V4、Qwen 3.7、GLM 5.2、MiniMax M3、Kimi K2.7、Doubao、Hunyuan、OpenRouter、SiliconFlow、Together、Groq、Fireworks、Perplexity、Ollama、vLLM、LM Studio、Coding Plan / Token Plan 与自定义 OpenAI/Anthropic 兼容厂商，支持按协议族自动获取模型列表与上下文窗口
+- **AI 账号持久化配置页**：超级管理员可在 WebUI 的「AI 配置」中保存多个厂商账号（provider、protocol、region、base URL、API Key、默认模型），主模型/辅助模型/Agent Team 可随时切换账号并配置回退链；每个模型可独立覆盖上下文窗口、最大输出、图片多模态、思考模式/等级和采样参数能力；内置远程厂商仅接受官方 HTTPS 地址，`custom` / `custom-anthropic` 允许连接 HTTPS 公网服务，以及 HTTP/HTTPS 本机或私有网络兼容服务；Coding Plan 会明确标注交互式编程专用限制
+- **多协议适配层**：统一运行时覆盖 OpenAI Chat Completions、Anthropic Messages、Gemini 原生协议与兼容端点，归一化请求/响应、鉴权头、工具调用映射与错误语义；新增厂商只需声明协议族与端点
+- **跨协议故障转移**：单次调用先按退避策略重试，重试耗尽后跨协议/跨厂商切换备用模型；上下文超限时先经当前模型 AI 摘要恢复，仍超限才回退到容量足够的候选模型
+- **按模型上下文窗口**：上下文窗口作为模型级元数据（自动发现优先，可手动覆盖），替代旧的全局单值；推理参数按模型能力动态过滤
 - **GitHub App 安装管理**：自动处理 GitHub App 安装 / 卸载事件，同步仓库授权状态
 - **安全中心与多因素认证**：支持 TOTP、恢复码、Passkeys/WebAuthn、全局 / 单用户强制 MFA、管理员重置 MFA 与安全事件审计、MFA 失败锁定（动态阈值与锁定时长）、API Passkey 二次验证；移动端 OAuth 支持自定义回调 URI 白名单，WebAuthn 支持多个允许 Origin 与 Android App Links
 - **SSE 实时推送**：基于 Redis Pub/Sub 的多进程实时通信，WebUI 数据即时更新
@@ -344,8 +348,8 @@ WebUI：`https://your-domain.com/`
 
 > **动态配置**：通过 WebUI 的配置管理页面修改的配置项即时生效，无需重启服务。支持 AI 模型、辅助模型、RAG、Web 搜索、代码索引、仓库互助等多个配置分组。
 
-- **AI 模型**：WebUI 配置管理中选择内置 AI Provider（OpenAI、DeepSeek、Qwen、Z.ai、Doubao、SiliconFlow、Gemini、Anthropic 兼容、自定义 OpenAI 兼容），设置 API 地址、API Key 和模型名称，并可自动拉取模型列表与上下文窗口信息
-- **辅助模型**：WebUI 配置管理中设置 `summary_model`、`summary_api_base`、`summary_api_key`，用于摘要生成、标签推荐等轻量任务，留空则自动回退到主模型
+- **AI 模型**：WebUI「AI 配置」中可保存多个 OpenAI、Anthropic、Gemini、DeepSeek、Qwen、GLM、MiniMax、Kimi、Grok、Mistral、聚合网关、本地模型或自定义兼容账号，并为主模型、辅助模型和 Agent Team 分别配置账号与故障转移链；获取模型后会持久化列表并支持标签快速选择。每个模型的高级配置可单独设置上下文窗口、最大输出、图片多模态、思考模式/等级与 temperature、top_p、top_k 能力/默认值；内置远程账号仅允许官方 HTTPS endpoint，`custom` / `custom-anthropic` 可配置 HTTPS 公网 endpoint，以及 HTTP/HTTPS 本机或私网兼容 endpoint；旧「通用配置」中的单模型字段仍作为迁移回退
+- **辅助模型**：WebUI「AI 配置」中将 summary 角色设置为跟随主模型或独立账号，用于摘要生成、标签推荐、上下文压缩等轻量任务
 - **PR 自动审查**：WebUI 配置管理中 `enable_auto_review` 控制 PR webhook 是否自动触发审查；关闭后仍可通过命令或手动入口触发
 - **Check Runs 可视化**：WebUI 配置管理中 `enable_check_runs` 控制是否将审查进度同步到 GitHub Checks 面板（默认开启，需 GitHub App 授予 `checks:write` 权限）；`enable_analysis_check` / `enable_findings_check` 分别控制副 Analysis / Findings Check 是否创建，`analysis_min_interval_sec` 控制 Analysis 快照写入最小间隔（避免高频更新烧 API 配额）；三个 Check 的 external_id 形如 `sakura-ai:v1:<review_job_id>:<check_kind>`，跨进程恢复优先读 DB 持久化的 check_run_id，缺失时按 head_sha + name 列举兜底
 - **外部 CI 失败注入**：`config/strategies.yaml` 的 `context_enhancement.ci_failure_injection` 控制是否注入外部 CI 失败、记录保留天数、单次审查最多失败记录数和每条失败最多 annotations 数；该功能依赖 GitHub App 订阅 `check_run` / `workflow_job` webhook，并授予 Checks 与 Actions 读取权限
@@ -358,7 +362,7 @@ WebUI：`https://your-domain.com/`
 - **审查批准**：`config/strategies.yaml` 中 `review_policy` 配置阈值和仓库级覆盖
 - **PR 变更总结**：WebUI 配置管理中 `enable_pr_summary`
 - **PR 依赖图**：WebUI 配置管理中 `enable_pr_dependency_graph` / `pr_dependency_graph_mode` / `pr_dependency_graph_max_nodes` / `pr_dependency_graph_max_files`；`ai` 模式使用模型分析依赖，`static` 模式使用静态 import 解析降低成本
-- **大型 PR 上下文治理**：WebUI 配置管理中 `model_context_window` / `context_safety_threshold` / `enable_context_compression` / `context_compression_threshold` / `context_compression_keep_rounds`；当初始 diff 过大时会自动使用 compact diff 工具模式
+- **大型 PR 上下文治理**：WebUI「AI 配置」中按模型设置上下文窗口，并通过 `enable_context_compression` / `context_compression_threshold` 配置自动压缩；当初始 diff 过大时会自动使用 compact diff 工具模式，历史上下文由当前候选模型 AI 摘要压缩，不再使用全局上下文窗口或“保留对话轮数”
 - **Token 成本追踪**：WebUI 配置管理中 `review_price_per_1k_prompt` / `review_price_per_1k_completion`，追踪审查 Token 消耗与成本
 - **支付网关**：WebUI 配置管理中 `payment_enabled` 启用付费配额系统，按需配置 `stripe_*`、`paddle_*`、`alipay_*`、`nowpayments_*`、`tron_*` 网关参数；支持外部支付订单、回调验签、退款申请和超级管理员退款审核
 - **RAG 知识库**：WebUI 配置管理中配置嵌入模型（支持 BAAI/bge-m3 等）、重排序模型、ChromaDB 等
@@ -373,7 +377,7 @@ WebUI：`https://your-domain.com/`
 - **跨文件搜索**：`config/strategies.yaml` 中 `context_enhancement.search_in_files`，配置 GitHub Search API 优先策略、上下文行数、最大结果数等
 - **Git 信息工具**：`config/strategies.yaml` 中 `context_enhancement.git_tools`，配置默认分支和提交返回数量
 - **项目记忆系统**：WebUI 配置管理中 `sakura_memory_enabled` 启用记忆系统，`sakura_reflection_enabled` 启用审查后反思，`sakura_consolidation_interval` 合并触发的反思轮数（默认 5），`sakura_auto_init` 自动初始化 `.sakura/` 目录，`sakura_auto_create_subdirs` 自动创建 rules/docs/plans 子目录，`sakura_knowledge_extraction_enabled` 启用自动知识提取（通过三次串行 LLM 调用分别提取 rules/docs/plans），`sakura_extraction_provider` 配置提取 AI 凭据来源（主AI / 辅助AI / 独立配置）。WebUI 提供「Sakura 记忆管理」页面，支持查看 / 编辑 / 删除记忆文件、手动触发合并和知识提取。`config/strategies.yaml` 的 `context_enhancement.sakura_memory.reflection` 可配置反思 prompt 包含的最大评论条数（`max_comments`）、变更文件条数（`max_changed_files`）和新增提交条数（`max_new_commits`），默认 30/30/20；评论正文与 PR 描述完整传入、不截断。详见 [项目记忆系统使用指南](docs/SAKURA_MEMORY_GUIDE.md)
-- **模型上下文**：WebUI 配置管理中配置上下文窗口、自动压缩等，详见 [模型上下文管理](docs/MODEL_CONTEXT_FEATURE.md)
+- **模型上下文**：在 WebUI「AI 配置」的每个模型高级配置中设置上下文窗口、最大输出与能力；自动压缩策略同页配置，详见 [模型上下文管理](docs/MODEL_CONTEXT_FEATURE.md)
 - **Agent 专家团队**：WebUI Agent Team 页面配置 `agent_team_enabled`、`agent_team_workspace_root`、`agent_team_repo_allowlist`、`agent_team_model_provider`、`agent_team_*` 模型与护栏参数；支持上下文压缩（`agent_team_enable_context_compression` 等）、全栈 / 审查工具轮数（`agent_team_max_tool_rounds` / `agent_team_reviewer_max_tool_rounds`）、自动安装依赖（`agent_team_auto_install_deps`）、验证命令黑名单、Draft PR 开关和 PR 审查闭环（`agent_team_pr_closed_loop_enabled`、`agent_team_max_iterations_per_task`、`agent_team_pr_review_pass_score`）；`agent_team_model_provider=main` 时复用主 AI 配置，也可选择独立 Agent AI 配置；普通用户入口会校验仓库归属和 `agent_team_repo_allowlist` 并消耗 Agent 配额，Issue 评论 `/agent` 可从已分析 Issue 或扫描报告 Issue 创建任务；支持 Web 搜索工具和 Token 消耗追踪
 - **Agent Skills**：WebUI Agent Skills 页面安装和启停 Skills；通过 `agent_team_skills_enabled` 控制 Agent 是否可加载技能，通过 `agent_team_skills_root` 配置本地存储根目录
 - **仓库互助**：WebUI 配置管理中 `star_aid_enabled` 为全局入口开关（关闭后页面只读），`star_aid_auto_star_enabled` 控制是否执行自动点星（关闭后仅保留手动点星与展示），`star_aid_scheduler_enabled` 控制后台调度器，`star_aid_min_interval_minutes` / `star_aid_max_interval_minutes` 设置单成员两次自动点星的随机间隔区间，`star_aid_batch_size` 每轮调度最大处理成员数，`star_aid_user_daily_limit` / `star_aid_repo_daily_limit` 分别为每用户 / 每仓库每日上限，`star_aid_summary_enabled` / `star_aid_summary_language` / `star_aid_summary_readme_budget` / `star_aid_summary_max_tokens` 控制展示仓库 AI 摘要；`star_aid_github_app_client_id` / `star_aid_github_app_client_secret` / `star_aid_github_app_callback_url` 配置仓库互助 GitHub App user-to-server 凭据（可复用审查 App），`star_aid_token_encryption_key` 设置 token 加密密钥

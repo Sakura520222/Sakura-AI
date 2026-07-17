@@ -1519,6 +1519,7 @@ class SakuraMemoryService:
             model=model or self._default_model,
             temperature=0.7,
             max_tokens=4000,
+            role="main",
         )
         if not response.choices:
             logger.warning("LLM 返回空响应 / LLM returned empty choices")

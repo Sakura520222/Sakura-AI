@@ -145,7 +145,7 @@ def get_tool_definitions(
         provider: AI 厂商 ID，用于应用厂商兼容转换
     """
     tools = FULLSTACK_TOOL_INSTANCES if role == "fullstack" else REVIEWER_TOOL_INSTANCES
-    if (provider or "").lower() == "zai":
+    if (provider or "").lower() in ("glm", "zai"):
         return [_glm_compatible_schema(t.get_schema()) for t in tools]
     return [_sanitize_schema(t.get_schema()) for t in tools]
 

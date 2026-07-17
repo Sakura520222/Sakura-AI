@@ -336,6 +336,7 @@ class FullStackExpertAgent:
                 timeout=config.timeout_seconds,
                 tools=tool_schemas,
                 tool_choice="auto",
+                role="agent_team",
             )
             token_tracker.accumulate(response)
 
