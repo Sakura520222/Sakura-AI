@@ -86,7 +86,12 @@ class GeminiNativeAdapter(ProtocolAdapter):
     ) -> list[ModelDiscoveryResult]:
         url = self._with_key(self.resolve_models_url(endpoint), credential)
         resp = await self._get(client, url, endpoint)
-        payload = resp.json()
+        payload = self.parse_json_response(
+            resp,
+            endpoint,
+            operation="Gemini 模型列表请求",
+            allow_list=True,
+        )
         return self._parse_model_list(payload)
 
     async def fetch_model_metadata(
@@ -101,10 +106,14 @@ class GeminiNativeAdapter(ProtocolAdapter):
         )
         try:
             resp = await self._get(client, url, endpoint)
+            payload = self.parse_json_response(
+                resp,
+                endpoint,
+                operation="Gemini 模型详情请求",
+            )
         except AIError as exc:  # type: ignore[name-defined]
             logger.debug("Gemini 模型详情获取失败: model={} err={}", model_id, exc)
             return None
-        payload = resp.json()
         return self._parse_model_detail(payload, model_id)
 
     @staticmethod
@@ -417,7 +426,12 @@ class GeminiNativeAdapter(ProtocolAdapter):
                 cause=exc,
             )
         self._raise_for_status(resp, endpoint)
-        payload = resp.json()
+        payload = self.parse_json_response(
+            resp,
+            endpoint,
+            model=request.model,
+            operation="Gemini chat 请求",
+        )
         response = self.parse_response(payload, raw=resp, request_model=request.model)
         if not response.content and not response.tool_calls:
             # Gemini 在安全拒绝时可能返回空 candidates
@@ -457,14 +471,12 @@ class GeminiNativeAdapter(ProtocolAdapter):
             async with client.stream(
                 "POST", url, json=body, headers=headers, timeout=timeout
             ) as resp:
-                if resp.status_code >= 400:
-                    text = await resp.aread()
-                    self._raise_for_status(
-                        httpx.Response(
-                            resp.status_code, content=text, request=resp.request
-                        ),
-                        endpoint,
-                    )
+                self.ensure_sse_response(
+                    resp,
+                    endpoint,
+                    model=request.model,
+                    operation="Gemini stream 请求",
+                )
                 async for line in resp.aiter_lines():
                     if not line.startswith("data:"):
                         continue

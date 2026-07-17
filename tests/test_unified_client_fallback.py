@@ -149,13 +149,74 @@ async def test_recoverable_failure_exhausts_then_falls_back(monkeypatch):
     await client.aclose()
 
 
+class _NonJsonThenSuccessAdapter(_StubAdapter):
+    """首个候选返回非 JSON 协议错误，验证统一客户端继续回退。"""
+
+    async def chat(self, client, endpoint, credential, request, *, timeout=None):
+        self.calls += 1
+        if self.calls <= len(self._fail_categories):
+            raise AIError(
+                self._fail_categories[self.calls - 1],
+                "响应不是有效 JSON",
+                status_code=200,
+                provider=endpoint.base_url,
+                model=request.model,
+            )
+        return await super().chat(client, endpoint, credential, request, timeout=timeout)
+
+
+@pytest.mark.asyncio
+async def test_non_json_response_exhausts_then_falls_back(monkeypatch):
+    """非 JSON 的 2xx 响应属于可恢复错误，重试后必须切换备用模型。"""
+    primary_stub = _NonJsonThenSuccessAdapter(
+        fail_categories=[AIErrorCategory.UNKNOWN],
+    )
+    fallback_stub = _StubAdapter(content="fallback")
+
+    from backend.core.ai_protocol import registry as reg
+
+    monkeypatch.setattr(
+        reg,
+        "get_adapter",
+        lambda family: (
+            primary_stub
+            if family == ProtocolFamily.OPENAI_COMPATIBLE
+            else fallback_stub
+        ),
+    )
+
+    client = UnifiedAIClient(
+        fallback_config=FallbackConfig(
+            enabled=True,
+            max_candidates=2,
+            max_retries=1,
+            total_timeout=10,
+            initial_retry_delay=0,
+        )
+    )
+    primary = _candidate(ProtocolFamily.OPENAI_COMPATIBLE, "primary")
+    fallback = _candidate(ProtocolFamily.ANTHROPIC_NATIVE, "fallback")
+
+    response = await client.call_with_retry(
+        [primary, fallback],
+        [UnifiedMessage(role="user", content="hi")],
+        model="primary",
+        role="main",
+    )
+
+    assert response.content == "fallback"
+    assert primary_stub.calls == 1
+    assert fallback_stub.calls == 1
+    await client.aclose()
+
+
 @pytest.mark.asyncio
 async def test_terminal_error_surfaces_without_fallback(monkeypatch):
     primary_stub = _StubAdapter(fail_categories=[AIErrorCategory.AUTH_INVALID])
 
     from backend.core.ai_protocol import registry as reg
 
-    monkeypatch.setattr(reg, "get_adapter", lambda f: primary_stub)
+    monkeypatch.setattr(reg, "get_adapter", lambda _: primary_stub)
 
     client = UnifiedAIClient(
         fallback_config=FallbackConfig(

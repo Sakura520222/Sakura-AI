@@ -86,7 +86,12 @@ class AnthropicNativeAdapter(ProtocolAdapter):
     ) -> list[ModelDiscoveryResult]:
         url = self.resolve_models_url(endpoint)
         resp = await self._get(client, url, credential, endpoint)
-        payload = resp.json()
+        payload = self.parse_json_response(
+            resp,
+            endpoint,
+            operation="Anthropic 模型列表请求",
+            allow_list=True,
+        )
         return self._parse_model_list(payload)
 
     async def fetch_model_metadata(
@@ -99,10 +104,14 @@ class AnthropicNativeAdapter(ProtocolAdapter):
         url = self.resolve_model_detail_url(endpoint, model_id)
         try:
             resp = await self._get(client, url, credential, endpoint)
+            payload = self.parse_json_response(
+                resp,
+                endpoint,
+                operation="Anthropic 模型详情请求",
+            )
         except AIError as exc:  # type: ignore[name-defined]
             logger.debug("Anthropic 模型详情获取失败: model={} err={}", model_id, exc)
             return None
-        payload = resp.json()
         return self._parse_model_detail(payload, model_id)
 
     @staticmethod
@@ -401,7 +410,12 @@ class AnthropicNativeAdapter(ProtocolAdapter):
                 cause=exc,
             )
         self._raise_for_status(resp, endpoint)
-        payload = resp.json()
+        payload = self.parse_json_response(
+            resp,
+            endpoint,
+            model=request.model,
+            operation="Anthropic chat 请求",
+        )
         response = self.parse_response(payload, raw=resp)
         if not response.content and not response.tool_calls:
             raise self.raise_error(
@@ -430,14 +444,12 @@ class AnthropicNativeAdapter(ProtocolAdapter):
             async with client.stream(
                 "POST", url, json=body, headers=headers, timeout=timeout
             ) as resp:
-                if resp.status_code >= 400:
-                    text = await resp.aread()
-                    self._raise_for_status(
-                        httpx.Response(
-                            resp.status_code, content=text, request=resp.request
-                        ),
-                        endpoint,
-                    )
+                self.ensure_sse_response(
+                    resp,
+                    endpoint,
+                    model=request.model,
+                    operation="Anthropic stream 请求",
+                )
                 event_type = ""
                 current_tool: dict[str, Any] = {}
                 async for line in resp.aiter_lines():

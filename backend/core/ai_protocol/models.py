@@ -13,6 +13,11 @@ from enum import Enum
 from typing import Any, Optional
 
 
+# 未发现或未配置单模型元数据时的默认上下文窗口（tokens）。
+# Default context window when a model has no discovered or user-provided metadata.
+DEFAULT_CONTEXT_WINDOW_TOKENS = 128_000
+
+
 # =============================================================================
 # 枚举 / Enums
 # =============================================================================
@@ -224,7 +229,9 @@ class BuiltinModel:
             model_id=self.model_id,
             provider_id=provider_id,
             display_name=self.display_name or self.model_id,
-            context_window_tokens=self.context_window_tokens or 8192,
+            context_window_tokens=(
+                self.context_window_tokens or DEFAULT_CONTEXT_WINDOW_TOKENS
+            ),
             max_output_tokens=self.max_output_tokens or 4096,
             capabilities=self.capabilities,
             reasoning_params=self.reasoning_params,

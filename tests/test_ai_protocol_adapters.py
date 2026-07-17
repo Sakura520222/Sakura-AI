@@ -1,9 +1,13 @@
 """AI 协议层测试 / Tests for the AI protocol layer."""
 
+import httpx
+import pytest
+
 from backend.core.ai_protocol.adapters.anthropic_native import AnthropicNativeAdapter
 from backend.core.ai_protocol.adapters.gemini_native import GeminiNativeAdapter
 from backend.core.ai_protocol.adapters.openai_compatible import OpenAICompatibleAdapter
 from backend.core.ai_protocol.adapters.openai_responses import OpenAIResponsesAdapter
+from backend.core.ai_protocol.errors import AIError
 from backend.core.ai_protocol.models import (
     AuthScheme,
     ProtocolFamily,
@@ -68,6 +72,393 @@ def test_openai_adapter_serializes_tool_calls_and_parses_response():
     assert response.choices[0].message.tool_calls[0].name == "read_file"
     assert response.usage.prompt_tokens == 10
     assert response.usage.completion_tokens == 5
+
+
+@pytest.mark.asyncio
+async def test_openai_adapter_converts_non_json_success_response_to_retryable_error():
+    """2xx HTML 响应必须转为可重试 AIError，而非泄漏 JSONDecodeError。"""
+    async def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            headers={"content-type": "text/html"},
+            text="<html><title>Gateway</title></html>",
+            request=request,
+        )
+
+    request = UnifiedRequest(
+        model="test-model",
+        messages=[UnifiedMessage(role="user", content="hello")],
+        max_tokens=1024,
+    )
+    client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+
+    try:
+        with pytest.raises(AIError) as exc_info:
+            await OpenAICompatibleAdapter().chat(
+                client,
+                _endpoint(ProtocolFamily.OPENAI_COMPATIBLE),
+                "test-key",
+                request,
+            )
+    finally:
+        await client.aclose()
+
+    error = exc_info.value
+    assert getattr(error, "category", None).value == "unknown"
+    assert getattr(error, "status_code", None) == 200
+    assert getattr(error, "model", None) == "test-model"
+    assert "content_type=text/html" in str(error)
+
+
+@pytest.mark.asyncio
+async def test_openai_adapter_rejects_redirect_response_as_retryable_error():
+    """禁止跟随重定向时，3xx 必须进入统一错误和故障转移链路。"""
+    async def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            302,
+            headers={"location": "https://gateway.example/login"},
+            request=request,
+        )
+
+    request = UnifiedRequest(
+        model="test-model",
+        messages=[UnifiedMessage(role="user", content="hello")],
+        max_tokens=1024,
+    )
+    client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+
+    try:
+        with pytest.raises(AIError) as exc_info:
+            await OpenAICompatibleAdapter().chat(
+                client,
+                _endpoint(ProtocolFamily.OPENAI_COMPATIBLE),
+                "test-key",
+                request,
+            )
+    finally:
+        await client.aclose()
+
+    error = exc_info.value
+    assert getattr(error, "category", None).value == "unknown"
+    assert getattr(error, "status_code", None) == 302
+    assert "location=https://gateway.example/login" in str(error)
+
+
+@pytest.mark.asyncio
+async def test_openai_adapter_redacts_redirect_query_from_error():
+    """重定向诊断不得泄漏可能包含凭据的查询参数。"""
+    secret = "test-secret-key"
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            302,
+            headers={"location": f"https://gateway.example/login?key={secret}"},
+            request=request,
+        )
+
+    request = UnifiedRequest(
+        model="test-model",
+        messages=[UnifiedMessage(role="user", content="hello")],
+        max_tokens=1024,
+    )
+    client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+
+    try:
+        with pytest.raises(AIError) as exc_info:
+            await OpenAICompatibleAdapter().chat(
+                client,
+                _endpoint(ProtocolFamily.OPENAI_COMPATIBLE),
+                "test-key",
+                request,
+            )
+    finally:
+        await client.aclose()
+
+    assert secret not in str(exc_info.value)
+    assert "location=https://gateway.example/login" in str(exc_info.value)
+
+
+@pytest.mark.asyncio
+async def test_openai_adapter_ignores_invalid_json_model_metadata_response():
+    """可选模型详情探测遇到无效 JSON 时应返回 None，而非中断模型发现。"""
+    async def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            headers={"content-type": "text/html"},
+            text="<html><title>Gateway</title></html>",
+            request=request,
+        )
+
+    client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+
+    try:
+        result = await OpenAICompatibleAdapter().fetch_model_metadata(
+            client,
+            _endpoint(ProtocolFamily.OPENAI_COMPATIBLE),
+            "test-key",
+            "test-model",
+        )
+    finally:
+        await client.aclose()
+
+    assert result is None
+
+
+@pytest.mark.asyncio
+async def test_openai_adapter_stream_preserves_http_error_category():
+    """流式 4xx 必须沿用协议错误分类，不得退化为 UNKNOWN。"""
+    async def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            401,
+            json={"error": {"message": "bad key"}},
+            request=request,
+        )
+
+    request = UnifiedRequest(
+        model="test-model",
+        messages=[UnifiedMessage(role="user", content="hello")],
+        max_tokens=1024,
+        stream=True,
+    )
+    client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+
+    try:
+        with pytest.raises(AIError) as exc_info:
+            async for _ in OpenAICompatibleAdapter().stream(
+                client,
+                _endpoint(ProtocolFamily.OPENAI_COMPATIBLE),
+                "test-key",
+                request,
+            ):
+                pass
+    finally:
+        await client.aclose()
+
+    assert exc_info.value.category.value == "auth_invalid"
+    assert exc_info.value.status_code == 401
+
+
+@pytest.mark.asyncio
+async def test_openai_adapter_stream_rejects_redirect_response():
+    """流式请求收到 3xx 时必须抛出 AIError，不能静默结束。"""
+    async def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            302,
+            headers={"location": "https://gateway.example/login"},
+            request=request,
+        )
+
+    request = UnifiedRequest(
+        model="test-model",
+        messages=[UnifiedMessage(role="user", content="hello")],
+        max_tokens=1024,
+        stream=True,
+    )
+    client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+
+    try:
+        with pytest.raises(AIError) as exc_info:
+            async for _ in OpenAICompatibleAdapter().stream(
+                client,
+                _endpoint(ProtocolFamily.OPENAI_COMPATIBLE),
+                "test-key",
+                request,
+            ):
+                pass
+    finally:
+        await client.aclose()
+
+    assert exc_info.value.category.value == "unknown"
+    assert exc_info.value.status_code == 302
+
+
+@pytest.mark.asyncio
+async def test_openai_adapter_stream_rejects_non_sse_response():
+    """流式请求收到 2xx HTML 时必须进入统一错误与故障转移链路。"""
+    async def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            headers={"content-type": "text/html"},
+            text="<html><title>Gateway</title></html>",
+            request=request,
+        )
+
+    request = UnifiedRequest(
+        model="test-model",
+        messages=[UnifiedMessage(role="user", content="hello")],
+        max_tokens=1024,
+        stream=True,
+    )
+    client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+
+    try:
+        with pytest.raises(AIError) as exc_info:
+            async for _ in OpenAICompatibleAdapter().stream(
+                client,
+                _endpoint(ProtocolFamily.OPENAI_COMPATIBLE),
+                "test-key",
+                request,
+            ):
+                pass
+    finally:
+        await client.aclose()
+
+    assert exc_info.value.category.value == "unknown"
+    assert exc_info.value.status_code == 200
+
+
+@pytest.mark.asyncio
+async def test_anthropic_adapter_accepts_top_level_model_array():
+    """Anthropic 兼容的模型列表也允许顶层 JSON 数组。"""
+    async def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json=[{"id": "claude-test"}],
+            request=request,
+        )
+
+    endpoint = ResolvedEndpoint(
+        base_url="https://example.test/v1/",
+        chat_path="messages",
+        auth_scheme=AuthScheme.X_API_KEY,
+    )
+    client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+
+    try:
+        models = await AnthropicNativeAdapter().list_models(
+            client,
+            endpoint,
+            "test-key",
+        )
+    finally:
+        await client.aclose()
+
+    assert [model.model_id for model in models] == ["claude-test"]
+
+
+@pytest.mark.asyncio
+async def test_openai_adapter_redacts_redirect_userinfo():
+    """重定向诊断不得泄漏 URL 中的用户名或密码。"""
+    username = "gateway-user"
+    password = "gateway-password"
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            302,
+            headers={
+                "location": (
+                    f"https://{username}:{password}@gateway.example:8443/login"
+                )
+            },
+            request=request,
+        )
+
+    request = UnifiedRequest(
+        model="test-model",
+        messages=[UnifiedMessage(role="user", content="hello")],
+        max_tokens=1024,
+    )
+    client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+
+    try:
+        with pytest.raises(AIError) as exc_info:
+            await OpenAICompatibleAdapter().chat(
+                client,
+                _endpoint(ProtocolFamily.OPENAI_COMPATIBLE),
+                "test-key",
+                request,
+            )
+    finally:
+        await client.aclose()
+
+    message = str(exc_info.value)
+    assert username not in message
+    assert password not in message
+    assert "location=https://gateway.example:8443/login" in message
+
+
+@pytest.mark.asyncio
+async def test_openai_adapter_redacts_malformed_redirect_location():
+    """非法 Location 也必须转换为 AIError，确保故障转移仍可执行。"""
+    async def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            302,
+            headers={"location": "http://["},
+            request=request,
+        )
+
+    request = UnifiedRequest(
+        model="test-model",
+        messages=[UnifiedMessage(role="user", content="hello")],
+        max_tokens=1024,
+    )
+    client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+
+    try:
+        with pytest.raises(AIError) as exc_info:
+            await OpenAICompatibleAdapter().chat(
+                client,
+                _endpoint(ProtocolFamily.OPENAI_COMPATIBLE),
+                "test-key",
+                request,
+            )
+    finally:
+        await client.aclose()
+
+    assert exc_info.value.category.value == "unknown"
+    assert exc_info.value.status_code == 302
+
+
+@pytest.mark.asyncio
+async def test_openai_adapter_rejects_array_chat_response_as_retryable_error():
+    """Chat Completions 的 JSON 根节点必须为对象，数组响应应进入故障转移链路。"""
+    async def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json=[], request=request)
+
+    request = UnifiedRequest(
+        model="test-model",
+        messages=[UnifiedMessage(role="user", content="hello")],
+        max_tokens=1024,
+    )
+    client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+
+    try:
+        with pytest.raises(AIError) as exc_info:
+            await OpenAICompatibleAdapter().chat(
+                client,
+                _endpoint(ProtocolFamily.OPENAI_COMPATIBLE),
+                "test-key",
+                request,
+            )
+    finally:
+        await client.aclose()
+
+    assert exc_info.value.category.value == "unknown"
+    assert exc_info.value.status_code == 200
+
+
+@pytest.mark.asyncio
+async def test_openai_adapter_accepts_top_level_model_array():
+    """OpenAI 兼容端点允许以 JSON 数组作为 /models 根节点。"""
+    async def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json=[{"id": "gpt-5.6-sol"}],
+            request=request,
+        )
+
+    client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+
+    try:
+        models = await OpenAICompatibleAdapter().list_models(
+            client,
+            _endpoint(ProtocolFamily.OPENAI_COMPATIBLE),
+            "test-key",
+        )
+    finally:
+        await client.aclose()
+
+    assert [model.model_id for model in models] == ["gpt-5.6-sol"]
 
 
 def test_openai_responses_adapter_serializes_typed_items_and_parses_output():
