@@ -11,6 +11,7 @@ from dataclasses import dataclass
 from typing import Optional
 
 from backend.core.ai_protocol.models import (
+    DEFAULT_CONTEXT_WINDOW_TOKENS,
     ModelCapabilitySet,
     ModelMetadata,
     MetadataSource,
@@ -31,7 +32,7 @@ def _build_metadata(provider_id: str, model_id: str) -> ModelMetadata:
     """构造元数据：优先内置目录，回退保守默认 / Build metadata.
 
     优先从目录的 BuiltinModel 取准确上下文窗口/最大输出/能力；目录未覆盖时
-    回退到保守 8K 默认，运行时可被用户覆盖或发现结果替换。
+    回退到默认 128K，运行时可被用户覆盖或发现结果替换。
     """
     decl = get_builtin_provider(provider_id)
     for builtin in decl.models:
@@ -41,7 +42,7 @@ def _build_metadata(provider_id: str, model_id: str) -> ModelMetadata:
         model_id=model_id,
         provider_id=provider_id,
         display_name=model_id,
-        context_window_tokens=8192,
+        context_window_tokens=DEFAULT_CONTEXT_WINDOW_TOKENS,
         max_output_tokens=4096,
         capabilities=_DEFAULT_CAPS,
         reasoning_params=_DEFAULT_PARAMS,

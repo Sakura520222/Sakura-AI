@@ -519,6 +519,24 @@ class AIApiClient:
             return None
         return await resolve_role_from_config(role)
 
+    async def resolve_role_model_context(
+        self, role: str
+    ) -> tuple[Optional[str], Optional[int]]:
+        """返回角色 primary 候选的模型 ID 与上下文窗口。"""
+        try:
+            chain = await self._resolve_role_chain(role)
+        except Exception as exc:  # noqa: BLE001
+            logger.debug(
+                "解析角色上下文配置失败，使用旧模型上下文: role={} err={}",
+                role,
+                exc,
+            )
+            return None, None
+        primary = getattr(chain, "primary", None) if chain is not None else None
+        if primary is None:
+            return None, None
+        return primary.model.model_id, primary.model.context_window_tokens
+
     async def _legacy_call(
         self,
         *,
