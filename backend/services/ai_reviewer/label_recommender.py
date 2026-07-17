@@ -81,6 +81,7 @@ class LabelRecommender:
                     {"role": "user", "content": user_message},
                 ],
                 temperature=LABEL_RECOMMENDATION_TEMPERATURE,
+                role="summary",
             )
 
             # 提取响应

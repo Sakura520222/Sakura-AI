@@ -157,6 +157,7 @@ class SakuraAgentBase:
                     tool_choice="auto",
                     temperature=0.3,
                     max_tokens=4096,
+                    role="main",
                 )
             except Exception as e:
                 logger.error(

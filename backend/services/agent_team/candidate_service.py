@@ -674,6 +674,7 @@ class AgentTeamCandidateService:
                 temperature=0.1,
                 max_tokens=min(config.max_tokens, 4096),
                 timeout=config.timeout_seconds,
+                role="agent_team",
             )
         except BadRequestError as exc:
             if _is_model_not_found_error(exc):

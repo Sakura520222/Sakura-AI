@@ -633,6 +633,29 @@ def _validate_label_name(name: str):
         raise ValueError(f"标签名称包含非法字符: {name}")
 
 
+# ========== GET: AI 账号配置页 ==========
+
+
+@router.get("/ai")
+async def ai_config_page(
+    request: Request,
+    user: dict = Depends(require_super_admin),
+    user_prefs: dict = Depends(get_user_preferences),
+):
+    """AI 提供商账号配置页（多厂商持久化、随时切换、故障转移链）."""
+    from backend.webui.routes.auth import APP_VERSION
+
+    return render_template(
+        "config_ai.html",
+        request,
+        user_prefs=user_prefs,
+        current_user=user,
+        csrf_token=get_csrf_serializer().dumps({}),
+        active_page="config_ai",
+        app_version=APP_VERSION,
+    )
+
+
 # ========== GET: 全局配置页 ==========
 
 

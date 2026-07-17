@@ -213,6 +213,7 @@ class HistoryContextService:
             model=self.model or settings.openai_model,
             temperature=HISTORY_SUMMARY_TEMPERATURE,
             max_tokens=settings.incremental_history_summary_max_tokens,
+            role="summary",
         )
 
         if not response or not response.choices:

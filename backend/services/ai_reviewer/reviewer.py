@@ -296,6 +296,7 @@ class AIReviewer:
                 model=settings.openai_model,
                 messages=repair_messages,
                 temperature=0,
+                role="main",
             )
             tracker.accumulate(response)
             repaired_text = response.choices[0].message.content or ""
@@ -368,6 +369,7 @@ class AIReviewer:
                 model=settings.openai_model,
                 messages=messages,
                 temperature=settings.openai_temperature,
+                role="main",
             )
             tracker.accumulate(response)
 
@@ -450,6 +452,7 @@ class AIReviewer:
                 tools=enabled_tools,
                 tool_choice="auto",
                 temperature=settings.openai_temperature,
+                role="main",
             )
             tracker.accumulate(response)
 
@@ -645,6 +648,7 @@ class AIReviewer:
             model=settings.openai_model,
             messages=messages,
             temperature=settings.openai_temperature,
+            role="main",
         )
         tracker.accumulate(last_response)
         review_text = last_response.choices[0].message.content or ""
@@ -911,6 +915,7 @@ class AIReviewer:
                     {"role": "user", "content": user_message},
                 ],
                 temperature=settings.openai_temperature,
+                role="main",
             )
 
             review_text = response.choices[0].message.content

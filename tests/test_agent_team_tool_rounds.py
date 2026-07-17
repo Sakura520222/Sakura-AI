@@ -33,9 +33,11 @@ def test_agent_team_context_compression_config_is_registered_for_webui():
     expected_keys = {
         "agent_team_enable_context_compression",
         "agent_team_context_compression_threshold",
-        "agent_team_context_compression_keep_rounds",
         "agent_team_context_summary_max_tokens",
     }
+    # keep_rounds 已废弃移除，确认它不再出现在 WebUI 注册集中
+    assert "agent_team_context_compression_keep_rounds" not in expected_keys
+    assert "agent_team_context_compression_keep_rounds" not in AGENT_TEAM_CONFIG_KEYS
 
     assert expected_keys.issubset(AGENT_TEAM_CONFIG_KEYS)
     assert (
@@ -46,9 +48,9 @@ def test_agent_team_context_compression_config_is_registered_for_webui():
         0.1,
         1.0,
     )
-    assert DYNAMIC_CONFIG_RANGES["agent_team_context_compression_keep_rounds"] == (
-        1,
-        20,
+    # keep_rounds 已废弃，RANGES 不再注册
+    assert (
+        "agent_team_context_compression_keep_rounds" not in DYNAMIC_CONFIG_RANGES
     )
     assert DYNAMIC_CONFIG_RANGES["agent_team_context_summary_max_tokens"] == (500, 8192)
     settings = get_settings()

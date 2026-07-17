@@ -127,6 +127,7 @@ class AgentTeamContextCompressor:
             temperature=0.2,
             timeout=config.timeout_seconds,
             max_tokens=max_tokens,
+            role="summary",
         )
         if token_tracker is not None:
             token_tracker.accumulate(response)

@@ -200,6 +200,7 @@ class PRDependencyGraphService:
             ],
             temperature=0.2,
             max_tokens=16000,
+            role="main",
         )
 
         if (

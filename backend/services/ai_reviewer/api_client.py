@@ -92,6 +92,14 @@ class AIApiClient:
         # 关闭 SDK 内置重试，避免与 _retry_loop 叠乘放大超时
         # （SDK 默认 max_retries=2，会使单次调用变成 3 次 HTTP 请求）
         self.client = AsyncOpenAI(base_url=base_url, api_key=api_key, max_retries=0)
+        # 统一多协议层入口（延迟创建）。当调用方传入 role= 参数时走统一层，
+        # 否则保持旧 OpenAI SDK 路径，确保向后兼容。
+        # Unified multi-protocol entry (lazy). When the caller passes role=,
+        # requests route through the unified layer; otherwise the legacy
+        # OpenAI SDK path is preserved for backward compatibility.
+        self.base_url = base_url
+        self.api_key = api_key
+        self._unified_client = None  # type: Optional[Any]
 
     @staticmethod
     def _estimate_prompt_tokens(messages: List[Dict[str, Any]]) -> int:
@@ -154,6 +162,12 @@ class AIApiClient:
         tool_choice: Optional[str] = None,
         timeout: Optional[float] = None,
         max_tokens: Optional[int] = None,
+        *,
+        role: Optional[str] = None,
+        thinking: Optional[dict] = None,
+        effort: Optional[str] = None,
+        top_p: Optional[float] = None,
+        top_k: Optional[int] = None,
         **kwargs,
     ) -> Any:
         """带重试机制的AI API调用
@@ -168,14 +182,38 @@ class AIApiClient:
             tool_choice: 工具选择策略
             timeout: 单次调用超时（默认使用 Settings 中的 AI API 请求超时）
             max_tokens: 最大输出token数（默认使用 DEFAULT_MAX_TOKENS）
+            role: 角色（main/summary/agent_team）；传入则走统一多协议层
+            thinking: 思考参数（仅能力匹配的模型生效）
+            effort: effort 参数（仅能力匹配的模型生效）
+            top_p / top_k: 采样参数（按能力过滤）
             **kwargs: 其他API参数
 
         Returns:
-            OpenAI API响应对象
+            OpenAI API响应对象（统一层返回 UnifiedResponse，向后兼容
+            response.choices[0].message.xxx 访问）
 
         Raises:
             Exception: 重试失败或超时
         """
+        # 统一多协议路径：当调用方显式指定 role 时，经由 UnifiedAIClient。
+        # Unified multi-protocol path: routes through UnifiedAIClient when the
+        # caller explicitly passes role=.
+        if role is not None:
+            return await self._call_via_unified(
+                messages=messages,
+                model=model,
+                temperature=temperature,
+                tools=tools,
+                tool_choice=tool_choice,
+                timeout=timeout,
+                max_tokens=max_tokens,
+                role=role,
+                thinking=thinking,
+                effort=effort,
+                top_p=top_p,
+                top_k=top_k,
+            )
+
         settings = get_settings()
 
         # 准备API参数
@@ -375,3 +413,137 @@ class AIApiClient:
         # 添加随机抖动（±20%）
         jitter = random.uniform(0.8, 1.2)
         return delay * jitter
+
+    # ------------------------------------------------------------------
+    # 统一多协议路径 / Unified multi-protocol path
+    # ------------------------------------------------------------------
+    async def _call_via_unified(
+        self,
+        *,
+        messages: List[Dict[str, Any]],
+        model: str,
+        temperature: float,
+        tools: Optional[List[Dict]],
+        tool_choice: Optional[str],
+        timeout: Optional[float],
+        max_tokens: Optional[int],
+        role: str,
+        thinking: Optional[dict],
+        effort: Optional[str],
+        top_p: Optional[float],
+        top_k: Optional[int],
+    ) -> Any:
+        """经由 UnifiedAIClient 的多协议调用入口 / Unified-layer entry.
+
+        解析角色候选链（由 ai_role_bindings + ai_provider_configs 驱动），
+        若解析失败（配置未迁移）则回退到旧 OpenAI SDK 路径，保证不中断。
+        Falls back to the legacy OpenAI SDK path when role resolution fails
+        (e.g. config not yet migrated), ensuring no downtime.
+        """
+        try:
+            chain = await self._resolve_role_chain(role)
+        except Exception as exc:  # noqa: BLE001
+            logger.debug(
+                "统一层角色解析失败，回退旧路径: role={} err={}", role, exc
+            )
+            return await self._legacy_call(
+                messages=messages,
+                model=model,
+                temperature=temperature,
+                tools=tools,
+                tool_choice=tool_choice,
+                timeout=timeout,
+                max_tokens=max_tokens,
+            )
+
+        if chain is None or not getattr(chain, "candidates", None):
+            # 配置未迁移或角色无绑定 → 回退旧路径 / not migrated → fallback
+            return await self._legacy_call(
+                messages=messages,
+                model=model,
+                temperature=temperature,
+                tools=tools,
+                tool_choice=tool_choice,
+                timeout=timeout,
+                max_tokens=max_tokens,
+            )
+
+        client = self._get_unified_client()
+        response = await client.call_with_retry(
+            chain,
+            messages,
+            model=model,
+            tools=tools,
+            tool_choice=tool_choice,
+            temperature=temperature,
+            top_p=top_p,
+            top_k=top_k,
+            max_tokens=max_tokens,
+            thinking=thinking,
+            effort=effort,
+            timeout=timeout,
+            role=role,
+        )
+        return response
+
+    def _get_unified_client(self) -> Any:
+        """延迟创建 UnifiedAIClient 单例 / Lazily create UnifiedAIClient."""
+        if self._unified_client is None:
+            from backend.services.ai_reviewer.unified_client import (
+                FallbackConfig,
+                UnifiedAIClient,
+            )
+            from backend.core.config import get_settings
+
+            settings = get_settings()
+            cfg = FallbackConfig(
+                enabled=getattr(settings, "ai_fallback_enabled", True),
+                max_candidates=int(getattr(settings, "ai_fallback_max_candidates", 3)),
+                max_retries=settings.ai_api_max_retries,
+                total_timeout=settings.ai_api_total_timeout_seconds,
+                initial_retry_delay=settings.ai_api_initial_retry_delay_seconds,
+            )
+            self._unified_client = UnifiedAIClient(fallback_config=cfg)
+        return self._unified_client
+
+    async def _resolve_role_chain(self, role: str) -> Any:
+        """从配置层解析角色候选链 / Resolve role chain from config layer.
+
+        配置层（ai_role_bindings）在 PR-4 落地；在此之前返回 None，触发回退。
+        The config layer (ai_role_bindings) lands in PR-4; returns None until
+        then, which triggers the legacy fallback path.
+        """
+        try:
+            from backend.core.ai_protocol.role_config import (
+                resolve_role_from_config,
+            )
+        except Exception:  # noqa: BLE001
+            return None
+        return await resolve_role_from_config(role)
+
+    async def _legacy_call(
+        self,
+        *,
+        messages: List[Dict[str, Any]],
+        model: str,
+        temperature: float,
+        tools: Optional[List[Dict]],
+        tool_choice: Optional[str],
+        timeout: Optional[float],
+        max_tokens: Optional[int],
+    ) -> Any:
+        """旧 OpenAI SDK 路径（保持原有行为）/ Legacy OpenAI SDK path."""
+        settings = get_settings()
+        api_kwargs: Dict[str, Any] = {
+            "model": model,
+            "messages": messages,
+            "temperature": temperature,
+        }
+        if tools:
+            api_kwargs["tools"] = tools
+        if tool_choice:
+            api_kwargs["tool_choice"] = tool_choice
+        api_timeout = timeout or settings.ai_api_timeout_seconds
+        api_kwargs.setdefault("timeout", api_timeout)
+        api_kwargs.setdefault("max_tokens", max_tokens or DEFAULT_MAX_TOKENS)
+        return await self._retry_loop(api_kwargs)

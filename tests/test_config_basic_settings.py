@@ -72,6 +72,8 @@ def test_mobile_oauth_allowed_redirect_uris_is_exposed_in_system_config_group():
 
 
 def test_ai_api_config_fields_support_live_update():
+    from backend.core.config import AI_STRATEGY_CONFIG_KEYS
+
     required_fields = {
         "ai_api_timeout_seconds",
         "ai_api_max_retries",
@@ -79,8 +81,9 @@ def test_ai_api_config_fields_support_live_update():
         "ai_api_total_timeout_seconds",
     }
     assert required_fields.issubset(Settings.model_fields)
-    assert "ai_api" in DYNAMIC_CONFIG_GROUPS
-    assert required_fields.issubset(set(DYNAMIC_CONFIG_GROUPS["ai_api"]["keys"]))
+    # AI API 调用策略已迁移到「AI 配置」页，不再出现在全局动态配置页
+    assert "ai_api" not in DYNAMIC_CONFIG_GROUPS
+    assert required_fields.issubset(set(AI_STRATEGY_CONFIG_KEYS))
     assert required_fields.issubset(set(get_all_db_config_keys()))
 
     settings = get_settings()

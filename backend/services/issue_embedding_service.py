@@ -614,6 +614,7 @@ class IssueEmbeddingService:
                 ],
                 model=model,
                 temperature=0.1,
+                role="summary",
             )
 
             # 解析 AI 响应

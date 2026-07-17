@@ -727,6 +727,7 @@ class ScanWorker:
                     tools=enabled_tools,
                     tool_choice="auto",
                     temperature=scan_temperature,
+                    role="main",
                 )
 
                 tracker.accumulate(response)
