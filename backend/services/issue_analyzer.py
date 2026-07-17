@@ -539,7 +539,15 @@ class IssueAnalyzer:
         iteration = 0
         tracker = TokenTracker()
         model_ctx_mgr = get_model_context_manager()
-        safe_context = model_ctx_mgr.calculate_safe_context(settings.openai_model, 0.8)
+        role_model, role_context_window = await self.api_client.resolve_role_model_context(
+            "main"
+        )
+        context_model = role_model or settings.openai_model
+        safe_context = (
+            int(role_context_window * 0.8)
+            if role_context_window
+            else model_ctx_mgr.calculate_safe_context(context_model, 0.8)
+        )
 
         while iteration < max_iterations:
             iteration += 1

@@ -5,7 +5,7 @@
 1. 调用方显式传入的 per-model 覆盖（来自 ai_model_configs 用户覆盖）
 2. 新协议层模型目录（builtin + discovered）
 3. 旧预定义模型映射表（兼容）
-4. 保守兜底（8K，并提示管理员补充）
+4. 保守兜底（128K，并提示管理员补充）
 
 Refactored to resolve context windows per-model instead of a single global
 MODEL_CONTEXT_WINDOW. Priority: explicit per-model override → protocol-layer
@@ -14,6 +14,7 @@ model catalog → legacy predefined table → conservative fallback.
 
 from loguru import logger
 
+from backend.core.ai_protocol.models import DEFAULT_CONTEXT_WINDOW_TOKENS
 from backend.core.config import get_settings
 
 
@@ -68,7 +69,7 @@ class ModelContextManager:
     }
 
     # 保守兜底（K tokens）/ Conservative fallback (K tokens)
-    CONSERVATIVE_FALLBACK_K = 8
+    CONSERVATIVE_FALLBACK_K = DEFAULT_CONTEXT_WINDOW_TOKENS // 1000
 
     def __init__(self):
         self.settings = get_settings()
@@ -90,7 +91,7 @@ class ModelContextManager:
         1. per-model 覆盖
         2. 旧全局 MODEL_CONTEXT_WINDOW（兼容，仅当未设置覆盖时）
         3. 预定义模型映射表（含新模型）
-        4. 保守兜底 8K
+        4. 保守兜底 128K
         """
         if model_name is None:
             model_name = self.settings.openai_model

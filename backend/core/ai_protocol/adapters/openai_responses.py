@@ -252,7 +252,12 @@ class OpenAIResponsesAdapter(OpenAICompatibleAdapter):
                 cause=exc,
             )
         self._raise_for_status(resp, endpoint)
-        payload = resp.json()
+        payload = self.parse_json_response(
+            resp,
+            endpoint,
+            model=request.model,
+            operation="OpenAI Responses 请求",
+        )
         response = self.parse_response(payload, raw=resp)
         if not response.content and not response.tool_calls:
             raise self.raise_error(
@@ -281,14 +286,12 @@ class OpenAIResponsesAdapter(OpenAICompatibleAdapter):
             async with client.stream(
                 "POST", url, json=body, headers=headers, timeout=timeout
             ) as resp:
-                if resp.status_code >= 400:
-                    text = await resp.aread()
-                    self._raise_for_status(
-                        httpx.Response(
-                            resp.status_code, content=text, request=resp.request
-                        ),
-                        endpoint,
-                    )
+                self.ensure_sse_response(
+                    resp,
+                    endpoint,
+                    model=request.model,
+                    operation="OpenAI Responses stream 请求",
+                )
                 async for line in resp.aiter_lines():
                     event = self._parse_responses_sse_line(line)
                     if event is not None:

@@ -6,7 +6,9 @@ import pytest
 
 from backend.api.v1.config import ModelOverrideRequest, put_model_override
 from backend.core.ai_protocol.account_store import ProviderAccount
-from backend.core.ai_protocol.models import ProtocolFamily
+from backend.core.ai_protocol.models import ProtocolFamily, BuiltinModel
+from backend.core.model_context import ModelContextManager
+from backend.core.ai_protocol.resolver import _build_metadata
 from backend.core.ai_protocol.role_config import (
     _build_candidate_from_account,
     _parse_metadata_overrides,
@@ -92,6 +94,51 @@ def test_account_candidate_uses_model_override_metadata():
     assert candidate.model.context_window_tokens == 512000
     assert candidate.model.capabilities.vision is True
     assert candidate.model.reasoning_params.thinking == {"type": "adaptive"}
+
+
+def test_unknown_model_uses_128k_context_fallback(monkeypatch):
+    """未发现模型元数据时，必须按全局保守上限 128K 规划上下文。"""
+    from backend.core import model_context as model_context_module
+
+    monkeypatch.setattr(
+        model_context_module,
+        "get_settings",
+        lambda: type("Settings", (), {"openai_model": "unknown-model", "model_context_window": 0})(),
+    )
+
+    manager = ModelContextManager()
+
+    assert manager.get_context_window("unknown-model") == 128
+
+
+def test_builtin_model_without_context_uses_128k_context_fallback():
+    """内置目录未声明窗口的模型也必须使用全局 128K 兜底。"""
+    metadata = BuiltinModel(model_id="unlisted-model").to_metadata("openai")
+
+    assert metadata.context_window_tokens == 128000
+
+
+def test_unknown_role_model_metadata_uses_128k_context_fallback():
+    """角色绑定的未知模型也必须沿用全局 128K 保守上下文策略。"""
+    metadata = _build_metadata("openai", "unlisted-model")
+
+    assert metadata.context_window_tokens == 128000
+
+
+def test_model_context_manager_uses_actual_resolved_model_override(monkeypatch):
+    """角色最终使用的模型 ID 应命中对应单模型覆盖，而非旧全局模型。"""
+    from backend.core import model_context as model_context_module
+
+    monkeypatch.setattr(
+        model_context_module,
+        "get_settings",
+        lambda: type("Settings", (), {"openai_model": "gpt-5.6-terra", "model_context_window": 0})(),
+    )
+
+    manager = ModelContextManager()
+    manager.set_overrides({"gpt-5.6-sol": 512})
+
+    assert manager.get_context_window("gpt-5.6-sol") == 512
 
 
 def test_model_override_parser_preserves_thinking_and_capabilities():
