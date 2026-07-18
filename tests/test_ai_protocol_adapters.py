@@ -69,7 +69,10 @@ def test_openai_adapter_serializes_tool_calls_and_parses_response():
         raw=None,
     )
     assert response.stop_reason == StopReason.TOOL_USE
-    assert response.choices[0].message.tool_calls[0].name == "read_file"
+    tool_call = response.choices[0].message.tool_calls[0]
+    assert tool_call.name == "read_file"
+    assert tool_call.function.name == "read_file"
+    assert tool_call.function.arguments == '{"path":"a.py"}'
     assert response.usage.prompt_tokens == 10
     assert response.usage.completion_tokens == 5
 

@@ -278,14 +278,22 @@ class UnifiedToolCall:
     """归一化工具调用 / Normalized tool call.
 
     id 在 OpenAI 为 tool_call_id，在 Anthropic 也为 id；统一为同一字段。
-    统一后，OpenAI 的 function.name/arguments 与 Anthropic 的 name/input 都
-    映射到 function.name / function.arguments（Anthropic 的 input 序列化为
-    JSON 字符串）。
+    ``name`` 与 ``arguments`` 是协议层规范字段；``function`` 属性保留 OpenAI
+    SDK 兼容视图，供仍依赖 ``tool_call.function.name`` 的业务工具执行器使用。
     """
 
     id: str
     name: str
     arguments: str  # JSON 字符串 / JSON string
+
+    @property
+    def function(self) -> Any:
+        """返回与 OpenAI SDK ``function`` 字段兼容的只读视图。"""
+        return type(
+            "_UnifiedToolFunction",
+            (),
+            {"name": self.name, "arguments": self.arguments},
+        )()
 
 
 @dataclass
