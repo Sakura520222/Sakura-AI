@@ -9,6 +9,7 @@ import json
 
 from loguru import logger
 
+from backend.core.ai_protocol.errors import ReviewCancelledError
 from backend.services.ai_reviewer.api_client import AIApiClient
 
 # ── 共享工具定义（OpenAI Function Calling 格式） ──────────────────────────
@@ -140,6 +141,7 @@ class SakuraAgentBase:
         model: str,
         max_iterations: int,
         initial_user_message: str | None = None,
+        cancel_event: asyncio.Event | None = None,
     ) -> None:
         messages: list = [{"role": "system", "content": system_prompt}]
         if initial_user_message:
@@ -147,6 +149,9 @@ class SakuraAgentBase:
         tools = self._get_tools()
 
         for i in range(max_iterations):
+            # 取消信号：外部取消已触发时立即中止 Agent 会话
+            if cancel_event is not None and cancel_event.is_set():
+                raise ReviewCancelledError()
             try:
                 response = await self._api_client.call_with_retry(
                     messages=messages,
@@ -156,6 +161,7 @@ class SakuraAgentBase:
                     temperature=0.3,
                     max_tokens=4096,
                     role="main",
+                    cancel_event=cancel_event,
                 )
             except Exception as e:
                 logger.error(

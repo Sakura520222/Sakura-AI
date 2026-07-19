@@ -133,6 +133,10 @@ class Settings(BaseSettings):
         3,
         description="单次调用最多尝试的候选模型数量（含首选）",
     )
+    ai_fallback_sticky_candidate: bool = Field(
+        True,
+        description="是否记忆并优先使用上次成功的候选模型（按角色），避免每轮工具循环都从首选重新故障转移",
+    )
 
     # 审查策略配置
     max_file_count: int = 100
@@ -2051,6 +2055,7 @@ AI_STRATEGY_CONFIG_KEYS: tuple[str, ...] = (
     "ai_api_total_timeout_seconds",
     "ai_fallback_enabled",
     "ai_fallback_max_candidates",
+    "ai_fallback_sticky_candidate",
     "enable_context_compression",
     "context_compression_threshold",
 )

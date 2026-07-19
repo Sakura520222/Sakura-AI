@@ -11,6 +11,7 @@ from loguru import logger
 from sqlalchemy import desc, select
 from sqlalchemy.exc import InterfaceError, OperationalError
 
+from backend.core.ai_protocol.errors import ReviewCancelledError
 from backend.core.config import (
     get_dynamic_config,
     get_settings,
@@ -202,7 +203,7 @@ class ReviewWorker:
                 return None
             model = context[0]
             return model or None
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             logger.debug("解析角色展示模型失败: role={} err={}", role, exc)
             return None
 
@@ -1168,11 +1169,18 @@ class ReviewWorker:
                                 else None
                             ),
                             initial_messages=initial_messages or None,
+                            cancel_event=self._cancel_events.get(task_key),
                         )
                     )
                 else:
                     logger.info("[{}] 使用标准模式进行审查", task_id)
-                    tasks.append(self.ai_reviewer.review_pr(context, analysis.strategy))
+                    tasks.append(
+                        self.ai_reviewer.review_pr(
+                            context,
+                            analysis.strategy,
+                            cancel_event=self._cancel_events.get(task_key),
+                        )
+                    )
 
                 # 任务2: AI标签推荐（并行）
                 if enable_label_recommendation:
@@ -1488,6 +1496,27 @@ class ReviewWorker:
                 )
                 return task_id
 
+            except ReviewCancelledError:
+                # AI 工具循环 / 退避等待响应了外部取消信号（如 PR 关闭）：
+                # 复用 _cancel_and_cleanup 走 CANCELLED 收尾（删占位评论 +
+                # 状态置 CANCELLED + Check Run 置 cancelled），避免被通用
+                # except Exception 当作 FAILED 处理。
+                logger.info(
+                    "[{}] AI 审查被取消（外部信号，阶段=reviewing）: {}",
+                    task_id,
+                    task_key,
+                )
+                await self._cancel_and_cleanup(
+                    task_id,
+                    task_key,
+                    review_obj,
+                    review_id,
+                    "AI 审查被外部取消",
+                    pr_info=pr_info,
+                    output_language=output_language,
+                    head_sha=head_sha,
+                )
+                return task_id
             except Exception as e:
                 logger.error(
                     "[{}] 处理审查任务时出错: {}",

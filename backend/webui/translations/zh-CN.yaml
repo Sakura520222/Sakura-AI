@@ -715,6 +715,7 @@ config:
   ai_api_total_timeout_seconds: "重试总超时（秒）"
   ai_fallback_enabled: "启用跨协议故障转移"
   ai_fallback_max_candidates: "最大候选模型数"
+  ai_fallback_sticky_candidate: "保持上次成功候选（按角色）"
   ai_context_management: "上下文管理"
   ai_context_management_desc: "上下文窗口由每个模型的高级配置决定；启用后，接近模型窗口时会使用当前候选模型总结历史上下文。"
   ai_context_compression_threshold: "压缩触发阈值（0-1）"

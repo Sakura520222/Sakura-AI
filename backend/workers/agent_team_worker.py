@@ -168,6 +168,7 @@ class AgentTeamWorker:
                 github_repo=sakura_info["github_repo"],
                 sakura_ref=sakura_info["sakura_ref"],
                 cancel_check=cancel_event.is_set,
+                cancel_event=cancel_event,
             )
 
             # 提前计算 estimated_cost（供成功/失败两分支共用）
@@ -556,6 +557,7 @@ class AgentTeamWorker:
                 sakura_ref=sakura_info["sakura_ref"],
                 initial_feedback=review_feedback,
                 cancel_check=cancel_event.is_set,
+                cancel_event=cancel_event,
                 iteration_offset=task.iteration_count or 0,
                 skip_internal_review=True,
             )
@@ -808,6 +810,7 @@ class AgentTeamWorker:
                 github_repo=sakura_info["github_repo"],
                 sakura_ref=sakura_info["sakura_ref"],
                 cancel_check=cancel_event.is_set,
+                cancel_event=cancel_event,
                 iteration_offset=task.iteration_count or 0,
                 skip_internal_review=True,
             )
