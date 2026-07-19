@@ -250,3 +250,166 @@ async def test_empty_chain_raises_all_candidates_failed():
             role="main",
         )
     await client.aclose()
+
+
+class _ModelRoutingAdapter(_StubAdapter):
+    """按 request.model 路由到不同子桩，并记录调用顺序 / Route + record call order."""
+
+    def __init__(self, behaviors: dict[str, _StubAdapter]):
+        super().__init__()
+        self._behaviors = behaviors
+        self.call_models: list[str] = []
+
+    async def chat(self, client, endpoint, credential, request, *, timeout=None):
+        self.call_models.append(request.model)
+        delegate = self._behaviors[request.model]
+        return await delegate.chat(
+            client, endpoint, credential, request, timeout=timeout
+        )
+
+
+def _install_router(monkeypatch, router):
+    from backend.core.ai_protocol import registry as reg
+
+    monkeypatch.setattr(reg, "get_adapter", lambda _family: router)
+
+
+@pytest.mark.asyncio
+async def test_sticky_candidate_promotes_last_successful(monkeypatch):
+    """第 1 轮 primary 失败 → secondary 成功；第 2 轮应优先调用 secondary."""
+    primary = _StubAdapter(fail_categories=[AIErrorCategory.RATE_LIMITED] * 5)
+    secondary = _StubAdapter(content="ok")
+    router = _ModelRoutingAdapter({"primary": primary, "secondary": secondary})
+    _install_router(monkeypatch, router)
+
+    client = UnifiedAIClient(
+        fallback_config=FallbackConfig(
+            enabled=True,
+            max_candidates=2,
+            max_retries=2,
+            total_timeout=10,
+            initial_retry_delay=0,
+            sticky_candidate=True,
+        )
+    )
+    candidates = [
+        _candidate(ProtocolFamily.OPENAI_COMPATIBLE, "primary"),
+        _candidate(ProtocolFamily.OPENAI_COMPATIBLE, "secondary"),
+    ]
+
+    r1 = await client.call_with_retry(
+        candidates,
+        [UnifiedMessage(role="user", content="hi")],
+        model="primary",
+        role="main",
+    )
+    assert r1.content == "ok"
+    # 第 1 轮从首选 primary 开始
+    assert router.call_models[0] == "primary"
+    assert "secondary" in router.call_models
+
+    # 第 2 轮 sticky：应优先调用上次成功的 secondary
+    router.call_models.clear()
+    secondary.calls = 0
+    r2 = await client.call_with_retry(
+        candidates,
+        [UnifiedMessage(role="user", content="hi")],
+        model="primary",
+        role="main",
+    )
+    assert r2.content == "ok"
+    assert router.call_models[0] == "secondary"
+    await client.aclose()
+
+
+@pytest.mark.asyncio
+async def test_sticky_candidate_disabled_keeps_original_order(monkeypatch):
+    """sticky_candidate=False 时第 2 轮仍从首选 primary 开始（不读取记忆）."""
+    primary = _StubAdapter(fail_categories=[AIErrorCategory.RATE_LIMITED] * 5)
+    secondary = _StubAdapter(content="ok-secondary")
+    router = _ModelRoutingAdapter({"primary": primary, "secondary": secondary})
+    _install_router(monkeypatch, router)
+
+    client = UnifiedAIClient(
+        fallback_config=FallbackConfig(
+            enabled=True,
+            max_candidates=2,
+            max_retries=1,
+            total_timeout=10,
+            initial_retry_delay=0,
+            sticky_candidate=False,
+        )
+    )
+    candidates = [
+        _candidate(ProtocolFamily.OPENAI_COMPATIBLE, "primary"),
+        _candidate(ProtocolFamily.OPENAI_COMPATIBLE, "secondary"),
+    ]
+
+    # 第 1 轮：primary 失败 → secondary 成功
+    r1 = await client.call_with_retry(
+        candidates,
+        [UnifiedMessage(role="user", content="hi")],
+        model="primary",
+        role="main",
+    )
+    assert r1.content == "ok-secondary"
+    assert "secondary" in router.call_models
+
+    # 关闭 sticky 后第 2 轮仍从 primary 开始（不读取 _last_successful）
+    router.call_models.clear()
+    await client.call_with_retry(
+        candidates,
+        [UnifiedMessage(role="user", content="hi")],
+        model="primary",
+        role="main",
+    )
+    assert router.call_models[0] == "primary"
+    await client.aclose()
+
+
+@pytest.mark.asyncio
+async def test_cancel_event_aborts_backoff(monkeypatch):
+    """退避等待期间 set cancel_event → 立即抛 ReviewCancelledError."""
+    import asyncio
+    import time
+
+    from backend.core.ai_protocol.errors import ReviewCancelledError
+
+    # 单候选持续失败，触发退避
+    stub = _StubAdapter(fail_categories=[AIErrorCategory.SERVER_ERROR] * 10)
+    from backend.core.ai_protocol import registry as reg
+
+    monkeypatch.setattr(reg, "get_adapter", lambda _f: stub)
+
+    client = UnifiedAIClient(
+        fallback_config=FallbackConfig(
+            enabled=True,
+            max_candidates=1,
+            max_retries=5,
+            total_timeout=30,
+            initial_retry_delay=2.0,
+        )
+    )
+    cancel_event = asyncio.Event()
+    candidate = _candidate(ProtocolFamily.OPENAI_COMPATIBLE, "x")
+
+    # 0.1s 后触发取消（远小于 2.0s 退避）
+    async def _cancel_soon():
+        await asyncio.sleep(0.1)
+        cancel_event.set()
+
+    asyncio.create_task(_cancel_soon())
+
+    start = time.monotonic()
+    with pytest.raises(ReviewCancelledError):
+        await client.call_with_retry(
+            [candidate],
+            [UnifiedMessage(role="user", content="hi")],
+            model="x",
+            role="main",
+            cancel_event=cancel_event,
+        )
+    elapsed = time.monotonic() - start
+    # 应在 1s 内返回（退避 2s 被 event 抢占）
+    assert elapsed < 1.0, f"取消响应过慢: {elapsed:.2f}s"
+    await client.aclose()

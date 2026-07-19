@@ -715,6 +715,7 @@ config:
   ai_api_total_timeout_seconds: "Total Retry Timeout (seconds)"
   ai_fallback_enabled: "Enable Cross-Protocol Fallback"
   ai_fallback_max_candidates: "Max Candidate Models"
+  ai_fallback_sticky_candidate: "Sticky Last-Winning Candidate (per role)"
   ai_context_management: "Context Management"
   ai_context_management_desc: "Each model's advanced configuration determines its context window. When enabled, Sakura summarizes history with the active candidate model as its window approaches capacity."
   ai_context_compression_threshold: "Compression Trigger Threshold (0-1)"

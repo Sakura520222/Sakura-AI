@@ -314,6 +314,7 @@ class AIStrategyRequest(BaseModel):
     ai_api_total_timeout_seconds: float | None = None
     ai_fallback_enabled: bool | None = None
     ai_fallback_max_candidates: int | None = None
+    ai_fallback_sticky_candidate: bool | None = None
     enable_context_compression: bool | None = None
     context_compression_threshold: float | None = None
 
