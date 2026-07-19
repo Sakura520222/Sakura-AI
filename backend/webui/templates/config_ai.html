@@ -260,6 +260,10 @@
                         <input type="checkbox" x-model="strategy.ai_fallback_enabled" class="rounded border-gray-300 text-sakura-600">
                         <span class="text-sm font-medium">{{ _('config.ai_fallback_enabled') }}</span>
                     </label>
+                    <label class="flex items-center gap-2 mt-2">
+                        <input type="checkbox" x-model="strategy.ai_fallback_sticky_candidate" class="rounded border-gray-300 text-sakura-600">
+                        <span class="text-sm font-medium">{{ _('config.ai_fallback_sticky_candidate') }}</span>
+                    </label>
                 </div>
             </div>
             <div class="border-t border-gray-100 dark:border-gray-700 pt-5">
@@ -654,7 +658,7 @@ function aiConfigPage() {
             for (const k of numericKeys) {
                 if (this.strategy[k] != null) this.strategy[k] = Number(this.strategy[k]);
             }
-            for (const bk of ['ai_fallback_enabled','enable_context_compression']) {
+            for (const bk of ['ai_fallback_enabled','ai_fallback_sticky_candidate','enable_context_compression']) {
                 if (typeof this.strategy[bk] === 'string') {
                     this.strategy[bk] = this.strategy[bk] === 'true';
                 }

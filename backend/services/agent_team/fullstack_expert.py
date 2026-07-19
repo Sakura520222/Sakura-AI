@@ -18,6 +18,7 @@ AI 自主决定调用哪些工具、读取哪些文件、如何修改，循环�
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
@@ -216,6 +217,7 @@ class FullStackExpertAgent:
         max_iterations: int = 3,
         cancel_check: Callable[[], bool] | None = None,
         guidance_callback: Callable[[], Any] | None = None,
+        cancel_event: asyncio.Event | None = None,
     ) -> FullStackResult:
         """执行全栈专家任务，AI 自主调用工具直到完成。"""
         client, config = await create_agent_team_client()
@@ -337,6 +339,7 @@ class FullStackExpertAgent:
                 tools=tool_schemas,
                 tool_choice="auto",
                 role="agent_team",
+                cancel_event=cancel_event,
             )
             token_tracker.accumulate(response)
 

@@ -119,6 +119,18 @@ class AllCandidatesFailedError(AIError):
         self.attempts = attempts or []
 
 
+class ReviewCancelledError(Exception):
+    """审查被外部信号取消（如 PR 关闭）/ Review cancelled by an external signal.
+
+    不继承 AIError，避免被 unified_client 的 ``except AIError`` 当作候选失败吞掉，
+    使其能沿调用栈向上传播到 worker 的取消收尾逻辑。
+    """
+
+    def __init__(self, message: str = "审查已被取消", *, task_key: str = ""):
+        super().__init__(message)
+        self.task_key = task_key
+
+
 def classify_context_overflow(message_lower: str) -> bool:
     """根据错误文本判断是否为上下文超长 / Classify context overflow by text."""
     return any(kw in message_lower for kw in CONTEXT_OVERFLOW_KEYWORDS)

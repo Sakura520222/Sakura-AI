@@ -4,6 +4,7 @@
 保持与原 ai_reviewer.py 中 AIReviewer 类相同的公共接口。
 """
 
+import asyncio
 import json
 import re
 from collections.abc import Callable, Coroutine
@@ -11,6 +12,7 @@ from typing import Any
 
 from loguru import logger
 
+from backend.core.ai_protocol.errors import ReviewCancelledError
 from backend.core.config import (
     get_settings,
     get_strategy_config,
@@ -285,7 +287,12 @@ class AIReviewer:
             logger.error("审查协议修复失败，降级为人工复审: {}", repair_error)
             return safe_protocol_failure(repair_error)
 
-    async def review_pr(self, context: dict[str, Any], strategy: str) -> dict[str, Any]:
+    async def review_pr(
+        self,
+        context: dict[str, Any],
+        strategy: str,
+        cancel_event: asyncio.Event | None = None,
+    ) -> dict[str, Any]:
         """审查PR（标准模式，不使用工具）
 
         Args:
@@ -329,6 +336,7 @@ class AIReviewer:
                 messages=messages,
                 temperature=settings.ai_temperature,
                 role="main",
+                cancel_event=cancel_event,
             )
             tracker.accumulate(response)
 
@@ -362,6 +370,7 @@ class AIReviewer:
         tool_handler: ToolHandler | None = None,
         event_callback: Callable[[str, dict[str, Any]], Coroutine] | None = None,
         pending_user_message_callback: PendingUserMessageCallback | None = None,
+        cancel_event: asyncio.Event | None = None,
     ) -> dict[str, Any]:
         """执行多轮工具调用循环
 
@@ -398,6 +407,10 @@ class AIReviewer:
         while iteration < max_iterations:
             iteration += 1
 
+            # 取消信号：PR 关闭等外部信号已触发时，立即中止工具循环
+            if cancel_event is not None and cancel_event.is_set():
+                raise ReviewCancelledError()
+
             await self._append_pending_user_message_if_any(
                 messages,
                 pending_user_message_callback,
@@ -412,6 +425,7 @@ class AIReviewer:
                 tool_choice="auto",
                 temperature=settings.ai_temperature,
                 role="main",
+                cancel_event=cancel_event,
             )
             tracker.accumulate(response)
 
@@ -608,6 +622,7 @@ class AIReviewer:
             messages=messages,
             temperature=settings.ai_temperature,
             role="main",
+            cancel_event=cancel_event,
         )
         tracker.accumulate(last_response)
         review_text = last_response.choices[0].message.content or ""
@@ -675,6 +690,7 @@ class AIReviewer:
         event_callback: Callable[[str, dict[str, Any]], Coroutine] | None = None,
         pending_user_message_callback: PendingUserMessageCallback | None = None,
         initial_messages: list[dict[str, Any]] | None = None,
+        cancel_event: asyncio.Event | None = None,
     ) -> dict[str, Any]:
         """使用函数工具审查 PR（唯一审查入口）
 
@@ -784,6 +800,7 @@ class AIReviewer:
                     tool_handler=active_tool_handler,
                     event_callback=event_callback,
                     pending_user_message_callback=pending_user_message_callback,
+                    cancel_event=cancel_event,
                 )
 
             except PromptTooLongError as e:
@@ -821,6 +838,7 @@ class AIReviewer:
                         tool_handler=active_tool_handler,
                         event_callback=event_callback,
                         pending_user_message_callback=pending_user_message_callback,
+                        cancel_event=cancel_event,
                     )
                 logger.error(
                     "🚨 上下文超限但压缩未启用 (估算 ~{} tokens)",

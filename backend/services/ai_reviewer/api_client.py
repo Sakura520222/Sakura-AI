@@ -6,11 +6,14 @@ ai_account.* 与 ai_role_bindings 解析。旧 OpenAI SDK 与扁平配置不再�
 
 from __future__ import annotations
 
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from loguru import logger
 
 from backend.core.ai_protocol.errors import AllCandidatesFailedError
+
+if TYPE_CHECKING:
+    import asyncio
 
 
 class AIEmptyResponseError(Exception):
@@ -62,6 +65,7 @@ class AIApiClient:
         effort: str | None = None,
         top_p: float | None = None,
         top_k: int | None = None,
+        cancel_event: asyncio.Event | None = None,
     ) -> Any:
         """按角色调用统一协议层 / Call the unified protocol layer by role."""
         if not role:
@@ -79,6 +83,7 @@ class AIApiClient:
             effort=effort,
             top_p=top_p,
             top_k=top_k,
+            cancel_event=cancel_event,
         )
 
     async def _call_via_unified(
@@ -96,6 +101,7 @@ class AIApiClient:
         effort: str | None,
         top_p: float | None,
         top_k: int | None,
+        cancel_event: asyncio.Event | None = None,
     ) -> Any:
         """解析角色候选链后调用统一客户端 / Resolve and invoke unified client."""
         try:
@@ -124,6 +130,7 @@ class AIApiClient:
             effort=effort,
             timeout=timeout,
             role=role,
+            cancel_event=cancel_event,
         )
 
     def _get_unified_client(self) -> Any:
@@ -142,6 +149,9 @@ class AIApiClient:
                 max_retries=settings.ai_api_max_retries,
                 total_timeout=settings.ai_api_total_timeout_seconds,
                 initial_retry_delay=settings.ai_api_initial_retry_delay_seconds,
+                sticky_candidate=getattr(
+                    settings, "ai_fallback_sticky_candidate", True
+                ),
             )
             self._unified_client = UnifiedAIClient(fallback_config=config)
         return self._unified_client

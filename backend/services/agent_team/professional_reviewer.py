@@ -14,6 +14,7 @@ AI 自主决定审查哪些文件、运行什么检查，完成后调用 submit_
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
@@ -217,6 +218,7 @@ class ProfessionalReviewAgent:
         user_guidance: str = "",
         cancel_check: Callable[[], bool] | None = None,
         guidance_callback: Callable[[], Any] | None = None,
+        cancel_event: asyncio.Event | None = None,
     ) -> ReviewResult:
         """执行审查，AI 自主调用工具直到提交审查。"""
         client, config = await create_agent_team_client()
@@ -332,6 +334,7 @@ class ProfessionalReviewAgent:
                 tools=tool_schemas,
                 tool_choice="auto",
                 role="agent_team",
+                cancel_event=cancel_event,
             )
             token_tracker.accumulate(response)
 

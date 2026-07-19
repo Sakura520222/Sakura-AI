@@ -9,6 +9,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -96,6 +97,7 @@ class IterationLoopService:
         initial_feedback: str = "",
         iteration_offset: int = 0,
         skip_internal_review: bool = False,
+        cancel_event: asyncio.Event | None = None,
     ) -> IterationOutcome:
         """运行迭代循环。"""
         total_tool_calls = 0
@@ -170,6 +172,7 @@ class IterationLoopService:
                     max_iterations=max_iterations,
                     cancel_check=cancel_check,
                     guidance_callback=self._consume_pending_prompts,
+                    cancel_event=cancel_event,
                 )
                 total_tool_calls += fs_result.tool_calls_count
                 tracker.add_tokens(fs_result.prompt_tokens, fs_result.completion_tokens)
@@ -299,6 +302,7 @@ class IterationLoopService:
                 user_guidance="",
                 cancel_check=cancel_check,
                 guidance_callback=self._consume_pending_prompts,
+                cancel_event=cancel_event,
             )
             total_tool_calls += rev_result.tool_calls_count
             tracker.add_tokens(rev_result.prompt_tokens, rev_result.completion_tokens)

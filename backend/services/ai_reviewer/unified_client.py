@@ -26,6 +26,7 @@ from backend.core.ai_protocol.errors import (
     AIError,
     AllCandidatesFailedError,
     ContextOverflowError,
+    ReviewCancelledError,
 )
 from backend.core.ai_protocol.models import (
     AIErrorCategory,
@@ -59,6 +60,8 @@ class FallbackConfig:
     max_retries: int = 3
     total_timeout: float = 600.0
     initial_retry_delay: float = 1.0
+    # 是否记忆并优先使用上次成功的候选（按 role）/ prefer last-winning candidate per role
+    sticky_candidate: bool = True
 
 
 @dataclass
@@ -200,6 +203,10 @@ class UnifiedAIClient:
         self._owns_http_client = http_client is None
         self.fallback_config = fallback_config or FallbackConfig()
         self._compressor = compressor
+        # role -> (provider_id, model_id)，记忆上次成功候选
+        # remember last-winning candidate per role so subsequent calls in the
+        # same review skip the failed-first fallback chain.
+        self._last_successful: dict[str, tuple[str, str]] = {}
 
     async def __aenter__(self) -> "UnifiedAIClient":
         return self
@@ -243,6 +250,7 @@ class UnifiedAIClient:
         effort: Optional[str] = None,
         timeout: Optional[float] = None,
         role: str = "main",
+        cancel_event: Optional[asyncio.Event] = None,
     ) -> UnifiedResponse:
         """统一调用入口（对外契约与旧 AIApiClient.call_with_retry 对齐）.
 
@@ -274,11 +282,24 @@ class UnifiedAIClient:
         )
         selected = candidates[:max_candidates]
 
+        # Sticky candidate: 若该 role 上次有成功候选，提升到首位，避免每轮工具循环
+        # 都从首选重新故障转移（首选若已挂会浪费 N×retries 次失败重试）。
+        if self.fallback_config.sticky_candidate and role in self._last_successful:
+            sticky_key = self._last_successful[role]
+            for i, c in enumerate(selected):
+                if (c.provider.id, c.model.model_id) == sticky_key:
+                    if i > 0:
+                        selected = [selected[i], *selected[:i], *selected[i + 1 :]]
+                    break
+
         attempt_chain: list[AttemptRecord] = []
         last_error: Optional[AIError] = None
         compressed_once = False
 
         for idx, candidate in enumerate(selected):
+            # 取消信号：立即中止整条故障转移链 / abort fast on external cancel
+            if cancel_event is not None and cancel_event.is_set():
+                raise ReviewCancelledError()
             served_by = f"{candidate.provider.id}/{candidate.model.model_id}"
             params = _filter_params_by_capability(
                 candidate.model,
@@ -307,7 +328,12 @@ class UnifiedAIClient:
             start = time.monotonic()
             try:
                 response = await self._retry_candidate(
-                    candidate, request, timeout=timeout, role=role, idx=idx
+                    candidate,
+                    request,
+                    timeout=timeout,
+                    role=role,
+                    idx=idx,
+                    cancel_event=cancel_event,
                 )
                 response.meta.served_by = served_by
                 response.meta.attempt_chain = [a.__dict__ for a in attempt_chain] + [
@@ -320,6 +346,11 @@ class UnifiedAIClient:
                     }
                 ]
                 response.meta.compressed = compressed_once
+                # 记录该 role 的成功候选，供后续调用 sticky 提升
+                self._last_successful[role] = (
+                    candidate.provider.id,
+                    candidate.model.model_id,
+                )
                 return response
             except AIError as exc:
                 last_error = exc
@@ -356,10 +387,16 @@ class UnifiedAIClient:
                         attempt_chain=attempt_chain,
                         timeout=timeout,
                         role=role,
+                        cancel_event=cancel_event,
                     )
                     if recovered is not None:
                         recovered.meta.compressed = True
                         recovered.meta.served_by = served_by
+                        # 压缩重试成功仍属于该候选，记录 sticky
+                        self._last_successful[role] = (
+                            candidate.provider.id,
+                            candidate.model.model_id,
+                        )
                         return recovered
                     # 压缩无法恢复，继续回退到下一候选 / continue to next candidate
                     continue
@@ -389,6 +426,7 @@ class UnifiedAIClient:
         timeout: Optional[float],
         role: str,
         idx: int,
+        cancel_event: Optional[asyncio.Event] = None,
     ) -> UnifiedResponse:
         adapter = _get_adapter(candidate.provider.family)
         cfg = self.fallback_config
@@ -397,6 +435,9 @@ class UnifiedAIClient:
 
         last_exc: Optional[AIError] = None
         for attempt in range(cfg.max_retries):
+            # 取消信号：退避中途被取消时立即抛出 / honor cancel between retries
+            if cancel_event is not None and cancel_event.is_set():
+                raise ReviewCancelledError()
             elapsed = time.monotonic() - start
             if elapsed > total_timeout:
                 raise AIError(
@@ -430,11 +471,37 @@ class UnifiedAIClient:
                         role,
                         candidate.model.model_id,
                     )
-                    await asyncio.sleep(delay)
+                    await self._abortable_sleep(delay, cancel_event)
                 else:
                     raise
         # 不可达 / unreachable
         raise last_exc  # type: ignore[misc]
+
+    @staticmethod
+    async def _abortable_sleep(
+        delay: float, cancel_event: Optional[asyncio.Event]
+    ) -> None:
+        """退避等待，cancel_event 被 set 时立即抛出 ReviewCancelledError。
+
+        用 asyncio.wait(FIRST_COMPLETED) 让 sleep 与 event 竞速；先完成的胜出，
+        另一个 task 主动 cancel 以避免悬挂。无 cancel_event 时退化为普通 sleep。
+        """
+        if cancel_event is None:
+            await asyncio.sleep(delay)
+            return
+        sleep_task = asyncio.ensure_future(asyncio.sleep(delay))
+        event_task = asyncio.ensure_future(cancel_event.wait())
+        try:
+            await asyncio.wait(
+                {sleep_task, event_task},
+                return_when=asyncio.FIRST_COMPLETED,
+            )
+        finally:
+            for task in (sleep_task, event_task):
+                if not task.done():
+                    task.cancel()
+        if cancel_event.is_set():
+            raise ReviewCancelledError()
 
     def _calculate_delay(self, attempt: int) -> float:
         """混合退避 + 抖动（沿用旧策略）/ Hybrid backoff with jitter (legacy)."""
@@ -460,6 +527,7 @@ class UnifiedAIClient:
         attempt_chain: list[AttemptRecord],
         timeout: Optional[float],
         role: str,
+        cancel_event: Optional[asyncio.Event] = None,
     ) -> Optional[UnifiedResponse]:
         """压缩后同候选重试；仍超限则返回 None 交由上层回退.
 
@@ -497,7 +565,12 @@ class UnifiedAIClient:
         start = time.monotonic()
         try:
             response = await self._retry_candidate(
-                candidate, compressed_request, timeout=timeout, role=role, idx=0
+                candidate,
+                compressed_request,
+                timeout=timeout,
+                role=role,
+                idx=0,
+                cancel_event=cancel_event,
             )
             response.meta.fallback_reason = "compressed-retry"
             attempt_chain.append(
