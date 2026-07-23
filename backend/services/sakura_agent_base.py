@@ -163,6 +163,8 @@ class SakuraAgentBase:
                     role="main",
                     cancel_event=cancel_event,
                 )
+            except ReviewCancelledError:
+                raise
             except Exception as e:
                 logger.error(
                     "{} LLM 调用失败 (iteration {}): {}", self.log_prefix, i, e
@@ -173,12 +175,16 @@ class SakuraAgentBase:
                 logger.warning("{} LLM 返回空响应 (iteration {})", self.log_prefix, i)
                 return
 
-            choice = response.choices[0]
-            msg = choice.message
-
-            if choice.finish_reason == "tool_calls" and msg.tool_calls:
-                messages.append(msg)
-                for tc in msg.tool_calls:
+            if response.tool_calls:
+                assistant_message = {
+                    "role": "assistant",
+                    "content": response.content,
+                    "tool_calls": response.tool_calls,
+                }
+                if response.reasoning_content:
+                    assistant_message["reasoning_content"] = response.reasoning_content
+                messages.append(assistant_message)
+                for tc in response.tool_calls:
                     tool_name = tc.function.name
                     try:
                         args_raw = (
@@ -215,7 +221,12 @@ class SakuraAgentBase:
                     )
 
                     messages.append(
-                        {"role": "tool", "content": result, "tool_call_id": tc.id}
+                        {
+                            "role": "tool",
+                            "content": result,
+                            "tool_call_id": tc.id,
+                            "name": tool_name,
+                        }
                     )
                 continue
 
@@ -223,7 +234,7 @@ class SakuraAgentBase:
                 "{} 会话结束 (iteration {}): {}",
                 self.log_prefix,
                 i,
-                (msg.content or "")[:200],
+                (response.content or "")[:200],
             )
             return
 

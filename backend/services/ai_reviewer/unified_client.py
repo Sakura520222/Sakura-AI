@@ -301,6 +301,14 @@ class UnifiedAIClient:
             if cancel_event is not None and cancel_event.is_set():
                 raise ReviewCancelledError()
             served_by = f"{candidate.provider.id}/{candidate.model.model_id}"
+            logger.info(
+                "AI 调用候选 [{}/{}]: role={} provider={} model={}",
+                idx + 1,
+                len(selected),
+                role,
+                candidate.provider.id,
+                candidate.model.model_id,
+            )
             params = _filter_params_by_capability(
                 candidate.model,
                 temperature=temperature,
@@ -350,6 +358,13 @@ class UnifiedAIClient:
                 self._last_successful[role] = (
                     candidate.provider.id,
                     candidate.model.model_id,
+                )
+                logger.info(
+                    "AI 调用成功 [{}/{}]: role={} served_by={}",
+                    idx + 1,
+                    len(selected),
+                    role,
+                    served_by,
                 )
                 return response
             except AIError as exc:
