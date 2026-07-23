@@ -24,6 +24,7 @@ from backend.core.ai_protocol.models import (
     UnifiedMessage,
 )
 from backend.core.ai_protocol.registry import resolve_endpoint
+from backend.services.ai_reviewer import unified_client as unified_client_module
 from backend.services.ai_reviewer.unified_client import (
     FallbackConfig,
     UnifiedAIClient,
@@ -323,6 +324,66 @@ async def test_sticky_candidate_promotes_last_successful(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_logs_selected_and_successful_fallback_candidate(monkeypatch):
+    """调用日志必须记录实际候选，才能关联 Issue/记忆合并与故障转移结果。"""
+    class _LogRecorder:
+        def __init__(self):
+            self.info_messages: list[str] = []
+
+        def info(self, message, *args, **kwargs):
+            self.info_messages.append(message.format(*args))
+
+        def warning(self, *args, **kwargs):
+            pass
+
+    primary = _StubAdapter(fail_categories=[AIErrorCategory.SERVER_ERROR])
+    fallback = _StubAdapter(content="fallback")
+    router = _ModelRoutingAdapter({"primary": primary, "fallback": fallback})
+    _install_router(monkeypatch, router)
+    recorder = _LogRecorder()
+    monkeypatch.setattr(unified_client_module, "logger", recorder)
+
+    client = UnifiedAIClient(
+        fallback_config=FallbackConfig(
+            enabled=True,
+            max_candidates=2,
+            max_retries=1,
+            total_timeout=10,
+            initial_retry_delay=0,
+        )
+    )
+    candidates = [
+        _candidate(ProtocolFamily.OPENAI_COMPATIBLE, "primary"),
+        _candidate(ProtocolFamily.OPENAI_COMPATIBLE, "fallback"),
+    ]
+
+    response = await client.call_with_retry(
+        candidates,
+        [UnifiedMessage(role="user", content="hi")],
+        model="primary",
+        role="summary",
+    )
+
+    assert response.content == "fallback"
+    assert any(
+        "AI 调用候选 [1/2]: role=summary provider=prov-primary model=primary"
+        == message
+        for message in recorder.info_messages
+    )
+    assert any(
+        "AI 调用候选 [2/2]: role=summary provider=prov-fallback model=fallback"
+        == message
+        for message in recorder.info_messages
+    )
+    assert any(
+        "AI 调用成功 [2/2]: role=summary served_by=prov-fallback/fallback"
+        == message
+        for message in recorder.info_messages
+    )
+    await client.aclose()
+
+
+@pytest.mark.asyncio
 async def test_sticky_candidate_disabled_keeps_original_order(monkeypatch):
     """sticky_candidate=False 时第 2 轮仍从首选 primary 开始（不读取记忆）."""
     primary = _StubAdapter(fail_categories=[AIErrorCategory.RATE_LIMITED] * 5)
@@ -391,16 +452,18 @@ async def test_cancel_event_aborts_backoff(monkeypatch):
         )
     )
     cancel_event = asyncio.Event()
+    cancelled_at: float | None = None
     candidate = _candidate(ProtocolFamily.OPENAI_COMPATIBLE, "x")
 
     # 0.1s 后触发取消（远小于 2.0s 退避）
     async def _cancel_soon():
+        nonlocal cancelled_at
         await asyncio.sleep(0.1)
+        cancelled_at = time.monotonic()
         cancel_event.set()
 
     asyncio.create_task(_cancel_soon())
 
-    start = time.monotonic()
     with pytest.raises(ReviewCancelledError):
         await client.call_with_retry(
             [candidate],
@@ -409,7 +472,9 @@ async def test_cancel_event_aborts_backoff(monkeypatch):
             role="main",
             cancel_event=cancel_event,
         )
-    elapsed = time.monotonic() - start
-    # 应在 1s 内返回（退避 2s 被 event 抢占）
-    assert elapsed < 1.0, f"取消响应过慢: {elapsed:.2f}s"
+    assert cancelled_at is not None
+    cancel_latency = time.monotonic() - cancelled_at
+    # 取消触发后应在 1s 内返回（退避 2s 被 event 抢占）。
+    # 以 event 设置时刻计时，避免测试进程调度延迟干扰断言。
+    assert cancel_latency < 1.0, f"取消响应过慢: {cancel_latency:.2f}s"
     await client.aclose()
