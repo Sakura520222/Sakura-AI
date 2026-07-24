@@ -18,8 +18,8 @@ def test_base64url_round_trip_without_padding():
 
 def test_rp_config_allows_web_and_android_origins(monkeypatch):
     settings = webauthn_service.get_settings()
-    monkeypatch.setattr(settings, "passkeys_origin", "https://pr-bot.firefly520.top")
-    monkeypatch.setattr(settings, "passkeys_rp_id", "pr-bot.firefly520.top")
+    monkeypatch.setattr(settings, "passkeys_origin", "https://ai.firefly520.top")
+    monkeypatch.setattr(settings, "passkeys_rp_id", "ai.firefly520.top")
     monkeypatch.setattr(
         settings,
         "passkeys_allowed_origins",
@@ -28,9 +28,9 @@ def test_rp_config_allows_web_and_android_origins(monkeypatch):
 
     rp = webauthn_service.get_rp_config()
 
-    assert rp.origin == "https://pr-bot.firefly520.top"
+    assert rp.origin == "https://ai.firefly520.top"
     assert rp.allowed_origins == [
-        "https://pr-bot.firefly520.top",
+        "https://ai.firefly520.top",
         "android:apk-key-hash:S1dtx2UHTOwaUDfi8f7xrEdDfofmcEz4fgvRXLSnyzg",
         "android:apk-key-hash:CzQNOrqlE6aOMd628-CB02Z8skMxr5DlUtZDjfRBEqA",
         "android:apk-key-hash:custom-origin",
