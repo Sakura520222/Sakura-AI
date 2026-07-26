@@ -15,7 +15,7 @@ from backend.webui.routes.agent_team import (
 def test_agent_skills_dynamic_config_registered():
     settings = Settings()
 
-    assert settings.agent_team_skills_enabled is False
+    assert settings.agent_team_skills_enabled is True
     assert settings.agent_team_skills_root == "./Skills"
     assert "agent_team_skills_enabled" in AGENT_TEAM_CONFIG_KEYS
     assert "agent_team_skills_root" in AGENT_TEAM_CONFIG_KEYS
