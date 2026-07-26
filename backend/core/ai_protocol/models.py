@@ -17,11 +17,6 @@ from typing import Any
 DEFAULT_CONTEXT_WINDOW_TOKENS = 128_000
 
 
-# 未发现或未配置单模型元数据时的默认上下文窗口（tokens）。
-# Default context window when a model has no discovered or user-provided metadata.
-DEFAULT_CONTEXT_WINDOW_TOKENS = 128_000
-
-
 # =============================================================================
 # 枚举 / Enums
 # =============================================================================
