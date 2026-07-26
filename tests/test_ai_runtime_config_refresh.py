@@ -117,9 +117,10 @@ def test_reviewer_refreshes_runtime_tool_and_compression_config(monkeypatch):
 
 
 class _FakeEmbeddingClient:
-    def __init__(self, base_url, api_key):
+    def __init__(self, base_url, api_key, **kwargs):
         self.base_url = base_url
         self.api_key = api_key
+        self.max_retries = kwargs.get("max_retries")
 
 
 class _FakeRerankerClient:

@@ -246,8 +246,10 @@ class SetupService:
                         detail = await adapter.fetch_model_metadata(
                             client, endpoint, api_key, selected_model
                         )
-                    except Exception as exc:  # noqa: BLE001
-                        logger.debug("模型详情获取失败 / model detail fetch failed: {}", exc)
+                    except Exception as exc:
+                        logger.debug(
+                            "模型详情获取失败 / model detail fetch failed: {}", exc
+                        )
                 if detail and detail.context_window_tokens:
                     ctx_tokens = detail.context_window_tokens
                     # tokens → K tokens（>2000 视为绝对值，否则视为 K）/ to K
@@ -265,7 +267,10 @@ class SetupService:
                 "context_window_k": context_window_k,
             }
         except Exception as e:
-            from backend.core.ai_protocol.errors import AIError, classify_context_overflow
+            from backend.core.ai_protocol.errors import (
+                AIError,
+                classify_context_overflow,
+            )
 
             if isinstance(e, AIError):
                 if e.category.value == "auth_invalid":
@@ -421,12 +426,14 @@ class SetupService:
             create_tables_async,
             init_async_db,
             insert_default_configs_async,
+            migrate_schema_async,
         )
 
         if db_module.async_engine is None:
             init_async_db(database_url)
             await create_tables_async()
-            await insert_default_configs_async()
+        await migrate_schema_async()
+        await insert_default_configs_async()
 
     async def create_admin_user(
         self, github_username: str, telegram_id: int, database_url: str
@@ -444,13 +451,15 @@ class SetupService:
             create_tables_async,
             init_async_db,
             insert_default_configs_async,
+            migrate_schema_async,
         )
         from backend.models.telegram_models import TelegramUser
 
         if db_module.async_engine is None:
             init_async_db(database_url)
             await create_tables_async()
-            await insert_default_configs_async()
+        await migrate_schema_async()
+        await insert_default_configs_async()
 
         # 创建管理员记录
         from backend.models.database import async_session

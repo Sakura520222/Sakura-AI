@@ -15,6 +15,9 @@ from backend.core.config import (
 )
 from backend.core.model_context import get_model_context_manager
 from backend.models.database import AppConfig, async_session
+from backend.services.activity_observability.publication_service import (
+    coordinate_publication,
+)
 from backend.services.ai_reviewer.api_client import AIApiClient
 from backend.services.ai_reviewer.message_utils import estimate_messages_tokens
 from backend.services.ai_reviewer.token_tracker import TokenTracker
@@ -115,7 +118,7 @@ class IssueAnalyzer:
 
     def _refresh_ai_client(self) -> None:
         """保留刷新入口以兼容长生命周期 Worker；账号与角色绑定按请求解析。"""
-        return None
+        return
 
     def _build_system_prompt(
         self,
@@ -334,6 +337,9 @@ class IssueAnalyzer:
         messages: list[dict[str, Any]],
         tracker: TokenTracker,
         event_callback: Callable[[str, dict[str, Any]], Coroutine] | None = None,
+        publication_coordinator: Any = None,
+        invocation_context: Any = None,
+        observer: Any = None,
     ) -> dict[str, Any]:
         """解析最终 Issue 分析，失败时进行一次仅格式修复。"""
         try:
@@ -363,6 +369,8 @@ class IssueAnalyzer:
                 messages=repair_messages,
                 temperature=0,
                 role="main",
+                context=invocation_context,
+                observer=observer,
             )
             tracker.accumulate(response)
             repaired_text = response.choices[0].message.content or ""
@@ -386,6 +394,9 @@ class IssueAnalyzer:
         repo_name: str,
         repo: Any = None,
         event_callback: Callable[[str, dict[str, Any]], Coroutine] | None = None,
+        publication_coordinator: Any = None,
+        invocation_context: Any = None,
+        observer: Any = None,
     ) -> dict[str, Any]:
         """分析 Issue
 
@@ -529,9 +540,10 @@ class IssueAnalyzer:
         iteration = 0
         tracker = TokenTracker()
         model_ctx_mgr = get_model_context_manager()
-        role_model, role_context_window = await self.api_client.resolve_role_model_context(
-            "main"
-        )
+        (
+            role_model,
+            role_context_window,
+        ) = await self.api_client.resolve_role_model_context("main")
         context_model = role_model
         safe_context = (
             int(role_context_window * 0.8)
@@ -550,6 +562,8 @@ class IssueAnalyzer:
                     tool_choice="auto",
                     temperature=settings.ai_temperature,
                     role="main",
+                    context=invocation_context,
+                    observer=observer,
                 )
             except Exception as e:
                 logger.error("AI API 调用失败: {}", e, exc_info=True)
@@ -605,7 +619,10 @@ class IssueAnalyzer:
                     review_text,
                     messages,
                     tracker,
-                    event_callback,
+                    event_callback=event_callback,
+                    publication_coordinator=publication_coordinator,
+                    invocation_context=invocation_context,
+                    observer=observer,
                 )
 
                 # 计算成本
@@ -616,6 +633,16 @@ class IssueAnalyzer:
                     settings.issue_price_per_1k_prompt,
                     settings.issue_price_per_1k_completion,
                 )
+                if (
+                    publication_coordinator is not None
+                    and invocation_context is not None
+                ):
+                    result = await coordinate_publication(
+                        publication_coordinator,
+                        kind="issue_analysis",
+                        result=result,
+                        context=invocation_context,
+                    )
 
                 logger.info(
                     "Issue #{} 分析完成 ({}轮对话, tokens: {}+{})",
@@ -640,7 +667,9 @@ class IssueAnalyzer:
                 and assistant_message.reasoning_content
             ):
                 strategy_config = get_strategy_config()
-                if strategy_config.is_model_supports_reasoning_content(context_model or ""):
+                if strategy_config.is_model_supports_reasoning_content(
+                    context_model or ""
+                ):
                     assistant_msg_dict["reasoning_content"] = (
                         assistant_message.reasoning_content
                     )
@@ -728,6 +757,8 @@ class IssueAnalyzer:
                 messages=messages,
                 temperature=0.3,
                 role="main",
+                context=invocation_context,
+                observer=observer,
             )
             last_content = final_response.choices[0].message.content or ""
         except Exception as e:
@@ -739,7 +770,10 @@ class IssueAnalyzer:
                 last_content,
                 messages,
                 tracker,
-                event_callback,
+                event_callback=event_callback,
+                publication_coordinator=publication_coordinator,
+                invocation_context=invocation_context,
+                observer=observer,
             )
         else:
             result = safe_issue_protocol_failure(
@@ -753,4 +787,11 @@ class IssueAnalyzer:
             settings.issue_price_per_1k_prompt,
             settings.issue_price_per_1k_completion,
         )
+        if publication_coordinator is not None and invocation_context is not None:
+            result = await coordinate_publication(
+                publication_coordinator,
+                kind="issue_analysis",
+                result=result,
+                context=invocation_context,
+            )
         return result

@@ -19,6 +19,9 @@ from backend.core.config import (
     get_user_dynamic_config,
 )
 from backend.core.model_context import get_model_context_manager
+from backend.services.activity_observability.publication_service import (
+    coordinate_publication,
+)
 
 from .api_client import AIApiClient, AIEmptyResponseError, PromptTooLongError
 from .compact_diff import build_tool_handler_with_diff
@@ -228,6 +231,8 @@ class AIReviewer:
         strategy: str,
         tracker: TokenTracker,
         event_callback: Callable[[str, dict[str, Any]], Coroutine] | None = None,
+        invocation_context: Any = None,
+        observer: Any = None,
     ) -> dict[str, Any]:
         """Parse a final review and make one format-only repair attempt if needed."""
         try:
@@ -258,6 +263,8 @@ class AIReviewer:
                 messages=repair_messages,
                 temperature=0,
                 role="main",
+                context=invocation_context,
+                observer=observer,
             )
             tracker.accumulate(response)
             repaired_text = response.choices[0].message.content or ""
@@ -292,6 +299,9 @@ class AIReviewer:
         context: dict[str, Any],
         strategy: str,
         cancel_event: asyncio.Event | None = None,
+        publication_coordinator: Any = None,
+        invocation_context: Any = None,
+        observer: Any = None,
     ) -> dict[str, Any]:
         """审查PR（标准模式，不使用工具）
 
@@ -337,6 +347,8 @@ class AIReviewer:
                 temperature=settings.ai_temperature,
                 role="main",
                 cancel_event=cancel_event,
+                context=invocation_context,
+                observer=observer,
             )
             tracker.accumulate(response)
 
@@ -347,9 +359,17 @@ class AIReviewer:
                 messages,
                 strategy,
                 tracker,
+                invocation_context=invocation_context,
+                observer=observer,
             )
             result["token_usage"] = tracker.to_dict()
-
+            if publication_coordinator is not None and invocation_context is not None:
+                result = await coordinate_publication(
+                    publication_coordinator,
+                    kind="review",
+                    result=result,
+                    context=invocation_context,
+                )
             logger.info("AI审查完成，策略: {}", strategy)
             return result
 
@@ -371,6 +391,9 @@ class AIReviewer:
         event_callback: Callable[[str, dict[str, Any]], Coroutine] | None = None,
         pending_user_message_callback: PendingUserMessageCallback | None = None,
         cancel_event: asyncio.Event | None = None,
+        publication_coordinator: Any = None,
+        invocation_context: Any = None,
+        observer: Any = None,
     ) -> dict[str, Any]:
         """执行多轮工具调用循环
 
@@ -426,6 +449,8 @@ class AIReviewer:
                 temperature=settings.ai_temperature,
                 role="main",
                 cancel_event=cancel_event,
+                context=invocation_context,
+                observer=observer,
             )
             tracker.accumulate(response)
 
@@ -458,6 +483,8 @@ class AIReviewer:
                     strategy,
                     tracker,
                     event_callback,
+                    invocation_context=invocation_context,
+                    observer=observer,
                 )
                 result["token_usage"] = tracker.to_dict()
                 logger.info(
@@ -623,6 +650,8 @@ class AIReviewer:
             temperature=settings.ai_temperature,
             role="main",
             cancel_event=cancel_event,
+            context=invocation_context,
+            observer=observer,
         )
         tracker.accumulate(last_response)
         review_text = last_response.choices[0].message.content or ""
@@ -631,9 +660,18 @@ class AIReviewer:
             messages,
             strategy,
             tracker,
-            event_callback,
+            event_callback=event_callback,
+            invocation_context=invocation_context,
+            observer=observer,
         )
         result["token_usage"] = tracker.to_dict()
+        if publication_coordinator is not None and invocation_context is not None:
+            result = await coordinate_publication(
+                publication_coordinator,
+                kind="review",
+                result=result,
+                context=invocation_context,
+            )
         return result
 
     async def _append_pending_user_message_if_any(
@@ -691,6 +729,9 @@ class AIReviewer:
         pending_user_message_callback: PendingUserMessageCallback | None = None,
         initial_messages: list[dict[str, Any]] | None = None,
         cancel_event: asyncio.Event | None = None,
+        publication_coordinator: Any = None,
+        invocation_context: Any = None,
+        observer: Any = None,
     ) -> dict[str, Any]:
         """使用函数工具审查 PR（唯一审查入口）
 
@@ -801,6 +842,9 @@ class AIReviewer:
                     event_callback=event_callback,
                     pending_user_message_callback=pending_user_message_callback,
                     cancel_event=cancel_event,
+                    publication_coordinator=publication_coordinator,
+                    invocation_context=invocation_context,
+                    observer=observer,
                 )
 
             except PromptTooLongError as e:
@@ -839,6 +883,7 @@ class AIReviewer:
                         event_callback=event_callback,
                         pending_user_message_callback=pending_user_message_callback,
                         cancel_event=cancel_event,
+                        publication_coordinator=publication_coordinator,
                     )
                 logger.error(
                     "🚨 上下文超限但压缩未启用 (估算 ~{} tokens)",

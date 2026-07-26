@@ -8,9 +8,11 @@
 - 连接失败时错误消息不得泄露连接串
 """
 
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from sqlalchemy import create_engine, inspect, text
 
 from backend.core.setup_service import SetupService
 
@@ -79,6 +81,107 @@ async def test_aiomysql_url_is_normalized_before_engine():
     assert result["success"] is True
     assert captured["url"].startswith("mysql+asyncmy://")
     assert "aiomysql" not in captured["url"]
+
+
+@pytest.mark.asyncio
+async def test_setup_init_database_runs_schema_migration_after_create_tables():
+    service = SetupService()
+    with patch("backend.models.database.async_engine", object()), patch(
+        "backend.models.database.init_async_db"
+    ) as init_async_db, patch(
+        "backend.models.database.create_tables_async", new_callable=AsyncMock
+    ) as create_tables, patch(
+        "backend.models.database.migrate_schema_async", new_callable=AsyncMock
+    ) as migrate, patch(
+        "backend.models.database.insert_default_configs_async", new_callable=AsyncMock
+    ):
+        await service.init_database("mysql+asyncmy://u:p@host/db")
+    init_async_db.assert_not_called()
+    create_tables.assert_not_called()
+    migrate.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_setup_create_admin_user_runs_migration_when_engine_exists():
+    service = SetupService()
+    fake_session = MagicMock()
+    fake_session.__aenter__ = AsyncMock(return_value=fake_session)
+    fake_session.__aexit__ = AsyncMock(return_value=None)
+    result = SimpleNamespace(
+        scalar=lambda: 0,
+        scalar_one_or_none=lambda: None,
+        scalars=lambda: SimpleNamespace(first=lambda: None),
+    )
+    fake_session.execute = AsyncMock(return_value=result)
+    fake_session.commit = AsyncMock()
+    with patch("backend.models.database.async_engine", object()), patch(
+        "backend.models.database.async_session", MagicMock(return_value=fake_session)
+    ), patch(
+        "backend.models.database.insert_default_configs_async", new_callable=AsyncMock
+    ), patch(
+        "backend.models.database.migrate_schema_async", new_callable=AsyncMock
+    ) as migrate:
+        await service.create_admin_user("admin", 1, "mysql+asyncmy://u:p@host/db")
+    migrate.assert_awaited_once()
+
+
+
+
+@pytest.mark.asyncio
+async def test_sqlite_auto_migration_skips_mysql_longtext_alter():
+    from backend.models.database import _ensure_agent_message_longtext_columns
+
+    conn = MagicMock()
+    conn.dialect.name = "sqlite"
+    logger = MagicMock()
+    await _ensure_agent_message_longtext_columns(conn, logger)
+    conn.run_sync.assert_not_called()
+    conn.execute.assert_not_called()
+
+
+def test_mysql_marker_and_agent_migration_sql_remain_mysql_specific():
+    from backend.models.database import _activity_publication_marker_upgrade_sql
+
+    sql = _activity_publication_marker_upgrade_sql("mysql", 64)
+    assert sql is not None
+    assert "MODIFY COLUMN `marker` VARCHAR(128)" in sql
+    assert _activity_publication_marker_upgrade_sql("sqlite", 64) is None
+
+
+def test_legacy_activity_cleanup_drops_only_retired_tables():
+    from backend.models.database import _drop_legacy_activity_tables
+
+    engine = create_engine("sqlite://")
+    with engine.begin() as conn:
+        for table_name in (
+            "activity_sessions",
+            "activity_messages",
+            "activity_tool_calls",
+            "activity_events",
+            "activity_observability_sessions",
+            "unrelated_table",
+        ):
+            conn.execute(text(f'CREATE TABLE "{table_name}" (id INTEGER PRIMARY KEY)'))
+
+        assert _drop_legacy_activity_tables(conn) == (
+            "activity_tool_calls",
+            "activity_messages",
+            "activity_events",
+            "activity_sessions",
+        )
+        assert _drop_legacy_activity_tables(conn) == ()
+
+    remaining = set(inspect(engine).get_table_names())
+    assert "activity_observability_sessions" in remaining
+    assert "unrelated_table" in remaining
+    assert not remaining.intersection(
+        {
+            "activity_sessions",
+            "activity_messages",
+            "activity_tool_calls",
+            "activity_events",
+        }
+    )
 
 
 @pytest.mark.asyncio

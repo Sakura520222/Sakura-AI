@@ -42,7 +42,7 @@ class Settings(BaseSettings):
 
     # AI 调用默认参数（模型、端点与凭据仅由 AI 账号和角色绑定提供）
     ai_temperature: float = 0.3
-    ai_max_tokens: int = 4000
+    ai_max_tokens: int = 128000
 
     # 模型上下文配置
     model_context_window: int = 0  # 自定义上下文窗口大小（K tokens），0 表示自动检测
@@ -52,7 +52,7 @@ class Settings(BaseSettings):
     # 上下文压缩配置
     enable_context_compression: bool = True  # 是否启用上下文自动压缩
     context_compression_threshold: float = 0.85  # 压缩触发阈值（0-1），默认 85%
-    context_compression_keep_rounds: int = 2  # 保留最近几轮对话不压缩
+    context_compression_keep_rounds: int = 5  # 保留最近几轮对话不压缩
 
     # 数据库配置
     database_url: str | None = None
@@ -139,15 +139,35 @@ class Settings(BaseSettings):
     )
 
     # 审查策略配置
-    max_file_count: int = 100
-    max_line_count: int = 10000
-    batch_size: int = 10
+    max_file_count: int = 1000
+    max_line_count: int = 50000
+    batch_size: int = 20
 
     # AI工具配置
     enable_ai_tools: bool = True
 
-    # Webhook配置
-    webhook_path: str = "/api/webhook/github"
+    # 活动可观测性可靠投递配置
+    activity_cursor_signing_secret: str = Field(
+        "",
+        description="新版活动 cursor HMAC 密钥；为空时拒绝创建/验证 cursor",
+    )
+    activity_cursor_ttl_seconds: int = Field(900, ge=1)
+    activity_cursor_page_size: int = Field(100, ge=1)
+    activity_outbox_batch_size: int = Field(50, ge=1)
+    activity_outbox_poll_interval_seconds: float = Field(1.0, ge=0)
+    activity_outbox_claim_timeout_seconds: float | None = Field(
+        None,
+        ge=0,
+        description="声明超时秒数；为空时不回收已声明 outbox",
+    )
+    activity_outbox_retry_max_attempts: int | None = Field(None, ge=1)
+    activity_outbox_retry_initial_delay_seconds: float = Field(1.0, ge=0)
+    activity_outbox_retry_backoff_factor: float = Field(2.0, ge=1.0)
+    activity_outbox_retry_max_delay_seconds: float | None = Field(None, ge=0)
+    activity_publication_allowed_github_hosts: str = Field(
+        "github.com,www.github.com,api.github.com",
+        description="允许保存为外部发布 URL 的 GitHub 主机名，逗号分隔",
+    )
 
     # WebUI配置
     webui_secret_key: str = Field(
@@ -514,8 +534,8 @@ class Settings(BaseSettings):
     rerank_provider: str = "siliconflow"  # huggingface|ollama|siliconflow|none
     rerank_base_url: str = "https://api.siliconflow.cn/v1/rerank"
     rerank_api_key: str = ""
-    rerank_top_k: int = 5
-    rerank_score_threshold: float = 0.3
+    rerank_top_k: int = 10
+    rerank_score_threshold: float = 0.6
 
     # 文档分块配置
     chunk_size: int = 1000
@@ -537,16 +557,16 @@ class Settings(BaseSettings):
     issue_confidence_threshold: float = 0.7
     issue_auto_create_labels: bool = True
     issue_auto_assign: bool = True
-    issue_auto_rewrite_title: bool = False
+    issue_auto_rewrite_title: bool = True
     issue_assignee_confidence_threshold: float = 0.8
     issue_auto_assign_max: int = 3
     issue_detect_duplicates: bool = True
     issue_suggest_assignees: bool = True
-    issue_suggest_milestones: bool = False
-    issue_max_tool_iterations: int = 15
-    issue_max_files_per_analysis: int = 10
-    issue_max_directory_depth: int = 3
-    max_concurrent_issues: int = 3
+    issue_suggest_milestones: bool = True
+    issue_max_tool_iterations: int = 200
+    issue_max_files_per_analysis: int = 500
+    issue_max_directory_depth: int = 20
+    max_concurrent_issues: int = 5
     issue_price_per_1k_prompt: float = 0.0
     issue_price_per_1k_completion: float = 0.0
     # Module A: 向量存储元数据增强
@@ -554,7 +574,7 @@ class Settings(BaseSettings):
     # Module D: 分析版本历史
     issue_max_analysis_versions: int = 10
     # Module F: 多人对话上下文分析
-    issue_include_comments: bool = False
+    issue_include_comments: bool = True
     issue_max_comments_in_context: int = 0
 
     # ========== PR 审查价格配置 ==========
@@ -565,21 +585,21 @@ class Settings(BaseSettings):
     web_search_enabled: bool = True  # 是否启用 Web 搜索工具
     web_search_provider: str = "duckduckgo"  # 搜索提供商：duckduckgo(免费) | tavily
     web_search_api_key: str = ""  # API Key（tavily 需要，duckduckgo 不需要）
-    web_search_max_results: int = 3  # 最大返回结果数
-    web_search_max_content_length: int = 500  # 每个结果截断长度（字符）
-    web_search_timeout: int = 15  # 搜索超时（秒）
+    web_search_max_results: int = 5  # 最大返回结果数
+    web_search_max_content_length: int = 2000  # 每个结果截断长度（字符）
+    web_search_timeout: int = 30  # 搜索超时（秒）
 
     # ========== URL 抓取配置 ==========
-    fetch_url_enabled: bool = False  # 是否启用 URL 抓取工具
+    fetch_url_enabled: bool = True  # 是否启用 URL 抓取工具
     fetch_url_timeout: int = 15  # 抓取超时（秒）
     fetch_url_max_content_length: int = 5000  # 文本截断长度（字符）
     fetch_url_max_download_size: int = (
         1048576  # 原始 HTML 下载大小限制（字节，默认 1MB）
     )
-    fetch_url_max_calls_per_session: int = 3  # 单次会话最大调用次数
+    fetch_url_max_calls_per_session: int = 50  # 单次会话最大调用次数
     fetch_url_domain_policy: str = "off"  # 域名过滤策略：off / blacklist / whitelist
     fetch_url_domain_list: str = ""  # 域名列表（逗号分隔）
-    fetch_url_force_https: bool = False  # 强制仅允许 HTTPS 协议
+    fetch_url_force_https: bool = True  # 强制仅允许 HTTPS 协议
     fetch_url_allowed_content_types: str = (
         DEFAULT_FETCH_URL_ALLOWED_CONTENT_TYPES  # 允许抓取的 Content-Type（逗号分隔）
     )
@@ -639,19 +659,19 @@ class Settings(BaseSettings):
 
     # ========== 增量审查历史上下文配置 ==========
     enable_incremental_history_context: bool = True  # 是否启用增量审查历史上下文
-    enable_pr_summary: bool = False  # 是否启用 PR 变更自动总结
+    enable_pr_summary: bool = True  # 是否启用 PR 变更自动总结
     incremental_history_max_reviews: int = 5  # 最多查询的历史审查轮数
-    incremental_history_summary_max_tokens: int = 1500  # 摘要生成最大 token
+    incremental_history_summary_max_tokens: int = 4096  # 摘要生成最大 token
 
     # ========== PR 依赖图配置 ==========
-    enable_pr_dependency_graph: bool = False  # 是否启用 PR 依赖图生成
-    pr_dependency_graph_mode: Literal["ai", "static"] = "ai"  # 依赖图生成模式
+    enable_pr_dependency_graph: bool = True  # 是否启用 PR 依赖图生成
+    pr_dependency_graph_mode: Literal["ai", "static"] = "static"  # 依赖图生成模式
     pr_dependency_graph_max_nodes: int = 25  # 依赖图最大节点数
-    pr_dependency_graph_max_files: int = 50  # 参与分析的最大文件数
+    pr_dependency_graph_max_files: int = 200  # 参与分析的最大文件数
 
     # ========== 语义 Issue 关联配置 ==========
-    enable_semantic_issue_linking: bool = False  # 是否启用语义 Issue 关联
-    semantic_issue_similarity_threshold: float = 0.65  # 语义相似度阈值
+    enable_semantic_issue_linking: bool = True  # 是否启用语义 Issue 关联
+    semantic_issue_similarity_threshold: float = 0.8  # 语义相似度阈值
     semantic_issue_max_links: int = 5  # 最大关联 Issue 数量
 
     # 支持的编程语言
@@ -685,7 +705,7 @@ class Settings(BaseSettings):
     code_index_dependency_files: bool = True
 
     # ========== 仓库扫描配置 ==========
-    enable_repo_scan: bool = True  # 是否启用仓库扫描
+    enable_repo_scan: bool = False  # 是否启用仓库扫描
     scan_interval_minutes: int = 360  # 扫描间隔（分钟，默认6小时）
     scan_cooldown_hours: int = 24  # 同一仓库扫描冷却时间（小时）
     scan_max_tokens_per_repo: int = 0  # 单仓库扫描 Token 预算（0=无限制）
@@ -704,17 +724,17 @@ class Settings(BaseSettings):
     sakura_reflection_enabled: bool = True  # 是否启用审查后反思
     sakura_consolidation_interval: int = 5  # 触发合并的反思轮数
     sakura_max_memory_chars: int = 2000  # memory.md 最大字符数
-    sakura_max_sakura_chars: int = 5000  # SAKURA.md 最大字符数
+    sakura_max_sakura_chars: int = 3000  # SAKURA.md 最大字符数
     sakura_auto_init: bool = True  # 是否自动初始化 .sakura/ 目录
     sakura_consolidation_partial_commit: bool = (
-        False  # 合并时一个文件失败是否仍提交另一个
+        True  # 合并时一个文件失败是否仍提交另一个
     )
     sakura_issue_reflection_enabled: bool = True  # 是否启用 Issue 分析后反思
     sakura_knowledge_extraction_enabled: bool = True  # 是否启用自动知识提取
     sakura_extraction_min_reflections: int = 10  # 知识提取间隔（每N次反思触发一次）
-    sakura_extraction_max_iterations: int = 15  # 每个分类提取时工具调用最大轮数
+    sakura_extraction_max_iterations: int = 200  # 每个分类提取时工具调用最大轮数
     sakura_consolidation_max_iterations: int = (
-        20  # 合并 Agent 每个文件的最大工具调用轮数
+        200  # 合并 Agent 每个文件的最大工具调用轮数
     )
     sakura_auto_create_subdirs: bool = True  # 初始化时自动创建子目录(rules/docs/plans)
 
@@ -747,7 +767,7 @@ class Settings(BaseSettings):
     agent_team_run_tests: bool = True
     agent_team_auto_install_deps: bool = True  # 自动安装工作区项目依赖
     agent_team_test_command_blocklist: str = ""
-    agent_team_skills_enabled: bool = False
+    agent_team_skills_enabled: bool = True
     agent_team_skills_root: str = "./Skills"
     agent_team_reviewer_max_tool_rounds: int = 20
     # Module G: 候选池缓存
@@ -1476,11 +1496,11 @@ DYNAMIC_CONFIG_RANGES: dict[str, tuple[float, float]] = {
     "max_file_count": (1, 100000),
     "max_line_count": (100, 100000000),
     "incremental_history_max_reviews": (1, 20),
-    "incremental_history_summary_max_tokens": (500, 4096),
-    "pr_dependency_graph_max_nodes": (5, 50),
-    "pr_dependency_graph_max_files": (5, 200),
+    "incremental_history_summary_max_tokens": (500, 128000),
+    "pr_dependency_graph_max_nodes": (5, 100),
+    "pr_dependency_graph_max_files": (5, 500),
     "semantic_issue_similarity_threshold": (0.0, 1.0),
-    "semantic_issue_max_links": (1, 20),
+    "semantic_issue_max_links": (1, 200),
     "issue_max_comments_in_context": (0, 5000),
     "issue_max_analysis_versions": (1, 100),
     "agent_team_candidate_cache_ttl": (0, 3600),
@@ -2025,6 +2045,7 @@ BASIC_CONFIG_KEYS = frozenset(
         "enable_analysis_check",
         "enable_findings_check",
         "analysis_min_interval_sec",
+        "activity_outbox_claim_timeout_seconds",
         "web_search_enabled",
         "web_search_provider",
         "web_search_api_key",

@@ -201,6 +201,26 @@ class IssueService:
         db: AsyncSession,
     ) -> bool:
         """发布分析评论到 Issue"""
+        body = self.build_analysis_comment(analysis)
+        if not body:
+            return False
+
+        success = await asyncio.to_thread(
+            self.github_app.create_issue_comment,
+            repo_owner,
+            repo_name,
+            issue_number,
+            body,
+        )
+
+        if success:
+            analysis.comment_posted = 1
+            await db.commit()
+
+        return bool(success)
+
+    def build_analysis_comment(self, analysis: IssueAnalysis) -> str | None:
+        """Render the Issue comment body without performing an external write."""
         config = get_strategy_config().get_issue_analysis_config()
         # 根据 output_language 选择模板 / Select template based on output_language
         is_english = get_settings().output_language == "en"
@@ -212,7 +232,7 @@ class IssueService:
             template = config.get("comment_template", "")
 
         if not template:
-            return False
+            return None
 
         labels = []
         try:
@@ -267,7 +287,7 @@ class IssueService:
                 f"\n- **{suggested_title_label}**: `{analysis.suggested_title}`"
             )
 
-        body = template.format(
+        return template.format(
             category=analysis.category or "unknown",
             priority=analysis.priority or "unknown",
             feasibility=analysis.feasibility or no_feasibility,
@@ -277,20 +297,6 @@ class IssueService:
             related_info=related_info,
             suggested_title_section=suggested_title_section,
         )
-
-        success = await asyncio.to_thread(
-            self.github_app.create_issue_comment,
-            repo_owner,
-            repo_name,
-            issue_number,
-            body,
-        )
-
-        if success:
-            analysis.comment_posted = 1
-            await db.commit()
-
-        return success
 
     async def apply_suggested_labels(
         self,
