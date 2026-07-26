@@ -34,7 +34,7 @@
                             {{ task.repo_full_name }} · {{ _('agent_team.source_' ~ task.source_type) }}{% if task.source_issue_number %} #{{ task.source_issue_number }}{% endif %} · {{ task.created_at.strftime('%Y-%m-%d %H:%M') if task.created_at else '-' }}
                         </p>
                         {% if task.branch_name or task.base_branch %}<p class="mt-1 text-xs text-gray-400 dark:text-gray-500 font-mono">
-                            {% if task.branch_name %}🌿 {{ task.branch_name }}{% endif %}{% if task.base_branch %} → {{ task.base_branch }}{% endif %}
+                            {% if task.branch_name %}{{ task.branch_name }}{% endif %}{% if task.base_branch %} → {{ task.base_branch }}{% endif %}
                         </p>{% endif %}
                         {% if task.summary %}<p class="mt-3 text-sm text-gray-600 dark:text-gray-300 line-clamp-2">{{ task.summary }}</p>{% endif %}
                         {% if task.error_message %}<p class="mt-3 text-sm text-red-600 dark:text-red-400 line-clamp-2">{{ task.error_message }}</p>{% endif %}
