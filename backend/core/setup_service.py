@@ -11,6 +11,7 @@ from typing import Any
 import httpx
 from loguru import logger
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import create_async_engine
 
 from backend.core.ai_providers import (
@@ -31,6 +32,7 @@ _ENV_TO_SETTINGS_KEY: dict[str, str] = {
     "GITHUB_WEBHOOK_SECRET": "github_webhook_secret",
     "TELEGRAM_BOT_TOKEN": "telegram_bot_token",
     "WEBUI_SECRET_KEY": "webui_secret_key",
+    "ACTIVITY_CURSOR_SIGNING_SECRET": "activity_cursor_signing_secret",
     "APP_DOMAIN": "app_domain",
     "APP_PORT": "app_port",
     "LOG_LEVEL": "log_level",
@@ -519,6 +521,10 @@ class SetupService:
         try:
             # 1. 自动生成 WEBUI_SECRET_KEY
             all_config.setdefault("WEBUI_SECRET_KEY", secrets.token_hex(32))
+            # 活动可观测性 cursor HMAC 密钥：留空则新版 dispatcher 跳过，故自动生成
+            all_config.setdefault(
+                "ACTIVITY_CURSOR_SIGNING_SECRET", secrets.token_hex(32)
+            )
 
             # 2. 未配置嵌入 API Key 时自动禁用 RAG，避免空 Key 调用报错
             if not all_config.get("EMBEDDING_API_KEY", "").strip():
@@ -573,3 +579,61 @@ class SetupService:
 
 # 全局单例
 setup_service = SetupService()
+
+
+async def ensure_activity_cursor_signing_secret() -> str:
+    """启动时自愈：``activity_cursor_signing_secret`` 为空则生成并幂等落库。
+
+    覆盖 Setup 之前未生成该密钥的已部署实例。幂等写兼容 web/worker 容器同时
+    启动的竞态：SELECT → 不存在则 INSERT → 捕获唯一约束冲突再 SELECT，
+    最终以 DB 中权威值为准回填 Settings 单例。
+    """
+    from backend.core.config import get_settings
+    from backend.models.database import AppConfig, async_session
+
+    settings = get_settings()
+    current = settings.activity_cursor_signing_secret
+    if current:
+        return current
+
+    new_secret = secrets.token_hex(32)
+    value: str
+    generated = False
+    async with async_session() as session:
+        existing = (
+            await session.execute(
+                select(AppConfig).where(
+                    AppConfig.key_name == "activity_cursor_signing_secret"
+                )
+            )
+        ).scalar_one_or_none()
+        if existing is not None:
+            value = existing.key_value
+        else:
+            try:
+                session.add(
+                    AppConfig(
+                        key_name="activity_cursor_signing_secret",
+                        key_value=new_secret,
+                    )
+                )
+                await session.commit()
+                value = new_secret
+                generated = True
+            except IntegrityError:
+                # 并发对手刚刚写入：回退后重新读取权威值
+                await session.rollback()
+                existing = (
+                    await session.execute(
+                        select(AppConfig).where(
+                            AppConfig.key_name == "activity_cursor_signing_secret"
+                        )
+                    )
+                ).scalar_one()
+                value = existing.key_value
+    settings.activity_cursor_signing_secret = value
+    logger.info(
+        "活动 cursor signing secret 已就绪（{}）",
+        "自动生成并写入 DB" if generated else "从 DB 加载",
+    )
+    return value
