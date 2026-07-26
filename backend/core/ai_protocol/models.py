@@ -405,6 +405,11 @@ class UnifiedResponseMeta:
     attempt_chain: list[dict[str, Any]] = field(default_factory=list)
     fallback_reason: str = ""
     compressed: bool = False
+    # 实际服务候选（winner）的上下文窗口（tokens），供调用方按实际模型
+    # 而非角色首选重算上下文预算（如 Issue 分析的 safe_context）。
+    # Context window (tokens) of the winning candidate that actually served
+    # the request, so callers budget against the real model, not the primary.
+    context_window_tokens: Optional[int] = None
 
 
 class _AttributeProxy:
