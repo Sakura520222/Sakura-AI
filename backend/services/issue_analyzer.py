@@ -387,6 +387,50 @@ class IssueAnalyzer:
             logger.error("Issue 分析协议修复失败，降级为人工复核: {}", repair_error)
             return safe_issue_protocol_failure(repair_error)
 
+    @staticmethod
+    def _resolve_safe_context(response: Any, current_safe_context: int) -> int:
+        """按实际服务模型（winner）的上下文窗口重算安全阈值 / Recompute budget.
+
+        fallback 可能切换到与角色首选窗口不同的模型。若响应携带了 winner 的
+        上下文窗口，按 ×0.8 重算 safe_context；否则保持现有阈值，兼容未填充
+        该字段的旧客户端或异常路径。
+
+        Args:
+            response: ``call_with_retry`` 返回的响应（含 ``meta.context_window_tokens``）。
+            current_safe_context: 现有安全阈值（tokens），winner 窗口缺失时原样返回。
+
+        Returns:
+            重算后的安全阈值（tokens）。
+        """
+        winner_window = getattr(
+            getattr(response, "meta", None), "context_window_tokens", None
+        )
+        if winner_window and winner_window > 0:
+            return int(winner_window * 0.8)
+        return current_safe_context
+
+    @staticmethod
+    def _resolve_served_model(
+        response: Any, current_model: Optional[str]
+    ) -> Optional[str]:
+        """从响应 meta 提取实际服务模型名 / Extract the winning model id.
+
+        fallback 可能切换到与角色首选不同的模型；``reasoning_content`` 等模型
+        相关判断应基于实际 winner。``meta.served_by`` 形如 ``"provider/model"``，
+        取末段作为模型名；缺失或格式异常时保持原值。
+
+        Args:
+            response: ``call_with_retry`` 返回的响应（含 ``meta.served_by``）。
+            current_model: 现有模型名（角色首选），winner 缺失时原样返回。
+
+        Returns:
+            实际服务模型名，或原 ``current_model``。
+        """
+        served_by = getattr(getattr(response, "meta", None), "served_by", "")
+        if served_by and "/" in served_by:
+            return served_by.rsplit("/", 1)[-1]
+        return current_model
+
     async def analyze_issue(
         self,
         issue_info: dict[str, Any],
@@ -606,6 +650,11 @@ class IssueAnalyzer:
 
             # 累积 token 使用
             tracker.accumulate(response)
+
+            # fallback 可能切换到不同窗口/能力的模型，按实际 winner 更新上下文预算
+            # 与模型名，避免 reasoning_content 判断和日志百分比基于角色首选失真
+            safe_context = self._resolve_safe_context(response, safe_context)
+            context_model = self._resolve_served_model(response, context_model)
 
             # 检查是否有工具调用
             tool_calls = (

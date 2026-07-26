@@ -277,3 +277,54 @@ async def test_repairs_invalid_issue_analysis_once(monkeypatch):
     ]
     assert tracker.prompt_tokens == 3
     assert tracker.completion_tokens == 5
+
+
+def test_resolve_safe_context_uses_winner_window():
+    """winner 窗口可用时，safe_context 应按实际服务模型重算（×0.8）。
+
+    角色首选 258K，但 fallback 到 1M 窗口的模型后，日志与预算应基于实际窗口，
+    否则会低估可用上下文并过早触发"接近上限"告警。
+    """
+    initial = int(258000 * 0.8)  # 角色首选预算
+    response_winner = SimpleNamespace(
+        meta=SimpleNamespace(context_window_tokens=1000000)
+    )
+
+    result = IssueAnalyzer._resolve_safe_context(response_winner, initial)
+
+    assert result == int(1000000 * 0.8)
+    assert result != initial
+
+
+def test_resolve_safe_context_preserves_budget_when_window_missing():
+    """响应未携带 winner 窗口时，保持原有 safe_context（兼容旧客户端/降级路径）。"""
+    initial = int(258000 * 0.8)
+
+    # meta 存在但 context_window_tokens 为 None
+    none_window = SimpleNamespace(meta=SimpleNamespace(context_window_tokens=None))
+    assert IssueAnalyzer._resolve_safe_context(none_window, initial) == initial
+
+    # response 根本没有 meta 属性
+    assert IssueAnalyzer._resolve_safe_context(SimpleNamespace(), initial) == initial
+
+
+def test_resolve_served_model_extracts_winner_from_served_by():
+    """reasoning_content 等模型相关判断应基于实际 winner，而非角色首选。
+
+    角色 primary 为 gpt-5.6-sol，但 fallback 到 deepseek-r1 后，winner 模型名
+    必须更新为 deepseek-r1，否则 reasoning_content 支持判断会按错误的模型走。
+    """
+    initial = "gpt-5.6-sol"
+    response = SimpleNamespace(meta=SimpleNamespace(served_by="deepseek/deepseek-r1"))
+
+    assert IssueAnalyzer._resolve_served_model(response, initial) == "deepseek-r1"
+
+
+def test_resolve_served_model_preserves_current_when_served_by_missing():
+    """served_by 缺失或格式不含 / 时保持原模型名（兼容降级路径）。"""
+    initial = "gpt-5.6-sol"
+
+    empty = SimpleNamespace(meta=SimpleNamespace(served_by=""))
+    assert IssueAnalyzer._resolve_served_model(empty, initial) == initial
+
+    assert IssueAnalyzer._resolve_served_model(SimpleNamespace(), initial) == initial
