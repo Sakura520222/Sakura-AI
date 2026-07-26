@@ -1,24 +1,29 @@
 """SSE (Server-Sent Events) 实时推送模块"""
 
 import asyncio
+import hashlib
 import json
+import re
 from typing import Any
 
 import redis.exceptions  # 仅异常类型引用，不触发连接初始化
 from loguru import logger
 
+from backend.services.activity_observability.contracts import PublicActivityNotification
+
 
 class SSEManager:
     """SSE 连接管理器（进程内）"""
 
-    def __init__(self):
+    def __init__(self, queue_size: int = 100):
+        self._queue_size = queue_size
         self._subscribers: dict[str, list[asyncio.Queue]] = {}
 
     def subscribe(self, channel: str) -> asyncio.Queue:
         """订阅频道，返回消息队列"""
         if channel not in self._subscribers:
             self._subscribers[channel] = []
-        queue = asyncio.Queue(maxsize=100)
+        queue = asyncio.Queue(maxsize=self._queue_size)
         self._subscribers[channel].append(queue)
         logger.debug(
             f"SSE 客户端订阅频道: {channel}, 当前订阅数: {len(self._subscribers[channel])}"
@@ -48,6 +53,36 @@ class SSEManager:
                 dead_queues.append(queue)
         for q in dead_queues:
             self.unsubscribe(channel, q)
+
+
+_ACTIVITY_USER_ID_PATTERN = re.compile(r"^[A-Za-z0-9_.:@-]{1,255}$")
+_ACTIVITY_CHANNEL_PREFIX = "activity:user:"
+
+
+def user_activity_channel(user_id: str | int) -> str:
+    """Return a non-injectable, opaque channel for one authenticated user."""
+    value = str(user_id).strip()
+    if not _ACTIVITY_USER_ID_PATTERN.fullmatch(value):
+        raise ValueError("invalid activity user id")
+    digest = hashlib.sha256(value.encode("utf-8")).hexdigest()
+    return f"{_ACTIVITY_CHANNEL_PREFIX}{digest}"
+
+
+async def publish_user_activity_notification(
+    user_id: str | int, notification: PublicActivityNotification
+) -> None:
+    """Publish only the three-field activity notification to one user channel."""
+    channel = user_activity_channel(user_id)
+    data = notification.to_sse_data()
+    if set(data) != {"event_id", "sequence", "projection_version"}:
+        raise ValueError("activity SSE projection must contain exactly three fields")
+    await publish_event("activity:notification", data, channel=channel)
+
+
+async def subscribe_user_activity(user_id: str | int) -> asyncio.Queue:
+    """Subscribe to a validated user-scoped activity channel."""
+    queue = sse_manager.subscribe(user_activity_channel(user_id))
+    return queue
 
 
 # 全局 SSE 管理器单例

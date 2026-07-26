@@ -27,13 +27,14 @@ from backend.core.ai_protocol.models import (
     UnifiedTool,
     UnifiedToolCall,
     UnifiedUsage,
+    safe_provider_event_metadata,
+    usage_from_mapping,
 )
 
 
 _RESPONSES_STATUS_MAP: dict[str, StopReason] = {
     "completed": StopReason.END_TURN,
     "incomplete": StopReason.MAX_TOKENS,
-    "failed": StopReason.END_TURN,
 }
 
 
@@ -214,20 +215,7 @@ class OpenAIResponsesAdapter(OpenAICompatibleAdapter):
 
     @staticmethod
     def _parse_responses_usage(raw: Any) -> UnifiedUsage:
-        if not isinstance(raw, dict):
-            return UnifiedUsage()
-        input_details = raw.get("input_tokens_details")
-        output_details = raw.get("output_tokens_details")
-        return UnifiedUsage(
-            input_tokens=int(raw.get("input_tokens", 0) or 0),
-            output_tokens=int(raw.get("output_tokens", 0) or 0),
-            cache_read_tokens=int(input_details.get("cached_tokens", 0) or 0)
-            if isinstance(input_details, dict)
-            else 0,
-            reasoning_tokens=int(output_details.get("reasoning_tokens", 0) or 0)
-            if isinstance(output_details, dict)
-            else 0,
-        )
+        return usage_from_mapping(raw)
 
     async def chat(
         self,
@@ -258,6 +246,13 @@ class OpenAIResponsesAdapter(OpenAICompatibleAdapter):
             model=request.model,
             operation="OpenAI Responses 请求",
         )
+        if str(payload.get("status") or "").lower() == "failed":
+            raise self.raise_error(
+                AIErrorCategory.SERVER_ERROR,
+                "OpenAI Responses 端点报告请求失败",
+                provider=endpoint.base_url,
+                model=request.model,
+            )
         response = self.parse_response(payload, raw=resp)
         if not response.content and not response.tool_calls:
             raise self.raise_error(
@@ -295,6 +290,13 @@ class OpenAIResponsesAdapter(OpenAICompatibleAdapter):
                 async for line in resp.aiter_lines():
                     event = self._parse_responses_sse_line(line)
                     if event is not None:
+                        if event.type == "error":
+                            raise self.raise_error(
+                                AIErrorCategory.SERVER_ERROR,
+                                event.error or "OpenAI Responses 流报告请求失败",
+                                provider=endpoint.base_url,
+                                model=request.model,
+                            )
                         yield event
         except httpx.HTTPError as exc:
             raise self.raise_error(
@@ -317,16 +319,95 @@ class OpenAIResponsesAdapter(OpenAICompatibleAdapter):
         except json.JSONDecodeError:
             return None
         event_type = str(chunk.get("type") or "")
+        metadata = safe_provider_event_metadata({"event": event_type})
         if event_type in ("response.output_text.delta", "response.text.delta"):
             return UnifiedStreamEvent(type="text_delta", text=str(chunk.get("delta") or ""))
-        if event_type in ("response.completed", "response.done"):
+        if event_type in ("response.reasoning_summary_text.delta",):
+            delta = chunk.get("delta")
+            if isinstance(delta, str) and delta:
+                return UnifiedStreamEvent(
+                    type="reasoning_delta",
+                    text=delta,
+                    reasoning_availability="summarized",
+                    provider_event_metadata=metadata,
+                )
+            return UnifiedStreamEvent(
+                type="reasoning_end",
+                text=None,
+                reasoning_availability="summarized",
+                provider_event_metadata=metadata,
+            )
+        if event_type in {
+            "response.reasoning_summary_text.done",
+            "response.reasoning_summary_text.end",
+        }:
+            return UnifiedStreamEvent(
+                type="reasoning_end",
+                text=None,
+                reasoning_availability="summarized",
+                provider_event_metadata=metadata,
+            )
+        if event_type in {
+            "response.reasoning.started",
+            "response.reasoning_summary_part.added",
+            "response.reasoning_summary_text.added",
+            "response.reasoning_item.added",
+            "response.reasoning_summary_text.created",
+        }:
+            return UnifiedStreamEvent(
+                type="reasoning_start",
+                text=None,
+                reasoning_availability="omitted",
+                provider_event_metadata=metadata,
+            )
+        if event_type in (
+            "response.completed",
+            "response.done",
+            "response.incomplete",
+        ):
             usage = None
             response = chunk.get("response")
             if isinstance(response, dict):
                 usage = OpenAIResponsesAdapter._parse_responses_usage(response.get("usage"))
-            return UnifiedStreamEvent(type="done", usage=usage)
+            return UnifiedStreamEvent(
+                type="done",
+                usage=usage,
+                stop_reason=(
+                    StopReason.MAX_TOKENS
+                    if event_type == "response.incomplete"
+                    else StopReason.END_TURN
+                ),
+                provider_event_metadata=metadata,
+            )
+        if event_type in {"response.failed", "error"}:
+            return UnifiedStreamEvent(
+                type="error",
+                error="OpenAI Responses 流报告请求失败",
+                provider_event_metadata=metadata,
+            )
+        if event_type == "response.output_item.added":
+            item = chunk.get("item")
+            if isinstance(item, dict) and item.get("type") == "function_call":
+                return UnifiedStreamEvent(
+                    type="tool_call_start",
+                    tool_call=UnifiedToolCall(
+                        id=str(item.get("call_id") or item.get("id") or ""),
+                        name=str(item.get("name") or ""),
+                        arguments=str(item.get("arguments") or ""),
+                    ),
+                    provider_event_metadata=metadata,
+                )
         if event_type == "response.function_call_arguments.delta":
-            return UnifiedStreamEvent(type="tool_call_delta", text=str(chunk.get("delta") or ""))
+            return UnifiedStreamEvent(
+                type="tool_call_delta",
+                text=str(chunk.get("delta") or ""),
+                tool_call=UnifiedToolCall(
+                    id=str(chunk.get("call_id") or chunk.get("item_id") or ""),
+                    name=str(chunk.get("name") or ""),
+                    arguments=str(chunk.get("delta") or ""),
+                ),
+                provider_event_metadata=metadata,
+            )
         return None
 
 

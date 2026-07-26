@@ -18,6 +18,7 @@ import random
 import time
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Optional
+from uuid import uuid4
 
 import httpx
 from loguru import logger
@@ -198,11 +199,18 @@ class UnifiedAIClient:
         http_client: Optional[httpx.AsyncClient] = None,
         fallback_config: Optional[FallbackConfig] = None,
         compressor: Optional["UnifiedContextCompressor"] = None,
+        observer: Any = None,
+        context: Any = None,
+        logical_call_factory: Any = uuid4,
     ):
         self._http_client = http_client
         self._owns_http_client = http_client is None
         self.fallback_config = fallback_config or FallbackConfig()
         self._compressor = compressor
+        self._observer = observer
+        self._context = context
+        self._logical_call_factory = logical_call_factory
+        self._last_attempt_id: int | None = None
         # role -> (provider_id, model_id)，记忆上次成功候选
         # remember last-winning candidate per role so subsequent calls in the
         # same review skip the failed-first fallback chain.
@@ -251,6 +259,9 @@ class UnifiedAIClient:
         timeout: Optional[float] = None,
         role: str = "main",
         cancel_event: Optional[asyncio.Event] = None,
+        context: Any = None,
+        observer: Any = None,
+        logical_call_factory: Any = uuid4,
     ) -> UnifiedResponse:
         """统一调用入口（对外契约与旧 AIApiClient.call_with_retry 对齐）.
 
@@ -259,6 +270,14 @@ class UnifiedAIClient:
         返回 UnifiedResponse（向后兼容 response.choices[0].message.xxx 访问）。
         """
         candidates = self._extract_candidates(chain_or_candidates)
+        if observer is not None:
+            self._observer = observer
+        if context is not None:
+            self._context = context
+        if logical_call_factory is not uuid4:
+            self._logical_call_factory = logical_call_factory
+        if self._observer is not None:
+            self._observer.context = self._context
         if not candidates:
             raise AllCandidatesFailedError(
                 f"角色 {role} 无可用 AI 候选模型，请检查配置。"
@@ -293,6 +312,7 @@ class UnifiedAIClient:
                     break
 
         attempt_chain: list[AttemptRecord] = []
+        logical_call_id = str(self._logical_call_factory())
         last_error: Optional[AIError] = None
         compressed_once = False
 
@@ -342,6 +362,8 @@ class UnifiedAIClient:
                     role=role,
                     idx=idx,
                     cancel_event=cancel_event,
+                    logical_call_id=logical_call_id,
+                    fallback_from=self._last_attempt_id if idx > 0 else None,
                 )
                 response.meta.served_by = served_by
                 response.meta.attempt_chain = [a.__dict__ for a in attempt_chain] + [
@@ -403,6 +425,8 @@ class UnifiedAIClient:
                         timeout=timeout,
                         role=role,
                         cancel_event=cancel_event,
+                        logical_call_id=logical_call_id,
+                        retry_of_attempt_id=self._last_attempt_id,
                     )
                     if recovered is not None:
                         recovered.meta.compressed = True
@@ -430,8 +454,163 @@ class UnifiedAIClient:
             attempts=[a.__dict__ for a in attempt_chain],
         )
 
-    # ------------------------------------------------------------------
-    # 单候选重试 / Per-candidate retry loop
+    async def stream_with_retry(
+        self,
+        chain_or_candidates: Any,
+        messages: list[dict[str, Any]] | list[UnifiedMessage],
+        *,
+        model: str = "",
+        temperature: Optional[float] = None,
+        top_p: Optional[float] = None,
+        top_k: Optional[int] = None,
+        max_tokens: Optional[int] = None,
+        thinking: Optional[dict[str, Any]] = None,
+        effort: Optional[str] = None,
+        timeout: Optional[float] = None,
+        role: str = "main",
+        cancel_event: Optional[asyncio.Event] = None,
+        context: Any = None,
+        observer: Any = None,
+        logical_call_factory: Any = uuid4,
+    ):
+        """Public streaming path with the same observed-send boundary as chat."""
+        candidates = self._extract_candidates(chain_or_candidates)
+        if not candidates:
+            raise AllCandidatesFailedError(f"角色 {role} 无可用 AI 候选模型")
+        if observer is not None:
+            self._observer = observer
+        if context is not None:
+            self._context = context
+        if logical_call_factory is not uuid4:
+            self._logical_call_factory = logical_call_factory
+        if self._observer is not None:
+            self._observer.context = self._context
+        unified_messages = (
+            messages
+            if (messages and isinstance(messages[0], UnifiedMessage))
+            else _messages_from_legacy(messages)  # type: ignore[arg-type]
+        )
+        max_candidates = (
+            min(self.fallback_config.max_candidates, len(candidates))
+            if self.fallback_config.enabled
+            else 1
+        )
+        selected = candidates[:max_candidates]
+        if self.fallback_config.sticky_candidate and role in self._last_successful:
+            sticky_key = self._last_successful[role]
+            for index, item in enumerate(selected):
+                if (item.provider.id, item.model.model_id) == sticky_key:
+                    if index:
+                        selected = [
+                            selected[index],
+                            *selected[:index],
+                            *selected[index + 1 :],
+                        ]
+                    break
+
+        logical_call_id = str(self._logical_call_factory())
+        last_error: AIError | None = None
+        previous_attempt_id: int | None = None
+        for candidate_index, candidate in enumerate(selected):
+            fallback_from_id = previous_attempt_id
+            params = _filter_params_by_capability(
+                candidate.model,
+                temperature=temperature,
+                top_p=top_p,
+                top_k=top_k,
+                thinking=thinking,
+                effort=effort,
+            )
+            request = UnifiedRequest(
+                model=candidate.model.model_id,
+                messages=list(unified_messages),
+                max_tokens=max_tokens
+                or candidate.model.reasoning_params.max_output_tokens,
+                temperature=params["temperature"],
+                top_p=params["top_p"],
+                top_k=params["top_k"],
+                thinking=params["thinking"],
+                effort=params["effort"],
+                stream=True,
+            )
+            for retry_index in range(self.fallback_config.max_retries):
+                if cancel_event is not None and cancel_event.is_set():
+                    raise ReviewCancelledError()
+                emitted = False
+                sender = self._observer
+                try:
+                    adapter = _get_adapter(candidate.provider.family)
+                    if sender is None:
+                        events = adapter.stream(
+                            self.http_client,
+                            candidate.endpoint,
+                            candidate.credential,
+                            request,
+                            timeout=timeout,
+                        )
+                    else:
+                        events = sender.send_stream(
+                            adapter,
+                            self.http_client,
+                            candidate,
+                            request,
+                            timeout=timeout,
+                            logical_call_id=logical_call_id,
+                            purpose=role,
+                            attempt_kind=(
+                                "retry"
+                                if retry_index
+                                else ("fallback" if candidate_index else "primary")
+                            ),
+                            retry_of=(
+                                previous_attempt_id if retry_index else None
+                            ),
+                            fallback_from=(
+                                fallback_from_id
+                                if candidate_index and not retry_index
+                                else None
+                            ),
+                        )
+                    async for event in events:
+                        emitted = True
+                        yield event
+                    if sender is not None:
+                        previous_attempt_id = sender.last_attempt_id
+                        self._last_attempt_id = previous_attempt_id
+                    self._last_successful[role] = (
+                        candidate.provider.id,
+                        candidate.model.model_id,
+                    )
+                    return
+                except AIError as exc:
+                    last_error = exc
+                    if sender is not None:
+                        previous_attempt_id = sender.last_attempt_id
+                        self._last_attempt_id = previous_attempt_id
+                    # Once any stream event is visible to the caller, replaying a
+                    # retry/fallback would duplicate output. Surface the error.
+                    if emitted or exc.is_terminal or not exc.is_retryable:
+                        raise
+                    if retry_index < self.fallback_config.max_retries - 1:
+                        await self._abortable_sleep(
+                            self._calculate_delay(retry_index),
+                            cancel_event,
+                        )
+                        continue
+                    break
+        if last_error is not None:
+            raise AllCandidatesFailedError(
+                f"角色 {role} 所有流式候选模型均失败",
+                attempts=[
+                    {
+                        "provider": item.provider.id,
+                        "model": item.model.model_id,
+                    }
+                    for item in selected
+                ],
+            ) from last_error
+        raise AllCandidatesFailedError(f"角色 {role} 所有流式候选模型均失败")
+
     # ------------------------------------------------------------------
     async def _retry_candidate(
         self,
@@ -442,6 +621,10 @@ class UnifiedAIClient:
         role: str,
         idx: int,
         cancel_event: Optional[asyncio.Event] = None,
+        logical_call_id: str = "",
+        fallback_from: int | None = None,
+        initial_attempt_kind: str | None = None,
+        initial_retry_of: int | None = None,
     ) -> UnifiedResponse:
         adapter = _get_adapter(candidate.provider.family)
         cfg = self.fallback_config
@@ -462,13 +645,37 @@ class UnifiedAIClient:
                     model=candidate.model.model_id,
                 )
             try:
-                response = await adapter.chat(
-                    self.http_client,
-                    candidate.endpoint,
-                    candidate.credential,
-                    request,
-                    timeout=timeout,
-                )
+                if self._observer is not None:
+                    attempt_kind = (
+                        "retry"
+                        if attempt
+                        else (
+                            initial_attempt_kind
+                            or ("fallback" if fallback_from is not None else "primary")
+                        )
+                    )
+                    response, self._last_attempt_id = await self._observer.send_chat(
+                        adapter,
+                        self.http_client,
+                        candidate,
+                        request,
+                        timeout=timeout,
+                        logical_call_id=logical_call_id or str(self._logical_call_factory()),
+                        attempt_kind=attempt_kind,
+                        purpose=role,
+                        retry_of=(
+                            self._last_attempt_id if attempt else initial_retry_of
+                        ),
+                        fallback_from=fallback_from,
+                    )
+                else:
+                    response = await adapter.chat(
+                        self.http_client,
+                        candidate.endpoint,
+                        candidate.credential,
+                        request,
+                        timeout=timeout,
+                    )
                 return response
             except AIError as exc:
                 last_exc = exc
@@ -542,6 +749,8 @@ class UnifiedAIClient:
         attempt_chain: list[AttemptRecord],
         timeout: Optional[float],
         role: str,
+        logical_call_id: str,
+        retry_of_attempt_id: int | None,
         cancel_event: Optional[asyncio.Event] = None,
     ) -> Optional[UnifiedResponse]:
         """压缩后同候选重试；仍超限则返回 None 交由上层回退.
@@ -562,6 +771,19 @@ class UnifiedAIClient:
             return None
         if compressed is None:
             return None
+        if self._observer is not None:
+            record_replacement = getattr(
+                self._observer, "record_context_replacement", None
+            )
+            if record_replacement is not None:
+                try:
+                    await record_replacement(
+                        compressed,
+                        trigger_reason="provider_overflow",
+                    )
+                except Exception as exc:  # noqa: BLE001
+                    logger.warning("压缩上下文持久化失败，跳过压缩重试: {}", exc)
+                    return None
 
         compressed_request = UnifiedRequest(
             model=request.model,
@@ -586,6 +808,9 @@ class UnifiedAIClient:
                 role=role,
                 idx=0,
                 cancel_event=cancel_event,
+                logical_call_id=logical_call_id,
+                initial_attempt_kind="compression_retry",
+                initial_retry_of=retry_of_attempt_id,
             )
             response.meta.fallback_reason = "compressed-retry"
             attempt_chain.append(

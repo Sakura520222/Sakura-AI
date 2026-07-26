@@ -334,11 +334,10 @@ class UnifiedTool:
 class UnifiedUsage:
     """归一化用量 / Normalized token usage.
 
-    为兼容 TokenTracker.accumulate(response) 的 getattr(usage, "prompt_tokens")
-    与 getattr(usage, "completion_tokens") 访问模式，提供 prompt_tokens /
-    completion_tokens 只读属性别名。
-    Provides prompt_tokens / completion_tokens read-only aliases so legacy
-    TokenTracker.accumulate(response) works unchanged.
+    Numeric fields retain the legacy zero defaults, while ``reported_fields``
+    records which counters the provider actually supplied.  This prevents an
+    absent counter from being persisted or displayed as a provider-reported
+    zero.  ``details`` contains only safe provider token-detail counters.
     """
 
     input_tokens: int = 0
@@ -346,6 +345,8 @@ class UnifiedUsage:
     cache_read_tokens: int = 0
     cache_creation_tokens: int = 0
     reasoning_tokens: int = 0
+    reported_fields: frozenset[str] = field(default_factory=frozenset)
+    details: dict[str, int] = field(default_factory=dict)
 
     @property
     def prompt_tokens(self) -> int:
@@ -358,7 +359,7 @@ class UnifiedUsage:
         return self.output_tokens
 
     def add(self, other: "UnifiedUsage") -> "UnifiedUsage":
-        """累加另一用量（用于多轮统计）/ Accumulate another usage."""
+        """累加另一用量，同时保留提供商真实报告字段。"""
         return UnifiedUsage(
             input_tokens=self.input_tokens + other.input_tokens,
             output_tokens=self.output_tokens + other.output_tokens,
@@ -366,6 +367,11 @@ class UnifiedUsage:
             cache_creation_tokens=self.cache_creation_tokens
             + other.cache_creation_tokens,
             reasoning_tokens=self.reasoning_tokens + other.reasoning_tokens,
+            reported_fields=self.reported_fields | other.reported_fields,
+            details={
+                key: self.details.get(key, 0) + other.details.get(key, 0)
+                for key in self.details.keys() | other.details.keys()
+            },
         )
 
 
@@ -491,12 +497,108 @@ class UnifiedResponse:
 
 @dataclass
 class UnifiedStreamEvent:
-    """归一化流式事件 / Normalized stream event."""
+    """归一化流式事件 / Normalized stream event.
 
-    type: str  # "text_delta" / "tool_call_delta" / "tool_call_start" / "done"
-    text: str = ""
+    ``reasoning_*`` events describe only provider-signalled phases or provider
+    summaries; they are never inferred from ordinary content.  Metadata is a
+    small, already-sanitized projection rather than a raw provider event.
+    """
+
+    type: str  # text/tool/reasoning_start|delta|end/usage/error/done
+    text: Optional[str] = None
     tool_call: Optional[UnifiedToolCall] = None
     usage: Optional[UnifiedUsage] = None
+    stop_reason: Optional[StopReason] = None
+    error: Optional[str] = None
+    reasoning_availability: Optional[str] = None
+    provider_event_metadata: Optional[dict[str, Any]] = None
+
+
+_SAFE_PROVIDER_METADATA_KEYS = frozenset(
+    {
+        "event",
+        "block_type",
+        "delta_type",
+        "item_type",
+        "response_status",
+        "finish_reason",
+        "index",
+        "signature_present",
+        "redacted",
+        "encrypted",
+        "usage_fields",
+    }
+)
+_SAFE_PROVIDER_METADATA_FORBIDDEN = frozenset(
+    {"headers", "endpoint", "url", "request", "body", "credential", "raw", "payload"}
+)
+
+
+def safe_provider_event_metadata(value: Any) -> dict[str, Any] | None:
+    """Return a scalar allowlisted provider-event projection, never raw payload."""
+    if not isinstance(value, dict):
+        return None
+    result: dict[str, Any] = {}
+    for key, item in value.items():
+        key = str(key)
+        if key.lower() in _SAFE_PROVIDER_METADATA_FORBIDDEN or key not in _SAFE_PROVIDER_METADATA_KEYS:
+            continue
+        if isinstance(item, bool):
+            result[key] = item
+        elif isinstance(item, int) and not isinstance(item, bool) and 0 <= item <= 1_000_000:
+            result[key] = item
+        elif isinstance(item, str) and len(item) <= 128:
+            result[key] = item
+        elif (
+            key == "usage_fields"
+            and isinstance(item, (list, tuple, set, frozenset))
+        ):
+            fields = sorted(
+                str(field)
+                for field in item
+                if str(field)
+                in {"input_tokens", "output_tokens", "cached_tokens", "reasoning_tokens"}
+            )
+            if fields:
+                result[key] = fields
+    return result or None
+
+
+def usage_from_mapping(value: Any) -> UnifiedUsage:
+    """Parse only reported non-negative integer usage counters."""
+    if not isinstance(value, dict):
+        return UnifiedUsage()
+    merged = dict(value)
+    for detail_key in ("input_tokens_details", "output_tokens_details", "prompt_tokens_details", "completion_tokens_details"):
+        nested = value.get(detail_key)
+        if isinstance(nested, dict):
+            merged.update(nested)
+    aliases = {
+        "input_tokens": ("input_tokens", "prompt_tokens"),
+        "output_tokens": ("output_tokens", "completion_tokens"),
+        "cache_read_tokens": ("cache_read_tokens", "cached_tokens"),
+        "cache_creation_tokens": ("cache_creation_tokens",),
+        "reasoning_tokens": ("reasoning_tokens",),
+    }
+    fields: set[str] = set()
+    parsed: dict[str, int] = {}
+    for target, names in aliases.items():
+        for name in names:
+            candidate = merged.get(name)
+            if isinstance(candidate, int) and not isinstance(candidate, bool) and candidate >= 0:
+                parsed[target] = candidate
+                fields.add(target)
+                break
+    details: dict[str, int] = {}
+    for key in ("input_tokens", "output_tokens", "cached_tokens", "reasoning_tokens"):
+        candidate = merged.get(key)
+        if isinstance(candidate, int) and not isinstance(candidate, bool) and candidate >= 0:
+            details[key] = candidate
+    return UnifiedUsage(
+        **parsed,
+        reported_fields=frozenset(fields),
+        details=details,
+    )
 
 
 # =============================================================================

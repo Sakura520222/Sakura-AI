@@ -34,6 +34,8 @@ from backend.core.ai_protocol.models import (
     UnifiedTool,
     UnifiedToolCall,
     UnifiedUsage,
+    safe_provider_event_metadata,
+    usage_from_mapping,
 )
 
 # OpenAI 停止原因 → 归一化 / OpenAI stop reasons → normalized
@@ -324,22 +326,7 @@ class OpenAICompatibleAdapter(ProtocolAdapter):
 
     @staticmethod
     def _parse_usage(raw: Any) -> UnifiedUsage:
-        if not isinstance(raw, dict):
-            return UnifiedUsage()
-        return UnifiedUsage(
-            input_tokens=int(raw.get("prompt_tokens", 0) or 0),
-            output_tokens=int(raw.get("completion_tokens", 0) or 0),
-            cache_read_tokens=int(
-                raw.get("prompt_tokens_details", {}).get("cached_tokens", 0) or 0
-            )
-            if isinstance(raw.get("prompt_tokens_details"), dict)
-            else 0,
-            reasoning_tokens=int(
-                raw.get("completion_tokens_details", {}).get("reasoning_tokens", 0) or 0
-            )
-            if isinstance(raw.get("completion_tokens_details"), dict)
-            else 0,
-        )
+        return usage_from_mapping(raw)
 
     # ------------------------------------------------------------------
     # HTTP 调用 / HTTP calls
@@ -514,25 +501,63 @@ class OpenAICompatibleAdapter(ProtocolAdapter):
             usage = chunk.get("usage")
             if usage:
                 return UnifiedStreamEvent(
-                    type="done",
+                    type="usage",
                     usage=OpenAICompatibleAdapter._parse_usage(usage),
+                    provider_event_metadata=safe_provider_event_metadata(
+                        {"event": "usage", "usage_fields": usage.keys()}
+                    ),
                 )
             return None
-        delta = choices[0].get("delta") or {}
+        choice = choices[0]
+        delta = choice.get("delta") or {}
+        finish_reason = _OPENAI_STOP_MAP.get(
+            str(choice.get("finish_reason")),
+            StopReason.END_TURN,
+        ) if choice.get("finish_reason") is not None else None
+        reasoning = delta.get("reasoning_content")
+        if reasoning is None:
+            reasoning = delta.get("reasoning")
+        if isinstance(reasoning, str) and reasoning:
+            return UnifiedStreamEvent(
+                type="reasoning_delta",
+                text=reasoning,
+                stop_reason=finish_reason,
+                reasoning_availability="provider_exposed",
+                provider_event_metadata=safe_provider_event_metadata(
+                    {"event": "chat.completion.chunk", "delta_type": "reasoning"}
+                ),
+            )
+        if any(key in delta for key in ("reasoning_content", "reasoning")):
+            return UnifiedStreamEvent(
+                type="reasoning_start",
+                text=None,
+                stop_reason=finish_reason,
+                reasoning_availability="omitted",
+                provider_event_metadata=safe_provider_event_metadata(
+                    {"event": "chat.completion.chunk", "delta_type": "reasoning"}
+                ),
+            )
         if delta.get("content"):
-            return UnifiedStreamEvent(type="text_delta", text=delta["content"])
+            return UnifiedStreamEvent(
+                type="text_delta",
+                text=delta["content"],
+                stop_reason=finish_reason,
+            )
         tool_calls = delta.get("tool_calls")
         if tool_calls:
             first = tool_calls[0]
             function = first.get("function") or {}
             return UnifiedStreamEvent(
                 type="tool_call_delta",
+                stop_reason=finish_reason,
                 tool_call=UnifiedToolCall(
                     id=first.get("id") or "",
                     name=function.get("name") or "",
                     arguments=function.get("arguments") or "",
                 ),
             )
+        if finish_reason is not None:
+            return UnifiedStreamEvent(type="done", stop_reason=finish_reason)
         return None
 
     def supports_capability(self, capability: ModelCapabilitySet) -> bool:

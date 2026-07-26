@@ -187,7 +187,7 @@ context_enhancement:
       # 一个文件失败时是否仍提交另一个 / Commit partial results on failure
       partial_commit: true
       # 每个文件合并时工具调用最大轮数 / Max tool-call iterations per file consolidation
-      max_iterations: 50
+      max_iterations: 200
 
     # 知识提取配置 / Knowledge extraction config
     knowledge_extraction:
@@ -196,7 +196,7 @@ context_enhancement:
       # 触发提取的最低反思轮数 / Minimum reflections before extraction
       min_reflections: 15
       # 每个分类提取时工具调用最大轮数 / Max tool-call iterations per category
-      max_iterations: 100
+      max_iterations: 200
 
     # 初始化配置 / Initialization config
     initialization:

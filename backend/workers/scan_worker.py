@@ -99,6 +99,10 @@ class ScanWorker:
         from backend.core.github_app import GitHubAppClient
 
         self.github_app = GitHubAppClient()
+        from backend.services.activity_observability.integration_service import (
+            ActivityIntegrationService,
+        )
+        self.activity_integration = ActivityIntegrationService()
 
     @staticmethod
     async def _log_activity(
@@ -106,14 +110,14 @@ class ScanWorker:
         event_type: str,
         content: dict[str, Any] | None = None,
     ) -> None:
-        """记录扫描活动事件（持久化 + SSE 推送）。"""
-        try:
-            # 延迟导入：避免 worker 模块启动时加载 service 层的完整依赖链
-            from backend.services.activity_event_service import ActivityEventService
+        """Legacy activity event hook — now a no-op.
 
-            await ActivityEventService.log_event("scan", scan_id, event_type, content)
-        except Exception as exc:
-            logger.debug("扫描活动事件记录失败: {}", exc)
+        The new observability system (ActivityOutbox + user-scoped SSE, driven by
+        ``execution.finish`` and the Attempt observer) replaces the legacy
+        ``activity_events`` table and global ``activity:*`` SSE channel. Retained
+        as a shim so existing call sites remain harmless; it writes nothing.
+        """
+        return None
 
     async def get_scan_candidates(self) -> dict:
         """获取待扫描仓库列表（GitHub App 安装仓库 + 冷却期内未扫描）"""
@@ -217,6 +221,19 @@ class ScanWorker:
 
             logger.info(f"开始扫描仓库: {repo_name} (scan_id={scan_id})")
 
+            execution = None
+            try:
+                execution = await self.activity_integration.start_scan_execution(
+                    {
+                        "task_id": str(scan_id),
+                        "delivery_id": str(scan_id),
+                        "repo_full_name": repo_name,
+                    },
+                    task_id=scan_id,
+                )
+            except Exception as observability_exc:
+                logger.warning("扫描 observability admission skipped: {}", observability_exc)
+
             # 2. 更新状态为 INDEXING
             await self._update_scan(
                 scan_id,
@@ -255,6 +272,11 @@ class ScanWorker:
                         "message": "克隆仓库失败",
                     },
                 )
+                if execution is not None:
+                    await execution.finish(
+                        "failed",
+                        error_message="克隆仓库失败",
+                    )
                 return
 
             # 获取 commit SHA
@@ -411,9 +433,16 @@ class ScanWorker:
                 aggregated["total_findings"],
                 aggregated["health_score"],
             )
+            if execution is not None:
+                await execution.finish("completed")
 
         except Exception as e:
             logger.error(f"扫描 {scan_id} 执行失败: {e}", exc_info=True)
+            if execution is not None:
+                try:
+                    await execution.finish("failed", error_message=str(e))
+                except Exception as finish_exc:
+                    logger.warning("扫描 observability finish 失败: {}", finish_exc)
             await self._update_scan(
                 scan_id,
                 status=ScanStatus.FAILED.value,

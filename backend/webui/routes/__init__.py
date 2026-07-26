@@ -6,6 +6,7 @@ from backend.webui.deps import mark_webui_request
 from backend.webui.routes import (
     action_logs,
     activity,
+    activity_observability,
     agent_skills,
     agent_team,
     assetlinks,
@@ -60,4 +61,4 @@ webui_router.include_router(star_aid.router)
 webui_router.include_router(system_config.router)
 webui_router.include_router(vector_db.router)
 webui_router.include_router(legal.router)
-webui_router.include_router(activity.router)
+webui_router.include_router(activity_observability.router)

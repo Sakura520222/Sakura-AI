@@ -48,6 +48,7 @@
 - **PR 变更自动总结**：AI 自动生成 PR 变更摘要，并在 PR 更新时增量更新总结内容
 - **PR 依赖图生成**：支持 AI 分析与静态 import 分析双模式，生成 Mermaid 格式可视化依赖关系图；增量审查基于上一轮依赖图叠加更新，保留历史依赖节点与边
 - **Token 消耗追踪**：实时追踪审查中所有 AI API 调用的 token 消耗量与预估成本
+- **AI 活动可观测性**：新版“活动可观测性”页面（`/activity/observability/`）基于全新数据范围，为每个 PR/Issue 维护长期业务会话与独立角色线程，权威记录每次真实 Provider HTTP 请求（含 retry/fallback/压缩/模型切换）、上下文 revision、工具执行与 GitHub 发布状态；实时监控按 Work Unit 展示当前 effective 模型、上下文占用与来源、压缩时点和当前阶段，思考内容按可见性策略展示（Provider 未返回可展示摘要时仅显示确定性提示，绝不伪造或永久 spinner）；同一 PR 的多次触发复用同一会话；通知采用 user-scoped SSE，仅投递 `{event_id, sequence, projection_version}`，所有内容经授权 REST 按白名单投影（普通用户与 admin/super_admin 分级），不读取或兼容旧 Activity 历史数据
 - **一键撤回**：管理员使用 `/revoke` 命令一键撤回所有 AI 评论和 Review
 - **辅助模型支持**：独立配置轻量级模型处理摘要、标签推荐等任务，降低推理成本
 - **行内评论开关**：通过 WebUI 配置 `enable_inline_comments`，控制是否在 PR diff 上发布行内评论，减少审查噪音
@@ -471,8 +472,7 @@ Sakura-AI/
 │   │   ├── scan_scheduler.py         # 扫描调度器
 │   │   ├── history_context_service.py     # 增量审查历史
 │   │   ├── pr_review_incremental_queue.py # 增量审查入队
-│   │   ├── activity_event_service.py      # Agent Live View 事件
-│   │   ├── activity_checkpoint_service.py # Agent 会话检查点
+│   │   ├── activity_observability/    # Activity 可观测性、Canonical Transcript、Outbox 与 SSE
 │   │   ├── sakura_memory_service.py          # .sakura/ 项目记忆服务
 │   │   ├── sakura_consolidation_agent.py     # .sakura/ 记忆合并 Agent
 │   │   ├── sakura_knowledge_extractor.py     # .sakura/ 知识提取 Agent

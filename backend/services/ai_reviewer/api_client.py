@@ -6,11 +6,19 @@ ai_account.* 与 ai_role_bindings 解析。旧 OpenAI SDK 与扁平配置不再�
 
 from __future__ import annotations
 
+import hashlib
+from dataclasses import replace
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
+from uuid import uuid4
 
 from loguru import logger
 
 from backend.core.ai_protocol.errors import AllCandidatesFailedError
+from backend.services.activity_observability.contracts import (
+    InvocationContext,
+    RoleConfigSnapshot,
+)
 
 if TYPE_CHECKING:
     import asyncio
@@ -47,8 +55,17 @@ class AIApiClient:
     单模型覆盖中解析实际模型、端点、凭据、协议和故障转移链。
     """
 
-    def __init__(self):
+    def __init__(
+        self,
+        *,
+        context: InvocationContext | None = None,
+        observer: Any = None,
+        logical_call_factory: Any = uuid4,
+    ):
         self._unified_client: Any | None = None
+        self._context = context
+        self._observer = observer
+        self._logical_call_factory = logical_call_factory
 
     async def call_with_retry(
         self,
@@ -66,6 +83,9 @@ class AIApiClient:
         top_p: float | None = None,
         top_k: int | None = None,
         cancel_event: asyncio.Event | None = None,
+        context: InvocationContext | None = None,
+        observer: Any = None,
+        logical_call_factory: Any = uuid4,
     ) -> Any:
         """按角色调用统一协议层 / Call the unified protocol layer by role."""
         if not role:
@@ -84,6 +104,41 @@ class AIApiClient:
             top_p=top_p,
             top_k=top_k,
             cancel_event=cancel_event,
+            context=context,
+            observer=observer,
+            logical_call_factory=logical_call_factory,
+        )
+
+    async def stream_with_retry(
+        self,
+        messages: list[dict[str, Any]],
+        model: str = "",
+        *,
+        role: str | None = None,
+        temperature: float = 0.7,
+        max_tokens: int | None = None,
+        timeout: float | None = None,
+        context: InvocationContext | None = None,
+        observer: Any = None,
+        logical_call_factory: Any = uuid4,
+    ):
+        """Stream through the resolved role chain and observed provider boundary."""
+        if not role:
+            raise ValueError("AI 调用必须显式指定 role")
+        chain = await self._resolve_role_chain(role)
+        if chain is None or not getattr(chain, "candidates", None):
+            raise AllCandidatesFailedError(f"角色 {role} 无可用 AI 候选模型")
+        return self._get_unified_client().stream_with_retry(
+            chain,
+            messages,
+            model=model,
+            role=role,
+            temperature=temperature,
+            max_tokens=max_tokens,
+            timeout=timeout,
+            context=context or self._context,
+            observer=observer or self._observer,
+            logical_call_factory=logical_call_factory,
         )
 
     async def _call_via_unified(
@@ -102,6 +157,9 @@ class AIApiClient:
         top_p: float | None,
         top_k: int | None,
         cancel_event: asyncio.Event | None = None,
+        context: InvocationContext | None = None,
+        observer: Any = None,
+        logical_call_factory: Any = uuid4,
     ) -> Any:
         """解析角色候选链后调用统一客户端 / Resolve and invoke unified client."""
         try:
@@ -115,6 +173,31 @@ class AIApiClient:
             raise AllCandidatesFailedError(
                 f"角色 {role} 无可用 AI 候选模型，请检查 AI 账号和角色绑定。"
             )
+
+        call_context = context or self._context
+        if call_context is not None:
+            primary = chain.candidates[0]
+            primary_endpoint = primary.endpoint.base_url
+            snapshot = RoleConfigSnapshot(
+                role=role,
+                requested_provider=primary.provider.id,
+                requested_model=primary.model.model_id,
+                requested_thinking_mode=None,
+                candidate_chain=tuple(
+                    (candidate.provider.id, candidate.model.model_id)
+                    for candidate in chain.candidates
+                ),
+                account_id=str(getattr(primary.provider, "id", "unknown")),
+                protocol_family=getattr(
+                    primary.provider.family, "value", str(primary.provider.family)
+                ),
+                endpoint_fingerprint=hashlib.sha256(
+                    primary_endpoint.encode("utf-8")
+                ).hexdigest(),
+                config_snapshot_version=1,
+                captured_at=datetime.now(UTC),
+            )
+            call_context = replace(call_context, role_snapshot=snapshot)
 
         return await self._get_unified_client().call_with_retry(
             chain,
@@ -131,6 +214,9 @@ class AIApiClient:
             timeout=timeout,
             role=role,
             cancel_event=cancel_event,
+            context=call_context,
+            observer=observer,
+            logical_call_factory=logical_call_factory,
         )
 
     def _get_unified_client(self) -> Any:
@@ -153,7 +239,12 @@ class AIApiClient:
                     settings, "ai_fallback_sticky_candidate", True
                 ),
             )
-            self._unified_client = UnifiedAIClient(fallback_config=config)
+            self._unified_client = UnifiedAIClient(
+                fallback_config=config,
+                observer=self._observer,
+                context=self._context,
+                logical_call_factory=self._logical_call_factory,
+            )
         return self._unified_client
 
     async def _resolve_role_chain(self, role: str) -> Any:
@@ -161,6 +252,32 @@ class AIApiClient:
         from backend.core.ai_protocol.role_config import resolve_role_from_config
 
         return await resolve_role_from_config(role)
+
+    async def resolve_role_config_snapshot(self, role: str) -> RoleConfigSnapshot:
+        """Freeze the resolved candidate chain before creating a Work Unit."""
+        chain = await self._resolve_role_chain(role)
+        candidates = getattr(chain, "candidates", None) or []
+        if not candidates:
+            raise AllCandidatesFailedError(f"角色 {role} 无可用 AI 候选模型")
+        primary = candidates[0]
+        endpoint = primary.endpoint.base_url
+        return RoleConfigSnapshot(
+            role=role,
+            requested_provider=primary.provider.id,
+            requested_model=primary.model.model_id,
+            requested_thinking_mode=None,
+            candidate_chain=tuple(
+                (candidate.provider.id, candidate.model.model_id)
+                for candidate in candidates
+            ),
+            account_id=str(getattr(primary, "account_id", None) or primary.provider.id),
+            protocol_family=getattr(
+                primary.provider.family, "value", str(primary.provider.family)
+            ),
+            endpoint_fingerprint=hashlib.sha256(endpoint.encode("utf-8")).hexdigest(),
+            config_snapshot_version=1,
+            captured_at=datetime.now(UTC),
+        )
 
     async def resolve_role_model_context(
         self, role: str

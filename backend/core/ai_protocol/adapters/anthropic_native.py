@@ -32,6 +32,8 @@ from backend.core.ai_protocol.models import (
     UnifiedTool,
     UnifiedToolCall,
     UnifiedUsage,
+    safe_provider_event_metadata,
+    usage_from_mapping,
 )
 
 _ANTHROPIC_VERSION = "2023-06-01"
@@ -301,14 +303,7 @@ class AnthropicNativeAdapter(ProtocolAdapter):
 
     @staticmethod
     def _parse_usage(raw: Any) -> UnifiedUsage:
-        if not isinstance(raw, dict):
-            return UnifiedUsage()
-        return UnifiedUsage(
-            input_tokens=int(raw.get("input_tokens", 0) or 0),
-            output_tokens=int(raw.get("output_tokens", 0) or 0),
-            cache_read_tokens=int(raw.get("cache_read_input_tokens", 0) or 0),
-            cache_creation_tokens=int(raw.get("cache_creation_input_tokens", 0) or 0),
-        )
+        return usage_from_mapping(raw)
 
     # ------------------------------------------------------------------
     # HTTP / chat / stream
@@ -485,9 +480,56 @@ class AnthropicNativeAdapter(ProtocolAdapter):
     ) -> Optional[UnifiedStreamEvent]:
         if event_type == "message_stop":
             return UnifiedStreamEvent(type="done")
+        if event_type == "content_block_start":
+            block = chunk.get("content_block") or {}
+            block_type = block.get("type")
+            if block_type in {"thinking", "redacted_thinking"}:
+                opaque = block_type == "redacted_thinking"
+                return UnifiedStreamEvent(
+                    type="reasoning_start",
+                    text=None,
+                    reasoning_availability="encrypted_opaque" if opaque else "omitted",
+                    provider_event_metadata=safe_provider_event_metadata(
+                        {"event": event_type, "block_type": block_type, "redacted": opaque}
+                    ),
+                )
+            if block_type == "tool_use":
+                current_tool.clear()
+                current_tool["id"] = block.get("id", "")
+                current_tool["name"] = block.get("name", "")
+                current_tool["arguments"] = ""
+                return UnifiedStreamEvent(
+                    type="tool_call_start",
+                    tool_call=UnifiedToolCall(
+                        id=current_tool["id"], name=current_tool["name"], arguments=""
+                    ),
+                )
         if event_type == "content_block_delta":
             delta = chunk.get("delta") or {}
             dtype = delta.get("type")
+            if dtype == "thinking_delta":
+                text = delta.get("thinking")
+                if isinstance(text, str) and text:
+                    return UnifiedStreamEvent(
+                        type="reasoning_delta",
+                        text=text,
+                        reasoning_availability="provider_exposed",
+                        provider_event_metadata=safe_provider_event_metadata(
+                            {"event": event_type, "delta_type": dtype}
+                        ),
+                    )
+                return UnifiedStreamEvent(
+                    type="reasoning_start", text=None, reasoning_availability="omitted"
+                )
+            if dtype in {"signature_delta", "redacted_thinking_delta", "redacted_thinking"}:
+                return UnifiedStreamEvent(
+                    type="reasoning_delta",
+                    text=None,
+                    reasoning_availability="encrypted_opaque",
+                    provider_event_metadata=safe_provider_event_metadata(
+                        {"event": event_type, "delta_type": dtype, "encrypted": True}
+                    ),
+                )
             if dtype == "text_delta":
                 return UnifiedStreamEvent(type="text_delta", text=delta.get("text") or "")
             if dtype == "input_json_delta":
@@ -502,27 +544,35 @@ class AnthropicNativeAdapter(ProtocolAdapter):
                         arguments=current_tool.get("arguments", ""),
                     ),
                 )
-        if event_type == "content_block_start":
-            block = chunk.get("content_block") or {}
-            if block.get("type") == "tool_use":
-                current_tool.clear()
-                current_tool["id"] = block.get("id", "")
-                current_tool["name"] = block.get("name", "")
-                current_tool["arguments"] = ""
-                return UnifiedStreamEvent(
-                    type="tool_call_start",
-                    tool_call=UnifiedToolCall(
-                        id=block.get("id", ""),
-                        name=block.get("name", ""),
-                        arguments="",
-                    ),
-                )
+        if event_type == "content_block_stop":
+            return UnifiedStreamEvent(
+                type="reasoning_end",
+                text=None,
+                reasoning_availability="omitted",
+                provider_event_metadata=safe_provider_event_metadata(
+                    {"event": event_type}
+                ),
+            )
         if event_type == "message_delta":
             usage = chunk.get("usage")
+            stop_reason = _ANTHROPIC_STOP_MAP.get(
+                str(chunk.get("delta", {}).get("stop_reason")),
+                StopReason.END_TURN,
+            ) if chunk.get("delta", {}).get("stop_reason") is not None else None
             if usage:
                 return UnifiedStreamEvent(
-                    type="done",
+                    type="usage",
                     usage=AnthropicNativeAdapter._parse_usage(usage),
+                    stop_reason=stop_reason,
+                )
+            if stop_reason is not None:
+                return UnifiedStreamEvent(type="done", stop_reason=stop_reason)
+        if event_type == "message_start":
+            message = chunk.get("message") or {}
+            usage = message.get("usage") if isinstance(message, dict) else None
+            if usage:
+                return UnifiedStreamEvent(
+                    type="usage", usage=AnthropicNativeAdapter._parse_usage(usage)
                 )
         return None
 

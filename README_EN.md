@@ -48,6 +48,7 @@
 - **PR Change Summary**: AI auto-generates PR change summaries with incremental updates when the PR is updated
 - **PR Dependency Graph**: Supports both AI analysis and static import analysis modes to generate Mermaid-format visual dependency graphs; incremental reviews build on the previous graph, preserving historical dependency nodes and edges
 - **Token Consumption Tracking**: Real-time tracking of token usage and estimated costs across all AI API calls during review
+- **AI Activity Observability**: The new "Activity Observability" page (`/activity/observability/`) is built on a fresh data scope: every PR/Issue gets a long-lived business session with independent role threads, authoritatively recording each real Provider HTTP request (retry/fallback/compaction/model switch), context revisions, tool executions, and GitHub publication status. The live monitor shows the current effective model, context usage and provenance, compaction timing, and the current phase per Work Unit; reasoning is shown per visibility policy (when the provider exposes no displayable summary, only a deterministic hint appears — never fabricated text or a permanent spinner). Multiple triggers on the same PR reuse one session. Notifications use user-scoped SSE carrying only `{event_id, sequence, projection_version}`; all content is fetched through authorized REST endpoints with whitelist projections (regular users vs. admin/super_admin), and the new system does not read or remain compatible with legacy Activity history
 - **One-click Revoke**: Admins can use `/revoke` to instantly withdraw all AI comments and reviews
 - **Auxiliary Model Support**: Independently configure lightweight models for summarization, label recommendation, and other tasks to reduce inference costs
 - **Inline Comments Toggle**: Control whether inline comments are posted on PR diffs via WebUI config `enable_inline_comments`, reducing review noise
@@ -472,8 +473,7 @@ Sakura-AI/
 │   │   ├── scan_scheduler.py         # Scan scheduler
 │   │   ├── history_context_service.py     # Incremental review history
 │   │   ├── pr_review_incremental_queue.py # Incremental review queue
-│   │   ├── activity_event_service.py      # Agent Live View events
-│   │   ├── activity_checkpoint_service.py # Agent conversation checkpoints
+│   │   ├── activity_observability/    # Activity observability, canonical transcript, outbox, and SSE
 │   │   ├── sakura_memory_service.py          # .sakura/ project memory service
 │   │   ├── sakura_consolidation_agent.py     # .sakura/ memory consolidation agent
 │   │   ├── sakura_knowledge_extractor.py     # .sakura/ knowledge extraction agent

@@ -358,6 +358,41 @@ async def handle_workflow_job_event(payload: dict[str, Any]) -> JSONResponse:
         )
 
 
+async def _admit_observability_pr_trigger(
+    pr_info: dict[str, Any], delivery_id: str | None, action: str
+) -> None:
+    """Best-effort admission into the new observability domain.
+
+    Business webhook handling remains compatible with older installations, but
+    real GitHub payloads must carry the immutable repository ID before this
+    path can create an authoritative Session/Trigger.
+    """
+    if not delivery_id or not pr_info.get("repository_external_id"):
+        return
+    trigger_kind = {
+        "synchronize": "synchronize",
+        "reopened": "reopen",
+    }.get(action)
+    if trigger_kind is None:
+        return
+    try:
+        from backend.services.activity_observability.integration_service import (
+            ActivityIntegrationService,
+        )
+
+        await ActivityIntegrationService().admit(
+            pr_info,
+            trigger_kind=trigger_kind,
+            delivery_id=delivery_id,
+            base_sha=pr_info.get("before"),
+            head_sha=pr_info.get("after") or pr_info.get("head_sha"),
+        )
+    except Exception as exc:
+        # Admission is fail-safe for deployments that have not migrated their
+        # schema yet; it must never duplicate or block GitHub side effects.
+        logger.warning("Activity observability admission skipped: {}", exc)
+
+
 async def handle_pull_request_event(
     payload: dict[str, Any],
     delivery_id: str | None = None,
@@ -374,6 +409,9 @@ async def handle_pull_request_event(
             )
 
         action = pr_info["action"]
+        if delivery_id:
+            pr_info["delivery_id"] = delivery_id
+        await _admit_observability_pr_trigger(pr_info, delivery_id, action)
 
         # Handle PR closed/merged event: cancel any active review task
         if action == "closed":
@@ -920,6 +958,10 @@ async def handle_issue_comment_event(payload: dict[str, Any]) -> JSONResponse:
                 "repo_owner": repo_owner,
                 "repo_name": repo_name,
                 "repo_full_name": repo_full_name,
+                "repository_external_id": getattr(repo, "id", None),
+                "source_system_instance": getattr(
+                    repo, "html_url", "https://github.com"
+                ).split("://")[-1].split("/", 1)[0].lower(),
                 "installation_id": installation_id,
                 "author": pr.user.login,
                 "title": pr.title,
