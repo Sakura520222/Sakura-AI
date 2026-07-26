@@ -17,6 +17,7 @@ from backend.core.ai_protocol.models import (
     UnifiedRequest,
     UnifiedTool,
     UnifiedToolCall,
+    safe_provider_event_metadata,
 )
 
 
@@ -604,3 +605,201 @@ def test_protocol_adapters_classify_terminal_and_recoverable_errors():
         assert category.value == "context_overflow"
         category, _ = adapter.translate_error(429, {"error": {"message": "rate limited"}})
         assert category.value == "rate_limited"
+
+
+def test_openai_responses_stream_reasoning_summary_lifecycle_and_usage_details():
+    adapter = OpenAIResponsesAdapter()
+    exposed = adapter._parse_responses_sse_line(
+        'data: {"type":"response.reasoning_summary_text.delta","delta":"checking diff"}'
+    )
+    omitted = adapter._parse_responses_sse_line(
+        'data: {"type":"response.reasoning.started"}'
+    )
+    done = adapter._parse_responses_sse_line(
+        'data: {"type":"response.reasoning_summary_text.done"}'
+    )
+    completed = adapter._parse_responses_sse_line(
+        'data: {"type":"response.completed","response":{"usage":{"input_tokens":12,"output_tokens":7,"input_tokens_details":{"cached_tokens":3},"output_tokens_details":{"reasoning_tokens":2}}}}'
+    )
+
+    assert exposed.type == "reasoning_delta"
+    assert exposed.reasoning_availability == "summarized"
+    assert exposed.text == "checking diff"
+    assert omitted.type == "reasoning_start"
+    assert omitted.reasoning_availability == "omitted"
+    assert omitted.text is None
+    assert done.type == "reasoning_end"
+    assert done.reasoning_availability == "summarized"
+    assert done.text is None
+    assert completed.type == "done"
+    assert completed.usage is not None
+    assert completed.usage.input_tokens == 12
+    assert completed.usage.cache_read_tokens == 3
+    assert completed.usage.reasoning_tokens == 2
+    assert completed.usage.reported_fields == frozenset({"input_tokens", "output_tokens", "cache_read_tokens", "reasoning_tokens"})
+    assert completed.usage.details == {"input_tokens": 12, "output_tokens": 7, "cached_tokens": 3, "reasoning_tokens": 2}
+
+
+def test_openai_responses_unknown_events_are_ignored_safely():
+    assert OpenAIResponsesAdapter._parse_responses_sse_line(
+        'data: {"type":"response.internal.secret","url":"https://evil.test","payload":{"token":"secret"}}'
+    ) is None
+
+
+def test_anthropic_stream_reasoning_blocks_omit_text_and_redact_opaque_values():
+    adapter = AnthropicNativeAdapter()
+    current_tool = {}
+    omitted = adapter._parse_stream_event(
+        "content_block_start",
+        {"content_block": {"type": "thinking", "thinking": ""}},
+        current_tool,
+    )
+    delta = adapter._parse_stream_event(
+        "content_block_delta",
+        {"delta": {"type": "thinking_delta", "thinking": "plan"}},
+        current_tool,
+    )
+    signature = adapter._parse_stream_event(
+        "content_block_delta",
+        {"delta": {"type": "signature_delta", "signature": "SECRET-SIGNATURE"}},
+        current_tool,
+    )
+    redacted = adapter._parse_stream_event(
+        "content_block_delta",
+        {"delta": {"type": "redacted_thinking", "data": "SECRET-THOUGHT"}},
+        current_tool,
+    )
+    ended = adapter._parse_stream_event("content_block_stop", {}, current_tool)
+    usage = adapter._parse_stream_event(
+        "message_delta",
+        {"usage": {"input_tokens": 10, "output_tokens": 6, "cache_read_tokens": 2, "reasoning_tokens": 4}},
+        current_tool,
+    )
+
+    assert omitted.type == "reasoning_start"
+    assert omitted.text is None and omitted.reasoning_availability == "omitted"
+    assert delta.type == "reasoning_delta"
+    assert delta.text == "plan" and delta.reasoning_availability == "provider_exposed"
+    assert signature.type == "reasoning_delta"
+    assert signature.text is None and signature.reasoning_availability == "encrypted_opaque"
+    assert redacted.type == "reasoning_delta"
+    assert redacted.text is None and redacted.reasoning_availability == "encrypted_opaque"
+    assert "SECRET" not in repr(signature.provider_event_metadata)
+    assert "signature" not in (signature.provider_event_metadata or {})
+    assert ended.type == "reasoning_end"
+    assert ended.text is None
+    assert usage.type == "usage"
+    assert usage.usage is not None and usage.usage.cache_read_tokens == 2
+
+
+def test_openai_compatible_reasoning_content_is_provider_exposed_without_false_events():
+    adapter = OpenAICompatibleAdapter()
+    reasoning = adapter._parse_sse_line(
+        'data: {"choices":[{"delta":{"reasoning_content":"step"}}]}'
+    )
+    ordinary = adapter._parse_sse_line(
+        'data: {"choices":[{"delta":{"content":"answer"}}]}'
+    )
+    no_reasoning = adapter._parse_sse_line(
+        'data: {"choices":[{"delta":{"role":"assistant"}}]}'
+    )
+    usage_only = adapter._parse_sse_line(
+        'data: {"usage":{"prompt_tokens":4,"completion_tokens":2}}'
+    )
+
+    assert reasoning.type == "reasoning_delta"
+    assert reasoning.text == "step" and reasoning.reasoning_availability == "provider_exposed"
+    assert ordinary.type == "text_delta" and ordinary.text == "answer"
+    assert no_reasoning is None
+    assert usage_only.type == "usage"
+    assert usage_only.usage is not None and usage_only.usage.input_tokens == 4
+
+
+def test_gemini_thought_and_signature_are_not_confused_with_ordinary_text():
+    thought = GeminiNativeAdapter._parse_stream_chunk(
+        {"candidates": [{"content": {"parts": [{"thought": True, "text": "plan"}]}}]}
+    )
+    signature = GeminiNativeAdapter._parse_stream_chunk(
+        {"candidates": [{"content": {"parts": [{"thoughtSignature": "SECRET"}]}}]}
+    )
+    ordinary = GeminiNativeAdapter._parse_stream_chunk(
+        {"candidates": [{"content": {"parts": [{"text": "answer"}]}}]}
+    )
+    usage = GeminiNativeAdapter._parse_stream_chunk(
+        {"usageMetadata": {"promptTokenCount": 8, "candidatesTokenCount": 3, "cachedContentTokenCount": 2, "thoughtsTokenCount": 1}}
+    )
+
+    assert thought.type == "reasoning_delta"
+    assert thought.text == "plan" and thought.reasoning_availability == "provider_exposed"
+    assert signature.type == "reasoning_end"
+    assert signature.text is None and signature.reasoning_availability == "encrypted_opaque"
+    assert "SECRET" not in repr(signature.provider_event_metadata)
+    assert ordinary.type == "text_delta" and ordinary.text == "answer"
+    assert usage.type == "done"
+    assert usage.usage is not None and usage.usage.cache_read_tokens == 2
+    assert usage.usage.reasoning_tokens == 1
+
+
+def test_provider_event_metadata_is_scalar_allowlist_only():
+    metadata = safe_provider_event_metadata(
+        {
+            "event": "response.completed",
+            "index": 1,
+            "url": "https://evil.test",
+            "authorization": "Bearer secret",
+            "raw": {"api_key": "secret"},
+            "payload": "secret",
+            "unknown": "secret",
+        }
+    )
+    assert metadata == {"event": "response.completed", "index": 1}
+    assert all(secret not in repr(metadata) for secret in ("https://", "Bearer", "secret", "api_key"))
+
+
+@pytest.mark.asyncio
+async def test_openai_responses_adapter_stream_iterates_real_sse_reasoning_events():
+    sse = "\n".join(
+        [
+            'data: {"type":"response.reasoning.started"}',
+            'data: {"type":"response.reasoning_summary_text.delta","delta":"summary"}',
+            'data: {"type":"response.completed","response":{"usage":{"input_tokens":4,"output_tokens":2}}}',
+            "",
+        ]
+    )
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            headers={"content-type": "text/event-stream"},
+            text=sse,
+            request=request,
+        )
+
+    endpoint = ResolvedEndpoint(
+        base_url="https://example.test/v1/",
+        chat_path="responses",
+        auth_scheme=AuthScheme.BEARER,
+    )
+    client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    request = UnifiedRequest(
+        model="gpt-5.6-sol",
+        messages=[UnifiedMessage(role="user", content="inspect")],
+        max_tokens=128,
+        stream=True,
+    )
+    try:
+        events = [
+            event
+            async for event in OpenAIResponsesAdapter().stream(
+                client, endpoint, "test-key", request
+            )
+        ]
+    finally:
+        await client.aclose()
+
+    assert [event.type for event in events] == [
+        "reasoning_start", "reasoning_delta", "done"
+    ]
+    assert events[1].text == "summary"
+    assert events[-1].usage is not None
+    assert events[-1].usage.input_tokens == 4

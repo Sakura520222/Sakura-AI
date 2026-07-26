@@ -1,0 +1,539 @@
+{% extends "base.html" %}
+
+{# 新版实时活动监控：长期 Session / Invocation / Work Unit / Attempt。
+   仅渲染授权投影；reasoning 区域按可见性策略展示，omitted 时不显示 spinner 或伪造文本。 #}
+{% block title %}{{ _('activity.title') }} - Sakura AI{% endblock %}
+
+{% block content %}
+<div class="flex flex-col lg:flex-row gap-4 h-[calc(100vh-140px)]"
+     x-data="activityObservability()" x-init="init()">
+
+    <!-- ========== 左栏：Session 列表 ========== -->
+    <div class="w-full lg:w-[380px] shrink-0 flex flex-col gap-4">
+        <div>
+            <h1 class="text-2xl font-bold bg-gradient-to-r from-sakura-700 to-purple-700 dark:from-sakura-400 dark:to-purple-400 bg-clip-text text-transparent">
+                {{ _('activity.title') }}
+            </h1>
+            <p class="mt-1 text-sm text-gray-500 dark:text-gray-400">
+                {{ _('activity.description') }}
+            </p>
+        </div>
+
+        <div class="flex items-center gap-1.5 flex-wrap">
+            <button @click="filter = 'all'"
+                    :class="filter === 'all' ? 'bg-sakura-500 text-white shadow-md shadow-sakura-500/25' : 'text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800'"
+                    class="px-2.5 py-1 rounded-lg text-xs font-medium transition-all">
+                {{ _('activity.filter_all') }}
+            </button>
+            <button @click="filter = 'pr'"
+                    :class="filter === 'pr' ? 'bg-blue-500 text-white shadow-md shadow-blue-500/25' : 'text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800'"
+                    class="px-2.5 py-1 rounded-lg text-xs font-medium transition-all">
+                {{ _('activity.filter_pr') }}
+            </button>
+            <button @click="filter = 'issue'"
+                    :class="filter === 'issue' ? 'bg-purple-500 text-white shadow-md shadow-purple-500/25' : 'text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800'"
+                    class="px-2.5 py-1 rounded-lg text-xs font-medium transition-all">
+                {{ _('activity.filter_issue') }}
+            </button>
+        </div>
+
+        <div class="flex-1 overflow-y-auto rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 divide-y divide-gray-100 dark:divide-gray-700">
+            <template x-for="s in filteredSessions" :key="s.session_id">
+                <div @click="selectSession(s.session_id)"
+                     :class="selectedSessionId === s.session_id ? 'bg-sakura-50 dark:bg-sakura-900/20 border-l-4 border-sakura-500' : 'hover:bg-gray-50 dark:hover:bg-gray-700/50'"
+                     class="p-3 cursor-pointer transition-all">
+                    <div class="flex items-center justify-between">
+                        <span class="text-sm font-medium text-gray-800 dark:text-gray-200 truncate"
+                              x-text="s.repo_full_name || ('#' + s.session_id)"></span>
+                        <span class="text-[10px] px-1.5 py-0.5 rounded-full"
+                              :class="resourceBadgeClass(s.resource_type)"
+                              x-text="s.resource_type"></span>
+                    </div>
+                    <div class="mt-1 flex items-center justify-between text-[11px] text-gray-400 dark:text-gray-500">
+                        <span x-text="formatStatus(s.status)"></span>
+                        <span x-text="formatTime(s.last_active_at)"></span>
+                    </div>
+                </div>
+            </template>
+            <template x-if="!loading && filteredSessions.length === 0">
+                <div class="p-6 text-center text-sm text-gray-400 dark:text-gray-500">
+                    {{ _('activity.no_active_tasks') }}
+                </div>
+            </template>
+            <template x-if="loading">
+                <div class="p-6 text-center text-sm text-gray-400 dark:text-gray-500">
+                    {{ _('activity.loading') }}
+                </div>
+            </template>
+        </div>
+    </div>
+
+    <!-- ========== 右栏：Session 详情 ========== -->
+    <div class="flex-1 overflow-y-auto rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 p-4">
+        <template x-if="!selectedSessionId">
+            <div class="h-full flex items-center justify-center text-gray-400 dark:text-gray-500 text-sm">
+                {{ _('activity.select_prompt') }}
+            </div>
+        </template>
+
+        <template x-if="selectedSessionId">
+            <div class="space-y-4">
+
+                <!-- Session 摘要 -->
+                <div class="rounded-xl border border-gray-200 dark:border-gray-700 p-3">
+                    <div class="flex items-center justify-between">
+                        <div>
+                            <p class="text-lg font-semibold text-gray-800 dark:text-gray-200"
+                               x-text="snapshot?.session?.repo_full_name"></p>
+                            <p class="text-xs text-gray-400 dark:text-gray-500 mt-0.5">
+                                <span x-text="snapshot?.session?.resource_type"></span>
+                                <span x-text="'#' + (snapshot?.session?.resource_number ?? '')"></span>
+                                ·
+                                <span x-text="formatStatus(snapshot?.session?.status)"></span>
+                            </p>
+                        </div>
+                        <div class="text-right text-[11px] text-gray-400 dark:text-gray-500">
+                            <p x-text="formatTime(snapshot?.session?.last_active_at)"></p>
+                            <p class="mt-0.5">high-water: <span x-text="snapshot?.high_water_mark ?? 0"></span></p>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 当前阶段 / 模型 / 上下文 -->
+                <div class="grid grid-cols-1 xl:grid-cols-3 gap-3">
+                    <div class="rounded-xl border border-gray-200 dark:border-gray-700 p-3">
+                        <p class="text-[11px] uppercase tracking-wide text-gray-400">{{ _('activity.current_phase') }}</p>
+                        <p class="mt-1 text-sm font-semibold text-gray-800 dark:text-gray-200"
+                           x-text="formatPhase(snapshot?.current_phase) || '—'"></p>
+                    </div>
+                    <div class="rounded-xl border border-gray-200 dark:border-gray-700 p-3">
+                        <p class="text-[11px] uppercase tracking-wide text-gray-400">{{ _('activity.active_models') }}</p>
+                        <template x-if="(snapshot?.active_models || []).length">
+                            <div class="mt-1 space-y-1">
+                                <template x-for="a in snapshot.active_models" :key="a.attempt_id">
+                                    <p class="text-sm text-gray-800 dark:text-gray-200">
+                                        <span class="font-semibold" x-text="a.effective_model"></span>
+                                        <span class="text-xs text-gray-400" x-text="' · ' + a.effective_provider"></span>
+                                        <span class="text-[10px] rounded px-1 py-0.5 bg-amber-50 text-amber-700 dark:bg-amber-900/30 dark:text-amber-300"
+                                              x-text="a.attempt_kind"></span>
+                                    </p>
+                                </template>
+                            </div>
+                        </template>
+                        <template x-if="!(snapshot?.active_models || []).length">
+                            <p class="mt-1 text-sm text-gray-400">—</p>
+                        </template>
+                    </div>
+                    <div class="rounded-xl border border-gray-200 dark:border-gray-700 p-3">
+                        <p class="text-[11px] uppercase tracking-wide text-gray-400">{{ _('activity.context_usage') }}</p>
+                        <template x-if="latestContext">
+                            <div class="mt-1">
+                                <p class="text-sm font-semibold text-gray-800 dark:text-gray-200"
+                                   x-text="formatContext(latestContext)"></p>
+                                <div class="mt-2 h-1.5 rounded bg-gray-100 dark:bg-gray-700 overflow-hidden">
+                                    <div class="h-full bg-sakura-500 transition-all"
+                                         :style="`width:${contextPercent(latestContext)}%`"></div>
+                                </div>
+                                <p class="mt-1 text-[10px] text-gray-400"
+                                   x-text="contextProvenance(latestContext)"></p>
+                            </div>
+                        </template>
+                        <template x-if="!latestContext">
+                            <p class="mt-1 text-sm text-gray-400">{{ _('activity.context_unavailable') }}</p>
+                        </template>
+                    </div>
+                </div>
+
+                <!-- 累计用量与 Thread revision -->
+                <div class="grid grid-cols-1 xl:grid-cols-2 gap-3">
+                    <div class="rounded-xl border border-gray-200 dark:border-gray-700 p-3">
+                        <h3 class="text-sm font-semibold text-gray-700 dark:text-gray-300 mb-2">
+                            {{ _('activity.total_usage') }}
+                        </h3>
+                        <div class="grid grid-cols-2 gap-2 text-xs">
+                            <p>{{ _('activity.input_tokens') }}:
+                                <span class="font-mono" x-text="formatNumber(snapshot?.usage_totals?.input_tokens)"></span>
+                            </p>
+                            <p>{{ _('activity.output_tokens') }}:
+                                <span class="font-mono" x-text="formatNumber(snapshot?.usage_totals?.output_tokens)"></span>
+                            </p>
+                            <p>{{ _('activity.reasoning_tokens') }}:
+                                <span class="font-mono" x-text="formatNumber(snapshot?.usage_totals?.reasoning_tokens)"></span>
+                            </p>
+                            <p>{{ _('activity.cached_tokens') }}:
+                                <span class="font-mono" x-text="formatNumber(snapshot?.usage_totals?.cached_input_tokens)"></span>
+                            </p>
+                        </div>
+                    </div>
+                    <div class="rounded-xl border border-gray-200 dark:border-gray-700 p-3">
+                        <h3 class="text-sm font-semibold text-gray-700 dark:text-gray-300 mb-2">
+                            {{ _('activity.context_revisions') }}
+                        </h3>
+                        <div class="space-y-1">
+                            <template x-for="t in snapshot?.threads || []" :key="t.thread_id">
+                                <p class="text-xs text-gray-600 dark:text-gray-300">
+                                    <span class="font-medium" x-text="t.purpose"></span>
+                                    <span x-text="' · rev ' + (t.revision_number ?? 0)"></span>
+                                    <span x-text="' · ' + t.message_count + ' {{ _('activity.messages') }}'"></span>
+                                    <span class="text-gray-400" x-text="t.revision_reason ? ' · ' + t.revision_reason : ''"></span>
+                                </p>
+                            </template>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 压缩 / 上下文操作 -->
+                <div class="rounded-xl border border-gray-200 dark:border-gray-700 p-3">
+                    <h3 class="text-sm font-semibold text-gray-700 dark:text-gray-300 mb-2">
+                        {{ _('activity.compression_history') }}
+                    </h3>
+                    <template x-if="(snapshot?.context_operations || []).length">
+                        <div class="space-y-1.5">
+                            <template x-for="op in snapshot.context_operations" :key="op.operation_id">
+                                <div class="text-xs flex flex-wrap items-center gap-1.5">
+                                    <span class="font-medium" x-text="op.operation_type"></span>
+                                    <span class="rounded px-1.5 py-0.5 bg-purple-50 text-purple-700 dark:bg-purple-900/30 dark:text-purple-300"
+                                          x-text="op.status"></span>
+                                    <span class="text-gray-400"
+                                          x-text="'rev ' + (op.before_revision_id ?? '—') + ' → ' + (op.after_revision_id ?? '—')"></span>
+                                    <span class="text-gray-400" x-text="formatTime(op.completed_at || op.created_at)"></span>
+                                </div>
+                            </template>
+                        </div>
+                    </template>
+                    <template x-if="!(snapshot?.context_operations || []).length">
+                        <p class="text-xs text-gray-400">{{ _('activity.no_compression') }}</p>
+                    </template>
+                </div>
+
+                <!-- Invocation / Work Unit / Attempt -->
+                <div>
+                    <h3 class="text-sm font-semibold text-gray-700 dark:text-gray-300 mb-2">
+                        {{ _('activity.invocations') }}
+                    </h3>
+                    <div class="space-y-2">
+                        <template x-for="(inv, index) in snapshot?.invocations || []" :key="inv.invocation_id">
+                            <details class="rounded-xl border border-gray-200 dark:border-gray-700 p-3" :open="index === 0">
+                                <summary class="cursor-pointer text-sm font-medium text-gray-700 dark:text-gray-200">
+                                    <span x-text="'Invocation #' + inv.invocation_id"></span>
+                                    <span class="ml-2 text-xs text-gray-400" x-text="formatStatus(inv.status)"></span>
+                                    <span class="ml-2 text-xs text-gray-400" x-text="formatPhase(inv.current_phase)"></span>
+                                </summary>
+                                <div class="mt-2 space-y-2">
+                                    <template x-for="wu in inv.work_units" :key="wu.work_unit_id">
+                                        <div class="rounded-lg bg-gray-50 dark:bg-gray-700/40 p-2">
+                                            <div class="flex flex-wrap items-center gap-1.5 text-xs">
+                                                <span class="font-semibold" x-text="wu.purpose"></span>
+                                                <span x-text="formatStatus(wu.status)"></span>
+                                                <span class="text-gray-400" x-text="formatPhase(wu.current_phase)"></span>
+                                            </div>
+                                            <div class="mt-1.5 space-y-1">
+                                                <template x-for="a in wu.attempts" :key="a.attempt_id">
+                                                    <div class="text-[11px] grid grid-cols-1 lg:grid-cols-[auto_1fr_auto] gap-1 lg:gap-3 border-t border-gray-200/70 dark:border-gray-600/70 pt-1">
+                                                        <span class="font-mono" x-text="'#' + a.attempt_index + ' ' + a.attempt_kind"></span>
+                                                        <span>
+                                                            <span x-text="a.effective_provider + '/' + a.effective_model"></span>
+                                                            <span class="text-gray-400" x-text="a.effective_thinking_mode ? ' · ' + a.effective_thinking_mode : ''"></span>
+                                                        </span>
+                                                        <span class="text-gray-400"
+                                                              x-text="formatAttemptUsage(a)"></span>
+                                                    </div>
+                                                </template>
+                                            </div>
+                                        </div>
+                                    </template>
+                                </div>
+                            </details>
+                        </template>
+                    </div>
+                </div>
+
+                <!-- 事件时间线（授权投影） -->
+                <div>
+                    <h3 class="text-sm font-semibold text-gray-700 dark:text-gray-300 mb-2">
+                        {{ _('activity.events') }}
+                    </h3>
+                    <div class="space-y-1.5">
+                        <template x-for="e in events" :key="e.event_id">
+                            <div class="flex items-start gap-2 text-xs p-2 rounded-lg bg-gray-50 dark:bg-gray-700/40">
+                                <span class="shrink-0 px-1.5 py-0.5 rounded text-[10px] font-mono"
+                                      :class="eventBadgeClass(e.event_type)"
+                                      x-text="e.event_type"></span>
+                                <div class="flex-1 min-w-0">
+                                    <p class="text-gray-600 dark:text-gray-300 break-words"
+                                       x-text="eventSummary(e)"></p>
+                                    <p class="text-[10px] text-gray-400 dark:text-gray-500 mt-0.5"
+                                       x-text="formatTime(e.created_at)"></p>
+                                </div>
+                            </div>
+                        </template>
+                        <template x-if="events.length === 0">
+                            <p class="text-xs text-gray-400 dark:text-gray-500 italic">
+                                {{ _('activity.no_events') }}
+                            </p>
+                        </template>
+                    </div>
+                </div>
+
+                <!-- Reasoning 区域（按可见性策略展示） -->
+                <div class="rounded-xl border border-gray-200 dark:border-gray-700 p-3">
+                    <h3 class="text-sm font-semibold text-gray-700 dark:text-gray-300 mb-1">
+                        {{ _('activity.reasoning') }}
+                    </h3>
+                    <template x-if="reasoningAttempts.length">
+                        <div class="space-y-1">
+                            <template x-for="a in reasoningAttempts" :key="a.attempt_id">
+                                <p class="text-xs text-gray-600 dark:text-gray-300">
+                                    <span class="font-medium" x-text="a.effective_model"></span>
+                                    <span x-text="' · ' + a.reasoning_availability"></span>
+                                    <span x-text="a.reasoning_tokens != null ? ' · ' + formatNumber(a.reasoning_tokens) + ' tokens' : ''"></span>
+                                    <span class="text-gray-400"
+                                          x-text="reasoningDuration(a)"></span>
+                                </p>
+                            </template>
+                        </div>
+                    </template>
+                    {# omitted/unavailable 时只显示确定性提示，不渲染 spinner 或伪造文本 #}
+                    <template x-if="!reasoningAttempts.length">
+                        <p class="text-xs text-gray-400 dark:text-gray-500">
+                            {{ _('activity.reasoning_omitted_hint') }}
+                        </p>
+                    </template>
+                </div>
+
+            </div>
+        </template>
+    </div>
+</div>
+
+<script>
+function activityObservability() {
+    return {
+        sessions: [],
+        selectedSessionId: null,
+        filter: 'all',
+        loading: false,
+        snapshot: null,
+        events: [],
+        cursor: null,
+        eventSource: null,
+
+        get filteredSessions() {
+            if (this.filter === 'all') return this.sessions;
+            return this.sessions.filter(s => s.resource_type === this.filter);
+        },
+
+        get allAttempts() {
+            return (this.snapshot?.invocations || []).flatMap(inv =>
+                (inv.work_units || []).flatMap(wu => wu.attempts || [])
+            );
+        },
+
+        get latestContext() {
+            const attempt = [...this.allAttempts].reverse().find(a => a.context);
+            return attempt?.context || null;
+        },
+
+        get reasoningAttempts() {
+            return this.allAttempts.filter(a =>
+                a.reasoning_availability && a.reasoning_availability !== 'unavailable'
+            );
+        },
+
+        async init() {
+            await this.loadSessions();
+            // SSE 负责低延迟唤醒；轮询是断流和无 outbox 事件时的恢复兜底。
+            setInterval(() => this.loadSessions(), 15000);
+            setInterval(() => {
+                if (this.selectedSessionId) this.refreshSnapshot(this.selectedSessionId);
+            }, 5000);
+        },
+
+        async loadSessions() {
+            this.loading = true;
+            try {
+                const resp = await fetch('/activity/observability/api/sessions?limit=30');
+                if (resp.ok) {
+                    const data = await resp.json();
+                    this.sessions = data.sessions || [];
+                }
+            } catch (e) {
+                console.error('load sessions failed', e);
+            } finally {
+                this.loading = false;
+            }
+        },
+
+        async selectSession(sessionId) {
+            if (this.eventSource) {
+                this.eventSource.close();
+                this.eventSource = null;
+            }
+            this.selectedSessionId = sessionId;
+            await this.loadSnapshot(sessionId);
+            this.subscribeStream(sessionId);
+        },
+
+        async loadSnapshot(sessionId) {
+            try {
+                const resp = await fetch(`/activity/observability/api/sessions/${sessionId}/snapshot`);
+                if (resp.status === 404) {
+                    this.selectedSessionId = null;
+                    return;
+                }
+                if (resp.ok) {
+                    const data = await resp.json();
+                    this.snapshot = data;
+                    this.cursor = data.cursor;
+                    this.events = [];
+                    await this.loadEvents(sessionId, null);
+                }
+            } catch (e) {
+                console.error('snapshot failed', e);
+            }
+        },
+
+        async refreshSnapshot(sessionId) {
+            try {
+                const resp = await fetch(`/activity/observability/api/sessions/${sessionId}/snapshot`);
+                if (resp.status === 404) {
+                    this.selectedSessionId = null;
+                    if (this.eventSource) this.eventSource.close();
+                    return;
+                }
+                if (resp.ok && this.selectedSessionId === sessionId) {
+                    this.snapshot = await resp.json();
+                }
+            } catch (e) {
+                console.error('snapshot refresh failed', e);
+            }
+        },
+
+        async loadEvents(sessionId, cursor) {
+            const url = `/activity/observability/api/sessions/${sessionId}/events` + (cursor ? `?cursor=${encodeURIComponent(cursor)}` : '');
+            try {
+                const resp = await fetch(url);
+                if (resp.status === 409) {
+                    // cursor 失效：重新拉 snapshot。
+                    await this.loadSnapshot(sessionId);
+                    return;
+                }
+                if (resp.ok) {
+                    const data = await resp.json();
+                    const incoming = data.events || [];
+                    // 幂等合并：按 event_id 去重，按 sequence 排序。
+                    const merged = new Map();
+                    for (const e of this.events) merged.set(e.event_id, e);
+                    for (const e of incoming) merged.set(e.event_id, e);
+                    this.events = Array.from(merged.values()).sort((a, b) => (a.sequence ?? 0) - (b.sequence ?? 0));
+                    if (data.cursor) this.cursor = data.cursor;
+                }
+            } catch (e) {
+                console.error('events failed', e);
+            }
+        },
+
+        subscribeStream(sessionId) {
+            // user-scoped SSE：通知只含 event_id/sequence/projection_version。
+            // 收到通知后调用授权 events API 拉取投影，不依赖通知内容更新 UI。
+            this.eventSource = new EventSource(`/activity/observability/api/sessions/${sessionId}/stream`);
+            this.eventSource.addEventListener('activity:notification', (msg) => {
+                try {
+                    const data = JSON.parse(msg.data);
+                    // 通知本身无 session/type/time；用当前 cursor 拉增量。
+                    this.loadEvents(sessionId, this.cursor);
+                    this.refreshSnapshot(sessionId);
+                } catch (e) {
+                    console.error('bad notification', e);
+                }
+            });
+            this.eventSource.onerror = () => {
+                // 断线后短暂等待重连；cursor 恢复保证不丢事件。
+            };
+        },
+
+        formatStatus(status) {
+            const map = {open: '{{ _('activity.status_open') }}', archived: '{{ _('activity.status_archived') }}', completed: '{{ _('activity.status_completed') }}', partial: '{{ _('activity.status_partial') }}', failed: '{{ _('activity.status_failed') }}', cancelled: '{{ _('activity.status_cancelled') }}'};
+            return map[status] || status || '';
+        },
+
+        formatTime(iso) {
+            if (!iso) return '';
+            try {
+                const d = new Date(iso);
+                return d.toLocaleString();
+            } catch {
+                return iso;
+            }
+        },
+
+        formatNumber(value) {
+            return Number(value || 0).toLocaleString();
+        },
+
+        formatPhase(phase) {
+            const map = {
+                admitted: '{{ _('activity.phase_admitted') }}',
+                preparing_context: '{{ _('activity.phase_preparing_context') }}',
+                model_request: '{{ _('activity.phase_model_request') }}',
+                embedding_request: '{{ _('activity.phase_embedding_request') }}',
+                processing_response: '{{ _('activity.phase_processing_response') }}',
+                context_compaction: '{{ _('activity.phase_context_compaction') }}',
+                model_followup: '{{ _('activity.phase_model_followup') }}',
+                retry_wait: '{{ _('activity.phase_retry_wait') }}',
+                provider_error: '{{ _('activity.phase_provider_error') }}',
+                tool_failed: '{{ _('activity.phase_tool_failed') }}',
+            };
+            if (phase?.startsWith('tool:')) return '{{ _('activity.phase_tool') }} ' + phase.slice(5);
+            return map[phase] || phase || '';
+        },
+
+        formatContext(ctx) {
+            const used = ctx?.context_tokens;
+            const total = ctx?.context_window_tokens;
+            if (used == null || total == null) return '{{ _('activity.context_unavailable') }}';
+            return `${this.formatNumber(used)} / ${this.formatNumber(total)}`;
+        },
+
+        contextPercent(ctx) {
+            const used = Number(ctx?.context_tokens || 0);
+            const total = Number(ctx?.context_window_tokens || 0);
+            return total > 0 ? Math.max(0, Math.min(100, used * 100 / total)) : 0;
+        },
+
+        contextProvenance(ctx) {
+            return `${ctx?.context_tokens_availability || 'unavailable'} · ${ctx?.context_tokens_source || 'unknown'}`;
+        },
+
+        formatAttemptUsage(a) {
+            return `${this.formatStatus(a.status)} · ${this.formatNumber(a.input_tokens)} in / ${this.formatNumber(a.output_tokens)} out`;
+        },
+
+        reasoningDuration(a) {
+            if (!a.reasoning_started_at || !a.reasoning_completed_at) return '';
+            const duration = Math.max(0, new Date(a.reasoning_completed_at) - new Date(a.reasoning_started_at));
+            return ` · ${(duration / 1000).toFixed(1)}s`;
+        },
+
+        resourceBadgeClass(type) {
+            if (type === 'pr') return 'bg-blue-100 text-blue-700 dark:bg-blue-900/40 dark:text-blue-300';
+            if (type === 'issue') return 'bg-purple-100 text-purple-700 dark:bg-purple-900/40 dark:text-purple-300';
+            if (type === 'ephemeral') return 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300';
+            return 'bg-gray-100 text-gray-600 dark:bg-gray-700 dark:text-gray-300';
+        },
+
+        eventBadgeClass(type) {
+            if (type === 'status') return 'bg-blue-50 text-blue-600 dark:bg-blue-900/30';
+            if (type === 'error') return 'bg-red-50 text-red-600 dark:bg-red-900/30';
+            if (type === 'result') return 'bg-emerald-50 text-emerald-600 dark:bg-emerald-900/30';
+            return 'bg-gray-50 text-gray-600 dark:bg-gray-700/50';
+        },
+
+        eventSummary(e) {
+            const p = e.payload || {};
+            return p.message || p.status || e.event_type;
+        },
+    };
+}
+</script>
+{% endblock %}

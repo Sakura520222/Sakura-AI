@@ -34,6 +34,8 @@ from backend.core.ai_protocol.models import (
     UnifiedTool,
     UnifiedToolCall,
     UnifiedUsage,
+    safe_provider_event_metadata,
+    usage_from_mapping,
 )
 
 # Gemini finishReason → 归一化 / Gemini finishReason → normalized
@@ -320,10 +322,13 @@ class GeminiNativeAdapter(ProtocolAdapter):
     def _parse_usage(raw: Any) -> UnifiedUsage:
         if not isinstance(raw, dict):
             return UnifiedUsage()
-        return UnifiedUsage(
-            input_tokens=int(raw.get("promptTokenCount", 0) or 0),
-            output_tokens=int(raw.get("candidatesTokenCount", 0) or 0),
-            cache_read_tokens=int(raw.get("cachedContentTokenCount", 0) or 0),
+        return usage_from_mapping(
+            {
+                "input_tokens": raw.get("promptTokenCount"),
+                "output_tokens": raw.get("candidatesTokenCount"),
+                "cached_tokens": raw.get("cachedContentTokenCount"),
+                "reasoning_tokens": raw.get("thoughtsTokenCount"),
+            }
         )
 
     # ------------------------------------------------------------------
@@ -503,7 +508,41 @@ class GeminiNativeAdapter(ProtocolAdapter):
         if candidates:
             parts = candidates[0].get("content", {}).get("parts") or []
             for part in parts:
-                if "text" in part:
+                thought = part.get("thought")
+                signature = part.get("thoughtSignature")
+                if isinstance(thought, bool) and thought:
+                    if isinstance(part.get("text"), str) and part["text"]:
+                        return UnifiedStreamEvent(
+                            type="reasoning_delta",
+                            text=part["text"],
+                            reasoning_availability="provider_exposed",
+                            provider_event_metadata=safe_provider_event_metadata(
+                                {"event": "candidate.content.part", "item_type": "thought"}
+                            ),
+                        )
+                    return UnifiedStreamEvent(
+                        type="reasoning_start",
+                        text=None,
+                        reasoning_availability="omitted",
+                        provider_event_metadata=safe_provider_event_metadata(
+                            {"event": "candidate.content.part", "item_type": "thought"}
+                        ),
+                    )
+                if signature is not None:
+                    return UnifiedStreamEvent(
+                        type="reasoning_end",
+                        text=None,
+                        reasoning_availability="encrypted_opaque",
+                        provider_event_metadata=safe_provider_event_metadata(
+                            {
+                                "event": "candidate.content.part",
+                                "item_type": "thoughtSignature",
+                                "signature_present": True,
+                                "encrypted": True,
+                            }
+                        ),
+                    )
+                if "text" in part and isinstance(part["text"], str):
                     return UnifiedStreamEvent(type="text_delta", text=part["text"])
                 if "functionCall" in part:
                     fc = part["functionCall"]
@@ -521,8 +560,18 @@ class GeminiNativeAdapter(ProtocolAdapter):
                     )
         usage = chunk.get("usageMetadata")
         if usage:
+            candidates = chunk.get("candidates") or []
+            finish_reason = (
+                candidates[0].get("finishReason")
+                if candidates and isinstance(candidates[0], dict)
+                else None
+            )
             return UnifiedStreamEvent(
-                type="done", usage=GeminiNativeAdapter._parse_usage(usage)
+                type="done",
+                usage=GeminiNativeAdapter._parse_usage(usage),
+                stop_reason=_GEMINI_STOP_MAP.get(
+                    str(finish_reason), StopReason.END_TURN
+                ),
             )
         return None
 

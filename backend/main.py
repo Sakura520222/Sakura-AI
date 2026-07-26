@@ -121,6 +121,7 @@ async def lifespan(app: FastAPI):
 
     telegram_task = None
     redis_listener_task = None
+    outbox_dispatcher = None
     scan_scheduler = None
     quota_reset_scheduler = None
     star_aid_scheduler = None
@@ -212,6 +213,70 @@ async def lifespan(app: FastAPI):
                 except Exception as e:
                     logger.error(f"❌ SSE Redis Pub/Sub 监听启动失败: {e}")
 
+                # 启动活动观测 Outbox dispatcher（授权器由应用注入）
+                try:
+                    from backend.services.activity_observability.access_service import (
+                        ActivityAccessService,
+                        CursorConfig,
+                    )
+                    from backend.services.activity_observability.outbox_service import (
+                        OutboxDispatcher,
+                        OutboxDispatcherConfig,
+                        OutboxRetryPolicy,
+                    )
+                    from backend.models import database as db_module
+
+                    scope_authorizer = getattr(
+                        app.state, "activity_scope_authorizer", None
+                    )
+                    if scope_authorizer is None:
+                        from backend.services.activity_observability.legacy_scope_authorizer import (
+                            LegacyRepositoryScopeAuthorizer,
+                        )
+
+                        scope_authorizer = LegacyRepositoryScopeAuthorizer()
+                        app.state.activity_scope_authorizer = scope_authorizer
+                    if settings.activity_cursor_signing_secret and db_module.async_session and scope_authorizer:
+                        access_service = ActivityAccessService(
+                            authorizer=scope_authorizer,
+                            cursor_config=CursorConfig(
+                                secret=settings.activity_cursor_signing_secret,
+                                ttl_seconds=settings.activity_cursor_ttl_seconds,
+                                page_size=settings.activity_cursor_page_size,
+                            ),
+                        )
+                        outbox_dispatcher = OutboxDispatcher(
+                            db_module.async_session,
+                            authorizer=scope_authorizer,
+                            config=OutboxDispatcherConfig(
+                                batch_size=settings.activity_outbox_batch_size,
+                                poll_interval_seconds=settings.activity_outbox_poll_interval_seconds,
+                                claim_timeout_seconds=settings.activity_outbox_claim_timeout_seconds,
+                                retry_policy=OutboxRetryPolicy(
+                                    max_attempts=settings.activity_outbox_retry_max_attempts,
+                                    initial_delay_seconds=settings.activity_outbox_retry_initial_delay_seconds,
+                                    backoff_factor=settings.activity_outbox_retry_backoff_factor,
+                                    max_delay_seconds=settings.activity_outbox_retry_max_delay_seconds,
+                                ),
+                            ),
+                        )
+                        app.state.activity_access_service = access_service
+                        app.state.activity_outbox_dispatcher = outbox_dispatcher
+                        app.state.activity_outbox_task = asyncio.create_task(
+                            outbox_dispatcher.run()
+                        )
+                        logger.info("✅ 活动观测 Outbox dispatcher 已启动")
+                    elif not settings.activity_cursor_signing_secret:
+                        logger.warning(
+                            "活动 cursor signing secret 缺失，跳过新版 dispatcher"
+                        )
+                    else:
+                        logger.warning(
+                            "活动 repository scope authorizer 未注入，跳过新版 dispatcher"
+                        )
+                except Exception as e:
+                    logger.error(f"❌ 活动观测 Outbox dispatcher 启动失败: {e}")
+
                 # 启动仓库扫描调度器
                 try:
                     from backend.services.scan_scheduler import ScanScheduler
@@ -294,6 +359,19 @@ async def lifespan(app: FastAPI):
     if scan_scheduler:
         scan_scheduler.stop()
 
+    # 停止活动观测 Outbox dispatcher
+    outbox_task = getattr(app.state, "activity_outbox_task", None)
+    if outbox_task:
+        dispatcher = getattr(app.state, "activity_outbox_dispatcher", None)
+        if dispatcher:
+            dispatcher.stop()
+        outbox_task.cancel()
+        try:
+            await outbox_task
+        except asyncio.CancelledError:
+            pass
+
+
     # 停止配额重置调度器
     if quota_reset_scheduler:
         quota_reset_scheduler.stop()
@@ -345,6 +423,7 @@ app.include_router(api_v1_router, prefix="/api/v1", tags=["API v1"])
 
 # 限流：注册 slowapi 状态 + 异常处理
 app.state.limiter = limiter
+app.state.activity_scope_authorizer = None
 _WEBUI_RATE_LIMIT_JSON_SUFFIXES = frozenset(
     {
         "/passkey/options",

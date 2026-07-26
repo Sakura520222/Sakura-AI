@@ -221,6 +221,10 @@ class PRReviewIncrementalQueue(Base):
     base_sha = Column(String(64), nullable=True)
     head_sha = Column(String(64), nullable=False, index=True)
     delivery_id = Column(String(128), nullable=True, index=True)
+    # New activity-observability bridge fields. Nullable for pre-migration rows.
+    observability_session_id = Column(Integer, nullable=True, index=True)
+    observability_trigger_id = Column(Integer, nullable=True, unique=True, index=True)
+    observability_revision_id = Column(Integer, nullable=True, index=True)
     status = Column(String(50), default="pending", nullable=False, index=True)
     active_review_id = Column(
         Integer,
@@ -656,6 +660,35 @@ class IssueAnalysisQueue(Base):
         return f"<IssueAnalysisQueue(id={self.id}, issue={self.issue_number}, status={self.status})>"
 
 
+async def migrate_schema_async() -> None:
+    """Run all idempotent async schema upgrades after tables exist."""
+    if async_engine is None:
+        raise RuntimeError("异步数据库引擎未初始化,请先调用 init_async_db()")
+    await _auto_migrate()
+
+
+_LEGACY_ACTIVITY_TABLES = (
+    "activity_tool_calls",
+    "activity_messages",
+    "activity_events",
+    "activity_sessions",
+)
+
+
+def _drop_legacy_activity_tables(sync_conn) -> tuple[str, ...]:
+    """Drop only the retired activity-v1 tables, in foreign-key-safe order."""
+    from sqlalchemy import MetaData, Table, inspect
+
+    existing = set(inspect(sync_conn).get_table_names())
+    dropped: list[str] = []
+    for table_name in _LEGACY_ACTIVITY_TABLES:
+        if table_name not in existing:
+            continue
+        Table(table_name, MetaData()).drop(sync_conn, checkfirst=True)
+        dropped.append(table_name)
+    return tuple(dropped)
+
+
 async def create_tables_async():
     """异步创建所有数据库表"""
     import logging
@@ -671,8 +704,11 @@ async def create_tables_async():
         # 在异步上下文中创建表
         async with async_engine.begin() as conn:
             await conn.run_sync(Base.metadata.create_all)
+            dropped = await conn.run_sync(_drop_legacy_activity_tables)
 
         logger.info("✅ 数据库表创建成功")
+        if dropped:
+            logger.info("✅ 已移除旧版实时监控表: %s", ", ".join(dropped))
 
     except Exception as e:
         logger.error(f"❌ 数据库表创建失败: {e}")
@@ -681,8 +717,7 @@ async def create_tables_async():
 
 def _ensure_model_modules_imported() -> None:
     """导入独立模型模块，确保 metadata 已注册。"""
-    import backend.models.activity_conversation_models
-    import backend.models.activity_event_models
+    import backend.models.activity_observability_models
     import backend.models.agent_skill_models
     import backend.models.agent_team_models
     import backend.models.payment_models
@@ -855,6 +890,10 @@ def init_database(database_url: str):
 
         # 创建所有表
         Base.metadata.create_all(engine)
+        with engine.begin() as connection:
+            dropped = _drop_legacy_activity_tables(connection)
+        if dropped:
+            logger.info("已移除旧版实时监控表: %s", ", ".join(dropped))
 
         logger.info("数据库表初始化完成")
 
@@ -1131,7 +1170,54 @@ def _get_default_sql(col) -> str | None:
     return None
 
 
+def _activity_publication_marker_upgrade_sql(
+    dialect_name: str, current_length: int | None
+) -> str | None:
+    """Return the idempotent legacy marker-column upgrade SQL."""
+    if (current_length or 0) >= 128 or dialect_name != "mysql":
+        return None
+    return (
+        "ALTER TABLE `activity_observability_publications` "
+        "MODIFY COLUMN `marker` VARCHAR(128) COLLATE ascii_bin NOT NULL"
+    )
+
+
+async def _ensure_activity_publication_marker_column(conn, logger) -> None:
+    """Upgrade legacy publication markers from VARCHAR(64) to VARCHAR(128)."""
+    from sqlalchemy import inspect
+
+    def _marker_column(sync_conn):
+        inspector = inspect(sync_conn)
+        table_name = "activity_observability_publications"
+        if table_name not in inspector.get_table_names():
+            return None
+        return next(
+            (
+                column
+                for column in inspector.get_columns(table_name)
+                if column["name"] == "marker"
+            ),
+            None,
+        )
+
+    marker = await conn.run_sync(_marker_column)
+    if marker is None:
+        return
+    sql = _activity_publication_marker_upgrade_sql(
+        conn.dialect.name, getattr(marker.get("type"), "length", None)
+    )
+    if sql is None:
+        return
+    await conn.execute(text(sql))
+    logger.info(
+        "[auto-migrate] 扩展列为 VARCHAR(128): "
+        "activity_observability_publications.marker"
+    )
+
+
 async def _ensure_agent_message_longtext_columns(conn, logger) -> None:
+    if conn.dialect.name != "mysql":
+        return
     from sqlalchemy import inspect
 
     def _existing_tables(sync_conn):
@@ -1189,6 +1275,9 @@ async def _auto_migrate():
         await conn.run_sync(
             lambda sync_conn: Base.metadata.create_all(sync_conn, checkfirst=True)
         )
+        dropped = await conn.run_sync(_drop_legacy_activity_tables)
+        if dropped:
+            _logger.info("[auto-migrate] 已移除旧版实时监控表: %s", ", ".join(dropped))
 
         # 用 Inspector 逐表检测缺失列
         def _get_missing_columns(sync_conn):
@@ -1209,6 +1298,7 @@ async def _auto_migrate():
         missing = await conn.run_sync(_get_missing_columns)
 
         await _ensure_agent_message_longtext_columns(conn, _logger)
+        await _ensure_activity_publication_marker_column(conn, _logger)
 
         if not missing:
             return
