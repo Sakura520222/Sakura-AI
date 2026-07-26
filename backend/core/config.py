@@ -2019,6 +2019,7 @@ CORE_CONFIG_KEYS = frozenset(
         "github_webhook_secret",
         "telegram_bot_token",
         "webui_secret_key",
+        "activity_cursor_signing_secret",
         "app_domain",
         "app_port",
         "log_level",

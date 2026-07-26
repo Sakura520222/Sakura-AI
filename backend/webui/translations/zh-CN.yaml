@@ -1414,6 +1414,8 @@ system_config:
   key_log_level_desc: "日志输出最低级别"
   key_webui_secret_key: "WebUI 密钥"
   key_webui_secret_key_desc: "JWT 和 CSRF Token 签名密钥，生产环境务必设为强随机字符串"
+  key_activity_cursor_signing_secret: "活动 Cursor 签名密钥"
+  key_activity_cursor_signing_secret_desc: "活动日志分页 cursor 的 HMAC 签名密钥；留空将在启动时自动生成，轮换后已签发的旧 cursor 将失效"
   key_bot_username: "Bot 用户名"
   key_bot_username_desc: "GitHub App 机器人用户名（可选），用于幂等性检查"
 

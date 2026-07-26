@@ -27,6 +27,7 @@ SYSTEM_SENSITIVE_KEYS = frozenset(
         "github_oauth_client_secret",
         "telegram_bot_token",
         "webui_secret_key",
+        "activity_cursor_signing_secret",
         "star_aid_github_app_client_secret",
     }
 )
@@ -38,6 +39,7 @@ RESTART_REQUIRED_KEYS = frozenset(
         "redis_url",
         "github_private_key",
         "webui_secret_key",
+        "activity_cursor_signing_secret",
     }
 )
 
@@ -83,6 +85,7 @@ SYSTEM_CONFIG_GROUPS = [
             "app_port",
             "log_level",
             "webui_secret_key",
+            "activity_cursor_signing_secret",
             "bot_username",
         ],
     },

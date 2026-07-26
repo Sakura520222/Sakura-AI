@@ -213,6 +213,16 @@ async def lifespan(app: FastAPI):
                 except Exception as e:
                     logger.error(f"❌ SSE Redis Pub/Sub 监听启动失败: {e}")
 
+                # 自愈活动 cursor signing secret（已部署实例可能 Setup 时未生成）
+                try:
+                    from backend.core.setup_service import (
+                        ensure_activity_cursor_signing_secret,
+                    )
+
+                    await ensure_activity_cursor_signing_secret()
+                except Exception as e:
+                    logger.warning(f"⚠️ 活动 cursor signing secret 自愈失败: {e}")
+
                 # 启动活动观测 Outbox dispatcher（授权器由应用注入）
                 try:
                     from backend.services.activity_observability.access_service import (
@@ -236,7 +246,11 @@ async def lifespan(app: FastAPI):
 
                         scope_authorizer = LegacyRepositoryScopeAuthorizer()
                         app.state.activity_scope_authorizer = scope_authorizer
-                    if settings.activity_cursor_signing_secret and db_module.async_session and scope_authorizer:
+                    if (
+                        settings.activity_cursor_signing_secret
+                        and db_module.async_session
+                        and scope_authorizer
+                    ):
                         access_service = ActivityAccessService(
                             authorizer=scope_authorizer,
                             cursor_config=CursorConfig(
@@ -370,7 +384,6 @@ async def lifespan(app: FastAPI):
             await outbox_task
         except asyncio.CancelledError:
             pass
-
 
     # 停止配额重置调度器
     if quota_reset_scheduler:
