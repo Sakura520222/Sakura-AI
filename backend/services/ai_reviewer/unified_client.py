@@ -376,6 +376,7 @@ class UnifiedAIClient:
                     }
                 ]
                 response.meta.compressed = compressed_once
+                response.meta.context_window_tokens = candidate.model.context_window_tokens
                 # 记录该 role 的成功候选，供后续调用 sticky 提升
                 self._last_successful[role] = (
                     candidate.provider.id,
@@ -431,6 +432,7 @@ class UnifiedAIClient:
                     if recovered is not None:
                         recovered.meta.compressed = True
                         recovered.meta.served_by = served_by
+                        recovered.meta.context_window_tokens = candidate.model.context_window_tokens
                         # 压缩重试成功仍属于该候选，记录 sticky
                         self._last_successful[role] = (
                             candidate.provider.id,

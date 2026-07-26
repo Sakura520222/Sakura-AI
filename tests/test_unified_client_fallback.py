@@ -31,7 +31,12 @@ from backend.services.ai_reviewer.unified_client import (
 )
 
 
-def _candidate(family: ProtocolFamily, model_id: str) -> ResolvedModel:
+def _candidate(
+    family: ProtocolFamily,
+    model_id: str,
+    *,
+    context_window_tokens: int = 128000,
+) -> ResolvedModel:
     decl = ProviderDeclaration(
         id=f"prov-{model_id}",
         label=model_id,
@@ -44,7 +49,7 @@ def _candidate(family: ProtocolFamily, model_id: str) -> ResolvedModel:
         model_id=model_id,
         provider_id=decl.id,
         display_name=model_id,
-        context_window_tokens=128000,
+        context_window_tokens=context_window_tokens,
         max_output_tokens=4096,
         capabilities=ModelCapabilitySet(),
         reasoning_params=ReasoningParams(),
@@ -477,4 +482,64 @@ async def test_cancel_event_aborts_backoff(monkeypatch):
     # 取消触发后应在 1s 内返回（退避 2s 被 event 抢占）。
     # 以 event 设置时刻计时，避免测试进程调度延迟干扰断言。
     assert cancel_latency < 1.0, f"取消响应过慢: {cancel_latency:.2f}s"
+    await client.aclose()
+
+
+def test_unified_response_meta_exposes_context_window_tokens():
+    """响应元数据应携带 winner 上下文窗口，默认 None（未命中候选时）。
+
+    Issue 分析的 safe_context 需按实际服务的模型窗口计算，而不是角色首选。
+    UnifiedResponseMeta 必须暴露该字段供调用方读取。
+    """
+    from backend.core.ai_protocol.models import UnifiedResponseMeta
+
+    meta = UnifiedResponseMeta()
+    assert meta.context_window_tokens is None
+
+
+@pytest.mark.asyncio
+async def test_call_with_retry_records_winner_context_window(monkeypatch):
+    """fallback 到非首选候选时，响应 meta 应记录 winner 的上下文窗口。
+
+    Issue 分析的 safe_context 必须按实际服务模型而非角色首选计算：primary(258K)
+    失败后 fallback 到 1M 窗口的候选，response.meta.context_window_tokens 必须是
+    1M，否则调用方只能拿到首选的 258K，导致上下文预算被低估、过早触发告警。
+    """
+    primary = _StubAdapter(fail_categories=[AIErrorCategory.SERVER_ERROR])
+    fallback = _StubAdapter(content="ok")
+    router = _ModelRoutingAdapter({"primary": primary, "fallback": fallback})
+    _install_router(monkeypatch, router)
+
+    client = UnifiedAIClient(
+        fallback_config=FallbackConfig(
+            enabled=True,
+            max_candidates=2,
+            max_retries=1,
+            total_timeout=10,
+            initial_retry_delay=0,
+        )
+    )
+    candidates = [
+        _candidate(
+            ProtocolFamily.OPENAI_COMPATIBLE,
+            "primary",
+            context_window_tokens=258000,
+        ),
+        _candidate(
+            ProtocolFamily.OPENAI_COMPATIBLE,
+            "fallback",
+            context_window_tokens=1000000,
+        ),
+    ]
+
+    response = await client.call_with_retry(
+        candidates,
+        [UnifiedMessage(role="user", content="hi")],
+        model="primary",
+        role="main",
+    )
+
+    assert response.content == "ok"
+    assert response.meta.served_by == "prov-fallback/fallback"
+    assert response.meta.context_window_tokens == 1000000
     await client.aclose()
