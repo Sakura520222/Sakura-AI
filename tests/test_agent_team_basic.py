@@ -65,20 +65,14 @@ async def test_load_agent_team_ai_config_uses_only_role_and_policy(monkeypatch):
 
     assert config.agent_role == "agent_team"
     assert config.summary_role == "summary"
-    assert config.temperature == 0.25
-    assert config.max_tokens == 4096
     assert config.timeout_seconds == 300
-    assert set(requested_keys) == {
-        "agent_team_temperature",
-        "agent_team_max_tokens",
-        "agent_team_timeout_seconds",
-    }
+    # temperature/max_tokens 已迁至新版 /config/ai 角色绑定的 reasoning_params，
+    # load 不再读取这两个 key（即使数据库存在也不读）。
+    assert set(requested_keys) == {"agent_team_timeout_seconds"}
     snapshot = config.safe_snapshot()
     assert snapshot == {
         "agent_role": "agent_team",
         "summary_role": "summary",
-        "temperature": 0.25,
-        "max_tokens": 4096,
         "timeout_seconds": 300,
     }
     assert "legacy" not in str(snapshot)
@@ -102,8 +96,6 @@ async def test_create_agent_team_client_is_role_only(monkeypatch):
     config = AgentTeamAIConfig(
         agent_role="agent_team",
         summary_role="summary",
-        temperature=0.2,
-        max_tokens=8192,
         timeout_seconds=600,
     )
     monkeypatch.setattr(module, "load_agent_team_ai_config", lambda: _async_value(config))
@@ -129,8 +121,6 @@ async def test_summary_factory_returns_summary_role_without_legacy_config(monkey
     config = AgentTeamAIConfig(
         agent_role="agent_team",
         summary_role="summary",
-        temperature=0.2,
-        max_tokens=8192,
         timeout_seconds=600,
     )
     client, role, loaded = await module.create_agent_team_summary_client(config)
@@ -175,16 +165,12 @@ def test_agent_team_ai_config_safe_snapshot_contains_only_roles_and_policy():
     config = AgentTeamAIConfig(
         agent_role="agent_team",
         summary_role="summary",
-        temperature=0.2,
-        max_tokens=8192,
         timeout_seconds=600,
     )
 
     assert config.safe_snapshot() == {
         "agent_role": "agent_team",
         "summary_role": "summary",
-        "temperature": 0.2,
-        "max_tokens": 8192,
         "timeout_seconds": 600,
     }
 
@@ -193,8 +179,6 @@ def test_agent_team_ai_config_pickle_roundtrip_preserves_roles_and_policy():
     config = AgentTeamAIConfig(
         agent_role="agent_team",
         summary_role="summary",
-        temperature=0.2,
-        max_tokens=8192,
         timeout_seconds=600,
     )
 
@@ -207,8 +191,6 @@ def test_agent_team_ai_config_pickle_roundtrip_preserves_roles_and_policy():
 async def test_load_agent_team_ai_config_preserves_explicit_zero_values(monkeypatch):
     async def fake_get_dynamic_config(key: str):
         values = {
-            "agent_team_temperature": 0,
-            "agent_team_max_tokens": 0,
             "agent_team_timeout_seconds": 0,
         }
         return values.get(key)
@@ -220,8 +202,6 @@ async def test_load_agent_team_ai_config_preserves_explicit_zero_values(monkeypa
 
     config = await load_agent_team_ai_config()
 
-    assert config.temperature == 0
-    assert config.max_tokens == 0
     assert config.timeout_seconds == 0
     assert config.agent_role == "agent_team"
     assert config.summary_role == "summary"
@@ -229,14 +209,25 @@ async def test_load_agent_team_ai_config_preserves_explicit_zero_values(monkeypa
 
 def test_agent_team_config_includes_policy_keys():
     required = {
-        "agent_team_temperature",
-        "agent_team_max_tokens",
-        "agent_team_timeout_seconds",
         "agent_team_enabled",
         "agent_team_workspace_root",
+        "agent_team_max_concurrent",
+        "agent_team_max_iterations_per_task",
     }
 
     assert required.issubset(set(AGENT_TEAM_CONFIG_KEYS))
+
+    # 温度/max_tokens/超时/压缩等模型相关配置已迁至新版 /config/ai 角色绑定，
+    # 不再在 /agent-team 配置页暴露（Agent 运行时仍可读 get_settings 默认值）。
+    retired_ai_keys = {
+        "agent_team_temperature",
+        "agent_team_max_tokens",
+        "agent_team_timeout_seconds",
+        "agent_team_enable_context_compression",
+        "agent_team_context_compression_threshold",
+        "agent_team_context_summary_max_tokens",
+    }
+    assert retired_ai_keys.isdisjoint(set(AGENT_TEAM_CONFIG_KEYS))
 
 
 def test_agent_team_active_statuses_include_waiting_human():
@@ -252,7 +243,7 @@ def test_agent_team_config_grouping_preserves_all_items():
     grouped_keys = [item["key"] for group in groups for item in group["items"]]
 
     assert grouped_keys == AGENT_TEAM_CONFIG_KEYS
-    assert [group["key"] for group in groups] == ["basic", "ai", "guardrails", "skills"]
+    assert [group["key"] for group in groups] == ["basic", "guardrails", "skills"]
 
 
 def test_agent_candidate_dict_includes_ai_filter_reason():
