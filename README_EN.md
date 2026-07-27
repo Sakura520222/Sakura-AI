@@ -91,7 +91,7 @@
 
 - **Super-admin Manual Launch**: Select candidate tasks from Issue analysis and repository scan findings, with natural language filtering, and start automated fix workflows on demand
 - **Manual Issue Task Creation**: Paste a GitHub Issue URL or enter `owner/repo#123`; the system validates it and creates an Agent fix task directly
-- **Issue Comment Delegation**: Repository admins or write collaborators can comment `/agent` on analyzed Issues or scan report Issues to create fix tasks, optionally adding `base:<branch>` to select the base branch
+- **Issue Comment Delegation**: Repository admins or write collaborators can comment `/agent` on any Issue to create fix tasks (no prior analysis required; Issue title, body, and comments are fetched automatically), optionally adding `base:<branch>` to select the base branch
 - **PR Comment One-Click Fix**: Comment `/agent` on a PR review to create an Agent fix task based on that PR's review findings, automatically creating a new fix branch and submitting a fix PR; only one `/agent` task per source PR (supports multi-round iteration)
 - **Multi-branch Parallel Workspaces**: Each Agent task uses an isolated Git worktree, supporting multiple concurrent tasks in the same repository without interference
 - **Non-admin Repository Access Control**: Non-admin users may only operate repositories they own and that match `agent_team_repo_allowlist`; task creation, retry, and `/agent` delegation consume dedicated Agent quotas
@@ -319,7 +319,7 @@ Create a PR in a repository with the App installed, and the AI will automaticall
 - **Auto-analysis**: Triggered automatically on Issue opened/edited/reopened, posting classification, priority, and label suggestions
 - **Auto-labeling**: AI recommends labels; high-confidence labels are applied automatically
 - **Manual trigger**: Comment `/analyze` in an Issue
-- **Agent delegation**: Repository admins or write collaborators can comment `/agent` on analyzed Issues or scan report Issues to hand the work to Agent Expert Team; use `/agent base:develop` to choose the base branch
+- **Agent delegation**: Repository admins or write collaborators can comment `/agent` on any Issue to hand the work to Agent Expert Team (no prior analysis required; Issue conversation context is fetched automatically); use `/agent base:develop` to choose the base branch
 - **PR /agent One-Click Fix**: Comment `/agent` on a PR review page to create an Agent fix task based on that PR's review findings, automatically creating a new fix branch and submitting a fix PR; only one `/agent` task per source PR (supports multi-round closed-loop iteration)
 - **Duplicate detection**: Automatically identifies duplicate Issues and links to existing ones
 
