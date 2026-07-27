@@ -222,7 +222,9 @@ class ProfessionalReviewAgent:
     ) -> ReviewResult:
         """执行审查，AI 自主调用工具直到提交审查。"""
         client, config = await create_agent_team_client()
-        model, _ = await client.resolve_role_model_context(config.agent_role)
+        model, context_window_tokens = await client.resolve_role_model_context(
+            config.agent_role
+        )
         model = model or ""
         ctx = self._build_context(
             skills_context,
@@ -319,6 +321,7 @@ class ProfessionalReviewAgent:
 
             model_messages = await AgentTeamContextCompressor(
                 target_model=model,
+                context_window_tokens=context_window_tokens,
             ).build_model_messages(self.messages, token_tracker)
             await _publish_review_ai_request(
                 round_num,
@@ -328,8 +331,6 @@ class ProfessionalReviewAgent:
             response = await client.call_with_retry(
                 messages=model_messages,
                 model="",
-                temperature=max(config.temperature - 0.1, 0.0),
-                max_tokens=config.max_tokens,
                 timeout=config.timeout_seconds,
                 tools=tool_schemas,
                 tool_choice="auto",
@@ -339,7 +340,12 @@ class ProfessionalReviewAgent:
             token_tracker.accumulate(response)
 
             # 每轮记录上下文使用率
-            safe_ctx = model_ctx_mgr.calculate_safe_context(model, 0.8)
+            # 优先用新版 unified config 解析的上下文窗口，避免 model_context 未注册
+            # 该模型时回退 128K 兜底（曾导致日志反复警告并误判上下文占比）。
+            if context_window_tokens and context_window_tokens > 0:
+                safe_ctx = int(context_window_tokens * 0.8)
+            else:
+                safe_ctx = model_ctx_mgr.calculate_safe_context(model, 0.8)
             current_tokens = estimate_messages_tokens(self.messages, model_ctx_mgr)
             token_tracker.log_context_usage(current_tokens, safe_ctx, round_num)
 

@@ -672,7 +672,6 @@ class AgentTeamCandidateService:
                 messages=messages,
                 model="",
                 temperature=0.1,
-                max_tokens=min(config.max_tokens, 4096),
                 timeout=config.timeout_seconds,
                 role="agent_team",
             )

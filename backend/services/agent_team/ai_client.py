@@ -39,13 +39,13 @@ async def resolve_agent_team_bool_config(key: str, fallback: bool) -> bool:
 class AgentTeamAIConfig:
     """Agent Team 的角色绑定与调用策略快照。
 
-    Endpoint、凭据和模型均由统一协议层按角色解析，不在此快照中保存。
+    Endpoint、凭据、模型及其推理参数（temperature/max_tokens/上下文窗口）均由
+    统一协议层按角色绑定的 reasoning_params 实时解析，不在此快照中保存。
+    这里仅保留角色名与 HTTP 超时策略。
     """
 
     agent_role: str
     summary_role: str
-    temperature: float
-    max_tokens: int
     timeout_seconds: int
 
     def safe_snapshot(self) -> dict[str, Any]:
@@ -53,8 +53,6 @@ class AgentTeamAIConfig:
         return {
             "agent_role": self.agent_role,
             "summary_role": self.summary_role,
-            "temperature": self.temperature,
-            "max_tokens": self.max_tokens,
             "timeout_seconds": self.timeout_seconds,
         }
 
@@ -70,8 +68,6 @@ class AgentTeamAIConfig:
         """从安全快照恢复对象。"""
         object.__setattr__(self, "agent_role", state.get("agent_role", "agent_team"))
         object.__setattr__(self, "summary_role", state.get("summary_role", "summary"))
-        object.__setattr__(self, "temperature", state.get("temperature", 0.0))
-        object.__setattr__(self, "max_tokens", state.get("max_tokens", 0))
         object.__setattr__(self, "timeout_seconds", state.get("timeout_seconds", 0))
 
 
@@ -85,15 +81,15 @@ async def _config_value(key: str, default: Any = "") -> Any:
 
 
 async def load_agent_team_ai_config() -> AgentTeamAIConfig:
-    """只加载 Agent Team 的角色名称和调用策略。"""
-    temperature = await _config_value("agent_team_temperature", 0.2)
-    max_tokens = await _config_value("agent_team_max_tokens", 8192)
+    """只加载 Agent Team 的角色名称与 HTTP 超时策略。
+
+    temperature/max_tokens 不再在此读取：由 unified client 按角色绑定的
+    reasoning_params 实时解析（call_with_retry 传入 None 即回退到 candidate）。
+    """
     timeout_seconds = await _config_value("agent_team_timeout_seconds", 600)
     return AgentTeamAIConfig(
         agent_role="agent_team",
         summary_role="summary",
-        temperature=float(temperature),
-        max_tokens=int(max_tokens),
         timeout_seconds=int(timeout_seconds),
     )
 

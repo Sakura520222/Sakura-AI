@@ -72,7 +72,7 @@ def test_settings_and_config_registries_drop_legacy_supplier_keys():
     )
 
 
-def test_agent_team_webui_surface_keeps_policy_fields_only_for_ai_group():
+def test_agent_team_webui_surface_excludes_legacy_and_retired_ai_keys():
     assert LEGACY_SUPPLIER_KEYS.isdisjoint(AGENT_TEAM_CONFIG_KEYS)
     grouped_keys = {
         key for group in AGENT_TEAM_CONFIG_GROUPS for key in group["keys"]
@@ -80,15 +80,19 @@ def test_agent_team_webui_surface_keeps_policy_fields_only_for_ai_group():
     assert grouped_keys == set(AGENT_TEAM_CONFIG_KEYS)
     assert LEGACY_SUPPLIER_KEYS.isdisjoint(grouped_keys)
 
-    ai_group = next(group for group in AGENT_TEAM_CONFIG_GROUPS if group["key"] == "ai")
-    assert ai_group["keys"] == [
+    # 温度/max_tokens/超时/压缩等模型相关配置已迁至新版 /config/ai 角色绑定，
+    # /agent-team 配置页不再暴露「专用 AI 模型」选项卡（原 ai group）。
+    retired_ai_keys = {
         "agent_team_temperature",
         "agent_team_max_tokens",
         "agent_team_enable_context_compression",
         "agent_team_context_compression_threshold",
         "agent_team_context_summary_max_tokens",
         "agent_team_timeout_seconds",
-    ]
+    }
+    assert retired_ai_keys.isdisjoint(AGENT_TEAM_CONFIG_KEYS)
+    assert retired_ai_keys.isdisjoint(grouped_keys)
+    assert "ai" not in {group["key"] for group in AGENT_TEAM_CONFIG_GROUPS}
 
 
 def test_ai_strategy_registry_keeps_request_policy_fields():

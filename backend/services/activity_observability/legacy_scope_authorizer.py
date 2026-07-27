@@ -29,9 +29,12 @@ class LegacyRepositoryScopeAuthorizer:
     async def authorize_session(
         self, db: AsyncSession, *, session: ActivityObservabilitySession, user: dict
     ) -> bool:
-        identity = session.resource_identity
-        if identity is None:
-            identity = await db.get(ActivityResourceIdentity, session.resource_identity_id)
+        # 避免触发同步懒加载：直接按外键 id 显式查询 resource_identity。
+        # 当上游已 selectinload 该关系时，db.get 命中 identity map 几乎零成本；
+        # 当 session 由 db.get（未 eager load）查出时（如 resolve_recipients /
+        # is_authorized 路径），避免在 async 上下文触发 MissingGreenlet，
+        # 该异常曾导致 PR 审查直接失败、Issue 实时监控无法启动。
+        identity = await db.get(ActivityResourceIdentity, session.resource_identity_id)
         if identity is None:
             return False
         role = identity.resource_type.lower()
