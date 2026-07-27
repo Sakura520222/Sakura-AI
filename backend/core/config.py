@@ -83,7 +83,7 @@ class Settings(BaseSettings):
         description="最大并发审查数量",
     )
     review_timeout_seconds: int = Field(
-        300,
+        600,
         description="审查任务整体超时时间（秒）",
     )
     enable_auto_review: bool = Field(
