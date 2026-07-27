@@ -2179,22 +2179,13 @@ async def handle_agent_command(payload: dict[str, Any]) -> JSONResponse:
                     scan_findings = list(result.scalars().all())
 
         if not existing_analysis and not scan_report:
+            # 不再阻塞：底层 create_task_from_manual_issue 已支持无分析记录的情况，
+            # 会从 GitHub Issue 原始标题/正文构建任务（source_type=MANUAL_ISSUE），
+            # 评论上下文由 load_issue_comments_for_context 自动拉取。
             logger.info(
-                "/agent 无分析记录或扫描报告: {}#{}", repo_full_name, issue_number
-            )
-            await _post_issue_comment(
-                github_app,
-                repo_owner,
-                repo_name,
+                "/agent 无分析记录或扫描报告，直接使用 Issue 原始上下文: {}#{}",
                 repo_full_name,
                 issue_number,
-                "❌ 此 Issue 尚未完成 AI 分析，也未匹配到 Sakura 仓库扫描报告。请先使用 `/analyze` 命令分析此 Issue。",
-            )
-            return JSONResponse(
-                content={
-                    "status": "skipped",
-                    "reason": "no completed analysis or scan report",
-                }
             )
 
         # 构建提交上下文（与通过 WebUI 创建任务一致）
@@ -2251,6 +2242,17 @@ async def handle_agent_command(payload: dict[str, Any]) -> JSONResponse:
                         else 60,
                     }
                 )
+            elif not existing_analysis:
+                # 无分析记录且非扫描报告 Issue：使用 Issue 原始标题与正文作为任务摘要，
+                # 确保 Agent 拿到完整的 Issue 上下文（评论由 load_issue_comments_for_context 补充）
+                issue_title = (issue.get("title") or "").strip()
+                issue_body = (issue.get("body") or "").strip()
+                raw_parts: list[str] = []
+                if issue_title:
+                    raw_parts.append(f"# {issue_title}")
+                if issue_body:
+                    raw_parts.append(issue_body)
+                task_summary = "\n\n".join(raw_parts)
             agent_task_context = build_agent_task_summary(
                 task_summary or "", issue_context_md
             )

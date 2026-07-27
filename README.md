@@ -91,7 +91,7 @@
 
 - **超级管理员手动启动**：从 Issue 分析和仓库扫描发现中筛选候选任务，支持自然语言描述筛选条件，按需启动自动修复流程
 - **手动 Issue 创建任务**：支持粘贴 GitHub Issue 链接或输入 `owner/repo#123`，验证后直接创建 Agent 修复任务
-- **Issue 评论委派**：仓库管理员 / 写权限协作者可在已分析 Issue 或扫描报告 Issue 中评论 `/agent` 创建修复任务，可附加 `base:<branch>` 指定基础分支
+- **Issue 评论委派**：仓库管理员 / 写权限协作者可在任意 Issue 中评论 `/agent` 创建修复任务（无需预先分析，自动获取 Issue 标题、正文与评论上下文），可附加 `base:<branch>` 指定基础分支
 - **PR 评论一键修复**：在 PR 审查评论中发送 `/agent`，基于该 PR 的审查意见自动创建 Agent 修复任务，新开独立修复分支并提交修复 PR；同一 PR 仅允许一个 `/agent` 任务（支持多轮迭代），可附加 `base:<branch>` 指定基础分支
 - **多分支并行工作区**：每个 Agent 任务使用独立 Git worktree 隔离，支持同一仓库多个任务并行执行，互不干扰
 - **普通用户仓库权限控制**：非管理员只能操作自己名下仓库，且仓库必须匹配 `agent_team_repo_allowlist`；任务创建、重试和 `/agent` 委派均消耗独立 Agent 配额
@@ -318,7 +318,7 @@ WebUI：`https://your-domain.com/`
 - **自动分析**：Issue opened/edited/reopened 时自动触发，发布分类、优先级、标签建议
 - **自动打标**：AI 推荐标签，高置信度自动应用到 Issue
 - **手动触发**：在 Issue 中评论 `/analyze`
-- **Agent 委派**：仓库管理员或写权限协作者可在已分析 Issue 或扫描报告 Issue 中评论 `/agent`，将问题交给 Agent 专家团队处理；可使用 `/agent base:develop` 指定基础分支
+- **Agent 委派**：仓库管理员或写权限协作者可在任意 Issue 中评论 `/agent`，将问题交给 Agent 专家团队处理（无需预先分析，自动获取 Issue 对话上下文）；可使用 `/agent base:develop` 指定基础分支
 - **PR /agent 一键修复**：在 PR 审查页面评论 `/agent`，基于该 PR 审查意见创建 Agent 修复任务，自动新开修复分支并提交修复 PR；同一源 PR 仅允许一个 `/agent` 任务（支持多轮迭代闭环）
 - **重复检测**：自动识别重复 Issue 并关联已有 Issue
 

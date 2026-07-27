@@ -286,14 +286,40 @@ async def test_agent_command_permission_unknown_returns_retryable_message(monkey
 
 
 @pytest.mark.asyncio
-async def test_agent_command_skipped_when_no_analysis(monkeypatch):
+async def test_agent_command_creates_task_without_analysis(monkeypatch):
+    """无分析记录且无扫描报告时，/agent 仍应基于 Issue 原始上下文创建任务。"""
     payload = _base_payload()
+    captured = {}
+
+    class CapturingCandidateService:
+        async def create_task_from_manual_issue(
+            self,
+            db,
+            repo_full_name,
+            issue_number,
+            started_by,
+            ai_config_snapshot=None,
+            base_branch=None,
+            overrides=None,
+        ):
+            captured["overrides"] = overrides
+            return _FakeTask()
+
     _make_base_mocks(monkeypatch, scalar_result=None)
+    monkeypatch.setattr(
+        "backend.services.agent_team.candidate_service.AgentTeamCandidateService",
+        CapturingCandidateService,
+    )
 
     response = await webhook.handle_agent_command(payload)
 
     assert response.status_code == 200
-    assert b"no completed analysis or scan report" in response.body
+    assert b"accepted" in response.body
+    overrides = captured["overrides"]
+    assert overrides is not None
+    # Issue 原始标题与正文应进入任务摘要，确保 Agent 拿到完整上下文
+    assert "Test Issue" in overrides["summary"]
+    assert "Issue body" in overrides["summary"]
 
 
 @pytest.mark.asyncio
