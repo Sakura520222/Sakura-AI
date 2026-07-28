@@ -483,7 +483,7 @@ class PublicationService:
             visibility="internal",
             payload=payload,
             recipient_resolver=self.recipient_resolver,
-            recipient_user_ids=self.recipient_user_ids or (),
+            recipient_user_ids=self.recipient_user_ids,
         )
 
     async def create_pending(self, result_id: int, kind: str, external_key: str) -> ActivityPublication:
