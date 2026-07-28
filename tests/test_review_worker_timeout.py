@@ -552,6 +552,47 @@ class _TimeoutWorker:
         self.saved_errors.append((pr_info, error, task_id))
 
 
+class _ReportingWorker:
+    def __init__(self):
+        self.cancelled_key = None
+        self.saved_errors = []
+        self.reporting_started = False
+
+    async def process_review_task(self, _pr_info):
+        self.reporting_started = True
+        await asyncio.sleep(0.05)
+        return "reported"
+
+    def is_task_reporting(self, _task_key):
+        return self.reporting_started
+
+    def cancel_task(self, task_key):
+        self.cancelled_key = task_key
+        return True
+
+    async def _save_error_record(self, pr_info, error, task_id):
+        self.saved_errors.append((pr_info, error, task_id))
+
+
+@pytest.mark.asyncio
+async def test_review_timeout_stops_after_entering_reporting():
+    """AI 结果落库后进入 reporting，原总预算不得取消发布收尾。"""
+    settings = get_settings()
+    old_value = settings.review_timeout_seconds
+    try:
+        settings.review_timeout_seconds = 0.01
+        worker = _ReportingWorker()
+        pr_info = {"repo_full_name": "owner/repo", "pr_number": 1}
+
+        result = await _run_review_task_with_timeout(worker, pr_info, "owner/repo#1")
+
+        assert result == "reported"
+        assert worker.cancelled_key is None
+        assert worker.saved_errors == []
+    finally:
+        settings.review_timeout_seconds = old_value
+
+
 def _review_worker_for_normalization():
     worker = ReviewWorker.__new__(ReviewWorker)
     worker.comment_service = CommentService()
