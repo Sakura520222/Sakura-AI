@@ -9,7 +9,7 @@
 ### Base URL
 
 ```
-https://pr-bot.firefly520.top/api/v1
+https://ai.firefly520.top/api/v1
 ```
 
 ### 认证方式
