@@ -136,6 +136,9 @@ class ReviewWorker:
         # Thread-safety: dict operations are atomic under GIL; asyncio.Event
         # is signal-only (set/check), safe for concurrent async coroutines.
         self._cancel_events: dict[str, asyncio.Event] = {}
+        # 任务阶段仅用于将 AI 审查预算与 GitHub reporting 收尾隔离：一旦审查
+        # 结果已落库并进入 reporting，整体 AI 审查预算不再中断发布收尾。
+        self._task_stages: dict[str, str] = {}
         # The new observability admission/orchestration boundary is injected at
         # the worker edge; legacy checkpoint objects remain compatibility-only.
         from backend.services.activity_observability.integration_service import (
@@ -250,9 +253,12 @@ class ReviewWorker:
                        submit_review_task to ensure a clean state before
                        the coroutine starts executing).
         """
+        if not hasattr(self, "_task_stages"):
+            self._task_stages = {}
         if force_new:
             event = asyncio.Event()
             self._cancel_events[task_key] = event
+            self._task_stages[task_key] = "reviewing"
             return event
         existing = self._cancel_events.get(task_key)
         if existing and not existing.is_set():
@@ -260,11 +266,23 @@ class ReviewWorker:
         # Always create a fresh event (covers: no existing, or stale set event)
         event = asyncio.Event()
         self._cancel_events[task_key] = event
+        self._task_stages[task_key] = "reviewing"
         return event
 
     def _unregister_task(self, task_key: str):
-        """Remove cancel event after task completes or fails"""
+        """Remove task state after task completes or fails."""
         self._cancel_events.pop(task_key, None)
+        getattr(self, "_task_stages", {}).pop(task_key, None)
+
+    def _mark_task_reporting(self, task_key: str) -> None:
+        """Mark that AI review results are durable and GitHub publication began."""
+        if not hasattr(self, "_task_stages"):
+            self._task_stages = {}
+        self._task_stages[task_key] = "reporting"
+
+    def is_task_reporting(self, task_key: str) -> bool:
+        """Return whether a task has entered the post-analysis reporting stage."""
+        return getattr(self, "_task_stages", {}).get(task_key) == "reporting"
 
     def cancel_task(self, task_key: str) -> bool:
         """Signal cancellation for a PR's review task(s). Called from webhook.
@@ -1383,6 +1401,7 @@ class ReviewWorker:
                         label_results = results[1]
 
                 # 9. 【第二阶段】删除占位评论，准备创建最终Review
+                self._mark_task_reporting(task_key)
                 if review_obj:
                     logger.info("[{}] 删除占位评论...", task_id)
                     await self.comment_service.delete_placeholder_comment(review_obj)
@@ -1396,6 +1415,7 @@ class ReviewWorker:
                         completed_stages=list(check_run_stages),
                         output_language=output_language,
                     )
+                    check_run_stages.append("reporting")
                     # Analysis Check 定格（success）：进入 reporting 即审查分析完成。
                     # 仅工具模式（有 progress 快照）才 finalize；标准模式无 Analysis Check，
                     # 避免误建一个空壳 completed Analysis。
@@ -2434,30 +2454,52 @@ async def _run_review_task_with_timeout(
     pr_info: dict[str, Any],
     task_key: str,
 ) -> str:
-    """按配置限制单个审查任务的整体执行时间"""
+    """按配置限制 AI 审查阶段，允许已开始的 reporting 完成收尾。"""
     timeout_seconds = get_settings().review_timeout_seconds
+    review_task = asyncio.create_task(worker.process_review_task(pr_info))
     try:
         result = await asyncio.wait_for(
-            worker.process_review_task(pr_info),
+            asyncio.shield(review_task),
             timeout=timeout_seconds,
         )
     except TimeoutError as exc:
-        worker.cancel_task(task_key)
-        task_id = "timeout"
-        message = f"审查任务超时（{timeout_seconds}秒）"
-        logger.error(
-            "{}: {}",
-            message,
-            task_key,
-        )
-        try:
-            await worker._save_error_record(pr_info, message, task_id)
-        except Exception as save_error:
-            logger.error(
-                "保存超时错误记录失败: {}",
-                str(save_error),
+        is_reporting = getattr(worker, "is_task_reporting", lambda _key: False)
+        if is_reporting(task_key):
+            logger.warning(
+                "审查 AI 阶段已在 {} 秒预算内完成，继续等待 reporting 收尾: {}",
+                timeout_seconds,
+                task_key,
             )
-        raise RuntimeError(f"{message}: {task_key}") from exc
+            result = await review_task
+        else:
+            worker.cancel_task(task_key)
+            review_task.cancel()
+            try:
+                await review_task
+            except asyncio.CancelledError:
+                pass
+            task_id = "timeout"
+            message = f"审查任务超时（{timeout_seconds}秒）"
+            logger.error(
+                "{}: {}",
+                message,
+                task_key,
+            )
+            try:
+                await worker._save_error_record(pr_info, message, task_id)
+            except Exception as save_error:
+                logger.error(
+                    "保存超时错误记录失败: {}",
+                    str(save_error),
+                )
+            raise RuntimeError(f"{message}: {task_key}") from exc
+    except asyncio.CancelledError:
+        review_task.cancel()
+        try:
+            await review_task
+        except asyncio.CancelledError:
+            pass
+        raise
 
     # 兜底：非增量审查顺利完成后，若仍有 pending 增量（审查期间到达的新提交，
     # 本次未消费），触发一个增量审查去消费。此时 process_review_task 的 finally
