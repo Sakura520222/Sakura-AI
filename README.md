@@ -12,8 +12,8 @@
 [![Python](https://img.shields.io/badge/Python-3.11+-blue.svg)](https://www.python.org/)
 [![FastAPI](https://img.shields.io/badge/FastAPI-Latest-green.svg)](https://fastapi.tiangolo.com/)
 [![License](https://img.shields.io/badge/License-AGPLv3-yellow.svg)](LICENSE)
-[![Live Demo](https://img.shields.io/badge/免费体验-Online-success.svg)](https://pr-bot.firefly520.top/)
-[![Android App](https://img.shields.io/badge/Android_App-开发中-orange.svg)](https://github.com/Sakura520222/Sakura-AI-APP)
+[![Live Demo](https://img.shields.io/badge/🌐_免费体验-Online-success.svg)](https://ai.firefly520.top/)
+[![Android App](https://img.shields.io/badge/Android_App-🚧_开发中-orange.svg)](https://github.com/Sakura520222/Sakura-AI-Reviewer-APP)
 
 </div>
 
@@ -21,7 +21,7 @@
 
 ## 官方服务
 
-**官方服务平台**：[https://pr-bot.firefly520.top/](https://pr-bot.firefly520.top/)
+**官方服务平台**：[https://ai.firefly520.top/](https://ai.firefly520.top/)
 
 - **免费额度**：注册即赠免费体验额度，可立即使用 PR 审查、Issue 分析等核心功能
 - **完整功能**：体验全部功能，包括 PR 审查、Issue 分析、Agent 任务委派、仓库互助等

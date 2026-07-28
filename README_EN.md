@@ -12,8 +12,8 @@
 [![Python](https://img.shields.io/badge/Python-3.11+-blue.svg)](https://www.python.org/)
 [![FastAPI](https://img.shields.io/badge/FastAPI-Latest-green.svg)](https://fastapi.tiangolo.com/)
 [![License](https://img.shields.io/badge/License-AGPLv3-yellow.svg)](LICENSE)
-[![Live Demo](https://img.shields.io/badge/Free_Demo-Online-success.svg)](https://pr-bot.firefly520.top/)
-[![Android App](https://img.shields.io/badge/Android_App-In_Development-orange.svg)](https://github.com/Sakura520222/Sakura-AI-APP)
+[![Live Demo](https://img.shields.io/badge/🌐_Free_Demo-Online-success.svg)](https://ai.firefly520.top/)
+[![Android App](https://img.shields.io/badge/Android_App-🚧_In_Development-orange.svg)](https://github.com/Sakura520222/Sakura-AI-Reviewer-APP)
 
 </div>
 
@@ -21,7 +21,7 @@
 
 ## Official Service
 
-**Official Service Platform**: [https://pr-bot.firefly520.top/](https://pr-bot.firefly520.top/)
+**Official Service Platform**: [https://ai.firefly520.top/](https://ai.firefly520.top/)
 
 - **Free Quota**: Register to receive free trial credits for PR review, Issue analysis, and other core features
 - **Full Features**: Experience all features including PR review, Issue analysis, Agent task delegation, Repository Aid, and more
