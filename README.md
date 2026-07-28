@@ -435,6 +435,8 @@ python run_ruff.py          # 检查 + 修复 + 格式化
 python run_ruff.py --check  # 只读检查，不修改文件
 ```
 
+脚本遵循 `.gitignore` 跳过工具临时目录；任一 Ruff 阶段失败或发生目录遍历错误时，脚本会返回非零退出码。
+
 ### 测试
 
 ```bash
