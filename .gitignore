@@ -69,6 +69,7 @@ config/connection.json
 *.tmp
 *.bak
 *.swp
+.codex-tmp/
 deploy_key
 deploy.py
 .deploy_state.json

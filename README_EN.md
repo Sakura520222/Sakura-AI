@@ -436,6 +436,8 @@ python run_ruff.py          # check + fix + format
 python run_ruff.py --check  # read-only check, no modifications
 ```
 
+The script follows `.gitignore` to skip tool-generated temporary directories. It returns a non-zero exit code when any Ruff stage fails or encounters a directory traversal error.
+
 ### Tests
 
 ```bash

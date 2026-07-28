@@ -62,7 +62,11 @@ class RuffRunner:
                 cwd=self.project_root,
                 check=False,
             )
-            return result.returncode, result.stdout, result.stderr
+            returncode = result.returncode
+            # Ruff check 遇到目录遍历错误时仍可能返回 0，不能据此误报成功。
+            if returncode == 0 and "Encountered error:" in result.stderr:
+                returncode = 1
+            return returncode, result.stdout, result.stderr
         except Exception as e:
             return 1, "", str(e)
 
@@ -236,27 +240,30 @@ def main():
         # 检查模式
         if args.check:
             # 检查用户指定的路径
-            runner.check_paths(args.check)
+            succeeded = runner.check_paths(args.check)
         else:
             # 没有指定路径，检查整个项目
-            runner.check()
-    else:
-        # 默认：完整模式（检查 → 修复 → 格式化）
-        print("\n执行完整模式：检查 → 修复 → 格式化\n")
+            succeeded = runner.check()
+        return 0 if succeeded else 1
 
-        # 1. 检查
-        runner.check()
+    # 默认：完整模式（检查 → 修复 → 格式化）
+    print("\n执行完整模式：检查 → 修复 → 格式化\n")
 
-        # 2. 修复
-        runner.fix()
+    results = (
+        runner.check(),
+        runner.fix(),
+        runner.format(),
+    )
+    succeeded = all(results)
 
-        # 3. 格式化
-        runner.format()
-
-        print("\n" + "=" * 60)
+    print("\n" + "=" * 60)
+    if succeeded:
         print("[OK] 完整模式执行完成！")
-        print("=" * 60)
+    else:
+        print("[FAILED] 完整模式执行失败！")
+    print("=" * 60)
+    return 0 if succeeded else 1
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())
