@@ -9,6 +9,7 @@ import hashlib
 import hmac
 import json
 import sys
+from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 import pytest
@@ -320,6 +321,40 @@ class TestPaddleGatewayRefund:
 
         assert result.success is False
         assert "Refund failed" in result.error_message
+
+
+class TestPaddleGatewayCancelPayment:
+    @pytest.mark.asyncio
+    async def test_cancel_payment_updates_transaction_status(self, gateway, paddle_sdk_mock):
+        _, mock_client_cls = paddle_sdk_mock
+        sys.modules["paddle_billing.Entities.Shared"].TransactionStatus = SimpleNamespace(
+            Canceled="canceled"
+        )
+        sys.modules[
+            "paddle_billing.Resources.Transactions.Operations"
+        ].UpdateTransaction.side_effect = lambda **kwargs: SimpleNamespace(**kwargs)
+        mock_client_instance = MagicMock()
+        mock_client_cls.return_value = mock_client_instance
+
+        result = await gateway.cancel_payment("txn_01test123")
+
+        assert result.success is True
+        assert result.status == "cancelled"
+        mock_client_instance.transactions.update.assert_called_once()
+        args = mock_client_instance.transactions.update.call_args.args
+        assert args[0] == "txn_01test123"
+        assert args[1].status == "canceled"
+
+    @pytest.mark.asyncio
+    async def test_cancel_payment_fails_when_sdk_import_is_unavailable(
+        self, gateway, paddle_sdk_mock
+    ):
+        del sys.modules["paddle_billing.Entities.Shared"]
+
+        result = await gateway.cancel_payment("txn_01test123")
+
+        assert result.success is False
+        assert result.error_message == "paddle-python-sdk is not installed"
 
 
 class TestPaddleGatewayGetPaymentStatus:

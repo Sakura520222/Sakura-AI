@@ -4,7 +4,6 @@
 - SiliconFlow (默认): BAAI/bge-m3
 - OpenAI: text-embedding-3-small/large
 - Ollama: 本地模型
-- HuggingFace: 本地模型
 """
 
 import threading
@@ -39,15 +38,13 @@ class EmbeddingService:
         self.client = None
         self._client_config = None
         self._retired_clients = []
-        self._hf_model = None
         self._refresh_client()
 
     def _refresh_client(self):
         """配置变化时刷新客户端，旧客户端延迟到服务关闭时释放。
 
         本方法被 async 的 ``embed_texts`` 同步调用，须保持轻量：当前仅做配置
-        比较与客户端对象构造（AsyncOpenAI 构造不建连），HuggingFace 模型在
-        ``_embed_via_huggingface`` 中懒加载，故不阻塞事件循环；若未来
+        比较与客户端对象构造（AsyncOpenAI 构造不建连）；若未来
         ``_init_client`` 引入耗时初始化需改用 ``asyncio.to_thread``。
         """
         settings = get_settings()
@@ -64,7 +61,6 @@ class EmbeddingService:
             self._retired_clients.append(self.client)
         self.provider = config[0]
         self.client = None
-        self._hf_model = None
         self._init_client(settings)
         self._client_config = config
 
@@ -101,10 +97,6 @@ class EmbeddingService:
                     max_retries=0,
                 )
                 logger.info("✅ 嵌入服务初始化成功: {}", self.provider)
-
-            elif self.provider == "hf" or self.provider == "huggingface":
-                # HuggingFace 本地模型（使用 sentence-transformers）
-                logger.info("🔄 嵌入服务使用 HuggingFace 本地模型（按需加载）")
 
             else:
                 raise ValueError(f"不支持的嵌入提供商: {self.provider}")
@@ -149,9 +141,6 @@ class EmbeddingService:
                     context=active_context,
                     logical_call_id=active_logical_call_id,
                 )
-            if self.provider in ["hf", "huggingface"]:
-                # 使用 HuggingFace 本地模型
-                return await self._embed_via_huggingface(texts)
             raise ValueError(f"不支持的嵌入提供商: {self.provider}")
         except Exception as e:
             logger.error("❌ 生成嵌入向量失败: type={}", type(e).__name__)
@@ -235,37 +224,6 @@ class EmbeddingService:
                 settings.embedding_model,
                 type(e).__name__,
             )
-            raise
-
-    async def _embed_via_huggingface(self, texts: list[str]) -> list[list[float]]:
-        """通过 HuggingFace 本地模型生成嵌入
-
-        使用 sentence-transformers 库。
-        """
-        try:
-            from sentence_transformers import SentenceTransformer
-
-            # 懒加载模型（只在第一次使用时加载）
-            settings = get_settings()
-            if self._hf_model is None:
-                logger.info("🔄 加载 HuggingFace 模型: {}", settings.embedding_model)
-                self._hf_model = SentenceTransformer(settings.embedding_model)
-                logger.info("✅ HuggingFace 模型加载完成")
-
-            # 生成嵌入
-            embeddings = self._hf_model.encode(texts, convert_to_numpy=True)
-            embeddings = embeddings.tolist()
-
-            logger.debug("✅ 成功生成 {} 个嵌入向量", len(embeddings))
-            return embeddings
-
-        except ImportError:
-            logger.error(
-                "❌ sentence-transformers 未安装，请运行: pip install sentence-transformers"
-            )
-            raise RuntimeError("sentence-transformers 未安装")
-        except Exception as e:
-            logger.error("❌ HuggingFace 嵌入失败: type={}", type(e).__name__)
             raise
 
     async def embed_query(
