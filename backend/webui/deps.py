@@ -2,6 +2,7 @@
 
 import time
 from collections import OrderedDict
+from collections.abc import AsyncGenerator
 from functools import lru_cache
 from typing import Any
 
@@ -144,7 +145,7 @@ async def require_payment_enabled():
 
 
 # ========== 数据库会话 ==========
-async def get_db() -> AsyncSession:
+async def get_db() -> AsyncGenerator[AsyncSession]:
     """获取异步数据库会话"""
     async with db_module.async_session() as session:
         yield session

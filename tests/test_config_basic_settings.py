@@ -103,6 +103,17 @@ def test_ai_api_config_fields_support_live_update():
             setattr(settings, key, value)
 
 
+def test_embedding_provider_options_exclude_local_huggingface():
+    from backend.core.config import DYNAMIC_CONFIG_SELECT_OPTIONS
+
+    provider_values = {
+        option["value"]
+        for option in DYNAMIC_CONFIG_SELECT_OPTIONS["embedding_provider"]
+    }
+
+    assert provider_values == {"siliconflow", "openai", "ollama"}
+
+
 def test_fetch_url_dynamic_config_fields_support_live_update():
     required_fields = {
         "fetch_url_allowed_content_types",
