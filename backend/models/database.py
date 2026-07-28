@@ -770,7 +770,7 @@ async def insert_default_configs_async():
         ),
         AppConfig(
             key_name="review_timeout_seconds",
-            key_value="300",
+            key_value="600",
             description="审查任务整体超时时间（秒）",
         ),
         AppConfig(
