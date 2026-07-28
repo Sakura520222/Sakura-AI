@@ -1020,7 +1020,6 @@ config:
     embedding_provider_siliconflow: "SiliconFlow"
     embedding_provider_openai: "OpenAI"
     embedding_provider_ollama: "Ollama"
-    embedding_provider_hf: "HuggingFace"
     rerank_provider_siliconflow: "SiliconFlow"
     rerank_provider_none: "禁用"
     default_language_zh-CN: "简体中文"

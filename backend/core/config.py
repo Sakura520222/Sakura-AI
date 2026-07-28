@@ -523,7 +523,7 @@ class Settings(BaseSettings):
 
     # 嵌入模型配置
     embedding_model: str = "BAAI/bge-m3"
-    embedding_provider: str = "siliconflow"  # openai|ollama|hf|siliconflow
+    embedding_provider: str = "siliconflow"  # openai|ollama|siliconflow
     embedding_base_url: str = "https://api.siliconflow.cn/v1"
     embedding_api_key: str = ""
     embedding_dimension: int = 1024
@@ -1449,7 +1449,6 @@ DYNAMIC_CONFIG_SELECT_OPTIONS: dict[str, list[dict]] = {
         {"value": "siliconflow", "label": "SiliconFlow"},
         {"value": "openai", "label": "OpenAI"},
         {"value": "ollama", "label": "Ollama"},
-        {"value": "hf", "label": "HuggingFace"},
     ],
     "rerank_provider": [
         {"value": "siliconflow", "label": "SiliconFlow"},

@@ -375,7 +375,7 @@ WebUI：`https://your-domain.com/`
 - **语义 Issue 关联**：WebUI 配置管理中 `enable_semantic_issue_linking` / `semantic_issue_similarity_threshold`
 - **增量审查历史**：WebUI 配置管理中 `enable_incremental_history_context`，AI 自动学习历史审查记录
 - **行内评论开关**：WebUI 配置管理中 `enable_inline_comments`，控制是否在 PR diff 上发布行内评论，默认开启
-- **Web 搜索工具**：WebUI 配置管理中 `web_search_provider`（`duckduckgo` 免费或 `tavily` 高级）
+- **Web 搜索工具**：WebUI 配置管理中 `web_search_provider`（`duckduckgo` 免费或 `tavily` 高级）；DuckDuckGo 提供商使用 `duckduckgo-search`
 - **跨文件搜索**：`config/strategies.yaml` 中 `context_enhancement.search_in_files`，配置 GitHub Search API 优先策略、上下文行数、最大结果数等
 - **Git 信息工具**：`config/strategies.yaml` 中 `context_enhancement.git_tools`，配置默认分支和提交返回数量
 - **项目记忆系统**：WebUI 配置管理中 `sakura_memory_enabled` 启用记忆系统，`sakura_reflection_enabled` 启用审查后反思，`sakura_consolidation_interval` 合并触发的反思轮数（默认 5），`sakura_auto_init` 自动初始化 `.sakura/` 目录，`sakura_auto_create_subdirs` 自动创建 rules/docs/plans 子目录，`sakura_knowledge_extraction_enabled` 启用自动知识提取（通过三次串行 LLM 调用分别提取 rules/docs/plans）。反思、合并与知识提取由 `main` 或 `summary` 角色绑定决定实际账号和模型，不支持在该功能中另配凭据或模型。WebUI 提供「Sakura 记忆管理」页面，支持查看 / 编辑 / 删除记忆文件、手动触发合并和知识提取。`config/strategies.yaml` 的 `context_enhancement.sakura_memory.reflection` 可配置反思 prompt 包含的最大评论条数（`max_comments`）、变更文件条数（`max_changed_files`）和新增提交条数（`max_new_commits`），默认 30/30/20；评论正文与 PR 描述完整传入、不截断。详见 [项目记忆系统使用指南](docs/SAKURA_MEMORY_GUIDE.md)
