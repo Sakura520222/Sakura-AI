@@ -84,6 +84,7 @@
 - **Auto-labeling**: AI categorizes and recommends labels; high-confidence labels are applied automatically
 - **Auto-assignment**: AI analyzes issue content and automatically assigns it to appropriate repository collaborators
 - **Title Rewriting**: AI automatically improves vague or inaccurate issue titles
+- **Analysis Comment Publishing**: Automatically publishes the analysis result after completion and reports publication status through user-scoped activity events; repository permission resolution and explicit recipient configuration remain mutually exclusive
 - **PR-Issue Linking**: Automatically parses issue references and injects context to enhance review precision
 - **Semantic Issue Linking**: Discovers and links related issues based on vector semantic similarity
 
