@@ -176,6 +176,34 @@ async def test_create_pending_is_idempotent_and_parent_chain_is_real_db(publicat
 
 
 @pytest.mark.asyncio
+async def test_create_pending_uses_recipient_resolver_when_explicit_ids_are_unset():
+    engine, db = _publication_db()
+    try:
+        result_id = _publication_chain(db)
+
+        async def resolve_recipients(**_kwargs):
+            return ("resolved-user",)
+
+        service = PublicationService(
+            db=_AsyncDbAdapter(db),
+            recipient_resolver=resolve_recipients,
+        )
+
+        publication = await service.create_pending(
+            result_id,
+            "issue_comment",
+            "issue:owner/repo:resolver",
+        )
+
+        assert publication.status == "pending"
+        outbox = (await service._db.execute(select(ActivityOutbox))).scalars().all()
+        assert [row.target_user_id for row in outbox] == ["resolved-user"]
+    finally:
+        db.close()
+        engine.dispose()
+
+
+@pytest.mark.asyncio
 async def test_result_coordinator_persists_generated_result_and_returns_stable_id(
     publication_service,
 ):
