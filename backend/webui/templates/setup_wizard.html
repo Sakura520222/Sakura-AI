@@ -107,6 +107,48 @@
                         如果还没有创建 GitHub App，<a href="https://docs.github.com/en/apps/creating-github-apps" target="_blank" class="underline text-yellow-700 dark:text-yellow-300 hover:text-yellow-600">点击这里查看创建指南</a>。
                     </p>
                 </div>
+
+                <div class="mt-6 p-5 bg-blue-50 dark:bg-blue-900/20 rounded-lg border border-blue-200 dark:border-blue-800">
+                    <div class="flex items-start gap-3">
+                        <div class="text-2xl" aria-hidden="true">↥</div>
+                        <div class="flex-1 min-w-0">
+                            <h3 class="font-semibold text-blue-900 dark:text-blue-100">
+                                {{ _("setup.backup_title") }}
+                            </h3>
+                            <p class="mt-1 text-sm text-blue-800 dark:text-blue-200">
+                                {{ _("setup.backup_description") }}
+                            </p>
+                            <p class="mt-2 text-xs text-amber-700 dark:text-amber-300">
+                                {{ _("setup.backup_plaintext_warning") }}
+                            </p>
+
+                            <label class="mt-4 inline-flex items-center gap-2 px-4 py-2 text-sm font-medium rounded-lg bg-white dark:bg-gray-800 border border-blue-300 dark:border-blue-700 text-blue-700 dark:text-blue-300 hover:bg-blue-100 dark:hover:bg-blue-900/30 cursor-pointer transition-colors"
+                                   :class="backupInspecting ? 'opacity-50 cursor-wait' : ''">
+                                <span x-show="!backupInspecting">{{ _("setup.backup_choose") }}</span>
+                                <span x-show="backupInspecting" class="flex items-center gap-2">
+                                    <span class="pulse-dot">●</span> {{ _("setup.backup_checking") }}
+                                </span>
+                                <input type="file"
+                                       accept=".json,application/json"
+                                       class="sr-only"
+                                       :disabled="backupInspecting"
+                                       @change="inspectBackup($event)">
+                            </label>
+
+                            <div x-show="backupSummary" x-cloak
+                                 class="mt-4 p-3 rounded-lg bg-green-50 dark:bg-green-900/20 border border-green-200 dark:border-green-800 text-sm text-green-800 dark:text-green-200">
+                                <p class="font-medium" x-text="backupSummaryText"></p>
+                                <p class="mt-1 text-xs">
+                                    {{ _("setup.backup_admin_required") }}
+                                </p>
+                                <p x-show="backupSummary?.requires_database_url"
+                                   class="mt-1 text-xs text-amber-700 dark:text-amber-300">
+                                    {{ _("setup.backup_needs_database") }}
+                                </p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
             </div>
 
             <!-- Step 1: 数据库配置 -->
@@ -546,6 +588,20 @@ function setupWizard() {
         restartError: false,
         restartMessage: '',
         error: '',
+        backupInspecting: false,
+        backupContent: '',
+        backupFileName: '',
+        backupSummary: null,
+        backupSectionLabels: {
+            global: {{ _("config.backup_global") | tojson }},
+            ai: {{ _("config.backup_ai") | tojson }},
+            system: {{ _("config.backup_system") | tojson }},
+        },
+        backupMessages: {
+            loaded: {{ _("setup.backup_loaded") | tojson }},
+            tooLarge: {{ _("setup.backup_too_large") | tojson }},
+            readFailed: {{ _("setup.backup_read_failed") | tojson }},
+        },
 
         get canProceed() {
             switch (this.currentStep) {
@@ -559,6 +615,17 @@ function setupWizard() {
 
         get canComplete() {
             return this.form.admin_github_username.trim() !== '' && this.form.admin_telegram_id.trim() !== '' && this.form.app_domain.trim() !== '' && this.form.github_oauth_client_id.trim() !== '' && this.form.github_oauth_client_secret.trim() !== '' && this.form.github_oauth_redirect_uri.trim() !== '';
+        },
+
+        get backupSummaryText() {
+            if (!this.backupSummary) return '';
+            const sections = this.backupSummary.sections
+                .map(section => this.backupSectionLabels[section] || section)
+                .join('、');
+            return this.backupMessages.loaded
+                .replace('{filename}', this.backupFileName)
+                .replace('{sections}', sections)
+                .replace('{count}', String(this.backupSummary.total_count));
         },
 
         generateOAuthCallback() {
@@ -594,6 +661,51 @@ function setupWizard() {
                 }
             } catch (e) {
                 // 忽略，从第 0 步开始
+            }
+        },
+
+        async inspectBackup(event) {
+            const file = event.target.files?.[0];
+            this.backupContent = '';
+            this.backupFileName = '';
+            this.backupSummary = null;
+            if (!file) return;
+
+            if (file.size > 5 * 1024 * 1024) {
+                this.error = this.backupMessages.tooLarge;
+                event.target.value = '';
+                return;
+            }
+
+            this.backupInspecting = true;
+            try {
+                const content = await file.text();
+                const resp = await fetch('/setup/api/backup/inspect', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ content }),
+                });
+                const data = await resp.json();
+                if (!resp.ok || !data.success) {
+                    throw new Error(data.message || this.backupMessages.readFailed);
+                }
+
+                for (const [key, value] of Object.entries(data.setup_values || {})) {
+                    if (Object.prototype.hasOwnProperty.call(this.form, key) && typeof value === 'string') {
+                        this.form[key] = value;
+                    }
+                }
+                this.backupContent = content;
+                this.backupFileName = file.name;
+                this.backupSummary = data;
+                // 备份可能替换连接参数和凭证，必须由部署者重新执行连接测试。
+                this.testResults = {};
+                this.error = '';
+            } catch (e) {
+                this.error = e.message || this.backupMessages.readFailed;
+                event.target.value = '';
+            } finally {
+                this.backupInspecting = false;
             }
         },
 
@@ -727,12 +839,12 @@ function setupWizard() {
                     break;
                 case 3:
                     if (this.form.telegram_bot_token) map.TELEGRAM_BOT_TOKEN = this.form.telegram_bot_token;
+                    if (this.form.embedding_api_key) map.EMBEDDING_API_KEY = this.form.embedding_api_key;
                     if (this.form.embedding_base_url) map.EMBEDDING_BASE_URL = this.form.embedding_base_url;
                     if (this.form.embedding_model) map.EMBEDDING_MODEL = this.form.embedding_model;
                     if (this.form.rerank_api_key) map.RERANK_API_KEY = this.form.rerank_api_key;
                     if (this.form.rerank_base_url) map.RERANK_BASE_URL = this.form.rerank_base_url;
                     if (this.form.rerank_model) map.RERANK_MODEL = this.form.rerank_model;
-                    if (this.form.telegram_bot_token) map.TELEGRAM_BOT_TOKEN = this.form.telegram_bot_token;
                     break;
             }
             return map;
@@ -746,6 +858,7 @@ function setupWizard() {
             if (this.form.github_private_key) map.GITHUB_PRIVATE_KEY = this.form.github_private_key;
             if (this.form.github_webhook_secret) map.GITHUB_WEBHOOK_SECRET = this.form.github_webhook_secret;
             if (this.form.bot_username) map.BOT_USERNAME = this.form.bot_username;
+            if (this.form.embedding_api_key) map.EMBEDDING_API_KEY = this.form.embedding_api_key;
             if (this.form.embedding_base_url) map.EMBEDDING_BASE_URL = this.form.embedding_base_url;
             if (this.form.embedding_model) map.EMBEDDING_MODEL = this.form.embedding_model;
             if (this.form.rerank_api_key) map.RERANK_API_KEY = this.form.rerank_api_key;
@@ -759,6 +872,7 @@ function setupWizard() {
             if (this.form.github_oauth_client_secret) map.GITHUB_OAUTH_CLIENT_SECRET = this.form.github_oauth_client_secret;
             if (this.form.github_oauth_redirect_uri) map.GITHUB_OAUTH_REDIRECT_URI = this.form.github_oauth_redirect_uri;
             if (this.form.mobile_oauth_allowed_redirect_uris) map.MOBILE_OAUTH_ALLOWED_REDIRECT_URIS = this.form.mobile_oauth_allowed_redirect_uris;
+            if (this.backupContent) map.CONFIG_BACKUP = this.backupContent;
             return map;
         },
     }

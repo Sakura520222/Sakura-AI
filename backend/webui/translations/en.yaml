@@ -2011,3 +2011,15 @@ star_aid:
   repo_enable_success: "Repository enabled"
   repo_enable_failed: "Failed to enable repository"
   not_displayed: "Not displayed"
+
+setup:
+  backup_title: "Restore from a configuration backup (optional)"
+  backup_description: "Select a JSON file exported from Config Backup. The wizard validates it, prefills connection details, and restores its global, AI, and system settings when setup is completed."
+  backup_plaintext_warning: "Backups contain plaintext secrets and connection credentials. Use only a trusted file over a secure network."
+  backup_choose: "Choose configuration backup"
+  backup_checking: "Validating..."
+  backup_loaded: "Loaded {filename}: {sections}, {count} settings in total."
+  backup_admin_required: "Administrator users are not imported. Continue the wizard to create the super administrator for this deployment."
+  backup_needs_database: "This backup has no database connection setting. Enter the database URL manually in the next step."
+  backup_too_large: "The backup exceeds the 5 MiB limit"
+  backup_read_failed: "The backup could not be read or validated"

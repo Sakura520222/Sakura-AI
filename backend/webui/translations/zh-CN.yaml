@@ -2011,3 +2011,15 @@ star_aid:
   repo_enable_success: "仓库已启用"
   repo_enable_failed: "仓库启用失败"
   not_displayed: "未展示"
+
+setup:
+  backup_title: "从配置备份恢复（可选）"
+  backup_description: "选择从“配置备份”页面导出的 JSON 文件。向导会校验文件并预填连接信息，完成配置时恢复其中的全局、AI 和系统配置。"
+  backup_plaintext_warning: "备份包含明文密钥与连接凭证，请只使用可信文件，并确保当前网络环境安全。"
+  backup_choose: "选择配置备份"
+  backup_checking: "正在校验..."
+  backup_loaded: "已读取 {filename}：{sections}，共 {count} 项配置。"
+  backup_admin_required: "管理员用户不会随备份导入，请继续完成向导以创建本次部署的超级管理员。"
+  backup_needs_database: "此备份不含数据库连接信息，请在下一步手动填写数据库地址。"
+  backup_too_large: "备份文件超过 5 MiB 限制"
+  backup_read_failed: "无法读取或校验备份文件"
