@@ -4,11 +4,12 @@ import asyncio
 import re
 import shutil
 import tempfile
+from datetime import datetime
 from pathlib import Path
 
 import yaml
-from fastapi import APIRouter, Depends, Form, HTTPException, Request
-from loguru import logger
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile
+from fastapi.responses import Response
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -23,6 +24,15 @@ from backend.core.config import (
     reload_strategy_config,
 )
 from backend.models.database import AppConfig
+from backend.services.config_backup_service import (
+    BACKUP_MAX_BYTES,
+    ConfigBackupError,
+    export_config_backup,
+    parse_config_backup,
+    refresh_imported_runtime_config,
+    restore_config_backup,
+    serialize_config_backup,
+)
 from backend.services.label_service import label_service
 from backend.webui.deps import (
     get_csrf_serializer,
@@ -653,6 +663,190 @@ async def ai_config_page(
         active_page="config_ai",
         app_version=APP_VERSION,
     )
+
+
+# ========== 配置备份与恢复 ==========
+
+
+@router.get("/backup")
+async def config_backup_page(
+    request: Request,
+    user: dict = Depends(require_super_admin),
+    user_prefs: dict = Depends(get_user_preferences),
+):
+    """配置备份页面。"""
+    return render_template(
+        "config_backup.html",
+        request,
+        user_prefs=user_prefs,
+        current_user=user,
+        csrf_token=get_csrf_serializer().dumps({}),
+        active_page="config_backup",
+    )
+
+
+@router.post("/backup/export/{scope}")
+async def download_config_backup(
+    scope: str,
+    db: AsyncSession = Depends(get_db),
+    user: dict = Depends(require_super_admin),
+    csrf_token: str = Depends(require_csrf),
+):
+    """下载全局配置、AI 配置或两者的版本化 JSON 备份。"""
+    try:
+        document = await export_config_backup(db, scope)
+        content = serialize_config_backup(document)
+        counts = {
+            section: data["count"] for section, data in document["sections"].items()
+        }
+        await log_admin_action(
+            db,
+            user["user_id"],
+            "config_export",
+            "config",
+            scope,
+            {"scope": scope, "counts": counts},
+        )
+
+        timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+        filename = f"sakura-ai-config-{scope}-{timestamp}.json"
+        logger.info(
+            "配置备份已导出, by={}, scope={}, counts={}",
+            user["sub"],
+            scope,
+            counts,
+        )
+        return Response(
+            content=content,
+            media_type="application/json",
+            headers={
+                "Content-Disposition": f'attachment; filename="{filename}"',
+                "Cache-Control": "no-store, max-age=0",
+                "Pragma": "no-cache",
+                "X-Content-Type-Options": "nosniff",
+            },
+        )
+    except ConfigBackupError as exc:
+        return toast_redirect(
+            "/config/backup",
+            "toast.config_backup_export_failed",
+            "error",
+            lang=detect_language(),
+            reason=str(exc),
+        )
+    except Exception as exc:
+        logger.error("配置备份导出失败: {}", exc, exc_info=True)
+        return toast_redirect(
+            "/config/backup",
+            "toast.config_backup_export_failed",
+            "error",
+            lang=detect_language(),
+            reason="internal error",
+        )
+
+
+@router.post("/backup/import")
+async def upload_config_backup(
+    backup_file: UploadFile = File(...),
+    db: AsyncSession = Depends(get_db),
+    user: dict = Depends(require_super_admin),
+    csrf_token: str = Depends(require_csrf),
+):
+    """校验并精确恢复备份中包含的配置分类。"""
+    result = None
+    try:
+        content = await backup_file.read(BACKUP_MAX_BYTES + 1)
+        sections = parse_config_backup(content)
+        result = await restore_config_backup(db, sections)
+        runtime_refresh_ok = True
+        try:
+            refresh_imported_runtime_config(result)
+        except Exception as exc:
+            runtime_refresh_ok = False
+            logger.error(
+                "配置已导入，但运行时配置刷新失败，需重启应用: {}",
+                exc,
+                exc_info=True,
+            )
+
+        safe_filename = Path(backup_file.filename or "backup.json").name[:255]
+        detail = {
+            "filename": safe_filename,
+            "sections": list(result.sections),
+            "created": result.created,
+            "updated": result.updated,
+            "deleted": result.deleted,
+            "unchanged": result.unchanged,
+            "runtime_refresh_ok": runtime_refresh_ok,
+        }
+        await log_admin_action(
+            db,
+            user["user_id"],
+            "config_import",
+            "config",
+            ",".join(result.sections),
+            detail,
+        )
+        logger.info(
+            "配置备份已导入, by={}, sections={}, created={}, updated={}, deleted={}",
+            user["sub"],
+            result.sections,
+            result.created,
+            result.updated,
+            result.deleted,
+        )
+        lang = detect_language()
+        from backend.webui.i18n import i18n as _i18n
+
+        section_names = ", ".join(
+            _i18n.t(f"config.backup_{section}", lang=lang)
+            for section in result.sections
+        )
+        return toast_redirect(
+            "/config/backup",
+            (
+                "toast.config_backup_imported"
+                if runtime_refresh_ok
+                else "toast.config_backup_imported_restart"
+            ),
+            lang=lang,
+            sections=section_names,
+            created=result.created,
+            updated=result.updated,
+            deleted=result.deleted,
+            unchanged=result.unchanged,
+        )
+    except ConfigBackupError as exc:
+        return toast_redirect(
+            "/config/backup",
+            "toast.config_backup_invalid",
+            "error",
+            lang=detect_language(),
+            reason=str(exc),
+        )
+    except Exception as exc:
+        logger.error("配置备份导入失败: {}", exc, exc_info=True)
+        if result is not None:
+            return toast_redirect(
+                "/config/backup",
+                "toast.config_backup_imported_restart",
+                "error",
+                lang=detect_language(),
+                sections=", ".join(result.sections),
+                created=result.created,
+                updated=result.updated,
+                deleted=result.deleted,
+                unchanged=result.unchanged,
+            )
+        await db.rollback()
+        return toast_redirect(
+            "/config/backup",
+            "toast.config_backup_import_failed",
+            "error",
+            lang=detect_language(),
+        )
+    finally:
+        await backup_file.close()
 
 
 # ========== GET: 全局配置页 ==========
