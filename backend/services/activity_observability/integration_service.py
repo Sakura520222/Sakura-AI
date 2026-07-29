@@ -70,7 +70,11 @@ class NormalizedResource:
 
     @property
     def number(self) -> int | str:
-        return int(self.resource_number) if self.resource_number.isdigit() else self.resource_number
+        return (
+            int(self.resource_number)
+            if self.resource_number.isdigit()
+            else self.resource_number
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -178,7 +182,10 @@ class ObservedExecutionBundle:
             return
         if len(errors) == 1:
             raise errors[0]
-        if any(isinstance(error, BaseException) and not isinstance(error, Exception) for error in errors):
+        if any(
+            isinstance(error, BaseException) and not isinstance(error, Exception)
+            for error in errors
+        ):
             raise BaseExceptionGroup(
                 "execution finish and lease release failed", errors
             )
@@ -228,7 +235,11 @@ class ActivityIntegrationService:
     ) -> NormalizedResource:
         """Validate provider identity; never manufacture identity from owner/name."""
         data = dict(resource)
-        kind = str(resource_type or data.get("resource_type") or data.get("type") or "").strip().lower()
+        kind = (
+            str(resource_type or data.get("resource_type") or data.get("type") or "")
+            .strip()
+            .lower()
+        )
         if kind in {"scan", "repo_scan", "repository_scan"}:
             task_id = data.get("task_id") or data.get("scan_id")
             if task_id is None or not str(task_id).strip():
@@ -237,7 +248,9 @@ class ActivityIntegrationService:
             return NormalizedResource(
                 source_system_instance="internal:ephemeral",
                 repository_external_id=f"scan-task:{task}",
-                repo_full_name=str(data.get("repo_full_name") or data.get("repository") or task),
+                repo_full_name=str(
+                    data.get("repo_full_name") or data.get("repository") or task
+                ),
                 resource_type="ephemeral",
                 resource_number=task,
                 task_id=task,
@@ -245,7 +258,11 @@ class ActivityIntegrationService:
 
         if kind not in {"pr", "issue"}:
             raise AdmissionError("resource_type must be pr, issue, or scan")
-        source = data.get("source_system_instance") or data.get("source_host") or data.get("host")
+        source = (
+            data.get("source_system_instance")
+            or data.get("source_host")
+            or data.get("host")
+        )
         repo_id = (
             data.get("repository_external_id")
             or data.get("repository_id")
@@ -267,7 +284,11 @@ class ActivityIntegrationService:
             raise AdmissionError(
                 "immutable repository external ID is required; owner/name cannot be used as identity"
             )
-        if not isinstance(full_name, str) or not full_name.strip() or "/" not in full_name:
+        if (
+            not isinstance(full_name, str)
+            or not full_name.strip()
+            or "/" not in full_name
+        ):
             raise AdmissionError("repo_full_name is required")
         if number is None or not str(number).strip():
             raise AdmissionError("resource number is required")
@@ -302,8 +323,13 @@ class ActivityIntegrationService:
         if not kind:
             raise AdmissionError("trigger_kind is required")
         if resource_type is None and kind in {
-            "synchronize", "reopen", "comment", "review_comment",
-            "manual", "manual_review", "manual_analyze",
+            "synchronize",
+            "reopen",
+            "comment",
+            "review_comment",
+            "manual",
+            "manual_review",
+            "manual_analyze",
         }:
             resource_type = "pr"
         normalized = self.normalize_resource(resource, resource_type=resource_type)
@@ -347,7 +373,9 @@ class ActivityIntegrationService:
             elif kind in {"manual", "manual_review", "manual_analyze"}:
                 if not actor_id or not manual_nonce:
                     raise AdmissionError("manual admission requires actor_id and nonce")
-                dedupe_key = f"manual:{str(actor_id).strip()}:{str(manual_nonce).strip()}"
+                dedupe_key = (
+                    f"manual:{str(actor_id).strip()}:{str(manual_nonce).strip()}"
+                )
                 duplicate = await obs.get_trigger_by_dedupe_key(dedupe_key) is not None
                 trigger = await obs.create_manual_trigger(
                     session.id, actor_id, manual_nonce, purpose
@@ -357,23 +385,39 @@ class ActivityIntegrationService:
             await self._commit_if_owned(db)
             return AdmissionResult(session, trigger, duplicate)
 
-    async def admit_synchronize(self, resource: Mapping[str, Any], **kwargs: Any) -> AdmissionResult:
+    async def admit_synchronize(
+        self, resource: Mapping[str, Any], **kwargs: Any
+    ) -> AdmissionResult:
         return await self.admit(resource, trigger_kind="synchronize", **kwargs)
 
-    async def admit_comment(self, resource: Mapping[str, Any], **kwargs: Any) -> AdmissionResult:
+    async def admit_comment(
+        self, resource: Mapping[str, Any], **kwargs: Any
+    ) -> AdmissionResult:
         return await self.admit(resource, trigger_kind="comment", **kwargs)
 
-    async def admit_reopen(self, resource: Mapping[str, Any], **kwargs: Any) -> AdmissionResult:
+    async def admit_reopen(
+        self, resource: Mapping[str, Any], **kwargs: Any
+    ) -> AdmissionResult:
         return await self.admit(resource, trigger_kind="reopen", **kwargs)
 
-    async def admit_manual(self, resource: Mapping[str, Any], **kwargs: Any) -> AdmissionResult:
+    async def admit_manual(
+        self, resource: Mapping[str, Any], **kwargs: Any
+    ) -> AdmissionResult:
         return await self.admit(resource, trigger_kind="manual", **kwargs)
 
-    async def admit_issue(self, resource: Mapping[str, Any], **kwargs: Any) -> AdmissionResult:
-        return await self.admit(resource, trigger_kind="issue", resource_type="issue", **kwargs)
+    async def admit_issue(
+        self, resource: Mapping[str, Any], **kwargs: Any
+    ) -> AdmissionResult:
+        return await self.admit(
+            resource, trigger_kind="issue", resource_type="issue", **kwargs
+        )
 
-    async def admit_scan(self, resource: Mapping[str, Any], **kwargs: Any) -> AdmissionResult:
-        return await self.admit(resource, trigger_kind="scan", resource_type="scan", **kwargs)
+    async def admit_scan(
+        self, resource: Mapping[str, Any], **kwargs: Any
+    ) -> AdmissionResult:
+        return await self.admit(
+            resource, trigger_kind="scan", resource_type="scan", **kwargs
+        )
 
     async def start_or_merge_review(
         self,
@@ -406,11 +450,17 @@ class ActivityIntegrationService:
                     repo_full_name=normalized.repo_full_name,
                 )
             else:
-                session = await db.get(ActivityObservabilitySession, session_id, with_for_update=True)
+                session = await db.get(
+                    ActivityObservabilitySession, session_id, with_for_update=True
+                )
                 if session is None:
-                    raise AdmissionError(f"ActivityObservabilitySession not found: {session_id}")
+                    raise AdmissionError(
+                        f"ActivityObservabilitySession not found: {session_id}"
+                    )
             # Lock parent before selecting pending triggers or active invocations.
-            session = await db.get(ActivityObservabilitySession, session.id, with_for_update=True)
+            session = await db.get(
+                ActivityObservabilitySession, session.id, with_for_update=True
+            )
             selected = await self._select_pending_triggers(db, session.id, trigger_ids)
             if not selected:
                 raise AdmissionError("no pending triggers available for review")
@@ -419,7 +469,9 @@ class ActivityIntegrationService:
             obs = ActivityObservabilityService(db=db)
             if active is not None:
                 invocation, thread, work_unit, _lease = active
-                await obs.merge_invocation_triggers(invocation.id, [t.id for t in selected])
+                await obs.merge_invocation_triggers(
+                    invocation.id, [t.id for t in selected]
+                )
                 refreshed = await db.get(ActivityInvocation, invocation.id)
                 selected = await self._load_triggers(db, [t.id for t in selected])
                 await self._commit_if_owned(db)
@@ -433,7 +485,9 @@ class ActivityIntegrationService:
                     merged=True,
                 )
 
-            invocation = await obs.create_invocation(session.id, [t.id for t in selected])
+            invocation = await obs.create_invocation(
+                session.id, [t.id for t in selected]
+            )
             if task_type:
                 invocation.task_type = task_type
             invocation.task_id = task_id
@@ -472,7 +526,9 @@ class ActivityIntegrationService:
                 merged=False,
             )
 
-    async def start_or_merge_issue(self, *args: Any, **kwargs: Any) -> ReviewStartResult:
+    async def start_or_merge_issue(
+        self, *args: Any, **kwargs: Any
+    ) -> ReviewStartResult:
         kwargs.setdefault("role", "issue_analyzer")
         kwargs.setdefault("task_type", "issue")
         return await self.start_or_merge_review(*args, **kwargs)
@@ -485,20 +541,39 @@ class ActivityIntegrationService:
         role_snapshot: RoleConfigSnapshot | None = None,
         role: str = "scan",
         task_id: int | None = None,
-    ) -> tuple[ActivityObservabilitySession, ActivityInvocation, ActivityInvocationWorkUnit, tuple[ActivityTrigger, ...]]:
+    ) -> tuple[
+        ActivityObservabilitySession,
+        ActivityInvocation,
+        ActivityInvocationWorkUnit,
+        tuple[ActivityTrigger, ...],
+    ]:
         """Start an ephemeral scan invocation with an unthreaded work unit."""
-        admitted = await self.admit_scan(resource, delivery_id=str(resource.get("delivery_id") or resource.get("task_id") or task_id), head_sha=resource.get("head_sha"))
+        admitted = await self.admit_scan(
+            resource,
+            delivery_id=str(
+                resource.get("delivery_id") or resource.get("task_id") or task_id
+            ),
+            head_sha=resource.get("head_sha"),
+        )
         async with self._session_scope() as db:
-            session = await db.get(ActivityObservabilitySession, admitted.session_id, with_for_update=True)
+            session = await db.get(
+                ActivityObservabilitySession, admitted.session_id, with_for_update=True
+            )
             if session is None:
                 raise AdmissionError("scan session disappeared")
-            selected = await self._select_pending_triggers(db, session.id, trigger_ids or [admitted.trigger_id])
+            selected = await self._select_pending_triggers(
+                db, session.id, trigger_ids or [admitted.trigger_id]
+            )
             obs = ActivityObservabilityService(db=db)
-            invocation = await obs.create_invocation(session.id, [t.id for t in selected])
+            invocation = await obs.create_invocation(
+                session.id, [t.id for t in selected]
+            )
             invocation.task_type = "scan"
             invocation.task_id = task_id
             snapshot = role_snapshot or await self._resolve_snapshot(role)
-            work_unit = await obs.create_work_unit(invocation.id, role, "primary_required", True, snapshot, thread_id=None)
+            work_unit = await obs.create_work_unit(
+                invocation.id, role, "primary_required", True, snapshot, thread_id=None
+            )
             await db.flush()
             await self._commit_if_owned(db)
             return session, invocation, work_unit, tuple(selected)
@@ -511,7 +586,9 @@ class ActivityIntegrationService:
         role_snapshot: RoleConfigSnapshot | None = None,
     ) -> ObservedExecutionBundle:
         """Bind the admitted lane to context/attempt/publication dependencies."""
-        snapshot = role_snapshot or await self._resolve_snapshot_from_work_unit(started.work_unit)
+        snapshot = role_snapshot or await self._resolve_snapshot_from_work_unit(
+            started.work_unit
+        )
         context = InvocationContext(
             invocation_id=int(started.invocation.id),
             work_unit_id=int(started.work_unit.id),
@@ -527,11 +604,19 @@ class ActivityIntegrationService:
             thread_id = int(started.thread.id)
 
             async def revision_resolver() -> int | None:
-                return await context_service.context_revision_for_next_attempt(thread_id)
+                return await context_service.context_revision_for_next_attempt(
+                    thread_id
+                )
 
-        from backend.services.activity_observability.tool_service import ToolService
+        from backend.services.activity_observability.tool_service import (
+            DefaultArtifactEncryptionProvider,
+            ToolService,
+        )
 
-        tool_service = ToolService(db=self._db)
+        tool_service = ToolService(
+            db=self._db,
+            encryption_provider=DefaultArtifactEncryptionProvider(),
+        )
         observer = ObservedModelSender(
             attempts,
             context=context,
@@ -552,7 +637,11 @@ class ActivityIntegrationService:
         revision_id = (
             int(started.lease.base_revision_id)
             if started.lease is not None and started.lease.base_revision_id is not None
-            else (int(started.thread.current_revision_id) if started.thread and started.thread.current_revision_id else None)
+            else (
+                int(started.thread.current_revision_id)
+                if started.thread and started.thread.current_revision_id
+                else None
+            )
         )
         return ObservedExecutionBundle(
             session=started.session,
@@ -579,7 +668,9 @@ class ActivityIntegrationService:
         stored = getattr(work_unit, "role_binding_snapshot", None)
         if stored is not None:
             try:
-                candidates = tuple(tuple(item) for item in json.loads(stored.candidate_chain_json))
+                candidates = tuple(
+                    tuple(item) for item in json.loads(stored.candidate_chain_json)
+                )
                 return RoleConfigSnapshot(
                     role=stored.role,
                     requested_provider=stored.requested_provider,
@@ -680,29 +771,55 @@ class ActivityIntegrationService:
         )
 
     @staticmethod
-    async def _ensure_thread(db: AsyncSession, session_id: int, purpose: str) -> ActivityThread:
+    async def _ensure_thread(
+        db: AsyncSession, session_id: int, purpose: str
+    ) -> ActivityThread:
         thread = (
             await db.execute(
                 select(ActivityThread)
-                .where(ActivityThread.session_id == session_id, ActivityThread.thread_purpose == purpose)
+                .where(
+                    ActivityThread.session_id == session_id,
+                    ActivityThread.thread_purpose == purpose,
+                )
                 .with_for_update()
             )
         ).scalar_one_or_none()
         if thread is None:
-            thread = ActivityThread(session_id=session_id, thread_purpose=purpose, last_seq=0)
+            thread = ActivityThread(
+                session_id=session_id, thread_purpose=purpose, last_seq=0
+            )
             db.add(thread)
             await db.flush()
         return thread
 
     @staticmethod
-    async def _load_triggers(db: AsyncSession, ids: Sequence[int]) -> list[ActivityTrigger]:
-        rows = (await db.execute(select(ActivityTrigger).where(ActivityTrigger.id.in_(list(ids))))).scalars().all()
+    async def _load_triggers(
+        db: AsyncSession, ids: Sequence[int]
+    ) -> list[ActivityTrigger]:
+        rows = (
+            (
+                await db.execute(
+                    select(ActivityTrigger).where(ActivityTrigger.id.in_(list(ids)))
+                )
+            )
+            .scalars()
+            .all()
+        )
         by_id = {row.id: row for row in rows}
         return [by_id[item] for item in ids if item in by_id]
 
     @classmethod
-    async def _select_pending_triggers(cls, db: AsyncSession, session_id: int, ids: Sequence[int] | None) -> list[ActivityTrigger]:
-        statement = select(ActivityTrigger).where(ActivityTrigger.session_id == session_id, ActivityTrigger.status == "pending").order_by(ActivityTrigger.created_at, ActivityTrigger.id)
+    async def _select_pending_triggers(
+        cls, db: AsyncSession, session_id: int, ids: Sequence[int] | None
+    ) -> list[ActivityTrigger]:
+        statement = (
+            select(ActivityTrigger)
+            .where(
+                ActivityTrigger.session_id == session_id,
+                ActivityTrigger.status == "pending",
+            )
+            .order_by(ActivityTrigger.created_at, ActivityTrigger.id)
+        )
         if ids is not None:
             wanted = list(dict.fromkeys(int(item) for item in ids))
             if not wanted:
@@ -711,49 +828,64 @@ class ActivityIntegrationService:
         return list((await db.execute(statement.with_for_update())).scalars().all())
 
     @staticmethod
-    async def _active_review_with_live_lease(db: AsyncSession, session_id: int, purpose: str):
-        rows = (await db.execute(
-            select(ActivityInvocation, ActivityThread, ActivityInvocationWorkUnit, ActivityThreadLease)
-            .join(
-                ActivityThread,
-                ActivityThread.session_id == ActivityInvocation.session_id,
+    async def _active_review_with_live_lease(
+        db: AsyncSession, session_id: int, purpose: str
+    ):
+        rows = (
+            await db.execute(
+                select(
+                    ActivityInvocation,
+                    ActivityThread,
+                    ActivityInvocationWorkUnit,
+                    ActivityThreadLease,
+                )
+                .join(
+                    ActivityThread,
+                    ActivityThread.session_id == ActivityInvocation.session_id,
+                )
+                .join(
+                    ActivityInvocationWorkUnit,
+                    and_(
+                        ActivityInvocationWorkUnit.thread_id == ActivityThread.id,
+                        ActivityInvocationWorkUnit.invocation_id
+                        == ActivityInvocation.id,
+                    ),
+                )
+                .join(
+                    ActivityThreadLease,
+                    and_(
+                        ActivityThreadLease.thread_id == ActivityThread.id,
+                        ActivityThreadLease.owner_work_unit_id
+                        == ActivityInvocationWorkUnit.id,
+                    ),
+                )
+                .where(
+                    ActivityInvocation.session_id == session_id,
+                    ActivityThread.thread_purpose == purpose,
+                    ActivityInvocation.status.in_(("queued", "running")),
+                    ActivityInvocationWorkUnit.is_primary.is_(True),
+                    ActivityInvocationWorkUnit.purpose == purpose,
+                )
+                .with_for_update()
             )
-            .join(
-                ActivityInvocationWorkUnit,
-                and_(
-                    ActivityInvocationWorkUnit.thread_id == ActivityThread.id,
-                    ActivityInvocationWorkUnit.invocation_id == ActivityInvocation.id,
-                ),
-            )
-            .join(
-                ActivityThreadLease,
-                and_(
-                    ActivityThreadLease.thread_id == ActivityThread.id,
-                    ActivityThreadLease.owner_work_unit_id
-                    == ActivityInvocationWorkUnit.id,
-                ),
-            )
-            .where(
-                ActivityInvocation.session_id == session_id,
-                ActivityThread.thread_purpose == purpose,
-                ActivityInvocation.status.in_(("queued", "running")),
-                ActivityInvocationWorkUnit.is_primary.is_(True),
-                ActivityInvocationWorkUnit.purpose == purpose,
-            )
-            .with_for_update()
-        )).all()
+        ).all()
         now = utc_now()
         for invocation, thread, work_unit, lease in rows:
             expires = lease.expires_at
             if expires is not None and expires.tzinfo is None:
                 expires = expires.replace(tzinfo=timezone.utc)
             if expires is not None and expires > now:
-                return invocation, thread, work_unit, ThreadLeaseToken(
-                    thread_id=thread.id,
-                    owner_work_unit_id=work_unit.id,
-                    fencing_token=lease.fencing_token,
-                    base_revision_id=lease.base_revision_id,
-                    expires_at=expires,
+                return (
+                    invocation,
+                    thread,
+                    work_unit,
+                    ThreadLeaseToken(
+                        thread_id=thread.id,
+                        owner_work_unit_id=work_unit.id,
+                        fencing_token=lease.fencing_token,
+                        base_revision_id=lease.base_revision_id,
+                        expires_at=expires,
+                    ),
                 )
         return None
 

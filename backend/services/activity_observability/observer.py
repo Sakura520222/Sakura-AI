@@ -3,12 +3,23 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
+import time
 from collections.abc import AsyncIterator, Awaitable, Callable
 from typing import Any
 
+from loguru import logger
+
+from backend.core.config import get_settings
+from backend.services.activity_observability.artifact_projection import (
+    projection_json,
+)
 from backend.services.activity_observability.attempt_service import AttemptService
-from backend.services.activity_observability.contracts import InvocationContext
+from backend.services.activity_observability.contracts import (
+    EffectiveReasoningSnapshot,
+    InvocationContext,
+)
 from backend.services.activity_observability.context_service import (
     AVAILABILITY_ESTIMATED,
     AVAILABILITY_REPORTED,
@@ -25,7 +36,9 @@ from backend.services.activity_observability.reasoning import (
     REASONING_OMITTED,
     REASONING_PROVIDER_EXPOSED,
     REASONING_SUMMARIZED,
+    REASONING_UNAVAILABLE,
     ReasoningCapturePolicy,
+    configured_reasoning_capture_policy,
 )
 
 
@@ -37,7 +50,8 @@ class ObservedModelSender:
         attempt_service: AttemptService,
         *,
         context: InvocationContext | None = None,
-        revision_resolver: Callable[[], Awaitable[int | None] | int | None] | None = None,
+        revision_resolver: Callable[[], Awaitable[int | None] | int | None]
+        | None = None,
         context_service: ContextService | None = None,
         tool_service: Any = None,
         lease: ThreadLeaseToken | None = None,
@@ -49,6 +63,233 @@ class ObservedModelSender:
         self.tool_service = tool_service
         self.lease = lease
         self.last_attempt_id: int | None = None
+
+    async def _best_effort(
+        self,
+        stage: str,
+        operation: Callable[[], Awaitable[Any]],
+        *,
+        default: Any = None,
+    ) -> Any:
+        """Keep observability failures off the provider request's critical path."""
+        try:
+            return await operation()
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            logger.bind(
+                observability_stage=stage,
+                error_type=type(exc).__name__,
+            ).warning(
+                "AI 可观测性写入失败，业务调用继续: stage={} error_type={}",
+                stage,
+                type(exc).__name__,
+            )
+            return default
+
+    def _log_attempt(
+        self,
+        event: str,
+        *,
+        logical_call_id: str,
+        attempt: Any,
+        attempt_kind: str,
+        purpose: str,
+        candidate: Any,
+        reasoning_snapshot: EffectiveReasoningSnapshot | None,
+        elapsed: float | None = None,
+        error: BaseException | None = None,
+    ) -> None:
+        provider = getattr(getattr(candidate, "provider", None), "id", "unknown")
+        model = getattr(getattr(candidate, "model", None), "model_id", "unknown")
+        role = getattr(
+            getattr(self.context, "role_snapshot", None),
+            "role",
+            purpose,
+        )
+        attempt_id = getattr(attempt, "id", None)
+        attempt_index = getattr(attempt, "attempt_index", None)
+        thinking = (
+            reasoning_snapshot.effective_thinking_mode
+            if reasoning_snapshot is not None
+            else getattr(attempt, "effective_thinking_mode", "unavailable")
+        )
+        effort = (
+            reasoning_snapshot.effective_effort
+            if reasoning_snapshot is not None
+            else getattr(attempt, "effective_effort", "unavailable")
+        )
+        protocol = (
+            reasoning_snapshot.protocol_family
+            if reasoning_snapshot is not None
+            else getattr(attempt, "protocol_family", "unknown")
+        )
+        bound = logger.bind(
+            logical_call_id=logical_call_id,
+            attempt_id=attempt_id,
+            attempt_index=attempt_index,
+            attempt_kind=attempt_kind,
+            role=role,
+            purpose=purpose,
+            provider=provider,
+            model=model,
+            protocol=protocol,
+            effective_thinking_mode=thinking,
+            effective_effort=effort,
+        )
+        if event == "started":
+            bound.info(
+                "AI 调用开始: call={} attempt={} index={} kind={} role={} purpose={} "
+                "provider={} model={} protocol={} thinking={} effort={}",
+                logical_call_id,
+                attempt_id,
+                attempt_index,
+                attempt_kind,
+                role,
+                purpose,
+                provider,
+                model,
+                protocol,
+                thinking,
+                effort,
+            )
+            return
+        if event == "completed":
+            bound.bind(
+                reasoning_availability=getattr(
+                    attempt, "reasoning_availability", "unavailable"
+                ),
+                reasoning_tokens=getattr(attempt, "reasoning_tokens", None),
+                input_tokens=getattr(attempt, "input_tokens", None),
+                output_tokens=getattr(attempt, "output_tokens", None),
+                cached_input_tokens=getattr(attempt, "cached_input_tokens", None),
+                stop_reason=getattr(attempt, "stop_reason", None),
+                elapsed_seconds=elapsed,
+            ).info(
+                "AI 调用成功: call={} attempt={} provider={} model={} "
+                "thinking={} effort={} reasoning={} elapsed={:.3f}s",
+                logical_call_id,
+                attempt_id,
+                provider,
+                model,
+                thinking,
+                effort,
+                getattr(attempt, "reasoning_availability", "unavailable"),
+                elapsed or 0.0,
+            )
+            return
+        category = getattr(getattr(error, "category", None), "value", "unknown")
+        bound.bind(
+            error_category=category,
+            retryable=getattr(error, "is_retryable", None),
+            elapsed_seconds=elapsed,
+            retry_of_attempt_id=getattr(attempt, "retry_of_attempt_id", None),
+            fallback_from_attempt_id=getattr(attempt, "fallback_from_attempt_id", None),
+        ).warning(
+            "AI 调用失败: call={} attempt={} provider={} model={} "
+            "thinking={} effort={} category={} retryable={} elapsed={:.3f}s",
+            logical_call_id,
+            attempt_id,
+            provider,
+            model,
+            thinking,
+            effort,
+            category,
+            getattr(error, "is_retryable", None),
+            elapsed or 0.0,
+        )
+
+    @staticmethod
+    def _artifact_identity(
+        candidate: Any,
+        reasoning_snapshot: EffectiveReasoningSnapshot | None,
+    ) -> dict[str, str]:
+        provider = str(getattr(getattr(candidate, "provider", None), "id", "unknown"))
+        model = str(getattr(getattr(candidate, "model", None), "model_id", "unknown"))
+        protocol = (
+            reasoning_snapshot.protocol_family
+            if reasoning_snapshot is not None
+            else str(
+                getattr(
+                    getattr(
+                        getattr(candidate, "provider", None),
+                        "family",
+                        "unknown",
+                    ),
+                    "value",
+                    getattr(
+                        getattr(candidate, "provider", None),
+                        "family",
+                        "unknown",
+                    ),
+                )
+            )
+        )
+        endpoint = getattr(
+            getattr(candidate, "endpoint", None),
+            "base_url",
+            "",
+        )
+        endpoint_scope = hashlib.sha256(str(endpoint).encode("utf-8")).hexdigest()
+        return {
+            "provider_family": provider,
+            "protocol_family": protocol,
+            "model_family": model,
+            "endpoint_scope": endpoint_scope,
+        }
+
+    async def _capture_projection(
+        self,
+        *,
+        artifact_kind: str,
+        attempt: Any,
+        candidate: Any,
+        reasoning_snapshot: EffectiveReasoningSnapshot | None,
+        payload: Any,
+    ) -> None:
+        settings = get_settings()
+        if (
+            attempt is None
+            or self.tool_service is None
+            or not settings.activity_request_response_capture_enabled
+        ):
+            return
+        identity = self._artifact_identity(candidate, reasoning_snapshot)
+        await self.tool_service.capture_sensitive_artifact(
+            artifact_kind=artifact_kind,
+            payload=projection_json(payload),
+            attempt_id=int(attempt.id),
+            retention_days=settings.activity_artifact_retention_days,
+            **identity,
+        )
+
+    async def _capture_reasoning(
+        self,
+        *,
+        attempt: Any,
+        candidate: Any,
+        reasoning_snapshot: EffectiveReasoningSnapshot | None,
+        payload: str | None,
+        availability: str,
+        policy: ReasoningCapturePolicy,
+    ) -> None:
+        if attempt is None:
+            return
+        await self.attempt_service.record_reasoning_event(
+            int(attempt.id),
+            event_type="reasoning_observed",
+            availability=availability,
+        )
+        if self.tool_service is None or payload is None:
+            return
+        identity = self._artifact_identity(candidate, reasoning_snapshot)
+        await self.tool_service.capture_reasoning_artifact(
+            attempt_id=int(attempt.id),
+            availability=availability,
+            payload=payload,
+            policy=policy,
+            **identity,
+        )
 
     async def _revision(self, explicit: int | None) -> int | None:
         if explicit is not None:
@@ -69,6 +310,7 @@ class ObservedModelSender:
         context_revision_id: int | None = None,
         retry_of: int | None = None,
         fallback_from: int | None = None,
+        reasoning_snapshot: EffectiveReasoningSnapshot | None = None,
     ):
         if self.context is None:
             return None
@@ -82,6 +324,7 @@ class ObservedModelSender:
             await self._revision(context_revision_id),
             retry_of=retry_of,
             fallback_from=fallback_from,
+            reasoning_snapshot=reasoning_snapshot,
         )
 
     async def record_context_replacement(
@@ -112,9 +355,7 @@ class ObservedModelSender:
                         "type": "function",
                         "function": {
                             "name": str(getattr(call, "name", "") or ""),
-                            "arguments": str(
-                                getattr(call, "arguments", "") or ""
-                            ),
+                            "arguments": str(getattr(call, "arguments", "") or ""),
                         },
                     }
                     for call in tool_calls
@@ -191,17 +432,23 @@ class ObservedModelSender:
             ),
             context_window_tokens=MeasuredValue(
                 context_window,
-                AVAILABILITY_REPORTED if context_window is not None else AVAILABILITY_UNAVAILABLE,
+                AVAILABILITY_REPORTED
+                if context_window is not None
+                else AVAILABILITY_UNAVAILABLE,
                 SOURCE_MODEL_CATALOG,
             ),
             reserved_output_tokens=MeasuredValue(
                 reserved_output,
-                AVAILABILITY_REPORTED if reserved_output is not None else AVAILABILITY_UNAVAILABLE,
+                AVAILABILITY_REPORTED
+                if reserved_output is not None
+                else AVAILABILITY_UNAVAILABLE,
                 SOURCE_CONFIGURATION,
             ),
             available_context_tokens=MeasuredValue(
                 available,
-                AVAILABILITY_ESTIMATED if available is not None else AVAILABILITY_UNAVAILABLE,
+                AVAILABILITY_ESTIMATED
+                if available is not None
+                else AVAILABILITY_UNAVAILABLE,
                 SOURCE_HEURISTIC,
             ),
         )
@@ -223,44 +470,70 @@ class ObservedModelSender:
     ) -> tuple[Any, int | None]:
         """Observe one concrete ``embeddings.create`` HTTP send."""
         if self.context is not None and self.context.thread_id is not None:
-            raise ValueError("embedding observation requires a threadless InvocationContext")
-        attempt = await self.begin(
-            logical_call_id=logical_call_id,
-            attempt_kind="primary",
-            purpose="embedding",
-            requested=requested,
-            effective=effective,
-            context_revision_id=None,
+            raise ValueError(
+                "embedding observation requires a threadless InvocationContext"
+            )
+        started = time.monotonic()
+        attempt = await self._best_effort(
+            "embedding_attempt_begin",
+            lambda: self.begin(
+                logical_call_id=logical_call_id,
+                attempt_kind="primary",
+                purpose="embedding",
+                requested=requested,
+                effective=effective,
+                context_revision_id=None,
+            ),
         )
         try:
             response = await create()
         except asyncio.CancelledError:
             if attempt is not None:
-                await self.attempt_service.fail(
-                    attempt.id,
-                    "request cancelled",
-                    error_category="cancelled",
-                    status="cancelled",
+                await self._best_effort(
+                    "embedding_attempt_cancel",
+                    lambda: self.attempt_service.fail(
+                        attempt.id,
+                        "request cancelled",
+                        error_category="cancelled",
+                        status="cancelled",
+                    ),
                 )
             raise
         except BaseException as exc:
             if attempt is not None:
-                await self.attempt_service.fail(
-                    attempt.id,
-                    exc,
-                    error_category=getattr(
-                        getattr(exc, "category", None), "value", "unknown"
+                await self._best_effort(
+                    "embedding_attempt_fail",
+                    lambda error=exc: self.attempt_service.fail(
+                        attempt.id,
+                        error,
+                        error_category=getattr(
+                            getattr(error, "category", None), "value", "unknown"
+                        ),
+                        retryable=getattr(error, "is_retryable", None),
+                        http_status=getattr(error, "status_code", None),
                     ),
-                    retryable=getattr(exc, "is_retryable", None),
-                    http_status=getattr(exc, "status_code", None),
                 )
             raise
         if attempt is not None:
-            await self.attempt_service.finish(
-                attempt.id,
-                raw_usage=getattr(response, "usage", None),
-                provider_request_id=self._provider_request_id(response),
+            await self._best_effort(
+                "embedding_attempt_finish",
+                lambda: self.attempt_service.finish(
+                    attempt.id,
+                    raw_usage=getattr(response, "usage", None),
+                    provider_request_id=self._provider_request_id(response),
+                ),
             )
+        logger.bind(
+            logical_call_id=logical_call_id,
+            attempt_id=getattr(attempt, "id", None),
+            purpose="embedding",
+            elapsed_seconds=time.monotonic() - started,
+        ).info(
+            "AI embedding 调用成功: call={} attempt={} elapsed={:.3f}s",
+            logical_call_id,
+            getattr(attempt, "id", None),
+            time.monotonic() - started,
+        )
         return response, attempt.id if attempt is not None else None
 
     async def send_chat(
@@ -278,63 +551,187 @@ class ObservedModelSender:
         retry_of: int | None = None,
         fallback_from: int | None = None,
         context_revision_id: int | None = None,
+        reasoning_snapshot: EffectiveReasoningSnapshot | None = None,
     ) -> tuple[Any, int | None]:
         requested = candidate if requested is None else requested
-        attempt = await self.begin(
-            logical_call_id=logical_call_id,
-            attempt_kind=attempt_kind,
-            purpose=purpose,
-            requested=requested,
-            effective=candidate,
-            context_revision_id=context_revision_id,
-            retry_of=retry_of,
-            fallback_from=fallback_from,
+        started = time.monotonic()
+        attempt = await self._best_effort(
+            "attempt_begin",
+            lambda: self.begin(
+                logical_call_id=logical_call_id,
+                attempt_kind=attempt_kind,
+                purpose=purpose,
+                requested=requested,
+                effective=candidate,
+                context_revision_id=context_revision_id,
+                retry_of=retry_of,
+                fallback_from=fallback_from,
+                reasoning_snapshot=reasoning_snapshot,
+            ),
         )
         self.last_attempt_id = int(attempt.id) if attempt is not None else None
-        try:
-            await self._record_before_request_context(
+        self._log_attempt(
+            "started",
+            logical_call_id=logical_call_id,
+            attempt=attempt,
+            attempt_kind=attempt_kind,
+            purpose=purpose,
+            candidate=candidate,
+            reasoning_snapshot=reasoning_snapshot,
+        )
+        await self._best_effort(
+            "context_snapshot_before_request",
+            lambda: self._record_before_request_context(
                 attempt=attempt,
                 adapter=adapter,
                 candidate=candidate,
                 request=request,
-            )
-        except BaseException as exc:
-            if attempt is not None:
-                await self.attempt_service.fail(
-                    attempt.id,
-                    exc,
-                    error_category="context_snapshot",
-                    retryable=False,
-                )
-            raise
+            ),
+        )
+        await self._best_effort(
+            "request_projection_capture",
+            lambda: self._capture_projection(
+                artifact_kind="request_projection",
+                attempt=attempt,
+                candidate=candidate,
+                reasoning_snapshot=reasoning_snapshot,
+                payload=adapter.serialize_request(request),
+            ),
+        )
         try:
             response = await adapter.chat(
-                client, candidate.endpoint, candidate.credential, request, timeout=timeout
+                client,
+                candidate.endpoint,
+                candidate.credential,
+                request,
+                timeout=timeout,
             )
-        except asyncio.CancelledError:
+        except asyncio.CancelledError as exc:
             if attempt is not None:
-                await self.attempt_service.fail(
-                    attempt.id, "send cancelled", error_category="cancelled", status="cancelled"
+                attempt = await self._best_effort(
+                    "attempt_cancel",
+                    lambda: self.attempt_service.fail(
+                        attempt.id,
+                        "send cancelled",
+                        error_category="cancelled",
+                        status="cancelled",
+                    ),
+                    default=attempt,
                 )
+            self._log_attempt(
+                "failed",
+                logical_call_id=logical_call_id,
+                attempt=attempt,
+                attempt_kind=attempt_kind,
+                purpose=purpose,
+                candidate=candidate,
+                reasoning_snapshot=reasoning_snapshot,
+                elapsed=time.monotonic() - started,
+                error=exc,
+            )
             raise
         except BaseException as exc:
             if attempt is not None:
-                await self.attempt_service.fail(
-                    attempt.id,
-                    exc,
-                    error_category=getattr(getattr(exc, "category", None), "value", "unknown"),
-                    retryable=getattr(exc, "is_retryable", None),
-                    http_status=getattr(exc, "status_code", None),
+                attempt = await self._best_effort(
+                    "attempt_fail",
+                    lambda error=exc: self.attempt_service.fail(
+                        attempt.id,
+                        error,
+                        error_category=getattr(
+                            getattr(error, "category", None), "value", "unknown"
+                        ),
+                        retryable=getattr(error, "is_retryable", None),
+                        http_status=getattr(error, "status_code", None),
+                    ),
+                    default=attempt,
                 )
-            raise
-        if attempt is not None:
-            await self.attempt_service.first_token(attempt.id)
-            await self.attempt_service.finish(
-                attempt.id,
-                response,
-                provider_request_id=self._provider_request_id(response),
-                stop_reason=getattr(getattr(response, "stop_reason", None), "value", None),
+            self._log_attempt(
+                "failed",
+                logical_call_id=logical_call_id,
+                attempt=attempt,
+                attempt_kind=attempt_kind,
+                purpose=purpose,
+                candidate=candidate,
+                reasoning_snapshot=reasoning_snapshot,
+                elapsed=time.monotonic() - started,
+                error=exc,
             )
+            raise
+        policy = configured_reasoning_capture_policy()
+        reasoning_payload = getattr(response, "reasoning_content", None)
+        reasoning_tokens = getattr(
+            getattr(response, "usage", None),
+            "reasoning_tokens",
+            0,
+        )
+        reasoning_availability = (
+            REASONING_PROVIDER_EXPOSED
+            if isinstance(reasoning_payload, str) and reasoning_payload
+            else REASONING_OMITTED
+            if (
+                reasoning_snapshot is not None
+                and reasoning_snapshot.effective_thinking_mode
+                not in {"disabled", "unsupported"}
+                and isinstance(reasoning_tokens, int)
+                and reasoning_tokens > 0
+            )
+            else REASONING_UNAVAILABLE
+        )
+        await self._best_effort(
+            "reasoning_capture",
+            lambda: self._capture_reasoning(
+                attempt=attempt,
+                candidate=candidate,
+                reasoning_snapshot=reasoning_snapshot,
+                payload=(
+                    reasoning_payload if isinstance(reasoning_payload, str) else None
+                ),
+                availability=reasoning_availability,
+                policy=policy,
+            ),
+        )
+        response_projection = (
+            response.to_dict()
+            if callable(getattr(response, "to_dict", None))
+            else response
+        )
+        await self._best_effort(
+            "response_projection_capture",
+            lambda: self._capture_projection(
+                artifact_kind="response_projection",
+                attempt=attempt,
+                candidate=candidate,
+                reasoning_snapshot=reasoning_snapshot,
+                payload=response_projection,
+            ),
+        )
+        if attempt is not None:
+            await self._best_effort(
+                "attempt_first_token",
+                lambda: self.attempt_service.first_token(attempt.id),
+            )
+            attempt = await self._best_effort(
+                "attempt_finish",
+                lambda: self.attempt_service.finish(
+                    attempt.id,
+                    response,
+                    provider_request_id=self._provider_request_id(response),
+                    stop_reason=getattr(
+                        getattr(response, "stop_reason", None), "value", None
+                    ),
+                ),
+                default=attempt,
+            )
+        self._log_attempt(
+            "completed",
+            logical_call_id=logical_call_id,
+            attempt=attempt,
+            attempt_kind=attempt_kind,
+            purpose=purpose,
+            candidate=candidate,
+            reasoning_snapshot=reasoning_snapshot,
+            elapsed=time.monotonic() - started,
+        )
         return response, attempt.id if attempt is not None else None
 
     async def consume_stream_event(
@@ -355,7 +752,9 @@ class ObservedModelSender:
         """
         event_type = getattr(event, "type", "")
         if event_type.startswith("reasoning_"):
-            availability = getattr(event, "reasoning_availability", None) or REASONING_OMITTED
+            availability = (
+                getattr(event, "reasoning_availability", None) or REASONING_OMITTED
+            )
             if attempt is not None and getattr(attempt, "id", None) is not None:
                 record = getattr(self.attempt_service, "record_reasoning_event", None)
                 if record is not None:
@@ -363,7 +762,9 @@ class ObservedModelSender:
                         attempt.id,
                         event_type=event_type,
                         availability=availability,
-                        provider_event_metadata=getattr(event, "provider_event_metadata", None),
+                        provider_event_metadata=getattr(
+                            event, "provider_event_metadata", None
+                        ),
                     )
             policy = reasoning_policy or ReasoningCapturePolicy()
             text = getattr(event, "text", None)
@@ -381,7 +782,11 @@ class ObservedModelSender:
                 result = preview_callback(text)
                 if hasattr(result, "__await__"):
                     await result
-        elif event_type == "usage" and attempt is not None and getattr(event, "usage", None) is not None:
+        elif (
+            event_type == "usage"
+            and attempt is not None
+            and getattr(event, "usage", None) is not None
+        ):
             # Usage is accumulated until terminal done; the final finish call
             # persists the last provider-reported snapshot.
             pass
@@ -406,54 +811,104 @@ class ObservedModelSender:
         preview_callback: Callable[[str], Awaitable[Any] | Any] | None = None,
         is_admin: bool = False,
         has_admin_channel: bool = False,
+        reasoning_snapshot: EffectiveReasoningSnapshot | None = None,
     ) -> AsyncIterator[Any]:
         requested = candidate if requested is None else requested
-        attempt = await self.begin(
-            logical_call_id=logical_call_id,
-            attempt_kind=attempt_kind,
-            purpose=purpose,
-            requested=requested,
-            effective=candidate,
-            context_revision_id=context_revision_id,
-            retry_of=retry_of,
-            fallback_from=fallback_from,
+        reasoning_policy = reasoning_policy or configured_reasoning_capture_policy()
+        settings = get_settings()
+        capture_response_projection = settings.activity_request_response_capture_enabled
+        capture_reasoning_payload = settings.activity_reasoning_capture_enabled
+        started = time.monotonic()
+        attempt = await self._best_effort(
+            "attempt_begin",
+            lambda: self.begin(
+                logical_call_id=logical_call_id,
+                attempt_kind=attempt_kind,
+                purpose=purpose,
+                requested=requested,
+                effective=candidate,
+                context_revision_id=context_revision_id,
+                retry_of=retry_of,
+                fallback_from=fallback_from,
+                reasoning_snapshot=reasoning_snapshot,
+            ),
         )
         self.last_attempt_id = int(attempt.id) if attempt is not None else None
-        try:
-            await self._record_before_request_context(
+        self._log_attempt(
+            "started",
+            logical_call_id=logical_call_id,
+            attempt=attempt,
+            attempt_kind=attempt_kind,
+            purpose=purpose,
+            candidate=candidate,
+            reasoning_snapshot=reasoning_snapshot,
+        )
+        await self._best_effort(
+            "context_snapshot_before_request",
+            lambda: self._record_before_request_context(
                 attempt=attempt,
                 adapter=adapter,
                 candidate=candidate,
                 request=request,
-            )
-        except BaseException as exc:
-            if attempt is not None:
-                await self.attempt_service.fail(
-                    attempt.id,
-                    exc,
-                    error_category="context_snapshot",
-                    retryable=False,
-                )
-            raise
+            ),
+        )
+        await self._best_effort(
+            "request_projection_capture",
+            lambda: self._capture_projection(
+                artifact_kind="request_projection",
+                attempt=attempt,
+                candidate=candidate,
+                reasoning_snapshot=reasoning_snapshot,
+                payload=adapter.serialize_request(request),
+            ),
+        )
         first = False
         final_usage = None
         final_stop_reason = None
+        reasoning_chunks: list[str] = []
+        reasoning_availability = REASONING_UNAVAILABLE
+        response_events: list[Any] = []
         try:
             async for event in adapter.stream(
-                client, candidate.endpoint, candidate.credential, request, timeout=timeout
+                client,
+                candidate.endpoint,
+                candidate.credential,
+                request,
+                timeout=timeout,
             ):
-                await self.consume_stream_event(
-                    event,
-                    attempt=attempt,
-                    reasoning_policy=reasoning_policy,
-                    preview_callback=preview_callback,
-                    is_admin=is_admin,
-                    has_admin_channel=has_admin_channel,
+                await self._best_effort(
+                    "stream_event_observation",
+                    lambda: self.consume_stream_event(
+                        event,
+                        attempt=attempt,
+                        reasoning_policy=reasoning_policy,
+                        preview_callback=preview_callback,
+                        is_admin=is_admin,
+                        has_admin_channel=has_admin_channel,
+                    ),
                 )
+                if capture_response_projection:
+                    response_events.append(event)
+                event_type = getattr(event, "type", "")
+                if event_type.startswith("reasoning_"):
+                    reasoning_availability = (
+                        getattr(event, "reasoning_availability", None)
+                        or reasoning_availability
+                    )
+                    text = getattr(event, "text", None)
+                    if (
+                        capture_reasoning_payload
+                        and event_type == "reasoning_delta"
+                        and isinstance(text, str)
+                    ):
+                        reasoning_chunks.append(text)
                 if self._is_effective_delta(event) and not first:
                     first = True
                     if attempt is not None:
-                        await self.attempt_service.first_token(attempt.id)
+                        await self._best_effort(
+                            "attempt_first_token",
+                            lambda: self.attempt_service.first_token(attempt.id),
+                        )
                 event_usage = getattr(event, "usage", None)
                 if event_usage is not None:
                     final_usage = (
@@ -467,35 +922,124 @@ class ObservedModelSender:
                         event_stop_reason, "value", str(event_stop_reason)
                     )
                 yield event
-        except asyncio.CancelledError:
+        except asyncio.CancelledError as exc:
             if attempt is not None:
-                await self.attempt_service.fail(
-                    attempt.id, "stream cancelled", error_category="cancelled", status="cancelled"
+                attempt = await self._best_effort(
+                    "attempt_cancel",
+                    lambda: self.attempt_service.fail(
+                        attempt.id,
+                        "stream cancelled",
+                        error_category="cancelled",
+                        status="cancelled",
+                    ),
+                    default=attempt,
                 )
+            self._log_attempt(
+                "failed",
+                logical_call_id=logical_call_id,
+                attempt=attempt,
+                attempt_kind=attempt_kind,
+                purpose=purpose,
+                candidate=candidate,
+                reasoning_snapshot=reasoning_snapshot,
+                elapsed=time.monotonic() - started,
+                error=exc,
+            )
             raise
         except BaseException as exc:
             if attempt is not None:
-                await self.attempt_service.fail(
-                    attempt.id,
-                    exc,
-                    error_category=getattr(getattr(exc, "category", None), "value", "unknown"),
-                    retryable=getattr(exc, "is_retryable", None),
-                    http_status=getattr(exc, "status_code", None),
+                attempt = await self._best_effort(
+                    "attempt_fail",
+                    lambda error=exc: self.attempt_service.fail(
+                        attempt.id,
+                        error,
+                        error_category=getattr(
+                            getattr(error, "category", None), "value", "unknown"
+                        ),
+                        retryable=getattr(error, "is_retryable", None),
+                        http_status=getattr(error, "status_code", None),
+                    ),
+                    default=attempt,
                 )
+            self._log_attempt(
+                "failed",
+                logical_call_id=logical_call_id,
+                attempt=attempt,
+                attempt_kind=attempt_kind,
+                purpose=purpose,
+                candidate=candidate,
+                reasoning_snapshot=reasoning_snapshot,
+                elapsed=time.monotonic() - started,
+                error=exc,
+            )
             raise
         else:
+            if (
+                reasoning_availability == REASONING_UNAVAILABLE
+                and reasoning_snapshot is not None
+                and reasoning_snapshot.effective_thinking_mode
+                not in {"disabled", "unsupported"}
+                and int(getattr(final_usage, "reasoning_tokens", 0) or 0) > 0
+            ):
+                reasoning_availability = REASONING_OMITTED
+            await self._best_effort(
+                "reasoning_capture",
+                lambda: self._capture_reasoning(
+                    attempt=attempt,
+                    candidate=candidate,
+                    reasoning_snapshot=reasoning_snapshot,
+                    payload=("".join(reasoning_chunks) if reasoning_chunks else None),
+                    availability=reasoning_availability,
+                    policy=reasoning_policy,
+                ),
+            )
+            await self._best_effort(
+                "response_projection_capture",
+                lambda: self._capture_projection(
+                    artifact_kind="response_projection",
+                    attempt=attempt,
+                    candidate=candidate,
+                    reasoning_snapshot=reasoning_snapshot,
+                    payload={
+                        "events": response_events,
+                        "stop_reason": final_stop_reason,
+                        "usage": final_usage,
+                    },
+                ),
+            )
             if attempt is not None:
-                await self.attempt_service.finish(
-                    attempt.id,
-                    raw_usage=final_usage,
-                    stop_reason=final_stop_reason or "done",
+                attempt = await self._best_effort(
+                    "attempt_finish",
+                    lambda: self.attempt_service.finish(
+                        attempt.id,
+                        raw_usage=final_usage,
+                        stop_reason=final_stop_reason or "done",
+                    ),
+                    default=attempt,
                 )
+            self._log_attempt(
+                "completed",
+                logical_call_id=logical_call_id,
+                attempt=attempt,
+                attempt_kind=attempt_kind,
+                purpose=purpose,
+                candidate=candidate,
+                reasoning_snapshot=reasoning_snapshot,
+                elapsed=time.monotonic() - started,
+            )
 
     @staticmethod
     def _is_effective_delta(event: Any) -> bool:
         event_type = getattr(event, "type", "")
-        return event_type in {"text_delta", "tool_call_delta", "tool_call_start", "reasoning_delta"} and bool(
-            getattr(event, "text", "") or getattr(event, "tool_call", None) or event_type == "reasoning_delta"
+        return event_type in {
+            "text_delta",
+            "tool_call_delta",
+            "tool_call_start",
+            "reasoning_delta",
+        } and bool(
+            getattr(event, "text", "")
+            or getattr(event, "tool_call", None)
+            or event_type == "reasoning_delta"
         )
 
     @staticmethod
@@ -505,6 +1049,8 @@ class ObservedModelSender:
         if headers:
             return headers.get("x-request-id") or headers.get("request-id")
         return getattr(response, "provider_request_id", None)
+
+
 class ObservedEmbeddingSender(ObservedModelSender):
     """Specialized name for embedding sends kept separate from model semantics.
 
@@ -520,12 +1066,15 @@ class ObservedEmbeddingSender(ObservedModelSender):
         effective: Any,
     ) -> tuple[Any, int | None]:
         if self.context is not None and self.context.thread_id is not None:
-            raise ValueError("embedding observation requires a threadless InvocationContext")
+            raise ValueError(
+                "embedding observation requires a threadless InvocationContext"
+            )
         return await super().send_embedding(
             create,
             logical_call_id=logical_call_id,
             requested=requested,
             effective=effective,
         )
+
 
 __all__ = ["ObservedModelSender", "ObservedEmbeddingSender"]

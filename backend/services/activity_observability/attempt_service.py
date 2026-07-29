@@ -26,7 +26,10 @@ from backend.models.activity_observability_models import (
     ActivityThread,
 )
 from backend.models.database import utc_now
-from backend.services.activity_observability.contracts import InvocationContext
+from backend.services.activity_observability.contracts import (
+    EffectiveReasoningSnapshot,
+    InvocationContext,
+)
 from backend.services.activity_observability.event_service import append_lifecycle_event
 
 
@@ -115,21 +118,42 @@ def _safe_reasoning_metadata(value: Mapping[str, Any] | None) -> dict[str, Any] 
     if not isinstance(value, Mapping):
         return None
     allowed = {
-        "event", "block_type", "delta_type", "item_type", "response_status",
-        "finish_reason", "index", "signature_present", "redacted", "encrypted",
+        "event",
+        "block_type",
+        "delta_type",
+        "item_type",
+        "response_status",
+        "finish_reason",
+        "index",
+        "signature_present",
+        "redacted",
+        "encrypted",
         "usage_fields",
     }
-    forbidden = {"headers", "endpoint", "url", "request", "body", "credential", "raw", "payload"}
+    forbidden = {
+        "headers",
+        "endpoint",
+        "url",
+        "request",
+        "body",
+        "credential",
+        "raw",
+        "payload",
+    }
     result: dict[str, Any] = {}
     for key, item in value.items():
         key = str(key)
         if key not in allowed or key.lower() in forbidden:
             continue
-        if isinstance(item, (bool, int, str)) and (not isinstance(item, int) or 0 <= item <= 1_000_000):
+        if isinstance(item, (bool, int, str)) and (
+            not isinstance(item, int) or 0 <= item <= 1_000_000
+        ):
             if not isinstance(item, str) or len(item) <= 128:
                 result[key] = item
         elif key == "usage_fields" and isinstance(item, (list, tuple, set, frozenset)):
-            fields = sorted(str(field) for field in item if str(field) in _SAFE_USAGE_FIELDS)
+            fields = sorted(
+                str(field) for field in item if str(field) in _SAFE_USAGE_FIELDS
+            )
             if fields:
                 result[key] = fields
     return result or None
@@ -217,8 +241,13 @@ def _safe_usage_payload(value: Any) -> dict[str, Any] | None:
     if reported_fields is not None and not reported_fields:
         return None
     for name in (
-        "input_tokens", "output_tokens", "prompt_tokens", "completion_tokens",
-        "cache_read_tokens", "cache_creation_tokens", "reasoning_tokens",
+        "input_tokens",
+        "output_tokens",
+        "prompt_tokens",
+        "completion_tokens",
+        "cache_read_tokens",
+        "cache_creation_tokens",
+        "reasoning_tokens",
     ):
         canonical = {
             "prompt_tokens": "input_tokens",
@@ -227,7 +256,11 @@ def _safe_usage_payload(value: Any) -> dict[str, Any] | None:
         if reported_fields is not None and canonical not in reported_fields:
             continue
         value_part = getattr(value, name, None)
-        if isinstance(value_part, int) and not isinstance(value_part, bool) and value_part >= 0:
+        if (
+            isinstance(value_part, int)
+            and not isinstance(value_part, bool)
+            and value_part >= 0
+        ):
             result[name] = value_part
     return result or None
 
@@ -302,14 +335,21 @@ class AttemptService:
         context_revision_id: int | None,
         retry_of: int | None = None,
         fallback_from: int | None = None,
+        reasoning_snapshot: EffectiveReasoningSnapshot | None = None,
     ) -> ActivityModelAttempt:
         if not isinstance(context, InvocationContext):
             raise TypeError("context must be an InvocationContext")
         logical_call_id = _nonempty(logical_call_id, "logical_call_id")
         attempt_kind = _nonempty(attempt_kind, "attempt_kind")
         purpose = _nonempty(purpose, "purpose")
-        if retry_of is not None and fallback_from is not None and retry_of == fallback_from:
-            raise ValueError("retry_of and fallback_from must be distinct relationships")
+        if (
+            retry_of is not None
+            and fallback_from is not None
+            and retry_of == fallback_from
+        ):
+            raise ValueError(
+                "retry_of and fallback_from must be distinct relationships"
+            )
         if purpose == "embedding":
             # Embeddings are contextless Work Units by contract: they never
             # inherit a transcript thread or a stale context revision.
@@ -332,7 +372,10 @@ class AttemptService:
             )
             if invocation is None or work_unit is None:
                 raise ValueError("InvocationContext parent does not exist")
-            if work_unit.invocation_id != invocation.id or work_unit.session_id != invocation.session_id:
+            if (
+                work_unit.invocation_id != invocation.id
+                or work_unit.session_id != invocation.session_id
+            ):
                 raise ValueError("work unit does not belong to invocation")
             if context.thread_id != work_unit.thread_id:
                 raise ValueError("InvocationContext thread does not match work unit")
@@ -343,34 +386,63 @@ class AttemptService:
 
             revision = None
             if work_unit.thread_id is not None:
-                thread = await db.get(ActivityThread, work_unit.thread_id, with_for_update=True)
+                thread = await db.get(
+                    ActivityThread, work_unit.thread_id, with_for_update=True
+                )
                 if thread is None or thread.session_id != work_unit.session_id:
-                    raise ValueError("work unit thread does not belong to invocation session")
+                    raise ValueError(
+                        "work unit thread does not belong to invocation session"
+                    )
                 if context_revision_id is None:
                     raise ValueError("threaded attempts require context_revision_id")
                 if thread.current_revision_id != context_revision_id:
-                    raise ValueError("context_revision_id is not the thread current revision")
-                revision = await db.get(ActivityCanonicalContextRevision, context_revision_id)
+                    raise ValueError(
+                        "context_revision_id is not the thread current revision"
+                    )
+                revision = await db.get(
+                    ActivityCanonicalContextRevision, context_revision_id
+                )
                 if revision is None or revision.thread_id != thread.id:
-                    raise ValueError("context revision does not belong to work unit thread")
+                    raise ValueError(
+                        "context revision does not belong to work unit thread"
+                    )
             elif context_revision_id is not None:
                 raise ValueError("threadless attempts cannot have a context revision")
 
             parents: dict[str, ActivityModelAttempt] = {}
-            for field_name, parent_id in (("retry_of", retry_of), ("fallback_from", fallback_from)):
+            for field_name, parent_id in (
+                ("retry_of", retry_of),
+                ("fallback_from", fallback_from),
+            ):
                 if parent_id is None:
                     continue
-                parent = await db.get(ActivityModelAttempt, parent_id, with_for_update=True)
+                parent = await db.get(
+                    ActivityModelAttempt, parent_id, with_for_update=True
+                )
                 if parent is None or parent.work_unit_id != work_unit.id:
-                    raise ValueError(f"{field_name} attempt must belong to same work unit")
+                    raise ValueError(
+                        f"{field_name} attempt must belong to same work unit"
+                    )
                 parents[field_name] = parent
-            if retry_of is not None and parents["retry_of"].logical_call_id != logical_call_id:
+            if (
+                retry_of is not None
+                and parents["retry_of"].logical_call_id != logical_call_id
+            ):
                 raise ValueError("retry attempt must share logical_call_id")
-            if fallback_from is not None and parents["fallback_from"].logical_call_id != logical_call_id:
+            if (
+                fallback_from is not None
+                and parents["fallback_from"].logical_call_id != logical_call_id
+            ):
                 raise ValueError("fallback attempt must share logical_call_id")
-            if retry_of is not None and attempt_kind not in {"retry", "compression_retry"}:
+            if retry_of is not None and attempt_kind not in {
+                "retry",
+                "compression_retry",
+            }:
                 raise ValueError("retry_of requires retry attempt_kind")
-            if fallback_from is not None and attempt_kind not in {"fallback", "primary"}:
+            if fallback_from is not None and attempt_kind not in {
+                "fallback",
+                "primary",
+            }:
                 raise ValueError("fallback_from requires fallback/primary attempt_kind")
 
             max_index = await db.execute(
@@ -382,9 +454,13 @@ class AttemptService:
             contextless_reason = None
             if work_unit.thread_id is None:
                 contextless_reason = (
-                    "threadless_embedding" if purpose == "embedding" else "transcript_not_applicable"
+                    "threadless_embedding"
+                    if purpose == "embedding"
+                    else "transcript_not_applicable"
                 )
-            endpoint_fingerprint = eff["endpoint_fingerprint"] or req["endpoint_fingerprint"]
+            endpoint_fingerprint = (
+                eff["endpoint_fingerprint"] or req["endpoint_fingerprint"]
+            )
             if endpoint_fingerprint is not None and (
                 not isinstance(endpoint_fingerprint, str)
                 or len(endpoint_fingerprint) != 64
@@ -400,12 +476,57 @@ class AttemptService:
                 status="running",
                 requested_provider=req["provider"],
                 requested_model=req["model"],
-                requested_thinking_mode=req["thinking"],
+                requested_thinking_mode=(
+                    reasoning_snapshot.requested_thinking_mode
+                    if reasoning_snapshot is not None
+                    else req["thinking"]
+                ),
+                requested_effort=(
+                    reasoning_snapshot.requested_effort
+                    if reasoning_snapshot is not None
+                    else None
+                ),
                 effective_provider=eff["provider"],
                 effective_model=eff["model"],
-                effective_thinking_mode=eff["thinking"],
-                protocol_family=eff["protocol"] or req["protocol"] or None,
-                account_id=eff["account_id"] or req["account_id"] or context.role_snapshot.account_id,
+                effective_thinking_mode=(
+                    reasoning_snapshot.effective_thinking_mode
+                    if reasoning_snapshot is not None
+                    else eff["thinking"]
+                ),
+                effective_effort=(
+                    reasoning_snapshot.effective_effort
+                    if reasoning_snapshot is not None
+                    else None
+                ),
+                protocol_family=(
+                    reasoning_snapshot.protocol_family
+                    if reasoning_snapshot is not None
+                    else (eff["protocol"] or req["protocol"] or None)
+                ),
+                max_output_tokens=(
+                    reasoning_snapshot.max_output_tokens
+                    if reasoning_snapshot is not None
+                    else None
+                ),
+                temperature=(
+                    reasoning_snapshot.temperature
+                    if reasoning_snapshot is not None
+                    else None
+                ),
+                top_p=(
+                    reasoning_snapshot.top_p if reasoning_snapshot is not None else None
+                ),
+                top_k=(
+                    reasoning_snapshot.top_k if reasoning_snapshot is not None else None
+                ),
+                tool_choice=(
+                    reasoning_snapshot.tool_choice
+                    if reasoning_snapshot is not None
+                    else None
+                ),
+                account_id=eff["account_id"]
+                or req["account_id"]
+                or context.role_snapshot.account_id,
                 endpoint_fingerprint=endpoint_fingerprint,
                 retry_of_attempt_id=retry_of,
                 fallback_from_attempt_id=fallback_from,
@@ -457,7 +578,13 @@ class AttemptService:
         provider_event_metadata: Mapping[str, Any] | None = None,
     ) -> ActivityModelAttempt:
         """Persist reasoning phase metadata only; never persist reasoning text."""
-        allowed = {"unavailable", "omitted", "summarized", "provider_exposed", "encrypted_opaque"}
+        allowed = {
+            "unavailable",
+            "omitted",
+            "summarized",
+            "provider_exposed",
+            "encrypted_opaque",
+        }
         availability = availability if availability in allowed else "omitted"
         safe_metadata = _safe_reasoning_metadata(provider_event_metadata)
         async with self._session_scope() as db:
@@ -472,9 +599,7 @@ class AttemptService:
                     safe_metadata, separators=(",", ":"), sort_keys=True
                 )
             await db.flush()
-            work_unit = await db.get(
-                ActivityInvocationWorkUnit, attempt.work_unit_id
-            )
+            work_unit = await db.get(ActivityInvocationWorkUnit, attempt.work_unit_id)
             if work_unit is not None:
                 await append_lifecycle_event(
                     db,
@@ -496,7 +621,9 @@ class AttemptService:
             attempt = await self._load(db, attempt_id)
             if attempt.first_token_at is None:
                 if attempt.status != "running":
-                    raise AttemptConflictError("first token cannot follow terminal attempt")
+                    raise AttemptConflictError(
+                        "first token cannot follow terminal attempt"
+                    )
                 attempt.first_token_at = utc_now()
                 await db.flush()
                 await self._finish_owned(db)
@@ -513,7 +640,9 @@ class AttemptService:
         raw_usage: Any = None,
         normalized_usage: Mapping[str, Any] | None = None,
     ) -> ActivityModelAttempt:
-        usage_raw_from_response, usage = _response_usage(response) if response is not None else (None, None)
+        usage_raw_from_response, usage = (
+            _response_usage(response) if response is not None else (None, None)
+        )
         safe_raw = _safe_usage_payload(raw_usage) or usage_raw_from_response
         if safe_raw is None and usage is not None:
             # UnifiedUsage's compatibility defaults are deliberately not reported.
@@ -525,11 +654,22 @@ class AttemptService:
                 "provider_request_id": _safe_identifier(provider_request_id),
                 "http_status": _safe_http_status(http_status),
                 "stop_reason": _safe_identifier(stop_reason),
-                "provider_usage_json": json.dumps(safe_raw, separators=(",", ":"), sort_keys=True) if safe_raw else None,
-                "normalized_usage_json": json.dumps(safe_normalized, separators=(",", ":"), sort_keys=True) if safe_normalized else None,
+                "provider_usage_json": json.dumps(
+                    safe_raw, separators=(",", ":"), sort_keys=True
+                )
+                if safe_raw
+                else None,
+                "normalized_usage_json": json.dumps(
+                    safe_normalized, separators=(",", ":"), sort_keys=True
+                )
+                if safe_normalized
+                else None,
             }
             if attempt.status in TERMINAL_ATTEMPT_STATUSES:
-                if all(self._same(getattr(attempt, key), value) for key, value in values.items()):
+                if all(
+                    self._same(getattr(attempt, key), value)
+                    for key, value in values.items()
+                ):
                     return attempt
                 raise AttemptConflictError(f"attempt {attempt_id} already terminal")
             attempt.status = "completed"
@@ -601,7 +741,8 @@ class AttemptService:
             }
             if attempt.status in TERMINAL_ATTEMPT_STATUSES:
                 if attempt.status == status and all(
-                    self._same(getattr(attempt, key), value) for key, value in values.items()
+                    self._same(getattr(attempt, key), value)
+                    for key, value in values.items()
                 ):
                     return attempt
                 raise AttemptConflictError(f"attempt {attempt_id} already terminal")
@@ -638,9 +779,7 @@ class AttemptService:
                         payload={
                             "status": status,
                             "attempt_status": status,
-                            "phase": "retry_wait"
-                            if retryable
-                            else "provider_error",
+                            "phase": "retry_wait" if retryable else "provider_error",
                         },
                     )
             await db.flush()
@@ -648,7 +787,11 @@ class AttemptService:
             return attempt
 
     @staticmethod
-    def _apply_usage(attempt: ActivityModelAttempt, raw: dict[str, Any] | None, normalized: dict[str, Any] | None) -> None:
+    def _apply_usage(
+        attempt: ActivityModelAttempt,
+        raw: dict[str, Any] | None,
+        normalized: dict[str, Any] | None,
+    ) -> None:
         if not raw and not normalized:
             return
         values = normalized or raw or {}
@@ -656,10 +799,17 @@ class AttemptService:
             "input_tokens": ("input_tokens", "prompt_tokens"),
             "output_tokens": ("output_tokens", "completion_tokens"),
             "reasoning_tokens": ("reasoning_tokens",),
-            "cached_input_tokens": ("cached_input_tokens", "cache_read_tokens", "cached_tokens"),
+            "cached_input_tokens": (
+                "cached_input_tokens",
+                "cache_read_tokens",
+                "cached_tokens",
+            ),
         }
         for field, keys in aliases.items():
-            number = next((values.get(key) for key in keys if isinstance(values.get(key), int)), None)
+            number = next(
+                (values.get(key) for key in keys if isinstance(values.get(key), int)),
+                None,
+            )
             if number is not None:
                 setattr(attempt, field, number)
                 setattr(attempt, f"{field}_availability", "reported")

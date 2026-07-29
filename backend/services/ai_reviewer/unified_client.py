@@ -39,11 +39,15 @@ from backend.core.ai_protocol.models import (
     UnifiedTool,
 )
 from backend.core.ai_protocol import registry as _protocol_registry
+from backend.services.activity_observability.contracts import (
+    EffectiveReasoningSnapshot,
+)
 
 
 def _get_adapter(family):
     """通过 registry 模块属性访问，便于测试 monkeypatch / Module-attribute access for testability."""
     return _protocol_registry.get_adapter(family)
+
 
 # 压缩器延迟导入，避免循环依赖 / lazy import to avoid circular dependency
 if TYPE_CHECKING:
@@ -99,13 +103,74 @@ def _filter_params_by_capability(
     result["temperature"] = _pick(temperature, params.temperature, caps.temperature)
     result["top_p"] = _pick(top_p, params.top_p, caps.top_p)
     result["top_k"] = _pick(top_k, params.top_k, caps.top_k)
-    result["thinking"] = thinking if (thinking is not None and caps.thinking) else (
-        params.thinking if caps.thinking else None
+    result["thinking"] = (
+        thinking
+        if (thinking is not None and caps.thinking)
+        else (params.thinking if caps.thinking else None)
     )
-    result["effort"] = effort if (effort is not None and caps.effort) else (
-        params.effort if caps.effort else None
+    result["effort"] = (
+        effort
+        if (effort is not None and caps.effort)
+        else (params.effort if caps.effort else None)
     )
     return result
+
+
+def _reasoning_mode(value: Any, *, supported: bool) -> str:
+    if not supported:
+        return "unsupported"
+    if value is None or value is False:
+        return "disabled"
+    if isinstance(value, dict):
+        raw = str(value.get("type") or "").strip().lower()
+        if raw in {"adaptive", "enabled"}:
+            return "adaptive" if raw == "adaptive" else "forced"
+        if raw in {"disabled", "off", "none"}:
+            return "disabled"
+        return "forced"
+    raw = str(value).strip().lower()
+    if raw in {"adaptive", "forced", "disabled", "unsupported"}:
+        return raw
+    return "forced"
+
+
+def _effective_reasoning_snapshot(
+    candidate: ResolvedModel,
+    request: UnifiedRequest,
+    *,
+    requested_thinking: Any,
+    requested_effort: str | None,
+) -> EffectiveReasoningSnapshot:
+    """Capture the final, credential-free settings of one concrete send."""
+    caps = candidate.model.capabilities
+    configured = candidate.model.reasoning_params
+    requested_thinking_value = (
+        requested_thinking if requested_thinking is not None else configured.thinking
+    )
+    requested_effort_value = (
+        requested_effort if requested_effort is not None else configured.effort
+    )
+    protocol = getattr(candidate.provider.family, "value", candidate.provider.family)
+    return EffectiveReasoningSnapshot(
+        requested_thinking_mode=_reasoning_mode(
+            requested_thinking_value,
+            supported=True,
+        ),
+        effective_thinking_mode=_reasoning_mode(
+            request.thinking,
+            supported=caps.thinking,
+        ),
+        requested_effort=str(requested_effort_value or "default"),
+        effective_effort=(
+            "unsupported" if not caps.effort else str(request.effort or "default")
+        ),
+        protocol_family=str(protocol),
+        max_output_tokens=request.max_tokens,
+        temperature=request.temperature,
+        top_p=request.top_p,
+        top_k=request.top_k,
+        tool_choice=request.tool_choice,
+    )
 
 
 def _messages_from_legacy(
@@ -126,11 +191,17 @@ def _messages_from_legacy(
             converted = []
             for tc in tool_calls_raw:
                 function = (
-                    tc.get("function") if isinstance(tc, dict) else getattr(tc, "function", None)
+                    tc.get("function")
+                    if isinstance(tc, dict)
+                    else getattr(tc, "function", None)
                 )
                 if function is None:
                     continue
-                fname = function.get("name") if isinstance(function, dict) else getattr(function, "name", "")
+                fname = (
+                    function.get("name")
+                    if isinstance(function, dict)
+                    else getattr(function, "name", "")
+                )
                 fargs = (
                     function.get("arguments")
                     if isinstance(function, dict)
@@ -138,7 +209,9 @@ def _messages_from_legacy(
                 )
                 tc_id = tc.get("id") if isinstance(tc, dict) else getattr(tc, "id", "")
                 converted.append(
-                    UnifiedToolCall(id=tc_id or "", name=fname or "", arguments=fargs or "")
+                    UnifiedToolCall(
+                        id=tc_id or "", name=fname or "", arguments=fargs or ""
+                    )
                 )
             if converted:
                 tool_calls = converted
@@ -155,7 +228,9 @@ def _messages_from_legacy(
     return result
 
 
-def _tools_from_legacy(tools: Optional[list[dict[str, Any]]]) -> Optional[list[UnifiedTool]]:
+def _tools_from_legacy(
+    tools: Optional[list[dict[str, Any]]],
+) -> Optional[list[UnifiedTool]]:
     """旧版工具 dict → UnifiedTool / Legacy tool dict → UnifiedTool."""
     if not tools:
         return None
@@ -169,7 +244,8 @@ def _tools_from_legacy(tools: Optional[list[dict[str, Any]]]) -> Optional[list[U
                 UnifiedTool(
                     name=function.get("name", ""),
                     description=function.get("description", ""),
-                    parameters=function.get("parameters") or {"type": "object", "properties": {}},
+                    parameters=function.get("parameters")
+                    or {"type": "object", "properties": {}},
                     strict=bool(function.get("strict", False)),
                 )
             )
@@ -178,7 +254,8 @@ def _tools_from_legacy(tools: Optional[list[dict[str, Any]]]) -> Optional[list[U
                 UnifiedTool(
                     name=tool.get("name", ""),
                     description=tool.get("description", ""),
-                    parameters=tool.get("parameters") or {"type": "object", "properties": {}},
+                    parameters=tool.get("parameters")
+                    or {"type": "object", "properties": {}},
                 )
             )
     return result
@@ -211,10 +288,75 @@ class UnifiedAIClient:
         self._context = context
         self._logical_call_factory = logical_call_factory
         self._last_attempt_id: int | None = None
+        self._logical_attempt_counts: dict[str, int] = {}
         # role -> (provider_id, model_id)，记忆上次成功候选
         # remember last-winning candidate per role so subsequent calls in the
         # same review skip the failed-first fallback chain.
         self._last_successful: dict[str, tuple[str, str]] = {}
+
+    def _mark_logical_attempt(self, logical_call_id: str) -> None:
+        self._logical_attempt_counts[logical_call_id] = (
+            self._logical_attempt_counts.get(logical_call_id, 0) + 1
+        )
+
+    def _log_logical_call_summary(
+        self,
+        *,
+        logical_call_id: str,
+        role: str,
+        started: float,
+        winner: ResolvedModel | None,
+        usage: Any = None,
+        success: bool,
+        outcome: str | None = None,
+    ) -> None:
+        attempt_count = self._logical_attempt_counts.pop(logical_call_id, 0)
+        provider = winner.provider.id if winner is not None else None
+        model = winner.model.model_id if winner is not None else None
+        final_outcome = outcome or ("completed" if success else "failed")
+        fields = {
+            "logical_call_id": logical_call_id,
+            "role": role,
+            "winner_provider": provider,
+            "winner_model": model,
+            "attempt_count": attempt_count,
+            "elapsed_seconds": time.monotonic() - started,
+            "input_tokens": getattr(usage, "input_tokens", None),
+            "output_tokens": getattr(usage, "output_tokens", None),
+            "reasoning_tokens": getattr(usage, "reasoning_tokens", None),
+            "cached_input_tokens": getattr(usage, "cache_read_tokens", None),
+            "success": success,
+            "outcome": final_outcome,
+        }
+        bind = getattr(logger, "bind", None)
+        bound = bind(**fields) if callable(bind) else logger
+        if final_outcome == "cancelled":
+            bound.info(
+                "AI 逻辑调用取消: call={} role={} attempts={} elapsed={:.3f}s",
+                logical_call_id,
+                role,
+                attempt_count,
+                fields["elapsed_seconds"],
+            )
+        elif success:
+            bound.info(
+                "AI 逻辑调用完成: call={} role={} winner={}/{} attempts={} "
+                "elapsed={:.3f}s",
+                logical_call_id,
+                role,
+                provider,
+                model,
+                attempt_count,
+                fields["elapsed_seconds"],
+            )
+        else:
+            bound.warning(
+                "AI 逻辑调用失败: call={} role={} attempts={} elapsed={:.3f}s",
+                logical_call_id,
+                role,
+                attempt_count,
+                fields["elapsed_seconds"],
+            )
 
     async def __aenter__(self) -> "UnifiedAIClient":
         return self
@@ -294,6 +436,7 @@ class UnifiedAIClient:
             else _tools_from_legacy(tools)  # type: ignore[arg-type]
         )
 
+        requested_candidate = candidates[0]
         max_candidates = (
             min(self.fallback_config.max_candidates, len(candidates))
             if self.fallback_config.enabled
@@ -313,12 +456,21 @@ class UnifiedAIClient:
 
         attempt_chain: list[AttemptRecord] = []
         logical_call_id = str(self._logical_call_factory())
+        logical_call_started = time.monotonic()
         last_error: Optional[AIError] = None
         compressed_once = False
 
         for idx, candidate in enumerate(selected):
             # 取消信号：立即中止整条故障转移链 / abort fast on external cancel
             if cancel_event is not None and cancel_event.is_set():
+                self._log_logical_call_summary(
+                    logical_call_id=logical_call_id,
+                    role=role,
+                    started=logical_call_started,
+                    winner=None,
+                    success=False,
+                    outcome="cancelled",
+                )
                 raise ReviewCancelledError()
             served_by = f"{candidate.provider.id}/{candidate.model.model_id}"
             logger.info(
@@ -337,7 +489,9 @@ class UnifiedAIClient:
                 thinking=thinking,
                 effort=effort,
             )
-            effective_max_tokens = max_tokens or candidate.model.reasoning_params.max_output_tokens
+            effective_max_tokens = (
+                max_tokens or candidate.model.reasoning_params.max_output_tokens
+            )
 
             request = UnifiedRequest(
                 model=candidate.model.model_id,
@@ -352,6 +506,12 @@ class UnifiedAIClient:
                 effort=params["effort"],
                 stream=False,
             )
+            reasoning_snapshot = _effective_reasoning_snapshot(
+                candidate,
+                request,
+                requested_thinking=thinking,
+                requested_effort=effort,
+            )
 
             start = time.monotonic()
             try:
@@ -364,6 +524,8 @@ class UnifiedAIClient:
                     cancel_event=cancel_event,
                     logical_call_id=logical_call_id,
                     fallback_from=self._last_attempt_id if idx > 0 else None,
+                    requested_candidate=requested_candidate,
+                    reasoning_snapshot=reasoning_snapshot,
                 )
                 response.meta.served_by = served_by
                 response.meta.attempt_chain = [a.__dict__ for a in attempt_chain] + [
@@ -376,7 +538,9 @@ class UnifiedAIClient:
                     }
                 ]
                 response.meta.compressed = compressed_once
-                response.meta.context_window_tokens = candidate.model.context_window_tokens
+                response.meta.context_window_tokens = (
+                    candidate.model.context_window_tokens
+                )
                 # 记录该 role 的成功候选，供后续调用 sticky 提升
                 self._last_successful[role] = (
                     candidate.provider.id,
@@ -389,7 +553,25 @@ class UnifiedAIClient:
                     role,
                     served_by,
                 )
+                self._log_logical_call_summary(
+                    logical_call_id=logical_call_id,
+                    role=role,
+                    started=logical_call_started,
+                    winner=candidate,
+                    usage=response.usage,
+                    success=True,
+                )
                 return response
+            except (asyncio.CancelledError, ReviewCancelledError):
+                self._log_logical_call_summary(
+                    logical_call_id=logical_call_id,
+                    role=role,
+                    started=logical_call_started,
+                    winner=None,
+                    success=False,
+                    outcome="cancelled",
+                )
+                raise
             except AIError as exc:
                 last_error = exc
                 attempt_chain.append(
@@ -413,30 +595,58 @@ class UnifiedAIClient:
 
                 # 终端错误：直接报出 / terminal errors surface immediately
                 if exc.is_terminal:
+                    self._log_logical_call_summary(
+                        logical_call_id=logical_call_id,
+                        role=role,
+                        started=logical_call_started,
+                        winner=None,
+                        success=False,
+                    )
                     raise
 
                 # 上下文超限：尝试压缩恢复 / context overflow: compress & retry
                 if exc.category == AIErrorCategory.CONTEXT_OVERFLOW:
-                    recovered = await self._attempt_compress_recovery(
-                        candidate=candidate,
-                        messages=unified_messages,
-                        request=request,
-                        remaining=selected[idx + 1 :],
-                        attempt_chain=attempt_chain,
-                        timeout=timeout,
-                        role=role,
-                        cancel_event=cancel_event,
-                        logical_call_id=logical_call_id,
-                        retry_of_attempt_id=self._last_attempt_id,
-                    )
+                    try:
+                        recovered = await self._attempt_compress_recovery(
+                            candidate=candidate,
+                            messages=unified_messages,
+                            request=request,
+                            remaining=selected[idx + 1 :],
+                            attempt_chain=attempt_chain,
+                            timeout=timeout,
+                            role=role,
+                            cancel_event=cancel_event,
+                            logical_call_id=logical_call_id,
+                            retry_of_attempt_id=self._last_attempt_id,
+                        )
+                    except (asyncio.CancelledError, ReviewCancelledError):
+                        self._log_logical_call_summary(
+                            logical_call_id=logical_call_id,
+                            role=role,
+                            started=logical_call_started,
+                            winner=None,
+                            success=False,
+                            outcome="cancelled",
+                        )
+                        raise
                     if recovered is not None:
                         recovered.meta.compressed = True
                         recovered.meta.served_by = served_by
-                        recovered.meta.context_window_tokens = candidate.model.context_window_tokens
+                        recovered.meta.context_window_tokens = (
+                            candidate.model.context_window_tokens
+                        )
                         # 压缩重试成功仍属于该候选，记录 sticky
                         self._last_successful[role] = (
                             candidate.provider.id,
                             candidate.model.model_id,
+                        )
+                        self._log_logical_call_summary(
+                            logical_call_id=logical_call_id,
+                            role=role,
+                            started=logical_call_started,
+                            winner=candidate,
+                            usage=recovered.usage,
+                            success=True,
                         )
                         return recovered
                     # 压缩无法恢复，继续回退到下一候选 / continue to next candidate
@@ -447,10 +657,24 @@ class UnifiedAIClient:
 
         # 全部候选失败 / all candidates failed
         if last_error and last_error.category == AIErrorCategory.CONTEXT_OVERFLOW:
+            self._log_logical_call_summary(
+                logical_call_id=logical_call_id,
+                role=role,
+                started=logical_call_started,
+                winner=None,
+                success=False,
+            )
             raise ContextOverflowError(
                 f"所有候选模型均无法承载当前上下文（尝试 {len(attempt_chain)} 次）",
                 attempted_candidates=[a.model for a in attempt_chain],
             )
+        self._log_logical_call_summary(
+            logical_call_id=logical_call_id,
+            role=role,
+            started=logical_call_started,
+            winner=None,
+            success=False,
+        )
         raise AllCandidatesFailedError(
             f"角色 {role} 所有候选模型均失败",
             attempts=[a.__dict__ for a in attempt_chain],
@@ -492,6 +716,7 @@ class UnifiedAIClient:
             if (messages and isinstance(messages[0], UnifiedMessage))
             else _messages_from_legacy(messages)  # type: ignore[arg-type]
         )
+        requested_candidate = candidates[0]
         max_candidates = (
             min(self.fallback_config.max_candidates, len(candidates))
             if self.fallback_config.enabled
@@ -511,8 +736,10 @@ class UnifiedAIClient:
                     break
 
         logical_call_id = str(self._logical_call_factory())
+        logical_call_started = time.monotonic()
         last_error: AIError | None = None
         previous_attempt_id: int | None = None
+        final_usage = None
         for candidate_index, candidate in enumerate(selected):
             fallback_from_id = previous_attempt_id
             params = _filter_params_by_capability(
@@ -535,8 +762,22 @@ class UnifiedAIClient:
                 effort=params["effort"],
                 stream=True,
             )
+            reasoning_snapshot = _effective_reasoning_snapshot(
+                candidate,
+                request,
+                requested_thinking=thinking,
+                requested_effort=effort,
+            )
             for retry_index in range(self.fallback_config.max_retries):
                 if cancel_event is not None and cancel_event.is_set():
+                    self._log_logical_call_summary(
+                        logical_call_id=logical_call_id,
+                        role=role,
+                        started=logical_call_started,
+                        winner=None,
+                        success=False,
+                        outcome="cancelled",
+                    )
                     raise ReviewCancelledError()
                 emitted = False
                 sender = self._observer
@@ -564,17 +805,20 @@ class UnifiedAIClient:
                                 if retry_index
                                 else ("fallback" if candidate_index else "primary")
                             ),
-                            retry_of=(
-                                previous_attempt_id if retry_index else None
-                            ),
+                            retry_of=(previous_attempt_id if retry_index else None),
                             fallback_from=(
                                 fallback_from_id
                                 if candidate_index and not retry_index
                                 else None
                             ),
+                            requested=requested_candidate,
+                            reasoning_snapshot=reasoning_snapshot,
                         )
+                    self._mark_logical_attempt(logical_call_id)
                     async for event in events:
                         emitted = True
+                        if getattr(event, "type", None) == "done":
+                            final_usage = getattr(event, "usage", None)
                         yield event
                     if sender is not None:
                         previous_attempt_id = sender.last_attempt_id
@@ -583,7 +827,25 @@ class UnifiedAIClient:
                         candidate.provider.id,
                         candidate.model.model_id,
                     )
+                    self._log_logical_call_summary(
+                        logical_call_id=logical_call_id,
+                        role=role,
+                        started=logical_call_started,
+                        winner=candidate,
+                        usage=final_usage,
+                        success=True,
+                    )
                     return
+                except (asyncio.CancelledError, ReviewCancelledError):
+                    self._log_logical_call_summary(
+                        logical_call_id=logical_call_id,
+                        role=role,
+                        started=logical_call_started,
+                        winner=None,
+                        success=False,
+                        outcome="cancelled",
+                    )
+                    raise
                 except AIError as exc:
                     last_error = exc
                     if sender is not None:
@@ -592,15 +854,40 @@ class UnifiedAIClient:
                     # Once any stream event is visible to the caller, replaying a
                     # retry/fallback would duplicate output. Surface the error.
                     if emitted or exc.is_terminal or not exc.is_retryable:
+                        self._log_logical_call_summary(
+                            logical_call_id=logical_call_id,
+                            role=role,
+                            started=logical_call_started,
+                            winner=None,
+                            success=False,
+                        )
                         raise
                     if retry_index < self.fallback_config.max_retries - 1:
-                        await self._abortable_sleep(
-                            self._calculate_delay(retry_index),
-                            cancel_event,
-                        )
+                        try:
+                            await self._abortable_sleep(
+                                self._calculate_delay(retry_index),
+                                cancel_event,
+                            )
+                        except (asyncio.CancelledError, ReviewCancelledError):
+                            self._log_logical_call_summary(
+                                logical_call_id=logical_call_id,
+                                role=role,
+                                started=logical_call_started,
+                                winner=None,
+                                success=False,
+                                outcome="cancelled",
+                            )
+                            raise
                         continue
                     break
         if last_error is not None:
+            self._log_logical_call_summary(
+                logical_call_id=logical_call_id,
+                role=role,
+                started=logical_call_started,
+                winner=None,
+                success=False,
+            )
             raise AllCandidatesFailedError(
                 f"角色 {role} 所有流式候选模型均失败",
                 attempts=[
@@ -611,6 +898,13 @@ class UnifiedAIClient:
                     for item in selected
                 ],
             ) from last_error
+        self._log_logical_call_summary(
+            logical_call_id=logical_call_id,
+            role=role,
+            started=logical_call_started,
+            winner=None,
+            success=False,
+        )
         raise AllCandidatesFailedError(f"角色 {role} 所有流式候选模型均失败")
 
     # ------------------------------------------------------------------
@@ -627,6 +921,8 @@ class UnifiedAIClient:
         fallback_from: int | None = None,
         initial_attempt_kind: str | None = None,
         initial_retry_of: int | None = None,
+        requested_candidate: ResolvedModel | None = None,
+        reasoning_snapshot: EffectiveReasoningSnapshot | None = None,
     ) -> UnifiedResponse:
         adapter = _get_adapter(candidate.provider.family)
         cfg = self.fallback_config
@@ -647,6 +943,7 @@ class UnifiedAIClient:
                     model=candidate.model.model_id,
                 )
             try:
+                self._mark_logical_attempt(logical_call_id)
                 if self._observer is not None:
                     attempt_kind = (
                         "retry"
@@ -662,13 +959,16 @@ class UnifiedAIClient:
                         candidate,
                         request,
                         timeout=timeout,
-                        logical_call_id=logical_call_id or str(self._logical_call_factory()),
+                        logical_call_id=logical_call_id
+                        or str(self._logical_call_factory()),
                         attempt_kind=attempt_kind,
                         purpose=role,
                         retry_of=(
                             self._last_attempt_id if attempt else initial_retry_of
                         ),
                         fallback_from=fallback_from,
+                        requested=requested_candidate or candidate,
+                        reasoning_snapshot=reasoning_snapshot,
                     )
                 else:
                     response = await adapter.chat(
