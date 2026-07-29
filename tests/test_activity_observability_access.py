@@ -596,6 +596,34 @@ def test_activity_page_renders_reasoning_omitted_without_spinner_or_fabricated_t
     assert ".__x" not in template
 
 
+def test_activity_page_uses_independent_scroll_regions_and_sse_fallback_polling():
+    from pathlib import Path
+
+    template = Path("backend/webui/templates/activity_observability.html").read_text(
+        encoding="utf-8"
+    )
+    notification_handler = template.split(
+        "addEventListener('activity:notification'", 1
+    )[1].split("this.eventSource.onerror", 1)[0]
+
+    assert "min-h-0 min-w-0 grid-cols-1 overflow-hidden" in template
+    assert 'x-ref="timeline"' in template
+    assert "min-h-0 flex-1 overflow-y-auto overscroll-contain" in template
+    assert "lg:h-full" in template
+    assert "&& !this.streamConnected" in template
+    assert "this.stopFallbackPolling();" in template
+    assert "this.scheduleRefresh(sessionId);" in notification_handler
+    assert "this.loadSessions();" not in notification_handler
+    assert "}, 15000);" in template
+    assert "{% block global_sse_client %}{% endblock %}" in template
+    assert 'x-data="{expanded: false, expandable: false}"' in template
+    assert "$refs.content.scrollHeight > $refs.content.clientHeight" in template
+    assert '@click.stop="expanded = !expanded"' in template
+    assert "expandedEntries" not in template
+    assert "fa-wave-square" not in template
+    assert "fa-comments" not in template
+
+
 @pytest.mark.asyncio
 async def test_conversation_projection_is_ordered_versioned_and_server_redacted(db):
     observed_session, _, _, _, _, artifact = _conversation_chain(db)

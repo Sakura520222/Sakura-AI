@@ -16,6 +16,7 @@ from backend import __version__
 from backend.api import webhook
 from backend.api.v1 import api_v1_router
 from backend.api.v1.deps import limiter
+from backend.core.access_log import install_quiet_successful_access_filter
 from backend.core.bootstrap import (
     BootstrapMiddleware,
     is_bootstrap_mode,
@@ -29,6 +30,7 @@ from backend.webui.routes import webui_router
 from backend.webui.routes.setup import router as setup_router
 
 # 配置日志
+install_quiet_successful_access_filter()
 logger.remove()
 logger.add(
     sys.stdout,
@@ -225,6 +227,7 @@ async def lifespan(app: FastAPI):
 
                 # 启动活动观测 Outbox dispatcher（授权器由应用注入）
                 try:
+                    from backend.models import database as db_module
                     from backend.services.activity_observability.access_service import (
                         ActivityAccessService,
                         CursorConfig,
@@ -234,7 +237,6 @@ async def lifespan(app: FastAPI):
                         OutboxDispatcherConfig,
                         OutboxRetryPolicy,
                     )
-                    from backend.models import database as db_module
 
                     scope_authorizer = getattr(
                         app.state, "activity_scope_authorizer", None
@@ -530,26 +532,7 @@ async def webui_fallback(request: Request, path: str):
 
 
 if __name__ == "__main__":
-    import logging
-
     import uvicorn
-
-    # Suppress access log for high-frequency polling endpoints
-    class _PollingLogFilter(logging.Filter):
-        _skip_patterns = (
-            "/agent-team/api/tasks/",
-            "/agent-team/api/active-tasks",
-        )
-
-        def filter(self, record: logging.LogRecord) -> bool:
-            msg = getattr(record, "msg", "") or ""
-            for p in self._skip_patterns:
-                if p in msg:
-                    return False
-            return True
-
-    access_logger = logging.getLogger("uvicorn.access")
-    access_logger.addFilter(_PollingLogFilter())
 
     uvicorn.run(
         "backend.main:app",
