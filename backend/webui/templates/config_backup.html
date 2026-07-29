@@ -1,0 +1,104 @@
+{% extends "base.html" %}
+
+{% block title %}{{ _('config.backup_title') }} - Sakura AI{% endblock %}
+
+{% block content %}
+<div class="space-y-5">
+    <div>
+        <h1 class="text-2xl font-bold">{{ _('config.backup_title') }}</h1>
+        <p class="mt-1 text-sm text-gray-500 dark:text-gray-400">{{ _('config.backup_subtitle') }}</p>
+    </div>
+
+    <div class="rounded-xl border border-amber-200 dark:border-amber-800 bg-amber-50 dark:bg-amber-900/20 p-4">
+        <div class="flex items-start gap-3">
+            <svg class="w-5 h-5 mt-0.5 flex-shrink-0 text-amber-600 dark:text-amber-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01M10.29 3.86l-7.82 13.55A2 2 0 004.2 20h15.6a2 2 0 001.73-2.99L13.71 3.86a2 2 0 00-3.42 0z"/>
+            </svg>
+            <div>
+                <h2 class="text-sm font-semibold text-amber-800 dark:text-amber-200">{{ _('config.backup_sensitive_title') }}</h2>
+                <p class="mt-1 text-sm text-amber-700 dark:text-amber-300">{{ _('config.backup_sensitive_desc') }}</p>
+            </div>
+        </div>
+    </div>
+
+    <section class="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 shadow-sm overflow-hidden">
+        <div class="p-5 border-b border-gray-200 dark:border-gray-700">
+            <h2 class="font-semibold">{{ _('config.backup_export_title') }}</h2>
+            <p class="mt-1 text-sm text-gray-500 dark:text-gray-400">{{ _('config.backup_export_desc') }}</p>
+        </div>
+        <div class="grid grid-cols-1 lg:grid-cols-3 gap-4 p-5">
+            <div class="rounded-xl border-2 border-sakura-200 dark:border-sakura-800 bg-sakura-50/60 dark:bg-sakura-900/10 p-4">
+                <div class="flex items-center justify-between gap-3">
+                    <div>
+                        <h3 class="font-semibold text-sakura-800 dark:text-sakura-200">{{ _('config.backup_all') }}</h3>
+                        <p class="mt-1 text-xs text-gray-600 dark:text-gray-400">{{ _('config.backup_all_desc') }}</p>
+                    </div>
+                    <span class="px-2 py-1 rounded-full bg-sakura-100 dark:bg-sakura-900/30 text-sakura-700 dark:text-sakura-300 text-xs font-medium">{{ _('config.backup_recommended') }}</span>
+                </div>
+                <form method="POST" action="/config/backup/export/all" class="mt-4">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                    <button type="submit" class="w-full px-4 py-2 rounded-lg bg-sakura-600 hover:bg-sakura-700 text-white text-sm font-medium transition-colors">
+                        {{ _('config.backup_export_all') }}
+                    </button>
+                </form>
+            </div>
+
+            <div class="rounded-xl border border-gray-200 dark:border-gray-700 p-4">
+                <h3 class="font-semibold">{{ _('config.backup_global') }}</h3>
+                <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">{{ _('config.backup_global_desc') }}</p>
+                <form method="POST" action="/config/backup/export/global" class="mt-4">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                    <button type="submit" class="w-full px-4 py-2 rounded-lg border border-gray-300 dark:border-gray-600 text-sm font-medium hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors">
+                        {{ _('config.backup_export_global') }}
+                    </button>
+                </form>
+            </div>
+
+            <div class="rounded-xl border border-gray-200 dark:border-gray-700 p-4">
+                <h3 class="font-semibold">{{ _('config.backup_ai') }}</h3>
+                <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">{{ _('config.backup_ai_desc') }}</p>
+                <form method="POST" action="/config/backup/export/ai" class="mt-4">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                    <button type="submit" class="w-full px-4 py-2 rounded-lg border border-gray-300 dark:border-gray-600 text-sm font-medium hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors">
+                        {{ _('config.backup_export_ai') }}
+                    </button>
+                </form>
+            </div>
+        </div>
+    </section>
+
+    <section class="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 shadow-sm overflow-hidden">
+        <div class="p-5 border-b border-gray-200 dark:border-gray-700">
+            <h2 class="font-semibold">{{ _('config.backup_import_title') }}</h2>
+            <p class="mt-1 text-sm text-gray-500 dark:text-gray-400">{{ _('config.backup_import_desc') }}</p>
+        </div>
+        <form method="POST"
+              action="/config/backup/import"
+              enctype="multipart/form-data"
+              class="p-5 space-y-4"
+              onsubmit="return confirm({{ _('config.backup_import_confirm') | tojson }});">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+            <label class="block">
+                <span class="text-sm font-medium text-gray-700 dark:text-gray-300">{{ _('config.backup_file') }}</span>
+                <input type="file"
+                       name="backup_file"
+                       accept=".json,application/json"
+                       required
+                       class="mt-2 block w-full text-sm text-gray-600 dark:text-gray-300 file:mr-4 file:rounded-lg file:border-0 file:bg-sakura-50 file:px-4 file:py-2 file:text-sm file:font-medium file:text-sakura-700 hover:file:bg-sakura-100 dark:file:bg-sakura-900/30 dark:file:text-sakura-300">
+                <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">{{ _('config.backup_file_help') }}</p>
+            </label>
+
+            <label class="flex items-start gap-3 rounded-lg border border-red-200 dark:border-red-800 bg-red-50/60 dark:bg-red-900/10 p-3">
+                <input type="checkbox" required class="mt-0.5 rounded border-gray-300 text-red-600 focus:ring-red-500">
+                <span class="text-sm text-red-700 dark:text-red-300">{{ _('config.backup_replace_ack') }}</span>
+            </label>
+
+            <div class="flex justify-end">
+                <button type="submit" class="px-5 py-2.5 rounded-lg bg-sakura-600 hover:bg-sakura-700 text-white text-sm font-medium transition-colors">
+                    {{ _('config.backup_import_button') }}
+                </button>
+            </div>
+        </form>
+    </section>
+</div>
+{% endblock %}

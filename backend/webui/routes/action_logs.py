@@ -26,6 +26,8 @@ ACTION_LABELS = {
     "repo_toggle": "启用/禁用仓库",
     "repo_remove": "删除仓库",
     "config_save": "保存配置",
+    "config_export": "导出配置备份",
+    "config_import": "导入配置备份",
 }
 
 TARGET_TYPE_LABELS = {
