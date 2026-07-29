@@ -5,6 +5,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 from datetime import datetime
+from typing import Any
 
 
 _ENDPOINT_FINGERPRINT_PATTERN = re.compile(r"^[0-9a-f]{64}$")
@@ -100,6 +101,59 @@ class InvocationContext:
             _require_int(self.thread_id, "thread_id")
         if not isinstance(self.role_snapshot, RoleConfigSnapshot):
             raise TypeError("role_snapshot must be a RoleConfigSnapshot")
+
+
+@dataclass(frozen=True, slots=True)
+class EffectiveReasoningSnapshot:
+    """Credential-free final request settings for one concrete HTTP attempt."""
+
+    requested_thinking_mode: str
+    effective_thinking_mode: str
+    requested_effort: str
+    effective_effort: str
+    protocol_family: str
+    max_output_tokens: int
+    temperature: float | None
+    top_p: float | None
+    top_k: int | None
+    tool_choice: str | None
+
+    def __post_init__(self) -> None:
+        for field_name in (
+            "requested_thinking_mode",
+            "effective_thinking_mode",
+            "requested_effort",
+            "effective_effort",
+            "protocol_family",
+        ):
+            _require_string(getattr(self, field_name), field_name)
+        _require_int(self.max_output_tokens, "max_output_tokens")
+        if self.max_output_tokens <= 0:
+            raise ValueError("max_output_tokens must be positive")
+        for field_name in ("temperature", "top_p"):
+            value = getattr(self, field_name)
+            if value is not None and (
+                not isinstance(value, (int, float)) or isinstance(value, bool)
+            ):
+                raise TypeError(f"{field_name} must be numeric or None")
+        if self.top_k is not None:
+            _require_int(self.top_k, "top_k")
+        _require_string(self.tool_choice, "tool_choice", optional=True)
+
+    def safe_dict(self) -> dict[str, Any]:
+        """Return the metadata-only representation suitable for persistence/logs."""
+        return {
+            "requested_thinking_mode": self.requested_thinking_mode,
+            "effective_thinking_mode": self.effective_thinking_mode,
+            "requested_effort": self.requested_effort,
+            "effective_effort": self.effective_effort,
+            "protocol_family": self.protocol_family,
+            "max_output_tokens": self.max_output_tokens,
+            "temperature": self.temperature,
+            "top_p": self.top_p,
+            "top_k": self.top_k,
+            "tool_choice": self.tool_choice,
+        }
 
 
 @dataclass(frozen=True, slots=True)

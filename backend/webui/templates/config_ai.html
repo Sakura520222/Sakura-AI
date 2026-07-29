@@ -280,6 +280,40 @@
                 </div>
                 <p class="text-xs text-gray-500 dark:text-gray-400 mt-2">{{ _('config.ai_context_management_desc') }}</p>
             </div>
+            <div class="border-t border-gray-100 dark:border-gray-700 pt-5">
+                <h3 class="text-sm font-semibold text-gray-700 dark:text-gray-300 mb-3">{{ _('config.ai_observability_capture') }}</h3>
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <label class="flex items-center gap-2">
+                        <input type="checkbox" x-model="strategy.activity_reasoning_capture_enabled" class="rounded border-gray-300 text-sakura-600">
+                        <span class="text-sm font-medium">{{ _('config.ai_capture_reasoning') }}</span>
+                    </label>
+                    <label class="flex items-center gap-2">
+                        <input type="checkbox" x-model="strategy.activity_request_response_capture_enabled" class="rounded border-gray-300 text-sakura-600">
+                        <span class="text-sm font-medium">{{ _('config.ai_capture_request_response') }}</span>
+                    </label>
+                    <label class="block">
+                        <span class="text-sm font-medium">{{ _('config.ai_artifact_retention_days') }}</span>
+                        <input type="number" min="1" max="3650" x-model.number="strategy.activity_artifact_retention_days" class="mt-1 w-full rounded-lg border-gray-300 dark:border-gray-600 dark:bg-gray-700">
+                    </label>
+                    <label class="block">
+                        <span class="text-sm font-medium">{{ _('config.ai_artifact_key_id') }}</span>
+                        <input type="text" x-model="strategy.activity_artifact_encryption_key_id" class="mt-1 w-full rounded-lg border-gray-300 dark:border-gray-600 dark:bg-gray-700">
+                    </label>
+                    <label class="block">
+                        <span class="text-sm font-medium">{{ _('config.ai_reasoning_provider_allowlist') }}</span>
+                        <input type="text" x-model="strategy.activity_reasoning_provider_allowlist" placeholder="anthropic,openai" class="mt-1 w-full rounded-lg border-gray-300 dark:border-gray-600 dark:bg-gray-700">
+                    </label>
+                    <label class="block">
+                        <span class="text-sm font-medium">{{ _('config.ai_reasoning_protocol_allowlist') }}</span>
+                        <input type="text" x-model="strategy.activity_reasoning_protocol_allowlist" placeholder="anthropic_native,openai_responses" class="mt-1 w-full rounded-lg border-gray-300 dark:border-gray-600 dark:bg-gray-700">
+                    </label>
+                    <label class="flex items-center gap-2 md:col-span-2">
+                        <input type="checkbox" x-model="strategy.activity_artifact_super_admin_read_enabled" class="rounded border-gray-300 text-sakura-600">
+                        <span class="text-sm font-medium">{{ _('config.ai_super_admin_artifact_access') }}</span>
+                    </label>
+                </div>
+                <p class="text-xs text-gray-500 dark:text-gray-400 mt-2">{{ _('config.ai_observability_capture_desc') }}</p>
+            </div>
             <button @click="saveStrategy" class="px-4 py-2 rounded-lg bg-sakura-600 hover:bg-sakura-700 text-white text-sm font-medium">
                 {{ _('config.ai_save_strategy') }}
             </button>
@@ -654,11 +688,11 @@ function aiConfigPage() {
             const resp = await fetch('/api/v1/config/ai/settings');
             const data = await resp.json();
             this.strategy = data.data || {};
-            const numericKeys = ['ai_api_timeout_seconds','ai_api_max_retries','ai_api_initial_retry_delay_seconds','ai_api_total_timeout_seconds','ai_fallback_max_candidates','context_compression_threshold'];
+            const numericKeys = ['ai_api_timeout_seconds','ai_api_max_retries','ai_api_initial_retry_delay_seconds','ai_api_total_timeout_seconds','ai_fallback_max_candidates','context_compression_threshold','activity_artifact_retention_days'];
             for (const k of numericKeys) {
                 if (this.strategy[k] != null) this.strategy[k] = Number(this.strategy[k]);
             }
-            for (const bk of ['ai_fallback_enabled','ai_fallback_sticky_candidate','enable_context_compression']) {
+            for (const bk of ['ai_fallback_enabled','ai_fallback_sticky_candidate','enable_context_compression','activity_reasoning_capture_enabled','activity_request_response_capture_enabled','activity_artifact_super_admin_read_enabled']) {
                 if (typeof this.strategy[bk] === 'string') {
                     this.strategy[bk] = this.strategy[bk] === 'true';
                 }

@@ -55,7 +55,9 @@ def _candidate(
         reasoning_params=ReasoningParams(),
         source=MetadataSource.FALLBACK,
     )
-    return ResolvedModel(provider=decl, model=metadata, credential="key", endpoint=endpoint)
+    return ResolvedModel(
+        provider=decl, model=metadata, credential="key", endpoint=endpoint
+    )
 
 
 class _StubAdapter:
@@ -63,7 +65,12 @@ class _StubAdapter:
 
     family = ProtocolFamily.OPENAI_COMPATIBLE
 
-    def __init__(self, *, fail_categories: Optional[list[AIErrorCategory]] = None, content: str = "ok"):
+    def __init__(
+        self,
+        *,
+        fail_categories: Optional[list[AIErrorCategory]] = None,
+        content: str = "ok",
+    ):
         self._fail_categories = fail_categories or []
         self.calls = 0
         self._content = content
@@ -79,7 +86,11 @@ class _StubAdapter:
         if self.calls <= len(self._fail_categories):
             category = self._fail_categories[self.calls - 1]
             raise AIError(category, f"stub failure {category.value}")
-        from backend.core.ai_protocol.models import StopReason, UnifiedResponse, UnifiedUsage
+        from backend.core.ai_protocol.models import (
+            StopReason,
+            UnifiedResponse,
+            UnifiedUsage,
+        )
 
         return UnifiedResponse(
             content=self._content,
@@ -130,13 +141,21 @@ async def test_recoverable_failure_exhausts_then_falls_back(monkeypatch):
     from backend.core.ai_protocol import registry as reg
 
     def fake_get_adapter(family):
-        return primary_stub if family == ProtocolFamily.OPENAI_COMPATIBLE else fallback_stub
+        return (
+            primary_stub
+            if family == ProtocolFamily.OPENAI_COMPATIBLE
+            else fallback_stub
+        )
 
     monkeypatch.setattr(reg, "get_adapter", fake_get_adapter)
 
     client = UnifiedAIClient(
         fallback_config=FallbackConfig(
-            enabled=True, max_candidates=2, max_retries=3, total_timeout=10, initial_retry_delay=0
+            enabled=True,
+            max_candidates=2,
+            max_retries=3,
+            total_timeout=10,
+            initial_retry_delay=0,
         )
     )
 
@@ -168,7 +187,9 @@ class _NonJsonThenSuccessAdapter(_StubAdapter):
                 provider=endpoint.base_url,
                 model=request.model,
             )
-        return await super().chat(client, endpoint, credential, request, timeout=timeout)
+        return await super().chat(
+            client, endpoint, credential, request, timeout=timeout
+        )
 
 
 @pytest.mark.asyncio
@@ -226,7 +247,11 @@ async def test_terminal_error_surfaces_without_fallback(monkeypatch):
 
     client = UnifiedAIClient(
         fallback_config=FallbackConfig(
-            enabled=True, max_candidates=2, max_retries=3, total_timeout=10, initial_retry_delay=0
+            enabled=True,
+            max_candidates=2,
+            max_retries=3,
+            total_timeout=10,
+            initial_retry_delay=0,
         )
     )
     primary = _candidate(ProtocolFamily.OPENAI_COMPATIBLE, "primary")
@@ -331,6 +356,7 @@ async def test_sticky_candidate_promotes_last_successful(monkeypatch):
 @pytest.mark.asyncio
 async def test_logs_selected_and_successful_fallback_candidate(monkeypatch):
     """调用日志必须记录实际候选，才能关联 Issue/记忆合并与故障转移结果。"""
+
     class _LogRecorder:
         def __init__(self):
             self.info_messages: list[str] = []
@@ -371,8 +397,7 @@ async def test_logs_selected_and_successful_fallback_candidate(monkeypatch):
 
     assert response.content == "fallback"
     assert any(
-        "AI 调用候选 [1/2]: role=summary provider=prov-primary model=primary"
-        == message
+        "AI 调用候选 [1/2]: role=summary provider=prov-primary model=primary" == message
         for message in recorder.info_messages
     )
     assert any(
@@ -381,8 +406,7 @@ async def test_logs_selected_and_successful_fallback_candidate(monkeypatch):
         for message in recorder.info_messages
     )
     assert any(
-        "AI 调用成功 [2/2]: role=summary served_by=prov-fallback/fallback"
-        == message
+        "AI 调用成功 [2/2]: role=summary served_by=prov-fallback/fallback" == message
         for message in recorder.info_messages
     )
     await client.aclose()
@@ -482,6 +506,7 @@ async def test_cancel_event_aborts_backoff(monkeypatch):
     # 取消触发后应在 1s 内返回（退避 2s 被 event 抢占）。
     # 以 event 设置时刻计时，避免测试进程调度延迟干扰断言。
     assert cancel_latency < 1.0, f"取消响应过慢: {cancel_latency:.2f}s"
+    assert client._logical_attempt_counts == {}
     await client.aclose()
 
 

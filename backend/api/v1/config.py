@@ -302,6 +302,7 @@ _AI_STRATEGY_RANGES = {
     "ai_api_total_timeout_seconds": (1.0, 7200.0),
     "ai_fallback_max_candidates": (1, 10),
     "context_compression_threshold": (0.1, 1.0),
+    "activity_artifact_retention_days": (1, 3650),
 }
 
 
@@ -317,6 +318,13 @@ class AIStrategyRequest(BaseModel):
     ai_fallback_sticky_candidate: bool | None = None
     enable_context_compression: bool | None = None
     context_compression_threshold: float | None = None
+    activity_reasoning_capture_enabled: bool | None = None
+    activity_request_response_capture_enabled: bool | None = None
+    activity_reasoning_provider_allowlist: str | None = None
+    activity_reasoning_protocol_allowlist: str | None = None
+    activity_artifact_retention_days: int | None = None
+    activity_artifact_encryption_key_id: str | None = None
+    activity_artifact_super_admin_read_enabled: bool | None = None
 
 
 @router.get("/ai/settings")

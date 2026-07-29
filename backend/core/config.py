@@ -153,6 +153,25 @@ class Settings(BaseSettings):
     )
     activity_cursor_ttl_seconds: int = Field(900, ge=1)
     activity_cursor_page_size: int = Field(100, ge=1)
+    activity_reasoning_capture_enabled: bool = Field(
+        False,
+        description="是否加密采集供应商明确返回的 reasoning 内容或摘要",
+    )
+    activity_request_response_capture_enabled: bool = Field(
+        False,
+        description="是否加密采集最终请求与响应的结构保真脱敏投影",
+    )
+    activity_reasoning_provider_allowlist: str = Field(
+        "",
+        description="允许采集 reasoning 的 provider ID，逗号分隔；为空表示不额外限制",
+    )
+    activity_reasoning_protocol_allowlist: str = Field(
+        "",
+        description="允许采集 reasoning 的协议族，逗号分隔；为空表示不额外限制",
+    )
+    activity_artifact_retention_days: int = Field(7, ge=1)
+    activity_artifact_encryption_key_id: str = Field("app-fernet-v1")
+    activity_artifact_super_admin_read_enabled: bool = Field(True)
     activity_outbox_batch_size: int = Field(50, ge=1)
     activity_outbox_poll_interval_seconds: float = Field(1.0, ge=0)
     activity_outbox_claim_timeout_seconds: float | None = Field(
@@ -2079,6 +2098,13 @@ AI_STRATEGY_CONFIG_KEYS: tuple[str, ...] = (
     "ai_fallback_sticky_candidate",
     "enable_context_compression",
     "context_compression_threshold",
+    "activity_reasoning_capture_enabled",
+    "activity_request_response_capture_enabled",
+    "activity_reasoning_provider_allowlist",
+    "activity_reasoning_protocol_allowlist",
+    "activity_artifact_retention_days",
+    "activity_artifact_encryption_key_id",
+    "activity_artifact_super_admin_read_enabled",
 )
 
 

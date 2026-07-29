@@ -1,6 +1,7 @@
 """Task 4 tests for authoritative attempts, tools, and native artifacts."""
 
-from dataclasses import dataclass
+import json
+from dataclasses import dataclass, replace
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 
@@ -33,9 +34,10 @@ from backend.core.ai_protocol.models import (
     ResolvedModel,
     StopReason,
     UnifiedMessage,
+    UnifiedRequest,
+    UnifiedResponse,
     UnifiedStreamEvent,
     UnifiedUsage,
-    UnifiedRequest,
 )
 from backend.core.ai_protocol.registry import resolve_endpoint
 from backend.models.database import Base
@@ -59,7 +61,12 @@ from backend.services.activity_observability.observer import (
     ObservedEmbeddingSender,
     ObservedModelSender,
 )
-from backend.services.ai_reviewer.unified_client import UnifiedAIClient
+from backend.services.ai_reviewer.unified_client import (
+    FallbackConfig,
+    UnifiedAIClient,
+    _effective_reasoning_snapshot,
+    _filter_params_by_capability,
+)
 from backend.services.activity_observability.tool_service import (
     ArtifactAuthorization,
     ConflictError,
@@ -108,15 +115,23 @@ class _AsyncAdapter:
 
 @pytest.fixture
 def db_session():
-    engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
+    engine = create_engine(
+        "sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool
+    )
 
     @event.listens_for(engine, "connect")
     def _configure(connection, _record):
-        connection.create_collation("ascii_bin", lambda left, right: (left > right) - (left < right))
+        connection.create_collation(
+            "ascii_bin", lambda left, right: (left > right) - (left < right)
+        )
         connection.create_function("regexp", 2, lambda *args: bool(args))
         connection.execute("PRAGMA foreign_keys=ON")
 
-    tables = [table for table in Base.metadata.tables.values() if table.name.startswith("activity_observability_")]
+    tables = [
+        table
+        for table in Base.metadata.tables.values()
+        if table.name.startswith("activity_observability_")
+    ]
     Base.metadata.create_all(engine, tables=tables)
     session = Session(engine, expire_on_commit=False)
     yield session
@@ -135,16 +150,25 @@ def chain(db_session):
     )
     db_session.add(identity)
     db_session.flush()
-    session = ActivityObservabilitySession(resource_identity_id=identity.id, session_kind="long_lived", status="open")
+    session = ActivityObservabilitySession(
+        resource_identity_id=identity.id, session_kind="long_lived", status="open"
+    )
     db_session.add(session)
     db_session.flush()
-    thread = ActivityThread(session_id=session.id, thread_purpose="reviewer", last_seq=0)
+    thread = ActivityThread(
+        session_id=session.id, thread_purpose="reviewer", last_seq=0
+    )
     db_session.add(thread)
     db_session.flush()
     snapshot = ActivityObservabilityRoleBindingSnapshot(
-        role="reviewer", requested_provider="provider", requested_model="model",
-        candidate_chain_json="[]", account_id="account", protocol_family="protocol",
-        endpoint_fingerprint="a" * 64, config_snapshot_version=1,
+        role="reviewer",
+        requested_provider="provider",
+        requested_model="model",
+        candidate_chain_json="[]",
+        account_id="account",
+        protocol_family="protocol",
+        endpoint_fingerprint="a" * 64,
+        config_snapshot_version=1,
     )
     db_session.add(snapshot)
     db_session.flush()
@@ -152,15 +176,24 @@ def chain(db_session):
     db_session.add(invocation)
     db_session.flush()
     work_unit = ActivityInvocationWorkUnit(
-        invocation_id=invocation.id, session_id=session.id, thread_id=thread.id,
-        role_binding_snapshot_id=snapshot.id, purpose="reviewer", requirement="required",
-        is_primary=True, status="queued",
+        invocation_id=invocation.id,
+        session_id=session.id,
+        thread_id=thread.id,
+        role_binding_snapshot_id=snapshot.id,
+        purpose="reviewer",
+        requirement="required",
+        is_primary=True,
+        status="queued",
     )
     db_session.add(work_unit)
     db_session.flush()
     attempt = ActivityModelAttempt(
-        work_unit_id=work_unit.id, attempt_index=0, logical_call_id="call-1",
-        attempt_kind="primary", purpose="review", endpoint_fingerprint="b" * 64,
+        work_unit_id=work_unit.id,
+        attempt_index=0,
+        logical_call_id="call-1",
+        attempt_kind="primary",
+        purpose="review",
+        endpoint_fingerprint="b" * 64,
         contextless_reason="transcript_not_applicable",
     )
     db_session.add(attempt)
@@ -169,20 +202,31 @@ def chain(db_session):
 
 
 @pytest.mark.asyncio
-async def test_canonical_message_discards_reasoning_and_keeps_artifact_reference(db_session, chain):
+async def test_canonical_message_discards_reasoning_and_keeps_artifact_reference(
+    db_session, chain
+):
     session, thread, work_unit, attempt = chain
     service = ToolService(_AsyncAdapter(db_session))
     artifact = ActivityNativeArtifact(
-        attempt_id=attempt.id, artifact_kind="reasoning", availability=REASONING_SUMMARIZED,
-        provider_family="provider", protocol_family="protocol", model_family="model",
-        compatibility_key="provider|protocol|model|endpoint", capture_mode=CAPTURE_METADATA_ONLY,
+        attempt_id=attempt.id,
+        artifact_kind="reasoning",
+        availability=REASONING_SUMMARIZED,
+        provider_family="provider",
+        protocol_family="protocol",
+        model_family="model",
+        compatibility_key="provider|protocol|model|endpoint",
+        capture_mode=CAPTURE_METADATA_ONLY,
         visibility="admin_only",
     )
     db_session.add(artifact)
     db_session.commit()
     message = await service.append_assistant_message(
-        thread_id=thread.id, work_unit_id=work_unit.id, origin_attempt_id=attempt.id,
-        content="final", reasoning_content="secret reasoning", artifact_id=artifact.id,
+        thread_id=thread.id,
+        work_unit_id=work_unit.id,
+        origin_attempt_id=attempt.id,
+        content="final",
+        reasoning_content="secret reasoning",
+        artifact_id=artifact.id,
     )
     assert message.seq == 1
     assert "reasoning" not in message.message_json
@@ -194,23 +238,47 @@ async def test_canonical_message_discards_reasoning_and_keeps_artifact_reference
 @pytest.mark.asyncio
 async def test_tool_fields_parent_chain_sensitivity_and_recovery(db_session, chain):
     _, thread, work_unit, attempt = chain
-    service = ToolService(_AsyncAdapter(db_session), artifact_hash_secret=b"test-key")
-    execution = await service.create_tool_execution(
-        work_unit_id=work_unit.id, thread_id=thread.id, origin_attempt_id=attempt.id,
-        tool_call_id="tool-1", name="read", arguments={"path": "x"},
+    service = ToolService(
+        _AsyncAdapter(db_session),
+        encryption_provider=_FakeEncryption(),
+        artifact_hash_secret=b"test-key",
     )
-    assert execution.arguments_json == '{"path":"x"}'
+    execution = await service.create_tool_execution(
+        work_unit_id=work_unit.id,
+        thread_id=thread.id,
+        origin_attempt_id=attempt.id,
+        tool_call_id="tool-1",
+        name="read",
+        arguments={"path": "x"},
+    )
+    assert execution.arguments_json is None
+    assert execution.arguments_storage_ref.startswith("artifact:")
     assert not hasattr(execution, "function")
     await service.start_tool_execution(execution.id)
-    assert db_session.get(ActivityToolExecution, execution.id).status == TOOL_STATUS_RUNNING
-    await service.finish_tool_execution(execution.id, status=TOOL_STATUS_COMPLETED, result={"ok": True})
-    assert db_session.get(ActivityToolExecution, execution.id).status == TOOL_STATUS_COMPLETED
+    assert (
+        db_session.get(ActivityToolExecution, execution.id).status
+        == TOOL_STATUS_RUNNING
+    )
+    await service.finish_tool_execution(
+        execution.id, status=TOOL_STATUS_COMPLETED, result={"ok": True}
+    )
+    assert (
+        db_session.get(ActivityToolExecution, execution.id).status
+        == TOOL_STATUS_COMPLETED
+    )
     with pytest.raises(ConflictError):
-        await service.finish_tool_execution(execution.id, status=TOOL_STATUS_FAILED, result={"ok": False})
+        await service.finish_tool_execution(
+            execution.id, status=TOOL_STATUS_FAILED, result={"ok": False}
+        )
 
     sensitive = await service.create_tool_execution(
-        work_unit_id=work_unit.id, thread_id=thread.id, origin_attempt_id=attempt.id,
-        tool_call_id="tool-secret", name="secret", arguments="password", sensitivity=SENSITIVITY_SECRET,
+        work_unit_id=work_unit.id,
+        thread_id=thread.id,
+        origin_attempt_id=attempt.id,
+        tool_call_id="tool-secret",
+        name="secret",
+        arguments="password",
+        sensitivity=SENSITIVITY_SECRET,
     )
     assert sensitive.arguments_json is None
     assert sensitive.arguments_hash is not None
@@ -221,80 +289,183 @@ async def test_tool_parent_chain_and_dedupe_reject_mismatch(db_session, chain):
     _, thread, work_unit, attempt = chain
     service = ToolService(_AsyncAdapter(db_session))
     await service.create_tool_execution(
-        work_unit_id=work_unit.id, thread_id=thread.id, origin_attempt_id=attempt.id,
-        tool_call_id="duplicate", name="read", arguments="{}",
+        work_unit_id=work_unit.id,
+        thread_id=thread.id,
+        origin_attempt_id=attempt.id,
+        tool_call_id="duplicate",
+        name="read",
+        arguments="{}",
     )
     with pytest.raises(ConflictError):
         await service.create_tool_execution(
-            work_unit_id=work_unit.id, thread_id=thread.id, origin_attempt_id=attempt.id,
-            tool_call_id="duplicate", name="write", arguments="{}",
+            work_unit_id=work_unit.id,
+            thread_id=thread.id,
+            origin_attempt_id=attempt.id,
+            tool_call_id="duplicate",
+            name="write",
+            arguments="{}",
         )
     with pytest.raises(ValueError):
         await service.create_tool_execution(
-            work_unit_id=work_unit.id, thread_id=None, origin_attempt_id=attempt.id,
-            tool_call_id="bad-parent", name="read", arguments="{}",
+            work_unit_id=work_unit.id,
+            thread_id=None,
+            origin_attempt_id=attempt.id,
+            tool_call_id="bad-parent",
+            name="read",
+            arguments="{}",
         )
 
 
 @dataclass(frozen=True)
 class _Encrypted:
-    ciphertext: str = "ciphertext"
+    ciphertext: str
     nonce: str = "nonce"
     key_id: str = "key-1"
 
 
 class _FakeEncryption:
+    def __init__(self):
+        self.payloads = {}
+
     def encrypt(self, payload):
         assert isinstance(payload, str)
-        return _Encrypted()
+        ciphertext = f"ciphertext-{len(self.payloads) + 1}"
+        self.payloads[ciphertext] = payload
+        return _Encrypted(ciphertext=ciphertext)
+
+    def decrypt(self, ciphertext, *, nonce, key_id):
+        assert nonce == "nonce"
+        assert key_id == "key-1"
+        return self.payloads[ciphertext]
+
+
+class _FailingEncryption:
+    def encrypt(self, _payload):
+        raise RuntimeError("encryption backend unavailable")
 
 
 @pytest.mark.asyncio
-async def test_artifact_policy_metadata_summary_encryption_and_retention(db_session, chain):
+async def test_artifact_policy_metadata_summary_encryption_and_retention(
+    db_session, chain
+):
     _, _, _, attempt = chain
     fixed = datetime(2026, 7, 23, tzinfo=timezone.utc)
-    service = ToolService(_AsyncAdapter(db_session), encryption_provider=_FakeEncryption(), clock=lambda: fixed)
+    service = ToolService(
+        _AsyncAdapter(db_session),
+        encryption_provider=_FakeEncryption(),
+        clock=lambda: fixed,
+    )
     metadata = await service.capture_reasoning_artifact(
-        attempt_id=attempt.id, availability=REASONING_PROVIDER_EXPOSED, payload="must not persist",
-        provider_family="provider", protocol_family="protocol", model_family="model", endpoint_scope="api",
+        attempt_id=attempt.id,
+        availability=REASONING_PROVIDER_EXPOSED,
+        payload="must not persist",
+        provider_family="provider",
+        protocol_family="protocol",
+        model_family="model",
+        endpoint_scope="api",
         policy=ReasoningCapturePolicy(capture_mode=CAPTURE_METADATA_ONLY),
     )
     assert metadata.payload_ciphertext is None and metadata.payload_safe_summary is None
     summary = await service.capture_reasoning_artifact(
-        attempt_id=attempt.id, availability=REASONING_SUMMARIZED, payload="safe summary",
-        provider_family="provider", protocol_family="protocol", model_family="model", endpoint_scope="api",
-        policy=ReasoningCapturePolicy(capture_mode=CAPTURE_SAFE_SUMMARY, provider_allowlist=frozenset({"provider"})),
+        attempt_id=attempt.id,
+        availability=REASONING_SUMMARIZED,
+        payload="safe summary",
+        provider_family="provider",
+        protocol_family="protocol",
+        model_family="model",
+        endpoint_scope="api",
+        policy=ReasoningCapturePolicy(
+            capture_mode=CAPTURE_SAFE_SUMMARY,
+            provider_allowlist=frozenset({"provider"}),
+        ),
     )
-    assert summary.payload_safe_summary == "safe summary"
+    assert summary.payload_safe_summary is None
+    assert summary.payload_ciphertext is not None
     encrypted = await service.capture_reasoning_artifact(
-        attempt_id=attempt.id, availability=REASONING_ENCRYPTED_OPAQUE, payload="opaque",
-        provider_family="provider", protocol_family="protocol", model_family="model", endpoint_scope="api",
+        attempt_id=attempt.id,
+        availability=REASONING_ENCRYPTED_OPAQUE,
+        payload="opaque",
+        provider_family="provider",
+        protocol_family="protocol",
+        model_family="model",
+        endpoint_scope="api",
         policy=ReasoningCapturePolicy(capture_mode=CAPTURE_ARTIFACT, retention_days=2),
     )
-    assert encrypted.payload_ciphertext == "ciphertext"
+    assert encrypted.payload_ciphertext.startswith("ciphertext-")
     assert encrypted.payload_safe_summary is None
     assert encrypted.retention_expires_at == fixed + timedelta(days=2)
 
 
 @pytest.mark.asyncio
-async def test_artifact_mode_without_encryption_is_rejected(db_session, chain):
-    _, _, _, attempt = chain
-    service = ToolService(_AsyncAdapter(db_session))
-    with pytest.raises(RuntimeError, match="encryption"):
-        await service.capture_reasoning_artifact(
-            attempt_id=attempt.id, availability=REASONING_PROVIDER_EXPOSED, payload="secret",
-            provider_family="provider", protocol_family="protocol", model_family="model", endpoint_scope="api",
-            policy=ReasoningCapturePolicy(capture_mode=CAPTURE_ARTIFACT),
-        )
-
-
-@pytest.mark.asyncio
-async def test_artifact_read_fails_closed_and_audits_missing_and_denied(db_session, chain):
+async def test_artifact_mode_without_encryption_degrades_to_metadata(db_session, chain):
     _, _, _, attempt = chain
     service = ToolService(_AsyncAdapter(db_session))
     artifact = await service.capture_reasoning_artifact(
-        attempt_id=attempt.id, availability=REASONING_PROVIDER_EXPOSED, payload="summary",
-        provider_family="provider", protocol_family="protocol", model_family="model", endpoint_scope="api",
+        attempt_id=attempt.id,
+        availability=REASONING_PROVIDER_EXPOSED,
+        payload="secret",
+        provider_family="provider",
+        protocol_family="protocol",
+        model_family="model",
+        endpoint_scope="api",
+        policy=ReasoningCapturePolicy(capture_mode=CAPTURE_ARTIFACT),
+    )
+    assert artifact.payload_ciphertext is None
+    assert artifact.payload_safe_summary is None
+    assert artifact.capture_error == "encryption_unavailable"
+
+
+@pytest.mark.asyncio
+async def test_encryption_failure_persists_metadata_without_plaintext(
+    db_session, chain
+):
+    _, _, _, attempt = chain
+    service = ToolService(
+        _AsyncAdapter(db_session),
+        encryption_provider=_FailingEncryption(),
+    )
+
+    reasoning = await service.capture_reasoning_artifact(
+        attempt_id=attempt.id,
+        availability=REASONING_PROVIDER_EXPOSED,
+        payload="reasoning secret",
+        provider_family="provider",
+        protocol_family="protocol",
+        model_family="model",
+        endpoint_scope="api",
+        policy=ReasoningCapturePolicy(capture_mode=CAPTURE_ARTIFACT),
+    )
+    projection = await service.capture_sensitive_artifact(
+        artifact_kind="request_projection",
+        payload='{"prompt":"request secret"}',
+        attempt_id=attempt.id,
+        provider_family="provider",
+        protocol_family="protocol",
+        model_family="model",
+        endpoint_scope="api",
+    )
+
+    for artifact in (reasoning, projection):
+        assert artifact.capture_mode == "metadata_only"
+        assert artifact.capture_error == "encryption_failed"
+        assert artifact.payload_ciphertext is None
+        assert artifact.payload_safe_summary is None
+
+
+@pytest.mark.asyncio
+async def test_artifact_read_fails_closed_and_audits_missing_and_denied(
+    db_session, chain
+):
+    _, _, _, attempt = chain
+    service = ToolService(_AsyncAdapter(db_session))
+    artifact = await service.capture_reasoning_artifact(
+        attempt_id=attempt.id,
+        availability=REASONING_PROVIDER_EXPOSED,
+        payload="summary",
+        provider_family="provider",
+        protocol_family="protocol",
+        model_family="model",
+        endpoint_scope="api",
         policy=ReasoningCapturePolicy(capture_mode=CAPTURE_SAFE_SUMMARY),
     )
     assert await service.read_artifact_with_audit(artifact.id, reader="user") is None
@@ -306,20 +477,64 @@ async def test_artifact_read_fails_closed_and_audits_missing_and_denied(db_sessi
 class _Allow:
     async def authorize(self, **kwargs):
         assert kwargs
-        return ArtifactAuthorization(allowed=True, authorization_scope="repo:owner/repo", can_display=True)
+        return ArtifactAuthorization(
+            allowed=True, authorization_scope="repo:owner/repo", can_display=True
+        )
 
 
 @pytest.mark.asyncio
-async def test_admin_scoped_trace_returns_safe_view_and_opaque_never_displays(db_session, chain):
+async def test_admin_scoped_trace_returns_safe_view_and_opaque_never_displays(
+    db_session, chain
+):
     _, _, _, attempt = chain
     service = ToolService(_AsyncAdapter(db_session), artifact_authorizer=_Allow())
     artifact = await service.capture_reasoning_artifact(
-        attempt_id=attempt.id, availability=REASONING_ENCRYPTED_OPAQUE, payload=None,
-        provider_family="provider", protocol_family="protocol", model_family="model", endpoint_scope="api",
+        attempt_id=attempt.id,
+        availability=REASONING_ENCRYPTED_OPAQUE,
+        payload=None,
+        provider_family="provider",
+        protocol_family="protocol",
+        model_family="model",
+        endpoint_scope="api",
         policy=ReasoningCapturePolicy(capture_mode=CAPTURE_METADATA_ONLY),
     )
     view = await service.read_artifact_with_audit(artifact.id, reader="admin")
     assert view is not None and view.payload_safe_summary is None
+
+
+@pytest.mark.asyncio
+async def test_authorized_message_artifact_decrypts_without_attempt_parent(
+    db_session, chain
+):
+    _, thread, work_unit, _ = chain
+    encryption = _FakeEncryption()
+    service = ToolService(
+        _AsyncAdapter(db_session),
+        encryption_provider=encryption,
+        artifact_authorizer=_Allow(),
+    )
+    message = await service.append_conversation_message(
+        thread_id=thread.id,
+        work_unit_id=work_unit.id,
+        message={"role": "user", "content": "private prompt"},
+    )
+
+    assert message.content is None
+    assert "private prompt" not in message.message_json
+    artifact = db_session.get(ActivityNativeArtifact, message.artifact_id)
+    assert artifact is not None
+    assert artifact.attempt_id is None
+    assert "private prompt" not in (artifact.payload_ciphertext or "")
+
+    view = await service.read_artifact_with_audit(
+        artifact.id,
+        reader="super-admin",
+    )
+    assert view is not None
+    assert json.loads(view.payload) == {"content": "private prompt", "role": "user"}
+    assert db_session.scalars(select(ActivityArtifactAccessLog)).all()[-1].outcome == (
+        "allowed"
+    )
 
 
 def _threadless_context(work_unit):
@@ -343,34 +558,54 @@ def _threadless_context(work_unit):
 
 
 @pytest.mark.asyncio
-async def test_observed_embedding_success_persists_usage_and_embedding_purpose(db_session):
+async def test_observed_embedding_success_persists_usage_and_embedding_purpose(
+    db_session,
+):
     identity = ActivityResourceIdentity(
-        source_system_instance="github.com", repository_external_id="embedding",
-        resource_type="ephemeral", resource_number="1", repo_full_name="owner/repo",
+        source_system_instance="github.com",
+        repository_external_id="embedding",
+        resource_type="ephemeral",
+        resource_number="1",
+        repo_full_name="owner/repo",
     )
     db_session.add(identity)
     db_session.flush()
-    session = ActivityObservabilitySession(resource_identity_id=identity.id, session_kind="ephemeral", status="open")
+    session = ActivityObservabilitySession(
+        resource_identity_id=identity.id, session_kind="ephemeral", status="open"
+    )
     db_session.add(session)
     db_session.flush()
     invocation = ActivityInvocation(session_id=session.id, status="queued")
     db_session.add(invocation)
     db_session.flush()
     snapshot = ActivityObservabilityRoleBindingSnapshot(
-        role="embedding", requested_provider="provider", requested_model="model",
-        candidate_chain_json="[]", account_id="account", protocol_family="protocol",
-        endpoint_fingerprint="a" * 64, config_snapshot_version=1,
+        role="embedding",
+        requested_provider="provider",
+        requested_model="model",
+        candidate_chain_json="[]",
+        account_id="account",
+        protocol_family="protocol",
+        endpoint_fingerprint="a" * 64,
+        config_snapshot_version=1,
     )
     db_session.add(snapshot)
     db_session.flush()
     work_unit = ActivityInvocationWorkUnit(
-        invocation_id=invocation.id, session_id=session.id, thread_id=None,
-        role_binding_snapshot_id=snapshot.id, purpose="embedding", requirement="detached",
-        is_primary=False, status="queued",
+        invocation_id=invocation.id,
+        session_id=session.id,
+        thread_id=None,
+        role_binding_snapshot_id=snapshot.id,
+        purpose="embedding",
+        requirement="detached",
+        is_primary=False,
+        status="queued",
     )
     db_session.add(work_unit)
     db_session.flush()
-    sender = ObservedEmbeddingSender(AttemptService(_AsyncAdapter(db_session)), context=_threadless_context(work_unit))
+    sender = ObservedEmbeddingSender(
+        AttemptService(_AsyncAdapter(db_session)),
+        context=_threadless_context(work_unit),
+    )
 
     class _Usage:
         input_tokens = 4
@@ -380,9 +615,18 @@ async def test_observed_embedding_success_persists_usage_and_embedding_purpose(d
         usage = _Usage()
 
     response, attempt_id = await sender.send_embedding(
-        lambda: _completed(_Response()), logical_call_id="embedding-call",
-        requested={"provider_id": "provider", "model_id": "model", "protocol_family": "protocol"},
-        effective={"provider_id": "provider", "model_id": "model", "protocol_family": "protocol"},
+        lambda: _completed(_Response()),
+        logical_call_id="embedding-call",
+        requested={
+            "provider_id": "provider",
+            "model_id": "model",
+            "protocol_family": "protocol",
+        },
+        effective={
+            "provider_id": "provider",
+            "model_id": "model",
+            "protocol_family": "protocol",
+        },
     )
     assert response is not None
     attempt = db_session.get(ActivityModelAttempt, attempt_id)
@@ -400,14 +644,21 @@ async def _completed(value):
 async def test_attempt_unknown_error_persists_safe_message_only(db_session, chain):
     _, _, _, attempt = chain
     service = AttemptService(_AsyncAdapter(db_session))
-    dangerous = "https://evil.test?api_key=secret Authorization: Bearer token body=secret"
+    dangerous = (
+        "https://evil.test?api_key=secret Authorization: Bearer token body=secret"
+    )
     stored = await service.fail(attempt.id, dangerous)
     assert stored.status == "failed"
     assert stored.error_category == "unknown"
     assert stored.error_message == "internal_provider_error"
     serialized = " ".join(
         str(getattr(stored, field))
-        for field in ("error_category", "error_message", "provider_usage_json", "normalized_usage_json")
+        for field in (
+            "error_category",
+            "error_message",
+            "provider_usage_json",
+            "normalized_usage_json",
+        )
         if getattr(stored, field) is not None
     )
     assert dangerous not in serialized
@@ -420,18 +671,55 @@ def test_safe_summary_requires_provider_and_protocol_allowlist_match():
         protocol_allowlist=frozenset({"protocol"}),
     )
     assert safe_summary_or_none(REASONING_SUMMARIZED, "summary", policy) is None
-    assert safe_summary_or_none(
-        REASONING_SUMMARIZED, "summary", policy, provider_family="provider", protocol_family="protocol"
-    ) == "summary"
-    assert safe_summary_or_none(REASONING_ENCRYPTED_OPAQUE, "opaque", policy, provider_family="provider", protocol_family="protocol") is None
+    assert (
+        safe_summary_or_none(
+            REASONING_SUMMARIZED,
+            "summary",
+            policy,
+            provider_family="provider",
+            protocol_family="protocol",
+        )
+        == "summary"
+    )
+    assert (
+        safe_summary_or_none(
+            REASONING_ENCRYPTED_OPAQUE,
+            "opaque",
+            policy,
+            provider_family="provider",
+            protocol_family="protocol",
+        )
+        is None
+    )
 
 
 class _RecordingAttemptService:
     def __init__(self):
         self.events = []
 
-    async def begin_attempt(self, context, logical_call_id, attempt_kind, purpose, requested, effective, context_revision_id, **kwargs):
-        self.events.append(("begin", logical_call_id, attempt_kind, purpose, context_revision_id, kwargs))
+    async def begin_attempt(
+        self,
+        context,
+        logical_call_id,
+        attempt_kind,
+        purpose,
+        requested,
+        effective,
+        context_revision_id,
+        **kwargs,
+    ):
+        self.events.append(
+            (
+                "begin",
+                logical_call_id,
+                attempt_kind,
+                purpose,
+                context_revision_id,
+                kwargs,
+                requested,
+                effective,
+            )
+        )
         return SimpleNamespace(id=1)
 
     async def first_token(self, attempt_id):
@@ -446,39 +734,276 @@ class _RecordingAttemptService:
 
 def _stream_candidate():
     provider = ProviderDeclaration(
-        id="stream-provider", label="stream-provider", family=ProtocolFamily.OPENAI_COMPATIBLE,
-        base_url="https://stream.example/v1/", auth_scheme=AuthScheme.BEARER,
+        id="stream-provider",
+        label="stream-provider",
+        family=ProtocolFamily.OPENAI_COMPATIBLE,
+        base_url="https://stream.example/v1/",
+        auth_scheme=AuthScheme.BEARER,
     )
     metadata = ModelMetadata(
-        model_id="stream-model", provider_id=provider.id, display_name="stream-model",
-        context_window_tokens=128000, max_output_tokens=4096,
-        capabilities=ModelCapabilitySet(), reasoning_params=ReasoningParams(), source=MetadataSource.FALLBACK,
+        model_id="stream-model",
+        provider_id=provider.id,
+        display_name="stream-model",
+        context_window_tokens=128000,
+        max_output_tokens=4096,
+        capabilities=ModelCapabilitySet(),
+        reasoning_params=ReasoningParams(),
+        source=MetadataSource.FALLBACK,
     )
-    return ResolvedModel(provider=provider, model=metadata, credential="credential", endpoint=resolve_endpoint(provider, None))
+    return ResolvedModel(
+        provider=provider,
+        model=metadata,
+        credential="credential",
+        endpoint=resolve_endpoint(provider, None),
+    )
 
 
 @pytest.mark.asyncio
-async def test_unified_stream_real_entry_observes_first_delta_and_done_usage(monkeypatch):
+async def test_sticky_winner_does_not_change_requested_primary_candidate(monkeypatch):
+    primary = _stream_candidate()
+    fallback_provider = replace(
+        primary.provider,
+        id="fallback-provider",
+        label="fallback-provider",
+        base_url="https://fallback.example/v1/",
+    )
+    fallback = replace(
+        primary,
+        provider=fallback_provider,
+        model=replace(
+            primary.model,
+            model_id="fallback-model",
+            provider_id=fallback_provider.id,
+        ),
+        endpoint=resolve_endpoint(fallback_provider, None),
+    )
+
+    class _Adapter:
+        def serialize_request(self, request):
+            return {"model": request.model}
+
+        async def chat(self, *_args, **_kwargs):
+            return UnifiedResponse(
+                content="ok",
+                tool_calls=[],
+                stop_reason=StopReason.END_TURN,
+                usage=UnifiedUsage(input_tokens=1, output_tokens=1),
+            )
+
+    monkeypatch.setattr(
+        "backend.services.ai_reviewer.unified_client._get_adapter",
+        lambda _family: _Adapter(),
+    )
+    attempt_service = _RecordingAttemptService()
+    sender = ObservedModelSender(attempt_service, context=object())
+    client = UnifiedAIClient(
+        observer=sender,
+        context=object(),
+        fallback_config=FallbackConfig(
+            enabled=True,
+            max_candidates=2,
+            max_retries=1,
+            sticky_candidate=True,
+        ),
+        logical_call_factory=lambda: "sticky-call",
+    )
+    client._last_successful["reviewer"] = (
+        fallback.provider.id,
+        fallback.model.model_id,
+    )
+
+    await client.call_with_retry(
+        [primary, fallback],
+        [UnifiedMessage(role="user", content="hi")],
+        model="",
+        role="reviewer",
+    )
+
+    begin = attempt_service.events[0]
+    requested = begin[6]
+    effective = begin[7]
+    assert requested.provider.id == primary.provider.id
+    assert requested.model.model_id == primary.model.model_id
+    assert effective.provider.id == fallback.provider.id
+    assert effective.model.model_id == fallback.model.model_id
+
+
+def test_effective_reasoning_snapshot_uses_final_capability_filtered_request():
+    unsupported = _stream_candidate()
+    filtered = _filter_params_by_capability(
+        unsupported.model,
+        temperature=0.4,
+        top_p=0.8,
+        top_k=12,
+        thinking={"type": "adaptive"},
+        effort="high",
+    )
+    unsupported_request = UnifiedRequest(
+        model=unsupported.model.model_id,
+        messages=[UnifiedMessage(role="user", content="hi")],
+        max_tokens=1234,
+        thinking=filtered["thinking"],
+        effort=filtered["effort"],
+        temperature=filtered["temperature"],
+        top_p=filtered["top_p"],
+        top_k=filtered["top_k"],
+        tool_choice="auto",
+    )
+    unsupported_snapshot = _effective_reasoning_snapshot(
+        unsupported,
+        unsupported_request,
+        requested_thinking={"type": "adaptive"},
+        requested_effort="high",
+    )
+    assert unsupported_snapshot.requested_thinking_mode == "adaptive"
+    assert unsupported_snapshot.effective_thinking_mode == "unsupported"
+    assert unsupported_snapshot.requested_effort == "high"
+    assert unsupported_snapshot.effective_effort == "unsupported"
+    assert unsupported_snapshot.top_k is None
+    assert unsupported_snapshot.max_output_tokens == 1234
+    assert unsupported_snapshot.tool_choice == "auto"
+
+    supported = replace(
+        unsupported,
+        model=replace(
+            unsupported.model,
+            capabilities=ModelCapabilitySet(
+                thinking=True,
+                effort=True,
+                temperature=True,
+                top_p=True,
+                top_k=True,
+            ),
+            reasoning_params=ReasoningParams(
+                max_output_tokens=8192,
+                thinking={"type": "adaptive"},
+                effort="medium",
+            ),
+        ),
+    )
+    filtered = _filter_params_by_capability(
+        supported.model,
+        temperature=None,
+        top_p=None,
+        top_k=9,
+        thinking={"type": "disabled"},
+        effort="max",
+    )
+    supported_request = UnifiedRequest(
+        model=supported.model.model_id,
+        messages=[UnifiedMessage(role="user", content="hi")],
+        max_tokens=8192,
+        thinking=filtered["thinking"],
+        effort=filtered["effort"],
+        top_k=filtered["top_k"],
+    )
+    supported_snapshot = _effective_reasoning_snapshot(
+        supported,
+        supported_request,
+        requested_thinking={"type": "disabled"},
+        requested_effort="max",
+    )
+    assert supported_snapshot.requested_thinking_mode == "disabled"
+    assert supported_snapshot.effective_thinking_mode == "disabled"
+    assert supported_snapshot.requested_effort == "max"
+    assert supported_snapshot.effective_effort == "max"
+    assert supported_snapshot.top_k == 9
+
+
+@pytest.mark.asyncio
+async def test_observability_failures_do_not_replace_provider_result_or_error():
+    class _BrokenObservation:
+        async def begin_attempt(self, *_args, **_kwargs):
+            raise RuntimeError("database unavailable")
+
+    class _Adapter:
+        def __init__(self, error=None):
+            self.calls = 0
+            self.error = error
+
+        def serialize_request(self, request):
+            return {"model": request.model}
+
+        async def chat(self, *_args, **_kwargs):
+            self.calls += 1
+            if self.error is not None:
+                raise self.error
+            return SimpleNamespace(
+                reasoning_content=None,
+                usage=UnifiedUsage(),
+                stop_reason=StopReason.END_TURN,
+            )
+
+    sender = ObservedModelSender(_BrokenObservation(), context=object())
+    candidate = _stream_candidate()
+    request = UnifiedRequest(
+        model=candidate.model.model_id,
+        messages=[UnifiedMessage(role="user", content="hi")],
+        max_tokens=128,
+    )
+    success_adapter = _Adapter()
+    response, attempt_id = await sender.send_chat(
+        success_adapter,
+        object(),
+        candidate,
+        request,
+        logical_call_id="best-effort-success",
+    )
+    assert response.usage is not None
+    assert attempt_id is None
+    assert success_adapter.calls == 1
+
+    provider_error = RuntimeError("provider failed")
+    failing_adapter = _Adapter(provider_error)
+    with pytest.raises(RuntimeError) as raised:
+        await sender.send_chat(
+            failing_adapter,
+            object(),
+            candidate,
+            request,
+            logical_call_id="best-effort-provider-error",
+        )
+    assert raised.value is provider_error
+    assert failing_adapter.calls == 1
+
+
+@pytest.mark.asyncio
+async def test_unified_stream_real_entry_observes_first_delta_and_done_usage(
+    monkeypatch,
+):
     attempt_service = _RecordingAttemptService()
     sender = ObservedModelSender(attempt_service, context=object())
 
     class _StreamAdapter:
         async def stream(self, *_args, **_kwargs):
             yield UnifiedStreamEvent(type="text_delta", text="hello")
-            yield UnifiedStreamEvent(type="done", usage=UnifiedUsage(input_tokens=2, output_tokens=1))
+            yield UnifiedStreamEvent(
+                type="done", usage=UnifiedUsage(input_tokens=2, output_tokens=1)
+            )
 
     adapter = _StreamAdapter()
-    monkeypatch.setattr("backend.services.ai_reviewer.unified_client._get_adapter", lambda _family: adapter)
-    client = UnifiedAIClient(observer=sender, context=object(), logical_call_factory=lambda: "stream-call")
+    monkeypatch.setattr(
+        "backend.services.ai_reviewer.unified_client._get_adapter",
+        lambda _family: adapter,
+    )
+    client = UnifiedAIClient(
+        observer=sender, context=object(), logical_call_factory=lambda: "stream-call"
+    )
     events = [
         event
         async for event in client.stream_with_retry(
-            [_stream_candidate()], [UnifiedMessage(role="user", content="hi")], role="reviewer",
+            [_stream_candidate()],
+            [UnifiedMessage(role="user", content="hi")],
+            role="reviewer",
             logical_call_factory=lambda: "stream-call",
         )
     ]
     assert [event.type for event in events] == ["text_delta", "done"]
-    assert [event[0] for event in attempt_service.events] == ["begin", "first_token", "finish"]
+    assert [event[0] for event in attempt_service.events] == [
+        "begin",
+        "first_token",
+        "finish",
+    ]
     assert attempt_service.events[0][1:4] == ("stream-call", "primary", "reviewer")
     assert attempt_service.events[2][2]["raw_usage"].output_tokens == 1
 
@@ -535,7 +1060,11 @@ async def test_consume_stream_event_enforces_reasoning_preview_policy_matrix(
             if policy.capture_mode == CAPTURE_ARTIFACT
             else REASONING_SUMMARIZED
         ),
-        provider_event_metadata={"event": "summary", "url": "https://evil.test", "raw": "secret"},
+        provider_event_metadata={
+            "event": "summary",
+            "url": "https://evil.test",
+            "raw": "secret",
+        },
     )
 
     await sender.consume_stream_event(
@@ -548,7 +1077,9 @@ async def test_consume_stream_event_enforces_reasoning_preview_policy_matrix(
     )
 
     assert bool(previews) is should_preview
-    assert attempt_service.events[0][0] == "reasoning" if attempt_service.events else True
+    assert (
+        attempt_service.events[0][0] == "reasoning" if attempt_service.events else True
+    )
 
 
 @pytest.mark.asyncio
@@ -562,14 +1093,18 @@ async def test_consume_stream_event_records_omitted_phases_without_preview_text(
 
     attempt_service.record_reasoning_event = record_reasoning_event
     await sender.consume_stream_event(
-        UnifiedStreamEvent(type="reasoning_start", text=None, reasoning_availability="omitted"),
+        UnifiedStreamEvent(
+            type="reasoning_start", text=None, reasoning_availability="omitted"
+        ),
         attempt=SimpleNamespace(id=1),
         preview_callback=previews.append,
         is_admin=True,
         has_admin_channel=True,
     )
     await sender.consume_stream_event(
-        UnifiedStreamEvent(type="reasoning_end", text=None, reasoning_availability="omitted"),
+        UnifiedStreamEvent(
+            type="reasoning_end", text=None, reasoning_availability="omitted"
+        ),
         attempt=SimpleNamespace(id=1),
         preview_callback=previews.append,
         is_admin=True,
@@ -578,13 +1113,16 @@ async def test_consume_stream_event_records_omitted_phases_without_preview_text(
 
     assert previews == []
     assert [item[2]["event_type"] for item in attempt_service.events] == [
-        "reasoning_start", "reasoning_end"
+        "reasoning_start",
+        "reasoning_end",
     ]
     assert all(item[2]["availability"] == "omitted" for item in attempt_service.events)
 
 
 @pytest.mark.asyncio
-async def test_canonical_transcript_regression_excludes_all_reasoning_text(db_session, chain):
+async def test_canonical_transcript_regression_excludes_all_reasoning_text(
+    db_session, chain
+):
     _, thread, work_unit, attempt = chain
     service = ToolService(_AsyncAdapter(db_session))
     message = await service.append_assistant_message(
@@ -607,7 +1145,7 @@ async def test_conversation_restore_follows_head_revision_after_compaction(
     _, thread, work_unit, _ = chain
     adapter = _AsyncAdapter(db_session)
     context_service = ContextService(adapter)
-    tool_service = ToolService(adapter)
+    tool_service = ToolService(adapter, encryption_provider=_FakeEncryption())
     lease = await context_service.acquire_lease(thread.id, work_unit.id)
 
     await tool_service.append_conversation_message(
@@ -647,7 +1185,9 @@ async def test_conversation_restore_follows_head_revision_after_compaction(
 
 
 @pytest.mark.asyncio
-async def test_done_usage_finishes_attempt_and_preserves_reported_usage(db_session, chain):
+async def test_done_usage_finishes_attempt_and_preserves_reported_usage(
+    db_session, chain
+):
     _, thread, work_unit, _ = chain
     revision = ActivityCanonicalContextRevision(
         thread_id=thread.id,
@@ -665,10 +1205,15 @@ async def test_done_usage_finishes_attempt_and_preserves_reported_usage(db_sessi
         work_unit_id=work_unit.id,
         thread_id=work_unit.thread_id,
         role_snapshot=RoleConfigSnapshot(
-            role="reviewer", requested_provider="provider", requested_model="model",
-            requested_thinking_mode=None, candidate_chain=(("provider", "model"),),
-            account_id="account", protocol_family="openai_compatible",
-            endpoint_fingerprint="a" * 64, config_snapshot_version=1,
+            role="reviewer",
+            requested_provider="provider",
+            requested_model="model",
+            requested_thinking_mode=None,
+            candidate_chain=(("provider", "model"),),
+            account_id="account",
+            protocol_family="openai_compatible",
+            endpoint_fingerprint="a" * 64,
+            config_snapshot_version=1,
             captured_at=datetime.now(timezone.utc),
         ),
     )
@@ -678,7 +1223,11 @@ async def test_done_usage_finishes_attempt_and_preserves_reported_usage(db_sessi
 
     class _StreamAdapter:
         async def stream(self, *_args, **_kwargs):
-            yield UnifiedStreamEvent(type="reasoning_delta", text="summary", reasoning_availability=REASONING_SUMMARIZED)
+            yield UnifiedStreamEvent(
+                type="reasoning_delta",
+                text="summary",
+                reasoning_availability=REASONING_SUMMARIZED,
+            )
             yield UnifiedStreamEvent(
                 type="usage",
                 usage=UnifiedUsage(
@@ -691,20 +1240,29 @@ async def test_done_usage_finishes_attempt_and_preserves_reported_usage(db_sessi
                 usage=UnifiedUsage(
                     output_tokens=3,
                     reasoning_tokens=2,
-                    reported_fields=frozenset(
-                        {"output_tokens", "reasoning_tokens"}
-                    ),
+                    reported_fields=frozenset({"output_tokens", "reasoning_tokens"}),
                 ),
                 stop_reason=StopReason.END_TURN,
             )
 
-    events = [event async for event in sender.send_stream(
-        _StreamAdapter(), object(), candidate, UnifiedRequest(model="model", messages=[], max_tokens=10),
-        logical_call_id="done-call", reasoning_policy=ReasoningCapturePolicy(capture_mode=CAPTURE_METADATA_ONLY),
-        context_revision_id=revision.id,
-    )]
+    events = [
+        event
+        async for event in sender.send_stream(
+            _StreamAdapter(),
+            object(),
+            candidate,
+            UnifiedRequest(model="model", messages=[], max_tokens=10),
+            logical_call_id="done-call",
+            reasoning_policy=ReasoningCapturePolicy(capture_mode=CAPTURE_METADATA_ONLY),
+            context_revision_id=revision.id,
+        )
+    ]
     assert events[-1].type == "done"
-    attempt = db_session.scalars(select(ActivityModelAttempt).where(ActivityModelAttempt.logical_call_id == "done-call")).one()
+    attempt = db_session.scalars(
+        select(ActivityModelAttempt).where(
+            ActivityModelAttempt.logical_call_id == "done-call"
+        )
+    ).one()
     assert attempt.status == "completed"
     assert attempt.stop_reason == "end_turn"
     assert attempt.input_tokens == 5 and attempt.output_tokens == 3
@@ -722,28 +1280,47 @@ async def test_unified_stream_real_entry_marks_failure_on_provider_error(monkeyp
             yield UnifiedStreamEvent(type="text_delta", text="partial")
             raise RuntimeError("https://evil.test?api_key=secret body=secret")
 
-    monkeypatch.setattr("backend.services.ai_reviewer.unified_client._get_adapter", lambda _family: _FailingStreamAdapter())
-    client = UnifiedAIClient(observer=sender, context=object(), logical_call_factory=lambda: "stream-call")
+    monkeypatch.setattr(
+        "backend.services.ai_reviewer.unified_client._get_adapter",
+        lambda _family: _FailingStreamAdapter(),
+    )
+    client = UnifiedAIClient(
+        observer=sender, context=object(), logical_call_factory=lambda: "stream-call"
+    )
     with pytest.raises(RuntimeError):
         async for _event in client.stream_with_retry(
-            [_stream_candidate()], [UnifiedMessage(role="user", content="hi")], role="reviewer",
+            [_stream_candidate()],
+            [UnifiedMessage(role="user", content="hi")],
+            role="reviewer",
         ):
             pass
-    assert [event[0] for event in attempt_service.events] == ["begin", "first_token", "fail"]
+    assert [event[0] for event in attempt_service.events] == [
+        "begin",
+        "first_token",
+        "fail",
+    ]
 
 
 @pytest.mark.asyncio
-async def test_embedding_service_without_context_uses_fake_sdk_production_path(monkeypatch):
+async def test_embedding_service_without_context_uses_fake_sdk_production_path(
+    monkeypatch,
+):
     from backend.services import embedding_service as module
 
     settings = SimpleNamespace(
-        embedding_provider="openai", embedding_base_url="https://embedding.example/v1",
-        embedding_api_key="key", embedding_model="embedding-model", embedding_batch_size=10,
+        embedding_provider="openai",
+        embedding_base_url="https://embedding.example/v1",
+        embedding_api_key="key",
+        embedding_model="embedding-model",
+        embedding_batch_size=10,
     )
 
     class _EmbeddingAPI:
         async def create(self, **_kwargs):
-            return SimpleNamespace(data=[SimpleNamespace(embedding=[0.1, 0.2])], usage=SimpleNamespace(input_tokens=1))
+            return SimpleNamespace(
+                data=[SimpleNamespace(embedding=[0.1, 0.2])],
+                usage=SimpleNamespace(input_tokens=1),
+            )
 
     class _FakeSDK:
         def __init__(self, **kwargs):
