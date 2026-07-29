@@ -81,6 +81,31 @@ ENV_FIELD_GROUPS = {
     "admin": ["APP_DOMAIN"],
 }
 
+# Setup 页面可以从备份中预填的字段。未列出的配置仍会在完成 Setup 时恢复，
+# 但不会把不需要展示的密钥（例如 WebUI 会话密钥）回传给浏览器。
+SETUP_BACKUP_PREFILL_KEYS = frozenset(
+    {
+        "database_url",
+        "redis_url",
+        "github_app_id",
+        "github_private_key",
+        "github_webhook_secret",
+        "telegram_bot_token",
+        "app_domain",
+        "bot_username",
+        "github_oauth_client_id",
+        "github_oauth_client_secret",
+        "github_oauth_redirect_uri",
+        "mobile_oauth_allowed_redirect_uris",
+        "embedding_api_key",
+        "embedding_base_url",
+        "embedding_model",
+        "rerank_api_key",
+        "rerank_base_url",
+        "rerank_model",
+    }
+)
+
 
 class SetupService:
     """Setup Wizard 服务"""
@@ -509,67 +534,166 @@ class SetupService:
                 logger.info(f"已创建超级管理员: {github_username}")
             await session.commit()
 
-    async def complete_setup(self, all_config: dict[str, str]) -> dict[str, Any]:
+    @staticmethod
+    def _flatten_backup_values(
+        backup_sections: dict[str, list[Any]] | None,
+    ) -> dict[str, str | None]:
+        """把已校验的备份分类展开为配置键值映射。"""
+        if not backup_sections:
+            return {}
+        return {
+            record.key: record.value
+            for records in backup_sections.values()
+            for record in records
+        }
+
+    def get_backup_setup_values(
+        self,
+        backup_sections: dict[str, list[Any]],
+    ) -> dict[str, str]:
+        """提取可安全回填到 Setup 表单的备份字段。"""
+        values = self._flatten_backup_values(backup_sections)
+        return {
+            key: value
+            for key, value in values.items()
+            if key in SETUP_BACKUP_PREFILL_KEYS and value is not None
+        }
+
+    async def restore_backup_for_setup(
+        self,
+        backup_sections: dict[str, list[Any]],
+    ) -> Any:
+        """在已初始化的数据库中恢复备份，并尽力刷新当前进程配置。"""
+        from backend.models.database import async_session
+        from backend.services.config_backup_service import (
+            refresh_imported_runtime_config,
+            restore_config_backup,
+        )
+
+        async with async_session() as session:
+            result = await restore_config_backup(session, backup_sections)
+
+        try:
+            refresh_imported_runtime_config(result)
+        except Exception as exc:
+            # Setup 成功后必定重启，运行时刷新失败不影响已提交的备份数据。
+            logger.warning("Setup 备份已恢复，但运行时配置刷新失败: {}", exc)
+        return result
+
+    async def complete_setup(
+        self,
+        all_config: dict[str, str],
+        backup_sections: dict[str, list[Any]] | None = None,
+    ) -> dict[str, Any]:
         """完成 Setup 全流程
 
         Args:
             all_config: 所有配置项的环境变量键值对
+            backup_sections: 已严格校验的配置备份分类；为空时执行普通 Setup
 
         Returns:
             结果字典
         """
+        all_config = dict(all_config)
+        backup_values = self._flatten_backup_values(backup_sections)
+        database_url = ""
         try:
-            # 1. 自动生成 WEBUI_SECRET_KEY
-            all_config.setdefault("WEBUI_SECRET_KEY", secrets.token_hex(32))
-            # 活动可观测性 cursor HMAC 密钥：留空则新版 dispatcher 跳过，故自动生成
-            all_config.setdefault(
-                "ACTIVITY_CURSOR_SIGNING_SECRET", secrets.token_hex(32)
-            )
-
-            # 2. 未配置嵌入 API Key 时自动禁用 RAG，避免空 Key 调用报错
-            if not all_config.get("EMBEDDING_API_KEY", "").strip():
-                all_config["ENABLE_RAG"] = "false"
-                logger.info("未配置嵌入 API Key，自动禁用 RAG 功能")
-
-            database_url = all_config.get("DATABASE_URL", "")
-            admin_github = all_config.get("ADMIN_GITHUB_USERNAME", "")
-            admin_telegram_id = all_config.get("ADMIN_TELEGRAM_ID", "")
-
-            if not database_url:
-                return {"success": False, "message": "数据库连接字符串为必填项"}
-
-            # 3. 初始化数据库并创建表
-            await self.init_database(database_url)
-
-            # 4. 将所有配置写入数据库
-            await self.save_configs_to_db(all_config)
-
-            # 5. 创建管理员
-            if admin_github and admin_telegram_id:
-                try:
-                    telegram_id_int = int(admin_telegram_id)
-                    await self.create_admin_user(
-                        admin_github, telegram_id_int, database_url
-                    )
-                except ValueError, TypeError:
-                    return {
-                        "success": False,
-                        "message": f"管理员 Telegram ID 格式无效: {admin_telegram_id}",
-                    }
-            else:
+            # 1. 先校验管理员和数据库信息，避免无效请求产生部分写入。
+            admin_github = str(
+                all_config.get("ADMIN_GITHUB_USERNAME", "") or ""
+            ).strip()
+            admin_telegram_id = str(
+                all_config.get("ADMIN_TELEGRAM_ID", "") or ""
+            ).strip()
+            if not admin_github or not admin_telegram_id:
                 return {
                     "success": False,
                     "message": "管理员 GitHub 用户名和 Telegram ID 为必填项",
                 }
+            try:
+                telegram_id_int = int(admin_telegram_id)
+            except ValueError, TypeError:
+                return {
+                    "success": False,
+                    "message": f"管理员 Telegram ID 格式无效: {admin_telegram_id}",
+                }
 
-            # 6. 写入 connection.json 标记完成
+            database_url = str(all_config.get("DATABASE_URL", "") or "").strip()
+            if not database_url:
+                database_url = str(backup_values.get("database_url") or "").strip()
+            if not database_url:
+                return {"success": False, "message": "数据库连接字符串为必填项"}
+            # 显式填写的数据库地址优先；从备份取得时也写回完成配置。
+            all_config["DATABASE_URL"] = database_url
+
+            # 2. 优先沿用备份中的安全密钥，仅在新部署和备份都未提供时生成。
+            if not str(all_config.get("WEBUI_SECRET_KEY", "") or "").strip():
+                all_config["WEBUI_SECRET_KEY"] = str(
+                    backup_values.get("webui_secret_key") or secrets.token_hex(32)
+                )
+            # 活动可观测性 cursor HMAC 密钥：留空则新版 dispatcher 跳过，故自动生成
+            if not str(
+                all_config.get("ACTIVITY_CURSOR_SIGNING_SECRET", "") or ""
+            ).strip():
+                all_config["ACTIVITY_CURSOR_SIGNING_SECRET"] = str(
+                    backup_values.get("activity_cursor_signing_secret")
+                    or secrets.token_hex(32)
+                )
+
+            # 3. 表单或备份均未配置嵌入 API Key 时自动禁用 RAG。
+            embedding_api_key = str(
+                all_config.get("EMBEDDING_API_KEY", "")
+                or backup_values.get("embedding_api_key")
+                or ""
+            ).strip()
+            if not embedding_api_key:
+                all_config["ENABLE_RAG"] = "false"
+                logger.info("未配置嵌入 API Key，自动禁用 RAG 功能")
+
+            # 4. 初始化目标数据库；旧版备份不含系统分类时使用表单中的地址。
+            await self.init_database(database_url)
+
+            # 5. 先精确恢复备份，再写入本次 Setup 表单值，使部署时的显式修改优先。
+            import_result = None
+            if backup_sections is not None:
+                import_result = await self.restore_backup_for_setup(backup_sections)
+                logger.info(
+                    "Setup 配置备份已恢复, sections={}, created={}, updated={}, deleted={}",
+                    import_result.sections,
+                    import_result.created,
+                    import_result.updated,
+                    import_result.deleted,
+                )
+
+            # 6. 将 Setup 表单配置写入数据库。
+            await self.save_configs_to_db(all_config)
+
+            # 7. 备份不包含用户，始终由当前部署者创建/确认超级管理员。
+            await self.create_admin_user(admin_github, telegram_id_int, database_url)
+
+            # 8. 所有步骤成功后才写入 connection.json 标记完成。
             mark_setup_completed(database_url)
 
-            # 7. 返回成功（前端开始轮询 /health）
-            return {"success": True, "message": "配置完成，正在重启应用..."}
+            # 9. 返回成功（前端开始轮询 /health）。
+            response: dict[str, Any] = {
+                "success": True,
+                "message": "配置完成，正在重启应用...",
+            }
+            if import_result is not None:
+                response["backup_import"] = {
+                    "sections": list(import_result.sections),
+                    "created": import_result.created,
+                    "updated": import_result.updated,
+                    "deleted": import_result.deleted,
+                    "unchanged": import_result.unchanged,
+                }
+            return response
         except Exception as e:
             logger.error(f"Setup 完成失败: {e}")
-            return {"success": False, "message": f"配置失败: {e}"}
+            error_message = str(e)
+            if database_url and database_url in error_message:
+                error_message = error_message.replace(database_url, "***")
+            return {"success": False, "message": f"配置失败: {error_message}"}
 
     def trigger_restart(self) -> None:
         """触发应用重启（通过 SIGTERM 信号）"""

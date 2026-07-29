@@ -16,6 +16,10 @@ from backend.core.bootstrap import (
     write_connection_config,
 )
 from backend.core.setup_service import setup_service
+from backend.services.config_backup_service import (
+    ConfigBackupError,
+    parse_config_backup,
+)
 from backend.webui.deps import get_templates, render_template
 
 router = APIRouter(prefix="/setup", tags=["Setup Wizard"])
@@ -127,6 +131,48 @@ async def get_ai_models(request: Request):
     return _legacy_ai_migration_response()
 
 
+@router.post("/api/backup/inspect")
+async def inspect_config_backup(request: Request):
+    """校验配置备份，并返回 Setup 表单可预填的字段与分类摘要。"""
+    if not is_bootstrap_mode():
+        return JSONResponse(
+            {"success": False, "message": "Setup 已完成"}, status_code=403
+        )
+
+    try:
+        body = await request.json()
+        content = body.get("content") if isinstance(body, dict) else None
+        if not isinstance(content, str):
+            raise ConfigBackupError("缺少备份文件内容")
+
+        sections = parse_config_backup(content.encode("utf-8"))
+        counts = {section: len(records) for section, records in sections.items()}
+        setup_values = setup_service.get_backup_setup_values(sections)
+        return JSONResponse(
+            {
+                "success": True,
+                "sections": list(sections),
+                "counts": counts,
+                "total_count": sum(counts.values()),
+                "setup_values": setup_values,
+                "requires_database_url": not bool(
+                    setup_values.get("database_url", "").strip()
+                ),
+            }
+        )
+    except ConfigBackupError as exc:
+        return JSONResponse(
+            {"success": False, "message": f"备份文件无效: {exc}"},
+            status_code=400,
+        )
+    except Exception as exc:
+        logger.error("Setup 备份校验失败: {}", exc, exc_info=True)
+        return JSONResponse(
+            {"success": False, "message": "备份文件校验失败"},
+            status_code=400,
+        )
+
+
 @router.post("/api/save-step")
 async def save_step(request: Request):
     """保存单步配置
@@ -189,7 +235,31 @@ async def complete_setup(request: Request):
         )
 
     body = await request.json()
-    result = await setup_service.complete_setup(body)
+    if not isinstance(body, dict):
+        return JSONResponse(
+            {"success": False, "message": "请求内容必须是对象"}, status_code=400
+        )
+
+    backup_sections = None
+    backup_content = body.pop("CONFIG_BACKUP", None)
+    if backup_content is not None:
+        if not isinstance(backup_content, str):
+            return JSONResponse(
+                {"success": False, "message": "备份文件内容无效"}, status_code=400
+            )
+        try:
+            # 完成时重新校验浏览器保留的原始内容，不能依赖预检结果。
+            backup_sections = parse_config_backup(backup_content.encode("utf-8"))
+        except ConfigBackupError as exc:
+            return JSONResponse(
+                {"success": False, "message": f"备份文件无效: {exc}"},
+                status_code=400,
+            )
+
+    result = await setup_service.complete_setup(
+        body,
+        backup_sections=backup_sections,
+    )
 
     if result["success"]:
         # 异步触发重启（给前端时间接收响应）
