@@ -3,6 +3,7 @@
 {# Conversation-first live activity monitor. Sensitive text is never embedded in
    this page: super_admin fetches one audited artifact only after an explicit click. #}
 {% block title %}{{ _('activity.title') }} - Sakura AI{% endblock %}
+{% block global_sse_client %}{% endblock %}
 
 {% block content %}
 <style>
@@ -32,27 +33,22 @@
     @keydown.escape.window="closeTransientPanels()"
 >
     <div
-        class="grid h-full min-w-0 grid-cols-1 transition-[grid-template-columns] duration-200 md:grid-cols-[18rem_minmax(0,1fr)]"
+        class="grid h-full min-h-0 min-w-0 grid-cols-1 overflow-hidden transition-[grid-template-columns] duration-200 md:grid-cols-[18rem_minmax(0,1fr)]"
         :class="diagnosticsOpen ? 'lg:grid-cols-[18rem_minmax(0,1fr)_23rem]' : 'lg:grid-cols-[18rem_minmax(0,1fr)]'"
     >
         <!-- Session navigator -->
         <aside
-            class="min-w-0 flex-col border-r border-gray-200/80 bg-gray-50/70 dark:border-gray-700/80 dark:bg-gray-950/35"
+            class="h-full min-h-0 min-w-0 flex-col overflow-hidden border-r border-gray-200/80 bg-gray-50/70 dark:border-gray-700/80 dark:bg-gray-950/35"
             :class="selectedSessionId ? 'hidden md:flex' : 'flex'"
         >
             <div class="border-b border-gray-200/80 p-4 dark:border-gray-700/80">
-                <div class="flex items-center gap-2">
-                    <span class="flex h-8 w-8 items-center justify-center rounded-xl bg-gradient-to-br from-sakura-500 to-purple-600 text-white shadow-lg shadow-sakura-500/20">
-                        <i class="fas fa-wave-square text-xs"></i>
-                    </span>
-                    <div class="min-w-0">
-                        <h1 class="truncate text-base font-semibold text-gray-900 dark:text-white">
-                            {{ _('activity.title') }}
-                        </h1>
-                        <p class="truncate text-[11px] text-gray-500 dark:text-gray-400">
-                            {{ _('activity.conversation_first') }}
-                        </p>
-                    </div>
+                <div class="min-w-0">
+                    <h1 class="truncate text-base font-semibold text-gray-900 dark:text-white">
+                        {{ _('activity.title') }}
+                    </h1>
+                    <p class="truncate text-[11px] text-gray-500 dark:text-gray-400">
+                        {{ _('activity.conversation_first') }}
+                    </p>
                 </div>
                 <div class="mt-4 grid grid-cols-3 gap-1 rounded-xl bg-gray-100 p-1 dark:bg-gray-800">
                     <template x-for="option in sessionFilters" :key="option.value">
@@ -69,7 +65,7 @@
                 </div>
             </div>
 
-            <div class="activity-scroll flex-1 overflow-y-auto p-2">
+            <div class="activity-scroll min-h-0 flex-1 overflow-y-auto overscroll-contain p-2">
                 <template x-for="session in filteredSessions" :key="session.session_id">
                     <button
                         type="button"
@@ -128,12 +124,9 @@
         </aside>
 
         <!-- Conversation timeline -->
-        <main class="relative flex min-w-0 flex-col" :class="!selectedSessionId ? 'hidden md:flex' : 'flex'">
+        <main class="relative h-full min-h-0 min-w-0 overflow-hidden flex-col" :class="!selectedSessionId ? 'hidden md:flex' : 'flex'">
             <template x-if="!selectedSessionId">
                 <div class="flex h-full flex-col items-center justify-center px-8 text-center">
-                    <span class="mb-4 flex h-14 w-14 items-center justify-center rounded-2xl bg-sakura-50 text-sakura-500 dark:bg-sakura-950/40">
-                        <i class="far fa-comments text-xl"></i>
-                    </span>
                     <h2 class="text-sm font-semibold text-gray-800 dark:text-gray-100">{{ _('activity.stream_empty_title') }}</h2>
                     <p class="mt-1 max-w-sm text-xs leading-5 text-gray-500 dark:text-gray-400">{{ _('activity.stream_empty_hint') }}</p>
                 </div>
@@ -141,7 +134,7 @@
 
             <template x-if="selectedSessionId">
                 <div class="flex h-full min-h-0 flex-col">
-                    <header class="border-b border-gray-200/80 bg-white/80 px-4 py-3 backdrop-blur dark:border-gray-700/80 dark:bg-gray-900/80">
+                    <header class="shrink-0 border-b border-gray-200/80 bg-white/80 px-4 py-3 backdrop-blur dark:border-gray-700/80 dark:bg-gray-900/80">
                         <div class="flex items-center gap-3">
                             <button type="button" class="md:hidden text-gray-500" @click="backToSessions()">
                                 <i class="fas fa-chevron-left"></i>
@@ -201,7 +194,7 @@
                     <div
                         x-ref="timeline"
                         @scroll.passive="handleTimelineScroll()"
-                        class="activity-scroll flex-1 overflow-y-auto bg-[radial-gradient(circle_at_top,rgb(244_114_182_/_0.06),transparent_28rem)] px-3 py-4 sm:px-6"
+                        class="activity-scroll min-h-0 flex-1 overflow-y-auto overscroll-contain bg-[radial-gradient(circle_at_top,rgb(244_114_182_/_0.06),transparent_28rem)] px-3 py-4 sm:px-6"
                     >
                         <div class="mx-auto max-w-4xl">
                             <div x-show="conversationLoading" class="py-16 text-center text-xs text-gray-400">
@@ -247,13 +240,22 @@
                                                     <span class="shrink-0 text-[10px] text-gray-400" x-text="formatTime(entry.created_at)"></span>
                                                 </div>
                                                 <template x-if="entry.content_visibility === 'visible' && entry.content != null">
-                                                    <div class="mt-3">
-                                                        <div class="relative" :class="expandedEntries[entry.id] ? '' : 'activity-content-collapsed'">
+                                                    <div
+                                                        class="mt-3"
+                                                        x-data="{expanded: false, expandable: false}"
+                                                        x-init="$nextTick(() => {
+                                                            expandable = $refs.content.scrollHeight > $refs.content.clientHeight + 1;
+                                                        })"
+                                                    >
+                                                        <div x-ref="content" class="relative activity-content-collapsed"
+                                                             :style="expanded ? 'max-height:none; overflow:visible; mask-image:none; -webkit-mask-image:none;' : ''">
                                                             <pre class="whitespace-pre-wrap break-words font-sans text-[13px] leading-6 text-gray-700 dark:text-gray-200" x-text="entry.content"></pre>
                                                         </div>
-                                                        <button type="button" @click="toggleExpanded(entry.id)"
+                                                        <button x-show="expandable" x-cloak type="button"
+                                                                @click.stop="expanded = !expanded"
+                                                                :aria-expanded="expanded"
                                                                 class="mt-2 text-[10px] font-medium text-sakura-600 hover:text-sakura-700"
-                                                                x-text="expandedEntries[entry.id] ? labels.collapse : labels.expand"></button>
+                                                                x-text="expanded ? labels.collapse : labels.expand"></button>
                                                     </div>
                                                 </template>
                                                 <template x-if="entry.content_visibility !== 'visible'">
@@ -432,7 +434,7 @@
         <aside
             x-show="diagnosticsOpen && selectedSessionId"
             x-transition
-            class="activity-scroll fixed inset-y-0 right-0 z-40 w-[min(92vw,24rem)] overflow-y-auto border-l border-gray-200 bg-white p-4 shadow-2xl dark:border-gray-700 dark:bg-gray-900 lg:static lg:z-auto lg:w-auto lg:shadow-none"
+            class="activity-scroll fixed inset-y-0 right-0 z-40 min-h-0 w-[min(92vw,24rem)] overflow-y-auto overscroll-contain border-l border-gray-200 bg-white p-4 shadow-2xl dark:border-gray-700 dark:bg-gray-900 lg:static lg:z-auto lg:h-full lg:w-auto lg:shadow-none"
         >
             <div class="mb-4 flex items-center justify-between">
                 <div>
@@ -578,9 +580,12 @@ function activityObservability() {
         requestController: null,
         pollTimer: null,
         sessionTimer: null,
+        refreshTimer: null,
+        refreshInFlight: false,
+        refreshQueued: false,
+        lastNotificationSequence: 0,
         diagnosticsOpen: window.innerWidth >= 1024,
         focusedAttemptId: null,
-        expandedEntries: {},
         sensitiveContent: {},
         unreadCounts: {},
         knownSessionActivity: {},
@@ -636,13 +641,14 @@ function activityObservability() {
 
         async init() {
             await this.loadSessions();
-            this.sessionTimer = setInterval(() => this.loadSessions(), 15000);
-            this.pollTimer = setInterval(() => {
-                if (this.selectedSessionId) {
-                    this.loadConversationUpdates(this.selectedSessionId);
-                    this.refreshSnapshot(this.selectedSessionId);
-                }
-            }, 5000);
+            this.sessionTimer = setInterval(() => {
+                if (!document.hidden) this.loadSessions();
+            }, 30000);
+        },
+        destroy() {
+            if (this.sessionTimer) clearInterval(this.sessionTimer);
+            this.sessionTimer = null;
+            this.teardownSession();
         },
         async loadSessions() {
             this.loadingSessions = true;
@@ -685,6 +691,12 @@ function activityObservability() {
             }
         },
         teardownSession() {
+            this.stopFallbackPolling();
+            if (this.refreshTimer) clearTimeout(this.refreshTimer);
+            this.refreshTimer = null;
+            this.refreshInFlight = false;
+            this.refreshQueued = false;
+            this.lastNotificationSequence = 0;
             this.requestController?.abort();
             this.requestController = null;
             if (this.eventSource) this.eventSource.close();
@@ -695,7 +707,6 @@ function activityObservability() {
             this.historyCursor = null;
             this.eventsCursor = null;
             this.sensitiveContent = {};
-            this.expandedEntries = {};
             this.newMessageCount = 0;
             this.focusedAttemptId = null;
         },
@@ -791,16 +802,78 @@ function activityObservability() {
             if (this.selectedSessionId !== sessionId) return;
             await this.loadSnapshot(sessionId);
         },
+        scheduleRefresh(sessionId) {
+            if (this.selectedSessionId !== sessionId) return;
+            if (this.refreshInFlight) {
+                this.refreshQueued = true;
+                return;
+            }
+            if (this.refreshTimer) return;
+            this.refreshTimer = setTimeout(() => {
+                this.refreshTimer = null;
+                this.refreshSelectedSession(sessionId);
+            }, 500);
+        },
+        async refreshSelectedSession(sessionId) {
+            if (this.selectedSessionId !== sessionId) return;
+            if (this.refreshInFlight) {
+                this.refreshQueued = true;
+                return;
+            }
+            this.refreshInFlight = true;
+            try {
+                await Promise.all([
+                    this.loadConversationUpdates(sessionId),
+                    this.refreshSnapshot(sessionId),
+                ]);
+            } finally {
+                this.refreshInFlight = false;
+                if (this.refreshQueued && this.selectedSessionId === sessionId) {
+                    this.refreshQueued = false;
+                    this.scheduleRefresh(sessionId);
+                }
+            }
+        },
+        startFallbackPolling(sessionId) {
+            if (this.pollTimer || this.selectedSessionId !== sessionId) return;
+            this.pollTimer = setInterval(() => {
+                if (
+                    this.selectedSessionId === sessionId
+                    && !this.streamConnected
+                    && !document.hidden
+                ) {
+                    this.scheduleRefresh(sessionId);
+                }
+            }, 15000);
+        },
+        stopFallbackPolling() {
+            if (this.pollTimer) clearInterval(this.pollTimer);
+            this.pollTimer = null;
+        },
         subscribeStream(sessionId) {
+            this.startFallbackPolling(sessionId);
             this.eventSource = new EventSource(`/activity/observability/api/sessions/${sessionId}/stream`);
-            this.eventSource.onopen = () => { if (this.selectedSessionId === sessionId) this.streamConnected = true; };
-            this.eventSource.addEventListener('activity:notification', () => {
+            this.eventSource.onopen = () => {
                 if (this.selectedSessionId !== sessionId) return;
-                this.loadConversationUpdates(sessionId);
-                this.refreshSnapshot(sessionId);
-                this.loadSessions();
+                this.streamConnected = true;
+                this.stopFallbackPolling();
+            };
+            this.eventSource.addEventListener('activity:notification', event => {
+                if (this.selectedSessionId !== sessionId) return;
+                try {
+                    const sequence = Number(JSON.parse(event.data)?.sequence || 0);
+                    if (sequence && sequence <= this.lastNotificationSequence) return;
+                    if (sequence) this.lastNotificationSequence = sequence;
+                } catch (error) {
+                    console.warn('activity notification parse failed', error);
+                }
+                this.scheduleRefresh(sessionId);
             });
-            this.eventSource.onerror = () => { if (this.selectedSessionId === sessionId) this.streamConnected = false; };
+            this.eventSource.onerror = () => {
+                if (this.selectedSessionId !== sessionId) return;
+                this.streamConnected = false;
+                this.startFallbackPolling(sessionId);
+            };
         },
         async reloadCurrentSession() {
             const sessionId = this.selectedSessionId;
@@ -824,9 +897,6 @@ function activityObservability() {
         },
         resetFilters() {
             this.entryTypeFilter = this.roleFilter = this.threadFilter = this.invocationFilter = 'all';
-        },
-        toggleExpanded(entryId) {
-            this.expandedEntries = {...this.expandedEntries, [entryId]: !this.expandedEntries[entryId]};
         },
         artifactKey(entry, artifact) {
             return `${entry.id}:${artifact.artifact_id}`;

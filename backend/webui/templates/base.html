@@ -4,6 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>{% block title %}Sakura AI{% endblock %}</title>
+    <link rel="icon" href="data:,">
     <!-- Tailwind CSS CDN -->
     <script src="https://cdn.tailwindcss.com?plugins=typography"></script>
     <script>if(localStorage.getItem('theme')==='dark'){document.documentElement.classList.replace('light','dark')}</script>
@@ -642,7 +643,7 @@
     </script>
 
     <!-- SSE 实时推送客户端 -->
-    {% include "components/sse_client.html" %}
+    {% block global_sse_client %}{% include "components/sse_client.html" %}{% endblock %}
 
     <script>
     // === Markdown 渲染 ===
