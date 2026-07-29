@@ -692,7 +692,7 @@ async def download_config_backup(
     user: dict = Depends(require_super_admin),
     csrf_token: str = Depends(require_csrf),
 ):
-    """下载全局配置、AI 配置或两者的版本化 JSON 备份。"""
+    """下载全局、AI、系统配置或完整的版本化 JSON 备份。"""
     try:
         document = await export_config_backup(db, scope)
         content = serialize_config_backup(document)
@@ -778,6 +778,7 @@ async def upload_config_backup(
             "deleted": result.deleted,
             "unchanged": result.unchanged,
             "runtime_refresh_ok": runtime_refresh_ok,
+            "requires_restart": result.requires_restart,
         }
         await log_admin_action(
             db,
@@ -805,9 +806,13 @@ async def upload_config_backup(
         return toast_redirect(
             "/config/backup",
             (
-                "toast.config_backup_imported"
-                if runtime_refresh_ok
-                else "toast.config_backup_imported_restart"
+                "toast.config_backup_imported_restart"
+                if not runtime_refresh_ok
+                else (
+                    "toast.config_backup_imported_restart_required"
+                    if result.requires_restart
+                    else "toast.config_backup_imported"
+                )
             ),
             lang=lang,
             sections=section_names,

@@ -14,12 +14,18 @@ from backend.services.config_backup_service import (
     BACKUP_FORMAT,
     BACKUP_VERSION,
     GLOBAL_SECTION,
+    LEGACY_BACKUP_VERSION,
+    SYSTEM_SECTION,
     BackupRecord,
     ConfigBackupError,
     build_backup_document,
     parse_config_backup,
     restore_config_backup,
     serialize_config_backup,
+)
+from backend.services.system_config_service import (
+    SYSTEM_CONFIG_GROUPS,
+    SYSTEM_CONFIG_KEYS,
 )
 from backend.webui.deps import require_csrf, require_super_admin
 from backend.webui.routes import config as config_routes
@@ -71,6 +77,7 @@ def test_combined_backup_round_trip_preserves_allowed_values_and_secrets():
             "AI role bindings",
         ),
         BackupRecord("ai_api_max_retries", "3", "ai_api_max_retries"),
+        BackupRecord("app_port", "8000", "app_port"),
     ]
 
     document = build_backup_document(records, "all", exported_at=exported_at)
@@ -83,6 +90,7 @@ def test_combined_backup_round_trip_preserves_allowed_values_and_secrets():
     assert {record.key for record in parsed[GLOBAL_SECTION]} == {
         "max_concurrent_reviews"
     }
+    assert {record.key for record in parsed[SYSTEM_SECTION]} == {"app_port"}
     account = next(
         record for record in parsed[AI_SECTION] if record.key == "ai_account.acc_primary"
     )
@@ -130,6 +138,73 @@ def test_backup_rejects_invalid_typed_global_value():
 
     with pytest.raises(ConfigBackupError, match="值类型无效"):
         parse_config_backup(serialize_config_backup(document))
+
+
+def test_system_backup_round_trip_includes_connection_secrets():
+    document = build_backup_document(
+        [
+            BackupRecord(
+                "database_url",
+                "mysql+asyncmy://user:secret@db/sakura",
+                "database_url",
+            ),
+            BackupRecord("redis_url", "redis://:secret@redis:6379/0", "redis_url"),
+            BackupRecord("log_level", "INFO", "log_level"),
+        ],
+        "system",
+    )
+
+    parsed = parse_config_backup(serialize_config_backup(document))
+
+    assert document["contains_sensitive_values"] is True
+    assert {record.key for record in parsed[SYSTEM_SECTION]} == {
+        "database_url",
+        "redis_url",
+        "log_level",
+    }
+
+
+@pytest.mark.parametrize(
+    ("key", "value", "message"),
+    [
+        ("database_url", "sqlite:///tmp/app.db", "database_url 格式无效"),
+        ("app_port", "70000", "app_port 必须在 1 到 65535"),
+        ("log_level", "TRACE", "log_level 无效"),
+    ],
+)
+def test_system_backup_rejects_invalid_values(key: str, value: str, message: str):
+    document = build_backup_document(
+        [BackupRecord(key, value, key)],
+        "system",
+    )
+
+    with pytest.raises(ConfigBackupError, match=message):
+        parse_config_backup(serialize_config_backup(document))
+
+
+def test_v1_combined_backup_remains_importable_without_system_section():
+    document = {
+        "format": BACKUP_FORMAT,
+        "version": LEGACY_BACKUP_VERSION,
+        "scope": "all",
+        "sections": {
+            "global": {"count": 0, "configs": []},
+            "ai": {"count": 0, "configs": []},
+        },
+    }
+
+    parsed = parse_config_backup(json.dumps(document).encode())
+
+    assert set(parsed) == {GLOBAL_SECTION, AI_SECTION}
+
+
+def test_system_backup_key_registry_matches_the_system_config_page():
+    page_keys = {
+        key for group in SYSTEM_CONFIG_GROUPS for key in group["keys"]
+    }
+
+    assert SYSTEM_CONFIG_KEYS == page_keys
+    assert "redis_url" in SYSTEM_CONFIG_KEYS
 
 
 class _ScalarResult:
@@ -203,6 +278,38 @@ async def test_restore_replaces_only_the_included_section_exactly():
     assert result.deleted_keys == frozenset({"web_search_provider"})
     assert session.committed is True
     assert session.rolled_back is False
+
+
+@pytest.mark.asyncio
+async def test_system_restore_marks_restart_required_and_stays_in_scope():
+    database = AppConfig(
+        key_name="database_url",
+        key_value="mysql+asyncmy://old/db",
+        description="database_url",
+    )
+    redis = AppConfig(
+        key_name="redis_url",
+        key_value="redis://old:6379/0",
+        description="redis_url",
+    )
+    session = _FakeSession([database, redis])
+    sections = {
+        SYSTEM_SECTION: [
+            BackupRecord(
+                "database_url",
+                "mysql+asyncmy://new/db",
+                "database_url",
+            ),
+            BackupRecord("app_domain", "example.com", "app_domain"),
+        ]
+    }
+
+    result = await restore_config_backup(session, sections)
+
+    assert result.sections == (SYSTEM_SECTION,)
+    assert result.requires_restart is True
+    assert (result.created, result.updated, result.deleted) == (1, 1, 1)
+    assert session.deleted == [redis]
 
 
 def _route(path: str, method: str) -> APIRoute:

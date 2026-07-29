@@ -1,4 +1,4 @@
-"""全局配置与 AI 配置的版本化备份、校验和恢复服务。"""
+"""全局配置、AI 配置与系统配置的版本化备份、校验和恢复服务。"""
 
 from __future__ import annotations
 
@@ -25,16 +25,26 @@ from backend.core.config import (
     update_settings_field,
 )
 from backend.models.database import AppConfig
+from backend.services.system_config_service import (
+    RESTART_REQUIRED_KEYS,
+    SYSTEM_CONFIG_KEYS,
+    SYSTEM_SENSITIVE_KEYS,
+)
 
 BACKUP_FORMAT = "sakura-ai-config-backup"
-BACKUP_VERSION = 1
+BACKUP_VERSION = 2
+LEGACY_BACKUP_VERSION = 1
+SUPPORTED_BACKUP_VERSIONS = frozenset({LEGACY_BACKUP_VERSION, BACKUP_VERSION})
 BACKUP_MAX_BYTES = 5 * 1024 * 1024
 BACKUP_MAX_ENTRIES = 5000
 
 GLOBAL_SECTION = "global"
 AI_SECTION = "ai"
+SYSTEM_SECTION = "system"
 ALL_SCOPE = "all"
-VALID_SCOPES = frozenset({GLOBAL_SECTION, AI_SECTION, ALL_SCOPE})
+VALID_SCOPES = frozenset(
+    {GLOBAL_SECTION, AI_SECTION, SYSTEM_SECTION, ALL_SCOPE}
+)
 
 GLOBAL_CONFIG_KEYS = frozenset(BASIC_CONFIG_KEYS) | frozenset(
     get_all_dynamic_config_keys()
@@ -44,6 +54,10 @@ AI_CONFIG_PREFIXES = ("ai_account.", "ai_model_override.")
 
 _GLOBAL_SENSITIVE_KEYS = frozenset(DYNAMIC_CONFIG_SENSITIVE_KEYS) | {
     "web_search_api_key"
+}
+_SYSTEM_BACKUP_SENSITIVE_KEYS = frozenset(SYSTEM_SENSITIVE_KEYS) | {
+    "database_url",
+    "redis_url",
 }
 _ACCOUNT_ID_RE = re.compile(r"^[A-Za-z0-9_-]{1,80}$")
 _POSITIVE_INTEGER_KEYS = {
@@ -86,6 +100,7 @@ class ConfigImportResult:
     unchanged: int
     imported_values: dict[str, str | None]
     deleted_keys: frozenset[str]
+    requires_restart: bool
 
     @property
     def total_changes(self) -> int:
@@ -98,13 +113,23 @@ def config_section_for_key(key: str) -> str | None:
         return GLOBAL_SECTION
     if key in AI_CONFIG_KEYS or key.startswith(AI_CONFIG_PREFIXES):
         return AI_SECTION
+    if key in SYSTEM_CONFIG_KEYS:
+        return SYSTEM_SECTION
     return None
 
 
-def _sections_for_scope(scope: str) -> tuple[str, ...]:
+def _sections_for_scope(
+    scope: str,
+    *,
+    version: int = BACKUP_VERSION,
+) -> tuple[str, ...]:
     if scope == ALL_SCOPE:
-        return (GLOBAL_SECTION, AI_SECTION)
+        if version == LEGACY_BACKUP_VERSION:
+            return (GLOBAL_SECTION, AI_SECTION)
+        return (GLOBAL_SECTION, AI_SECTION, SYSTEM_SECTION)
     if scope in (GLOBAL_SECTION, AI_SECTION):
+        return (scope,)
+    if scope == SYSTEM_SECTION and version == BACKUP_VERSION:
         return (scope,)
     raise ConfigBackupError("不支持的备份范围")
 
@@ -114,7 +139,12 @@ def _is_sensitive_record(section: str, record: BackupRecord) -> bool:
         return False
     if section == AI_SECTION and record.key.startswith("ai_account."):
         return True
-    return section == GLOBAL_SECTION and record.key in _GLOBAL_SENSITIVE_KEYS
+    if section == GLOBAL_SECTION:
+        return record.key in _GLOBAL_SENSITIVE_KEYS
+    return (
+        section == SYSTEM_SECTION
+        and record.key in _SYSTEM_BACKUP_SENSITIVE_KEYS
+    )
 
 
 def build_backup_document(
@@ -180,6 +210,8 @@ async def export_config_backup(
                 *(AppConfig.key_name.like(f"{prefix}%") for prefix in AI_CONFIG_PREFIXES),
             ]
         )
+    if SYSTEM_SECTION in selected_sections:
+        conditions.append(AppConfig.key_name.in_(SYSTEM_CONFIG_KEYS))
 
     result = await db.execute(
         select(AppConfig).where(or_(*conditions)).order_by(AppConfig.key_name)
@@ -260,6 +292,39 @@ def _validate_global_record(record: BackupRecord) -> None:
         and record.value not in {"duckduckgo", "tavily"}
     ):
         raise ConfigBackupError("配置项 web_search_provider 包含不支持的选项")
+
+
+def _validate_system_record(record: BackupRecord) -> None:
+    _validate_typed_config_value(record.key, record.value)
+    if record.value is None or not record.value.strip():
+        return
+
+    value = record.value.strip()
+    if record.key == "database_url" and not value.startswith(
+        (
+            "mysql+aiomysql://",
+            "mysql+asyncmy://",
+            "mysql://",
+            "postgresql+asyncpg://",
+            "postgresql://",
+        )
+    ):
+        raise ConfigBackupError("系统配置 database_url 格式无效")
+    if record.key == "app_port":
+        try:
+            port = int(value)
+        except ValueError as exc:
+            raise ConfigBackupError("系统配置 app_port 必须是整数") from exc
+        if not 1 <= port <= 65535:
+            raise ConfigBackupError("系统配置 app_port 必须在 1 到 65535 之间")
+    if record.key == "log_level" and value.upper() not in {
+        "DEBUG",
+        "INFO",
+        "WARNING",
+        "ERROR",
+        "CRITICAL",
+    }:
+        raise ConfigBackupError("系统配置 log_level 无效")
 
 
 def _validate_ai_account(record: BackupRecord) -> None:
@@ -416,11 +481,12 @@ def parse_config_backup(content: bytes) -> dict[str, list[BackupRecord]]:
         raise ConfigBackupError("备份文件顶层必须是对象")
     if payload.get("format") != BACKUP_FORMAT:
         raise ConfigBackupError("备份文件格式标识不匹配")
-    if payload.get("version") != BACKUP_VERSION:
+    version = payload.get("version")
+    if version not in SUPPORTED_BACKUP_VERSIONS:
         raise ConfigBackupError("不支持此备份版本")
 
     scope = payload.get("scope")
-    selected_sections = _sections_for_scope(scope)
+    selected_sections = _sections_for_scope(scope, version=version)
     raw_sections = payload.get("sections")
     if not isinstance(raw_sections, dict):
         raise ConfigBackupError("备份文件缺少配置分类")
@@ -469,8 +535,10 @@ def parse_config_backup(content: bytes) -> dict[str, list[BackupRecord]]:
             )
             if section == GLOBAL_SECTION:
                 _validate_global_record(record)
-            else:
+            elif section == AI_SECTION:
                 _validate_ai_record(record)
+            else:
+                _validate_system_record(record)
             section_records.append(record)
             seen_keys.add(key)
 
@@ -487,11 +555,15 @@ async def restore_config_backup(
     sections: dict[str, list[BackupRecord]],
 ) -> ConfigImportResult:
     """事务式精确恢复所选分类，删除备份中不存在的同分类旧项。"""
-    if not sections or not set(sections).issubset({GLOBAL_SECTION, AI_SECTION}):
+    if not sections or not set(sections).issubset(
+        {GLOBAL_SECTION, AI_SECTION, SYSTEM_SECTION}
+    ):
         raise ConfigBackupError("没有可导入的配置分类")
 
     selected_sections = tuple(
-        section for section in (GLOBAL_SECTION, AI_SECTION) if section in sections
+        section
+        for section in (GLOBAL_SECTION, AI_SECTION, SYSTEM_SECTION)
+        if section in sections
     )
     conditions = []
     if GLOBAL_SECTION in sections:
@@ -503,6 +575,8 @@ async def restore_config_backup(
                 *(AppConfig.key_name.like(f"{prefix}%") for prefix in AI_CONFIG_PREFIXES),
             ]
         )
+    if SYSTEM_SECTION in sections:
+        conditions.append(AppConfig.key_name.in_(SYSTEM_CONFIG_KEYS))
 
     try:
         result = await db.execute(select(AppConfig).where(or_(*conditions)))
@@ -560,6 +634,9 @@ async def restore_config_backup(
         unchanged=unchanged,
         imported_values={key: record.value for key, record in imported.items()},
         deleted_keys=frozenset(deleted_keys),
+        requires_restart=bool(
+            (set(imported) | deleted_keys) & set(RESTART_REQUIRED_KEYS)
+        ),
     )
 
 
@@ -567,7 +644,9 @@ def refresh_imported_runtime_config(result: ConfigImportResult) -> None:
     """将恢复后的 DB 覆盖同步到当前进程的 Settings 与配置缓存。"""
     affected_keys = set(result.imported_values) | set(result.deleted_keys)
     runtime_keys = affected_keys & (
-        set(GLOBAL_CONFIG_KEYS) | set(AI_STRATEGY_CONFIG_KEYS)
+        set(GLOBAL_CONFIG_KEYS)
+        | set(AI_STRATEGY_CONFIG_KEYS)
+        | set(SYSTEM_CONFIG_KEYS)
     )
     invalidate_dynamic_config_cache(list(runtime_keys))
 

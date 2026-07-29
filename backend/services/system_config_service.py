@@ -91,6 +91,11 @@ SYSTEM_CONFIG_GROUPS = [
     },
 ]
 
+# 「系统配置」页面实际管理的完整键集合。
+SYSTEM_CONFIG_KEYS = frozenset(
+    key for group in SYSTEM_CONFIG_GROUPS for key in group["keys"]
+)
+
 
 class SystemConfigService:
     """系统核心配置服务"""
@@ -106,7 +111,7 @@ class SystemConfigService:
         settings = get_settings()
 
         result = await db.execute(
-            select(AppConfig).where(AppConfig.key_name.in_(CORE_CONFIG_KEYS))
+            select(AppConfig).where(AppConfig.key_name.in_(SYSTEM_CONFIG_KEYS))
         )
         db_configs = result.scalars().all()
         config_map = {c.key_name: c.key_value for c in db_configs}
