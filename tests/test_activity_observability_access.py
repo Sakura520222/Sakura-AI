@@ -480,6 +480,12 @@ async def test_snapshot_high_water_and_cursor_are_same_sequence(db):
     )
     assert snapshot["high_water_mark"] == 3
     assert cursor_body["last_scanned_sequence"] == 3
+    assert snapshot["usage_totals"] == {
+        "input_tokens": None,
+        "output_tokens": None,
+        "reasoning_tokens": None,
+        "cached_input_tokens": None,
+    }
 
 
 @pytest.mark.asyncio
@@ -694,6 +700,63 @@ async def test_conversation_projection_is_ordered_versioned_and_server_redacted(
     assert super_message["can_request_sensitive"] is True
     assert super_message["artifacts"][0]["artifact_id"] == artifact.id
     assert "encrypted-secret" not in json.dumps(super_page)
+
+
+@pytest.mark.asyncio
+async def test_conversation_projects_tool_round_once_without_blank_protocol_messages(db):
+    observed_session, thread, _, work_unit, attempt, _ = _conversation_chain(db)
+    db.session.add_all(
+        [
+            ActivityObservabilityMessage(
+                thread_id=thread.id,
+                work_unit_id=work_unit.id,
+                origin_attempt_id=attempt.id,
+                seq=3,
+                role="assistant",
+                content="",
+                message_json=(
+                    '{"role":"assistant","content":"",'
+                    '"tool_calls":[{"id":"tool-77","type":"function",'
+                    '"function":{"name":"read_file"}}]}'
+                ),
+                created_at=datetime(
+                    2026, 7, 20, 1, 0, 3, 500000, tzinfo=timezone.utc
+                ),
+            ),
+            ActivityObservabilityMessage(
+                thread_id=thread.id,
+                work_unit_id=work_unit.id,
+                origin_attempt_id=attempt.id,
+                seq=4,
+                role="tool",
+                content=None,
+                message_json='{"role":"tool","tool_call_id":"tool-77"}',
+                tool_call_id="tool-77",
+                created_at=datetime(2026, 7, 20, 1, 0, 5, tzinfo=timezone.utc),
+            ),
+        ]
+    )
+    db.session.commit()
+    projection = ConversationProjectionService(
+        db,
+        access_service=_service(db, ScopeAuthorizer()),
+    )
+
+    page = await projection.get_conversation(
+        observed_session.id,
+        {"user_id": "user-a", "repo": "owner/repo-77", "role": "user"},
+        limit=50,
+    )
+
+    assert not any(
+        entry["type"] == "message" and entry.get("seq") in {3, 4}
+        for entry in page["entries"]
+    )
+    assert [
+        entry["tool_call_id"]
+        for entry in page["entries"]
+        if entry["type"] == "tool_call"
+    ] == ["tool-77"]
 
 
 @pytest.mark.asyncio
