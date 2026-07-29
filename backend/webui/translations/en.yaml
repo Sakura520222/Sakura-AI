@@ -1926,6 +1926,9 @@ activity:
   view_reasoning_summary: "View reasoning summary on demand"
   view_request_projection: "View effective request on demand"
   view_response_projection: "View response projection on demand"
+  view_message_content: "View full message on demand"
+  view_tool_arguments: "View tool arguments on demand"
+  view_tool_result: "View tool result on demand"
   opaque_not_displayable: "Provider-encrypted content is unreadable"
   unknown: "Unknown"
 

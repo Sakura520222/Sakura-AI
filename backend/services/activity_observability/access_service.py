@@ -965,15 +965,23 @@ class ActivityAccessService:
         active_attempts = [
             project_attempt(item, user) for item in attempts if item.status == "running"
         ]
-        usage_totals = {
-            name: sum(int(getattr(item, name) or 0) for item in attempts)
-            for name in (
-                "input_tokens",
-                "output_tokens",
-                "reasoning_tokens",
-                "cached_input_tokens",
+        usage_totals: dict[str, int | None] = {}
+        for name in (
+            "input_tokens",
+            "output_tokens",
+            "reasoning_tokens",
+            "cached_input_tokens",
+        ):
+            reported_values = [
+                int(value)
+                for item in attempts
+                if (value := getattr(item, name)) is not None
+            ]
+            # Missing provider counters are unavailable, not provider-reported
+            # zero. A real reported zero remains distinguishable and sums to 0.
+            usage_totals[name] = (
+                sum(reported_values) if reported_values else None
             )
-        }
         newest_invocation = next(
             (
                 item

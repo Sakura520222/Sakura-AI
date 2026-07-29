@@ -342,6 +342,18 @@ class IssueAnalyzer:
         observer: Any = None,
     ) -> dict[str, Any]:
         """解析最终 Issue 分析，失败时进行一次仅格式修复。"""
+        # The final no-tool assistant turn is part of the canonical dialogue.
+        # Tool-loop turns were already emitted by the caller, but historically
+        # this terminal turn was parsed and returned without ever reaching the
+        # observability callback.
+        if event_callback:
+            try:
+                await event_callback(
+                    "message",
+                    {"role": "assistant", "content": response_text},
+                )
+            except Exception as exc:
+                logger.warning("event_callback failed: {}", exc)
         try:
             return self._parse_analysis_result(response_text)
         except IssueProtocolError as first_error:
@@ -554,6 +566,12 @@ class IssueAnalyzer:
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": user_message},
         ]
+        if event_callback:
+            for initial_message in messages:
+                try:
+                    await event_callback("message", initial_message)
+                except Exception as exc:
+                    logger.warning("event_callback failed: {}", exc)
 
         # 获取启用的工具
         enabled_tools = await self.tool_manager.get_enabled_tools(repo_full_name)

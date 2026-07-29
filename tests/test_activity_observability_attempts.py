@@ -37,6 +37,7 @@ from backend.core.ai_protocol.models import (
     UnifiedRequest,
     UnifiedResponse,
     UnifiedStreamEvent,
+    UnifiedToolCall,
     UnifiedUsage,
 )
 from backend.core.ai_protocol.registry import resolve_endpoint
@@ -537,6 +538,57 @@ async def test_authorized_message_artifact_decrypts_without_attempt_parent(
     )
 
 
+@pytest.mark.asyncio
+async def test_tool_request_artifact_keeps_structured_unified_tool_calls(
+    db_session, chain
+):
+    _, thread, work_unit, attempt = chain
+    service = ToolService(
+        _AsyncAdapter(db_session),
+        encryption_provider=_FakeEncryption(),
+        artifact_authorizer=_Allow(),
+    )
+    message = await service.append_conversation_message(
+        thread_id=thread.id,
+        work_unit_id=work_unit.id,
+        origin_attempt_id=attempt.id,
+        message={
+            "role": "assistant",
+            "content": "",
+            "tool_calls": [
+                UnifiedToolCall(
+                    id="call-structured",
+                    name="read_file",
+                    arguments='{"path":"README.md"}',
+                )
+            ],
+        },
+    )
+
+    view = await service.read_artifact_with_audit(
+        message.artifact_id,
+        reader="super-admin",
+    )
+    payload = json.loads(view.payload)
+    assert payload["tool_calls"] == [
+        {
+            "id": "call-structured",
+            "type": "function",
+            "function": {
+                "name": "read_file",
+                "arguments": '{"path":"README.md"}',
+            },
+        }
+    ]
+    assert "UnifiedToolCall" not in view.payload
+    execution = db_session.scalars(
+        select(ActivityToolExecution).where(
+            ActivityToolExecution.tool_call_id == "call-structured"
+        )
+    ).one()
+    assert execution.name == "read_file"
+
+
 def _threadless_context(work_unit):
     return InvocationContext(
         invocation_id=work_unit.invocation_id,
@@ -662,6 +714,55 @@ async def test_attempt_unknown_error_persists_safe_message_only(db_session, chai
         if getattr(stored, field) is not None
     )
     assert dangerous not in serialized
+
+
+@pytest.mark.asyncio
+async def test_nonstream_attempt_applies_normalized_nested_usage(db_session, chain):
+    _, _, _, attempt = chain
+    service = AttemptService(_AsyncAdapter(db_session))
+    raw_usage = {
+        "prompt_tokens": 4258,
+        "completion_tokens": 181,
+        "prompt_cache_hit_tokens": 3000,
+        "prompt_cache_miss_tokens": 1258,
+        "completion_tokens_details": {"reasoning_tokens": 120},
+        "total_tokens": 4439,
+    }
+    response = UnifiedResponse(
+        content="done",
+        tool_calls=[],
+        stop_reason=StopReason.END_TURN,
+        usage=UnifiedUsage(
+            input_tokens=4258,
+            output_tokens=181,
+            cache_read_tokens=3000,
+            reasoning_tokens=120,
+            reported_fields=frozenset(
+                {
+                    "input_tokens",
+                    "output_tokens",
+                    "cache_read_tokens",
+                    "reasoning_tokens",
+                }
+            ),
+        ),
+        raw=SimpleNamespace(json=lambda: {"usage": raw_usage}),
+    )
+
+    stored = await service.finish(attempt.id, response)
+
+    assert stored.input_tokens == 4258
+    assert stored.output_tokens == 181
+    assert stored.cached_input_tokens == 3000
+    assert stored.reasoning_tokens == 120
+    assert stored.cached_input_tokens_availability == "reported"
+    assert stored.reasoning_tokens_availability == "reported"
+    assert json.loads(stored.normalized_usage_json) == {
+        "cache_read_tokens": 3000,
+        "input_tokens": 4258,
+        "output_tokens": 181,
+        "reasoning_tokens": 120,
+    }
 
 
 def test_safe_summary_requires_provider_and_protocol_allowlist_match():

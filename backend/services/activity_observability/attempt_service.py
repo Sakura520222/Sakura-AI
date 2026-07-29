@@ -60,6 +60,9 @@ _SAFE_USAGE_FIELDS = frozenset(
         "cache_read_tokens",
         "cache_creation_tokens",
         "cached_tokens",
+        "cached_input_tokens",
+        "prompt_cache_hit_tokens",
+        "prompt_cache_miss_tokens",
         "reasoning_tokens",
         "total_tokens",
     }
@@ -261,7 +264,7 @@ def _safe_usage_payload(value: Any) -> dict[str, Any] | None:
             and not isinstance(value_part, bool)
             and value_part >= 0
         ):
-            result[name] = value_part
+            result[canonical] = value_part
     return result or None
 
 
@@ -648,6 +651,13 @@ class AttemptService:
             # UnifiedUsage's compatibility defaults are deliberately not reported.
             safe_raw = None
         safe_normalized = _safe_normalized_usage(normalized_usage)
+        if safe_normalized is None and usage is not None:
+            # ``UnifiedUsage`` has already normalized provider-specific nested
+            # counters such as completion_tokens_details.reasoning_tokens and
+            # DeepSeek's prompt_cache_hit_tokens. Prefer that normalized view
+            # when applying columns; the flat raw allowlist intentionally does
+            # not copy arbitrary nested response objects.
+            safe_normalized = _safe_usage_payload(usage)
         async with self._session_scope() as db:
             attempt = await self._load(db, attempt_id)
             values = {

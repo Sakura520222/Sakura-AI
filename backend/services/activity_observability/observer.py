@@ -155,26 +155,39 @@ class ObservedModelSender:
             )
             return
         if event == "completed":
+            reasoning_availability = getattr(
+                attempt, "reasoning_availability", "unavailable"
+            )
+            reasoning_tokens = getattr(attempt, "reasoning_tokens", None)
+            input_tokens = getattr(attempt, "input_tokens", None)
+            output_tokens = getattr(attempt, "output_tokens", None)
+            cached_input_tokens = getattr(attempt, "cached_input_tokens", None)
+            stop_reason = getattr(attempt, "stop_reason", None)
             bound.bind(
-                reasoning_availability=getattr(
-                    attempt, "reasoning_availability", "unavailable"
-                ),
-                reasoning_tokens=getattr(attempt, "reasoning_tokens", None),
-                input_tokens=getattr(attempt, "input_tokens", None),
-                output_tokens=getattr(attempt, "output_tokens", None),
-                cached_input_tokens=getattr(attempt, "cached_input_tokens", None),
-                stop_reason=getattr(attempt, "stop_reason", None),
+                reasoning_availability=reasoning_availability,
+                reasoning_tokens=reasoning_tokens,
+                input_tokens=input_tokens,
+                output_tokens=output_tokens,
+                cached_input_tokens=cached_input_tokens,
+                stop_reason=stop_reason,
                 elapsed_seconds=elapsed,
             ).info(
                 "AI 调用成功: call={} attempt={} provider={} model={} "
-                "thinking={} effort={} reasoning={} elapsed={:.3f}s",
+                "thinking={} effort={} reasoning={} reasoning_tokens={} "
+                "input_tokens={} output_tokens={} cached_input_tokens={} "
+                "stop_reason={} elapsed={:.3f}s",
                 logical_call_id,
                 attempt_id,
                 provider,
                 model,
                 thinking,
                 effort,
-                getattr(attempt, "reasoning_availability", "unavailable"),
+                reasoning_availability,
+                reasoning_tokens,
+                input_tokens,
+                output_tokens,
+                cached_input_tokens,
+                stop_reason,
                 elapsed or 0.0,
             )
             return

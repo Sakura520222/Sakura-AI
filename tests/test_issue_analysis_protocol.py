@@ -279,6 +279,31 @@ async def test_repairs_invalid_issue_analysis_once(monkeypatch):
     assert tracker.completion_tokens == 5
 
 
+@pytest.mark.asyncio
+async def test_valid_issue_analysis_emits_final_assistant_message():
+    analyzer = IssueAnalyzer.__new__(IssueAnalyzer)
+    events = []
+
+    async def callback(event_type, payload):
+        events.append((event_type, payload))
+
+    response_text = _issue_analysis()
+    result = await analyzer._parse_or_repair_analysis(
+        response_text,
+        [],
+        TokenTracker(),
+        event_callback=callback,
+    )
+
+    assert result["parse_source"] == "tagged_issue"
+    assert events == [
+        (
+            "message",
+            {"role": "assistant", "content": response_text},
+        )
+    ]
+
+
 def test_resolve_safe_context_uses_winner_window():
     """winner 窗口可用时，safe_context 应按实际服务模型重算（×0.8）。
 

@@ -30,7 +30,7 @@ from backend.services.activity_observability.access_service import (
     project_attempt,
 )
 
-CONVERSATION_PROJECTION_VERSION = 2
+CONVERSATION_PROJECTION_VERSION = 3
 _TYPE_RANK = {
     "invocation_boundary": 0,
     "thread_boundary": 1,
@@ -54,6 +54,24 @@ def _as_utc(value: datetime | None) -> datetime:
 
 def _iso(value: datetime | None) -> str | None:
     return _as_utc(value).isoformat() if value is not None else None
+
+
+def _message_tool_call_ids(message_json: str | None) -> set[str]:
+    """Read only public tool-call identifiers from a canonical message."""
+    try:
+        payload = json.loads(message_json or "{}")
+    except (TypeError, json.JSONDecodeError):
+        return set()
+    if not isinstance(payload, dict):
+        return set()
+    calls = payload.get("tool_calls")
+    if not isinstance(calls, list):
+        return set()
+    return {
+        str(item.get("id"))
+        for item in calls
+        if isinstance(item, dict) and item.get("id")
+    }
 
 
 def _b64encode(value: bytes) -> str:
@@ -362,6 +380,9 @@ class ConversationProjectionService:
 
         work_unit_map = {int(item.id): item for item in work_units}
         invocation_map = {int(item.id): item for item in invocations}
+        projected_tool_call_ids = {
+            str(item.tool_call_id) for item in tools if item.tool_call_id
+        }
         artifacts_by_attempt: dict[int, list[ActivityNativeArtifact]] = {}
         artifacts_by_operation: dict[int, list[ActivityNativeArtifact]] = {}
         artifacts_by_id = {int(item.id): item for item in artifacts}
@@ -438,6 +459,22 @@ class ConversationProjectionService:
             )
 
         for message in messages:
+            message_tool_call_ids = _message_tool_call_ids(message.message_json)
+            is_projected_tool_result = (
+                message.role == "tool"
+                and bool(message.tool_call_id)
+                and str(message.tool_call_id) in projected_tool_call_ids
+            )
+            is_projected_tool_request = (
+                message.role == "assistant"
+                and not str(message.content or "").strip()
+                and bool(message_tool_call_ids & projected_tool_call_ids)
+            )
+            if is_projected_tool_result or is_projected_tool_request:
+                # Canonical messages retain the exact protocol transcript, while
+                # the public conversation timeline represents a tool round once
+                # through its authoritative ActivityToolExecution card.
+                continue
             work_unit = work_unit_map.get(int(message.work_unit_id))
             content_allowed = message.role == "assistant"
             restricted = message.role in _SENSITIVE_MESSAGE_ROLES

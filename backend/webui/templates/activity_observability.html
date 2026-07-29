@@ -272,7 +272,7 @@
                                                         <div class="mt-1">
                                                             <button x-show="artifact.can_request" type="button" @click="loadArtifact(entry, artifact)"
                                                                     class="text-[10px] font-medium text-purple-600 hover:text-purple-700">
-                                                                <i class="fas fa-key mr-1"></i><span x-text="artifactLabel(artifact)"></span>
+                                                                <i class="fas fa-key mr-1"></i><span x-text="artifactLabel(entry, artifact)"></span>
                                                             </button>
                                                             <span x-show="artifact.capture_error" class="text-[10px] text-amber-600"
                                                                   x-text="artifactError(artifact)"></span>
@@ -341,7 +341,7 @@
                                                     <div class="mt-2">
                                                         <button x-show="artifact.can_request" type="button" @click="loadArtifact(entry, artifact)"
                                                                 class="text-[10px] font-medium text-purple-600 hover:text-purple-700">
-                                                            <i class="fas fa-key mr-1"></i><span x-text="artifactLabel(artifact)"></span>
+                                                            <i class="fas fa-key mr-1"></i><span x-text="artifactLabel(entry, artifact)"></span>
                                                         </button>
                                                         <span x-show="artifact.capture_error" class="text-[10px] text-amber-600" x-text="artifactError(artifact)"></span>
                                                         <div x-show="artifactState(entry, artifact)" class="mt-2 rounded-xl bg-white/75 p-3 dark:bg-gray-900/60">
@@ -373,7 +373,7 @@
                                                         <div>
                                                             <button x-show="artifact.can_request" type="button" @click="loadArtifact(entry, artifact)"
                                                                     class="text-[10px] font-medium text-emerald-700 hover:text-emerald-800 dark:text-emerald-300">
-                                                                <i class="fas fa-key mr-1"></i><span x-text="artifactLabel(artifact)"></span>
+                                                                <i class="fas fa-key mr-1"></i><span x-text="artifactLabel(entry, artifact)"></span>
                                                             </button>
                                                             <span x-show="artifact.capture_error" class="text-[10px] text-amber-600" x-text="artifactError(artifact)"></span>
                                                             <div x-show="artifactState(entry, artifact)" class="mt-2 rounded-xl bg-white/75 p-3 dark:bg-gray-900/60">
@@ -1018,7 +1018,15 @@ function activityObservability() {
             };
             return descriptions[entry.availability] || {{ _('activity.reasoning_omitted_hint') | tojson }};
         },
-        artifactLabel(artifact) {
+        artifactLabel(entry, artifact) {
+            if (entry.type === 'message') {
+                return {{ _('activity.view_message_content') | tojson }};
+            }
+            if (entry.type === 'tool_call') {
+                return artifact.artifact_kind === 'response_projection'
+                    ? {{ _('activity.view_tool_result') | tojson }}
+                    : {{ _('activity.view_tool_arguments') | tojson }};
+            }
             const labels = {
                 reasoning_content: {{ _('activity.view_reasoning_content') | tojson }},
                 reasoning_summary: {{ _('activity.view_reasoning_summary') | tojson }},
