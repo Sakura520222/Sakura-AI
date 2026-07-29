@@ -21,6 +21,7 @@ from sqlalchemy import desc, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
+from backend.core.config import get_settings
 from backend.models.activity_observability_models import (
     ActivityCanonicalContextRevision,
     ActivityContextOperation,
@@ -80,7 +81,9 @@ class CursorConfig:
 
     def __post_init__(self) -> None:
         if not isinstance(self.secret, str) or len(self.secret) < 32:
-            raise ValueError("activity cursor signing secret must be at least 32 characters")
+            raise ValueError(
+                "activity cursor signing secret must be at least 32 characters"
+            )
         if self.ttl_seconds <= 0:
             raise ValueError("cursor ttl must be positive")
         if self.page_size <= 0:
@@ -162,7 +165,9 @@ def _safe_payload(payload: dict[str, Any], *, admin: bool) -> dict[str, Any]:
     return result
 
 
-def project_event(event: ActivityObservabilityEvent, user: dict[str, Any]) -> dict[str, Any]:
+def project_event(
+    event: ActivityObservabilityEvent, user: dict[str, Any]
+) -> dict[str, Any]:
     """Return a REST-safe event projection, never the raw projection JSON."""
     try:
         payload = json.loads(event.projection_json or "{}")
@@ -182,7 +187,9 @@ def project_event(event: ActivityObservabilityEvent, user: dict[str, Any]) -> di
     }
 
 
-def project_attempt(attempt: ActivityModelAttempt, user: dict[str, Any]) -> dict[str, Any]:
+def project_attempt(
+    attempt: ActivityModelAttempt, user: dict[str, Any]
+) -> dict[str, Any]:
     """Project only safe lifecycle, model, thinking, and availability values."""
     result: dict[str, Any] = {
         "attempt_id": attempt.id,
@@ -194,9 +201,17 @@ def project_attempt(attempt: ActivityModelAttempt, user: dict[str, Any]) -> dict
         "requested_provider": attempt.requested_provider,
         "requested_model": attempt.requested_model,
         "requested_thinking_mode": attempt.requested_thinking_mode,
+        "requested_effort": attempt.requested_effort,
         "effective_provider": attempt.effective_provider,
         "effective_model": attempt.effective_model,
         "effective_thinking_mode": attempt.effective_thinking_mode,
+        "effective_effort": attempt.effective_effort,
+        "protocol_family": attempt.protocol_family,
+        "max_output_tokens": attempt.max_output_tokens,
+        "temperature": attempt.temperature,
+        "top_p": attempt.top_p,
+        "top_k": attempt.top_k,
+        "tool_choice": attempt.tool_choice,
         "started_at": _iso(attempt.started_at),
         "first_token_at": _iso(attempt.first_token_at),
         "completed_at": _iso(attempt.completed_at),
@@ -219,6 +234,8 @@ def project_attempt(attempt: ActivityModelAttempt, user: dict[str, Any]) -> dict
         "cached_input_tokens_availability": attempt.cached_input_tokens_availability,
         "cached_input_tokens_source": attempt.cached_input_tokens_source,
         "context_revision_id": attempt.context_revision_id,
+        "retry_of_attempt_id": attempt.retry_of_attempt_id,
+        "fallback_from_attempt_id": attempt.fallback_from_attempt_id,
         "error_category": attempt.error_category,
     }
     return result
@@ -332,6 +349,7 @@ def project_session(
         "resource_type": identity.resource_type if identity else None,
         "resource_number": identity.resource_number if identity else None,
         "repo_full_name": identity.repo_full_name if identity else None,
+        "event_sequence": int(session.session_event_sequence or 0),
         "last_active_at": _iso(session.last_active_at),
         "created_at": _iso(session.created_at),
         "archived_at": _iso(session.archived_at),
@@ -384,6 +402,7 @@ class ActivityAccessService:
             yield self.db
             return
         from backend.models import database as db_module
+
         if db_module.async_session is None:
             raise RuntimeError("异步数据库会话尚未初始化")
         async with db_module.async_session() as db:
@@ -409,7 +428,9 @@ class ActivityAccessService:
             value = await value
         return value
 
-    async def authorization_version(self, user: dict[str, Any], db: AsyncSession) -> str:
+    async def authorization_version(
+        self, user: dict[str, Any], db: AsyncSession
+    ) -> str:
         value = await self._invoke("authorization_version", db=db, user=user)
         if value is None:
             value = user.get("auth_version")
@@ -439,20 +460,152 @@ class ActivityAccessService:
         page_size = max(1, min(int(limit), 100))
         buffer = max(page_size, int(scan_buffer)) * max(1, int(scan_buffer))
         rows = (
-            await db.execute(
-                select(ActivityObservabilitySession)
-                .options(selectinload(ActivityObservabilitySession.resource_identity))
-                .order_by(desc(ActivityObservabilitySession.last_active_at))
-                .limit(buffer)
+            (
+                await db.execute(
+                    select(ActivityObservabilitySession)
+                    .options(
+                        selectinload(ActivityObservabilitySession.resource_identity)
+                    )
+                    .order_by(desc(ActivityObservabilitySession.last_active_at))
+                    .limit(buffer)
+                )
             )
-        ).scalars().all()
+            .scalars()
+            .all()
+        )
+        session_ids = [int(item.id) for item in rows]
+        invocation_rows = (
+            list(
+                (
+                    await db.execute(
+                        select(ActivityInvocation)
+                        .where(ActivityInvocation.session_id.in_(session_ids))
+                        .order_by(
+                            ActivityInvocation.session_id,
+                            desc(ActivityInvocation.id),
+                        )
+                    )
+                ).scalars()
+            )
+            if session_ids
+            else []
+        )
+        latest_invocation_by_session: dict[int, ActivityInvocation] = {}
+        for invocation in invocation_rows:
+            latest_invocation_by_session.setdefault(
+                int(invocation.session_id),
+                invocation,
+            )
+        latest_invocation_ids = [
+            int(item.id) for item in latest_invocation_by_session.values()
+        ]
+        work_units = (
+            list(
+                (
+                    await db.execute(
+                        select(ActivityInvocationWorkUnit)
+                        .where(
+                            ActivityInvocationWorkUnit.invocation_id.in_(
+                                latest_invocation_ids
+                            )
+                        )
+                        .order_by(
+                            ActivityInvocationWorkUnit.invocation_id,
+                            desc(ActivityInvocationWorkUnit.is_primary),
+                            desc(ActivityInvocationWorkUnit.id),
+                        )
+                    )
+                ).scalars()
+            )
+            if latest_invocation_ids
+            else []
+        )
+        work_units_by_invocation: dict[int, list[ActivityInvocationWorkUnit]] = {}
+        for work_unit in work_units:
+            work_units_by_invocation.setdefault(
+                int(work_unit.invocation_id),
+                [],
+            ).append(work_unit)
+        work_unit_ids = [int(item.id) for item in work_units]
+        attempts = (
+            list(
+                (
+                    await db.execute(
+                        select(ActivityModelAttempt)
+                        .where(ActivityModelAttempt.work_unit_id.in_(work_unit_ids))
+                        .order_by(
+                            ActivityModelAttempt.work_unit_id,
+                            desc(ActivityModelAttempt.attempt_index),
+                        )
+                    )
+                ).scalars()
+            )
+            if work_unit_ids
+            else []
+        )
+        latest_attempt_by_work_unit: dict[int, ActivityModelAttempt] = {}
+        for attempt in attempts:
+            latest_attempt_by_work_unit.setdefault(int(attempt.work_unit_id), attempt)
         projected: list[dict[str, Any]] = []
         for session in rows:
             try:
                 await self.require_session_access(session.id, user, db)
             except ActivityNotFoundError:
                 continue
-            projected.append(project_session(session, user))
+            item = project_session(session, user)
+            invocation = latest_invocation_by_session.get(int(session.id))
+            selected_work_unit = None
+            attempt = None
+            if invocation is not None:
+                invocation_work_units = work_units_by_invocation.get(
+                    int(invocation.id),
+                    [],
+                )
+                selected_work_unit = next(
+                    (
+                        work_unit
+                        for work_unit in invocation_work_units
+                        if work_unit.is_primary
+                    ),
+                    invocation_work_units[0] if invocation_work_units else None,
+                )
+                if selected_work_unit is not None:
+                    attempt = latest_attempt_by_work_unit.get(
+                        int(selected_work_unit.id)
+                    )
+            item.update(
+                {
+                    "current_phase": (
+                        invocation.current_phase if invocation is not None else None
+                    ),
+                    "active_provider": (
+                        attempt.effective_provider
+                        if attempt is not None
+                        else selected_work_unit.final_provider
+                        if selected_work_unit is not None
+                        else None
+                    ),
+                    "active_model": (
+                        attempt.effective_model
+                        if attempt is not None
+                        else selected_work_unit.final_model
+                        if selected_work_unit is not None
+                        else None
+                    ),
+                    "thinking_mode": (
+                        attempt.effective_thinking_mode
+                        if attempt is not None
+                        else selected_work_unit.final_thinking_mode
+                        if selected_work_unit is not None
+                        else None
+                    ),
+                    "attempt_kind": (
+                        attempt.attempt_kind if attempt is not None else None
+                    ),
+                    "attempt_status": (attempt.status if attempt is not None else None),
+                }
+            )
+            projected.append(item)
             if len(projected) >= page_size:
                 break
         return {"sessions": projected}
@@ -514,8 +667,16 @@ class ActivityAccessService:
                 work_unit = await db.get(ActivityInvocationWorkUnit, row.work_unit_id)
                 resolved_session_id = work_unit.session_id if work_unit else None
             elif isinstance(row, ActivityNativeArtifact):
-                attempt = await db.get(ActivityModelAttempt, row.attempt_id) if row.attempt_id else None
-                work_unit = await db.get(ActivityInvocationWorkUnit, attempt.work_unit_id) if attempt else None
+                attempt = (
+                    await db.get(ActivityModelAttempt, row.attempt_id)
+                    if row.attempt_id
+                    else None
+                )
+                work_unit = (
+                    await db.get(ActivityInvocationWorkUnit, attempt.work_unit_id)
+                    if attempt
+                    else None
+                )
                 resolved_session_id = work_unit.session_id if work_unit else None
         if resolved_session_id is None:
             raise ActivityNotFoundError("activity object not found")
@@ -571,8 +732,13 @@ class ActivityAccessService:
             if not isinstance(body, dict):
                 raise ValueError
             required = {
-                "v", "session_id", "last_scanned_sequence", "auth_version",
-                "projection_version", "issued_at", "expires_at",
+                "v",
+                "session_id",
+                "last_scanned_sequence",
+                "auth_version",
+                "projection_version",
+                "issued_at",
+                "expires_at",
             }
             if set(body) != required or body["v"] != 1:
                 raise ValueError
@@ -580,7 +746,9 @@ class ActivityAccessService:
                 raise ValueError
             if body["auth_version"] != str(authorization_version):
                 raise CursorResetRequiredError("authorization version changed")
-            if body["projection_version"] != int(projection_version or config.projection_version):
+            if body["projection_version"] != int(
+                projection_version or config.projection_version
+            ):
                 raise CursorResetRequiredError("projection version changed")
             now = (_as_utc(self.now()) or datetime.now(timezone.utc)).timestamp()
             if now >= int(body["expires_at"]):
@@ -590,7 +758,13 @@ class ActivityAccessService:
             return body
         except CursorResetRequiredError:
             raise
-        except (ValueError, TypeError, KeyError, json.JSONDecodeError, UnicodeError) as exc:
+        except (
+            ValueError,
+            TypeError,
+            KeyError,
+            json.JSONDecodeError,
+            UnicodeError,
+        ) as exc:
             raise CursorResetRequiredError("invalid cursor") from exc
 
     async def create_snapshot(
@@ -638,7 +812,10 @@ class ActivityAccessService:
                     await db.execute(
                         select(ActivityModelAttempt)
                         .where(ActivityModelAttempt.work_unit_id.in_(work_unit_ids))
-                        .order_by(ActivityModelAttempt.work_unit_id, ActivityModelAttempt.attempt_index)
+                        .order_by(
+                            ActivityModelAttempt.work_unit_id,
+                            ActivityModelAttempt.attempt_index,
+                        )
                     )
                 ).scalars()
             )
@@ -742,7 +919,9 @@ class ActivityAccessService:
             projected_attempt = project_attempt(attempt, user)
             latest_context = latest_snapshot_by_attempt.get(int(attempt.id))
             projected_attempt["context"] = (
-                project_context_snapshot(latest_context) if latest_context is not None else None
+                project_context_snapshot(latest_context)
+                if latest_context is not None
+                else None
             )
             attempts_by_work_unit.setdefault(int(attempt.work_unit_id), []).append(
                 projected_attempt
@@ -754,7 +933,9 @@ class ActivityAccessService:
             )
         work_units_by_invocation: dict[int, list[dict[str, Any]]] = {}
         for work_unit in work_units:
-            work_units_by_invocation.setdefault(int(work_unit.invocation_id), []).append(
+            work_units_by_invocation.setdefault(
+                int(work_unit.invocation_id), []
+            ).append(
                 project_work_unit(
                     work_unit,
                     attempts_by_work_unit.get(int(work_unit.id), []),
@@ -813,8 +994,12 @@ class ActivityAccessService:
                     "thread_id": thread.id,
                     "purpose": thread.thread_purpose,
                     "current_revision_id": thread.current_revision_id,
-                    "revision_number": revision.revision_number if revision is not None else None,
-                    "revision_reason": revision.reason if revision is not None else None,
+                    "revision_number": revision.revision_number
+                    if revision is not None
+                    else None,
+                    "revision_reason": revision.reason
+                    if revision is not None
+                    else None,
                     "message_count": int(thread.last_seq or 0),
                     "last_active_at": _iso(thread.last_active_at),
                 }
@@ -823,7 +1008,9 @@ class ActivityAccessService:
             "session": project_session(session, user),
             "high_water_mark": high_water,
             "current_phase": (
-                newest_invocation.current_phase if newest_invocation is not None else None
+                newest_invocation.current_phase
+                if newest_invocation is not None
+                else None
             ),
             "active_models": active_attempts,
             "usage_totals": usage_totals,
@@ -866,15 +1053,19 @@ class ActivityAccessService:
         # Scan every sequence after the cursor (including hidden/internal rows)
         # so a hidden row can never block cursor progress or cause a replay loop.
         rows = (
-            await db.execute(
-                select(ActivityObservabilityEvent)
-                .where(
-                    ActivityObservabilityEvent.session_id == session_id,
-                    ActivityObservabilityEvent.event_sequence > last_sequence,
+            (
+                await db.execute(
+                    select(ActivityObservabilityEvent)
+                    .where(
+                        ActivityObservabilityEvent.session_id == session_id,
+                        ActivityObservabilityEvent.event_sequence > last_sequence,
+                    )
+                    .order_by(ActivityObservabilityEvent.event_sequence)
                 )
-                .order_by(ActivityObservabilityEvent.event_sequence)
             )
-        ).scalars().all()
+            .scalars()
+            .all()
+        )
         visible: list[dict[str, Any]] = []
         scanned = last_sequence
         for event in rows:
@@ -906,8 +1097,18 @@ class ActivityAccessService:
         db = db or self.db
         if db is None:
             return False
-        if not await self._invoke("authorize_session", db=db, session=session, user=user):
-            if not (_is_super_admin(user) and self.super_admin_global_policy and self.super_admin_global_policy(user)):
+        if not _is_super_admin(user):
+            return False
+        if not get_settings().activity_artifact_super_admin_read_enabled:
+            return False
+        if not await self._invoke(
+            "authorize_session", db=db, session=session, user=user
+        ):
+            if not (
+                _is_super_admin(user)
+                and self.super_admin_global_policy
+                and self.super_admin_global_policy(user)
+            ):
                 return False
         trace_allowed = await self._invoke(
             "may_view_trace", db=db, session=session, user=user
@@ -916,7 +1117,7 @@ class ActivityAccessService:
             return False
         if artifact.visibility not in {"admin_only", "public"}:
             return False
-        if artifact.capture_mode not in {"artifact", "metadata_only"}:
+        if artifact.capture_mode != "artifact":
             return False
         return artifact.availability in {"summarized", "provider_exposed"}
 
@@ -924,9 +1125,9 @@ class ActivityAccessService:
 async def require_session_access(
     session_id: int, user: dict[str, Any], db: AsyncSession, *, authorizer: Any
 ) -> ActivityObservabilitySession:
-    return await ActivityAccessService(db, authorizer=authorizer).require_session_access(
-        session_id, user, db
-    )
+    return await ActivityAccessService(
+        db, authorizer=authorizer
+    ).require_session_access(session_id, user, db)
 
 
 __all__ = [

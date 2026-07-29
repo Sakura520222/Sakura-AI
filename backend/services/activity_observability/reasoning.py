@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from backend.core.config import get_settings
+
 REASONING_UNAVAILABLE = "unavailable"
 REASONING_OMITTED = "omitted"
 REASONING_SUMMARIZED = "summarized"
@@ -59,11 +61,9 @@ class ReasoningCapturePolicy:
     def allows_provider(self, provider: str, protocol_family: str) -> bool:
         """Return whether provider and protocol are explicitly permitted."""
         return (
-            (not self.provider_allowlist or provider in self.provider_allowlist)
-            and (
-                not self.protocol_allowlist
-                or protocol_family in self.protocol_allowlist
-            )
+            not self.provider_allowlist or provider in self.provider_allowlist
+        ) and (
+            not self.protocol_allowlist or protocol_family in self.protocol_allowlist
         )
 
     def should_persist_payload(
@@ -97,10 +97,33 @@ class ReasoningCapturePolicy:
             return False
         if not is_admin:
             return False
-        expected_visibility = self.summary_visibility if visibility is None else visibility
+        expected_visibility = (
+            self.summary_visibility if visibility is None else visibility
+        )
         return expected_visibility in VALID_VISIBILITY and self.allows_provider(
             provider, protocol_family
         )
+
+
+def configured_reasoning_capture_policy() -> ReasoningCapturePolicy:
+    """Build the live AppConfig-backed policy used for each concrete attempt."""
+    settings = get_settings()
+
+    def values(raw: str) -> frozenset[str]:
+        return frozenset(
+            item.strip() for item in str(raw or "").split(",") if item.strip()
+        )
+
+    return ReasoningCapturePolicy(
+        capture_mode=(
+            CAPTURE_ARTIFACT
+            if settings.activity_reasoning_capture_enabled
+            else CAPTURE_METADATA_ONLY
+        ),
+        provider_allowlist=values(settings.activity_reasoning_provider_allowlist),
+        protocol_allowlist=values(settings.activity_reasoning_protocol_allowlist),
+        retention_days=settings.activity_artifact_retention_days,
+    )
 
 
 def build_compatibility_key(

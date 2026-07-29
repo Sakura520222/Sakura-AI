@@ -1,25 +1,36 @@
-"""New activity observability REST/SSE helpers.
-
-This intentionally stops at snapshot/cursor access primitives; Task 10 owns the
-full page and route surface.  It is safe to mount as a small API router now.
-"""
+"""Conversation-first activity observability REST/SSE surface."""
 
 from __future__ import annotations
 
 import asyncio
 import json
+from dataclasses import asdict
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi.encoders import jsonable_encoder
 from sqlalchemy.ext.asyncio import AsyncSession
-from starlette.responses import StreamingResponse
+from starlette.responses import JSONResponse, StreamingResponse
 
 from backend.services.activity_observability.access_service import (
     ActivityAccessService,
     ActivityNotFoundError,
     CursorResetRequiredError,
 )
-from backend.webui.deps import get_db, get_user_preferences, render_template, require_auth
+from backend.services.activity_observability.conversation_service import (
+    ConversationProjectionService,
+)
+from backend.services.activity_observability.tool_service import (
+    ArtifactAuthorization,
+    DefaultArtifactEncryptionProvider,
+    ToolService,
+)
+from backend.webui.deps import (
+    get_db,
+    get_user_preferences,
+    render_template,
+    require_auth,
+)
 from backend.webui.sse import sse_manager, user_activity_channel
 
 router = APIRouter(prefix="/activity/observability", tags=["Activity Observability"])
@@ -35,6 +46,47 @@ def _access_service(request: Request, db: AsyncSession) -> ActivityAccessService
 
 def _not_found() -> HTTPException:
     return HTTPException(status_code=404, detail="Not Found")
+
+
+class _RequestArtifactAuthorizer:
+    def __init__(
+        self,
+        *,
+        access: ActivityAccessService,
+        user: dict[str, Any],
+        db: AsyncSession,
+        session_id: int,
+    ) -> None:
+        self.access = access
+        self.user = user
+        self.db = db
+        self.session_id = session_id
+
+    async def authorize(
+        self,
+        *,
+        artifact,
+        session,
+        require_trace: bool,
+        **_: Any,
+    ) -> ArtifactAuthorization:
+        if self.user.get("role") != "super_admin":
+            return ArtifactAuthorization(False, "repository", False)
+        if int(session.id) != self.session_id:
+            return ArtifactAuthorization(False, "repository", False)
+        allowed = await self.access.may_view_reasoning_artifact(
+            self.user,
+            session,
+            artifact,
+            db=self.db,
+        )
+        return ArtifactAuthorization(
+            allowed=allowed,
+            authorization_scope=(
+                "super_admin:trace" if require_trace else "super_admin"
+            ),
+            can_display=allowed,
+        )
 
 
 @router.get("/")
@@ -71,7 +123,9 @@ async def activity_snapshot(
     db: AsyncSession = Depends(get_db),
 ) -> dict[str, Any]:
     try:
-        return await _access_service(request, db).create_snapshot(session_id, user, db=db)
+        return await _access_service(request, db).create_snapshot(
+            session_id, user, db=db
+        )
     except ActivityNotFoundError as exc:
         raise _not_found() from exc
     except CursorResetRequiredError as exc:
@@ -94,6 +148,97 @@ async def activity_events(
         raise _not_found() from exc
     except CursorResetRequiredError as exc:
         raise HTTPException(status_code=409, detail="cursor reset required") from exc
+
+
+@router.get("/api/sessions/{session_id}/conversation")
+async def activity_conversation(
+    session_id: int,
+    request: Request,
+    cursor: str | None = None,
+    limit: int | None = None,
+    user: dict = Depends(require_auth),
+    db: AsyncSession = Depends(get_db),
+) -> dict[str, Any]:
+    try:
+        access = _access_service(request, db)
+        return await ConversationProjectionService(
+            db,
+            access_service=access,
+        ).get_conversation(
+            session_id,
+            user,
+            cursor=cursor,
+            limit=limit,
+        )
+    except ActivityNotFoundError as exc:
+        raise _not_found() from exc
+    except CursorResetRequiredError as exc:
+        raise HTTPException(status_code=409, detail="cursor reset required") from exc
+
+
+@router.get("/api/sessions/{session_id}/conversation/events")
+async def activity_conversation_events(
+    session_id: int,
+    request: Request,
+    cursor: str | None = None,
+    user: dict = Depends(require_auth),
+    db: AsyncSession = Depends(get_db),
+) -> dict[str, Any]:
+    try:
+        access = _access_service(request, db)
+        return await ConversationProjectionService(
+            db,
+            access_service=access,
+        ).get_updates(
+            session_id,
+            user,
+            cursor=cursor,
+        )
+    except ActivityNotFoundError as exc:
+        raise _not_found() from exc
+    except CursorResetRequiredError as exc:
+        raise HTTPException(status_code=409, detail="cursor reset required") from exc
+
+
+@router.get("/api/sessions/{session_id}/artifacts/{artifact_id}")
+async def activity_artifact(
+    session_id: int,
+    artifact_id: int,
+    request: Request,
+    user: dict = Depends(require_auth),
+    db: AsyncSession = Depends(get_db),
+):
+    access = _access_service(request, db)
+    try:
+        await access.require_session_access(session_id, user, db)
+    except ActivityNotFoundError as exc:
+        raise _not_found() from exc
+    authorizer = _RequestArtifactAuthorizer(
+        access=access,
+        user=user,
+        db=db,
+        session_id=session_id,
+    )
+    service = ToolService(
+        encryption_provider=DefaultArtifactEncryptionProvider(),
+        artifact_authorizer=authorizer,
+    )
+    view = await service.read_artifact_with_audit(
+        artifact_id,
+        reader=str(user.get("user_id") or user.get("sub") or "unknown"),
+        require_trace=True,
+    )
+    if view is None:
+        raise _not_found()
+    return JSONResponse(
+        content=jsonable_encoder(asdict(view)),
+        headers={
+            "Cache-Control": "no-store, no-cache, must-revalidate, private",
+            "Pragma": "no-cache",
+            "Expires": "0",
+            "X-Content-Type-Options": "nosniff",
+        },
+    )
 
 
 @router.get("/api/sessions/{session_id}/stream")

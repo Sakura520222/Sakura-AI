@@ -11,6 +11,7 @@ from sqlalchemy import (
     Boolean,
     CheckConstraint,
     Column,
+    Float,
     ForeignKey,
     ForeignKeyConstraint,
     Index,
@@ -608,10 +609,17 @@ class ActivityModelAttempt(Base):
     requested_provider = Column(String(100), nullable=True)
     requested_model = Column(String(255), nullable=True)
     requested_thinking_mode = Column(String(100), nullable=True)
+    requested_effort = Column(String(50), nullable=True)
     effective_provider = Column(String(100), nullable=True)
     effective_model = Column(String(255), nullable=True)
     effective_thinking_mode = Column(String(100), nullable=True)
+    effective_effort = Column(String(50), nullable=True)
     protocol_family = Column(String(100), nullable=True)
+    max_output_tokens = Column(Integer, nullable=True)
+    temperature = Column(Float, nullable=True)
+    top_p = Column(Float, nullable=True)
+    top_k = Column(Integer, nullable=True)
+    tool_choice = Column(String(100), nullable=True)
     account_id = Column(String(255), nullable=True)
     endpoint_fingerprint = Column(
         OBSERVABILITY_ASCII_64,
@@ -920,9 +928,7 @@ class ActivityThreadLease(Base):
 
     __tablename__ = f"{OBSERVABILITY_PREFIX}thread_leases"
     __table_args__ = (
-        UniqueConstraint(
-            "thread_id", name="uq_activity_observability_thread_lease"
-        ),
+        UniqueConstraint("thread_id", name="uq_activity_observability_thread_lease"),
         ForeignKeyConstraint(
             ["owner_work_unit_id", "thread_id"],
             [
@@ -1107,6 +1113,7 @@ class ActivityNativeArtifact(Base):
     payload_ciphertext = Column(OBSERVABILITY_TEXT, nullable=True)
     payload_nonce = Column(String(255), nullable=True)
     encryption_key_id = Column(String(255), nullable=True)
+    capture_error = Column(String(100), nullable=True)
     payload_safe_summary = Column(OBSERVABILITY_TEXT, nullable=True)
     payload_hash = Column(OBSERVABILITY_ASCII_512, nullable=True)
     retention_expires_at = Column(TIMESTAMP, nullable=True)
@@ -1133,9 +1140,7 @@ class ActivityPublication(Base):
         nullable=False,
     )
     publication_kind = Column(String(100), nullable=False)
-    external_idempotency_key = Column(
-        OBSERVABILITY_ASCII_512, nullable=False
-    )
+    external_idempotency_key = Column(OBSERVABILITY_ASCII_512, nullable=False)
     status = Column(String(50), nullable=False, default="pending")
     external_object_id = Column(String(255), nullable=True)
     external_object_url = Column(String(1024), nullable=True)

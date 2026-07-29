@@ -25,6 +25,10 @@ class _FakeApiClient:
     def __init__(self):
         self.calls = []
 
+    async def resolve_role_model_context(self, role):
+        assert role == "main"
+        return "test-model", 100_000
+
     async def call_with_retry(self, **kwargs):
         self.calls.append(kwargs)
         message = SimpleNamespace(content=VALID_REVIEW, tool_calls=[])

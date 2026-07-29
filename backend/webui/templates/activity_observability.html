@@ -1,537 +1,1057 @@
 {% extends "base.html" %}
 
-{# 新版实时活动监控：长期 Session / Invocation / Work Unit / Attempt。
-   仅渲染授权投影；reasoning 区域按可见性策略展示，omitted 时不显示 spinner 或伪造文本。 #}
+{# Conversation-first live activity monitor. Sensitive text is never embedded in
+   this page: super_admin fetches one audited artifact only after an explicit click. #}
 {% block title %}{{ _('activity.title') }} - Sakura AI{% endblock %}
 
 {% block content %}
-<div class="flex flex-col lg:flex-row gap-4 h-[calc(100vh-140px)]"
-     x-data="activityObservability()" x-init="init()">
+<style>
+    .activity-signal-rail::before {
+        background: linear-gradient(180deg, rgb(244 114 182 / .6), rgb(168 85 247 / .35), transparent);
+        content: "";
+        inset: 1.75rem auto 0 .62rem;
+        position: absolute;
+        width: 1px;
+    }
+    .activity-content-collapsed {
+        max-height: 12rem;
+        overflow: hidden;
+        -webkit-mask-image: linear-gradient(to bottom, black 65%, transparent 100%);
+        mask-image: linear-gradient(to bottom, black 65%, transparent 100%);
+    }
+    .activity-scroll {
+        scrollbar-color: rgb(244 114 182 / .45) transparent;
+        scrollbar-width: thin;
+    }
+</style>
 
-    <!-- ========== 左栏：Session 列表 ========== -->
-    <div class="w-full lg:w-[380px] shrink-0 flex flex-col gap-4">
-        <div>
-            <h1 class="text-2xl font-bold bg-gradient-to-r from-sakura-700 to-purple-700 dark:from-sakura-400 dark:to-purple-400 bg-clip-text text-transparent">
-                {{ _('activity.title') }}
-            </h1>
-            <p class="mt-1 text-sm text-gray-500 dark:text-gray-400">
-                {{ _('activity.description') }}
-            </p>
-        </div>
-
-        <div class="flex items-center gap-1.5 flex-wrap">
-            <button @click="filter = 'all'"
-                    :class="filter === 'all' ? 'bg-sakura-500 text-white shadow-md shadow-sakura-500/25' : 'text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800'"
-                    class="px-2.5 py-1 rounded-lg text-xs font-medium transition-all">
-                {{ _('activity.filter_all') }}
-            </button>
-            <button @click="filter = 'pr'"
-                    :class="filter === 'pr' ? 'bg-blue-500 text-white shadow-md shadow-blue-500/25' : 'text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800'"
-                    class="px-2.5 py-1 rounded-lg text-xs font-medium transition-all">
-                {{ _('activity.filter_pr') }}
-            </button>
-            <button @click="filter = 'issue'"
-                    :class="filter === 'issue' ? 'bg-purple-500 text-white shadow-md shadow-purple-500/25' : 'text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800'"
-                    class="px-2.5 py-1 rounded-lg text-xs font-medium transition-all">
-                {{ _('activity.filter_issue') }}
-            </button>
-        </div>
-
-        <div class="flex-1 overflow-y-auto rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 divide-y divide-gray-100 dark:divide-gray-700">
-            <template x-for="s in filteredSessions" :key="s.session_id">
-                <div @click="selectSession(s.session_id)"
-                     :class="selectedSessionId === s.session_id ? 'bg-sakura-50 dark:bg-sakura-900/20 border-l-4 border-sakura-500' : 'hover:bg-gray-50 dark:hover:bg-gray-700/50'"
-                     class="p-3 cursor-pointer transition-all">
-                    <div class="flex items-center justify-between">
-                        <span class="text-sm font-medium text-gray-800 dark:text-gray-200 truncate"
-                              x-text="s.repo_full_name || ('#' + s.session_id)"></span>
-                        <span class="text-[10px] px-1.5 py-0.5 rounded-full"
-                              :class="resourceBadgeClass(s.resource_type)"
-                              x-text="s.resource_type"></span>
+<div
+    class="h-[calc(100vh-8.5rem)] min-h-[36rem] overflow-hidden rounded-2xl border border-gray-200/80 bg-white/80 shadow-sm backdrop-blur dark:border-gray-700/80 dark:bg-gray-900/70"
+    x-data="activityObservability()"
+    x-init="init()"
+    @keydown.escape.window="closeTransientPanels()"
+>
+    <div
+        class="grid h-full min-w-0 grid-cols-1 transition-[grid-template-columns] duration-200 md:grid-cols-[18rem_minmax(0,1fr)]"
+        :class="diagnosticsOpen ? 'lg:grid-cols-[18rem_minmax(0,1fr)_23rem]' : 'lg:grid-cols-[18rem_minmax(0,1fr)]'"
+    >
+        <!-- Session navigator -->
+        <aside
+            class="min-w-0 flex-col border-r border-gray-200/80 bg-gray-50/70 dark:border-gray-700/80 dark:bg-gray-950/35"
+            :class="selectedSessionId ? 'hidden md:flex' : 'flex'"
+        >
+            <div class="border-b border-gray-200/80 p-4 dark:border-gray-700/80">
+                <div class="flex items-center gap-2">
+                    <span class="flex h-8 w-8 items-center justify-center rounded-xl bg-gradient-to-br from-sakura-500 to-purple-600 text-white shadow-lg shadow-sakura-500/20">
+                        <i class="fas fa-wave-square text-xs"></i>
+                    </span>
+                    <div class="min-w-0">
+                        <h1 class="truncate text-base font-semibold text-gray-900 dark:text-white">
+                            {{ _('activity.title') }}
+                        </h1>
+                        <p class="truncate text-[11px] text-gray-500 dark:text-gray-400">
+                            {{ _('activity.conversation_first') }}
+                        </p>
                     </div>
-                    <div class="mt-1 flex items-center justify-between text-[11px] text-gray-400 dark:text-gray-500">
-                        <span x-text="formatStatus(s.status)"></span>
-                        <span x-text="formatTime(s.last_active_at)"></span>
-                    </div>
                 </div>
-            </template>
-            <template x-if="!loading && filteredSessions.length === 0">
-                <div class="p-6 text-center text-sm text-gray-400 dark:text-gray-500">
-                    {{ _('activity.no_active_tasks') }}
+                <div class="mt-4 grid grid-cols-3 gap-1 rounded-xl bg-gray-100 p-1 dark:bg-gray-800">
+                    <template x-for="option in sessionFilters" :key="option.value">
+                        <button
+                            type="button"
+                            @click="filter = option.value"
+                            class="rounded-lg px-2 py-1.5 text-[11px] font-medium transition"
+                            :class="filter === option.value
+                                ? 'bg-white text-sakura-700 shadow-sm dark:bg-gray-700 dark:text-sakura-300'
+                                : 'text-gray-500 hover:text-gray-800 dark:text-gray-400 dark:hover:text-white'"
+                            x-text="option.label"
+                        ></button>
+                    </template>
                 </div>
-            </template>
-            <template x-if="loading">
-                <div class="p-6 text-center text-sm text-gray-400 dark:text-gray-500">
-                    {{ _('activity.loading') }}
-                </div>
-            </template>
-        </div>
-    </div>
-
-    <!-- ========== 右栏：Session 详情 ========== -->
-    <div class="flex-1 overflow-y-auto rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 p-4">
-        <template x-if="!selectedSessionId">
-            <div class="h-full flex items-center justify-center text-gray-400 dark:text-gray-500 text-sm">
-                {{ _('activity.select_prompt') }}
             </div>
-        </template>
 
-        <template x-if="selectedSessionId">
-            <div class="space-y-4">
-
-                <!-- Session 摘要 -->
-                <div class="rounded-xl border border-gray-200 dark:border-gray-700 p-3">
-                    <div class="flex items-center justify-between">
-                        <div>
-                            <p class="text-lg font-semibold text-gray-800 dark:text-gray-200"
-                               x-text="snapshot?.session?.repo_full_name"></p>
-                            <p class="text-xs text-gray-400 dark:text-gray-500 mt-0.5">
-                                <span x-text="snapshot?.session?.resource_type"></span>
-                                <span x-text="'#' + (snapshot?.session?.resource_number ?? '')"></span>
-                                ·
-                                <span x-text="formatStatus(snapshot?.session?.status)"></span>
-                            </p>
-                        </div>
-                        <div class="text-right text-[11px] text-gray-400 dark:text-gray-500">
-                            <p x-text="formatTime(snapshot?.session?.last_active_at)"></p>
-                            <p class="mt-0.5">high-water: <span x-text="snapshot?.high_water_mark ?? 0"></span></p>
-                        </div>
-                    </div>
-                </div>
-
-                <!-- 当前阶段 / 模型 / 上下文 -->
-                <div class="grid grid-cols-1 xl:grid-cols-3 gap-3">
-                    <div class="rounded-xl border border-gray-200 dark:border-gray-700 p-3">
-                        <p class="text-[11px] uppercase tracking-wide text-gray-400">{{ _('activity.current_phase') }}</p>
-                        <p class="mt-1 text-sm font-semibold text-gray-800 dark:text-gray-200"
-                           x-text="formatPhase(snapshot?.current_phase) || '—'"></p>
-                    </div>
-                    <div class="rounded-xl border border-gray-200 dark:border-gray-700 p-3">
-                        <p class="text-[11px] uppercase tracking-wide text-gray-400">{{ _('activity.active_models') }}</p>
-                        <template x-if="(snapshot?.active_models || []).length">
-                            <div class="mt-1 space-y-1">
-                                <template x-for="a in snapshot.active_models" :key="a.attempt_id">
-                                    <p class="text-sm text-gray-800 dark:text-gray-200">
-                                        <span class="font-semibold" x-text="a.effective_model"></span>
-                                        <span class="text-xs text-gray-400" x-text="' · ' + a.effective_provider"></span>
-                                        <span class="text-[10px] rounded px-1 py-0.5 bg-amber-50 text-amber-700 dark:bg-amber-900/30 dark:text-amber-300"
-                                              x-text="a.attempt_kind"></span>
-                                    </p>
-                                </template>
-                            </div>
-                        </template>
-                        <template x-if="!(snapshot?.active_models || []).length">
-                            <p class="mt-1 text-sm text-gray-400">—</p>
-                        </template>
-                    </div>
-                    <div class="rounded-xl border border-gray-200 dark:border-gray-700 p-3">
-                        <p class="text-[11px] uppercase tracking-wide text-gray-400">{{ _('activity.context_usage') }}</p>
-                        <template x-if="latestContext">
-                            <div class="mt-1">
-                                <p class="text-sm font-semibold text-gray-800 dark:text-gray-200"
-                                   x-text="formatContext(latestContext)"></p>
-                                <div class="mt-2 h-1.5 rounded bg-gray-100 dark:bg-gray-700 overflow-hidden">
-                                    <div class="h-full bg-sakura-500 transition-all"
-                                         :style="`width:${contextPercent(latestContext)}%`"></div>
+            <div class="activity-scroll flex-1 overflow-y-auto p-2">
+                <template x-for="session in filteredSessions" :key="session.session_id">
+                    <button
+                        type="button"
+                        @click="selectSession(session.session_id)"
+                        class="mb-1.5 w-full rounded-xl border p-3 text-left transition"
+                        :class="selectedSessionId === session.session_id
+                            ? 'border-sakura-300 bg-sakura-50 shadow-sm dark:border-sakura-700 dark:bg-sakura-950/35'
+                            : 'border-transparent hover:border-gray-200 hover:bg-white dark:hover:border-gray-700 dark:hover:bg-gray-800/70'"
+                    >
+                        <div class="flex items-start gap-2">
+                            <span
+                                class="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-lg text-[10px] font-bold"
+                                :class="resourceBadgeClass(session.resource_type)"
+                                x-text="resourceLabel(session.resource_type)"
+                            ></span>
+                            <div class="min-w-0 flex-1">
+                                <div class="flex items-center gap-1.5">
+                                    <span
+                                        class="min-w-0 flex-1 truncate text-xs font-semibold text-gray-800 dark:text-gray-100"
+                                        x-text="session.repo_full_name || ('Session #' + session.session_id)"
+                                    ></span>
+                                    <span
+                                        x-show="unreadCounts[session.session_id]"
+                                        class="min-w-5 rounded-full bg-sakura-500 px-1.5 py-0.5 text-center text-[9px] font-semibold text-white"
+                                        x-text="unreadCounts[session.session_id]"
+                                    ></span>
                                 </div>
-                                <p class="mt-1 text-[10px] text-gray-400"
-                                   x-text="contextProvenance(latestContext)"></p>
-                            </div>
-                        </template>
-                        <template x-if="!latestContext">
-                            <p class="mt-1 text-sm text-gray-400">{{ _('activity.context_unavailable') }}</p>
-                        </template>
-                    </div>
-                </div>
-
-                <!-- 累计用量与 Thread revision -->
-                <div class="grid grid-cols-1 xl:grid-cols-2 gap-3">
-                    <div class="rounded-xl border border-gray-200 dark:border-gray-700 p-3">
-                        <h3 class="text-sm font-semibold text-gray-700 dark:text-gray-300 mb-2">
-                            {{ _('activity.total_usage') }}
-                        </h3>
-                        <div class="grid grid-cols-2 gap-2 text-xs">
-                            <p>{{ _('activity.input_tokens') }}:
-                                <span class="font-mono" x-text="formatNumber(snapshot?.usage_totals?.input_tokens)"></span>
-                            </p>
-                            <p>{{ _('activity.output_tokens') }}:
-                                <span class="font-mono" x-text="formatNumber(snapshot?.usage_totals?.output_tokens)"></span>
-                            </p>
-                            <p>{{ _('activity.reasoning_tokens') }}:
-                                <span class="font-mono" x-text="formatNumber(snapshot?.usage_totals?.reasoning_tokens)"></span>
-                            </p>
-                            <p>{{ _('activity.cached_tokens') }}:
-                                <span class="font-mono" x-text="formatNumber(snapshot?.usage_totals?.cached_input_tokens)"></span>
-                            </p>
-                        </div>
-                    </div>
-                    <div class="rounded-xl border border-gray-200 dark:border-gray-700 p-3">
-                        <h3 class="text-sm font-semibold text-gray-700 dark:text-gray-300 mb-2">
-                            {{ _('activity.context_revisions') }}
-                        </h3>
-                        <div class="space-y-1">
-                            <template x-for="t in snapshot?.threads || []" :key="t.thread_id">
-                                <p class="text-xs text-gray-600 dark:text-gray-300">
-                                    <span class="font-medium" x-text="t.purpose"></span>
-                                    <span x-text="' · rev ' + (t.revision_number ?? 0)"></span>
-                                    <span x-text="' · ' + t.message_count + ' {{ _('activity.messages') }}'"></span>
-                                    <span class="text-gray-400" x-text="t.revision_reason ? ' · ' + t.revision_reason : ''"></span>
+                                <p class="mt-0.5 text-[11px] text-gray-500 dark:text-gray-400">
+                                    <span x-text="'#' + (session.resource_number ?? session.session_id)"></span>
+                                    <span x-text="' · ' + formatStatus(session.status)"></span>
                                 </p>
-                            </template>
-                        </div>
-                    </div>
-                </div>
-
-                <!-- 压缩 / 上下文操作 -->
-                <div class="rounded-xl border border-gray-200 dark:border-gray-700 p-3">
-                    <h3 class="text-sm font-semibold text-gray-700 dark:text-gray-300 mb-2">
-                        {{ _('activity.compression_history') }}
-                    </h3>
-                    <template x-if="(snapshot?.context_operations || []).length">
-                        <div class="space-y-1.5">
-                            <template x-for="op in snapshot.context_operations" :key="op.operation_id">
-                                <div class="text-xs flex flex-wrap items-center gap-1.5">
-                                    <span class="font-medium" x-text="op.operation_type"></span>
-                                    <span class="rounded px-1.5 py-0.5 bg-purple-50 text-purple-700 dark:bg-purple-900/30 dark:text-purple-300"
-                                          x-text="op.status"></span>
-                                    <span class="text-gray-400"
-                                          x-text="'rev ' + (op.before_revision_id ?? '—') + ' → ' + (op.after_revision_id ?? '—')"></span>
-                                    <span class="text-gray-400" x-text="formatTime(op.completed_at || op.created_at)"></span>
+                                <div class="mt-2 flex items-center justify-between gap-2 text-[10px] text-gray-400">
+                                    <span class="truncate" x-text="formatPhase(session.current_phase) || labels.waiting"></span>
+                                    <span class="shrink-0" x-text="formatRelativeTime(session.last_active_at)"></span>
                                 </div>
-                            </template>
+                                <div x-show="session.active_model" class="mt-1.5 flex min-w-0 items-center gap-1 text-[10px]">
+                                    <span class="truncate rounded-md bg-gray-100 px-1.5 py-0.5 text-gray-600 dark:bg-gray-800 dark:text-gray-300"
+                                          x-text="session.active_model"></span>
+                                    <span class="shrink-0 text-purple-500" x-text="session.thinking_mode"></span>
+                                    <span x-show="session.attempt_kind && session.attempt_kind !== 'primary'"
+                                          class="shrink-0 rounded bg-amber-100 px-1 py-0.5 text-amber-700 dark:bg-amber-900/40 dark:text-amber-300"
+                                          x-text="session.attempt_kind"></span>
+                                </div>
+                            </div>
                         </div>
-                    </template>
-                    <template x-if="!(snapshot?.context_operations || []).length">
-                        <p class="text-xs text-gray-400">{{ _('activity.no_compression') }}</p>
-                    </template>
+                    </button>
+                </template>
+                <div x-show="loadingSessions" class="p-8 text-center text-xs text-gray-400">
+                    <i class="fas fa-circle-notch mr-1 animate-spin"></i>{{ _('activity.loading') }}
                 </div>
+                <div x-show="!loadingSessions && filteredSessions.length === 0" class="p-8 text-center">
+                    <i class="far fa-moon mb-2 text-2xl text-gray-300 dark:text-gray-600"></i>
+                    <p class="text-xs text-gray-500 dark:text-gray-400">{{ _('activity.no_active_tasks') }}</p>
+                </div>
+            </div>
+        </aside>
 
-                <!-- Invocation / Work Unit / Attempt -->
-                <div>
-                    <h3 class="text-sm font-semibold text-gray-700 dark:text-gray-300 mb-2">
-                        {{ _('activity.invocations') }}
-                    </h3>
-                    <div class="space-y-2">
-                        <template x-for="(inv, index) in snapshot?.invocations || []" :key="inv.invocation_id">
-                            <details class="rounded-xl border border-gray-200 dark:border-gray-700 p-3" :open="index === 0">
-                                <summary class="cursor-pointer text-sm font-medium text-gray-700 dark:text-gray-200">
-                                    <span x-text="'Invocation #' + inv.invocation_id"></span>
-                                    <span class="ml-2 text-xs text-gray-400" x-text="formatStatus(inv.status)"></span>
-                                    <span class="ml-2 text-xs text-gray-400" x-text="formatPhase(inv.current_phase)"></span>
-                                </summary>
-                                <div class="mt-2 space-y-2">
-                                    <template x-for="wu in inv.work_units" :key="wu.work_unit_id">
-                                        <div class="rounded-lg bg-gray-50 dark:bg-gray-700/40 p-2">
-                                            <div class="flex flex-wrap items-center gap-1.5 text-xs">
-                                                <span class="font-semibold" x-text="wu.purpose"></span>
-                                                <span x-text="formatStatus(wu.status)"></span>
-                                                <span class="text-gray-400" x-text="formatPhase(wu.current_phase)"></span>
+        <!-- Conversation timeline -->
+        <main class="relative flex min-w-0 flex-col" :class="!selectedSessionId ? 'hidden md:flex' : 'flex'">
+            <template x-if="!selectedSessionId">
+                <div class="flex h-full flex-col items-center justify-center px-8 text-center">
+                    <span class="mb-4 flex h-14 w-14 items-center justify-center rounded-2xl bg-sakura-50 text-sakura-500 dark:bg-sakura-950/40">
+                        <i class="far fa-comments text-xl"></i>
+                    </span>
+                    <h2 class="text-sm font-semibold text-gray-800 dark:text-gray-100">{{ _('activity.stream_empty_title') }}</h2>
+                    <p class="mt-1 max-w-sm text-xs leading-5 text-gray-500 dark:text-gray-400">{{ _('activity.stream_empty_hint') }}</p>
+                </div>
+            </template>
+
+            <template x-if="selectedSessionId">
+                <div class="flex h-full min-h-0 flex-col">
+                    <header class="border-b border-gray-200/80 bg-white/80 px-4 py-3 backdrop-blur dark:border-gray-700/80 dark:bg-gray-900/80">
+                        <div class="flex items-center gap-3">
+                            <button type="button" class="md:hidden text-gray-500" @click="backToSessions()">
+                                <i class="fas fa-chevron-left"></i>
+                            </button>
+                            <div class="min-w-0 flex-1">
+                                <div class="flex items-center gap-2">
+                                    <h2 class="truncate text-sm font-semibold text-gray-900 dark:text-white"
+                                        x-text="selectedSession?.repo_full_name || ('Session #' + selectedSessionId)"></h2>
+                                    <span class="rounded-full bg-emerald-50 px-2 py-0.5 text-[10px] font-medium text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300"
+                                          x-text="formatStatus(snapshot?.session?.status || selectedSession?.status)"></span>
+                                </div>
+                                <p class="mt-0.5 truncate text-[11px] text-gray-500 dark:text-gray-400">
+                                    <span x-text="resourceLabel(selectedSession?.resource_type)"></span>
+                                    <span x-text="' #' + (selectedSession?.resource_number ?? '')"></span>
+                                    <span x-text="' · ' + (formatPhase(snapshot?.current_phase) || labels.waiting)"></span>
+                                </p>
+                            </div>
+                            <span class="hidden items-center gap-1.5 rounded-lg bg-gray-50 px-2 py-1 text-[10px] text-gray-500 dark:bg-gray-800 dark:text-gray-400 sm:flex">
+                                <span class="h-1.5 w-1.5 rounded-full" :class="streamConnected ? 'bg-emerald-500' : 'bg-amber-500'"></span>
+                                <span x-text="streamConnected ? labels.connected : labels.reconnecting"></span>
+                            </span>
+                            <button
+                                type="button"
+                                @click="diagnosticsOpen = !diagnosticsOpen"
+                                class="rounded-lg border border-gray-200 px-2.5 py-1.5 text-[11px] font-medium text-gray-600 hover:border-sakura-300 hover:text-sakura-600 dark:border-gray-700 dark:text-gray-300"
+                            >
+                                <i class="fas fa-sliders-h mr-1"></i>{{ _('activity.diagnostics') }}
+                            </button>
+                        </div>
+
+                        <div class="activity-scroll mt-3 flex items-center gap-2 overflow-x-auto pb-0.5">
+                            <select x-model="entryTypeFilter" class="rounded-lg border-gray-200 bg-gray-50 py-1 pl-2 pr-7 text-[10px] dark:border-gray-700 dark:bg-gray-800">
+                                <option value="all">{{ _('activity.filter_all_entries') }}</option>
+                                <option value="messages">{{ _('activity.filter_messages') }}</option>
+                                <option value="model">{{ _('activity.filter_model') }}</option>
+                                <option value="tools">{{ _('activity.filter_tools') }}</option>
+                                <option value="context">{{ _('activity.filter_context') }}</option>
+                            </select>
+                            <select x-model="roleFilter" class="rounded-lg border-gray-200 bg-gray-50 py-1 pl-2 pr-7 text-[10px] dark:border-gray-700 dark:bg-gray-800">
+                                <option value="all">{{ _('activity.all_roles') }}</option>
+                                <template x-for="role in roleOptions" :key="role"><option :value="role" x-text="role"></option></template>
+                            </select>
+                            <select x-model="threadFilter" class="rounded-lg border-gray-200 bg-gray-50 py-1 pl-2 pr-7 text-[10px] dark:border-gray-700 dark:bg-gray-800">
+                                <option value="all">{{ _('activity.all_threads') }}</option>
+                                <template x-for="thread in threadOptions" :key="thread"><option :value="String(thread)" x-text="'Thread #' + thread"></option></template>
+                            </select>
+                            <select x-model="invocationFilter" class="rounded-lg border-gray-200 bg-gray-50 py-1 pl-2 pr-7 text-[10px] dark:border-gray-700 dark:bg-gray-800">
+                                <option value="all">{{ _('activity.all_invocations') }}</option>
+                                <template x-for="invocation in invocationOptions" :key="invocation"><option :value="String(invocation)" x-text="'Invocation #' + invocation"></option></template>
+                            </select>
+                            <button type="button" @click="resetFilters()" class="shrink-0 px-2 py-1 text-[10px] text-gray-400 hover:text-sakura-600">
+                                {{ _('activity.reset_filters') }}
+                            </button>
+                        </div>
+                    </header>
+
+                    <div
+                        x-ref="timeline"
+                        @scroll.passive="handleTimelineScroll()"
+                        class="activity-scroll flex-1 overflow-y-auto bg-[radial-gradient(circle_at_top,rgb(244_114_182_/_0.06),transparent_28rem)] px-3 py-4 sm:px-6"
+                    >
+                        <div class="mx-auto max-w-4xl">
+                            <div x-show="conversationLoading" class="py-16 text-center text-xs text-gray-400">
+                                <i class="fas fa-circle-notch mr-1 animate-spin"></i>{{ _('activity.loading_conversation') }}
+                            </div>
+                            <button
+                                x-show="!conversationLoading && historyCursor"
+                                type="button"
+                                @click="loadEarlier()"
+                                :disabled="historyLoading"
+                                class="mx-auto mb-5 block rounded-full border border-gray-200 bg-white px-4 py-1.5 text-[11px] text-gray-500 shadow-sm hover:border-sakura-300 hover:text-sakura-600 disabled:opacity-50 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-300"
+                            >
+                                <i class="fas fa-history mr-1"></i>
+                                <span x-text="historyLoading ? labels.loading : labels.loadEarlier"></span>
+                            </button>
+
+                            <div class="activity-signal-rail relative space-y-3">
+                                <template x-for="entry in filteredEntries" :key="entry.id">
+                                    <article class="relative pl-7" :data-entry-id="entry.id">
+                                        <span class="absolute left-0 top-4 z-10 flex h-5 w-5 items-center justify-center rounded-full border-2 border-white text-[8px] shadow-sm dark:border-gray-900"
+                                              :class="entryDotClass(entry)">
+                                            <i :class="entryIcon(entry)"></i>
+                                        </span>
+
+                                        <template x-if="isBoundary(entry)">
+                                            <div class="flex items-center gap-3 py-2">
+                                                <div class="h-px flex-1 bg-gray-200 dark:bg-gray-700"></div>
+                                                <span class="text-[10px] font-medium uppercase tracking-[.14em] text-gray-400"
+                                                      x-text="boundaryLabel(entry)"></span>
+                                                <div class="h-px flex-1 bg-gray-200 dark:bg-gray-700"></div>
                                             </div>
-                                            <div class="mt-1.5 space-y-1">
-                                                <template x-for="a in wu.attempts" :key="a.attempt_id">
-                                                    <div class="text-[11px] grid grid-cols-1 lg:grid-cols-[auto_1fr_auto] gap-1 lg:gap-3 border-t border-gray-200/70 dark:border-gray-600/70 pt-1">
-                                                        <span class="font-mono" x-text="'#' + a.attempt_index + ' ' + a.attempt_kind"></span>
-                                                        <span>
-                                                            <span x-text="a.effective_provider + '/' + a.effective_model"></span>
-                                                            <span class="text-gray-400" x-text="a.effective_thinking_mode ? ' · ' + a.effective_thinking_mode : ''"></span>
-                                                        </span>
-                                                        <span class="text-gray-400"
-                                                              x-text="formatAttemptUsage(a)"></span>
+                                        </template>
+
+                                        <template x-if="entry.type === 'message'">
+                                            <div class="rounded-2xl border bg-white p-4 shadow-sm dark:bg-gray-900"
+                                                 :class="messageCardClass(entry.role)">
+                                                <div class="flex items-start justify-between gap-3">
+                                                    <div class="flex min-w-0 items-center gap-2">
+                                                        <span class="rounded-md px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide"
+                                                              :class="messageRoleClass(entry.role)" x-text="entry.role"></span>
+                                                        <span class="truncate text-[10px] text-gray-400" x-text="sourceLabel(entry)"></span>
+                                                    </div>
+                                                    <span class="shrink-0 text-[10px] text-gray-400" x-text="formatTime(entry.created_at)"></span>
+                                                </div>
+                                                <template x-if="entry.content_visibility === 'visible' && entry.content != null">
+                                                    <div class="mt-3">
+                                                        <div class="relative" :class="expandedEntries[entry.id] ? '' : 'activity-content-collapsed'">
+                                                            <pre class="whitespace-pre-wrap break-words font-sans text-[13px] leading-6 text-gray-700 dark:text-gray-200" x-text="entry.content"></pre>
+                                                        </div>
+                                                        <button type="button" @click="toggleExpanded(entry.id)"
+                                                                class="mt-2 text-[10px] font-medium text-sakura-600 hover:text-sakura-700"
+                                                                x-text="expandedEntries[entry.id] ? labels.collapse : labels.expand"></button>
+                                                    </div>
+                                                </template>
+                                                <template x-if="entry.content_visibility !== 'visible'">
+                                                    <div class="mt-3 rounded-xl border border-dashed border-gray-200 bg-gray-50 px-3 py-2.5 text-[11px] text-gray-500 dark:border-gray-700 dark:bg-gray-800/60 dark:text-gray-400">
+                                                        <i class="fas fa-lock mr-1 text-gray-400"></i>
+                                                        <span x-text="restrictedMessage(entry)"></span>
+                                                    </div>
+                                                </template>
+                                                <div x-show="!entry.current_context" class="mt-2 rounded-lg bg-purple-50 px-2 py-1 text-[10px] text-purple-700 dark:bg-purple-950/35 dark:text-purple-300">
+                                                    {{ _('activity.compacted_history_hint') }}
+                                                </div>
+                                                <div class="mt-2" x-show="entry.artifacts?.length">
+                                                    <template x-for="artifact in entry.artifacts || []" :key="artifact.artifact_id">
+                                                        <div class="mt-1">
+                                                            <button x-show="artifact.can_request" type="button" @click="loadArtifact(entry, artifact)"
+                                                                    class="text-[10px] font-medium text-purple-600 hover:text-purple-700">
+                                                                <i class="fas fa-key mr-1"></i><span x-text="artifactLabel(artifact)"></span>
+                                                            </button>
+                                                            <span x-show="artifact.capture_error" class="text-[10px] text-amber-600"
+                                                                  x-text="artifactError(artifact)"></span>
+                                                            <div x-show="artifactState(entry, artifact)" class="mt-2 rounded-xl border border-purple-200 bg-purple-50/60 p-3 dark:border-purple-900 dark:bg-purple-950/25">
+                                                                <div class="mb-2 flex items-center justify-between">
+                                                                    <span class="text-[10px] font-semibold text-purple-700 dark:text-purple-300" x-text="artifact.artifact_kind"></span>
+                                                                    <button type="button" @click="closeArtifact(entry, artifact)" class="text-[10px] text-gray-400 hover:text-red-500">
+                                                                        {{ _('activity.clear_sensitive') }}
+                                                                    </button>
+                                                                </div>
+                                                                <pre class="max-h-96 overflow-auto whitespace-pre-wrap break-words text-[11px] leading-5 text-gray-700 dark:text-gray-200"
+                                                                     x-text="artifactState(entry, artifact)?.display"></pre>
+                                                            </div>
+                                                        </div>
+                                                    </template>
+                                                </div>
+                                            </div>
+                                        </template>
+
+                                        <template x-if="entry.type === 'attempt'">
+                                            <button type="button" @click="focusAttempt(entry)"
+                                                    class="w-full rounded-2xl border border-blue-200/80 bg-blue-50/60 p-3 text-left transition hover:border-blue-300 dark:border-blue-900/70 dark:bg-blue-950/20">
+                                                <div class="flex items-center justify-between gap-3">
+                                                    <div class="flex min-w-0 items-center gap-2">
+                                                        <span class="rounded-md bg-blue-600 px-1.5 py-0.5 text-[9px] font-semibold uppercase text-white"
+                                                              x-text="entry.attempt?.attempt_kind || 'attempt'"></span>
+                                                        <span class="truncate text-xs font-semibold text-gray-800 dark:text-gray-100"
+                                                              x-text="attemptModel(entry.attempt)"></span>
+                                                    </div>
+                                                    <span class="text-[10px]" :class="statusTextClass(entry.attempt?.status)"
+                                                          x-text="formatStatus(entry.attempt?.status)"></span>
+                                                </div>
+                                                <div class="mt-2 flex flex-wrap gap-x-3 gap-y-1 text-[10px] text-gray-500 dark:text-gray-400">
+                                                    <span x-text="'thinking ' + (entry.attempt?.effective_thinking_mode || 'unavailable')"></span>
+                                                    <span x-text="'effort ' + (entry.attempt?.effective_effort || 'unavailable')"></span>
+                                                    <span x-text="formatAttemptUsage(entry.attempt)"></span>
+                                                    <span x-text="formatDuration(entry.attempt?.started_at, entry.attempt?.completed_at)"></span>
+                                                </div>
+                                                <div x-show="entry.attempt?.fallback_from_attempt_id || entry.attempt?.attempt_kind === 'fallback'"
+                                                     class="mt-2 text-[10px] font-medium text-amber-700 dark:text-amber-300">
+                                                    <i class="fas fa-code-branch mr-1"></i>{{ _('activity.fallback_attempt') }}
+                                                </div>
+                                            </button>
+                                        </template>
+
+                                        <template x-if="entry.type === 'reasoning'">
+                                            <div class="rounded-2xl border border-purple-200/80 bg-purple-50/60 p-3 dark:border-purple-900/70 dark:bg-purple-950/20">
+                                                <div class="flex items-center justify-between gap-3">
+                                                    <div class="flex items-center gap-2">
+                                                        <span x-show="isReasoningLive(entry)" class="h-2 w-2 animate-pulse rounded-full bg-purple-500"></span>
+                                                        <span x-show="!isReasoningLive(entry)" class="h-2 w-2 rounded-full bg-purple-300 dark:bg-purple-700"></span>
+                                                        <span class="text-xs font-semibold text-purple-800 dark:text-purple-200"
+                                                              x-text="reasoningTitle(entry)"></span>
+                                                    </div>
+                                                    <span class="text-[10px] text-purple-500" x-text="formatTime(entry.created_at)"></span>
+                                                </div>
+                                                <p class="mt-2 text-[11px] leading-5 text-gray-600 dark:text-gray-300"
+                                                   x-text="reasoningDescription(entry)"></p>
+                                                <div class="mt-2 flex flex-wrap gap-2 text-[10px] text-gray-500 dark:text-gray-400">
+                                                    <span x-text="'thinking: ' + (entry.thinking_mode || 'unavailable')"></span>
+                                                    <span x-text="'effort: ' + (entry.effort || 'unavailable')"></span>
+                                                    <span x-show="entry.tokens != null" x-text="formatNumber(entry.tokens) + ' tokens'"></span>
+                                                    <span x-text="formatDuration(entry.started_at, entry.completed_at)"></span>
+                                                </div>
+                                                <template x-for="artifact in entry.artifacts || []" :key="artifact.artifact_id">
+                                                    <div class="mt-2">
+                                                        <button x-show="artifact.can_request" type="button" @click="loadArtifact(entry, artifact)"
+                                                                class="text-[10px] font-medium text-purple-600 hover:text-purple-700">
+                                                            <i class="fas fa-key mr-1"></i><span x-text="artifactLabel(artifact)"></span>
+                                                        </button>
+                                                        <span x-show="artifact.capture_error" class="text-[10px] text-amber-600" x-text="artifactError(artifact)"></span>
+                                                        <div x-show="artifactState(entry, artifact)" class="mt-2 rounded-xl bg-white/75 p-3 dark:bg-gray-900/60">
+                                                            <div class="mb-2 flex justify-end">
+                                                                <button type="button" @click="closeArtifact(entry, artifact)" class="text-[10px] text-gray-400 hover:text-red-500">{{ _('activity.clear_sensitive') }}</button>
+                                                            </div>
+                                                            <pre class="max-h-96 overflow-auto whitespace-pre-wrap break-words text-[11px] leading-5"
+                                                                 x-text="artifactState(entry, artifact)?.display"></pre>
+                                                        </div>
                                                     </div>
                                                 </template>
                                             </div>
+                                        </template>
+
+                                        <template x-if="entry.type === 'tool_call'">
+                                            <div class="rounded-2xl border border-emerald-200/80 bg-emerald-50/60 p-3 dark:border-emerald-900/70 dark:bg-emerald-950/20">
+                                                <div class="flex items-center justify-between gap-3">
+                                                    <div class="flex min-w-0 items-center gap-2">
+                                                        <i class="fas fa-wrench text-[10px] text-emerald-600"></i>
+                                                        <span class="truncate text-xs font-semibold text-gray-800 dark:text-gray-100" x-text="entry.name || labels.tool"></span>
+                                                        <span class="rounded px-1.5 py-0.5 text-[9px] font-medium" :class="toolStatusClass(entry.status)"
+                                                              x-text="formatStatus(entry.status)"></span>
+                                                    </div>
+                                                    <span class="text-[10px] text-gray-400" x-text="formatTime(entry.completed_at || entry.created_at)"></span>
+                                                </div>
+                                                <p class="mt-1 text-[10px] text-gray-500 dark:text-gray-400" x-text="sourceLabel(entry)"></p>
+                                                <div x-show="entry.artifacts?.length" class="mt-2 flex flex-col gap-1">
+                                                    <template x-for="artifact in entry.artifacts || []" :key="artifact.artifact_id">
+                                                        <div>
+                                                            <button x-show="artifact.can_request" type="button" @click="loadArtifact(entry, artifact)"
+                                                                    class="text-[10px] font-medium text-emerald-700 hover:text-emerald-800 dark:text-emerald-300">
+                                                                <i class="fas fa-key mr-1"></i><span x-text="artifactLabel(artifact)"></span>
+                                                            </button>
+                                                            <span x-show="artifact.capture_error" class="text-[10px] text-amber-600" x-text="artifactError(artifact)"></span>
+                                                            <div x-show="artifactState(entry, artifact)" class="mt-2 rounded-xl bg-white/75 p-3 dark:bg-gray-900/60">
+                                                                <div class="mb-2 flex justify-end">
+                                                                    <button type="button" @click="closeArtifact(entry, artifact)" class="text-[10px] text-gray-400 hover:text-red-500">{{ _('activity.clear_sensitive') }}</button>
+                                                                </div>
+                                                                <pre class="max-h-96 overflow-auto whitespace-pre-wrap break-words text-[11px] leading-5"
+                                                                     x-text="artifactState(entry, artifact)?.display"></pre>
+                                                            </div>
+                                                        </div>
+                                                    </template>
+                                                </div>
+                                            </div>
+                                        </template>
+
+                                        <template x-if="entry.type === 'context_operation'">
+                                            <div class="rounded-2xl border border-amber-200/80 bg-amber-50/60 p-3 dark:border-amber-900/70 dark:bg-amber-950/20">
+                                                <div class="flex items-center justify-between">
+                                                    <span class="text-xs font-semibold text-amber-800 dark:text-amber-200">
+                                                        <i class="fas fa-compress-alt mr-1"></i>{{ _('activity.context_operation') }}
+                                                    </span>
+                                                    <span class="text-[10px] text-amber-600" x-text="formatTime(entry.completed_at || entry.created_at)"></span>
+                                                </div>
+                                                <p class="mt-2 text-[11px] text-gray-600 dark:text-gray-300">
+                                                    <span x-text="entry.operation_type"></span>
+                                                    <span x-text="' · ' + (entry.trigger_reason || labels.unknown)"></span>
+                                                    <span x-text="' · rev ' + (entry.before_revision_id ?? '—') + ' → ' + (entry.after_revision_id ?? '—')"></span>
+                                                </p>
+                                            </div>
+                                        </template>
+                                    </article>
+                                </template>
+                            </div>
+
+                            <div x-show="!conversationLoading && filteredEntries.length === 0" class="py-16 text-center text-xs text-gray-400">
+                                {{ _('activity.no_conversation_entries') }}
+                            </div>
+                        </div>
+                    </div>
+
+                    <button
+                        x-show="newMessageCount > 0"
+                        x-transition
+                        type="button"
+                        @click="jumpToLatest()"
+                        class="absolute bottom-5 left-1/2 z-20 -translate-x-1/2 rounded-full bg-gray-900 px-4 py-2 text-[11px] font-medium text-white shadow-xl dark:bg-white dark:text-gray-900"
+                    >
+                        <i class="fas fa-arrow-down mr-1"></i>
+                        <span x-text="newMessageCount + ' ' + labels.newMessages"></span>
+                    </button>
+                </div>
+            </template>
+        </main>
+
+        <!-- Diagnostics drawer: static third column on desktop, overlay on narrow screens. -->
+        <div x-show="diagnosticsOpen && selectedSessionId" x-transition.opacity
+             class="fixed inset-0 z-30 bg-gray-950/30 lg:hidden" @click="diagnosticsOpen = false"></div>
+        <aside
+            x-show="diagnosticsOpen && selectedSessionId"
+            x-transition
+            class="activity-scroll fixed inset-y-0 right-0 z-40 w-[min(92vw,24rem)] overflow-y-auto border-l border-gray-200 bg-white p-4 shadow-2xl dark:border-gray-700 dark:bg-gray-900 lg:static lg:z-auto lg:w-auto lg:shadow-none"
+        >
+            <div class="mb-4 flex items-center justify-between">
+                <div>
+                    <h3 class="text-sm font-semibold text-gray-900 dark:text-white">{{ _('activity.diagnostics') }}</h3>
+                    <p class="text-[10px] text-gray-400">{{ _('activity.diagnostics_hint') }}</p>
+                </div>
+                <button type="button" @click="diagnosticsOpen = false" class="rounded-lg p-2 text-gray-400 hover:bg-gray-100 hover:text-gray-700 dark:hover:bg-gray-800">
+                    <i class="fas fa-times"></i>
+                </button>
+            </div>
+
+            <div class="space-y-3">
+                <section class="rounded-xl border border-gray-200 p-3 dark:border-gray-700">
+                    <p class="text-[10px] uppercase tracking-widest text-gray-400">{{ _('activity.current_phase') }}</p>
+                    <p class="mt-1 text-sm font-semibold text-gray-800 dark:text-gray-100" x-text="formatPhase(snapshot?.current_phase) || '—'"></p>
+                    <div class="mt-3 grid grid-cols-2 gap-2 text-[10px]">
+                        <div class="rounded-lg bg-gray-50 p-2 dark:bg-gray-800">
+                            <p class="text-gray-400">{{ _('activity.input_tokens') }}</p>
+                            <p class="mt-0.5 font-mono text-xs" x-text="formatNumber(snapshot?.usage_totals?.input_tokens)"></p>
+                        </div>
+                        <div class="rounded-lg bg-gray-50 p-2 dark:bg-gray-800">
+                            <p class="text-gray-400">{{ _('activity.output_tokens') }}</p>
+                            <p class="mt-0.5 font-mono text-xs" x-text="formatNumber(snapshot?.usage_totals?.output_tokens)"></p>
+                        </div>
+                        <div class="rounded-lg bg-gray-50 p-2 dark:bg-gray-800">
+                            <p class="text-gray-400">{{ _('activity.reasoning_tokens') }}</p>
+                            <p class="mt-0.5 font-mono text-xs" x-text="formatNumber(snapshot?.usage_totals?.reasoning_tokens)"></p>
+                        </div>
+                        <div class="rounded-lg bg-gray-50 p-2 dark:bg-gray-800">
+                            <p class="text-gray-400">{{ _('activity.cached_tokens') }}</p>
+                            <p class="mt-0.5 font-mono text-xs" x-text="formatNumber(snapshot?.usage_totals?.cached_input_tokens)"></p>
+                        </div>
+                    </div>
+                </section>
+
+                <section class="rounded-xl border border-gray-200 p-3 dark:border-gray-700">
+                    <div class="flex items-center justify-between">
+                        <p class="text-[10px] uppercase tracking-widest text-gray-400">{{ _('activity.context_usage') }}</p>
+                        <span class="text-[10px] text-gray-400" x-text="latestContext ? contextProvenance(latestContext) : ''"></span>
+                    </div>
+                    <template x-if="latestContext">
+                        <div class="mt-2">
+                            <div class="flex items-end justify-between">
+                                <span class="text-sm font-semibold" x-text="formatContext(latestContext)"></span>
+                                <span class="text-[10px] text-gray-400" x-text="contextPercent(latestContext).toFixed(1) + '%'"></span>
+                            </div>
+                            <div class="mt-2 h-1.5 overflow-hidden rounded-full bg-gray-100 dark:bg-gray-800">
+                                <div class="h-full rounded-full bg-gradient-to-r from-sakura-500 to-purple-500 transition-all"
+                                     :style="`width:${contextPercent(latestContext)}%`"></div>
+                            </div>
+                        </div>
+                    </template>
+                    <p x-show="!latestContext" class="mt-2 text-[11px] text-gray-400">{{ _('activity.context_unavailable') }}</p>
+                </section>
+
+                <section class="rounded-xl border border-gray-200 p-3 dark:border-gray-700">
+                    <p class="mb-2 text-[10px] uppercase tracking-widest text-gray-400">{{ _('activity.invocations') }}</p>
+                    <div class="space-y-2">
+                        <template x-for="invocation in snapshot?.invocations || []" :key="invocation.invocation_id">
+                            <details class="rounded-lg bg-gray-50 p-2 dark:bg-gray-800/70" :open="isFocusedInvocation(invocation)">
+                                <summary class="cursor-pointer text-[11px] font-semibold text-gray-700 dark:text-gray-200">
+                                    <span x-text="'Invocation #' + invocation.invocation_id"></span>
+                                    <span class="ml-1 font-normal text-gray-400" x-text="formatStatus(invocation.status)"></span>
+                                </summary>
+                                <div class="mt-2 space-y-2">
+                                    <template x-for="workUnit in invocation.work_units || []" :key="workUnit.work_unit_id">
+                                        <div class="border-l border-gray-200 pl-2 dark:border-gray-700">
+                                            <p class="text-[10px] font-medium">
+                                                <span x-text="workUnit.purpose"></span>
+                                                <span class="text-gray-400" x-text="' · ' + formatStatus(workUnit.status)"></span>
+                                            </p>
+                                            <template x-for="attempt in workUnit.attempts || []" :key="attempt.attempt_id">
+                                                <button type="button" @click="focusedAttemptId = attempt.attempt_id"
+                                                        class="mt-1 block w-full rounded-md px-1.5 py-1 text-left text-[10px]"
+                                                        :class="focusedAttemptId === attempt.attempt_id ? 'bg-blue-100 text-blue-800 dark:bg-blue-950 dark:text-blue-200' : 'hover:bg-white dark:hover:bg-gray-700'">
+                                                    <span class="font-mono" x-text="'#' + attempt.attempt_index"></span>
+                                                    <span x-text="' ' + (attempt.effective_model || attempt.requested_model || 'unknown')"></span>
+                                                    <span class="float-right" x-text="formatStatus(attempt.status)"></span>
+                                                    <span class="mt-0.5 block text-gray-400"
+                                                          x-text="(attempt.protocol_family || 'unknown') + ' · ' + (attempt.effective_thinking_mode || 'unavailable') + ' · ' + (attempt.effective_effort || 'unavailable')"></span>
+                                                </button>
+                                            </template>
                                         </div>
                                     </template>
                                 </div>
                             </details>
                         </template>
                     </div>
-                </div>
+                </section>
 
-                <!-- 事件时间线（授权投影） -->
-                <div>
-                    <h3 class="text-sm font-semibold text-gray-700 dark:text-gray-300 mb-2">
-                        {{ _('activity.events') }}
-                    </h3>
-                    <div class="space-y-1.5">
-                        <template x-for="e in events" :key="e.event_id">
-                            <div class="flex items-start gap-2 text-xs p-2 rounded-lg bg-gray-50 dark:bg-gray-700/40">
-                                <span class="shrink-0 px-1.5 py-0.5 rounded text-[10px] font-mono"
-                                      :class="eventBadgeClass(e.event_type)"
-                                      x-text="e.event_type"></span>
-                                <div class="flex-1 min-w-0">
-                                    <p class="text-gray-600 dark:text-gray-300 break-words"
-                                       x-text="eventSummary(e)"></p>
-                                    <p class="text-[10px] text-gray-400 dark:text-gray-500 mt-0.5"
-                                       x-text="formatTime(e.created_at)"></p>
+                <section class="rounded-xl border border-gray-200 p-3 dark:border-gray-700">
+                    <p class="mb-2 text-[10px] uppercase tracking-widest text-gray-400">{{ _('activity.compression_history') }}</p>
+                    <div class="space-y-2">
+                        <template x-for="operation in snapshot?.context_operations || []" :key="operation.operation_id">
+                            <div class="rounded-lg bg-amber-50 p-2 text-[10px] dark:bg-amber-950/25">
+                                <div class="flex justify-between gap-2">
+                                    <span class="font-medium" x-text="operation.operation_type"></span>
+                                    <span class="text-gray-400" x-text="formatStatus(operation.status)"></span>
                                 </div>
+                                <p class="mt-1 text-gray-500" x-text="'rev ' + (operation.before_revision_id ?? '—') + ' → ' + (operation.after_revision_id ?? '—')"></p>
                             </div>
                         </template>
-                        <template x-if="events.length === 0">
-                            <p class="text-xs text-gray-400 dark:text-gray-500 italic">
-                                {{ _('activity.no_events') }}
-                            </p>
-                        </template>
+                        <p x-show="!(snapshot?.context_operations || []).length" class="text-[10px] text-gray-400">{{ _('activity.no_compression') }}</p>
                     </div>
-                </div>
-
-                <!-- Reasoning 区域（按可见性策略展示） -->
-                <div class="rounded-xl border border-gray-200 dark:border-gray-700 p-3">
-                    <h3 class="text-sm font-semibold text-gray-700 dark:text-gray-300 mb-1">
-                        {{ _('activity.reasoning') }}
-                    </h3>
-                    <template x-if="reasoningAttempts.length">
-                        <div class="space-y-1">
-                            <template x-for="a in reasoningAttempts" :key="a.attempt_id">
-                                <p class="text-xs text-gray-600 dark:text-gray-300">
-                                    <span class="font-medium" x-text="a.effective_model"></span>
-                                    <span x-text="' · ' + a.reasoning_availability"></span>
-                                    <span x-text="a.reasoning_tokens != null ? ' · ' + formatNumber(a.reasoning_tokens) + ' tokens' : ''"></span>
-                                    <span class="text-gray-400"
-                                          x-text="reasoningDuration(a)"></span>
-                                </p>
-                            </template>
-                        </div>
-                    </template>
-                    {# omitted/unavailable 时只显示确定性提示，不渲染 spinner 或伪造文本 #}
-                    <template x-if="!reasoningAttempts.length">
-                        <p class="text-xs text-gray-400 dark:text-gray-500">
-                            {{ _('activity.reasoning_omitted_hint') }}
-                        </p>
-                    </template>
-                </div>
-
+                </section>
             </div>
-        </template>
+        </aside>
     </div>
 </div>
 
 <script>
 function activityObservability() {
     return {
+        labels: {
+            connected: {{ _('activity.connected') | tojson }},
+            reconnecting: {{ _('activity.reconnecting') | tojson }},
+            waiting: {{ _('activity.waiting') | tojson }},
+            loading: {{ _('activity.loading') | tojson }},
+            loadEarlier: {{ _('activity.load_earlier') | tojson }},
+            newMessages: {{ _('activity.new_messages') | tojson }},
+            expand: {{ _('activity.expand') | tojson }},
+            collapse: {{ _('activity.collapse') | tojson }},
+            tool: {{ _('activity.tool_generic') | tojson }},
+            unknown: {{ _('activity.unknown') | tojson }},
+        },
+        sessionFilters: [
+            {value: 'all', label: {{ _('activity.filter_all') | tojson }}},
+            {value: 'pr', label: {{ _('activity.filter_pr') | tojson }}},
+            {value: 'issue', label: {{ _('activity.filter_issue') | tojson }}},
+        ],
         sessions: [],
         selectedSessionId: null,
         filter: 'all',
-        loading: false,
+        loadingSessions: false,
         snapshot: null,
-        events: [],
-        cursor: null,
+        entries: [],
+        historyCursor: null,
+        eventsCursor: null,
+        conversationLoading: false,
+        historyLoading: false,
+        streamConnected: false,
         eventSource: null,
+        requestController: null,
+        pollTimer: null,
+        sessionTimer: null,
+        diagnosticsOpen: window.innerWidth >= 1024,
+        focusedAttemptId: null,
+        expandedEntries: {},
+        sensitiveContent: {},
+        unreadCounts: {},
+        knownSessionActivity: {},
+        newMessageCount: 0,
+        atTimelineBottom: true,
+        entryTypeFilter: 'all',
+        roleFilter: 'all',
+        threadFilter: 'all',
+        invocationFilter: 'all',
 
         get filteredSessions() {
-            if (this.filter === 'all') return this.sessions;
-            return this.sessions.filter(s => s.resource_type === this.filter);
+            return this.filter === 'all'
+                ? this.sessions
+                : this.sessions.filter(item => item.resource_type === this.filter);
         },
-
+        get selectedSession() {
+            return this.sessions.find(item => item.session_id === this.selectedSessionId) || null;
+        },
         get allAttempts() {
-            return (this.snapshot?.invocations || []).flatMap(inv =>
-                (inv.work_units || []).flatMap(wu => wu.attempts || [])
+            return (this.snapshot?.invocations || []).flatMap(invocation =>
+                (invocation.work_units || []).flatMap(workUnit => workUnit.attempts || [])
             );
         },
-
         get latestContext() {
-            const attempt = [...this.allAttempts].reverse().find(a => a.context);
+            const attempt = [...this.allAttempts].reverse().find(item => item.context);
             return attempt?.context || null;
         },
-
-        get reasoningAttempts() {
-            return this.allAttempts.filter(a =>
-                a.reasoning_availability && a.reasoning_availability !== 'unavailable'
-            );
+        get roleOptions() {
+            return [...new Set(this.entries.map(item => item.source_role || item.role).filter(Boolean))].sort();
+        },
+        get threadOptions() {
+            return [...new Set(this.entries.map(item => item.thread_id).filter(value => value != null))].sort((a, b) => a - b);
+        },
+        get invocationOptions() {
+            return [...new Set(this.entries.map(item => item.invocation_id).filter(value => value != null))].sort((a, b) => a - b);
+        },
+        get filteredEntries() {
+            return this.entries.filter(entry => {
+                if (entry.type === 'tool_result') return false;
+                const groups = {
+                    messages: ['message'],
+                    model: ['attempt', 'reasoning'],
+                    tools: ['tool_call'],
+                    context: ['context_operation', 'thread_boundary', 'invocation_boundary'],
+                };
+                if (this.entryTypeFilter !== 'all' && !(groups[this.entryTypeFilter] || []).includes(entry.type)) return false;
+                if (this.roleFilter !== 'all' && (entry.source_role || entry.role) !== this.roleFilter) return false;
+                if (this.threadFilter !== 'all' && String(entry.thread_id) !== this.threadFilter) return false;
+                if (this.invocationFilter !== 'all' && String(entry.invocation_id) !== this.invocationFilter) return false;
+                return true;
+            });
         },
 
         async init() {
             await this.loadSessions();
-            // SSE 负责低延迟唤醒；轮询是断流和无 outbox 事件时的恢复兜底。
-            setInterval(() => this.loadSessions(), 15000);
-            setInterval(() => {
-                if (this.selectedSessionId) this.refreshSnapshot(this.selectedSessionId);
+            this.sessionTimer = setInterval(() => this.loadSessions(), 15000);
+            this.pollTimer = setInterval(() => {
+                if (this.selectedSessionId) {
+                    this.loadConversationUpdates(this.selectedSessionId);
+                    this.refreshSnapshot(this.selectedSessionId);
+                }
             }, 5000);
         },
-
         async loadSessions() {
-            this.loading = true;
+            this.loadingSessions = true;
             try {
-                const resp = await fetch('/activity/observability/api/sessions?limit=30');
-                if (resp.ok) {
-                    const data = await resp.json();
-                    this.sessions = data.sessions || [];
+                const response = await fetch('/activity/observability/api/sessions?limit=50');
+                if (!response.ok) return;
+                const data = await response.json();
+                const incoming = data.sessions || [];
+                for (const session of incoming) {
+                    const previous = this.knownSessionActivity[session.session_id];
+                    if (previous && previous !== session.last_active_at && session.session_id !== this.selectedSessionId) {
+                        this.unreadCounts[session.session_id] = (this.unreadCounts[session.session_id] || 0) + 1;
+                    }
+                    this.knownSessionActivity[session.session_id] = session.last_active_at;
                 }
-            } catch (e) {
-                console.error('load sessions failed', e);
+                this.sessions = incoming;
+            } catch (error) {
+                console.error('activity sessions failed', error);
             } finally {
-                this.loading = false;
+                this.loadingSessions = false;
             }
         },
-
         async selectSession(sessionId) {
-            if (this.eventSource) {
-                this.eventSource.close();
-                this.eventSource = null;
-            }
+            this.teardownSession();
             this.selectedSessionId = sessionId;
-            await this.loadSnapshot(sessionId);
-            this.subscribeStream(sessionId);
+            this.unreadCounts[sessionId] = 0;
+            this.requestController = new AbortController();
+            this.conversationLoading = true;
+            try {
+                await Promise.all([
+                    this.loadConversation(sessionId),
+                    this.loadSnapshot(sessionId),
+                ]);
+                if (this.selectedSessionId === sessionId) {
+                    this.subscribeStream(sessionId);
+                    this.$nextTick(() => this.scrollToBottom(false));
+                }
+            } finally {
+                if (this.selectedSessionId === sessionId) this.conversationLoading = false;
+            }
         },
-
+        teardownSession() {
+            this.requestController?.abort();
+            this.requestController = null;
+            if (this.eventSource) this.eventSource.close();
+            this.eventSource = null;
+            this.streamConnected = false;
+            this.entries = [];
+            this.snapshot = null;
+            this.historyCursor = null;
+            this.eventsCursor = null;
+            this.sensitiveContent = {};
+            this.expandedEntries = {};
+            this.newMessageCount = 0;
+            this.focusedAttemptId = null;
+        },
+        backToSessions() {
+            this.teardownSession();
+            this.selectedSessionId = null;
+        },
+        async loadConversation(sessionId) {
+            const response = await fetch(
+                `/activity/observability/api/sessions/${sessionId}/conversation`,
+                {signal: this.requestController?.signal}
+            );
+            if (response.status === 404) return this.backToSessions();
+            if (!response.ok) throw new Error(`conversation ${response.status}`);
+            const data = await response.json();
+            if (this.selectedSessionId !== sessionId) return;
+            this.entries = this.sortEntries(data.entries || []);
+            this.historyCursor = data.before_cursor;
+            this.eventsCursor = data.events_cursor;
+        },
+        async loadEarlier() {
+            if (!this.historyCursor || this.historyLoading || !this.selectedSessionId) return;
+            this.historyLoading = true;
+            const viewport = this.$refs.timeline;
+            const previousHeight = viewport?.scrollHeight || 0;
+            try {
+                const response = await fetch(
+                    `/activity/observability/api/sessions/${this.selectedSessionId}/conversation?cursor=${encodeURIComponent(this.historyCursor)}`,
+                    {signal: this.requestController?.signal}
+                );
+                if (response.status === 409) return this.reloadCurrentSession();
+                if (!response.ok) return;
+                const data = await response.json();
+                this.mergeEntries(data.entries || []);
+                this.historyCursor = data.before_cursor;
+                this.$nextTick(() => {
+                    if (viewport) viewport.scrollTop += viewport.scrollHeight - previousHeight;
+                });
+            } finally {
+                this.historyLoading = false;
+            }
+        },
+        async loadConversationUpdates(sessionId) {
+            if (!this.eventsCursor || this.selectedSessionId !== sessionId) return;
+            try {
+                const response = await fetch(
+                    `/activity/observability/api/sessions/${sessionId}/conversation/events?cursor=${encodeURIComponent(this.eventsCursor)}`,
+                    {signal: this.requestController?.signal}
+                );
+                if (response.status === 409) return this.reloadCurrentSession();
+                if (!response.ok) return;
+                const data = await response.json();
+                if (this.selectedSessionId !== sessionId) return;
+                const incoming = data.entries || [];
+                const known = new Set(this.entries.map(item => item.id));
+                const added = incoming.filter(item => !known.has(item.id)).length;
+                this.mergeEntries(incoming);
+                this.eventsCursor = data.cursor || this.eventsCursor;
+                if (added) {
+                    if (this.atTimelineBottom) this.$nextTick(() => this.scrollToBottom(true));
+                    else this.newMessageCount += added;
+                }
+            } catch (error) {
+                if (error.name !== 'AbortError') console.error('conversation updates failed', error);
+            }
+        },
+        mergeEntries(incoming) {
+            const merged = new Map(this.entries.map(item => [item.id, item]));
+            for (const item of incoming) merged.set(item.id, item);
+            this.entries = this.sortEntries([...merged.values()]);
+        },
+        sortEntries(entries) {
+            const key = value => String(value || '0:0:0').split(':').map(Number);
+            return entries.sort((left, right) => {
+                const a = key(left.order_key);
+                const b = key(right.order_key);
+                return (a[0] - b[0]) || (a[1] - b[1]) || (a[2] - b[2]);
+            });
+        },
         async loadSnapshot(sessionId) {
             try {
-                const resp = await fetch(`/activity/observability/api/sessions/${sessionId}/snapshot`);
-                if (resp.status === 404) {
-                    this.selectedSessionId = null;
-                    return;
-                }
-                if (resp.ok) {
-                    const data = await resp.json();
-                    this.snapshot = data;
-                    this.cursor = data.cursor;
-                    this.events = [];
-                    await this.loadEvents(sessionId, null);
-                }
-            } catch (e) {
-                console.error('snapshot failed', e);
+                const response = await fetch(
+                    `/activity/observability/api/sessions/${sessionId}/snapshot`,
+                    {signal: this.requestController?.signal}
+                );
+                if (response.status === 404) return this.backToSessions();
+                if (response.ok && this.selectedSessionId === sessionId) this.snapshot = await response.json();
+            } catch (error) {
+                if (error.name !== 'AbortError') console.error('snapshot failed', error);
             }
         },
-
         async refreshSnapshot(sessionId) {
-            try {
-                const resp = await fetch(`/activity/observability/api/sessions/${sessionId}/snapshot`);
-                if (resp.status === 404) {
-                    this.selectedSessionId = null;
-                    if (this.eventSource) this.eventSource.close();
-                    return;
-                }
-                if (resp.ok && this.selectedSessionId === sessionId) {
-                    this.snapshot = await resp.json();
-                }
-            } catch (e) {
-                console.error('snapshot refresh failed', e);
-            }
+            if (this.selectedSessionId !== sessionId) return;
+            await this.loadSnapshot(sessionId);
         },
-
-        async loadEvents(sessionId, cursor) {
-            const url = `/activity/observability/api/sessions/${sessionId}/events` + (cursor ? `?cursor=${encodeURIComponent(cursor)}` : '');
-            try {
-                const resp = await fetch(url);
-                if (resp.status === 409) {
-                    // cursor 失效：重新拉 snapshot。
-                    await this.loadSnapshot(sessionId);
-                    return;
-                }
-                if (resp.ok) {
-                    const data = await resp.json();
-                    const incoming = data.events || [];
-                    // 幂等合并：按 event_id 去重，按 sequence 排序。
-                    const merged = new Map();
-                    for (const e of this.events) merged.set(e.event_id, e);
-                    for (const e of incoming) merged.set(e.event_id, e);
-                    this.events = Array.from(merged.values()).sort((a, b) => (a.sequence ?? 0) - (b.sequence ?? 0));
-                    if (data.cursor) this.cursor = data.cursor;
-                }
-            } catch (e) {
-                console.error('events failed', e);
-            }
-        },
-
         subscribeStream(sessionId) {
-            // user-scoped SSE：通知只含 event_id/sequence/projection_version。
-            // 收到通知后调用授权 events API 拉取投影，不依赖通知内容更新 UI。
             this.eventSource = new EventSource(`/activity/observability/api/sessions/${sessionId}/stream`);
-            this.eventSource.addEventListener('activity:notification', (msg) => {
-                try {
-                    const data = JSON.parse(msg.data);
-                    // 通知本身无 session/type/time；用当前 cursor 拉增量。
-                    this.loadEvents(sessionId, this.cursor);
-                    this.refreshSnapshot(sessionId);
-                } catch (e) {
-                    console.error('bad notification', e);
-                }
+            this.eventSource.onopen = () => { if (this.selectedSessionId === sessionId) this.streamConnected = true; };
+            this.eventSource.addEventListener('activity:notification', () => {
+                if (this.selectedSessionId !== sessionId) return;
+                this.loadConversationUpdates(sessionId);
+                this.refreshSnapshot(sessionId);
+                this.loadSessions();
             });
-            this.eventSource.onerror = () => {
-                // 断线后短暂等待重连；cursor 恢复保证不丢事件。
-            };
+            this.eventSource.onerror = () => { if (this.selectedSessionId === sessionId) this.streamConnected = false; };
         },
-
-        formatStatus(status) {
-            const map = {open: '{{ _('activity.status_open') }}', archived: '{{ _('activity.status_archived') }}', completed: '{{ _('activity.status_completed') }}', partial: '{{ _('activity.status_partial') }}', failed: '{{ _('activity.status_failed') }}', cancelled: '{{ _('activity.status_cancelled') }}'};
-            return map[status] || status || '';
+        async reloadCurrentSession() {
+            const sessionId = this.selectedSessionId;
+            if (sessionId) await this.selectSession(sessionId);
         },
-
-        formatTime(iso) {
-            if (!iso) return '';
+        handleTimelineScroll() {
+            const element = this.$refs.timeline;
+            if (!element) return;
+            this.atTimelineBottom = element.scrollHeight - element.scrollTop - element.clientHeight < 72;
+            if (this.atTimelineBottom) this.newMessageCount = 0;
+        },
+        jumpToLatest() {
+            this.scrollToBottom(true);
+            this.newMessageCount = 0;
+        },
+        scrollToBottom(smooth) {
+            const element = this.$refs.timeline;
+            if (!element) return;
+            element.scrollTo({top: element.scrollHeight, behavior: smooth ? 'smooth' : 'auto'});
+            this.atTimelineBottom = true;
+        },
+        resetFilters() {
+            this.entryTypeFilter = this.roleFilter = this.threadFilter = this.invocationFilter = 'all';
+        },
+        toggleExpanded(entryId) {
+            this.expandedEntries = {...this.expandedEntries, [entryId]: !this.expandedEntries[entryId]};
+        },
+        artifactKey(entry, artifact) {
+            return `${entry.id}:${artifact.artifact_id}`;
+        },
+        artifactState(entry, artifact) {
+            return this.sensitiveContent[this.artifactKey(entry, artifact)] || null;
+        },
+        async loadArtifact(entry, artifact) {
+            if (!artifact.can_request || !this.selectedSessionId) return;
+            const key = this.artifactKey(entry, artifact);
+            this.sensitiveContent = {...this.sensitiveContent, [key]: {display: this.labels.loading}};
             try {
-                const d = new Date(iso);
-                return d.toLocaleString();
-            } catch {
-                return iso;
+                const response = await fetch(
+                    `/activity/observability/api/sessions/${this.selectedSessionId}/artifacts/${artifact.artifact_id}`,
+                    {cache: 'no-store', signal: this.requestController?.signal}
+                );
+                if (!response.ok) throw new Error(`artifact ${response.status}`);
+                const data = await response.json();
+                let display = data.payload || data.payload_safe_summary || data.payload_unavailable_reason || this.labels.unknown;
+                try { display = JSON.stringify(JSON.parse(display), null, 2); } catch (_) {}
+                this.sensitiveContent = {...this.sensitiveContent, [key]: {display}};
+            } catch (error) {
+                if (error.name !== 'AbortError') {
+                    this.sensitiveContent = {...this.sensitiveContent, [key]: {display: String(error)}};
+                }
             }
         },
-
-        formatNumber(value) {
-            return Number(value || 0).toLocaleString();
+        closeArtifact(entry, artifact) {
+            const next = {...this.sensitiveContent};
+            delete next[this.artifactKey(entry, artifact)];
+            this.sensitiveContent = next;
         },
-
-        formatPhase(phase) {
-            const map = {
-                admitted: '{{ _('activity.phase_admitted') }}',
-                preparing_context: '{{ _('activity.phase_preparing_context') }}',
-                model_request: '{{ _('activity.phase_model_request') }}',
-                embedding_request: '{{ _('activity.phase_embedding_request') }}',
-                processing_response: '{{ _('activity.phase_processing_response') }}',
-                context_compaction: '{{ _('activity.phase_context_compaction') }}',
-                model_followup: '{{ _('activity.phase_model_followup') }}',
-                retry_wait: '{{ _('activity.phase_retry_wait') }}',
-                provider_error: '{{ _('activity.phase_provider_error') }}',
-                tool_failed: '{{ _('activity.phase_tool_failed') }}',
+        closeTransientPanels() {
+            this.sensitiveContent = {};
+            if (window.innerWidth < 1024) this.diagnosticsOpen = false;
+        },
+        focusAttempt(entry) {
+            this.focusedAttemptId = entry.attempt?.attempt_id || entry.attempt_id || null;
+            this.diagnosticsOpen = true;
+        },
+        isFocusedInvocation(invocation) {
+            return (invocation.work_units || []).some(workUnit =>
+                (workUnit.attempts || []).some(attempt => attempt.attempt_id === this.focusedAttemptId)
+            );
+        },
+        isBoundary(entry) {
+            return ['invocation_boundary', 'thread_boundary'].includes(entry.type);
+        },
+        boundaryLabel(entry) {
+            return entry.type === 'invocation_boundary'
+                ? `Invocation #${entry.invocation_id} · ${entry.task_type || ''} · ${this.formatStatus(entry.status)}`
+                : `Thread #${entry.thread_id} · ${entry.role || ''} · rev ${entry.current_revision_id ?? '—'}`;
+        },
+        sourceLabel(entry) {
+            return [
+                entry.invocation_id != null ? `Invocation #${entry.invocation_id}` : null,
+                entry.source_role,
+                entry.thread_id != null ? `Thread #${entry.thread_id}` : null,
+                entry.work_unit_id != null ? `Work Unit #${entry.work_unit_id}` : null,
+            ].filter(Boolean).join(' · ');
+        },
+        entryIcon(entry) {
+            return {
+                message: entry.role === 'assistant' ? 'fas fa-sparkles' : 'far fa-comment',
+                attempt: 'fas fa-bolt',
+                reasoning: 'fas fa-brain',
+                tool_call: 'fas fa-wrench',
+                context_operation: 'fas fa-compress-alt',
+                invocation_boundary: 'fas fa-play',
+                thread_boundary: 'fas fa-code-branch',
+            }[entry.type] || 'fas fa-circle';
+        },
+        entryDotClass(entry) {
+            return {
+                message: 'bg-sakura-500 text-white',
+                attempt: 'bg-blue-500 text-white',
+                reasoning: 'bg-purple-500 text-white',
+                tool_call: 'bg-emerald-500 text-white',
+                context_operation: 'bg-amber-500 text-white',
+            }[entry.type] || 'bg-gray-300 text-gray-600 dark:bg-gray-700 dark:text-gray-200';
+        },
+        messageCardClass(role) {
+            return role === 'assistant'
+                ? 'border-sakura-200 dark:border-sakura-900/70'
+                : role === 'tool'
+                ? 'border-emerald-200 dark:border-emerald-900/70'
+                : 'border-gray-200 dark:border-gray-700';
+        },
+        messageRoleClass(role) {
+            return role === 'assistant'
+                ? 'bg-sakura-100 text-sakura-700 dark:bg-sakura-950 dark:text-sakura-300'
+                : role === 'tool'
+                ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300'
+                : 'bg-gray-100 text-gray-600 dark:bg-gray-800 dark:text-gray-300';
+        },
+        restrictedMessage(entry) {
+            if ((entry.artifacts || []).some(item => item.capture_error === 'encryption_unavailable')) {
+                return {{ _('activity.encryption_unavailable') | tojson }};
+            }
+            return entry.can_request_sensitive
+                ? {{ _('activity.super_admin_expand_hint') | tojson }}
+                : {{ _('activity.restricted_content') | tojson }};
+        },
+        isReasoningLive(entry) {
+            return entry.status === 'running' && entry.started_at && !entry.completed_at;
+        },
+        reasoningTitle(entry) {
+            return this.isReasoningLive(entry)
+                ? {{ _('activity.reasoning_running') | tojson }}
+                : {{ _('activity.reasoning') | tojson }};
+        },
+        reasoningDescription(entry) {
+            const descriptions = {
+                omitted: {{ _('activity.reasoning_omitted') | tojson }},
+                unavailable: {{ _('activity.reasoning_unavailable') | tojson }},
+                summarized: {{ _('activity.reasoning_summarized') | tojson }},
+                provider_exposed: {{ _('activity.reasoning_provider_exposed') | tojson }},
+                encrypted_opaque: {{ _('activity.reasoning_encrypted_opaque') | tojson }},
             };
-            if (phase?.startsWith('tool:')) return '{{ _('activity.phase_tool') }} ' + phase.slice(5);
-            return map[phase] || phase || '';
+            return descriptions[entry.availability] || {{ _('activity.reasoning_omitted_hint') | tojson }};
         },
-
-        formatContext(ctx) {
-            const used = ctx?.context_tokens;
-            const total = ctx?.context_window_tokens;
-            if (used == null || total == null) return '{{ _('activity.context_unavailable') }}';
-            return `${this.formatNumber(used)} / ${this.formatNumber(total)}`;
+        artifactLabel(artifact) {
+            const labels = {
+                reasoning_content: {{ _('activity.view_reasoning_content') | tojson }},
+                reasoning_summary: {{ _('activity.view_reasoning_summary') | tojson }},
+                request_projection: {{ _('activity.view_request_projection') | tojson }},
+                response_projection: {{ _('activity.view_response_projection') | tojson }},
+                encrypted_opaque: {{ _('activity.opaque_not_displayable') | tojson }},
+            };
+            return labels[artifact.artifact_kind] || artifact.artifact_kind;
         },
-
-        contextPercent(ctx) {
-            const used = Number(ctx?.context_tokens || 0);
-            const total = Number(ctx?.context_window_tokens || 0);
+        artifactError(artifact) {
+            return artifact.capture_error === 'encryption_unavailable'
+                ? {{ _('activity.encryption_unavailable') | tojson }}
+                : {{ _('activity.sensitive_capture_failed') | tojson }};
+        },
+        attemptModel(attempt) {
+            if (!attempt) return this.labels.unknown;
+            return `${attempt.effective_provider || attempt.requested_provider || 'unknown'} / ${attempt.effective_model || attempt.requested_model || 'unknown'}`;
+        },
+        formatAttemptUsage(attempt) {
+            if (!attempt) return '';
+            return `${this.formatNumber(attempt.input_tokens)} in · ${this.formatNumber(attempt.output_tokens)} out · ${this.formatNumber(attempt.reasoning_tokens)} reasoning`;
+        },
+        formatDuration(start, end) {
+            if (!start || !end) return '';
+            const milliseconds = Math.max(0, new Date(end) - new Date(start));
+            return `${(milliseconds / 1000).toFixed(2)}s`;
+        },
+        formatContext(context) {
+            if (context?.context_tokens == null || context?.context_window_tokens == null) return this.labels.unknown;
+            return `${this.formatNumber(context.context_tokens)} / ${this.formatNumber(context.context_window_tokens)}`;
+        },
+        contextPercent(context) {
+            const used = Number(context?.context_tokens || 0);
+            const total = Number(context?.context_window_tokens || 0);
             return total > 0 ? Math.max(0, Math.min(100, used * 100 / total)) : 0;
         },
-
-        contextProvenance(ctx) {
-            return `${ctx?.context_tokens_availability || 'unavailable'} · ${ctx?.context_tokens_source || 'unknown'}`;
+        contextProvenance(context) {
+            return `${context?.context_tokens_availability || 'unavailable'} · ${context?.context_tokens_source || 'unknown'}`;
         },
-
-        formatAttemptUsage(a) {
-            return `${this.formatStatus(a.status)} · ${this.formatNumber(a.input_tokens)} in / ${this.formatNumber(a.output_tokens)} out`;
+        formatStatus(status) {
+            const values = {
+                open: {{ _('activity.status_open') | tojson }},
+                archived: {{ _('activity.status_archived') | tojson }},
+                pending: {{ _('activity.status_pending') | tojson }},
+                queued: {{ _('activity.status_pending') | tojson }},
+                running: {{ _('activity.status_reviewing') | tojson }},
+                completed: {{ _('activity.status_completed') | tojson }},
+                partial: {{ _('activity.status_partial') | tojson }},
+                failed: {{ _('activity.status_failed') | tojson }},
+                cancelled: {{ _('activity.status_cancelled') | tojson }},
+            };
+            return values[status] || status || '';
         },
-
-        reasoningDuration(a) {
-            if (!a.reasoning_started_at || !a.reasoning_completed_at) return '';
-            const duration = Math.max(0, new Date(a.reasoning_completed_at) - new Date(a.reasoning_started_at));
-            return ` · ${(duration / 1000).toFixed(1)}s`;
+        statusTextClass(status) {
+            if (status === 'failed') return 'text-red-600';
+            if (status === 'completed') return 'text-emerald-600';
+            if (status === 'running') return 'text-blue-600';
+            return 'text-gray-400';
         },
-
+        toolStatusClass(status) {
+            if (status === 'failed') return 'bg-red-100 text-red-700 dark:bg-red-950 dark:text-red-300';
+            if (status === 'completed') return 'bg-emerald-100 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300';
+            return 'bg-amber-100 text-amber-700 dark:bg-amber-950 dark:text-amber-300';
+        },
+        formatPhase(phase) {
+            const values = {
+                admitted: {{ _('activity.phase_admitted') | tojson }},
+                preparing_context: {{ _('activity.phase_preparing_context') | tojson }},
+                model_request: {{ _('activity.phase_model_request') | tojson }},
+                embedding_request: {{ _('activity.phase_embedding_request') | tojson }},
+                processing_response: {{ _('activity.phase_processing_response') | tojson }},
+                context_compaction: {{ _('activity.phase_context_compaction') | tojson }},
+                model_followup: {{ _('activity.phase_model_followup') | tojson }},
+                retry_wait: {{ _('activity.phase_retry_wait') | tojson }},
+                provider_error: {{ _('activity.phase_provider_error') | tojson }},
+                tool_failed: {{ _('activity.phase_tool_failed') | tojson }},
+            };
+            if (phase?.startsWith('tool:')) return {{ _('activity.phase_tool') | tojson }} + ' ' + phase.slice(5);
+            return values[phase] || phase || '';
+        },
+        resourceLabel(type) {
+            return {pr: 'PR', issue: 'Issue', scan: 'Scan', ephemeral: 'AI'}[type] || String(type || 'AI');
+        },
         resourceBadgeClass(type) {
-            if (type === 'pr') return 'bg-blue-100 text-blue-700 dark:bg-blue-900/40 dark:text-blue-300';
-            if (type === 'issue') return 'bg-purple-100 text-purple-700 dark:bg-purple-900/40 dark:text-purple-300';
-            if (type === 'ephemeral') return 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300';
-            return 'bg-gray-100 text-gray-600 dark:bg-gray-700 dark:text-gray-300';
+            if (type === 'pr') return 'bg-blue-100 text-blue-700 dark:bg-blue-950 dark:text-blue-300';
+            if (type === 'issue') return 'bg-purple-100 text-purple-700 dark:bg-purple-950 dark:text-purple-300';
+            if (type === 'scan') return 'bg-emerald-100 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300';
+            return 'bg-gray-100 text-gray-600 dark:bg-gray-800 dark:text-gray-300';
         },
-
-        eventBadgeClass(type) {
-            if (type === 'status') return 'bg-blue-50 text-blue-600 dark:bg-blue-900/30';
-            if (type === 'error') return 'bg-red-50 text-red-600 dark:bg-red-900/30';
-            if (type === 'result') return 'bg-emerald-50 text-emerald-600 dark:bg-emerald-900/30';
-            return 'bg-gray-50 text-gray-600 dark:bg-gray-700/50';
+        formatTime(value) {
+            if (!value) return '';
+            try { return new Date(value).toLocaleString(); } catch (_) { return value; }
         },
-
-        eventSummary(e) {
-            const p = e.payload || {};
-            return p.message || p.status || e.event_type;
+        formatRelativeTime(value) {
+            if (!value) return '';
+            const seconds = Math.max(0, (Date.now() - new Date(value).getTime()) / 1000);
+            if (seconds < 60) return {{ _('activity.time_just_now') | tojson }};
+            if (seconds < 3600) return `${Math.floor(seconds / 60)}{{ _('activity.time_minutes_ago') }}`;
+            if (seconds < 86400) return `${Math.floor(seconds / 3600)}{{ _('activity.time_hours_ago') }}`;
+            return `${Math.floor(seconds / 86400)}{{ _('activity.time_days_ago') }}`;
+        },
+        formatNumber(value) {
+            return value == null ? '—' : Number(value).toLocaleString();
         },
     };
 }

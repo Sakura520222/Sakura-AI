@@ -1,6 +1,7 @@
 """Activity observability service APIs."""
 
 from backend.services.activity_observability.contracts import (
+    EffectiveReasoningSnapshot,
     InvocationContext,
     PublicActivityNotification,
     RoleConfigSnapshot,
@@ -46,6 +47,10 @@ from backend.services.activity_observability.integration_service import (
     ObservedExecutionBundle,
     ReviewStartResult,
 )
+from backend.services.activity_observability.conversation_service import (
+    CONVERSATION_PROJECTION_VERSION,
+    ConversationProjectionService,
+)
 from backend.services.activity_observability.publication_service import (
     PUBLICATION_KINDS,
     PUBLICATION_STATUSES,
@@ -75,7 +80,10 @@ __all__ = [
     "NormalizedResource",
     "ObservedExecutionBundle",
     "ReviewStartResult",
+    "CONVERSATION_PROJECTION_VERSION",
+    "ConversationProjectionService",
     "InvocationContext",
+    "EffectiveReasoningSnapshot",
     "PublicActivityNotification",
     "RoleConfigSnapshot",
     "AttemptConflictError",

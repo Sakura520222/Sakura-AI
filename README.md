@@ -48,7 +48,7 @@
 - **PR 变更自动总结**：AI 自动生成 PR 变更摘要，并在 PR 更新时增量更新总结内容
 - **PR 依赖图生成**：支持 AI 分析与静态 import 分析双模式，生成 Mermaid 格式可视化依赖关系图；增量审查基于上一轮依赖图叠加更新，保留历史依赖节点与边
 - **Token 消耗追踪**：实时追踪审查中所有 AI API 调用的 token 消耗量与预估成本
-- **AI 活动可观测性**：新版“活动可观测性”页面（`/activity/observability/`）基于全新数据范围，为每个 PR/Issue 维护长期业务会话与独立角色线程，权威记录每次真实 Provider HTTP 请求（含 retry/fallback/压缩/模型切换）、上下文 revision、工具执行与 GitHub 发布状态；实时监控按 Work Unit 展示当前 effective 模型、上下文占用与来源、压缩时点和当前阶段，思考内容按可见性策略展示（Provider 未返回可展示摘要时仅显示确定性提示，绝不伪造或永久 spinner）；同一 PR 的多次触发复用同一会话；通知采用 user-scoped SSE，仅投递 `{event_id, sequence, projection_version}`，所有内容经授权 REST 按白名单投影（普通用户与 admin/super_admin 分级），不读取或兼容旧 Activity 历史数据
+- **新版实时监控**：`/activity/observability/` 采用对话优先的 AI 审查控制台，为每个 PR/Issue 维护长期 Session 与独立角色 Thread；中央时间线统一呈现完整 assistant 回复、真实 Provider HTTP Attempt（retry/fallback/模型切换）、工具状态、上下文 revision、压缩时点和当前阶段，右侧诊断区显示 effective 模型、最终思考模式/等级、Token 与上下文来源。system/user/tool 内容、工具参数与结果、最终请求/响应投影及可读 reasoning 均与 Canonical Transcript 分离并加密保存；普通用户只看安全投影，admin 查看元数据，super_admin 也必须具备仓库与 trace 权限且显式点击后才会产生审计解密，响应强制 `no-store`。Provider 未暴露可展示 reasoning 时仅显示确定性状态，不伪造内容或永久 spinner；同一 PR 多次触发复用同一会话，user-scoped SSE 只发送 `{event_id, sequence, projection_version}` 并驱动授权 REST 增量刷新；新版不读取或兼容旧 Activity 历史数据
 - **一键撤回**：管理员使用 `/revoke` 命令一键撤回所有 AI 评论和 Review
 - **辅助模型支持**：独立配置轻量级模型处理摘要、标签推荐等任务，降低推理成本
 - **行内评论开关**：通过 WebUI 配置 `enable_inline_comments`，控制是否在 PR diff 上发布行内评论，减少审查噪音

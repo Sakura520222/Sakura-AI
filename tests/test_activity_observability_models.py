@@ -21,6 +21,7 @@ from backend.models.activity_observability_models import (
     ActivityInvocationWorkUnit,
     ActivityMessage,
     ActivityModelAttempt,
+    ActivityNativeArtifact,
     ActivityObservabilityEvent,
     ActivityObservabilityRoleBindingSnapshot,
     ActivityOutbox,
@@ -69,12 +70,13 @@ def _assert_composite_foreign_key(
 
 
 def test_publication_marker_column_can_store_full_marker():
-    from backend.services.activity_observability.publication_service import publication_marker
+    from backend.services.activity_observability.publication_service import (
+        publication_marker,
+    )
 
     marker = publication_marker("issue:owner/repo:1")
     assert len(marker) == 89
     assert ActivityPublication.__table__.c.marker.type.length >= len(marker)
-
 
     """The resource identity is complete and unique within the observability schema."""
     table = ActivityResourceIdentity.__table__
@@ -122,7 +124,9 @@ def test_parent_scoped_composite_foreign_keys_are_declared():
     invocation_table = ActivitySession.metadata.tables[
         "activity_observability_invocations"
     ]
-    lease_table = ActivitySession.metadata.tables["activity_observability_thread_leases"]
+    lease_table = ActivitySession.metadata.tables[
+        "activity_observability_thread_leases"
+    ]
     event_table = ActivityObservabilityEvent.__table__
     outbox_table = ActivityOutbox.__table__
 
@@ -245,6 +249,23 @@ def test_attempt_requires_context_revision_or_contextless_reason():
         constraints["ck_activity_observability_attempt_context"]
         == "context_revision_id IS NOT NULL OR contextless_reason IS NOT NULL"
     )
+    for column_name in (
+        "requested_effort",
+        "effective_effort",
+        "max_output_tokens",
+        "temperature",
+        "top_p",
+        "top_k",
+        "tool_choice",
+    ):
+        assert table.c[column_name].nullable is True
+
+
+def test_native_artifact_records_metadata_only_capture_failure():
+    table = ActivityNativeArtifact.__table__
+
+    assert table.c.capture_error.nullable is True
+    assert table.c.payload_ciphertext.nullable is True
 
 
 def test_event_visibility_is_non_nullable_and_constrained():
@@ -374,7 +395,9 @@ def _sqlite_observability_session() -> Session:
         dbapi_connection.create_function(
             "regexp",
             2,
-            lambda pattern, value: bool(value is not None and re.search(pattern, value)),
+            lambda pattern, value: bool(
+                value is not None and re.search(pattern, value)
+            ),
         )
         dbapi_connection.execute("PRAGMA foreign_keys=ON")
 
@@ -523,6 +546,8 @@ def test_sqlite_rejects_cross_parent_scoped_references():
         )
         session.flush()
     session.close()
+
+
 def test_activity_observability_tables_create_on_sqlite():
     """Observability tables use types that SQLite can compile for tests."""
     from sqlalchemy import inspect
