@@ -485,6 +485,17 @@ class UnifiedResponse:
 
     def to_dict(self) -> dict[str, Any]:
         """轻量序列化（用于日志）/ Lightweight serialization for logging."""
+        usage = {
+            name: getattr(self.usage, name)
+            for name in (
+                "input_tokens",
+                "output_tokens",
+                "cache_read_tokens",
+                "cache_creation_tokens",
+                "reasoning_tokens",
+            )
+            if name in self.usage.reported_fields
+        }
         return {
             "content": self.content,
             "tool_calls": [
@@ -492,10 +503,7 @@ class UnifiedResponse:
                 for tc in self.tool_calls
             ],
             "stop_reason": self.stop_reason.value,
-            "usage": {
-                "input_tokens": self.usage.input_tokens,
-                "output_tokens": self.usage.output_tokens,
-            },
+            "usage": usage,
             "served_by": self.meta.served_by,
         }
 
@@ -581,7 +589,11 @@ def usage_from_mapping(value: Any) -> UnifiedUsage:
     aliases = {
         "input_tokens": ("input_tokens", "prompt_tokens"),
         "output_tokens": ("output_tokens", "completion_tokens"),
-        "cache_read_tokens": ("cache_read_tokens", "cached_tokens"),
+        "cache_read_tokens": (
+            "cache_read_tokens",
+            "cached_tokens",
+            "prompt_cache_hit_tokens",
+        ),
         "cache_creation_tokens": ("cache_creation_tokens",),
         "reasoning_tokens": ("reasoning_tokens",),
     }
@@ -595,7 +607,14 @@ def usage_from_mapping(value: Any) -> UnifiedUsage:
                 fields.add(target)
                 break
     details: dict[str, int] = {}
-    for key in ("input_tokens", "output_tokens", "cached_tokens", "reasoning_tokens"):
+    for key in (
+        "input_tokens",
+        "output_tokens",
+        "cached_tokens",
+        "prompt_cache_hit_tokens",
+        "prompt_cache_miss_tokens",
+        "reasoning_tokens",
+    ):
         candidate = merged.get(key)
         if isinstance(candidate, int) and not isinstance(candidate, bool) and candidate >= 0:
             details[key] = candidate

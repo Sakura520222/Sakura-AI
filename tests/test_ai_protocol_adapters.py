@@ -78,6 +78,50 @@ def test_openai_adapter_serializes_tool_calls_and_parses_response():
     assert response.usage.completion_tokens == 5
 
 
+def test_openai_adapter_normalizes_deepseek_reasoning_and_cache_usage():
+    adapter = OpenAICompatibleAdapter()
+    response = adapter.parse_response(
+        {
+            "choices": [
+                {
+                    "finish_reason": "stop",
+                    "message": {
+                        "content": "done",
+                    },
+                }
+            ],
+            "usage": {
+                "prompt_tokens": 4258,
+                "completion_tokens": 181,
+                "prompt_cache_hit_tokens": 3000,
+                "prompt_cache_miss_tokens": 1258,
+                "completion_tokens_details": {"reasoning_tokens": 120},
+                "total_tokens": 4439,
+            },
+        },
+        raw=None,
+    )
+
+    assert response.usage.input_tokens == 4258
+    assert response.usage.output_tokens == 181
+    assert response.usage.cache_read_tokens == 3000
+    assert response.usage.reasoning_tokens == 120
+    assert response.usage.reported_fields == frozenset(
+        {
+            "input_tokens",
+            "output_tokens",
+            "cache_read_tokens",
+            "reasoning_tokens",
+        }
+    )
+    assert response.to_dict()["usage"] == {
+        "input_tokens": 4258,
+        "output_tokens": 181,
+        "cache_read_tokens": 3000,
+        "reasoning_tokens": 120,
+    }
+
+
 @pytest.mark.asyncio
 async def test_openai_adapter_converts_non_json_success_response_to_retryable_error():
     """2xx HTML 响应必须转为可重试 AIError，而非泄漏 JSONDecodeError。"""

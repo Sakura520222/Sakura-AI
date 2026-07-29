@@ -226,10 +226,20 @@ class IssueWorker:
                             return
                         try:
                             if event_type == "message":
+                                origin_attempt_id = (
+                                    getattr(
+                                        execution.observer,
+                                        "last_attempt_id",
+                                        None,
+                                    )
+                                    if data.get("role") in {"assistant", "tool"}
+                                    else None
+                                )
                                 await execution.tool_service.append_conversation_message(
                                     thread_id=execution.thread.id,
                                     work_unit_id=execution.work_unit.id,
                                     message=data,
+                                    origin_attempt_id=origin_attempt_id,
                                     lease=execution.lease,
                                 )
                                 if data.get("role") == "tool" and data.get(

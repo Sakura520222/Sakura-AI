@@ -667,7 +667,34 @@ class ToolService:
                 locked_thread.last_seq += 1
                 message_seq = locked_thread.last_seq
                 # Canonical transcript never persists reasoning content.
-                safe = {k: v for k, v in message.items() if k != "reasoning_content"}
+                raw_tool_calls = message.get("tool_calls") or []
+                tool_calls = raw_tool_calls if isinstance(raw_tool_calls, list) else []
+                normalized_tool_calls = [
+                    parsed
+                    for parsed in (_normalize_tool_call(item) for item in tool_calls)
+                    if parsed["id"] and parsed["name"]
+                ]
+                safe = {
+                    k: v
+                    for k, v in message.items()
+                    if k not in {"reasoning_content", "tool_calls"}
+                }
+                if normalized_tool_calls and role == "assistant":
+                    # Preserve the real provider-independent structure. Serializing
+                    # UnifiedToolCall with ``default=str`` produced a list of repr
+                    # strings, which made the audited projection look like an
+                    # assistant answer instead of a structured tool request.
+                    safe["tool_calls"] = [
+                        {
+                            "id": parsed["id"],
+                            "type": "function",
+                            "function": {
+                                "name": parsed["name"],
+                                "arguments": parsed["arguments"],
+                            },
+                        }
+                        for parsed in normalized_tool_calls
+                    ]
                 sensitive_payload_json = json.dumps(
                     safe,
                     ensure_ascii=False,
@@ -683,7 +710,6 @@ class ToolService:
                     )
                 else:
                     content_value = content
-                tool_calls = message.get("tool_calls") or []
                 needs_sensitive_artifact = role != "assistant" or bool(tool_calls)
                 artifact = None
                 if needs_sensitive_artifact:
@@ -705,17 +731,14 @@ class ToolService:
                     public_payload["name"] = str(message["name"])
                 if message.get("tool_call_id"):
                     public_payload["tool_call_id"] = str(message["tool_call_id"])
-                if tool_calls and isinstance(tool_calls, list) and role == "assistant":
+                if normalized_tool_calls and role == "assistant":
                     public_payload["tool_calls"] = [
                         {
                             "id": parsed["id"],
                             "type": "function",
                             "function": {"name": parsed["name"]},
                         }
-                        for parsed in (
-                            _normalize_tool_call(item) for item in tool_calls
-                        )
-                        if parsed["id"] and parsed["name"]
+                        for parsed in normalized_tool_calls
                     ]
                 if artifact is not None:
                     public_payload["artifact_id"] = artifact.id
@@ -744,11 +767,8 @@ class ToolService:
                 await db.flush()
                 # Mirror assistant tool_calls as authoritative pending executions so
                 # tool status tracking no longer needs the legacy checkpoint tables.
-                if isinstance(tool_calls, list) and role == "assistant":
-                    for tc in tool_calls:
-                        parsed = _normalize_tool_call(tc)
-                        if not parsed["id"] or not parsed["name"]:
-                            continue
+                if normalized_tool_calls and role == "assistant":
+                    for parsed in normalized_tool_calls:
                         existing = (
                             await db.execute(
                                 select(ActivityToolExecution).where(

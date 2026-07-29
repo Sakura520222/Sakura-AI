@@ -664,6 +664,17 @@ class AIReviewer:
         )
         tracker.accumulate(last_response)
         review_text = last_response.choices[0].message.content or ""
+        if event_callback:
+            try:
+                await event_callback(
+                    "message",
+                    {
+                        "role": "assistant",
+                        "content": review_text,
+                    },
+                )
+            except Exception as exc:
+                logger.warning("event_callback failed: {}", exc)
         result = await self._parse_or_repair_review(
             review_text,
             messages,
