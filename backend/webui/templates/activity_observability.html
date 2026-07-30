@@ -610,7 +610,15 @@ function activityObservability() {
             );
         },
         get latestContext() {
-            const attempt = [...this.allAttempts].reverse().find(item => item.context);
+            const attempt = this.allAttempts
+                .filter(item => item.context)
+                .reduce(
+                    (latest, item) =>
+                        !latest || Number(item.attempt_id) > Number(latest.attempt_id)
+                            ? item
+                            : latest,
+                    null,
+                );
             return attempt?.context || null;
         },
         get roleOptions() {

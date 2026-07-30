@@ -1862,7 +1862,7 @@ activity:
   no_events: "暂无事件"
   reasoning: "推理状态"
   reasoning_omitted_hint: "思考内容按可见性策略展示；Provider 未返回可展示摘要时此区域保持确定性提示。"
-  status_open: "进行中"
+  status_open: "待命"
   status_archived: "已归档"
   status_partial: "部分完成"
   current_phase: "当前阶段"
