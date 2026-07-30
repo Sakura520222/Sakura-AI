@@ -17,6 +17,9 @@ from backend.services.database_reset_service import (
     DatabaseResetError,
     database_reset_service,
 )
+from backend.services.database_reset_runtime_service import (
+    quiesce_database_reset_runtime,
+)
 from backend.services.system_config_service import (
     SYSTEM_CONFIG_GROUPS,
     SYSTEM_SENSITIVE_KEYS,
@@ -281,7 +284,9 @@ async def reset_database(
         user["sub"],
     )
     try:
-        result = await database_reset_service.reset()
+        result = await database_reset_service.reset(
+            before_drop=lambda: quiesce_database_reset_runtime(request.app),
+        )
     except DatabaseResetError as exc:
         if exc.setup_state_reset:
             _schedule_application_restart()
