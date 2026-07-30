@@ -422,11 +422,14 @@ class AIReviewer:
         # 优先用新版 unified config 解析的上下文窗口（来自角色绑定模型的内置元数据，
         # 如 deepseek-v4-flash 内置 1M tokens），避免 model_context 在未提供模型名时
         # 回退 128K 兜底（曾导致日志误报 102K 上限、过早触发压缩）。
-        _ctx_model_id, context_window_tokens = (
-            await self.api_client.resolve_role_model_context("main")
-        )
+        (
+            _ctx_model_id,
+            context_window_tokens,
+        ) = await self.api_client.resolve_role_model_context("main")
         if context_window_tokens and context_window_tokens > 0:
-            safe_context = int(context_window_tokens * settings.context_safety_threshold)
+            safe_context = int(
+                context_window_tokens * settings.context_safety_threshold
+            )
         else:
             safe_context = self.model_context_mgr.calculate_safe_context(
                 None, settings.context_safety_threshold
@@ -876,9 +879,10 @@ class AIReviewer:
                 # 尝试压缩后重试
                 if self.enable_compression:
                     settings = get_settings()
-                    _ctx_model_id, ctx_tokens = (
-                        await self.api_client.resolve_role_model_context("main")
-                    )
+                    (
+                        _ctx_model_id,
+                        ctx_tokens,
+                    ) = await self.api_client.resolve_role_model_context("main")
                     if ctx_tokens and ctx_tokens > 0:
                         safe_context = int(
                             ctx_tokens * settings.context_safety_threshold
@@ -982,6 +986,10 @@ class AIReviewer:
         available_labels: dict[str, dict[str, Any]],
         pr_info: dict[str, Any],
         existing_labels: list[str] | None = None,
+        *,
+        invocation_context: Any = None,
+        observer: Any = None,
+        propagate_errors: bool = False,
     ) -> list[dict[str, Any]]:
         """推荐PR标签
 
@@ -997,5 +1005,11 @@ class AIReviewer:
         self._refresh_ai_clients()
         self._refresh_runtime_config()
         return await self.label_recommender.recommend_labels(
-            context, available_labels, pr_info, existing_labels=existing_labels
+            context,
+            available_labels,
+            pr_info,
+            existing_labels=existing_labels,
+            invocation_context=invocation_context,
+            observer=observer,
+            propagate_errors=propagate_errors,
         )

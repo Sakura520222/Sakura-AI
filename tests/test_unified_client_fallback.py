@@ -6,6 +6,7 @@
 - 终端错误 → 直接报出，不回退
 """
 
+import asyncio
 from typing import Optional
 
 import pytest
@@ -21,7 +22,10 @@ from backend.core.ai_protocol.models import (
     AuthScheme,
     ReasoningParams,
     ResolvedModel,
+    StopReason,
     UnifiedMessage,
+    UnifiedResponse,
+    UnifiedUsage,
 )
 from backend.core.ai_protocol.registry import resolve_endpoint
 from backend.services.ai_reviewer import unified_client as unified_client_module
@@ -112,11 +116,144 @@ class _StubAdapter:
         return {}
 
 
+class _LaneObserver:
+    def __init__(
+        self,
+        name: str,
+        *,
+        first_call_entered: asyncio.Event | None = None,
+        release_first_call: asyncio.Event | None = None,
+        fail_first: bool = False,
+    ) -> None:
+        self.name = name
+        self.context = None
+        self.calls: list[str] = []
+        self.last_attempt_id: int | None = None
+        self._first_call_entered = first_call_entered
+        self._release_first_call = release_first_call
+        self._fail_first = fail_first
+
+    async def send_chat(
+        self,
+        _adapter,
+        _client,
+        _candidate,
+        _request,
+        *,
+        logical_call_id,
+        **_kwargs,
+    ):
+        self.calls.append(logical_call_id)
+        if len(self.calls) == 1 and self._first_call_entered is not None:
+            self._first_call_entered.set()
+        if len(self.calls) == 1 and self._release_first_call is not None:
+            await self._release_first_call.wait()
+        if len(self.calls) == 1 and self._fail_first:
+            raise AIError(AIErrorCategory.RATE_LIMITED, "retry this lane")
+        self.last_attempt_id = len(self.calls)
+        return (
+            UnifiedResponse(
+                content=self.name,
+                tool_calls=[],
+                stop_reason=StopReason.END_TURN,
+                usage=UnifiedUsage(input_tokens=1, output_tokens=1),
+            ),
+            self.last_attempt_id,
+        )
+
+
 def _install_stub(monkeypatch, family, stub):
     from backend.core.ai_protocol import registry as reg
 
     monkeypatch.setitem(reg._DEFAULT_CHAT_PATHS, family, "chat/completions")
     monkeypatch.setattr(reg, "get_adapter", lambda f: stub)
+
+
+@pytest.mark.asyncio
+async def test_per_call_observer_does_not_leak_into_later_unobserved_call(monkeypatch):
+    adapter = _StubAdapter(content="direct")
+    _install_stub(monkeypatch, ProtocolFamily.OPENAI_COMPATIBLE, adapter)
+    candidate = _candidate(ProtocolFamily.OPENAI_COMPATIBLE, "isolated")
+    observer = _LaneObserver("observed")
+    client = UnifiedAIClient(
+        fallback_config=FallbackConfig(max_retries=1),
+    )
+
+    observed = await client.call_with_retry(
+        [candidate],
+        [UnifiedMessage(role="user", content="first")],
+        model="",
+        role="main",
+        context=object(),
+        observer=observer,
+        logical_call_factory=lambda: "observed-call",
+    )
+    direct = await client.call_with_retry(
+        [candidate],
+        [UnifiedMessage(role="user", content="second")],
+        model="",
+        role="summary",
+        logical_call_factory=lambda: "direct-call",
+    )
+
+    assert observed.content == "observed"
+    assert direct.content == "direct"
+    assert observer.calls == ["observed-call"]
+    assert adapter.calls == 1
+    await client.aclose()
+
+
+@pytest.mark.asyncio
+async def test_concurrent_retry_keeps_each_call_on_its_own_observer(monkeypatch):
+    adapter = _StubAdapter()
+    _install_stub(monkeypatch, ProtocolFamily.OPENAI_COMPATIBLE, adapter)
+    candidate = _candidate(ProtocolFamily.OPENAI_COMPATIBLE, "concurrent")
+    first_entered = asyncio.Event()
+    release_first = asyncio.Event()
+    observer_a = _LaneObserver(
+        "lane-a",
+        first_call_entered=first_entered,
+        release_first_call=release_first,
+        fail_first=True,
+    )
+    observer_b = _LaneObserver("lane-b")
+    client = UnifiedAIClient(
+        fallback_config=FallbackConfig(
+            max_retries=2,
+            initial_retry_delay=0,
+            total_timeout=10,
+        )
+    )
+
+    task_a = asyncio.create_task(
+        client.call_with_retry(
+            [candidate],
+            [UnifiedMessage(role="user", content="a")],
+            model="",
+            role="main",
+            context=object(),
+            observer=observer_a,
+            logical_call_factory=lambda: "call-a",
+        )
+    )
+    await first_entered.wait()
+    response_b = await client.call_with_retry(
+        [candidate],
+        [UnifiedMessage(role="user", content="b")],
+        model="",
+        role="main",
+        context=object(),
+        observer=observer_b,
+        logical_call_factory=lambda: "call-b",
+    )
+    release_first.set()
+    response_a = await task_a
+
+    assert response_a.content == "lane-a"
+    assert response_b.content == "lane-b"
+    assert observer_a.calls == ["call-a", "call-a"]
+    assert observer_b.calls == ["call-b"]
+    await client.aclose()
 
 
 @pytest.mark.asyncio
