@@ -130,6 +130,59 @@ class _RecordingActivityIntegration:
 
 
 @pytest.mark.asyncio
+async def test_create_review_record_persists_global_id_and_repository_number(
+    monkeypatch,
+):
+    stored = []
+
+    class RecordingSession:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_args):
+            return None
+
+        def add(self, row):
+            stored.append(row)
+
+        async def commit(self):
+            return None
+
+        async def refresh(self, row):
+            row.id = 7
+
+    monkeypatch.setattr(
+        review_worker,
+        "get_async_session",
+        lambda: RecordingSession,
+    )
+    worker = ReviewWorker.__new__(ReviewWorker)
+    analysis = SimpleNamespace(
+        pr_id=987654321,
+        pr_number=15,
+        total_files=1,
+        total_changes=3,
+        code_file_count=1,
+        strategy="quick",
+    )
+    pr_info = {
+        "repo_name": "repo",
+        "repo_owner": "owner",
+        "author": "alice",
+        "title": "Fix",
+        "branch": "feature/fix",
+        "head_sha": "a" * 40,
+    }
+
+    review_id = await worker._create_review_record(analysis, pr_info, "task")
+
+    assert review_id == 7
+    assert len(stored) == 1
+    assert stored[0].pr_id == 987654321
+    assert stored[0].pr_number == 15
+
+
+@pytest.mark.asyncio
 async def test_timeout_finishes_started_execution_as_cancelled(monkeypatch):
     """wait_for 超时后，已启动的 execution 必须且只能取消收尾一次。"""
     settings = get_settings()
