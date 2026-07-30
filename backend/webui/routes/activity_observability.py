@@ -264,7 +264,9 @@ async def activity_stream(
                 if await request.is_disconnected():
                     return
                 try:
-                    message = await asyncio.wait_for(queue.get(), timeout=30)
+                    message = await sse_manager.receive(queue, timeout=30)
+                    if message is None:
+                        return
                 except asyncio.TimeoutError:
                     # Revalidate before every heartbeat.  A revoked scope closes
                     # the stream without leaking which session caused the revoke.
@@ -280,7 +282,12 @@ async def activity_stream(
                     continue
                 yield f"event: activity:notification\ndata: {json.dumps(data)}\n\n"
         finally:
-            sse_manager.unsubscribe(channel, queue)
+            # 此流使用请求级数据库依赖；必须先释放会话再注销订阅，使清库流程
+            # 可以通过 subscriber_count 准确确认数据库锁已经解除。
+            try:
+                await db.close()
+            finally:
+                sse_manager.unsubscribe(channel, queue)
 
     return StreamingResponse(
         event_generator(),
