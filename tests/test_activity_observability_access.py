@@ -14,6 +14,7 @@ from starlette.requests import Request
 
 from backend.models.activity_observability_models import (
     ActivityContextOperation,
+    ActivityContextSnapshot,
     ActivityInvocation,
     ActivityInvocationWorkUnit,
     ActivityModelAttempt,
@@ -33,6 +34,7 @@ from backend.services.activity_observability.access_service import (
     CursorConfig,
     CursorResetRequiredError,
     project_attempt,
+    project_context_snapshot,
     project_event,
 )
 from backend.services.activity_observability.conversation_service import (
@@ -392,6 +394,40 @@ def test_projection_whitelists_event_and_attempt_without_sensitive_fields():
     assert "tool_result" not in serialized
     assert "cipher" not in serialized
     assert "endpoint" not in serialized
+
+
+def test_context_projection_prefers_provider_usage_over_heuristic_snapshot():
+    context = ActivityContextSnapshot(
+        attempt_id=10,
+        context_revision_id=20,
+        snapshot_kind="before_request",
+        context_tokens=9783,
+        context_tokens_availability="estimated",
+        context_tokens_source="heuristic",
+        context_window_tokens=1_000_000,
+        context_window_tokens_availability="reported",
+        context_window_tokens_source="model_catalog",
+    )
+    attempt = ActivityModelAttempt(
+        input_tokens=18432,
+        input_tokens_availability="reported",
+        input_tokens_source="provider",
+        cached_input_tokens=18304,
+        cached_input_tokens_availability="reported",
+        cached_input_tokens_source="provider",
+        reasoning_tokens=32,
+        reasoning_tokens_availability="reported",
+        reasoning_tokens_source="provider",
+    )
+
+    projected = project_context_snapshot(context, attempt)
+
+    assert projected["context_tokens"] == 18432
+    assert projected["context_tokens_availability"] == "reported"
+    assert projected["context_tokens_source"] == "provider"
+    assert projected["context_window_tokens"] == 1_000_000
+    assert projected["cache_read_tokens"] == 18304
+    assert projected["reasoning_context_tokens"] == 32
 
 
 def test_cursor_config_fails_closed_for_missing_or_short_secret_and_roundtrips():
@@ -820,7 +856,7 @@ async def test_conversation_cursor_paginates_and_event_updates_are_idempotent(db
 
 @pytest.mark.asyncio
 async def test_session_list_projects_current_phase_model_thinking_and_fallback(db):
-    observed_session, _, _, _, _, _ = _conversation_chain(db)
+    observed_session, _, invocation, work_unit, attempt, _ = _conversation_chain(db)
     access = _service(db, ScopeAuthorizer())
 
     result = await access.list_sessions(
@@ -839,6 +875,34 @@ async def test_session_list_projects_current_phase_model_thinking_and_fallback(d
     assert item["thinking_mode"] == "unsupported"
     assert item["attempt_kind"] == "fallback"
     assert item["attempt_status"] == "running"
+    assert item["status"] == "running"
+    assert item["session_status"] == "open"
+
+    invocation.status = "completed"
+    invocation.current_phase = None
+    work_unit.status = "completed"
+    work_unit.current_phase = None
+    attempt.status = "completed"
+    db.session.commit()
+
+    completed = await access.list_sessions(
+        {"user_id": "user-a", "repo": "owner/repo-77", "role": "user"},
+        db=db,
+    )
+    completed_item = next(
+        session
+        for session in completed["sessions"]
+        if session["session_id"] == observed_session.id
+    )
+    assert completed_item["status"] == "completed"
+    assert completed_item["session_status"] == "open"
+    snapshot = await access.create_snapshot(
+        observed_session.id,
+        {"user_id": "user-a", "repo": "owner/repo-77", "role": "user"},
+        db=db,
+    )
+    assert snapshot["session"]["status"] == "completed"
+    assert snapshot["session"]["session_status"] == "open"
 
 
 def test_configures_cursor_and_outbox_from_settings():

@@ -40,6 +40,14 @@ from backend.models.activity_observability_models import (
 from backend.models.database import utc_now
 
 
+_INVOCATION_TERMINAL_STATUSES = {
+    "completed",
+    "partial",
+    "failed",
+    "cancelled",
+}
+
+
 class ActivityNotFoundError(LookupError):
     """The resource is absent or not visible to the caller.
 
@@ -241,7 +249,10 @@ def project_attempt(
     return result
 
 
-def project_context_snapshot(snapshot: ActivityContextSnapshot) -> dict[str, Any]:
+def project_context_snapshot(
+    snapshot: ActivityContextSnapshot,
+    attempt: ActivityModelAttempt | None = None,
+) -> dict[str, Any]:
     fields: dict[str, Any] = {
         "snapshot_id": snapshot.id,
         "snapshot_kind": snapshot.snapshot_kind,
@@ -260,6 +271,25 @@ def project_context_snapshot(snapshot: ActivityContextSnapshot) -> dict[str, Any
         fields[name] = getattr(snapshot, name)
         fields[f"{name}_availability"] = getattr(snapshot, f"{name}_availability")
         fields[f"{name}_source"] = getattr(snapshot, f"{name}_source")
+    if attempt is not None:
+        provider_fields = {
+            "context_tokens": "input_tokens",
+            "cache_read_tokens": "cached_input_tokens",
+            "reasoning_context_tokens": "reasoning_tokens",
+        }
+        for context_name, attempt_name in provider_fields.items():
+            value = getattr(attempt, attempt_name)
+            if value is None:
+                continue
+            fields[context_name] = int(value)
+            fields[f"{context_name}_availability"] = getattr(
+                attempt,
+                f"{attempt_name}_availability",
+            )
+            fields[f"{context_name}_source"] = getattr(
+                attempt,
+                f"{attempt_name}_source",
+            )
     return fields
 
 
@@ -354,6 +384,20 @@ def project_session(
         "created_at": _iso(session.created_at),
         "archived_at": _iso(session.archived_at),
     }
+
+
+def _select_display_invocation(
+    invocations: list[ActivityInvocation],
+) -> ActivityInvocation | None:
+    """Prefer an active execution, otherwise return the newest terminal one."""
+    return next(
+        (
+            invocation
+            for invocation in invocations
+            if invocation.status not in _INVOCATION_TERMINAL_STATUSES
+        ),
+        invocations[0] if invocations else None,
+    )
 
 
 def _b64_encode(value: bytes) -> str:
@@ -490,14 +534,19 @@ class ActivityAccessService:
             if session_ids
             else []
         )
-        latest_invocation_by_session: dict[int, ActivityInvocation] = {}
+        invocations_by_session: dict[int, list[ActivityInvocation]] = {}
         for invocation in invocation_rows:
-            latest_invocation_by_session.setdefault(
+            invocations_by_session.setdefault(
                 int(invocation.session_id),
-                invocation,
-            )
-        latest_invocation_ids = [
-            int(item.id) for item in latest_invocation_by_session.values()
+                [],
+            ).append(invocation)
+        display_invocation_by_session = {
+            session_id: selected
+            for session_id, items in invocations_by_session.items()
+            if (selected := _select_display_invocation(items)) is not None
+        }
+        display_invocation_ids = [
+            int(item.id) for item in display_invocation_by_session.values()
         ]
         work_units = (
             list(
@@ -506,7 +555,7 @@ class ActivityAccessService:
                         select(ActivityInvocationWorkUnit)
                         .where(
                             ActivityInvocationWorkUnit.invocation_id.in_(
-                                latest_invocation_ids
+                                display_invocation_ids
                             )
                         )
                         .order_by(
@@ -517,7 +566,7 @@ class ActivityAccessService:
                     )
                 ).scalars()
             )
-            if latest_invocation_ids
+            if display_invocation_ids
             else []
         )
         work_units_by_invocation: dict[int, list[ActivityInvocationWorkUnit]] = {}
@@ -553,7 +602,13 @@ class ActivityAccessService:
             except ActivityNotFoundError:
                 continue
             item = project_session(session, user)
-            invocation = latest_invocation_by_session.get(int(session.id))
+            invocation = display_invocation_by_session.get(int(session.id))
+            item["session_status"] = session.status
+            item["invocation_id"] = (
+                int(invocation.id) if invocation is not None else None
+            )
+            if session.status != "archived" and invocation is not None:
+                item["status"] = invocation.status
             selected_work_unit = None
             attempt = None
             if invocation is not None:
@@ -919,7 +974,7 @@ class ActivityAccessService:
             projected_attempt = project_attempt(attempt, user)
             latest_context = latest_snapshot_by_attempt.get(int(attempt.id))
             projected_attempt["context"] = (
-                project_context_snapshot(latest_context)
+                project_context_snapshot(latest_context, attempt)
                 if latest_context is not None
                 else None
             )
@@ -982,14 +1037,7 @@ class ActivityAccessService:
             usage_totals[name] = (
                 sum(reported_values) if reported_values else None
             )
-        newest_invocation = next(
-            (
-                item
-                for item in invocations
-                if item.status not in {"completed", "partial", "failed", "cancelled"}
-            ),
-            invocations[0] if invocations else None,
-        )
+        newest_invocation = _select_display_invocation(invocations)
         thread_projection = []
         for thread in threads:
             revision = (
@@ -1012,8 +1060,15 @@ class ActivityAccessService:
                     "last_active_at": _iso(thread.last_active_at),
                 }
             )
+        session_projection = project_session(session, user)
+        session_projection["session_status"] = session.status
+        session_projection["invocation_id"] = (
+            int(newest_invocation.id) if newest_invocation is not None else None
+        )
+        if session.status != "archived" and newest_invocation is not None:
+            session_projection["status"] = newest_invocation.status
         return {
-            "session": project_session(session, user),
+            "session": session_projection,
             "high_water_mark": high_water,
             "current_phase": (
                 newest_invocation.current_phase

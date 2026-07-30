@@ -13,6 +13,7 @@ from sqlalchemy.pool import StaticPool
 from backend.models.activity_observability_models import (
     ActivityArtifactAccessLog,
     ActivityCanonicalContextRevision,
+    ActivityContextSnapshot,
     ActivityInvocation,
     ActivityInvocationWorkUnit,
     ActivityModelAttempt,
@@ -765,6 +766,103 @@ async def test_nonstream_attempt_applies_normalized_nested_usage(db_session, cha
     }
 
 
+@pytest.mark.asyncio
+async def test_nonstream_sender_supersedes_context_estimate_with_provider_usage(
+    db_session,
+    chain,
+):
+    _, thread, work_unit, _ = chain
+    revision = ActivityCanonicalContextRevision(
+        thread_id=thread.id,
+        revision_number=1,
+        message_manifest_json="[]",
+        content_hash="nonstream-context",
+        reason="test",
+    )
+    db_session.add(revision)
+    db_session.flush()
+    thread.current_revision_id = revision.id
+    db_session.commit()
+    context = InvocationContext(
+        invocation_id=work_unit.invocation_id,
+        work_unit_id=work_unit.id,
+        thread_id=thread.id,
+        role_snapshot=RoleConfigSnapshot(
+            role="reviewer",
+            requested_provider="stream-provider",
+            requested_model="stream-model",
+            requested_thinking_mode="adaptive",
+            candidate_chain=(("stream-provider", "stream-model"),),
+            account_id="account",
+            protocol_family="openai_compatible",
+            endpoint_fingerprint="a" * 64,
+            config_snapshot_version=1,
+            captured_at=datetime.now(timezone.utc),
+        ),
+    )
+    adapter_session = _AsyncAdapter(db_session)
+    sender = ObservedModelSender(
+        AttemptService(adapter_session),
+        context=context,
+        context_service=ContextService(adapter_session),
+    )
+
+    class _Adapter:
+        @staticmethod
+        def serialize_request(request):
+            return {"model": request.model, "messages": ["estimated payload"]}
+
+        async def chat(self, *_args, **_kwargs):
+            return UnifiedResponse(
+                content="done",
+                tool_calls=[],
+                stop_reason=StopReason.END_TURN,
+                usage=UnifiedUsage(
+                    input_tokens=18432,
+                    output_tokens=574,
+                    cache_read_tokens=18304,
+                    reasoning_tokens=32,
+                    reported_fields=frozenset(
+                        {
+                            "input_tokens",
+                            "output_tokens",
+                            "cache_read_tokens",
+                            "reasoning_tokens",
+                        }
+                    ),
+                ),
+            )
+
+    _, attempt_id = await sender.send_chat(
+        _Adapter(),
+        object(),
+        _stream_candidate(),
+        UnifiedRequest(
+            model="stream-model",
+            messages=[UnifiedMessage(role="user", content="inspect issue")],
+            max_tokens=4096,
+        ),
+        logical_call_id="nonstream-context",
+        context_revision_id=revision.id,
+    )
+
+    snapshots = db_session.scalars(
+        select(ActivityContextSnapshot)
+        .where(ActivityContextSnapshot.attempt_id == attempt_id)
+        .order_by(ActivityContextSnapshot.id)
+    ).all()
+    assert [item.snapshot_kind for item in snapshots] == [
+        "before_request",
+        "after_request",
+    ]
+    assert snapshots[0].context_tokens_availability == "estimated"
+    assert snapshots[-1].context_tokens == 18432
+    assert snapshots[-1].context_tokens_availability == "reported"
+    assert snapshots[-1].context_tokens_source == "provider"
+    assert snapshots[-1].cache_read_tokens == 18304
+    assert snapshots[-1].reasoning_context_tokens == 32
+
+
 def test_safe_summary_requires_provider_and_protocol_allowlist_match():
     policy = ReasoningCapturePolicy(
         capture_mode=CAPTURE_SAFE_SUMMARY,
@@ -1319,7 +1417,11 @@ async def test_done_usage_finishes_attempt_and_preserves_reported_usage(
         ),
     )
     attempt_service = AttemptService(_AsyncAdapter(db_session))
-    sender = ObservedModelSender(attempt_service, context=context)
+    sender = ObservedModelSender(
+        attempt_service,
+        context=context,
+        context_service=ContextService(_AsyncAdapter(db_session)),
+    )
     candidate = _stream_candidate()
 
     class _StreamAdapter:
@@ -1369,6 +1471,23 @@ async def test_done_usage_finishes_attempt_and_preserves_reported_usage(
     assert attempt.input_tokens == 5 and attempt.output_tokens == 3
     assert attempt.reasoning_tokens == 2
     assert attempt.reasoning_tokens_availability == "reported"
+    context_snapshots = db_session.scalars(
+        select(ActivityContextSnapshot)
+        .where(ActivityContextSnapshot.attempt_id == attempt.id)
+        .order_by(ActivityContextSnapshot.id)
+    ).all()
+    assert [item.snapshot_kind for item in context_snapshots] == [
+        "before_request",
+        "after_request",
+    ]
+    reported = context_snapshots[-1]
+    assert reported.context_tokens == 5
+    assert reported.context_tokens_availability == "reported"
+    assert reported.context_tokens_source == "provider"
+    assert reported.context_window_tokens == 128000
+    assert reported.cache_read_tokens is None
+    assert reported.reasoning_context_tokens == 2
+    assert reported.reasoning_context_tokens_availability == "reported"
 
 
 @pytest.mark.asyncio
