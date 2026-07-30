@@ -719,6 +719,90 @@ class ActivityIntegrationService:
             role_snapshot=role_snapshot,
         )
 
+    async def start_auxiliary_execution(
+        self,
+        *,
+        session_id: int,
+        invocation_id: int,
+        role: str,
+        role_snapshot: RoleConfigSnapshot | None = None,
+        requirement: str = "detached",
+        lease_ttl: Any = None,
+    ) -> ObservedExecutionBundle:
+        """Attach a non-primary observed model lane to an active invocation.
+
+        Optional work such as PR label recommendation must not borrow the main
+        reviewer observer: it has a different role binding and may run in
+        parallel. A dedicated Thread, Work Unit, lease, and observer keep
+        Attempt ownership and context revisions isolated while retaining the
+        same long-lived resource Session and Invocation.
+        """
+
+        snapshot = role_snapshot or await self._resolve_snapshot(role)
+        async with self._session_scope() as db:
+            invocation = await db.get(
+                ActivityInvocation,
+                invocation_id,
+                with_for_update=True,
+            )
+            if invocation is None:
+                raise AdmissionError(
+                    f"ActivityInvocation not found: {invocation_id}"
+                )
+            if int(invocation.session_id) != int(session_id):
+                raise AdmissionError(
+                    "auxiliary invocation does not belong to the requested session"
+                )
+            session = await db.get(ActivityObservabilitySession, session_id)
+            if session is None:
+                raise AdmissionError(
+                    f"ActivityObservabilitySession not found: {session_id}"
+                )
+
+            thread = await self._ensure_thread(db, session_id, role)
+            observability = ActivityObservabilityService(db=db)
+            work_unit = await observability.create_work_unit(
+                invocation.id,
+                purpose=role,
+                requirement=requirement,
+                is_primary=False,
+                role_snapshot=snapshot,
+                thread_id=thread.id,
+            )
+            context_service = self._lease_context or ContextService(db=db)
+            lease = await context_service.acquire_lease(
+                thread.id,
+                work_unit.id,
+                ttl=lease_ttl,
+            )
+            if thread.current_revision_id is None:
+                await context_service.create_revision(
+                    thread.id,
+                    lease,
+                    expected_parent_revision_id=None,
+                    message_manifest=[],
+                    reason="initial",
+                    created_invocation_id=invocation.id,
+                    created_work_unit_id=work_unit.id,
+                )
+                thread = await db.get(ActivityThread, thread.id) or thread
+            await db.flush()
+            await self._commit_if_owned(db)
+            started = ReviewStartResult(
+                session=session,
+                invocation=invocation,
+                triggers=(),
+                thread=thread,
+                work_unit=work_unit,
+                lease=lease,
+                merged=False,
+            )
+
+        return await self.build_execution_bundle(
+            started,
+            role_snapshot=snapshot,
+        )
+
     async def start_scan_execution(
         self,
         resource: Mapping[str, Any],

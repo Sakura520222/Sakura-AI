@@ -1268,6 +1268,27 @@ class ReviewWorker:
 
                 # 检查是否启用标签推荐功能
                 enable_label_recommendation = _get_label_rec_setting("enabled", True)
+                label_execution = None
+                if enable_label_recommendation:
+                    try:
+                        summary_snapshot = (
+                            await resolver("summary") if resolver is not None else None
+                        )
+                        label_execution = (
+                            await self.activity_integration.start_auxiliary_execution(
+                                session_id=execution.session.id,
+                                invocation_id=execution.invocation.id,
+                                role="summary",
+                                role_snapshot=summary_snapshot,
+                                requirement="detached",
+                            )
+                        )
+                    except Exception as exc:
+                        logger.warning(
+                            "[{}] 标签推荐可观测通道创建失败，继续执行但不记录该通道: {}",
+                            task_id,
+                            exc,
+                        )
 
                 # 根据配置决定是否使用AI工具
                 enable_tools = (
@@ -1318,6 +1339,7 @@ class ReviewWorker:
                     logger.info("[{}] 并行启动AI标签推荐...", task_id)
 
                     async def run_label_recommendation():
+                        label_status = "completed"
                         try:
                             # 获取仓库可用标签
                             available_labels = await label_service.get_repo_labels(
@@ -1339,6 +1361,17 @@ class ReviewWorker:
                                 available_labels,
                                 pr_info,
                                 existing_labels=pr_existing_labels,
+                                invocation_context=(
+                                    label_execution.invocation_context
+                                    if label_execution is not None
+                                    else None
+                                ),
+                                observer=(
+                                    label_execution.observer
+                                    if label_execution is not None
+                                    else None
+                                ),
+                                propagate_errors=True,
                             )
 
                             if recommendations:
@@ -1371,13 +1404,34 @@ class ReviewWorker:
                                 logger.info("[{}] AI未推荐任何标签", task_id)
                                 return None
 
+                        except asyncio.CancelledError:
+                            label_status = "cancelled"
+                            raise
                         except Exception as label_error:
+                            label_status = "failed"
                             logger.warning(
                                 "[{}] 标签推荐失败（不影响审查）: {}",
                                 task_id,
                                 str(label_error),
                             )
                             return None
+                        finally:
+                            if label_execution is not None:
+                                try:
+                                    await label_execution.finish(
+                                        label_status,
+                                        error_message=(
+                                            "label recommendation failed"
+                                            if label_status == "failed"
+                                            else None
+                                        ),
+                                    )
+                                except Exception as finish_error:
+                                    logger.warning(
+                                        "[{}] 标签推荐可观测通道收尾失败: {}",
+                                        task_id,
+                                        finish_error,
+                                    )
 
                     tasks.append(run_label_recommendation())
 

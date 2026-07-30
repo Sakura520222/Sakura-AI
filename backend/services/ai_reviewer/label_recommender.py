@@ -40,6 +40,10 @@ class LabelRecommender:
         available_labels: dict[str, dict[str, Any]],
         pr_info: dict[str, Any],
         existing_labels: list[str] | None = None,
+        *,
+        invocation_context: Any = None,
+        observer: Any = None,
+        propagate_errors: bool = False,
     ) -> list[dict[str, Any]]:
         """推荐PR标签
 
@@ -80,6 +84,8 @@ class LabelRecommender:
                 ],
                 temperature=LABEL_RECOMMENDATION_TEMPERATURE,
                 role="summary",
+                context=invocation_context,
+                observer=observer,
             )
 
             # 提取响应
@@ -98,6 +104,8 @@ class LabelRecommender:
 
         except Exception as e:
             logger.error(f"AI标签推荐失败: {e}", exc_info=True)
+            if propagate_errors:
+                raise
             return []
 
     def _build_system_prompt(

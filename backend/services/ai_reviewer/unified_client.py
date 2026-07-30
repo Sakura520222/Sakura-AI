@@ -81,6 +81,20 @@ class AttemptRecord:
     fallback_reason: str = ""
 
 
+@dataclass(slots=True)
+class _CallState:
+    """Mutable state that belongs to one logical model call.
+
+    ``UnifiedAIClient`` is shared by the global review worker. Keeping the
+    observer or retry linkage on the client instance lets concurrent PR lanes
+    overwrite each other, so all request-specific state lives here instead.
+    """
+
+    observer: Any
+    logical_call_factory: Any
+    last_attempt_id: int | None = None
+
+
 def _filter_params_by_capability(
     metadata: ModelMetadata,
     *,
@@ -287,7 +301,6 @@ class UnifiedAIClient:
         self._observer = observer
         self._context = context
         self._logical_call_factory = logical_call_factory
-        self._last_attempt_id: int | None = None
         self._logical_attempt_counts: dict[str, int] = {}
         # role -> (provider_id, model_id)，记忆上次成功候选
         # remember last-winning candidate per role so subsequent calls in the
@@ -412,14 +425,19 @@ class UnifiedAIClient:
         返回 UnifiedResponse（向后兼容 response.choices[0].message.xxx 访问）。
         """
         candidates = self._extract_candidates(chain_or_candidates)
-        if observer is not None:
-            self._observer = observer
-        if context is not None:
-            self._context = context
-        if logical_call_factory is not uuid4:
-            self._logical_call_factory = logical_call_factory
-        if self._observer is not None:
-            self._observer.context = self._context
+        active_observer = observer if observer is not None else self._observer
+        active_context = context if context is not None else self._context
+        active_logical_call_factory = (
+            logical_call_factory
+            if logical_call_factory is not uuid4
+            else self._logical_call_factory
+        )
+        if active_observer is not None:
+            active_observer.context = active_context
+        call_state = _CallState(
+            observer=active_observer,
+            logical_call_factory=active_logical_call_factory,
+        )
         if not candidates:
             raise AllCandidatesFailedError(
                 f"角色 {role} 无可用 AI 候选模型，请检查配置。"
@@ -455,7 +473,7 @@ class UnifiedAIClient:
                     break
 
         attempt_chain: list[AttemptRecord] = []
-        logical_call_id = str(self._logical_call_factory())
+        logical_call_id = str(call_state.logical_call_factory())
         logical_call_started = time.monotonic()
         last_error: Optional[AIError] = None
         compressed_once = False
@@ -523,9 +541,10 @@ class UnifiedAIClient:
                     idx=idx,
                     cancel_event=cancel_event,
                     logical_call_id=logical_call_id,
-                    fallback_from=self._last_attempt_id if idx > 0 else None,
+                    fallback_from=call_state.last_attempt_id if idx > 0 else None,
                     requested_candidate=requested_candidate,
                     reasoning_snapshot=reasoning_snapshot,
+                    call_state=call_state,
                 )
                 response.meta.served_by = served_by
                 response.meta.attempt_chain = [a.__dict__ for a in attempt_chain] + [
@@ -617,7 +636,8 @@ class UnifiedAIClient:
                             role=role,
                             cancel_event=cancel_event,
                             logical_call_id=logical_call_id,
-                            retry_of_attempt_id=self._last_attempt_id,
+                            retry_of_attempt_id=call_state.last_attempt_id,
+                            call_state=call_state,
                         )
                     except (asyncio.CancelledError, ReviewCancelledError):
                         self._log_logical_call_summary(
@@ -703,14 +723,15 @@ class UnifiedAIClient:
         candidates = self._extract_candidates(chain_or_candidates)
         if not candidates:
             raise AllCandidatesFailedError(f"角色 {role} 无可用 AI 候选模型")
-        if observer is not None:
-            self._observer = observer
-        if context is not None:
-            self._context = context
-        if logical_call_factory is not uuid4:
-            self._logical_call_factory = logical_call_factory
-        if self._observer is not None:
-            self._observer.context = self._context
+        active_observer = observer if observer is not None else self._observer
+        active_context = context if context is not None else self._context
+        active_logical_call_factory = (
+            logical_call_factory
+            if logical_call_factory is not uuid4
+            else self._logical_call_factory
+        )
+        if active_observer is not None:
+            active_observer.context = active_context
         unified_messages = (
             messages
             if (messages and isinstance(messages[0], UnifiedMessage))
@@ -735,7 +756,7 @@ class UnifiedAIClient:
                         ]
                     break
 
-        logical_call_id = str(self._logical_call_factory())
+        logical_call_id = str(active_logical_call_factory())
         logical_call_started = time.monotonic()
         last_error: AIError | None = None
         previous_attempt_id: int | None = None
@@ -780,7 +801,7 @@ class UnifiedAIClient:
                     )
                     raise ReviewCancelledError()
                 emitted = False
-                sender = self._observer
+                sender = active_observer
                 try:
                     adapter = _get_adapter(candidate.provider.family)
                     if sender is None:
@@ -822,7 +843,6 @@ class UnifiedAIClient:
                         yield event
                     if sender is not None:
                         previous_attempt_id = sender.last_attempt_id
-                        self._last_attempt_id = previous_attempt_id
                     self._last_successful[role] = (
                         candidate.provider.id,
                         candidate.model.model_id,
@@ -850,7 +870,6 @@ class UnifiedAIClient:
                     last_error = exc
                     if sender is not None:
                         previous_attempt_id = sender.last_attempt_id
-                        self._last_attempt_id = previous_attempt_id
                     # Once any stream event is visible to the caller, replaying a
                     # retry/fallback would duplicate output. Surface the error.
                     if emitted or exc.is_terminal or not exc.is_retryable:
@@ -923,6 +942,7 @@ class UnifiedAIClient:
         initial_retry_of: int | None = None,
         requested_candidate: ResolvedModel | None = None,
         reasoning_snapshot: EffectiveReasoningSnapshot | None = None,
+        call_state: _CallState,
     ) -> UnifiedResponse:
         adapter = _get_adapter(candidate.provider.family)
         cfg = self.fallback_config
@@ -944,7 +964,7 @@ class UnifiedAIClient:
                 )
             try:
                 self._mark_logical_attempt(logical_call_id)
-                if self._observer is not None:
+                if call_state.observer is not None:
                     attempt_kind = (
                         "retry"
                         if attempt
@@ -953,22 +973,26 @@ class UnifiedAIClient:
                             or ("fallback" if fallback_from is not None else "primary")
                         )
                     )
-                    response, self._last_attempt_id = await self._observer.send_chat(
-                        adapter,
-                        self.http_client,
-                        candidate,
-                        request,
-                        timeout=timeout,
-                        logical_call_id=logical_call_id
-                        or str(self._logical_call_factory()),
-                        attempt_kind=attempt_kind,
-                        purpose=role,
-                        retry_of=(
-                            self._last_attempt_id if attempt else initial_retry_of
-                        ),
-                        fallback_from=fallback_from,
-                        requested=requested_candidate or candidate,
-                        reasoning_snapshot=reasoning_snapshot,
+                    response, call_state.last_attempt_id = (
+                        await call_state.observer.send_chat(
+                            adapter,
+                            self.http_client,
+                            candidate,
+                            request,
+                            timeout=timeout,
+                            logical_call_id=logical_call_id
+                            or str(call_state.logical_call_factory()),
+                            attempt_kind=attempt_kind,
+                            purpose=role,
+                            retry_of=(
+                                call_state.last_attempt_id
+                                if attempt
+                                else initial_retry_of
+                            ),
+                            fallback_from=fallback_from,
+                            requested=requested_candidate or candidate,
+                            reasoning_snapshot=reasoning_snapshot,
+                        )
                     )
                 else:
                     response = await adapter.chat(
@@ -1053,6 +1077,7 @@ class UnifiedAIClient:
         role: str,
         logical_call_id: str,
         retry_of_attempt_id: int | None,
+        call_state: _CallState,
         cancel_event: Optional[asyncio.Event] = None,
     ) -> Optional[UnifiedResponse]:
         """压缩后同候选重试；仍超限则返回 None 交由上层回退.
@@ -1073,9 +1098,9 @@ class UnifiedAIClient:
             return None
         if compressed is None:
             return None
-        if self._observer is not None:
+        if call_state.observer is not None:
             record_replacement = getattr(
-                self._observer, "record_context_replacement", None
+                call_state.observer, "record_context_replacement", None
             )
             if record_replacement is not None:
                 try:
@@ -1113,6 +1138,7 @@ class UnifiedAIClient:
                 logical_call_id=logical_call_id,
                 initial_attempt_kind="compression_retry",
                 initial_retry_of=retry_of_attempt_id,
+                call_state=call_state,
             )
             response.meta.fallback_reason = "compressed-retry"
             attempt_chain.append(
