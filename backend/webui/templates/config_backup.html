@@ -37,7 +37,7 @@
                 </div>
                 <form method="POST" action="/config/backup/export/all" class="mt-4">
                     <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-                    <button type="submit" class="w-full px-4 py-2 rounded-lg bg-sakura-600 hover:bg-sakura-700 text-white text-sm font-medium transition-colors">
+                    <button type="submit" data-no-loading="true" class="w-full px-4 py-2 rounded-lg bg-sakura-600 hover:bg-sakura-700 text-white text-sm font-medium transition-colors">
                         {{ _('config.backup_export_all') }}
                     </button>
                 </form>
@@ -48,7 +48,7 @@
                 <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">{{ _('config.backup_global_desc') }}</p>
                 <form method="POST" action="/config/backup/export/global" class="mt-4">
                     <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-                    <button type="submit" class="w-full px-4 py-2 rounded-lg border border-gray-300 dark:border-gray-600 text-sm font-medium hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors">
+                    <button type="submit" data-no-loading="true" class="w-full px-4 py-2 rounded-lg border border-gray-300 dark:border-gray-600 text-sm font-medium hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors">
                         {{ _('config.backup_export_global') }}
                     </button>
                 </form>
@@ -59,7 +59,7 @@
                 <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">{{ _('config.backup_ai_desc') }}</p>
                 <form method="POST" action="/config/backup/export/ai" class="mt-4">
                     <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-                    <button type="submit" class="w-full px-4 py-2 rounded-lg border border-gray-300 dark:border-gray-600 text-sm font-medium hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors">
+                    <button type="submit" data-no-loading="true" class="w-full px-4 py-2 rounded-lg border border-gray-300 dark:border-gray-600 text-sm font-medium hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors">
                         {{ _('config.backup_export_ai') }}
                     </button>
                 </form>
@@ -70,7 +70,7 @@
                 <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">{{ _('config.backup_system_desc') }}</p>
                 <form method="POST" action="/config/backup/export/system" class="mt-4">
                     <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-                    <button type="submit" class="w-full px-4 py-2 rounded-lg border border-gray-300 dark:border-gray-600 text-sm font-medium hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors">
+                    <button type="submit" data-no-loading="true" class="w-full px-4 py-2 rounded-lg border border-gray-300 dark:border-gray-600 text-sm font-medium hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors">
                         {{ _('config.backup_export_system') }}
                     </button>
                 </form>
