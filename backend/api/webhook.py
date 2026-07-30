@@ -1031,7 +1031,7 @@ async def handle_issue_comment_event(payload: dict[str, Any]) -> JSONResponse:
                     select(PRReview).where(
                         and_(
                             PRReview.repo_name == repo_name,
-                            PRReview.pr_id == pr_number,
+                            PRReview.pr_number == pr_number,
                         )
                     )
                 )
