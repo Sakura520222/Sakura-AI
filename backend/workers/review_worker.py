@@ -1906,6 +1906,7 @@ class ReviewWorker:
             async with AsyncSession() as session:
                 record = PRReview(
                     pr_id=analysis.pr_id,
+                    pr_number=analysis.pr_number,
                     repo_name=pr_info["repo_name"],
                     repo_owner=pr_info["repo_owner"],
                     author=pr_info["author"],
@@ -2044,6 +2045,7 @@ class ReviewWorker:
             async with AsyncSession() as session:
                 record = PRReview(
                     pr_id=analysis.pr_id,
+                    pr_number=analysis.pr_number,
                     repo_name=pr_info["repo_name"],
                     repo_owner=pr_info["repo_owner"],
                     author=pr_info["author"],
@@ -2072,6 +2074,7 @@ class ReviewWorker:
             async with AsyncSession() as session:
                 record = PRReview(
                     pr_id=pr_info["pr_id"],
+                    pr_number=pr_info["pr_number"],
                     repo_name=pr_info["repo_name"],
                     repo_owner=pr_info["repo_owner"],
                     author=pr_info["author"],

@@ -150,7 +150,10 @@ class PRReview(Base):
     __tablename__ = "pr_reviews"
 
     id = Column(Integer, primary_key=True, autoincrement=True)
+    # ``pr_id`` is GitHub's global pull_request.id.  Keep the repository-local
+    # number separately; UI/resource identities use this value (for example #15).
     pr_id = Column(BigInteger, nullable=False, index=True)
+    pr_number = Column(BigInteger, nullable=True, index=True)
     repo_name = Column(String(255), nullable=False, index=True)
     repo_owner = Column(String(100), nullable=False)
     author = Column(String(100))
@@ -205,7 +208,11 @@ class PRReview(Base):
     )
 
     def __repr__(self):
-        return f"<PRReview(id={self.id}, pr_id={self.pr_id}, repo={self.repo_name}, strategy={self.strategy})>"
+        return (
+            f"<PRReview(id={self.id}, pr_id={self.pr_id}, "
+            f"pr_number={self.pr_number}, repo={self.repo_name}, "
+            f"strategy={self.strategy})>"
+        )
 
 
 class PRReviewIncrementalQueue(Base):

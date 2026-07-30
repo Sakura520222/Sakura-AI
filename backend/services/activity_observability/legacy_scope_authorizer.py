@@ -47,7 +47,7 @@ class LegacyRepositoryScopeAuthorizer:
         if role == "pr":
             model = PRReview
             query = select(model).where(
-                model.pr_id == number,
+                model.pr_number == number,
                 model.repo_name == identity.repo_full_name.rsplit("/", 1)[-1],
                 model.repo_owner == identity.repo_full_name.split("/", 1)[0],
             )

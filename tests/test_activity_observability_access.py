@@ -525,13 +525,14 @@ async def test_snapshot_high_water_and_cursor_are_same_sequence(db):
 
 
 @pytest.mark.asyncio
-async def test_legacy_scope_uses_external_numbers_and_repository_user_scope(db):
+async def test_legacy_scope_uses_repository_pr_number_not_global_github_id(db):
     from backend.services.activity_observability.legacy_scope_authorizer import (
         LegacyRepositoryScopeAuthorizer,
     )
 
     pr = PRReview(
         pr_id=987654,
+        pr_number=123,
         repo_name="repo",
         repo_owner="owner",
         author="alice",
@@ -577,12 +578,12 @@ async def test_legacy_scope_uses_external_numbers_and_repository_user_scope(db):
     db.session.flush()
     authorizer = LegacyRepositoryScopeAuthorizer()
     user = {"user_id": "alice", "sub": "alice", "role": "user"}
+    assert await authorizer.authorize_session(db, session=pr_session, user=user) is True
+    pr.pr_number = 124
+    db.session.flush()
     assert (
         await authorizer.authorize_session(db, session=pr_session, user=user) is False
     )
-    pr.pr_id = 123
-    db.session.flush()
-    assert await authorizer.authorize_session(db, session=pr_session, user=user) is True
     assert (
         await authorizer.authorize_session(db, session=issue_session, user=user) is True
     )

@@ -574,7 +574,7 @@ async def cmd_review(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     select(PRReview).where(
                         and_(
                             PRReview.repo_name == pr_info["repo_name"],
-                            PRReview.pr_id == pr_info["pr_number"],
+                            PRReview.pr_number == pr_info["pr_number"],
                         )
                     )
                 )
