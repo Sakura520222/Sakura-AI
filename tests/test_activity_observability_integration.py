@@ -204,6 +204,66 @@ async def test_bundle_release_failure_is_retryable_after_work_unit_aggregation(
 
 
 @pytest.mark.asyncio
+async def test_auxiliary_execution_uses_separate_detached_thread_and_observer(
+    db, resource, snapshot
+):
+    service = ActivityIntegrationService(db=db)
+    admitted = await service.admit_synchronize(
+        resource,
+        delivery_id="auxiliary-summary",
+    )
+    primary = await service.start_or_merge_review(
+        session_id=admitted.session_id,
+        role="main",
+        role_snapshot=snapshot,
+    )
+    primary_bundle = await service.build_execution_bundle(primary)
+    summary_snapshot = RoleConfigSnapshot(
+        role="summary",
+        requested_provider="test",
+        requested_model="summary-model",
+        requested_thinking_mode=None,
+        candidate_chain=(("test", "summary-model"),),
+        account_id="summary-account",
+        protocol_family="test",
+        endpoint_fingerprint="b" * 64,
+        config_snapshot_version=1,
+        captured_at=datetime.now(timezone.utc),
+    )
+
+    auxiliary = await service.start_auxiliary_execution(
+        session_id=primary.session.id,
+        invocation_id=primary.invocation.id,
+        role="summary",
+        role_snapshot=summary_snapshot,
+        requirement="detached",
+    )
+
+    assert auxiliary.session.id == primary.session.id
+    assert auxiliary.invocation.id == primary.invocation.id
+    assert auxiliary.work_unit.id != primary.work_unit.id
+    assert auxiliary.work_unit.requirement == "detached"
+    assert auxiliary.work_unit.is_primary is False
+    assert auxiliary.thread.id != primary.thread.id
+    assert auxiliary.thread.thread_purpose == "summary"
+    assert auxiliary.invocation_context.work_unit_id == auxiliary.work_unit.id
+    assert auxiliary.invocation_context.thread_id == auxiliary.thread.id
+    assert auxiliary.invocation_context.role_snapshot == summary_snapshot
+    assert auxiliary.observer is not primary_bundle.observer
+
+    await auxiliary.finish("completed")
+    stored_auxiliary = await db.get(
+        ActivityInvocationWorkUnit,
+        auxiliary.work_unit.id,
+    )
+    stored_invocation = await db.get(ActivityInvocation, primary.invocation.id)
+    assert stored_auxiliary.status == "completed"
+    assert stored_invocation.status not in {"completed", "failed", "partial"}
+    assert await db.get(ActivityThreadLease, auxiliary.thread.id) is None
+    await primary_bundle.finish("completed")
+
+
+@pytest.mark.asyncio
 async def test_active_review_lease_join_follows_invocation_and_owner_work_unit(
     db, resource, snapshot
 ):
