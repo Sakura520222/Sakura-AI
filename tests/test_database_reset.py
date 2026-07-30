@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -48,6 +49,7 @@ def _dependency_calls(route: APIRoute) -> list[object]:
 class _JsonRequest:
     def __init__(self, body: object) -> None:
         self.body = body
+        self.app = SimpleNamespace(state=SimpleNamespace())
 
     async def json(self) -> object:
         return self.body
@@ -209,12 +211,16 @@ async def test_reset_preserves_original_database_url_and_orders_setup_before_dro
     monkeypatch.setattr(reset_module, "write_connection_config", fake_write)
     monkeypatch.setattr(reset_module, "create_async_engine", create_engine_mock)
 
-    result = await DatabaseResetService().reset()
+    async def before_drop() -> None:
+        events.append("before_drop")
+
+    result = await DatabaseResetService().reset(before_drop=before_drop)
 
     assert result.total_dropped == 3
     assert events == [
         "_collect_database_objects",
         "write_connection_config",
+        "before_drop",
         "_drop_database_objects",
     ]
     assert create_engine_mock.call_args.args[0].startswith("mysql+asyncmy://")
@@ -226,6 +232,7 @@ async def test_inventory_failure_does_not_change_setup_state(monkeypatch):
     connection = _FakeAsyncConnection([], fail_inventory=True)
     engine = _FakeAsyncEngine(connection)
     write_mock = MagicMock()
+    before_drop = AsyncMock()
 
     monkeypatch.setattr(
         reset_module,
@@ -239,10 +246,48 @@ async def test_inventory_failure_does_not_change_setup_state(monkeypatch):
     monkeypatch.setattr(reset_module, "create_async_engine", lambda *_a, **_kw: engine)
 
     with pytest.raises(DatabaseResetError) as exc_info:
-        await DatabaseResetService().reset()
+        await DatabaseResetService().reset(before_drop=before_drop)
 
     assert exc_info.value.setup_state_reset is False
     write_mock.assert_not_called()
+    before_drop.assert_not_awaited()
+    engine.dispose.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_quiesce_failure_keeps_setup_in_incomplete_safe_state(monkeypatch):
+    events: list[str] = []
+    connection = _FakeAsyncConnection(events)
+    engine = _FakeAsyncEngine(connection)
+
+    monkeypatch.setattr(
+        reset_module,
+        "read_connection_config",
+        lambda: {
+            "database_url": "mysql+asyncmy://user:secret@db.example/sakura",
+            "setup_completed": True,
+        },
+    )
+    monkeypatch.setattr(
+        reset_module,
+        "write_connection_config",
+        lambda *_args, **_kwargs: events.append("write_connection_config"),
+    )
+    monkeypatch.setattr(reset_module, "create_async_engine", lambda *_a, **_kw: engine)
+
+    async def fail_before_drop() -> None:
+        events.append("before_drop")
+        raise RuntimeError("quiesce failed")
+
+    with pytest.raises(DatabaseResetError) as exc_info:
+        await DatabaseResetService().reset(before_drop=fail_before_drop)
+
+    assert exc_info.value.setup_state_reset is True
+    assert events == [
+        "_collect_database_objects",
+        "write_connection_config",
+        "before_drop",
+    ]
     engine.dispose.assert_awaited_once()
 
 
@@ -341,14 +386,19 @@ async def test_reset_route_rejects_wrong_confirmation_without_mutation(monkeypat
 
 @pytest.mark.asyncio
 async def test_reset_route_schedules_restart_after_success(monkeypatch):
-    reset_mock = AsyncMock(
-        return_value=DatabaseResetResult(
-            tables_dropped=12,
-            views_dropped=2,
-            materialized_views_dropped=1,
-            sequences_dropped=3,
-        )
+    reset_result = DatabaseResetResult(
+        tables_dropped=12,
+        views_dropped=2,
+        materialized_views_dropped=1,
+        sequences_dropped=3,
     )
+
+    async def reset_with_quiesce(*, before_drop):
+        await before_drop()
+        return reset_result
+
+    reset_mock = AsyncMock(side_effect=reset_with_quiesce)
+    quiesce_mock = AsyncMock()
     restart_mock = MagicMock()
     monkeypatch.setattr(
         system_config_routes.database_reset_service,
@@ -360,14 +410,20 @@ async def test_reset_route_schedules_restart_after_success(monkeypatch):
         "_schedule_application_restart",
         restart_mock,
     )
+    monkeypatch.setattr(
+        system_config_routes,
+        "quiesce_database_reset_runtime",
+        quiesce_mock,
+    )
 
+    request = _JsonRequest(
+        {
+            "confirmation": DATABASE_RESET_CONFIRMATION,
+            "language": "zh-CN",
+        }
+    )
     response = await system_config_routes.reset_database(
-        _JsonRequest(
-            {
-                "confirmation": DATABASE_RESET_CONFIRMATION,
-                "language": "zh-CN",
-            }
-        ),
+        request,
         user={"user_id": 1, "sub": "root"},
         _csrf="valid",
     )
@@ -382,6 +438,7 @@ async def test_reset_route_schedules_restart_after_success(monkeypatch):
         "materialized_views": 1,
         "sequences": 3,
     }
+    quiesce_mock.assert_awaited_once_with(request.app)
     restart_mock.assert_called_once_with()
 
 

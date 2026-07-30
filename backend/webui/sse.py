@@ -11,6 +11,8 @@ from loguru import logger
 
 from backend.services.activity_observability.contracts import PublicActivityNotification
 
+_SSE_SHUTDOWN = object()
+
 
 class SSEManager:
     """SSE 连接管理器（进程内）"""
@@ -53,6 +55,57 @@ class SSEManager:
                 dead_queues.append(queue)
         for q in dead_queues:
             self.unsubscribe(channel, q)
+
+    async def receive(
+        self,
+        queue: asyncio.Queue,
+        *,
+        timeout: float,
+    ) -> Dict[str, Any] | None:
+        """等待下一条事件；应用准备退出时返回 ``None``。"""
+
+        event = await asyncio.wait_for(queue.get(), timeout=timeout)
+        if event is _SSE_SHUTDOWN:
+            return None
+        return event
+
+    def close_all(self) -> int:
+        """立即唤醒并关闭所有进程内 SSE 流。"""
+
+        queues = [
+            queue
+            for subscribers in self._subscribers.values()
+            for queue in tuple(subscribers)
+        ]
+        for queue in queues:
+            # 丢弃尚未发送的业务事件，保证关闭哨兵位于队首并立即唤醒生成器。
+            while True:
+                try:
+                    queue.get_nowait()
+                except asyncio.QueueEmpty:
+                    break
+            queue.put_nowait(_SSE_SHUTDOWN)
+
+        if queues:
+            logger.info("已通知 {} 个 SSE 长连接关闭", len(queues))
+        return len(queues)
+
+    @property
+    def subscriber_count(self) -> int:
+        """返回当前进程内仍登记的 SSE 订阅数。"""
+
+        return sum(len(subscribers) for subscribers in self._subscribers.values())
+
+    async def wait_until_closed(self, *, timeout: float) -> int:
+        """等待生成器完成清理，返回超时后仍存活的订阅数。"""
+
+        deadline = asyncio.get_running_loop().time() + timeout
+        while self.subscriber_count:
+            remaining_time = deadline - asyncio.get_running_loop().time()
+            if remaining_time <= 0:
+                return self.subscriber_count
+            await asyncio.sleep(min(0.01, remaining_time))
+        return 0
 
 
 _ACTIVITY_USER_ID_PATTERN = re.compile(r"^[A-Za-z0-9_.:@-]{1,255}$")

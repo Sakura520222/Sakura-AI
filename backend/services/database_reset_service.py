@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import dataclass
-from typing import Callable
+from typing import Awaitable, Callable
 
 from loguru import logger
 from sqlalchemy import inspect
@@ -20,6 +20,7 @@ _SUPPORTED_DATABASE_PREFIXES = (
     "mysql+asyncmy://",
     "postgresql+asyncpg://",
 )
+BeforeDatabaseDrop = Callable[[], Awaitable[None]]
 
 
 @dataclass(frozen=True)
@@ -170,7 +171,11 @@ class DatabaseResetService:
     def __init__(self) -> None:
         self._lock = asyncio.Lock()
 
-    async def reset(self) -> DatabaseResetResult:
+    async def reset(
+        self,
+        *,
+        before_drop: BeforeDatabaseDrop | None = None,
+    ) -> DatabaseResetResult:
         """清空默认 schema，保留连接地址并将 Setup 标记重置为 false。"""
 
         async with self._lock:
@@ -196,6 +201,11 @@ class DatabaseResetService:
                     # 任何部分删除或崩溃后都只会进入 Setup，而不会按正常模式启动。
                     write_connection_config(database_url, setup_completed=False)
                     setup_state_reset = True
+
+                    # connection.json 已切换到 Setup 模式，新请求会被中间件拦截。
+                    # 在真正删除表之前，等待仍可能访问数据库的后台任务退出。
+                    if before_drop is not None:
+                        await before_drop()
 
                     result = await connection.run_sync(
                         _drop_database_objects,

@@ -540,4 +540,5 @@ if __name__ == "__main__":
         port=settings.app_port,
         reload=True,
         log_level=settings.log_level.lower(),
+        timeout_graceful_shutdown=15,
     )

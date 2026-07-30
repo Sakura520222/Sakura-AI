@@ -698,6 +698,18 @@ class SetupService:
     def trigger_restart(self) -> None:
         """触发应用重启（通过 SIGTERM 信号）"""
         logger.info("Setup 完成，正在触发应用重启...")
+        try:
+            # Uvicorn 会先等待 HTTP 长连接结束，再进入 lifespan shutdown。
+            # 先唤醒所有 SSE 生成器，避免 EventSource 让重启无限等待。
+            from backend.webui.sse import sse_manager
+
+            sse_manager.close_all()
+        except Exception as exc:
+            # SSE 清理失败不能阻止重启；Uvicorn 的强制停机超时会继续兜底。
+            logger.warning(
+                "重启前关闭 SSE 长连接失败: error_type={}",
+                type(exc).__name__,
+            )
         os.kill(os.getpid(), signal.SIGTERM)
 
 
