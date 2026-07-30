@@ -27,6 +27,7 @@ from backend.services.activity_observability.context_service import (
     SOURCE_CONFIGURATION,
     SOURCE_HEURISTIC,
     SOURCE_MODEL_CATALOG,
+    SOURCE_PROVIDER,
     ContextService,
     ContextSnapshotFields,
     MeasuredValue,
@@ -389,6 +390,46 @@ class ObservedModelSender:
         )
         return int(revision.id)
 
+    @staticmethod
+    def _context_limits(
+        candidate: Any,
+        request: Any,
+    ) -> tuple[int | None, int | None, int | None]:
+        model = getattr(candidate, "model", None)
+        context_window = getattr(model, "context_window_tokens", None)
+        if not isinstance(context_window, int) or context_window <= 0:
+            context_window = None
+        reserved_output = getattr(request, "max_tokens", None)
+        if not isinstance(reserved_output, int) or reserved_output < 0:
+            reserved_output = None
+        available = (
+            context_window - reserved_output
+            if context_window is not None
+            and reserved_output is not None
+            and context_window >= reserved_output
+            else None
+        )
+        return context_window, reserved_output, available
+
+    @staticmethod
+    def _attempt_usage_measurement(attempt: Any, field_name: str) -> MeasuredValue:
+        value = getattr(attempt, field_name, None)
+        if not isinstance(value, int) or isinstance(value, bool) or value < 0:
+            return MeasuredValue(
+                None,
+                AVAILABILITY_UNAVAILABLE,
+                SOURCE_PROVIDER,
+            )
+        return MeasuredValue(
+            value,
+            getattr(
+                attempt,
+                f"{field_name}_availability",
+                AVAILABILITY_REPORTED,
+            ),
+            getattr(attempt, f"{field_name}_source", SOURCE_PROVIDER),
+        )
+
     async def _record_before_request_context(
         self,
         *,
@@ -423,19 +464,9 @@ class ObservedModelSender:
             encoded = repr(request)
         estimated_tokens = max(1, (len(encoded) + 3) // 4)
 
-        model = getattr(candidate, "model", None)
-        context_window = getattr(model, "context_window_tokens", None)
-        if not isinstance(context_window, int) or context_window <= 0:
-            context_window = None
-        reserved_output = getattr(request, "max_tokens", None)
-        if not isinstance(reserved_output, int) or reserved_output < 0:
-            reserved_output = None
-        available = (
-            context_window - reserved_output
-            if context_window is not None
-            and reserved_output is not None
-            and context_window >= reserved_output
-            else None
+        context_window, reserved_output, available = self._context_limits(
+            candidate,
+            request,
         )
         fields = ContextSnapshotFields(
             context_tokens=MeasuredValue(
@@ -470,6 +501,74 @@ class ObservedModelSender:
             operation_id=None,
             revision_id=int(attempt.context_revision_id),
             snapshot_kind="before_request",
+            fields=fields,
+        )
+
+    async def _record_after_request_context(
+        self,
+        *,
+        attempt: Any,
+        candidate: Any,
+        request: Any,
+    ) -> None:
+        """Replace the in-flight heuristic with provider-reported usage."""
+        if (
+            attempt is None
+            or self.context_service is None
+            or getattr(attempt, "context_revision_id", None) is None
+        ):
+            return
+
+        input_tokens = self._attempt_usage_measurement(attempt, "input_tokens")
+        cache_read_tokens = self._attempt_usage_measurement(
+            attempt,
+            "cached_input_tokens",
+        )
+        reasoning_tokens = self._attempt_usage_measurement(
+            attempt,
+            "reasoning_tokens",
+        )
+        if all(
+            item.value is None
+            for item in (input_tokens, cache_read_tokens, reasoning_tokens)
+        ):
+            return
+
+        context_window, reserved_output, available = self._context_limits(
+            candidate,
+            request,
+        )
+        fields = ContextSnapshotFields(
+            context_tokens=input_tokens,
+            context_window_tokens=MeasuredValue(
+                context_window,
+                AVAILABILITY_REPORTED
+                if context_window is not None
+                else AVAILABILITY_UNAVAILABLE,
+                SOURCE_MODEL_CATALOG,
+            ),
+            reserved_output_tokens=MeasuredValue(
+                reserved_output,
+                AVAILABILITY_REPORTED
+                if reserved_output is not None
+                else AVAILABILITY_UNAVAILABLE,
+                SOURCE_CONFIGURATION,
+            ),
+            available_context_tokens=MeasuredValue(
+                available,
+                AVAILABILITY_ESTIMATED
+                if available is not None
+                else AVAILABILITY_UNAVAILABLE,
+                SOURCE_HEURISTIC,
+            ),
+            cache_read_tokens=cache_read_tokens,
+            reasoning_context_tokens=reasoning_tokens,
+        )
+        await self.context_service.record_snapshot(
+            attempt_id=int(attempt.id),
+            operation_id=None,
+            revision_id=int(attempt.context_revision_id),
+            snapshot_kind="after_request",
             fields=fields,
         )
 
@@ -734,6 +833,14 @@ class ObservedModelSender:
                     ),
                 ),
                 default=attempt,
+            )
+            await self._best_effort(
+                "context_snapshot_after_request",
+                lambda: self._record_after_request_context(
+                    attempt=attempt,
+                    candidate=candidate,
+                    request=request,
+                ),
             )
         self._log_attempt(
             "completed",
@@ -1029,6 +1136,14 @@ class ObservedModelSender:
                         stop_reason=final_stop_reason or "done",
                     ),
                     default=attempt,
+                )
+                await self._best_effort(
+                    "context_snapshot_after_request",
+                    lambda: self._record_after_request_context(
+                        attempt=attempt,
+                        candidate=candidate,
+                        request=request,
+                    ),
                 )
             self._log_attempt(
                 "completed",

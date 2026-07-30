@@ -1862,7 +1862,7 @@ activity:
   no_events: "No events"
   reasoning: "Reasoning status"
   reasoning_omitted_hint: "Reasoning is shown per visibility policy; when the provider exposes no displayable summary this area keeps a deterministic hint."
-  status_open: "Active"
+  status_open: "Ready"
   status_archived: "Archived"
   status_partial: "Partial"
   current_phase: "Current phase"
