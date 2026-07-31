@@ -88,6 +88,17 @@ file_filters:
     - .html
     - .vue
     - .svelte
+    # 文档与配置类文本文件（3.0.0 重构起长期纳入审查范围）
+    - .yaml
+    - .yml
+    - .md
+    - .json
+    - .toml
+    - .cfg
+    - .ini
+    - .txt
+    - Dockerfile
+    - Makefile
 
 # 上下文增强配置
 context_enhancement:
@@ -129,7 +140,7 @@ context_enhancement:
   # Git 工具配置
   git_tools:
     default_branch_count: 20    # 默认返回分支数量
-    default_commit_count: 10    # 默认返回提交数量
+    default_commit_count: 30    # 默认返回提交数量
 
   # 外部 CI 失败注入配置 / External CI failure injection config
   # 由 check_run.completed / workflow_job.completed webhook 采集，审查时注入上下文
