@@ -30,7 +30,7 @@ pydantic>=2.5.3
 pydantic-settings>=2.1.0
 
 # 日志
-loguru>=0.7.2
+loguru>=0.7.3
 
 # Telegram Bot
 python-telegram-bot>=21.0
