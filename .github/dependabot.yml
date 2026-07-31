@@ -1,0 +1,86 @@
+# To get started with Dependabot version updates, you'll need to specify which
+# package ecosystems to update and where the package manifests are located.
+# Please see the documentation for all configuration options:
+# https://docs.github.com/code-security/dependabot/dependabot-version-updates/configuration-options-for-the-dependabot.yml-file
+
+version: 2
+
+updates:
+  # Python 依赖：根目录 requirements.txt
+  - package-ecosystem: "pip"
+    directory: "/"
+    target-branch: "develop"
+
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "09:00"
+      timezone: "Asia/Shanghai"
+
+    # 主动提高 requirements.txt 中的最低版本
+    versioning-strategy: "increase"
+
+    # 限制同时存在的版本更新 PR
+    open-pull-requests-limit: 5
+
+    # 次版本和补丁版本合并为一个 PR
+    # 主版本更新仍然单独创建 PR，方便审查
+    groups:
+      python-minor-patch:
+        patterns:
+          - "*"
+        update-types:
+          - "minor"
+          - "patch"
+
+    commit-message:
+      prefix: "chore(deps)"
+
+
+  # GitHub Actions 依赖
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    target-branch: "develop"
+
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "09:10"
+      timezone: "Asia/Shanghai"
+
+    open-pull-requests-limit: 5
+
+    groups:
+      actions-minor-patch:
+        patterns:
+          - "*"
+        update-types:
+          - "minor"
+          - "patch"
+
+    commit-message:
+      prefix: "ci(deps)"
+
+
+  # docker/Dockerfile 中的基础镜像
+  - package-ecosystem: "docker"
+    directory: "/docker"
+    target-branch: "develop"
+
+    schedule:
+      interval: "monthly"
+      time: "09:20"
+      timezone: "Asia/Shanghai"
+
+    open-pull-requests-limit: 2
+
+    groups:
+      docker-minor-patch:
+        patterns:
+          - "*"
+        update-types:
+          - "minor"
+          - "patch"
+
+    commit-message:
+      prefix: "chore(docker)"
