@@ -43,7 +43,7 @@ jobs:
           fi
 
       - name: 检出目标分支
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           token: ${{ secrets.MY_RELEASE_PAT || secrets.GITHUB_TOKEN }}
           fetch-depth: 0
