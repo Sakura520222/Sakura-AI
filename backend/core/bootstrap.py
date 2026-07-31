@@ -12,8 +12,6 @@ from pathlib import Path
 from typing import Literal
 
 from loguru import logger
-from starlette.middleware.base import BaseHTTPMiddleware
-from starlette.requests import Request
 from starlette.responses import JSONResponse, RedirectResponse
 
 SetupState = Literal["not_configured", "in_progress", "completed"]
@@ -232,40 +230,67 @@ async def get_current_step() -> int:
     return 3
 
 
-class BootstrapMiddleware(BaseHTTPMiddleware):
-    """Bootstrap 模式中间件：未完成 Setup 时拦截所有请求"""
+class BootstrapMiddleware:
+    """Bootstrap 模式中间件：未完成 Setup 时拦截所有请求。
+
+    纯 ASGI 实现（不再继承 ``BaseHTTPMiddleware``）。
+
+    Why: ``starlette.middleware.base.BaseHTTPMiddleware`` 用 anyio TaskGroup
+    包裹下游 ``call_next``，响应返回后 teardown 会取消该 coro。若此时
+    FastAPI 依赖（如 ``get_db``）正在执行数据库会话清理，cleanup 会被
+    ``CancelledError`` 中断，导致连接未归还连接池、最终由 GC 兜底回收，
+    触发 ``SAWarning: non-checked-in connection``。纯 ASGI 中间件不经过
+    该 TaskGroup 路径，从根上消除连接泄漏。
+    """
 
     # 始终放行的路径
     ALLOWED_PATHS = ("/setup", "/health", "/docs", "/openapi.json", "/redoc")
 
-    async def dispatch(self, request: Request, call_next):
+    def __init__(self, app) -> None:
+        self.app = app
+
+    async def __call__(self, scope, receive, send) -> None:
+        # 仅拦截 HTTP；lifespan / websocket 等透传给下游应用
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+
         if not is_bootstrap_mode():
-            return await call_next(request)
+            await self.app(scope, receive, send)
+            return
 
-        path = request.url.path
+        path = scope["path"]
 
-        # 放行根路径（重定向到 /setup）
+        # 根路径重定向到 /setup
         if path == "/":
-            return RedirectResponse(url="/setup", status_code=302)
+            await RedirectResponse(url="/setup", status_code=302)(
+                scope, receive, send
+            )
+            return
 
         # 放行 Setup Wizard 相关路径
         for allowed in self.ALLOWED_PATHS:
             if path.startswith(allowed):
-                return await call_next(request)
+                await self.app(scope, receive, send)
+                return
 
         # 静态资源放行
         if path.startswith("/static") or path.endswith((".css", ".js", ".ico")):
-            return await call_next(request)
+            await self.app(scope, receive, send)
+            return
 
         # API 请求返回 503
         if "/api/" in path or path.startswith("/api/"):
-            return JSONResponse(
+            await JSONResponse(
                 status_code=503,
                 content={
                     "detail": "应用尚未完成初始配置，请访问 /setup 完成设置",
                     "setup_url": "/setup",
                 },
-            )
+            )(scope, receive, send)
+            return
 
         # 页面请求重定向到 Setup
-        return RedirectResponse(url="/setup", status_code=302)
+        await RedirectResponse(url="/setup", status_code=302)(
+            scope, receive, send
+        )
