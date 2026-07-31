@@ -21,7 +21,7 @@ jobs:
 
     steps:
       - name: 删除已合并的 Gitflow 分支
-        uses: actions/github-script@v7
+        uses: actions/github-script@v9
         with:
           script: |
             const pr = context.payload.pull_request;

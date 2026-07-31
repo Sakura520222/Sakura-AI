@@ -345,7 +345,7 @@ jobs:
 
       - name: 发送评论到 PR
         if: github.event_name == 'pull_request'
-        uses: actions/github-script@v7
+        uses: actions/github-script@v9
         with:
           script: |
             const version = '${{ steps.read_version.outputs.current_version }}';
