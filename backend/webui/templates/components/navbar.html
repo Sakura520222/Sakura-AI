@@ -44,7 +44,8 @@
                 data-confirm-text="{{ _('nav.restart_action') }}"
                 data-restarting-label="{{ _('nav.restarting') }}"
                 data-success-message="{{ _('nav.restart_request_sent') }}"
-                data-failure-message="{{ _('nav.restart_failed') }}">
+                data-failure-message="{{ _('nav.restart_failed') }}"
+                data-timeout-message="{{ _('nav.restart_timeout') }}">
             <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8 8 0 004.582 9m0 0H9m11 11v-5h-.581m0 0A8 8 0 014.582 15m15.356 0H15"/>
             </svg>
@@ -88,6 +89,36 @@
         var restartButton = document.getElementById('application-restart-button');
         if (!restartButton) return;
 
+        async function getHealth() {
+            var response = await fetch('/health', { cache: 'no-store' });
+            if (!response.ok) throw new Error('health check failed');
+            return response.json();
+        }
+
+        async function waitForApplicationRestart(previousStartupTime) {
+            var observedOffline = false;
+            var maxAttempts = 60;
+
+            for (var attempt = 0; attempt < maxAttempts; attempt++) {
+                await new Promise(function (resolve) { window.setTimeout(resolve, 1000); });
+                try {
+                    var health = await getHealth();
+                    var startupChanged = Boolean(health.startup_time)
+                        && health.startup_time !== previousStartupTime;
+                    if (observedOffline || startupChanged) {
+                        window.location.reload();
+                        return;
+                    }
+                } catch (_error) {
+                    observedOffline = true;
+                }
+            }
+
+            window.dispatchEvent(new CustomEvent('show-toast', {
+                detail: { message: restartButton.dataset.timeoutMessage, type: 'warning', duration: 0 },
+            }));
+        }
+
         restartButton.addEventListener('click', async function () {
             var dialogEl = document.querySelector('[x-data="confirmDialog()"]');
             if (!dialogEl || !window.Alpine) return;
@@ -105,6 +136,7 @@
             restartButton.classList.add('opacity-50', 'cursor-not-allowed');
 
             try {
+                var previousHealth = await getHealth().catch(function () { return null; });
                 var response = await fetch('/system-config/restart', {
                     method: 'POST',
                     headers: { 'X-CSRF-Token': restartButton.dataset.csrfToken },
@@ -120,6 +152,9 @@
                 window.dispatchEvent(new CustomEvent('show-toast', {
                     detail: { message: restartButton.dataset.successMessage, type: 'info', duration: 8000 },
                 }));
+                void waitForApplicationRestart(
+                    previousHealth ? previousHealth.startup_time : null,
+                );
             } catch (_error) {
                 restartButton.disabled = false;
                 restartButton.classList.remove('opacity-50', 'cursor-not-allowed');
