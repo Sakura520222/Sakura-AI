@@ -23,6 +23,7 @@ def test_quiet_access_filter_only_hides_successful_high_frequency_gets():
 
     quiet_paths = (
         "/sse/events",
+        "/health",
         "/activity/observability/api/sessions?limit=50",
         "/activity/observability/api/sessions/5/snapshot",
         "/activity/observability/api/sessions/5/stream",
@@ -33,6 +34,16 @@ def test_quiet_access_filter_only_hides_successful_high_frequency_gets():
     for path in quiet_paths:
         assert access_filter.filter(_access_record("GET", path, 200)) is False
 
+    assert (
+        access_filter.filter(
+            _access_record(
+                "GET",
+                "/health",
+                500,
+            )
+        )
+        is True
+    )
     assert (
         access_filter.filter(
             _access_record(

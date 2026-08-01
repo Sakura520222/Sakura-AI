@@ -1,7 +1,7 @@
 """Main app helper tests"""
 
-from datetime import datetime
 import time
+from datetime import datetime
 from unittest.mock import Mock, call, patch
 
 import pytest
@@ -9,6 +9,7 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse
 
 from backend import main
+from backend.core import logging_bridge
 from backend.core.config import Settings
 from backend.main import (
     _format_duration,
@@ -23,12 +24,12 @@ from backend.main import (
 def test_create_startup_log_file_is_unique_for_each_start(tmp_path):
     startup_time = datetime(2026, 8, 1, 12, 34, 56, 123456)
 
-    first_log = main._create_startup_log_file(
+    first_log = logging_bridge._create_startup_log_file(
         tmp_path,
         started_at=startup_time,
         process_id=4321,
     )
-    second_log = main._create_startup_log_file(
+    second_log = logging_bridge._create_startup_log_file(
         tmp_path,
         started_at=startup_time,
         process_id=4321,
@@ -43,16 +44,24 @@ def test_create_startup_log_file_is_unique_for_each_start(tmp_path):
 def test_configure_logging_uses_a_new_file_for_each_start(monkeypatch, tmp_path):
     remove = Mock()
     add = Mock()
-    install_filter = Mock()
+    install_standard_bridge = Mock()
     app_log_path = tmp_path / "app_20260801_123456_123456_pid4321.log"
     cleanup = Mock()
-    monkeypatch.setattr(main.logger, "remove", remove)
-    monkeypatch.setattr(main.logger, "add", add)
-    monkeypatch.setattr(main, "install_quiet_successful_access_filter", install_filter)
-    monkeypatch.setattr(main, "_cleanup_expired_app_logs", cleanup)
-    monkeypatch.setattr(main, "_create_startup_log_file", Mock(return_value=app_log_path))
+    monkeypatch.setattr(logging_bridge.logger, "remove", remove)
+    monkeypatch.setattr(logging_bridge.logger, "add", add)
+    monkeypatch.setattr(
+        logging_bridge,
+        "install_standard_logging_bridge",
+        install_standard_bridge,
+    )
+    monkeypatch.setattr(logging_bridge, "_cleanup_expired_app_logs", cleanup)
+    monkeypatch.setattr(
+        logging_bridge,
+        "_create_startup_log_file",
+        Mock(return_value=app_log_path),
+    )
 
-    main.configure_logging()
+    logging_bridge.configure_logging()
 
     assert add.call_args_list[1] == call(
         str(app_log_path),
@@ -60,7 +69,7 @@ def test_configure_logging_uses_a_new_file_for_each_start(monkeypatch, tmp_path)
         retention=cleanup,
         level="DEBUG",
     )
-    install_filter.assert_called_once()
+    install_standard_bridge.assert_called_once()
     remove.assert_called_once()
     cleanup.assert_called_once()
 
