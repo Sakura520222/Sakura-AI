@@ -29,6 +29,7 @@ class QuietSuccessfulAccessFilter(logging.Filter):
         normalized_path = path.partition("?")[0]
         return not (
             normalized_path == "/sse/events"
+            or normalized_path == "/health"
             or normalized_path == "/activity/observability/api/sessions"
             or _QUIET_ACTIVITY_SESSION_PATH.fullmatch(normalized_path)
             or normalized_path == "/agent-team/api/active-tasks"

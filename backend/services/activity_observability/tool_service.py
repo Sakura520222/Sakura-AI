@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import hmac
 import json
+from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Any, Protocol
@@ -200,6 +201,7 @@ class ToolService:
         self._artifact_hash_secret = artifact_hash_secret
         self._clock = clock
 
+    @asynccontextmanager
     async def _session_scope(self):
         if self._db is not None:
             yield self._db
@@ -405,7 +407,7 @@ class ToolService:
         if not tool_call_id or not name:
             raise ValueError("tool_call_id and name are required")
         arguments_json = self._serialized(arguments)
-        async for db in self._session_scope():
+        async with self._session_scope() as db:
             async with db.begin():
                 work_unit, _, _ = await self._get_parent_chain(
                     db, work_unit_id, thread_id
@@ -473,7 +475,7 @@ class ToolService:
         raise RuntimeError("unreachable")
 
     async def start_tool_execution(self, tool_execution_id: int) -> None:
-        async for db in self._session_scope():
+        async with self._session_scope() as db:
             async with db.begin():
                 execution = await db.get(
                     ActivityToolExecution, tool_execution_id, with_for_update=True
@@ -503,7 +505,7 @@ class ToolService:
         if result_sensitivity not in VALID_SENSITIVITY:
             raise ValueError(f"unknown result sensitivity: {result_sensitivity}")
         result_json = None if result is None else self._serialized(result)
-        async for db in self._session_scope():
+        async with self._session_scope() as db:
             async with db.begin():
                 execution = await db.get(
                     ActivityToolExecution, tool_execution_id, with_for_update=True
@@ -560,7 +562,7 @@ class ToolService:
     async def get_tool_execution(
         self, tool_execution_id: int
     ) -> ActivityToolExecution | None:
-        async for db in self._session_scope():
+        async with self._session_scope() as db:
             return await db.get(ActivityToolExecution, tool_execution_id)
         raise RuntimeError("unreachable")
 
@@ -576,7 +578,7 @@ class ToolService:
         seq: int | None = None,
     ) -> ActivityObservabilityMessage:
         """Append final visible content; reasoning_content is intentionally dropped."""
-        async for db in self._session_scope():
+        async with self._session_scope() as db:
             async with db.begin():
                 work_unit, thread, invocation = await self._get_parent_chain(
                     db, work_unit_id, thread_id
@@ -649,7 +651,7 @@ class ToolService:
         role = str(message.get("role") or "")
         if not role:
             raise ValueError("message role is required")
-        async for db in self._session_scope():
+        async with self._session_scope() as db:
             async with db.begin():
                 work_unit, thread, invocation = await self._get_parent_chain(
                     db, work_unit_id, thread_id
@@ -877,7 +879,7 @@ class ToolService:
 
     async def load_conversation_messages(self, thread_id: int) -> list[dict[str, Any]]:
         """Load only the thread head revision in its canonical manifest order."""
-        async for db in self._session_scope():
+        async with self._session_scope() as db:
             thread = await db.get(ActivityThread, thread_id)
             if thread is None:
                 return []
@@ -959,7 +961,7 @@ class ToolService:
         """Persist replacement context and atomically advance the thread revision."""
         if not messages:
             raise ValueError("replacement context must contain at least one message")
-        async for db in self._session_scope():
+        async with self._session_scope() as db:
             async with db.begin():
                 work_unit, thread, invocation = await self._get_parent_chain(
                     db, work_unit_id, thread_id
@@ -1083,7 +1085,7 @@ class ToolService:
     async def mark_tool_execution_running(
         self, work_unit_id: int, tool_call_id: str
     ) -> None:
-        async for db in self._session_scope():
+        async with self._session_scope() as db:
             async with db.begin():
                 execution = (
                     await db.execute(
@@ -1125,7 +1127,7 @@ class ToolService:
     async def mark_tool_execution_completed(
         self, work_unit_id: int, tool_call_id: str
     ) -> None:
-        async for db in self._session_scope():
+        async with self._session_scope() as db:
             async with db.begin():
                 execution = (
                     await db.execute(
@@ -1170,7 +1172,7 @@ class ToolService:
         error_message: str = "tool execution failed",
     ) -> None:
         """Mark an authoritative tool execution failed without storing raw errors."""
-        async for db in self._session_scope():
+        async with self._session_scope() as db:
             async with db.begin():
                 execution = (
                     await db.execute(
@@ -1266,7 +1268,7 @@ class ToolService:
             if policy.retention_days is not None
             else None
         )
-        async for db in self._session_scope():
+        async with self._session_scope() as db:
             async with db.begin():
                 attempt = await db.get(ActivityModelAttempt, attempt_id)
                 if attempt is None:
@@ -1358,7 +1360,7 @@ class ToolService:
             model_family,
             endpoint_scope,
         )
-        async for db in self._session_scope():
+        async with self._session_scope() as db:
             async with db.begin():
                 if attempt_id is not None:
                     attempt = await db.get(ActivityModelAttempt, attempt_id)
@@ -1418,7 +1420,7 @@ class ToolService:
     ) -> AuthorizedArtifactView | None:
         """Read through an injected authorizer; default is fail closed."""
         actor = reader or reader_user_id or "anonymous"
-        async for db in self._session_scope():
+        async with self._session_scope() as db:
             async with db.begin():
                 artifact = await db.get(ActivityNativeArtifact, artifact_id)
                 if artifact is None:
