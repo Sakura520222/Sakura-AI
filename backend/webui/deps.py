@@ -428,7 +428,7 @@ async def get_current_user(request: Request) -> dict:
 async def require_auth(request: Request) -> dict:
     """需要登录的页面路由依赖"""
     user = await get_current_user(request)
-    async for db in get_db():
+    async with db_module.async_session() as db:
         await enforce_mfa_enrollment(request, user, db)
     return user
 

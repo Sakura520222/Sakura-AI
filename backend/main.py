@@ -1,12 +1,12 @@
 """Sakura AI 主应用"""
 
 import asyncio
-import os
-import sys
 import time
 from contextlib import asynccontextmanager
-from datetime import datetime
-from pathlib import Path
+
+from backend.core.logging_bridge import configure_logging
+
+configure_logging()
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -28,69 +28,15 @@ from backend.core.bootstrap import (
 from backend.core.config import Settings, get_settings
 from backend.telegram import start_telegram_bot, stop_telegram_bot
 from backend.webui.auth import decode_access_token
-from backend.webui.deps import error_page, is_webui_request, toast_redirect
+from backend.webui.deps import (
+    error_page,
+    is_webui_request,
+    toast_redirect,
+)
 from backend.webui.routes import webui_router
 from backend.webui.routes.setup import router as setup_router
 
-APP_LOG_DIRECTORY = Path("logs")
-APP_LOG_RETENTION_DAYS = 10
-
-
-def _cleanup_expired_app_logs(_log_paths: list[str] | None = None) -> None:
-    """删除超过保留期限的应用日志，包含历史启动与轮转文件。"""
-    retention_threshold = time.time() - APP_LOG_RETENTION_DAYS * 24 * 60 * 60
-    for log_path in APP_LOG_DIRECTORY.glob("app_*.log"):
-        try:
-            if log_path.stat().st_mtime < retention_threshold:
-                log_path.unlink()
-        except OSError:
-            # 其他进程可能已完成同一历史文件的清理，或仍占用该历史文件。
-            continue
-
-
-def _create_startup_log_file(
-    log_directory: Path = APP_LOG_DIRECTORY,
-    *,
-    started_at: datetime | None = None,
-    process_id: int | None = None,
-) -> Path:
-    """为本次进程启动原子地分配一个新的日志文件。"""
-    log_directory.mkdir(parents=True, exist_ok=True)
-    startup_time = started_at or datetime.now()
-    pid = process_id if process_id is not None else os.getpid()
-    file_stem = f"app_{startup_time:%Y%m%d_%H%M%S_%f}_pid{pid}"
-
-    collision_index = 0
-    while True:
-        collision_suffix = "" if collision_index == 0 else f"_{collision_index}"
-        log_path = log_directory / f"{file_stem}{collision_suffix}.log"
-        try:
-            log_path.touch(exist_ok=False)
-            return log_path
-        except FileExistsError:
-            collision_index += 1
-
-
-def configure_logging() -> None:
-    """配置控制台与按进程启动分文件保存的应用日志。"""
-    _cleanup_expired_app_logs()
-    app_log_path = _create_startup_log_file()
-    install_quiet_successful_access_filter()
-    logger.remove()
-    logger.add(
-        sys.stdout,
-        format="<green>{time:YYYY-MM-DD HH:mm:ss}</green> | <level>{level: <8}</level> | <cyan>{name}</cyan>:<cyan>{function}</cyan> - <level>{message}</level>",
-        level="INFO",
-    )
-    logger.add(
-        str(app_log_path),
-        rotation="500 MB",
-        retention=_cleanup_expired_app_logs,
-        level="DEBUG",
-    )
-
-
-configure_logging()
+install_quiet_successful_access_filter()
 
 settings = get_settings()
 
@@ -593,5 +539,6 @@ if __name__ == "__main__":
         port=settings.app_port,
         reload=True,
         log_level=settings.log_level.lower(),
+        log_config=None,
         timeout_graceful_shutdown=15,
     )
