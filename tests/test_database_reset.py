@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import ANY, AsyncMock, MagicMock
 
@@ -369,6 +370,17 @@ def test_restart_route_requires_super_admin_csrf_and_audit_session():
     assert require_super_admin in dependencies
     assert require_csrf_header in dependencies
     assert get_db in dependencies
+
+
+def test_restart_button_waits_for_new_process_before_refreshing():
+    navbar = Path("backend/webui/templates/components/navbar.html").read_text(
+        encoding="utf-8"
+    )
+
+    assert "waitForApplicationRestart" in navbar
+    assert "fetch('/health', { cache: 'no-store' })" in navbar
+    assert "observedOffline || startupChanged" in navbar
+    assert "window.location.reload()" in navbar
 
 
 @pytest.mark.asyncio
