@@ -1964,6 +1964,8 @@ activity:
   view_message_content: "按需查看完整消息"
   view_tool_arguments: "按需查看工具参数"
   view_tool_result: "按需查看工具返回结果"
+  label_recommendation_request: "标签推荐请求"
+  label_recommendation_response: "标签推荐响应"
   opaque_not_displayable: "供应商加密内容不可读"
   unknown: "未知"
 

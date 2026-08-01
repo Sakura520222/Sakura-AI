@@ -232,9 +232,12 @@
                                             <div class="rounded-2xl border bg-white p-4 shadow-sm dark:bg-gray-900"
                                                  :class="messageCardClass(entry.role)">
                                                 <div class="flex items-start justify-between gap-3">
-                                                    <div class="flex min-w-0 items-center gap-2">
+                                                    <div class="flex min-w-0 flex-wrap items-center gap-2">
                                                         <span class="rounded-md px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide"
                                                               :class="messageRoleClass(entry.role)" x-text="entry.role"></span>
+                                                        <span x-show="entry.message_kind" x-cloak
+                                                              class="rounded-md bg-sakura-100 px-1.5 py-0.5 text-[10px] font-semibold tracking-wide text-sakura-700 dark:bg-sakura-950 dark:text-sakura-300"
+                                                              x-text="messageKindLabel(entry.message_kind)"></span>
                                                         <span class="truncate text-[10px] text-gray-400" x-text="sourceLabel(entry)"></span>
                                                     </div>
                                                     <span class="shrink-0 text-[10px] text-gray-400" x-text="formatTime(entry.created_at)"></span>
@@ -1024,6 +1027,13 @@ function activityObservability() {
                 : role === 'tool'
                 ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300'
                 : 'bg-gray-100 text-gray-600 dark:bg-gray-800 dark:text-gray-300';
+        },
+        messageKindLabel(kind) {
+            const labels = {
+                label_recommendation_request: {{ _('activity.label_recommendation_request') | tojson }},
+                label_recommendation_response: {{ _('activity.label_recommendation_response') | tojson }},
+            };
+            return labels[kind] || kind || '';
         },
         restrictedMessage(entry) {
             if ((entry.artifacts || []).some(item => item.capture_error === 'encryption_unavailable')) {

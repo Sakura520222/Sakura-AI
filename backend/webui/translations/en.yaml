@@ -1964,6 +1964,8 @@ activity:
   view_message_content: "View full message on demand"
   view_tool_arguments: "View tool arguments on demand"
   view_tool_result: "View tool result on demand"
+  label_recommendation_request: "Label recommendation request"
+  label_recommendation_response: "Label recommendation response"
   opaque_not_displayable: "Provider-encrypted content is unreadable"
   unknown: "Unknown"
 

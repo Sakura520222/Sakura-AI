@@ -804,6 +804,104 @@ async def test_conversation_projects_tool_round_once_without_blank_protocol_mess
 
 
 @pytest.mark.asyncio
+async def test_conversation_projects_allowed_message_kind(db):
+    """投影在公开时间线暴露 allowlist 内的 message_kind。
+
+    使前端可渲染"标签推荐请求/响应"等可区分标题，而不依赖受限正文或对
+    summary 等技术角色的推断。The projection surfaces allowlisted business
+    kinds so the live monitor can render distinguishable titles without
+    restricted content or role guesses.
+    """
+    observed_session, thread, _, work_unit, _, _ = _conversation_chain(db)
+    db.session.add_all(
+        [
+            ActivityObservabilityMessage(
+                thread_id=thread.id,
+                work_unit_id=work_unit.id,
+                seq=11,
+                role="assistant",
+                content='{"labels":[]}',
+                message_json=(
+                    '{"role":"assistant","content":"{\\"labels\\":[]}",'
+                    '"message_kind":"label_recommendation_response"}'
+                ),
+                created_at=datetime(2026, 7, 20, 2, 0, 0, tzinfo=timezone.utc),
+            ),
+            ActivityObservabilityMessage(
+                thread_id=thread.id,
+                work_unit_id=work_unit.id,
+                seq=12,
+                role="user",
+                content=None,
+                message_json=(
+                    '{"role":"user",'
+                    '"message_kind":"label_recommendation_request"}'
+                ),
+                created_at=datetime(2026, 7, 20, 2, 0, 1, tzinfo=timezone.utc),
+            ),
+        ]
+    )
+    db.session.commit()
+    projection = ConversationProjectionService(
+        db, access_service=_service(db, ScopeAuthorizer())
+    )
+    page = await projection.get_conversation(
+        observed_session.id,
+        {"user_id": "user-a", "repo": "owner/repo-77", "role": "user"},
+        limit=50,
+    )
+    by_seq = {
+        entry["seq"]: entry
+        for entry in page["entries"]
+        if entry["type"] == "message"
+    }
+    assert by_seq[11]["message_kind"] == "label_recommendation_response"
+    assert by_seq[12]["message_kind"] == "label_recommendation_request"
+
+
+@pytest.mark.asyncio
+async def test_conversation_strips_unapproved_message_kind(db):
+    """投影丢弃 allowlist 外的 message_kind。
+
+    防止任意元数据借道公开时间线泄漏（例如绕过写入侧直接写入 DB 的旧数据
+    或伪造行）。Unapproved kinds never reach the public timeline, defending
+    against rows that bypassed the writer-side allowlist.
+    """
+    observed_session, thread, _, work_unit, _, _ = _conversation_chain(db)
+    db.session.add_all(
+        [
+            ActivityObservabilityMessage(
+                thread_id=thread.id,
+                work_unit_id=work_unit.id,
+                seq=13,
+                role="assistant",
+                content="hi",
+                message_json=(
+                    '{"role":"assistant","content":"hi",'
+                    '"message_kind":"forged_kind"}'
+                ),
+                created_at=datetime(2026, 7, 20, 2, 0, 2, tzinfo=timezone.utc),
+            ),
+        ]
+    )
+    db.session.commit()
+    projection = ConversationProjectionService(
+        db, access_service=_service(db, ScopeAuthorizer())
+    )
+    page = await projection.get_conversation(
+        observed_session.id,
+        {"user_id": "user-a", "repo": "owner/repo-77", "role": "user"},
+        limit=50,
+    )
+    by_seq = {
+        entry["seq"]: entry
+        for entry in page["entries"]
+        if entry["type"] == "message"
+    }
+    assert by_seq[13].get("message_kind") is None
+
+
+@pytest.mark.asyncio
 async def test_conversation_cursor_paginates_and_event_updates_are_idempotent(db):
     observed_session, _, invocation, work_unit, _, _ = _conversation_chain(db)
     access = _service(db, ScopeAuthorizer())
