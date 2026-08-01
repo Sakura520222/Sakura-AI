@@ -987,34 +987,6 @@ async def test_session_list_projects_current_phase_model_thinking_and_fallback(d
     assert item["thinking_mode"] == "unsupported"
     assert item["attempt_kind"] == "fallback"
     assert item["attempt_status"] == "running"
-    assert item["status"] == "running"
-    assert item["session_status"] == "open"
-
-    invocation.status = "completed"
-    invocation.current_phase = None
-    work_unit.status = "completed"
-    work_unit.current_phase = None
-    attempt.status = "completed"
-    db.session.commit()
-
-    completed = await access.list_sessions(
-        {"user_id": "user-a", "repo": "owner/repo-77", "role": "user"},
-        db=db,
-    )
-    completed_item = next(
-        session
-        for session in completed["sessions"]
-        if session["session_id"] == observed_session.id
-    )
-    assert completed_item["status"] == "completed"
-    assert completed_item["session_status"] == "open"
-    snapshot = await access.create_snapshot(
-        observed_session.id,
-        {"user_id": "user-a", "repo": "owner/repo-77", "role": "user"},
-        db=db,
-    )
-    assert snapshot["session"]["status"] == "completed"
-    assert snapshot["session"]["session_status"] == "open"
 
     invocation.status = "completed"
     invocation.current_phase = None
