@@ -14,6 +14,16 @@ _SENSITIVE_SNAPSHOT_PATTERN = re.compile(
     re.IGNORECASE,
 )
 
+# 业务级消息标识 allowlist：写入侧与投影侧共享，避免任意 metadata 借道公开
+# 时间线泄漏。稳定标识让实时监控能区分"标签推荐请求/响应"等卡片，而不依
+# 赖受限正文或对 summary 等技术角色的推断。Public business-kind allowlist
+# shared by writers and the projection so arbitrary metadata cannot leak
+# through the public timeline and cards stay distinguishable without touching
+# restricted content or guessing from technical roles.
+ALLOWED_MESSAGE_KINDS = frozenset(
+    {"label_recommendation_request", "label_recommendation_response"}
+)
+
 
 def _require_string(value: object, field_name: str, *, optional: bool = False) -> None:
     if optional and value is None:

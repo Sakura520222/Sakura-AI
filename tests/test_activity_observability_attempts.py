@@ -540,6 +540,69 @@ async def test_authorized_message_artifact_decrypts_without_attempt_parent(
 
 
 @pytest.mark.asyncio
+async def test_canonical_message_persists_allowed_message_kind(db_session, chain):
+    """allowlist 内的 message_kind 写入公开 message_json。
+
+    使投影层能暴露稳定的业务标识（如"标签推荐请求/响应"），不依赖敏感
+    正文或对 summary 角色的角色推断。A stable business kind is persisted in
+    the public message payload so the timeline can distinguish cards without
+    touching restricted content.
+    """
+    _, thread, work_unit, _ = chain
+    service = ToolService(
+        _AsyncAdapter(db_session),
+        encryption_provider=_FakeEncryption(),
+    )
+
+    assistant_msg = await service.append_conversation_message(
+        thread_id=thread.id,
+        work_unit_id=work_unit.id,
+        message={
+            "role": "assistant",
+            "content": '{"labels":[]}',
+            "message_kind": "label_recommendation_response",
+        },
+    )
+    user_msg = await service.append_conversation_message(
+        thread_id=thread.id,
+        work_unit_id=work_unit.id,
+        message={
+            "role": "user",
+            "content": "recommend labels",
+            "message_kind": "label_recommendation_request",
+        },
+    )
+
+    assert json.loads(assistant_msg.message_json)["message_kind"] == (
+        "label_recommendation_response"
+    )
+    assert json.loads(user_msg.message_json)["message_kind"] == (
+        "label_recommendation_request"
+    )
+
+
+@pytest.mark.asyncio
+async def test_canonical_message_drops_unapproved_message_kind(db_session, chain):
+    """allowlist 外的 message_kind 不落入公开 message_json。
+
+    避免任意元数据借道公开投影泄漏。Unapproved kinds are stripped so
+    arbitrary metadata cannot escape through the public projection.
+    """
+    _, thread, work_unit, _ = chain
+    service = ToolService(_AsyncAdapter(db_session))
+    message = await service.append_conversation_message(
+        thread_id=thread.id,
+        work_unit_id=work_unit.id,
+        message={
+            "role": "assistant",
+            "content": "hi",
+            "message_kind": "not_a_real_kind",
+        },
+    )
+    assert "message_kind" not in json.loads(message.message_json)
+
+
+@pytest.mark.asyncio
 async def test_tool_request_artifact_keeps_structured_unified_tool_calls(
     db_session, chain
 ):
