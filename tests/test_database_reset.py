@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import ANY, AsyncMock, MagicMock
 
 import pytest
 from fastapi.routing import APIRoute
@@ -361,6 +361,44 @@ def test_reset_route_requires_super_admin_and_header_csrf():
     # 请求级 DB session 会一直存活到响应完成，并与 DROP TABLE 形成锁等待。
     assert get_db not in dependencies
     assert get_user_preferences not in dependencies
+
+
+def test_restart_route_requires_super_admin_csrf_and_audit_session():
+    dependencies = _dependency_calls(_route("/system-config/restart", "POST"))
+
+    assert require_super_admin in dependencies
+    assert require_csrf_header in dependencies
+    assert get_db in dependencies
+
+
+@pytest.mark.asyncio
+async def test_restart_route_records_action_and_schedules_restart(monkeypatch):
+    audit_mock = AsyncMock()
+    restart_mock = MagicMock()
+    monkeypatch.setattr(system_config_routes, "log_admin_action", audit_mock)
+    monkeypatch.setattr(
+        system_config_routes,
+        "_schedule_application_restart",
+        restart_mock,
+    )
+
+    response = await system_config_routes.restart_application(
+        db=MagicMock(),
+        user={"user_id": 1, "sub": "root"},
+        _csrf="valid",
+    )
+
+    assert response.status_code == 202
+    assert json.loads(response.body) == {"success": True, "restarting": True}
+    assert response.headers["cache-control"] == "no-store, max-age=0"
+    audit_mock.assert_awaited_once_with(
+        ANY,
+        1,
+        "application_restart",
+        "system_core",
+        detail={"trigger": "webui"},
+    )
+    restart_mock.assert_called_once_with()
 
 
 @pytest.mark.asyncio

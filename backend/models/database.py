@@ -727,6 +727,7 @@ def _ensure_model_modules_imported() -> None:
     import backend.models.activity_observability_models
     import backend.models.agent_skill_models
     import backend.models.agent_team_models
+    import backend.models.ai_usage_models
     import backend.models.payment_models
     import backend.models.star_aid_models  # noqa: F401
 

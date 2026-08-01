@@ -266,12 +266,6 @@ class ProfessionalReviewAgent:
         tool_calls_count = 0
         token_tracker = TokenTracker()
 
-        # 延迟导入：避免 agent_team → ai_reviewer → model_context 循环依赖
-        from backend.core.model_context import get_model_context_manager
-        from backend.services.ai_reviewer.message_utils import estimate_messages_tokens
-
-        model_ctx_mgr = get_model_context_manager()
-
         for round_num in range(1, max_tool_rounds + 1):
             if cancel_check and cancel_check():
                 return ReviewResult(
@@ -338,16 +332,11 @@ class ProfessionalReviewAgent:
                 cancel_event=cancel_event,
             )
             token_tracker.accumulate(response)
-
-            # 每轮记录上下文使用率
-            # 优先用新版 unified config 解析的上下文窗口，避免 model_context 未注册
-            # 该模型时回退 128K 兜底（曾导致日志反复警告并误判上下文占比）。
-            if context_window_tokens and context_window_tokens > 0:
-                safe_ctx = int(context_window_tokens * 0.8)
-            else:
-                safe_ctx = model_ctx_mgr.calculate_safe_context(model, 0.8)
-            current_tokens = estimate_messages_tokens(self.messages, model_ctx_mgr)
-            token_tracker.log_context_usage(current_tokens, safe_ctx, round_num)
+            token_tracker.log_context_usage(
+                response,
+                context_window_tokens,
+                round_num,
+            )
 
             if not response.choices:
                 return ReviewResult(

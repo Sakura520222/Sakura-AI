@@ -768,6 +768,11 @@ class ScanWorker:
                 )
 
                 tracker.accumulate(response)
+                tracker.log_context_usage(
+                    response,
+                    role_context_tokens,
+                    iteration,
+                )
                 usage = getattr(response, "usage", None)
                 if usage and budget:
                     budget.consume(
@@ -888,12 +893,11 @@ class ScanWorker:
                             },
                         )
 
-                # 每轮记录上下文使用率
+                # 本地估算仅用于决定下一轮发送前是否压缩。
                 try:
                     current_tokens = (
                         reviewer.context_compressor.estimate_messages_tokens(messages)
                     )
-                    tracker.log_context_usage(current_tokens, safe_context, iteration)
                 except Exception:
                     logger.warning("token estimation failed, skipping", exc_info=True)
                     current_tokens = 0

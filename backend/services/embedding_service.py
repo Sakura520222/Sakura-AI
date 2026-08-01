@@ -210,6 +210,25 @@ class EmbeddingService:
                         input=batch,
                     )
 
+                from backend.services.ai_usage_service import (
+                    build_usage_record_key,
+                    record_ai_usage_best_effort,
+                )
+
+                await record_ai_usage_best_effort(
+                    record_key=build_usage_record_key(
+                        "embedding",
+                        f"{logical_call_id or uuid4()}:{batch_num}",
+                    ),
+                    call_kind="embedding",
+                    role="embedding",
+                    provider_id=self.provider,
+                    model_id=settings.embedding_model,
+                    protocol_family="openai-compatible",
+                    usage=getattr(response, "usage", None),
+                    input_only=True,
+                )
+
                 # 提取嵌入向量
                 batch_embeddings = [item.embedding for item in response.data]
                 all_embeddings.extend(batch_embeddings)
@@ -382,6 +401,7 @@ class RerankerService:
             texts = [doc["content"] for doc in docs]
 
             # 调用 Rerank API
+            logical_call_id = str(uuid4())
             response = await self.client.post(
                 "",
                 json={
@@ -394,6 +414,22 @@ class RerankerService:
 
             response.raise_for_status()
             results = response.json()
+
+            from backend.services.ai_usage_service import (
+                build_usage_record_key,
+                record_ai_usage_best_effort,
+            )
+
+            await record_ai_usage_best_effort(
+                record_key=build_usage_record_key("rerank", logical_call_id),
+                call_kind="rerank",
+                role="rerank",
+                provider_id=self.provider,
+                model_id=settings.rerank_model,
+                protocol_family="siliconflow-rerank",
+                usage=results,
+                input_only=True,
+            )
 
             # 解析结果
             if "results" not in results:

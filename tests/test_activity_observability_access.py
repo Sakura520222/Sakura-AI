@@ -665,6 +665,13 @@ def test_activity_page_uses_independent_scroll_regions_and_sse_fallback_polling(
     assert "expandedEntries" not in template
     assert "fa-wave-square" not in template
     assert "fa-comments" not in template
+    # Diagnostics must follow the selected Attempt or the display Invocation's
+    # primary Work Unit, rather than a newer auxiliary summary Attempt.
+    assert "get contextAttempt()" in template
+    assert "invocation.primary_work_unit_id" in template
+    assert "this.contextAttempt?.context" in template
+    assert "current_request_context" in template
+    assert "session_usage_total" in template
 
 
 @pytest.mark.asyncio

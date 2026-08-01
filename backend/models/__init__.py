@@ -29,6 +29,7 @@ from backend.models.activity_observability_models import (
 )
 from backend.models.admin_action_log import AdminActionLog
 from backend.models.agent_skill_models import AgentSkill
+from backend.models.ai_usage_models import AIUsageRecord
 from backend.models.database import (
     AppConfig,
     Base,
@@ -75,11 +76,7 @@ from backend.models.telegram_models import UserRecoveryCode, UserWebAuthnCredent
 logger = logging.getLogger(__name__)
 
 __all__ = [
-    "ActivityArtifactAccessLog",
-    "ActivityCanonicalContextRevision",
-    "ActivityContextOperation",
-    "ActivityContextSnapshot",
-    "ActivityEvent",
+    "AIUsageRecord",
     "ActivityInvocation",
     "ActivityInvocationTrigger",
     "ActivityInvocationWorkUnit",

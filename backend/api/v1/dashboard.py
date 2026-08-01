@@ -82,27 +82,6 @@ async def get_stats(
         func.avg(
             case((PRReview.status == "completed", PRReview.overall_score), else_=None)
         ).label("avg_score"),
-        func.coalesce(
-            func.sum(
-                case((PRReview.status == "completed", PRReview.prompt_tokens), else_=0)
-            ),
-            0,
-        ).label("total_prompt_tokens"),
-        func.coalesce(
-            func.sum(
-                case(
-                    (PRReview.status == "completed", PRReview.completion_tokens),
-                    else_=0,
-                )
-            ),
-            0,
-        ).label("total_completion_tokens"),
-        func.coalesce(
-            func.sum(
-                case((PRReview.status == "completed", PRReview.estimated_cost), else_=0)
-            ),
-            0,
-        ).label("total_estimated_cost"),
     )
     if scope_filter is not None:
         stats_query = stats_query.where(scope_filter)
@@ -122,13 +101,9 @@ async def get_stats(
     # 合并所有模块的 token / cost（按用户权限过滤）
     module_scope_user = None if scope_filter is None else user["sub"]
     module_stats = await fetch_module_token_stats(db, module_scope_user)
-    total_prompt = (
-        int(stats_row.total_prompt_tokens or 0) + module_stats["total_prompt"]
-    )
-    total_completion = (
-        int(stats_row.total_completion_tokens or 0) + module_stats["total_completion"]
-    )
-    total_cost = int(stats_row.total_estimated_cost or 0) + module_stats["total_cost"]
+    total_prompt = module_stats["total_prompt"]
+    total_completion = module_stats["total_completion"]
+    total_cost = module_stats["total_cost"]
 
     result = {
         "total": int(stats_row.total or 0),
@@ -143,6 +118,14 @@ async def get_stats(
         "total_prompt_tokens": total_prompt,
         "total_completion_tokens": total_completion,
         "total_estimated_cost": total_cost,
+        "token_usage_source": module_stats["token_usage_source"],
+        "token_usage_includes_auxiliary": module_stats[
+            "token_usage_includes_auxiliary"
+        ],
+        "token_usage_recorded_calls": module_stats["token_usage_recorded_calls"],
+        "token_usage_unreported_calls": module_stats[
+            "token_usage_unreported_calls"
+        ],
     }
 
     # LRU 缓存

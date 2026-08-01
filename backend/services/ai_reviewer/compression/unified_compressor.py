@@ -14,6 +14,8 @@ Replaces legacy ContextCompressor and AgentTeamContextCompressor:
 
 from __future__ import annotations
 
+from uuid import uuid4
+
 from typing import Any, Optional
 
 from loguru import logger
@@ -229,6 +231,21 @@ class UnifiedContextCompressor:
         except Exception as exc:  # noqa: BLE001
             logger.warning("压缩摘要调用失败，放弃压缩: {}", exc)
             return None
+
+        # This request intentionally bypasses UnifiedAIClient to avoid recursive
+        # compression.  Account for it explicitly so auxiliary summarization is
+        # still part of the global provider-usage ledger.
+        from backend.services.ai_usage_service import (
+            record_unified_ai_usage_best_effort,
+        )
+
+        await record_unified_ai_usage_best_effort(
+            logical_call_id=str(uuid4()),
+            call_kind="context_compression",
+            role="summary",
+            candidate=candidate,
+            usage=response.usage,
+        )
 
         summary = (response.content or "").strip()
         if not summary:
