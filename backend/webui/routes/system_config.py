@@ -241,6 +241,34 @@ def _schedule_application_restart(delay_seconds: float = 2.0) -> None:
     )
 
 
+@router.post("/restart")
+async def restart_application(
+    db: AsyncSession = Depends(get_db),
+    user: dict = Depends(require_super_admin),
+    _csrf: str = Depends(require_csrf_header),
+):
+    """由超级管理员请求重启当前应用进程。"""
+
+    logger.warning(
+        "超级管理员请求重启应用: user_id={}, username={}",
+        user["user_id"],
+        user["sub"],
+    )
+    await log_admin_action(
+        db,
+        user["user_id"],
+        "application_restart",
+        "system_core",
+        detail={"trigger": "webui"},
+    )
+    _schedule_application_restart()
+    return JSONResponse(
+        {"success": True, "restarting": True},
+        status_code=202,
+        headers={"Cache-Control": "no-store, max-age=0"},
+    )
+
+
 @router.post("/reset-database")
 async def reset_database(
     request: Request,

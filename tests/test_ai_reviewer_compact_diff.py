@@ -145,11 +145,25 @@ def test_diff_tools_have_valid_definitions():
 def test_token_tracker_logs_context_usage():
     tracker = TokenTracker()
 
-    tracker.log_context_usage(5000, 10000, 1)
-    tracker.log_context_usage(8000, 10000, 2)
-    tracker.log_context_usage(9500, 10000, 3)
+    def response(input_tokens, *, window=None, reported=True):
+        return SimpleNamespace(
+            usage=SimpleNamespace(
+                input_tokens=input_tokens,
+                reported_fields=(frozenset({"input_tokens"}) if reported else frozenset()),
+            ),
+            meta=SimpleNamespace(context_window_tokens=window),
+        )
+
+    assert tracker.log_context_usage(response(5000), 10000, 1) == 5000
+    assert tracker.log_context_usage(response(8000), 10000, 2) == 8000
+    # Winner metadata is authoritative when fallback selects a different model.
+    assert tracker.log_context_usage(response(9500, window=20000), 10000, 3) == 9500
 
     assert len(tracker.context_usage_log) == 3
     assert tracker.context_usage_log[0].percentage == 50.0
     assert tracker.context_usage_log[1].percentage == 80.0
-    assert tracker.context_usage_log[2].percentage == 95.0
+    assert tracker.context_usage_log[2].percentage == 47.5
+    assert tracker.context_usage_log[2].context_window_tokens == 20000
+
+    assert tracker.log_context_usage(response(0, reported=False), 10000, 4) is None
+    assert len(tracker.context_usage_log) == 3

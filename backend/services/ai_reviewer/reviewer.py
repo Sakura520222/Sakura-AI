@@ -465,6 +465,17 @@ class AIReviewer:
                 observer=observer,
             )
             tracker.accumulate(response)
+            reported_context_tokens = tracker.log_context_usage(
+                response,
+                context_window_tokens,
+                iteration,
+            )
+            response_meta = getattr(response, "meta", None)
+            reported_context_window = getattr(
+                response_meta,
+                "context_window_tokens",
+                None,
+            ) or context_window_tokens
 
             # 防御性检查：确保响应有效
             if not response.choices:
@@ -582,9 +593,11 @@ class AIReviewer:
                         except Exception as exc:
                             logger.warning("event_callback failed: {}", exc)
 
-            # 记录上下文使用率
-            current_tokens = self.context_compressor.estimate_messages_tokens(messages)
-            tracker.log_context_usage(current_tokens, safe_context, iteration)
+            # 本地估算仅用于预测下一次发送前是否应压缩；不得展示为
+            # Provider 精确上下文使用量。
+            estimated_message_tokens = (
+                self.context_compressor.estimate_messages_tokens(messages)
+            )
 
             # 通知 Check Run：本轮进度快照（轮次/工具调用/Token/上下文/模型）。
             # worker 侧 _review_event_callback 识别 "progress" 事件桥接到 Analysis Check。
@@ -597,8 +610,10 @@ class AIReviewer:
                             "iteration": iteration,
                             "max_iterations": max_iterations,
                             "token_usage": tracker.to_dict(),
-                            "current_tokens": current_tokens,
-                            "safe_context": safe_context,
+                            "current_tokens": reported_context_tokens,
+                            "safe_context": reported_context_window,
+                            "estimated_message_tokens": estimated_message_tokens,
+                            "context_source": "provider",
                             "model": "",
                         },
                     )
@@ -609,11 +624,11 @@ class AIReviewer:
             if self.enable_compression:
                 threshold_tokens = int(safe_context * self.compression_threshold)
 
-                if current_tokens > threshold_tokens:
-                    current_k = current_tokens / 1000
+                if estimated_message_tokens > threshold_tokens:
+                    current_k = estimated_message_tokens / 1000
                     threshold_k = threshold_tokens / 1000
                     logger.warning(
-                        "🚨 上下文超限: {:.1f}K tokens > {:.1f}K tokens "
+                        "🚨 本地上下文估算超限: {:.1f}K tokens > {:.1f}K tokens "
                         "(阈值 {}%)，启动压缩...",
                         current_k,
                         threshold_k,
@@ -629,12 +644,15 @@ class AIReviewer:
                         )
                     )
 
-                    # 压缩后再次记录上下文使用率
+                    # 压缩发生在下一次 Provider 请求前，此时只能本地估算；
+                    # 精确值会在下一次响应 usage 中记录。
                     post_compress_tokens = (
                         self.context_compressor.estimate_messages_tokens(messages)
                     )
-                    tracker.log_context_usage(
-                        post_compress_tokens, safe_context, iteration
+                    logger.info(
+                        "上下文压缩后本地估算: {:,} tokens；精确值等待下一次 "
+                        "Provider usage",
+                        post_compress_tokens,
                     )
 
         # 达到最大迭代次数，引导 AI 基于已有信息交付最终审查结果
@@ -666,6 +684,11 @@ class AIReviewer:
             observer=observer,
         )
         tracker.accumulate(last_response)
+        tracker.log_context_usage(
+            last_response,
+            context_window_tokens,
+            max_iterations + 1,
+        )
         review_text = last_response.choices[0].message.content or ""
         if event_callback:
             try:

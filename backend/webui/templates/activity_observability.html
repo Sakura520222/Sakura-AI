@@ -450,6 +450,7 @@
                 <section class="rounded-xl border border-gray-200 p-3 dark:border-gray-700">
                     <p class="text-[10px] uppercase tracking-widest text-gray-400">{{ _('activity.current_phase') }}</p>
                     <p class="mt-1 text-sm font-semibold text-gray-800 dark:text-gray-100" x-text="formatPhase(snapshot?.current_phase) || '—'"></p>
+                    <p class="mt-3 text-[10px] uppercase tracking-widest text-gray-400">{{ _('activity.session_usage_total') }}</p>
                     <div class="mt-3 grid grid-cols-2 gap-2 text-[10px]">
                         <div class="rounded-lg bg-gray-50 p-2 dark:bg-gray-800">
                             <p class="text-gray-400">{{ _('activity.input_tokens') }}</p>
@@ -472,7 +473,7 @@
 
                 <section class="rounded-xl border border-gray-200 p-3 dark:border-gray-700">
                     <div class="flex items-center justify-between">
-                        <p class="text-[10px] uppercase tracking-widest text-gray-400">{{ _('activity.context_usage') }}</p>
+                        <p class="text-[10px] uppercase tracking-widest text-gray-400">{{ _('activity.current_request_context') }}</p>
                         <span class="text-[10px] text-gray-400" x-text="latestContext ? contextProvenance(latestContext) : ''"></span>
                     </div>
                     <template x-if="latestContext">
@@ -609,17 +610,41 @@ function activityObservability() {
                 (invocation.work_units || []).flatMap(workUnit => workUnit.attempts || [])
             );
         },
-        get latestContext() {
-            const attempt = this.allAttempts
+        get contextAttempt() {
+            if (this.focusedAttemptId != null) {
+                const focused = this.allAttempts.find(
+                    item => Number(item.attempt_id) === Number(this.focusedAttemptId),
+                );
+                if (focused?.context) return focused;
+            }
+
+            const invocations = this.snapshot?.invocations || [];
+            const displayInvocationId = this.snapshot?.session?.invocation_id;
+            const invocation = invocations.find(
+                item => Number(item.invocation_id) === Number(displayInvocationId),
+            ) || invocations[0];
+            if (!invocation) return null;
+
+            const workUnits = invocation.work_units || [];
+            const primary = workUnits.find(
+                item => Number(item.work_unit_id) === Number(invocation.primary_work_unit_id),
+            ) || workUnits.find(item => item.is_primary) || workUnits[0];
+            if (!primary) return null;
+
+            return (primary.attempts || [])
                 .filter(item => item.context)
                 .reduce(
-                    (latest, item) =>
-                        !latest || Number(item.attempt_id) > Number(latest.attempt_id)
-                            ? item
-                            : latest,
+                    (latest, item) => {
+                        if (!latest) return item;
+                        const itemOrder = Number(item.attempt_index ?? item.attempt_id);
+                        const latestOrder = Number(latest.attempt_index ?? latest.attempt_id);
+                        return itemOrder > latestOrder ? item : latest;
+                    },
                     null,
                 );
-            return attempt?.context || null;
+        },
+        get latestContext() {
+            return this.contextAttempt?.context || null;
         },
         get roleOptions() {
             return [...new Set(this.entries.map(item => item.source_role || item.role).filter(Boolean))].sort();

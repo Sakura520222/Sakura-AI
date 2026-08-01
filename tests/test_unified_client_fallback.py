@@ -8,6 +8,7 @@
 
 import asyncio
 from typing import Optional
+from unittest.mock import AsyncMock
 
 import pytest
 
@@ -167,6 +168,36 @@ def _install_stub(monkeypatch, family, stub):
 
     monkeypatch.setitem(reg._DEFAULT_CHAT_PATHS, family, "chat/completions")
     monkeypatch.setattr(reg, "get_adapter", lambda f: stub)
+
+
+@pytest.mark.asyncio
+async def test_successful_logical_call_records_provider_usage_once(monkeypatch):
+    adapter = _StubAdapter(content="accounted")
+    _install_stub(monkeypatch, ProtocolFamily.OPENAI_COMPATIBLE, adapter)
+    candidate = _candidate(ProtocolFamily.OPENAI_COMPATIBLE, "usage-model")
+    recorder = AsyncMock()
+    client = UnifiedAIClient(
+        fallback_config=FallbackConfig(max_retries=1),
+        usage_recorder=recorder,
+    )
+
+    response = await client.call_with_retry(
+        [candidate],
+        [UnifiedMessage(role="user", content="count me")],
+        model="",
+        role="summary",
+        logical_call_factory=lambda: "usage-call",
+    )
+
+    assert response.content == "accounted"
+    recorder.assert_awaited_once()
+    kwargs = recorder.await_args.kwargs
+    assert kwargs["logical_call_id"] == "usage-call"
+    assert kwargs["call_kind"] == "chat"
+    assert kwargs["role"] == "summary"
+    assert kwargs["candidate"] is candidate
+    assert kwargs["usage"] is response.usage
+    await client.aclose()
 
 
 @pytest.mark.asyncio

@@ -293,6 +293,7 @@ class UnifiedAIClient:
         observer: Any = None,
         context: Any = None,
         logical_call_factory: Any = uuid4,
+        usage_recorder: Any = None,
     ):
         self._http_client = http_client
         self._owns_http_client = http_client is None
@@ -301,6 +302,7 @@ class UnifiedAIClient:
         self._observer = observer
         self._context = context
         self._logical_call_factory = logical_call_factory
+        self._usage_recorder = usage_recorder
         self._logical_attempt_counts: dict[str, int] = {}
         # role -> (provider_id, model_id)，记忆上次成功候选
         # remember last-winning candidate per role so subsequent calls in the
@@ -369,6 +371,38 @@ class UnifiedAIClient:
                 role,
                 attempt_count,
                 fields["elapsed_seconds"],
+            )
+
+    async def _record_successful_usage(
+        self,
+        *,
+        logical_call_id: str,
+        call_kind: str,
+        role: str,
+        candidate: ResolvedModel,
+        usage: Any,
+    ) -> None:
+        recorder = self._usage_recorder
+        if recorder is None:
+            from backend.services.ai_usage_service import (
+                record_unified_ai_usage_best_effort,
+            )
+
+            recorder = record_unified_ai_usage_best_effort
+        try:
+            await recorder(
+                logical_call_id=logical_call_id,
+                call_kind=call_kind,
+                role=role,
+                candidate=candidate,
+                usage=usage,
+            )
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:  # noqa: BLE001
+            logger.bind(error_type=type(exc).__name__).warning(
+                "AI usage 记录器失败，业务调用继续: error_type={}",
+                type(exc).__name__,
             )
 
     async def __aenter__(self) -> "UnifiedAIClient":
@@ -572,6 +606,13 @@ class UnifiedAIClient:
                     role,
                     served_by,
                 )
+                await self._record_successful_usage(
+                    logical_call_id=logical_call_id,
+                    call_kind="chat",
+                    role=role,
+                    candidate=candidate,
+                    usage=response.usage,
+                )
                 self._log_logical_call_summary(
                     logical_call_id=logical_call_id,
                     role=role,
@@ -659,6 +700,13 @@ class UnifiedAIClient:
                         self._last_successful[role] = (
                             candidate.provider.id,
                             candidate.model.model_id,
+                        )
+                        await self._record_successful_usage(
+                            logical_call_id=logical_call_id,
+                            call_kind="chat",
+                            role=role,
+                            candidate=candidate,
+                            usage=recovered.usage,
                         )
                         self._log_logical_call_summary(
                             logical_call_id=logical_call_id,
@@ -846,6 +894,13 @@ class UnifiedAIClient:
                     self._last_successful[role] = (
                         candidate.provider.id,
                         candidate.model.model_id,
+                    )
+                    await self._record_successful_usage(
+                        logical_call_id=logical_call_id,
+                        call_kind="chat_stream",
+                        role=role,
+                        candidate=candidate,
+                        usage=final_usage,
                     )
                     self._log_logical_call_summary(
                         logical_call_id=logical_call_id,
