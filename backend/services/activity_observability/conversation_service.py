@@ -29,8 +29,9 @@ from backend.services.activity_observability.access_service import (
     CursorResetRequiredError,
     project_attempt,
 )
+from backend.services.activity_observability.contracts import ALLOWED_MESSAGE_KINDS
 
-CONVERSATION_PROJECTION_VERSION = 3
+CONVERSATION_PROJECTION_VERSION = 4
 _TYPE_RANK = {
     "invocation_boundary": 0,
     "thread_boundary": 1,
@@ -72,6 +73,18 @@ def _message_tool_call_ids(message_json: str | None) -> set[str]:
         for item in calls
         if isinstance(item, dict) and item.get("id")
     }
+
+
+def _message_kind(message_json: str | None) -> str | None:
+    """Read the public business kind from a canonical message payload."""
+    try:
+        payload = json.loads(message_json or "{}")
+    except (TypeError, json.JSONDecodeError):
+        return None
+    if not isinstance(payload, dict):
+        return None
+    kind = payload.get("message_kind")
+    return kind if kind in ALLOWED_MESSAGE_KINDS else None
 
 
 def _b64encode(value: bytes) -> str:
@@ -494,6 +507,7 @@ class ConversationProjectionService:
                     "thread_id": message.thread_id,
                     "role": message.role,
                     "source_role": work_unit.purpose if work_unit else None,
+                    "message_kind": _message_kind(message.message_json),
                     "seq": int(message.seq),
                     "content": message.content if content_allowed else None,
                     "content_visibility": (

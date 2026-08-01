@@ -84,6 +84,36 @@ def _get_label_rec_setting(key: str, default=None):
         return default
 
 
+def _make_label_event_callback(label_execution, task_id):
+    """构造标签推荐可观测回调，把请求/响应消息写入辅助 summary Thread。
+
+    Build a best-effort callback that persists label-recommendation message
+    events onto the auxiliary summary thread so the live activity monitor can
+    surface distinguishable "label recommendation request/response" cards.
+    Only ``message`` events are forwarded; observability write failures are
+    swallowed so they never break the label recommendation flow.
+    """
+    thread = label_execution.thread
+    work_unit = label_execution.work_unit
+    tool_service = label_execution.tool_service
+    lease = label_execution.lease
+
+    async def _callback(event_type, data):
+        if event_type != "message":
+            return
+        try:
+            await tool_service.append_conversation_message(
+                thread_id=thread.id,
+                work_unit_id=work_unit.id,
+                message=data,
+                lease=lease,
+            )
+        except Exception as exc:
+            logger.debug("[{}] 标签推荐可观测回调失败: {}", task_id, exc)
+
+    return _callback
+
+
 def get_async_session():
     """获取异步会话工厂（动态导入）"""
     from backend.models.database import async_session
@@ -1355,6 +1385,16 @@ class ReviewWorker:
                                 )
                             )
 
+                            # 构造标签推荐可观测回调，把请求/响应写入辅助 summary
+                            # Thread，使实时监控可区分"标签推荐请求/响应"卡片。
+                            # Build a callback so the label recommendation
+                            # request/response land on the summary thread.
+                            label_callback = (
+                                _make_label_event_callback(label_execution, task_id)
+                                if label_execution is not None
+                                else None
+                            )
+
                             # AI推荐标签（传入已有标签）
                             recommendations = await self.ai_reviewer.recommend_labels(
                                 context,
@@ -1371,6 +1411,7 @@ class ReviewWorker:
                                     if label_execution is not None
                                     else None
                                 ),
+                                event_callback=label_callback,
                                 propagate_errors=True,
                             )
 

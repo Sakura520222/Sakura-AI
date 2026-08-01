@@ -36,6 +36,7 @@ from backend.services.activity_observability.context_service import (
     ContextService,
     ThreadLeaseToken,
 )
+from backend.services.activity_observability.contracts import ALLOWED_MESSAGE_KINDS
 from backend.services.activity_observability.event_service import append_lifecycle_event
 from backend.services.activity_observability.reasoning import (
     REASONING_ENCRYPTED_OPAQUE,
@@ -725,6 +726,9 @@ class ToolService:
                         endpoint_scope=f"canonical-thread:{thread.id}",
                     )
                 public_payload: dict[str, Any] = {"role": role}
+                message_kind = message.get("message_kind")
+                if message_kind in ALLOWED_MESSAGE_KINDS:
+                    public_payload["message_kind"] = message_kind
                 if role == "assistant" and isinstance(content_value, str):
                     public_payload["content"] = content_value
                 if message.get("name"):

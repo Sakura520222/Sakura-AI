@@ -44,6 +44,7 @@ class LabelRecommender:
         invocation_context: Any = None,
         observer: Any = None,
         propagate_errors: bool = False,
+        event_callback: Any = None,
     ) -> list[dict[str, Any]]:
         """推荐PR标签
 
@@ -52,6 +53,11 @@ class LabelRecommender:
             available_labels: 可用的标签字典
             pr_info: PR信息（包含标题、描述等）
             existing_labels: PR 已有的标签名称列表（用于增量审查时避免冲突）
+            invocation_context: 可观测调用上下文（透传给 provider）
+            observer: 可观测模型发送器（透传给 provider）
+            propagate_errors: 是否向上抛出 provider 失败
+            event_callback: 可选异步回调 ``(event_type, data)``，用于把标签
+                推荐请求/响应写入辅助可观测通道，使实时监控卡片可区分业务来源
 
         Returns:
             推荐标签列表，格式：[{"name": str, "confidence": float, "reason": str}]
@@ -76,6 +82,28 @@ class LabelRecommender:
                 context, available_labels, pr_info
             )
 
+            # 将标签推荐请求写入辅助可观测通道（system + user），使实时监控
+            # 能在 summary Thread 中展示"标签推荐请求"卡片而非裸 Attempt。
+            # Surface the label-recommendation request (system + user) on the
+            # auxiliary lane so the live monitor shows a labelled request card.
+            if event_callback is not None:
+                await event_callback(
+                    "message",
+                    {
+                        "role": "system",
+                        "content": system_prompt,
+                        "message_kind": "label_recommendation_request",
+                    },
+                )
+                await event_callback(
+                    "message",
+                    {
+                        "role": "user",
+                        "content": user_message,
+                        "message_kind": "label_recommendation_request",
+                    },
+                )
+
             response = await self.api_client.call_with_retry(
                 model="",
                 messages=[
@@ -90,6 +118,20 @@ class LabelRecommender:
 
             # 提取响应
             recommendation_text = response.choices[0].message.content
+
+            # 将标签推荐最终响应写入辅助可观测通道（assistant），与请求卡片
+            # 区分，便于在时间线中直接查看模型返回的 JSON。
+            # Surface the final assistant response so it is distinguishable from
+            # the request card in the unified timeline.
+            if event_callback is not None:
+                await event_callback(
+                    "message",
+                    {
+                        "role": "assistant",
+                        "content": recommendation_text,
+                        "message_kind": "label_recommendation_response",
+                    },
+                )
 
             logger.debug(f"AI标签推荐完整响应:\n{recommendation_text}")
             logger.info(f"AI标签推荐响应长度: {len(recommendation_text)} 字符")
