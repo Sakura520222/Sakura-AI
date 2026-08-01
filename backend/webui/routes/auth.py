@@ -262,7 +262,7 @@ async def github_login(request: Request):
     }
 
     auth_url = f"{settings.github_oauth_auth_url}?{urlencode(params)}"
-    logger.info(f"GitHub OAuth: 重定向用户到授权页面, state={state[:8]}...")
+    logger.info(f"GitHub OAuth: 重定向用户到授权页面, state={state}")
     return RedirectResponse(url=auth_url, status_code=302)
 
 
