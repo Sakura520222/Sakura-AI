@@ -1043,7 +1043,7 @@ def init_async_db(database_url: str):
     try:
         database_url = normalize_database_url(database_url)
 
-        logger.info(f"初始化异步数据库引擎: {database_url}")
+        logger.info("初始化异步数据库引擎")
 
         # 创建异步引擎
         # aiomysql 的 ping() 签名与 SQLAlchemy 的 pool_pre_ping 不兼容，
