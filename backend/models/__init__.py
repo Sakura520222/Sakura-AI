@@ -143,7 +143,7 @@ async def init_db():
     """
     try:
         logger.info("正在初始化数据库...")
-        logger.info(f"数据库地址: {settings.database_url}")
+        logger.info("数据库连接地址已配置")
 
         # 1. 先初始化异步数据库引擎
         init_async_db(settings.database_url)

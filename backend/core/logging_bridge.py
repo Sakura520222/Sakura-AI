@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 import sys
 import time
 from datetime import datetime
@@ -14,6 +15,11 @@ from loguru import logger
 
 APP_LOG_DIRECTORY = Path("logs")
 APP_LOG_RETENTION_DAYS = 10
+_NOISY_LOGGER_PREFIXES = ("httpx", "httpcore", "telegram")
+_URL_PASSWORD_PATTERN = re.compile(
+    r"(?P<prefix>[a-zA-Z][a-zA-Z0-9+.-]*://[^:/\s@]+:)[^@/\s]+(?P<suffix>@)"
+)
+_TELEGRAM_BOT_TOKEN_PATTERN = re.compile(r"/bot\d+:[A-Za-z0-9_-]+")
 
 
 def _cleanup_expired_app_logs(_log_paths: list[str] | None = None) -> None:
@@ -55,6 +61,9 @@ class InterceptHandler(logging.Handler):
     """把标准 ``logging`` 记录写入配置好的 Loguru sinks。"""
 
     def emit(self, record: logging.LogRecord) -> None:
+        if _is_noisy_library_record(record):
+            return
+
         try:
             level = logger.level(record.levelname).name
         except ValueError:
@@ -63,6 +72,7 @@ class InterceptHandler(logging.Handler):
         message = record.getMessage()
         if record.stack_info:
             message = f"{message}\n{self.formatStack(record.stack_info)}"
+        message = _redact_standard_log_message(message)
 
         logger.opt(exception=record.exc_info).log(
             level,
@@ -70,6 +80,20 @@ class InterceptHandler(logging.Handler):
             record.name,
             message,
         )
+
+
+def _is_noisy_library_record(record: logging.LogRecord) -> bool:
+    """抑制高频 HTTP 传输和 Telegram 轮询的正常细节日志。"""
+    return record.levelno < logging.WARNING and any(
+        record.name == prefix or record.name.startswith(f"{prefix}.")
+        for prefix in _NOISY_LOGGER_PREFIXES
+    )
+
+
+def _redact_standard_log_message(message: str) -> str:
+    """防止标准日志中的 URL 密码和 Telegram Bot token 落盘。"""
+    message = _URL_PASSWORD_PATTERN.sub(r"\g<prefix>***\g<suffix>", message)
+    return _TELEGRAM_BOT_TOKEN_PATTERN.sub("/bot***", message)
 
 
 def install_standard_logging_bridge() -> None:
