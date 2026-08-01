@@ -18,8 +18,9 @@ class ContextSnapshot:
 
     iteration: int
     current_tokens: int
-    safe_threshold: int
-    percentage: float
+    context_window_tokens: int | None
+    percentage: float | None
+    source: str = "provider"
 
 
 class TokenTracker:
@@ -54,45 +55,106 @@ class TokenTracker:
             )
 
     def log_context_usage(
-        self, current_tokens: int, safe_threshold: int, iteration: int
-    ) -> None:
-        """记录上下文使用率快照并输出日志
+        self,
+        response: object,
+        context_window_tokens: int | None,
+        iteration: int,
+    ) -> int | None:
+        """记录 Provider 上报的精确请求上下文并输出日志。
 
         Args:
-            current_tokens: 当前消息的 token 数
-            safe_threshold: 安全上下文阈值
+            response: 当前 Provider 的统一响应
+            context_window_tokens: 模型完整上下文窗口（非压缩安全阈值）
             iteration: 当前轮次
+
+        Returns:
+            Provider 明确上报的 input tokens；未上报时返回 None。
         """
+        usage = getattr(response, "usage", None)
+        if usage is None:
+            logger.info(
+                "📊 当前请求上下文: Provider 未返回 usage | 轮次: {}",
+                iteration,
+            )
+            return None
+
+        reported_fields = getattr(usage, "reported_fields", None)
+        if reported_fields is not None and "input_tokens" not in reported_fields:
+            logger.info(
+                "📊 当前请求上下文: Provider 未报告精确 input_tokens | 轮次: {}",
+                iteration,
+            )
+            return None
+
+        current_tokens = getattr(usage, "input_tokens", None)
+        if current_tokens is None and reported_fields is None:
+            current_tokens = getattr(usage, "prompt_tokens", None)
+        if (
+            not isinstance(current_tokens, int)
+            or isinstance(current_tokens, bool)
+            or current_tokens < 0
+        ):
+            logger.info(
+                "📊 当前请求上下文: Provider 未报告精确 input_tokens | 轮次: {}",
+                iteration,
+            )
+            return None
+
+        response_meta = getattr(response, "meta", None)
+        winner_window = getattr(response_meta, "context_window_tokens", None)
+        if (
+            isinstance(winner_window, int)
+            and not isinstance(winner_window, bool)
+            and winner_window > 0
+        ):
+            context_window_tokens = winner_window
+        elif (
+            not isinstance(context_window_tokens, int)
+            or isinstance(context_window_tokens, bool)
+            or context_window_tokens <= 0
+        ):
+            context_window_tokens = None
+
         percentage = (
-            (current_tokens / safe_threshold * 100) if safe_threshold > 0 else 0
+            current_tokens / context_window_tokens * 100
+            if context_window_tokens is not None
+            else None
         )
-        current_k = current_tokens / 1000
-        safe_k = safe_threshold / 1000
 
         snapshot = ContextSnapshot(
             iteration=iteration,
             current_tokens=current_tokens,
-            safe_threshold=safe_threshold,
+            context_window_tokens=context_window_tokens,
             percentage=percentage,
         )
         self.context_usage_log.append(snapshot)
 
-        if percentage >= 90:
+        if percentage is None:
+            logger.info(
+                "📊 当前请求上下文: {:,} tokens | 完整上下文窗口未知 | "
+                "轮次: {} | 来源: Provider",
+                current_tokens,
+                iteration,
+            )
+        elif percentage >= 90:
             logger.warning(
-                "📊 上下文使用率: {:.1f}K / {:.1f}K ({:.0f}%) | 轮次: {} ⚠️ 接近上限",
-                current_k,
-                safe_k,
+                "📊 当前请求上下文: {:,} / {:,} tokens ({:.1f}%) | "
+                "轮次: {} | 来源: Provider ⚠️ 接近上限",
+                current_tokens,
+                context_window_tokens,
                 percentage,
                 iteration,
             )
         else:
             logger.info(
-                "📊 上下文使用率: {:.1f}K / {:.1f}K ({:.0f}%) | 轮次: {}",
-                current_k,
-                safe_k,
+                "📊 当前请求上下文: {:,} / {:,} tokens ({:.1f}%) | "
+                "轮次: {} | 来源: Provider",
+                current_tokens,
+                context_window_tokens,
                 percentage,
                 iteration,
             )
+        return current_tokens
 
     def merge(self, other: TokenTracker) -> None:
         """合并另一个 tracker 的数据"""

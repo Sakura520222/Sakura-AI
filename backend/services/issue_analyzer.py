@@ -19,7 +19,6 @@ from backend.services.activity_observability.publication_service import (
     coordinate_publication,
 )
 from backend.services.ai_reviewer.api_client import AIApiClient
-from backend.services.ai_reviewer.message_utils import estimate_messages_tokens
 from backend.services.ai_reviewer.token_tracker import TokenTracker
 from backend.services.ai_reviewer.tools import (
     FileToolHandler,
@@ -422,9 +421,7 @@ class IssueAnalyzer:
         return current_safe_context
 
     @staticmethod
-    def _resolve_served_model(
-        response: Any, current_model: Optional[str]
-    ) -> Optional[str]:
+    def _resolve_served_model(response: Any, current_model: str | None) -> str | None:
         """从响应 meta 提取实际服务模型名 / Extract the winning model id.
 
         fallback 可能切换到与角色首选不同的模型；``reasoning_content`` 等模型
@@ -673,6 +670,7 @@ class IssueAnalyzer:
             # 与模型名，避免 reasoning_content 判断和日志百分比基于角色首选失真
             safe_context = self._resolve_safe_context(response, safe_context)
             context_model = self._resolve_served_model(response, context_model)
+            tracker.log_context_usage(response, role_context_window, iteration)
 
             # 检查是否有工具调用
             tool_calls = (
@@ -804,10 +802,6 @@ class IssueAnalyzer:
                         except Exception as exc:
                             logger.warning("event_callback failed: {}", exc)
 
-            # 每轮工具调用处理后记录上下文使用率
-            current_tokens = estimate_messages_tokens(messages, model_ctx_mgr)
-            tracker.log_context_usage(current_tokens, safe_context, iteration)
-
         # 达到最大迭代次数，做最后一次 API 调用强制 AI 返回结果
         logger.warning(
             f"Issue 分析达到最大迭代次数 ({max_iterations})，强制生成最终结果"
@@ -826,6 +820,12 @@ class IssueAnalyzer:
                 role="main",
                 context=invocation_context,
                 observer=observer,
+            )
+            tracker.accumulate(final_response)
+            tracker.log_context_usage(
+                final_response,
+                role_context_window,
+                max_iterations + 1,
             )
             last_content = final_response.choices[0].message.content or ""
         except Exception as e:

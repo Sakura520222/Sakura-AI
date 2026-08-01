@@ -60,7 +60,6 @@
         </div>
     </div>
 </div>
-
 <!-- Token 消耗统计 -->
 <div class="grid grid-cols-1 sm:grid-cols-3 gap-4 mt-4" id="token-stats-cards">
     <!-- 总 Token 消耗 -->
@@ -108,3 +107,13 @@
         </div>
     </div>
 </div>
+<p class="mt-2 px-1 text-xs leading-5 text-gray-500 dark:text-gray-400" id="stat-token-source">
+    <span id="stat-token-source-all" class="hidden">{{ _('dashboard.token_source_all_ai') }}</span>
+    <span id="stat-token-source-legacy" class="hidden">{{ _('dashboard.token_source_legacy') }}</span>
+    <span id="stat-token-source-scoped" class="hidden">{{ _('dashboard.token_source_scoped') }}</span>
+    <span
+        id="stat-token-unreported"
+        class="hidden"
+        data-template="{{ _('dashboard.token_usage_unreported') }}"
+    ></span>
+</p>

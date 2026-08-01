@@ -13,88 +13,46 @@ from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.models.agent_team_models import AgentTeamTask
+from backend.models.ai_usage_models import AIUsageRecord
 from backend.models.database import IssueAnalysis, PRReview
 from backend.models.scan_models import RepoScan
+from backend.services.ai_usage_service import (
+    LEGACY_BASELINE_CALL_KIND,
+    fetch_global_token_totals,
+    fetch_legacy_module_stats,
+    get_usage_cutover_at,
+)
 
 
 async def fetch_module_token_stats(
     db: AsyncSession,
     scope_user: str | None = None,
-) -> dict[str, int]:
-    """聚合所有模块（PR / Issue / Agent / Scan）的累计 token 和 cost。
+) -> dict[str, Any]:
+    """聚合累计 Token 和 cost。
 
-    Args:
-        db: 数据库 session
-        scope_user: 非 admin 用户的 GitHub 用户名，用于权限过滤；
-            None 表示管理员或无需过滤。
-
-    Returns:
-        {"total_prompt": int, "total_completion": int, "total_cost": int}
+    管理员的 Token 来自全局 Provider usage 账本，覆盖主模型与辅助模型；
+    普通用户继续使用权限范围内的业务表聚合，避免泄露其他用户调用量。
+    cost 暂无跨 Provider 的统一精确报价，仍沿用业务表估值。
     """
 
-    # ── 构建各模块的 scope 过滤条件 ──
-    # PRReview / IssueAnalysis 有 repo_owner + author，双向匹配
-    # AgentTeamTask / RepoScan 仅有 repo_owner
-    def _scope_for(model, *, has_author: bool = True):
-        if scope_user is None:
-            return None
-        conditions = [model.repo_owner == scope_user]
-        if has_author:
-            conditions.append(model.author == scope_user)
-        return or_(*conditions) if len(conditions) > 1 else conditions[0]
-
-    def _aggregate(model, scope):
-        q = select(
-            func.coalesce(func.sum(model.prompt_tokens), 0).label("p"),
-            func.coalesce(func.sum(model.completion_tokens), 0).label("c"),
-            func.coalesce(func.sum(model.estimated_cost), 0).label("e"),
-        ).where(model.status == "completed")
-        if scope is not None:
-            q = q.where(scope)
-        return q
-
-    # PR 审查聚合
-    pr_row = (
-        await db.execute(_aggregate(PRReview, _scope_for(PRReview, has_author=True)))
-    ).one()
-
-    # Issue 分析聚合
-    issue_row = (
-        await db.execute(
-            _aggregate(IssueAnalysis, _scope_for(IssueAnalysis, has_author=True))
-        )
-    ).one()
-
-    # Agent 任务聚合
-    agent_row = (
-        await db.execute(
-            _aggregate(AgentTeamTask, _scope_for(AgentTeamTask, has_author=False))
-        )
-    ).one()
-
-    # 仓库扫描聚合
-    scan_row = (
-        await db.execute(_aggregate(RepoScan, _scope_for(RepoScan, has_author=False)))
-    ).one()
-
+    legacy = await fetch_legacy_module_stats(db, scope_user)
+    if scope_user is None:
+        totals = await fetch_global_token_totals(db, legacy_fallback=legacy)
+    else:
+        totals = None
     return {
-        "total_prompt": (
-            int(pr_row.p or 0)
-            + int(issue_row.p or 0)
-            + int(agent_row.p or 0)
-            + int(scan_row.p or 0)
+        "total_prompt": totals.input_tokens if totals else legacy.input_tokens,
+        "total_completion": totals.output_tokens if totals else legacy.output_tokens,
+        "total_cost": legacy.estimated_cost,
+        "token_usage_source": (
+            totals.source if totals is not None else "legacy_scoped_modules"
         ),
-        "total_completion": (
-            int(pr_row.c or 0)
-            + int(issue_row.c or 0)
-            + int(agent_row.c or 0)
-            + int(scan_row.c or 0)
+        "token_usage_includes_auxiliary": bool(
+            totals and totals.includes_auxiliary_calls
         ),
-        "total_cost": (
-            int(pr_row.e or 0)
-            + int(issue_row.e or 0)
-            + int(agent_row.e or 0)
-            + int(scan_row.e or 0)
+        "token_usage_recorded_calls": totals.recorded_calls if totals else 0,
+        "token_usage_unreported_calls": (
+            totals.unreported_usage_calls if totals else 0
         ),
     }
 
@@ -118,6 +76,11 @@ async def fetch_token_trend(
         长度与 labels 一致的 token 总量列表。
     """
     token_data = [0] * len(labels)
+    # Global administrators switch at the immutable baseline timestamp: old
+    # business rows before it + provider ledger rows after it.  This keeps the
+    # historical chart while preventing post-cutover primary calls from being
+    # counted once in a business row and again in the ledger.
+    cutover_at = await get_usage_cutover_at(db) if scope_user is None else None
 
     # ── PR 审查 token 趋势（repo_owner / author 均可匹配）──
     pr_scope = None
@@ -140,6 +103,8 @@ async def fetch_token_trend(
     )
     if pr_scope is not None:
         pr_query = pr_query.where(pr_scope)
+    if cutover_at is not None:
+        pr_query = pr_query.where(PRReview.created_at < cutover_at)
     for row in (await db.execute(pr_query)).all():
         if row.day:
             idx = (row.day - thirty_days_ago.date()).days
@@ -188,11 +153,37 @@ async def fetch_token_trend(
         )
         if scope is not None:
             q = q.where(scope)
+        if cutover_at is not None:
+            q = q.where(date_col < cutover_at)
         rows = (await db.execute(q)).all()
         for row in rows:
             if row.day:
                 idx = (row.day - thirty_days_ago.date()).days
                 if 0 <= idx < len(labels):
                     token_data[idx] += int(row.tokens)
+
+    if cutover_at is not None:
+        ledger_query = (
+            select(
+                func.date(AIUsageRecord.occurred_at).label("day"),
+                func.coalesce(
+                    func.sum(
+                        func.coalesce(AIUsageRecord.input_tokens, 0)
+                        + func.coalesce(AIUsageRecord.output_tokens, 0)
+                    ),
+                    0,
+                ).label("tokens"),
+            )
+            .where(
+                AIUsageRecord.occurred_at >= thirty_days_ago,
+                AIUsageRecord.call_kind != LEGACY_BASELINE_CALL_KIND,
+            )
+            .group_by(func.date(AIUsageRecord.occurred_at))
+        )
+        for row in (await db.execute(ledger_query)).all():
+            if row.day:
+                idx = (row.day - thirty_days_ago.date()).days
+                if 0 <= idx < len(labels):
+                    token_data[idx] += int(row.tokens or 0)
 
     return token_data

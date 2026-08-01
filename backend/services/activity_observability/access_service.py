@@ -17,7 +17,7 @@ from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from typing import Any, Callable, Protocol
 
-from sqlalchemy import desc, select
+from sqlalchemy import desc, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -1020,23 +1020,50 @@ class ActivityAccessService:
         active_attempts = [
             project_attempt(item, user) for item in attempts if item.status == "running"
         ]
-        usage_totals: dict[str, int | None] = {}
+        # The detail payload only carries the newest 25 Invocations, but the
+        # diagnostic cards are explicitly session totals. Aggregate directly
+        # over every Attempt in the Session so long-lived PR/Issue sessions do
+        # not silently lose older or auxiliary model usage.
+        usage_row = (
+            await db.execute(
+                select(
+                    func.sum(ActivityModelAttempt.input_tokens).label("input_tokens"),
+                    func.sum(ActivityModelAttempt.output_tokens).label(
+                        "output_tokens"
+                    ),
+                    func.sum(ActivityModelAttempt.reasoning_tokens).label(
+                        "reasoning_tokens"
+                    ),
+                    func.sum(ActivityModelAttempt.cached_input_tokens).label(
+                        "cached_input_tokens"
+                    ),
+                )
+                .select_from(ActivityModelAttempt)
+                .join(
+                    ActivityInvocationWorkUnit,
+                    ActivityModelAttempt.work_unit_id
+                    == ActivityInvocationWorkUnit.id,
+                )
+                .where(ActivityInvocationWorkUnit.session_id == session_id)
+            )
+        ).one()
+        usage_totals = {
+            name: int(value) if value is not None else None
+            for name in (
+                "input_tokens",
+                "output_tokens",
+                "reasoning_tokens",
+                "cached_input_tokens",
+            )
+            if (value := getattr(usage_row, name)) is not None
+        }
         for name in (
             "input_tokens",
             "output_tokens",
             "reasoning_tokens",
             "cached_input_tokens",
         ):
-            reported_values = [
-                int(value)
-                for item in attempts
-                if (value := getattr(item, name)) is not None
-            ]
-            # Missing provider counters are unavailable, not provider-reported
-            # zero. A real reported zero remains distinguishable and sums to 0.
-            usage_totals[name] = (
-                sum(reported_values) if reported_values else None
-            )
+            usage_totals.setdefault(name, None)
         newest_invocation = _select_display_invocation(invocations)
         thread_projection = []
         for thread in threads:
