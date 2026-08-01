@@ -1,7 +1,8 @@
 """Main app helper tests"""
 
+from datetime import datetime
 import time
-from unittest.mock import patch
+from unittest.mock import Mock, call, patch
 
 import pytest
 from starlette.requests import Request
@@ -17,6 +18,51 @@ from backend.main import (
     get_startup_info,
     get_system_info_dict,
 )
+
+
+def test_create_startup_log_file_is_unique_for_each_start(tmp_path):
+    startup_time = datetime(2026, 8, 1, 12, 34, 56, 123456)
+
+    first_log = main._create_startup_log_file(
+        tmp_path,
+        started_at=startup_time,
+        process_id=4321,
+    )
+    second_log = main._create_startup_log_file(
+        tmp_path,
+        started_at=startup_time,
+        process_id=4321,
+    )
+
+    assert first_log.name == "app_20260801_123456_123456_pid4321.log"
+    assert second_log.name == "app_20260801_123456_123456_pid4321_1.log"
+    assert first_log.is_file()
+    assert second_log.is_file()
+
+
+def test_configure_logging_uses_a_new_file_for_each_start(monkeypatch, tmp_path):
+    remove = Mock()
+    add = Mock()
+    install_filter = Mock()
+    app_log_path = tmp_path / "app_20260801_123456_123456_pid4321.log"
+    cleanup = Mock()
+    monkeypatch.setattr(main.logger, "remove", remove)
+    monkeypatch.setattr(main.logger, "add", add)
+    monkeypatch.setattr(main, "install_quiet_successful_access_filter", install_filter)
+    monkeypatch.setattr(main, "_cleanup_expired_app_logs", cleanup)
+    monkeypatch.setattr(main, "_create_startup_log_file", Mock(return_value=app_log_path))
+
+    main.configure_logging()
+
+    assert add.call_args_list[1] == call(
+        str(app_log_path),
+        rotation="500 MB",
+        retention=cleanup,
+        level="DEBUG",
+    )
+    install_filter.assert_called_once()
+    remove.assert_called_once()
+    cleanup.assert_called_once()
 
 
 class RequestStub:
