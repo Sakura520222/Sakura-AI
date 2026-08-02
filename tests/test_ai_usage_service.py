@@ -12,10 +12,8 @@ from backend.core.ai_protocol.models import UnifiedUsage
 from backend.models.ai_usage_models import AIUsageRecord
 from backend.services import dashboard_stats_service
 from backend.services.ai_usage_service import (
+    ACCOUNTED_CALL_KINDS,
     GlobalTokenTotals,
-    LEGACY_BASELINE_CALL_KIND,
-    LEGACY_BASELINE_RECORD_KEY,
-    LegacyModuleStats,
     build_usage_record_key,
     extract_provider_usage,
     fetch_global_token_totals,
@@ -81,7 +79,7 @@ def test_usage_record_key_is_stable_and_mysql_index_safe():
 
 
 @pytest.mark.asyncio
-async def test_global_totals_include_all_ledger_calls_without_cache_double_count():
+async def test_global_totals_only_include_accounted_ledger_calls_without_cache_double_count():
     engine = create_engine("sqlite:///:memory:")
     AIUsageRecord.__table__.create(engine)
     now = datetime.now(timezone.utc)
@@ -89,8 +87,8 @@ async def test_global_totals_include_all_ledger_calls_without_cache_double_count
         session.add_all(
             [
                 AIUsageRecord(
-                    record_key=LEGACY_BASELINE_RECORD_KEY,
-                    call_kind=LEGACY_BASELINE_CALL_KIND,
+                    record_key="legacy-module-baseline:v1",
+                    call_kind="legacy_baseline",
                     role="legacy",
                     provider_id="legacy",
                     model_id="legacy",
@@ -141,35 +139,32 @@ async def test_global_totals_include_all_ledger_calls_without_cache_double_count
 
         totals = await fetch_global_token_totals(_AsyncExecuteAdapter(session))
 
-    assert totals.input_tokens == 180
-    assert totals.output_tokens == 25
+    assert totals.input_tokens == 80
+    assert totals.output_tokens == 5
     assert totals.recorded_calls == 3
     assert totals.unreported_usage_calls == 1
-    assert totals.includes_auxiliary_calls is True
+    assert "legacy_baseline" not in ACCOUNTED_CALL_KINDS
 
 
 @pytest.mark.asyncio
-async def test_dashboard_uses_global_ledger_for_admin_and_keeps_cost_legacy(
+async def test_dashboard_uses_global_ledger_for_admin_and_keeps_cost_separate(
     monkeypatch,
 ):
-    async def fake_legacy(_db, _scope_user=None):
-        return LegacyModuleStats(input_tokens=10, output_tokens=3, estimated_cost=77)
+    async def fake_cost(_db, _scope_user=None):
+        return 77
 
-    async def fake_global(_db, *, legacy_fallback=None):
-        assert legacy_fallback == LegacyModuleStats(10, 3, 77)
+    async def fake_global(_db):
         return GlobalTokenTotals(
             input_tokens=900,
             output_tokens=100,
             recorded_calls=12,
             unreported_usage_calls=2,
-            source="provider_ledger_with_legacy_baseline",
-            includes_auxiliary_calls=True,
         )
 
     monkeypatch.setattr(
         dashboard_stats_service,
-        "fetch_legacy_module_stats",
-        fake_legacy,
+        "fetch_estimated_cost",
+        fake_cost,
     )
     monkeypatch.setattr(
         dashboard_stats_service,
@@ -182,5 +177,31 @@ async def test_dashboard_uses_global_ledger_for_admin_and_keeps_cost_legacy(
     assert result["total_prompt"] == 900
     assert result["total_completion"] == 100
     assert result["total_cost"] == 77
-    assert result["token_usage_includes_auxiliary"] is True
-    assert result["token_usage_unreported_calls"] == 2
+    assert result["token_usage_available"] is True
+
+
+@pytest.mark.asyncio
+async def test_dashboard_never_falls_back_to_legacy_token_columns_for_scoped_user(
+    monkeypatch,
+):
+    async def fake_cost(_db, _scope_user=None):
+        return 31
+
+    async def fail_if_called(_db):
+        raise AssertionError("scoped dashboard must not read global ledger")
+
+    monkeypatch.setattr(dashboard_stats_service, "fetch_estimated_cost", fake_cost)
+    monkeypatch.setattr(
+        dashboard_stats_service,
+        "fetch_global_token_totals",
+        fail_if_called,
+    )
+
+    result = await dashboard_stats_service.fetch_module_token_stats(object(), "alice")
+
+    assert result == {
+        "total_prompt": None,
+        "total_completion": None,
+        "total_cost": 31,
+        "token_usage_available": False,
+    }

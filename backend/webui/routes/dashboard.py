@@ -277,14 +277,7 @@ async def get_stats(
         "total_prompt_tokens": total_prompt,
         "total_completion_tokens": total_completion,
         "total_estimated_cost": total_cost,
-        "token_usage_source": module_stats["token_usage_source"],
-        "token_usage_includes_auxiliary": module_stats[
-            "token_usage_includes_auxiliary"
-        ],
-        "token_usage_recorded_calls": module_stats["token_usage_recorded_calls"],
-        "token_usage_unreported_calls": module_stats[
-            "token_usage_unreported_calls"
-        ],
+        "token_usage_available": module_stats["token_usage_available"],
     }
 
     # LRU 淘汰 + 写入缓存
