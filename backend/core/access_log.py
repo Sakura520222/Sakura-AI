@@ -34,6 +34,7 @@ class QuietSuccessfulAccessFilter(logging.Filter):
             or _QUIET_ACTIVITY_SESSION_PATH.fullmatch(normalized_path)
             or normalized_path == "/agent-team/api/active-tasks"
             or normalized_path.startswith("/agent-team/api/tasks/")
+            or normalized_path == "/agent-team/list-fragment"
         )
 
     @staticmethod
