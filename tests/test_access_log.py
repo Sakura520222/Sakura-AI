@@ -30,6 +30,7 @@ def test_quiet_access_filter_only_hides_successful_high_frequency_gets():
         "/activity/observability/api/sessions/5/conversation/events?cursor=signed",
         "/agent-team/api/active-tasks",
         "/agent-team/api/tasks/5/status",
+        "/agent-team/list-fragment?page=1&status=all",
     )
     for path in quiet_paths:
         assert access_filter.filter(_access_record("GET", path, 200)) is False
