@@ -16,18 +16,21 @@ from datetime import datetime, timezone
 from typing import Any
 
 from loguru import logger
-from sqlalchemy import and_, case, func, or_, select
+from sqlalchemy import and_, case, func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.models.ai_usage_models import AIUsageRecord
-from backend.models.agent_team_models import AgentTeamTask
-from backend.models.database import IssueAnalysis, PRReview
-from backend.models.scan_models import RepoScan
-
-
-LEGACY_BASELINE_RECORD_KEY = "legacy-module-baseline:v1"
-LEGACY_BASELINE_CALL_KIND = "legacy_baseline"
+# Only these call kinds are part of the provider-usage ledger.  The explicit
+# allow-list also ensures that a temporary record from an older deployment can
+# never be displayed as a current usage record.
+ACCOUNTED_CALL_KINDS = (
+    "chat",
+    "chat_stream",
+    "context_compression",
+    "embedding",
+    "rerank",
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -55,21 +58,11 @@ class ProviderUsageCounters:
 
 
 @dataclass(frozen=True, slots=True)
-class LegacyModuleStats:
-    input_tokens: int
-    output_tokens: int
-    estimated_cost: int
-
-
-@dataclass(frozen=True, slots=True)
 class GlobalTokenTotals:
     input_tokens: int
     output_tokens: int
     recorded_calls: int
     unreported_usage_calls: int
-    source: str
-    includes_auxiliary_calls: bool
-    cutover_at: datetime | None = None
 
 
 def _valid_counter(value: Any) -> int | None:
@@ -239,54 +232,6 @@ def _safe_identifier(value: Any, *, fallback: str, limit: int) -> str:
     return normalized[:limit]
 
 
-async def fetch_legacy_module_stats(
-    db: AsyncSession,
-    scope_user: str | None = None,
-) -> LegacyModuleStats:
-    """Read the pre-ledger business aggregates, optionally user-scoped."""
-
-    def scope_for(model, *, has_author: bool = True):
-        if scope_user is None:
-            return None
-        conditions = [model.repo_owner == scope_user]
-        if has_author:
-            conditions.append(model.author == scope_user)
-        return or_(*conditions) if len(conditions) > 1 else conditions[0]
-
-    def aggregate(model, scope):
-        query = select(
-            func.coalesce(func.sum(model.prompt_tokens), 0).label("input_tokens"),
-            func.coalesce(func.sum(model.completion_tokens), 0).label(
-                "output_tokens"
-            ),
-            func.coalesce(func.sum(model.estimated_cost), 0).label("estimated_cost"),
-        ).where(model.status == "completed")
-        if scope is not None:
-            query = query.where(scope)
-        return query
-
-    rows = []
-    for model, has_author in (
-        (PRReview, True),
-        (IssueAnalysis, True),
-        (AgentTeamTask, False),
-        (RepoScan, False),
-    ):
-        rows.append(
-            (
-                await db.execute(
-                    aggregate(model, scope_for(model, has_author=has_author))
-                )
-            ).one()
-        )
-
-    return LegacyModuleStats(
-        input_tokens=sum(int(row.input_tokens or 0) for row in rows),
-        output_tokens=sum(int(row.output_tokens or 0) for row in rows),
-        estimated_cost=sum(int(row.estimated_cost or 0) for row in rows),
-    )
-
-
 async def _insert_record(db: AsyncSession, record: AIUsageRecord) -> bool:
     try:
         async with db.begin_nested():
@@ -307,35 +252,6 @@ async def _insert_record(db: AsyncSession, record: AIUsageRecord) -> bool:
         if existing is not None:
             return False
         raise
-
-
-async def _ensure_legacy_baseline(db: AsyncSession) -> None:
-    existing = (
-        await db.execute(
-            select(AIUsageRecord.id).where(
-                AIUsageRecord.record_key == LEGACY_BASELINE_RECORD_KEY
-            )
-        )
-    ).scalar_one_or_none()
-    if existing is not None:
-        return
-
-    legacy = await fetch_legacy_module_stats(db)
-    await _insert_record(
-        db,
-        AIUsageRecord(
-            record_key=LEGACY_BASELINE_RECORD_KEY,
-            call_kind=LEGACY_BASELINE_CALL_KIND,
-            role="legacy",
-            provider_id="legacy",
-            model_id="legacy-business-aggregate",
-            protocol_family="legacy",
-            input_tokens=legacy.input_tokens,
-            output_tokens=legacy.output_tokens,
-            usage_reported=True,
-            occurred_at=datetime.now(timezone.utc),
-        ),
-    )
 
 
 async def record_ai_usage(
@@ -388,7 +304,6 @@ async def record_ai_usage(
     )
 
     async with session_factory() as db:
-        await _ensure_legacy_baseline(db)
         inserted = await _insert_record(db, record)
         await db.commit()
         return inserted
@@ -431,36 +346,10 @@ async def record_unified_ai_usage_best_effort(
     )
 
 
-async def get_usage_cutover_at(db: AsyncSession) -> datetime | None:
-    return (
-        await db.execute(
-            select(AIUsageRecord.occurred_at).where(
-                AIUsageRecord.record_key == LEGACY_BASELINE_RECORD_KEY
-            )
-        )
-    ).scalar_one_or_none()
+async def fetch_global_token_totals(db: AsyncSession) -> GlobalTokenTotals:
+    """Return global Token totals exclusively from the provider-usage ledger."""
 
-
-async def fetch_global_token_totals(
-    db: AsyncSession,
-    *,
-    legacy_fallback: LegacyModuleStats | None = None,
-) -> GlobalTokenTotals:
-    """Return global totals from the ledger, or legacy totals before cutover."""
-
-    cutover_at = await get_usage_cutover_at(db)
-    if cutover_at is None:
-        legacy = legacy_fallback or await fetch_legacy_module_stats(db)
-        return GlobalTokenTotals(
-            input_tokens=legacy.input_tokens,
-            output_tokens=legacy.output_tokens,
-            recorded_calls=0,
-            unreported_usage_calls=0,
-            source="legacy_modules",
-            includes_auxiliary_calls=False,
-        )
-
-    normal_record = AIUsageRecord.call_kind != LEGACY_BASELINE_CALL_KIND
+    accounted_record = AIUsageRecord.call_kind.in_(ACCOUNTED_CALL_KINDS)
     row = (
         await db.execute(
             select(
@@ -470,16 +359,15 @@ async def fetch_global_token_totals(
                 func.coalesce(func.sum(AIUsageRecord.output_tokens), 0).label(
                     "output_tokens"
                 ),
-                func.coalesce(
-                    func.sum(case((normal_record, 1), else_=0)),
-                    0,
-                ).label("recorded_calls"),
+                func.coalesce(func.sum(case((accounted_record, 1), else_=0)), 0).label(
+                    "recorded_calls"
+                ),
                 func.coalesce(
                     func.sum(
                         case(
                             (
                                 and_(
-                                    normal_record,
+                                    accounted_record,
                                     AIUsageRecord.usage_reported.is_(False),
                                 ),
                                 1,
@@ -489,7 +377,7 @@ async def fetch_global_token_totals(
                     ),
                     0,
                 ).label("unreported_usage_calls"),
-            )
+            ).where(accounted_record)
         )
     ).one()
     return GlobalTokenTotals(
@@ -497,23 +385,16 @@ async def fetch_global_token_totals(
         output_tokens=int(row.output_tokens or 0),
         recorded_calls=int(row.recorded_calls or 0),
         unreported_usage_calls=int(row.unreported_usage_calls or 0),
-        source="provider_ledger_with_legacy_baseline",
-        includes_auxiliary_calls=True,
-        cutover_at=cutover_at,
     )
 
 
 __all__ = [
+    "ACCOUNTED_CALL_KINDS",
     "GlobalTokenTotals",
-    "LEGACY_BASELINE_CALL_KIND",
-    "LEGACY_BASELINE_RECORD_KEY",
-    "LegacyModuleStats",
     "ProviderUsageCounters",
     "build_usage_record_key",
     "extract_provider_usage",
     "fetch_global_token_totals",
-    "fetch_legacy_module_stats",
-    "get_usage_cutover_at",
     "record_ai_usage",
     "record_ai_usage_best_effort",
     "record_unified_ai_usage_best_effort",

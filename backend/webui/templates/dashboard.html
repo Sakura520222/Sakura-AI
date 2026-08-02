@@ -107,32 +107,17 @@ function dashboardInit() {
             document.getElementById('stat-score').textContent = data.avg_score;
 
             // Token 统计
+            var tokensAvailable = data.token_usage_available !== false;
             var totalTokens = (data.total_prompt_tokens || 0) + (data.total_completion_tokens || 0);
-            document.getElementById('stat-total-tokens').textContent = totalTokens.toLocaleString();
-            document.getElementById('stat-prompt-completion').textContent =
-                (data.total_prompt_tokens || 0).toLocaleString() + ' / ' +
-                (data.total_completion_tokens || 0).toLocaleString();
+            document.getElementById('stat-total-tokens').textContent =
+                tokensAvailable ? totalTokens.toLocaleString() : '—';
+            document.getElementById('stat-prompt-completion').textContent = tokensAvailable
+                ? (data.total_prompt_tokens || 0).toLocaleString() + ' / ' +
+                    (data.total_completion_tokens || 0).toLocaleString()
+                : '—';
             document.getElementById('stat-cost').textContent =
                 ((data.total_estimated_cost || 0) / 100).toFixed(2);
 
-            var allSource = document.getElementById('stat-token-source-all');
-            var legacySource = document.getElementById('stat-token-source-legacy');
-            var scopedSource = document.getElementById('stat-token-source-scoped');
-            var unreported = document.getElementById('stat-token-unreported');
-            var source = data.token_usage_source || 'legacy_modules';
-            allSource.classList.toggle('hidden', !data.token_usage_includes_auxiliary);
-            legacySource.classList.toggle(
-                'hidden',
-                data.token_usage_includes_auxiliary || source === 'legacy_scoped_modules'
-            );
-            scopedSource.classList.toggle('hidden', source !== 'legacy_scoped_modules');
-            var unreportedCount = Number(data.token_usage_unreported_calls || 0);
-            unreported.classList.toggle('hidden', unreportedCount <= 0);
-            if (unreportedCount > 0) {
-                unreported.textContent = ' ' + unreported.dataset.template.replace(
-                    '{count}', unreportedCount.toLocaleString()
-                );
-            }
         })
         .catch(err => console.error('加载统计数据失败:', err));
 
