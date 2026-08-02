@@ -31,7 +31,7 @@ from backend.models.activity_observability_models import (
     ActivityThread,
     ActivityThreadLease,
 )
-from backend.models.database import Base
+from backend.models.database import Base, _ensure_model_modules_imported
 
 
 def _column_names(constraint: UniqueConstraint) -> tuple[str, ...]:
@@ -171,6 +171,7 @@ def test_composite_summary_foreign_keys_require_explicit_pointer_clear_before_de
     activity_session = _session(session, 30)
     invocation = _invocation(session, activity_session)
     work_unit = _work_unit(session, invocation)
+    work_unit_id = work_unit.id
     session.commit()
 
     session.execute(
@@ -200,6 +201,14 @@ def test_composite_summary_foreign_keys_require_explicit_pointer_clear_before_de
         )
     )
     session.commit()
+    assert (
+        session.execute(
+            ActivityInvocationWorkUnit.__table__.select().where(
+                ActivityInvocationWorkUnit.id == work_unit_id
+            )
+        ).scalar_one_or_none()
+        is None
+    )
 
     activity_session = _session(session, 31)
     invocation = _invocation(session, activity_session)
@@ -233,6 +242,43 @@ def test_composite_summary_foreign_keys_require_explicit_pointer_clear_before_de
     )
     session.commit()
     session.close()
+
+
+def test_mysql_check_constraints_do_not_use_foreign_key_action_columns():
+    """MySQL forbids referential actions on columns used by CHECK constraints."""
+    _ensure_model_modules_imported()
+    conflicts = []
+    for table in Base.metadata.tables.values():
+        for check_constraint in table.constraints:
+            if not isinstance(check_constraint, CheckConstraint):
+                continue
+            checked_columns = {
+                column.name
+                for column in table.columns
+                if re.search(
+                    rf"\b{re.escape(column.name)}\b", str(check_constraint.sqltext)
+                )
+            }
+            for foreign_key in table.constraints:
+                if not isinstance(foreign_key, ForeignKeyConstraint):
+                    continue
+                if foreign_key.ondelete is None and foreign_key.onupdate is None:
+                    continue
+                foreign_key_columns = {
+                    element.parent.name for element in foreign_key.elements
+                }
+                shared_columns = tuple(sorted(checked_columns & foreign_key_columns))
+                if shared_columns:
+                    conflicts.append(
+                        (
+                            table.name,
+                            check_constraint.name,
+                            foreign_key.name,
+                            shared_columns,
+                        )
+                    )
+
+    assert conflicts == []
 
 
 def test_attempt_requires_context_revision_or_contextless_reason():
