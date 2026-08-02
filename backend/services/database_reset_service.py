@@ -212,7 +212,7 @@ class DatabaseResetService:
                         inventory,
                     )
 
-                logger.warning(
+                logger.info(
                     "数据库已被超级管理员彻底清空: tables={}, views={}, "
                     "materialized_views={}, sequences={}",
                     result.tables_dropped,

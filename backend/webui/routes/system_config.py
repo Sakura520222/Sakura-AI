@@ -306,7 +306,7 @@ async def reset_database(
             headers=no_store_headers,
         )
 
-    logger.warning(
+    logger.info(
         "超级管理员请求彻底清空数据库: user_id={}, username={}",
         user["user_id"],
         user["sub"],
