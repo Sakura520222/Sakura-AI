@@ -472,7 +472,7 @@ jobs:
           echo "✅ Sakura-AI 项目结构验证通过"
       
       - name: 设置 Python 3.11
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v7
         with:
           python-version: '3.11'
       
