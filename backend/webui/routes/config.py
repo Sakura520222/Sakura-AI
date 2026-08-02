@@ -10,6 +10,7 @@ from pathlib import Path
 import yaml
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import Response
+from loguru import logger
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -34,6 +35,14 @@ from backend.services.config_backup_service import (
     serialize_config_backup,
 )
 from backend.services.label_service import label_service
+from backend.services.user_backup_service import (
+    USER_BACKUP_MAX_BYTES,
+    UserBackupError,
+    export_user_backup,
+    parse_user_backup,
+    restore_user_backup,
+    serialize_user_backup,
+)
 from backend.webui.deps import (
     get_csrf_serializer,
     get_db,
@@ -685,6 +694,75 @@ async def config_backup_page(
     )
 
 
+@router.post("/backup/export/users")
+async def download_user_backup(
+    db: AsyncSession = Depends(get_db),
+    user: dict = Depends(require_super_admin),
+    csrf_token: str = Depends(require_csrf),
+):
+    """下载全部用户及个人配置、两步验证和通行密钥的 JSON 备份。"""
+    try:
+        document = await export_user_backup(db)
+        content = serialize_user_backup(document)
+        counts = {
+            "users": document.get("user_count", len(document.get("users", []))),
+            "personal_configs": sum(
+                len(item.get("personal_config", {}).get("dynamic_overrides", []))
+                for item in document.get("users", [])
+            ),
+            "recovery_codes": sum(
+                len(item.get("two_factor", {}).get("recovery_codes", []))
+                for item in document.get("users", [])
+            ),
+            "passkeys": sum(
+                len(item.get("passkeys", [])) for item in document.get("users", [])
+            ),
+        }
+        await log_admin_action(
+            db,
+            user["user_id"],
+            "user_export",
+            "users",
+            "all",
+            {"scope": "users", "counts": counts},
+        )
+
+        timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+        filename = f"sakura-ai-users-{timestamp}.json"
+        logger.info(
+            "用户信息备份已导出, by={}, counts={}",
+            user["sub"],
+            counts,
+        )
+        return Response(
+            content=content,
+            media_type="application/json",
+            headers={
+                "Content-Disposition": f'attachment; filename="{filename}"',
+                "Cache-Control": "no-store, max-age=0",
+                "Pragma": "no-cache",
+                "X-Content-Type-Options": "nosniff",
+            },
+        )
+    except UserBackupError as exc:
+        return toast_redirect(
+            "/config/backup",
+            "toast.user_backup_export_failed",
+            "error",
+            lang=detect_language(),
+            reason=str(exc),
+        )
+    except Exception as exc:
+        logger.error("用户信息备份导出失败: {}", exc, exc_info=True)
+        return toast_redirect(
+            "/config/backup",
+            "toast.user_backup_export_failed",
+            "error",
+            lang=detect_language(),
+            reason="internal error",
+        )
+
+
 @router.post("/backup/export/{scope}")
 async def download_config_backup(
     scope: str,
@@ -847,6 +925,96 @@ async def upload_config_backup(
         return toast_redirect(
             "/config/backup",
             "toast.config_backup_import_failed",
+            "error",
+            lang=detect_language(),
+        )
+    finally:
+        await backup_file.close()
+
+
+@router.post("/backup/users/import")
+async def upload_user_backup(
+    backup_file: UploadFile = File(...),
+    db: AsyncSession = Depends(get_db),
+    user: dict = Depends(require_super_admin),
+    csrf_token: str = Depends(require_csrf),
+):
+    """校验并合并全部用户及其受支持的安全信息。"""
+    try:
+        content = await backup_file.read(USER_BACKUP_MAX_BYTES + 1)
+        document = parse_user_backup(content)
+        result = await restore_user_backup(db, document)
+
+        safe_filename = Path(backup_file.filename or "users.json").name[:255]
+        detail = {
+            "filename": safe_filename,
+            "users_created": result.users_created,
+            "users_updated": result.users_updated,
+            "users_unchanged": result.users_unchanged,
+            "user_configs_created": result.user_configs_created,
+            "user_configs_updated": result.user_configs_updated,
+            "user_configs_deleted": result.user_configs_deleted,
+            "webui_configs_created": result.webui_configs_created,
+            "webui_configs_updated": result.webui_configs_updated,
+            "webui_configs_deleted": result.webui_configs_deleted,
+            "recovery_codes_imported": result.recovery_codes_imported,
+            "passkeys_created": result.passkeys_created,
+            "passkeys_updated": result.passkeys_updated,
+            "recovery_codes_portable": result.recovery_codes_portable,
+        }
+        await log_admin_action(
+            db,
+            user["user_id"],
+            "user_import",
+            "users",
+            "all",
+            detail,
+        )
+        from backend.webui.deps import invalidate_user_prefs_cache
+
+        for user_id in result.affected_user_ids:
+            invalidate_user_prefs_cache(user_id)
+
+        logger.info(
+            "用户信息备份已导入, by={}, users_created={}, users_updated={}, passkeys={}, recovery_codes_portable={}",
+            user["sub"],
+            result.users_created,
+            result.users_updated,
+            result.passkeys_imported,
+            result.recovery_codes_portable,
+        )
+        lang = detect_language()
+        message_key = (
+            "toast.user_backup_imported"
+            if result.recovery_codes_portable
+            else "toast.user_backup_imported_warning"
+        )
+        return toast_redirect(
+            "/config/backup",
+            message_key,
+            "success",
+            lang=lang,
+            users_created=result.users_created,
+            users_updated=result.users_updated,
+            configs_created=result.user_configs_created,
+            configs_updated=result.user_configs_updated,
+            passkeys=result.passkeys_imported,
+            recovery_codes=result.recovery_codes_imported,
+        )
+    except UserBackupError as exc:
+        return toast_redirect(
+            "/config/backup",
+            "toast.user_backup_invalid",
+            "error",
+            lang=detect_language(),
+            reason=str(exc),
+        )
+    except Exception as exc:
+        logger.error("用户信息备份导入失败: {}", exc, exc_info=True)
+        await db.rollback()
+        return toast_redirect(
+            "/config/backup",
+            "toast.user_backup_import_failed",
             "error",
             lang=detect_language(),
         )
