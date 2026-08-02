@@ -471,11 +471,14 @@ class AIReviewer:
                 iteration,
             )
             response_meta = getattr(response, "meta", None)
-            reported_context_window = getattr(
-                response_meta,
-                "context_window_tokens",
-                None,
-            ) or context_window_tokens
+            reported_context_window = (
+                getattr(
+                    response_meta,
+                    "context_window_tokens",
+                    None,
+                )
+                or context_window_tokens
+            )
 
             # 防御性检查：确保响应有效
             if not response.choices:
@@ -595,8 +598,8 @@ class AIReviewer:
 
             # 本地估算仅用于预测下一次发送前是否应压缩；不得展示为
             # Provider 精确上下文使用量。
-            estimated_message_tokens = (
-                self.context_compressor.estimate_messages_tokens(messages)
+            estimated_message_tokens = self.context_compressor.estimate_messages_tokens(
+                messages
             )
 
             # 通知 Check Run：本轮进度快照（轮次/工具调用/Token/上下文/模型）。
@@ -1013,6 +1016,7 @@ class AIReviewer:
         invocation_context: Any = None,
         observer: Any = None,
         propagate_errors: bool = False,
+        event_callback: Any = None,
     ) -> list[dict[str, Any]]:
         """推荐PR标签
 
@@ -1021,6 +1025,10 @@ class AIReviewer:
             available_labels: 可用的标签字典
             pr_info: PR信息（包含标题、描述等）
             existing_labels: PR 已有的标签名称列表（用于增量审查时避免冲突）
+            invocation_context: 可观测调用上下文
+            observer: 可观测模型发送器
+            propagate_errors: 是否向上抛出 provider 失败
+            event_callback: 标签推荐请求/响应可观测事件回调
 
         Returns:
             推荐标签列表，格式：[{"name": str, "confidence": float, "reason": str}]
@@ -1035,4 +1043,5 @@ class AIReviewer:
             invocation_context=invocation_context,
             observer=observer,
             propagate_errors=propagate_errors,
+            event_callback=event_callback,
         )
