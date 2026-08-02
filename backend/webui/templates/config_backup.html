@@ -78,6 +78,59 @@
         </div>
     </section>
 
+    <section class="bg-white dark:bg-gray-800 rounded-xl border border-purple-200 dark:border-purple-800 shadow-sm overflow-hidden">
+        <div class="p-5 border-b border-purple-200 dark:border-purple-800">
+            <h2 class="font-semibold">{{ _('config.user_backup_title') }}</h2>
+            <p class="mt-1 text-sm text-gray-500 dark:text-gray-400">{{ _('config.user_backup_desc') }}</p>
+        </div>
+        <div class="p-5 space-y-4">
+            <div class="rounded-lg border border-purple-200 dark:border-purple-800 bg-purple-50/60 dark:bg-purple-900/10 p-4">
+                <p class="text-sm text-purple-800 dark:text-purple-200">{{ _('config.user_backup_sensitive_desc') }}</p>
+                <p class="mt-1 text-xs text-purple-700 dark:text-purple-300">{{ _('config.user_backup_recovery_desc') }}</p>
+            </div>
+            <form method="POST" action="/config/backup/export/users">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+                <button type="submit" data-no-loading="true" class="w-full px-4 py-2.5 rounded-lg bg-purple-600 hover:bg-purple-700 text-white text-sm font-medium transition-colors">
+                    {{ _('config.user_backup_export') }}
+                </button>
+            </form>
+        </div>
+    </section>
+
+    <section class="bg-white dark:bg-gray-800 rounded-xl border border-purple-200 dark:border-purple-800 shadow-sm overflow-hidden">
+        <div class="p-5 border-b border-purple-200 dark:border-purple-800">
+            <h2 class="font-semibold">{{ _('config.user_backup_import_title') }}</h2>
+            <p class="mt-1 text-sm text-gray-500 dark:text-gray-400">{{ _('config.user_backup_import_desc') }}</p>
+        </div>
+        <form method="POST"
+              action="/config/backup/users/import"
+              enctype="multipart/form-data"
+              class="p-5 space-y-4"
+              onsubmit="return confirm({{ _('config.user_backup_import_confirm') | tojson }});">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+            <label class="block">
+                <span class="text-sm font-medium text-gray-700 dark:text-gray-300">{{ _('config.backup_file') }}</span>
+                <input type="file"
+                       name="backup_file"
+                       accept=".json,application/json"
+                       required
+                       class="mt-2 block w-full text-sm text-gray-600 dark:text-gray-300 file:mr-4 file:rounded-lg file:border-0 file:bg-purple-50 file:px-4 file:py-2 file:text-sm file:font-medium file:text-purple-700 hover:file:bg-purple-100 dark:file:bg-purple-900/30 dark:file:text-purple-300">
+                <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">{{ _('config.user_backup_file_help') }}</p>
+            </label>
+
+            <label class="flex items-start gap-3 rounded-lg border border-red-200 dark:border-red-800 bg-red-50/60 dark:bg-red-900/10 p-3">
+                <input type="checkbox" required class="mt-0.5 rounded border-gray-300 text-red-600 focus:ring-red-500">
+                <span class="text-sm text-red-700 dark:text-red-300">{{ _('config.user_backup_replace_ack') }}</span>
+            </label>
+
+            <div class="flex justify-end">
+                <button type="submit" class="px-5 py-2.5 rounded-lg bg-purple-600 hover:bg-purple-700 text-white text-sm font-medium transition-colors">
+                    {{ _('config.user_backup_import_button') }}
+                </button>
+            </div>
+        </form>
+    </section>
+
     <section class="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 shadow-sm overflow-hidden">
         <div class="p-5 border-b border-gray-200 dark:border-gray-700">
             <h2 class="font-semibold">{{ _('config.backup_import_title') }}</h2>
