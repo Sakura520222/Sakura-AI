@@ -393,14 +393,6 @@ class ActivityInvocationWorkUnit(Base):
 
     __tablename__ = f"{OBSERVABILITY_PREFIX}invocation_work_units"
     __table_args__ = (
-        CheckConstraint(
-            "invocation_id IS NOT NULL",
-            name="ck_activity_observability_work_unit_invocation",
-            comment=(
-                "服务层强制同一 invocation 最多一个 is_primary=true；支持条件索引的"
-                "数据库以 UNIQUE (invocation_id) WHERE is_primary 补强。"
-            ),
-        ),
         UniqueConstraint(
             "id",
             "invocation_id",
@@ -639,10 +631,7 @@ class ActivityModelAttempt(Base):
     )
     context_revision_id = Column(
         Integer,
-        ForeignKey(
-            f"{OBSERVABILITY_PREFIX}canonical_context_revisions.id",
-            ondelete="SET NULL",
-        ),
+        ForeignKey(f"{OBSERVABILITY_PREFIX}canonical_context_revisions.id"),
         nullable=True,
         comment=(
             "有 transcript 的 Work Unit 必须由服务层设置；仅明确无上下文时可为空。"
