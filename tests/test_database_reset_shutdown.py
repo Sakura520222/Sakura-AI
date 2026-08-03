@@ -21,6 +21,94 @@ from backend.webui.routes import activity_observability as activity_routes
 from backend.webui.routes.sse import sse_events
 from backend.webui.sse import SSEManager, sse_manager
 
+import backend.main as main
+
+
+async def _run_isolated_lifespan(app, monkeypatch):
+    monkeypatch.setattr(main, "is_bootstrap_mode", lambda: True)
+    monkeypatch.setattr(main, "stop_telegram_bot", AsyncMock())
+    monkeypatch.setattr(
+        "backend.services.embedding_service.close_embedding_service", AsyncMock()
+    )
+    monkeypatch.setattr(
+        "backend.services.embedding_service.close_reranker_service", AsyncMock()
+    )
+
+    async with main.lifespan(app):
+        pass
+
+
+@pytest.mark.asyncio
+async def test_lifespan_outbox_shutdown_waits_for_natural_dispatcher_exit(
+    monkeypatch,
+):
+    release_task = asyncio.Event()
+
+    async def run_outbox():
+        await release_task.wait()
+
+    dispatcher = MagicMock()
+    dispatcher.stop.side_effect = release_task.set
+    task = asyncio.create_task(run_outbox())
+    await asyncio.sleep(0)
+    app = SimpleNamespace(
+        state=SimpleNamespace(
+            activity_outbox_dispatcher=dispatcher,
+            activity_outbox_task=task,
+        )
+    )
+
+    await _run_isolated_lifespan(app, monkeypatch)
+
+    dispatcher.stop.assert_called_once_with()
+    assert task.done()
+    assert not task.cancelled()
+
+
+@pytest.mark.asyncio
+async def test_lifespan_outbox_shutdown_cancels_and_awaits_unresponsive_dispatcher(
+    monkeypatch,
+):
+    shutdown_timeout = 0.02
+    cancellation_received = asyncio.Event()
+    task_finished = asyncio.Event()
+    task_started = asyncio.Event()
+
+    async def run_outbox():
+        task_started.set()
+        try:
+            await asyncio.Event().wait()
+        except asyncio.CancelledError:
+            cancellation_received.set()
+            task_finished.set()
+            raise
+
+    dispatcher = MagicMock()
+    task = asyncio.create_task(run_outbox())
+    await task_started.wait()
+    app = SimpleNamespace(
+        state=SimpleNamespace(
+            activity_outbox_dispatcher=dispatcher,
+            activity_outbox_task=task,
+        )
+    )
+    monkeypatch.setattr(
+        main,
+        "settings",
+        SimpleNamespace(activity_outbox_shutdown_timeout_seconds=shutdown_timeout),
+    )
+
+    started_at = asyncio.get_running_loop().time()
+    await _run_isolated_lifespan(app, monkeypatch)
+    elapsed = asyncio.get_running_loop().time() - started_at
+
+    dispatcher.stop.assert_called_once_with()
+    assert elapsed >= shutdown_timeout / 2
+    assert cancellation_received.is_set()
+    assert task_finished.is_set()
+    assert task.done()
+    assert task.cancelled()
+
 
 async def _run_isolated_lifespan(app, monkeypatch):
     monkeypatch.setattr(main, "is_bootstrap_mode", lambda: True)
