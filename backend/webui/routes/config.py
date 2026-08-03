@@ -1317,6 +1317,33 @@ async def save_general_config(
                 }
                 cfg.key_value = str(val)
 
+        # protocol_repair_max_attempts (number)
+        raw = form.get("protocol_repair_max_attempts")
+        if raw is not None:
+            val = _parse_positive_int_config(raw)
+            # 上限 10，避免误输入导致无意义的超长修复
+            val = min(max(val, 1), 10)
+            result = await db.execute(
+                select(AppConfig).where(
+                    AppConfig.key_name == "protocol_repair_max_attempts"
+                )
+            )
+            cfg = result.scalar_one_or_none()
+            if cfg is None:
+                cfg = AppConfig(
+                    key_name="protocol_repair_max_attempts",
+                    key_value=str(val),
+                    description="协议信封修复最大次数",
+                )
+                db.add(cfg)
+                changed["protocol_repair_max_attempts"] = {"old": "(无)", "new": str(val)}
+            elif cfg.key_value != str(val):
+                changed["protocol_repair_max_attempts"] = {
+                    "old": cfg.key_value,
+                    "new": str(val),
+                }
+                cfg.key_value = str(val)
+
         # ========== Web 搜索配置 ==========
         web_search_keys = [
             "web_search_enabled",
