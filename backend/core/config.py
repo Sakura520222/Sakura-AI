@@ -588,6 +588,7 @@ class Settings(BaseSettings):
     issue_suggest_assignees: bool = True
     issue_suggest_milestones: bool = True
     issue_max_tool_iterations: int = 200
+    protocol_repair_max_attempts: int = 3
     issue_max_files_per_analysis: int = 500
     issue_max_directory_depth: int = 20
     max_concurrent_issues: int = 5
@@ -1121,6 +1122,7 @@ DYNAMIC_CONFIG_GROUPS: OrderedDict[str, dict] = OrderedDict(
                     "issue_suggest_assignees": "AI 分析时推荐合适的指派人",
                     "issue_suggest_milestones": "AI 分析时推荐合适的里程碑",
                     "issue_max_tool_iterations": "AI 工具调用最大迭代次数，控制分析深度",
+                    "protocol_repair_max_attempts": "协议信封解析失败时的最大修复次数（1-10）",
                     "issue_max_files_per_analysis": "单次分析最多读取的文件数",
                     "issue_max_directory_depth": "目录浏览的最大深度",
                     "max_concurrent_issues": "同时进行的最大 Issue 分析任务数，超出排队等待",
@@ -1142,6 +1144,7 @@ DYNAMIC_CONFIG_GROUPS: OrderedDict[str, dict] = OrderedDict(
                     "issue_suggest_assignees",
                     "issue_suggest_milestones",
                     "issue_max_tool_iterations",
+                    "protocol_repair_max_attempts",
                     "issue_max_files_per_analysis",
                     "issue_max_directory_depth",
                     "max_concurrent_issues",
@@ -2080,6 +2083,7 @@ BASIC_CONFIG_KEYS = frozenset(
         "issue_auto_create_labels",
         "issue_auto_assign",
         "issue_max_tool_iterations",
+        "protocol_repair_max_attempts",
     }
 )
 

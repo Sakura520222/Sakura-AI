@@ -50,7 +50,7 @@
                 <h3 class="text-sm font-semibold text-gray-700 dark:text-gray-300 mb-4">{{ _('common.review_task_config') }}</h3>
                 <div class="space-y-4">
                     {% for config in configs %}
-                    {% if config.key_name in ('max_concurrent_reviews', 'review_timeout_seconds', 'enable_auto_review', 'enable_check_runs', 'enable_analysis_check', 'enable_findings_check', 'analysis_min_interval_sec') %}
+                    {% if config.key_name in ('max_concurrent_reviews', 'review_timeout_seconds', 'enable_auto_review', 'enable_check_runs', 'enable_analysis_check', 'enable_findings_check', 'analysis_min_interval_sec', 'protocol_repair_max_attempts') %}
                     <div class="flex items-center justify-between">
                         <div>
                             <h4 class="text-sm font-medium text-gray-700 dark:text-gray-300">{{ config.description or config.key_name }}</h4>
@@ -62,6 +62,7 @@
                                 {% elif config.key_name == 'enable_analysis_check' %}{{ _('common.enable_analysis_check_desc') }}
                                 {% elif config.key_name == 'enable_findings_check' %}{{ _('common.enable_findings_check_desc') }}
                                 {% elif config.key_name == 'analysis_min_interval_sec' %}{{ _('common.analysis_min_interval_sec_desc') }}
+                                {% elif config.key_name == 'protocol_repair_max_attempts' %}{{ _('common.protocol_repair_max_attempts_desc') }}
                                 {% endif %}
                             </p>
                         </div>

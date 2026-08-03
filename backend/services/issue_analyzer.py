@@ -34,6 +34,7 @@ from backend.services.issue_protocol import (
     TaggedIssueAnalysisParser,
     safe_issue_protocol_failure,
 )
+from backend.services.protocol_repair import run_protocol_repair_loop
 
 ISSUE_ANALYSIS_REPAIR_INSTRUCTION = """Your previous response did not match the required SAKURA_ISSUE_ANALYSIS protocol.
 Reformat the same Issue analysis conclusions only. Do not add, remove, or reconsider recommendations.
@@ -340,63 +341,39 @@ class IssueAnalyzer:
         invocation_context: Any = None,
         observer: Any = None,
     ) -> dict[str, Any]:
-        """解析最终 Issue 分析，失败时进行一次仅格式修复。"""
-        # The final no-tool assistant turn is part of the canonical dialogue.
-        # Tool-loop turns were already emitted by the caller, but historically
-        # this terminal turn was parsed and returned without ever reaching the
-        # observability callback.
-        if event_callback:
+        """解析最终 Issue 分析；失败时委托公共 helper 进行累积式修复。"""
+        # 解析前推送 final assistant turn（保留现有行为：caller 负责 final turn 推送）
+        if event_callback is not None:
             try:
                 await event_callback(
-                    "message",
-                    {"role": "assistant", "content": response_text},
+                    "message", {"role": "assistant", "content": response_text}
                 )
             except Exception as exc:
                 logger.warning("event_callback failed: {}", exc)
-        try:
-            return self._parse_analysis_result(response_text)
-        except IssueProtocolError as first_error:
-            stripped = response_text.strip()
-            logger.warning(
-                "Issue 分析协议解析失败，尝试修复一次: {} | length={} prefix={!r} suffix={!r}",
-                first_error,
-                len(response_text),
-                stripped[:80],
-                stripped[-80:],
-            )
 
-        system_message = next(
-            (message for message in messages if message.get("role") == "system"),
-            None,
-        )
-        repair_messages = [
-            *([system_message] if system_message else []),
-            {"role": "assistant", "content": response_text},
-            {"role": "user", "content": self.REPAIR_INSTRUCTION},
-        ]
         try:
-            response = await self.api_client.call_with_retry(
-                model="",
-                messages=repair_messages,
-                temperature=0,
-                role="main",
-                context=invocation_context,
-                observer=observer,
+            max_attempts = int(
+                await get_dynamic_config("protocol_repair_max_attempts") or 3
             )
-            tracker.accumulate(response)
-            repaired_text = response.choices[0].message.content or ""
-            if event_callback:
-                try:
-                    await event_callback(
-                        "message",
-                        {"role": "assistant", "content": repaired_text},
-                    )
-                except Exception as exc:
-                    logger.warning("event_callback failed: {}", exc)
-            return self._parse_analysis_result(repaired_text)
-        except Exception as repair_error:
-            logger.error("Issue 分析协议修复失败，降级为人工复核: {}", repair_error)
-            return safe_issue_protocol_failure(repair_error)
+        except ValueError, TypeError:
+            max_attempts = 3
+
+        return await run_protocol_repair_loop(
+            parse_fn=self._parse_analysis_result,
+            error_type=IssueProtocolError,
+            base_messages=messages,
+            final_text=response_text,
+            repair_instruction=self.REPAIR_INSTRUCTION,
+            api_client=self.api_client,
+            tracker=tracker,
+            max_attempts=max_attempts,
+            fallback_result_fn=safe_issue_protocol_failure,
+            log_label="Issue 分析",
+            sse_channel="issue:protocol_repair",
+            invocation_context=invocation_context,
+            observer=observer,
+            event_callback=event_callback,
+        )
 
     @staticmethod
     def _resolve_safe_context(response: Any, current_safe_context: int) -> int:
