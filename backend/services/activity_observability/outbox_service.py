@@ -577,14 +577,17 @@ class OutboxDispatcher:
     async def run(self) -> None:
         """Run until ``stop``; tests can call ``dispatch_once`` without a task."""
         self._stop_event.clear()
-        while not self._stop_event.is_set():
-            await self.dispatch_once()
-            try:
-                await asyncio.wait_for(
-                    self._stop_event.wait(), timeout=self.config.poll_interval_seconds
-                )
-            except asyncio.TimeoutError:
-                continue
+        try:
+            while not self._stop_event.is_set():
+                await self.dispatch_once()
+                try:
+                    await asyncio.wait_for(
+                        self._stop_event.wait(), timeout=self.config.poll_interval_seconds
+                    )
+                except asyncio.TimeoutError:
+                    continue
+        finally:
+            self._stop_event.set()
 
     def stop(self) -> None:
         self._stop_event.set()

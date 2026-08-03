@@ -1,5 +1,6 @@
 """WebUI FastAPI 依赖注入"""
 
+import asyncio
 import time
 from collections import OrderedDict
 from collections.abc import AsyncGenerator
@@ -145,10 +146,28 @@ async def require_payment_enabled():
 
 
 # ========== 数据库会话 ==========
+async def _close_db_session(session: AsyncSession) -> None:
+    close_task = asyncio.create_task(session.close())
+    original_cancelled = None
+    while not close_task.done():
+        try:
+            await asyncio.shield(close_task)
+        except asyncio.CancelledError as exc:
+            if original_cancelled is None:
+                original_cancelled = exc
+    if original_cancelled is not None:
+        await close_task
+        raise original_cancelled
+    await close_task
+
+
 async def get_db() -> AsyncGenerator[AsyncSession]:
     """获取异步数据库会话"""
-    async with db_module.async_session() as session:
+    session = db_module.async_session()
+    try:
         yield session
+    finally:
+        await _close_db_session(session)
 
 
 async def mark_webui_request(request: Request):

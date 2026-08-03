@@ -128,7 +128,7 @@ async def github_mobile_authorize(
         ]
         normalized_uri = urlparse(redirect_uri).geturl()
         if normalized_uri not in allowed:
-            logger.warning(f"OAuth 白名单拒绝: {redirect_uri[:200]}")
+            logger.warning("OAuth redirect URI rejected by allowlist")
             return error_response("不支持的回调地址", status_code=400)
 
     state = secrets.token_urlsafe(32)
@@ -178,7 +178,7 @@ async def github_callback(request: Request, body: OAuthCallbackRequest):
 
         if token_resp.status_code != 200:
             logger.error(f"API OAuth token 交换失败: status={token_resp.status_code}")
-            logger.debug(f"OAuth 响应体: {token_resp.text[:500]}")
+            logger.debug("API OAuth token response received with failure status")
             return error_response("获取访问令牌失败", status_code=502)
 
         token_data = token_resp.json()
@@ -207,7 +207,7 @@ async def github_callback(request: Request, body: OAuthCallbackRequest):
     except httpx.RequestError:
         return error_response("网络连接失败", status_code=504)
     except Exception:
-        logger.exception("API OAuth 未预期错误")
+        logger.error("API OAuth unexpected error")
         return error_response("登录过程中发生错误", status_code=500)
 
     github_username = gh_user.get("login")

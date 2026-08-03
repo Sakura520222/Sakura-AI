@@ -111,6 +111,31 @@ def _should_start_background_tasks(app_settings: Settings) -> bool:
     )
 
 
+async def _shutdown_activity_outbox(app: FastAPI) -> None:
+    """停止 Outbox dispatcher，并在必要时有界取消其后台任务。"""
+    outbox_task = getattr(app.state, "activity_outbox_task", None)
+    if not outbox_task:
+        return
+
+    dispatcher = getattr(app.state, "activity_outbox_dispatcher", None)
+    if dispatcher:
+        dispatcher.stop()
+
+    try:
+        await asyncio.wait_for(
+            outbox_task,
+            timeout=settings.activity_outbox_shutdown_timeout_seconds,
+        )
+    except asyncio.TimeoutError:
+        outbox_task.cancel()
+        try:
+            await outbox_task
+        except asyncio.CancelledError:
+            pass
+    except asyncio.CancelledError:
+        raise
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """应用生命周期管理"""
@@ -154,8 +179,9 @@ async def lifespan(app: FastAPI):
 
                 await init_db()
                 logger.info("✅ 数据库初始化成功")
-            except Exception as e:
-                logger.error(f"❌ 数据库初始化失败: {e}")
+            except Exception:
+                logger.exception("❌ 数据库初始化失败，停止启动")
+                raise
 
             # 3. 从数据库加载全部配置到 Settings 单例
             try:
@@ -375,16 +401,7 @@ async def lifespan(app: FastAPI):
         scan_scheduler.stop()
 
     # 停止活动观测 Outbox dispatcher
-    outbox_task = getattr(app.state, "activity_outbox_task", None)
-    if outbox_task:
-        dispatcher = getattr(app.state, "activity_outbox_dispatcher", None)
-        if dispatcher:
-            dispatcher.stop()
-        outbox_task.cancel()
-        try:
-            await outbox_task
-        except asyncio.CancelledError:
-            pass
+    await _shutdown_activity_outbox(app)
 
     # 停止配额重置调度器
     if quota_reset_scheduler:

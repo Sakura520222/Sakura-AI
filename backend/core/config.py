@@ -179,6 +179,11 @@ class Settings(BaseSettings):
         ge=0,
         description="声明超时秒数；为空时不回收已声明 outbox",
     )
+    activity_outbox_shutdown_timeout_seconds: float = Field(
+        10.0,
+        ge=0,
+        description="应用关闭时等待 Outbox dispatcher 自然退出的最长秒数",
+    )
     activity_outbox_retry_max_attempts: int | None = Field(None, ge=1)
     activity_outbox_retry_initial_delay_seconds: float = Field(1.0, ge=0)
     activity_outbox_retry_backoff_factor: float = Field(2.0, ge=1.0)
@@ -2065,6 +2070,7 @@ BASIC_CONFIG_KEYS = frozenset(
         "enable_findings_check",
         "analysis_min_interval_sec",
         "activity_outbox_claim_timeout_seconds",
+        "activity_outbox_shutdown_timeout_seconds",
         "web_search_enabled",
         "web_search_provider",
         "web_search_api_key",

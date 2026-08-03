@@ -1252,7 +1252,9 @@ async def _ensure_agent_message_longtext_columns(conn, logger) -> None:
                 )
             )
             logger.info(
-                f"[auto-migrate] 扩展列为 LONGTEXT: {table_name}.{column_name}",
+                "[auto-migrate] 扩展列为 LONGTEXT: %s.%s",
+                table_name,
+                column_name,
             )
 
 
@@ -1324,7 +1326,7 @@ async def _auto_migrate():
                 else:
                     sql += " NOT NULL"
             await conn.execute(text(sql))
-            _logger.info(f"[auto-migrate] 添加列: {table_name}.{col.name}")
+            _logger.info("[auto-migrate] 添加列: %s.%s", table_name, col.name)
 
         # 记录迁移版本
         version = datetime.utcnow().strftime("%Y%m%d%H%M%S")
@@ -1335,4 +1337,4 @@ async def _auto_migrate():
             ),
             {"v": version},
         )
-        _logger.info(f"[auto-migrate] 迁移完成, version={version}")
+        _logger.info("[auto-migrate] 迁移完成, version=%s", version)

@@ -12,6 +12,7 @@ from fastapi.encoders import jsonable_encoder
 from sqlalchemy.ext.asyncio import AsyncSession
 from starlette.responses import JSONResponse, StreamingResponse
 
+from backend.models import database as db_module
 from backend.services.activity_observability.access_service import (
     ActivityAccessService,
     ActivityNotFoundError,
@@ -36,10 +37,13 @@ from backend.webui.sse import sse_manager, user_activity_channel
 router = APIRouter(prefix="/activity/observability", tags=["Activity Observability"])
 
 
-def _access_service(request: Request, db: AsyncSession) -> ActivityAccessService:
+def _access_service(
+    request: Request, db: AsyncSession | None = None
+) -> ActivityAccessService:
     service = getattr(request.app.state, "activity_access_service", None)
     if service is not None:
-        service.db = db
+        if db is not None:
+            service.db = db
         return service
     raise HTTPException(status_code=503, detail="activity observability unavailable")
 
@@ -246,17 +250,17 @@ async def activity_stream(
     session_id: int,
     request: Request,
     user: dict = Depends(require_auth),
-    db: AsyncSession = Depends(get_db),
 ):
-    service = _access_service(request, db)
+    service = _access_service(request)
     try:
-        await service.require_session_access(session_id, user, db)
+        async with db_module.async_session() as db:
+            await service.require_session_access(session_id, user, db)
+            initial_auth_version = await service.authorization_version(user, db)
     except ActivityNotFoundError as exc:
         raise _not_found() from exc
     user_id = user.get("user_id")
     channel = user_activity_channel(user_id)
     queue = sse_manager.subscribe(channel)
-    initial_auth_version = await service.authorization_version(user, db)
 
     async def event_generator():
         try:
@@ -270,7 +274,10 @@ async def activity_stream(
                 except asyncio.TimeoutError:
                     # Revalidate before every heartbeat.  A revoked scope closes
                     # the stream without leaking which session caused the revoke.
-                    current = await service.authorization_version(user, db)
+                    async with db_module.async_session() as heartbeat_db:
+                        current = await service.authorization_version(
+                            user, heartbeat_db
+                        )
                     if current != initial_auth_version:
                         return
                     yield ": keepalive\n\n"
@@ -282,12 +289,7 @@ async def activity_stream(
                     continue
                 yield f"event: activity:notification\ndata: {json.dumps(data)}\n\n"
         finally:
-            # 此流使用请求级数据库依赖；必须先释放会话再注销订阅，使清库流程
-            # 可以通过 subscriber_count 准确确认数据库锁已经解除。
-            try:
-                await db.close()
-            finally:
-                sse_manager.unsubscribe(channel, queue)
+            sse_manager.unsubscribe(channel, queue)
 
     return StreamingResponse(
         event_generator(),

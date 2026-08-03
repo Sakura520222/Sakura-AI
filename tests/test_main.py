@@ -139,6 +139,29 @@ def test_background_tasks_can_be_skipped_for_local_development():
 
 
 @pytest.mark.anyio
+async def test_lifespan_does_not_yield_when_database_initialization_fails(monkeypatch):
+    database_url = "mysql+asyncmy://db/app"
+
+    monkeypatch.setattr(main, "is_bootstrap_mode", lambda: False)
+    monkeypatch.setattr(
+        main,
+        "read_connection_config",
+        lambda: {"database_url": database_url},
+    )
+    monkeypatch.setattr(main.settings, "database_url", database_url)
+    monkeypatch.setattr(main, "_should_start_background_tasks", lambda _: False)
+
+    async def fail_init_db():
+        raise RuntimeError("migration failed")
+
+    monkeypatch.setattr("backend.models.init_db", fail_init_db)
+
+    with pytest.raises(RuntimeError, match="migration failed"):
+        async with main.lifespan(main.app):
+            pytest.fail("lifespan yielded after database initialization failed")
+
+
+@pytest.mark.anyio
 async def test_rate_limit_handler_returns_sync_slowapi_response_without_await(
     monkeypatch,
 ):

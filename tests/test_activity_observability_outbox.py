@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 
 import pytest
@@ -79,6 +80,25 @@ class SessionContext:
         return self.db
 
     async def __aexit__(self, exc_type, value, traceback):
+        return await self.db.__aexit__(exc_type, value, traceback)
+
+
+class TrackingSessionContext:
+    def __init__(self, db, contexts):
+        self.db = db
+        self.contexts = contexts
+        self.entered = False
+        self.exited = False
+        self.exit_exception = None
+        contexts.append(self)
+
+    async def __aenter__(self):
+        self.entered = True
+        return self.db
+
+    async def __aexit__(self, exc_type, value, traceback):
+        self.exited = True
+        self.exit_exception = exc_type
         return await self.db.__aexit__(exc_type, value, traceback)
 
 
@@ -323,6 +343,75 @@ async def test_dispatch_reauthorizes_and_publishes_exact_three_field_sse_project
 
     monkeypatch.setattr("backend.webui.sse.publish_event", legacy_publish)
     assert calls == []
+
+
+@pytest.mark.asyncio
+async def test_dispatch_cancellation_exits_claim_and_delivery_sessions(db):
+    activity_session = _seed_session(db)
+    await append_event_and_outbox(
+        db,
+        session_id=activity_session.id,
+        event_type="cancelled-publish",
+        visibility="public",
+        payload={"status": "running"},
+        recipient_user_ids=["user-a"],
+    )
+    await db.commit()
+
+    contexts = []
+    publish_started = asyncio.Event()
+    release_publish = asyncio.Event()
+
+    async def publisher(_user_id, _notification):
+        publish_started.set()
+        await release_publish.wait()
+
+    def session_factory():
+        return TrackingSessionContext(db, contexts)
+
+    dispatcher = OutboxDispatcher(
+        session_factory,
+        authorizer=lambda **_kwargs: True,
+        publisher=publisher,
+        config=OutboxDispatcherConfig(
+            retry_policy=OutboxRetryPolicy(initial_delay_seconds=0),
+        ),
+    )
+    task = asyncio.create_task(dispatcher.dispatch_once())
+    await asyncio.wait_for(publish_started.wait(), timeout=1)
+    task.cancel()
+
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+    assert contexts
+    assert all(context.entered for context in contexts)
+    assert all(context.exited for context in contexts)
+    assert any(context.exit_exception is asyncio.CancelledError for context in contexts)
+
+
+@pytest.mark.asyncio
+async def test_dispatcher_run_stops_after_stop_without_cancelling_current_session(db):
+    contexts = []
+    dispatch_started = asyncio.Event()
+    release_dispatch = asyncio.Event()
+
+    class Dispatcher(OutboxDispatcher):
+        async def dispatch_once(self):
+            dispatch_started.set()
+            await release_dispatch.wait()
+            return 0
+
+    dispatcher = Dispatcher(
+        lambda: TrackingSessionContext(db, contexts),
+        authorizer=lambda **_kwargs: True,
+    )
+    task = asyncio.create_task(dispatcher.run())
+    await asyncio.wait_for(dispatch_started.wait(), timeout=1)
+    dispatcher.stop()
+    release_dispatch.set()
+    await asyncio.wait_for(task, timeout=1)
+    assert not task.cancelled()
 
 
 @pytest.mark.asyncio
