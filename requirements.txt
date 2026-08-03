@@ -55,7 +55,7 @@ webauthn>=2.5.2
 # GitHub签名验证 (hmac 和 hashlib 是 Python 内置模块，无需安装)
 
 # API 限流
-slowapi>=0.1.9
+slowapi>=0.1.10
 
 # URL 抓取工具
 beautifulsoup4>=4.12.0
