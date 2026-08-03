@@ -16,7 +16,7 @@ httpx>=0.27.0
 sqlalchemy>=2.0.28,<2.1
 asyncmy>=0.2.11
 asyncpg>=0.31.0  # PostgreSQL 异步驱动（备用）
-alembic>=1.13.1
+alembic>=1.18.5
 
 # 任务队列
 celery>=5.3.6
