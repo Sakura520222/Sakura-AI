@@ -43,6 +43,14 @@ def test_basic_config_keys_are_loaded_from_database_config_keys():
     assert BASIC_CONFIG_KEYS.issubset(set(get_all_db_config_keys()))
 
 
+def test_activity_outbox_shutdown_timeout_is_database_configurable():
+    required_key = "activity_outbox_shutdown_timeout_seconds"
+
+    assert required_key in Settings.model_fields
+    assert required_key in BASIC_CONFIG_KEYS
+    assert required_key in get_all_db_config_keys()
+
+
 def test_mobile_oauth_allowed_redirect_uris_is_available_in_core_config_paths():
     required_key = "mobile_oauth_allowed_redirect_uris"
 

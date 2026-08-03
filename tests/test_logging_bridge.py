@@ -1,8 +1,37 @@
+import ast
 import logging
 import sys
+from pathlib import Path
 
+import backend.models.database
 from backend.core.logging_bridge import InterceptHandler
 from backend.core.logging_bridge import _redact_standard_log_message
+
+
+def test_auto_migrate_standard_logging_messages_are_percent_formatted():
+    source = Path(backend.models.database.__file__).read_text(encoding="utf-8")
+    tree = ast.parse(source)
+    migration_calls = []
+
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
+            continue
+        if not isinstance(node.func, ast.Attribute) or node.func.attr != "info":
+            continue
+        if len(node.args) < 2:
+            continue
+        message = node.args[0]
+        if isinstance(message, ast.Constant) and isinstance(message.value, str):
+            if "auto-migrate" in message.value and any(
+                marker in message.value
+                for marker in ("扩展列为 LONGTEXT", "添加列", "迁移完成")
+            ):
+                migration_calls.append((message.value, len(node.args) - 1))
+
+    assert len(migration_calls) == 3
+    for message, argument_count in migration_calls:
+        assert "{}" not in message
+        assert message.count("%s") >= argument_count
 
 
 def test_intercept_handler_preserves_logger_name_message_and_exception(monkeypatch):
