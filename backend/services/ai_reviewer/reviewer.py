@@ -14,6 +14,7 @@ from loguru import logger
 
 from backend.core.ai_protocol.errors import ReviewCancelledError
 from backend.core.config import (
+    get_dynamic_config,
     get_settings,
     get_strategy_config,
     get_user_dynamic_config,
@@ -22,6 +23,7 @@ from backend.core.model_context import get_model_context_manager
 from backend.services.activity_observability.publication_service import (
     coordinate_publication,
 )
+from backend.services.protocol_repair import run_protocol_repair_loop
 
 from .api_client import AIApiClient, AIEmptyResponseError, PromptTooLongError
 from .compact_diff import build_tool_handler_with_diff
@@ -234,65 +236,60 @@ class AIReviewer:
         invocation_context: Any = None,
         observer: Any = None,
     ) -> dict[str, Any]:
-        """Parse a final review and make one format-only repair attempt if needed."""
+        """Parse a final review; delegate to the shared repair loop on failure."""
+        # 注意：不在此推送 final assistant turn——_run_tool_loop 两个退出分支
+        # （无工具分支 / finalize 分支）已推送，此处补推会造成同一条 assistant
+        # 消息被推 2 次（Canonical Transcript 重复）。
         try:
-            return self.result_parser.parse_review_result(review_text, strategy)
-        except ReviewProtocolError as first_error:
-            stripped = review_text.strip()
-            _dump_protocol_failure(strategy, review_text)
-            logger.warning(
-                "审查协议解析失败，尝试修复一次: {} | length={} prefix={!r} suffix={!r}",
-                first_error,
-                len(review_text),
-                stripped[:80],
-                stripped[-80:],
+            max_attempts = int(
+                await get_dynamic_config("protocol_repair_max_attempts") or 3
             )
+        except ValueError, TypeError:
+            max_attempts = 3
 
-        system_message = next(
-            (message for message in messages if message.get("role") == "system"),
-            None,
+        # helper 只把 first_error 传给 on_parse_failure 回调，review_text/strategy
+        # 不可见，故用闭包捕获两者，复用模块级落盘函数（完整载荷诊断）。
+        async def _dump_failure(_error: BaseException) -> None:
+            _dump_protocol_failure(strategy, review_text)
+
+        return await run_protocol_repair_loop(
+            parse_fn=lambda text: self.result_parser.parse_review_result(
+                text, strategy
+            ),
+            error_type=ReviewProtocolError,
+            base_messages=messages,
+            final_text=review_text,
+            repair_instruction=REPAIR_INSTRUCTION,
+            api_client=self.api_client,
+            tracker=tracker,
+            max_attempts=max_attempts,
+            fallback_result_fn=safe_protocol_failure,
+            log_label="审查",
+            sse_channel="review:protocol_repair",
+            invocation_context=invocation_context,
+            observer=observer,
+            event_callback=event_callback,
+            on_repaired=self._check_finding_consistency,
+            on_parse_failure=_dump_failure,
         )
-        repair_messages = [
-            *([system_message] if system_message else []),
-            {"role": "assistant", "content": review_text},
-            {"role": "user", "content": REPAIR_INSTRUCTION},
-        ]
-        try:
-            response = await self.api_client.call_with_retry(
-                model="",
-                messages=repair_messages,
-                temperature=0,
-                role="main",
-                context=invocation_context,
-                observer=observer,
+
+    @staticmethod
+    async def _check_finding_consistency(
+        original_text: str, repaired_text: str, result: dict[str, Any]
+    ) -> None:
+        """修复后的 finding 数量与原始输出的标签数对比——仅警告，不阻断。"""
+        # 语义与旧实现一致：原始 review_text 的 <FINDING> 标签数 vs 修复后解析的
+        # comment 数。修复丢弃 finding（或凭空增加）时告警。
+        original_tag_count = sum(
+            line.strip() == "<FINDING>" for line in original_text.splitlines()
+        )
+        comment_count = len(result["comments"]) + len(result["inline_comments"])
+        if comment_count != original_tag_count:
+            logger.warning(
+                "审查协议修复后的 finding 数量与原始标签数不一致: original_tags={} repaired={}",
+                original_tag_count,
+                comment_count,
             )
-            tracker.accumulate(response)
-            repaired_text = response.choices[0].message.content or ""
-            if event_callback:
-                try:
-                    await event_callback(
-                        "message",
-                        {"role": "assistant", "content": repaired_text},
-                    )
-                except Exception as exc:
-                    logger.warning("event_callback failed: {}", exc)
-            result = self.result_parser.parse_review_result(repaired_text, strategy)
-            original_finding_count = sum(
-                line.strip() == "<FINDING>" for line in review_text.splitlines()
-            )
-            repaired_finding_count = len(result["comments"]) + len(
-                result["inline_comments"]
-            )
-            if repaired_finding_count != original_finding_count:
-                logger.warning(
-                    "审查协议修复后的 finding 数量发生变化: original_tags={} repaired_valid={}",
-                    original_finding_count,
-                    repaired_finding_count,
-                )
-            return result
-        except Exception as repair_error:
-            logger.error("审查协议修复失败，降级为人工复审: {}", repair_error)
-            return safe_protocol_failure(repair_error)
 
     async def review_pr(
         self,

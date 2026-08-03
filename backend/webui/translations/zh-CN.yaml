@@ -114,6 +114,7 @@ common:
   enable_analysis_check_desc: "是否启用副 Analysis Check（AI 运行时指标：轮次/工具调用/Token/上下文/耗时），仅在工具模式下出现"
   enable_findings_check_desc: "是否启用副 Findings Check（发现分级统计），仅有可发布 findings 时出现"
   analysis_min_interval_sec_desc: "Analysis Check 快照写入 GitHub 的最小间隔（秒），避免高频更新烧 API 配额"
+  protocol_repair_max_attempts_desc: "协议信封解析失败时的最大修复次数（1-10）"
   issue_auto_labels_desc: "是否自动为 Issue 应用 AI 推荐的标签"
   issue_auto_assign_desc: "是否自动为 Issue 指派 AI 推荐的负责人"
   issue_max_iterations_desc: "Issues 分析中 AI 工具调用的最大轮数"

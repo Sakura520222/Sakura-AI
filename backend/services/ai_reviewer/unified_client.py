@@ -451,6 +451,7 @@ class UnifiedAIClient:
         context: Any = None,
         observer: Any = None,
         logical_call_factory: Any = uuid4,
+        attempt_kind: Optional[str] = None,
     ) -> UnifiedResponse:
         """统一调用入口（对外契约与旧 AIApiClient.call_with_retry 对齐）.
 
@@ -576,6 +577,7 @@ class UnifiedAIClient:
                     cancel_event=cancel_event,
                     logical_call_id=logical_call_id,
                     fallback_from=call_state.last_attempt_id if idx > 0 else None,
+                    initial_attempt_kind=attempt_kind if idx == 0 else None,
                     requested_candidate=requested_candidate,
                     reasoning_snapshot=reasoning_snapshot,
                     call_state=call_state,

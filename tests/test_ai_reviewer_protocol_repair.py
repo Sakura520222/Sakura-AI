@@ -1,4 +1,4 @@
-"""Tests for the one-shot PR review protocol repair flow."""
+"""Tests for the PR review protocol repair loop (configurable multi-round)."""
 
 from types import SimpleNamespace
 
@@ -65,10 +65,14 @@ async def test_invalid_response_is_repaired_once():
     repair_call = reviewer.api_client.calls[0]
     assert repair_call["temperature"] == 0
     assert "tools" not in repair_call
-    assert len(repair_call["messages"]) == 3
+    # 新循环保留完整 base_messages（system+user），每轮追加 assistant+user
+    assert len(repair_call["messages"]) == 4
     assert repair_call["messages"][0]["role"] == "system"
+    assert repair_call["messages"][1]["role"] == "user"
     assert repair_call["messages"][-2]["role"] == "assistant"
     assert repair_call["messages"][-1]["role"] == "user"
+    # 错误注入到最后的 user 修复指令
+    assert "Specific violation" in repair_call["messages"][-1]["content"]
 
 
 @pytest.mark.asyncio
@@ -107,6 +111,8 @@ async def test_second_invalid_response_falls_back_to_comment():
         "minor": [],
         "suggestions": [],
     }
+    # 新循环默认上限 3，fake 每轮都返回 "still invalid"，跑满 3 轮才降级
+    assert len(reviewer.api_client.calls) == 3
 
 
 @pytest.mark.asyncio
@@ -168,3 +174,55 @@ async def test_tool_loop_maximum_round_exit_uses_tagged_parser(monkeypatch):
     assert result["parse_source"] == "tagged"
     assert result["ai_decision"] == "approve"
     assert len(reviewer.api_client.calls) == 1
+
+
+@pytest.mark.asyncio
+async def test_repair_respects_configured_max_attempts(monkeypatch):
+    """protocol_repair_max_attempts 配置覆盖默认上限 3。"""
+    from backend.services.ai_reviewer import reviewer as reviewer_module
+
+    async def _fake_get_dynamic_config(key):
+        if key == "protocol_repair_max_attempts":
+            return "2"
+        return None
+
+    monkeypatch.setattr(
+        reviewer_module, "get_dynamic_config", _fake_get_dynamic_config
+    )
+
+    reviewer = _reviewer_with_response("still invalid")
+
+    result = await reviewer._parse_or_repair_review(
+        "invalid",
+        [{"role": "system", "content": "system"}, {"role": "user", "content": "data"}],
+        "standard",
+        TokenTracker(),
+    )
+
+    assert result["parse_source"] == "protocol_error"
+    assert len(reviewer.api_client.calls) == 2  # 配置覆盖为 2
+
+
+@pytest.mark.asyncio
+async def test_final_assistant_turn_emitted_once():
+    """final assistant turn 只推送一次（修复轮次消息除外）。"""
+    events = []
+
+    async def _capture(event_type, data):
+        if event_type == "message" and data.get("role") == "assistant":
+            events.append(data["content"])
+
+    reviewer = _reviewer_with_response(VALID_REVIEW)
+
+    result = await reviewer._parse_or_repair_review(
+        "legacy free-form response",
+        [{"role": "system", "content": "system"}, {"role": "user", "content": "data"}],
+        "standard",
+        TokenTracker(),
+        event_callback=_capture,
+    )
+
+    assert result["parse_source"] == "tagged"
+    # 修复轮次的 assistant 修复输出（VALID_REVIEW）推 1 次
+    # final_text（"legacy free-form response"）不再由 _parse_or_repair_review 推送
+    assert events == [VALID_REVIEW]

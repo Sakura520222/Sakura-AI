@@ -44,7 +44,7 @@
 - **运行中增量入队**：审查进行中收到新的 `synchronize` 提交时不会并行启动新审查；新增变化会入队，并在下一次 AI 请求前合并成一条 user message
 - **按需 diff 控制**：增量队列不引入硬编码 diff 截断，内容量控制继续依赖工具按需读取、现有配置和上下文压缩
 - **智能审查批准**：基于 AI 评分自动决策 APPROVE / REQUEST_CHANGES / COMMENT
-- **严格审查输出契约**：审查器输出受严格信封协议约束并经字段校验与严重等级分数上限保护，无效响应自动修复或安全降级，杜绝误批准与误低分拒绝
+- **严格审查输出契约**：审查器输出受 `<SAKURA_REVIEW>` 信封协议约束，经字段校验与严重等级分数上限保护；非法响应将进行累积式多轮修复（repaired up to `protocol_repair_max_attempts` 次，可配置，默认 3），每轮携带具体错误并保留完整对话历史，全部失败则安全降级，杜绝误批准与误低分拒绝。修复过程通过 transcript / SSE / observer attempt 全链路可观测
 - **PR 变更自动总结**：AI 自动生成 PR 变更摘要，并在 PR 更新时增量更新总结内容
 - **PR 依赖图生成**：支持 AI 分析与静态 import 分析双模式，生成 Mermaid 格式可视化依赖关系图；增量审查基于上一轮依赖图叠加更新，保留历史依赖节点与边
 - **Token 消耗追踪**：实时追踪审查中所有 AI API 调用的 token 消耗量与预估成本
@@ -80,7 +80,7 @@
 ### Issue 分析
 
 - **Issue 智能分析**：自动分类、优先级判定、标签推荐、重复检测、关联 PR 发现
-- **严格 Issue 输出契约**：Issue 分析输出使用 `<SAKURA_ISSUE_ANALYSIS>` 信封协议并进行字段校验，无效响应会自动进行一次格式修复或安全降级
+- **严格 Issue 输出契约**：Issue 分析使用 `<SAKURA_ISSUE_ANALYSIS>` 信封协议与字段校验；非法响应将进行累积式多轮修复（repaired up to `protocol_repair_max_attempts` 次，可配置，默认 3），每轮携带具体错误并保留完整对话历史，全部失败则安全降级为人工复核。修复过程通过 transcript / SSE / observer attempt 全链路可观测
 - **Issue 自动打标**：AI 自动分类并推荐标签，高置信度自动应用
 - **Issue 自动指派**：AI 分析内容并自动指派给合适的仓库协作者
 - **Issue 标题改写**：AI 自动优化模糊或不够准确的 Issue 标题

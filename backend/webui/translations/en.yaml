@@ -114,6 +114,7 @@ common:
   enable_analysis_check_desc: "Enable the Analysis sub-check (AI runtime metrics: rounds / tool calls / tokens / context / duration); only appears in tool mode"
   enable_findings_check_desc: "Enable the Findings sub-check (finding severity breakdown); only appears when there are publishable findings"
   analysis_min_interval_sec_desc: "Minimum interval (seconds) between Analysis check snapshot writes to GitHub, to avoid burning API quota on high-frequency updates"
+  protocol_repair_max_attempts_desc: "Maximum repair attempts for protocol envelope parse failures (1-10)"
   issue_auto_labels_desc: "Auto-apply AI-recommended labels to Issues"
   issue_auto_assign_desc: "Auto-assign AI-recommended assignees to Issues"
   issue_max_iterations_desc: "Max AI tool call iterations for Issue analysis"

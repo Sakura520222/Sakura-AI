@@ -44,7 +44,7 @@
 - **In-flight Increment Queue**: New `synchronize` commits received during an active review are queued instead of launching a parallel review; pending changes are merged into one user message before the next AI request
 - **On-demand Diff Control**: The incremental queue does not add hardcoded diff truncation; content size remains governed by tool-driven inspection, existing configuration, and context compression
 - **Smart Review Approval**: Automatically decides APPROVE / REQUEST_CHANGES / COMMENT based on AI scores
-- **Strict Review Output Contract**: Reviewer output is governed by a strict envelope protocol with field validation and severity score caps; invalid responses are auto-repaired or safely degraded to prevent accidental approvals and erroneous low-score rejections
+- **Strict Review Output Contract**: Reviewer output is governed by the `<SAKURA_REVIEW>` envelope protocol with field validation and severity score caps; invalid responses are repaired up to `protocol_repair_max_attempts` times (configurable, default 3) with per-round error injection and full dialogue preserved, then safely degraded to prevent accidental approvals and erroneous low-score rejections. The repair process is observable end-to-end via transcript / SSE / observer attempts
 - **PR Change Summary**: AI auto-generates PR change summaries with incremental updates when the PR is updated
 - **PR Dependency Graph**: Supports both AI analysis and static import analysis modes to generate Mermaid-format visual dependency graphs; incremental reviews build on the previous graph, preserving historical dependency nodes and edges
 - **Token Consumption Tracking**: Real-time tracking of token usage and estimated costs across all AI API calls during review
@@ -80,7 +80,7 @@
 ### Issue Analysis
 
 - **Intelligent Issue Analysis**: Auto-classification, priority assessment, label recommendation, duplicate detection, linked PR discovery
-- **Strict Issue Output Contract**: Issue analysis uses the `<SAKURA_ISSUE_ANALYSIS>` envelope protocol with field validation; invalid responses are repaired once or safely degraded
+- **Strict Issue Output Contract**: Issue analysis uses the `<SAKURA_ISSUE_ANALYSIS>` envelope protocol with field validation; invalid responses are repaired up to `protocol_repair_max_attempts` times (configurable, default 3) with per-round error injection and full dialogue preserved, then safely degraded. The repair process is observable end-to-end via transcript / SSE / observer attempts
 - **Auto-labeling**: AI categorizes and recommends labels; high-confidence labels are applied automatically
 - **Auto-assignment**: AI analyzes issue content and automatically assigns it to appropriate repository collaborators
 - **Title Rewriting**: AI automatically improves vague or inaccurate issue titles

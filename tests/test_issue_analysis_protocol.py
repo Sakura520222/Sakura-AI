@@ -270,11 +270,12 @@ async def test_repairs_invalid_issue_analysis_once(monkeypatch):
 
     assert result["parse_source"] == "tagged_issue"
     assert analyzer.api_client.calls[0]["temperature"] == 0
-    assert analyzer.api_client.calls[0]["messages"] == [
-        {"role": "system", "content": "system contract"},
-        {"role": "assistant", "content": "legacy text"},
-        {"role": "user", "content": analyzer.REPAIR_INSTRUCTION},
-    ]
+    repair_messages = analyzer.api_client.calls[0]["messages"]
+    assert repair_messages[0] == {"role": "system", "content": "system contract"}
+    assert repair_messages[1] == {"role": "user", "content": "issue evidence"}
+    assert repair_messages[2] == {"role": "assistant", "content": "legacy text"}
+    assert repair_messages[3]["role"] == "user"
+    assert "Specific violation" in repair_messages[3]["content"]
     assert tracker.prompt_tokens == 3
     assert tracker.completion_tokens == 5
 
@@ -282,6 +283,7 @@ async def test_repairs_invalid_issue_analysis_once(monkeypatch):
 @pytest.mark.asyncio
 async def test_valid_issue_analysis_emits_final_assistant_message():
     analyzer = IssueAnalyzer.__new__(IssueAnalyzer)
+    analyzer.api_client = None  # 本地解析快路径不触碰 api_client，helper 仅求值参数
     events = []
 
     async def callback(event_type, payload):

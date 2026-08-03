@@ -86,6 +86,7 @@ class AIApiClient:
         context: InvocationContext | None = None,
         observer: Any = None,
         logical_call_factory: Any = uuid4,
+        attempt_kind: Optional[str] = None,
     ) -> Any:
         """按角色调用统一协议层 / Call the unified protocol layer by role."""
         if not role:
@@ -107,6 +108,7 @@ class AIApiClient:
             context=context,
             observer=observer,
             logical_call_factory=logical_call_factory,
+            attempt_kind=attempt_kind,
         )
 
     async def stream_with_retry(
@@ -160,6 +162,7 @@ class AIApiClient:
         context: InvocationContext | None = None,
         observer: Any = None,
         logical_call_factory: Any = uuid4,
+        attempt_kind: Optional[str] = None,
     ) -> Any:
         """解析角色候选链后调用统一客户端 / Resolve and invoke unified client."""
         try:
@@ -217,6 +220,7 @@ class AIApiClient:
             context=call_context,
             observer=observer,
             logical_call_factory=logical_call_factory,
+            attempt_kind=attempt_kind,
         )
 
     def _get_unified_client(self) -> Any:
