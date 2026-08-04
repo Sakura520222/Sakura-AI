@@ -770,9 +770,6 @@ jobs:
     permissions:
       contents: read
       packages: write
-    env:
-      DOCKER_METADATA_SHORT_SHA_LENGTH: 12
-
     steps:
       - name: 检出发版 Tag
         uses: actions/checkout@v4
@@ -803,7 +800,6 @@ jobs:
             type=semver,pattern={{major}}.{{minor}},value=v${{ needs.generate-release.outputs.version }}
             type=semver,pattern={{major}},value=v${{ needs.generate-release.outputs.version }}
             type=raw,value=latest
-            type=sha,prefix=sha-
           labels: |
             org.opencontainers.image.title=Sakura AI Reviewer
             org.opencontainers.image.description=AI-powered GitHub pull request reviewer and issue analyzer
