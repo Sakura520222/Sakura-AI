@@ -705,7 +705,7 @@ config:
     fetch_url: "URL Fetch Config"
     i18n: "i18n Config"
     payment: "Payment & Quota Config"
-    registration_quota: "Self-registration Quota Config"
+    registration_quota: "User Registration Config"
   label:
     ai_provider: "AI Provider"
     openai_api_base: "API Base URL"
@@ -870,6 +870,7 @@ config:
     init_user_issue_daily_quota: "Self-register Base Daily Issue Quota"
     init_user_issue_weekly_quota: "Self-register Base Weekly Issue Quota"
     init_user_issue_monthly_quota: "Self-register Base Monthly Issue Quota"
+    allow_user_registration: "Allow User Self-registration"
     register_quota_multiplier: "Self-register Quota Multiplier"
   desc:
     ai_api_timeout_seconds: "Per-request timeout passed to the OpenAI-compatible SDK; different from the overall review task timeout"
@@ -968,6 +969,7 @@ config:
     init_user_issue_daily_quota: "Base daily Issue analysis quota for self-registered users"
     init_user_issue_weekly_quota: "Base weekly Issue analysis quota for self-registered users"
     init_user_issue_monthly_quota: "Base monthly Issue analysis quota for self-registered users"
+    allow_user_registration: "Allow users to self-register with the Telegram /sign command"
     register_quota_multiplier: "Self-registered user quota multiplier relative to base quota (0.1-1.0)"
   option:
     ai_provider_openai: "OpenAI"
@@ -1312,6 +1314,8 @@ error:
 register:
   title: "Register"
   telegram_register: "Telegram Registration"
+  registration_closed: "User Registration Closed"
+  registration_closed_hint: "Only administrators can add users manually. Contact the system administrator to create an account."
   input_chat_id: "Enter Chat ID"
   input_token: "Enter verification token"
   register_success: "Registration successful"

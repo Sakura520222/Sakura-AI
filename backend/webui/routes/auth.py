@@ -376,6 +376,7 @@ async def github_callback(
             request,
             github_username=github_username,
             deep_link=deep_link,
+            registration_enabled=settings.allow_user_registration,
             app_version=APP_VERSION,
             status_code=403,
         )

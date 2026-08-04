@@ -504,6 +504,9 @@ class TelegramService:
         self, telegram_id: int, github_username: str
     ) -> tuple[bool, str]:
         """用户自注册（配额为默认值的 register_quota_multiplier 倍）"""
+        if not settings.allow_user_registration:
+            return False, "用户自注册已关闭，请联系管理员创建账号"
+
         # 检查 telegram_id 是否已存在
         existing_by_id = await self.get_user_by_telegram_id(telegram_id)
         if existing_by_id:

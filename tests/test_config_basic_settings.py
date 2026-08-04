@@ -123,15 +123,29 @@ def test_fetch_url_dynamic_config_fields_support_live_update():
             setattr(settings, key, value)
 
 
-def test_registration_quota_multiplier_has_own_dynamic_group():
+def test_user_registration_settings_have_own_dynamic_group():
     assert "registration_quota" in DYNAMIC_CONFIG_GROUPS
     assert DYNAMIC_CONFIG_GROUPS["registration_quota"]["keys"] == [
+        "allow_user_registration",
         "register_quota_multiplier"
     ]
     assert (
         "register_quota_multiplier" not in DYNAMIC_CONFIG_GROUPS["init_quota"]["keys"]
     )
+    assert "allow_user_registration" in get_all_db_config_keys()
     assert "register_quota_multiplier" in get_all_db_config_keys()
+
+
+def test_allow_user_registration_supports_live_update():
+    settings = get_settings()
+    old_value = settings.allow_user_registration
+    try:
+        update_settings_field("allow_user_registration", "false")
+        assert settings.allow_user_registration is False
+        update_settings_field("allow_user_registration", "true")
+        assert settings.allow_user_registration is True
+    finally:
+        settings.allow_user_registration = old_value
 
 
 def test_web_search_configs_have_range_limits_and_fetch_url_configs_do_not():

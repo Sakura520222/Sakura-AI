@@ -705,7 +705,7 @@ config:
     fetch_url: "URL 抓取配置"
     i18n: "国际化配置"
     payment: "付费配额配置"
-    registration_quota: "自注册配额配置"
+    registration_quota: "用户注册配置"
   label:
     ai_provider: "AI 厂商"
     openai_api_base: "API Base URL"
@@ -870,6 +870,7 @@ config:
     init_user_issue_daily_quota: "自注册基础每日 Issue 配额"
     init_user_issue_weekly_quota: "自注册基础每周 Issue 配额"
     init_user_issue_monthly_quota: "自注册基础每月 Issue 配额"
+    allow_user_registration: "允许用户自注册"
     register_quota_multiplier: "自注册配额倍率"
   desc:
     ai_api_timeout_seconds: "传递给 OpenAI 兼容 SDK 的单次请求超时时间，不等同于审查任务整体超时"
@@ -968,6 +969,7 @@ config:
     init_user_issue_daily_quota: "自注册用户基础每日 Issue 分析配额"
     init_user_issue_weekly_quota: "自注册用户基础每周 Issue 分析配额"
     init_user_issue_monthly_quota: "自注册用户基础每月 Issue 分析配额"
+    allow_user_registration: "允许用户通过 Telegram /sign 命令自注册"
     register_quota_multiplier: "自注册用户配额相对于基础值的倍率（0.1-1.0）"
   option:
     ai_provider_openai: "OpenAI"
@@ -1312,6 +1314,8 @@ error:
 register:
   title: "注册"
   telegram_register: "Telegram 注册"
+  registration_closed: "用户注册已关闭"
+  registration_closed_hint: "当前仅允许管理员手动添加用户，请联系系统管理员创建账号。"
   input_chat_id: "请输入 Chat ID"
   input_token: "请输入验证 Token"
   register_success: "注册成功"

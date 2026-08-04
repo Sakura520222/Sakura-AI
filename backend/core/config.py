@@ -252,6 +252,10 @@ class Settings(BaseSettings):
     telegram_bot_username: str | None = None  # 启动时通过 getMe 自动填充
     telegram_admin_user_ids: str = ""  # 逗号分隔的超级管理员ID列表
     telegram_default_chat_id: str = ""  # 默认接收通知的聊天ID
+    allow_user_registration: bool = Field(
+        True,
+        description="允许用户通过 Telegram /sign 命令自注册",
+    )
     register_quota_multiplier: float = Field(
         0.2,
         ge=0.1,
@@ -1338,12 +1342,14 @@ DYNAMIC_CONFIG_GROUPS: OrderedDict[str, dict] = OrderedDict(
         (
             "registration_quota",
             {
-                "label": "自注册配额配置",
+                "label": "用户注册配置",
                 "icon": "user-plus",
                 "descriptions": {
+                    "allow_user_registration": "允许用户通过 Telegram /sign 命令自注册",
                     "register_quota_multiplier": "自注册用户配额相对于基础值的倍率（0.1-1.0）",
                 },
                 "keys": [
+                    "allow_user_registration",
                     "register_quota_multiplier",
                 ],
             },
@@ -1724,6 +1730,7 @@ DYNAMIC_CONFIG_LABELS: dict[str, str] = {
     "init_user_agent_daily_quota": "自注册基础每日 Agent 配额",
     "init_user_agent_weekly_quota": "自注册基础每周 Agent 配额",
     "init_user_agent_monthly_quota": "自注册基础每月 Agent 配额",
+    "allow_user_registration": "允许用户自注册",
     "register_quota_multiplier": "自注册配额倍率",
 }
 

@@ -674,6 +674,10 @@ async def general_config_page(
             input_type = get_dynamic_config_input_type(key)
             is_sensitive = key in DYNAMIC_CONFIG_SENSITIVE_KEYS
 
+            if input_type == "boolean":
+                value = str(value).lower()
+                default_val = str(default_val).lower()
+
             display_value = (
                 mask_sensitive_value(value) if (is_sensitive and value) else value
             )
