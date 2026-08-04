@@ -58,7 +58,7 @@ def paddle_sdk_mock():
     sys.modules.update(original_modules)
 
 
-from backend.services.payment.paddle_gateway import PaddleGateway  # noqa: E402
+from backend.services.payment.paddle_gateway import PaddleGateway
 
 
 @pytest.fixture
@@ -83,7 +83,7 @@ def _make_paddle_signature(
 class TestPaddleGatewayCreatePayment:
     @pytest.mark.asyncio
     async def test_create_payment_success(self, gateway, paddle_sdk_mock):
-        mock_pkg, mock_client_cls = paddle_sdk_mock
+        _mock_pkg, mock_client_cls = paddle_sdk_mock
 
         mock_tx = MagicMock()
         mock_tx.id = "txn_01test123"
@@ -113,7 +113,7 @@ class TestPaddleGatewayCreatePayment:
 
     @pytest.mark.asyncio
     async def test_create_payment_sdk_error(self, gateway, paddle_sdk_mock):
-        mock_pkg, mock_client_cls = paddle_sdk_mock
+        _mock_pkg, mock_client_cls = paddle_sdk_mock
         mock_client_cls.side_effect = Exception("Paddle API error")
 
         result = await gateway.create_payment(
@@ -262,7 +262,7 @@ class TestPaddleGatewayVerifyWebhook:
 class TestPaddleGatewayRefund:
     @pytest.mark.asyncio
     async def test_refund_full(self, gateway, paddle_sdk_mock):
-        mock_pkg, mock_client_cls = paddle_sdk_mock
+        _mock_pkg, mock_client_cls = paddle_sdk_mock
 
         mock_adjustment = MagicMock()
         mock_adjustment.id = "adj_01fullrefund"
@@ -282,7 +282,7 @@ class TestPaddleGatewayRefund:
 
     @pytest.mark.asyncio
     async def test_refund_partial(self, gateway, paddle_sdk_mock):
-        mock_pkg, mock_client_cls = paddle_sdk_mock
+        _mock_pkg, mock_client_cls = paddle_sdk_mock
 
         mock_line_item = MagicMock()
         mock_line_item.id = "txnitm_01item1"
@@ -313,7 +313,7 @@ class TestPaddleGatewayRefund:
 
     @pytest.mark.asyncio
     async def test_refund_error(self, gateway, paddle_sdk_mock):
-        mock_pkg, mock_client_cls = paddle_sdk_mock
+        _mock_pkg, mock_client_cls = paddle_sdk_mock
         mock_client_cls.side_effect = Exception("Refund failed")
 
         result = await gateway.refund(provider_tx_id="txn_01test123")
@@ -325,7 +325,7 @@ class TestPaddleGatewayRefund:
 class TestPaddleGatewayGetPaymentStatus:
     @pytest.mark.asyncio
     async def test_get_payment_status_success(self, gateway, paddle_sdk_mock):
-        mock_pkg, mock_client_cls = paddle_sdk_mock
+        _mock_pkg, mock_client_cls = paddle_sdk_mock
 
         mock_tx = MagicMock()
         mock_tx.id = "txn_01test123"
@@ -350,7 +350,7 @@ class TestPaddleGatewayGetPaymentStatus:
 
     @pytest.mark.asyncio
     async def test_get_payment_status_error(self, gateway, paddle_sdk_mock):
-        mock_pkg, mock_client_cls = paddle_sdk_mock
+        _mock_pkg, mock_client_cls = paddle_sdk_mock
         mock_client_cls.side_effect = Exception("Not found")
 
         result = await gateway.get_payment_status("txn_nonexistent")
@@ -364,7 +364,7 @@ class TestPaddleGatewayEnvironment:
 
     @pytest.mark.asyncio
     async def test_sandbox_key(self, paddle_sdk_mock):
-        mock_pkg, mock_client_cls = paddle_sdk_mock
+        _mock_pkg, mock_client_cls = paddle_sdk_mock
 
         mock_tx = MagicMock()
         mock_tx.id = "txn_test"
@@ -392,7 +392,7 @@ class TestPaddleGatewayEnvironment:
 
     @pytest.mark.asyncio
     async def test_production_key(self, paddle_sdk_mock):
-        mock_pkg, mock_client_cls = paddle_sdk_mock
+        _mock_pkg, mock_client_cls = paddle_sdk_mock
 
         mock_tx = MagicMock()
         mock_tx.id = "txn_live"

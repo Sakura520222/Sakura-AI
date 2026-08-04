@@ -4,12 +4,12 @@ from types import SimpleNamespace
 
 import pytest
 
-from backend.services.ai_reviewer import reviewer as reviewer_module
-from backend.services.ai_reviewer.tools import ToolHandler
 from backend.services import embedding_service as embedding_module
-from backend.services.issue_analyzer import IssueAnalyzer
 from backend.services import issue_analyzer as issue_analyzer_module
 from backend.services import sakura_memory_service as sakura_memory_module
+from backend.services.ai_reviewer import reviewer as reviewer_module
+from backend.services.ai_reviewer.tools import ToolHandler
+from backend.services.issue_analyzer import IssueAnalyzer
 
 
 class _FakeAIApiClient:

@@ -1,45 +1,45 @@
 """Telegram Bot 主逻辑"""
 
 import httpx
+from loguru import logger
 from telegram import Bot, BotCommand
 from telegram.error import NetworkError, TimedOut
 from telegram.ext import Application, CommandHandler
-from loguru import logger
 
 from backend.core.config import get_settings
 from backend.services.payment_service import is_payment_enabled
 from backend.telegram.handlers import (
-    cmd_start,
-    cmd_help,
-    cmd_status,
-    cmd_recent,
-    cmd_myquota,
     cmd_admin_add,
     cmd_admin_remove,
-    cmd_user_add,
-    cmd_user_remove,
-    cmd_repo_add,
-    cmd_repo_remove,
-    cmd_quota_set,
-    cmd_users,
-    cmd_repos,
-    cmd_review,
-    cmd_docs_status,
-    cmd_update_docs,
     cmd_code_index,
     cmd_code_status,
-    cmd_sign,
-    cmd_repo_subscribe,
-    cmd_repo_unsubscribe,
-    cmd_my_subscriptions,
-    cmd_plans,
-    cmd_redeem,
-    cmd_myorders,
+    cmd_docs_status,
     cmd_gen_codes,
     cmd_grant,
+    cmd_help,
+    cmd_my_subscriptions,
+    cmd_myorders,
+    cmd_myquota,
+    cmd_plans,
+    cmd_quota_set,
+    cmd_recent,
+    cmd_redeem,
+    cmd_repo_add,
+    cmd_repo_remove,
+    cmd_repo_subscribe,
+    cmd_repo_unsubscribe,
+    cmd_repos,
+    cmd_review,
+    cmd_sign,
+    cmd_start,
+    cmd_status,
+    cmd_update_docs,
+    cmd_user_add,
+    cmd_user_remove,
+    cmd_users,
 )
-from backend.telegram.notifications import NotificationSender, set_notification_sender
 from backend.telegram.menu import get_callback_handler, get_force_reply_handler
+from backend.telegram.notifications import NotificationSender, set_notification_sender
 
 settings = get_settings()
 
@@ -103,9 +103,7 @@ async def _telegram_error_handler(update: object, context) -> None:
     if "Message is not modified" in error_str:
         return
 
-    if isinstance(error, (httpx.ReadError, httpx.ConnectError, httpx.ReadTimeout)):
-        logger.warning(f"⚡ Telegram 网络瞬态错误（将自动重试）: {error}")
-    elif isinstance(error, (NetworkError, TimedOut)):
+    if isinstance(error, (httpx.ReadError, httpx.ConnectError, httpx.ReadTimeout, NetworkError, TimedOut)):
         logger.warning(f"⚡ Telegram 网络瞬态错误（将自动重试）: {error}")
     else:
         logger.error(f"❌ Telegram Bot 未预期的错误: {error}", exc_info=error)
@@ -212,6 +210,8 @@ async def stop_telegram_bot():
             logger.info("👋 Telegram Bot 已停止")
         except Exception as e:
             logger.error(f"❌ 停止 Telegram Bot 时出错: {e}")
+        finally:
+            _telegram_app = None
 
 
 def get_telegram_bot() -> Bot:

@@ -1,6 +1,6 @@
 """实时活动事件模型 — 记录 PR 审查 / Issue 分析 / 仓库扫描的对话流事件。"""
 
-from sqlalchemy import Column, Integer, String, TIMESTAMP, Index
+from sqlalchemy import TIMESTAMP, Column, Index, Integer, String
 from sqlalchemy.dialects.mysql import LONGTEXT
 
 from backend.models.database import Base, utc_now

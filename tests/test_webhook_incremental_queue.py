@@ -150,7 +150,6 @@ async def test_synchronize_without_active_review_submits_new_task(monkeypatch):
     class _QueueService:
         async def enqueue_from_webhook(self, pr_info, delivery_id=None):
             queued.append((pr_info.copy(), delivery_id))
-            return None
 
     async def fake_submit_review_task(pr_info):
         submitted.append(pr_info.copy())

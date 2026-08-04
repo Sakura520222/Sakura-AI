@@ -1,7 +1,7 @@
 """Agent Team task creation wizard backend tests."""
 
 import json
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from types import SimpleNamespace
 
 import pytest
@@ -14,6 +14,8 @@ from backend.services.agent_team.submission_context import (
     build_agent_submission_context_preview,
     build_agent_task_summary,
     build_issue_context_markdown,
+    format_issue_analysis_context,
+    format_issue_comments,
 )
 from backend.webui.routes.agent_team import (
     _format_agent_conversation_contexts,
@@ -21,10 +23,6 @@ from backend.webui.routes.agent_team import (
     _should_schedule_agent_task,
     create_task_from_issue,
     preview_task_from_issue,
-)
-from backend.services.agent_team.submission_context import (
-    format_issue_analysis_context,
-    format_issue_comments,
 )
 
 
@@ -371,7 +369,7 @@ async def test_preview_task_from_issue_returns_draft(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_preview_task_from_issue_serializes_datetime_context(monkeypatch):
-    timestamp = datetime(2026, 5, 21, 3, 11, 19, tzinfo=timezone.utc)
+    timestamp = datetime(2026, 5, 21, 3, 11, 19, tzinfo=UTC)
 
     async def fake_draft(self, db, repo_full_name, issue_number):
         return {

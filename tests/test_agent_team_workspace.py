@@ -12,14 +12,14 @@ from backend.services.agent_team.shell_executor import (
     AgentTeamShellExecutor,
     ShellCommandResult,
 )
-from backend.services.agent_team.workspace_service import (
-    AgentTeamWorkspaceService,
-    WorkspaceSecurityError,
-)
 from backend.services.agent_team.tools.base import ToolContext
 from backend.services.agent_team.tools.shell_tool import (
     ShellTool,
     is_agent_command_allowed,
+)
+from backend.services.agent_team.workspace_service import (
+    AgentTeamWorkspaceService,
+    WorkspaceSecurityError,
 )
 from backend.workers.agent_team_worker import _merge_modified_files
 

@@ -5,7 +5,6 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
-
 PROTOCOL_VERSION = "1"
 VALID_PRIORITIES = {"critical", "high", "medium", "low"}
 

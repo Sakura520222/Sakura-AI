@@ -5,7 +5,7 @@
 - _tool_search_code_context (2770-2855行)
 """
 
-from typing import Any, Dict, Optional
+from typing import Any
 
 from loguru import logger
 
@@ -20,7 +20,7 @@ class SearchToolHandler:
 
     async def search_project_docs(
         self, query: str, top_k: int, repo: Any, pr: Any
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """检索项目文档的工具实现
 
         Args:
@@ -91,19 +91,19 @@ class SearchToolHandler:
             logger.error(f"文档检索失败: {e}", exc_info=True)
             return {
                 "query": query,
-                "error": f"检索失败: {str(e)}",
+                "error": f"检索失败: {e!s}",
                 "hint": "可能是向量数据库未初始化或配置错误，请检查系统状态",
             }
 
     async def search_code_context(
         self,
         query: str,
-        language: Optional[str],
-        file_path: Optional[str],
+        language: str | None,
+        file_path: str | None,
         top_k: int,
         repo: Any,
         pr: Any,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """检索代码上下文的工具实现
 
         Args:
@@ -178,6 +178,6 @@ class SearchToolHandler:
             logger.error(f"代码上下文检索失败: {e}", exc_info=True)
             return {
                 "query": query,
-                "error": f"检索失败: {str(e)}",
+                "error": f"检索失败: {e!s}",
                 "hint": "可能是代码索引未初始化或配置错误，请检查系统状态",
             }

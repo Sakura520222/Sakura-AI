@@ -1,18 +1,18 @@
 """Telegram Bot 服务层"""
 
-from typing import Optional, List, Tuple
-from sqlalchemy import select, and_
-from sqlalchemy.ext.asyncio import AsyncSession
-from loguru import logger
 
+from loguru import logger
+from sqlalchemy import and_, select
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from backend.core.config import get_settings
 from backend.models.telegram_models import (
-    TelegramUser,
-    RepoSubscription,
-    UserRepoSubscription,
     QuotaUsageLog,
+    RepoSubscription,
+    TelegramUser,
+    UserRepoSubscription,
     UserRole,
 )
-from backend.core.config import get_settings
 from backend.services.payment_service import PaymentService, is_payment_enabled
 from backend.services.quota_service import QuotaService
 
@@ -29,7 +29,7 @@ class TelegramService:
         """检查是否为超级管理员"""
         return telegram_id in settings.telegram_admin_ids_list
 
-    async def get_user_by_telegram_id(self, telegram_id: int) -> Optional[TelegramUser]:
+    async def get_user_by_telegram_id(self, telegram_id: int) -> TelegramUser | None:
         """通过 Telegram ID 获取用户"""
         result = await self.session.execute(
             select(TelegramUser).where(TelegramUser.telegram_id == telegram_id)
@@ -38,7 +38,7 @@ class TelegramService:
 
     async def get_user_by_github_username(
         self, github_username: str
-    ) -> Optional[TelegramUser]:
+    ) -> TelegramUser | None:
         """通过 GitHub 用户名获取用户"""
         # 先从数据库中查找
         result = await self.session.execute(
@@ -71,7 +71,7 @@ class TelegramService:
 
     async def check_and_consume_quota(
         self, github_username: str, repo_name: str, pr_number: int
-    ) -> Tuple[bool, str]:
+    ) -> tuple[bool, str]:
         """检查并消耗配额（原子操作，避免并发竞态条件）
 
         使用数据库原子UPDATE操作，一次性完成检查和递增，
@@ -307,7 +307,7 @@ class TelegramService:
         daily_quota: int = 10,
         weekly_quota: int = 50,
         monthly_quota: int = 200,
-    ) -> Tuple[bool, str]:
+    ) -> tuple[bool, str]:
         """添加用户"""
         # 检查是否已存在
         existing = await self.get_user_by_telegram_id(telegram_id)
@@ -333,7 +333,7 @@ class TelegramService:
         await self.session.commit()
         return True, "用户添加成功"
 
-    async def remove_user(self, github_username: str) -> Tuple[bool, str]:
+    async def remove_user(self, github_username: str) -> tuple[bool, str]:
         """移除用户"""
         user = await self.get_user_by_github_username(github_username)
         if not user:
@@ -343,7 +343,7 @@ class TelegramService:
         await self.session.commit()
         return True, "用户已移除"
 
-    async def add_repo(self, repo_name: str, added_by: int) -> Tuple[bool, str]:
+    async def add_repo(self, repo_name: str, added_by: int) -> tuple[bool, str]:
         """添加仓库到白名单"""
         # 检查是否已存在
         result = await self.session.execute(
@@ -364,7 +364,7 @@ class TelegramService:
         await self.session.commit()
         return True, "仓库添加成功"
 
-    async def remove_repo(self, repo_name: str) -> Tuple[bool, str]:
+    async def remove_repo(self, repo_name: str) -> tuple[bool, str]:
         """移除仓库（软删除）"""
         result = await self.session.execute(
             select(RepoSubscription).where(RepoSubscription.repo_name == repo_name)
@@ -380,7 +380,7 @@ class TelegramService:
 
     async def set_user_quota(
         self, github_username: str, quota_type: str, limit: int
-    ) -> Tuple[bool, str]:
+    ) -> tuple[bool, str]:
         """设置用户配额"""
         user = await self.get_user_by_github_username(github_username)
         if not user:
@@ -410,7 +410,7 @@ class TelegramService:
         await self.session.commit()
         return True, f"配额已更新: {quota_type} = {limit}"
 
-    async def get_user_quota_info(self, github_username: str) -> Optional[dict]:
+    async def get_user_quota_info(self, github_username: str) -> dict | None:
         """获取用户配额信息"""
         user = await self.get_user_by_github_username(github_username)
         if not user:
@@ -456,7 +456,7 @@ class TelegramService:
 
     async def list_all_users(
         self, *, refresh_expired_quotas: bool = False
-    ) -> List[TelegramUser]:
+    ) -> list[TelegramUser]:
         """列出所有用户。
 
         refresh_expired_quotas=True 时会执行 6 条批量 UPDATE 刷新过期配额，适合需要
@@ -471,14 +471,14 @@ class TelegramService:
         )
         return result.scalars().all()
 
-    async def list_all_repos(self) -> List[RepoSubscription]:
+    async def list_all_repos(self) -> list[RepoSubscription]:
         """列出所有仓库"""
         result = await self.session.execute(
             select(RepoSubscription).where(RepoSubscription.is_active)
         )
         return result.scalars().all()
 
-    async def get_recent_reviews(self, limit: int = 10) -> List[dict]:
+    async def get_recent_reviews(self, limit: int = 10) -> list[dict]:
         """获取最近的审查记录"""
         from backend.models.database import PRReview
 
@@ -502,7 +502,7 @@ class TelegramService:
 
     async def register_user(
         self, telegram_id: int, github_username: str
-    ) -> Tuple[bool, str]:
+    ) -> tuple[bool, str]:
         """用户自注册（配额为默认值的 register_quota_multiplier 倍）"""
         # 检查 telegram_id 是否已存在
         existing_by_id = await self.get_user_by_telegram_id(telegram_id)
@@ -572,7 +572,7 @@ class TelegramService:
         except Exception as e:
             await self.session.rollback()
             logger.error(f"用户注册失败: {e}", exc_info=True)
-            return False, f"注册失败: {str(e)}"
+            return False, f"注册失败: {e!s}"
 
         if role == UserRole.SUPER_ADMIN:
             quota_info = (
@@ -592,7 +592,7 @@ class TelegramService:
 
     async def subscribe_repo(
         self, telegram_id: int, repo_name: str
-    ) -> Tuple[bool, str]:
+    ) -> tuple[bool, str]:
         """用户订阅仓库"""
         # 检查用户是否存在
         user = await self.get_user_by_telegram_id(telegram_id)
@@ -623,12 +623,12 @@ class TelegramService:
         except Exception as e:
             await self.session.rollback()
             logger.error(f"订阅仓库失败: {e}", exc_info=True)
-            return False, f"订阅失败: {str(e)}"
+            return False, f"订阅失败: {e!s}"
         return True, f"已订阅 {repo_name}"
 
     async def unsubscribe_repo(
         self, telegram_id: int, repo_name: str
-    ) -> Tuple[bool, str]:
+    ) -> tuple[bool, str]:
         """用户取消订阅仓库"""
         result = await self.session.execute(
             select(UserRepoSubscription).where(
@@ -648,12 +648,12 @@ class TelegramService:
         except Exception as e:
             await self.session.rollback()
             logger.error(f"取消订阅仓库失败: {e}", exc_info=True)
-            return False, f"取消订阅失败: {str(e)}"
+            return False, f"取消订阅失败: {e!s}"
         return True, f"已取消订阅 {repo_name}"
 
     async def get_notification_targets(
         self, repo_name: str, author: str = ""
-    ) -> List[int]:
+    ) -> list[int]:
         """获取通知目标：作者 + 仓库订阅者（去重）"""
         chat_ids = []
         if author:
@@ -664,7 +664,7 @@ class TelegramService:
         chat_ids = list(dict.fromkeys(chat_ids + subscribers))
         return chat_ids
 
-    async def get_repo_subscribers(self, repo_name: str) -> List[int]:
+    async def get_repo_subscribers(self, repo_name: str) -> list[int]:
         """获取仓库所有订阅者的 telegram_id 列表"""
         result = await self.session.execute(
             select(UserRepoSubscription.telegram_id).where(
@@ -673,7 +673,7 @@ class TelegramService:
         )
         return list(result.scalars().all())
 
-    async def get_user_subscriptions(self, telegram_id: int) -> List[str]:
+    async def get_user_subscriptions(self, telegram_id: int) -> list[str]:
         """获取用户订阅的所有仓库名称"""
         result = await self.session.execute(
             select(UserRepoSubscription.repo_name).where(

@@ -7,8 +7,8 @@ import os
 from dataclasses import dataclass
 from pathlib import Path
 
-from backend.core.github_app import GitHubAppClient
 from backend.core.config import get_dynamic_config, get_settings
+from backend.core.github_app import GitHubAppClient
 from backend.services.agent_team.shell_executor import (
     AgentTeamShellExecutor,
     ShellCommandResult,
@@ -42,7 +42,6 @@ async def _get_repo_lock(repo_full_name: str) -> asyncio.Lock:
     部署中极难触发；驱逐时额外跳过 ``locked()`` 的活跃锁以进一步降低风险，
     极端情况下（全部活跃）允许暂时超限，优先避免并发。
     """
-    global _repo_locks
     async with _repo_locks_guard:
         # 超出上限时清理：FIFO 遍历，跳过仍被持有的活跃锁以避免竞态
         if len(_repo_locks) >= _REPO_LOCKS_MAX_SIZE:

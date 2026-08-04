@@ -14,7 +14,7 @@ from pathlib import Path
 class RuffRunner:
     """Ruff 运行器"""
 
-    def __init__(self, project_root: Path = None):
+    def __init__(self, project_root: Path | None = None):
         """初始化运行器"""
         self.project_root = project_root or Path(__file__).parent.absolute()
         self.venv_python = self._find_venv_python()
@@ -60,6 +60,7 @@ class RuffRunner:
                 text=True,
                 encoding="utf-8",
                 cwd=self.project_root,
+                check=False,
             )
             return result.returncode, result.stdout, result.stderr
         except Exception as e:

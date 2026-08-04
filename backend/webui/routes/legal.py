@@ -4,7 +4,7 @@
 这些页面使用独立模板（不继承 base.html），不依赖登录态。
 """
 
-from fastapi import APIRouter, Request, Depends
+from fastapi import APIRouter, Depends, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.services.payment_service import PaymentService

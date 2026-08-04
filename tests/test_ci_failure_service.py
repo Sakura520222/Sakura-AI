@@ -1,7 +1,7 @@
 """CIFailureService 单元测试。"""
 
 import json
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
@@ -12,7 +12,7 @@ from backend.services.ci_failure_service import CIFailureService
 
 
 def _utcnow_naive() -> datetime:
-    return datetime.now(timezone.utc).replace(tzinfo=None)
+    return datetime.now(UTC).replace(tzinfo=None)
 
 
 class _Result:
@@ -292,7 +292,7 @@ async def test_record_workflow_job_failure_stores_failed_steps(ci_store):
         "owner", "repo", "owner/repo", 8, "sha2", payload
     )
 
-    failure = list(ci_store["ci_failures"].values())[0]
+    failure = next(iter(ci_store["ci_failures"].values()))
     assert failure.source == "workflow_job"
     assert failure.name == "tests"
     assert failure.conclusion == "timed_out"
@@ -412,7 +412,7 @@ async def test_record_caps_annotations_at_storage_time(ci_store):
         "owner", "repo", "owner/repo", 7, "sha3", payload
     )
 
-    failure = list(ci_store["ci_failures"].values())[0]
+    failure = next(iter(ci_store["ci_failures"].values()))
     # 配置 max_annotations_per_record=1，存储 1 条
     stored = json.loads(failure.annotations_json)
     assert len(stored) == 1

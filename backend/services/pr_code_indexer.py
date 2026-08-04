@@ -4,11 +4,12 @@
 """
 
 import asyncio
-from typing import Dict, Any, Optional, Tuple
+from typing import Any
+
 from loguru import logger
 
-from backend.services.code_index_service import get_code_index_service
 from backend.core.github_app import GitHubAppClient
+from backend.services.code_index_service import get_code_index_service
 
 # 无扩展名的特殊代码/配置文件
 _SPECIAL_CODE_FILES = frozenset(
@@ -49,7 +50,7 @@ class PRCodeIndexer:
 
     def _fetch_pr_files_sync(
         self, repo_full_name: str, pr_number: int
-    ) -> Tuple[Optional[list], Optional[str], Optional[str]]:
+    ) -> tuple[list | None, str | None, str | None]:
         """同步获取PR的文件列表（在线程池中运行）
 
         Args:
@@ -104,7 +105,7 @@ class PRCodeIndexer:
         repo_full_name: str,
         pr_number: int,
         install_id: int,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """索引PR的变更文件
 
         Args:
@@ -171,8 +172,9 @@ class PRCodeIndexer:
         Returns:
             是否为代码文件
         """
-        from backend.services.code_parser_service import CodeParserService
         from pathlib import Path
+
+        from backend.services.code_parser_service import CodeParserService
 
         # 检查特殊文件名（无扩展名或固定名称的配置/构建文件）
         if Path(file_path).name in _SPECIAL_CODE_FILES:
@@ -220,7 +222,7 @@ class PRCodeIndexer:
 
 
 # 全局单例
-_pr_code_indexer_instance: Optional[PRCodeIndexer] = None
+_pr_code_indexer_instance: PRCodeIndexer | None = None
 
 
 def get_pr_code_indexer() -> PRCodeIndexer:

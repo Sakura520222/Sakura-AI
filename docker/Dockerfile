@@ -1,5 +1,5 @@
 # Sakura AI Reviewer Dockerfile
-FROM python:3.11-slim
+FROM python:3.14-slim
 
 # 设置工作目录
 WORKDIR /app

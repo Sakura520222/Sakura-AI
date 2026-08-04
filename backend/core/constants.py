@@ -2,7 +2,6 @@
 
 import base64
 
-
 # Android APK 签名证书指纹 — 签名密钥轮换时须同步更新。
 ANDROID_SHA256_CERT_FINGERPRINTS: tuple[str, ...] = (
     "4B:57:6D:C7:65:07:4C:EC:1A:50:37:E2:F1:FE:F1:AC:47:43:7E:87:E6:70:4C:F8:7E:0B:D1:5C:B4:A7:CB:38",

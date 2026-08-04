@@ -10,13 +10,14 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import Any, Callable
+from typing import Any
 
 from loguru import logger
 
-from backend.models.agent_team_models import AgentTeamUserPrompt
 from backend.models import database as db_module
+from backend.models.agent_team_models import AgentTeamUserPrompt
 from backend.models.database import utc_now
 from backend.services.agent_team.conversation_checkpoint import (
     ConversationCheckpointService,
@@ -25,12 +26,12 @@ from backend.services.agent_team.conversation_checkpoint import (
 from backend.services.agent_team.conversation_context import (
     AgentTeamConversationContextService,
 )
-from backend.services.agent_team.git_workspace_service import (
-    AgentTeamGitWorkspaceService,
-)
 from backend.services.agent_team.fullstack_expert import (
     FullStackExpertAgent,
     FullStackResult,
+)
+from backend.services.agent_team.git_workspace_service import (
+    AgentTeamGitWorkspaceService,
 )
 from backend.services.agent_team.professional_reviewer import (
     ProfessionalReviewAgent,

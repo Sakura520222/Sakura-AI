@@ -2,11 +2,9 @@
 
 from __future__ import annotations
 
+from sqlalchemy import TIMESTAMP, Column, Integer, String, Text
 
-from sqlalchemy import Column, Integer, String, Text, TIMESTAMP
-
-from backend.models.database import Base
-from backend.models.database import utc_now
+from backend.models.database import Base, utc_now
 
 
 class AgentSkill(Base):

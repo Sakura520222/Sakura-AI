@@ -5,7 +5,7 @@
 - _tool_list_directory (1587-1711行)
 """
 
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 from loguru import logger
 
@@ -19,7 +19,7 @@ from backend.services.ai_reviewer.constants import (
 
 
 def format_search_results(
-    lines: List[str], match_indices: List[int], context_lines: int
+    lines: list[str], match_indices: list[int], context_lines: int
 ) -> str:
     """Format search results with line numbers and match markers.
 
@@ -59,26 +59,26 @@ class _ContentsFetchResult:
     """
 
     __slots__ = (
-        "contents",
         "branch_requested",
         "branch_used",
-        "tried_branches",
+        "contents",
         "error",
+        "tried_branches",
     )
 
     def __init__(self) -> None:
         self.contents: Any = None
-        self.branch_requested: Optional[str] = None
-        self.branch_used: Optional[str] = None
-        self.tried_branches: List[str] = []
-        self.error: Optional[str] = None
+        self.branch_requested: str | None = None
+        self.branch_used: str | None = None
+        self.tried_branches: list[str] = []
+        self.error: str | None = None
 
     @property
     def ok(self) -> bool:
         return self.contents is not None and self.error is None
 
 
-def _normalize_branch(branch: Optional[str]) -> Optional[str]:
+def _normalize_branch(branch: str | None) -> str | None:
     """规整分支名：去除首尾空白，空字符串视为未传。"""
     normalized = (branch or "").strip()
     return normalized or None
@@ -106,7 +106,7 @@ class FileToolHandler:
         path: str,
         repo: Any,
         pr: Any,
-        branch: Optional[str],
+        branch: str | None,
         *,
         path_kind: str = "路径",
     ) -> _ContentsFetchResult:
@@ -160,13 +160,13 @@ class FileToolHandler:
         result.branch_requested = normalized_branch
         default_branch = getattr(repo, "default_branch", None)
 
-        candidate_refs: List[str] = []
+        candidate_refs: list[str] = []
         if normalized_branch:
             candidate_refs.append(normalized_branch)
         if default_branch:
             candidate_refs.append(default_branch)
 
-        last_error: Optional[str] = None
+        last_error: str | None = None
         for ref in candidate_refs:
             result.tried_branches.append(ref)
             try:
@@ -197,12 +197,12 @@ class FileToolHandler:
         file_path: str,
         repo: Any,
         pr: Any,
-        start_line: Optional[int] = None,
-        end_line: Optional[int] = None,
-        search_pattern: Optional[str] = None,
-        context_lines: Optional[int] = None,
-        branch: Optional[str] = None,
-    ) -> Dict[str, Any]:
+        start_line: int | None = None,
+        end_line: int | None = None,
+        search_pattern: str | None = None,
+        context_lines: int | None = None,
+        branch: str | None = None,
+    ) -> dict[str, Any]:
         """读取文件内容的工具实现
 
         支持三种模式：
@@ -459,7 +459,7 @@ class FileToolHandler:
             logger.error(f"读取文件 {file_path} 时发生未预期的错误: {e}", exc_info=True)
             return {
                 "file_path": file_path,
-                "error": f"读取文件时发生错误: {str(e)}",
+                "error": f"读取文件时发生错误: {e!s}",
                 "hint": "请检查文件路径是否正确，或基于PR diff进行审查",
             }
 
@@ -468,8 +468,8 @@ class FileToolHandler:
         directory: str,
         repo: Any,
         pr: Any,
-        branch: Optional[str] = None,
-    ) -> Dict[str, Any]:
+        branch: str | None = None,
+    ) -> dict[str, Any]:
         """列出目录内容的工具实现
 
         Args:
@@ -580,7 +580,7 @@ class FileToolHandler:
             logger.error(f"列出目录 {directory} 时发生未预期的错误: {e}", exc_info=True)
             return {
                 "directory": directory,
-                "error": f"列出目录时发生错误: {str(e)}",
+                "error": f"列出目录时发生错误: {e!s}",
                 "hint": "请检查目录路径是否正确，或基于PR diff进行审查",
                 "items": [],
                 "count": 0,

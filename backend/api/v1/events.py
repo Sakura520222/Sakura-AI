@@ -6,8 +6,8 @@ import json
 from fastapi import APIRouter, Depends, Request
 from fastapi.responses import StreamingResponse
 
-from backend.webui.sse import sse_manager
 from backend.api.v1.deps import require_api_auth
+from backend.webui.sse import sse_manager
 
 router = APIRouter(tags=["Events"])
 
@@ -29,7 +29,7 @@ async def sse_events(
                 try:
                     event = await asyncio.wait_for(queue.get(), timeout=30)
                     yield f"event: {event['type']}\ndata: {json.dumps(event['data'])}\n\n"
-                except asyncio.TimeoutError:
+                except TimeoutError:
                     yield ": keepalive\n\n"
         finally:
             sse_manager.unsubscribe(channel, queue)

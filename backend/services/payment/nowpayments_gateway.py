@@ -30,8 +30,7 @@ API 流程：
 import hashlib
 import hmac
 import json
-from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
-from typing import Optional
+from decimal import ROUND_HALF_UP, Decimal, InvalidOperation
 
 import httpx
 from loguru import logger
@@ -150,7 +149,7 @@ class NowPaymentsGateway(PaymentGateway):
             )
             return 0
         scale = Decimal(10) ** decimals
-        return int((value * scale).quantize(Decimal("1"), rounding=ROUND_HALF_UP))
+        return int((value * scale).quantize(Decimal(1), rounding=ROUND_HALF_UP))
 
     @classmethod
     def _from_minor_units(cls, amount: int, currency: str) -> int | float:
@@ -216,7 +215,7 @@ class NowPaymentsGateway(PaymentGateway):
         user_id: int,
         success_url: str,
         cancel_url: str,
-        metadata: Optional[dict[str, str]] = None,
+        metadata: dict[str, str] | None = None,
     ) -> PaymentIntentResult:
         """调用 NOWPayments 创建支付，返回充值地址
 
@@ -359,8 +358,8 @@ class NowPaymentsGateway(PaymentGateway):
     async def refund(
         self,
         provider_tx_id: str,
-        amount_cents: Optional[int] = None,
-        reason: Optional[str] = None,
+        amount_cents: int | None = None,
+        reason: str | None = None,
     ) -> RefundResult:
         """NOWPayments 不支持 API 退款，需在 Dashboard 手动操作"""
         logger.warning(

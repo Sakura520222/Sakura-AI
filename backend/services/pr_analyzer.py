@@ -1,13 +1,14 @@
 """PR分析服务"""
 
 import asyncio
-from typing import Dict, List, Optional, Tuple, TypedDict
+from typing import TypedDict
 
 try:
     from typing import NotRequired
 except ImportError:
-    from typing_extensions import NotRequired
+    from typing import NotRequired
 from dataclasses import dataclass
+
 from loguru import logger
 
 from backend.core.config import get_settings, get_strategy_config
@@ -36,7 +37,7 @@ class PRFileInfo:
     additions: int
     deletions: int
     changes: int
-    patch: Optional[str] = None
+    patch: str | None = None
     is_code_file: bool = False
 
 
@@ -55,33 +56,33 @@ class PRAnalysis:
     total_changes: int
 
     # 代码文件统计
-    code_files: List[PRFileInfo]
+    code_files: list[PRFileInfo]
     code_file_count: int
     code_changes: int
 
     # 策略判断
     strategy: str
     should_skip: bool
-    skip_reason: Optional[str] = None
+    skip_reason: str | None = None
 
     # Diff 安全区：每个文件的变更行号白名单
     # 格式：{"file_path.py": {10, 15, 20, 25}, "another.py": {5, 10}}
-    changed_lines_map: Dict[str, set] = None
+    changed_lines_map: dict[str, set] = None
 
     # Hunk 边界：每个文件的 hunk 行范围列表，用于检测跨 hunk 多行评论
     # 格式：{"file.py": [(10, 20), (50, 65)], ...}
-    hunk_boundaries: Dict[str, List[Tuple[int, int]]] = None
+    hunk_boundaries: dict[str, list[tuple[int, int]]] = None
 
     # 原代码缩进映射：每个 PR 后行号 → 该行的前导空白
     # 格式：{"file.py": {10: "    ", 11: "        "}, ...}
     # 用于一键应用 suggestion 块的缩进兜底对齐（AI 偶尔丢失缩进时按原代码补齐）
-    original_indent_map: Dict[str, Dict[int, str]] = None
+    original_indent_map: dict[str, dict[int, str]] = None
 
     # 增量审查标记
     is_incremental: bool = False
 
     # 增量审查时的新提交信息
-    new_commits: Optional[List[CommitInfo]] = None
+    new_commits: list[CommitInfo] | None = None
 
 
 class PRAnalyzer:
@@ -90,11 +91,11 @@ class PRAnalyzer:
     def __init__(self):
         self.github_app = GitHubAppClient()
 
-    async def analyze_pr(self, pr_info: Dict[str, any]) -> PRAnalysis:
+    async def analyze_pr(self, pr_info: dict[str, any]) -> PRAnalysis:
         """分析PR并返回分析结果（将 PyGithub 同步调用移到线程池避免阻塞事件循环）"""
         return await asyncio.to_thread(self._analyze_pr_sync, pr_info)
 
-    def _analyze_pr_sync(self, pr_info: Dict[str, any]) -> PRAnalysis:
+    def _analyze_pr_sync(self, pr_info: dict[str, any]) -> PRAnalysis:
         """同步执行 PR 分析（在线程池中运行）"""
         try:
             # 获取GitHub客户端
@@ -252,11 +253,11 @@ class PRAnalyzer:
             raise
 
     def _extract_changed_lines(
-        self, code_files: List[PRFileInfo]
-    ) -> Tuple[
-        Dict[str, set],
-        Dict[str, List[Tuple[int, int]]],
-        Dict[str, Dict[int, str]],
+        self, code_files: list[PRFileInfo]
+    ) -> tuple[
+        dict[str, set],
+        dict[str, list[tuple[int, int]]],
+        dict[str, dict[int, str]],
     ]:
         """从文件 patch 中提取变更的行号（Diff 安全区）、hunk 边界和原代码缩进
 
@@ -278,7 +279,7 @@ class PRAnalyzer:
 
         changed_lines = {}
         hunk_boundaries = {}
-        original_indent: Dict[str, Dict[int, str]] = {}
+        original_indent: dict[str, dict[int, str]] = {}
 
         for file_info in code_files:
             if not file_info.patch:
@@ -293,7 +294,7 @@ class PRAnalyzer:
             # -removed_line
             lines = file_info.patch.split("\n")
             file_changed_lines = set()
-            file_original_indent: Dict[int, str] = {}
+            file_original_indent: dict[int, str] = {}
 
             i = 0
             hunk_count = 0
@@ -407,7 +408,7 @@ class PRAnalyzer:
 
     def _should_skip_review(
         self, code_file_count: int, code_changes: int, total_files: int
-    ) -> Tuple[bool, Optional[str]]:
+    ) -> tuple[bool, str | None]:
         """判断是否应该跳过审查"""
         # 检查是否有代码文件
         if code_file_count == 0:
@@ -434,7 +435,7 @@ class PRAnalyzer:
 
     async def get_project_structure(
         self, repo: any, max_files: int | None = None
-    ) -> List[str]:
+    ) -> list[str]:
         """获取项目的目录结构（将 PyGithub 同步调用移到线程池）"""
         if max_files is None:
             max_files = self._get_max_structure_files()
@@ -450,7 +451,7 @@ class PRAnalyzer:
         except Exception:
             return 500
 
-    def _get_project_structure_sync(self, repo: any, max_files: int = 500) -> List[str]:
+    def _get_project_structure_sync(self, repo: any, max_files: int = 500) -> list[str]:
         """获取项目的目录结构
 
         Args:
@@ -505,13 +506,13 @@ class PRAnalyzer:
 
     async def prepare_review_context(
         self, analysis: PRAnalysis, pr: any
-    ) -> Dict[str, any]:
+    ) -> dict[str, any]:
         """准备审查上下文（将 PyGithub 同步调用移到线程池）"""
         return await asyncio.to_thread(self._prepare_review_context_sync, analysis, pr)
 
     def _prepare_review_context_sync(
         self, analysis: PRAnalysis, pr: any
-    ) -> Dict[str, any]:
+    ) -> dict[str, any]:
         """准备审查上下文
 
         优化说明：

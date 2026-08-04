@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 import enum
+from dataclasses import dataclass
 from typing import Any
 
 from sqlalchemy import select
@@ -57,7 +57,7 @@ def parse_blocking_severities(value: Any) -> set[str]:
 
 async def schedule_agent_pr_review_iteration(task_id: int, review_id: int) -> Any:
     """Schedule an Agent Team iteration for Sakura PR review feedback."""
-    from backend.workers.agent_team_worker import (  # noqa: PLC0415
+    from backend.workers.agent_team_worker import (
         submit_agent_team_pr_review_iteration,
     )
 

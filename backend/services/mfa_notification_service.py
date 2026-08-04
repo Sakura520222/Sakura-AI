@@ -6,9 +6,9 @@ their ``user_id`` and delegates to ``NotificationSender.send_mfa_event``.
 
 from __future__ import annotations
 
+from loguru import logger
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
-from loguru import logger
 
 from backend.models.telegram_models import TelegramUser
 from backend.telegram.notifications import get_notification_sender

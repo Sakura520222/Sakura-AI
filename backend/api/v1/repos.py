@@ -6,20 +6,18 @@ from fastapi import APIRouter, Depends
 from loguru import logger
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from backend.api.v1.deps import require_api_admin, require_api_super_admin
+from backend.api.v1.responses import error_response, success_response
 from backend.webui.deps import get_db
 from backend.webui.helpers.admin_log import log_admin_action
-
-from backend.api.v1.deps import require_api_admin, require_api_super_admin
-from backend.api.v1.responses import success_response, error_response
-
 from backend.webui.routes.repos import (
+    _active_index_tasks,
     _get_installations_with_stats,
     _is_index_locked,
-    _run_docs_index,
     _run_code_index,
+    _run_docs_index,
     _run_issues_index,
     _run_repo_scan,
-    _active_index_tasks,
 )
 
 router = APIRouter(prefix="/repos", tags=["Repos"])

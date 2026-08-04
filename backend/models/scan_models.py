@@ -4,13 +4,13 @@ import enum
 from datetime import datetime
 
 from sqlalchemy import (
+    TIMESTAMP,
     BigInteger,
     Column,
     ForeignKey,
     Integer,
     String,
     Text,
-    TIMESTAMP,
 )
 from sqlalchemy.orm import relationship
 

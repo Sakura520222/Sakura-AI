@@ -3,17 +3,18 @@
 import asyncio
 import json
 import uuid
-from typing import Dict, Any, Optional
-from loguru import logger
+from typing import Any
 
-from backend.core.config import get_settings, get_dynamic_config
+from loguru import logger
+from sqlalchemy import and_, func, select
+
+from backend.core.config import get_dynamic_config, get_settings
 from backend.core.github_app import GitHubAppClient
 from backend.models.database import (
-    async_session,
     IssueAnalysis,
     IssueAnalysisStatus,
+    async_session,
 )
-from sqlalchemy import select, and_, func
 from backend.services.issue_analyzer import IssueAnalyzer
 from backend.services.issue_service import issue_service
 
@@ -73,7 +74,7 @@ class IssueWorker:
         except Exception as exc:
             logger.debug("Issue 活动事件记录失败: {}", exc)
 
-    async def process_issue_analysis(self, issue_info: Dict[str, Any]) -> str:
+    async def process_issue_analysis(self, issue_info: dict[str, Any]) -> str:
         """处理 Issue 分析任务
 
         Args:
@@ -570,7 +571,7 @@ class IssueWorker:
                                 record.id,
                                 "error",
                                 {
-                                    "message": f"Issue 分析失败: {str(e)}",
+                                    "message": f"Issue 分析失败: {e!s}",
                                 },
                             )
 
@@ -623,7 +624,7 @@ class IssueWorker:
             logger.warning(f"归档旧版本分析失败: {e}")
 
 
-_worker_instance: Optional[IssueWorker] = None
+_worker_instance: IssueWorker | None = None
 
 
 def get_issue_worker() -> IssueWorker:
@@ -634,7 +635,7 @@ def get_issue_worker() -> IssueWorker:
     return _worker_instance
 
 
-async def submit_issue_analysis_task(issue_info: Dict[str, Any]) -> str:
+async def submit_issue_analysis_task(issue_info: dict[str, Any]) -> str:
     """提交 Issue 分析任务"""
     task_id = str(uuid.uuid4())
     issue_info["task_id"] = task_id

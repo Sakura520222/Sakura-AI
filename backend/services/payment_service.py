@@ -2,30 +2,29 @@
 
 import json
 import uuid
-from datetime import datetime, timedelta, timezone
-from typing import List, Optional
+from datetime import UTC, datetime, timedelta
 
-from sqlalchemy import select, and_, func
+from loguru import logger
+from sqlalchemy import and_, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
-from loguru import logger
 
+from backend.core.config import get_dynamic_config, get_settings
 from backend.models.payment_models import (
-    Plan,
-    PlanType,
     Order,
     OrderStatus,
+    PaymentAction,
+    PaymentLog,
+    Plan,
+    PlanType,
     RedeemCode,
     RedeemCodeStatus,
-    UserSubscription,
-    SubscriptionStatus,
-    PaymentLog,
-    PaymentAction,
     RefundRequest,
     RefundRequestStatus,
+    SubscriptionStatus,
+    UserSubscription,
 )
 from backend.models.telegram_models import TelegramUser
-from backend.core.config import get_dynamic_config, get_settings
 from backend.services.refund_notification_service import (
     notify_refund_request_approved,
     notify_refund_request_failed,
@@ -81,7 +80,7 @@ class PaymentService:
         plan_type: str,
         price_cents: int,
         currency: str = "CNY",
-        duration_days: Optional[int] = None,
+        duration_days: int | None = None,
         pr_quota_bonus: int = 0,
         pr_daily_add: int = 0,
         pr_weekly_add: int = 0,
@@ -94,7 +93,7 @@ class PaymentService:
         agent_daily_add: int = 0,
         agent_weekly_add: int = 0,
         agent_monthly_add: int = 0,
-        description: Optional[str] = None,
+        description: str | None = None,
         sort_order: int = 0,
     ) -> Plan:
         plan = Plan(
@@ -135,14 +134,14 @@ class PaymentService:
         await self.session.flush()
         return plan
 
-    async def list_plans(self, active_only: bool = False) -> List[Plan]:
+    async def list_plans(self, active_only: bool = False) -> list[Plan]:
         stmt = select(Plan).order_by(Plan.sort_order, Plan.id)
         if active_only:
             stmt = stmt.where(Plan.is_active)
         result = await self.session.execute(stmt)
         return list(result.scalars().all())
 
-    async def get_plan(self, plan_id: int) -> Optional[Plan]:
+    async def get_plan(self, plan_id: int) -> Plan | None:
         stmt = select(Plan).where(Plan.id == plan_id)
         result = await self.session.execute(stmt)
         return result.scalar_one_or_none()
@@ -247,11 +246,11 @@ class PaymentService:
         self,
         plan_id: int,
         count: int,
-        batch_name: Optional[str] = None,
+        batch_name: str | None = None,
         max_uses: int = 1,
-        expires_at: Optional[datetime] = None,
-        created_by: Optional[int] = None,
-    ) -> List[RedeemCode]:
+        expires_at: datetime | None = None,
+        created_by: int | None = None,
+    ) -> list[RedeemCode]:
         plan = await self.get_plan(plan_id)
         if not plan:
             raise PaymentError(f"Plan not found: {plan_id}")
@@ -277,11 +276,11 @@ class PaymentService:
 
     async def list_redeem_codes(
         self,
-        batch_name: Optional[str] = None,
-        status: Optional[str] = None,
+        batch_name: str | None = None,
+        status: str | None = None,
         limit: int = 50,
         offset: int = 0,
-    ) -> tuple[List[RedeemCode], int]:
+    ) -> tuple[list[RedeemCode], int]:
         conditions = []
         if batch_name:
             conditions.append(RedeemCode.batch_name == batch_name)
@@ -303,7 +302,7 @@ class PaymentService:
         result = await self.session.execute(stmt)
         return list(result.scalars().all()), total
 
-    async def get_redeem_code(self, code_id: int) -> Optional[RedeemCode]:
+    async def get_redeem_code(self, code_id: int) -> RedeemCode | None:
         """按 ID 获取单个兑换码"""
         stmt = select(RedeemCode).where(RedeemCode.id == code_id)
         result = await self.session.execute(stmt)
@@ -423,7 +422,7 @@ class PaymentService:
         if not redeem:
             raise PaymentError("Invalid or inactive redeem code")
 
-        if redeem.expires_at and redeem.expires_at < datetime.now(timezone.utc):
+        if redeem.expires_at and redeem.expires_at < datetime.now(UTC):
             raise PaymentError("Redeem code has expired")
 
         if redeem.used_count >= redeem.max_uses:
@@ -446,7 +445,7 @@ class PaymentService:
             status=OrderStatus.PAID.value,
             payment_provider="redeem_code",
             provider_tx_id=code,
-            paid_at=datetime.now(timezone.utc),
+            paid_at=datetime.now(UTC),
         )
         self.session.add(order)
         await self.session.flush()
@@ -491,7 +490,7 @@ class PaymentService:
             currency=plan.currency,
             status=OrderStatus.PENDING.value,
             payment_provider=provider,
-            expires_at=datetime.now(timezone.utc) + timedelta(minutes=expire_minutes),
+            expires_at=datetime.now(UTC) + timedelta(minutes=expire_minutes),
         )
         self.session.add(order)
         await self.session.flush()
@@ -732,8 +731,8 @@ class PaymentService:
     async def _validate_payment_amount(
         self,
         order: Order,
-        paid_amount_cents: Optional[int],
-        paid_currency: Optional[str],
+        paid_amount_cents: int | None,
+        paid_currency: str | None,
     ) -> None:
         """Validate webhook amount before fulfilling an order.
 
@@ -805,8 +804,8 @@ class PaymentService:
         self,
         order_no: str,
         provider_tx_id: str,
-        paid_amount_cents: Optional[int] = None,
-        paid_currency: Optional[str] = None,
+        paid_amount_cents: int | None = None,
+        paid_currency: str | None = None,
     ) -> Order:
         """Confirm payment for a PENDING order (PENDING -> PAID -> FULFILLED)"""
         # 仅按 order_no 查询，provider_tx_id 在创建时设为 order_no，
@@ -840,7 +839,7 @@ class PaymentService:
 
         order.provider_tx_id = provider_tx_id
         order.status = OrderStatus.PAID.value
-        order.paid_at = datetime.now(timezone.utc)
+        order.paid_at = datetime.now(UTC)
 
         await self._log_payment(
             order_id=order.id,
@@ -858,7 +857,7 @@ class PaymentService:
         )
         return order
 
-    async def cancel_expired_order(self, order_no: str) -> Optional[Order]:
+    async def cancel_expired_order(self, order_no: str) -> Order | None:
         """Cancel an expired PENDING order (idempotent).
 
         Returns the cancelled order, or ``None`` when the order is already
@@ -895,7 +894,7 @@ class PaymentService:
         logger.info("Order cancelled: order_no={}", order_no)
         return order
 
-    async def cancel_and_commit_if_needed(self, order_no: str) -> Optional[Order]:
+    async def cancel_and_commit_if_needed(self, order_no: str) -> Order | None:
         """Cancel an expired order and commit when it was actually cancelled.
 
         Thin wrapper around :meth:`cancel_expired_order` shared by webhook
@@ -957,8 +956,8 @@ class PaymentService:
     async def process_refund(
         self,
         order_id: int,
-        amount_cents: Optional[int] = None,
-        operator_id: Optional[int] = None,
+        amount_cents: int | None = None,
+        operator_id: int | None = None,
     ) -> Order:
         """Process refund for a FULFILLED order"""
         order = await self.session.get(Order, order_id)
@@ -1112,10 +1111,10 @@ class PaymentService:
 
     async def list_refund_requests(
         self,
-        status: Optional[str] = None,
+        status: str | None = None,
         limit: int = 50,
         offset: int = 0,
-    ) -> tuple[List[RefundRequest], int]:
+    ) -> tuple[list[RefundRequest], int]:
         """List refund requests for admin review."""
         conditions = []
         if status:
@@ -1168,7 +1167,7 @@ class PaymentService:
     async def get_refund_request(
         self,
         request_id: int,
-    ) -> Optional[RefundRequest]:
+    ) -> RefundRequest | None:
         stmt = (
             select(RefundRequest)
             .options(
@@ -1200,7 +1199,7 @@ class PaymentService:
                 f"Cannot approve refund request in status: {refund_request.status}"
             )
 
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         refund_request.reviewed_by = reviewer_id
         refund_request.reviewed_at = now
         refund_request.review_note = (review_note or "").strip() or None
@@ -1213,7 +1212,7 @@ class PaymentService:
             )
             refund_request.order = order
             refund_request.status = RefundRequestStatus.APPROVED.value
-            refund_request.processed_at = datetime.now(timezone.utc)
+            refund_request.processed_at = datetime.now(UTC)
             refund_request.error_message = None
             await self.session.flush()
             await notify_refund_request_approved(self.session, refund_request)
@@ -1265,7 +1264,7 @@ class PaymentService:
 
         refund_request.status = RefundRequestStatus.REJECTED.value
         refund_request.reviewed_by = reviewer_id
-        refund_request.reviewed_at = datetime.now(timezone.utc)
+        refund_request.reviewed_at = datetime.now(UTC)
         refund_request.review_note = (review_note or "").strip() or None
         refund_request.error_message = None
         await self.session.flush()
@@ -1281,7 +1280,7 @@ class PaymentService:
         self,
         user_id: int,
         plan_id: int,
-        operator_id: Optional[int] = None,
+        operator_id: int | None = None,
     ) -> Order:
         """管理员手动为用户充值"""
         plan = await self.get_plan(plan_id)
@@ -1300,7 +1299,7 @@ class PaymentService:
             currency=plan.currency,
             status=OrderStatus.PAID.value,
             payment_provider="manual",
-            paid_at=datetime.now(timezone.utc),
+            paid_at=datetime.now(UTC),
         )
         self.session.add(order)
         await self.session.flush()
@@ -1328,22 +1327,22 @@ class PaymentService:
 
     # ========== 订阅管理 ==========
 
-    async def get_active_subscription(self, user_id: int) -> Optional[UserSubscription]:
+    async def get_active_subscription(self, user_id: int) -> UserSubscription | None:
         await self.expire_due_subscriptions(user_id)
         stmt = select(UserSubscription).where(
             and_(
                 UserSubscription.user_id == user_id,
                 UserSubscription.status == SubscriptionStatus.ACTIVE.value,
-                UserSubscription.expires_at > datetime.now(timezone.utc),
+                UserSubscription.expires_at > datetime.now(UTC),
             )
         )
         result = await self.session.execute(stmt)
         return result.scalar_one_or_none()
 
-    async def expire_due_subscriptions(self, user_id: Optional[int] = None) -> int:
+    async def expire_due_subscriptions(self, user_id: int | None = None) -> int:
         conditions = [
             UserSubscription.status == SubscriptionStatus.ACTIVE.value,
-            UserSubscription.expires_at <= datetime.now(timezone.utc),
+            UserSubscription.expires_at <= datetime.now(UTC),
         ]
         if user_id is not None:
             conditions.append(UserSubscription.user_id == user_id)
@@ -1367,7 +1366,7 @@ class PaymentService:
         user_id: int,
         limit: int = 20,
         offset: int = 0,
-    ) -> tuple[List[Order], int]:
+    ) -> tuple[list[Order], int]:
         count_stmt = (
             select(func.count()).select_from(Order).where(Order.user_id == user_id)
         )
@@ -1390,13 +1389,13 @@ class PaymentService:
         order: Order,
         user: TelegramUser,
         plan: Plan,
-        operator_id: Optional[int] = None,
+        operator_id: int | None = None,
     ) -> Order:
         """发放套餐配额到用户"""
         user = await self._apply_plan_to_user(user, plan)
 
         order.status = OrderStatus.FULFILLED.value
-        order.fulfilled_at = datetime.now(timezone.utc)
+        order.fulfilled_at = datetime.now(UTC)
 
         if plan.plan_type == PlanType.SUBSCRIPTION.value:
             await self._upsert_subscription(user.id, plan, order.id)
@@ -1475,7 +1474,7 @@ class PaymentService:
         values = self._plan_quota_values(plan)
         if existing:
             existing.status = SubscriptionStatus.ACTIVE.value
-            existing.expires_at = datetime.now(timezone.utc) + timedelta(
+            existing.expires_at = datetime.now(UTC) + timedelta(
                 days=plan.duration_days or 30
             )
             existing.applied_pr_quota_bonus = values["pr_quota_bonus"]
@@ -1498,7 +1497,7 @@ class PaymentService:
             user_id=user_id,
             plan_id=plan.id,
             status=SubscriptionStatus.ACTIVE.value,
-            expires_at=datetime.now(timezone.utc)
+            expires_at=datetime.now(UTC)
             + timedelta(days=plan.duration_days or 30),
             applied_pr_quota_bonus=values["pr_quota_bonus"],
             applied_pr_daily_add=values["pr_daily_add"],
@@ -1678,8 +1677,8 @@ class PaymentService:
         order_id: int,
         user_id: int,
         action: str,
-        detail: Optional[str] = None,
-        operator_id: Optional[int] = None,
+        detail: str | None = None,
+        operator_id: int | None = None,
     ):
         log = PaymentLog(
             order_id=order_id,
@@ -1692,6 +1691,6 @@ class PaymentService:
 
     @staticmethod
     def _generate_order_no() -> str:
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         short_uuid = uuid.uuid4().hex[:8].upper()
         return f"ORD{now.strftime('%Y%m%d%H%M%S')}{short_uuid}"

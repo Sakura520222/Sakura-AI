@@ -8,18 +8,17 @@
 from __future__ import annotations
 
 import asyncio
-from typing import Any, Optional
+from typing import Any
 
 from loguru import logger
 
 from backend.core.config import get_strategy_config
 from backend.services.agent_team.tools.base import BaseTool, ToolContext, ToolResult
 
-
 # ── 路径安全校验 ──────────────────────────────────────────
 
 
-def _validate_sakura_path(user_input: str) -> Optional[str]:
+def _validate_sakura_path(user_input: str) -> str | None:
     """验证并规范化 .sakura/ 下的路径，防止路径遍历"""
     normalized = user_input.strip().replace("\\", "/")
     if "../" in normalized or "..\\" in user_input:
@@ -110,7 +109,7 @@ class ReadSakuraDocsTool(BaseTool):
         )
 
     async def _get_docs_overview(
-        self, repo: Any, sakura_ref: Optional[str]
+        self, repo: Any, sakura_ref: str | None
     ) -> ToolResult:
         """返回 .sakura/ 所有文档概览"""
         try:
@@ -157,8 +156,8 @@ class ReadSakuraDocsTool(BaseTool):
 
     @staticmethod
     async def _read_file(
-        repo: Any, sakura_ref: Optional[str], path: str
-    ) -> Optional[str]:
+        repo: Any, sakura_ref: str | None, path: str
+    ) -> str | None:
         try:
             ref = sakura_ref or "main"
 
@@ -174,8 +173,8 @@ class ReadSakuraDocsTool(BaseTool):
 
     @staticmethod
     async def _list_dir(
-        repo: Any, sakura_ref: Optional[str], path: str
-    ) -> Optional[list]:
+        repo: Any, sakura_ref: str | None, path: str
+    ) -> list | None:
         try:
             ref = sakura_ref or "main"
 
@@ -279,8 +278,8 @@ class ListSakuraDirectoryTool(BaseTool):
 
     @staticmethod
     async def _list_dir(
-        repo: Any, sakura_ref: Optional[str], path: str
-    ) -> Optional[list]:
+        repo: Any, sakura_ref: str | None, path: str
+    ) -> list | None:
         try:
             ref = sakura_ref or "main"
 

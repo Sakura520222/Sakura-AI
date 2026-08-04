@@ -395,12 +395,12 @@ class SetupService:
         Args:
             database_url: 数据库连接字符串
         """
+        from backend.models import database as db_module
         from backend.models.database import (
-            init_async_db,
             create_tables_async,
+            init_async_db,
             insert_default_configs_async,
         )
-        from backend.models import database as db_module
 
         if db_module.async_engine is None:
             init_async_db(database_url)
@@ -417,15 +417,14 @@ class SetupService:
             telegram_id: 管理员的 Telegram 用户 ID
             database_url: 数据库连接字符串
         """
+        # 初始化数据库引擎（可能已经初始化过）
+        from backend.models import database as db_module
         from backend.models.database import (
-            init_async_db,
             create_tables_async,
+            init_async_db,
             insert_default_configs_async,
         )
         from backend.models.telegram_models import TelegramUser
-
-        # 初始化数据库引擎（可能已经初始化过）
-        from backend.models import database as db_module
 
         if db_module.async_engine is None:
             init_async_db(database_url)

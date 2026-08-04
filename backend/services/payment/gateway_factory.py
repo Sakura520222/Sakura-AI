@@ -1,11 +1,10 @@
 """支付网关工厂"""
 
-from typing import Optional
 
 from loguru import logger
 
-from backend.services.payment.gateway_base import PaymentGateway
 from backend.services.payment.alipay_gateway import AlipayGateway
+from backend.services.payment.gateway_base import PaymentGateway
 from backend.services.payment.nowpayments_gateway import NowPaymentsGateway
 from backend.services.payment.paddle_gateway import PaddleGateway
 from backend.services.payment.stripe_gateway import StripeGateway
@@ -41,8 +40,8 @@ def register_gateway(name: str, gateway_cls: type[PaymentGateway]) -> None:
 
 async def get_gateway(
     provider: str,
-    api_key: Optional[str] = None,
-    webhook_secret: Optional[str] = None,
+    api_key: str | None = None,
+    webhook_secret: str | None = None,
 ) -> PaymentGateway:
     """根据 provider 名称获取对应的支付网关实例
 

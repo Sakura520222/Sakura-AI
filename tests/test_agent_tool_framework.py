@@ -29,7 +29,6 @@ from backend.services.agent_team.tools.registry import (
 )
 from backend.services.agent_team.workspace_service import AgentTeamWorkspaceService
 
-
 # ── 辅助 ──────────────────────────────────────────────
 
 

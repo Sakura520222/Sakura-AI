@@ -13,9 +13,9 @@ Usage:
     text = i18n.t("comment.review_passed", lang="en")
 """
 
-from pathlib import Path
-from typing import Any, Optional
 import threading
+from pathlib import Path
+from typing import Any
 
 import yaml
 from loguru import logger
@@ -174,7 +174,7 @@ def make_translation_func(lang: str = DEFAULT_LANGUAGE):
     return translate
 
 
-def detect_language(user_prefs: Optional[dict] = None) -> str:
+def detect_language(user_prefs: dict | None = None) -> str:
     """检测应使用的语言 / Detect which language to use
 
     优先级：用户偏好 > 动态配置缓存 > Settings 环境变量 > 硬编码默认值

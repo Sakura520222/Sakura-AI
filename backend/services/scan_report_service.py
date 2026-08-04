@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import asyncio
-from typing import TYPE_CHECKING, Optional
+from typing import TYPE_CHECKING
 
 from loguru import logger
 
@@ -24,7 +24,7 @@ class ScanReportService:
     """扫描报告生成与交付"""
 
     async def generate_and_deliver(
-        self, scan_id: int, report_data: dict = None
+        self, scan_id: int, report_data: dict | None = None
     ) -> dict:
         """生成报告并交付到所有渠道
 
@@ -36,9 +36,10 @@ class ScanReportService:
         Returns:
             {"issue_number": int|None, "issue_url": str|None}
         """
+        from sqlalchemy import select
+
         from backend.models.database import async_session
         from backend.models.scan_models import RepoScan, ScanFinding
-        from sqlalchemy import select
 
         # 加载扫描记录和 findings
         async with async_session() as session:
@@ -79,7 +80,7 @@ class ScanReportService:
         return report_info
 
     def generate_issue_body(
-        self, scan: "RepoScan", findings: list["ScanFinding"]
+        self, scan: RepoScan, findings: list[ScanFinding]
     ) -> str:
         """生成 GitHub Issue 报告 Markdown 内容"""
         lines = []
@@ -154,7 +155,7 @@ class ScanReportService:
 
         return "\n".join(lines)
 
-    def generate_telegram_message(self, scan: "RepoScan", issue_url: str = None) -> str:
+    def generate_telegram_message(self, scan: RepoScan, issue_url: str | None = None) -> str:
         """生成 Telegram 通知消息"""
         health = scan.overall_health_score or 0
         health_emoji = "🟢" if health >= 80 else "🟡" if health >= 60 else "🔴"
@@ -223,8 +224,8 @@ class ScanReportService:
         return "\n".join(lines)
 
     async def _create_github_issue(
-        self, scan: "RepoScan", findings: list["ScanFinding"]
-    ) -> Optional[dict]:
+        self, scan: RepoScan, findings: list[ScanFinding]
+    ) -> dict | None:
         """在仓库中创建 GitHub Issue 报告"""
         try:
             from backend.core.github_app import GitHubAppClient
@@ -338,16 +339,17 @@ class ScanReportService:
             return None
 
     async def _send_telegram_notification(
-        self, scan: "RepoScan", issue_url: str = None
+        self, scan: RepoScan, issue_url: str | None = None
     ):
         """发送 Telegram 通知"""
         try:
-            from backend.telegram.notifications import get_notification_sender
+            from sqlalchemy import select
+
             from backend.models.database import async_session
             from backend.models.telegram_models import (
                 UserRepoSubscription,
             )
-            from sqlalchemy import select
+            from backend.telegram.notifications import get_notification_sender
 
             sender = get_notification_sender()
             if not sender or not sender.bot:
@@ -396,9 +398,10 @@ class ScanReportService:
     @classmethod
     async def _get_all_admin_telegram_ids(cls) -> list[int]:
         """查询所有管理员的 telegram_id"""
+        from sqlalchemy import select
+
         from backend.models.database import async_session
         from backend.models.telegram_models import TelegramUser
-        from sqlalchemy import select
 
         async with async_session() as session:
             result = await session.execute(

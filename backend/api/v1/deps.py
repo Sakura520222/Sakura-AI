@@ -3,11 +3,12 @@
 公共函数（get_db, paginate 等）由各路由文件直接从 backend.webui.deps 导入。
 """
 
-from fastapi import Request, HTTPException, Header
+from fastapi import Header, HTTPException, Request
+
+from backend.core.rate_limit import limiter as _limiter
+from backend.models import database as db_module
 from backend.webui.auth import decode_access_token, is_access_token_payload
 from backend.webui.deps import user_requires_mfa_enrollment
-from backend.models import database as db_module
-from backend.core.rate_limit import limiter as _limiter
 
 # Backward-compatible export for API modules importing limiter from this module.
 limiter = _limiter

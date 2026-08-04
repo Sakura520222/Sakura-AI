@@ -5,8 +5,9 @@
 
 import asyncio
 import socket
-import pytest
 from unittest.mock import patch
+
+import pytest
 
 from backend.core.config import DEFAULT_FETCH_URL_ALLOWED_CONTENT_TYPES
 from backend.services.ai_reviewer.tools.fetch_url_tool import (
@@ -14,7 +15,6 @@ from backend.services.ai_reviewer.tools.fetch_url_tool import (
     _normalize_ip_octet,
     _try_parse_mixed_radix_ipv4,
 )
-
 
 # ── URL 标准化 ──────────────────────────────────────────────────
 
@@ -170,9 +170,8 @@ class TestSSRFCheck:
     async def test_unresolvable_host(self):
         with patch.object(
             socket, "getaddrinfo", side_effect=socket.gaierror("DNS lookup failed")
-        ):
-            with pytest.raises(ValueError, match="DNS 解析失败"):
-                await self.handler._resolve_and_check_ssrf("nonexistent.invalid")
+        ), pytest.raises(ValueError, match="DNS 解析失败"):
+            await self.handler._resolve_and_check_ssrf("nonexistent.invalid")
 
 
 # ── Content-Type 白名单 ─────────────────────────────────────────
@@ -297,7 +296,7 @@ class TestSuspiciousTextDetection:
         assert FetchUrlToolHandler._detect_suspicious_text(text)
 
     def test_zero_width_chars(self):
-        text = "hello​world​test​" * 3
+        text = "hello\u200bworld\u200btest\u200b" * 3
         assert FetchUrlToolHandler._detect_suspicious_text(text)
 
     def test_normal_ascii_not_flagged(self):

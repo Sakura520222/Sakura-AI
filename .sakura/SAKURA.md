@@ -2,7 +2,7 @@
 
 ## 1. 项目简介
 LLM 驱动的 PR 审查、Issue 分析、仓库扫描与 Agent 自动修复平台。具备 RAG、代码索引、项目记忆、增量审查与 GitHub Checks 状态机能力。
-**技术栈**：Python 3.11+/FastAPI/Jinja2+HTMX+Alpine/MySQL/Redis/ChromaDB/Docker/GitHub App/Telegram Bot
+**技术栈**：Python 3.14+/FastAPI/Jinja2+HTMX+Alpine/MySQL/Redis/ChromaDB/Docker/GitHub App/Telegram Bot
 
 ## 2. 仓库信息
 - 仓库名: Sakura520222/Sakura-AI-Reviewer

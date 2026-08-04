@@ -2,14 +2,20 @@
 
 import enum
 
-from sqlalchemy import BigInteger, Column, ForeignKey, Integer, String, Text, TIMESTAMP
-from sqlalchemy import UniqueConstraint
+from sqlalchemy import (
+    TIMESTAMP,
+    BigInteger,
+    Column,
+    ForeignKey,
+    Integer,
+    String,
+    Text,
+    UniqueConstraint,
+)
 from sqlalchemy.dialects.mysql import LONGTEXT
 from sqlalchemy.orm import relationship
 
-from backend.models.database import Base
-from backend.models.database import utc_now
-
+from backend.models.database import Base, utc_now
 
 DEFAULT_AGENT_TEAM_MAX_ITERATIONS = 3
 

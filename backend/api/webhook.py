@@ -1,26 +1,27 @@
 """GitHub Webhook API端点"""
 
-from fastapi import APIRouter, Request, HTTPException, Header
-from fastapi.responses import JSONResponse, PlainTextResponse
-from typing import Dict, Any, Optional
 import asyncio
 import re
+from typing import Any
+
+from fastapi import APIRouter, Header, HTTPException, Request
+from fastapi.responses import JSONResponse, PlainTextResponse
 from loguru import logger
 
-from backend.core.github_app import (
-    verify_webhook_signature,
-    extract_pr_info_from_webhook,
-    extract_issue_info_from_webhook,
-    GitHubAppClient,
-)
-from backend.workers.review_worker import submit_review_task
-from backend.services.telegram_service import TelegramService
-from backend.telegram.notifications import get_notification_sender
 from backend.core.config import (
-    get_settings,
     get_dynamic_config,
+    get_settings,
     get_user_dynamic_config,
 )
+from backend.core.github_app import (
+    GitHubAppClient,
+    extract_issue_info_from_webhook,
+    extract_pr_info_from_webhook,
+    verify_webhook_signature,
+)
+from backend.services.telegram_service import TelegramService
+from backend.telegram.notifications import get_notification_sender
+from backend.workers.review_worker import submit_review_task
 
 settings = get_settings()
 
@@ -154,7 +155,7 @@ async def resolve_pr_number_for_ci(
     repo_full_name: str,
     head_sha: str,
     payload_prs: list,
-) -> Optional[int]:
+) -> int | None:
     """CI 失败事件三层降级解析 pr_number / Resolve pr_number (three-tier fallback).
 
     ① payload.pull_requests 字段（Fork 场景为空）
@@ -182,7 +183,7 @@ async def resolve_pr_number_for_ci(
     )
 
 
-async def handle_check_run_event(payload: Dict[str, Any]) -> JSONResponse:
+async def handle_check_run_event(payload: dict[str, Any]) -> JSONResponse:
     """处理 check_run.completed 事件：采集外部 CI（Checks API 类）失败详情。
 
     过滤自身 Sakura Check Run；非 completed 动作忽略；解不出 pr_number 忽略。
@@ -203,9 +204,7 @@ async def handle_check_run_event(payload: Dict[str, Any]) -> JSONResponse:
         repo_name = repo_info.get("name", "")
         repo_full_name = repo_info.get("full_name", "")
         logger.info(
-            "[check_run] completed 收到: name={!r}, conclusion={!r}, head_sha={!r}".format(
-                name, conclusion, head_sha[:8]
-            )
+            f"[check_run] completed 收到: name={name!r}, conclusion={conclusion!r}, head_sha={head_sha[:8]!r}"
         )
 
         # 过滤自身 Check Run（避免把 Sakura 审查状态当外部失败）
@@ -217,9 +216,7 @@ async def handle_check_run_event(payload: Dict[str, Any]) -> JSONResponse:
 
         if conclusion not in {"failure", "timed_out", "cancelled", "action_required"}:
             logger.info(
-                "[check_run] 跳过非失败 conclusion: name={!r}, conclusion={!r}".format(
-                    name, conclusion
-                )
+                f"[check_run] 跳过非失败 conclusion: name={name!r}, conclusion={conclusion!r}"
             )
             # 重跑成功：清除同 (repo, head_sha, name) 的旧失败记录，避免注入过时失败
             if repo_full_name and head_sha:
@@ -262,7 +259,7 @@ async def handle_check_run_event(payload: Dict[str, Any]) -> JSONResponse:
             check_run,
         )
         logger.info(
-            "[check_run] 已采集失败: name={!r}, pr_number={}".format(name, pr_number)
+            f"[check_run] 已采集失败: name={name!r}, pr_number={pr_number}"
         )
         return JSONResponse(
             content={
@@ -278,7 +275,7 @@ async def handle_check_run_event(payload: Dict[str, Any]) -> JSONResponse:
         )
 
 
-async def handle_workflow_job_event(payload: Dict[str, Any]) -> JSONResponse:
+async def handle_workflow_job_event(payload: dict[str, Any]) -> JSONResponse:
     """处理 workflow_job.completed 事件：采集 GitHub Actions Job 失败详情。
 
     workflow_job payload 无 pull_requests 字段，pr_number 走映射表/API 兜底。
@@ -297,15 +294,11 @@ async def handle_workflow_job_event(payload: Dict[str, Any]) -> JSONResponse:
         repo_info = payload.get("repository") or {}
         repo_full_name = repo_info.get("full_name", "")
         logger.info(
-            "[workflow_job] completed 收到: name={!r}, conclusion={!r}, head_sha={!r}".format(
-                wf_name, conclusion, head_sha[:8]
-            )
+            f"[workflow_job] completed 收到: name={wf_name!r}, conclusion={conclusion!r}, head_sha={head_sha[:8]!r}"
         )
         if conclusion not in {"failure", "timed_out", "cancelled", "action_required"}:
             logger.info(
-                "[workflow_job] 跳过非失败 conclusion: name={!r}, conclusion={!r}".format(
-                    wf_name, conclusion
-                )
+                f"[workflow_job] 跳过非失败 conclusion: name={wf_name!r}, conclusion={conclusion!r}"
             )
             # 重跑成功：清除同 (repo, head_sha, name) 的旧失败记录
             if repo_full_name and head_sha:
@@ -347,9 +340,7 @@ async def handle_workflow_job_event(payload: Dict[str, Any]) -> JSONResponse:
             workflow_job,
         )
         logger.info(
-            "[workflow_job] 已采集失败: name={!r}, pr_number={}".format(
-                wf_name, pr_number
-            )
+            f"[workflow_job] 已采集失败: name={wf_name!r}, pr_number={pr_number}"
         )
         return JSONResponse(
             content={
@@ -366,7 +357,7 @@ async def handle_workflow_job_event(payload: Dict[str, Any]) -> JSONResponse:
 
 
 async def handle_pull_request_event(
-    payload: Dict[str, Any],
+    payload: dict[str, Any],
     delivery_id: str | None = None,
 ) -> JSONResponse:
     """处理Pull Request事件"""
@@ -753,7 +744,7 @@ async def handle_pull_request_event(
         )
 
 
-async def handle_issue_comment_event(payload: Dict[str, Any]) -> JSONResponse:
+async def handle_issue_comment_event(payload: dict[str, Any]) -> JSONResponse:
     """处理Issue Comment事件（PR评论指令）"""
     try:
         action = payload.get("action")
@@ -965,8 +956,9 @@ async def handle_issue_comment_event(payload: Dict[str, Any]) -> JSONResponse:
         # 清理数据库中的旧审查记录
         try:
             async with get_async_session() as session:
+                from sqlalchemy import and_, select
+
                 from backend.models.database import PRReview
-                from sqlalchemy import select, and_
 
                 result = await session.execute(
                     select(PRReview).where(
@@ -1070,7 +1062,7 @@ async def _handle_label_checkbox_toggle_inner(
     editor_login: str,
     pr_author_login: str,
     comment_source: str,
-    comment_id: Optional[int] = None,
+    comment_id: int | None = None,
 ) -> JSONResponse:
     """Shared logic for detecting label checkbox toggles and applying changes.
 
@@ -1125,7 +1117,7 @@ async def _handle_label_checkbox_toggle_inner(
     is_pr_author = editor_login == pr_author_login
     is_collaborator = False
     is_review_body_edit = comment_source == "pull_request_review"
-    github_app: Optional[GitHubAppClient] = None
+    github_app: GitHubAppClient | None = None
 
     if not is_pr_author and not is_review_body_edit:
         github_app = GitHubAppClient()
@@ -1216,7 +1208,7 @@ async def _handle_label_checkbox_toggle_inner(
     )
 
 
-async def handle_comment_edited_event(payload: Dict[str, Any]) -> JSONResponse:
+async def handle_comment_edited_event(payload: dict[str, Any]) -> JSONResponse:
     """Handle issue_comment edited events to detect label checkbox toggles.
 
     When a user edits a comment in a PR and changes the checked state of a
@@ -1283,7 +1275,7 @@ async def handle_comment_edited_event(payload: Dict[str, Any]) -> JSONResponse:
 
 
 async def handle_pull_request_review_event(
-    payload: Dict[str, Any],
+    payload: dict[str, Any],
 ) -> JSONResponse:
     """Handle pull_request_review events.
 
@@ -1350,7 +1342,7 @@ async def handle_pull_request_review_event(
         )
 
 
-async def handle_revoke_command(payload: Dict[str, Any]) -> JSONResponse:
+async def handle_revoke_command(payload: dict[str, Any]) -> JSONResponse:
     """处理 /revoke 命令（一键撤回 AI 评论和 Review）"""
     try:
         # 提取 PR 信息
@@ -1502,7 +1494,7 @@ async def handle_revoke_command(payload: Dict[str, Any]) -> JSONResponse:
         )
 
 
-async def handle_issue_event(payload: Dict[str, Any]) -> JSONResponse:
+async def handle_issue_event(payload: dict[str, Any]) -> JSONResponse:
     """处理 Issue 事件"""
     try:
         issue_info = extract_issue_info_from_webhook(payload)
@@ -1599,11 +1591,14 @@ async def handle_issue_event(payload: Dict[str, Any]) -> JSONResponse:
                         )
                         # 同步数据库中的 issue_state
                         try:
+                            from sqlalchemy import update as sql_update
+
                             from backend.models.database import (
                                 IssueAnalysis as _IA,
+                            )
+                            from backend.models.database import (
                                 async_session as _as,
                             )
-                            from sqlalchemy import update as sql_update
 
                             _repo_full = f"{repo_owner}/{repo_name}"
                             async with _as() as _session:
@@ -1629,8 +1624,9 @@ async def handle_issue_event(payload: Dict[str, Any]) -> JSONResponse:
         if action == "closed":
             # 同步数据库中的 issue_state
             try:
-                from backend.models.database import IssueAnalysis, async_session
                 from sqlalchemy import update as sql_update
+
+                from backend.models.database import IssueAnalysis, async_session
 
                 repo_full = f"{repo_owner}/{repo_name}"
                 async with async_session() as session:
@@ -1744,7 +1740,7 @@ async def handle_issue_event(payload: Dict[str, Any]) -> JSONResponse:
         )
 
 
-async def handle_issue_analyze_command(payload: Dict[str, Any]) -> JSONResponse:
+async def handle_issue_analyze_command(payload: dict[str, Any]) -> JSONResponse:
     """处理 /analyze 命令（手动触发 Issue 分析）"""
     try:
         issue_info = extract_issue_info_from_webhook(payload)
@@ -1828,7 +1824,7 @@ async def handle_issue_analyze_command(payload: Dict[str, Any]) -> JSONResponse:
 
 
 async def _post_issue_comment(
-    github_app: "GitHubAppClient",
+    github_app: GitHubAppClient,
     repo_owner: str,
     repo_name: str,
     repo_full_name: str,
@@ -1852,7 +1848,7 @@ async def _post_issue_comment(
 
 
 async def _permission_check_unavailable_response(
-    github_app: "GitHubAppClient",
+    github_app: GitHubAppClient,
     repo_owner: str,
     repo_name: str,
     repo_full_name: str,
@@ -1915,7 +1911,7 @@ async def _check_agent_team_enabled() -> JSONResponse | None:
 
 
 async def _check_agent_permission(
-    github_app: "GitHubAppClient",
+    github_app: GitHubAppClient,
     repo_owner: str,
     repo_name: str,
     repo_full_name: str,
@@ -1958,7 +1954,7 @@ async def _check_agent_permission(
 
 
 async def _consume_agent_quota_or_cleanup(
-    github_app: "GitHubAppClient",
+    github_app: GitHubAppClient,
     repo_owner: str,
     repo_name: str,
     repo_full_name: str,
@@ -2016,7 +2012,7 @@ async def _consume_agent_quota_or_cleanup(
     )
 
 
-async def handle_agent_command(payload: Dict[str, Any]) -> JSONResponse:
+async def handle_agent_command(payload: dict[str, Any]) -> JSONResponse:
     """处理 /agent 命令：将已分析的 Issue 委派给 Agent 团队执行"""
     try:
         comment_body = payload.get("comment", {}).get("body", "").strip()
@@ -2073,7 +2069,8 @@ async def handle_agent_command(payload: Dict[str, Any]) -> JSONResponse:
 
         # 前置校验：检查是否有已完成的 Issue 分析记录，或是否为扫描自动创建的报告 Issue
         # 延迟导入：避免 webhook ↔ database/scan_models 循环依赖
-        from sqlalchemy import select, and_, desc
+        from sqlalchemy import and_, desc, select
+
         from backend.models.database import IssueAnalysis, IssueAnalysisStatus
         from backend.models.scan_models import RepoScan, ScanFinding
 
@@ -2159,8 +2156,8 @@ async def handle_agent_command(payload: Dict[str, Any]) -> JSONResponse:
             task_summary = existing_analysis.summary if existing_analysis else ""
             if scan_report:
                 # 延迟导入：避免 webhook ↔ scan_report_service/agent_team_models 循环依赖
-                from backend.services.scan_report_service import ScanReportService
                 from backend.models.agent_team_models import AgentTeamSourceType
+                from backend.services.scan_report_service import ScanReportService
 
                 scan_markdown = ScanReportService().generate_issue_body(
                     scan_report, scan_findings
@@ -2280,7 +2277,7 @@ async def handle_agent_command(payload: Dict[str, Any]) -> JSONResponse:
         )
 
 
-async def handle_pr_agent_command(payload: Dict[str, Any]) -> JSONResponse:
+async def handle_pr_agent_command(payload: dict[str, Any]) -> JSONResponse:
     """处理 PR 评论中的 /agent 命令：基于 PR 审查记录创建 Agent 修复任务。
 
     流程：
@@ -2441,7 +2438,7 @@ async def handle_pr_agent_command(payload: Dict[str, Any]) -> JSONResponse:
         )
 
 
-async def handle_installation_event(payload: Dict[str, Any]) -> JSONResponse:
+async def handle_installation_event(payload: dict[str, Any]) -> JSONResponse:
     """处理 GitHub App installation 事件，清除安装状态缓存"""
     try:
         action = payload.get("action", "")
@@ -2486,8 +2483,8 @@ async def handle_stripe_webhook(
     request: Request,
 ) -> JSONResponse:
     """Handle Stripe webhook events (checkout.session.completed, etc.)"""
-    from backend.services.payment import get_gateway, WebhookEventType
-    from backend.services.payment_service import PaymentService, PaymentError
+    from backend.services.payment import WebhookEventType, get_gateway
+    from backend.services.payment_service import PaymentError, PaymentService
 
     payload = await request.body()
     headers = {k.lower(): v for k, v in request.headers.items()}
@@ -2534,6 +2531,7 @@ async def handle_stripe_webhook(
                 elif event.event_type == WebhookEventType.PAYMENT_REFUNDED:
                     # For refund events from Stripe, find order by provider_tx_id
                     from sqlalchemy import select
+
                     from backend.models.payment_models import Order, OrderStatus
 
                     stmt = select(Order).where(
@@ -2597,8 +2595,8 @@ async def handle_paddle_webhook(
     request: Request,
 ) -> JSONResponse:
     """Handle Paddle Billing webhook events (transaction.completed, etc.)"""
-    from backend.services.payment import get_gateway, WebhookEventType
-    from backend.services.payment_service import PaymentService, PaymentError
+    from backend.services.payment import WebhookEventType, get_gateway
+    from backend.services.payment_service import PaymentError, PaymentService
 
     payload = await request.body()
     headers = {k.lower(): v for k, v in request.headers.items()}
@@ -2645,6 +2643,7 @@ async def handle_paddle_webhook(
                 elif event.event_type == WebhookEventType.PAYMENT_REFUNDED:
                     # For refund events from Paddle, find order by provider_tx_id
                     from sqlalchemy import select
+
                     from backend.models.payment_models import Order, OrderStatus
 
                     stmt = select(Order).where(
@@ -2711,8 +2710,8 @@ async def handle_alipay_webhook(
 
     支付宝回调为 POST form-urlencoded，验签成功后返回纯文本 "success"。
     """
-    from backend.services.payment import get_gateway, WebhookEventType
-    from backend.services.payment_service import PaymentService, PaymentError
+    from backend.services.payment import WebhookEventType, get_gateway
+    from backend.services.payment_service import PaymentError, PaymentService
 
     payload = await request.body()
     headers = {k.lower(): v for k, v in request.headers.items()}
@@ -2785,8 +2784,8 @@ async def handle_nowpayments_webhook(
     NOWPayments sends POST JSON with x-nowpayments-sig header.
     Verification uses HMAC-SHA512 with IPN secret.
     """
-    from backend.services.payment import get_gateway, WebhookEventType
-    from backend.services.payment_service import PaymentService, PaymentError
+    from backend.services.payment import WebhookEventType, get_gateway
+    from backend.services.payment_service import PaymentError, PaymentService
 
     payload = await request.body()
     headers = {k.lower(): v for k, v in request.headers.items()}

@@ -12,7 +12,6 @@ from types import SimpleNamespace
 from backend.services.comment_service import CommentService
 from backend.services.pr_analyzer import PRAnalyzer, PRFileInfo
 
-
 # ---------------------------------------------------------------------------
 # comment_service: suggestion 缩进兜底
 # ---------------------------------------------------------------------------

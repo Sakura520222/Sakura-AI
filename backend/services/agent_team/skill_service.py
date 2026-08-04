@@ -61,7 +61,7 @@ def _safe_skill_relative_path(path: str | Path) -> Path | None:
             continue
         if part == ".." or ":" in part or "\x00" in part:
             return None
-        if part.startswith(".") or part.startswith("__"):
+        if part.startswith((".", "__")):
             # 拒绝隐藏文件和双下划线私有文件，避免安装敏感/缓存文件；
             # 但允许 Python 包 Skill 必需的 __init__.py。
             if part != "__init__.py" or index != len(candidate_parts) - 1:
@@ -473,7 +473,7 @@ class AgentSkillService:
             if entry.get("type") != "file":
                 continue
             name = entry.get("name", "")
-            if name.startswith(".") or name.startswith("__"):
+            if name.startswith((".", "__")):
                 continue
             download_url = entry.get("download_url", "")
             if not download_url:
@@ -805,7 +805,7 @@ class AgentSkillService:
     def _extract_first_paragraph(self, content: str) -> str:
         for block in content.split("\n\n"):
             text = " ".join(line.strip() for line in block.splitlines() if line.strip())
-            if not text or text.startswith("---") or text.startswith("#"):
+            if not text or text.startswith(("---", "#")):
                 continue
             return text[:500]
         return ""

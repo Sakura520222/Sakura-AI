@@ -13,12 +13,12 @@ from telegram.error import BadRequest
 from telegram.ext import CallbackQueryHandler, ContextTypes, MessageHandler, filters
 
 from backend.models.telegram_models import UserRole
+from backend.services.telegram_service import TelegramService
 from backend.telegram.handlers import (
     check_permission,
     get_async_session,
     validate_github_repo_name,
 )
-from backend.services.telegram_service import TelegramService
 
 # ---------------------------------------------------------------------------
 # Callback data 协议: action:target
@@ -93,7 +93,6 @@ _PERMISSION_MAP = {
 def _mock_default_attr(self, name: str):
     """mock 对象的 __getattr__ 兜底，未模拟的属性返回 None 并记录警告"""
     logger.warning(f"Mock 对象访问了未模拟的属性: {name}")
-    return None
 
 
 def build_main_menu(user_role: str) -> InlineKeyboardMarkup:
