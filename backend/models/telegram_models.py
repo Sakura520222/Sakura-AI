@@ -1,19 +1,20 @@
 """Telegram Bot 数据模型"""
 
+import enum
 from datetime import datetime
+
 from sqlalchemy import (
-    Column,
-    Integer,
-    BigInteger,
-    String,
     TIMESTAMP,
-    ForeignKey,
+    BigInteger,
     Boolean,
+    Column,
+    ForeignKey,
+    Integer,
+    String,
     Text,
     UniqueConstraint,
 )
 from sqlalchemy.orm import relationship
-import enum
 
 from backend.models.database import Base
 

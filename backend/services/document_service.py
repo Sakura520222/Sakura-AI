@@ -7,11 +7,13 @@
 - 文件 Hash 计算（增量更新）
 """
 
-from typing import List, Dict, Any, Optional
-from pathlib import Path
-from loguru import logger
+import asyncio
 import hashlib
 import re
+from pathlib import Path
+from typing import Any
+
+from loguru import logger
 
 from backend.core.config import get_settings
 
@@ -30,7 +32,7 @@ class DocumentService:
         self.chunk_overlap = settings.chunk_overlap
         self.max_chunks_per_doc = settings.max_chunks_per_doc
 
-    async def scan_sakura_directory(self, repo_path: str) -> List[Dict[str, Any]]:
+    async def scan_sakura_directory(self, repo_path: str) -> list[dict[str, Any]]:
         """扫描 .sakura/ 文件夹，获取所有 Markdown 文件
 
         Args:
@@ -101,23 +103,26 @@ class DocumentService:
         Returns:
             MD5 Hash 字符串（16进制）
         """
-        try:
-            md5_hash = hashlib.md5()
+        def _compute() -> str:
+            try:
+                md5_hash = hashlib.md5()
 
-            with open(file_path, "rb") as f:
-                # 分块读取大文件
-                for chunk in iter(lambda: f.read(4096), b""):
-                    md5_hash.update(chunk)
+                with open(file_path, "rb") as f:
+                    # 分块读取大文件
+                    for chunk in iter(lambda: f.read(4096), b""):
+                        md5_hash.update(chunk)
 
-            return md5_hash.hexdigest()
+                return md5_hash.hexdigest()
 
-        except Exception as e:
-            logger.error(f"计算文件 Hash 失败 {file_path}: {e}")
-            return ""
+            except Exception as e:
+                logger.error(f"计算文件 Hash 失败 {file_path}: {e}")
+                return ""
+
+        return await asyncio.to_thread(_compute)
 
     async def parse_markdown_documents(
-        self, files_info: List[Dict[str, Any]]
-    ) -> List[Dict[str, Any]]:
+        self, files_info: list[dict[str, Any]]
+    ) -> list[dict[str, Any]]:
         """解析 Markdown 文档
 
         Args:
@@ -133,9 +138,10 @@ class DocumentService:
 
         for file_info in files_info:
             try:
-                # 读取文件内容
-                with open(file_info["full_path"], "r", encoding="utf-8") as f:
-                    content = f.read()
+                # 读取文件内容（在线程池中执行阻塞 IO）
+                content = await asyncio.to_thread(
+                    Path(file_info["full_path"]).read_text, encoding="utf-8"
+                )
 
                 # 提取元数据
                 metadata = {
@@ -182,8 +188,8 @@ class DocumentService:
         return Path(file_path).stem
 
     async def chunk_document_by_headers(
-        self, content: str, metadata: Dict[str, Any]
-    ) -> List[Dict[str, Any]]:
+        self, content: str, metadata: dict[str, Any]
+    ) -> list[dict[str, Any]]:
         """基于 Markdown 标题进行智能分块
 
         特性：
@@ -273,8 +279,8 @@ class DocumentService:
         return chunks
 
     async def _split_long_chunks(
-        self, chunks: List[Dict[str, Any]], metadata: Dict[str, Any]
-    ) -> List[Dict[str, Any]]:
+        self, chunks: list[dict[str, Any]], metadata: dict[str, Any]
+    ) -> list[dict[str, Any]]:
         """分割超长的块
 
         Args:
@@ -368,8 +374,8 @@ class DocumentService:
         return result
 
     async def prepare_documents_for_indexing(
-        self, documents: List[Dict[str, Any]]
-    ) -> List[Dict[str, Any]]:
+        self, documents: list[dict[str, Any]]
+    ) -> list[dict[str, Any]]:
         """准备用于索引的文档
 
         将文档分块并添加索引所需的元数据。
@@ -408,7 +414,7 @@ class DocumentService:
 
 
 # 全局单例
-_document_service_instance: Optional[DocumentService] = None
+_document_service_instance: DocumentService | None = None
 
 
 def get_document_service() -> DocumentService:

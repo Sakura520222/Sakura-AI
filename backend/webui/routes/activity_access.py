@@ -11,14 +11,14 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.models.database import (
-    PRReview,
     IssueAnalysis,
+    PRReview,
 )
 from backend.models.scan_models import RepoScan
 from backend.webui.deps import (
+    build_user_scope_filter,
     get_db,
     require_auth,
-    build_user_scope_filter,
 )
 
 

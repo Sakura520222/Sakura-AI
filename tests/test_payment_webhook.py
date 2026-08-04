@@ -33,11 +33,11 @@ class TestStripeWebhookEndpoint:
 
     @pytest.mark.asyncio
     async def test_webhook_payment_completed(self, mock_db_session, mock_gateway):
+        from backend.models.payment_models import OrderStatus
         from backend.services.payment.gateway_base import (
             WebhookEvent,
             WebhookEventType,
         )
-        from backend.models.payment_models import OrderStatus
 
         event = WebhookEvent(
             event_type=WebhookEventType.PAYMENT_COMPLETED,
@@ -68,8 +68,9 @@ class TestStripeWebhookEndpoint:
                 return_value=mock_order,
             ) as mock_confirm_payment,
         ):
-            from backend.api.webhook import handle_stripe_webhook
             from fastapi import Request
+
+            from backend.api.webhook import handle_stripe_webhook
 
             mock_request = MagicMock(spec=Request)
             mock_request.body = AsyncMock(return_value=b'{"test": true}')
@@ -104,8 +105,9 @@ class TestStripeWebhookEndpoint:
             new_callable=AsyncMock,
             return_value=mock_gateway,
         ):
-            from backend.api.webhook import handle_stripe_webhook
             from fastapi import Request
+
+            from backend.api.webhook import handle_stripe_webhook
 
             mock_request = MagicMock(spec=Request)
             mock_request.body = AsyncMock(return_value=b'{"test": true}')
@@ -124,8 +126,9 @@ class TestStripeWebhookEndpoint:
             new_callable=AsyncMock,
             side_effect=ValueError("missing API key"),
         ):
-            from backend.api.webhook import handle_stripe_webhook
             from fastapi import Request
+
+            from backend.api.webhook import handle_stripe_webhook
 
             mock_request = MagicMock(spec=Request)
             mock_request.body = AsyncMock(return_value=b'{"test": true}')
@@ -162,10 +165,11 @@ async def test_payment_completed_webhooks_pass_amount_to_confirmation(
     mock_db_session,
     mock_gateway,
 ):
+    from fastapi import Request
+
     from backend.api import webhook
     from backend.models.payment_models import OrderStatus
     from backend.services.payment.gateway_base import WebhookEvent, WebhookEventType
-    from fastapi import Request
 
     event = WebhookEvent(
         event_type=WebhookEventType.PAYMENT_COMPLETED,
@@ -247,9 +251,10 @@ async def test_payment_expired_webhooks_commit_when_cancelled(
     ``cancel_expired_order``, verifying the handler → helper → commit flow is
     consistent across every payment provider.
     """
+    from fastapi import Request
+
     from backend.api import webhook
     from backend.services.payment.gateway_base import WebhookEvent, WebhookEventType
-    from fastapi import Request
 
     event = WebhookEvent(
         event_type=WebhookEventType.PAYMENT_EXPIRED,
@@ -304,9 +309,10 @@ async def test_payment_expired_webhooks_skip_commit_when_order_gone(
     mock_gateway,
 ):
     """All providers skip commit when the order is already gone (None)."""
+    from fastapi import Request
+
     from backend.api import webhook
     from backend.services.payment.gateway_base import WebhookEvent, WebhookEventType
-    from fastapi import Request
 
     event = WebhookEvent(
         event_type=WebhookEventType.PAYMENT_EXPIRED,

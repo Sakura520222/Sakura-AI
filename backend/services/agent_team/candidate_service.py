@@ -4,14 +4,14 @@ import asyncio
 import json
 import re
 import time
+from collections.abc import Iterable
 from dataclasses import dataclass
-from typing import Any, Iterable
+from typing import Any
 
+from loguru import logger
 from openai import BadRequestError
 from sqlalchemy import and_, desc, func, not_, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
-
-from loguru import logger
 
 from backend.core.config import get_dynamic_config
 from backend.core.github_app import GitHubAppClient
@@ -937,7 +937,7 @@ def _extract_json_payload(text: str) -> str:
     value = (text or "").strip()
     value = re.sub(r"^```(?:json)?\s*", "", value)
     value = re.sub(r"\s*```$", "", value)
-    if value.startswith("[") or value.startswith("{"):
+    if value.startswith(("[", "{")):
         return value
 
     array_match = re.search(r"\[[\s\S]*\]", value)

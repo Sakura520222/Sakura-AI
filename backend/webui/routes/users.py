@@ -1,31 +1,33 @@
 """WebUI 用户管理路由"""
 
-from fastapi import APIRouter, Request, Depends, Form, Query
-from fastapi.responses import RedirectResponse, HTMLResponse
+from datetime import UTC
+
+from fastapi import APIRouter, Depends, Form, Query, Request
+from fastapi.responses import HTMLResponse, RedirectResponse
 from loguru import logger
-from sqlalchemy import select, func, desc, or_, String, type_coerce
+from sqlalchemy import String, desc, func, or_, select, type_coerce
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from backend.models.telegram_models import TelegramUser, QuotaUsageLog
-from backend.webui.deps import (
-    require_admin,
-    require_super_admin,
-    get_db,
-    get_templates,
-    get_csrf_serializer,
-    require_csrf,
-    get_user_preferences,
-    paginate,
-    error_page,
-    toast_redirect,
-    render_template,
-)
 from backend.core.config import get_settings
+from backend.models.telegram_models import QuotaUsageLog, TelegramUser
 from backend.services.quota_service import QuotaService
 from backend.services.user_role_policy import (
     can_toggle_user_status,
     can_update_user_role,
+)
+from backend.webui.deps import (
+    error_page,
+    get_csrf_serializer,
+    get_db,
+    get_templates,
+    get_user_preferences,
+    paginate,
+    render_template,
+    require_admin,
+    require_csrf,
+    require_super_admin,
+    toast_redirect,
 )
 from backend.webui.helpers.admin_log import log_admin_action
 from backend.webui.i18n import detect_language
@@ -751,9 +753,9 @@ async def reset_user_quota(
     if not target_user:
         return error_page(request, message="用户不存在", user=user)
 
-    from datetime import datetime, timezone
+    from datetime import datetime
 
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
 
     old_used = {
         "daily": target_user.daily_used,

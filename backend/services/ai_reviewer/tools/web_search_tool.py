@@ -3,9 +3,8 @@
 为 AI 审查员提供互联网搜索能力，用于查找文档、最佳实践等。
 """
 
-from typing import Any, Dict, List, Optional
-
 import time
+from typing import Any
 
 import httpx
 from loguru import logger
@@ -49,8 +48,9 @@ class WebSearchToolHandler:
             return
 
         try:
-            from backend.models.database import AppConfig, async_session
             from sqlalchemy import select
+
+            from backend.models.database import AppConfig, async_session
 
             if async_session is None:
                 return
@@ -109,8 +109,8 @@ class WebSearchToolHandler:
     async def search_web(
         self,
         query: str,
-        top_k: Optional[int] = None,
-    ) -> Dict[str, Any]:
+        top_k: int | None = None,
+    ) -> dict[str, Any]:
         """执行 Web 搜索
 
         Args:
@@ -147,7 +147,7 @@ class WebSearchToolHandler:
                 "provider": self.provider,
             }
 
-    async def _search_tavily(self, query: str, max_results: int) -> List[Dict]:
+    async def _search_tavily(self, query: str, max_results: int) -> list[dict]:
         """使用 Tavily API 搜索
 
         Args:
@@ -196,7 +196,7 @@ class WebSearchToolHandler:
 
         return results
 
-    async def _search_duckduckgo(self, query: str, max_results: int) -> List[Dict]:
+    async def _search_duckduckgo(self, query: str, max_results: int) -> list[dict]:
         """使用 DuckDuckGo 搜索（免费，无需 API Key）
 
         Args:

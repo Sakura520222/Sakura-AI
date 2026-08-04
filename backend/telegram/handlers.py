@@ -1,16 +1,17 @@
 """Telegram Bot 命令处理器"""
 
+import re
+
+from loguru import logger
 from telegram import Update
 from telegram.ext import ContextTypes
 from telegram.helpers import escape_markdown
-from loguru import logger
 
+from backend.core.config import get_settings
 from backend.models.database import init_async_db
 from backend.models.telegram_models import UserRole
-from backend.services.telegram_service import TelegramService
 from backend.services.payment_service import is_payment_enabled
-from backend.core.config import get_settings
-import re
+from backend.services.telegram_service import TelegramService
 
 settings = get_settings()
 
@@ -142,7 +143,7 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     # 默认行为：显示带按钮的主菜单
-    from backend.telegram.menu import build_main_menu, _get_user_role
+    from backend.telegram.menu import _get_user_role, build_main_menu
 
     role = await _get_user_role(telegram_id)
 
@@ -177,7 +178,7 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def cmd_help(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """帮助命令 — 显示带分页按钮的帮助信息"""
-    from backend.telegram.menu import build_help_markup, _HELP_BASIC
+    from backend.telegram.menu import _HELP_BASIC, build_help_markup
 
     await update.message.reply_text(
         _HELP_BASIC, parse_mode="Markdown", reply_markup=build_help_markup("help_basic")
@@ -491,13 +492,7 @@ async def cmd_users(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 "super_admin": "超级管理员",
             }.get(role_lower, user.role)
 
-            role_icon = (
-                "👑"
-                if role_lower == "super_admin"
-                else "👤"
-                if role_lower == "admin"
-                else "👤"
-            )
+            role_icon = "👑" if role_lower == "super_admin" else "👤"
 
             # 管理员和超级管理员不受配额限制
             if role_lower in ["admin", "super_admin"]:
@@ -571,8 +566,9 @@ async def cmd_review(update: Update, context: ContextTypes.DEFAULT_TYPE):
         dismissed_reviews = 0
         try:
             async with get_async_session() as session:
+                from sqlalchemy import and_, select
+
                 from backend.models.database import PRReview
-                from sqlalchemy import select, and_
 
                 # 查询旧记录
                 result = await session.execute(
@@ -712,7 +708,7 @@ async def cmd_review(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     except ValueError as e:
         # URL格式错误
-        await update.message.reply_text(f"❌ {str(e)}")
+        await update.message.reply_text(f"❌ {e!s}")
         logger.warning(f"PR URL格式错误: {pr_url}, error={e}")
 
     except Exception as e:
@@ -764,9 +760,9 @@ async def cmd_update_docs(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
 
         # 导入 RAG 服务
-        from backend.services.rag_service import get_rag_service
-        from backend.core.github_app import GitHubAppClient
         from backend.core.config import get_settings
+        from backend.core.github_app import GitHubAppClient
+        from backend.services.rag_service import get_rag_service
 
         settings = get_settings()
 
@@ -793,19 +789,21 @@ async def cmd_update_docs(update: Update, context: ContextTypes.DEFAULT_TYPE):
         repo = client.get_repo(repo_name)
 
         # 克隆仓库到临时目录
-        import tempfile
         import shutil
+        import tempfile
 
         temp_dir = tempfile.mkdtemp()
         try:
-            # 使用 git clone
+            # 使用 git clone（在线程池中执行阻塞 subprocess）
+            import asyncio
             import subprocess
 
             clone_url = repo.clone_url.replace(
                 "https://", f"https://x-access-token:{settings.github_app_id}@"
             )
 
-            subprocess.run(
+            await asyncio.to_thread(
+                subprocess.run,
                 ["git", "clone", "--depth", "1", clone_url, temp_dir],
                 check=True,
                 capture_output=True,
@@ -834,8 +832,8 @@ async def cmd_update_docs(update: Update, context: ContextTypes.DEFAULT_TYPE):
             shutil.rmtree(temp_dir, ignore_errors=True)
 
     except Exception as e:
-        logger.error(f"更新文档索引失败: {str(e)}", exc_info=True)
-        await status_msg.edit_text(f"❌ 更新失败: {str(e)}")
+        logger.error(f"更新文档索引失败: {e!s}", exc_info=True)
+        await status_msg.edit_text(f"❌ 更新失败: {e!s}")
 
 
 async def cmd_docs_status(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -853,8 +851,8 @@ async def cmd_docs_status(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     try:
         # 导入 RAG 服务
-        from backend.services.rag_service import get_rag_service
         from backend.core.config import get_settings
+        from backend.services.rag_service import get_rag_service
 
         settings = get_settings()
 
@@ -889,7 +887,7 @@ async def cmd_docs_status(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     except Exception as e:
         logger.error(f"获取文档状态失败: {e}", exc_info=True)
-        await update.message.reply_text(f"❌ 获取状态失败: {str(e)}")
+        await update.message.reply_text(f"❌ 获取状态失败: {e!s}")
 
 
 async def cmd_code_index(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -935,8 +933,8 @@ async def cmd_code_index(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         # 检查代码索引状态
         async with get_async_session() as session:
-            from backend.services.telegram_service import TelegramService
             from backend.models.database import CodeIndex
+            from backend.services.telegram_service import TelegramService
 
             service = TelegramService(session)
 
@@ -987,8 +985,8 @@ async def cmd_code_index(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await status_msg.edit_text(text)
 
     except Exception as e:
-        logger.error(f"代码索引失败: {str(e)}", exc_info=True)
-        await status_msg.edit_text(f"❌ 索引失败: {str(e)}")
+        logger.error(f"代码索引失败: {e!s}", exc_info=True)
+        await status_msg.edit_text(f"❌ 索引失败: {e!s}")
 
 
 async def cmd_code_status(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -1011,8 +1009,8 @@ async def cmd_code_status(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     try:
-        from backend.services.code_index_service import get_code_index_service
         from backend.models.database import CodeIndex
+        from backend.services.code_index_service import get_code_index_service
 
         code_index_service = get_code_index_service()
 
@@ -1053,7 +1051,7 @@ async def cmd_code_status(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     except Exception as e:
         logger.error(f"获取代码状态失败: {e}", exc_info=True)
-        await update.message.reply_text(f"❌ 获取状态失败: {str(e)}")
+        await update.message.reply_text(f"❌ 获取状态失败: {e!s}")
 
 
 async def cmd_sign(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -1203,7 +1201,7 @@ async def cmd_redeem(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if await _reply_if_payment_disabled(update):
         return
 
-    from backend.services.payment_service import PaymentService, PaymentError
+    from backend.services.payment_service import PaymentError, PaymentService
 
     if not context.args or len(context.args) != 1:
         await update.message.reply_text("用法: /redeem <兑换码>")
@@ -1284,7 +1282,7 @@ async def cmd_gen_codes(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if await _reply_if_payment_disabled(update):
         return
 
-    from backend.services.payment_service import PaymentService, PaymentError
+    from backend.services.payment_service import PaymentError, PaymentService
 
     if not await check_permission(update.effective_user.id, UserRole.ADMIN):
         await update.message.reply_text("❌ 此命令仅管理员可用")
@@ -1337,7 +1335,7 @@ async def cmd_grant(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if await _reply_if_payment_disabled(update):
         return
 
-    from backend.services.payment_service import PaymentService, PaymentError
+    from backend.services.payment_service import PaymentError, PaymentService
 
     if not await check_permission(update.effective_user.id, UserRole.ADMIN):
         await update.message.reply_text("❌ 此命令仅管理员可用")

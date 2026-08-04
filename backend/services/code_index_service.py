@@ -7,24 +7,25 @@
 - 代码检索
 """
 
-from typing import List, Dict, Any, Optional
-from loguru import logger
 import asyncio
 import hashlib
-from pathlib import Path
 from datetime import datetime
+from pathlib import Path
+from typing import Any
 
-from backend.services.code_parser_service import CodeParserService, get_code_parser
-from backend.services.code_vector_store import CodeVectorStore, get_code_vector_store
-from backend.services.embedding_service import EmbeddingService, get_embedding_service
+from loguru import logger
+from sqlalchemy import and_, select
+from sqlalchemy.ext.asyncio import AsyncSession
+
 from backend.models.database import (
-    CodeIndex,
     CodeFile,
+    CodeIndex,
     CodeIndexingStatus,
     async_session,
 )
-from sqlalchemy import select, and_
-from sqlalchemy.ext.asyncio import AsyncSession
+from backend.services.code_parser_service import CodeParserService, get_code_parser
+from backend.services.code_vector_store import CodeVectorStore, get_code_vector_store
+from backend.services.embedding_service import EmbeddingService, get_embedding_service
 
 
 class CodeIndexService:
@@ -35,9 +36,9 @@ class CodeIndexService:
 
     def __init__(
         self,
-        parser: Optional[CodeParserService] = None,
-        vector_store: Optional[CodeVectorStore] = None,
-        embedding_service: Optional[EmbeddingService] = None,
+        parser: CodeParserService | None = None,
+        vector_store: CodeVectorStore | None = None,
+        embedding_service: EmbeddingService | None = None,
     ):
         """初始化代码索引服务
 
@@ -54,9 +55,9 @@ class CodeIndexService:
         self,
         repo_full_name: str,
         pr_number: int,
-        files: List[Dict[str, Any]],
-        commit_sha: Optional[str] = None,
-    ) -> Dict[str, Any]:
+        files: list[dict[str, Any]],
+        commit_sha: str | None = None,
+    ) -> dict[str, Any]:
         """索引PR变更的文件
 
         Args:
@@ -236,8 +237,8 @@ class CodeIndexService:
         repo_full_name: str,
         repo_path: str,
         commit_sha: str,
-        paths: Optional[List[str]] = None,
-    ) -> Dict[str, Any]:
+        paths: list[str] | None = None,
+    ) -> dict[str, Any]:
         """索引仓库代码
 
         Args:
@@ -411,10 +412,10 @@ class CodeIndexService:
         repo_full_name: str,
         query: str,
         top_k: int = 5,
-        language: Optional[str] = None,
-        file_path: Optional[str] = None,
-        pr_number: Optional[int] = None,
-    ) -> List[Dict[str, Any]]:
+        language: str | None = None,
+        file_path: str | None = None,
+        pr_number: int | None = None,
+    ) -> list[dict[str, Any]]:
         """检索代码上下文
 
         Args:
@@ -464,7 +465,7 @@ class CodeIndexService:
         repo_full_name: str,
         repo_path: str,
         commit_sha: str,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """增量更新索引
 
         使用上一次索引的 commit hash 与当前 commit hash 进行比较，
@@ -639,7 +640,7 @@ class CodeIndexService:
             "total_chunks": total_chunks,
         }
 
-    async def _get_last_commit_hash(self, repo_full_name: str) -> Optional[str]:
+    async def _get_last_commit_hash(self, repo_full_name: str) -> str | None:
         """获取仓库上一次索引的 commit hash"""
         async with async_session() as session:
             result = await session.execute(
@@ -652,7 +653,7 @@ class CodeIndexService:
 
     async def _get_changed_files(
         self, repo_path: str, old_hash: str, new_hash: str
-    ) -> Optional[tuple]:
+    ) -> tuple | None:
         """使用 git diff 获取变更文件列表
 
         Args:
@@ -689,7 +690,7 @@ class CodeIndexService:
                     continue
                 status = parts[0]
                 # 过滤只保留支持的代码文件
-                if status.startswith("R") or status.startswith("C"):
+                if status.startswith(("R", "C")):
                     # 重命名/复制: "R100\told\tnew" -> 取新路径
                     if len(parts) >= 3:
                         file_path = parts[-1]
@@ -702,9 +703,7 @@ class CodeIndexService:
                     continue
                 if status == "A":
                     added.append(file_path)
-                elif status.startswith("M"):
-                    modified.append(file_path)
-                elif status.startswith("R") or status.startswith("C"):
+                elif status.startswith(("M", "R", "C")):
                     modified.append(file_path)
                 elif status == "D":
                     deleted.append(file_path)
@@ -795,8 +794,8 @@ class CodeIndexService:
             return 0
 
     def _collect_code_files(
-        self, repo_path: Path, paths: Optional[List[str]] = None
-    ) -> List[Path]:
+        self, repo_path: Path, paths: list[str] | None = None
+    ) -> list[Path]:
         """收集要索引的代码文件
 
         Args:
@@ -834,7 +833,7 @@ class CodeIndexService:
 
     async def _get_code_file(
         self, session: AsyncSession, repo_full_name: str, file_path: str
-    ) -> Optional[CodeFile]:
+    ) -> CodeFile | None:
         """获取代码文件记录
 
         Args:
@@ -861,10 +860,10 @@ class CodeIndexService:
         repo_full_name: str,
         file_path: str,
         file_hash: str,
-        language: Optional[str],
+        language: str | None,
         chunk_count: int,
-        pr_number: Optional[int] = None,
-        commit_sha: Optional[str] = None,
+        pr_number: int | None = None,
+        commit_sha: str | None = None,
     ):
         """插入或更新代码文件记录
 
@@ -918,7 +917,7 @@ class CodeIndexService:
         file_count: int,
         total_chunks: int,
         index_type: str = "full",
-        commit_hash: Optional[str] = None,
+        commit_hash: str | None = None,
     ):
         """更新代码索引状态
 
@@ -959,7 +958,7 @@ class CodeIndexService:
 
 
 # 全局单例
-_code_index_service_instance: Optional[CodeIndexService] = None
+_code_index_service_instance: CodeIndexService | None = None
 
 
 def get_code_index_service() -> CodeIndexService:

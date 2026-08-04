@@ -10,10 +10,10 @@ from loguru import logger
 from pydantic import BaseModel
 
 from backend.core.bootstrap import (
-    is_bootstrap_mode,
+    clear_bootstrap_cache,
     get_current_step,
     get_missing_fields,
-    clear_bootstrap_cache,
+    is_bootstrap_mode,
     write_connection_config,
 )
 from backend.core.setup_service import setup_service

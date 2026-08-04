@@ -68,7 +68,7 @@
 
 ## 项目信息
 - 仓库名: Sakura520222/Sakura-AI-Reviewer
-- 后端语言: Python 3.11+
+- 后端语言: Python 3.14+
 - Web框架: FastAPI
 - 前端界面: HTML、Alpine.js、HTMX
 - 数据库: MySQL、Redis

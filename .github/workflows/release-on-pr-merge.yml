@@ -471,10 +471,10 @@ jobs:
 
           echo "✅ Sakura-AI-Reviewer 项目结构验证通过"
       
-      - name: 设置 Python 3.11
+      - name: 设置 Python 3.14
         uses: actions/setup-python@v5
         with:
-          python-version: '3.11'
+          python-version: '3.14'
       
       - name: 获取版本信息
         id: get_version

@@ -9,7 +9,6 @@ from pathlib import Path
 
 from backend.core.config import get_settings
 
-
 _SAFE_SEGMENT_RE = re.compile(r"^[A-Za-z0-9_.-]+$")
 _WORKTREE_SLUG_RE = re.compile(r"[^A-Za-z0-9_.-]+")
 

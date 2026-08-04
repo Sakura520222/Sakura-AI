@@ -1,14 +1,13 @@
 """API v1 Setup Wizard 端点（免认证，仅在 bootstrap 模式下可用）"""
 
+
 from fastapi import APIRouter, Request
 from pydantic import BaseModel
-from typing import Optional
 
+from backend.api.v1.deps import limiter
+from backend.api.v1.responses import error_response, success_response
 from backend.core.bootstrap import is_bootstrap_mode
 from backend.core.setup_service import setup_service
-
-from backend.api.v1.responses import success_response, error_response
-from backend.api.v1.deps import limiter
 
 router = APIRouter(prefix="/setup", tags=["Setup"])
 
@@ -18,19 +17,19 @@ class TestConnectionRequest(BaseModel):
 
     type: str  # database, redis, github, openai, telegram
     # database
-    database_url: Optional[str] = None
+    database_url: str | None = None
     # redis
-    redis_url: Optional[str] = None
+    redis_url: str | None = None
     # github
-    app_id: Optional[str] = None
-    private_key: Optional[str] = None
+    app_id: str | None = None
+    private_key: str | None = None
     # openai
-    provider: Optional[str] = None
-    api_key: Optional[str] = None
-    api_base: Optional[str] = None
-    model: Optional[str] = None
+    provider: str | None = None
+    api_key: str | None = None
+    api_base: str | None = None
+    model: str | None = None
     # telegram
-    bot_token: Optional[str] = None
+    bot_token: str | None = None
 
 
 class SaveStepRequest(BaseModel):
@@ -42,34 +41,34 @@ class SaveStepRequest(BaseModel):
 class CompleteSetupRequest(BaseModel):
     """完成 Setup 请求"""
 
-    DATABASE_URL: Optional[str] = None
-    REDIS_URL: Optional[str] = None
-    GITHUB_APP_ID: Optional[str] = None
-    GITHUB_PRIVATE_KEY: Optional[str] = None
-    GITHUB_WEBHOOK_SECRET: Optional[str] = None
-    AI_PROVIDER: Optional[str] = None
-    OPENAI_API_KEY: Optional[str] = None
-    OPENAI_API_BASE: Optional[str] = None
-    OPENAI_MODEL: Optional[str] = None
-    SUMMARY_PROVIDER: Optional[str] = None
-    TELEGRAM_BOT_TOKEN: Optional[str] = None
-    APP_DOMAIN: Optional[str] = None
-    APP_PORT: Optional[str] = None
-    LOG_LEVEL: Optional[str] = None
-    ADMIN_GITHUB_USERNAME: Optional[str] = None
-    ADMIN_TELEGRAM_ID: Optional[str] = None
-    GITHUB_OAUTH_CLIENT_ID: Optional[str] = None
-    GITHUB_OAUTH_CLIENT_SECRET: Optional[str] = None
-    GITHUB_OAUTH_REDIRECT_URI: Optional[str] = None
-    EMBEDDING_API_KEY: Optional[str] = None
-    EMBEDDING_BASE_URL: Optional[str] = None
-    EMBEDDING_MODEL: Optional[str] = None
-    EMBEDDING_PROVIDER: Optional[str] = None
-    EMBEDDING_DIMENSION: Optional[str] = None
-    RERANK_API_KEY: Optional[str] = None
-    RERANK_BASE_URL: Optional[str] = None
-    RERANK_MODEL: Optional[str] = None
-    RERANK_PROVIDER: Optional[str] = None
+    DATABASE_URL: str | None = None
+    REDIS_URL: str | None = None
+    GITHUB_APP_ID: str | None = None
+    GITHUB_PRIVATE_KEY: str | None = None
+    GITHUB_WEBHOOK_SECRET: str | None = None
+    AI_PROVIDER: str | None = None
+    OPENAI_API_KEY: str | None = None
+    OPENAI_API_BASE: str | None = None
+    OPENAI_MODEL: str | None = None
+    SUMMARY_PROVIDER: str | None = None
+    TELEGRAM_BOT_TOKEN: str | None = None
+    APP_DOMAIN: str | None = None
+    APP_PORT: str | None = None
+    LOG_LEVEL: str | None = None
+    ADMIN_GITHUB_USERNAME: str | None = None
+    ADMIN_TELEGRAM_ID: str | None = None
+    GITHUB_OAUTH_CLIENT_ID: str | None = None
+    GITHUB_OAUTH_CLIENT_SECRET: str | None = None
+    GITHUB_OAUTH_REDIRECT_URI: str | None = None
+    EMBEDDING_API_KEY: str | None = None
+    EMBEDDING_BASE_URL: str | None = None
+    EMBEDDING_MODEL: str | None = None
+    EMBEDDING_PROVIDER: str | None = None
+    EMBEDDING_DIMENSION: str | None = None
+    RERANK_API_KEY: str | None = None
+    RERANK_BASE_URL: str | None = None
+    RERANK_MODEL: str | None = None
+    RERANK_PROVIDER: str | None = None
 
 
 def _check_bootstrap():
@@ -98,7 +97,7 @@ async def get_setup_state():
 
     settings = get_settings()
     missing = []
-    for group, fields in ENV_FIELD_GROUPS.items():
+    for fields in ENV_FIELD_GROUPS.values():
         for field in fields:
             val = getattr(settings, field.lower(), None)
             if not val:

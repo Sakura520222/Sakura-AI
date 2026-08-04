@@ -1,7 +1,8 @@
 """Two-factor authentication helper tests."""
 
-import pyotp
 from unittest.mock import patch
+
+import pyotp
 
 from backend.services.two_factor_service import (
     TwoFactorReplayError,

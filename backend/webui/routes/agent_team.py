@@ -3,7 +3,7 @@
 import asyncio
 import json
 import re
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from fastapi import APIRouter, BackgroundTasks, Depends, Form, Request
 from fastapi.encoders import jsonable_encoder
@@ -15,8 +15,8 @@ from sqlalchemy.orm import selectinload
 
 from backend.core.config import (
     DYNAMIC_CONFIG_RANGES,
-    DYNAMIC_CONFIG_SENSITIVE_KEYS,
     DYNAMIC_CONFIG_SELECT_OPTIONS,
+    DYNAMIC_CONFIG_SENSITIVE_KEYS,
     get_all_dynamic_config_keys,
     get_dynamic_config,
     get_dynamic_config_input_type,
@@ -1402,7 +1402,7 @@ async def cancel_task(
 
     old_status = task.status
     task.status = AgentTeamTaskStatus.CANCELLED.value
-    task.completed_at = datetime.now(timezone.utc)
+    task.completed_at = datetime.now(UTC)
     await db.commit()
 
     # 向正在运行的 worker 发送取消信号
@@ -1562,7 +1562,7 @@ async def worktree_list_fragment(
                 "file_count": w.file_count,
                 "total_size_bytes": w.total_size_bytes,
                 "size_label": _format_bytes(w.total_size_bytes),
-                "modified_at": datetime.fromtimestamp(w.modified_at, tz=timezone.utc)
+                "modified_at": datetime.fromtimestamp(w.modified_at, tz=UTC)
                 if w.modified_at
                 else None,
                 "task_status": task_status,
@@ -1881,7 +1881,7 @@ def _workspace_info_to_dict(info) -> dict:
         "file_count": info.file_count,
         "total_size_bytes": info.total_size_bytes,
         "size_label": _format_bytes(info.total_size_bytes),
-        "modified_at": datetime.fromtimestamp(info.modified_at, tz=timezone.utc)
+        "modified_at": datetime.fromtimestamp(info.modified_at, tz=UTC)
         if info.modified_at
         else None,
         "has_git": info.has_git,

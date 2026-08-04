@@ -4,11 +4,12 @@
 支持多租户隔离，每个仓库使用独立的 Collection
 """
 
-from typing import List, Dict, Any, Optional
-from loguru import logger
 import hashlib
 import re
 from pathlib import Path
+from typing import Any
+
+from loguru import logger
 
 try:
     import chromadb
@@ -31,7 +32,7 @@ class VectorStore:
     - 向量相似度检索
     """
 
-    def __init__(self, persist_directory: Optional[str] = None):
+    def __init__(self, persist_directory: str | None = None):
         """初始化向量存储
 
         Args:
@@ -134,7 +135,7 @@ class VectorStore:
             raise
 
     async def add_documents(
-        self, repo_full_name: str, documents: List[Dict[str, Any]]
+        self, repo_full_name: str, documents: list[dict[str, Any]]
     ) -> int:
         """向 Collection 添加文档
 
@@ -182,10 +183,10 @@ class VectorStore:
     async def search(
         self,
         repo_full_name: str,
-        query_embedding: List[float],
+        query_embedding: list[float],
         top_k: int = 20,
-        where: Optional[Dict[str, Any]] = None,
-    ) -> List[Dict[str, Any]]:
+        where: dict[str, Any] | None = None,
+    ) -> list[dict[str, Any]]:
         """向量相似度检索
 
         Args:
@@ -275,7 +276,7 @@ class VectorStore:
             logger.error(f"❌ 获取文档数量失败 (repo: {repo_full_name}): {e}")
             return 0
 
-    async def delete_documents(self, repo_full_name: str, doc_ids: List[str]) -> bool:
+    async def delete_documents(self, repo_full_name: str, doc_ids: list[str]) -> bool:
         """从 Collection 中删除指定文档
 
         Args:
@@ -295,7 +296,7 @@ class VectorStore:
             return False
 
     async def upsert_documents(
-        self, repo_full_name: str, documents: List[Dict[str, Any]]
+        self, repo_full_name: str, documents: list[dict[str, Any]]
     ) -> int:
         """更新或插入文档（使用 ChromaDB 原生 upsert）
 
@@ -364,7 +365,7 @@ class VectorStore:
 
 
 # 全局单例
-_vector_store_instance: Optional[VectorStore] = None
+_vector_store_instance: VectorStore | None = None
 
 
 def get_vector_store() -> VectorStore:

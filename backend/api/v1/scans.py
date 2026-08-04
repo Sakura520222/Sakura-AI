@@ -4,19 +4,17 @@ import asyncio
 
 from fastapi import APIRouter, Depends, Query, Request
 from loguru import logger
-from sqlalchemy import select, func, desc, or_
+from sqlalchemy import desc, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from backend.models.scan_models import RepoScan, ScanFinding
-from backend.webui.deps import get_db, paginate
-
-from backend.api.v1.deps import require_api_admin, require_api_super_admin
+from backend.api.v1.deps import limiter, require_api_admin, require_api_super_admin
 from backend.api.v1.responses import (
-    success_response,
     error_response,
     paginated_response,
+    success_response,
 )
-from backend.api.v1.deps import limiter
+from backend.models.scan_models import RepoScan, ScanFinding
+from backend.webui.deps import get_db, paginate
 
 router = APIRouter(prefix="/scans", tags=["Scans"])
 

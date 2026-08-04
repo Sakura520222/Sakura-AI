@@ -1,22 +1,22 @@
 """配置管理模块"""
 
+import time
 from collections import OrderedDict
-from typing import Any, Dict, Literal, Optional, get_origin
+from functools import lru_cache
+from pathlib import Path
+from typing import Any, Literal, get_origin
 
+import yaml
+from loguru import logger
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
-from functools import lru_cache
-import time
-import yaml
-from pathlib import Path
-from loguru import logger
 
 from backend.core.ai_providers import get_provider_select_options
 
 DEFAULT_FETCH_URL_ALLOWED_CONTENT_TYPES = "text/html,application/xhtml+xml,text/plain"
 
 
-def sanitize_domain(domain: Optional[str]) -> str:
+def sanitize_domain(domain: str | None) -> str:
     """Strip protocol prefix and trailing slashes from a domain string."""
     domain = (domain or "").strip()
     for prefix in ("https://", "http://"):
@@ -38,14 +38,14 @@ class Settings(BaseSettings):
     )
 
     # GitHub App配置（Setup Wizard 模式下可为 None）
-    github_app_id: Optional[str] = None
-    github_private_key: Optional[str] = None
-    github_webhook_secret: Optional[str] = None
+    github_app_id: str | None = None
+    github_private_key: str | None = None
+    github_webhook_secret: str | None = None
 
     # OpenAI 兼容 AI 配置
     ai_provider: str = "openai"
     openai_api_base: str = "https://api.openai.com/v1"
-    openai_api_key: Optional[str] = None
+    openai_api_key: str | None = None
     openai_model: str = "gpt-4"
     openai_temperature: float = 0.3
     openai_max_tokens: int = 4000
@@ -67,7 +67,7 @@ class Settings(BaseSettings):
     context_compression_keep_rounds: int = 2  # 保留最近几轮对话不压缩
 
     # 数据库配置
-    database_url: Optional[str] = None
+    database_url: str | None = None
 
     # Redis配置
     redis_url: str = "redis://127.0.0.1:6379/0"
@@ -248,8 +248,8 @@ class Settings(BaseSettings):
     )
 
     # Telegram Bot配置
-    telegram_bot_token: Optional[str] = None
-    telegram_bot_username: Optional[str] = None  # 启动时通过 getMe 自动填充
+    telegram_bot_token: str | None = None
+    telegram_bot_username: str | None = None  # 启动时通过 getMe 自动填充
     telegram_admin_user_ids: str = ""  # 逗号分隔的超级管理员ID列表
     telegram_default_chat_id: str = ""  # 默认接收通知的聊天ID
     register_quota_multiplier: float = Field(
@@ -341,7 +341,7 @@ class Settings(BaseSettings):
     )
 
     # GitHub App机器人用户名（可选，用于幂等性检查）
-    bot_username: Optional[str] = None  # 备用方案，当无法从GitHub API获取时使用
+    bot_username: str | None = None  # 备用方案，当无法从GitHub API获取时使用
 
     # ========== 国际化配置 / i18n Configuration ==========
     default_language: str = Field(
@@ -789,13 +789,13 @@ class StrategyConfig:
         return any(model_lower.startswith(ds_model) for ds_model in deepseek_models)
 
 
-@lru_cache()
+@lru_cache
 def get_settings() -> Settings:
     """获取配置单例"""
     return Settings()
 
 
-@lru_cache()
+@lru_cache
 def get_strategy_config() -> StrategyConfig:
     """获取策略配置单例"""
     return StrategyConfig()
@@ -850,7 +850,7 @@ class LabelConfig:
         """获取标签推荐设置"""
         return self.config.get("recommendation", {})
 
-    def get_conflict_rules(self) -> Dict[str, list]:
+    def get_conflict_rules(self) -> dict[str, list]:
         """获取标签冲突规则
 
         Returns:
@@ -859,7 +859,7 @@ class LabelConfig:
         return self.config.get("conflict_rules", {})
 
 
-@lru_cache()
+@lru_cache
 def get_label_config() -> LabelConfig:
     """获取标签配置单例"""
     return LabelConfig()
@@ -1880,12 +1880,13 @@ async def get_user_dynamic_config_state(key: str, user_id: int) -> dict[str, Any
     }
 
 
-async def _read_user_config_from_db(user_id: int, key: str) -> Optional[str]:
+async def _read_user_config_from_db(user_id: int, key: str) -> str | None:
     """从 UserConfig 表读取用户配置值。"""
     try:
         # 延迟导入避免 config ↔ database 初始化阶段循环引用。
-        from backend.models.database import UserConfig, async_session
         from sqlalchemy import select
+
+        from backend.models.database import UserConfig, async_session
 
         async with async_session() as session:
             result = await session.execute(
@@ -1921,11 +1922,12 @@ def invalidate_user_dynamic_config_cache(
         _user_dynamic_config_cache.pop((int(user_id), key), None)
 
 
-async def _read_config_from_db(key: str) -> Optional[str]:
+async def _read_config_from_db(key: str) -> str | None:
     """从 AppConfig 表读取配置值"""
     try:
-        from backend.models.database import async_session, AppConfig
         from sqlalchemy import select
+
+        from backend.models.database import AppConfig, async_session
 
         async with async_session() as session:
             result = await session.execute(
@@ -1949,7 +1951,7 @@ def invalidate_dynamic_config_cache(keys: list[str] | None = None):
             _dynamic_config_cache.pop(k, None)
 
 
-def get_cached_config(key: str) -> Optional[str]:
+def get_cached_config(key: str) -> str | None:
     """从动态配置缓存中同步读取值（无 I/O）
 
     用于 i18n 等同步上下文中读取运行时配置。
@@ -2073,8 +2075,9 @@ async def load_dynamic_configs_to_settings():
         return
 
     try:
-        from backend.models.database import async_session, AppConfig
         from sqlalchemy import select
+
+        from backend.models.database import AppConfig, async_session
 
         async with async_session() as session:
             result = await session.execute(

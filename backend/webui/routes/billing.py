@@ -1,8 +1,8 @@
 """WebUI 付费配额路由"""
 
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
-from fastapi import APIRouter, Request, Depends, Form
+from fastapi import APIRouter, Depends, Form, Request
 from fastapi.responses import JSONResponse
 from loguru import logger
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -15,16 +15,16 @@ from backend.services.payment_service import (
 )
 from backend.services.quota_service import QuotaService
 from backend.webui.deps import (
-    require_auth,
-    require_super_admin,
+    get_csrf_serializer,
     get_db,
     get_templates,
-    get_csrf_serializer,
-    require_csrf,
     get_user_preferences,
-    require_payment_enabled,
-    toast_redirect,
     render_template,
+    require_auth,
+    require_csrf,
+    require_payment_enabled,
+    require_super_admin,
+    toast_redirect,
 )
 from backend.webui.helpers.admin_log import log_admin_action
 from backend.webui.i18n import detect_language
@@ -54,9 +54,9 @@ def _get_order_expires_at(order: Order) -> str:
         dt = order.expires_at
         # MySQL TIMESTAMP 返回 naive datetime（实为 UTC），确保带 +00:00
         if dt.tzinfo is None:
-            dt = dt.replace(tzinfo=timezone.utc)
+            dt = dt.replace(tzinfo=UTC)
         return dt.isoformat()
-    return (datetime.now(timezone.utc) + timedelta(hours=1)).isoformat()
+    return (datetime.now(UTC) + timedelta(hours=1)).isoformat()
 
 
 def _parse_page(value: str | None) -> int:
@@ -259,8 +259,9 @@ async def reopen_crypto_payment(
     """重新打开虚拟币支付页面（用户点击'先返回'后可再次进入）"""
     import json
 
-    from backend.models.payment_models import Order
     from sqlalchemy import select
+
+    from backend.models.payment_models import Order
 
     stmt = select(Order).where(
         Order.order_no == order_no,
@@ -343,8 +344,9 @@ async def crypto_payment_status(
     if not order_no:
         return JSONResponse({"status": "unknown"}, status_code=400)
 
-    from backend.models.payment_models import Order
     from sqlalchemy import select
+
+    from backend.models.payment_models import Order
 
     stmt = select(Order).where(
         Order.order_no == order_no,
@@ -507,8 +509,9 @@ async def user_cancel_order(
     csrf_token: str = Depends(require_csrf),
 ):
     """用户主动取消 pending 订单"""
-    from backend.models.payment_models import Order
     from sqlalchemy import select
+
+    from backend.models.payment_models import Order
 
     stmt = select(Order).where(
         Order.id == order_id,
@@ -554,8 +557,9 @@ async def user_delete_order(
     csrf_token: str = Depends(require_csrf),
 ):
     """User deletes their own order record (only non-active statuses)"""
+    from sqlalchemy import and_, select
+
     from backend.models.payment_models import Order, OrderStatus, PaymentLog
-    from sqlalchemy import select, and_
 
     deletable_statuses = [
         OrderStatus.PENDING.value,

@@ -97,19 +97,19 @@ class TestAiDecision:
         """No AI decision → falls back to rule-based logic"""
         # High score, no issues → should approve
         result = _review_result(score=9, major_count=0)
-        decision, reason = engine.make_decision(result, "owner/repo")
+        decision, _reason = engine.make_decision(result, "owner/repo")
         assert decision == ReviewDecision.APPROVE
 
     def test_no_ai_decision_critical_blocks(self, engine):
         """No AI decision, critical issue → rule blocks"""
         result = _review_result(score=9, critical_count=1)
-        decision, reason = engine.make_decision(result, "owner/repo")
+        decision, _reason = engine.make_decision(result, "owner/repo")
         assert decision == ReviewDecision.REQUEST_CHANGES
 
     def test_no_ai_decision_low_score_blocks(self, engine):
         """No AI decision, low score → rule blocks"""
         result = _review_result(score=2)
-        decision, reason = engine.make_decision(result, "owner/repo")
+        decision, _reason = engine.make_decision(result, "owner/repo")
         assert decision == ReviewDecision.REQUEST_CHANGES
 
     def test_missing_validated_score_requires_manual_review(self, engine):

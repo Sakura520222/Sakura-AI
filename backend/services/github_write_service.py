@@ -12,7 +12,6 @@ a branch + PR + auto-merge when branch protection blocks direct commits.
 import asyncio
 import base64
 from datetime import datetime
-from typing import Optional
 
 from github.GithubException import GithubException, UnknownObjectException
 from loguru import logger
@@ -32,7 +31,7 @@ class GitHubWriteService:
         repo,
         files: dict,
         message: str,
-        branch: Optional[str] = None,
+        branch: str | None = None,
     ) -> str:
         """通过 Contents API 提交多个文件到仓库
 
@@ -247,7 +246,7 @@ class GitHubWriteService:
             pr_title = message[:72]
             pr_body = (
                 "Automated commit by **Sakura AI Reviewer**.\n\n"
-                f"Files: {', '.join(f'`{p}`' for p in files.keys())}"
+                f"Files: {', '.join(f'`{p}`' for p in files)}"
             )
             pr = repo.create_pull(
                 title=pr_title,
@@ -306,11 +305,11 @@ class GitHubWriteService:
             raise
 
     async def read_file(
-        self, repo, path: str, ref: Optional[str] = None
-    ) -> Optional[str]:
+        self, repo, path: str, ref: str | None = None
+    ) -> str | None:
         """从仓库读取文件内容 / Read file content from repository"""
 
-        def _sync() -> Optional[str]:
+        def _sync() -> str | None:
             kwargs = {}
             if ref is not None:
                 kwargs["ref"] = ref
@@ -330,7 +329,7 @@ class GitHubWriteService:
             logger.error("Failed to read file {}: {}", path, e)
             return None
 
-    async def file_exists(self, repo, path: str, ref: Optional[str] = None) -> bool:
+    async def file_exists(self, repo, path: str, ref: str | None = None) -> bool:
         """检查文件是否存在于仓库中 / Check if a file exists in the repository"""
 
         def _sync() -> bool:
@@ -363,15 +362,15 @@ class GitHubWriteService:
     async def _find_open_sakura_branch(
         self,
         repo,
-        base_branch: Optional[str] = None,
-    ) -> Optional[tuple]:
+        base_branch: str | None = None,
+    ) -> tuple | None:
         """查找已有的未合并 sakura 分支 / Find existing open sakura PR branch
 
         Returns:
             (head_ref, base_ref) 元组，未找到时返回 None
         """
 
-        def _sync() -> Optional[tuple]:
+        def _sync() -> tuple | None:
             # NOTE: get_pulls 默认只返回前 30 条，超 30 个 open PR 时可能遗漏
             pulls = repo.get_pulls(state="open")
             for pr in pulls:
@@ -394,7 +393,7 @@ class GitHubWriteService:
             logger.debug("Failed to search open PRs: {}", e)
             return None
 
-    async def get_sakura_branch(self, repo) -> Optional[str]:
+    async def get_sakura_branch(self, repo) -> str | None:
         """获取当前未合并的 sakura 分支名（供读取用）
 
         Get the open sakura branch name for reading files before merge.
@@ -405,7 +404,7 @@ class GitHubWriteService:
 
 
 # 模块级单例访问 / Module-level singleton accessor
-_github_write_service: Optional[GitHubWriteService] = None
+_github_write_service: GitHubWriteService | None = None
 
 
 def get_github_write_service() -> GitHubWriteService:

@@ -162,7 +162,7 @@ class _FakeCandidateService:
 
 async def _async_noop(*a, **kw):
     """通用异步 no-op，用于 monkeypatch 同步函数为 async 版本"""
-    return None
+    return
 
 
 class _PostCommentRecorder:

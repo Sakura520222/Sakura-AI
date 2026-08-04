@@ -11,8 +11,8 @@
 
 import asyncio
 import json
-from datetime import datetime, timedelta, timezone
-from typing import Any, Optional
+from datetime import UTC, datetime, timedelta
+from typing import Any
 
 from loguru import logger
 from sqlalchemy import select
@@ -25,7 +25,7 @@ from backend.models.database import CIFailure, HeadShaPRMap
 
 def _utcnow_naive() -> datetime:
     """返回 UTC naive datetime，兼容现有 TIMESTAMP 字段且避免 utcnow 弃用警告。"""
-    return datetime.now(timezone.utc).replace(tzinfo=None)
+    return datetime.now(UTC).replace(tzinfo=None)
 
 
 class CIFailureService:
@@ -162,8 +162,8 @@ class CIFailureService:
                 details_url=workflow_job_payload.get("html_url"),
             )
             logger.info(
-                "[ci_failure] record workflow_job: name={!r}, pr={}, "
-                "failed_steps={}".format(name, pr_number, len(failed_steps))
+                f"[ci_failure] record workflow_job: name={name!r}, pr={pr_number}, "
+                f"failed_steps={len(failed_steps)}"
             )
         except Exception as exc:
             logger.debug("CIFailureService.record_workflow_job_failure 失败: {}", exc)
@@ -180,13 +180,13 @@ class CIFailureService:
         name: str,
         conclusion: str,
         external_id: str,
-        output_title: Optional[str],
-        output_summary: Optional[str],
-        output_text: Optional[str],
-        annotations: Optional[list],
+        output_title: str | None,
+        output_summary: str | None,
+        output_text: str | None,
+        annotations: list | None,
         annotations_total: int,
-        failed_steps: Optional[list],
-        details_url: Optional[str],
+        failed_steps: list | None,
+        details_url: str | None,
     ) -> None:
         """按 (repo, head_sha, source, external_id) 去重 upsert。"""
         annotations_json = (
@@ -282,15 +282,8 @@ class CIFailureService:
             omitted_records = max(0, len(deduped) - max_records)
             shown = deduped[:max_records]
             logger.info(
-                "[ci_failure] fetch_for_review: repo={}, head_sha={!r}, "
-                "total={}, deduped={}, shown={}, names={}".format(
-                    repo_full_name,
-                    head_sha[:8],
-                    len(rows),
-                    len(deduped),
-                    len(shown),
-                    [r.name for r in shown],
-                )
+                f"[ci_failure] fetch_for_review: repo={repo_full_name}, head_sha={head_sha[:8]!r}, "
+                f"total={len(rows)}, deduped={len(deduped)}, shown={len(shown)}, names={[r.name for r in shown]}"
             )
             return [self._row_to_dict(row, omitted_records) for row in shown]
         except Exception as exc:
@@ -321,7 +314,7 @@ class CIFailureService:
         }
 
     @staticmethod
-    def _load_json(raw: Optional[str]) -> Any:
+    def _load_json(raw: str | None) -> Any:
         if not raw:
             return None
         try:
@@ -369,7 +362,7 @@ class CIFailureService:
 
     async def lookup_pr_number(
         self, repo_full_name: str, head_sha: str
-    ) -> Optional[int]:
+    ) -> int | None:
         """查映射表解 pr_number（三层降级第二层）。"""
         try:
             async with db_module.async_session() as session:

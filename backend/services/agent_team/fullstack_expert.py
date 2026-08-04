@@ -18,8 +18,9 @@ AI 自主决定调用哪些工具、读取哪些文件、如何修改，循环�
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import Any, Callable
+from typing import Any
 
 from loguru import logger
 

@@ -7,9 +7,10 @@
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any
 
 from backend.services.agent_team.workspace_service import (
     AgentTeamWorkspaceService,

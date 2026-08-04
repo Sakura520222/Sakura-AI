@@ -12,7 +12,6 @@ import pytest
 from backend.models.database import ReviewDecision
 from backend.services.check_run_service import CheckRunService
 
-
 # 宽松的 emoji 检测：覆盖常见 emoji Unicode 区间 + 项目评论用过的符号
 _EMOJI_RE = re.compile(
     "["

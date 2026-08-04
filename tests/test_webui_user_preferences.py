@@ -6,7 +6,7 @@ import pytest
 
 from backend.webui import deps
 from backend.webui.deps import _USER_PREFS_CACHE
-from tests.stubs import RequestStub, DbStub
+from tests.stubs import DbStub, RequestStub
 
 
 @pytest.fixture(autouse=True)

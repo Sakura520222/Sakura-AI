@@ -11,7 +11,8 @@
 """
 
 import asyncio
-from typing import Any, Iterable, Optional
+from collections.abc import Iterable
+from typing import Any
 
 from loguru import logger
 
@@ -68,7 +69,7 @@ class CheckRunService:
     # ------------------------------------------------------------------ utils
 
     @staticmethod
-    def _is_english(output_language: Optional[str]) -> bool:
+    def _is_english(output_language: str | None) -> bool:
         """判断输出语言是否为英文（与 CommentService._is_english 一致）。"""
         lang = (
             output_language
@@ -92,13 +93,13 @@ class CheckRunService:
         repo_name: str,
         head_sha: str,
         *,
-        status: Optional[str] = None,
-        conclusion: Optional[str] = None,
-        output_title: Optional[str] = None,
-        output_summary: Optional[str] = None,
-        output_text: Optional[str] = None,
+        status: str | None = None,
+        conclusion: str | None = None,
+        output_title: str | None = None,
+        output_summary: str | None = None,
+        output_text: str | None = None,
         finalize: bool = False,
-    ) -> Optional[int]:
+    ) -> int | None:
         """按 head_sha + name 定位 Check Run 并更新；未命中则创建。
 
         带实例级 id 缓存：中间态（queued/in_progress，finalize=False）update 后
@@ -189,7 +190,7 @@ class CheckRunService:
         head_sha: str,
         *,
         pr_number: Any,
-        output_language: Optional[str] = None,
+        output_language: str | None = None,
     ) -> None:
         """审查已排队（queued）。幂等：find 命中则重置为 queued。"""
         if not get_settings().enable_check_runs:
@@ -220,8 +221,8 @@ class CheckRunService:
         head_sha: str,
         *,
         stage: str,
-        completed_stages: Optional[Iterable[str]] = None,
-        output_language: Optional[str] = None,
+        completed_stages: Iterable[str] | None = None,
+        output_language: str | None = None,
     ) -> None:
         """审查进行中（in_progress），更新当前阶段 output。"""
         if not get_settings().enable_check_runs:
@@ -274,7 +275,7 @@ class CheckRunService:
         overall_score: Any,
         comment_count: int,
         summary_excerpt: str = "",
-        output_language: Optional[str] = None,
+        output_language: str | None = None,
     ) -> None:
         """审查完成（completed），conclusion 由 decision 映射。"""
         if not get_settings().enable_check_runs:
@@ -321,7 +322,7 @@ class CheckRunService:
         repo_name: str,
         head_sha: str,
         *,
-        output_language: Optional[str] = None,
+        output_language: str | None = None,
     ) -> None:
         """审查失败（completed + failure）。错误信息脱敏，不直接写入 output。
 
@@ -353,7 +354,7 @@ class CheckRunService:
         repo_name: str,
         head_sha: str,
         *,
-        output_language: Optional[str] = None,
+        output_language: str | None = None,
     ) -> None:
         """审查取消（completed + cancelled）。"""
         if not get_settings().enable_check_runs:
@@ -382,7 +383,7 @@ class CheckRunService:
         head_sha: str,
         *,
         reason: str,
-        output_language: Optional[str] = None,
+        output_language: str | None = None,
     ) -> None:
         """审查跳过（completed + neutral）。reason 直接使用原值（中英一致）。"""
         if not get_settings().enable_check_runs:

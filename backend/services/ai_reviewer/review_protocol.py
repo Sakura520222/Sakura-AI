@@ -7,7 +7,6 @@ from typing import Any
 
 from loguru import logger
 
-
 PROTOCOL_VERSION = "1"
 VALID_SEVERITIES = {"critical", "major", "minor", "suggestion"}
 VALID_DECISIONS = {"approve", "request_changes", "comment"}

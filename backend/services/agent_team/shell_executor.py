@@ -6,9 +6,9 @@ import asyncio
 import os
 import re
 import sys
+from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Sequence
 from urllib.parse import urlsplit
 
 from backend.services.agent_team.workspace_service import (
@@ -87,7 +87,7 @@ class AgentTeamShellExecutor:
                 stdout=stdout.decode("utf-8", errors="replace"),
                 stderr=stderr.decode("utf-8", errors="replace"),
             )
-        except asyncio.TimeoutError:
+        except TimeoutError:
             process.kill()
             stdout, stderr = await process.communicate()
             return ShellCommandResult(
@@ -132,7 +132,7 @@ class AgentTeamShellExecutor:
                 stdout=stdout.decode("utf-8", errors="replace"),
                 stderr=stderr.decode("utf-8", errors="replace"),
             )
-        except asyncio.TimeoutError:
+        except TimeoutError:
             process.kill()
             stdout, stderr = await process.communicate()
             return ShellCommandResult(
