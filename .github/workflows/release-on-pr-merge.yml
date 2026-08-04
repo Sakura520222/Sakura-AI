@@ -570,7 +570,7 @@ jobs:
           MAX_RETRIES=6
           RETRY_COUNT=0
 
-          while [ $RETRY_COUNT -lt $MAX_RETRIES ]; then
+          while [ $RETRY_COUNT -lt $MAX_RETRIES ]; do
             # 检查 Tag 是否已经生效
             if git ls-remote --tags origin | grep -q "refs/tags/${TAG_NAME}$"; then
               echo "✅ Tag ${TAG_NAME} 已确认存在"
