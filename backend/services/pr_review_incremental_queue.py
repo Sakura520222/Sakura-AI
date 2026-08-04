@@ -11,7 +11,9 @@ from sqlalchemy import desc, select
 from backend.core.config import get_settings
 from backend.models import database as db_module
 from backend.models.database import PRReview, PRReviewIncrementalQueue, PRStatus
-from backend.services.activity_observability.integration_service import ActivityIntegrationService
+from backend.services.activity_observability.integration_service import (
+    ActivityIntegrationService,
+)
 
 
 @dataclass
@@ -113,7 +115,11 @@ class PRReviewIncrementalQueueService:
         pr_number = int(pr_info["pr_number"])
         observability_session_id = None
         observability_trigger_id = None
-        if pr_info.get("repository_external_id") and pr_info.get("source_system_instance") and delivery_id:
+        if (
+            pr_info.get("repository_external_id")
+            and pr_info.get("source_system_instance")
+            and delivery_id
+        ):
             try:
                 admission = await ActivityIntegrationService().admit_synchronize(
                     pr_info,

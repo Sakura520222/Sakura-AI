@@ -16,10 +16,6 @@ from backend.services.activity_observability.artifact_projection import (
     projection_json,
 )
 from backend.services.activity_observability.attempt_service import AttemptService
-from backend.services.activity_observability.contracts import (
-    EffectiveReasoningSnapshot,
-    InvocationContext,
-)
 from backend.services.activity_observability.context_service import (
     AVAILABILITY_ESTIMATED,
     AVAILABILITY_REPORTED,
@@ -32,6 +28,10 @@ from backend.services.activity_observability.context_service import (
     ContextSnapshotFields,
     MeasuredValue,
     ThreadLeaseToken,
+)
+from backend.services.activity_observability.contracts import (
+    EffectiveReasoningSnapshot,
+    InvocationContext,
 )
 from backend.services.activity_observability.reasoning import (
     REASONING_OMITTED,
@@ -998,7 +998,7 @@ class ObservedModelSender:
             ):
                 await self._best_effort(
                     "stream_event_observation",
-                    lambda: self.consume_stream_event(
+                    lambda event=event: self.consume_stream_event(
                         event,
                         attempt=attempt,
                         reasoning_policy=reasoning_policy,
@@ -1205,4 +1205,4 @@ class ObservedEmbeddingSender(ObservedModelSender):
         )
 
 
-__all__ = ["ObservedModelSender", "ObservedEmbeddingSender"]
+__all__ = ["ObservedEmbeddingSender", "ObservedModelSender"]

@@ -186,9 +186,7 @@ async def test_repair_respects_configured_max_attempts(monkeypatch):
             return "2"
         return None
 
-    monkeypatch.setattr(
-        reviewer_module, "get_dynamic_config", _fake_get_dynamic_config
-    )
+    monkeypatch.setattr(reviewer_module, "get_dynamic_config", _fake_get_dynamic_config)
 
     reviewer = _reviewer_with_response("still invalid")
 

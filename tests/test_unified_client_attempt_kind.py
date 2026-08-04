@@ -1,4 +1,5 @@
 """验证 call_with_retry 把 attempt_kind 透传到 _retry_candidate.initial_attempt_kind。"""
+
 import inspect
 
 from backend.services.ai_reviewer.unified_client import UnifiedAIClient

@@ -4,15 +4,15 @@
 review/issue 两侧 caller 把各自差异（解析器、错误类型、修复指令、降级函数）
 作为参数传入，调用同一份实现。
 """
-from typing import Any, Awaitable, Callable, Coroutine, List, Optional
+
+from collections.abc import Awaitable, Callable, Coroutine
+from typing import Any
 
 from loguru import logger
 
 from backend.webui.sse import publish_event
 
-VIOLATION_SUFFIX = (
-    "\n\nSpecific violation in your previous response:\n{error}"
-)
+VIOLATION_SUFFIX = "\n\nSpecific violation in your previous response:\n{error}"
 
 _SIDE_BY_LABEL = {"审查": "review", "Issue 分析": "issue"}
 
@@ -21,7 +21,7 @@ async def run_protocol_repair_loop(
     *,
     parse_fn: Callable[[str], dict[str, Any]],
     error_type: type[Exception],
-    base_messages: List[dict[str, Any]],
+    base_messages: list[dict[str, Any]],
     final_text: str,
     repair_instruction: str,
     api_client: Any,
@@ -32,9 +32,9 @@ async def run_protocol_repair_loop(
     sse_channel: str,
     invocation_context: Any = None,
     observer: Any = None,
-    event_callback: Optional[Callable[[str, dict[str, Any]], Coroutine]] = None,
-    on_repaired: Optional[Callable[[str, str, dict[str, Any]], Awaitable[None]]] = None,
-    on_parse_failure: Optional[Callable[[BaseException], Awaitable[None]]] = None,
+    event_callback: Callable[[str, dict[str, Any]], Coroutine] | None = None,
+    on_repaired: Callable[[str, str, dict[str, Any]], Awaitable[None]] | None = None,
+    on_parse_failure: Callable[[BaseException], Awaitable[None]] | None = None,
     attempt_kind: str = "protocol_repair",
 ) -> dict[str, Any]:
     """Run up to ``max_attempts`` cumulative format-only repair rounds.
@@ -168,7 +168,7 @@ async def _emit_event(
     """best-effort 推送事件，吞掉可观测性侧异常，不影响修复主流程。"""
     try:
         await callback(event_type, data)
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         logger.warning("protocol repair event_callback failed: {}", exc)
 
 
@@ -191,5 +191,5 @@ async def _publish_repair_event(
     }
     try:
         await publish_event("protocol_repair_attempt", payload, channel=channel)
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         logger.warning("protocol repair SSE publish failed: {}", exc)

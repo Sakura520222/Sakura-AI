@@ -8,16 +8,15 @@
 
 from __future__ import annotations
 
-import pytest
 from unittest.mock import AsyncMock, patch
 
+import pytest
 from sqlalchemy import create_engine, select
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
 from backend.core.config import CORE_CONFIG_KEYS, get_all_db_config_keys, get_settings
 from backend.models.database import AppConfig, Base
-
 
 # ---------------------------------------------------------------------------
 # 契约测试：配置键注册位置

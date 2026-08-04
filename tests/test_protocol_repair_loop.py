@@ -1,4 +1,5 @@
 """协议信封修复循环 helper 的单元测试。"""
+
 import pytest
 
 import backend.services.protocol_repair as pr_module
@@ -72,13 +73,16 @@ async def test_local_parse_success_skips_model_call():
 @pytest.mark.asyncio
 async def test_first_round_repair_succeeds():
     """本地解析失败、第 1 轮模型修复成功。"""
+
     class _ProtocolErr(ValueError):
         pass
 
-    parse_fn = _make_parse([
-        _ProtocolErr("missing DESCRIPTION"),
-        {"decision": "approve"},
-    ])
+    parse_fn = _make_parse(
+        [
+            _ProtocolErr("missing DESCRIPTION"),
+            {"decision": "approve"},
+        ]
+    )
     api_client = _FakeAIClient(responses=["<SAKURA_REVIEW>...fixed...</SAKURA_REVIEW>"])
     tracker = _Tracker()
 
@@ -106,15 +110,18 @@ async def test_first_round_repair_succeeds():
 @pytest.mark.asyncio
 async def test_all_rounds_fail_degrades():
     """3 轮模型修复全失败 → 降级。"""
+
     class _ProtocolErr(ValueError):
         pass
 
-    parse_fn = _make_parse([
-        _ProtocolErr("err-0"),
-        _ProtocolErr("err-1"),
-        _ProtocolErr("err-2"),
-        _ProtocolErr("err-3"),
-    ])
+    parse_fn = _make_parse(
+        [
+            _ProtocolErr("err-0"),
+            _ProtocolErr("err-1"),
+            _ProtocolErr("err-2"),
+            _ProtocolErr("err-3"),
+        ]
+    )
     api_client = _FakeAIClient(responses=["resp-1", "resp-2", "resp-3"])
     tracker = _Tracker()
 
@@ -144,6 +151,7 @@ async def test_all_rounds_fail_degrades():
 @pytest.mark.asyncio
 async def test_model_call_exception_degrades_immediately():
     """模型调用本身抛异常 → 立即降级，不继续剩余轮次。"""
+
     class _ProtocolErr(ValueError):
         pass
 
@@ -173,6 +181,7 @@ async def test_model_call_exception_degrades_immediately():
 @pytest.mark.asyncio
 async def test_event_callback_emits_user_and_assistant_each_round():
     """每轮 event_callback 收到 user 修复指令 + assistant 修复输出。"""
+
     class _ProtocolErr(ValueError):
         pass
 
@@ -181,10 +190,12 @@ async def test_event_callback_emits_user_and_assistant_each_round():
     async def _capture(event_type, data):
         events.append((event_type, data["role"], data["content"]))
 
-    parse_fn = _make_parse([
-        _ProtocolErr("err-0"),
-        {"ok": True},
-    ])
+    parse_fn = _make_parse(
+        [
+            _ProtocolErr("err-0"),
+            {"ok": True},
+        ]
+    )
     api_client = _FakeAIClient(responses=["fixed-response"])
 
     await run_protocol_repair_loop(
@@ -210,6 +221,7 @@ async def test_event_callback_emits_user_and_assistant_each_round():
 @pytest.mark.asyncio
 async def test_on_repaired_hook_called_on_success():
     """on_repaired 钩子在解析成功时被调用。"""
+
     class _ProtocolErr(ValueError):
         pass
 
@@ -236,14 +248,15 @@ async def test_on_repaired_hook_called_on_success():
     )
 
     assert len(hook_calls) == 1
-    assert hook_calls[0][0] == "<valid>"   # original
-    assert hook_calls[0][1] == "<valid>"   # repaired（快路径下相同）
+    assert hook_calls[0][0] == "<valid>"  # original
+    assert hook_calls[0][1] == "<valid>"  # repaired（快路径下相同）
     assert hook_calls[0][2] == {"decision": "approve"}
 
 
 @pytest.mark.asyncio
 async def test_on_repaired_hook_receives_original_and_repaired():
     """修复成功时钩子收到原始失败文本与修复后文本。"""
+
     class _ProtocolErr(ValueError):
         pass
 
@@ -271,14 +284,15 @@ async def test_on_repaired_hook_receives_original_and_repaired():
     )
 
     assert len(hook_calls) == 1
-    assert hook_calls[0][0] == "broken-original"   # original
-    assert hook_calls[0][1] == "fixed-text"        # repaired
+    assert hook_calls[0][0] == "broken-original"  # original
+    assert hook_calls[0][1] == "fixed-text"  # repaired
     assert hook_calls[0][2] == {"ok": True}
 
 
 @pytest.mark.asyncio
 async def test_sse_progress_events_emitted(monkeypatch):
     """每轮修复与降级都通过 publish_event 推送 SSE 进度事件。"""
+
     class _ProtocolErr(ValueError):
         pass
 
@@ -289,12 +303,14 @@ async def test_sse_progress_events_emitted(monkeypatch):
 
     monkeypatch.setattr(pr_module, "publish_event", _fake_publish)
 
-    parse_fn = _make_parse([
-        _ProtocolErr("err-0"),
-        _ProtocolErr("err-1"),
-        _ProtocolErr("err-2"),
-        _ProtocolErr("err-3"),
-    ])
+    parse_fn = _make_parse(
+        [
+            _ProtocolErr("err-0"),
+            _ProtocolErr("err-1"),
+            _ProtocolErr("err-2"),
+            _ProtocolErr("err-3"),
+        ]
+    )
     api_client = _FakeAIClient(responses=["r1", "r2", "r3"])
 
     await run_protocol_repair_loop(
@@ -323,6 +339,7 @@ async def test_sse_progress_events_emitted(monkeypatch):
 @pytest.mark.asyncio
 async def test_max_attempts_zero_skips_loop_and_degrades():
     """max_attempts=0 时循环范围为空，直接降级，零模型调用。"""
+
     class _ProtocolErr(ValueError):
         pass
 
@@ -350,13 +367,16 @@ async def test_max_attempts_zero_skips_loop_and_degrades():
 @pytest.mark.asyncio
 async def test_max_attempts_one_single_repair_attempt():
     """max_attempts=1 只尝试一次修复，失败即降级。"""
+
     class _ProtocolErr(ValueError):
         pass
 
-    parse_fn = _make_parse([
-        _ProtocolErr("err-0"),
-        _ProtocolErr("err-1"),
-    ])
+    parse_fn = _make_parse(
+        [
+            _ProtocolErr("err-0"),
+            _ProtocolErr("err-1"),
+        ]
+    )
     api_client = _FakeAIClient(responses=["resp-1"])
 
     result = await run_protocol_repair_loop(

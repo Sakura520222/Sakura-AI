@@ -111,7 +111,9 @@ async def test_export_includes_personal_config_totp_recovery_codes_and_passkeys(
         created_at=datetime(2026, 7, 1, 0, 0, 0),
     )
     monkeypatch.setattr(service, "decrypt_totp_secret", lambda value: "TOTP-SECRET")
-    monkeypatch.setattr(service, "_recovery_code_hash_key_fingerprint", lambda: "b" * 64)
+    monkeypatch.setattr(
+        service, "_recovery_code_hash_key_fingerprint", lambda: "b" * 64
+    )
     session = _ExportSession(
         {
             TelegramUser: [user],
@@ -233,7 +235,13 @@ class _RestoreSession:
         self.added.clear()
 
     async def delete(self, row):
-        for rows in (self.users, self.configs, self.webuis, self.recoveries, self.passkeys):
+        for rows in (
+            self.users,
+            self.configs,
+            self.webuis,
+            self.recoveries,
+            self.passkeys,
+        ):
             if row in rows:
                 rows.remove(row)
 
@@ -268,7 +276,9 @@ async def test_restore_matches_user_and_remaps_related_records(monkeypatch):
         passkeys=[],
     )
 
-    result = await restore_user_backup(session, parse_user_backup(serialize_user_backup(document)))
+    result = await restore_user_backup(
+        session, parse_user_backup(serialize_user_backup(document))
+    )
 
     assert result.users_updated == 1
     assert target.role == "admin"

@@ -50,7 +50,9 @@ def test_custom_provider_allows_https_and_local_http_endpoints():
     assert ok is True
     assert message == ""
 
-    ok, message = validate_provider_base_url("custom-anthropic", "http://192.168.1.10:8080")
+    ok, message = validate_provider_base_url(
+        "custom-anthropic", "http://192.168.1.10:8080"
+    )
     assert ok is True
     assert message == ""
 
@@ -62,7 +64,9 @@ def test_custom_provider_allows_https_and_local_http_endpoints():
 def test_ai_endpoint_clients_disable_redirects():
     """账号探测与实际调用均不得自动跟随跨域重定向。"""
     assert "follow_redirects=False" in inspect.getsource(probe_account)
-    assert "follow_redirects=False" in inspect.getsource(UnifiedAIClient.http_client.fget)
+    assert "follow_redirects=False" in inspect.getsource(
+        UnifiedAIClient.http_client.fget
+    )
 
 
 def test_local_provider_allows_loopback():

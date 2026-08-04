@@ -1,7 +1,7 @@
 """Tests for the activity observability ORM models."""
 
 import re
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import pytest
 from sqlalchemy import (
@@ -563,7 +563,7 @@ def test_sqlite_rejects_cross_parent_scoped_references():
                 thread_id=first_work_unit.thread_id or 999,
                 owner_work_unit_id=second_work_unit.id,
                 fencing_token=1,
-                expires_at=datetime(2030, 1, 1, tzinfo=timezone.utc),
+                expires_at=datetime(2030, 1, 1, tzinfo=UTC),
             )
         )
         session.flush()

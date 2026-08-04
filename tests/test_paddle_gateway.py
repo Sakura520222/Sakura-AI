@@ -325,11 +325,13 @@ class TestPaddleGatewayRefund:
 
 class TestPaddleGatewayCancelPayment:
     @pytest.mark.asyncio
-    async def test_cancel_payment_updates_transaction_status(self, gateway, paddle_sdk_mock):
+    async def test_cancel_payment_updates_transaction_status(
+        self, gateway, paddle_sdk_mock
+    ):
         _, mock_client_cls = paddle_sdk_mock
-        sys.modules["paddle_billing.Entities.Shared"].TransactionStatus = SimpleNamespace(
-            Canceled="canceled"
-        )
+        sys.modules[
+            "paddle_billing.Entities.Shared"
+        ].TransactionStatus = SimpleNamespace(Canceled="canceled")
         sys.modules[
             "paddle_billing.Resources.Transactions.Operations"
         ].UpdateTransaction.side_effect = lambda **kwargs: SimpleNamespace(**kwargs)

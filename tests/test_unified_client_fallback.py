@@ -7,7 +7,6 @@
 """
 
 import asyncio
-from typing import Optional
 from unittest.mock import AsyncMock
 
 import pytest
@@ -15,12 +14,12 @@ import pytest
 from backend.core.ai_protocol.errors import AIError, AllCandidatesFailedError
 from backend.core.ai_protocol.models import (
     AIErrorCategory,
+    AuthScheme,
+    MetadataSource,
     ModelCapabilitySet,
     ModelMetadata,
-    MetadataSource,
     ProtocolFamily,
     ProviderDeclaration,
-    AuthScheme,
     ReasoningParams,
     ResolvedModel,
     StopReason,
@@ -73,14 +72,14 @@ class _StubAdapter:
     def __init__(
         self,
         *,
-        fail_categories: Optional[list[AIErrorCategory]] = None,
+        fail_categories: list[AIErrorCategory] | None = None,
         content: str = "ok",
     ):
         self._fail_categories = fail_categories or []
         self.calls = 0
         self._content = content
 
-    async def list_models(self, *args, **kwargs):  # noqa: D401
+    async def list_models(self, *args, **kwargs):
         return []
 
     async def fetch_model_metadata(self, *args, **kwargs):

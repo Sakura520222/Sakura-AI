@@ -12,7 +12,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 
 from loguru import logger
@@ -21,6 +21,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.models.ai_usage_models import AIUsageRecord
+
 # Only these call kinds are part of the provider-usage ledger.  The explicit
 # allow-list also ensures that a temporary record from an older deployment can
 # never be displayed as a current usage record.
@@ -300,7 +301,7 @@ async def record_ai_usage(
         cache_creation_tokens=counters.cache_creation_tokens,
         reasoning_tokens=counters.reasoning_tokens,
         usage_reported=counters.usage_reported,
-        occurred_at=occurred_at or datetime.now(timezone.utc),
+        occurred_at=occurred_at or datetime.now(UTC),
     )
 
     async with session_factory() as db:
@@ -316,7 +317,7 @@ async def record_ai_usage_best_effort(**kwargs: Any) -> bool:
         return await record_ai_usage(**kwargs)
     except asyncio.CancelledError:
         raise
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         logger.bind(error_type=type(exc).__name__).warning(
             "AI usage 账本写入失败，业务调用继续: error_type={}",
             type(exc).__name__,

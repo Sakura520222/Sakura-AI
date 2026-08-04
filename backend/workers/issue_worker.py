@@ -59,6 +59,7 @@ class IssueWorker:
         from backend.services.activity_observability.integration_service import (
             ActivityIntegrationService,
         )
+
         self.activity_integration = ActivityIntegrationService()
 
     @staticmethod
@@ -74,7 +75,7 @@ class IssueWorker:
         ``activity_events`` table and global ``activity:*`` SSE channel. This shim
         is retained so existing call sites remain harmless; it writes nothing.
         """
-        return None
+        return
 
     async def process_issue_analysis(self, issue_info: dict[str, Any]) -> str:
         """处理 Issue 分析任务
@@ -100,13 +101,17 @@ class IssueWorker:
             admission = await self.activity_integration.admit_issue(
                 issue_info,
                 delivery_id=issue_info.get("delivery_id") or str(task_id),
-                actor_id=str(issue_info.get("actor_id") or issue_info.get("sender") or "worker"),
+                actor_id=str(
+                    issue_info.get("actor_id") or issue_info.get("sender") or "worker"
+                ),
                 base_sha=issue_info.get("base_sha"),
                 head_sha=issue_info.get("head_sha"),
             )
             role_snapshot = None
             analyzer_api_client = getattr(self.analyzer, "api_client", None)
-            resolver = getattr(analyzer_api_client, "resolve_role_config_snapshot", None)
+            resolver = getattr(
+                analyzer_api_client, "resolve_role_config_snapshot", None
+            )
             if resolver is not None:
                 role_snapshot = await resolver("main")
             execution = await self.activity_integration.start_execution(
@@ -129,8 +134,11 @@ class IssueWorker:
             # immutable repository identity; the core analysis still runs, but
             # no invocation/attempt is recorded.  Once admission has succeeded,
             # downstream failures are handled via ``execution.finish`` below.
-            logger.warning("[{}] issue observability admission skipped: {}", task_id, observability_exc)
-
+            logger.warning(
+                "[{}] issue observability admission skipped: {}",
+                task_id,
+                observability_exc,
+            )
 
         # 获取并发信号量，限制同时运行的 Issue 分析任务数
         semaphore = await _get_issue_semaphore()
@@ -235,17 +243,21 @@ class IssueWorker:
                                     if data.get("role") in {"assistant", "tool"}
                                     else None
                                 )
-                                await execution.tool_service.append_conversation_message(
-                                    thread_id=execution.thread.id,
-                                    work_unit_id=execution.work_unit.id,
-                                    message=data,
-                                    origin_attempt_id=origin_attempt_id,
-                                    lease=execution.lease,
+                                await (
+                                    execution.tool_service.append_conversation_message(
+                                        thread_id=execution.thread.id,
+                                        work_unit_id=execution.work_unit.id,
+                                        message=data,
+                                        origin_attempt_id=origin_attempt_id,
+                                        lease=execution.lease,
+                                    )
                                 )
                                 if data.get("role") == "tool" and data.get(
                                     "tool_call_id"
                                 ):
-                                    if execution.tool_service.is_failed_tool_result(data):
+                                    if execution.tool_service.is_failed_tool_result(
+                                        data
+                                    ):
                                         await execution.tool_service.mark_tool_execution_failed(
                                             execution.work_unit.id,
                                             data["tool_call_id"],
@@ -255,8 +267,10 @@ class IssueWorker:
                                             execution.work_unit.id, data["tool_call_id"]
                                         )
                             elif event_type == "tool_running":
-                                await execution.tool_service.mark_tool_execution_running(
-                                    execution.work_unit.id, data
+                                await (
+                                    execution.tool_service.mark_tool_execution_running(
+                                        execution.work_unit.id, data
+                                    )
                                 )
                         except Exception as exc:
                             logger.debug("issue observability callback failed: {}", exc)
@@ -415,16 +429,14 @@ class IssueWorker:
                                 if not body:
                                     success = False
                                 else:
-                                    publication = (
-                                        await execution.publication_service.create_pending(
-                                            activity_result_id,
-                                            "issue_comment",
-                                            (
-                                                f"issue-comment-{execution.session.id}-"
-                                                f"{execution.invocation.id}-"
-                                                f"{execution.work_unit.id}"
-                                            ),
-                                        )
+                                    publication = await execution.publication_service.create_pending(
+                                        activity_result_id,
+                                        "issue_comment",
+                                        (
+                                            f"issue-comment-{execution.session.id}-"
+                                            f"{execution.invocation.id}-"
+                                            f"{execution.work_unit.id}"
+                                        ),
                                     )
                                     resource_identity = {
                                         "source_system_instance": issue_info.get(
@@ -440,7 +452,7 @@ class IssueWorker:
                                     async def _sender(
                                         _kind: str,
                                         body_with_marker: str,
-                                        _resource_identity: Dict[str, Any],
+                                        _resource_identity: dict[str, Any],
                                     ) -> Any:
                                         return await asyncio.to_thread(
                                             issue_service.github_app.create_issue_comment,
@@ -451,13 +463,11 @@ class IssueWorker:
                                             raise_on_error=True,
                                         )
 
-                                    terminal = (
-                                        await execution.publication_service.send(
-                                            publication.id,
-                                            body=body,
-                                            sender=_sender,
-                                            resource_identity=resource_identity,
-                                        )
+                                    terminal = await execution.publication_service.send(
+                                        publication.id,
+                                        body=body,
+                                        sender=_sender,
+                                        resource_identity=resource_identity,
                                     )
                                     success = terminal.status == "succeeded"
                                     if success:

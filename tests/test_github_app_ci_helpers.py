@@ -119,9 +119,7 @@ async def test_manual_pr_info_contains_immutable_identity_for_admission(monkeypa
 
     monkeypatch.setattr(github_app_module, "GitHubAppClient", FakeGitHubApp)
 
-    pr_info = await get_pr_info_from_url(
-        "https://github.com/owner/repo/pull/42"
-    )
+    pr_info = await get_pr_info_from_url("https://github.com/owner/repo/pull/42")
 
     assert pr_info["repository_external_id"] == 9876
     assert pr_info["source_system_instance"] == "github.com"

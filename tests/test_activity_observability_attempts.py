@@ -2,7 +2,7 @@
 
 import json
 from dataclasses import dataclass, replace
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 
 import pytest
@@ -10,6 +10,24 @@ from sqlalchemy import create_engine, event, select
 from sqlalchemy.orm import Session
 from sqlalchemy.pool import StaticPool
 
+from backend.core.ai_protocol.models import (
+    AuthScheme,
+    MetadataSource,
+    ModelCapabilitySet,
+    ModelMetadata,
+    ProtocolFamily,
+    ProviderDeclaration,
+    ReasoningParams,
+    ResolvedModel,
+    StopReason,
+    UnifiedMessage,
+    UnifiedRequest,
+    UnifiedResponse,
+    UnifiedStreamEvent,
+    UnifiedToolCall,
+    UnifiedUsage,
+)
+from backend.core.ai_protocol.registry import resolve_endpoint
 from backend.models.activity_observability_models import (
     ActivityArtifactAccessLog,
     ActivityCanonicalContextRevision,
@@ -24,25 +42,17 @@ from backend.models.activity_observability_models import (
     ActivityThread,
     ActivityToolExecution,
 )
-from backend.core.ai_protocol.models import (
-    AuthScheme,
-    ModelCapabilitySet,
-    ModelMetadata,
-    MetadataSource,
-    ProtocolFamily,
-    ProviderDeclaration,
-    ReasoningParams,
-    ResolvedModel,
-    StopReason,
-    UnifiedMessage,
-    UnifiedRequest,
-    UnifiedResponse,
-    UnifiedStreamEvent,
-    UnifiedToolCall,
-    UnifiedUsage,
-)
-from backend.core.ai_protocol.registry import resolve_endpoint
 from backend.models.database import Base
+from backend.services.activity_observability.attempt_service import AttemptService
+from backend.services.activity_observability.context_service import ContextService
+from backend.services.activity_observability.contracts import (
+    InvocationContext,
+    RoleConfigSnapshot,
+)
+from backend.services.activity_observability.observer import (
+    ObservedEmbeddingSender,
+    ObservedModelSender,
+)
 from backend.services.activity_observability.reasoning import (
     CAPTURE_ARTIFACT,
     CAPTURE_METADATA_ONLY,
@@ -53,30 +63,20 @@ from backend.services.activity_observability.reasoning import (
     ReasoningCapturePolicy,
     safe_summary_or_none,
 )
-from backend.services.activity_observability.contracts import (
-    InvocationContext,
-    RoleConfigSnapshot,
-)
-from backend.services.activity_observability.attempt_service import AttemptService
-from backend.services.activity_observability.context_service import ContextService
-from backend.services.activity_observability.observer import (
-    ObservedEmbeddingSender,
-    ObservedModelSender,
+from backend.services.activity_observability.tool_service import (
+    SENSITIVITY_SECRET,
+    TOOL_STATUS_COMPLETED,
+    TOOL_STATUS_FAILED,
+    TOOL_STATUS_RUNNING,
+    ArtifactAuthorization,
+    ConflictError,
+    ToolService,
 )
 from backend.services.ai_reviewer.unified_client import (
     FallbackConfig,
     UnifiedAIClient,
     _effective_reasoning_snapshot,
     _filter_params_by_capability,
-)
-from backend.services.activity_observability.tool_service import (
-    ArtifactAuthorization,
-    ConflictError,
-    SENSITIVITY_SECRET,
-    TOOL_STATUS_COMPLETED,
-    TOOL_STATUS_FAILED,
-    TOOL_STATUS_RUNNING,
-    ToolService,
 )
 
 
@@ -207,7 +207,7 @@ def chain(db_session):
 async def test_canonical_message_discards_reasoning_and_keeps_artifact_reference(
     db_session, chain
 ):
-    session, thread, work_unit, attempt = chain
+    _session, thread, work_unit, attempt = chain
     service = ToolService(_AsyncAdapter(db_session))
     artifact = ActivityNativeArtifact(
         attempt_id=attempt.id,
@@ -351,7 +351,7 @@ async def test_artifact_policy_metadata_summary_encryption_and_retention(
     db_session, chain
 ):
     _, _, _, attempt = chain
-    fixed = datetime(2026, 7, 23, tzinfo=timezone.utc)
+    fixed = datetime(2026, 7, 23, tzinfo=UTC)
     service = ToolService(
         _AsyncAdapter(db_session),
         encryption_provider=_FakeEncryption(),
@@ -668,7 +668,7 @@ def _threadless_context(work_unit):
             protocol_family="protocol",
             endpoint_fingerprint="a" * 64,
             config_snapshot_version=1,
-            captured_at=datetime.now(timezone.utc),
+            captured_at=datetime.now(UTC),
         ),
     )
 
@@ -860,7 +860,7 @@ async def test_nonstream_sender_supersedes_context_estimate_with_provider_usage(
             protocol_family="openai_compatible",
             endpoint_fingerprint="a" * 64,
             config_snapshot_version=1,
-            captured_at=datetime.now(timezone.utc),
+            captured_at=datetime.now(UTC),
         ),
     )
     adapter_session = _AsyncAdapter(db_session)
@@ -1476,7 +1476,7 @@ async def test_done_usage_finishes_attempt_and_preserves_reported_usage(
             protocol_family="openai_compatible",
             endpoint_fingerprint="a" * 64,
             config_snapshot_version=1,
-            captured_at=datetime.now(timezone.utc),
+            captured_at=datetime.now(UTC),
         ),
     )
     attempt_service = AttemptService(_AsyncAdapter(db_session))

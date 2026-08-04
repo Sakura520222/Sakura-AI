@@ -12,20 +12,20 @@ the role facade to report explicitly; legacy flat AI configuration is ignored.
 from __future__ import annotations
 
 import json
-from typing import Any, Optional
+from typing import Any
 
 from loguru import logger
 
+from backend.core.ai_protocol.endpoint_security import validate_provider_base_url
 from backend.core.ai_protocol.models import (
+    MetadataSource,
     ModelCapabilitySet,
     ModelMetadata,
-    MetadataSource,
     ProtocolFamily,
     ReasoningParams,
     ResolvedModel,
 )
 from backend.core.ai_protocol.registry import resolve_account_endpoint
-from backend.core.ai_protocol.endpoint_security import validate_provider_base_url
 from backend.core.ai_protocol.resolver import ResolvedChain, _build_metadata
 from backend.core.ai_providers import get_builtin_provider
 
@@ -53,9 +53,10 @@ def _safe_json(value: Any) -> Any:
 async def _load_app_config_map(keys: list[str]) -> dict[str, str]:
     """从 AppConfig 加载明文配置（非脱敏值）/ Load plaintext AppConfig values."""
     try:
-        from backend.models.database import AppConfig, async_session
         from sqlalchemy import select
-    except Exception:  # noqa: BLE001
+
+        from backend.models.database import AppConfig, async_session
+    except Exception:
         return {}
 
     if async_session is None:
@@ -67,7 +68,7 @@ async def _load_app_config_map(keys: list[str]) -> dict[str, str]:
                 select(AppConfig).where(AppConfig.key_name.in_(keys))
             )
             return {c.key_name: c.key_value for c in result.scalars().all()}
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         logger.debug("读取 AI 角色配置失败 / failed to load ai role config: {}", exc)
         return {}
 
@@ -111,9 +112,7 @@ def _parse_metadata_overrides(
                 prompt_caching=bool(
                     raw_caps.get("prompt_caching", default_caps.prompt_caching)
                 ),
-                temperature=bool(
-                    raw_caps.get("temperature", default_caps.temperature)
-                ),
+                temperature=bool(raw_caps.get("temperature", default_caps.temperature)),
                 top_p=bool(raw_caps.get("top_p", default_caps.top_p)),
                 top_k=bool(raw_caps.get("top_k", default_caps.top_k)),
             )
@@ -195,7 +194,7 @@ async def _load_model_overrides(
 
 async def _resolve_from_accounts(
     role: str,
-) -> Optional[ResolvedChain]:
+) -> ResolvedChain | None:
     """从持久化账号解析角色链 / Resolve a role chain from saved accounts.
 
     只读取 ai_role_bindings 与 ai_account.*；旧扁平 AI 配置键永不参与解析。
@@ -252,7 +251,7 @@ def _resolve_from_accounts_sync_cached(
     main_role: str,
     accounts: dict,
     bindings: dict,
-    overrides: Optional[dict[tuple[str, str], ModelMetadata]] = None,
+    overrides: dict[tuple[str, str], ModelMetadata] | None = None,
 ) -> list[ResolvedModel]:
     """同步解析 main 角色（避免重复 IO）/ Resolve main role synchronously."""
     binding = bindings.get(main_role)
@@ -284,15 +283,17 @@ def _resolve_from_accounts_sync_cached(
 def _build_candidate_from_account(
     account: Any,
     model_id: str,
-    metadata_override: Optional[ModelMetadata] = None,
-) -> Optional[ResolvedModel]:
+    metadata_override: ModelMetadata | None = None,
+) -> ResolvedModel | None:
     """从账号 + 模型 ID 构造 ResolvedModel / Build a ResolvedModel from an account.
 
     metadata_override 优先于内置目录；用于「AI 配置」页的单模型高级覆盖
     （ai_model_override.<provider>.<model>）。
     """
     decl = get_builtin_provider(account.provider_id)
-    family = _parse_protocol_family(account.protocol) if account.protocol else decl.family
+    family = (
+        _parse_protocol_family(account.protocol) if account.protocol else decl.family
+    )
     ok, message = validate_provider_base_url(
         decl.id,
         account.api_base,
@@ -323,19 +324,19 @@ def _build_candidate_from_account(
     )
 
 
-async def resolve_role_from_config(role: str) -> Optional[ResolvedChain]:
+async def resolve_role_from_config(role: str) -> ResolvedChain | None:
     """仅从账号与角色绑定解析候选链 / Resolve a role chain from accounts."""
     try:
         return await _resolve_from_accounts(role)
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         logger.warning("账号角色解析失败: role={} err={}", role, exc)
         return None
 
 
 __all__ = [
+    "ALL_ROLES",
+    "ROLE_AGENT_TEAM",
     "ROLE_MAIN",
     "ROLE_SUMMARY",
-    "ROLE_AGENT_TEAM",
-    "ALL_ROLES",
     "resolve_role_from_config",
 ]

@@ -125,9 +125,7 @@ class SakuraKnowledgeExtractor(SakuraAgentBase):
         ext_config = config.get("knowledge_extraction", {})
         consolidation_config = config.get("consolidation", {})
 
-        max_iterations = ext_config.get(
-            "max_iterations", 15
-        )
+        max_iterations = ext_config.get("max_iterations", 15)
         max_chars = consolidation_config.get("max_sakura_chars", 5000)
 
         self._repo = repo

@@ -9,7 +9,8 @@ Sakura 内部 UnifiedRequest/UnifiedResponse 与 Responses wire format 的转换
 from __future__ import annotations
 
 import json
-from typing import Any, AsyncIterator, Optional
+from collections.abc import AsyncIterator
+from typing import Any
 
 import httpx
 
@@ -30,7 +31,6 @@ from backend.core.ai_protocol.models import (
     safe_provider_event_metadata,
     usage_from_mapping,
 )
-
 
 _RESPONSES_STATUS_MAP: dict[str, StopReason] = {
     "completed": StopReason.END_TURN,
@@ -62,12 +62,16 @@ class OpenAIResponsesAdapter(OpenAICompatibleAdapter):
         endpoint: ResolvedEndpoint,
         credential: str,
         model_id: str,
-    ) -> Optional[ModelDiscoveryResult]:
-        return await super().fetch_model_metadata(client, endpoint, credential, model_id)
+    ) -> ModelDiscoveryResult | None:
+        return await super().fetch_model_metadata(
+            client, endpoint, credential, model_id
+        )
 
     def serialize_request(self, request: UnifiedRequest) -> dict[str, Any]:
         """UnifiedRequest → Responses JSON body."""
-        instructions, input_items = self._serialize_input(request.messages, request.system)
+        instructions, input_items = self._serialize_input(
+            request.messages, request.system
+        )
         body: dict[str, Any] = {
             "model": request.model,
             "input": input_items,
@@ -82,7 +86,9 @@ class OpenAIResponsesAdapter(OpenAICompatibleAdapter):
         if request.tools:
             body["tools"] = [self._serialize_response_tool(t) for t in request.tools]
         if request.tool_choice:
-            body["tool_choice"] = self._serialize_response_tool_choice(request.tool_choice)
+            body["tool_choice"] = self._serialize_response_tool_choice(
+                request.tool_choice
+            )
         if request.stream:
             body["stream"] = True
         if request.effort:
@@ -158,7 +164,10 @@ class OpenAIResponsesAdapter(OpenAICompatibleAdapter):
         status = str(payload.get("status") or "completed")
         stop_reason = _RESPONSES_STATUS_MAP.get(status, StopReason.END_TURN)
         incomplete = payload.get("incomplete_details")
-        if isinstance(incomplete, dict) and incomplete.get("reason") == "max_output_tokens":
+        if (
+            isinstance(incomplete, dict)
+            and incomplete.get("reason") == "max_output_tokens"
+        ):
             stop_reason = StopReason.MAX_TOKENS
         return UnifiedResponse(
             content=content,
@@ -224,7 +233,7 @@ class OpenAIResponsesAdapter(OpenAICompatibleAdapter):
         credential: str,
         request: UnifiedRequest,
         *,
-        timeout: Optional[float] = None,
+        timeout: float | None = None,
     ) -> UnifiedResponse:
         url = self.resolve_chat_url(endpoint)
         body = self.serialize_request(request)
@@ -270,7 +279,7 @@ class OpenAIResponsesAdapter(OpenAICompatibleAdapter):
         credential: str,
         request: UnifiedRequest,
         *,
-        timeout: Optional[float] = None,
+        timeout: float | None = None,
     ) -> AsyncIterator[UnifiedStreamEvent]:
         url = self.resolve_chat_url(endpoint)
         body = self.serialize_request(request)
@@ -308,7 +317,7 @@ class OpenAIResponsesAdapter(OpenAICompatibleAdapter):
             )
 
     @staticmethod
-    def _parse_responses_sse_line(line: str) -> Optional[UnifiedStreamEvent]:
+    def _parse_responses_sse_line(line: str) -> UnifiedStreamEvent | None:
         if not line or not line.startswith("data:"):
             return None
         data = line[5:].strip()
@@ -321,7 +330,9 @@ class OpenAIResponsesAdapter(OpenAICompatibleAdapter):
         event_type = str(chunk.get("type") or "")
         metadata = safe_provider_event_metadata({"event": event_type})
         if event_type in ("response.output_text.delta", "response.text.delta"):
-            return UnifiedStreamEvent(type="text_delta", text=str(chunk.get("delta") or ""))
+            return UnifiedStreamEvent(
+                type="text_delta", text=str(chunk.get("delta") or "")
+            )
         if event_type in ("response.reasoning_summary_text.delta",):
             delta = chunk.get("delta")
             if isinstance(delta, str) and delta:
@@ -368,7 +379,9 @@ class OpenAIResponsesAdapter(OpenAICompatibleAdapter):
             usage = None
             response = chunk.get("response")
             if isinstance(response, dict):
-                usage = OpenAIResponsesAdapter._parse_responses_usage(response.get("usage"))
+                usage = OpenAIResponsesAdapter._parse_responses_usage(
+                    response.get("usage")
+                )
             return UnifiedStreamEvent(
                 type="done",
                 usage=usage,

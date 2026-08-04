@@ -4,8 +4,7 @@ import sys
 from pathlib import Path
 
 import backend.models.database
-from backend.core.logging_bridge import InterceptHandler
-from backend.core.logging_bridge import _redact_standard_log_message
+from backend.core.logging_bridge import InterceptHandler, _redact_standard_log_message
 
 
 def test_auto_migrate_standard_logging_messages_are_percent_formatted():
@@ -70,7 +69,10 @@ def test_intercept_handler_preserves_logger_name_message_and_exception(monkeypat
 
     assert calls["level"] == "ERROR"
     assert calls["message"] == "[{}] {}"
-    assert calls["args"] == ("backend.models.database", "database failure: retry exhausted")
+    assert calls["args"] == (
+        "backend.models.database",
+        "database failure: retry exhausted",
+    )
     assert calls["exception"][0] is RuntimeError
 
 

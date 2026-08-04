@@ -11,10 +11,10 @@ from typing import Any
 import httpx
 from loguru import logger
 
+from backend.core.ai_protocol.endpoint_security import validate_provider_base_url
 from backend.core.ai_protocol.errors import AIError
 from backend.core.ai_protocol.models import ProtocolFamily
 from backend.core.ai_protocol.registry import get_adapter, resolve_account_endpoint
-from backend.core.ai_protocol.endpoint_security import validate_provider_base_url
 from backend.core.ai_providers import get_builtin_provider, provider_declaration_to_dict
 
 
@@ -39,7 +39,13 @@ async def probe_account(
     返回结构：{success, message, models, provider, default_model, context_window_k}。
     与 setup_service.test_ai_api 对齐，便于前端复用。
     """
-    if not api_key and provider_id not in ("ollama", "vllm", "lmstudio", "custom", "custom-anthropic"):
+    if not api_key and provider_id not in (
+        "ollama",
+        "vllm",
+        "lmstudio",
+        "custom",
+        "custom-anthropic",
+    ):
         return {"success": False, "message": "API Key 不能为空"}
 
     decl = get_builtin_provider(provider_id)
@@ -68,9 +74,7 @@ async def probe_account(
             for d in discovered:
                 if d.model_id == selected and d.context_window_tokens:
                     ctx = d.context_window_tokens
-                    context_window_k = (
-                        max(1, round(ctx / 1000)) if ctx > 2000 else ctx
-                    )
+                    context_window_k = max(1, round(ctx / 1000)) if ctx > 2000 else ctx
                     break
         return {
             "success": True,
@@ -84,9 +88,12 @@ async def probe_account(
         if exc.category.value == "auth_invalid":
             return {"success": False, "message": "API Key 无效"}
         if exc.category.value == "network":
-            return {"success": False, "message": "无法连接到 API 服务，请检查 API Base URL"}
+            return {
+                "success": False,
+                "message": "无法连接到 API 服务，请检查 API Base URL",
+            }
         return {"success": False, "message": f"验证失败: {exc}"}
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         logger.debug("账号探测异常 / account probe error: {}", exc)
         return {"success": False, "message": f"验证异常: {exc}"}
 

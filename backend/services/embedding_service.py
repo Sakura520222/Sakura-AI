@@ -186,7 +186,7 @@ class EmbeddingService:
 
                 if observer is not None and context is not None:
                     response, _ = await observer.send_embedding(
-                        lambda: self.client.embeddings.create(
+                        lambda batch=batch: self.client.embeddings.create(
                             model=settings.embedding_model,
                             input=batch,
                         ),

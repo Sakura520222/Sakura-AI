@@ -58,7 +58,9 @@ async def test_load_agent_team_ai_config_uses_only_role_and_policy(monkeypatch):
     )
     monkeypatch.setattr(
         "backend.services.agent_team.ai_client.get_settings",
-        lambda: (_ for _ in ()).throw(AssertionError("legacy settings must not be read")),
+        lambda: (_ for _ in ()).throw(
+            AssertionError("legacy settings must not be read")
+        ),
     )
 
     config = await load_agent_team_ai_config()
@@ -98,7 +100,9 @@ async def test_create_agent_team_client_is_role_only(monkeypatch):
         summary_role="summary",
         timeout_seconds=600,
     )
-    monkeypatch.setattr(module, "load_agent_team_ai_config", lambda: _async_value(config))
+    monkeypatch.setattr(
+        module, "load_agent_team_ai_config", lambda: _async_value(config)
+    )
 
     client, loaded = await module.create_agent_team_client()
 

@@ -30,7 +30,7 @@ import json
 import secrets
 import time
 from dataclasses import asdict, dataclass, field
-from typing import Any, Optional
+from typing import Any
 
 from loguru import logger
 
@@ -133,7 +133,7 @@ def _safe_json_loads(raw: str | None) -> Any:
         return None
     try:
         return json.loads(raw)
-    except (json.JSONDecodeError, TypeError):
+    except json.JSONDecodeError, TypeError:
         return None
 
 
@@ -160,12 +160,14 @@ def _account_from_dict(data: dict[str, Any]) -> ProviderAccount:
     )
 
 
-def _role_binding_from_dict(data: dict[str, Any]) -> Optional[RoleBindingConfig]:
+def _role_binding_from_dict(data: dict[str, Any]) -> RoleBindingConfig | None:
     """从 dict 构造 RoleBindingConfig / Build role binding from dict."""
     primary_raw = data.get("primary") or {}
     if isinstance(primary_raw, dict):
         primary = RoleAssignment(
-            account=str(primary_raw.get("account") or primary_raw.get("provider") or ""),
+            account=str(
+                primary_raw.get("account") or primary_raw.get("provider") or ""
+            ),
             model=str(primary_raw.get("model") or ""),
         )
     else:
@@ -190,9 +192,10 @@ def _role_binding_from_dict(data: dict[str, Any]) -> Optional[RoleBindingConfig]
 async def _load_app_config_map(keys: list[str]) -> dict[str, str]:
     """从 AppConfig 批量加载明文配置 / Load plaintext values from AppConfig."""
     try:
-        from backend.models.database import AppConfig, async_session
         from sqlalchemy import select
-    except Exception:  # noqa: BLE001
+
+        from backend.models.database import AppConfig, async_session
+    except Exception:
         return {}
 
     if async_session is None:
@@ -204,7 +207,7 @@ async def _load_app_config_map(keys: list[str]) -> dict[str, str]:
                 select(AppConfig).where(AppConfig.key_name.in_(keys))
             )
             return {c.key_name: c.key_value for c in result.scalars().all()}
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         logger.debug("加载 AppConfig 失败 / failed to load AppConfig: {}", exc)
         return {}
 
@@ -212,9 +215,10 @@ async def _load_app_config_map(keys: list[str]) -> dict[str, str]:
 async def _fetch_all_account_keys() -> list[str]:
     """扫描 AppConfig 获取所有 ai_account.* 键 / Scan all account keys."""
     try:
-        from backend.models.database import AppConfig, async_session
         from sqlalchemy import select
-    except Exception:  # noqa: BLE001
+
+        from backend.models.database import AppConfig, async_session
+    except Exception:
         return []
 
     if async_session is None:
@@ -228,7 +232,7 @@ async def _fetch_all_account_keys() -> list[str]:
                 )
             )
             return [str(row) for row in result.scalars().all()]
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         logger.debug("扫描账号键失败 / failed to scan account keys: {}", exc)
         return []
 
@@ -236,9 +240,10 @@ async def _fetch_all_account_keys() -> list[str]:
 async def _upsert_app_config(key: str, value: str, description: str = "") -> None:
     """插入或更新 AppConfig 行 / Upsert an AppConfig row."""
     try:
-        from backend.models.database import AppConfig, async_session
         from sqlalchemy import select
-    except Exception:  # noqa: BLE001
+
+        from backend.models.database import AppConfig, async_session
+    except Exception:
         return
 
     if async_session is None:
@@ -261,9 +266,10 @@ async def _upsert_app_config(key: str, value: str, description: str = "") -> Non
 async def _delete_app_config(key: str) -> None:
     """删除 AppConfig 行 / Delete an AppConfig row."""
     try:
-        from backend.models.database import AppConfig, async_session
         from sqlalchemy import delete
-    except Exception:  # noqa: BLE001
+
+        from backend.models.database import AppConfig, async_session
+    except Exception:
         return
 
     if async_session is None:
@@ -300,7 +306,7 @@ async def list_accounts(*, include_disabled: bool = True) -> list[ProviderAccoun
     return accounts
 
 
-async def get_account(account_id: str) -> Optional[ProviderAccount]:
+async def get_account(account_id: str) -> ProviderAccount | None:
     """按 ID 获取单个账号 / Get a single account by id."""
     if not account_id:
         return None
@@ -346,7 +352,7 @@ async def delete_account(account_id: str) -> bool:
     if not account_id:
         return False
     bindings = await get_role_bindings()
-    for _role, binding in bindings.items():
+    for binding in bindings.values():
         if binding.primary.account == account_id:
             return False
         for fb in binding.fallback:
@@ -415,14 +421,14 @@ __all__ = [
     "ProviderAccount",
     "RoleAssignment",
     "RoleBindingConfig",
-    "generate_account_id",
-    "list_accounts",
-    "get_account",
-    "save_account",
-    "delete_account",
     "count_accounts",
+    "delete_account",
+    "generate_account_id",
+    "get_account",
     "get_role_bindings",
     "get_role_bindings_raw",
+    "list_accounts",
+    "save_account",
     "save_role_bindings",
     "save_role_bindings_raw",
 ]

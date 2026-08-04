@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import pytest
 from fastapi.routing import APIRoute
@@ -57,7 +57,7 @@ def _ai_account_record(
 
 
 def test_combined_backup_round_trip_preserves_allowed_values_and_secrets():
-    exported_at = datetime(2026, 7, 29, 10, 30, tzinfo=timezone.utc)
+    exported_at = datetime(2026, 7, 29, 10, 30, tzinfo=UTC)
     records = [
         BackupRecord("max_concurrent_reviews", "4", "最大并发审查数量"),
         _ai_account_record(),
@@ -92,7 +92,9 @@ def test_combined_backup_round_trip_preserves_allowed_values_and_secrets():
     }
     assert {record.key for record in parsed[SYSTEM_SECTION]} == {"app_port"}
     account = next(
-        record for record in parsed[AI_SECTION] if record.key == "ai_account.acc_primary"
+        record
+        for record in parsed[AI_SECTION]
+        if record.key == "ai_account.acc_primary"
     )
     assert "sk-backup-secret" in account.value
 
@@ -199,9 +201,7 @@ def test_v1_combined_backup_remains_importable_without_system_section():
 
 
 def test_system_backup_key_registry_matches_the_system_config_page():
-    page_keys = {
-        key for group in SYSTEM_CONFIG_GROUPS for key in group["keys"]
-    }
+    page_keys = {key for group in SYSTEM_CONFIG_GROUPS for key in group["keys"]}
 
     assert SYSTEM_CONFIG_KEYS == page_keys
     assert "redis_url" in SYSTEM_CONFIG_KEYS

@@ -7,7 +7,6 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
 
-
 _ENDPOINT_FINGERPRINT_PATTERN = re.compile(r"^[0-9a-f]{64}$")
 _SENSITIVE_SNAPSHOT_PATTERN = re.compile(
     r"(?:[A-Za-z][A-Za-z0-9+.-]*://|\b(?:authorization|bearer|basic)\b|\b(?:api[_-]?key|access[_-]?token|password|passwd|secret|credential|private[_-]?key|token)\s*[:=])",

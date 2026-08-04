@@ -43,9 +43,7 @@ def _build_app() -> FastAPI:
 
 def test_not_bootstrap_mode_passes_all_through():
     """非 bootstrap 模式：所有请求直接放行，中间件不干预。"""
-    with patch(
-        "backend.core.bootstrap.is_bootstrap_mode", return_value=False
-    ):
+    with patch("backend.core.bootstrap.is_bootstrap_mode", return_value=False):
         client = TestClient(_build_app())
         resp = client.get("/api/data")
         assert resp.status_code == 200
@@ -54,9 +52,7 @@ def test_not_bootstrap_mode_passes_all_through():
 
 def test_bootstrap_mode_redirects_root_to_setup():
     """bootstrap 模式：根路径重定向到 /setup（302）。"""
-    with patch(
-        "backend.core.bootstrap.is_bootstrap_mode", return_value=True
-    ):
+    with patch("backend.core.bootstrap.is_bootstrap_mode", return_value=True):
         client = TestClient(_build_app())
         resp = client.get("/", follow_redirects=False)
         assert resp.status_code == 302
@@ -65,9 +61,7 @@ def test_bootstrap_mode_redirects_root_to_setup():
 
 def test_bootstrap_mode_allowed_paths_pass_through():
     """bootstrap 模式：ALLOWED_PATHS（如 /health）放行。"""
-    with patch(
-        "backend.core.bootstrap.is_bootstrap_mode", return_value=True
-    ):
+    with patch("backend.core.bootstrap.is_bootstrap_mode", return_value=True):
         client = TestClient(_build_app())
         resp = client.get("/health")
         assert resp.status_code == 200
@@ -76,9 +70,7 @@ def test_bootstrap_mode_allowed_paths_pass_through():
 
 def test_bootstrap_mode_api_returns_503():
     """bootstrap 模式：API 路径返回 503 JSON 提示。"""
-    with patch(
-        "backend.core.bootstrap.is_bootstrap_mode", return_value=True
-    ):
+    with patch("backend.core.bootstrap.is_bootstrap_mode", return_value=True):
         client = TestClient(_build_app())
         resp = client.get("/api/data")
         assert resp.status_code == 503
@@ -87,9 +79,7 @@ def test_bootstrap_mode_api_returns_503():
 
 def test_bootstrap_mode_page_redirects_to_setup():
     """bootstrap 模式：普通页面请求重定向到 /setup（302）。"""
-    with patch(
-        "backend.core.bootstrap.is_bootstrap_mode", return_value=True
-    ):
+    with patch("backend.core.bootstrap.is_bootstrap_mode", return_value=True):
         client = TestClient(_build_app())
         resp = client.get("/some/page", follow_redirects=False)
         assert resp.status_code == 302
@@ -98,9 +88,7 @@ def test_bootstrap_mode_page_redirects_to_setup():
 
 def test_bootstrap_mode_static_assets_pass_through():
     """bootstrap 模式：静态资源（/static、.css/.js/.ico）放行。"""
-    with patch(
-        "backend.core.bootstrap.is_bootstrap_mode", return_value=True
-    ):
+    with patch("backend.core.bootstrap.is_bootstrap_mode", return_value=True):
         client = TestClient(_build_app())
         resp = client.get("/static/app.css")
         assert resp.status_code == 200
