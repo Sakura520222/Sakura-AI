@@ -1,6 +1,5 @@
 """SSE 事件流路由"""
 
-import asyncio
 import json
 
 from fastapi import APIRouter, Depends

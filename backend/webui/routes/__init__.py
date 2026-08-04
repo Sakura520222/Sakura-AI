@@ -5,7 +5,6 @@ from fastapi import APIRouter, Depends
 from backend.webui.deps import mark_webui_request
 from backend.webui.routes import (
     action_logs,
-    activity,
     activity_observability,
     agent_skills,
     agent_team,

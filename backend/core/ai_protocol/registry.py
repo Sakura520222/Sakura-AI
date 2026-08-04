@@ -6,7 +6,7 @@ Returns the singleton adapter for each protocol family and resolves endpoints.
 
 from __future__ import annotations
 
-from functools import lru_cache
+from functools import cache
 
 from backend.core.ai_protocol.adapters.anthropic_native import AnthropicNativeAdapter
 from backend.core.ai_protocol.adapters.base import ProtocolAdapter
@@ -40,7 +40,7 @@ _AUTH_SCHEME_BY_FAMILY: dict[ProtocolFamily, AuthScheme] = {
 }
 
 
-@lru_cache(maxsize=None)
+@cache
 def get_adapter(family: ProtocolFamily) -> ProtocolAdapter:
     """获取协议族对应的适配器单例 / Get the adapter singleton for a family."""
     if family == ProtocolFamily.OPENAI_COMPATIBLE:
@@ -62,7 +62,9 @@ def ensure_trailing_slash(base_url: str) -> str:
     return url if url.endswith("/") else f"{url}/"
 
 
-def resolve_endpoint(provider: ProviderDeclaration, base_url: str | None) -> ResolvedEndpoint:
+def resolve_endpoint(
+    provider: ProviderDeclaration, base_url: str | None
+) -> ResolvedEndpoint:
     """根据提供商声明与可选 base_url 解析端点 / Resolve endpoint for a provider."""
     base = ensure_trailing_slash(base_url or provider.base_url)
     chat_path = _DEFAULT_CHAT_PATHS.get(provider.family, "")
@@ -104,8 +106,8 @@ def resolve_account_endpoint(
 
 __all__ = [
     "AuthScheme",
-    "get_adapter",
-    "resolve_endpoint",
-    "resolve_account_endpoint",
     "ensure_trailing_slash",
+    "get_adapter",
+    "resolve_account_endpoint",
+    "resolve_endpoint",
 ]

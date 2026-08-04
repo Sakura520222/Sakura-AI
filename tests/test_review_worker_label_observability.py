@@ -45,17 +45,29 @@ async def test_label_event_callback_persists_message_events_on_summary_thread():
 
     await callback(
         "message",
-        {"role": "system", "content": "sys", "message_kind": "label_recommendation_request"},
+        {
+            "role": "system",
+            "content": "sys",
+            "message_kind": "label_recommendation_request",
+        },
     )
     await callback(
         "message",
-        {"role": "user", "content": "u", "message_kind": "label_recommendation_request"},
+        {
+            "role": "user",
+            "content": "u",
+            "message_kind": "label_recommendation_request",
+        },
     )
     # 非 message 事件必须忽略 / non-message events are ignored
     await callback("tool_running", {"name": "x"})
     await callback(
         "message",
-        {"role": "assistant", "content": "{}", "message_kind": "label_recommendation_response"},
+        {
+            "role": "assistant",
+            "content": "{}",
+            "message_kind": "label_recommendation_response",
+        },
     )
 
     assert len(tool_service.calls) == 3

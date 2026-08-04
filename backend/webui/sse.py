@@ -61,7 +61,7 @@ class SSEManager:
         queue: asyncio.Queue,
         *,
         timeout: float,
-    ) -> Dict[str, Any] | None:
+    ) -> dict[str, Any] | None:
         """等待下一条事件；应用准备退出时返回 ``None``。"""
 
         event = await asyncio.wait_for(queue.get(), timeout=timeout)

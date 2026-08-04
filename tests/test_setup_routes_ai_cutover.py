@@ -79,7 +79,9 @@ async def test_ai_provider_catalog_returns_migration_response_without_supplier_c
     """旧供应商目录 API 不得再读取 SetupService 的供应商目录。"""
     monkeypatch.setattr(setup_route, "is_bootstrap_mode", lambda: True)
     list_ai_providers = _FailIfCalled()
-    monkeypatch.setattr(setup_route.setup_service, "list_ai_providers", list_ai_providers)
+    monkeypatch.setattr(
+        setup_route.setup_service, "list_ai_providers", list_ai_providers
+    )
 
     response = await setup_route.get_ai_providers(_Request())
 

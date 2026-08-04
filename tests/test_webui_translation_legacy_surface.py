@@ -5,7 +5,6 @@ from pathlib import Path
 import pytest
 import yaml
 
-
 TRANSLATIONS_DIR = (
     Path(__file__).resolve().parents[1] / "backend" / "webui" / "translations"
 )
@@ -48,8 +47,7 @@ def test_dynamic_config_translations_drop_legacy_llm_supplier_keys(filename):
     assert LEGACY_DYNAMIC_KEYS.isdisjoint(config.get("desc", {}))
     assert "summary_model" not in config.get("group", {})
     assert not any(
-        key.startswith("summary_provider_")
-        for key in config.get("option", {})
+        key.startswith("summary_provider_") for key in config.get("option", {})
     )
     assert "agent_team_model_provider_main" not in config.get("option", {})
 

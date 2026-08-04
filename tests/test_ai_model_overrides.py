@@ -6,13 +6,13 @@ import pytest
 
 from backend.api.v1.config import ModelOverrideRequest, put_model_override
 from backend.core.ai_protocol.account_store import ProviderAccount
-from backend.core.ai_protocol.models import ProtocolFamily, BuiltinModel
-from backend.core.model_context import ModelContextManager
+from backend.core.ai_protocol.models import BuiltinModel, ProtocolFamily
 from backend.core.ai_protocol.resolver import _build_metadata
 from backend.core.ai_protocol.role_config import (
     _build_candidate_from_account,
     _parse_metadata_overrides,
 )
+from backend.core.model_context import ModelContextManager
 
 
 class _Result:
@@ -103,7 +103,9 @@ def test_unknown_model_uses_128k_context_fallback(monkeypatch):
     monkeypatch.setattr(
         model_context_module,
         "get_settings",
-        lambda: type("Settings", (), {"openai_model": "unknown-model", "model_context_window": 0})(),
+        lambda: type(
+            "Settings", (), {"openai_model": "unknown-model", "model_context_window": 0}
+        )(),
     )
 
     manager = ModelContextManager()
@@ -132,7 +134,9 @@ def test_model_context_manager_uses_actual_resolved_model_override(monkeypatch):
     monkeypatch.setattr(
         model_context_module,
         "get_settings",
-        lambda: type("Settings", (), {"openai_model": "gpt-5.6-terra", "model_context_window": 0})(),
+        lambda: type(
+            "Settings", (), {"openai_model": "gpt-5.6-terra", "model_context_window": 0}
+        )(),
     )
 
     manager = ModelContextManager()

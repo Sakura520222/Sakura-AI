@@ -14,8 +14,8 @@ serialization, response deserialization, error normalization, and streaming.
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from typing import Any, AsyncIterator, Optional
-
+from collections.abc import AsyncIterator
+from typing import Any
 from urllib.parse import urlsplit, urlunsplit
 
 import httpx
@@ -60,7 +60,7 @@ class ProtocolAdapter(ABC):
         endpoint: ResolvedEndpoint,
         credential: str,
         model_id: str,
-    ) -> Optional[ModelDiscoveryResult]:
+    ) -> ModelDiscoveryResult | None:
         """获取单个模型元数据 / Fetch metadata for one model."""
 
     @abstractmethod
@@ -71,7 +71,7 @@ class ProtocolAdapter(ABC):
         credential: str,
         request: UnifiedRequest,
         *,
-        timeout: Optional[float] = None,
+        timeout: float | None = None,
     ) -> UnifiedResponse:
         """发送聊天请求并返回归一化响应 / Send chat request, return normalized response."""
 
@@ -83,7 +83,7 @@ class ProtocolAdapter(ABC):
         credential: str,
         request: UnifiedRequest,
         *,
-        timeout: Optional[float] = None,
+        timeout: float | None = None,
     ) -> AsyncIterator[UnifiedStreamEvent]:
         """发送流式聊天请求 / Send streaming chat request."""
 
@@ -194,7 +194,9 @@ class ProtocolAdapter(ABC):
                 model=model,
                 cause=exc,
             ) from exc
-        if not isinstance(payload, dict) and not (allow_list and isinstance(payload, list)):
+        if not isinstance(payload, dict) and not (
+            allow_list and isinstance(payload, list)
+        ):
             expected_root = "对象或数组" if allow_list else "对象"
             raise self.raise_error(
                 AIErrorCategory.UNKNOWN,
@@ -212,11 +214,11 @@ class ProtocolAdapter(ABC):
         category: AIErrorCategory,
         message: str,
         *,
-        status_code: Optional[int] = None,
+        status_code: int | None = None,
         provider: str = "",
         model: str = "",
-        cause: Optional[BaseException] = None,
-    ) -> "AIError":
+        cause: BaseException | None = None,
+    ) -> AIError:
         """构造并可直接 raise 的 AIError / Build an AIError ready to raise."""
         return AIError(
             category,

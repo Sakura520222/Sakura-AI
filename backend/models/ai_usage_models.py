@@ -9,6 +9,7 @@ credentials never belong here.
 from __future__ import annotations
 
 from sqlalchemy import (
+    TIMESTAMP,
     BigInteger,
     Boolean,
     CheckConstraint,
@@ -16,7 +17,6 @@ from sqlalchemy import (
     Index,
     Integer,
     String,
-    TIMESTAMP,
 )
 
 from backend.models.database import Base, utc_now

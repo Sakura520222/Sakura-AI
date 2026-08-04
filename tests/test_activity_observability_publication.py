@@ -1,6 +1,5 @@
 """Focused tests for the Task 8 publication authority."""
 
-import asyncio
 from types import SimpleNamespace
 
 import pytest
@@ -8,19 +7,19 @@ from sqlalchemy import create_engine, event, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import StaticPool
+
 from backend.models.activity_observability_models import (
     ActivityInvocation,
     ActivityInvocationWorkUnit,
+    ActivityObservabilityEvent,
     ActivityObservabilityRoleBindingSnapshot,
     ActivityObservabilitySession,
-    ActivityObservabilityEvent,
     ActivityOutbox,
     ActivityPublication,
     ActivityResourceIdentity,
     ActivityWorkUnitResult,
 )
 from backend.models.database import Base
-
 from backend.services.activity_observability.publication_service import (
     PublicationConflictError,
     PublicationLimits,
@@ -93,7 +92,6 @@ class _AsyncDbAdapter:
         return _AsyncNested(self.session.begin_nested())
 
 
-
 def _publication_chain(db: Session) -> int:
     identity = ActivityResourceIdentity(
         source_system_instance="github.com",
@@ -164,7 +162,9 @@ def publication_service():
 
 
 @pytest.mark.asyncio
-async def test_create_pending_is_idempotent_and_parent_chain_is_real_db(publication_service):
+async def test_create_pending_is_idempotent_and_parent_chain_is_real_db(
+    publication_service,
+):
     first = await publication_service.create_pending(
         publication_service._test_result_id, "issue_comment", "issue:owner/repo:1"
     )
@@ -208,8 +208,10 @@ async def test_result_coordinator_persists_generated_result_and_returns_stable_i
     publication_service,
 ):
     work_unit = (
-        await publication_service._db.execute(select(ActivityInvocationWorkUnit))
-    ).scalars().one()
+        (await publication_service._db.execute(select(ActivityInvocationWorkUnit)))
+        .scalars()
+        .one()
+    )
     context = SimpleNamespace(
         invocation_id=work_unit.invocation_id,
         work_unit_id=work_unit.id,
@@ -256,19 +258,21 @@ async def test_create_pending_recovers_unique_race_inside_savepoint(
             return SimpleNamespace(scalar_one_or_none=lambda: None)
         return await original_execute(statement)
 
-    monkeypatch.setattr(publication_service._db, "execute", hide_existing_for_initial_lookup)
+    monkeypatch.setattr(
+        publication_service._db, "execute", hide_existing_for_initial_lookup
+    )
     recovered = await publication_service.create_pending(
         publication_service._test_result_id,
         "issue_comment",
         "issue:owner/repo:race",
     )
     assert recovered.id == first.id
-    rows = (
-        await original_execute(select(ActivityPublication))
-    ).scalars().all()
+    rows = (await original_execute(select(ActivityPublication))).scalars().all()
     assert len(rows) == 1
     assert rows[0].id == first.id
-    events = (await original_execute(select(ActivityObservabilityEvent))).scalars().all()
+    events = (
+        (await original_execute(select(ActivityObservabilityEvent))).scalars().all()
+    )
     outbox = (await original_execute(select(ActivityOutbox))).scalars().all()
     assert len(events) == 1
     assert len(outbox) == 1
@@ -291,8 +295,7 @@ async def test_create_pending_non_key_integrity_error_is_not_recovered(
         "statement",
         {},
         Exception(
-            "UNIQUE constraint failed: "
-            "activity_observability_publications.marker"
+            "UNIQUE constraint failed: activity_observability_publications.marker"
         ),
     )
     initial_lookup = True
@@ -320,6 +323,8 @@ async def test_create_pending_non_key_integrity_error_is_not_recovered(
     assert (
         await publication_service._db.execute(select(ActivityPublication))
     ).scalars().one().id == existing.id
+
+
 @pytest.mark.parametrize(
     ("message", "expected"),
     [
@@ -389,9 +394,13 @@ async def test_reconcile_found_notfound_timeout_and_max_attempts(publication_ser
         publication_service._test_result_id, "issue_comment", "issue:owner/repo:3"
     )
     sent = await publication_service.mark_sending(found.id)
-    await publication_service.mark_transport_timeout(found.id, claim_token=sent.claim_token)
+    await publication_service.mark_transport_timeout(
+        found.id, claim_token=sent.claim_token
+    )
     restored = await publication_service.reconcile(
-        found.id, Probe({"id": 99, "html_url": "https://github.com/owner/repo/issues/99"}), {}
+        found.id,
+        Probe({"id": 99, "html_url": "https://github.com/owner/repo/issues/99"}),
+        {},
     )
     assert restored.status == "succeeded" and restored.external_object_id == "99"
 
@@ -399,7 +408,9 @@ async def test_reconcile_found_notfound_timeout_and_max_attempts(publication_ser
         publication_service._test_result_id, "issue_comment", "issue:owner/repo:4"
     )
     sent = await publication_service.mark_sending(absent.id)
-    await publication_service.mark_transport_timeout(absent.id, claim_token=sent.claim_token)
+    await publication_service.mark_transport_timeout(
+        absent.id, claim_token=sent.claim_token
+    )
     pending = await publication_service.reconcile(absent.id, Probe(None), {})
     assert pending.status == "pending"
 
@@ -407,22 +418,28 @@ async def test_reconcile_found_notfound_timeout_and_max_attempts(publication_ser
         publication_service._test_result_id, "issue_comment", "issue:owner/repo:5"
     )
     sent = await publication_service.mark_sending(unknown.id)
-    await publication_service.mark_transport_timeout(unknown.id, claim_token=sent.claim_token)
+    await publication_service.mark_transport_timeout(
+        unknown.id, claim_token=sent.claim_token
+    )
     still_unknown = await publication_service.reconcile(
-        unknown.id, Probe(asyncio.TimeoutError()), {}
+        unknown.id, Probe(TimeoutError()), {}
     )
     assert still_unknown.status == "unknown"
     failed = await publication_service.reconcile(unknown.id, Probe(None), {})
     assert failed.status == "pending"
     sent = await publication_service.mark_sending(failed.id)
-    await publication_service.mark_transport_timeout(failed.id, claim_token=sent.claim_token)
+    await publication_service.mark_transport_timeout(
+        failed.id, claim_token=sent.claim_token
+    )
     terminal = await publication_service.reconcile(failed.id, Probe(None), {})
     assert terminal.status == "failed"
     marker = publication_marker("review:owner/repo:7:head")
     assert marker.startswith("<!-- sakura-activity:")
     assert marker.endswith(" -->")
     assert len(marker) == len("<!-- sakura-activity:") + 64 + len(" -->")
-    assert request_fingerprint("body", "secret") == request_fingerprint("body", "secret")
+    assert request_fingerprint("body", "secret") == request_fingerprint(
+        "body", "secret"
+    )
     assert "secret" not in request_fingerprint("body", "secret")
 
 
@@ -470,7 +487,9 @@ async def test_allowed_enterprise_github_host_is_injected_and_untrusted_host_rej
         "https://github.example.com/owner/repo/issues/7",
         claim_token=sent.claim_token,
     )
-    assert accepted.external_object_url == "https://github.example.com/owner/repo/issues/7"
+    assert (
+        accepted.external_object_url == "https://github.example.com/owner/repo/issues/7"
+    )
 
     rejected = await publication_service.create_pending(
         publication_service._test_result_id, "issue_comment", "issue:owner/repo:8"
@@ -502,12 +521,22 @@ async def test_coordinator_requires_context_and_routes_issue():
             return {**result, "published": True}
 
     result = {"summary": "safe"}
-    assert await coordinate_publication(FakeCoordinator(), kind="issue_analysis", result=result, context={}) == result
+    assert (
+        await coordinate_publication(
+            FakeCoordinator(), kind="issue_analysis", result=result, context={}
+        )
+        == result
+    )
     context = {"invocation_context": SimpleNamespace(invocation_id=7)}
-    assert await coordinate_publication(FakeCoordinator(), kind="issue_analysis", result=result, context=context) == {"summary": "safe", "published": True}
+    assert await coordinate_publication(
+        FakeCoordinator(), kind="issue_analysis", result=result, context=context
+    ) == {"summary": "safe", "published": True}
 
 
 def test_external_key_whitelist():
-    assert validate_external_key("pr_review:owner/repo:12:sha") == "pr_review:owner/repo:12:sha"
+    assert (
+        validate_external_key("pr_review:owner/repo:12:sha")
+        == "pr_review:owner/repo:12:sha"
+    )
     with pytest.raises(ValueError):
         validate_external_key("contains space")

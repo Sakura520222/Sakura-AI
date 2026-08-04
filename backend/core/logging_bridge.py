@@ -12,7 +12,6 @@ from pathlib import Path
 
 from loguru import logger
 
-
 APP_LOG_DIRECTORY = Path("logs")
 APP_LOG_RETENTION_DAYS = 10
 _NOISY_LOGGER_PREFIXES = ("httpx", "httpcore", "telegram")

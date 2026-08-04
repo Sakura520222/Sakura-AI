@@ -8,20 +8,18 @@ candidates for the UnifiedAIClient.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Optional
 
 from backend.core.ai_protocol.models import (
     DEFAULT_CONTEXT_WINDOW_TOKENS,
+    MetadataSource,
     ModelCapabilitySet,
     ModelMetadata,
-    MetadataSource,
     ReasoningParams,
     ResolvedModel,
     RoleBinding,
 )
-from backend.core.ai_providers import get_builtin_provider
 from backend.core.ai_protocol.registry import resolve_endpoint
-
+from backend.core.ai_providers import get_builtin_provider
 
 # 保守默认能力与推理参数 / Conservative default capability & reasoning params
 _DEFAULT_CAPS = ModelCapabilitySet()
@@ -59,7 +57,7 @@ class ResolvedChain:
     compressed: bool = False
 
     @property
-    def primary(self) -> Optional[ResolvedModel]:
+    def primary(self) -> ResolvedModel | None:
         return self.candidates[0] if self.candidates else None
 
 
@@ -67,9 +65,9 @@ def resolve_candidate(
     provider_id: str,
     model_id: str,
     credential: str,
-    base_url: Optional[str] = None,
+    base_url: str | None = None,
     *,
-    metadata_override: Optional[ModelMetadata] = None,
+    metadata_override: ModelMetadata | None = None,
 ) -> ResolvedModel:
     """构造单个 ResolvedModel / Build a single ResolvedModel."""
     decl = get_builtin_provider(provider_id)
@@ -88,8 +86,8 @@ def resolve_role(
     bindings: dict[str, RoleBinding],
     credentials: dict[str, str],
     *,
-    upstream_chain: Optional[ResolvedChain] = None,
-    metadata_overrides: Optional[dict[tuple[str, str], ModelMetadata]] = None,
+    upstream_chain: ResolvedChain | None = None,
+    metadata_overrides: dict[tuple[str, str], ModelMetadata] | None = None,
 ) -> ResolvedChain:
     """解析角色 → ResolvedChain / Resolve a role into a candidate chain.
 
@@ -106,7 +104,7 @@ def resolve_role(
 
     candidates: list[ResolvedModel] = []
 
-    def _add(ref: dict[str, str]) -> Optional[ResolvedModel]:
+    def _add(ref: dict[str, str]) -> ResolvedModel | None:
         provider_id = ref.get("provider", "")
         model_id = ref.get("model", "")
         if not provider_id or not model_id:

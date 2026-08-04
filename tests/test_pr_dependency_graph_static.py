@@ -205,7 +205,9 @@ async def test_dependency_graph_calls_summary_role_without_model_override(servic
     service.update_pr_body_with_graph = AsyncMock()
     service.api_client.call_with_retry = AsyncMock(
         return_value=SimpleNamespace(
-            choices=[SimpleNamespace(message=SimpleNamespace(content="graph TD\nN1 --> N2"))]
+            choices=[
+                SimpleNamespace(message=SimpleNamespace(content="graph TD\nN1 --> N2"))
+            ]
         )
     )
 

@@ -1,20 +1,21 @@
 """Review worker dynamic timeout coverage."""
 
 import asyncio
+from builtins import BaseExceptionGroup
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 import pytest
 
-from builtins import BaseExceptionGroup
-
 from backend.core.ai_protocol.errors import ReviewCancelledError
 from backend.core.config import get_settings
-from backend.services.comment_service import CommentService
-from backend.services.activity_observability import integration_service as _activity_integration_module
+from backend.services.activity_observability import (
+    integration_service as _activity_integration_module,
+)
 from backend.services.activity_observability.integration_service import (
     ObservedExecutionBundle,
 )
+from backend.services.comment_service import CommentService
 from backend.workers import review_worker
 from backend.workers.review_worker import (
     ReviewDecision,
@@ -77,7 +78,9 @@ def stub_review_worker_dependencies(monkeypatch):
     monkeypatch.setattr(review_worker, "AIReviewer", lambda: object())
     monkeypatch.setattr(review_worker, "CommentService", lambda: object())
     monkeypatch.setattr(
-        _activity_integration_module, "ActivityIntegrationService", _NoOpActivityIntegration
+        _activity_integration_module,
+        "ActivityIntegrationService",
+        _NoOpActivityIntegration,
     )
     monkeypatch.setattr(review_worker, "_worker_instance", None)
     yield
@@ -225,9 +228,7 @@ async def test_timeout_finishes_started_execution_as_cancelled(monkeypatch):
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("cancel_check_count", [2, 3, 4])
-async def test_early_cancel_finishes_execution_once(
-    monkeypatch, cancel_check_count
-):
+async def test_early_cancel_finishes_execution_once(monkeypatch, cancel_check_count):
     """三个 execution 创建后的取消检查点都必须只做一次 cancelled 收尾。"""
     execution = _RecordingExecutionBundle()
     integration = _RecordingActivityIntegration(execution)
@@ -282,7 +283,9 @@ async def test_early_cancel_finishes_execution_once(
         "_get_review_semaphore",
         lambda: asyncio.sleep(0, result=asyncio.Semaphore(1)),
     )
-    monkeypatch.setattr(review_worker, "get_user_dynamic_config", AsyncMock(return_value=None))
+    monkeypatch.setattr(
+        review_worker, "get_user_dynamic_config", AsyncMock(return_value=None)
+    )
     monkeypatch.setattr(review_worker, "_get_label_rec_setting", lambda *_args: False)
     monkeypatch.setattr(review_worker.settings, "auto_index_pr_changes", False)
     monkeypatch.setattr(review_worker.settings, "enable_code_index", False)
@@ -335,7 +338,9 @@ async def test_skip_path_finishes_execution_as_completed_once(monkeypatch):
         "_get_review_semaphore",
         lambda: asyncio.sleep(0, result=asyncio.Semaphore(1)),
     )
-    monkeypatch.setattr(review_worker, "get_user_dynamic_config", AsyncMock(return_value=None))
+    monkeypatch.setattr(
+        review_worker, "get_user_dynamic_config", AsyncMock(return_value=None)
+    )
 
     pr_info = {
         "repo_full_name": "owner/repo",
@@ -365,7 +370,11 @@ async def test_cancelled_error_finishes_execution_and_finalizes_check_run(monkey
     worker._update_review_status = AsyncMock()
     worker._persist_error_reference = AsyncMock()
     worker._unregister_task = lambda _task_key: None
-    monkeypatch.setattr(review_worker, "_get_review_semaphore", lambda: asyncio.sleep(0, result=asyncio.Semaphore(1)))
+    monkeypatch.setattr(
+        review_worker,
+        "_get_review_semaphore",
+        lambda: asyncio.sleep(0, result=asyncio.Semaphore(1)),
+    )
 
     class CancellingAnalyzer:
         async def analyze_pr(self, _pr_info):
@@ -461,6 +470,8 @@ async def test_cancel_cleanup_survives_execution_finish_failure_and_retries(
     worker._update_review_status.assert_not_awaited()
     assert execution.finish_calls == [("cancelled", None), ("cancelled", None)]
     worker.comment_service.delete_placeholder_comment.assert_not_awaited()
+
+
 @pytest.mark.asyncio
 async def test_bundle_finish_releases_lease_after_work_unit_failure():
     """底层 bundle 在 WorkUnit 写入失败时仍尝试释放 lease，并保留异常。"""

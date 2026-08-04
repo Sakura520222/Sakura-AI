@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import pytest
 from sqlalchemy import event, select
@@ -19,11 +19,11 @@ from backend.models.activity_observability_models import (
     ActivityThreadLease,
 )
 from backend.models.database import Base
-from backend.services.activity_observability.contracts import RoleConfigSnapshot
 from backend.services.activity_observability.context_service import ContextService
+from backend.services.activity_observability.contracts import RoleConfigSnapshot
 from backend.services.activity_observability.integration_service import (
-    AdmissionError,
     ActivityIntegrationService,
+    AdmissionError,
 )
 
 
@@ -86,12 +86,18 @@ def db():
     engine = __import__("sqlalchemy").create_engine(
         "sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool
     )
+
     @event.listens_for(engine, "connect")
     def _configure(connection, _record):
         connection.execute("PRAGMA foreign_keys=ON")
         connection.create_collation("ascii_bin", lambda a, b: (a > b) - (a < b))
         connection.create_function("regexp", 2, lambda pattern, value: True)
-    tables = [table for name, table in Base.metadata.tables.items() if name.startswith("activity_observability_")]
+
+    tables = [
+        table
+        for name, table in Base.metadata.tables.items()
+        if name.startswith("activity_observability_")
+    ]
     Base.metadata.create_all(engine, tables=tables)
     session = sessionmaker(bind=engine, expire_on_commit=False)()
     try:
@@ -123,8 +129,10 @@ def snapshot():
         protocol_family="test",
         endpoint_fingerprint="a" * 64,
         config_snapshot_version=1,
-        captured_at=datetime.now(timezone.utc),
+        captured_at=datetime.now(UTC),
     )
+
+
 @pytest.mark.asyncio
 async def test_bundle_retry_converges_invocation_after_partial_finish_failure(
     db, resource, snapshot
@@ -228,7 +236,7 @@ async def test_auxiliary_execution_uses_separate_detached_thread_and_observer(
         protocol_family="test",
         endpoint_fingerprint="b" * 64,
         config_snapshot_version=1,
-        captured_at=datetime.now(timezone.utc),
+        captured_at=datetime.now(UTC),
     )
 
     auxiliary = await service.start_auxiliary_execution(
@@ -308,7 +316,9 @@ async def test_active_review_lease_join_follows_invocation_and_owner_work_unit(
 
 
 @pytest.mark.asyncio
-async def test_active_review_requires_matching_work_unit_purpose(db, resource, snapshot):
+async def test_active_review_requires_matching_work_unit_purpose(
+    db, resource, snapshot
+):
     service = ActivityIntegrationService(db=db)
     admitted = await service.admit_synchronize(resource, delivery_id="purpose-mismatch")
     started = await service.start_or_merge_review(
@@ -317,17 +327,13 @@ async def test_active_review_requires_matching_work_unit_purpose(db, resource, s
     started.work_unit.purpose = "issue_analyzer"
     await db.commit()
     assert (
-        await service._active_review_with_live_lease(
-            db, started.session.id, "reviewer"
-        )
+        await service._active_review_with_live_lease(db, started.session.id, "reviewer")
         is None
     )
     started.work_unit.purpose = "reviewer"
     await db.commit()
     assert (
-        await service._active_review_with_live_lease(
-            db, started.session.id, "reviewer"
-        )
+        await service._active_review_with_live_lease(db, started.session.id, "reviewer")
         is not None
     )
 
@@ -369,17 +375,19 @@ async def test_two_synchronize_events_share_session_and_merge(db, resource, snap
 async def test_redelivery_is_same_trigger_and_rename_keeps_identity(db, resource):
     service = ActivityIntegrationService(db=db)
     first = await service.admit_synchronize(resource, delivery_id="delivery-1")
-    retry = await service.admit_synchronize(resource | {"repo_full_name": "renamed/repo"}, delivery_id="delivery-1")
+    retry = await service.admit_synchronize(
+        resource | {"repo_full_name": "renamed/repo"}, delivery_id="delivery-1"
+    )
     assert retry.duplicate
     assert first.trigger_id == retry.trigger_id
     sessions = (await db.execute(select(ActivityObservabilitySession))).scalars().all()
     assert len(sessions) == 1
 
 
-
-
 @pytest.mark.asyncio
-async def test_bundle_keeps_persisted_role_snapshot_without_resolving_purpose(db, resource, snapshot):
+async def test_bundle_keeps_persisted_role_snapshot_without_resolving_purpose(
+    db, resource, snapshot
+):
     calls = []
 
     async def resolver(role):
@@ -397,18 +405,28 @@ async def test_bundle_keeps_persisted_role_snapshot_without_resolving_purpose(db
     assert bundle.invocation_context.role_snapshot == snapshot
     assert calls == []
     with pytest.raises(AdmissionError):
-        ActivityIntegrationService.normalize_resource(resource | {"repository_external_id": None})
+        ActivityIntegrationService.normalize_resource(
+            resource | {"repository_external_id": None}
+        )
 
 
 @pytest.mark.asyncio
 async def test_active_lease_mismatch_keeps_next_trigger_pending(db, resource, snapshot):
     service = ActivityIntegrationService(db=db, lease_context=ContextService(db=db))
-    admitted = await service.admit_synchronize(resource, delivery_id="d-1", base_sha="a", head_sha="b")
-    started = await service.start_or_merge_review(session_id=admitted.session_id, role_snapshot=snapshot)
-    await service.admit_synchronize(resource, delivery_id="d-2", base_sha="b", head_sha="c")
+    admitted = await service.admit_synchronize(
+        resource, delivery_id="d-1", base_sha="a", head_sha="b"
+    )
+    started = await service.start_or_merge_review(
+        session_id=admitted.session_id, role_snapshot=snapshot
+    )
+    await service.admit_synchronize(
+        resource, delivery_id="d-2", base_sha="b", head_sha="c"
+    )
     # A finished invocation cannot merge a new trigger; this is the worker crash/recovery boundary.
     await service._lease_context.release_lease(started.lease, "completed")
-    next_run = await service.start_or_merge_review(session_id=admitted.session_id, role_snapshot=snapshot)
+    next_run = await service.start_or_merge_review(
+        session_id=admitted.session_id, role_snapshot=snapshot
+    )
     assert next_run.invocation_id != started.invocation_id
     assert next_run.merged is False
 
@@ -416,7 +434,7 @@ async def test_active_lease_mismatch_keeps_next_trigger_pending(db, resource, sn
 @pytest.mark.asyncio
 async def test_scan_uses_ephemeral_unthreaded_work_unit(db):
     service = ActivityIntegrationService(db=db)
-    session, invocation, work_unit, triggers = await service.start_scan(
+    session, _invocation, work_unit, triggers = await service.start_scan(
         {"task_id": "scan-1", "repo_full_name": "owner/repo", "delivery_id": "scan-1"},
         role_snapshot=None,
         task_id=1,

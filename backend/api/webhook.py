@@ -961,7 +961,10 @@ async def handle_issue_comment_event(payload: dict[str, Any]) -> JSONResponse:
                 "repository_external_id": getattr(repo, "id", None),
                 "source_system_instance": getattr(
                     repo, "html_url", "https://github.com"
-                ).split("://")[-1].split("/", 1)[0].lower(),
+                )
+                .split("://")[-1]
+                .split("/", 1)[0]
+                .lower(),
                 "installation_id": installation_id,
                 "author": pr.user.login,
                 "title": pr.title,

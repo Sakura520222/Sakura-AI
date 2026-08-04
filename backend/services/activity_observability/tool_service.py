@@ -15,6 +15,7 @@ from sqlalchemy import or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from backend.core.config import get_settings
 from backend.models import database as db_module
 from backend.models.activity_observability_models import (
     ActivityArtifactAccessLog,
@@ -31,8 +32,6 @@ from backend.models.activity_observability_models import (
     ActivityToolExecution,
 )
 from backend.models.database import utc_now
-from backend.core.config import get_settings
-from backend.services.secret_crypto_service import decrypt_secret, encrypt_secret
 from backend.services.activity_observability.context_service import (
     ContextService,
     ThreadLeaseToken,
@@ -42,10 +41,11 @@ from backend.services.activity_observability.event_service import append_lifecyc
 from backend.services.activity_observability.reasoning import (
     REASONING_ENCRYPTED_OPAQUE,
     REASONING_PROVIDER_EXPOSED,
-    ReasoningCapturePolicy,
     VALID_AVAILABILITY,
+    ReasoningCapturePolicy,
     build_compatibility_key,
 )
+from backend.services.secret_crypto_service import decrypt_secret, encrypt_secret
 
 TOOL_STATUS_PENDING = "pending"
 TOOL_STATUS_RUNNING = "running"
@@ -246,7 +246,7 @@ class ToolService:
         if isinstance(payload, str):
             try:
                 payload = json.loads(payload)
-            except (TypeError, json.JSONDecodeError):
+            except TypeError, json.JSONDecodeError:
                 return False
         if not isinstance(payload, dict):
             return False
@@ -935,13 +935,13 @@ class ToolService:
                         if decrypted is not None:
                             try:
                                 candidate = json.loads(decrypted)
-                            except (TypeError, json.JSONDecodeError):
+                            except TypeError, json.JSONDecodeError:
                                 candidate = None
                             if isinstance(candidate, dict):
                                 payload = candidate
                 try:
                     payload = payload or json.loads(row.message_json)
-                except (TypeError, json.JSONDecodeError):
+                except TypeError, json.JSONDecodeError:
                     payload = {"role": row.role, "content": row.content}
                 if isinstance(payload, dict):
                     payload.pop("reasoning_content", None)

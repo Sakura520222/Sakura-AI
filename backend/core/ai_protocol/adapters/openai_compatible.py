@@ -13,7 +13,8 @@ Ollama, vLLM, LM Studio, and custom endpoints).
 from __future__ import annotations
 
 import json
-from typing import Any, AsyncIterator, Optional
+from collections.abc import AsyncIterator
+from typing import Any
 
 import httpx
 from loguru import logger
@@ -102,7 +103,7 @@ class OpenAICompatibleAdapter(ProtocolAdapter):
         endpoint: ResolvedEndpoint,
         credential: str,
         model_id: str,
-    ) -> Optional[ModelDiscoveryResult]:
+    ) -> ModelDiscoveryResult | None:
         url = self.resolve_model_detail_url(endpoint, model_id)
         try:
             resp = await self._get(client, url, credential, endpoint)
@@ -121,7 +122,10 @@ class OpenAICompatibleAdapter(ProtocolAdapter):
         raw_models: Any
         if isinstance(payload, dict):
             raw_models = (
-                payload.get("data") or payload.get("models") or payload.get("items") or []
+                payload.get("data")
+                or payload.get("models")
+                or payload.get("items")
+                or []
             )
         elif isinstance(payload, list):
             raw_models = payload
@@ -152,7 +156,7 @@ class OpenAICompatibleAdapter(ProtocolAdapter):
         return unique
 
     @staticmethod
-    def _parse_model_detail(payload: Any, model_id: str) -> Optional[ModelDiscoveryResult]:
+    def _parse_model_detail(payload: Any, model_id: str) -> ModelDiscoveryResult | None:
         if not isinstance(payload, dict):
             return None
         ctx_tokens = OpenAICompatibleAdapter._extract_context_tokens(payload)
@@ -165,7 +169,7 @@ class OpenAICompatibleAdapter(ProtocolAdapter):
         )
 
     @staticmethod
-    def _extract_context_tokens(payload: dict[str, Any]) -> Optional[int]:
+    def _extract_context_tokens(payload: dict[str, Any]) -> int | None:
         # 常见字段名（OpenAI / OpenAI 兼容 / vLLM / Together 等）
         for field in (
             "context_length",
@@ -193,7 +197,7 @@ class OpenAICompatibleAdapter(ProtocolAdapter):
         return None
 
     @staticmethod
-    def _extract_max_output(payload: dict[str, Any]) -> Optional[int]:
+    def _extract_max_output(payload: dict[str, Any]) -> int | None:
         for field in ("max_output_tokens", "max_tokens", "max_completion_tokens"):
             value = payload.get(field)
             if isinstance(value, (int, float)) and value > 0:
@@ -277,9 +281,7 @@ class OpenAICompatibleAdapter(ProtocolAdapter):
     # ------------------------------------------------------------------
     # 响应反序列化 / Response deserialization
     # ------------------------------------------------------------------
-    def parse_response(
-        self, payload: dict[str, Any], raw: Any
-    ) -> UnifiedResponse:
+    def parse_response(self, payload: dict[str, Any], raw: Any) -> UnifiedResponse:
         choices = payload.get("choices") or []
         if not choices:
             return UnifiedResponse(
@@ -415,7 +417,7 @@ class OpenAICompatibleAdapter(ProtocolAdapter):
         credential: str,
         request: UnifiedRequest,
         *,
-        timeout: Optional[float] = None,
+        timeout: float | None = None,
     ) -> UnifiedResponse:
         url = self.resolve_chat_url(endpoint)
         body = self.serialize_request(request)
@@ -455,7 +457,7 @@ class OpenAICompatibleAdapter(ProtocolAdapter):
         credential: str,
         request: UnifiedRequest,
         *,
-        timeout: Optional[float] = None,
+        timeout: float | None = None,
     ) -> AsyncIterator[UnifiedStreamEvent]:
         url = self.resolve_chat_url(endpoint)
         body = self.serialize_request(request)
@@ -486,7 +488,7 @@ class OpenAICompatibleAdapter(ProtocolAdapter):
             )
 
     @staticmethod
-    def _parse_sse_line(line: str) -> Optional[UnifiedStreamEvent]:
+    def _parse_sse_line(line: str) -> UnifiedStreamEvent | None:
         if not line or not line.startswith("data:"):
             return None
         data = line[5:].strip()
@@ -510,10 +512,14 @@ class OpenAICompatibleAdapter(ProtocolAdapter):
             return None
         choice = choices[0]
         delta = choice.get("delta") or {}
-        finish_reason = _OPENAI_STOP_MAP.get(
-            str(choice.get("finish_reason")),
-            StopReason.END_TURN,
-        ) if choice.get("finish_reason") is not None else None
+        finish_reason = (
+            _OPENAI_STOP_MAP.get(
+                str(choice.get("finish_reason")),
+                StopReason.END_TURN,
+            )
+            if choice.get("finish_reason") is not None
+            else None
+        )
         reasoning = delta.get("reasoning_content")
         if reasoning is None:
             reasoning = delta.get("reasoning")

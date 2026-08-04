@@ -7,8 +7,7 @@ import pytest
 
 from backend.api.v1.setup import CompleteSetupRequest
 from backend.core import bootstrap
-from backend.core.setup_service import ENV_FIELD_GROUPS, _ENV_TO_SETTINGS_KEY
-
+from backend.core.setup_service import _ENV_TO_SETTINGS_KEY, ENV_FIELD_GROUPS
 
 LEGACY_KEYS = {
     "AI_PROVIDER",
@@ -75,7 +74,10 @@ async def test_bootstrap_missing_fields_does_not_query_legacy_openai_key(monkeyp
 
     assert "OPENAI_API_KEY" not in missing
     assert "TELEGRAM_BOT_TOKEN" not in missing
-    assert all("openai_api_key" not in str(statement.compile()) for statement in session.statements)
+    assert all(
+        "openai_api_key" not in str(statement.compile())
+        for statement in session.statements
+    )
 
 
 @pytest.mark.asyncio
@@ -97,30 +99,40 @@ async def test_bootstrap_current_step_does_not_require_legacy_openai_key(monkeyp
     )
 
     assert await bootstrap.get_current_step() == 3
-    assert all("openai_api_key" not in str(statement.compile()) for statement in session.statements)
+    assert all(
+        "openai_api_key" not in str(statement.compile())
+        for statement in session.statements
+    )
 
 
 @pytest.mark.asyncio
 async def test_setup_save_rejects_legacy_env_and_settings_keys(monkeypatch):
-    service = __import__("backend.core.setup_service", fromlist=["SetupService"]).SetupService()
+    service = __import__(
+        "backend.core.setup_service", fromlist=["SetupService"]
+    ).SetupService()
     monkeypatch.setattr(
         "backend.core.config.update_settings_field",
         lambda *_args: pytest.fail("legacy setting must not be applied"),
     )
 
-    assert await service.save_configs_to_db(
-        {
-            "OPENAI_API_KEY": "legacy-key",
-            "openai_api_base": "https://legacy.example/v1",
-            "SUMMARY_PROVIDER": "legacy",
-        }
-    ) == 0
+    assert (
+        await service.save_configs_to_db(
+            {
+                "OPENAI_API_KEY": "legacy-key",
+                "openai_api_base": "https://legacy.example/v1",
+                "SUMMARY_PROVIDER": "legacy",
+            }
+        )
+        == 0
+    )
 
 
 def test_startup_and_telegram_status_do_not_read_legacy_model_setting():
     root = Path(__file__).resolve().parents[1]
     main_source = (root / "backend/main.py").read_text(encoding="utf-8")
-    telegram_source = (root / "backend/telegram/handlers.py").read_text(encoding="utf-8")
+    telegram_source = (root / "backend/telegram/handlers.py").read_text(
+        encoding="utf-8"
+    )
     assert "settings.openai_model" not in main_source
     assert "settings.openai_model" not in telegram_source
 

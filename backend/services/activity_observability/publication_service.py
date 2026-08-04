@@ -14,10 +14,11 @@ import inspect
 import json
 import re
 import secrets
-from contextlib import asynccontextmanager
+from collections.abc import Callable, Iterable, Mapping
+from contextlib import AbstractAsyncContextManager, asynccontextmanager
 from dataclasses import dataclass
 from datetime import timedelta
-from typing import Any, AsyncContextManager, Callable, Iterable, Mapping, Protocol
+from typing import Any, Protocol
 from urllib.parse import urlsplit
 
 from sqlalchemy import select
@@ -34,10 +35,13 @@ from backend.models.activity_observability_models import (
     ActivityWorkUnitResult,
 )
 from backend.models.database import utc_now
-from backend.services.activity_observability.outbox_service import append_event_and_outbox
+from backend.services.activity_observability.outbox_service import (
+    append_event_and_outbox,
+)
 
-
-PUBLICATION_KINDS = frozenset({"issue_comment", "pr_review", "pr_review_comment", "check_run"})
+PUBLICATION_KINDS = frozenset(
+    {"issue_comment", "pr_review", "pr_review_comment", "check_run"}
+)
 PUBLICATION_STATUSES = frozenset(
     {"pending", "sending", "succeeded", "failed", "unknown", "cancelled", "reconciling"}
 )
@@ -46,18 +50,31 @@ _ALLOWED_TRANSITIONS = {
     "pending": frozenset({"sending", "cancelled"}),
     "sending": frozenset({"succeeded", "failed", "unknown", "cancelled"}),
     "unknown": frozenset({"reconciling", "cancelled"}),
-    "reconciling": frozenset({"succeeded", "pending", "failed", "unknown", "cancelled"}),
+    "reconciling": frozenset(
+        {"succeeded", "pending", "failed", "unknown", "cancelled"}
+    ),
     "succeeded": frozenset(),
     "failed": frozenset(),
     "cancelled": frozenset(),
 }
 _SAFE_EXTERNAL_KEY = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:/-]{0,511}$")
 _MARKER_PATTERN = re.compile(r"<!--\s*sakura-activity:[^>]+-->", re.IGNORECASE)
-_SAFE_CATEGORY = frozenset({
-    "network", "timeout", "connection", "http_4xx", "http_5xx", "probe_timeout",
-    "probe_unknown", "invalid_response", "invalid_request", "reconcile_max_attempts",
-    "cancelled", "unknown",
-})
+_SAFE_CATEGORY = frozenset(
+    {
+        "network",
+        "timeout",
+        "connection",
+        "http_4xx",
+        "http_5xx",
+        "probe_timeout",
+        "probe_unknown",
+        "invalid_response",
+        "invalid_request",
+        "reconcile_max_attempts",
+        "cancelled",
+        "unknown",
+    }
+)
 _DEFAULT_ALLOWED_GITHUB_HOSTS = ("github.com", "www.github.com", "api.github.com")
 
 
@@ -76,7 +93,9 @@ class PublicationProbe(Protocol):
 
 
 class PublicationSender(Protocol):
-    async def __call__(self, kind: str, body: str, resource_identity: Mapping[str, Any]) -> Any: ...
+    async def __call__(
+        self, kind: str, body: str, resource_identity: Mapping[str, Any]
+    ) -> Any: ...
 
 
 @dataclass(frozen=True, slots=True)
@@ -108,7 +127,13 @@ def safe_hash(value: Any) -> str:
     elif isinstance(value, str):
         raw = value.encode("utf-8")
     else:
-        raw = json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"), default=str).encode("utf-8")
+        raw = json.dumps(
+            value,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+            default=str,
+        ).encode("utf-8")
     return hashlib.sha256(raw).hexdigest()
 
 
@@ -122,7 +147,17 @@ def validate_external_key(external_key: str) -> str:
     if "://" in key or key.startswith("//"):
         raise ValueError("external_key must not be a URL")
     lowered = key.lower()
-    if any(part in lowered for part in ("token", "secret", "password", "credential", "authorization", "bearer")):
+    if any(
+        part in lowered
+        for part in (
+            "token",
+            "secret",
+            "password",
+            "credential",
+            "authorization",
+            "bearer",
+        )
+    ):
         raise ValueError("external_key must not contain credential-shaped text")
     return key
 
@@ -138,10 +173,11 @@ def _is_external_key_integrity_error(error: IntegrityError) -> bool:
         )
     if "duplicate entry" in text_value:
         return "for key 'external_idempotency_key'" in text_value or (
-            "for key 'uq_activity_observability_publication_idempotency'"
-            in text_value
+            "for key 'uq_activity_observability_publication_idempotency'" in text_value
         )
     return False
+
+
 def publication_marker(external_key: str) -> str:
     """Build the deterministic, non-sensitive GitHub marker."""
     return f"<!-- sakura-activity:{safe_hash(validate_external_key(external_key))} -->"
@@ -151,7 +187,9 @@ def build_publication_body(body: str, marker: str) -> str:
     """Append a marker while preventing body-side marker spoofing/collision."""
     if not isinstance(body, str):
         raise TypeError("body must be a string")
-    if not isinstance(marker, str) or not re.fullmatch(r"<!-- sakura-activity:[0-9a-f]{64} -->", marker):
+    if not isinstance(marker, str) or not re.fullmatch(
+        r"<!-- sakura-activity:[0-9a-f]{64} -->", marker
+    ):
         raise ValueError("marker is not a safe Sakura activity marker")
     if _MARKER_PATTERN.search(body):
         raise ValueError("publication body must not contain a Sakura activity marker")
@@ -210,7 +248,7 @@ def _normalise_external_id(value: Any) -> str | None:
 def _reconcile_attempts(publication: ActivityPublication) -> int:
     try:
         payload = json.loads(publication.reconciliation_json or "{}")
-    except (TypeError, ValueError, json.JSONDecodeError):
+    except TypeError, ValueError, json.JSONDecodeError:
         return 0
     value = payload.get("reconcile_attempts", 0) if isinstance(payload, dict) else 0
     return value if isinstance(value, int) and value >= 0 else 0
@@ -227,11 +265,22 @@ def _status_code(error: Any) -> int | None:
     return value if isinstance(value, int) and 100 <= value <= 599 else None
 
 
-def _error_category(error: BaseException | None = None, *, category: str | None = None, status: int | None = None) -> str:
+def _error_category(
+    error: BaseException | None = None,
+    *,
+    category: str | None = None,
+    status: int | None = None,
+) -> str:
     if category in _SAFE_CATEGORY:
         return category
     if status is not None:
-        return "http_4xx" if 400 <= status < 500 else "http_5xx" if status >= 500 else "unknown"
+        return (
+            "http_4xx"
+            if 400 <= status < 500
+            else "http_5xx"
+            if status >= 500
+            else "unknown"
+        )
     if isinstance(error, asyncio.TimeoutError):
         return "timeout"
     if isinstance(error, ConnectionError):
@@ -242,15 +291,19 @@ def _error_category(error: BaseException | None = None, *, category: str | None 
 class PublicationCoordinator(Protocol):
     """Task 9 injection point for domain-specific publication orchestration."""
 
-    async def publish_review(self, result: Mapping[str, Any], *, context: Any) -> Any: ...
+    async def publish_review(
+        self, result: Mapping[str, Any], *, context: Any
+    ) -> Any: ...
 
-    async def publish_issue_analysis(self, result: Mapping[str, Any], *, context: Any) -> Any: ...
+    async def publish_issue_analysis(
+        self, result: Mapping[str, Any], *, context: Any
+    ) -> Any: ...
 
 
 class WorkUnitResultCoordinator:
     """Persist generated domain results before the worker performs a publication."""
 
-    def __init__(self, service: "PublicationService") -> None:
+    def __init__(self, service: PublicationService) -> None:
         self._service = service
 
     async def _record(
@@ -299,7 +352,9 @@ async def coordinate_publication(
     """Invoke a coordinator only when an authoritative InvocationContext exists."""
     if coordinator is None or context is None:
         return result
-    invocation_context = context.get("invocation_context") if isinstance(context, Mapping) else context
+    invocation_context = (
+        context.get("invocation_context") if isinstance(context, Mapping) else context
+    )
     if invocation_context is None:
         return result
     method_name = "publish_review" if kind == "review" else "publish_issue_analysis"
@@ -321,7 +376,7 @@ class PublicationService:
         self,
         db: AsyncSession | None = None,
         *,
-        session_factory: Callable[[], AsyncContextManager[AsyncSession]] | None = None,
+        session_factory: Callable[[], AbstractAsyncContextManager[AsyncSession]] | None = None,
         limits: PublicationLimits | None = None,
         recipient_user_ids: tuple[str, ...] | None = None,
         recipient_resolver: Callable[..., Any] | None = None,
@@ -338,7 +393,9 @@ class PublicationService:
             try:
                 from backend.core.config import get_settings
 
-                allowed_github_hosts = get_settings().activity_publication_allowed_github_hosts
+                allowed_github_hosts = (
+                    get_settings().activity_publication_allowed_github_hosts
+                )
             except Exception:
                 allowed_github_hosts = None
         self.allowed_github_hosts = _normalise_allowed_hosts(allowed_github_hosts)
@@ -364,13 +421,19 @@ class PublicationService:
         result = await db.get(ActivityWorkUnitResult, result_id, with_for_update=lock)
         if result is None:
             raise ValueError("work unit result does not exist")
-        work_unit = await db.get(ActivityInvocationWorkUnit, result.work_unit_id, with_for_update=lock)
+        work_unit = await db.get(
+            ActivityInvocationWorkUnit, result.work_unit_id, with_for_update=lock
+        )
         if work_unit is None:
             raise ValueError("work unit parent does not exist")
-        invocation = await db.get(ActivityInvocation, work_unit.invocation_id, with_for_update=lock)
+        invocation = await db.get(
+            ActivityInvocation, work_unit.invocation_id, with_for_update=lock
+        )
         if invocation is None or invocation.session_id != work_unit.session_id:
             raise ValueError("invocation parent chain is invalid")
-        session = await db.get(ActivityObservabilitySession, work_unit.session_id, with_for_update=lock)
+        session = await db.get(
+            ActivityObservabilitySession, work_unit.session_id, with_for_update=lock
+        )
         if session is None:
             raise ValueError("session parent chain is invalid")
         if result.thread_id is not None and result.thread_id != work_unit.thread_id:
@@ -402,8 +465,8 @@ class PublicationService:
             separators=(",", ":"),
             default=str,
         )
-        work_unit_id = int(getattr(context, "work_unit_id"))
-        invocation_id = int(getattr(context, "invocation_id"))
+        work_unit_id = int(context.work_unit_id)
+        invocation_id = int(context.invocation_id)
         context_thread_id = getattr(context, "thread_id", None)
         thread_id = int(context_thread_id) if context_thread_id is not None else None
         async with self._scope() as db:
@@ -446,8 +509,7 @@ class PublicationService:
                     existing.thread_id != thread_id
                     or existing.context_revision_id != revision_id
                     or existing.payload_json != payload_json
-                    or bool(existing.requires_publication)
-                    != bool(requires_publication)
+                    or bool(existing.requires_publication) != bool(requires_publication)
                 ):
                     raise PublicationConflictError(
                         "work unit result conflicts with its prior value"
@@ -466,7 +528,9 @@ class PublicationService:
             await db.flush()
             return stored
 
-    async def _event(self, db: AsyncSession, publication: ActivityPublication, status: str) -> None:
+    async def _event(
+        self, db: AsyncSession, publication: ActivityPublication, status: str
+    ) -> None:
         payload = {
             "publication_id": publication.id,
             "kind": publication.publication_kind,
@@ -486,17 +550,30 @@ class PublicationService:
             recipient_user_ids=self.recipient_user_ids,
         )
 
-    async def create_pending(self, result_id: int, kind: str, external_key: str) -> ActivityPublication:
+    async def create_pending(
+        self, result_id: int, kind: str, external_key: str
+    ) -> ActivityPublication:
         if kind not in PUBLICATION_KINDS:
             raise ValueError(f"unsupported publication kind: {kind}")
         key = validate_external_key(external_key)
         marker = publication_marker(key)
         async with self._scope() as db:
-            result, work_unit, invocation, session = await self._chain(db, result_id)
-            existing = (await db.execute(select(ActivityPublication).where(ActivityPublication.external_idempotency_key == key))).scalar_one_or_none()
+            _result, work_unit, invocation, session = await self._chain(db, result_id)
+            existing = (
+                await db.execute(
+                    select(ActivityPublication).where(
+                        ActivityPublication.external_idempotency_key == key
+                    )
+                )
+            ).scalar_one_or_none()
             if existing is not None:
-                if existing.work_unit_result_id != result_id or existing.publication_kind != kind:
-                    raise PublicationConflictError("external key belongs to a different publication")
+                if (
+                    existing.work_unit_result_id != result_id
+                    or existing.publication_kind != kind
+                ):
+                    raise PublicationConflictError(
+                        "external key belongs to a different publication"
+                    )
                 return existing
             publication = ActivityPublication(
                 work_unit_result_id=result_id,
@@ -539,8 +616,16 @@ class PublicationService:
             await self._event(db, publication, "pending")
             return publication
 
-    async def _locked(self, db: AsyncSession, publication_id: int) -> ActivityPublication:
-        publication = (await db.execute(select(ActivityPublication).where(ActivityPublication.id == publication_id).with_for_update())).scalar_one_or_none()
+    async def _locked(
+        self, db: AsyncSession, publication_id: int
+    ) -> ActivityPublication:
+        publication = (
+            await db.execute(
+                select(ActivityPublication)
+                .where(ActivityPublication.id == publication_id)
+                .with_for_update()
+            )
+        ).scalar_one_or_none()
         if publication is None:
             raise ValueError("publication does not exist")
         return publication
@@ -572,20 +657,31 @@ class PublicationService:
                         and publication.external_object_id is not None
                         and normalised_id != publication.external_object_id
                     ):
-                        raise PublicationConflictError("external identity conflicts with the terminal publication")
+                        raise PublicationConflictError(
+                            "external identity conflicts with the terminal publication"
+                        )
                     if external_url is not None:
                         safe_url = _safe_url(external_url, self.allowed_github_hosts)
                         if safe_url is None:
-                            raise ValueError("external_object_url must be a verified GitHub HTTPS URL")
+                            raise ValueError(
+                                "external_object_url must be a verified GitHub HTTPS URL"
+                            )
                         if (
                             publication.external_object_url is not None
                             and safe_url != publication.external_object_url
                         ):
-                            raise PublicationConflictError("external identity URL conflicts with the terminal publication")
+                            raise PublicationConflictError(
+                                "external identity URL conflicts with the terminal publication"
+                            )
                 return publication
             if target not in _ALLOWED_TRANSITIONS.get(current, frozenset()):
-                raise PublicationConflictError(f"illegal publication transition: {current} -> {target}")
-            if current in {"sending", "reconciling"} and claim_token != publication.claim_token:
+                raise PublicationConflictError(
+                    f"illegal publication transition: {current} -> {target}"
+                )
+            if (
+                current in {"sending", "reconciling"}
+                and claim_token != publication.claim_token
+            ):
                 raise PublicationLeaseError("publication lease is missing or expired")
             normalised_id = None
             safe_url = None
@@ -597,7 +693,9 @@ class PublicationService:
                     publication.external_object_id is not None
                     and publication.external_object_id != normalised_id
                 ):
-                    raise PublicationConflictError("external identity conflicts with the terminal publication")
+                    raise PublicationConflictError(
+                        "external identity conflicts with the terminal publication"
+                    )
             elif external_id is not None:
                 normalised_id = _normalise_external_id(external_id)
                 if normalised_id is None:
@@ -605,12 +703,16 @@ class PublicationService:
             if external_url is not None:
                 safe_url = _safe_url(external_url, self.allowed_github_hosts)
                 if safe_url is None:
-                    raise ValueError("external_object_url must be a verified GitHub HTTPS URL")
+                    raise ValueError(
+                        "external_object_url must be a verified GitHub HTTPS URL"
+                    )
                 if (
                     publication.external_object_url is not None
                     and publication.external_object_url != safe_url
                 ):
-                    raise PublicationConflictError("external identity URL conflicts with the terminal publication")
+                    raise PublicationConflictError(
+                        "external identity URL conflicts with the terminal publication"
+                    )
             publication.status = target
             if target == "sending":
                 publication.attempt_count = int(publication.attempt_count or 0) + 1
@@ -630,7 +732,9 @@ class PublicationService:
                         publication.external_object_id is not None
                         and publication.external_object_id != normalised_id
                     ):
-                        raise PublicationConflictError("external identity conflicts with the terminal publication")
+                        raise PublicationConflictError(
+                            "external identity conflicts with the terminal publication"
+                        )
                     publication.external_object_id = normalised_id
                 elif external_id is not None:
                     normalised_id = _normalise_external_id(external_id)
@@ -640,11 +744,21 @@ class PublicationService:
                 if external_url is not None:
                     safe_url = _safe_url(external_url, self.allowed_github_hosts)
                     if safe_url is None:
-                        raise ValueError("external_object_url must be a verified GitHub HTTPS URL")
+                        raise ValueError(
+                            "external_object_url must be a verified GitHub HTTPS URL"
+                        )
                     publication.external_object_url = safe_url
-                publication.error_category = _error_category(category=category, status=http_status) if target != "succeeded" else None
+                publication.error_category = (
+                    _error_category(category=category, status=http_status)
+                    if target != "succeeded"
+                    else None
+                )
                 publication.error_message = publication.error_category
-                publication.http_status = http_status if isinstance(http_status, int) and 100 <= http_status <= 599 else None
+                publication.http_status = (
+                    http_status
+                    if isinstance(http_status, int) and 100 <= http_status <= 599
+                    else None
+                )
             elif target == "unknown":
                 publication.timed_out_at = utc_now()
                 publication.claim_token = None
@@ -653,20 +767,32 @@ class PublicationService:
             elif target == "reconciling":
                 publication.claim_token = claim_token or secrets.token_hex(32)
             elif target == "pending":
-                if retry and int(publication.attempt_count or 0) > self.limits.max_pending_retries:
+                if (
+                    retry
+                    and int(publication.attempt_count or 0)
+                    > self.limits.max_pending_retries
+                ):
                     raise PublicationConflictError("publication retry limit exceeded")
                 publication.claim_token = None
                 try:
                     reconciliation = json.loads(publication.reconciliation_json or "{}")
-                except (TypeError, ValueError, json.JSONDecodeError):
+                except TypeError, ValueError, json.JSONDecodeError:
                     reconciliation = {}
                 if not isinstance(reconciliation, dict):
                     reconciliation = {}
                 reconciliation["confirmed_absent"] = True
-                publication.reconciliation_json = json.dumps(reconciliation, separators=(",", ":"))
-            publication._session_id = (await self._chain(db, publication.work_unit_result_id))[3].id
-            publication._invocation_id = (await self._chain(db, publication.work_unit_result_id))[2].id
-            publication._work_unit_id = (await self._chain(db, publication.work_unit_result_id))[1].id
+                publication.reconciliation_json = json.dumps(
+                    reconciliation, separators=(",", ":")
+                )
+            publication._session_id = (
+                await self._chain(db, publication.work_unit_result_id)
+            )[3].id
+            publication._invocation_id = (
+                await self._chain(db, publication.work_unit_result_id)
+            )[2].id
+            publication._work_unit_id = (
+                await self._chain(db, publication.work_unit_result_id)
+            )[1].id
             await self._event(db, publication, target)
             return publication
 
@@ -685,48 +811,120 @@ class PublicationService:
             publication.started_at = utc_now()
             publication.error_category = None
             publication.error_message = None
-            result, work_unit, invocation, session = await self._chain(db, publication.work_unit_result_id)
-            publication._session_id, publication._invocation_id, publication._work_unit_id = session.id, invocation.id, work_unit.id
+            _result, work_unit, invocation, session = await self._chain(
+                db, publication.work_unit_result_id
+            )
+            (
+                publication._session_id,
+                publication._invocation_id,
+                publication._work_unit_id,
+            ) = session.id, invocation.id, work_unit.id
             await self._event(db, publication, "sending")
             return publication
 
-    async def mark_succeeded(self, publication_id: int, external_id: str, external_url: str | None = None, *, claim_token: str | None = None) -> ActivityPublication:
-        return await self._transition(publication_id, "succeeded", claim_token=claim_token, external_id=external_id, external_url=external_url)
+    async def mark_succeeded(
+        self,
+        publication_id: int,
+        external_id: str,
+        external_url: str | None = None,
+        *,
+        claim_token: str | None = None,
+    ) -> ActivityPublication:
+        return await self._transition(
+            publication_id,
+            "succeeded",
+            claim_token=claim_token,
+            external_id=external_id,
+            external_url=external_url,
+        )
 
-    async def mark_failed(self, publication_id: int, *, category: str = "unknown", http_status: int | None = None, claim_token: str | None = None) -> ActivityPublication:
-        return await self._transition(publication_id, "failed", claim_token=claim_token, category=category, http_status=http_status)
+    async def mark_failed(
+        self,
+        publication_id: int,
+        *,
+        category: str = "unknown",
+        http_status: int | None = None,
+        claim_token: str | None = None,
+    ) -> ActivityPublication:
+        return await self._transition(
+            publication_id,
+            "failed",
+            claim_token=claim_token,
+            category=category,
+            http_status=http_status,
+        )
 
-    async def mark_transport_timeout(self, publication_id: int, *, category: str = "timeout", claim_token: str | None = None) -> ActivityPublication:
-        return await self._transition(publication_id, "unknown", claim_token=claim_token, category=category)
+    async def mark_transport_timeout(
+        self,
+        publication_id: int,
+        *,
+        category: str = "timeout",
+        claim_token: str | None = None,
+    ) -> ActivityPublication:
+        return await self._transition(
+            publication_id, "unknown", claim_token=claim_token, category=category
+        )
 
-    async def cancel(self, publication_id: int, *, claim_token: str | None = None) -> ActivityPublication:
-        return await self._transition(publication_id, "cancelled", claim_token=claim_token, category="cancelled")
+    async def cancel(
+        self, publication_id: int, *, claim_token: str | None = None
+    ) -> ActivityPublication:
+        return await self._transition(
+            publication_id, "cancelled", claim_token=claim_token, category="cancelled"
+        )
 
     async def recover_stale_sending(self, *, now=None) -> int:
-        cutoff = (now or utc_now()) - timedelta(seconds=self.limits.stale_sending_seconds)
+        cutoff = (now or utc_now()) - timedelta(
+            seconds=self.limits.stale_sending_seconds
+        )
         count = 0
         async with self._scope() as db:
-            rows = (await db.execute(select(ActivityPublication).where(ActivityPublication.status == "sending", ActivityPublication.started_at <= cutoff).with_for_update())).scalars().all()
+            rows = (
+                (
+                    await db.execute(
+                        select(ActivityPublication)
+                        .where(
+                            ActivityPublication.status == "sending",
+                            ActivityPublication.started_at <= cutoff,
+                        )
+                        .with_for_update()
+                    )
+                )
+                .scalars()
+                .all()
+            )
             for publication in rows:
                 publication.status = "unknown"
                 publication.timed_out_at = now or utc_now()
                 publication.error_category = "timeout"
                 publication.error_message = "timeout"
                 publication.claim_token = None
-                result, work_unit, invocation, session = await self._chain(db, publication.work_unit_result_id)
-                publication._session_id, publication._invocation_id, publication._work_unit_id = session.id, invocation.id, work_unit.id
+                _result, work_unit, invocation, session = await self._chain(
+                    db, publication.work_unit_result_id
+                )
+                (
+                    publication._session_id,
+                    publication._invocation_id,
+                    publication._work_unit_id,
+                ) = session.id, invocation.id, work_unit.id
                 await self._event(db, publication, "unknown")
                 count += 1
         return count
 
-    async def reconcile(self, publication_id: int, probe: PublicationProbe, resource_identity: Mapping[str, Any]) -> ActivityPublication:
+    async def reconcile(
+        self,
+        publication_id: int,
+        probe: PublicationProbe,
+        resource_identity: Mapping[str, Any],
+    ) -> ActivityPublication:
         should_fail = False
         async with self._scope() as db:
             publication = await self._locked(db, publication_id)
             if publication.status in TERMINAL_PUBLICATION_STATUSES:
                 return publication
             if publication.status != "unknown":
-                raise PublicationConflictError("only unknown publications can be reconciled")
+                raise PublicationConflictError(
+                    "only unknown publications can be reconciled"
+                )
             attempts = _reconcile_attempts(publication)
             should_fail = attempts >= self.limits.max_reconcile_attempts
             token = secrets.token_hex(32)
@@ -736,8 +934,14 @@ class PublicationService:
                 {"reconcile_attempts": attempts if should_fail else attempts + 1},
                 separators=(",", ":"),
             )
-            result, work_unit, invocation, session = await self._chain(db, publication.work_unit_result_id)
-            publication._session_id, publication._invocation_id, publication._work_unit_id = session.id, invocation.id, work_unit.id
+            _result, work_unit, invocation, session = await self._chain(
+                db, publication.work_unit_result_id
+            )
+            (
+                publication._session_id,
+                publication._invocation_id,
+                publication._work_unit_id,
+            ) = session.id, invocation.id, work_unit.id
             await self._event(db, publication, "reconciling")
         if should_fail:
             return await self._transition(
@@ -747,22 +951,41 @@ class PublicationService:
                 category="reconcile_max_attempts",
             )
         try:
-            found = probe.find_by_marker(publication.publication_kind, publication.marker, resource_identity)
+            found = probe.find_by_marker(
+                publication.publication_kind, publication.marker, resource_identity
+            )
             if inspect.isawaitable(found):
                 found = await found
-        except asyncio.TimeoutError:
-            return await self._transition(publication_id, "unknown", claim_token=token, category="probe_timeout")
+        except TimeoutError:
+            return await self._transition(
+                publication_id, "unknown", claim_token=token, category="probe_timeout"
+            )
         except Exception:
-            return await self._transition(publication_id, "unknown", claim_token=token, category="probe_unknown")
+            return await self._transition(
+                publication_id, "unknown", claim_token=token, category="probe_unknown"
+            )
         if found:
             external_id = _normalise_external_id(
                 _response_value(found, "id") or _response_value(found, "external_id")
             )
             url = _response_value(found, "url") or _response_value(found, "html_url")
             if external_id is None:
-                return await self._transition(publication_id, "unknown", claim_token=token, category="invalid_response")
-            return await self._transition(publication_id, "succeeded", claim_token=token, external_id=external_id, external_url=url)
-        return await self._transition(publication_id, "pending", claim_token=token, retry=True)
+                return await self._transition(
+                    publication_id,
+                    "unknown",
+                    claim_token=token,
+                    category="invalid_response",
+                )
+            return await self._transition(
+                publication_id,
+                "succeeded",
+                claim_token=token,
+                external_id=external_id,
+                external_url=url,
+            )
+        return await self._transition(
+            publication_id, "pending", claim_token=token, retry=True
+        )
 
     async def send(
         self,
@@ -793,28 +1016,52 @@ class PublicationService:
         # call must never hold this row lock.
         async with self._scope() as db:
             current = await self._locked(db, publication_id)
-            if current.status != "sending" or current.claim_token != publication.claim_token:
+            if (
+                current.status != "sending"
+                or current.claim_token != publication.claim_token
+            ):
                 raise PublicationLeaseError("publication lease is missing")
             current.request_fingerprint = publication.request_fingerprint
             token = current.claim_token
         try:
-            response = sender(publication.publication_kind, body_with_marker, resource_identity)
+            response = sender(
+                publication.publication_kind, body_with_marker, resource_identity
+            )
             if inspect.isawaitable(response):
                 response = await response
-            status = _response_value(response, "status_code", _response_value(response, "status"))
+            status = _response_value(
+                response, "status_code", _response_value(response, "status")
+            )
             if isinstance(status, int) and 400 <= status < 500:
-                return await self.mark_failed(publication_id, category="http_4xx", http_status=status, claim_token=token)
+                return await self.mark_failed(
+                    publication_id,
+                    category="http_4xx",
+                    http_status=status,
+                    claim_token=token,
+                )
             if isinstance(status, int) and status >= 500:
-                return await self.mark_transport_timeout(publication_id, category="http_5xx", claim_token=token)
-            external_id = _response_value(response, "id", _response_value(response, "external_id"))
-            url = _response_value(response, "html_url", _response_value(response, "url"))
+                return await self.mark_transport_timeout(
+                    publication_id, category="http_5xx", claim_token=token
+                )
+            external_id = _response_value(
+                response, "id", _response_value(response, "external_id")
+            )
+            url = _response_value(
+                response, "html_url", _response_value(response, "url")
+            )
             if not isinstance(external_id, str) or not external_id:
-                return await self.mark_failed(publication_id, category="invalid_response", claim_token=token)
-            return await self.mark_succeeded(publication_id, external_id, url, claim_token=token)
+                return await self.mark_failed(
+                    publication_id, category="invalid_response", claim_token=token
+                )
+            return await self.mark_succeeded(
+                publication_id, external_id, url, claim_token=token
+            )
         except asyncio.CancelledError:
             raise
-        except (asyncio.TimeoutError, ConnectionError):
-            return await self.mark_transport_timeout(publication_id, category="timeout", claim_token=token)
+        except TimeoutError, ConnectionError:
+            return await self.mark_transport_timeout(
+                publication_id, category="timeout", claim_token=token
+            )
         except ValueError:
             return await self.mark_failed(
                 publication_id,
@@ -826,13 +1073,38 @@ class PublicationService:
         except Exception as exc:
             status = _status_code(exc)
             if status is not None and 400 <= status < 500:
-                return await self.mark_failed(publication_id, category="http_4xx", http_status=status, claim_token=token)
-            category = self._error_category(exc) if self._error_category else _error_category(exc, status=status)
-            return await self.mark_transport_timeout(publication_id, category=category, claim_token=token)
+                return await self.mark_failed(
+                    publication_id,
+                    category="http_4xx",
+                    http_status=status,
+                    claim_token=token,
+                )
+            category = (
+                self._error_category(exc)
+                if self._error_category
+                else _error_category(exc, status=status)
+            )
+            return await self.mark_transport_timeout(
+                publication_id, category=category, claim_token=token
+            )
 
 
 __all__ = [
-    "PUBLICATION_KINDS", "PUBLICATION_STATUSES", "PublicationConflictError", "PublicationLeaseError",
-    "PublicationLimits", "PublicationLease", "PublicationProbe", "PublicationSender", "PublicationCoordinator", "WorkUnitResultCoordinator", "PublicationService",
-    "coordinate_publication", "build_publication_body", "publication_marker", "request_fingerprint", "safe_hash", "validate_external_key",
+    "PUBLICATION_KINDS",
+    "PUBLICATION_STATUSES",
+    "PublicationConflictError",
+    "PublicationCoordinator",
+    "PublicationLease",
+    "PublicationLeaseError",
+    "PublicationLimits",
+    "PublicationProbe",
+    "PublicationSender",
+    "PublicationService",
+    "WorkUnitResultCoordinator",
+    "build_publication_body",
+    "coordinate_publication",
+    "publication_marker",
+    "request_fingerprint",
+    "safe_hash",
+    "validate_external_key",
 ]

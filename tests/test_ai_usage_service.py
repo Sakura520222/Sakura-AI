@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import pytest
 from sqlalchemy import create_engine
@@ -82,7 +82,7 @@ def test_usage_record_key_is_stable_and_mysql_index_safe():
 async def test_global_totals_only_include_accounted_ledger_calls_without_cache_double_count():
     engine = create_engine("sqlite:///:memory:")
     AIUsageRecord.__table__.create(engine)
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     with Session(engine) as session:
         session.add_all(
             [

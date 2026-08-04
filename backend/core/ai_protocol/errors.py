@@ -7,7 +7,7 @@ defines the unified exception types used across the protocol layer.
 
 from __future__ import annotations
 
-from typing import Any, Optional
+from typing import Any
 
 from backend.core.ai_protocol.models import AIErrorCategory
 
@@ -68,10 +68,10 @@ class AIError(Exception):
         category: AIErrorCategory,
         message: str,
         *,
-        status_code: Optional[int] = None,
+        status_code: int | None = None,
         provider: str = "",
         model: str = "",
-        cause: Optional[BaseException] = None,
+        cause: BaseException | None = None,
     ):
         super().__init__(message)
         self.category = category
@@ -99,7 +99,7 @@ class ContextOverflowError(AIError):
         estimated_tokens: int = 0,
         model: str = "",
         provider: str = "",
-        attempted_candidates: Optional[list[str]] = None,
+        attempted_candidates: list[str] | None = None,
     ):
         super().__init__(
             AIErrorCategory.CONTEXT_OVERFLOW,
@@ -114,7 +114,7 @@ class ContextOverflowError(AIError):
 class AllCandidatesFailedError(AIError):
     """所有候选模型均失败 / All fallback candidates failed."""
 
-    def __init__(self, message: str, *, attempts: Optional[list[dict[str, Any]]] = None):
+    def __init__(self, message: str, *, attempts: list[dict[str, Any]] | None = None):
         super().__init__(AIErrorCategory.UNKNOWN, message)
         self.attempts = attempts or []
 
