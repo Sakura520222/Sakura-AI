@@ -771,10 +771,10 @@ jobs:
       contents: read
       packages: write
     steps:
-      - name: 检出发版 Tag
+      - name: 检出当前 main 提交
         uses: actions/checkout@v4
         with:
-          ref: v${{ needs.generate-release.outputs.version }}
+          ref: ${{ github.sha }}
 
       - name: 启用 arm64 构建
         uses: docker/setup-qemu-action@v3
