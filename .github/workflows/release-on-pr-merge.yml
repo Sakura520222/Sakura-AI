@@ -5,6 +5,10 @@ on:
     branches: [main]
   workflow_dispatch:
 
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   generate-release:
     name: 生成 Release 说明
@@ -56,8 +60,8 @@ jobs:
         id: compute_base
         run: |
           VERSION="${{ steps.read_version.outputs.current_version }}"
-          # 列出按版本号倒序的 tag，跳过当前版本 vV，取首个；都没有则空
-          BASE=$(git tag --sort=-v:refname | grep -vE "^v${VERSION}$" | head -n1)
+          # 只在严格版本号 tag 中选取 BASE，避免 latest / stable 等非版本 tag 干扰排序
+          BASE=$(git tag --sort=-v:refname | grep -E '^v[0-9]' | grep -vE "^v${VERSION}$" | head -n1)
           echo "base=${BASE}" >> "$GITHUB_OUTPUT"
           if [ -n "$BASE" ]; then
             echo "notes 范围: ${BASE}..HEAD"
