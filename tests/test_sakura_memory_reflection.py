@@ -60,7 +60,7 @@ def _make_comment(content, severity="suggestion", file_path="a.py", line_number=
 
 async def _noop(*_args, **_kwargs):
     """异步空操作，屏蔽 reflect 的副作用依赖（写状态、后处理）。"""
-    return None
+    return
 
 
 @pytest.mark.asyncio

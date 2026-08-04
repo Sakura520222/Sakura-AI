@@ -15,42 +15,41 @@
 """
 
 # 主类 - 保持向后兼容
-from .reviewer import AIReviewer
-
 # 可导出的子模块（供需要细粒度控制的场景使用）
 from .api_client import AIApiClient
 from .compression import ContextCompressor
 from .constants import (
-    DEFAULT_MAX_TOKENS,
-    MAX_FILE_SIZE_BYTES,
-    MAX_FILE_LINES,
     DEFAULT_CONTEXT_LINES,
+    DEFAULT_MAX_TOKENS,
     MAX_CONTEXT_LINES,
+    MAX_FILE_LINES,
+    MAX_FILE_SIZE_BYTES,
     SEVERITY_EMOJI,
 )
 from .label_recommender import LabelRecommender
 from .prompt_builder import PromptBuilder
 from .result_parser import ReviewResultParser
+from .reviewer import AIReviewer
 from .tools import FileToolHandler, SearchToolHandler, ToolHandler, ToolManager
 
 __all__ = [
-    # 主类（保持向后兼容）
-    "AIReviewer",
-    # 子模块
-    "AIApiClient",
-    "PromptBuilder",
-    "ReviewResultParser",
-    "ContextCompressor",
-    "LabelRecommender",
-    "ToolHandler",
-    "ToolManager",
-    "FileToolHandler",
-    "SearchToolHandler",
+    "DEFAULT_CONTEXT_LINES",
     # 常量
     "DEFAULT_MAX_TOKENS",
-    "MAX_FILE_SIZE_BYTES",
-    "MAX_FILE_LINES",
-    "DEFAULT_CONTEXT_LINES",
     "MAX_CONTEXT_LINES",
+    "MAX_FILE_LINES",
+    "MAX_FILE_SIZE_BYTES",
     "SEVERITY_EMOJI",
+    # 子模块
+    "AIApiClient",
+    # 主类（保持向后兼容）
+    "AIReviewer",
+    "ContextCompressor",
+    "FileToolHandler",
+    "LabelRecommender",
+    "PromptBuilder",
+    "ReviewResultParser",
+    "SearchToolHandler",
+    "ToolHandler",
+    "ToolManager",
 ]

@@ -10,7 +10,7 @@
 
 import json
 import time
-from typing import TYPE_CHECKING, Any, Dict, List, Optional
+from typing import TYPE_CHECKING, Any
 
 from loguru import logger
 
@@ -68,11 +68,11 @@ class ContextCompressor:
 
     async def compress_conversation_history(
         self,
-        messages: List[Dict[str, Any]],
+        messages: list[dict[str, Any]],
         system_prompt: str,
         max_tokens: int,
-        tracker: Optional["TokenTracker"] = None,
-    ) -> List[Dict[str, Any]]:
+        tracker: TokenTracker | None = None,
+    ) -> list[dict[str, Any]]:
         """智能压缩对话历史，保留工具调用的完整性
 
         压缩策略：
@@ -189,9 +189,9 @@ class ContextCompressor:
 
     async def _compress_early_history(
         self,
-        early_history: List[Dict],
+        early_history: list[dict],
         max_tokens: int,
-        tracker: Optional["TokenTracker"] = None,
+        tracker: TokenTracker | None = None,
     ) -> str:
         """压缩早期对话历史
 
@@ -268,7 +268,7 @@ the main reviewer.
 
         return response.choices[0].message.content.strip()
 
-    def estimate_messages_tokens(self, messages: List[Dict[str, Any]]) -> int:
+    def estimate_messages_tokens(self, messages: list[dict[str, Any]]) -> int:
         """估算消息列表的 token 数量
 
         Args:
@@ -280,7 +280,7 @@ the main reviewer.
         return estimate_messages_tokens(messages, self.model_context_mgr)
 
     def _find_tool_result_in_history(
-        self, messages: List[Dict], tool_call_id: str
+        self, messages: list[dict], tool_call_id: str
     ) -> Any:
         """查找工具调用的结果
 
@@ -300,8 +300,8 @@ the main reviewer.
         return None
 
     def _fallback_simplify_messages_full(
-        self, messages: List[Dict[str, Any]], system_prompt: str
-    ) -> List[Dict[str, Any]]:
+        self, messages: list[dict[str, Any]], system_prompt: str
+    ) -> list[dict[str, Any]]:
         """压缩失败时的完整简化后备方案
 
         Args:
@@ -348,7 +348,7 @@ the main reviewer.
 
         return result
 
-    def _clean_message_for_model(self, message: Dict[str, Any]) -> Dict[str, Any]:
+    def _clean_message_for_model(self, message: dict[str, Any]) -> dict[str, Any]:
         """清理消息中当前模型不支持的字段
 
         Args:

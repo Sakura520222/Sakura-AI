@@ -1,122 +1,34 @@
-name: Release/Hotfix 合并到 main 后自动发布
+name: main 推送自动发布 Release
 
 on:
-  pull_request:
-    types: [closed]
+  push:
     branches: [main]
   workflow_dispatch:
 
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
-  analyze-and-update-release:
-    name: 分析 PR 并更新 Release
+  generate-release:
+    name: 生成 Release 说明
     runs-on: ubuntu-latest
-    if: |
-      github.event_name == 'workflow_dispatch' ||
-      (github.event.pull_request.merged == true &&
-       (startsWith(github.event.pull_request.head.ref, 'release/') ||
-        startsWith(github.event.pull_request.head.ref, 'hotfix/')))
     permissions:
       contents: write
-      pull-requests: write
     outputs:
       version: ${{ steps.read_version.outputs.current_version }}
       release_exists: ${{ steps.check_release.outputs.exists }}
-      pr_title: ${{ github.event.pull_request.title || '' }}
-      pr_number: ${{ github.event.pull_request.number || '' }}
-    
+      release_action: ${{ steps.create_or_update_release.outputs.release_action }}
+
     steps:
       - name: 检出代码
         uses: actions/checkout@v4
         with:
           token: ${{ secrets.MY_RELEASE_PAT || secrets.GITHUB_TOKEN }}
           fetch-depth: 0
+          fetch-tags: true  # 拉取全部 tag，供 compute_base 列版本号
           ref: main  # 显式指定 main 分支，避免处于 PR ref 导致 push 失败
-      
-      - name: 提取 PR 信息
-        id: extract_pr_info
-        run: |
-          echo "PR 标题: ${PR_TITLE}"
-          echo "PR 编号: ${PR_NUMBER}"
-          echo "合并时间: $(date +'%Y-%m-%d')"
-          
-          echo "PR 标签: $LABELS"
-          echo "labels=$LABELS" >> $GITHUB_OUTPUT
-        env:
-          PR_TITLE: ${{ github.event.pull_request.title || '' }}
-          PR_NUMBER: ${{ github.event.pull_request.number || '' }}
-          LABELS: ${{ github.event_name == 'pull_request' && join(github.event.pull_request.labels.*.name, ',') || '' }}
-      
-      - name: 分析 PR 类型
-        id: analyze_type
-        run: |
-          # 根据 PR 标签确定类型
-          if echo "$LABELS" | grep -q "enhancement"; then
-            CHANGE_TYPE="新增"
-          elif echo "$LABELS" | grep -q "bug"; then
-            CHANGE_TYPE="问题修复"
-          elif echo "$LABELS" | grep -q "documentation"; then
-            CHANGE_TYPE="文档"
-          elif echo "$LABELS" | grep -q "refactor"; then
-            CHANGE_TYPE="重构"
-          elif echo "$LABELS" | grep -q "performance"; then
-            CHANGE_TYPE="优化"
-          else
-            # 根据标题前缀判断
-            if echo "$TITLE" | grep -qiE "^(feat|add|new|新增|添加)"; then
-              CHANGE_TYPE="新增"
-            elif echo "$TITLE" | grep -qiE "^(fix|bug|修复)"; then
-              CHANGE_TYPE="问题修复"
-            elif echo "$TITLE" | grep -qiE "^(doc|docs|readme|更新文档)"; then
-              CHANGE_TYPE="文档"
-            elif echo "$TITLE" | grep -qiE "^(refactor|重构)"; then
-              CHANGE_TYPE="重构"
-            elif echo "$TITLE" | grep -qiE "^(perf|performance|优化)"; then
-              CHANGE_TYPE="优化"
-            else
-              CHANGE_TYPE="改进"
-            fi
-          fi
-          
-          echo "change_type=$CHANGE_TYPE" >> $GITHUB_OUTPUT
-          echo "变更类型: $CHANGE_TYPE"
-        env:
-          TITLE: ${{ github.event.pull_request.title || '' }}
-          LABELS: ${{ steps.extract_pr_info.outputs.labels }}
-      
-      - name: 提取提交信息到文件
-        id: extract_commits
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          PR_NUMBER: ${{ github.event.pull_request.number || '' }}
-          BASE_SHA: ${{ github.event.pull_request.base.sha || '' }}
-          HEAD_SHA: ${{ github.event.pull_request.head.sha || '' }}
-        run: |
-          COMMITS_FILE="${{ runner.temp }}/commits_list.txt"
 
-          # workflow_dispatch 手动触发时无 PR 上下文
-          if [ -z "$PR_NUMBER" ]; then
-            echo "" > "$COMMITS_FILE"
-            echo "ℹ️ 手动触发，无 PR 提交信息"
-            exit 0
-          fi
-
-          # GitHub API 获取 PR 提交（兼容所有合并策略）
-          if ! gh api "repos/${{ github.repository }}/pulls/${PR_NUMBER}/commits" \
-               --jq '.[].commit.message | split("\n") | .[0]' \
-               > "$COMMITS_FILE" 2>/dev/null; then
-            echo "⚠️ API 获取失败，尝试 git log 备用方案"
-            if ! git log --pretty=format:"%s" \
-                "${BASE_SHA}..${HEAD_SHA}" \
-                 > "$COMMITS_FILE" 2>/dev/null; then
-              echo "⚠️ git log 也失败，创建空提交文件"
-              echo "" > "$COMMITS_FILE"
-            fi
-          fi
-
-          COMMIT_COUNT=$(grep -c . "$COMMITS_FILE" 2>/dev/null || echo "0")
-          echo "commit_count=$COMMIT_COUNT" >> $GITHUB_OUTPUT
-          echo "📝 已提取 ${COMMIT_COUNT} 条提交信息到 $COMMITS_FILE"
-      
       - name: 读取当前版本
         id: read_version
         run: |
@@ -143,188 +55,382 @@ jobs:
           TODAY=$(date +'%Y-%m-%d')
           echo "today=$TODAY" >> "$GITHUB_OUTPUT"
           echo "今天日期: $TODAY"
-      
+
+      - name: 计算 notes 基准点 BASE
+        id: compute_base
+        run: |
+          VERSION="${{ steps.read_version.outputs.current_version }}"
+          # 只在严格版本号 tag 中选取 BASE，避免 latest / stable 等非版本 tag 干扰排序
+          BASE=$(git tag --sort=-v:refname | grep -E '^v[0-9]' | grep -vE "^v${VERSION}$" | head -n1)
+          echo "base=${BASE}" >> "$GITHUB_OUTPUT"
+          if [ -n "$BASE" ]; then
+            echo "notes 范围: ${BASE}..HEAD"
+          else
+            echo "notes 范围: 首个 commit 起（无上一版本 tag）"
+          fi
+
       - name: 检查 Release 是否存在
         id: check_release
         run: |
           VERSION="${{ steps.read_version.outputs.current_version }}"
           TAG_NAME="v${VERSION}"
-          
+
           if gh release view "$TAG_NAME" >/dev/null 2>&1; then
             echo "exists=true" >> $GITHUB_OUTPUT
-            echo "✅ Release $TAG_NAME 已存在"
-            
-            # 获取现有 Release 描述
-            gh release view "$TAG_NAME" --json body -q .body > current_body.txt
-            echo "现有 Release 描述已读取"
+            echo "✅ Release $TAG_NAME 已存在，将刷新说明与附件"
           else
             echo "exists=false" >> $GITHUB_OUTPUT
             echo "ℹ️ Release $TAG_NAME 不存在，将创建新 Release"
           fi
         env:
           GITHUB_TOKEN: ${{ secrets.MY_RELEASE_PAT || secrets.GITHUB_TOKEN }}
-      
-      - name: 生成 Release 描述
-        id: generate_release_notes
-        shell: bash
+
+      - name: 检查 LLM 配置
+        id: check_llm
+        env:
+          LLM_BASE_URL: ${{ secrets.LLM_BASE_URL }}
+          LLM_API_KEY: ${{ secrets.LLM_API_KEY }}
+          LLM_MODEL: ${{ secrets.LLM_MODEL }}
         run: |
-          set -e  # 遇到错误立即退出
-          
-          COMMITS_FILE="${RUNNER_TEMP}/commits_list.txt"
-          
-          # 定义类型映射表（按优先级排序）
-          declare -A TYPE_MAP=(
-            ["feat"]="新增功能"
-            ["fix"]="问题修复"
-            ["docs"]="文档更新"
-            ["style"]="代码风格"
-            ["refactor"]="重构"
-            ["perf"]="性能优化"
-            ["test"]="测试相关"
-            ["build"]="构建系统"
-            ["ci"]="持续集成"
-            ["chore"]="其他变更"
-            ["i18n"]="国际化"
+          if [ -n "$LLM_BASE_URL" ] && [ -n "$LLM_API_KEY" ] && [ -n "$LLM_MODEL" ]; then
+            echo "has_llm=true" >> "$GITHUB_OUTPUT"
+            echo "LLM 已配置，将尝试 AI 路径"
+          else
+            echo "has_llm=false" >> "$GITHUB_OUTPUT"
+            echo "LLM 未配置，跳过 Python 安装，直接走 bash 降级路径"
+          fi
+
+      - name: 设置 Python 3.14
+        if: steps.check_llm.outputs.has_llm == 'true'
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.14'
+
+      - name: AI 生成 Release 说明
+        id: ai_notes
+        if: steps.check_llm.outputs.has_llm == 'true'
+        continue-on-error: true
+        shell: bash
+        env:
+          LLM_BASE_URL: ${{ secrets.LLM_BASE_URL }}
+          LLM_API_KEY: ${{ secrets.LLM_API_KEY }}
+          LLM_MODEL: ${{ secrets.LLM_MODEL }}
+          VERSION: ${{ steps.read_version.outputs.current_version }}
+          DATE: ${{ steps.read_version.outputs.today }}
+          BASE: ${{ steps.compute_base.outputs.base }}
+        run: |
+          python3 - <<'PY'
+          import json
+          import os
+          import subprocess
+          import sys
+          import time
+          import urllib.error
+          import urllib.request
+
+
+          def emit(key: str, value: str) -> None:
+              with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as f:
+                  f.write(f"{key}={value}\n")
+
+
+          def fail_fallback(reason: str) -> None:
+              print(f"AI 路径降级到 bash 分组: {reason}")
+              emit("fallback", "true")
+              sys.exit(0)
+
+
+          # 1. 校验 secrets
+          base_url = os.environ.get("LLM_BASE_URL", "").rstrip("/")
+          api_key = os.environ.get("LLM_API_KEY", "")
+          model = os.environ.get("LLM_MODEL", "")
+          if not base_url or not api_key or not model:
+              fail_fallback("LLM_BASE_URL / LLM_API_KEY / LLM_MODEL 任一未配置")
+
+          # 2. 读取版本、日期、提交标题列表
+          version = os.environ["VERSION"]
+          date = os.environ["DATE"]
+          base = os.environ.get("BASE", "").strip()
+          rev_range = f"{base}..HEAD" if base else "HEAD"
+          result = subprocess.run(
+              ["git", "log", "--pretty=format:%s", rev_range],
+              check=True,
+              capture_output=True,
+              text=True,
           )
-          
-          # 定义输出顺序
-          TYPE_ORDER=("feat" "fix" "docs" "style" "refactor" "perf" "test" "build" "ci" "chore" "i18n")
-          
-          # 解析现有 Release 内容（如果存在）
-          declare -A EXISTING_COMMITS
-          if [ "$EXISTS" = "true" ] && [ -f "current_body.txt" ]; then
-            CURRENT_TYPE=""
-            while IFS= read -r line; do
-              # 匹配分类标题：### 新增功能
-              if [[ "$line" =~ ^###[[:space:]]+(.+)$ ]]; then
-                CURRENT_TYPE="${BASH_REMATCH[1]}"
-                # 反向查找类型 key
-                for key in "${!TYPE_MAP[@]}"; do
-                  if [ "${TYPE_MAP[$key]}" = "$CURRENT_TYPE" ]; then
-                    CURRENT_TYPE="$key"
-                    break
-                  fi
-                done
-              # 匹配条目行：- fix(xxx): message (PR #123)
-              elif [[ "$line" =~ ^-[[:space:]] ]]; then
-                if [ -n "$CURRENT_TYPE" ]; then
-                  EXISTING_COMMITS[$CURRENT_TYPE]="${EXISTING_COMMITS[$CURRENT_TYPE]}$line"$'\n'
-                fi
-              fi
-            done < current_body.txt
-            echo "📋 已解析现有 Release 内容"
-          fi
-          
-          # 解析新 PR 的所有提交（包括 PR 标题），按提交类型分类
-          declare -A NEW_COMMITS
-          
-          # 定义正则表达式模式
-          PATTERN_BREAKING='^[a-zA-Z]+\([^)]+\)!:'
-          PATTERN_NORMAL='^[a-zA-Z]+\([^)]+\):'
-          PATTERN_SIMPLE='^[a-zA-Z]+:'
-          
-          # 添加 PR 标题作为一个"提交"
-          echo "$TITLE" > "${RUNNER_TEMP}/all_commits.txt"
-          
-          # 追加 PR 内的所有提交
-          if [ -s "$COMMITS_FILE" ]; then
-            cat "$COMMITS_FILE" >> "${RUNNER_TEMP}/all_commits.txt"
-          fi
-          
-          # 解析所有提交，按类型分组
-          while IFS= read -r commit; do
-            [ -z "$commit" ] && continue
-            
-            # 提取提交类型
-            commit_type=""
-            commit_msg="$commit"
-            
-            if [[ "$commit" =~ $PATTERN_BREAKING ]]; then
-              commit_type=$(echo "$commit" | sed -E 's/^([a-zA-Z]+).*/\1/' | tr '[:upper:]' '[:lower:]')
-            elif [[ "$commit" =~ $PATTERN_NORMAL ]]; then
-              commit_type=$(echo "$commit" | sed -E 's/^([a-zA-Z]+).*/\1/' | tr '[:upper:]' '[:lower:]')
-            elif [[ "$commit" =~ $PATTERN_SIMPLE ]]; then
-              commit_type=$(echo "$commit" | sed -E 's/^([a-zA-Z]+):.*/\1/' | tr '[:upper:]' '[:lower:]')
-            fi
-            
-            # 检查是否是已知类型
-            if [[ -n "$commit_type" ]] && [[ -n "${TYPE_MAP[$commit_type]}" ]]; then
-              # 有效类型
-              :
-            else
-              commit_type="chore"
-            fi
-            
-            # 添加到对应类型（不加粗）
-            # 添加 PR 编号（如果还没有）
-            if [[ "$commit_msg" != *"(PR #"* ]]; then
-              commit_msg="$commit_msg (PR #${PR_NUM})"
-              # 如果有标签，添加标签信息
-              if [ -n "$LABELS" ]; then
-                commit_msg="$commit_msg [$LABELS]"
-              fi
-            fi
-            
-            NEW_COMMITS[$commit_type]="${NEW_COMMITS[$commit_type]}- $commit_msg"$'\n'
-          done < "${RUNNER_TEMP}/all_commits.txt"
-          
-          # 合并新旧条目
-          declare -A MERGED_COMMITS
-          for type in "${TYPE_ORDER[@]}"; do
-            # 先添加旧条目
-            if [ -n "${EXISTING_COMMITS[$type]}" ]; then
-              MERGED_COMMITS[$type]="${EXISTING_COMMITS[$type]}"
-            fi
-            # 再添加新条目
-            if [ -n "${NEW_COMMITS[$type]}" ]; then
-              MERGED_COMMITS[$type]="${MERGED_COMMITS[$type]}${NEW_COMMITS[$type]}"
-            fi
-          done
-          
-          # 生成 Release 描述
-          echo "## 🎉 Release v${VERSION} - ${TODAY}" > release_notes.txt
-          echo "" >> release_notes.txt
-          
-          # 按分类输出
-          for type in "${TYPE_ORDER[@]}"; do
-            commits="${MERGED_COMMITS[$type]}"
-            if [ -n "$commits" ]; then
-              echo "### ${TYPE_MAP[$type]}" >> release_notes.txt
-              echo "" >> release_notes.txt
-              echo "$commits" >> release_notes.txt
-              echo "" >> release_notes.txt
-            fi
-          done
-          
-          # 添加分隔线
-          echo "---" >> release_notes.txt
-          echo "" >> release_notes.txt
-          
-          echo "✅ Release 描述已生成（按提交类型分组并合并到现有分类）"
-          echo "---"
-          cat release_notes.txt
-          
-          # 输出版本信息
-          echo "version=${VERSION}" >> $GITHUB_OUTPUT
-          echo "exists=${EXISTS}" >> $GITHUB_OUTPUT
+          commits = [c for c in result.stdout.splitlines() if c.strip()]
+          if not commits:
+              fail_fallback("提交列表为空")
+
+          commit_block = "\n".join(commits)
+
+          # 3. 构造 prompt（固定类型枚举顺序、禁 emoji、要求严格 JSON）
+          system_prompt = (
+              "你是一个发布说明撰写助手。只依据用户给出的 Conventional Commits 提交标题列表，"
+              "撰写中英双语发布说明。禁止捏造未出现的变更。全程不得使用 emoji。"
+              "输出严格 JSON（不要 markdown 代码围栏），结构为："
+              '{"summary_zh": string, "summary_en": string, '
+              '"groups": [{"title_zh": string, "title_en": string, '
+              '"items": [{"zh": string, "en": string}]}]}。'
+              "类型分组使用固定枚举并按此顺序：feat(新增功能/New Features)、"
+              "fix(问题修复/Bug Fixes)、perf(性能优化/Performance)、"
+              "refactor(重构/Refactor)、docs(文档更新/Documentation)、"
+              "test(测试/Tests)、i18n(国际化/Internationalization)、"
+              "build/ci/chore/style 归入「其他变更/Other Changes」。"
+              "无内容的类型省略。每个条目必须同时给出中文与英文。"
+              "合并语义重复或琐碎的 chore/ci 条目，保留具体描述，不要泛化为「若干维护任务」。"
+          )
+          user_prompt = (
+              f"版本号: {version}\n日期: {date}\n\n"
+              f"提交标题列表（每行一条）：\n{commit_block}"
+          )
+
+          payload = {
+              "model": model,
+              "messages": [
+                  {"role": "system", "content": system_prompt},
+                  {"role": "user", "content": user_prompt},
+              ],
+              "temperature": 0.3,
+              "reasoning_effort": "max",
+              "max_tokens": 131072,
+              "stream": False,
+          }
+          body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+          url = f"{base_url}/chat/completions"
+          headers = {
+              "Authorization": f"Bearer {api_key}",
+              "Content-Type": "application/json",
+          }
+
+          # 4. 请求（最多重试 2 次，指数退避）
+          last_err: Exception | None = None
+          content: str | None = None
+          for attempt in range(3):  # 初次 + 2 次重试
+              try:
+                  req = urllib.request.Request(
+                      url, data=body, headers=headers, method="POST"
+                  )
+                  with urllib.request.urlopen(req, timeout=60) as resp:
+                      data = json.loads(resp.read().decode("utf-8"))
+                  content = data["choices"][0]["message"]["content"]
+                  break
+              except Exception as e:  # noqa: BLE001
+                  last_err = e
+                  if attempt < 2:
+                      time.sleep(2 ** attempt)  # 1s, 2s
+          if content is None:
+              fail_fallback(f"API 请求失败: {last_err}")
+
+          # 5. 解析 content 为 JSON（兼容模型擅自加的代码围栏）
+          def extract_json(text: str) -> str:
+              text = text.strip()
+              if text.startswith("```"):
+                  lines = text.splitlines()
+                  if lines and lines[0].startswith("```"):
+                      lines = lines[1:]
+                  if lines and lines[-1].startswith("```"):
+                      lines = lines[:-1]
+                  text = "\n".join(lines).strip()
+              return text
+
+          try:
+              obj = json.loads(extract_json(content))
+          except Exception as e:  # noqa: BLE001
+              fail_fallback(
+                  f"JSON 解析失败: {e}; 原始内容前 200 字: {content[:200]!r}"
+              )
+
+          # 6. 校验字段
+          summary_zh = (obj.get("summary_zh") or "").strip()
+          summary_en = (obj.get("summary_en") or "").strip()
+          raw_groups = obj.get("groups")
+          if not isinstance(raw_groups, list):
+              fail_fallback("groups 字段非数组")
+          if not summary_zh or not summary_en or not raw_groups:
+              fail_fallback("summary_zh / summary_en / groups 字段缺失")
+
+          norm_groups: list[dict] = []
+          for g in raw_groups:
+              tz = (g.get("title_zh") or "").strip()
+              te = (g.get("title_en") or "").strip()
+              raw_items = g.get("items") or []
+              if not tz or not te or not raw_items:
+                  continue
+              norm_items: list[tuple[str, str]] = []
+              for it in raw_items:
+                  iz = (it.get("zh") or "").strip()
+                  ie = (it.get("en") or "").strip()
+                  if iz and ie:  # 条目必须同时具备中英
+                      norm_items.append((iz, ie))
+              if norm_items:
+                  norm_groups.append(
+                      {"title_zh": tz, "title_en": te, "items": norm_items}
+                  )
+          if not norm_groups:
+              fail_fallback("解析后无有效分组")
+
+          # 7. 按固定枚举顺序重排（稳定排序，未匹配项放最后）
+          order_en = [
+              "New Features",
+              "Bug Fixes",
+              "Performance",
+              "Refactor",
+              "Documentation",
+              "Tests",
+              "Internationalization",
+              "Other Changes",
+          ]
+
+          def rank(title_en: str) -> int:
+              try:
+                  return order_en.index(title_en)
+              except ValueError:
+                  return len(order_en)
+
+          norm_groups.sort(key=lambda g: rank(g["title_en"]))
+
+          # 8. 拼装最终 Markdown（§3.4：两个折叠块，全程无 emoji）
+          lines: list[str] = []
+          lines.append(f"## v{version} ({date})")
+          lines.append("")
+          lines.append("### 总结 / Summary")
+          lines.append("")
+          lines.append(summary_zh)
+          lines.append("")
+          lines.append(summary_en)
+          lines.append("")
+          lines.append("<details>")
+          lines.append("<summary>中文更新日志</summary>")
+          lines.append("")
+          for g in norm_groups:
+              lines.append(f"#### {g['title_zh']}")
+              for iz, _ie in g["items"]:
+                  lines.append(f"- {iz}")
+              lines.append("")
+          lines.append("</details>")
+          lines.append("")
+          lines.append("<details>")
+          lines.append("<summary>English Changelog</summary>")
+          lines.append("")
+          for g in norm_groups:
+              lines.append(f"#### {g['title_en']}")
+              for _iz, ie in g["items"]:
+                  lines.append(f"- {ie}")
+              lines.append("")
+          lines.append("</details>")
+          lines.append("")
+
+          with open("release_notes.txt", "w", encoding="utf-8") as f:
+              f.write("\n".join(lines))
+
+          print("AI 路径成功生成 release_notes.txt")
+          emit("fallback", "false")
+          print("--- release_notes.txt ---")
+          print("\n".join(lines))
+          PY
+
+      - name: 生成 Release 描述（降级 - Conventional Commits 分组）
+        id: generate_release_notes
+        if: ${{ steps.ai_notes.outcome != 'success' || steps.ai_notes.outputs.fallback == 'true' }}
+        shell: bash
         env:
           VERSION: ${{ steps.read_version.outputs.current_version }}
           TODAY: ${{ steps.read_version.outputs.today }}
-          CHANGE_TYPE: ${{ steps.analyze_type.outputs.change_type }}
-          TITLE: ${{ github.event.pull_request.title || '' }}
-          PR_NUM: ${{ github.event.pull_request.number || '' }}
-          EXISTS: ${{ steps.check_release.outputs.exists }}
-          LABELS: ${{ steps.extract_pr_info.outputs.labels }}
-      
+          BASE: ${{ steps.compute_base.outputs.base }}
+        run: |
+          set -e
+
+          # 类型→组 key 映射（style 归入其他变更，与 §3.3 一致）
+          declare -A PREFIX_GROUP=(
+            ["feat"]="feat" ["fix"]="fix" ["perf"]="perf"
+            ["refactor"]="refactor" ["docs"]="docs" ["test"]="test"
+            ["i18n"]="i18n"
+            ["build"]="chore" ["ci"]="chore" ["chore"]="chore" ["style"]="chore"
+          )
+          declare -A GROUP_ZH=(
+            ["feat"]="新增功能" ["fix"]="问题修复" ["perf"]="性能优化"
+            ["refactor"]="重构" ["docs"]="文档更新" ["test"]="测试"
+            ["i18n"]="国际化" ["chore"]="其他变更"
+          )
+          declare -A GROUP_EN=(
+            ["feat"]="New Features" ["fix"]="Bug Fixes" ["perf"]="Performance"
+            ["refactor"]="Refactor" ["docs"]="Documentation" ["test"]="Tests"
+            ["i18n"]="Internationalization" ["chore"]="Other Changes"
+          )
+          # 固定枚举顺序
+          GROUP_ORDER=("feat" "fix" "perf" "refactor" "docs" "test" "i18n" "chore")
+
+          # 取 BASE..HEAD 提交标题（BASE 为空则全部）
+          COMMITS_FILE="${RUNNER_TEMP}/commit_subjects.txt"
+          git log --pretty=format:"%s" ${BASE:+$BASE..}HEAD > "$COMMITS_FILE"
+
+          # 解析提交，按组归类
+          declare -A NEW_COMMITS
+          TOTAL=0
+          while IFS= read -r commit; do
+            [ -z "$commit" ] && continue
+            # 提取 Conventional Commits 前缀（小写）
+            prefix=$(echo "$commit" | sed -E 's/^([a-zA-Z]+)(\([^)]*\))?!?:.*/\1/' | tr '[:upper:]' '[:lower:]')
+            group="${PREFIX_GROUP[$prefix]:-chore}"
+            NEW_COMMITS[$group]="${NEW_COMMITS[$group]}- ${commit}"$'\n'
+            TOTAL=$((TOTAL + 1))
+          done < "$COMMITS_FILE"
+
+          # 收集涉及的类型（中文顿号 / 英文逗号）
+          ZH_TITLES=""
+          EN_TITLES=""
+          for g in "${GROUP_ORDER[@]}"; do
+            if [ -n "${NEW_COMMITS[$g]}" ]; then
+              if [ -n "$ZH_TITLES" ]; then
+                ZH_TITLES="${ZH_TITLES}、${GROUP_ZH[$g]}"
+                EN_TITLES="${EN_TITLES}, ${GROUP_EN[$g]}"
+              else
+                ZH_TITLES="${GROUP_ZH[$g]}"
+                EN_TITLES="${GROUP_EN[$g]}"
+              fi
+            fi
+          done
+
+          if [ "$TOTAL" -eq 0 ]; then
+            ZH_TITLES="无"
+            EN_TITLES="none"
+          fi
+
+          # 拼装 Markdown（无折叠、双语并排标题、条目为 commit 原文、无 emoji）
+          {
+            echo "## v${VERSION} (${TODAY})"
+            echo ""
+            echo "### 总结 / Summary"
+            echo ""
+            echo "本次发布包含 ${TOTAL} 项提交，涉及：${ZH_TITLES}。"
+            echo ""
+            echo "This release includes ${TOTAL} commits across: ${EN_TITLES}."
+            echo ""
+
+            for g in "${GROUP_ORDER[@]}"; do
+              commits="${NEW_COMMITS[$g]}"
+              if [ -n "$commits" ]; then
+                echo "### ${GROUP_ZH[$g]} / ${GROUP_EN[$g]}"
+                echo ""
+                printf '%s\n' "$commits"
+                echo ""
+              fi
+            done
+          } > release_notes.txt
+
+          echo "降级路径（bash 分组）已生成 release_notes.txt"
+          echo "--- release_notes.txt ---"
+          cat release_notes.txt
+
       - name: 创建或更新 Release
         id: create_or_update_release
         run: |
           VERSION="${{ steps.read_version.outputs.current_version }}"
           TAG_NAME="v${VERSION}"
           EXISTS="${{ steps.check_release.outputs.exists }}"
-          
+
           if [ "$EXISTS" = "false" ]; then
-            # 创建新 Release
             echo "📝 正在创建 Release ${TAG_NAME}..."
             gh release create "$TAG_NAME" \
               --title "Release ${TAG_NAME}" \
@@ -333,7 +439,6 @@ jobs:
             echo "✅ Release ${TAG_NAME} 已创建"
             echo "release_action=created" >> $GITHUB_OUTPUT
           else
-            # 更新现有 Release
             echo "📝 正在更新 Release ${TAG_NAME}..."
             gh release edit "$TAG_NAME" \
               --notes-file release_notes.txt
@@ -343,80 +448,55 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.MY_RELEASE_PAT || secrets.GITHUB_TOKEN }}
 
-      - name: 发送评论到 PR
-        if: github.event_name == 'pull_request'
-        uses: actions/github-script@v7
-        with:
-          script: |
-            const version = '${{ steps.read_version.outputs.current_version }}';
-            const exists = '${{ steps.check_release.outputs.exists }}';
-            const action = exists === 'true' ? '更新' : '创建';
-            
-            // 读取 release_notes.txt 文件内容（按字节数安全截断预览，避免截断多字节字符）
-            const fs = require('fs');
-            let notesPreview = '';
-            try {
-              // 检查文件是否存在
-              if (!fs.existsSync('release_notes.txt')) {
-                throw new Error('release_notes.txt 文件不存在');
-              }
-              const notes = fs.readFileSync('release_notes.txt', 'utf8');
-              // 转义反引号以避免破坏 Markdown 代码块
-              notesPreview = notes.replace(/`/g, '\\`');
+      - name: 生成 Release 说明预览摘要
+        if: always()
+        shell: bash
+        run: |
+          VERSION="${{ steps.read_version.outputs.current_version }}"
+          ACTION="${{ steps.create_or_update_release.outputs.release_action }}"
+          {
+            echo "# Release v${VERSION} 说明"
+            echo ""
+            echo "- 操作: ${ACTION:-未知}"
+            echo "- 标签: v${VERSION}"
+            echo "- 发布页面: https://github.com/${{ github.repository }}/releases/tag/v${VERSION}"
+            echo ""
+            if [ -f release_notes.txt ]; then
+              echo "<details><summary>release_notes.txt 预览</summary>"
+              echo ""
+              echo '```markdown'
+              cat release_notes.txt
+              echo '```'
+              echo ""
+              echo "</details>"
+            else
+              echo "release_notes.txt 未生成（AI 与降级路径均未产出）"
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
 
-              // 按 UTF-8 字节长度进行截断，确保不截断多字节字符（如 emoji）
-              const MAX_PREVIEW_BYTES = 1000;
-              const truncateByBytes = (input, maxBytes) => {
-                let bytes = 0;
-                let result = '';
-
-                for (const ch of input) {
-                  const chBytes = Buffer.byteLength(ch, 'utf8');
-                  if (bytes + chBytes > maxBytes) {
-                    break;
-                  }
-                  bytes += chBytes;
-                  result += ch;
-                }
-
-                return result.length < input.length ? `${result}...` : result;
-              };
-
-              notesPreview = truncateByBytes(notesPreview, MAX_PREVIEW_BYTES);
-            } catch (e) {
-              core.warning(`读取 release_notes.txt 失败: ${e instanceof Error ? e.message : String(e)}`);
-              notesPreview = '(无法读取预览)';
-            }
-            
-            await github.rest.issues.createComment({
-              issue_number: context.payload.pull_request.number,
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              body: `📝 **已${action} Release v${version} 描述**\n\n\`\`\`\n${notesPreview}\n\`\`\`\n\n---\n\n✅ 变更已记录到 [GitHub Releases](https://github.com/${context.repo.owner}/${context.repo.repo}/releases/tag/v${version})\n\n📦 附件正在打包中，请稍候...`
-            });
-      
       - name: 清理临时文件
         if: always()
         run: |
-          rm -f release_notes.txt current_body.txt new_entry.txt header.txt new_section.txt 2>/dev/null || true
-          rm -f "${RUNNER_TEMP}/commits_list.txt" 2>/dev/null || true
+          rm -f release_notes.txt 2>/dev/null || true
+          rm -f "${RUNNER_TEMP}/commit_subjects.txt" 2>/dev/null || true
           echo "✅ 临时文件已清理"
 
   build-and-upload-assets:
     name: 打包并上传附件
     runs-on: ubuntu-latest
-    needs: analyze-and-update-release
-    if: always() && needs.analyze-and-update-release.result == 'success'
+    needs: generate-release
+    if: always() && needs.generate-release.result == 'success'
     permissions:
       contents: write
-    
+
     steps:
       - name: 检出代码（使用合并后的 main 分支）
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
+          fetch-tags: true
           ref: main  # 确保使用的是合并后的 main 分支代码
-      
+
       - name: 验证项目结构
         run: |
           # 验证后端版本文件和主文件
@@ -470,95 +550,90 @@ jobs:
           fi
 
           echo "✅ Sakura-AI-Reviewer 项目结构验证通过"
-      
-      - name: 设置 Python 3.11
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.11'
-      
+
       - name: 获取版本信息
         id: get_version
         run: |
-          VERSION="${{ needs.analyze-and-update-release.outputs.version }}"
+          VERSION="${{ needs.generate-release.outputs.version }}"
           echo "VERSION=${VERSION}" >> $GITHUB_OUTPUT
           echo "TAG_NAME=v${VERSION}" >> $GITHUB_OUTPUT
           echo "当前版本: ${VERSION}"
-      
+
       - name: 等待 Release 创建并验证 Tag
         id: verify_tag
         run: |
           TAG_NAME="${{ steps.get_version.outputs.TAG_NAME }}"
-          VERSION="${{ steps.get_version.outputs.VERSION }}"
-          
+
           echo "⏳ 等待 Release 创建完成..."
-          
+
           # 等待最多 30 秒，确保 Release 创建完成
           MAX_RETRIES=6
           RETRY_COUNT=0
-          
-          while [ $RETRY_COUNT -lt $MAX_RETRIES ]; do
+
+          while [ $RETRY_COUNT -lt $MAX_RETRIES ]; then
             # 检查 Tag 是否已经生效
             if git ls-remote --tags origin | grep -q "refs/tags/${TAG_NAME}$"; then
               echo "✅ Tag ${TAG_NAME} 已确认存在"
               echo "tag_verified=true" >> $GITHUB_OUTPUT
               break
             fi
-            
+
             RETRY_COUNT=$((RETRY_COUNT + 1))
             echo "⏳ 等待 Tag 生效... ($RETRY_COUNT/$MAX_RETRIES)"
             sleep 5
           done
-          
+
           if [ $RETRY_COUNT -eq $MAX_RETRIES ]; then
             echo "❌ 错误: Tag ${TAG_NAME} 未能在预期时间内生效"
             echo "tag_verified=false" >> $GITHUB_OUTPUT
             exit 1
           fi
-          
+
           # 验证 Release 是否存在
           if ! gh release view "$TAG_NAME" >/dev/null 2>&1; then
             echo "❌ 错误: Release ${TAG_NAME} 不存在"
             exit 1
           fi
-          
+
           echo "✅ Release ${TAG_NAME} 已确认存在"
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      
+
       - name: 检查并清理 Release 附件状态
         id: check_assets
         run: |
           TAG_NAME="${{ steps.get_version.outputs.TAG_NAME }}"
-          
+
           # 检查是否有附件
           ASSETS=$(gh release view "$TAG_NAME" --json assets -q '.assets | length')
           echo "现有附件数量: $ASSETS"
-          
+
           if [ "$ASSETS" -gt 0 ]; then
             echo "🗑️ 检测到已有附件，正在清理旧附件..."
-            
+
             # 获取所有附件名称并删除
             ASSET_NAMES=$(gh release view "$TAG_NAME" --json assets -q '.assets[].name')
             for asset in $ASSET_NAMES; do
               echo "  删除附件: $asset"
               gh release delete-asset "$TAG_NAME" "$asset" -y
             done
-            
+
             echo "✅ 已删除 $ASSETS 个旧附件"
           else
             echo "ℹ️ Release 没有附件"
           fi
-          
+
           # 无论是否有旧附件，都标记为需要上传（确保附件与代码同步）
           echo "should_upload=true" >> $GITHUB_OUTPUT
-          echo "has_assets=false" >> $GITHUB_OUTPUT
           echo "ℹ️ 将上传新的发布附件"
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      
+
       - name: 创建发布资源包
         if: steps.check_assets.outputs.should_upload == 'true'
         run: |
+          set -e  # 任何必需文件复制失败立即显式报错
+
           VERSION="${{ steps.get_version.outputs.VERSION }}"
           TAG_NAME="${{ steps.get_version.outputs.TAG_NAME }}"
           RELEASE_NAME="${TAG_NAME}"
@@ -574,65 +649,54 @@ jobs:
           echo "" >> packaging_manifest.txt
           echo "📦 包含文件:" >> packaging_manifest.txt
 
-          # 复制后端核心代码
+          # === 必需文件（失败即退出） ===
+          # 后端核心代码（剔除 __pycache__ / tests / *.pyc）
           cp -r backend "$RELEASE_DIR/"
-          # 删除 __pycache__ 和测试文件
           find "$RELEASE_DIR/backend" -type d -name '__pycache__' -exec rm -rf {} +
           find "$RELEASE_DIR/backend" -type d -name 'tests' -exec rm -rf {} +
           find "$RELEASE_DIR/backend" -type f -name '*.pyc' -delete
           echo "- backend/ (核心应用代码)" >> packaging_manifest.txt
 
-          # 复制配置文件
-          mkdir -p "$RELEASE_DIR/config"
-          cp config/strategies.yaml "$RELEASE_DIR/config/" && echo "- config/strategies.yaml" >> packaging_manifest.txt
+          # config 整目录（含 strategies.yaml + labels.yaml，运行时必需）
+          cp -r config "$RELEASE_DIR/"
+          echo "- config/ (strategies.yaml + labels.yaml)" >> packaging_manifest.txt
 
-          # 复制环境配置示例
-          cp .env.example "$RELEASE_DIR/" && echo "- .env.example" >> packaging_manifest.txt
+          # docker 整目录（Dockerfile / docker-compose.yml / mysql-init / .dockerignore）
+          cp -r docker "$RELEASE_DIR/"
+          echo "- docker/ (Dockerfile + docker-compose.yml + mysql-init)" >> packaging_manifest.txt
 
-          # 复制项目配置文件
-          [ -f ".gitignore" ] && cp .gitignore "$RELEASE_DIR/" && echo "- .gitignore" >> packaging_manifest.txt
+          # 依赖与主 README
+          cp requirements.txt "$RELEASE_DIR/"
+          echo "- requirements.txt" >> packaging_manifest.txt
+          cp README.md "$RELEASE_DIR/"
+          echo "- README.md" >> packaging_manifest.txt
 
-          # 复制依赖和文档
-          [ -f "requirements.txt" ] && cp requirements.txt "$RELEASE_DIR/" && echo "- requirements.txt" >> packaging_manifest.txt
-          [ -f "README.md" ] && cp README.md "$RELEASE_DIR/" && echo "- README.md" >> packaging_manifest.txt
-          [ -f "LICENSE" ] && cp LICENSE "$RELEASE_DIR/" && echo "- LICENSE" >> packaging_manifest.txt
+          # 启动脚本
+          cp start.sh "$RELEASE_DIR/"
+          chmod +x "$RELEASE_DIR/start.sh" 2>/dev/null || true
+          echo "- start.sh (可执行)" >> packaging_manifest.txt
 
-          # 复制文档目录
-          if [ -d "docs" ]; then
-            cp -r docs "$RELEASE_DIR/" && echo "- docs/ (文档)" >> packaging_manifest.txt
-          fi
+          # === 可选文件（缺失跳过，不视为错误） ===
+          [ -f "README_EN.md" ] && cp README_EN.md "$RELEASE_DIR/" && echo "- README_EN.md" >> packaging_manifest.txt || true
+          [ -d "scripts" ] && cp -r scripts "$RELEASE_DIR/" && echo "- scripts/" >> packaging_manifest.txt || true
+          [ -d "res" ] && cp -r res "$RELEASE_DIR/" && echo "- res/ (README 截图)" >> packaging_manifest.txt || true
+          [ -f "AGENTS.md" ] && cp AGENTS.md "$RELEASE_DIR/" && echo "- AGENTS.md" >> packaging_manifest.txt || true
+          [ -f "LICENSE" ] && cp LICENSE "$RELEASE_DIR/" && echo "- LICENSE" >> packaging_manifest.txt || true
+          [ -f ".gitignore" ] && cp .gitignore "$RELEASE_DIR/" && echo "- .gitignore" >> packaging_manifest.txt || true
+          [ -d "docs" ] && cp -r docs "$RELEASE_DIR/" && echo "- docs/" >> packaging_manifest.txt || true
 
-          # 复制 Docker 配置
-          mkdir -p "$RELEASE_DIR/docker"
-          cp docker/Dockerfile "$RELEASE_DIR/docker/" && echo "- docker/Dockerfile" >> packaging_manifest.txt
-          cp docker/docker-compose.yml "$RELEASE_DIR/docker/" && echo "- docker/docker-compose.yml" >> packaging_manifest.txt
-          if [ -f "docker/.dockerignore" ]; then
-            cp docker/.dockerignore "$RELEASE_DIR/docker/" && echo "- docker/.dockerignore" >> packaging_manifest.txt
-          fi
-
-          # 复制 MySQL 初始化脚本
-          if [ -d "docker/mysql-init" ]; then
-            cp -r docker/mysql-init "$RELEASE_DIR/docker/" && echo "- docker/mysql-init/" >> packaging_manifest.txt
-          fi
-
-          # 复制启动脚本
-          [ -f "start.sh" ] && cp start.sh "$RELEASE_DIR/" && echo "- start.sh" >> packaging_manifest.txt
-
-          # 创建必要的目录
+          # === 运行时空目录 ===
           mkdir -p "$RELEASE_DIR/logs"
           mkdir -p "$RELEASE_DIR/data"
 
-          # 设置可执行权限
-          chmod +x "$RELEASE_DIR/start.sh" 2>/dev/null || true
-
-          # 创建版本信息文件
+          # === 版本信息文件 ===
           echo "Sakura AI Reviewer" > "$RELEASE_DIR/VERSION"
           echo "Version: ${VERSION}" >> "$RELEASE_DIR/VERSION"
           echo "Release Date: $(date +'%Y-%m-%d')" >> "$RELEASE_DIR/VERSION"
           echo "GitHub: https://github.com/${{ github.repository }}" >> "$RELEASE_DIR/VERSION"
           echo "- VERSION (版本信息)" >> packaging_manifest.txt
 
-          # 创建压缩包
+          # === 创建压缩包 ===
           echo "" >> packaging_manifest.txt
           echo "🗜️ 正在创建压缩包..." >> packaging_manifest.txt
           tar -czf "${RELEASE_DIR}.tar.gz" "$RELEASE_DIR/"
@@ -648,7 +712,7 @@ jobs:
 
           echo "✅ Sakura-AI-Reviewer 资源包创建完成"
           cat packaging_manifest.txt
-      
+
       - name: 上传发布资源
         if: steps.check_assets.outputs.should_upload == 'true'
         run: |
@@ -669,15 +733,17 @@ jobs:
           VERSION="${{ steps.get_version.outputs.VERSION }}"
           TAG_NAME="${{ steps.get_version.outputs.TAG_NAME }}"
           RELEASE_URL="https://github.com/${{ github.repository }}/releases/tag/${TAG_NAME}"
-          
-          echo "# 🚀 Release ${TAG_NAME} 创建成功" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "✅ 版本: **v${VERSION}**" >> $GITHUB_STEP_SUMMARY
-          echo "📦 附件: **已上传** (.tar.gz 和 .zip)" >> $GITHUB_STEP_SUMMARY
-          echo "🔗 发布页面: [${RELEASE_URL}](${RELEASE_URL})" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "ℹ️ **注意**: Release 描述和附件均已成功创建" >> $GITHUB_STEP_SUMMARY
-      
+
+          {
+            echo "# Release ${TAG_NAME} 发布完成"
+            echo ""
+            echo "- 版本: **v${VERSION}**"
+            echo "- 附件: .tar.gz + .zip（已覆盖上传）"
+            echo "- 发布页面: [${RELEASE_URL}](${RELEASE_URL})"
+            echo ""
+            echo "Release 说明与附件均已更新。"
+          } >> "$GITHUB_STEP_SUMMARY"
+
       - name: 清理临时文件
         if: always()
         run: |

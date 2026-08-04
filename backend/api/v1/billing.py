@@ -1,16 +1,15 @@
 """API v1 付费配额端点"""
 
 from datetime import datetime
-from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from backend.services.payment_service import PaymentError, PaymentService
-from backend.services.payment import SUPPORTED_PROVIDERS
-from backend.webui.deps import get_db, require_payment_enabled
 from backend.api.v1.deps import require_api_auth, require_api_super_admin
+from backend.services.payment import SUPPORTED_PROVIDERS
+from backend.services.payment_service import PaymentError, PaymentService
+from backend.webui.deps import get_db, require_payment_enabled
 
 router = APIRouter(
     prefix="/billing",
@@ -27,7 +26,7 @@ class PlanCreateRequest(BaseModel):
     plan_type: str = Field(..., pattern="^(one_time|subscription)$")
     price_cents: int = Field(0, ge=0)
     currency: str = Field("CNY", max_length=10)
-    duration_days: Optional[int] = None
+    duration_days: int | None = None
     pr_quota_bonus: int = Field(0, ge=0)
     pr_daily_add: int = Field(0, ge=0)
     pr_weekly_add: int = Field(0, ge=0)
@@ -36,7 +35,7 @@ class PlanCreateRequest(BaseModel):
     issue_daily_add: int = Field(0, ge=0)
     issue_weekly_add: int = Field(0, ge=0)
     issue_monthly_add: int = Field(0, ge=0)
-    description: Optional[str] = None
+    description: str | None = None
     sort_order: int = Field(0, ge=0)
 
 
@@ -52,34 +51,34 @@ class GrantRequest(BaseModel):
 class GenerateCodesRequest(BaseModel):
     plan_id: int
     count: int = Field(..., ge=1, le=100)
-    batch_name: Optional[str] = None
+    batch_name: str | None = None
     max_uses: int = Field(1, ge=1)
 
 
 class PlanUpdateRequest(BaseModel):
-    name: Optional[str] = Field(None, min_length=1, max_length=100)
-    plan_type: Optional[str] = Field(None, pattern="^(one_time|subscription)$")
-    price_cents: Optional[int] = Field(None, ge=0)
-    currency: Optional[str] = Field(None, max_length=10)
-    duration_days: Optional[int] = None
-    pr_quota_bonus: Optional[int] = Field(None, ge=0)
-    pr_daily_add: Optional[int] = Field(None, ge=0)
-    pr_weekly_add: Optional[int] = Field(None, ge=0)
-    pr_monthly_add: Optional[int] = Field(None, ge=0)
-    issue_quota_bonus: Optional[int] = Field(None, ge=0)
-    issue_daily_add: Optional[int] = Field(None, ge=0)
-    issue_weekly_add: Optional[int] = Field(None, ge=0)
-    issue_monthly_add: Optional[int] = Field(None, ge=0)
-    is_active: Optional[bool] = None
-    sort_order: Optional[int] = Field(None, ge=0)
-    description: Optional[str] = None
+    name: str | None = Field(None, min_length=1, max_length=100)
+    plan_type: str | None = Field(None, pattern="^(one_time|subscription)$")
+    price_cents: int | None = Field(None, ge=0)
+    currency: str | None = Field(None, max_length=10)
+    duration_days: int | None = None
+    pr_quota_bonus: int | None = Field(None, ge=0)
+    pr_daily_add: int | None = Field(None, ge=0)
+    pr_weekly_add: int | None = Field(None, ge=0)
+    pr_monthly_add: int | None = Field(None, ge=0)
+    issue_quota_bonus: int | None = Field(None, ge=0)
+    issue_daily_add: int | None = Field(None, ge=0)
+    issue_weekly_add: int | None = Field(None, ge=0)
+    issue_monthly_add: int | None = Field(None, ge=0)
+    is_active: bool | None = None
+    sort_order: int | None = Field(None, ge=0)
+    description: str | None = None
 
 
 class RedeemCodeUpdateRequest(BaseModel):
-    status: Optional[str] = Field(None, pattern="^(active|disabled)$")
-    expires_at: Optional[datetime] = None
-    max_uses: Optional[int] = Field(None, ge=1)
-    plan_id: Optional[int] = None
+    status: str | None = Field(None, pattern="^(active|disabled)$")
+    expires_at: datetime | None = None
+    max_uses: int | None = Field(None, ge=1)
+    plan_id: int | None = None
 
 
 class CreateOrderRequest(BaseModel):
@@ -91,7 +90,7 @@ class CreateOrderRequest(BaseModel):
 
 
 class RefundRequest(BaseModel):
-    amount_cents: Optional[int] = None
+    amount_cents: int | None = None
 
 
 # ========== Public endpoints ==========

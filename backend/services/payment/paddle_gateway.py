@@ -18,7 +18,6 @@ import asyncio
 import hashlib
 import hmac
 import re
-from typing import Optional
 
 from loguru import logger
 
@@ -52,7 +51,7 @@ class PaddleGateway(PaymentGateway):
         user_id: int,
         success_url: str,
         cancel_url: str,
-        metadata: Optional[dict[str, str]] = None,
+        metadata: dict[str, str] | None = None,
     ) -> PaymentIntentResult:
         """创建 Paddle Transaction 并返回 Checkout URL
 
@@ -271,8 +270,8 @@ class PaddleGateway(PaymentGateway):
     async def refund(
         self,
         provider_tx_id: str,
-        amount_cents: Optional[int] = None,
-        reason: Optional[str] = None,
+        amount_cents: int | None = None,
+        reason: str | None = None,
     ) -> RefundResult:
         """通过 Paddle Adjustments API 发起退款
 
@@ -280,12 +279,11 @@ class PaddleGateway(PaymentGateway):
         """
         try:
             from paddle_billing import Client, Environment, Options
-            from paddle_billing.Entities.Shared import Action
+            from paddle_billing.Entities.Shared import Action, AdjustmentType
             from paddle_billing.Resources.Adjustments.Operations import CreateAdjustment
             from paddle_billing.Resources.Adjustments.Operations.Create import (
                 CreateAdjustmentItem,
             )
-            from paddle_billing.Entities.Shared import AdjustmentType
 
             env = (
                 Environment.SANDBOX

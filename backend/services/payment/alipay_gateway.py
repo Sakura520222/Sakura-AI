@@ -20,7 +20,6 @@
 签名：RSA2（SHA256WithRSA）
 """
 
-from typing import Optional
 from urllib.parse import parse_qs, urlencode
 
 import httpx
@@ -178,6 +177,7 @@ class AlipayGateway(PaymentGateway):
     def _sign_with_rsa2(params: dict, private_key_pem: str) -> str:
         """使用 RSA2 (SHA256WithRSA) 对参数签名"""
         import base64
+
         from cryptography.hazmat.primitives import hashes
         from cryptography.hazmat.primitives.asymmetric import padding
 
@@ -197,6 +197,7 @@ class AlipayGateway(PaymentGateway):
     def _verify_rsa2(params: dict, sign: str, public_key_pem: str) -> bool:
         """使用支付宝公钥验签"""
         import base64
+
         from cryptography.hazmat.primitives import hashes
         from cryptography.hazmat.primitives.asymmetric import padding
 
@@ -261,7 +262,7 @@ class AlipayGateway(PaymentGateway):
         user_id: int,
         success_url: str,
         cancel_url: str,
-        metadata: Optional[dict[str, str]] = None,
+        metadata: dict[str, str] | None = None,
     ) -> PaymentIntentResult:
         """构建 alipay.trade.page.pay 跳转 URL
 
@@ -412,8 +413,8 @@ class AlipayGateway(PaymentGateway):
     async def refund(
         self,
         provider_tx_id: str,
-        amount_cents: Optional[int] = None,
-        reason: Optional[str] = None,
+        amount_cents: int | None = None,
+        reason: str | None = None,
     ) -> RefundResult:
         """调用 alipay.trade.refund 退款"""
         import json
@@ -600,7 +601,7 @@ class AlipayGateway(PaymentGateway):
     @staticmethod
     def _now_timestamp() -> str:
         """当前时间戳（北京时间，支付宝 API 要求），格式 YYYY-MM-DD HH:mm:ss"""
-        from datetime import datetime, timezone, timedelta
+        from datetime import datetime, timedelta, timezone
 
         # 支付宝 API timestamp 参数要求北京时间（东八区）
         bj_tz = timezone(timedelta(hours=8))

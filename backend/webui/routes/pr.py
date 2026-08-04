@@ -4,23 +4,23 @@ import csv
 import io
 from datetime import datetime
 
-from fastapi import APIRouter, Request, Depends, Query
+from fastapi import APIRouter, Depends, Query, Request
 from fastapi.responses import HTMLResponse, StreamingResponse
-from sqlalchemy import select, func, desc, case
+from sqlalchemy import case, desc, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.models.database import PRReview, ReviewComment
 from backend.webui.deps import (
-    require_auth,
-    get_db,
-    get_templates,
-    get_csrf_serializer,
-    get_user_preferences,
-    paginate,
-    error_page,
     build_review_search_filter,
     build_user_scope_filter,
+    error_page,
+    get_csrf_serializer,
+    get_db,
+    get_templates,
+    get_user_preferences,
+    paginate,
     render_template,
+    require_auth,
 )
 
 router = APIRouter(prefix="/pr", tags=["WebUI PR"])

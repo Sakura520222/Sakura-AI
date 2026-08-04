@@ -1,11 +1,12 @@
 """PR-Issue 关联分析器"""
 
 import re
-from typing import Dict, Any, List
+from typing import Any
+
 from loguru import logger
 
-from backend.core.github_app import GitHubAppClient
 from backend.core.config import get_strategy_config
+from backend.core.github_app import GitHubAppClient
 
 
 class PRIssueLinker:
@@ -25,17 +26,17 @@ class PRIssueLinker:
         )
         self._max_issues = config.get("max_linked_issues_in_prompt", 3)
 
-    async def parse_issue_references(self, pr_body: str) -> List[int]:
+    async def parse_issue_references(self, pr_body: str) -> list[int]:
         """从 PR 描述中解析 Issue 引用"""
         if not pr_body:
             return []
         return list(
-            set(int(m.group(1)) for m in self._reference_pattern.finditer(pr_body))
+            {int(m.group(1)) for m in self._reference_pattern.finditer(pr_body)}
         )
 
     async def fetch_issue_content(
-        self, repo_owner: str, repo_name: str, issue_numbers: List[int]
-    ) -> List[Dict[str, Any]]:
+        self, repo_owner: str, repo_name: str, issue_numbers: list[int]
+    ) -> list[dict[str, Any]]:
         """从 GitHub 获取 Issue 内容"""
         issues = []
         for num in issue_numbers:
@@ -56,8 +57,8 @@ class PRIssueLinker:
         return issues
 
     async def inject_issue_context(
-        self, context: Dict[str, Any], issue_contents: List[Dict[str, Any]]
-    ) -> Dict[str, Any]:
+        self, context: dict[str, Any], issue_contents: list[dict[str, Any]]
+    ) -> dict[str, Any]:
         """将 Issue 内容注入到审查上下文中"""
         if not issue_contents:
             return context
@@ -67,7 +68,7 @@ class PRIssueLinker:
         return context
 
     def format_related_issues_section(
-        self, explicit_issues: List[Dict[str, Any]]
+        self, explicit_issues: list[dict[str, Any]]
     ) -> str:
         """格式化关联 Issue 信息（用于 Review 评论展示）"""
         if not explicit_issues:
@@ -90,7 +91,7 @@ class PRIssueLinker:
         return "\n".join(lines)
 
     def build_updated_pr_body(
-        self, original_body: str, related_issues: List[Dict[str, Any]]
+        self, original_body: str, related_issues: list[dict[str, Any]]
     ) -> str:
         """构建包含语义关联 issues 的 PR body
 
@@ -117,13 +118,13 @@ class PRIssueLinker:
         if self.ISSUE_LINKS_START in original_body:
             match = re.search(pattern, original_body, flags=re.DOTALL)
             if match:
-                existing_numbers = set(
+                existing_numbers = {
                     int(m.group(1))
                     for m in re.finditer(r"Resolves\s+#(\d+)", match.group(0))
-                )
+                }
 
         # 合并已有编号与新传入的 issues（去重）
-        merged_issues: List[Dict[str, Any]] = list(related_issues)
+        merged_issues: list[dict[str, Any]] = list(related_issues)
         new_numbers = {i["number"] for i in related_issues}
         for num in existing_numbers - new_numbers:
             merged_issues.append({"number": num})

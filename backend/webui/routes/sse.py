@@ -2,9 +2,10 @@
 
 import asyncio
 import json
-from starlette.responses import StreamingResponse
-from starlette.requests import Request
+
 from fastapi import APIRouter, Depends
+from starlette.requests import Request
+from starlette.responses import StreamingResponse
 
 from backend.webui.deps import require_auth
 from backend.webui.sse import sse_manager
@@ -30,7 +31,7 @@ async def sse_events(
                 try:
                     event = await asyncio.wait_for(queue.get(), timeout=30)
                     yield f"event: {event['type']}\ndata: {json.dumps(event['data'])}\n\n"
-                except asyncio.TimeoutError:
+                except TimeoutError:
                     # 发送心跳防止连接超时
                     yield ": keepalive\n\n"
         finally:

@@ -2,7 +2,7 @@
 
 ## Project overview
 
-Sakura AI Reviewer is a Python 3.11+ FastAPI service for GitHub PR review, Issue analysis, WebUI administration, Telegram notifications, RAG/code indexing, billing, and repository scanning. Prefer Chinese when communicating in this repository.
+Sakura AI Reviewer is a Python 3.14+ FastAPI service for GitHub PR review, Issue analysis, WebUI administration, Telegram notifications, RAG/code indexing, billing, and repository scanning. Prefer Chinese when communicating in this repository.
 
 ## Architecture map
 
@@ -48,7 +48,7 @@ On Windows, use the active Python environment and PowerShell equivalents. Do not
 ## Testing and validation
 
 - Prefer focused tests in `tests/` for changed behavior.
-- The CI workflow runs `ruff check .` and `pytest -q` on Python 3.11.
+- The CI workflow runs `ruff check .` and `pytest -q` on Python 3.14.
 - Many services depend on MySQL, Redis, GitHub App, AI providers, or ChromaDB; for unit tests, mock external systems rather than requiring live services.
 - If modifying WebUI templates/routes, verify translation keys and auth/session behavior.
 - If modifying setup/bootstrap/config behavior, consider first-run mode where only `/setup` is available.

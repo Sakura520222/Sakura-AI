@@ -8,7 +8,8 @@
 """
 
 import re
-from typing import Dict, Any, Optional, List
+from typing import Any
+
 from loguru import logger
 
 
@@ -51,7 +52,7 @@ class ScoreExtractor:
         """
         return self.MIN_SCORE <= score <= self.MAX_SCORE
 
-    def extract_from_text(self, text: str) -> Optional[int]:
+    def extract_from_text(self, text: str) -> int | None:
         """从文本中提取评分（支持多种格式）
 
         Args:
@@ -82,7 +83,7 @@ class ScoreExtractor:
         logger.debug("⚠️ 未能从文本中提取有效评分")
         return None
 
-    def estimate_from_issues(self, issues: Dict[str, Any]) -> Optional[int]:
+    def estimate_from_issues(self, issues: dict[str, Any]) -> int | None:
         """基于问题统计估算评分（最后的fallback）
 
         估算逻辑：
@@ -137,7 +138,7 @@ class ScoreExtractor:
             logger.error(f"估算评分时出错: {e}")
             return None
 
-    def calculate_batch_average(self, batch_scores: List[int]) -> Optional[int]:
+    def calculate_batch_average(self, batch_scores: list[int]) -> int | None:
         """计算批次评分的平均值（用于多批次场景）
 
         Args:
@@ -165,7 +166,7 @@ class ScoreExtractor:
         )
         return average
 
-    def extract_score(self, review_result: Dict[str, Any]) -> Optional[int]:
+    def extract_score(self, review_result: dict[str, Any]) -> int | None:
         """从审查结果中提取评分，支持多种fallback机制
 
         Fallback链：
@@ -230,7 +231,7 @@ class ScoreExtractor:
         self.extraction_stats["fallback_zero"] += 1
         return None
 
-    def get_extraction_stats(self) -> Dict[str, int]:
+    def get_extraction_stats(self) -> dict[str, int]:
         """获取评分提取统计信息
 
         Returns:

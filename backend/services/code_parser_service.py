@@ -7,11 +7,12 @@
 - Context Padding: 为每个代码块添加语义上下文
 """
 
-from typing import List, Dict, Any, Optional
-from loguru import logger
 import re
-from pathlib import Path
 from dataclasses import dataclass
+from pathlib import Path
+from typing import Any
+
+from loguru import logger
 
 
 @dataclass
@@ -20,7 +21,7 @@ class CodeChunk:
 
     id: str
     content: str
-    metadata: Dict[str, Any]
+    metadata: dict[str, Any]
     start_line: int
     end_line: int
 
@@ -64,9 +65,9 @@ class CodeParserService:
         self.chunk_size = chunk_size
         self.chunk_overlap = chunk_overlap
         self.enable_context_padding = enable_context_padding
-        self._current_file_content_hash: Optional[str] = None
+        self._current_file_content_hash: str | None = None
 
-    def detect_language(self, file_path: str) -> Optional[str]:
+    def detect_language(self, file_path: str) -> str | None:
         """检测文件的语言类型
 
         Args:
@@ -86,10 +87,10 @@ class CodeParserService:
         file_path: str,
         content: str,
         repo_full_name: str,
-        pr_number: Optional[int] = None,
-        commit_sha: Optional[str] = None,
-        file_content_hash: Optional[str] = None,
-    ) -> List[CodeChunk]:
+        pr_number: int | None = None,
+        commit_sha: str | None = None,
+        file_content_hash: str | None = None,
+    ) -> list[CodeChunk]:
         """解析代码文件为代码块
 
         Args:
@@ -116,9 +117,9 @@ class CodeParserService:
         file_path: str,
         content: str,
         repo_full_name: str,
-        pr_number: Optional[int] = None,
-        commit_sha: Optional[str] = None,
-    ) -> List[CodeChunk]:
+        pr_number: int | None = None,
+        commit_sha: str | None = None,
+    ) -> list[CodeChunk]:
         """解析代码文件的内部实现"""
         language = self.detect_language(file_path)
 
@@ -182,7 +183,7 @@ class CodeParserService:
         )
         return enriched_chunks
 
-    def _add_context_padding(self, content: str, metadata: Dict[str, Any]) -> str:
+    def _add_context_padding(self, content: str, metadata: dict[str, Any]) -> str:
         """为代码块添加语义上下文
 
         Args:
@@ -214,7 +215,7 @@ class CodeParserService:
         context_header = " ".join(context_parts)
         return f"{context_header}\n{content}"
 
-    def _parse_python(self, content: str, file_path: str) -> List[CodeChunk]:
+    def _parse_python(self, content: str, file_path: str) -> list[CodeChunk]:
         """解析Python代码
 
         按类、函数、方法进行分块
@@ -348,7 +349,7 @@ class CodeParserService:
 
     def _parse_javascript_typescript(
         self, content: str, file_path: str
-    ) -> List[CodeChunk]:
+    ) -> list[CodeChunk]:
         """解析JavaScript/TypeScript代码
 
         按函数、类进行分块
@@ -451,7 +452,7 @@ class CodeParserService:
 
         return chunks
 
-    def _parse_go(self, content: str, file_path: str) -> List[CodeChunk]:
+    def _parse_go(self, content: str, file_path: str) -> list[CodeChunk]:
         """解析Go代码
 
         按函数、方法、结构体进行分块
@@ -522,7 +523,7 @@ class CodeParserService:
 
         return chunks
 
-    def _parse_java_like(self, content: str, file_path: str) -> List[CodeChunk]:
+    def _parse_java_like(self, content: str, file_path: str) -> list[CodeChunk]:
         """解析Java类语言（Java, C#, Kotlin）
 
         按类、方法进行分块
@@ -537,7 +538,7 @@ class CodeParserService:
         # 使用简化的解析策略，类似JavaScript
         return self._parse_javascript_typescript(content, file_path)
 
-    def _parse_generic(self, content: str, file_path: str) -> List[CodeChunk]:
+    def _parse_generic(self, content: str, file_path: str) -> list[CodeChunk]:
         """通用代码解析
 
         基于缩进和代码块进行分块
@@ -604,12 +605,12 @@ class CodeParserService:
 
     def _create_chunk(
         self,
-        lines: List[str],
+        lines: list[str],
         file_path: str,
         start_line: int,
         end_line: int,
-        class_name: Optional[str],
-        function_name: Optional[str],
+        class_name: str | None,
+        function_name: str | None,
     ) -> CodeChunk:
         """创建代码块
 
@@ -652,7 +653,7 @@ class CodeParserService:
 
 
 # 全局单例
-_code_parser_instance: Optional[CodeParserService] = None
+_code_parser_instance: CodeParserService | None = None
 
 
 def get_code_parser(

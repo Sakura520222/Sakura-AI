@@ -5,7 +5,7 @@
 - list_commits: 查看指定分支的提交历史记录
 """
 
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 from loguru import logger
 
@@ -35,8 +35,8 @@ class GitToolHandler:
         self,
         repo: Any,
         pr: Any,
-        branch_count: Optional[int] = None,
-    ) -> Dict[str, Any]:
+        branch_count: int | None = None,
+    ) -> dict[str, Any]:
         """获取仓库基本信息
 
         包括描述、默认分支、语言统计、主题、许可证和分支列表。
@@ -58,7 +58,7 @@ class GitToolHandler:
             )
 
             # 获取仓库基本信息 / Get basic repo info
-            info: Dict[str, Any] = {
+            info: dict[str, Any] = {
                 "full_name": repo.full_name,
                 "description": repo.description,
                 "default_branch": repo.default_branch,
@@ -95,7 +95,7 @@ class GitToolHandler:
             # 获取分支列表 / Get branch list
             try:
                 branches = repo.get_branches()
-                branch_list: List[Dict[str, str]] = []
+                branch_list: list[dict[str, str]] = []
                 for branch in branches[:effective_branch_count]:
                     branch_list.append(
                         {
@@ -130,9 +130,9 @@ class GitToolHandler:
         self,
         repo: Any,
         pr: Any,
-        branch: Optional[str] = None,
-        per_page: Optional[int] = None,
-    ) -> Dict[str, Any]:
+        branch: str | None = None,
+        per_page: int | None = None,
+    ) -> dict[str, Any]:
         """查看指定分支的提交历史记录
 
         优先级：参数指定 > PR 的 HEAD 分支 > 仓库默认分支。
@@ -165,9 +165,9 @@ class GitToolHandler:
 
             # PyGithub 返回 PaginatedList，使用切片获取指定数量
             # PyGithub returns a PaginatedList, use slicing for specified count
-            commit_list: List[Dict[str, Any]] = []
+            commit_list: list[dict[str, Any]] = []
             for commit in commits[:effective_per_page]:
-                commit_info: Dict[str, Any] = {
+                commit_info: dict[str, Any] = {
                     "sha": commit.sha,
                     "message": commit.commit.message,
                     "date": str(commit.commit.author.date),

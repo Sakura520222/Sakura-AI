@@ -7,22 +7,22 @@ import tempfile
 import time
 from datetime import datetime
 
-from fastapi import APIRouter, Request, Depends
+from fastapi import APIRouter, Depends, Request
 from fastapi.responses import JSONResponse
 from loguru import logger
-from sqlalchemy import select, func, tuple_
+from sqlalchemy import func, select, tuple_
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from backend.models.database import PRReview, IssueAnalysis
+from backend.models.database import IssueAnalysis, PRReview
 from backend.webui.deps import (
-    require_admin,
-    require_super_admin,
+    get_csrf_serializer,
     get_db,
     get_templates,
-    get_csrf_serializer,
-    require_csrf_header,
     get_user_preferences,
     render_template,
+    require_admin,
+    require_csrf_header,
+    require_super_admin,
 )
 from backend.webui.helpers.admin_log import log_admin_action
 

@@ -1,31 +1,32 @@
 """Sakura AI Reviewer 主应用"""
 
-from fastapi import FastAPI, Request, HTTPException
-from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import RedirectResponse, JSONResponse
-from contextlib import asynccontextmanager
-from loguru import logger
+import asyncio
 import sys
 import time
-import asyncio
+from contextlib import asynccontextmanager
+
+from fastapi import FastAPI, HTTPException, Request
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse, RedirectResponse
+from loguru import logger
+from slowapi import _rate_limit_exceeded_handler
+from slowapi.errors import RateLimitExceeded
 
 from backend import __version__
-from backend.core.config import Settings, get_settings
+from backend.api import webhook
+from backend.api.v1 import api_v1_router
+from backend.api.v1.deps import limiter
 from backend.core.bootstrap import (
     BootstrapMiddleware,
     is_bootstrap_mode,
     read_connection_config,
 )
-from backend.webui.routes.setup import router as setup_router
-from backend.api import webhook
-from backend.webui.routes import webui_router
-from backend.webui.deps import is_webui_request, error_page, toast_redirect
-from backend.webui.auth import decode_access_token
-from backend.api.v1 import api_v1_router
-from backend.api.v1.deps import limiter
-from slowapi import _rate_limit_exceeded_handler
-from slowapi.errors import RateLimitExceeded
+from backend.core.config import Settings, get_settings
 from backend.telegram import start_telegram_bot, stop_telegram_bot
+from backend.webui.auth import decode_access_token
+from backend.webui.deps import error_page, is_webui_request, toast_redirect
+from backend.webui.routes import webui_router
+from backend.webui.routes.setup import router as setup_router
 
 # 配置日志
 logger.remove()
@@ -425,6 +426,7 @@ async def webui_fallback(request: Request, path: str):
 
 if __name__ == "__main__":
     import logging
+
     import uvicorn
 
     # Suppress access log for high-frequency polling endpoints

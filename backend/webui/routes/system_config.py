@@ -5,9 +5,9 @@ Telegram Bot、WebUI 安全等。这些配置通常在 Setup Wizard 首次部署
 此页面允许超级管理员在运行时修改。
 """
 
-from fastapi import APIRouter, Request, Depends
-from sqlalchemy.ext.asyncio import AsyncSession
+from fastapi import APIRouter, Depends, Request
 from loguru import logger
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.services.system_config_service import (
     SYSTEM_CONFIG_GROUPS,
@@ -15,14 +15,14 @@ from backend.services.system_config_service import (
     system_config_service,
 )
 from backend.webui.deps import (
-    require_super_admin,
-    get_db,
     get_csrf_serializer,
+    get_db,
+    get_user_preferences,
+    render_template,
     require_csrf,
     require_csrf_header,
-    get_user_preferences,
+    require_super_admin,
     toast_redirect,
-    render_template,
 )
 from backend.webui.helpers.admin_log import log_admin_action
 from backend.webui.i18n import detect_language

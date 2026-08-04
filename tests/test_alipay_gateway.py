@@ -8,8 +8,8 @@ from unittest.mock import patch
 
 import pytest
 
-from backend.services.payment.gateway_base import WebhookEventType
 from backend.services.payment.alipay_gateway import AlipayGateway
+from backend.services.payment.gateway_base import WebhookEventType
 
 
 @pytest.fixture

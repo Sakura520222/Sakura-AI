@@ -11,7 +11,7 @@ import socket
 import time
 import unicodedata
 from fnmatch import fnmatch
-from typing import Any, Dict, List
+from typing import Any
 from urllib.parse import urljoin, urlparse, urlunparse
 
 import httpx
@@ -121,8 +121,9 @@ class FetchUrlToolHandler:
             return
 
         try:
-            from backend.models.database import AppConfig, async_session
             from sqlalchemy import select
+
+            from backend.models.database import AppConfig, async_session
 
             if async_session is None:
                 return
@@ -290,7 +291,7 @@ class FetchUrlToolHandler:
         except socket.gaierror as e:
             raise ValueError(f"DNS 解析失败: {hostname} — {e}")
 
-        resolved_ips: List[str] = []
+        resolved_ips: list[str] = []
         for family, _, _, _, sockaddr in addr_infos:
             ip_str = sockaddr[0]
             resolved_ips.append(ip_str)
@@ -440,7 +441,7 @@ class FetchUrlToolHandler:
             return text
         return text[: self._max_content_length] + "..."
 
-    async def fetch_url(self, url: str) -> Dict[str, Any]:
+    async def fetch_url(self, url: str) -> dict[str, Any]:
         """抓取网页并转换为纯文本"""
         start_time = time.time()
 
@@ -471,7 +472,7 @@ class FetchUrlToolHandler:
             }
 
         resolved_ip = ""
-        security_events: List[str] = []
+        security_events: list[str] = []
         status_code = 0
         download_bytes = 0
 
@@ -512,7 +513,7 @@ class FetchUrlToolHandler:
                 security_events=security_events,
             )
 
-            result: Dict[str, Any] = {
+            result: dict[str, Any] = {
                 "url": validated_url,
                 "content": text,
                 "content_length": len(text),
@@ -667,7 +668,7 @@ class FetchUrlToolHandler:
         text_length: int,
         truncated: bool,
         call_num: int,
-        security_events: List[str],
+        security_events: list[str],
     ) -> None:
         """记录结构化审计日志"""
         parts = [

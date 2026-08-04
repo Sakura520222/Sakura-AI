@@ -9,7 +9,7 @@ import os
 import re
 import subprocess
 from pathlib import Path
-from typing import Any, List, Optional
+from typing import Any
 
 from loguru import logger
 
@@ -30,12 +30,12 @@ class _LocalContentFile:
         self.name = os.path.basename(full_path)
         self.type = "file" if os.path.isfile(full_path) else "dir"
         self.size = os.path.getsize(full_path) if os.path.isfile(full_path) else 0
-        self.decoded_content: Optional[bytes] = (
+        self.decoded_content: bytes | None = (
             self._read_file(full_path) if self.type == "file" else None
         )
 
     @staticmethod
-    def _read_file(full_path: str) -> Optional[bytes]:
+    def _read_file(full_path: str) -> bytes | None:
         try:
             with open(full_path, "rb") as f:
                 return f.read()
@@ -51,7 +51,7 @@ class _LocalGitContentFile:
         self.name = os.path.basename(repo_relative_path)
         self.type = "file"
         self.size = len(content)
-        self.decoded_content: Optional[bytes] = content
+        self.decoded_content: bytes | None = content
 
 
 class _LocalGitTreeEntry:
@@ -65,7 +65,7 @@ class _LocalGitTreeEntry:
 class _LocalGitTree:
     """模拟 PyGithub GitTree"""
 
-    def __init__(self, entries: List[_LocalGitTreeEntry]):
+    def __init__(self, entries: list[_LocalGitTreeEntry]):
         self.tree = entries
 
 
@@ -78,6 +78,7 @@ def _detect_default_branch(repo_path: str) -> str:
             capture_output=True,
             text=True,
             timeout=5,
+            check=False,
         )
         if result.returncode == 0 and result.stdout.strip():
             return result.stdout.strip()
@@ -117,7 +118,7 @@ class LocalRepoAdapter:
     def full_name(self):
         return f"{self._owner}/{self._name}"
 
-    def get_contents(self, path: str, ref: str = None) -> Any:
+    def get_contents(self, path: str, ref: str | None = None) -> Any:
         """从本地文件系统读取文件或列出目录
 
         模拟 PyGithub Repository.get_contents() 的行为：
@@ -141,6 +142,7 @@ class LocalRepoAdapter:
                 cwd=self._repo_path,
                 capture_output=True,
                 timeout=10,
+                check=False,
             )
             if result.returncode == 0:
                 return _LocalGitContentFile(clean_path, result.stdout)
@@ -183,7 +185,7 @@ class LocalRepoAdapter:
 
         raise FileNotFoundError(f"路径类型未知: {path}")
 
-    def get_git_tree(self, sha: str = None, recursive: bool = False) -> _LocalGitTree:
+    def get_git_tree(self, sha: str | None = None, recursive: bool = False) -> _LocalGitTree:
         """基于本地文件系统构建文件树
 
         模拟 PyGithub Repository.get_git_tree() 的行为，
@@ -198,7 +200,7 @@ class LocalRepoAdapter:
                 f"get_git_tree: sha 参数 '{sha}' 被忽略，始终返回当前工作树内容"
             )
 
-        entries: List[_LocalGitTreeEntry] = []
+        entries: list[_LocalGitTreeEntry] = []
         for root, dirs, files in os.walk(self._repo_path, followlinks=False):
             # 安全校验：确保当前遍历目录在仓库范围内
             resolved_root = Path(root).resolve()

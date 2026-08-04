@@ -1,6 +1,7 @@
 """管理员操作日志辅助函数"""
 
 import json
+
 from loguru import logger
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -11,9 +12,9 @@ async def log_admin_action(
     db: AsyncSession,
     admin_id: int,
     action: str,
-    target_type: str = None,
-    target_id: str = None,
-    detail: dict = None,
+    target_type: str | None = None,
+    target_id: str | None = None,
+    detail: dict | None = None,
 ):
     """记录管理员操作日志"""
     try:

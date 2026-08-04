@@ -83,7 +83,7 @@ async def upload_skill(
         )
 
     lower_name = skill_file.filename.lower()
-    if not (lower_name.endswith(".md") or lower_name.endswith(".zip")):
+    if not (lower_name.endswith((".md", ".zip"))):
         return toast_redirect(
             "/agent-skills/",
             "toast.agent_skill_invalid_file",

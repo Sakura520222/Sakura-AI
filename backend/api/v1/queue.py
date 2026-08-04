@@ -1,18 +1,17 @@
 """API v1 队列监控端点"""
 
 from fastapi import APIRouter, Depends, Query
-from sqlalchemy import select, func, desc, or_
+from sqlalchemy import desc, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
-
-from backend.models.database import ReviewQueue
-from backend.webui.deps import get_db, paginate
 
 from backend.api.v1.deps import require_api_admin
 from backend.api.v1.responses import (
-    success_response,
     error_response,
     paginated_response,
+    success_response,
 )
+from backend.models.database import ReviewQueue
+from backend.webui.deps import get_db, paginate
 
 router = APIRouter(prefix="/queue", tags=["Queue"])
 

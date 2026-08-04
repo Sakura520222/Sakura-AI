@@ -4,7 +4,7 @@
 - _get_enabled_tools (1388-1474行)
 """
 
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 from loguru import logger
 
@@ -25,9 +25,8 @@ class ToolManager:
 
     def __init__(self):
         """初始化工具管理器"""
-        pass
 
-    def get_all_tools_definitions(self) -> List[Dict[str, Any]]:
+    def get_all_tools_definitions(self) -> list[dict[str, Any]]:
         """获取所有工具定义
 
         Returns:
@@ -36,8 +35,8 @@ class ToolManager:
         return list(TOOL_NAME_TO_DEFINITION.values())
 
     async def get_enabled_tools(
-        self, repo_full_name: Optional[str]
-    ) -> List[Dict[str, Any]]:
+        self, repo_full_name: str | None
+    ) -> list[dict[str, Any]]:
         """获取启用的工具列表
 
         根据全局配置和仓库状态动态决定可用工具：
@@ -138,8 +137,9 @@ class ToolManager:
                 # fetch_url 仅在 web_search 启用时才检查
                 fetch_url_enabled = settings.fetch_url_enabled
                 try:
-                    from backend.models.database import AppConfig, async_session
                     from sqlalchemy import select
+
+                    from backend.models.database import AppConfig, async_session
 
                     if async_session is not None:
                         async with async_session() as sess:

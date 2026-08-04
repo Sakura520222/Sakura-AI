@@ -6,7 +6,8 @@
 """
 
 import asyncio
-from typing import Any, Dict, Optional
+from typing import Any
+
 from loguru import logger
 
 from backend.core.config import get_strategy_config
@@ -24,7 +25,7 @@ class SakuraToolHandler:
         return ce_config.get("sakura_memory", {})
 
     @staticmethod
-    def _validate_sakura_path(user_input: str) -> Optional[str]:
+    def _validate_sakura_path(user_input: str) -> str | None:
         """验证并规范化 .sakura/ 下的路径，防止路径遍历
 
         Returns:
@@ -42,10 +43,10 @@ class SakuraToolHandler:
 
     async def read_sakura_docs(
         self,
-        doc_path: Optional[str] = None,
+        doc_path: str | None = None,
         repo: Any = None,
         pr: Any = None,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """读取 .sakura/ 目录中的文档
 
         Args:
@@ -74,14 +75,14 @@ class SakuraToolHandler:
 
         except Exception as e:
             logger.error(f"读取 .sakura/ 文档失败: {e}", exc_info=True)
-            return {"error": f"读取失败: {str(e)}"}
+            return {"error": f"读取失败: {e!s}"}
 
     async def list_sakura_directory(
         self,
-        subdirectory: Optional[str] = None,
+        subdirectory: str | None = None,
         repo: Any = None,
         pr: Any = None,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """列出 .sakura/ 目录结构
 
         Args:
@@ -131,15 +132,15 @@ class SakuraToolHandler:
 
         except Exception as e:
             logger.error(f"列出 .sakura/ 目录失败: {e}", exc_info=True)
-            return {"error": f"列出目录失败: {str(e)}"}
+            return {"error": f"列出目录失败: {e!s}"}
 
     async def read_sakura_memory(
         self,
-        file_name: Optional[str] = None,
+        file_name: str | None = None,
         count: int = 5,
         repo: Any = None,
         pr: Any = None,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """读取 .sakura/memory/ 目录下的审查反思文件
 
         Args:
@@ -182,9 +183,9 @@ class SakuraToolHandler:
 
         except Exception as e:
             logger.error(f"读取 .sakura/memory/ 失败: {e}", exc_info=True)
-            return {"error": f"读取失败: {str(e)}"}
+            return {"error": f"读取失败: {e!s}"}
 
-    async def _get_docs_overview(self, repo: Any) -> Dict[str, Any]:
+    async def _get_docs_overview(self, repo: Any) -> dict[str, Any]:
         """获取 .sakura/ 所有文档概览 / Get overview of all .sakura/ documents"""
         try:
             # List root .sakura/ contents
@@ -238,9 +239,9 @@ class SakuraToolHandler:
 
         except Exception as e:
             logger.error(f"获取 .sakura/ 概览失败: {e}", exc_info=True)
-            return {"error": f"获取概览失败: {str(e)}"}
+            return {"error": f"获取概览失败: {e!s}"}
 
-    async def _read_file_from_repo(self, repo: Any, path: str) -> Optional[str]:
+    async def _read_file_from_repo(self, repo: Any, path: str) -> str | None:
         """从仓库读取文件内容 / Read file content from repo"""
         try:
 
@@ -254,7 +255,7 @@ class SakuraToolHandler:
         except Exception:
             return None
 
-    async def _list_directory(self, repo: Any, path: str) -> Optional[list]:
+    async def _list_directory(self, repo: Any, path: str) -> list | None:
         """列出目录内容 / List directory contents"""
         try:
 

@@ -3,13 +3,12 @@
 import asyncio
 import time
 from collections import OrderedDict
-from datetime import datetime, timedelta, timezone
-from typing import Optional
+from datetime import UTC, datetime, timedelta
 
-from fastapi import APIRouter, Request, Depends
+from fastapi import APIRouter, Depends, Request
 from fastapi.responses import HTMLResponse
 from loguru import logger
-from sqlalchemy import select, func, desc, case, and_
+from sqlalchemy import and_, case, desc, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.models.database import PRReview, ReviewComment
@@ -18,13 +17,13 @@ from backend.services.dashboard_stats_service import (
     fetch_token_trend,
 )
 from backend.webui.deps import (
-    require_auth,
+    build_user_scope_filter,
+    get_csrf_serializer,
     get_db,
     get_templates,
-    get_csrf_serializer,
     get_user_preferences,
-    build_user_scope_filter,
     render_template,
+    require_auth,
 )
 
 router = APIRouter(tags=["WebUI Dashboard"])
@@ -110,7 +109,7 @@ async def _get_github_app_install_url() -> str | None:
     return None
 
 
-async def _check_github_app_installed(github_username: str) -> Optional[bool]:
+async def _check_github_app_installed(github_username: str) -> bool | None:
     """检查用户是否已安装 GitHub App
 
     Returns:
@@ -362,7 +361,7 @@ async def get_chart_data(
             _chart_cache.move_to_end(uid)
             return cached_data
 
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     thirty_days_ago = now - timedelta(days=30)
 
     # 构建用户过滤条件

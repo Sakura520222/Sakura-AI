@@ -4,29 +4,27 @@ import asyncio
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, Request
+from loguru import logger
 from pydantic import BaseModel
 from sqlalchemy import select
-from loguru import logger
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from backend.api.v1.deps import limiter, require_api_super_admin
+from backend.api.v1.responses import error_response, success_response
+from backend.api.v1.schemas import (
+    ConfigGeneralUpdateRequest,
+    ConfigLabelRecommendationUpdateRequest,
+    ConfigLabelsUpdateRequest,
+    ConfigStrategyUpdateRequest,
+)
 from backend.core.config import (
     get_label_config,
     reload_label_config,
     reload_strategy_config,
 )
+from backend.core.setup_service import setup_service
 from backend.models.database import AppConfig
 from backend.webui.deps import get_db
-
-from backend.api.v1.deps import require_api_super_admin
-from backend.api.v1.responses import success_response, error_response
-from backend.api.v1.schemas import (
-    ConfigGeneralUpdateRequest,
-    ConfigStrategyUpdateRequest,
-    ConfigLabelsUpdateRequest,
-    ConfigLabelRecommendationUpdateRequest,
-)
-from backend.api.v1.deps import limiter
-from backend.core.setup_service import setup_service
 
 router = APIRouter(prefix="/config", tags=["Config"])
 

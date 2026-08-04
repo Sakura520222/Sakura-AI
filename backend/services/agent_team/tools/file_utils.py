@@ -5,7 +5,6 @@ from __future__ import annotations
 import difflib
 from pathlib import Path
 
-
 # ── 编码与行尾 ────────────────────────────────────────
 
 

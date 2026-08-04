@@ -1,18 +1,18 @@
 """语言切换端到端流程测试。"""
 
 from types import SimpleNamespace
-from unittest.mock import patch, MagicMock
+from unittest.mock import MagicMock, patch
 
 import pytest
 
 from backend.webui import deps
 from backend.webui.deps import (
+    _USER_PREFS_CACHE,
     get_user_preferences,
     invalidate_user_prefs_cache,
-    _USER_PREFS_CACHE,
 )
 from backend.webui.i18n import detect_language, make_translation_func
-from tests.stubs import RequestStub, DbStub
+from tests.stubs import DbStub, RequestStub
 
 
 @pytest.fixture(autouse=True)
@@ -170,7 +170,7 @@ def test_make_translation_func_en():
 
 def test_render_template_injects_correct_lang():
     """render_template 应注入正确的 lang 和 _ 翻译函数。"""
-    from backend.webui.deps import render_template, get_templates
+    from backend.webui.deps import get_templates, render_template
 
     # 用 MagicMock 替换 TemplateResponse 以拦截调用
     captured = {}
@@ -195,7 +195,7 @@ def test_render_template_injects_correct_lang():
 
 def test_render_template_with_user_prefs_in_context():
     """当 user_prefs 通过 **context 传入时，应正确绑定到 user_prefs 参数。"""
-    from backend.webui.deps import render_template, get_templates
+    from backend.webui.deps import get_templates, render_template
 
     captured = {}
 

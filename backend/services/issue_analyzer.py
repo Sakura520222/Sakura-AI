@@ -1,21 +1,23 @@
 """Issue AI 分析引擎"""
 
 import json
+from collections.abc import Callable, Coroutine
 from datetime import datetime, timedelta
-from typing import Any, Callable, Coroutine, Dict, List, Optional
+from typing import Any
+
 from loguru import logger
 
 from backend.core.config import (
+    get_dynamic_config,
     get_settings,
     get_strategy_config,
     get_user_dynamic_config,
-    get_dynamic_config,
 )
+from backend.core.model_context import get_model_context_manager
 from backend.models.database import AppConfig, async_session
 from backend.services.ai_reviewer.api_client import AIApiClient
-from backend.services.ai_reviewer.token_tracker import TokenTracker
 from backend.services.ai_reviewer.message_utils import estimate_messages_tokens
-from backend.core.model_context import get_model_context_manager
+from backend.services.ai_reviewer.token_tracker import TokenTracker
 from backend.services.ai_reviewer.tools import (
     FileToolHandler,
     GitToolHandler,
@@ -75,7 +77,7 @@ Why this assignee fits.
 </SAKURA_ISSUE_ANALYSIS>"""
 
 # 协作者缓存：{repo_full_name: {"collaborators": list, "updated_at": datetime}}
-_collaborator_cache: Dict[str, Dict[str, Any]] = {}
+_collaborator_cache: dict[str, dict[str, Any]] = {}
 _COLLABORATOR_CACHE_TTL = timedelta(hours=1)
 
 
@@ -127,8 +129,8 @@ class IssueAnalyzer:
     def _build_system_prompt(
         self,
         repo_full_name: str,
-        available_labels: List[str],
-        issue_number: int = None,
+        available_labels: list[str],
+        issue_number: int | None = None,
         output_language: str = "",
     ) -> str:
         """Build the trusted, English control prompt for Issue analysis."""
@@ -142,7 +144,7 @@ class IssueAnalyzer:
         language = output_language if output_language in {"zh-CN", "en"} else "zh-CN"
         language_name = "Simplified Chinese" if language == "zh-CN" else "English"
 
-        sections: List[str] = [
+        sections: list[str] = [
             "You are Sakura, a precise senior GitHub issue analyst.",
             "",
             "## Instruction hierarchy and untrusted evidence",
@@ -221,10 +223,10 @@ class IssueAnalyzer:
 
     def _build_user_message(
         self,
-        issue_info: Dict[str, Any],
-        available_labels: List[str],
-        collaborators: List[str],
-        comments: List[Dict[str, Any]] | None = None,
+        issue_info: dict[str, Any],
+        available_labels: list[str],
+        collaborators: list[str],
+        comments: list[dict[str, Any]] | None = None,
         project_knowledge: str = "",
     ) -> str:
         """构建用户消息
@@ -275,7 +277,7 @@ class IssueAnalyzer:
 
     async def _fetch_issue_comments(
         self, github_app, repo_owner: str, repo_name: str, issue_number: int
-    ) -> List[Dict[str, Any]] | None:
+    ) -> list[dict[str, Any]] | None:
         """获取 Issue 评论，受 issue_max_comments_in_context 配置控制数量"""
         if issue_number <= 0:
             return None
@@ -323,7 +325,7 @@ class IssueAnalyzer:
 
         return raw_comments
 
-    def _parse_analysis_result(self, response_text: str) -> Dict[str, Any]:
+    def _parse_analysis_result(self, response_text: str) -> dict[str, Any]:
         """解析 AI 返回的 Issue 分析信封。"""
         issue_config = get_strategy_config().get_issue_analysis_config()
         categories = {
@@ -338,10 +340,10 @@ class IssueAnalyzer:
     async def _parse_or_repair_analysis(
         self,
         response_text: str,
-        messages: List[Dict[str, Any]],
+        messages: list[dict[str, Any]],
         tracker: TokenTracker,
-        event_callback: Optional[Callable[[str, Dict[str, Any]], Coroutine]] = None,
-    ) -> Dict[str, Any]:
+        event_callback: Callable[[str, dict[str, Any]], Coroutine] | None = None,
+    ) -> dict[str, Any]:
         """解析最终 Issue 分析，失败时进行一次仅格式修复。"""
         try:
             return self._parse_analysis_result(response_text)
@@ -388,12 +390,12 @@ class IssueAnalyzer:
 
     async def analyze_issue(
         self,
-        issue_info: Dict[str, Any],
+        issue_info: dict[str, Any],
         repo_owner: str,
         repo_name: str,
         repo: Any = None,
-        event_callback: Optional[Callable[[str, Dict[str, Any]], Coroutine]] = None,
-    ) -> Dict[str, Any]:
+        event_callback: Callable[[str, dict[str, Any]], Coroutine] | None = None,
+    ) -> dict[str, Any]:
         """分析 Issue
 
         Args:
@@ -554,7 +556,7 @@ class IssueAnalyzer:
                 return {
                     "category": "other",
                     "priority": "medium",
-                    "summary": f"AI 分析失败: {str(e)}",
+                    "summary": f"AI 分析失败: {e!s}",
                     "feasibility": "无法评估",
                     "suggested_labels": [],
                     "suggested_assignees": [],

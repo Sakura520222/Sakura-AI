@@ -1,37 +1,36 @@
 """API v1 用户管理端点"""
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from fastapi import APIRouter, Depends, Query
 from loguru import logger
-from sqlalchemy import select, func, desc, or_, String, type_coerce
+from sqlalchemy import String, desc, func, or_, select, type_coerce
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from backend.models.telegram_models import TelegramUser, QuotaUsageLog
-from backend.webui.deps import get_db, paginate
-from backend.webui.helpers.admin_log import log_admin_action
+from backend.api.v1.deps import require_api_admin, require_api_super_admin
+from backend.api.v1.responses import (
+    error_response,
+    paginated_response,
+    success_response,
+)
+from backend.api.v1.schemas import (
+    UserCreateRequest,
+    UserInfoUpdateRequest,
+    UserIssueQuotaUpdateRequest,
+    UserQuotaUpdateRequest,
+    UserResponse,
+    UserRoleUpdateRequest,
+)
 from backend.core.config import get_settings
+from backend.models.telegram_models import QuotaUsageLog, TelegramUser
 from backend.services.quota_service import QuotaService
 from backend.services.user_role_policy import (
     can_toggle_user_status,
     can_update_user_role,
 )
-
-from backend.api.v1.deps import require_api_admin, require_api_super_admin
-from backend.api.v1.schemas import (
-    UserResponse,
-    UserCreateRequest,
-    UserRoleUpdateRequest,
-    UserQuotaUpdateRequest,
-    UserIssueQuotaUpdateRequest,
-    UserInfoUpdateRequest,
-)
-from backend.api.v1.responses import (
-    success_response,
-    error_response,
-    paginated_response,
-)
+from backend.webui.deps import get_db, paginate
+from backend.webui.helpers.admin_log import log_admin_action
 
 router = APIRouter(prefix="/users", tags=["Users"])
 
@@ -500,7 +499,7 @@ async def reset_user_quota(
     if not target:
         return error_response("用户不存在", status_code=404)
 
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     old_used = {
         "daily": target.daily_used,
         "weekly": target.weekly_used,
