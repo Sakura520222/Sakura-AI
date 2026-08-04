@@ -4,8 +4,8 @@ from backend.core.ai_protocol.adapters.gemini_native import GeminiNativeAdapter
 from backend.core.ai_protocol.errors import ReviewCancelledError
 from backend.core.ai_protocol.models import (
     StopReason,
-    UnifiedResponse,
     UnifiedRequest,
+    UnifiedResponse,
     UnifiedToolCall,
     UnifiedUsage,
 )
@@ -180,6 +180,7 @@ async def test_agent_conversation_records_tool_name_for_gemini_replay():
 @pytest.mark.asyncio
 async def test_agent_conversation_propagates_cancellation_from_llm_call():
     """调用期间触发的取消必须传回 worker，不能被 Agent 的通用异常处理吞掉。"""
+
     class Client:
         async def call_with_retry(self, **kwargs):
             raise ReviewCancelledError()

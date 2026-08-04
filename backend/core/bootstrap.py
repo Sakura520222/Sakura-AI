@@ -263,9 +263,7 @@ class BootstrapMiddleware:
 
         # 根路径重定向到 /setup
         if path == "/":
-            await RedirectResponse(url="/setup", status_code=302)(
-                scope, receive, send
-            )
+            await RedirectResponse(url="/setup", status_code=302)(scope, receive, send)
             return
 
         # 放行 Setup Wizard 相关路径
@@ -291,6 +289,4 @@ class BootstrapMiddleware:
             return
 
         # 页面请求重定向到 Setup
-        await RedirectResponse(url="/setup", status_code=302)(
-            scope, receive, send
-        )
+        await RedirectResponse(url="/setup", status_code=302)(scope, receive, send)

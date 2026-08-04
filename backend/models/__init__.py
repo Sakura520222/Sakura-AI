@@ -77,6 +77,11 @@ logger = logging.getLogger(__name__)
 
 __all__ = [
     "AIUsageRecord",
+    "ActivityArtifactAccessLog",
+    "ActivityCanonicalContextRevision",
+    "ActivityContextOperation",
+    "ActivityContextSnapshot",
+    "ActivityEvent",
     "ActivityInvocation",
     "ActivityInvocationTrigger",
     "ActivityInvocationWorkUnit",

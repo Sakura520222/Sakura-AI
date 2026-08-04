@@ -9,10 +9,11 @@ from __future__ import annotations
 
 import hashlib
 import json
+from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta, timezone
-from typing import Any, AsyncIterator
+from datetime import UTC, datetime, timedelta
+from typing import Any
 
 from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -29,7 +30,6 @@ from backend.models.activity_observability_models import (
     ActivityThreadLease,
 )
 from backend.models.database import utc_now
-
 
 AVAILABILITY_REPORTED = "reported"
 AVAILABILITY_COUNTED = "counted"
@@ -110,7 +110,9 @@ class MeasuredValue:
         if self.source not in VALID_SOURCES:
             raise ValueError(f"unknown source: {self.source}")
         if self.value is None and self.availability != AVAILABILITY_UNAVAILABLE:
-            raise ValueError("NULL value must be paired with availability='unavailable'")
+            raise ValueError(
+                "NULL value must be paired with availability='unavailable'"
+            )
         if self.value is not None:
             if self.value < 0:
                 raise ValueError("context measurements must be non-negative")
@@ -188,7 +190,7 @@ def _manifest_hash(manifest_json: str) -> str:
 def _aware(value: datetime | None) -> datetime | None:
     if value is None or value.tzinfo is not None:
         return value
-    return value.replace(tzinfo=timezone.utc)
+    return value.replace(tzinfo=UTC)
 
 
 class ContextService:
@@ -205,7 +207,9 @@ class ContextService:
         lease_ttl: timedelta | None = None,
     ) -> None:
         self._db = db
-        self._lease_duration = lease_duration or lease_ttl or self.DEFAULT_LEASE_DURATION
+        self._lease_duration = (
+            lease_duration or lease_ttl or self.DEFAULT_LEASE_DURATION
+        )
         if self._lease_duration <= timedelta(0):
             raise ValueError("lease duration must be positive")
 
@@ -260,7 +264,9 @@ class ContextService:
             work_unit.thread_id != thread.id
             or work_unit.session_id != thread.session_id
         ):
-            raise ValueError("work unit and thread do not belong to the same session/thread")
+            raise ValueError(
+                "work unit and thread do not belong to the same session/thread"
+            )
         return work_unit
 
     async def _validate_token(
@@ -319,7 +325,11 @@ class ContextService:
             )
             now = utc_now()
             expires_at = _aware(lease.expires_at) if lease else None
-            if lease is not None and expires_at is not None and expires_at > _aware(now):
+            if (
+                lease is not None
+                and expires_at is not None
+                and expires_at > _aware(now)
+            ):
                 if lease.owner_work_unit_id != work_unit_id:
                     raise StaleThreadLeaseError(
                         f"thread {thread_id} is actively leased by another work unit"
@@ -390,7 +400,10 @@ class ContextService:
         A missing or expired row is stale rather than an idempotent success: this
         prevents an old worker from releasing a newer owner's lease.
         """
-        if terminal_status is not None and terminal_status not in VALID_LEASE_TERMINAL_STATUSES:
+        if (
+            terminal_status is not None
+            and terminal_status not in VALID_LEASE_TERMINAL_STATUSES
+        ):
             allowed = ", ".join(sorted(VALID_LEASE_TERMINAL_STATUSES))
             raise ValueError(f"invalid terminal_status; expected one of: {allowed}")
         async with self._transaction() as db:
@@ -439,7 +452,10 @@ class ContextService:
         """Create an immutable revision and conditionally advance the thread head."""
         if not isinstance(message_manifest, list):
             raise TypeError("message_manifest must be a list[int]")
-        if any(not isinstance(message_id, int) or isinstance(message_id, bool) for message_id in message_manifest):
+        if any(
+            not isinstance(message_id, int) or isinstance(message_id, bool)
+            for message_id in message_manifest
+        ):
             raise ValueError("message_manifest must contain integer message IDs")
         if len(set(message_manifest)) != len(message_manifest):
             raise ValueError("message_manifest must not contain duplicate IDs")
@@ -451,9 +467,13 @@ class ContextService:
                 raise ValueError(f"ActivityThread not found: {thread_id}")
             lease = await self._validate_token(db, thread, token)
             if thread.current_revision_id != expected_parent_revision_id:
-                raise StaleThreadLeaseError("expected parent revision does not match thread head")
+                raise StaleThreadLeaseError(
+                    "expected parent revision does not match thread head"
+                )
             if lease.base_revision_id != expected_parent_revision_id:
-                raise StaleThreadLeaseError("lease base revision does not match expected parent")
+                raise StaleThreadLeaseError(
+                    "lease base revision does not match expected parent"
+                )
 
             if expected_parent_revision_id is not None:
                 parent = await db.get(
@@ -462,31 +482,44 @@ class ContextService:
                     with_for_update=True,
                 )
                 if parent is None or parent.thread_id != thread_id:
-                    raise ValueError("expected parent revision does not belong to thread")
+                    raise ValueError(
+                        "expected parent revision does not belong to thread"
+                    )
             if message_manifest:
                 rows = (
-                    await db.execute(
-                        select(ActivityObservabilityMessage).where(
-                            ActivityObservabilityMessage.id.in_(message_manifest)
+                    (
+                        await db.execute(
+                            select(ActivityObservabilityMessage).where(
+                                ActivityObservabilityMessage.id.in_(message_manifest)
+                            )
                         )
                     )
-                ).scalars().all()
+                    .scalars()
+                    .all()
+                )
                 by_id = {row.id: row for row in rows}
                 if len(by_id) != len(message_manifest):
                     raise ValueError("message_manifest contains an unknown message ID")
-                if any(by_id[message_id].thread_id != thread_id for message_id in message_manifest):
-                    raise ValueError("message_manifest contains a message from another thread")
+                if any(
+                    by_id[message_id].thread_id != thread_id
+                    for message_id in message_manifest
+                ):
+                    raise ValueError(
+                        "message_manifest contains a message from another thread"
+                    )
 
             manifest_text = _manifest_json(message_manifest)
             max_number = await self._scalar(
                 db,
-                select(func.max(ActivityCanonicalContextRevision.revision_number)).where(
-                    ActivityCanonicalContextRevision.thread_id == thread_id
-                ),
+                select(
+                    func.max(ActivityCanonicalContextRevision.revision_number)
+                ).where(ActivityCanonicalContextRevision.thread_id == thread_id),
             )
             revision_number = (
                 0
-                if max_number is None and expected_parent_revision_id is None and not message_manifest
+                if max_number is None
+                and expected_parent_revision_id is None
+                and not message_manifest
                 else int(max_number or 0) + 1
             )
             revision = ActivityCanonicalContextRevision(
@@ -497,17 +530,23 @@ class ContextService:
                 reason=reason,
                 summary_artifact_reference=summary_artifact_reference,
                 system_manifest_json=(
-                    json.dumps(system_manifest, separators=(",", ":"), ensure_ascii=False)
+                    json.dumps(
+                        system_manifest, separators=(",", ":"), ensure_ascii=False
+                    )
                     if system_manifest is not None
                     else None
                 ),
                 tools_manifest_json=(
-                    json.dumps(tools_manifest, separators=(",", ":"), ensure_ascii=False)
+                    json.dumps(
+                        tools_manifest, separators=(",", ":"), ensure_ascii=False
+                    )
                     if tools_manifest is not None
                     else None
                 ),
                 tool_choice_manifest_json=(
-                    json.dumps(tool_choice_manifest, separators=(",", ":"), ensure_ascii=False)
+                    json.dumps(
+                        tool_choice_manifest, separators=(",", ":"), ensure_ascii=False
+                    )
                     if tool_choice_manifest is not None
                     else None
                 ),
@@ -536,7 +575,9 @@ class ContextService:
             await db.flush()
             return revision
 
-    async def get_revision(self, revision_id: int) -> ActivityCanonicalContextRevision | None:
+    async def get_revision(
+        self, revision_id: int
+    ) -> ActivityCanonicalContextRevision | None:
         async with self._session_scope() as db:
             return await db.get(ActivityCanonicalContextRevision, revision_id)
 
@@ -564,10 +605,14 @@ class ContextService:
                 ActivityInvocationWorkUnit, work_unit_id, with_for_update=True
             )
             if work_unit is None:
-                raise ValueError(f"ActivityInvocationWorkUnit not found: {work_unit_id}")
+                raise ValueError(
+                    f"ActivityInvocationWorkUnit not found: {work_unit_id}"
+                )
             if work_unit.thread_id is None:
                 raise ValueError("context operations require a threaded work unit")
-            thread = await db.get(ActivityThread, work_unit.thread_id, with_for_update=True)
+            thread = await db.get(
+                ActivityThread, work_unit.thread_id, with_for_update=True
+            )
             if thread is None or thread.session_id != work_unit.session_id:
                 raise ValueError("work unit thread does not belong to its session")
             before = None
@@ -578,7 +623,9 @@ class ContextService:
                     with_for_update=True,
                 )
                 if before is None or before.thread_id != thread.id:
-                    raise ValueError("before revision does not belong to work unit thread")
+                    raise ValueError(
+                        "before revision does not belong to work unit thread"
+                    )
             operation = ActivityContextOperation(
                 work_unit_id=work_unit_id,
                 thread_id=thread.id,
@@ -612,20 +659,31 @@ class ContextService:
             )
             if operation is None:
                 raise ValueError(f"ActivityContextOperation not found: {operation_id}")
-            thread = await db.get(ActivityThread, operation.thread_id, with_for_update=True)
+            thread = await db.get(
+                ActivityThread, operation.thread_id, with_for_update=True
+            )
             if thread is None:
                 raise ValueError("operation thread no longer exists")
-            work_unit = await self._validate_work_unit(db, thread, operation.work_unit_id)
+            work_unit = await self._validate_work_unit(
+                db, thread, operation.work_unit_id
+            )
             if token is not None:
                 await self._validate_token(db, thread, token)
                 if token.owner_work_unit_id != work_unit.id:
-                    raise StaleThreadLeaseError("completion token belongs to another work unit")
+                    raise StaleThreadLeaseError(
+                        "completion token belongs to another work unit"
+                    )
             after = await db.get(
-                ActivityCanonicalContextRevision, after_revision_id, with_for_update=True
+                ActivityCanonicalContextRevision,
+                after_revision_id,
+                with_for_update=True,
             )
             if after is None or after.thread_id != thread.id:
                 raise ValueError("after revision does not belong to operation thread")
-            if operation.before_revision_id is not None and after.parent_revision_id != operation.before_revision_id:
+            if (
+                operation.before_revision_id is not None
+                and after.parent_revision_id != operation.before_revision_id
+            ):
                 raise ValueError("after revision is not a child of before revision")
             if after.created_context_operation_id != operation.id:
                 raise ValueError("after revision is not associated with this operation")
@@ -649,15 +707,23 @@ class ContextService:
             return operation
 
     async def fail_operation(
-        self, operation_id: int, error_message: str, *, token: ThreadLeaseToken | None = None
+        self,
+        operation_id: int,
+        error_message: str,
+        *,
+        token: ThreadLeaseToken | None = None,
     ) -> ActivityContextOperation:
         if not error_message:
             raise ValueError("error_message must be non-empty")
         async with self._transaction() as db:
-            operation = await db.get(ActivityContextOperation, operation_id, with_for_update=True)
+            operation = await db.get(
+                ActivityContextOperation, operation_id, with_for_update=True
+            )
             if operation is None:
                 raise ValueError(f"ActivityContextOperation not found: {operation_id}")
-            thread = await db.get(ActivityThread, operation.thread_id, with_for_update=True)
+            thread = await db.get(
+                ActivityThread, operation.thread_id, with_for_update=True
+            )
             if thread is None:
                 raise ValueError("operation thread no longer exists")
             if token is not None:
@@ -694,18 +760,28 @@ class ContextService:
                 ActivityCanonicalContextRevision, revision_id, with_for_update=True
             )
             if revision is None:
-                raise ValueError(f"ActivityCanonicalContextRevision not found: {revision_id}")
+                raise ValueError(
+                    f"ActivityCanonicalContextRevision not found: {revision_id}"
+                )
             if attempt_id is not None:
-                attempt = await db.get(ActivityModelAttempt, attempt_id, with_for_update=True)
+                attempt = await db.get(
+                    ActivityModelAttempt, attempt_id, with_for_update=True
+                )
                 if attempt is None:
                     raise ValueError(f"ActivityModelAttempt not found: {attempt_id}")
-                work_unit = await db.get(ActivityInvocationWorkUnit, attempt.work_unit_id)
+                work_unit = await db.get(
+                    ActivityInvocationWorkUnit, attempt.work_unit_id
+                )
                 if work_unit is None or work_unit.thread_id != revision.thread_id:
                     raise ValueError("attempt and revision do not share a thread")
             else:
-                operation = await db.get(ActivityContextOperation, operation_id, with_for_update=True)
+                operation = await db.get(
+                    ActivityContextOperation, operation_id, with_for_update=True
+                )
                 if operation is None:
-                    raise ValueError(f"ActivityContextOperation not found: {operation_id}")
+                    raise ValueError(
+                        f"ActivityContextOperation not found: {operation_id}"
+                    )
                 if operation.thread_id != revision.thread_id:
                     raise ValueError("operation and revision do not share a thread")
             values: dict[str, Any] = {}

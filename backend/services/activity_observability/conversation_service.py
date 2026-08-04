@@ -6,7 +6,7 @@ import base64
 import hashlib
 import hmac
 import json
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 
 from sqlalchemy import or_, select
@@ -47,10 +47,10 @@ _SENSITIVE_MESSAGE_ROLES = frozenset({"system", "user", "tool"})
 
 def _as_utc(value: datetime | None) -> datetime:
     if value is None:
-        return datetime.fromtimestamp(0, tz=timezone.utc)
+        return datetime.fromtimestamp(0, tz=UTC)
     if value.tzinfo is None:
-        return value.replace(tzinfo=timezone.utc)
-    return value.astimezone(timezone.utc)
+        return value.replace(tzinfo=UTC)
+    return value.astimezone(UTC)
 
 
 def _iso(value: datetime | None) -> str | None:
@@ -61,7 +61,7 @@ def _message_tool_call_ids(message_json: str | None) -> set[str]:
     """Read only public tool-call identifiers from a canonical message."""
     try:
         payload = json.loads(message_json or "{}")
-    except (TypeError, json.JSONDecodeError):
+    except TypeError, json.JSONDecodeError:
         return set()
     if not isinstance(payload, dict):
         return set()
@@ -79,7 +79,7 @@ def _message_kind(message_json: str | None) -> str | None:
     """Read the public business kind from a canonical message payload."""
     try:
         payload = json.loads(message_json or "{}")
-    except (TypeError, json.JSONDecodeError):
+    except TypeError, json.JSONDecodeError:
         return None
     if not isinstance(payload, dict):
         return None
@@ -382,7 +382,7 @@ class ConversationProjectionService:
         for revision in revisions:
             try:
                 manifest = json.loads(revision.message_manifest_json)
-            except (TypeError, json.JSONDecodeError):
+            except TypeError, json.JSONDecodeError:
                 continue
             if isinstance(manifest, list):
                 current_message_ids.update(
@@ -689,7 +689,7 @@ class ConversationProjectionService:
             return None
         try:
             return int(reference.split(":", 1)[1])
-        except (TypeError, ValueError):
+        except TypeError, ValueError:
             return None
 
     async def get_conversation(

@@ -26,8 +26,8 @@ from backend.models.activity_observability_models import (
 )
 from backend.models.database import utc_now
 from backend.services.activity_observability.contracts import (
-    RoleConfigSnapshot,
     _SENSITIVE_SNAPSHOT_PATTERN,
+    RoleConfigSnapshot,
 )
 from backend.services.activity_observability.event_service import append_lifecycle_event
 
@@ -48,9 +48,7 @@ _FAILED_TERMINAL_STATUSES = frozenset({"failed", "cancelled", "abandoned"})
 _ENDPOINT_FINGERPRINT_PATTERN = re.compile(r"^[0-9a-f]{64}$")
 
 
-def _identity_query(
-    identity_values: dict[str, str], *, for_update: bool = False
-):
+def _identity_query(identity_values: dict[str, str], *, for_update: bool = False):
     statement = select(ActivityResourceIdentity).where(
         *(
             getattr(ActivityResourceIdentity, field) == value
@@ -60,9 +58,7 @@ def _identity_query(
     return statement.with_for_update() if for_update else statement
 
 
-def _session_query(
-    identity_values: dict[str, str], *, for_update: bool = False
-):
+def _session_query(identity_values: dict[str, str], *, for_update: bool = False):
     statement = (
         select(ActivityObservabilitySession)
         .join(ActivityObservabilitySession.resource_identity)
@@ -159,11 +155,18 @@ class ActivityObservabilityService:
 
         async with self._session_scope() as db:
             existing = (
-                await db.execute(_session_query(identity_values))
-            ).unique().scalar_one_or_none()
+                (await db.execute(_session_query(identity_values)))
+                .unique()
+                .scalar_one_or_none()
+            )
             if existing is not None:
-                if existing.resource_identity.repo_full_name != normalized_repo_full_name:
-                    existing.resource_identity.repo_full_name = normalized_repo_full_name
+                if (
+                    existing.resource_identity.repo_full_name
+                    != normalized_repo_full_name
+                ):
+                    existing.resource_identity.repo_full_name = (
+                        normalized_repo_full_name
+                    )
                     await db.flush()
                     await self._commit_if_owned(db)
                 return existing
@@ -180,7 +183,9 @@ class ActivityObservabilityService:
                         await db.flush()
                 except IntegrityError:
                     identity = (
-                        await db.execute(_identity_query(identity_values, for_update=True))
+                        await db.execute(
+                            _identity_query(identity_values, for_update=True)
+                        )
                     ).scalar_one_or_none()
                     if identity is None:
                         raise
@@ -207,12 +212,19 @@ class ActivityObservabilityService:
                     await db.flush()
             except IntegrityError:
                 concurrent = (
-                    await db.execute(_session_query(identity_values, for_update=True))
-                ).unique().scalar_one_or_none()
+                    (await db.execute(_session_query(identity_values, for_update=True)))
+                    .unique()
+                    .scalar_one_or_none()
+                )
                 if concurrent is None:
                     raise
-                if concurrent.resource_identity.repo_full_name != normalized_repo_full_name:
-                    concurrent.resource_identity.repo_full_name = normalized_repo_full_name
+                if (
+                    concurrent.resource_identity.repo_full_name
+                    != normalized_repo_full_name
+                ):
+                    concurrent.resource_identity.repo_full_name = (
+                        normalized_repo_full_name
+                    )
                     await db.flush()
                 await self._commit_if_owned(db)
                 return concurrent
@@ -277,9 +289,7 @@ class ActivityObservabilityService:
         """Load a trigger by its idempotency key without reading legacy tables."""
         normalized = _normalize_ascii(dedupe_key, "dedupe_key")
         async with self._session_scope() as db:
-            return (
-                await db.execute(_trigger_query(normalized))
-            ).scalar_one_or_none()
+            return (await db.execute(_trigger_query(normalized))).scalar_one_or_none()
 
     async def create_comment_trigger(
         self,
@@ -313,8 +323,14 @@ class ActivityObservabilityService:
                 base_sha=_normalize_optional_text(base_sha, "base_sha"),
                 head_sha=_normalize_optional_text(head_sha, "head_sha"),
                 metadata_json=(
-                    json.dumps(metadata, ensure_ascii=True, separators=(",", ":"), sort_keys=True)
-                    if metadata else None
+                    json.dumps(
+                        metadata,
+                        ensure_ascii=True,
+                        separators=(",", ":"),
+                        sort_keys=True,
+                    )
+                    if metadata
+                    else None
                 ),
             )
 
@@ -454,41 +470,67 @@ class ActivityObservabilityService:
         the final single-consumer fence; the invocation lock makes head SHA
         aggregation deterministic for concurrent synchronize deliveries.
         """
-        normalized_ids = tuple(dict.fromkeys(int(trigger_id) for trigger_id in trigger_ids))
+        normalized_ids = tuple(
+            dict.fromkeys(int(trigger_id) for trigger_id in trigger_ids)
+        )
         if not normalized_ids:
             raise ValueError("trigger_ids must not be empty")
         if len(normalized_ids) != len(tuple(trigger_ids)):
             raise ValueError("trigger_ids must not contain duplicates")
         async with self._session_scope() as db:
-            invocation = await db.get(ActivityInvocation, invocation_id, with_for_update=True)
+            invocation = await db.get(
+                ActivityInvocation, invocation_id, with_for_update=True
+            )
             if invocation is None:
                 raise ValueError(f"ActivityInvocation not found: {invocation_id}")
             if invocation.status not in {"queued", "running"}:
-                raise ConflictError(f"invocation {invocation_id} is terminal: {invocation.status}")
-            rows = list((await db.execute(
-                select(ActivityTrigger)
-                .where(
-                    ActivityTrigger.id.in_(normalized_ids),
-                    ActivityTrigger.session_id == invocation.session_id,
+                raise ConflictError(
+                    f"invocation {invocation_id} is terminal: {invocation.status}"
                 )
-                .with_for_update()
-            )).scalars().all())
+            rows = list(
+                (
+                    await db.execute(
+                        select(ActivityTrigger)
+                        .where(
+                            ActivityTrigger.id.in_(normalized_ids),
+                            ActivityTrigger.session_id == invocation.session_id,
+                        )
+                        .with_for_update()
+                    )
+                )
+                .scalars()
+                .all()
+            )
             by_id = {row.id: row for row in rows}
             if len(by_id) != len(normalized_ids):
-                raise ValueError("one or more triggers do not belong to invocation session")
-            existing_ids = set((await db.execute(
-                select(ActivityInvocationTrigger.trigger_id).where(
-                    ActivityInvocationTrigger.invocation_id == invocation_id,
-                    ActivityInvocationTrigger.trigger_id.in_(normalized_ids),
+                raise ValueError(
+                    "one or more triggers do not belong to invocation session"
                 )
-            )).scalars().all())
+            existing_ids = set(
+                (
+                    await db.execute(
+                        select(ActivityInvocationTrigger.trigger_id).where(
+                            ActivityInvocationTrigger.invocation_id == invocation_id,
+                            ActivityInvocationTrigger.trigger_id.in_(normalized_ids),
+                        )
+                    )
+                )
+                .scalars()
+                .all()
+            )
             for trigger_id in normalized_ids:
                 trigger = by_id[trigger_id]
                 if trigger_id in existing_ids:
                     continue
                 if trigger.status != "pending":
-                    raise ConflictError(f"trigger {trigger_id} is already consumed or unavailable")
-                db.add(ActivityInvocationTrigger(invocation_id=invocation_id, trigger_id=trigger_id))
+                    raise ConflictError(
+                        f"trigger {trigger_id} is already consumed or unavailable"
+                    )
+                db.add(
+                    ActivityInvocationTrigger(
+                        invocation_id=invocation_id, trigger_id=trigger_id
+                    )
+                )
                 trigger.status = "consumed"
                 trigger.consumed_at = utc_now()
             ordered = [by_id[item] for item in normalized_ids]
@@ -756,7 +798,9 @@ class ActivityObservabilityService:
         *,
         for_update: bool = False,
     ) -> ActivityResourceIdentity | None:
-        return (await db.execute(_identity_query(identity_values, for_update=for_update))).scalar_one_or_none()
+        return (
+            await db.execute(_identity_query(identity_values, for_update=for_update))
+        ).scalar_one_or_none()
 
     @staticmethod
     async def _find_session(
@@ -765,7 +809,11 @@ class ActivityObservabilityService:
         *,
         for_update: bool = False,
     ) -> ActivityObservabilitySession | None:
-        return (await db.execute(_session_query(identity_values, for_update=for_update))).unique().scalar_one_or_none()
+        return (
+            (await db.execute(_session_query(identity_values, for_update=for_update)))
+            .unique()
+            .scalar_one_or_none()
+        )
 
     @staticmethod
     async def _resolve_source_instance(
@@ -878,9 +926,7 @@ class ActivityObservabilityService:
                 ActivityObservabilityService._contains_sensitive_candidate_data(item)
                 for item in value
             )
-        return bool(
-            _SENSITIVE_SNAPSHOT_PATTERN.search(str(value))
-        )
+        return bool(_SENSITIVE_SNAPSHOT_PATTERN.search(str(value)))
 
     @staticmethod
     def _build_role_binding_snapshot(
@@ -899,9 +945,13 @@ class ActivityObservabilityService:
                 "requested_model", snapshot.requested_model
             ),
             "requested_thinking_mode": _validate_safe_snapshot_text(
-                "requested_thinking_mode", snapshot.requested_thinking_mode, optional=True
+                "requested_thinking_mode",
+                snapshot.requested_thinking_mode,
+                optional=True,
             ),
-            "account_id": _validate_safe_snapshot_text("account_id", snapshot.account_id),
+            "account_id": _validate_safe_snapshot_text(
+                "account_id", snapshot.account_id
+            ),
             "protocol_family": _validate_safe_snapshot_text(
                 "protocol_family", snapshot.protocol_family
             ),
@@ -909,7 +959,9 @@ class ActivityObservabilityService:
         if ActivityObservabilityService._contains_sensitive_candidate_data(
             snapshot.candidate_chain
         ):
-            raise ValueError("candidate_chain contains sensitive endpoint or credential data")
+            raise ValueError(
+                "candidate_chain contains sensitive endpoint or credential data"
+            )
         candidate_chain_json = json.dumps(
             snapshot.candidate_chain,
             ensure_ascii=False,

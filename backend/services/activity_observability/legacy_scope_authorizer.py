@@ -40,7 +40,7 @@ class LegacyRepositoryScopeAuthorizer:
         role = identity.resource_type.lower()
         try:
             number = int(identity.resource_number)
-        except (TypeError, ValueError):
+        except TypeError, ValueError:
             return False
         username = self._github_username(user)
         is_admin = user.get("role") in {"admin", "super_admin"}
@@ -52,7 +52,9 @@ class LegacyRepositoryScopeAuthorizer:
                 model.repo_owner == identity.repo_full_name.split("/", 1)[0],
             )
             if not is_admin:
-                query = query.where(or_(model.repo_owner == username, model.author == username))
+                query = query.where(
+                    or_(model.repo_owner == username, model.author == username)
+                )
             return (await db.execute(query)).scalars().first() is not None
         if role == "issue":
             model = IssueAnalysis
@@ -63,7 +65,9 @@ class LegacyRepositoryScopeAuthorizer:
                 model.repo_name == repo,
             )
             if not is_admin:
-                query = query.where(or_(model.repo_owner == username, model.author == username))
+                query = query.where(
+                    or_(model.repo_owner == username, model.author == username)
+                )
             return (await db.execute(query)).scalars().first() is not None
         if role == "ephemeral":
             query = select(RepoScan).where(RepoScan.id == number)
@@ -73,14 +77,19 @@ class LegacyRepositoryScopeAuthorizer:
         return False
 
     async def authorization_version(self, db: AsyncSession, *, user: dict) -> str:
-        return str(user.get("auth_version") or f"user:{user.get('user_id', user.get('sub', ''))}")
+        return str(
+            user.get("auth_version")
+            or f"user:{user.get('user_id', user.get('sub', ''))}"
+        )
 
     async def may_view_trace(
         self, db: AsyncSession, *, session: ActivityObservabilitySession, user: dict
     ) -> bool:
         return user.get("role") in {"admin", "super_admin"}
 
-    async def is_authorized(self, db: AsyncSession, *, user_id: str, session_id: int) -> bool:
+    async def is_authorized(
+        self, db: AsyncSession, *, user_id: str, session_id: int
+    ) -> bool:
         from backend.models.telegram_models import TelegramUser
 
         result = await db.execute(
@@ -105,7 +114,9 @@ class LegacyRepositoryScopeAuthorizer:
             "role": account.role,
         }
         session = await db.get(ActivityObservabilitySession, session_id)
-        return bool(session and await self.authorize_session(db, session=session, user=user))
+        return bool(
+            session and await self.authorize_session(db, session=session, user=user)
+        )
 
     async def resolve_recipients(
         self,
@@ -127,8 +138,10 @@ class LegacyRepositoryScopeAuthorizer:
             return ()
         try:
             accounts = (
-                await db.execute(select(TelegramUser).where(TelegramUser.is_active))
-            ).scalars().all()
+                (await db.execute(select(TelegramUser).where(TelegramUser.is_active)))
+                .scalars()
+                .all()
+            )
         except SQLAlchemyError:
             # Bootstrap/migration and isolated model tests may not have the
             # account table yet.  No audience is safer than a global fallback.

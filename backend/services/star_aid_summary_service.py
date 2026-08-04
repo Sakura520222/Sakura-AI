@@ -20,7 +20,6 @@ import json
 from datetime import datetime
 
 from loguru import logger
-from backend.services.ai_reviewer.api_client import AIApiClient
 from sqlalchemy import select
 
 from backend.core.config import get_dynamic_config, get_settings
@@ -31,6 +30,7 @@ from backend.models.star_aid_models import (
     StarAidRepository,
 )
 from backend.services import star_aid_github_service as gh
+from backend.services.ai_reviewer.api_client import AIApiClient
 
 _SUMMARY_MAX_TOKENS = 16000
 

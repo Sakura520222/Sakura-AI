@@ -51,9 +51,7 @@ def test_agent_team_context_compression_config_retired_from_webui():
         1.0,
     )
     # keep_rounds 已废弃，RANGES 不再注册
-    assert (
-        "agent_team_context_compression_keep_rounds" not in DYNAMIC_CONFIG_RANGES
-    )
+    assert "agent_team_context_compression_keep_rounds" not in DYNAMIC_CONFIG_RANGES
     assert DYNAMIC_CONFIG_RANGES["agent_team_context_summary_max_tokens"] == (500, 8192)
     settings = get_settings()
     assert settings.agent_team_enable_context_compression is True

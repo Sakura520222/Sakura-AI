@@ -510,6 +510,4 @@ def test_system_prompt_requires_finding_fields_exactly_once():
         "Review correctness.", {}, include_tools=False, output_language="zh-CN"
     )
     assert "exactly once" in prompt
-    assert any(
-        kw in prompt.lower() for kw in ("repeat", "after description", "second")
-    )
+    assert any(kw in prompt.lower() for kw in ("repeat", "after description", "second"))

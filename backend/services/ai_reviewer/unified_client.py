@@ -17,12 +17,13 @@ import asyncio
 import random
 import time
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Optional
+from typing import TYPE_CHECKING, Any, Self
 from uuid import uuid4
 
 import httpx
 from loguru import logger
 
+from backend.core.ai_protocol import registry as _protocol_registry
 from backend.core.ai_protocol.errors import (
     AIError,
     AllCandidatesFailedError,
@@ -38,7 +39,6 @@ from backend.core.ai_protocol.models import (
     UnifiedResponse,
     UnifiedTool,
 )
-from backend.core.ai_protocol import registry as _protocol_registry
 from backend.services.activity_observability.contracts import (
     EffectiveReasoningSnapshot,
 )
@@ -98,11 +98,11 @@ class _CallState:
 def _filter_params_by_capability(
     metadata: ModelMetadata,
     *,
-    temperature: Optional[float],
-    top_p: Optional[float],
-    top_k: Optional[int],
-    thinking: Optional[dict[str, Any]],
-    effort: Optional[str],
+    temperature: float | None,
+    top_p: float | None,
+    top_k: int | None,
+    thinking: dict[str, Any] | None,
+    effort: str | None,
 ) -> dict[str, Any]:
     """按模型能力过滤推理参数 / Filter reasoning params by model capability."""
     caps = metadata.capabilities
@@ -243,8 +243,8 @@ def _messages_from_legacy(
 
 
 def _tools_from_legacy(
-    tools: Optional[list[dict[str, Any]]],
-) -> Optional[list[UnifiedTool]]:
+    tools: list[dict[str, Any]] | None,
+) -> list[UnifiedTool] | None:
     """旧版工具 dict → UnifiedTool / Legacy tool dict → UnifiedTool."""
     if not tools:
         return None
@@ -287,9 +287,9 @@ class UnifiedAIClient:
     def __init__(
         self,
         *,
-        http_client: Optional[httpx.AsyncClient] = None,
-        fallback_config: Optional[FallbackConfig] = None,
-        compressor: Optional["UnifiedContextCompressor"] = None,
+        http_client: httpx.AsyncClient | None = None,
+        fallback_config: FallbackConfig | None = None,
+        compressor: UnifiedContextCompressor | None = None,
         observer: Any = None,
         context: Any = None,
         logical_call_factory: Any = uuid4,
@@ -399,13 +399,13 @@ class UnifiedAIClient:
             )
         except asyncio.CancelledError:
             raise
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             logger.bind(error_type=type(exc).__name__).warning(
                 "AI usage 记录器失败，业务调用继续: error_type={}",
                 type(exc).__name__,
             )
 
-    async def __aenter__(self) -> "UnifiedAIClient":
+    async def __aenter__(self) -> Self:
         return self
 
     async def __aexit__(self, exc_type, exc, tb) -> None:
@@ -425,7 +425,7 @@ class UnifiedAIClient:
             )
         return self._http_client
 
-    def set_compressor(self, compressor: "UnifiedContextCompressor") -> None:
+    def set_compressor(self, compressor: UnifiedContextCompressor) -> None:
         self._compressor = compressor
 
     # ------------------------------------------------------------------
@@ -437,21 +437,21 @@ class UnifiedAIClient:
         messages: list[dict[str, Any]] | list[UnifiedMessage],
         *,
         model: str,
-        tools: Optional[list[dict[str, Any]]] | Optional[list[UnifiedTool]] = None,
-        tool_choice: Optional[str] = None,
-        temperature: Optional[float] = None,
-        top_p: Optional[float] = None,
-        top_k: Optional[int] = None,
-        max_tokens: Optional[int] = None,
-        thinking: Optional[dict[str, Any]] = None,
-        effort: Optional[str] = None,
-        timeout: Optional[float] = None,
+        tools: list[dict[str, Any]] | None | list[UnifiedTool] = None,
+        tool_choice: str | None = None,
+        temperature: float | None = None,
+        top_p: float | None = None,
+        top_k: int | None = None,
+        max_tokens: int | None = None,
+        thinking: dict[str, Any] | None = None,
+        effort: str | None = None,
+        timeout: float | None = None,
         role: str = "main",
-        cancel_event: Optional[asyncio.Event] = None,
+        cancel_event: asyncio.Event | None = None,
         context: Any = None,
         observer: Any = None,
         logical_call_factory: Any = uuid4,
-        attempt_kind: Optional[str] = None,
+        attempt_kind: str | None = None,
     ) -> UnifiedResponse:
         """统一调用入口（对外契约与旧 AIApiClient.call_with_retry 对齐）.
 
@@ -510,7 +510,7 @@ class UnifiedAIClient:
         attempt_chain: list[AttemptRecord] = []
         logical_call_id = str(call_state.logical_call_factory())
         logical_call_started = time.monotonic()
-        last_error: Optional[AIError] = None
+        last_error: AIError | None = None
         compressed_once = False
 
         for idx, candidate in enumerate(selected):
@@ -624,7 +624,7 @@ class UnifiedAIClient:
                     success=True,
                 )
                 return response
-            except (asyncio.CancelledError, ReviewCancelledError):
+            except asyncio.CancelledError, ReviewCancelledError:
                 self._log_logical_call_summary(
                     logical_call_id=logical_call_id,
                     role=role,
@@ -682,7 +682,7 @@ class UnifiedAIClient:
                             retry_of_attempt_id=call_state.last_attempt_id,
                             call_state=call_state,
                         )
-                    except (asyncio.CancelledError, ReviewCancelledError):
+                    except asyncio.CancelledError, ReviewCancelledError:
                         self._log_logical_call_summary(
                             logical_call_id=logical_call_id,
                             role=role,
@@ -756,15 +756,15 @@ class UnifiedAIClient:
         messages: list[dict[str, Any]] | list[UnifiedMessage],
         *,
         model: str = "",
-        temperature: Optional[float] = None,
-        top_p: Optional[float] = None,
-        top_k: Optional[int] = None,
-        max_tokens: Optional[int] = None,
-        thinking: Optional[dict[str, Any]] = None,
-        effort: Optional[str] = None,
-        timeout: Optional[float] = None,
+        temperature: float | None = None,
+        top_p: float | None = None,
+        top_k: int | None = None,
+        max_tokens: int | None = None,
+        thinking: dict[str, Any] | None = None,
+        effort: str | None = None,
+        timeout: float | None = None,
         role: str = "main",
-        cancel_event: Optional[asyncio.Event] = None,
+        cancel_event: asyncio.Event | None = None,
         context: Any = None,
         observer: Any = None,
         logical_call_factory: Any = uuid4,
@@ -913,7 +913,7 @@ class UnifiedAIClient:
                         success=True,
                     )
                     return
-                except (asyncio.CancelledError, ReviewCancelledError):
+                except asyncio.CancelledError, ReviewCancelledError:
                     self._log_logical_call_summary(
                         logical_call_id=logical_call_id,
                         role=role,
@@ -944,7 +944,7 @@ class UnifiedAIClient:
                                 self._calculate_delay(retry_index),
                                 cancel_event,
                             )
-                        except (asyncio.CancelledError, ReviewCancelledError):
+                        except asyncio.CancelledError, ReviewCancelledError:
                             self._log_logical_call_summary(
                                 logical_call_id=logical_call_id,
                                 role=role,
@@ -989,10 +989,10 @@ class UnifiedAIClient:
         candidate: ResolvedModel,
         request: UnifiedRequest,
         *,
-        timeout: Optional[float],
+        timeout: float | None,
         role: str,
         idx: int,
-        cancel_event: Optional[asyncio.Event] = None,
+        cancel_event: asyncio.Event | None = None,
         logical_call_id: str = "",
         fallback_from: int | None = None,
         initial_attempt_kind: str | None = None,
@@ -1006,7 +1006,7 @@ class UnifiedAIClient:
         total_timeout = timeout or cfg.total_timeout
         start = time.monotonic()
 
-        last_exc: Optional[AIError] = None
+        last_exc: AIError | None = None
         for attempt in range(cfg.max_retries):
             # 取消信号：退避中途被取消时立即抛出 / honor cancel between retries
             if cancel_event is not None and cancel_event.is_set():
@@ -1030,26 +1030,25 @@ class UnifiedAIClient:
                             or ("fallback" if fallback_from is not None else "primary")
                         )
                     )
-                    response, call_state.last_attempt_id = (
-                        await call_state.observer.send_chat(
-                            adapter,
-                            self.http_client,
-                            candidate,
-                            request,
-                            timeout=timeout,
-                            logical_call_id=logical_call_id
-                            or str(call_state.logical_call_factory()),
-                            attempt_kind=attempt_kind,
-                            purpose=role,
-                            retry_of=(
-                                call_state.last_attempt_id
-                                if attempt
-                                else initial_retry_of
-                            ),
-                            fallback_from=fallback_from,
-                            requested=requested_candidate or candidate,
-                            reasoning_snapshot=reasoning_snapshot,
-                        )
+                    (
+                        response,
+                        call_state.last_attempt_id,
+                    ) = await call_state.observer.send_chat(
+                        adapter,
+                        self.http_client,
+                        candidate,
+                        request,
+                        timeout=timeout,
+                        logical_call_id=logical_call_id
+                        or str(call_state.logical_call_factory()),
+                        attempt_kind=attempt_kind,
+                        purpose=role,
+                        retry_of=(
+                            call_state.last_attempt_id if attempt else initial_retry_of
+                        ),
+                        fallback_from=fallback_from,
+                        requested=requested_candidate or candidate,
+                        reasoning_snapshot=reasoning_snapshot,
                     )
                 else:
                     response = await adapter.chat(
@@ -1084,7 +1083,7 @@ class UnifiedAIClient:
 
     @staticmethod
     async def _abortable_sleep(
-        delay: float, cancel_event: Optional[asyncio.Event]
+        delay: float, cancel_event: asyncio.Event | None
     ) -> None:
         """退避等待，cancel_event 被 set 时立即抛出 ReviewCancelledError。
 
@@ -1130,13 +1129,13 @@ class UnifiedAIClient:
         request: UnifiedRequest,
         remaining: list[ResolvedModel],
         attempt_chain: list[AttemptRecord],
-        timeout: Optional[float],
+        timeout: float | None,
         role: str,
         logical_call_id: str,
         retry_of_attempt_id: int | None,
         call_state: _CallState,
-        cancel_event: Optional[asyncio.Event] = None,
-    ) -> Optional[UnifiedResponse]:
+        cancel_event: asyncio.Event | None = None,
+    ) -> UnifiedResponse | None:
         """压缩后同候选重试；仍超限则返回 None 交由上层回退.
 
         Compress then retry the same candidate; if still overflowing, return
@@ -1150,7 +1149,7 @@ class UnifiedAIClient:
                 messages=messages,
                 system=request.system,
             )
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             logger.warning("压缩恢复失败: {}", exc)
             return None
         if compressed is None:
@@ -1165,7 +1164,7 @@ class UnifiedAIClient:
                         compressed,
                         trigger_reason="provider_overflow",
                     )
-                except Exception as exc:  # noqa: BLE001
+                except Exception as exc:
                     logger.warning("压缩上下文持久化失败，跳过压缩重试: {}", exc)
                     return None
 
@@ -1248,7 +1247,7 @@ class UnifiedAIClient:
         self,
         candidate: ResolvedModel,
         model_id: str,
-    ) -> Optional[Any]:
+    ) -> Any | None:
         """通过适配器获取单个模型元数据 / Fetch one model via adapter."""
         adapter = _get_adapter(candidate.provider.family)
         return await adapter.fetch_model_metadata(
@@ -1257,7 +1256,7 @@ class UnifiedAIClient:
 
 
 __all__ = [
-    "UnifiedAIClient",
-    "FallbackConfig",
     "AttemptRecord",
+    "FallbackConfig",
+    "UnifiedAIClient",
 ]

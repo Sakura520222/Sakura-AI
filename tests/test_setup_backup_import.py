@@ -90,9 +90,13 @@ async def test_setup_backup_inspection_is_disabled_after_setup(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_setup_complete_revalidates_backup_and_passes_parsed_sections(monkeypatch):
+async def test_setup_complete_revalidates_backup_and_passes_parsed_sections(
+    monkeypatch,
+):
     monkeypatch.setattr(setup_route, "is_bootstrap_mode", lambda: True)
-    complete = AsyncMock(return_value={"success": False, "message": "stop before restart"})
+    complete = AsyncMock(
+        return_value={"success": False, "message": "stop before restart"}
+    )
     monkeypatch.setattr(setup_route.setup_service, "complete_setup", complete)
 
     response = await setup_route.complete_setup(
@@ -278,12 +282,10 @@ async def test_restore_failure_does_not_mark_setup_completed(monkeypatch):
 
 
 def test_setup_template_submits_backup_only_with_final_completion():
-    source = (
-        setup_route.templates.env.loader.get_source(
-            setup_route.templates.env,
-            "setup_wizard.html",
-        )[0]
-    )
+    source = setup_route.templates.env.loader.get_source(
+        setup_route.templates.env,
+        "setup_wizard.html",
+    )[0]
 
     assert "/setup/api/backup/inspect" in source
     assert "map.CONFIG_BACKUP = this.backupContent" in source

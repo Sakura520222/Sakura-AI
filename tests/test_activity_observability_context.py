@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import re
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import pytest
 from sqlalchemy import create_engine, event
@@ -15,10 +15,10 @@ from sqlalchemy.pool import StaticPool
 from backend.models.database import Base
 from backend.services.activity_observability.context_service import (
     AVAILABILITY_UNAVAILABLE,
+    SOURCE_PROVIDER,
     ContextService,
     ContextSnapshotFields,
     MeasuredValue,
-    SOURCE_PROVIDER,
     StaleThreadLeaseError,
 )
 
@@ -106,7 +106,9 @@ def db_session():
         dbapi_connection.create_function(
             "regexp",
             2,
-            lambda pattern, value: bool(value is not None and re.search(pattern, value)),
+            lambda pattern, value: bool(
+                value is not None and re.search(pattern, value)
+            ),
         )
         dbapi_connection.execute("PRAGMA foreign_keys=ON")
 
@@ -181,7 +183,7 @@ def _make_work_unit(db_session, thread):
         protocol_family="anthropic_native",
         endpoint_fingerprint="a" * 64,
         config_snapshot_version=1,
-        captured_at=datetime(2026, 7, 18, tzinfo=timezone.utc),
+        captured_at=datetime(2026, 7, 18, tzinfo=UTC),
     )
     db_session._session.add(snapshot)
     db_session._session.flush()
@@ -212,7 +214,9 @@ def _make_work_unit(db_session, thread):
 
 def _make_messages(db_session, thread, work_unit, count):
     """Create canonical message fixtures so manifests use real message IDs."""
-    from backend.models.activity_observability_models import ActivityObservabilityMessage
+    from backend.models.activity_observability_models import (
+        ActivityObservabilityMessage,
+    )
 
     messages = []
     for seq in range(count):
@@ -240,7 +244,9 @@ def test_measured_value_requires_unavailable_pairing_for_null():
 
 def test_measured_value_rejects_non_null_marked_unavailable():
     with pytest.raises(ValueError):
-        MeasuredValue(value=100, availability=AVAILABILITY_UNAVAILABLE, source=SOURCE_PROVIDER)
+        MeasuredValue(
+            value=100, availability=AVAILABILITY_UNAVAILABLE, source=SOURCE_PROVIDER
+        )
 
 
 @pytest.mark.asyncio
@@ -325,7 +331,9 @@ async def test_snapshot_requires_revision_and_owner(context_service):
 
 
 @pytest.mark.asyncio
-async def test_canonical_message_excludes_reasoning_content(context_service, db_session):
+async def test_canonical_message_excludes_reasoning_content(
+    context_service, db_session
+):
     thread = _make_thread(db_session)
     work_unit = _make_work_unit(db_session, thread)
     messages = _make_messages(db_session, thread, work_unit, 1)

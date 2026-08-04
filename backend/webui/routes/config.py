@@ -1336,7 +1336,10 @@ async def save_general_config(
                     description="协议信封修复最大次数",
                 )
                 db.add(cfg)
-                changed["protocol_repair_max_attempts"] = {"old": "(无)", "new": str(val)}
+                changed["protocol_repair_max_attempts"] = {
+                    "old": "(无)",
+                    "new": str(val),
+                }
             elif cfg.key_value != str(val):
                 changed["protocol_repair_max_attempts"] = {
                     "old": cfg.key_value,

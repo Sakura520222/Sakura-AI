@@ -213,8 +213,16 @@ async def test_append_is_one_outer_transaction_and_rollback_removes_both_rows(db
 
     assert db.commit_calls == 0
     outbox = (
-        await db.execute(select(ActivityOutbox).where(ActivityOutbox.event_uuid == event_row.event_uuid))
-    ).scalars().all()
+        (
+            await db.execute(
+                select(ActivityOutbox).where(
+                    ActivityOutbox.event_uuid == event_row.event_uuid
+                )
+            )
+        )
+        .scalars()
+        .all()
+    )
     assert len(outbox) == 1
     assert json.loads(outbox[0].payload_json) == {
         "event_id": event_row.event_uuid,
@@ -263,7 +271,9 @@ async def test_cross_session_parent_chain_is_rejected_without_sequence_or_rows(d
 
 
 @pytest.mark.asyncio
-async def test_sequence_uuid_and_one_outbox_row_per_recipient_and_empty_audience_is_audit_only(db):
+async def test_sequence_uuid_and_one_outbox_row_per_recipient_and_empty_audience_is_audit_only(
+    db,
+):
     activity_session = _seed_session(db)
     first = await ActivityOutboxService(db).record_event_for_session(
         activity_session.id,
@@ -276,17 +286,27 @@ async def test_sequence_uuid_and_one_outbox_row_per_recipient_and_empty_audience
         recipient_user_ids=[],
     )
 
-    rows = (await db.execute(select(ActivityOutbox).order_by(ActivityOutbox.id))).scalars().all()
+    rows = (
+        (await db.execute(select(ActivityOutbox).order_by(ActivityOutbox.id)))
+        .scalars()
+        .all()
+    )
     assert [row.target_user_id for row in rows] == ["user-a", "user-b"]
     assert {row.event_uuid for row in rows} == {first.event_uuid}
     assert all(row.event_sequence == 1 for row in rows)
     assert second.event_sequence == 2
-    assert (await db.execute(select(ActivityOutbox).where(ActivityOutbox.event_uuid == second.event_uuid))).scalars().all() == []
+    assert (
+        await db.execute(
+            select(ActivityOutbox).where(ActivityOutbox.event_uuid == second.event_uuid)
+        )
+    ).scalars().all() == []
     assert activity_session.session_event_sequence == 2
 
 
 @pytest.mark.asyncio
-async def test_dispatch_reauthorizes_and_publishes_exact_three_field_sse_projection(db, monkeypatch):
+async def test_dispatch_reauthorizes_and_publishes_exact_three_field_sse_projection(
+    db, monkeypatch
+):
     activity_session = _seed_session(db)
     event_row = await append_event_and_outbox(
         db,
@@ -415,7 +435,9 @@ async def test_dispatcher_run_stops_after_stop_without_cancelling_current_sessio
 
 
 @pytest.mark.asyncio
-async def test_dispatch_failure_retries_with_configured_backoff_and_at_least_once_event_id(db):
+async def test_dispatch_failure_retries_with_configured_backoff_and_at_least_once_event_id(
+    db,
+):
     activity_session = _seed_session(db)
     event_row = await append_event_and_outbox(
         db,
@@ -502,8 +524,6 @@ def test_claim_query_compiles_actual_claim_statement_for_mysql_skip_locked(db):
     assert "FOR UPDATE SKIP LOCKED" in sql
     assert "status" in sql and "claimed_at" in sql
     assert "?" not in sql
-
-
 
 
 @pytest.mark.parametrize("user_id", ["", "a\nb", "a\rb", "a\tb", "a" * 256])
@@ -646,7 +666,9 @@ async def test_outbox_old_session_token_cannot_fence_new_claim(
         assert new_claim.claim_token != old_claim.claim_token
 
         if finish_kind == "success":
-            await old_dispatcher._finish_success(first, old_claim.id, old_claim.claim_token)
+            await old_dispatcher._finish_success(
+                first, old_claim.id, old_claim.claim_token
+            )
         elif finish_kind == "failure":
             await old_dispatcher._finish_failure(
                 first, old_claim.id, old_claim.claim_token, RuntimeError("late")
@@ -659,7 +681,9 @@ async def test_outbox_old_session_token_cannot_fence_new_claim(
         current = await second.get(ActivityOutbox, new_claim.id)
         assert current.status == "claimed"
         assert current.claim_token == new_claim.claim_token
-        await new_dispatcher._finish_success(second, new_claim.id, new_claim.claim_token)
+        await new_dispatcher._finish_success(
+            second, new_claim.id, new_claim.claim_token
+        )
         assert (await second.get(ActivityOutbox, new_claim.id)).status == "published"
     finally:
         first_session.close()

@@ -11,7 +11,7 @@ import json
 import re
 from collections import defaultdict
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 
 from sqlalchemy import select
@@ -28,8 +28,8 @@ from backend.models.database import UserConfig, WebUIConfig
 from backend.models.telegram_models import (
     TelegramUser,
     UserRecoveryCode,
-    UserWebAuthnCredential,
     UserRole,
+    UserWebAuthnCredential,
 )
 from backend.services.two_factor_service import (
     TwoFactorNotConfiguredError,
@@ -188,8 +188,8 @@ def _datetime_to_iso(value: datetime | None) -> str | None:
     if value is None:
         return None
     if value.tzinfo is None:
-        value = value.replace(tzinfo=timezone.utc)
-    return value.astimezone(timezone.utc).isoformat()
+        value = value.replace(tzinfo=UTC)
+    return value.astimezone(UTC).isoformat()
 
 
 def _parse_datetime(value: Any, label: str) -> datetime | None:
@@ -198,11 +198,11 @@ def _parse_datetime(value: Any, label: str) -> datetime | None:
     if not isinstance(value, str) or len(value) > 80:
         raise UserBackupError(f"{label} 时间格式无效")
     try:
-        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        parsed = datetime.fromisoformat(value)
     except ValueError as exc:
         raise UserBackupError(f"{label} 时间格式无效") from exc
     if parsed.tzinfo is not None:
-        parsed = parsed.astimezone(timezone.utc).replace(tzinfo=None)
+        parsed = parsed.astimezone(UTC).replace(tzinfo=None)
     return parsed
 
 
@@ -246,9 +246,7 @@ def _validate_int(
 
 def _recovery_code_hash_key_fingerprint() -> str:
     """Return a non-secret fingerprint for the recovery-code HMAC key."""
-    return hashlib.sha256(
-        get_settings().webui_secret_key.encode("utf-8")
-    ).hexdigest()
+    return hashlib.sha256(get_settings().webui_secret_key.encode("utf-8")).hexdigest()
 
 
 def _profile_from_user(user: TelegramUser) -> dict[str, Any]:
@@ -362,7 +360,7 @@ def build_user_backup_document(
     recovery_code_hash_key_fingerprint: str | None = None,
 ) -> dict[str, Any]:
     """Build a stable JSON-compatible user backup document from records."""
-    timestamp = exported_at or datetime.now(timezone.utc)
+    timestamp = exported_at or datetime.now(UTC)
     sorted_users = sorted(
         users,
         key=lambda item: (
@@ -526,7 +524,10 @@ def _validate_personal_config(raw: Any, index: int) -> dict[str, Any]:
         raise UserBackupError(f"{label}结构无效")
 
     raw_overrides = raw.get("dynamic_overrides", [])
-    if not isinstance(raw_overrides, list) or len(raw_overrides) > USER_BACKUP_MAX_CONFIGS:
+    if (
+        not isinstance(raw_overrides, list)
+        or len(raw_overrides) > USER_BACKUP_MAX_CONFIGS
+    ):
         raise UserBackupError(f"{label} dynamic_overrides 无效")
     overrides: list[dict[str, Any]] = []
     seen_keys: set[str] = set()
@@ -554,9 +555,7 @@ def _validate_personal_config(raw: Any, index: int) -> dict[str, Any]:
             255,
             allow_none=True,
         )
-        overrides.append(
-            {"key": key, "value": value, "description": description}
-        )
+        overrides.append({"key": key, "value": value, "description": description})
 
     webui = raw.get("webui")
     if webui is not None:
@@ -590,7 +589,9 @@ def _validate_two_factor(raw: Any, index: int) -> dict[str, Any]:
     _validate_bool(mfa_required, f"{label} mfa_required")
     _validate_bool(totp_enabled, f"{label} totp_enabled")
     secret = raw.get("totp_secret")
-    _validate_string(secret, f"{label} TOTP 密钥", 256, allow_none=True, allow_empty=False)
+    _validate_string(
+        secret, f"{label} TOTP 密钥", 256, allow_none=True, allow_empty=False
+    )
     if totp_enabled and not secret:
         raise UserBackupError(f"{label}已启用 TOTP 但缺少密钥")
     totp_enabled_at = raw.get("totp_enabled_at")
@@ -605,7 +606,10 @@ def _validate_two_factor(raw: Any, index: int) -> dict[str, Any]:
         )
 
     raw_codes = raw.get("recovery_codes", [])
-    if not isinstance(raw_codes, list) or len(raw_codes) > USER_BACKUP_MAX_RECOVERY_CODES:
+    if (
+        not isinstance(raw_codes, list)
+        or len(raw_codes) > USER_BACKUP_MAX_RECOVERY_CODES
+    ):
         raise UserBackupError(f"{label} recovery_codes 无效")
     codes: list[dict[str, Any]] = []
     seen_hashes: set[str] = set()
@@ -614,7 +618,9 @@ def _validate_two_factor(raw: Any, index: int) -> dict[str, Any]:
             raise UserBackupError(f"{label}包含无效恢复码")
         code_hash = code.get("code_hash")
         _validate_string(code_hash, f"{label}恢复码哈希", 128, allow_empty=False)
-        if len(code_hash) not in _RECOVERY_HASH_LENGTHS or not _HEX_RE.fullmatch(code_hash):
+        if len(code_hash) not in _RECOVERY_HASH_LENGTHS or not _HEX_RE.fullmatch(
+            code_hash
+        ):
             raise UserBackupError(f"{label}恢复码哈希格式无效")
         normalized_hash = code_hash.lower()
         if normalized_hash in seen_hashes:
@@ -654,8 +660,12 @@ def _validate_passkeys(raw: Any, index: int) -> list[dict[str, Any]]:
             raise UserBackupError(f"{label}包含无效记录")
         credential_id = item.get("credential_id")
         public_key = item.get("public_key")
-        _validate_string(credential_id, f"{label} credential_id", 1024, allow_empty=False)
-        _validate_string(public_key, f"{label} public_key", 1024 * 1024, allow_empty=False)
+        _validate_string(
+            credential_id, f"{label} credential_id", 1024, allow_empty=False
+        )
+        _validate_string(
+            public_key, f"{label} public_key", 1024 * 1024, allow_empty=False
+        )
         derived_hash = credential_id_hash(credential_id)
         supplied_hash = item.get("credential_id_hash")
         if supplied_hash is not None:
@@ -721,7 +731,9 @@ def parse_user_backup(content: bytes) -> dict[str, Any]:
     if exported_at is not None:
         _parse_datetime(exported_at, "exported_at")
     if "contains_sensitive_values" in payload:
-        _validate_bool(payload["contains_sensitive_values"], "contains_sensitive_values")
+        _validate_bool(
+            payload["contains_sensitive_values"], "contains_sensitive_values"
+        )
 
     fingerprint = payload.get("recovery_code_hash_key_fingerprint")
     _validate_string(
@@ -790,7 +802,9 @@ def parse_user_backup(content: bytes) -> dict[str, Any]:
         "exported_at": exported_at,
         "scope": USER_BACKUP_SCOPE,
         "user_count": len(users),
-        "contains_sensitive_values": bool(payload.get("contains_sensitive_values", True)),
+        "contains_sensitive_values": bool(
+            payload.get("contains_sensitive_values", True)
+        ),
         "recovery_code_hash_key_fingerprint": fingerprint,
         "users": users,
     }
@@ -847,21 +861,27 @@ async def restore_user_backup(
                 by_telegram_id.get(telegram_id) if telegram_id is not None else None
             )
             by_github = (
-                by_github_username.get(github_username)
-                if github_username
-                else None
+                by_github_username.get(github_username) if github_username else None
             )
-            if by_telegram is not None and by_github is not None and by_telegram.id != by_github.id:
+            if (
+                by_telegram is not None
+                and by_github is not None
+                and by_telegram.id != by_github.id
+            ):
                 raise UserBackupError(
                     f"用户身份冲突：telegram_id {telegram_id} 与 github_username {github_username} 指向不同用户"
                 )
             target = by_telegram or by_github
-            match_field = "telegram_id" if by_telegram is not None else (
-                "github_username" if by_github is not None else None
+            match_field = (
+                "telegram_id"
+                if by_telegram is not None
+                else ("github_username" if by_github is not None else None)
             )
             if target is not None:
                 if target.id in seen_existing_ids:
-                    raise UserBackupError(f"备份中的多个用户匹配到同一目标用户 {target.id}")
+                    raise UserBackupError(
+                        f"备份中的多个用户匹配到同一目标用户 {target.id}"
+                    )
                 seen_existing_ids.add(target.id)
             if target is None and telegram_id is None:
                 raise UserBackupError(
@@ -876,18 +896,22 @@ async def restore_user_backup(
         for row in existing_passkeys:
             derived_key = credential_id_hash(row.credential_id)
             if row.credential_id_hash and row.credential_id_hash != derived_key:
-                raise UserBackupError(
-                    f"数据库中通行密钥哈希与凭据不匹配：{row.id}"
-                )
+                raise UserBackupError(f"数据库中通行密钥哈希与凭据不匹配：{row.id}")
             key = derived_key
             previous = passkeys_by_hash.get(key)
             if previous is not None and previous.id != row.id:
                 raise UserBackupError(f"数据库中通行密钥哈希重复：{key}")
             passkeys_by_hash[key] = row
         target_ids = {target.id for _, target, _ in matches if target is not None}
-        target_id_by_payload = {id(raw): target.id for raw, target, _ in matches if target}
+        target_id_by_payload = {
+            id(raw): target.id for raw, target, _ in matches if target
+        }
         for raw_user, target, _ in matches:
-            target_id = target.id if target is not None else target_id_by_payload.get(id(raw_user))
+            target_id = (
+                target.id
+                if target is not None
+                else target_id_by_payload.get(id(raw_user))
+            )
             for passkey in raw_user.get("passkeys", []):
                 existing_passkey = passkeys_by_hash.get(passkey["credential_id_hash"])
                 if existing_passkey is not None and (
@@ -917,20 +941,31 @@ async def restore_user_backup(
                 users_created += 1
                 changed = True
             else:
-                if match_field == "telegram_id" and identity.get("github_username") != target.github_username:
-                    changed = _apply_value(
-                        target, "github_username", identity.get("github_username")
-                    ) or changed
+                if (
+                    match_field == "telegram_id"
+                    and identity.get("github_username") != target.github_username
+                ):
+                    changed = (
+                        _apply_value(
+                            target, "github_username", identity.get("github_username")
+                        )
+                        or changed
+                    )
                 for field in _PROFILE_FIELDS:
                     if field not in profile:
                         continue
-                    changed = _apply_value(
-                        target, field, _profile_value(profile, field)
-                    ) or changed
-                if identity.get("telegram_id") is not None and match_field != "github_username":
-                    changed = _apply_value(
-                        target, "telegram_id", identity["telegram_id"]
-                    ) or changed
+                    changed = (
+                        _apply_value(target, field, _profile_value(profile, field))
+                        or changed
+                    )
+                if (
+                    identity.get("telegram_id") is not None
+                    and match_field != "github_username"
+                ):
+                    changed = (
+                        _apply_value(target, "telegram_id", identity["telegram_id"])
+                        or changed
+                    )
 
             # For new rows SQLAlchemy defaults cover omitted profile fields; explicit backup values win.
             if target.id is None:
@@ -940,31 +975,47 @@ async def restore_user_backup(
             if not existing_target:
                 for field in _PROFILE_FIELDS:
                     if field in profile or field in _PROFILE_DEFAULTS:
-                        changed = _apply_value(
-                            target, field, _profile_value(profile, field)
-                        ) or changed
+                        changed = (
+                            _apply_value(target, field, _profile_value(profile, field))
+                            or changed
+                        )
 
-            changed = _apply_value(
-                target, "mfa_required", bool(two_factor.get("mfa_required", False))
-            ) or changed
-            changed = _apply_value(
-                target, "totp_enabled", bool(two_factor.get("totp_enabled", False))
-            ) or changed
+            changed = (
+                _apply_value(
+                    target, "mfa_required", bool(two_factor.get("mfa_required", False))
+                )
+                or changed
+            )
+            changed = (
+                _apply_value(
+                    target, "totp_enabled", bool(two_factor.get("totp_enabled", False))
+                )
+                or changed
+            )
             raw_secret = two_factor.get("totp_secret")
             encrypted_secret = encrypt_totp_secret(raw_secret) if raw_secret else None
-            changed = _apply_value(
-                target, "totp_secret_encrypted", encrypted_secret
-            ) or changed
-            changed = _apply_value(
-                target,
-                "totp_enabled_at",
-                _parse_datetime(two_factor.get("totp_enabled_at"), "totp_enabled_at"),
-            ) or changed
-            changed = _apply_value(
-                target,
-                "totp_last_used_step",
-                two_factor.get("totp_last_used_step"),
-            ) or changed
+            changed = (
+                _apply_value(target, "totp_secret_encrypted", encrypted_secret)
+                or changed
+            )
+            changed = (
+                _apply_value(
+                    target,
+                    "totp_enabled_at",
+                    _parse_datetime(
+                        two_factor.get("totp_enabled_at"), "totp_enabled_at"
+                    ),
+                )
+                or changed
+            )
+            changed = (
+                _apply_value(
+                    target,
+                    "totp_last_used_step",
+                    two_factor.get("totp_last_used_step"),
+                )
+                or changed
+            )
             if not existing_target:
                 # New rows were counted above; no separate update count is needed.
                 pass
@@ -1021,7 +1072,9 @@ async def restore_user_backup(
                         await db.delete(existing)
                         user_configs_deleted += 1
                     continue
-                description = override.get("description") or DYNAMIC_CONFIG_LABELS.get(key, key)
+                description = override.get("description") or DYNAMIC_CONFIG_LABELS.get(
+                    key, key
+                )
                 if existing is None:
                     db.add(
                         UserConfig(
@@ -1032,7 +1085,10 @@ async def restore_user_backup(
                         )
                     )
                     user_configs_created += 1
-                elif existing.config_value != value or existing.description != description:
+                elif (
+                    existing.config_value != value
+                    or existing.description != description
+                ):
                     existing.config_value = value
                     existing.description = description
                     user_configs_updated += 1
@@ -1072,11 +1128,13 @@ async def restore_user_backup(
                     UserRecoveryCode(
                         user_id=user_id,
                         code_hash=code["code_hash"],
-                        used_at=_parse_datetime(code.get("used_at"), "recovery used_at"),
+                        used_at=_parse_datetime(
+                            code.get("used_at"), "recovery used_at"
+                        ),
                         created_at=_parse_datetime(
                             code.get("created_at"), "recovery created_at"
                         )
-                        or datetime.now(timezone.utc).replace(tzinfo=None),
+                        or datetime.now(UTC).replace(tzinfo=None),
                     )
                 )
                 recovery_codes_imported += 1
@@ -1098,7 +1156,7 @@ async def restore_user_backup(
                             created_at=_parse_datetime(
                                 passkey.get("created_at"), "passkey created_at"
                             )
-                            or datetime.now(timezone.utc).replace(tzinfo=None),
+                            or datetime.now(UTC).replace(tzinfo=None),
                             last_used_at=_parse_datetime(
                                 passkey.get("last_used_at"), "passkey last_used_at"
                             ),

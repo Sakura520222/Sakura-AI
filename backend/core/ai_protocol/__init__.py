@@ -8,10 +8,10 @@ a unified intermediate representation for requests and responses.
 from backend.core.ai_protocol.models import (
     AIErrorCategory,
     AuthScheme,
+    MetadataSource,
     ModelCapabilitySet,
     ModelDiscoveryResult,
     ModelMetadata,
-    MetadataSource,
     ProtocolFamily,
     ProviderDeclaration,
     ReasoningParams,
@@ -30,10 +30,10 @@ from backend.core.ai_protocol.models import (
 __all__ = [
     "AIErrorCategory",
     "AuthScheme",
+    "MetadataSource",
     "ModelCapabilitySet",
     "ModelDiscoveryResult",
     "ModelMetadata",
-    "MetadataSource",
     "ProtocolFamily",
     "ProviderDeclaration",
     "ReasoningParams",

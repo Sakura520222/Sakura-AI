@@ -126,7 +126,7 @@ async def _shutdown_activity_outbox(app: FastAPI) -> None:
             outbox_task,
             timeout=settings.activity_outbox_shutdown_timeout_seconds,
         )
-    except asyncio.TimeoutError:
+    except TimeoutError:
         outbox_task.cancel()
         try:
             await outbox_task

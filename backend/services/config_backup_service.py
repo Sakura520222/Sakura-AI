@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import re
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 
 from sqlalchemy import or_, select
@@ -42,9 +42,7 @@ GLOBAL_SECTION = "global"
 AI_SECTION = "ai"
 SYSTEM_SECTION = "system"
 ALL_SCOPE = "all"
-VALID_SCOPES = frozenset(
-    {GLOBAL_SECTION, AI_SECTION, SYSTEM_SECTION, ALL_SCOPE}
-)
+VALID_SCOPES = frozenset({GLOBAL_SECTION, AI_SECTION, SYSTEM_SECTION, ALL_SCOPE})
 
 GLOBAL_CONFIG_KEYS = frozenset(BASIC_CONFIG_KEYS) | frozenset(
     get_all_dynamic_config_keys()
@@ -141,10 +139,7 @@ def _is_sensitive_record(section: str, record: BackupRecord) -> bool:
         return True
     if section == GLOBAL_SECTION:
         return record.key in _GLOBAL_SENSITIVE_KEYS
-    return (
-        section == SYSTEM_SECTION
-        and record.key in _SYSTEM_BACKUP_SENSITIVE_KEYS
-    )
+    return section == SYSTEM_SECTION and record.key in _SYSTEM_BACKUP_SENSITIVE_KEYS
 
 
 def build_backup_document(
@@ -183,7 +178,7 @@ def build_backup_document(
             ],
         }
 
-    timestamp = exported_at or datetime.now(timezone.utc)
+    timestamp = exported_at or datetime.now(UTC)
     return {
         "format": BACKUP_FORMAT,
         "version": BACKUP_VERSION,
@@ -207,7 +202,10 @@ async def export_config_backup(
         conditions.extend(
             [
                 AppConfig.key_name.in_(AI_CONFIG_KEYS),
-                *(AppConfig.key_name.like(f"{prefix}%") for prefix in AI_CONFIG_PREFIXES),
+                *(
+                    AppConfig.key_name.like(f"{prefix}%")
+                    for prefix in AI_CONFIG_PREFIXES
+                ),
             ]
         )
     if SYSTEM_SECTION in selected_sections:
@@ -280,8 +278,7 @@ def _validate_global_record(record: BackupRecord) -> None:
 
     if record.value is not None and record.key in DYNAMIC_CONFIG_SELECT_OPTIONS:
         valid_values = {
-            str(option["value"])
-            for option in DYNAMIC_CONFIG_SELECT_OPTIONS[record.key]
+            str(option["value"]) for option in DYNAMIC_CONFIG_SELECT_OPTIONS[record.key]
         }
         if record.value not in valid_values:
             raise ConfigBackupError(f"配置项 {record.key} 包含不支持的选项")
@@ -375,7 +372,9 @@ def _validate_ai_account(record: BackupRecord) -> None:
         raise ConfigBackupError(f"AI 账号 {account_id}: {message}")
 
     models = account.get("models") or []
-    if not isinstance(models, list) or any(not isinstance(model, str) for model in models):
+    if not isinstance(models, list) or any(
+        not isinstance(model, str) for model in models
+    ):
         raise ConfigBackupError(f"AI 账号 {account_id} 的模型列表无效")
 
 
@@ -572,7 +571,10 @@ async def restore_config_backup(
         conditions.extend(
             [
                 AppConfig.key_name.in_(AI_CONFIG_KEYS),
-                *(AppConfig.key_name.like(f"{prefix}%") for prefix in AI_CONFIG_PREFIXES),
+                *(
+                    AppConfig.key_name.like(f"{prefix}%")
+                    for prefix in AI_CONFIG_PREFIXES
+                ),
             ]
         )
     if SYSTEM_SECTION in sections:
@@ -611,10 +613,7 @@ async def restore_config_backup(
                     )
                 )
                 created += 1
-            elif (
-                row.key_value != record.value
-                or row.description != record.description
-            ):
+            elif row.key_value != record.value or row.description != record.description:
                 row.key_value = record.value
                 row.description = record.description
                 updated += 1
@@ -644,9 +643,7 @@ def refresh_imported_runtime_config(result: ConfigImportResult) -> None:
     """将恢复后的 DB 覆盖同步到当前进程的 Settings 与配置缓存。"""
     affected_keys = set(result.imported_values) | set(result.deleted_keys)
     runtime_keys = affected_keys & (
-        set(GLOBAL_CONFIG_KEYS)
-        | set(AI_STRATEGY_CONFIG_KEYS)
-        | set(SYSTEM_CONFIG_KEYS)
+        set(GLOBAL_CONFIG_KEYS) | set(AI_STRATEGY_CONFIG_KEYS) | set(SYSTEM_CONFIG_KEYS)
     )
     invalidate_dynamic_config_cache(list(runtime_keys))
 

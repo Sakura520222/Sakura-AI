@@ -5,9 +5,9 @@ import pytest
 from backend.core.ai_protocol.errors import AllCandidatesFailedError
 from backend.core.ai_protocol.models import (
     AuthScheme,
+    MetadataSource,
     ModelCapabilitySet,
     ModelMetadata,
-    MetadataSource,
     ProtocolFamily,
     ProviderDeclaration,
     ReasoningParams,

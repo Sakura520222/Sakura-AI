@@ -7,12 +7,14 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from backend.core.ai_protocol.errors import AllCandidatesFailedError
-from backend.services import history_context_service
-from backend.services import issue_embedding_service
-from backend.services import sakura_consolidation_agent
-from backend.services import sakura_knowledge_extractor
-from backend.services import sakura_memory_service
-from backend.services import star_aid_summary_service
+from backend.services import (
+    history_context_service,
+    issue_embedding_service,
+    sakura_consolidation_agent,
+    sakura_knowledge_extractor,
+    sakura_memory_service,
+    star_aid_summary_service,
+)
 from backend.workers import scan_worker
 
 
@@ -48,7 +50,9 @@ def test_sakura_agents_create_unconfigured_clients_and_no_model_override(monkeyp
 
     monkeypatch.setattr(sakura_knowledge_extractor, "AIApiClient", FakeClient)
     monkeypatch.setattr(sakura_consolidation_agent, "AIApiClient", FakeClient)
-    monkeypatch.setattr(sakura_knowledge_extractor, "get_strategy_config", lambda: object())
+    monkeypatch.setattr(
+        sakura_knowledge_extractor, "get_strategy_config", lambda: object()
+    )
     monkeypatch.setattr(sakura_consolidation_agent, "AIApiClient", FakeClient)
 
     extractor = sakura_knowledge_extractor.SakuraKnowledgeExtractor()
@@ -163,13 +167,12 @@ async def test_star_aid_summary_uses_summary_role_client(monkeypatch):
 @pytest.mark.asyncio
 async def test_issue_verification_propagates_missing_summary_role(monkeypatch):
     """summary 角色配置错误不能伪装成所有候选均已验证。"""
+
     class FailingClient:
         async def call_with_retry(self, **_kwargs):
             raise AllCandidatesFailedError("角色 summary 无可用 AI 候选模型")
 
-    monkeypatch.setattr(
-        issue_embedding_service, "AIApiClient", lambda: FailingClient()
-    )
+    monkeypatch.setattr(issue_embedding_service, "AIApiClient", lambda: FailingClient())
     service = issue_embedding_service.IssueEmbeddingService.__new__(
         issue_embedding_service.IssueEmbeddingService
     )
@@ -180,8 +183,6 @@ async def test_issue_verification_propagates_missing_summary_role(monkeypatch):
             "body",
             [{"number": 1, "title": "issue", "content": "details"}],
         )
-
-
 
 
 def test_scan_role_failure_is_not_converted_to_empty_findings():

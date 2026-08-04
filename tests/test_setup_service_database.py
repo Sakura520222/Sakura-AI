@@ -86,14 +86,19 @@ async def test_aiomysql_url_is_normalized_before_engine():
 @pytest.mark.asyncio
 async def test_setup_init_database_runs_schema_migration_after_create_tables():
     service = SetupService()
-    with patch("backend.models.database.async_engine", object()), patch(
-        "backend.models.database.init_async_db"
-    ) as init_async_db, patch(
-        "backend.models.database.create_tables_async", new_callable=AsyncMock
-    ) as create_tables, patch(
-        "backend.models.database.migrate_schema_async", new_callable=AsyncMock
-    ) as migrate, patch(
-        "backend.models.database.insert_default_configs_async", new_callable=AsyncMock
+    with (
+        patch("backend.models.database.async_engine", object()),
+        patch("backend.models.database.init_async_db") as init_async_db,
+        patch(
+            "backend.models.database.create_tables_async", new_callable=AsyncMock
+        ) as create_tables,
+        patch(
+            "backend.models.database.migrate_schema_async", new_callable=AsyncMock
+        ) as migrate,
+        patch(
+            "backend.models.database.insert_default_configs_async",
+            new_callable=AsyncMock,
+        ),
     ):
         await service.init_database("mysql+asyncmy://u:p@host/db")
     init_async_db.assert_not_called()
@@ -114,17 +119,22 @@ async def test_setup_create_admin_user_runs_migration_when_engine_exists():
     )
     fake_session.execute = AsyncMock(return_value=result)
     fake_session.commit = AsyncMock()
-    with patch("backend.models.database.async_engine", object()), patch(
-        "backend.models.database.async_session", MagicMock(return_value=fake_session)
-    ), patch(
-        "backend.models.database.insert_default_configs_async", new_callable=AsyncMock
-    ), patch(
-        "backend.models.database.migrate_schema_async", new_callable=AsyncMock
-    ) as migrate:
+    with (
+        patch("backend.models.database.async_engine", object()),
+        patch(
+            "backend.models.database.async_session",
+            MagicMock(return_value=fake_session),
+        ),
+        patch(
+            "backend.models.database.insert_default_configs_async",
+            new_callable=AsyncMock,
+        ),
+        patch(
+            "backend.models.database.migrate_schema_async", new_callable=AsyncMock
+        ) as migrate,
+    ):
         await service.create_admin_user("admin", 1, "mysql+asyncmy://u:p@host/db")
     migrate.assert_awaited_once()
-
-
 
 
 @pytest.mark.asyncio

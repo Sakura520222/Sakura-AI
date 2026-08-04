@@ -14,9 +14,8 @@ Replaces legacy ContextCompressor and AgentTeamContextCompressor:
 
 from __future__ import annotations
 
+from typing import Any
 from uuid import uuid4
-
-from typing import Any, Optional
 
 from loguru import logger
 
@@ -31,21 +30,31 @@ from backend.services.ai_reviewer.token_tracker import TokenTracker
 
 try:
     from backend.utils.message_utils import has_missing_tool_results
-except Exception:  # noqa: BLE001
+except Exception:
     # 兜容：若工具模块路径不同，提供本地等价实现 / fallback local impl
     def has_missing_tool_results(messages: list[Any]) -> bool:  # type: ignore[misc]
         pending_ids: set[str] = set()
         for msg in messages:
-            role = msg.get("role") if isinstance(msg, dict) else getattr(msg, "role", "")
+            role = (
+                msg.get("role") if isinstance(msg, dict) else getattr(msg, "role", "")
+            )
             tool_calls = (
-                msg.get("tool_calls") if isinstance(msg, dict) else getattr(msg, "tool_calls", None)
+                msg.get("tool_calls")
+                if isinstance(msg, dict)
+                else getattr(msg, "tool_calls", None)
             )
             tool_call_id = (
-                msg.get("tool_call_id") if isinstance(msg, dict) else getattr(msg, "tool_call_id", None)
+                msg.get("tool_call_id")
+                if isinstance(msg, dict)
+                else getattr(msg, "tool_call_id", None)
             )
             if role == "assistant" and tool_calls:
                 for tc in tool_calls or []:
-                    tc_id = tc.get("id") if isinstance(tc, dict) else getattr(tc, "id", None)
+                    tc_id = (
+                        tc.get("id")
+                        if isinstance(tc, dict)
+                        else getattr(tc, "id", None)
+                    )
                     if tc_id:
                         pending_ids.add(str(tc_id))
             elif role == "tool" and tool_call_id:
@@ -89,7 +98,7 @@ class UnifiedContextCompressor:
         candidate: ResolvedModel,
         messages: list[UnifiedMessage],
         *,
-        tracker: Optional[TokenTracker] = None,
+        tracker: TokenTracker | None = None,
     ) -> tuple[bool, list[UnifiedMessage]]:
         """按预算决定是否压缩，返回 (是否压缩, 消息列表).
 
@@ -138,8 +147,8 @@ class UnifiedContextCompressor:
         *,
         candidate: ResolvedModel,
         messages: list[UnifiedMessage],
-        system: Optional[str] = None,
-    ) -> Optional[list[UnifiedMessage]]:
+        system: str | None = None,
+    ) -> list[UnifiedMessage] | None:
         """强制压缩入口（供 UnifiedAIClient 超限恢复调用）.
 
         Force-compress entry used by UnifiedAIClient overflow recovery.
@@ -171,7 +180,12 @@ class UnifiedContextCompressor:
     def _has_pending_tool_results(messages: list[UnifiedMessage]) -> bool:
         """检查是否存在未回收工具结果 / Check for pending tool results."""
         dict_messages = [
-            {"role": m.role, "content": m.content, "tool_calls": None, "tool_call_id": m.tool_call_id}
+            {
+                "role": m.role,
+                "content": m.content,
+                "tool_calls": None,
+                "tool_call_id": m.tool_call_id,
+            }
             for m in messages
         ]
         # 还原 tool_calls 形态 / restore tool_calls shape
@@ -185,9 +199,9 @@ class UnifiedContextCompressor:
         candidate: ResolvedModel,
         messages: list[UnifiedMessage],
         *,
-        system: Optional[str] = None,
-        tracker: Optional[TokenTracker] = None,
-    ) -> Optional[list[UnifiedMessage]]:
+        system: str | None = None,
+        tracker: TokenTracker | None = None,
+    ) -> list[UnifiedMessage] | None:
         """调用当前候选模型生成历史摘要并组装压缩消息.
 
         Summarize via the current candidate's adapter and assemble the
@@ -228,7 +242,7 @@ class UnifiedContextCompressor:
                 request,
                 timeout=120.0,
             )
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             logger.warning("压缩摘要调用失败，放弃压缩: {}", exc)
             return None
 
@@ -271,7 +285,7 @@ class UnifiedContextCompressor:
 
     @staticmethod
     def _split_system(
-        messages: list[UnifiedMessage], explicit: Optional[str]
+        messages: list[UnifiedMessage], explicit: str | None
     ) -> tuple[str, list[UnifiedMessage]]:
         parts: list[str] = []
         body: list[UnifiedMessage] = []
@@ -286,7 +300,7 @@ class UnifiedContextCompressor:
         return "\n\n".join(parts), body
 
     @staticmethod
-    def _last_user_message(body: list[UnifiedMessage]) -> Optional[UnifiedMessage]:
+    def _last_user_message(body: list[UnifiedMessage]) -> UnifiedMessage | None:
         for msg in reversed(body):
             if msg.role == "user" and msg.content:
                 return UnifiedMessage(role="user", content=msg.content)

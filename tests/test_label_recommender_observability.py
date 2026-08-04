@@ -25,9 +25,7 @@ async def test_label_recommender_forwards_its_own_observation_lane():
             return SimpleNamespace(
                 choices=[
                     SimpleNamespace(
-                        message=SimpleNamespace(
-                            content='{"labels":[{"name":"bug"}]}'
-                        )
+                        message=SimpleNamespace(content='{"labels":[{"name":"bug"}]}')
                     )
                 ]
             )
@@ -101,9 +99,7 @@ async def test_label_recommender_emits_request_and_response_events():
             return SimpleNamespace(
                 choices=[
                     SimpleNamespace(
-                        message=SimpleNamespace(
-                            content='{"labels":[{"name":"bug"}]}'
-                        )
+                        message=SimpleNamespace(content='{"labels":[{"name":"bug"}]}')
                     )
                 ]
             )
@@ -127,14 +123,12 @@ async def test_label_recommender_emits_request_and_response_events():
     request_events = [
         d
         for et, d in events
-        if et == "message"
-        and d.get("message_kind") == "label_recommendation_request"
+        if et == "message" and d.get("message_kind") == "label_recommendation_request"
     ]
     response_events = [
         d
         for et, d in events
-        if et == "message"
-        and d.get("message_kind") == "label_recommendation_response"
+        if et == "message" and d.get("message_kind") == "label_recommendation_response"
     ]
 
     # 请求覆盖 system + user 两条消息，且携带实际 prompt 内容

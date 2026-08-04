@@ -86,7 +86,7 @@ class AIApiClient:
         context: InvocationContext | None = None,
         observer: Any = None,
         logical_call_factory: Any = uuid4,
-        attempt_kind: Optional[str] = None,
+        attempt_kind: str | None = None,
     ) -> Any:
         """按角色调用统一协议层 / Call the unified protocol layer by role."""
         if not role:
@@ -162,7 +162,7 @@ class AIApiClient:
         context: InvocationContext | None = None,
         observer: Any = None,
         logical_call_factory: Any = uuid4,
-        attempt_kind: Optional[str] = None,
+        attempt_kind: str | None = None,
     ) -> Any:
         """解析角色候选链后调用统一客户端 / Resolve and invoke unified client."""
         try:

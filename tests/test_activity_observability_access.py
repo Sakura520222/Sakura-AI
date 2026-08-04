@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 import pytest
 from sqlalchemy import create_engine, event
@@ -129,7 +129,7 @@ def _event(db, session_id, sequence, visibility="public", payload=None, event_id
         event_type="status",
         visibility=visibility,
         projection_json=json.dumps(payload or {"status": "running"}),
-        created_at=datetime(2026, 7, 20, tzinfo=timezone.utc),
+        created_at=datetime(2026, 7, 20, tzinfo=UTC),
     )
     db.session.add(row)
     db.session.flush()
@@ -165,7 +165,7 @@ def _service(db, authorizer=None, now=None):
             ttl_seconds=60,
             page_size=2,
         ),
-        now=now or (lambda: datetime(2026, 7, 20, tzinfo=timezone.utc)),
+        now=now or (lambda: datetime(2026, 7, 20, tzinfo=UTC)),
     )
 
 
@@ -194,7 +194,7 @@ def _conversation_chain(db):
         status="running",
         current_phase="model_request",
         task_type="review",
-        created_at=datetime(2026, 7, 20, 1, 0, tzinfo=timezone.utc),
+        created_at=datetime(2026, 7, 20, 1, 0, tzinfo=UTC),
     )
     db.session.add(invocation)
     db.session.flush()
@@ -231,7 +231,7 @@ def _conversation_chain(db):
         endpoint_fingerprint="b" * 64,
         contextless_reason="transcript_not_applicable",
         reasoning_availability="omitted",
-        started_at=datetime(2026, 7, 20, 1, 0, 1, tzinfo=timezone.utc),
+        started_at=datetime(2026, 7, 20, 1, 0, 1, tzinfo=UTC),
     )
     db.session.add(attempt)
     db.session.flush()
@@ -259,7 +259,7 @@ def _conversation_chain(db):
         content="legacy-user-secret",
         message_json='{"role":"user","content":"legacy-user-secret"}',
         artifact_id=artifact.id,
-        created_at=datetime(2026, 7, 20, 1, 0, 2, tzinfo=timezone.utc),
+        created_at=datetime(2026, 7, 20, 1, 0, 2, tzinfo=UTC),
     )
     assistant_message = ActivityObservabilityMessage(
         thread_id=thread.id,
@@ -269,7 +269,7 @@ def _conversation_chain(db):
         role="assistant",
         content="visible assistant answer",
         message_json='{"role":"assistant","content":"visible assistant answer"}',
-        created_at=datetime(2026, 7, 20, 1, 0, 3, tzinfo=timezone.utc),
+        created_at=datetime(2026, 7, 20, 1, 0, 3, tzinfo=UTC),
     )
     tool = ActivityToolExecution(
         work_unit_id=work_unit.id,
@@ -280,7 +280,7 @@ def _conversation_chain(db):
         arguments_json='{"token":"legacy-tool-secret"}',
         arguments_sensitivity="internal",
         status="running",
-        created_at=datetime(2026, 7, 20, 1, 0, 4, tzinfo=timezone.utc),
+        created_at=datetime(2026, 7, 20, 1, 0, 4, tzinfo=UTC),
     )
     operation = ActivityContextOperation(
         work_unit_id=work_unit.id,
@@ -288,7 +288,7 @@ def _conversation_chain(db):
         operation_type="canonical_summary",
         trigger_reason="threshold",
         status="completed",
-        created_at=datetime(2026, 7, 20, 1, 0, 5, tzinfo=timezone.utc),
+        created_at=datetime(2026, 7, 20, 1, 0, 5, tzinfo=UTC),
     )
     db.session.add_all([user_message, assistant_message, tool, operation])
     db.session.commit()
@@ -355,7 +355,7 @@ def test_projection_whitelists_event_and_attempt_without_sensitive_fields():
                 "safe_summary": "only safe",
             }
         ),
-        created_at=datetime(2026, 7, 20, tzinfo=timezone.utc),
+        created_at=datetime(2026, 7, 20, tzinfo=UTC),
     )
     projected = project_event(event, {"role": "admin"})
     assert projected["payload"] == {"status": "failed", "safe_summary": "only safe"}
@@ -437,7 +437,7 @@ def test_cursor_config_fails_closed_for_missing_or_short_secret_and_roundtrips()
         cursor_config=CursorConfig(secret="x" * 32, ttl_seconds=60, page_size=2),
         now=lambda: issued,
     )
-    issued = datetime(2026, 7, 20, tzinfo=timezone.utc)
+    issued = datetime(2026, 7, 20, tzinfo=UTC)
     cursor = service.create_cursor(
         session_id=7,
         last_scanned_sequence=3,
@@ -458,7 +458,7 @@ def test_cursor_config_fails_closed_for_missing_or_short_secret_and_roundtrips()
 
 
 def test_cursor_expiry_and_projection_version_reset():
-    issued = datetime(2026, 7, 20, tzinfo=timezone.utc)
+    issued = datetime(2026, 7, 20, tzinfo=UTC)
     service = _service(None, now=lambda: issued + timedelta(seconds=61))
     cursor = service.create_cursor(
         session_id=1,
@@ -747,7 +747,9 @@ async def test_conversation_projection_is_ordered_versioned_and_server_redacted(
 
 
 @pytest.mark.asyncio
-async def test_conversation_projects_tool_round_once_without_blank_protocol_messages(db):
+async def test_conversation_projects_tool_round_once_without_blank_protocol_messages(
+    db,
+):
     observed_session, thread, _, work_unit, attempt, _ = _conversation_chain(db)
     db.session.add_all(
         [
@@ -763,9 +765,7 @@ async def test_conversation_projects_tool_round_once_without_blank_protocol_mess
                     '"tool_calls":[{"id":"tool-77","type":"function",'
                     '"function":{"name":"read_file"}}]}'
                 ),
-                created_at=datetime(
-                    2026, 7, 20, 1, 0, 3, 500000, tzinfo=timezone.utc
-                ),
+                created_at=datetime(2026, 7, 20, 1, 0, 3, 500000, tzinfo=UTC),
             ),
             ActivityObservabilityMessage(
                 thread_id=thread.id,
@@ -776,7 +776,7 @@ async def test_conversation_projects_tool_round_once_without_blank_protocol_mess
                 content=None,
                 message_json='{"role":"tool","tool_call_id":"tool-77"}',
                 tool_call_id="tool-77",
-                created_at=datetime(2026, 7, 20, 1, 0, 5, tzinfo=timezone.utc),
+                created_at=datetime(2026, 7, 20, 1, 0, 5, tzinfo=UTC),
             ),
         ]
     )
@@ -825,7 +825,7 @@ async def test_conversation_projects_allowed_message_kind(db):
                     '{"role":"assistant","content":"{\\"labels\\":[]}",'
                     '"message_kind":"label_recommendation_response"}'
                 ),
-                created_at=datetime(2026, 7, 20, 2, 0, 0, tzinfo=timezone.utc),
+                created_at=datetime(2026, 7, 20, 2, 0, 0, tzinfo=UTC),
             ),
             ActivityObservabilityMessage(
                 thread_id=thread.id,
@@ -834,10 +834,9 @@ async def test_conversation_projects_allowed_message_kind(db):
                 role="user",
                 content=None,
                 message_json=(
-                    '{"role":"user",'
-                    '"message_kind":"label_recommendation_request"}'
+                    '{"role":"user","message_kind":"label_recommendation_request"}'
                 ),
-                created_at=datetime(2026, 7, 20, 2, 0, 1, tzinfo=timezone.utc),
+                created_at=datetime(2026, 7, 20, 2, 0, 1, tzinfo=UTC),
             ),
         ]
     )
@@ -851,9 +850,7 @@ async def test_conversation_projects_allowed_message_kind(db):
         limit=50,
     )
     by_seq = {
-        entry["seq"]: entry
-        for entry in page["entries"]
-        if entry["type"] == "message"
+        entry["seq"]: entry for entry in page["entries"] if entry["type"] == "message"
     }
     assert by_seq[11]["message_kind"] == "label_recommendation_response"
     assert by_seq[12]["message_kind"] == "label_recommendation_request"
@@ -877,10 +874,9 @@ async def test_conversation_strips_unapproved_message_kind(db):
                 role="assistant",
                 content="hi",
                 message_json=(
-                    '{"role":"assistant","content":"hi",'
-                    '"message_kind":"forged_kind"}'
+                    '{"role":"assistant","content":"hi","message_kind":"forged_kind"}'
                 ),
-                created_at=datetime(2026, 7, 20, 2, 0, 2, tzinfo=timezone.utc),
+                created_at=datetime(2026, 7, 20, 2, 0, 2, tzinfo=UTC),
             ),
         ]
     )
@@ -894,9 +890,7 @@ async def test_conversation_strips_unapproved_message_kind(db):
         limit=50,
     )
     by_seq = {
-        entry["seq"]: entry
-        for entry in page["entries"]
-        if entry["type"] == "message"
+        entry["seq"]: entry for entry in page["entries"] if entry["type"] == "message"
     }
     assert by_seq[13].get("message_kind") is None
 
@@ -1049,7 +1043,7 @@ async def test_artifact_route_returns_no_store_decrypted_view(monkeypatch):
                 payload='{"messages":[{"role":"user","content":"secret prompt"}]}',
                 payload_unavailable_reason=None,
                 replay_allowed=False,
-                retention_expires_at=datetime(2026, 8, 1, tzinfo=timezone.utc),
+                retention_expires_at=datetime(2026, 8, 1, tzinfo=UTC),
             )
 
     app = Starlette()

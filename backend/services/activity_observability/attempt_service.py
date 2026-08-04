@@ -32,7 +32,6 @@ from backend.services.activity_observability.contracts import (
 )
 from backend.services.activity_observability.event_service import append_lifecycle_event
 
-
 TERMINAL_ATTEMPT_STATUSES = frozenset({"completed", "failed", "cancelled"})
 ATTEMPT_STATUSES = frozenset({"running", *TERMINAL_ATTEMPT_STATUSES})
 
@@ -826,4 +825,4 @@ class AttemptService:
                 setattr(attempt, f"{field}_source", "provider")
 
 
-__all__ = ["AttemptConflictError", "AttemptService", "ATTEMPT_STATUSES"]
+__all__ = ["ATTEMPT_STATUSES", "AttemptConflictError", "AttemptService"]

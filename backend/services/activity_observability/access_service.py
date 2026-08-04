@@ -12,10 +12,11 @@ import hashlib
 import hmac
 import inspect
 import json
-from dataclasses import dataclass
+from collections.abc import Callable
 from contextlib import asynccontextmanager
-from datetime import datetime, timezone
-from typing import Any, Callable, Protocol
+from dataclasses import dataclass
+from datetime import UTC, datetime
+from typing import Any, Protocol
 
 from sqlalchemy import desc, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -34,11 +35,10 @@ from backend.models.activity_observability_models import (
     ActivityObservabilityEvent,
     ActivityObservabilitySession,
     ActivityThread,
-    ActivityTrigger,
     ActivityToolExecution,
+    ActivityTrigger,
 )
 from backend.models.database import utc_now
-
 
 _INVOCATION_TERMINAL_STATUSES = {
     "completed",
@@ -136,8 +136,8 @@ def _as_utc(value: datetime | None) -> datetime | None:
     if value is None:
         return None
     if value.tzinfo is None:
-        return value.replace(tzinfo=timezone.utc)
-    return value.astimezone(timezone.utc)
+        return value.replace(tzinfo=UTC)
+    return value.astimezone(UTC)
 
 
 def _iso(value: datetime | None) -> str | None:
@@ -163,7 +163,7 @@ def _safe_payload(payload: dict[str, Any], *, admin: bool) -> dict[str, Any]:
     result: dict[str, Any] = {}
     for key, value in payload.items():
         if key in _SAFE_EVENT_PAYLOAD_KEYS or (
-            key.endswith("_availability") or key.endswith("_source")
+            key.endswith(("_availability", "_source"))
         ):
             if isinstance(value, (str, int, float, bool)) or value is None:
                 result[key] = value
@@ -179,7 +179,7 @@ def project_event(
     """Return a REST-safe event projection, never the raw projection JSON."""
     try:
         payload = json.loads(event.projection_json or "{}")
-    except (TypeError, json.JSONDecodeError):
+    except TypeError, json.JSONDecodeError:
         payload = {}
     if not isinstance(payload, dict):
         payload = {}
@@ -462,7 +462,7 @@ class ActivityAccessService:
             return None
         try:
             params = inspect.signature(target).parameters
-        except (TypeError, ValueError):
+        except TypeError, ValueError:
             params = {}
         if any(p.kind == inspect.Parameter.VAR_KEYWORD for p in params.values()):
             value = target(**kwargs)
@@ -711,14 +711,9 @@ class ActivityAccessService:
             raise ActivityNotFoundError("activity object not found")
         resolved_session_id = session_id
         if resolved_session_id is None:
-            if isinstance(row, ActivityInvocation):
+            if isinstance(row, (ActivityInvocation, ActivityInvocationWorkUnit)):
                 resolved_session_id = row.session_id
-            elif isinstance(row, ActivityInvocationWorkUnit):
-                resolved_session_id = row.session_id
-            elif isinstance(row, ActivityModelAttempt):
-                work_unit = await db.get(ActivityInvocationWorkUnit, row.work_unit_id)
-                resolved_session_id = work_unit.session_id if work_unit else None
-            elif isinstance(row, ActivityToolExecution):
+            elif isinstance(row, (ActivityModelAttempt, ActivityToolExecution)):
                 work_unit = await db.get(ActivityInvocationWorkUnit, row.work_unit_id)
                 resolved_session_id = work_unit.session_id if work_unit else None
             elif isinstance(row, ActivityNativeArtifact):
@@ -805,7 +800,7 @@ class ActivityAccessService:
                 projection_version or config.projection_version
             ):
                 raise CursorResetRequiredError("projection version changed")
-            now = (_as_utc(self.now()) or datetime.now(timezone.utc)).timestamp()
+            now = (_as_utc(self.now()) or datetime.now(UTC)).timestamp()
             if now >= int(body["expires_at"]):
                 raise CursorResetRequiredError("cursor expired")
             if int(body["last_scanned_sequence"]) < 0:
@@ -1028,9 +1023,7 @@ class ActivityAccessService:
             await db.execute(
                 select(
                     func.sum(ActivityModelAttempt.input_tokens).label("input_tokens"),
-                    func.sum(ActivityModelAttempt.output_tokens).label(
-                        "output_tokens"
-                    ),
+                    func.sum(ActivityModelAttempt.output_tokens).label("output_tokens"),
                     func.sum(ActivityModelAttempt.reasoning_tokens).label(
                         "reasoning_tokens"
                     ),
@@ -1041,8 +1034,7 @@ class ActivityAccessService:
                 .select_from(ActivityModelAttempt)
                 .join(
                     ActivityInvocationWorkUnit,
-                    ActivityModelAttempt.work_unit_id
-                    == ActivityInvocationWorkUnit.id,
+                    ActivityModelAttempt.work_unit_id == ActivityInvocationWorkUnit.id,
                 )
                 .where(ActivityInvocationWorkUnit.session_id == session_id)
             )

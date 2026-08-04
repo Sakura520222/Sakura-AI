@@ -102,6 +102,7 @@ class ScanWorker:
         from backend.services.activity_observability.integration_service import (
             ActivityIntegrationService,
         )
+
         self.activity_integration = ActivityIntegrationService()
 
     @staticmethod
@@ -117,7 +118,7 @@ class ScanWorker:
         ``activity_events`` table and global ``activity:*`` SSE channel. Retained
         as a shim so existing call sites remain harmless; it writes nothing.
         """
-        return None
+        return
 
     async def get_scan_candidates(self) -> dict:
         """获取待扫描仓库列表（GitHub App 安装仓库 + 冷却期内未扫描）"""
@@ -232,7 +233,9 @@ class ScanWorker:
                     task_id=scan_id,
                 )
             except Exception as observability_exc:
-                logger.warning("扫描 observability admission skipped: {}", observability_exc)
+                logger.warning(
+                    "扫描 observability admission skipped: {}", observability_exc
+                )
 
             # 2. 更新状态为 INDEXING
             await self._update_scan(
@@ -716,9 +719,10 @@ class ScanWorker:
         scan_temperature = settings.scan_temperature
 
         tracker = TokenTracker()
-        role_model, role_context_tokens = await reviewer.api_client.resolve_role_model_context(
-            "main"
-        )
+        (
+            role_model,
+            role_context_tokens,
+        ) = await reviewer.api_client.resolve_role_model_context("main")
         if role_context_tokens and role_context_tokens > 0:
             safe_context = int(
                 role_context_tokens * settings.scan_context_safety_threshold

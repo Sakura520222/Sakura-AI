@@ -11,10 +11,11 @@ import hashlib
 import json
 import re
 from builtins import BaseExceptionGroup, ExceptionGroup
+from collections.abc import AsyncIterator, Awaitable, Callable, Mapping, Sequence
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
-from typing import Any, AsyncIterator, Awaitable, Callable, Mapping, Sequence
+from datetime import UTC, datetime
+from typing import Any
 
 from sqlalchemy import and_, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -29,6 +30,7 @@ from backend.models.activity_observability_models import (
     ActivityTrigger,
 )
 from backend.models.database import utc_now
+from backend.services.activity_observability.attempt_service import AttemptService
 from backend.services.activity_observability.context_service import (
     ContextService,
     ThreadLeaseToken,
@@ -37,17 +39,15 @@ from backend.services.activity_observability.contracts import (
     InvocationContext,
     RoleConfigSnapshot,
 )
-from backend.services.activity_observability.observer import ObservedModelSender
-from backend.services.activity_observability.attempt_service import AttemptService
 from backend.services.activity_observability.legacy_scope_authorizer import (
     LegacyRepositoryScopeAuthorizer,
 )
+from backend.services.activity_observability.observer import ObservedModelSender
 from backend.services.activity_observability.publication_service import (
     PublicationService,
     WorkUnitResultCoordinator,
 )
 from backend.services.activity_observability.service import ActivityObservabilityService
-
 
 _HOST_RE = re.compile(r"^[a-z0-9][a-z0-9.-]*(?::[0-9]+)?$", re.IGNORECASE)
 _SHA_RE = re.compile(r"^[0-9a-fA-F]{7,}$")
@@ -276,7 +276,7 @@ class ActivityIntegrationService:
         if not isinstance(source, str) or not source.strip():
             raise AdmissionError("source host/system instance is required")
         source = source.strip().lower()
-        if source.startswith("https://") or source.startswith("http://"):
+        if source.startswith(("https://", "http://")):
             source = source.split("://", 1)[1].split("/", 1)[0]
         if not _HOST_RE.fullmatch(source):
             raise AdmissionError("source host/system instance is invalid")
@@ -681,9 +681,9 @@ class ActivityIntegrationService:
                     protocol_family=stored.protocol_family,
                     endpoint_fingerprint=stored.endpoint_fingerprint,
                     config_snapshot_version=stored.config_snapshot_version,
-                    captured_at=stored.captured_at.replace(tzinfo=timezone.utc),
+                    captured_at=stored.captured_at.replace(tzinfo=UTC),
                 )
-            except (TypeError, ValueError, json.JSONDecodeError):
+            except TypeError, ValueError, json.JSONDecodeError:
                 pass
         if self._role_snapshot_resolver is not None:
             return await self._role_snapshot_resolver(str(work_unit.purpose))
@@ -746,9 +746,7 @@ class ActivityIntegrationService:
                 with_for_update=True,
             )
             if invocation is None:
-                raise AdmissionError(
-                    f"ActivityInvocation not found: {invocation_id}"
-                )
+                raise AdmissionError(f"ActivityInvocation not found: {invocation_id}")
             if int(invocation.session_id) != int(session_id):
                 raise AdmissionError(
                     "auxiliary invocation does not belong to the requested session"
@@ -839,7 +837,7 @@ class ActivityIntegrationService:
     async def _resolve_snapshot(self, role: str) -> RoleConfigSnapshot:
         if self._role_snapshot_resolver is not None:
             return await self._role_snapshot_resolver(role)
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         model = "unresolved"
         return RoleConfigSnapshot(
             role=role,
@@ -957,7 +955,7 @@ class ActivityIntegrationService:
         for invocation, thread, work_unit, lease in rows:
             expires = lease.expires_at
             if expires is not None and expires.tzinfo is None:
-                expires = expires.replace(tzinfo=timezone.utc)
+                expires = expires.replace(tzinfo=UTC)
             if expires is not None and expires > now:
                 return (
                     invocation,
@@ -978,10 +976,10 @@ class ActivityIntegrationService:
 IntegrationService = ActivityIntegrationService
 
 __all__ = [
-    "AdmissionError",
     "ActivityIntegrationService",
-    "IntegrationService",
+    "AdmissionError",
     "AdmissionResult",
+    "IntegrationService",
     "NormalizedResource",
     "ReviewStartResult",
 ]

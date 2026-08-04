@@ -211,8 +211,13 @@ _BUILTIN: list[ProviderDeclaration] = [
                 context_window_tokens=_CTX_GEMINI,
                 max_output_tokens=65536,
                 capabilities=ModelCapabilitySet(
-                    vision=True, tools=True, thinking=True, effort=True,
-                    temperature=True, top_p=True, top_k=True,
+                    vision=True,
+                    tools=True,
+                    thinking=True,
+                    effort=True,
+                    temperature=True,
+                    top_p=True,
+                    top_k=True,
                 ),
                 reasoning_params=_params(65536, effort="medium"),
                 notes="Multimodal: text/image/video/audio/PDF input. Thinking cannot be disabled on Gemini 3.",
@@ -414,7 +419,11 @@ _BUILTIN: list[ProviderDeclaration] = [
                 context_window_tokens=_CTX_1M,
                 max_output_tokens=32768,
                 capabilities=ModelCapabilitySet(
-                    vision=True, tools=True, thinking=True, temperature=True, top_p=True,
+                    vision=True,
+                    tools=True,
+                    thinking=True,
+                    temperature=True,
+                    top_p=True,
                 ),
                 reasoning_params=_params(32768, thinking={"type": "disabled"}),
                 notes="Thinking off by default; enable via thinking={type:adaptive}.",
@@ -726,9 +735,8 @@ def _to_legacy_view(decl: ProviderDeclaration) -> AIProvider:
     supports_ctx = True
     if decl.id == "anthropic":
         supports_ctx = True  # 新协议族已支持 /v1/models 元数据
-    default_model = (
-        override.get("default_model")
-        or (decl.default_models[0] if decl.default_models else "")
+    default_model = override.get("default_model") or (
+        decl.default_models[0] if decl.default_models else ""
     )
     base_url = override.get("base_url") or decl.base_url
     notes = decl.notes
@@ -806,7 +814,9 @@ def get_builtin_provider(provider_id: str | None) -> ProviderDeclaration:
     """按 id 获取内置声明，未知或空回退到 custom / Get declaration, fallback to custom."""
     if not provider_id:
         return BUILTIN_PROVIDERS["custom"]
-    return BUILTIN_PROVIDERS.get(provider_id.lower().strip(), BUILTIN_PROVIDERS["custom"])
+    return BUILTIN_PROVIDERS.get(
+        provider_id.lower().strip(), BUILTIN_PROVIDERS["custom"]
+    )
 
 
 # =============================================================================

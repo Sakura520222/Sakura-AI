@@ -7,7 +7,6 @@ import re
 from collections.abc import Sequence
 from typing import Any
 
-
 _QUIET_ACTIVITY_SESSION_PATH = re.compile(
     r"^/activity/observability/api/sessions/\d+/"
     r"(?:snapshot|stream|conversation/events)/?$"
@@ -51,7 +50,7 @@ class QuietSuccessfulAccessFilter(logging.Filter):
             method = str(args[1]).upper()
             path = str(args[2])
             status_code = int(args[4])
-        except (TypeError, ValueError):
+        except TypeError, ValueError:
             return None
         return method, path, status_code
 

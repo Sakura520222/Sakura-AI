@@ -11,9 +11,11 @@ import asyncio
 import inspect
 import json
 import secrets
+from collections.abc import Awaitable, Callable, Iterable
+from contextlib import AbstractAsyncContextManager
 from dataclasses import dataclass
 from datetime import timedelta
-from typing import Any, AsyncContextManager, Awaitable, Callable, Iterable, Protocol
+from typing import Any, Protocol
 from uuid import uuid4
 
 from loguru import logger
@@ -29,7 +31,6 @@ from backend.models.activity_observability_models import (
 )
 from backend.models.database import utc_now
 from backend.services.activity_observability.contracts import PublicActivityNotification
-
 
 _ALLOWED_VISIBILITIES = frozenset({"public", "admin_only", "internal", "hidden"})
 _PUBLIC_PROJECTION_VERSION = 1
@@ -157,9 +158,12 @@ async def _call_resolver(
     }
     try:
         parameters = inspect.signature(target).parameters
-    except (TypeError, ValueError):
+    except TypeError, ValueError:
         parameters = {}
-    if any(parameter.kind == inspect.Parameter.VAR_KEYWORD for parameter in parameters.values()):
+    if any(
+        parameter.kind == inspect.Parameter.VAR_KEYWORD
+        for parameter in parameters.values()
+    ):
         result = target(**kwargs)
     else:
         result = target(
@@ -321,7 +325,9 @@ class ActivityOutboxService:
         self.recipient_resolver = recipient_resolver
         self.projection_version = projection_version
 
-    async def append_event_and_outbox(self, **kwargs: Any) -> ActivityObservabilityEvent:
+    async def append_event_and_outbox(
+        self, **kwargs: Any
+    ) -> ActivityObservabilityEvent:
         kwargs.setdefault("recipient_resolver", self.recipient_resolver)
         kwargs.setdefault("projection_version", self.projection_version)
         return await append_event_and_outbox(self.db, **kwargs)
@@ -353,10 +359,11 @@ class OutboxDispatcher:
 
     def __init__(
         self,
-        session_factory: Callable[[], AsyncContextManager[AsyncSession]],
+        session_factory: Callable[[], AbstractAsyncContextManager[AsyncSession]],
         *,
         authorizer: DispatchAuthorizer | Callable[..., Any],
-        publisher: Callable[[str, PublicActivityNotification], Awaitable[None]] | None = None,
+        publisher: Callable[[str, PublicActivityNotification], Awaitable[None]]
+        | None = None,
         config: OutboxDispatcherConfig | None = None,
     ) -> None:
         self.session_factory = session_factory
@@ -372,9 +379,12 @@ class OutboxDispatcher:
         kwargs = {"db": db, "user_id": user_id, "session_id": session_id}
         try:
             parameters = inspect.signature(target).parameters
-        except (TypeError, ValueError):
+        except TypeError, ValueError:
             parameters = {}
-        if any(parameter.kind == inspect.Parameter.VAR_KEYWORD for parameter in parameters.values()):
+        if any(
+            parameter.kind == inspect.Parameter.VAR_KEYWORD
+            for parameter in parameters.values()
+        ):
             result = target(**kwargs)
         else:
             result = target(
@@ -499,11 +509,15 @@ class OutboxDispatcher:
             if exhausted
             else utc_now() + timedelta(seconds=policy.delay_for(attempts)),
         }
-        statement = update(ActivityOutbox).where(
-            ActivityOutbox.id == row_id,
-            ActivityOutbox.status == "claimed",
-            ActivityOutbox.claim_token == claim_token,
-        ).values(**values)
+        statement = (
+            update(ActivityOutbox)
+            .where(
+                ActivityOutbox.id == row_id,
+                ActivityOutbox.status == "claimed",
+                ActivityOutbox.claim_token == claim_token,
+            )
+            .values(**values)
+        )
         result = await db.execute(statement)
         if result.rowcount != 1:
             await db.rollback()
@@ -568,7 +582,9 @@ class OutboxDispatcher:
                     raise
                 except Exception as exc:  # publish failures are retryable
                     await self._finish_failure(db, claim.id, claim.claim_token, exc)
-                    logger.warning("activity outbox delivery deferred: {}", type(exc).__name__)
+                    logger.warning(
+                        "activity outbox delivery deferred: {}", type(exc).__name__
+                    )
                 else:
                     if await self._finish_success(db, claim.id, claim.claim_token):
                         delivered += 1
@@ -582,9 +598,10 @@ class OutboxDispatcher:
                 await self.dispatch_once()
                 try:
                     await asyncio.wait_for(
-                        self._stop_event.wait(), timeout=self.config.poll_interval_seconds
+                        self._stop_event.wait(),
+                        timeout=self.config.poll_interval_seconds,
                     )
-                except asyncio.TimeoutError:
+                except TimeoutError:
                     continue
         finally:
             self._stop_event.set()

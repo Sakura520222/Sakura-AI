@@ -5,11 +5,12 @@ from __future__ import annotations
 import asyncio
 import re
 from dataclasses import FrozenInstanceError, fields
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import pytest
 from sqlalchemy import create_engine, event, select
-from sqlalchemy.dialects.mysql import LONGTEXT, dialect as mysql_dialect
+from sqlalchemy.dialects.mysql import LONGTEXT
+from sqlalchemy.dialects.mysql import dialect as mysql_dialect
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.compiler import compiles
 from sqlalchemy.orm import Session, sessionmaker
@@ -207,7 +208,7 @@ def reviewer_snapshot():
         protocol_family="anthropic_native",
         endpoint_fingerprint="a" * 64,
         config_snapshot_version=3,
-        captured_at=datetime(2026, 7, 18, tzinfo=timezone.utc),
+        captured_at=datetime(2026, 7, 18, tzinfo=UTC),
     )
 
 
@@ -226,7 +227,7 @@ def label_snapshot():
         protocol_family="openai_compatible",
         endpoint_fingerprint="b" * 64,
         config_snapshot_version=4,
-        captured_at=datetime(2026, 7, 18, 1, tzinfo=timezone.utc),
+        captured_at=datetime(2026, 7, 18, 1, tzinfo=UTC),
     )
 
 
@@ -255,7 +256,7 @@ def test_role_config_snapshot_is_deeply_immutable(reviewer_snapshot):
             protocol_family="anthropic_native",
             endpoint_fingerprint="c" * 64,
             config_snapshot_version=1,
-            captured_at=datetime.now(timezone.utc),
+            captured_at=datetime.now(UTC),
         )
 
 
@@ -270,7 +271,7 @@ def test_role_config_snapshot_rejects_mutable_values():
         "protocol_family": "anthropic_native",
         "endpoint_fingerprint": "c" * 64,
         "config_snapshot_version": 1,
-        "captured_at": datetime.now(timezone.utc),
+        "captured_at": datetime.now(UTC),
     }
 
     for field_name in (
@@ -321,7 +322,7 @@ def test_public_notification_exposes_internal_routing_contract():
         work_unit_id=None,
         sequence=7,
         projection_version=2,
-        created_at=datetime(2026, 7, 18, tzinfo=timezone.utc),
+        created_at=datetime(2026, 7, 18, tzinfo=UTC),
     )
 
     assert {field.name for field in fields(notification)} == {
@@ -345,7 +346,7 @@ def test_public_notification_rejects_mutable_values():
         "work_unit_id": None,
         "sequence": 7,
         "projection_version": 2,
-        "created_at": datetime(2026, 7, 18, tzinfo=timezone.utc),
+        "created_at": datetime(2026, 7, 18, tzinfo=UTC),
     }
 
     for field_name in valid:
@@ -379,23 +380,41 @@ async def test_persisted_role_snapshot_contains_no_url_or_credentials_and_belong
     service, db_session, reviewer_snapshot
 ):
     session = await _create_session(service)
-    trigger = await service.create_delivery_trigger(session.id, "snapshot-safe", "b", "h")
+    trigger = await service.create_delivery_trigger(
+        session.id, "snapshot-safe", "b", "h"
+    )
     invocation = await service.create_invocation(session.id, (trigger.id,))
     work_unit = await service.create_work_unit(
-        invocation.id, "reviewer", "primary_required", True, role_snapshot=reviewer_snapshot
+        invocation.id,
+        "reviewer",
+        "primary_required",
+        True,
+        role_snapshot=reviewer_snapshot,
     )
-    stored = await db_session.get(ActivityObservabilityRoleBindingSnapshot, work_unit.role_binding_snapshot_id)
+    stored = await db_session.get(
+        ActivityObservabilityRoleBindingSnapshot, work_unit.role_binding_snapshot_id
+    )
     assert stored is not None
     assert stored.id == work_unit.role_binding_snapshot_id
     serialized = " ".join(
         str(getattr(stored, field))
         for field in (
-            "role", "requested_provider", "requested_model", "requested_thinking_mode",
-            "candidate_chain_json", "account_id", "protocol_family", "endpoint_fingerprint",
+            "role",
+            "requested_provider",
+            "requested_model",
+            "requested_thinking_mode",
+            "candidate_chain_json",
+            "account_id",
+            "protocol_family",
+            "endpoint_fingerprint",
         )
         if getattr(stored, field) is not None
     )
-    assert not re.search(r"https?://|authorization|bearer|api[_-]?key|access[_-]?token|password|secret|credential", serialized, re.I)
+    assert not re.search(
+        r"https?://|authorization|bearer|api[_-]?key|access[_-]?token|password|secret|credential",
+        serialized,
+        re.IGNORECASE,
+    )
     assert stored.candidate_chain_json == '[["anthropic","requested-review-model"]]'
 
 
@@ -407,8 +426,11 @@ async def test_create_work_unit_rejects_thread_from_another_session(
 
     first = await _create_session(service)
     second = await service.get_or_create_session(
-        source_system_instance="github.com", repository_external_id="thread-other",
-        resource_type="pr", resource_number=43, repo_full_name="owner/other",
+        source_system_instance="github.com",
+        repository_external_id="thread-other",
+        resource_type="pr",
+        resource_number=43,
+        repo_full_name="owner/other",
     )
     thread = ActivityThread(session_id=second.id, thread_purpose="reviewer", last_seq=0)
     db_session.add(thread)
@@ -417,8 +439,12 @@ async def test_create_work_unit_rejects_thread_from_another_session(
     invocation = await service.create_invocation(first.id, (trigger.id,))
     with pytest.raises(ValueError, match="thread"):
         await service.create_work_unit(
-            invocation.id, "reviewer", "primary_required", True,
-            role_snapshot=reviewer_snapshot, thread_id=thread.id,
+            invocation.id,
+            "reviewer",
+            "primary_required",
+            True,
+            role_snapshot=reviewer_snapshot,
+            thread_id=thread.id,
         )
 
 
@@ -427,18 +453,27 @@ async def test_create_invocation_flushes_all_trigger_links_and_session_state_wit
     service, db_session
 ):
     session = await _create_session(service)
-    trigger = await service.create_delivery_trigger(session.id, "flush-invocation", "b", "h")
+    trigger = await service.create_delivery_trigger(
+        session.id, "flush-invocation", "b", "h"
+    )
     invocation = await service.create_invocation(session.id, (trigger.id,))
     db_session._session.expire_all()
     links = (
-        await db_session.execute(
-            select(ActivityInvocationTrigger).where(
-                ActivityInvocationTrigger.invocation_id == invocation.id
+        (
+            await db_session.execute(
+                select(ActivityInvocationTrigger).where(
+                    ActivityInvocationTrigger.invocation_id == invocation.id
+                )
             )
         )
-    ).scalars().all()
+        .scalars()
+        .all()
+    )
     assert len(links) == 1
-    assert db_session._session.get(ActivityResourceIdentity, session.resource_identity_id) is not None
+    assert (
+        db_session._session.get(ActivityResourceIdentity, session.resource_identity_id)
+        is not None
+    )
 
 
 @pytest.mark.asyncio
@@ -446,13 +481,21 @@ async def test_create_work_unit_flushes_snapshot_primary_summary_without_committ
     service, db_session, reviewer_snapshot
 ):
     session = await _create_session(service)
-    trigger = await service.create_delivery_trigger(session.id, "flush-work-unit", "b", "h")
+    trigger = await service.create_delivery_trigger(
+        session.id, "flush-work-unit", "b", "h"
+    )
     invocation = await service.create_invocation(session.id, (trigger.id,))
     work_unit = await service.create_work_unit(
-        invocation.id, "reviewer", "primary_required", True, role_snapshot=reviewer_snapshot
+        invocation.id,
+        "reviewer",
+        "primary_required",
+        True,
+        role_snapshot=reviewer_snapshot,
     )
     db_session._session.expire_all()
-    stored = db_session._session.get(ActivityObservabilityRoleBindingSnapshot, work_unit.role_binding_snapshot_id)
+    stored = db_session._session.get(
+        ActivityObservabilityRoleBindingSnapshot, work_unit.role_binding_snapshot_id
+    )
     refreshed_invocation = await service.get_invocation(invocation.id)
     assert stored is not None
     assert refreshed_invocation.primary_work_unit_id == work_unit.id
@@ -463,17 +506,27 @@ async def test_finish_work_unit_flushes_aggregate_without_committing_caller_tran
     service, db_session, reviewer_snapshot
 ):
     session = await _create_session(service)
-    trigger = await service.create_delivery_trigger(session.id, "flush-finish", "b", "h")
+    trigger = await service.create_delivery_trigger(
+        session.id, "flush-finish", "b", "h"
+    )
     invocation = await service.create_invocation(session.id, (trigger.id,))
     work_unit = await service.create_work_unit(
-        invocation.id, "reviewer", "primary_required", True, role_snapshot=reviewer_snapshot
+        invocation.id,
+        "reviewer",
+        "primary_required",
+        True,
+        role_snapshot=reviewer_snapshot,
     )
     await service.finish_work_unit(work_unit.id, "completed")
     db_session._session.expire_all()
     refreshed_invocation = await service.get_invocation(invocation.id)
     assert refreshed_invocation.status == "completed"
+
+
 @pytest.mark.asyncio
-async def test_identity_nested_insert_fault_preserves_outer_transaction(service, db_session):
+async def test_identity_nested_insert_fault_preserves_outer_transaction(
+    service, db_session
+):
     winner = ActivityResourceIdentity(
         source_system_instance="github.com",
         repository_external_id="identity-race",
@@ -523,7 +576,9 @@ async def test_identity_nested_insert_fault_preserves_outer_transaction(service,
 
 
 @pytest.mark.asyncio
-async def test_session_nested_insert_fault_preserves_outer_transaction(service, db_session):
+async def test_session_nested_insert_fault_preserves_outer_transaction(
+    service, db_session
+):
     identity = ActivityResourceIdentity(
         source_system_instance="github.com",
         repository_external_id="session-race",
@@ -578,7 +633,9 @@ async def test_session_nested_insert_fault_preserves_outer_transaction(service, 
 
 
 @pytest.mark.asyncio
-async def test_trigger_nested_insert_fault_preserves_outer_transaction(service, db_session):
+async def test_trigger_nested_insert_fault_preserves_outer_transaction(
+    service, db_session
+):
     session = await _create_session(service)
     db_session.events.clear()
     dedupe_key = "github.com:delivery:trigger-race"
@@ -619,6 +676,8 @@ async def test_trigger_nested_insert_fault_preserves_outer_transaction(service, 
         "add:ActivityThread",
         "flush:ok",
     ]
+
+
 @pytest.mark.asyncio
 async def test_existing_identity_without_session_updates_repo_name_before_session_create(
     service, db_session
@@ -643,9 +702,9 @@ async def test_existing_identity_without_session_updates_repo_name_before_sessio
 
     assert session.resource_identity_id == identity.id
     assert identity.repo_full_name == "new-owner/new-repo"
-    assert (await db_session.get(ActivityResourceIdentity, identity.id)).repo_full_name == (
-        "new-owner/new-repo"
-    )
+    assert (
+        await db_session.get(ActivityResourceIdentity, identity.id)
+    ).repo_full_name == ("new-owner/new-repo")
 
 
 @pytest.mark.asyncio
@@ -714,8 +773,28 @@ async def test_snapshot_allows_colon_delimited_non_secret_identifiers(
 @pytest.mark.parametrize(
     ("query_builder", "arguments"),
     [
-        ("_identity_query", ({"source_system_instance": "github.com", "repository_external_id": "1", "resource_type": "pr", "resource_number": "1"},)),
-        ("_session_query", ({"source_system_instance": "github.com", "repository_external_id": "1", "resource_type": "pr", "resource_number": "1"},)),
+        (
+            "_identity_query",
+            (
+                {
+                    "source_system_instance": "github.com",
+                    "repository_external_id": "1",
+                    "resource_type": "pr",
+                    "resource_number": "1",
+                },
+            ),
+        ),
+        (
+            "_session_query",
+            (
+                {
+                    "source_system_instance": "github.com",
+                    "repository_external_id": "1",
+                    "resource_type": "pr",
+                    "resource_number": "1",
+                },
+            ),
+        ),
         ("_trigger_query", ("github.com:delivery:1",)),
     ],
 )
@@ -724,21 +803,31 @@ def test_recovery_queries_compile_with_mysql_for_update(query_builder, arguments
 
     statement = getattr(service_module, query_builder)(*arguments, for_update=True)
     assert "FOR UPDATE" in str(statement.compile(dialect=mysql_dialect()))
+
+
 @pytest.mark.asyncio
 async def test_required_failure_aggregates_invocation_failed(
     service, reviewer_snapshot, label_snapshot
 ):
     session = await _create_session(service)
-    trigger = await service.create_delivery_trigger(session.id, "required-failure", "b", "h")
+    trigger = await service.create_delivery_trigger(
+        session.id, "required-failure", "b", "h"
+    )
     invocation = await service.create_invocation(session.id, (trigger.id,))
     primary = await service.create_work_unit(
-        invocation.id, "reviewer", "primary_required", True, role_snapshot=reviewer_snapshot
+        invocation.id,
+        "reviewer",
+        "primary_required",
+        True,
+        role_snapshot=reviewer_snapshot,
     )
     required = await service.create_work_unit(
         invocation.id, "required-check", "required", False, role_snapshot=label_snapshot
     )
     await service.finish_work_unit(primary.id, "completed")
-    await service.finish_work_unit(required.id, "failed", error_message="required failed")
+    await service.finish_work_unit(
+        required.id, "failed", error_message="required failed"
+    )
     assert (await service.get_invocation(invocation.id)).status == "failed"
 
 
@@ -750,7 +839,11 @@ async def test_all_non_detached_success_aggregates_completed(
     trigger = await service.create_delivery_trigger(session.id, "all-success", "b", "h")
     invocation = await service.create_invocation(session.id, (trigger.id,))
     primary = await service.create_work_unit(
-        invocation.id, "reviewer", "primary_required", True, role_snapshot=reviewer_snapshot
+        invocation.id,
+        "reviewer",
+        "primary_required",
+        True,
+        role_snapshot=reviewer_snapshot,
     )
     required = await service.create_work_unit(
         invocation.id, "required-check", "required", False, role_snapshot=label_snapshot
@@ -779,6 +872,8 @@ async def test_production_invocation_rejects_empty_trigger_ids(service):
     session = await _create_session(service)
     with pytest.raises(ValueError, match="trigger_ids"):
         await service.create_invocation(session.id, ())
+
+
 @pytest.mark.asyncio
 async def test_session_rename_updates_display_name_without_changing_identity(
     service, db_session
@@ -799,7 +894,9 @@ async def test_session_rename_updates_display_name_without_changing_identity(
     )
 
     assert renamed.id == first.id
-    identity = await db_session.get(ActivityResourceIdentity, first.resource_identity_id)
+    identity = await db_session.get(
+        ActivityResourceIdentity, first.resource_identity_id
+    )
     assert identity.repo_full_name == "new-owner/new-repo"
 
 
@@ -825,7 +922,9 @@ async def test_role_snapshot_rejects_endpoint_url_in_candidate_chain(
     service, reviewer_snapshot
 ):
     session = await _create_session(service)
-    trigger = await service.create_delivery_trigger(session.id, "unsafe-chain", "base", "head")
+    trigger = await service.create_delivery_trigger(
+        session.id, "unsafe-chain", "base", "head"
+    )
     invocation = await service.create_invocation(session.id, (trigger.id,))
     unsafe = RoleConfigSnapshot(
         role=reviewer_snapshot.role,
@@ -867,19 +966,21 @@ async def test_cross_session_trigger_rejection_does_not_consume_trigger(service)
     with pytest.raises(ValueError, match="session"):
         await service.create_invocation(second_session.id, (trigger.id,))
 
-    assert (await service.get_work_unit(trigger.id) if False else trigger).status == "pending"
+    assert (
+        await service.get_work_unit(trigger.id) if False else trigger
+    ).status == "pending"
 
 
 @pytest.mark.asyncio
 async def test_service_flushes_without_owning_caller_transaction(service, db_session):
     session = await _create_session(service)
     assert session.id is not None
-    identity = await db_session.get(ActivityResourceIdentity, session.resource_identity_id)
+    identity = await db_session.get(
+        ActivityResourceIdentity, session.resource_identity_id
+    )
     assert identity is not None
     db_session._session.rollback()
     assert session.id is not None
-
-
 
     with pytest.raises(ValueError, match="source_system_instance"):
         await service.get_or_create_session(

@@ -11,6 +11,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 import backend.core.setup_service as setup_service_module
+from backend import main
 from backend.core.setup_service import SetupService
 from backend.services.database_reset_runtime_service import (
     quiesce_database_reset_runtime,
@@ -19,8 +20,6 @@ from backend.webui import deps as webui_deps
 from backend.webui.routes import activity_observability as activity_routes
 from backend.webui.routes.sse import sse_events
 from backend.webui.sse import SSEManager, sse_manager
-
-import backend.main as main
 
 
 async def _run_isolated_lifespan(app, monkeypatch):

@@ -10,8 +10,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any, Optional
-
+from typing import Any
 
 # 未发现或未配置单模型元数据时的默认上下文窗口（tokens）。
 # Default context window when a model has no discovered or user-provided metadata.
@@ -117,11 +116,11 @@ class ReasoningParams:
     """
 
     max_output_tokens: int = 4096
-    temperature: Optional[float] = None
-    top_p: Optional[float] = None
-    top_k: Optional[int] = None
-    thinking: Optional[dict[str, Any]] = None  # e.g. {"type": "adaptive"}
-    effort: Optional[str] = None  # "low".."max"
+    temperature: float | None = None
+    top_p: float | None = None
+    top_k: int | None = None
+    thinking: dict[str, Any] | None = None  # e.g. {"type": "adaptive"}
+    effort: str | None = None  # "low".."max"
 
 
 # =============================================================================
@@ -184,9 +183,9 @@ class ProviderDeclaration:
     usage_scope_note: str = ""
     website: str = ""
     # 内置模型元数据（旗舰模型）/ built-in per-model metadata
-    models: list["BuiltinModel"] = field(default_factory=list)
+    models: list[BuiltinModel] = field(default_factory=list)
 
-    def endpoint_for(self, family: "ProtocolFamily") -> tuple[str, AuthScheme]:
+    def endpoint_for(self, family: ProtocolFamily) -> tuple[str, AuthScheme]:
         """返回指定协议族的 (base_url, auth_scheme) / Resolve endpoint for a family.
 
         优先取 endpoints[family]，否则回退到默认 base_url。
@@ -223,7 +222,7 @@ class BuiltinModel:
         self,
         provider_id: str,
         source: MetadataSource = MetadataSource.BUILTIN,
-    ) -> "ModelMetadata":
+    ) -> ModelMetadata:
         """转换为 ModelMetadata / Convert to ModelMetadata."""
         return ModelMetadata(
             model_id=self.model_id,
@@ -264,8 +263,8 @@ class ModelDiscoveryResult:
 
     model_id: str
     display_name: str = ""
-    context_window_tokens: Optional[int] = None
-    max_output_tokens: Optional[int] = None
+    context_window_tokens: int | None = None
+    max_output_tokens: int | None = None
 
 
 # =============================================================================
@@ -309,11 +308,11 @@ class UnifiedMessage:
     """
 
     role: str
-    content: Optional[str] = None
-    tool_calls: Optional[list[UnifiedToolCall]] = None
-    tool_call_id: Optional[str] = None
-    reasoning_content: Optional[str] = None
-    name: Optional[str] = None
+    content: str | None = None
+    tool_calls: list[UnifiedToolCall] | None = None
+    tool_call_id: str | None = None
+    reasoning_content: str | None = None
+    name: str | None = None
 
 
 @dataclass
@@ -358,7 +357,7 @@ class UnifiedUsage:
         """OpenAI 风格别名 / OpenAI-style alias for output tokens."""
         return self.output_tokens
 
-    def add(self, other: "UnifiedUsage") -> "UnifiedUsage":
+    def add(self, other: UnifiedUsage) -> UnifiedUsage:
         """累加另一用量，同时保留提供商真实报告字段。"""
         return UnifiedUsage(
             input_tokens=self.input_tokens + other.input_tokens,
@@ -386,14 +385,14 @@ class UnifiedRequest:
     model: str
     messages: list[UnifiedMessage]
     max_tokens: int
-    system: Optional[str] = None
-    tools: Optional[list[UnifiedTool]] = None
-    tool_choice: Optional[str] = None  # "auto" / "none" / "required" / tool name
-    temperature: Optional[float] = None
-    top_p: Optional[float] = None
-    top_k: Optional[int] = None
-    thinking: Optional[dict[str, Any]] = None
-    effort: Optional[str] = None
+    system: str | None = None
+    tools: list[UnifiedTool] | None = None
+    tool_choice: str | None = None  # "auto" / "none" / "required" / tool name
+    temperature: float | None = None
+    top_p: float | None = None
+    top_k: int | None = None
+    thinking: dict[str, Any] | None = None
+    effort: str | None = None
     stream: bool = False
 
 
@@ -409,7 +408,7 @@ class UnifiedResponseMeta:
     # 而非角色首选重算上下文预算（如 Issue 分析的 safe_context）。
     # Context window (tokens) of the winning candidate that actually served
     # the request, so callers budget against the real model, not the primary.
-    context_window_tokens: Optional[int] = None
+    context_window_tokens: int | None = None
 
 
 class _AttributeProxy:
@@ -466,7 +465,7 @@ class UnifiedResponse:
     tool_calls: list[UnifiedToolCall]
     stop_reason: StopReason
     usage: UnifiedUsage
-    reasoning_content: Optional[str] = None
+    reasoning_content: str | None = None
     raw: Any = None
     meta: UnifiedResponseMeta = field(default_factory=UnifiedResponseMeta)
 
@@ -518,13 +517,13 @@ class UnifiedStreamEvent:
     """
 
     type: str  # text/tool/reasoning_start|delta|end/usage/error/done
-    text: Optional[str] = None
-    tool_call: Optional[UnifiedToolCall] = None
-    usage: Optional[UnifiedUsage] = None
-    stop_reason: Optional[StopReason] = None
-    error: Optional[str] = None
-    reasoning_availability: Optional[str] = None
-    provider_event_metadata: Optional[dict[str, Any]] = None
+    text: str | None = None
+    tool_call: UnifiedToolCall | None = None
+    usage: UnifiedUsage | None = None
+    stop_reason: StopReason | None = None
+    error: str | None = None
+    reasoning_availability: str | None = None
+    provider_event_metadata: dict[str, Any] | None = None
 
 
 _SAFE_PROVIDER_METADATA_KEYS = frozenset(
@@ -554,23 +553,31 @@ def safe_provider_event_metadata(value: Any) -> dict[str, Any] | None:
     result: dict[str, Any] = {}
     for key, item in value.items():
         key = str(key)
-        if key.lower() in _SAFE_PROVIDER_METADATA_FORBIDDEN or key not in _SAFE_PROVIDER_METADATA_KEYS:
-            continue
-        if isinstance(item, bool):
-            result[key] = item
-        elif isinstance(item, int) and not isinstance(item, bool) and 0 <= item <= 1_000_000:
-            result[key] = item
-        elif isinstance(item, str) and len(item) <= 128:
-            result[key] = item
-        elif (
-            key == "usage_fields"
-            and isinstance(item, (list, tuple, set, frozenset))
+        if (
+            key.lower() in _SAFE_PROVIDER_METADATA_FORBIDDEN
+            or key not in _SAFE_PROVIDER_METADATA_KEYS
         ):
+            continue
+        if (
+            isinstance(item, bool)
+            or isinstance(item, int)
+            and not isinstance(item, bool)
+            and 0 <= item <= 1_000_000
+            or isinstance(item, str)
+            and len(item) <= 128
+        ):
+            result[key] = item
+        elif key == "usage_fields" and isinstance(item, (list, tuple, set, frozenset)):
             fields = sorted(
                 str(field)
                 for field in item
                 if str(field)
-                in {"input_tokens", "output_tokens", "cached_tokens", "reasoning_tokens"}
+                in {
+                    "input_tokens",
+                    "output_tokens",
+                    "cached_tokens",
+                    "reasoning_tokens",
+                }
             )
             if fields:
                 result[key] = fields
@@ -582,7 +589,12 @@ def usage_from_mapping(value: Any) -> UnifiedUsage:
     if not isinstance(value, dict):
         return UnifiedUsage()
     merged = dict(value)
-    for detail_key in ("input_tokens_details", "output_tokens_details", "prompt_tokens_details", "completion_tokens_details"):
+    for detail_key in (
+        "input_tokens_details",
+        "output_tokens_details",
+        "prompt_tokens_details",
+        "completion_tokens_details",
+    ):
         nested = value.get(detail_key)
         if isinstance(nested, dict):
             merged.update(nested)
@@ -602,7 +614,11 @@ def usage_from_mapping(value: Any) -> UnifiedUsage:
     for target, names in aliases.items():
         for name in names:
             candidate = merged.get(name)
-            if isinstance(candidate, int) and not isinstance(candidate, bool) and candidate >= 0:
+            if (
+                isinstance(candidate, int)
+                and not isinstance(candidate, bool)
+                and candidate >= 0
+            ):
                 parsed[target] = candidate
                 fields.add(target)
                 break
@@ -616,7 +632,11 @@ def usage_from_mapping(value: Any) -> UnifiedUsage:
         "reasoning_tokens",
     ):
         candidate = merged.get(key)
-        if isinstance(candidate, int) and not isinstance(candidate, bool) and candidate >= 0:
+        if (
+            isinstance(candidate, int)
+            and not isinstance(candidate, bool)
+            and candidate >= 0
+        ):
             details[key] = candidate
     return UnifiedUsage(
         **parsed,

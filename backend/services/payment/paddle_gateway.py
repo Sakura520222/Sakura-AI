@@ -438,7 +438,9 @@ class PaddleGateway(PaymentGateway):
             # 延迟导入：paddle_billing SDK 为可选依赖，避免未安装时 import 失败
             from paddle_billing import Client, Environment, Options
             from paddle_billing.Entities.Shared import TransactionStatus
-            from paddle_billing.Resources.Transactions.Operations import UpdateTransaction
+            from paddle_billing.Resources.Transactions.Operations import (
+                UpdateTransaction,
+            )
 
             env = (
                 Environment.SANDBOX

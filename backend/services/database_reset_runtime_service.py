@@ -61,7 +61,7 @@ async def quiesce_database_reset_runtime(app: Any) -> None:
                     asyncio.shield(task),
                     timeout=_OUTBOX_STOP_TIMEOUT_SECONDS,
                 )
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 logger.warning(
                     "活动 Outbox dispatcher 未在 {} 秒内停止，将强制取消",
                     _OUTBOX_STOP_TIMEOUT_SECONDS,

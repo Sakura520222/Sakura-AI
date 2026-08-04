@@ -2,12 +2,12 @@
 
 import pytest
 
+from backend.api.v1.config import AccountSaveRequest, save_ai_account
 from backend.core.ai_protocol.account_store import ProviderAccount
 from backend.core.ai_protocol.models import ProtocolFamily
 from backend.core.ai_protocol.registry import resolve_account_endpoint
 from backend.core.ai_protocol.role_config import _build_candidate_from_account
 from backend.core.ai_providers import get_builtin_provider, list_provider_catalog
-from backend.api.v1.config import AccountSaveRequest, save_ai_account
 
 
 @pytest.mark.asyncio

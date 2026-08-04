@@ -149,7 +149,9 @@ def test_token_tracker_logs_context_usage():
         return SimpleNamespace(
             usage=SimpleNamespace(
                 input_tokens=input_tokens,
-                reported_fields=(frozenset({"input_tokens"}) if reported else frozenset()),
+                reported_fields=(
+                    frozenset({"input_tokens"}) if reported else frozenset()
+                ),
             ),
             meta=SimpleNamespace(context_window_tokens=window),
         )

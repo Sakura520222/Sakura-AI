@@ -11,7 +11,8 @@ on the anthropic SDK.
 from __future__ import annotations
 
 import json
-from typing import Any, AsyncIterator, Optional
+from collections.abc import AsyncIterator
+from typing import Any
 
 import httpx
 from loguru import logger
@@ -102,7 +103,7 @@ class AnthropicNativeAdapter(ProtocolAdapter):
         endpoint: ResolvedEndpoint,
         credential: str,
         model_id: str,
-    ) -> Optional[ModelDiscoveryResult]:
+    ) -> ModelDiscoveryResult | None:
         url = self.resolve_model_detail_url(endpoint, model_id)
         try:
             resp = await self._get(client, url, credential, endpoint)
@@ -139,12 +140,14 @@ class AnthropicNativeAdapter(ProtocolAdapter):
         return results
 
     @staticmethod
-    def _parse_model_detail(payload: Any, model_id: str) -> Optional[ModelDiscoveryResult]:
+    def _parse_model_detail(payload: Any, model_id: str) -> ModelDiscoveryResult | None:
         if not isinstance(payload, dict):
             return None
         return ModelDiscoveryResult(
             model_id=str(payload.get("id") or model_id),
-            display_name=str(payload.get("display_name") or payload.get("id") or model_id),
+            display_name=str(
+                payload.get("display_name") or payload.get("id") or model_id
+            ),
             context_window_tokens=_to_int(payload.get("max_input_tokens")),
             max_output_tokens=_to_int(payload.get("max_tokens")),
         )
@@ -206,7 +209,7 @@ class AnthropicNativeAdapter(ProtocolAdapter):
             try:
                 parsed = json.loads(content)
                 content_text = json.dumps(parsed, ensure_ascii=False)
-            except (json.JSONDecodeError, TypeError):
+            except json.JSONDecodeError, TypeError:
                 content_text = content
             return {
                 "role": "user",
@@ -226,7 +229,7 @@ class AnthropicNativeAdapter(ProtocolAdapter):
             for tc in message.tool_calls:
                 try:
                     input_obj = json.loads(tc.arguments) if tc.arguments else {}
-                except (json.JSONDecodeError, TypeError):
+                except json.JSONDecodeError, TypeError:
                     input_obj = {"raw": tc.arguments}
                 blocks.append(
                     {
@@ -265,9 +268,7 @@ class AnthropicNativeAdapter(ProtocolAdapter):
     # ------------------------------------------------------------------
     # 响应反序列化 / Response deserialization
     # ------------------------------------------------------------------
-    def parse_response(
-        self, payload: dict[str, Any], raw: Any
-    ) -> UnifiedResponse:
+    def parse_response(self, payload: dict[str, Any], raw: Any) -> UnifiedResponse:
         content_blocks = payload.get("content") or []
         text_parts: list[str] = []
         tool_calls: list[UnifiedToolCall] = []
@@ -280,7 +281,7 @@ class AnthropicNativeAdapter(ProtocolAdapter):
             elif btype == "tool_use":
                 try:
                     arguments = json.dumps(block.get("input") or {}, ensure_ascii=False)
-                except (TypeError, ValueError):
+                except TypeError, ValueError:
                     arguments = "{}"
                 tool_calls.append(
                     UnifiedToolCall(
@@ -389,7 +390,7 @@ class AnthropicNativeAdapter(ProtocolAdapter):
         credential: str,
         request: UnifiedRequest,
         *,
-        timeout: Optional[float] = None,
+        timeout: float | None = None,
     ) -> UnifiedResponse:
         url = self.resolve_messages_url(endpoint)
         body = self.serialize_request(request)
@@ -428,7 +429,7 @@ class AnthropicNativeAdapter(ProtocolAdapter):
         credential: str,
         request: UnifiedRequest,
         *,
-        timeout: Optional[float] = None,
+        timeout: float | None = None,
     ) -> AsyncIterator[UnifiedStreamEvent]:
         url = self.resolve_messages_url(endpoint)
         body = self.serialize_request(request)
@@ -477,7 +478,7 @@ class AnthropicNativeAdapter(ProtocolAdapter):
         event_type: str,
         chunk: dict[str, Any],
         current_tool: dict[str, Any],
-    ) -> Optional[UnifiedStreamEvent]:
+    ) -> UnifiedStreamEvent | None:
         if event_type == "message_stop":
             return UnifiedStreamEvent(type="done")
         if event_type == "content_block_start":
@@ -490,7 +491,11 @@ class AnthropicNativeAdapter(ProtocolAdapter):
                     text=None,
                     reasoning_availability="encrypted_opaque" if opaque else "omitted",
                     provider_event_metadata=safe_provider_event_metadata(
-                        {"event": event_type, "block_type": block_type, "redacted": opaque}
+                        {
+                            "event": event_type,
+                            "block_type": block_type,
+                            "redacted": opaque,
+                        }
                     ),
                 )
             if block_type == "tool_use":
@@ -521,7 +526,11 @@ class AnthropicNativeAdapter(ProtocolAdapter):
                 return UnifiedStreamEvent(
                     type="reasoning_start", text=None, reasoning_availability="omitted"
                 )
-            if dtype in {"signature_delta", "redacted_thinking_delta", "redacted_thinking"}:
+            if dtype in {
+                "signature_delta",
+                "redacted_thinking_delta",
+                "redacted_thinking",
+            }:
                 return UnifiedStreamEvent(
                     type="reasoning_delta",
                     text=None,
@@ -531,10 +540,12 @@ class AnthropicNativeAdapter(ProtocolAdapter):
                     ),
                 )
             if dtype == "text_delta":
-                return UnifiedStreamEvent(type="text_delta", text=delta.get("text") or "")
+                return UnifiedStreamEvent(
+                    type="text_delta", text=delta.get("text") or ""
+                )
             if dtype == "input_json_delta":
-                current_tool["arguments"] = (
-                    current_tool.get("arguments", "") + (delta.get("partial_json") or "")
+                current_tool["arguments"] = current_tool.get("arguments", "") + (
+                    delta.get("partial_json") or ""
                 )
                 return UnifiedStreamEvent(
                     type="tool_call_delta",
@@ -555,10 +566,14 @@ class AnthropicNativeAdapter(ProtocolAdapter):
             )
         if event_type == "message_delta":
             usage = chunk.get("usage")
-            stop_reason = _ANTHROPIC_STOP_MAP.get(
-                str(chunk.get("delta", {}).get("stop_reason")),
-                StopReason.END_TURN,
-            ) if chunk.get("delta", {}).get("stop_reason") is not None else None
+            stop_reason = (
+                _ANTHROPIC_STOP_MAP.get(
+                    str(chunk.get("delta", {}).get("stop_reason")),
+                    StopReason.END_TURN,
+                )
+                if chunk.get("delta", {}).get("stop_reason") is not None
+                else None
+            )
             if usage:
                 return UnifiedStreamEvent(
                     type="usage",
@@ -581,11 +596,11 @@ class AnthropicNativeAdapter(ProtocolAdapter):
         return True
 
 
-def _to_int(value: Any) -> Optional[int]:
+def _to_int(value: Any) -> int | None:
     if value is None:
         return None
     try:
         result = int(value)
         return result if result > 0 else None
-    except (TypeError, ValueError):
+    except TypeError, ValueError:
         return None

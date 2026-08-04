@@ -12,7 +12,6 @@ from backend.api.v1 import auth as api_auth
 from backend.api.v1.schemas import OAuthCallbackRequest
 from backend.webui.routes import auth as webui_auth
 
-
 SENSITIVE_VALUES = (
     "state-value",
     "authorization-code",
@@ -125,7 +124,9 @@ async def test_github_login_redirect_does_not_log_state(monkeypatch):
         saved.update(state=state, redirect=redirect)
 
     monkeypatch.setattr(webui_auth, "get_settings", _settings)
-    monkeypatch.setattr(webui_auth.secrets, "token_urlsafe", lambda _length: "state-value")
+    monkeypatch.setattr(
+        webui_auth.secrets, "token_urlsafe", lambda _length: "state-value"
+    )
     monkeypatch.setattr(webui_auth, "_save_oauth_state", save_state)
     monkeypatch.setattr(webui_auth, "logger", logger)
 
@@ -290,7 +291,9 @@ async def test_api_github_callback_non_200_does_not_log_token_response_body(
     )
     monkeypatch.setattr(api_auth, "logger", logger)
 
-    endpoint = getattr(api_auth.github_callback, "__wrapped__", api_auth.github_callback)
+    endpoint = getattr(
+        api_auth.github_callback, "__wrapped__", api_auth.github_callback
+    )
     response = await endpoint(
         None,
         OAuthCallbackRequest(code="authorization-code", state="state-value"),
@@ -433,7 +436,9 @@ async def test_api_github_callback_unexpected_exception_does_not_render_exceptio
     )
     monkeypatch.setattr(api_auth, "logger", logger)
 
-    endpoint = getattr(api_auth.github_callback, "__wrapped__", api_auth.github_callback)
+    endpoint = getattr(
+        api_auth.github_callback, "__wrapped__", api_auth.github_callback
+    )
     response = await endpoint(
         None,
         OAuthCallbackRequest(code="authorization-code", state="state-value"),

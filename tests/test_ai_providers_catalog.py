@@ -1,5 +1,6 @@
 """新内置提供商目录测试 / Tests for the rewritten provider catalog."""
 
+from backend.core.ai_protocol.models import ProtocolFamily
 from backend.core.ai_providers import (
     AI_PROVIDERS,
     BUILTIN_PROVIDERS,
@@ -9,7 +10,6 @@ from backend.core.ai_providers import (
     get_provider_select_options,
     list_ai_providers,
 )
-from backend.core.ai_protocol.models import ProtocolFamily
 
 
 def test_builtin_catalog_covers_all_families_and_mainstream_vendors():
@@ -19,7 +19,15 @@ def test_builtin_catalog_covers_all_families_and_mainstream_vendors():
     # 国产自研模型 / vendor-native compatible
     assert {"deepseek", "qwen", "zai", "doubao", "moonshot", "minimax"} <= ids
     # 聚合器 / aggregators
-    assert {"openrouter", "siliconflow", "together", "groq", "fireworks", "perplexity", "xai"} <= ids
+    assert {
+        "openrouter",
+        "siliconflow",
+        "together",
+        "groq",
+        "fireworks",
+        "perplexity",
+        "xai",
+    } <= ids
     # 本地 / local
     assert {"ollama", "vllm", "lmstudio"} <= ids
     # 自定义 / custom
@@ -34,7 +42,17 @@ def test_anthropic_and_google_use_native_protocols():
 
 def test_legacy_ai_providers_dict_preserves_compat_keys():
     # 旧配置中的 key 必须仍可解析，避免历史配置失效
-    for key in ("openai", "deepseek", "qwen", "zai", "doubao", "siliconflow", "anthropic", "gemini", "custom"):
+    for key in (
+        "openai",
+        "deepseek",
+        "qwen",
+        "zai",
+        "doubao",
+        "siliconflow",
+        "anthropic",
+        "gemini",
+        "custom",
+    ):
         assert key in AI_PROVIDERS
     assert get_ai_provider("unknown").id == "custom"
     assert get_ai_provider(None).id == "custom"

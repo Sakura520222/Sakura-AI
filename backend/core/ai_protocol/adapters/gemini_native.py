@@ -13,7 +13,8 @@ dependency on google-generativeai.
 from __future__ import annotations
 
 import json
-from typing import Any, AsyncIterator, Optional
+from collections.abc import AsyncIterator
+from typing import Any
 
 import httpx
 from loguru import logger
@@ -102,10 +103,8 @@ class GeminiNativeAdapter(ProtocolAdapter):
         endpoint: ResolvedEndpoint,
         credential: str,
         model_id: str,
-    ) -> Optional[ModelDiscoveryResult]:
-        url = self._with_key(
-            f"{endpoint.base_url}models/{model_id}", credential
-        )
+    ) -> ModelDiscoveryResult | None:
+        url = self._with_key(f"{endpoint.base_url}models/{model_id}", credential)
         try:
             resp = await self._get(client, url, endpoint)
             payload = self.parse_json_response(
@@ -143,7 +142,7 @@ class GeminiNativeAdapter(ProtocolAdapter):
         return results
 
     @staticmethod
-    def _parse_model_detail(payload: Any, model_id: str) -> Optional[ModelDiscoveryResult]:
+    def _parse_model_detail(payload: Any, model_id: str) -> ModelDiscoveryResult | None:
         if not isinstance(payload, dict):
             return None
         name = str(payload.get("name") or model_id).removeprefix("models/")
@@ -156,7 +155,7 @@ class GeminiNativeAdapter(ProtocolAdapter):
         )
 
     @staticmethod
-    def _extract_limits(payload: dict[str, Any]) -> tuple[Optional[int], Optional[int]]:
+    def _extract_limits(payload: dict[str, Any]) -> tuple[int | None, int | None]:
         ctx = None
         max_out = None
         ic = payload.get("inputTokenLimit")
@@ -189,7 +188,11 @@ class GeminiNativeAdapter(ProtocolAdapter):
             gen_config["topK"] = request.top_k
         if request.tools:
             body["tools"] = [
-                {"functionDeclarations": [self._serialize_tool(t) for t in request.tools]}
+                {
+                    "functionDeclarations": [
+                        self._serialize_tool(t) for t in request.tools
+                    ]
+                }
             ]
         if request.tool_choice:
             fc = self._serialize_tool_choice(request.tool_choice)
@@ -221,7 +224,7 @@ class GeminiNativeAdapter(ProtocolAdapter):
         if message.role == "tool":
             try:
                 parsed = json.loads(message.content or "{}")
-            except (json.JSONDecodeError, TypeError):
+            except json.JSONDecodeError, TypeError:
                 parsed = {"result": message.content or ""}
             return {
                 "role": "user",
@@ -242,7 +245,7 @@ class GeminiNativeAdapter(ProtocolAdapter):
             for tc in message.tool_calls:
                 try:
                     args = json.loads(tc.arguments) if tc.arguments else {}
-                except (json.JSONDecodeError, TypeError):
+                except json.JSONDecodeError, TypeError:
                     args = {"raw": tc.arguments}
                 parts.append({"functionCall": {"name": tc.name, "args": args}})
             return {"role": role, "parts": parts}
@@ -260,7 +263,7 @@ class GeminiNativeAdapter(ProtocolAdapter):
         }
 
     @staticmethod
-    def _serialize_tool_choice(choice: str) -> Optional[dict[str, Any]]:
+    def _serialize_tool_choice(choice: str) -> dict[str, Any] | None:
         if choice in ("auto",):
             return {"functionCallingConfig": {"mode": "AUTO"}}
         if choice in ("none",):
@@ -296,7 +299,7 @@ class GeminiNativeAdapter(ProtocolAdapter):
                     fc = part["functionCall"]
                     try:
                         arguments = json.dumps(fc.get("args") or {}, ensure_ascii=False)
-                    except (TypeError, ValueError):
+                    except TypeError, ValueError:
                         arguments = "{}"
                     tool_calls.append(
                         UnifiedToolCall(
@@ -306,9 +309,7 @@ class GeminiNativeAdapter(ProtocolAdapter):
                         )
                     )
             finish = candidate.get("finishReason")
-            stop_reason = _GEMINI_STOP_MAP.get(
-                str(finish), StopReason.END_TURN
-            )
+            stop_reason = _GEMINI_STOP_MAP.get(str(finish), StopReason.END_TURN)
         usage = self._parse_usage(payload.get("usageMetadata"))
         return UnifiedResponse(
             content="".join(text_parts),
@@ -414,7 +415,7 @@ class GeminiNativeAdapter(ProtocolAdapter):
         credential: str,
         request: UnifiedRequest,
         *,
-        timeout: Optional[float] = None,
+        timeout: float | None = None,
     ) -> UnifiedResponse:
         base = self.resolve_generate_url(endpoint, request.model)
         url = self._with_key(base, credential)
@@ -462,11 +463,11 @@ class GeminiNativeAdapter(ProtocolAdapter):
         credential: str,
         request: UnifiedRequest,
         *,
-        timeout: Optional[float] = None,
+        timeout: float | None = None,
     ) -> AsyncIterator[UnifiedStreamEvent]:
         base = self.resolve_stream_url(endpoint, request.model)
         url = self._with_key(
-            f"{base}&alt=sse" if "?" not in base else f"{base}&alt=sse",
+            f"{base}?alt=sse" if "?" not in base else f"{base}&alt=sse",
             credential,
         )
         body = self.serialize_request(request)
@@ -503,7 +504,7 @@ class GeminiNativeAdapter(ProtocolAdapter):
             )
 
     @staticmethod
-    def _parse_stream_chunk(chunk: dict[str, Any]) -> Optional[UnifiedStreamEvent]:
+    def _parse_stream_chunk(chunk: dict[str, Any]) -> UnifiedStreamEvent | None:
         candidates = chunk.get("candidates") or []
         if candidates:
             parts = candidates[0].get("content", {}).get("parts") or []
@@ -517,7 +518,10 @@ class GeminiNativeAdapter(ProtocolAdapter):
                             text=part["text"],
                             reasoning_availability="provider_exposed",
                             provider_event_metadata=safe_provider_event_metadata(
-                                {"event": "candidate.content.part", "item_type": "thought"}
+                                {
+                                    "event": "candidate.content.part",
+                                    "item_type": "thought",
+                                }
                             ),
                         )
                     return UnifiedStreamEvent(
@@ -548,7 +552,7 @@ class GeminiNativeAdapter(ProtocolAdapter):
                     fc = part["functionCall"]
                     try:
                         arguments = json.dumps(fc.get("args") or {}, ensure_ascii=False)
-                    except (TypeError, ValueError):
+                    except TypeError, ValueError:
                         arguments = "{}"
                     return UnifiedStreamEvent(
                         type="tool_call_start",

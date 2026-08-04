@@ -120,7 +120,9 @@ async def test_context_compressor_does_not_compress_missing_tool_results(monkeyp
     assert await compressor.build_model_messages(messages) == messages
 
 
-def test_context_compressor_resolve_safe_context_prefers_context_window_tokens(monkeypatch):
+def test_context_compressor_resolve_safe_context_prefers_context_window_tokens(
+    monkeypatch,
+):
     """新版 unified config 解析的 context_window_tokens 优先于 model_context 兜底。"""
     compressor = AgentTeamContextCompressor("any-model", context_window_tokens=800_000)
 
@@ -134,7 +136,9 @@ def test_context_compressor_resolve_safe_context_prefers_context_window_tokens(m
     assert compressor._resolve_safe_context(0.8) == 640_000
 
 
-def test_context_compressor_resolve_safe_context_falls_back_without_override(monkeypatch):
+def test_context_compressor_resolve_safe_context_falls_back_without_override(
+    monkeypatch,
+):
     """未注入 context_window_tokens 时回退 model_context。"""
     compressor = AgentTeamContextCompressor("any-model")
     monkeypatch.setattr(

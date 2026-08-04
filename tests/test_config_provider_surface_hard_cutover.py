@@ -22,7 +22,6 @@ from backend.webui.routes.agent_team import (
     AGENT_TEAM_CONFIG_KEYS,
 )
 
-
 LEGACY_SUPPLIER_KEYS = {
     "ai_provider",
     "openai_api_base",
@@ -64,19 +63,21 @@ def test_settings_and_config_registries_drop_legacy_supplier_keys():
         assert LEGACY_SUPPLIER_KEYS.isdisjoint(registry)
 
     assert {"ai_temperature", "ai_max_tokens"}.issubset(Settings.model_fields)
-    assert {"agent_team_temperature", "agent_team_max_tokens", "agent_team_timeout_seconds"}.issubset(
-        Settings.model_fields
-    )
-    assert {"agent_team_temperature", "agent_team_max_tokens", "agent_team_timeout_seconds"}.issubset(
-        DYNAMIC_CONFIG_GROUPS["agent_team"]["keys"]
-    )
+    assert {
+        "agent_team_temperature",
+        "agent_team_max_tokens",
+        "agent_team_timeout_seconds",
+    }.issubset(Settings.model_fields)
+    assert {
+        "agent_team_temperature",
+        "agent_team_max_tokens",
+        "agent_team_timeout_seconds",
+    }.issubset(DYNAMIC_CONFIG_GROUPS["agent_team"]["keys"])
 
 
 def test_agent_team_webui_surface_excludes_legacy_and_retired_ai_keys():
     assert LEGACY_SUPPLIER_KEYS.isdisjoint(AGENT_TEAM_CONFIG_KEYS)
-    grouped_keys = {
-        key for group in AGENT_TEAM_CONFIG_GROUPS for key in group["keys"]
-    }
+    grouped_keys = {key for group in AGENT_TEAM_CONFIG_GROUPS for key in group["keys"]}
     assert grouped_keys == set(AGENT_TEAM_CONFIG_KEYS)
     assert LEGACY_SUPPLIER_KEYS.isdisjoint(grouped_keys)
 

@@ -7,6 +7,7 @@ migrate the legacy ``activity_*`` tables used by the existing activity page.
 from uuid import uuid4
 
 from sqlalchemy import (
+    TIMESTAMP,
     BigInteger,
     Boolean,
     CheckConstraint,
@@ -17,7 +18,6 @@ from sqlalchemy import (
     Index,
     Integer,
     String,
-    TIMESTAMP,
     Text,
     UniqueConstraint,
     event,
@@ -27,7 +27,6 @@ from sqlalchemy.dialects.mysql import LONGTEXT
 from sqlalchemy.orm import relationship
 
 from backend.models.database import Base, utc_now
-
 
 OBSERVABILITY_PREFIX = "activity_observability_"
 ENDPOINT_FINGERPRINT_LENGTH = 64
@@ -1308,28 +1307,28 @@ ActivityEvent = ActivityObservabilityEvent
 
 
 __all__ = [
-    "ActivityResourceIdentity",
-    "ActivityObservabilitySession",
-    "ActivitySession",
-    "ActivityThread",
-    "ActivityTrigger",
+    "ActivityArtifactAccessLog",
+    "ActivityCanonicalContextRevision",
+    "ActivityContextOperation",
+    "ActivityContextSnapshot",
+    "ActivityEvent",
     "ActivityInvocation",
     "ActivityInvocationTrigger",
-    "ActivityObservabilityRoleBindingSnapshot",
     "ActivityInvocationWorkUnit",
-    "ActivityWorkUnitResult",
-    "ActivityModelAttempt",
-    "ActivityCanonicalContextRevision",
-    "ActivityContextSnapshot",
-    "ActivityContextOperation",
-    "ActivityThreadLease",
-    "ActivityObservabilityMessage",
     "ActivityMessage",
-    "ActivityToolExecution",
+    "ActivityModelAttempt",
     "ActivityNativeArtifact",
-    "ActivityPublication",
     "ActivityObservabilityEvent",
-    "ActivityEvent",
+    "ActivityObservabilityMessage",
+    "ActivityObservabilityRoleBindingSnapshot",
+    "ActivityObservabilitySession",
     "ActivityOutbox",
-    "ActivityArtifactAccessLog",
+    "ActivityPublication",
+    "ActivityResourceIdentity",
+    "ActivitySession",
+    "ActivityThread",
+    "ActivityThreadLease",
+    "ActivityToolExecution",
+    "ActivityTrigger",
+    "ActivityWorkUnitResult",
 ]

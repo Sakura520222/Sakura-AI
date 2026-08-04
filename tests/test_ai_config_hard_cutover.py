@@ -32,7 +32,9 @@ async def test_api_client_requires_role_and_never_constructs_legacy_sdk():
 
 
 @pytest.mark.asyncio
-async def test_unusable_explicit_summary_binding_does_not_fall_back_to_main(monkeypatch):
+async def test_unusable_explicit_summary_binding_does_not_fall_back_to_main(
+    monkeypatch,
+):
     """显式但不可用的 summary 绑定必须失败，而非暗中改用 main。"""
     main_account = ProviderAccount(
         id="main-account",
@@ -54,9 +56,7 @@ async def test_unusable_explicit_summary_binding_does_not_fall_back_to_main(monk
             primary=RoleAssignment(account="main-account", model="gpt-5.6-sol")
         ),
         "summary": RoleBindingConfig(
-            primary=RoleAssignment(
-                account="summary-account", model="gpt-5.6-summary"
-            )
+            primary=RoleAssignment(account="summary-account", model="gpt-5.6-summary")
         ),
     }
 
@@ -87,9 +87,7 @@ async def test_explicit_follow_binding_uses_main_candidates(monkeypatch, role):
         "main": RoleBindingConfig(
             primary=RoleAssignment(account="main-account", model="gpt-5.6-sol")
         ),
-        role: RoleBindingConfig(
-            primary=RoleAssignment(account="main", model="follow")
-        ),
+        role: RoleBindingConfig(primary=RoleAssignment(account="main", model="follow")),
     }
 
     async def get_bindings():
@@ -104,7 +102,9 @@ async def test_explicit_follow_binding_uses_main_candidates(monkeypatch, role):
     chain = await resolve_role_from_config(role)
 
     assert chain is not None
-    assert [candidate.model.model_id for candidate in chain.candidates] == ["gpt-5.6-sol"]
+    assert [candidate.model.model_id for candidate in chain.candidates] == [
+        "gpt-5.6-sol"
+    ]
 
 
 @pytest.mark.asyncio
@@ -146,7 +146,9 @@ async def test_valid_fallback_survives_unusable_primary_binding(monkeypatch):
     chain = await resolve_role_from_config("summary")
 
     assert chain is not None
-    assert [candidate.model.model_id for candidate in chain.candidates] == ["fallback-model"]
+    assert [candidate.model.model_id for candidate in chain.candidates] == [
+        "fallback-model"
+    ]
 
 
 @pytest.mark.asyncio

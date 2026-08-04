@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import json
 from dataclasses import asdict
 from typing import Any
@@ -271,7 +270,7 @@ async def activity_stream(
                     message = await sse_manager.receive(queue, timeout=30)
                     if message is None:
                         return
-                except asyncio.TimeoutError:
+                except TimeoutError:
                     # Revalidate before every heartbeat.  A revoked scope closes
                     # the stream without leaking which session caused the revoke.
                     async with db_module.async_session() as heartbeat_db:
