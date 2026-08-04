@@ -1,2 +1,6 @@
 # Ensure shell scripts always use LF line endings
 *.sh text eol=lf
+
+# Ensure GitHub Actions workflow files use LF line endings
+# (bash run blocks break on CRLF: `do\r` / `then\r` are not recognized as keywords)
+.github/workflows/*.yml text eol=lf
