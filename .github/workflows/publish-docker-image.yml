@@ -1,23 +1,6 @@
 name: 发布 Docker 镜像
 
 on:
-  workflow_dispatch:
-    inputs:
-      ref:
-        description: 要构建的 Git ref（分支、Tag 或 SHA）
-        required: true
-        default: main
-        type: string
-      version:
-        description: 镜像版本（留空时读取 backend/__init__.py）
-        required: false
-        default: ''
-        type: string
-      update_latest:
-        description: 同时更新 latest 标签
-        required: true
-        default: false
-        type: boolean
   workflow_call:
     inputs:
       ref:
