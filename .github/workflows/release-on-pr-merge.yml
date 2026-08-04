@@ -85,13 +85,30 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.MY_RELEASE_PAT || secrets.GITHUB_TOKEN }}
 
+      - name: 检查 LLM 配置
+        id: check_llm
+        env:
+          LLM_BASE_URL: ${{ secrets.LLM_BASE_URL }}
+          LLM_API_KEY: ${{ secrets.LLM_API_KEY }}
+          LLM_MODEL: ${{ secrets.LLM_MODEL }}
+        run: |
+          if [ -n "$LLM_BASE_URL" ] && [ -n "$LLM_API_KEY" ] && [ -n "$LLM_MODEL" ]; then
+            echo "has_llm=true" >> "$GITHUB_OUTPUT"
+            echo "LLM 已配置，将尝试 AI 路径"
+          else
+            echo "has_llm=false" >> "$GITHUB_OUTPUT"
+            echo "LLM 未配置，跳过 Python 安装，直接走 bash 降级路径"
+          fi
+
       - name: 设置 Python 3.14
+        if: steps.check_llm.outputs.has_llm == 'true'
         uses: actions/setup-python@v5
         with:
           python-version: '3.14'
 
       - name: AI 生成 Release 说明
         id: ai_notes
+        if: steps.check_llm.outputs.has_llm == 'true'
         continue-on-error: true
         shell: bash
         env:
@@ -533,11 +550,6 @@ jobs:
           fi
 
           echo "✅ Sakura-AI-Reviewer 项目结构验证通过"
-
-      - name: 设置 Python 3.14
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.14'
 
       - name: 获取版本信息
         id: get_version
