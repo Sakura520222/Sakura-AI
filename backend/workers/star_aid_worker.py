@@ -181,7 +181,8 @@ class StarAidWorker:
             select(
                 StarAidActionLog.target_repository_id,
                 func.count(StarAidActionLog.id),
-            ).where(
+            )
+            .where(
                 StarAidActionLog.target_repository_id.in_(candidates),
                 StarAidActionLog.action.in_([ACTION_STAR, ACTION_MANUAL_STAR]),
                 StarAidActionLog.status == ACTION_STATUS_SUCCESS,

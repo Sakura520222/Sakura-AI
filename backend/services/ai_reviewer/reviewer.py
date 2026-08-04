@@ -6,7 +6,8 @@
 
 import json
 import re
-from typing import Any, Callable, Coroutine, Dict, List, Optional
+from collections.abc import Callable, Coroutine
+from typing import Any
 
 from loguru import logger
 
@@ -23,12 +24,12 @@ from .compression import ContextCompressor
 from .constants import MAX_TOOL_ITERATIONS
 from .label_recommender import LabelRecommender
 from .prompt_builder import PromptBuilder
+from .result_parser import ReviewResultParser
 from .review_protocol import (
     REPAIR_INSTRUCTION,
     ReviewProtocolError,
     safe_protocol_failure,
 )
-from .result_parser import ReviewResultParser
 from .token_tracker import TokenTracker
 from .tools import (
     DiffToolHandler,
@@ -41,8 +42,7 @@ from .tools import (
     ToolManager,
 )
 
-
-PendingUserMessageCallback = Callable[[], Coroutine[Any, Any, Dict[str, Any] | None]]
+PendingUserMessageCallback = Callable[[], Coroutine[Any, Any, dict[str, Any] | None]]
 
 
 def _dump_protocol_failure(strategy: str, review_text: str) -> None:
@@ -67,7 +67,7 @@ def _dump_protocol_failure(strategy: str, review_text: str) -> None:
         logger.warning("保存协议失败载荷失败: {}", exc)
 
 
-def _coerce_tool_call_to_dict(tc: Any) -> Dict[str, Any]:
+def _coerce_tool_call_to_dict(tc: Any) -> dict[str, Any]:
     """把 tool_call 统一为 OpenAI 标准 dict 形态。
 
     tool_calls 可能是 OpenAI SDK 对象（内存新响应）、dict（规范化形态）或字符串
@@ -121,7 +121,7 @@ def _coerce_tool_call_to_dict(tc: Any) -> Dict[str, Any]:
     }
 
 
-def _normalize_tool_calls_inplace(messages: List[Dict[str, Any]]) -> None:
+def _normalize_tool_calls_inplace(messages: list[dict[str, Any]]) -> None:
     """把 messages 中所有 tool_calls 原地规范化为标准 OpenAI dict。"""
     for message in messages:
         tool_calls = message.get("tool_calls")
@@ -262,11 +262,11 @@ class AIReviewer:
     async def _parse_or_repair_review(
         self,
         review_text: str,
-        messages: List[Dict[str, Any]],
+        messages: list[dict[str, Any]],
         strategy: str,
         tracker: TokenTracker,
-        event_callback: Optional[Callable[[str, Dict[str, Any]], Coroutine]] = None,
-    ) -> Dict[str, Any]:
+        event_callback: Callable[[str, dict[str, Any]], Coroutine] | None = None,
+    ) -> dict[str, Any]:
         """Parse a final review and make one format-only repair attempt if needed."""
         try:
             return self.result_parser.parse_review_result(review_text, strategy)
@@ -325,7 +325,7 @@ class AIReviewer:
             logger.error("审查协议修复失败，降级为人工复审: {}", repair_error)
             return safe_protocol_failure(repair_error)
 
-    async def review_pr(self, context: Dict[str, Any], strategy: str) -> Dict[str, Any]:
+    async def review_pr(self, context: dict[str, Any], strategy: str) -> dict[str, Any]:
         """审查PR（标准模式，不使用工具）
 
         Args:
@@ -390,18 +390,18 @@ class AIReviewer:
 
     async def _run_tool_loop(
         self,
-        messages: List[Dict[str, Any]],
+        messages: list[dict[str, Any]],
         system_prompt: str,
         strategy: str,
-        enabled_tools: List[Any],
+        enabled_tools: list[Any],
         repo: Any,
         pr: Any,
         tracker: TokenTracker,
-        context: Dict[str, Any],
+        context: dict[str, Any],
         tool_handler: ToolHandler | None = None,
-        event_callback: Optional[Callable[[str, Dict[str, Any]], Coroutine]] = None,
-        pending_user_message_callback: Optional[PendingUserMessageCallback] = None,
-    ) -> Dict[str, Any]:
+        event_callback: Callable[[str, dict[str, Any]], Coroutine] | None = None,
+        pending_user_message_callback: PendingUserMessageCallback | None = None,
+    ) -> dict[str, Any]:
         """执行多轮工具调用循环
 
         Args:
@@ -660,9 +660,9 @@ class AIReviewer:
 
     async def _append_pending_user_message_if_any(
         self,
-        messages: List[Dict[str, Any]],
-        pending_user_message_callback: Optional[PendingUserMessageCallback],
-        event_callback: Optional[Callable[[str, Dict[str, Any]], Coroutine]] = None,
+        messages: list[dict[str, Any]],
+        pending_user_message_callback: PendingUserMessageCallback | None,
+        event_callback: Callable[[str, dict[str, Any]], Coroutine] | None = None,
     ) -> None:
         """Append a queued incremental user message before an AI request."""
         if not pending_user_message_callback:
@@ -692,8 +692,8 @@ class AIReviewer:
 
     async def _emit_initial_messages(
         self,
-        messages: List[Dict[str, Any]],
-        event_callback: Optional[Callable[[str, Dict[str, Any]], Coroutine]] = None,
+        messages: list[dict[str, Any]],
+        event_callback: Callable[[str, dict[str, Any]], Coroutine] | None = None,
     ) -> None:
         if not event_callback:
             return
@@ -705,14 +705,14 @@ class AIReviewer:
 
     async def review_pr_with_tools(
         self,
-        context: Dict[str, Any],
+        context: dict[str, Any],
         strategy: str,
         repo: Any,
         pr: Any,
-        event_callback: Optional[Callable[[str, Dict[str, Any]], Coroutine]] = None,
-        pending_user_message_callback: Optional[PendingUserMessageCallback] = None,
-        initial_messages: Optional[List[Dict[str, Any]]] = None,
-    ) -> Dict[str, Any]:
+        event_callback: Callable[[str, dict[str, Any]], Coroutine] | None = None,
+        pending_user_message_callback: PendingUserMessageCallback | None = None,
+        initial_messages: list[dict[str, Any]] | None = None,
+    ) -> dict[str, Any]:
         """使用函数工具审查 PR（唯一审查入口）
 
         所有 PR 统一走此方法：初始 prompt 不包含完整 diff，
@@ -874,7 +874,7 @@ class AIReviewer:
 
     async def review_file(
         self, file_path: str, patch: str, strategy: str
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """审查单个文件
 
         Args:
@@ -919,15 +919,15 @@ class AIReviewer:
 
         except Exception as e:
             logger.error("审查文件 {} 时出错: {}", file_path, str(e))
-            return {"file_path": file_path, "review": f"审查失败: {str(e)}"}
+            return {"file_path": file_path, "review": f"审查失败: {e!s}"}
 
     async def recommend_labels(
         self,
-        context: Dict[str, Any],
-        available_labels: Dict[str, Dict[str, Any]],
-        pr_info: Dict[str, Any],
-        existing_labels: List[str] | None = None,
-    ) -> List[Dict[str, Any]]:
+        context: dict[str, Any],
+        available_labels: dict[str, dict[str, Any]],
+        pr_info: dict[str, Any],
+        existing_labels: list[str] | None = None,
+    ) -> list[dict[str, Any]]:
         """推荐PR标签
 
         Args:

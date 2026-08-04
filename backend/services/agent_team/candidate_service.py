@@ -4,14 +4,14 @@ import asyncio
 import json
 import re
 import time
+from collections.abc import Iterable
 from dataclasses import dataclass
-from typing import Any, Iterable
+from typing import Any
 
+from loguru import logger
 from openai import BadRequestError
 from sqlalchemy import and_, desc, func, not_, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
-
-from loguru import logger
 
 from backend.core.config import get_dynamic_config
 from backend.core.github_app import GitHubAppClient
@@ -70,7 +70,7 @@ class AgentTeamCandidateService:
         ttl = get_dynamic_config("agent_team_candidate_cache_ttl")
         try:
             return int(ttl) if ttl is not None else 300
-        except (ValueError, TypeError):
+        except ValueError, TypeError:
             return 300
 
     def _cache_key(self, limit: int, ai_filter_requirement: str | None) -> str:
@@ -903,7 +903,7 @@ def _parse_ai_filter_response(text: str) -> list[dict[str, Any]]:
     raw = _extract_json_payload(text)
     try:
         data = json.loads(raw)
-    except (TypeError, json.JSONDecodeError):
+    except TypeError, json.JSONDecodeError:
         return []
     if isinstance(data, dict):
         data = data.get("items") or data.get("candidates") or data.get("results") or []
@@ -916,7 +916,7 @@ def _parse_ai_filter_response(text: str) -> list[dict[str, Any]]:
             continue
         try:
             source_id = int(item.get("source_id"))
-        except (TypeError, ValueError):
+        except TypeError, ValueError:
             continue
         selected = item.get("selected", True)
         if isinstance(selected, str):
@@ -937,7 +937,7 @@ def _extract_json_payload(text: str) -> str:
     value = (text or "").strip()
     value = re.sub(r"^```(?:json)?\s*", "", value)
     value = re.sub(r"\s*```$", "", value)
-    if value.startswith("[") or value.startswith("{"):
+    if value.startswith(("[", "{")):
         return value
 
     array_match = re.search(r"\[[\s\S]*\]", value)
@@ -953,7 +953,7 @@ def _normalize_score(value: Any, default: int) -> int:
     """规范化 AI 返回评分。"""
     try:
         score = int(float(value))
-    except (TypeError, ValueError):
+    except TypeError, ValueError:
         score = default
     return max(0, min(score, 100))
 

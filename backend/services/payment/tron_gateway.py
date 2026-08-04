@@ -24,7 +24,6 @@
 """
 
 import hashlib
-from typing import Optional
 
 import httpx
 from loguru import logger
@@ -118,7 +117,7 @@ class TronGateway(PaymentGateway):
         """USDT TRC-20 金额解析（6 位小数，字符串→float）"""
         try:
             return int(raw) / 1_000_000
-        except (ValueError, TypeError):
+        except ValueError, TypeError:
             return 0.0
 
     # ------------------------------------------------------------------
@@ -134,7 +133,7 @@ class TronGateway(PaymentGateway):
         user_id: int,
         success_url: str,
         cancel_url: str,
-        metadata: Optional[dict[str, str]] = None,
+        metadata: dict[str, str] | None = None,
     ) -> PaymentIntentResult:
         """创建 TRON USDT 收款订单
 
@@ -187,8 +186,8 @@ class TronGateway(PaymentGateway):
     async def refund(
         self,
         provider_tx_id: str,
-        amount_cents: Optional[int] = None,
-        reason: Optional[str] = None,
+        amount_cents: int | None = None,
+        reason: str | None = None,
     ) -> RefundResult:
         """TRON 链上无法自动退款，需手动操作"""
         return RefundResult(

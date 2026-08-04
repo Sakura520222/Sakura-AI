@@ -1,23 +1,22 @@
 """Sakura 记忆管理 WebUI 路由（超级管理员专用）"""
 
 import asyncio
-from typing import Optional
 
-from fastapi import APIRouter, Request, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from loguru import logger
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.models.database import SakuraMemoryState
 from backend.webui.deps import (
-    require_super_admin,
+    get_csrf_serializer,
     get_db,
     get_templates,
-    get_csrf_serializer,
-    require_csrf,
     get_user_preferences,
-    toast_redirect,
     render_template,
+    require_csrf,
+    require_super_admin,
+    toast_redirect,
 )
 from backend.webui.helpers.admin_log import log_admin_action
 from backend.webui.i18n import detect_language
@@ -98,7 +97,7 @@ async def sakura_memory_page(
     """Sakura 记忆管理主页"""
     result = await db.execute(
         select(SakuraMemoryState)
-        .where(SakuraMemoryState.is_initialized == True)  # noqa: E712
+        .where(SakuraMemoryState.is_initialized == True)
         .order_by(SakuraMemoryState.updated_at.desc())
     )
     repos = result.scalars().all()
@@ -149,7 +148,7 @@ async def view_file(
     # 获取所有仓库列表
     all_repos_result = await db.execute(
         select(SakuraMemoryState)
-        .where(SakuraMemoryState.is_initialized == True)  # noqa: E712
+        .where(SakuraMemoryState.is_initialized == True)
         .order_by(SakuraMemoryState.updated_at.desc())
     )
     all_repos = all_repos_result.scalars().all()
@@ -213,7 +212,7 @@ async def view_repo_memory(
     # 获取所有仓库列表（用于导航）
     all_repos_result = await db.execute(
         select(SakuraMemoryState)
-        .where(SakuraMemoryState.is_initialized == True)  # noqa: E712
+        .where(SakuraMemoryState.is_initialized == True)
         .order_by(SakuraMemoryState.updated_at.desc())
     )
     all_repos = all_repos_result.scalars().all()
@@ -538,7 +537,7 @@ async def _list_sakura_files(repo_full_name: str) -> list:
         return []
 
 
-async def _read_sakura_file(repo_full_name: str, path: str) -> Optional[str]:
+async def _read_sakura_file(repo_full_name: str, path: str) -> str | None:
     """读取 .sakura/ 下的文件内容"""
     try:
         gh_repo = _get_repo(repo_full_name)

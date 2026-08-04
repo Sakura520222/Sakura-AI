@@ -5,7 +5,7 @@
 """
 
 import json
-from typing import Any, Dict
+from typing import Any
 
 from loguru import logger
 
@@ -48,7 +48,7 @@ class ToolHandler:
         self.fetch_url_tool = fetch_url_tool
         self.diff_tool = diff_tool
 
-    def with_diff_tool(self, diff_tool) -> "ToolHandler":
+    def with_diff_tool(self, diff_tool) -> ToolHandler:
         """创建启用指定 PR diff 工具的新处理器"""
         return self.__class__(
             self.file_tool,
@@ -91,7 +91,7 @@ class ToolHandler:
 
     async def handle_tool_call(
         self, tool_call: Any, repo: Any, pr: Any
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """处理AI的工具调用请求
 
         Args:
@@ -233,4 +233,4 @@ class ToolHandler:
 
         except Exception as e:
             logger.error("执行工具 {} 失败: {}", function_name, str(e), exc_info=True)
-            return {"error": f"工具执行失败: {str(e)}"}
+            return {"error": f"工具执行失败: {e!s}"}

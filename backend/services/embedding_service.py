@@ -7,11 +7,11 @@
 - HuggingFace: 本地模型
 """
 
-from typing import List, Optional, Dict
+import threading
+
+import httpx
 from loguru import logger
 from openai import AsyncOpenAI
-import httpx
-import threading
 
 from backend.core.config import get_settings
 
@@ -103,7 +103,7 @@ class EmbeddingService:
             logger.error("❌ 嵌入服务初始化失败: {}", e)
             raise
 
-    async def embed_texts(self, texts: List[str]) -> List[List[float]]:
+    async def embed_texts(self, texts: list[str]) -> list[list[float]]:
         """批量生成文本嵌入向量
 
         Args:
@@ -143,7 +143,7 @@ class EmbeddingService:
             truncated = truncated[:last_break]
         return truncated
 
-    async def _embed_via_openai_api(self, texts: List[str]) -> List[List[float]]:
+    async def _embed_via_openai_api(self, texts: list[str]) -> list[list[float]]:
         """通过 OpenAI 兼容 API 生成嵌入（支持批处理）
 
         支持：SiliconFlow、OpenAI、Ollama
@@ -184,7 +184,7 @@ class EmbeddingService:
             )
             raise
 
-    async def _embed_via_huggingface(self, texts: List[str]) -> List[List[float]]:
+    async def _embed_via_huggingface(self, texts: list[str]) -> list[list[float]]:
         """通过 HuggingFace 本地模型生成嵌入
 
         使用 sentence-transformers 库。
@@ -215,7 +215,7 @@ class EmbeddingService:
             logger.error("❌ HuggingFace 嵌入失败: {}", e)
             raise
 
-    async def embed_query(self, query: str) -> List[float]:
+    async def embed_query(self, query: str) -> list[float]:
         """生成查询文本的嵌入向量
 
         Args:
@@ -302,10 +302,10 @@ class RerankerService:
     async def rerank(
         self,
         query: str,
-        docs: List[Dict[str, any]],
-        top_k: Optional[int] = None,
-        score_threshold: Optional[float] = None,
-    ) -> List[Dict[str, any]]:
+        docs: list[dict[str, any]],
+        top_k: int | None = None,
+        score_threshold: float | None = None,
+    ) -> list[dict[str, any]]:
         """对检索结果重新排序
 
         Args:
@@ -346,10 +346,10 @@ class RerankerService:
     async def _rerank_via_siliconflow(
         self,
         query: str,
-        docs: List[Dict[str, any]],
+        docs: list[dict[str, any]],
         top_k: int,
         score_threshold: float,
-    ) -> List[Dict[str, any]]:
+    ) -> list[dict[str, any]]:
         """通过 SiliconFlow Rerank API 重排序"""
         try:
             settings = get_settings()
@@ -413,8 +413,8 @@ class RerankerService:
 
 
 # 全局单例
-_embedding_service_instance: Optional[EmbeddingService] = None
-_reranker_service_instance: Optional[RerankerService] = None
+_embedding_service_instance: EmbeddingService | None = None
+_reranker_service_instance: RerankerService | None = None
 
 # 线程锁，确保单例初始化的线程安全
 _embedding_service_lock = threading.Lock()

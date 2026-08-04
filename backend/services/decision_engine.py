@@ -1,11 +1,12 @@
 """审查决策引擎"""
 
-from typing import Dict, Any, Tuple
+from typing import Any
+
 from loguru import logger
 
-from backend.models.database import ReviewDecision
 from backend.core.config import get_settings, get_strategy_config
 from backend.core.language_utils import output_text
+from backend.models.database import ReviewDecision
 from backend.services.ai_reviewer.constants import SEVERITY_EMOJI
 
 
@@ -16,7 +17,7 @@ class DecisionEngine:
         """初始化决策引擎"""
         self.policy = self._load_policy()
 
-    def _load_policy(self) -> Dict[str, Any]:
+    def _load_policy(self) -> dict[str, Any]:
         """从配置加载审查策略"""
         try:
             policy = get_strategy_config().config.get("review_policy", {})
@@ -59,7 +60,7 @@ class DecisionEngine:
                 "ai_decision_block_on_critical": True,
             }
 
-    def _get_repo_policy(self, repo_full_name: str) -> Dict[str, Any]:
+    def _get_repo_policy(self, repo_full_name: str) -> dict[str, Any]:
         """获取特定仓库的策略配置"""
         # 检查是否有仓库级别的覆盖配置
         repo_overrides = self.policy.get("repo_overrides", {})
@@ -75,9 +76,9 @@ class DecisionEngine:
 
     def make_decision(
         self,
-        review_result: Dict[str, Any],
+        review_result: dict[str, Any],
         repo_full_name: str,
-    ) -> Tuple[ReviewDecision, str]:
+    ) -> tuple[ReviewDecision, str]:
         """根据审查结果做出决策
 
         Args:
@@ -149,15 +150,15 @@ class DecisionEngine:
         except Exception as e:
             logger.error(f"决策引擎执行失败: {e}", exc_info=True)
             # 出错时默认为COMMENT，避免阻断
-            return (ReviewDecision.COMMENT, f"决策过程出现异常: {str(e)}")
+            return (ReviewDecision.COMMENT, f"决策过程出现异常: {e!s}")
 
     def _apply_ai_decision(
         self,
         ai_decision: str,
         ai_reason: str,
         critical_count: int,
-        policy: Dict[str, Any],
-    ) -> Tuple[ReviewDecision, str]:
+        policy: dict[str, Any],
+    ) -> tuple[ReviewDecision, str]:
         """处理 AI 建议决策，应用安全护栏
 
         Args:
@@ -215,8 +216,8 @@ class DecisionEngine:
         major_count: int,
         minor_count: int,
         suggestion_count: int,
-        policy: Dict[str, Any],
-    ) -> Tuple[ReviewDecision, str]:
+        policy: dict[str, Any],
+    ) -> tuple[ReviewDecision, str]:
         """基于规则的决策（原有逻辑，作为 fallback）
 
         Args:
@@ -316,11 +317,11 @@ class DecisionEngine:
     def format_review_body(
         self,
         decision: ReviewDecision,
-        review_result: Dict[str, Any],
+        review_result: dict[str, Any],
         decision_reason: str,
-        label_results: Dict[str, Any] = None,
+        label_results: dict[str, Any] | None = None,
         strategy_name: str = "代码审查",
-        template_vars: Dict[str, Any] = None,
+        template_vars: dict[str, Any] | None = None,
         output_language: str | None = None,
     ) -> str:
         """格式化审查评论内容

@@ -10,8 +10,8 @@ from backend.core.config import get_settings
 from backend.services.comment_service import CommentService
 from backend.workers import review_worker
 from backend.workers.review_worker import (
-    ReviewWorker,
     ReviewDecision,
+    ReviewWorker,
     _run_review_task_with_timeout,
     submit_review_task,
 )
@@ -883,7 +883,6 @@ async def test_review_record_created_before_code_indexing(monkeypatch):
     class FakeIndexer:
         async def index_pr_changes(self, **kwargs):
             call_order.append("index_pr_changes")
-            return None
 
     class FakeCheckpoint:
         def __init__(self, source_type, source_task_id):

@@ -60,11 +60,13 @@ def _make_comment(content, severity="suggestion", file_path="a.py", line_number=
 
 async def _noop(*_args, **_kwargs):
     """异步空操作，屏蔽 reflect 的副作用依赖（写状态、后处理）。"""
-    return None
+    return
 
 
 @pytest.mark.asyncio
-async def test_fetch_comments_from_db_keeps_full_content_without_truncation(monkeypatch):
+async def test_fetch_comments_from_db_keeps_full_content_without_truncation(
+    monkeypatch,
+):
     """评论正文不得被字符级截断。
 
     构造一条长度超过 150 字符的评论，关键标识符 external_ci_failures
@@ -189,14 +191,10 @@ async def test_reflect_passes_full_pr_description_without_truncation(monkeypatch
     assert len(long_body) > 500
     assert "unique_marker_xyz" in long_body[500:]
 
-    pr = SimpleNamespace(
-        number=42, body=long_body, head=SimpleNamespace(sha="abc1234")
-    )
+    pr = SimpleNamespace(number=42, body=long_body, head=SimpleNamespace(sha="abc1234"))
     analysis = SimpleNamespace(
         code_files=[
-            SimpleNamespace(
-                path="a.py", status="modified", additions=1, deletions=1
-            )
+            SimpleNamespace(path="a.py", status="modified", additions=1, deletions=1)
         ],
         strategy="default",
         is_incremental=False,

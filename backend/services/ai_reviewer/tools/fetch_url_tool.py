@@ -11,7 +11,7 @@ import socket
 import time
 import unicodedata
 from fnmatch import fnmatch
-from typing import Any, Dict, List
+from typing import Any
 from urllib.parse import urljoin, urlparse, urlunparse
 
 import httpx
@@ -70,7 +70,7 @@ def _try_parse_mixed_radix_ipv4(hostname: str) -> str | None:
         if any(o < 0 or o > 255 for o in octets):
             return None
         return str(ipaddress.IPv4Address(bytes(octets)))
-    except (ValueError, TypeError):
+    except ValueError, TypeError:
         return None
 
 
@@ -121,8 +121,9 @@ class FetchUrlToolHandler:
             return
 
         try:
-            from backend.models.database import AppConfig, async_session
             from sqlalchemy import select
+
+            from backend.models.database import AppConfig, async_session
 
             if async_session is None:
                 return
@@ -236,21 +237,21 @@ class FetchUrlToolHandler:
         if hostname.isdigit():
             try:
                 return str(ipaddress.IPv4Address(int(hostname)))
-            except (ValueError, TypeError):
+            except ValueError, TypeError:
                 pass
 
         # Hex integer IPv4 (e.g. 0x7f000001)
         if hostname.lower().startswith("0x"):
             try:
                 return str(ipaddress.IPv4Address(int(hostname, 16)))
-            except (ValueError, TypeError):
+            except ValueError, TypeError:
                 pass
 
         # Octal integer IPv4 (e.g. 017700000001)
         if len(hostname) > 1 and hostname[0] == "0" and hostname[1:].isdigit():
             try:
                 return str(ipaddress.IPv4Address(int(hostname, 8)))
-            except (ValueError, TypeError):
+            except ValueError, TypeError:
                 pass
 
         return hostname
@@ -290,7 +291,7 @@ class FetchUrlToolHandler:
         except socket.gaierror as e:
             raise ValueError(f"DNS 解析失败: {hostname} — {e}")
 
-        resolved_ips: List[str] = []
+        resolved_ips: list[str] = []
         for family, _, _, _, sockaddr in addr_infos:
             ip_str = sockaddr[0]
             resolved_ips.append(ip_str)
@@ -440,7 +441,7 @@ class FetchUrlToolHandler:
             return text
         return text[: self._max_content_length] + "..."
 
-    async def fetch_url(self, url: str) -> Dict[str, Any]:
+    async def fetch_url(self, url: str) -> dict[str, Any]:
         """抓取网页并转换为纯文本"""
         start_time = time.time()
 
@@ -471,7 +472,7 @@ class FetchUrlToolHandler:
             }
 
         resolved_ip = ""
-        security_events: List[str] = []
+        security_events: list[str] = []
         status_code = 0
         download_bytes = 0
 
@@ -512,7 +513,7 @@ class FetchUrlToolHandler:
                 security_events=security_events,
             )
 
-            result: Dict[str, Any] = {
+            result: dict[str, Any] = {
                 "url": validated_url,
                 "content": text,
                 "content_length": len(text),
@@ -652,7 +653,7 @@ class FetchUrlToolHandler:
                     content = body.decode(
                         response.encoding or "utf-8", errors="replace"
                     )
-                except (UnicodeDecodeError, LookupError):
+                except UnicodeDecodeError, LookupError:
                     content = body.decode("utf-8", errors="replace")
 
                 return content, status_code, total_bytes
@@ -667,7 +668,7 @@ class FetchUrlToolHandler:
         text_length: int,
         truncated: bool,
         call_num: int,
-        security_events: List[str],
+        security_events: list[str],
     ) -> None:
         """记录结构化审计日志"""
         parts = [

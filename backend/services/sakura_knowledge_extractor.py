@@ -4,8 +4,6 @@
 无截断，无硬编码限制，所有参数可配置。
 """
 
-from typing import Dict, Optional
-
 from loguru import logger
 
 from backend.core.config import get_settings, get_strategy_config
@@ -17,7 +15,6 @@ from backend.services.sakura_agent_base import (
     WRITE_FILE_TOOL,
     SakuraAgentBase,
 )
-
 
 # ── 工具定义 ────────────────────────────────────────────────────────────
 
@@ -87,7 +84,7 @@ class SakuraKnowledgeExtractor(SakuraAgentBase):
     def _get_tools(self) -> list:
         return EXTRACTION_TOOLS
 
-    def _check_write_allowed(self, rel_path: str) -> Optional[str]:
+    def _check_write_allowed(self, rel_path: str) -> str | None:
         if not rel_path or "../" in rel_path:
             return "无效文件路径"
         if any(rel_path.startswith(p) for p in _WRITE_BLOCKED_PREFIXES):
@@ -125,10 +122,10 @@ class SakuraKnowledgeExtractor(SakuraAgentBase):
         self,
         repo,
         repo_full_name: str,
-        sakura_ref: Optional[str] = None,
-        model: Optional[str] = None,
+        sakura_ref: str | None = None,
+        model: str | None = None,
         reflection_count: int = 0,
-    ) -> Dict[str, str]:
+    ) -> dict[str, str]:
         """运行知识提取 Agent 会话
 
         Returns:

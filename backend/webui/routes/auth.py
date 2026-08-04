@@ -8,20 +8,30 @@ from urllib.parse import urlencode
 import httpx
 from fastapi import (
     APIRouter,
-    Request,
+    Body,
     Depends,
     Form,
     HTTPException,
     Query,
-    Body,
+    Request,
 )
-from fastapi.responses import RedirectResponse, HTMLResponse, JSONResponse
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from loguru import logger
 from sqlalchemy import select
 
 from backend import __version__
-from backend.models.telegram_models import TelegramUser
+from backend.core.config import get_settings
+from backend.core.rate_limit import limiter
+from backend.core.redis import get_async_redis
 from backend.models import database as db_module
+from backend.models.telegram_models import TelegramUser
+from backend.services.mfa_lockout_service import (
+    AccountLockedError,
+    check_mfa_lockout,
+    record_mfa_failure,
+    reset_mfa_failures,
+)
+from backend.services.security_admin_service import user_has_any_mfa_method
 from backend.services.two_factor_service import (
     TwoFactorError,
     TwoFactorReplayError,
@@ -33,13 +43,6 @@ from backend.services.webauthn_service import (
     begin_authentication,
     finish_authentication,
 )
-from backend.services.security_admin_service import user_has_any_mfa_method
-from backend.services.mfa_lockout_service import (
-    AccountLockedError,
-    check_mfa_lockout,
-    record_mfa_failure,
-    reset_mfa_failures,
-)
 from backend.webui.auth import (
     create_access_token,
     create_mfa_pending_token,
@@ -47,18 +50,16 @@ from backend.webui.auth import (
     is_mfa_pending_payload,
 )
 from backend.webui.deps import (
-    get_templates,
     get_csrf_serializer,
+    get_templates,
+    render_template,
+    request_origin,
     require_csrf,
     require_csrf_header,
-    request_origin,
     toast_redirect,
-    render_template,
 )
-from backend.webui.i18n import detect_language, i18n as _i18n
-from backend.core.config import get_settings
-from backend.core.redis import get_async_redis
-from backend.core.rate_limit import limiter
+from backend.webui.i18n import detect_language
+from backend.webui.i18n import i18n as _i18n
 
 router = APIRouter(prefix="/auth", tags=["WebUI Auth"])
 templates = get_templates()

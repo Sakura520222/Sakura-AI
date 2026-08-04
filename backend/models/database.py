@@ -1,28 +1,29 @@
 """数据库模型定义"""
 
-from datetime import datetime, timezone
+import enum
+from datetime import UTC, datetime
+
 from sqlalchemy import (
+    TIMESTAMP,
+    BigInteger,
     Boolean,
     Column,
+    ForeignKey,
     Integer,
-    BigInteger,
     String,
     Text,
-    TIMESTAMP,
-    ForeignKey,
     UniqueConstraint,
     text,
 )
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.orm import declarative_base, relationship
-from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
-import enum
 
 Base = declarative_base()
 
 
 def utc_now() -> datetime:
     """返回带 UTC 时区的当前时间（公共工具函数，供所有模型共享）。"""
-    return datetime.now(timezone.utc)
+    return datetime.now(UTC)
 
 
 # 异步数据库引擎和会话（将在 init_async_db 中初始化）
@@ -657,7 +658,6 @@ class IssueAnalysisQueue(Base):
 
 async def create_tables_async():
     """异步创建所有数据库表"""
-    global async_engine
     import logging
 
     logger = logging.getLogger(__name__)
@@ -681,11 +681,11 @@ async def create_tables_async():
 
 def _ensure_model_modules_imported() -> None:
     """导入独立模型模块，确保 metadata 已注册。"""
-    import backend.models.activity_conversation_models  # noqa: F401
-    import backend.models.activity_event_models  # noqa: F401
-    import backend.models.agent_skill_models  # noqa: F401
-    import backend.models.agent_team_models  # noqa: F401
-    import backend.models.payment_models  # noqa: F401
+    import backend.models.activity_conversation_models
+    import backend.models.activity_event_models
+    import backend.models.agent_skill_models
+    import backend.models.agent_team_models
+    import backend.models.payment_models
     import backend.models.star_aid_models  # noqa: F401
 
 
@@ -719,7 +719,6 @@ def _append_dynamic_config_defaults(default_configs: list) -> None:
 
 async def insert_default_configs_async():
     """异步插入默认配置"""
-    global async_session
     import logging
 
     logger = logging.getLogger(__name__)
@@ -728,7 +727,7 @@ async def insert_default_configs_async():
         raise RuntimeError("异步会话工厂未初始化,请先调用 init_async_db()")
 
     default_configs = [
-        AppConfig(key_name="app_version", key_value="2.13.0", description="应用版本号"),
+        AppConfig(key_name="app_version", key_value="2.13.1", description="应用版本号"),
         AppConfig(
             key_name="max_concurrent_reviews",
             key_value="5",
@@ -810,7 +809,7 @@ async def insert_default_configs_async():
     try:
         async with async_session() as session:
             # 检查是否已有配置
-            from sqlalchemy import select, func
+            from sqlalchemy import func, select
 
             result = await session.execute(select(func.count(AppConfig.id)))
             existing_configs = result.scalar()
@@ -842,8 +841,9 @@ def init_database(database_url: str):
     Args:
         database_url: 数据库连接字符串
     """
-    from sqlalchemy import create_engine
     import logging
+
+    from sqlalchemy import create_engine
 
     logger = logging.getLogger(__name__)
 
@@ -869,7 +869,7 @@ def init_database(database_url: str):
 
             default_configs = [
                 AppConfig(
-                    key_name="app_version", key_value="2.13.0", description="应用版本号"
+                    key_name="app_version", key_value="2.13.1", description="应用版本号"
                 ),
                 AppConfig(
                     key_name="max_concurrent_reviews",
@@ -1025,7 +1025,6 @@ def init_async_db(database_url: str):
 
 async def close_async_db():
     """关闭异步数据库连接"""
-    global async_engine
     import logging
 
     logger = logging.getLogger(__name__)
@@ -1086,13 +1085,11 @@ class SakuraMemoryState(Base):
     # 配置覆盖 / Config override
     consolidation_interval = Column(Integer, default=5, nullable=False)
 
-    created_at = Column(
-        TIMESTAMP, default=lambda: datetime.now(timezone.utc), nullable=False
-    )
+    created_at = Column(TIMESTAMP, default=lambda: datetime.now(UTC), nullable=False)
     updated_at = Column(
         TIMESTAMP,
-        default=lambda: datetime.now(timezone.utc),
-        onupdate=lambda: datetime.now(timezone.utc),
+        default=lambda: datetime.now(UTC),
+        onupdate=lambda: datetime.now(UTC),
         nullable=False,
     )
 
@@ -1161,9 +1158,7 @@ async def _ensure_agent_message_longtext_columns(conn, logger) -> None:
                 )
             )
             logger.info(
-                "[auto-migrate] 扩展列为 LONGTEXT: {}.{}",
-                table_name,
-                column_name,
+                f"[auto-migrate] 扩展列为 LONGTEXT: {table_name}.{column_name}",
             )
 
 
@@ -1173,9 +1168,9 @@ async def _auto_migrate():
     用 Inspector 对比 SQLAlchemy 模型定义与数据库实际列，
     自动 ALTER TABLE 添加缺失的列（仅 ADD COLUMN，不做 DROP 或 MODIFY）。
     """
-    from sqlalchemy import inspect
-
     import logging
+
+    from sqlalchemy import inspect
 
     _logger = logging.getLogger(__name__)
 
@@ -1231,7 +1226,7 @@ async def _auto_migrate():
                 else:
                     sql += " NOT NULL"
             await conn.execute(text(sql))
-            _logger.info("[auto-migrate] 添加列: {}.{}", table_name, col.name)
+            _logger.info(f"[auto-migrate] 添加列: {table_name}.{col.name}")
 
         # 记录迁移版本
         version = datetime.utcnow().strftime("%Y%m%d%H%M%S")
@@ -1242,4 +1237,4 @@ async def _auto_migrate():
             ),
             {"v": version},
         )
-        _logger.info("[auto-migrate] 迁移完成, version={}", version)
+        _logger.info(f"[auto-migrate] 迁移完成, version={version}")

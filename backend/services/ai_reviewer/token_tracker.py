@@ -8,7 +8,6 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import List
 
 from loguru import logger
 
@@ -30,7 +29,7 @@ class TokenTracker:
         self.prompt_tokens: int = 0
         self.completion_tokens: int = 0
         self.api_call_count: int = 0
-        self.context_usage_log: List[ContextSnapshot] = []
+        self.context_usage_log: list[ContextSnapshot] = []
 
     def accumulate(self, response: object) -> None:
         """从 OpenAI API 响应中累积 token 使用量"""

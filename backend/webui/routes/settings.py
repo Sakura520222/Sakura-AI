@@ -1,21 +1,24 @@
 """WebUI 个人设置路由"""
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
-from fastapi import APIRouter, Request, Depends, Form, Body, HTTPException
+from fastapi import APIRouter, Body, Depends, Form, HTTPException, Request
 from fastapi.responses import JSONResponse
 from loguru import logger
 from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.core.config import (
+    get_settings,
     get_user_dynamic_config_state,
     invalidate_user_dynamic_config_cache,
     validate_user_dynamic_config_value,
 )
+from backend.core.rate_limit import limiter
 from backend.core.redis import get_async_redis
 from backend.models.database import UserConfig, WebUIConfig
 from backend.models.telegram_models import TelegramUser, UserWebAuthnCredential
+from backend.services.mfa_notification_service import notify_mfa_event
 from backend.services.two_factor_service import (
     TwoFactorError,
     TwoFactorReplayError,
@@ -34,23 +37,20 @@ from backend.services.webauthn_service import (
     finish_registration,
 )
 from backend.webui.deps import (
-    require_auth,
+    get_csrf_serializer,
     get_db,
     get_templates,
-    get_csrf_serializer,
-    request_origin,
-    require_csrf,
-    require_csrf_header,
     get_user_preferences,
-    toast_redirect,
     invalidate_user_prefs_cache,
     render_template,
+    request_origin,
+    require_auth,
+    require_csrf,
+    require_csrf_header,
+    toast_redirect,
     user_requires_mfa_enrollment,
 )
 from backend.webui.i18n import detect_language
-from backend.core.config import get_settings
-from backend.core.rate_limit import limiter
-from backend.services.mfa_notification_service import notify_mfa_event
 
 router = APIRouter(prefix="/settings", tags=["WebUI Settings"])
 templates = get_templates()
@@ -63,7 +63,7 @@ _totp_setup_fallback: dict[int, tuple[str, datetime]] = {}
 def _cleanup_totp_setup_fallback(now: datetime | None = None) -> None:
     """Prune expired and excessive in-memory TOTP setup secrets."""
     settings = get_settings()
-    now = now or datetime.now(timezone.utc)
+    now = now or datetime.now(UTC)
     ttl_seconds = settings.two_factor_pending_token_expire_minutes * 60
     expired_user_ids = [
         user_id
@@ -96,7 +96,7 @@ async def _save_totp_setup_secret(user_id: int, secret: str) -> None:
     except Exception as exc:
         logger.warning("Redis 存储 TOTP setup secret 失败，使用内存回退: {}", exc)
     _cleanup_totp_setup_fallback()
-    _totp_setup_fallback[user_id] = (secret, datetime.now(timezone.utc))
+    _totp_setup_fallback[user_id] = (secret, datetime.now(UTC))
 
 
 async def _pop_totp_setup_secret(user_id: int) -> str | None:
@@ -319,7 +319,7 @@ async def enable_two_factor(
 
     db_user.totp_enabled = True
     db_user.totp_secret_encrypted = encrypt_totp_secret(secret)
-    db_user.totp_enabled_at = datetime.now(timezone.utc)
+    db_user.totp_enabled_at = datetime.now(UTC)
     db_user.totp_last_used_step = used_step
     if db_user.mfa_required:
         db_user.mfa_required = False
@@ -362,7 +362,7 @@ async def disable_two_factor_route(
         if used_step is not None:
             db_user.totp_last_used_step = used_step
             verified = True
-    except (TwoFactorError, TwoFactorReplayError):
+    except TwoFactorError, TwoFactorReplayError:
         verified = False
 
     if not verified:
@@ -521,5 +521,5 @@ async def about_page(
         csrf_token=get_csrf_serializer().dumps({}),
         active_page="about",
         app_version=APP_VERSION,
-        build_date=datetime.now(timezone.utc).strftime("%Y-%m-%d"),
+        build_date=datetime.now(UTC).strftime("%Y-%m-%d"),
     )

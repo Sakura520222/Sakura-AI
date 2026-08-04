@@ -22,7 +22,7 @@ async def resolve_agent_team_max_iterations(
     )
     try:
         value = int(raw_value if raw_value is not None else effective_fallback)
-    except (TypeError, ValueError):
+    except TypeError, ValueError:
         value = fallback
     return max(1, value)
 

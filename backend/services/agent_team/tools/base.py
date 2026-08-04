@@ -18,7 +18,6 @@ from backend.services.agent_team.workspace_service import (
     AgentTeamWorkspaceService,
 )
 
-
 # ── 数据结构 ──────────────────────────────────────────
 
 

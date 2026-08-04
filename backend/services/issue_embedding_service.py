@@ -12,7 +12,7 @@
 import asyncio
 import json
 import re
-from typing import Any, Dict, List
+from typing import Any
 
 from loguru import logger
 
@@ -63,12 +63,12 @@ class IssueEmbeddingService:
         """安全地将 metadata 中的 number 转为 int，失败返回 None"""
         try:
             return int(value)
-        except (ValueError, TypeError):
+        except ValueError, TypeError:
             return None
 
     async def index_repo_issues(
         self, repo_owner: str, repo_name: str, *, force: bool = False
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """将仓库 issues 索引到 ChromaDB
 
         Args:
@@ -118,7 +118,7 @@ class IssueEmbeddingService:
         repo_name: str,
         collection_key: str,
         existing_count: int,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """增量重索引：补充缺失 issues，已有文档保留 AI 摘要并更新 state"""
         # 1. 获取所有 issues（open + closed）
         issues = await asyncio.to_thread(self._fetch_all_issues, repo_owner, repo_name)
@@ -179,11 +179,12 @@ class IssueEmbeddingService:
 
     async def _fetch_ai_analysis(
         self, repo_owner: str, repo_name: str, issue_numbers: list[int]
-    ) -> Dict[int, Dict[str, str]]:
+    ) -> dict[int, dict[str, str]]:
         """从数据库获取 issues 的 AI 分析结果（summary + suggested_title + category + priority + feasibility）"""
         try:
-            from backend.models.database import IssueAnalysis, async_session
             from sqlalchemy import select
+
+            from backend.models.database import IssueAnalysis, async_session
 
             repo_full = f"{repo_owner}/{repo_name}"
             async with async_session() as session:
@@ -218,7 +219,7 @@ class IssueEmbeddingService:
         self,
         collection_key: str,
         state_updates: list[tuple[str, Any]],
-        ai_results: Dict[int, Dict[str, str]] | None = None,
+        ai_results: dict[int, dict[str, str]] | None = None,
     ) -> int:
         """批量更新已有文档的 state metadata，并补充 AI 分析元数据"""
         collection = await self.vector_store.get_or_create_collection(collection_key)
@@ -265,7 +266,7 @@ class IssueEmbeddingService:
                 number_str = old_metadata.get("number", "")
                 try:
                     number = int(number_str)
-                except (ValueError, TypeError):
+                except ValueError, TypeError:
                     number = None
 
                 if number and number in ai_results:
@@ -299,7 +300,7 @@ class IssueEmbeddingService:
         self,
         collection_key: str,
         new_issues: list,
-        ai_results: Dict[int, Dict[str, str]],
+        ai_results: dict[int, dict[str, str]],
     ) -> int:
         """新增缺失的 issues，优先使用 AI 分析结果"""
         from backend.core.config import get_dynamic_config
@@ -356,11 +357,11 @@ class IssueEmbeddingService:
         repo_name: str,
         pr_title: str,
         pr_body: str,
-        exclude_numbers: List[int],
+        exclude_numbers: list[int],
         top_k: int = 5,
         similarity_threshold: float = 0.65,
         state_filter: str | None = None,
-    ) -> List[Dict[str, Any]]:
+    ) -> list[dict[str, Any]]:
         """检索与 PR 语义相关的 issues
 
         流程: Embedding 召回 → Reranker 精排 → 阈值过滤
@@ -396,11 +397,11 @@ class IssueEmbeddingService:
     async def _rerank_candidates(
         self,
         query: str,
-        candidates: List[Dict[str, Any]],
+        candidates: list[dict[str, Any]],
         top_k: int,
         threshold: float,
         exclude_set: set,
-    ) -> List[Dict[str, Any]]:
+    ) -> list[dict[str, Any]]:
         """使用 Reranker 对候选进行精排"""
         # 检查 Reranker 是否启用
         if self.reranker_service.client is None:
@@ -437,11 +438,11 @@ class IssueEmbeddingService:
 
     def _filter_by_cosine(
         self,
-        candidates: List[Dict[str, Any]],
+        candidates: list[dict[str, Any]],
         top_k: int,
         threshold: float,
         exclude_set: set,
-    ) -> List[Dict[str, Any]]:
+    ) -> list[dict[str, Any]]:
         """回退：使用 cosine similarity 过滤"""
         results = []
         for c in candidates:
@@ -523,10 +524,10 @@ class IssueEmbeddingService:
         self,
         pr_title: str,
         pr_body: str,
-        candidates: List[Dict[str, Any]],
+        candidates: list[dict[str, Any]],
         pr_summary: str = "",
         pr_files: str = "",
-    ) -> List[Dict[str, Any]]:
+    ) -> list[dict[str, Any]]:
         """使用 AI 批量验证候选 issues 是否真正与 PR 相关
 
         一次 LLM 调用，传入所有候选 issues，AI 返回真正相关的编号列表。
@@ -649,8 +650,8 @@ class IssueEmbeddingService:
         try:
             data = json.loads(content.strip())
             if "verified" in data:
-                return set(int(n) for n in data["verified"])
-        except (json.JSONDecodeError, ValueError):
+                return {int(n) for n in data["verified"]}
+        except json.JSONDecodeError, ValueError:
             pass
 
         # 2. 尝试从 markdown 代码块中提取完整内容再解析
@@ -659,8 +660,8 @@ class IssueEmbeddingService:
             try:
                 data = json.loads(code_match.group(1).strip())
                 if "verified" in data:
-                    return set(int(n) for n in data["verified"])
-            except (json.JSONDecodeError, ValueError):
+                    return {int(n) for n in data["verified"]}
+            except json.JSONDecodeError, ValueError:
                 pass
 
         # 3. 逐字符花括号计数提取最外层完整 JSON
@@ -677,8 +678,8 @@ class IssueEmbeddingService:
                     try:
                         data = json.loads(content[start : i + 1])
                         if "verified" in data:
-                            return set(int(n) for n in data["verified"])
-                    except (json.JSONDecodeError, ValueError):
+                            return {int(n) for n in data["verified"]}
+                    except json.JSONDecodeError, ValueError:
                         pass
                     start = None
 

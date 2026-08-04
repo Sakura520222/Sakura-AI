@@ -1,0 +1,18 @@
+# Ruff 配置 — 锁定规则基线，避免默认规则集升级冲击 CI
+# 详见 docs/superpowers/specs/2026-08-04-fix-ci-ruff-quality-design.md
+target-version = "py314"
+
+[lint]
+# 接受 ruff 0.16 默认规则集（413 条），仅 ignore 经分析不适合本项目的类别
+ignore = [
+    "B008",     # Depends()/Query() in argument defaults — FastAPI 标准用法
+    "BLE001",   # except Exception — API 层兜底异常，后续单独治理
+    "S110",     # try-except-pass — 有意的静默
+    "RUF012",   # 可变类默认 — pydantic Model 常见模式
+    "ISC004",   # 隐式字符串拼接 — 风格偏好
+    "DTZ",      # datetime 时区 — 需业务决策
+    "SIM102",   # collapsible-if — 可读性风格
+    "TRY002",   # raise vanilla Exception — 项目既有业务异常模式，待自定义异常体系后治理
+    "TRY004",   # isinstance 分支后抛 ValueError — 值/状态错误语义比 TypeError 更准确
+    "SIM117",   # 合并嵌套 with — 涉及缩进重构，手动改易错，后续治理
+]

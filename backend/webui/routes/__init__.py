@@ -1,32 +1,33 @@
 """WebUI 路由"""
 
 from fastapi import APIRouter, Depends
+
 from backend.webui.deps import mark_webui_request
 from backend.webui.routes import (
-    auth,
-    dashboard,
-    pr,
-    users,
-    repos,
-    logs,
-    settings,
-    config,
-    queue,
     action_logs,
-    issues,
-    sse,
-    scans,
-    billing,
-    security,
-    agent_team,
+    activity,
     agent_skills,
+    agent_team,
+    assetlinks,
+    auth,
+    billing,
+    config,
+    dashboard,
+    issues,
+    legal,
+    logs,
+    pr,
+    queue,
+    repos,
     sakura_memory,
+    scans,
+    security,
+    settings,
+    sse,
     star_aid,
     system_config,
+    users,
     vector_db,
-    assetlinks,
-    legal,
-    activity,
 )
 
 # WebUI routes are mounted at root (no prefix) so the dashboard is served at /.

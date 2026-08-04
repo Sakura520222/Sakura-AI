@@ -8,20 +8,31 @@ from fastapi import APIRouter, Depends, Query, Request
 from loguru import logger
 from sqlalchemy import select
 
-from backend.models.telegram_models import TelegramUser
-from backend.models import database as db_module
-from backend.services.two_factor_service import (
-    TwoFactorError,
-    TwoFactorReplayError,
-    consume_recovery_code,
-    verify_user_totp,
+from backend.api.v1.deps import get_api_current_user, limiter, require_api_auth
+from backend.api.v1.responses import error_response, success_response
+from backend.api.v1.schemas import (
+    MfaRequiredResponse,
+    MfaVerifyRequest,
+    OAuthAuthorizeResponse,
+    OAuthCallbackRequest,
+    TokenResponse,
+    UserInfoResponse,
 )
-from backend.services.security_admin_service import user_has_any_mfa_method
+from backend.core.config import get_settings
+from backend.models import database as db_module
+from backend.models.telegram_models import TelegramUser
 from backend.services.mfa_lockout_service import (
     AccountLockedError,
     check_mfa_lockout,
     record_mfa_failure,
     reset_mfa_failures,
+)
+from backend.services.security_admin_service import user_has_any_mfa_method
+from backend.services.two_factor_service import (
+    TwoFactorError,
+    TwoFactorReplayError,
+    consume_recovery_code,
+    verify_user_totp,
 )
 from backend.services.webauthn_service import (
     WebAuthnError,
@@ -34,28 +45,15 @@ from backend.webui.auth import (
     decode_access_token,
     is_mfa_pending_payload,
 )
-from backend.core.config import get_settings
-
-from backend.api.v1.deps import require_api_auth, get_api_current_user
-from backend.api.v1.schemas import (
-    OAuthAuthorizeResponse,
-    OAuthCallbackRequest,
-    MfaRequiredResponse,
-    MfaVerifyRequest,
-    TokenResponse,
-    UserInfoResponse,
-)
-from backend.api.v1.responses import success_response, error_response
-from backend.api.v1.deps import limiter
+from backend.webui.deps import request_origin
+from backend.webui.i18n import i18n as _i18n
 
 # 复用 WebUI OAuth state 管理
 from backend.webui.routes.auth import (
-    _save_oauth_state,
-    _get_oauth_state,
     _delete_oauth_state,
+    _get_oauth_state,
+    _save_oauth_state,
 )
-from backend.webui.deps import request_origin
-from backend.webui.i18n import i18n as _i18n
 
 router = APIRouter(prefix="/auth", tags=["Auth"])
 

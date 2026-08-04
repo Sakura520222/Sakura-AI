@@ -121,7 +121,7 @@ def main() -> int:
     )
     print(f"Python: {server_python}")
     print("后台任务: 已跳过")
-    print("")
+    print()
 
     try:
         return subprocess.call(command, cwd=repo_root, env=env)

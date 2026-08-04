@@ -4,8 +4,6 @@
 包含评分趋势、关键问题演变等信息。
 """
 
-from typing import List, Optional
-
 from loguru import logger
 from sqlalchemy import and_, select
 from sqlalchemy.orm import selectinload
@@ -36,7 +34,7 @@ class HistoryContextService:
         pr_id: int,
         repo_name: str,
         repo_owner: str,
-    ) -> Optional[str]:
+    ) -> str | None:
         """查询并生成历史审查摘要
 
         Args:
@@ -91,7 +89,7 @@ class HistoryContextService:
         pr_id: int,
         repo_name: str,
         repo_owner: str,
-    ) -> List[PRReview]:
+    ) -> list[PRReview]:
         """从数据库查询该 PR 的历史审查记录
 
         查询已完成的审查记录（含关联评论），按时间正序排列。
@@ -122,7 +120,7 @@ class HistoryContextService:
             result = await session.execute(stmt)
             return list(result.scalars().all())
 
-    def _format_history_for_summary(self, reviews: List[PRReview]) -> str:
+    def _format_history_for_summary(self, reviews: list[PRReview]) -> str:
         """将历史审查记录格式化为待摘要的文本"""
         parts = []
 
@@ -196,7 +194,7 @@ class HistoryContextService:
 
         return "\n\n".join(parts)
 
-    async def _generate_ai_summary(self, history_text: str) -> Optional[str]:
+    async def _generate_ai_summary(self, history_text: str) -> str | None:
         """调用 AI 生成历史审查的自然语言摘要"""
         from backend.core.config import get_settings
 

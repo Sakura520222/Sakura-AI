@@ -8,16 +8,16 @@ from typing import Any
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from backend.models.database import AppConfig
 from backend.core.config import (
     CORE_CONFIG_KEYS,
-    mask_sensitive_value,
-    update_settings_field,
+    get_all_dynamic_config_keys,
     get_settings,
     invalidate_dynamic_config_cache,
-    get_all_dynamic_config_keys,
+    mask_sensitive_value,
     sanitize_domain,
+    update_settings_field,
 )
+from backend.models.database import AppConfig
 
 # 敏感键（在页面显示时脱敏）
 SYSTEM_SENSITIVE_KEYS = frozenset(

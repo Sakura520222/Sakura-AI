@@ -27,7 +27,7 @@ def json_loads(value: Any, fallback: Any) -> Any:
         return value
     try:
         return json.loads(value)
-    except (TypeError, json.JSONDecodeError):
+    except TypeError, json.JSONDecodeError:
         return fallback
 
 
@@ -167,7 +167,7 @@ async def load_issue_comments_for_context(
 
     try:
         max_count = int(await get_dynamic_config("issue_max_comments_in_context") or 0)
-    except (TypeError, ValueError):
+    except TypeError, ValueError:
         max_count = 0
 
     try:

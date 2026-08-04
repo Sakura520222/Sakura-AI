@@ -3,7 +3,6 @@
 用于管理不同AI模型的上下文窗口大小，支持预定义和手动配置。
 """
 
-from typing import Optional, Dict
 from loguru import logger
 
 from backend.core.config import get_settings
@@ -54,9 +53,9 @@ class ModelContextManager:
 
     def __init__(self):
         self.settings = get_settings()
-        self._context_cache: Dict[str, int] = {}
+        self._context_cache: dict[str, int] = {}
 
-    def get_context_window(self, model_name: Optional[str] = None) -> int:
+    def get_context_window(self, model_name: str | None = None) -> int:
         """获取模型的上下文窗口大小（单位：K tokens）
 
         优先级：
@@ -104,7 +103,7 @@ class ModelContextManager:
         )
         return default_context
 
-    def _get_from_predefined(self, model_name: str) -> Optional[int]:
+    def _get_from_predefined(self, model_name: str) -> int | None:
         """从预定义映射表获取上下文大小
 
         Args:
@@ -135,7 +134,7 @@ class ModelContextManager:
         return None
 
     def calculate_safe_context(
-        self, model_name: Optional[str] = None, safety_ratio: float = 0.8
+        self, model_name: str | None = None, safety_ratio: float = 0.8
     ) -> int:
         """计算安全的上下文窗口大小
 
@@ -203,7 +202,7 @@ class ModelContextManager:
 
 
 # 全局单例
-_model_context_manager: Optional[ModelContextManager] = None
+_model_context_manager: ModelContextManager | None = None
 
 
 def get_model_context_manager() -> ModelContextManager:

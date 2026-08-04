@@ -7,33 +7,32 @@ import tempfile
 from pathlib import Path
 
 import yaml
-from fastapi import APIRouter, Request, Depends, Form, HTTPException
+from fastapi import APIRouter, Depends, Form, HTTPException, Request
+from loguru import logger
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
-
-from backend.models.database import AppConfig
-from loguru import logger
 
 from backend.core.config import (
     BASIC_CONFIG_KEYS,
     DYNAMIC_CONFIG_RANGES,
     get_dynamic_config,
-    invalidate_dynamic_config_cache,
-    get_strategy_config,
-    reload_strategy_config,
     get_label_config,
+    get_strategy_config,
+    invalidate_dynamic_config_cache,
     reload_label_config,
+    reload_strategy_config,
 )
+from backend.models.database import AppConfig
 from backend.services.label_service import label_service
 from backend.webui.deps import (
-    require_super_admin,
+    get_csrf_serializer,
     get_db,
     get_templates,
-    get_csrf_serializer,
-    require_csrf,
     get_user_preferences,
-    toast_redirect,
     render_template,
+    require_csrf,
+    require_super_admin,
+    toast_redirect,
 )
 from backend.webui.helpers.admin_log import log_admin_action
 from backend.webui.i18n import detect_language
@@ -340,7 +339,7 @@ async def save_strategies_section(
                 raw_linked = form.get("max_linked_issues_in_prompt", "5")
                 try:
                     max_linked = int(raw_linked)
-                except (ValueError, TypeError):
+                except ValueError, TypeError:
                     raise ValueError("关联 Issue 数量上限必须是有效整数")
 
                 config["issue_analysis"] = {
@@ -653,16 +652,17 @@ async def general_config_page(
     from backend.core.config import (
         DYNAMIC_CONFIG_GROUPS,
         DYNAMIC_CONFIG_LABELS,
-        DYNAMIC_CONFIG_SENSITIVE_KEYS,
-        DYNAMIC_CONFIG_SELECT_OPTIONS,
         DYNAMIC_CONFIG_RANGES,
+        DYNAMIC_CONFIG_SELECT_OPTIONS,
+        DYNAMIC_CONFIG_SENSITIVE_KEYS,
         get_dynamic_config_input_type,
         get_settings,
         mask_sensitive_value,
     )
 
     settings = get_settings()
-    from backend.webui.i18n import i18n as _i18n, detect_language as _detect_language
+    from backend.webui.i18n import detect_language as _detect_language
+    from backend.webui.i18n import i18n as _i18n
 
     lang = _detect_language(user_prefs)
     dynamic_groups = []
@@ -1000,8 +1000,10 @@ async def save_general_config(
         # ========== 动态配置保存 ==========
         from backend.core.config import (
             DYNAMIC_CONFIG_GROUPS,
-            DYNAMIC_CONFIG_SENSITIVE_KEYS,
             DYNAMIC_CONFIG_SELECT_OPTIONS,
+            DYNAMIC_CONFIG_SENSITIVE_KEYS,
+        )
+        from backend.core.config import (
             mask_sensitive_value as _mask,
         )
 
@@ -1105,9 +1107,9 @@ async def save_general_config(
 
         # 清除动态配置缓存 + 同步 Settings 单例
         from backend.core.config import (
+            get_all_dynamic_config_keys,
             invalidate_dynamic_config_cache,
             update_settings_field,
-            get_all_dynamic_config_keys,
         )
 
         all_dynamic_keys = get_all_dynamic_config_keys()

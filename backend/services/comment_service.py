@@ -2,7 +2,8 @@
 
 import asyncio
 import re
-from typing import Dict, Any, Optional
+from typing import Any
+
 from loguru import logger
 
 from backend.core.config import get_settings, get_strategy_config
@@ -95,10 +96,10 @@ class CommentService:
     async def update_review(
         self,
         comment: Any,
-        review_result: Dict[str, Any],
+        review_result: dict[str, Any],
         strategy: str,
         pr: Any = None,
-        label_results: Optional[Dict[str, Any]] = None,
+        label_results: dict[str, Any] | None = None,
         analysis: Any = None,
         output_language: str | None = None,
     ):
@@ -279,7 +280,7 @@ Please check system logs or contact the administrator.
     async def post_review_comment(
         self,
         pr: Any,
-        review_result: Dict[str, Any],
+        review_result: dict[str, Any],
         strategy: str,
         output_language: str | None = None,
     ):
@@ -312,9 +313,9 @@ Please check system logs or contact the administrator.
 
     def _format_comment(
         self,
-        review_result: Dict[str, Any],
+        review_result: dict[str, Any],
         strategy: str,
-        label_results: Optional[Dict[str, Any]] = None,
+        label_results: dict[str, Any] | None = None,
         output_language: str | None = None,
     ) -> str:
         """格式化评论内容"""
@@ -538,7 +539,7 @@ Please check system logs or contact the administrator.
             if line_number not in allowed_lines:
                 logger.warning(
                     f"行号 {line_number} 不在 Diff 安全区内 "
-                    f"(文件: {matched_path}, 允许的行号: {sorted(list(allowed_lines))[:5]}...)"
+                    f"(文件: {matched_path}, 允许的行号: {sorted(allowed_lines)[:5]}...)"
                 )
                 continue
 
@@ -633,7 +634,7 @@ Please check system logs or contact the administrator.
         realigned = "\n".join((pad + ln) if ln.strip() else ln for ln in code_lines)
         comment["body"] = body[: match.start(1)] + realigned + body[match.end(1) :]
 
-    def _match_file_path(self, ai_path: str, pr_files: set) -> Optional[str]:
+    def _match_file_path(self, ai_path: str, pr_files: set) -> str | None:
         """智能匹配文件路径
 
         处理 AI 可能给出的路径与 PR 中实际路径不一致的情况。
@@ -680,7 +681,7 @@ Please check system logs or contact the administrator.
         return None
 
     def format_file_review(
-        self, file_path: str, review_text: str, line_number: int = None
+        self, file_path: str, review_text: str, line_number: int | None = None
     ) -> str:
         """格式化文件审查评论"""
         comment = f"## 📄 {file_path}\n\n"

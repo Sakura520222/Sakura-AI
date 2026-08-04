@@ -4,11 +4,12 @@
 与文档向量存储分离，使用独立的 Collection（添加 _code 后缀）
 """
 
-from typing import List, Dict, Any, Optional
-from loguru import logger
 import hashlib
 import re
 from pathlib import Path
+from typing import Any
+
+from loguru import logger
 
 try:
     import chromadb
@@ -32,7 +33,7 @@ class CodeVectorStore:
     - 支持按语言、PR等元数据过滤
     """
 
-    def __init__(self, persist_directory: Optional[str] = None):
+    def __init__(self, persist_directory: str | None = None):
         """初始化代码向量存储
 
         Args:
@@ -130,7 +131,7 @@ class CodeVectorStore:
             raise
 
     async def add_code_chunks(
-        self, repo_full_name: str, chunks: List[Dict[str, Any]]
+        self, repo_full_name: str, chunks: list[dict[str, Any]]
     ) -> int:
         """向Collection添加代码块
 
@@ -178,10 +179,10 @@ class CodeVectorStore:
     async def search_code(
         self,
         repo_full_name: str,
-        query_embedding: List[float],
+        query_embedding: list[float],
         top_k: int = 5,
-        where: Optional[Dict[str, Any]] = None,
-    ) -> List[Dict[str, Any]]:
+        where: dict[str, Any] | None = None,
+    ) -> list[dict[str, Any]]:
         """代码向量相似度检索
 
         Args:
@@ -341,7 +342,7 @@ class CodeVectorStore:
             return 0
 
     async def upsert_code_chunks(
-        self, repo_full_name: str, chunks: List[Dict[str, Any]]
+        self, repo_full_name: str, chunks: list[dict[str, Any]]
     ) -> int:
         """插入或更新代码块
 
@@ -384,7 +385,7 @@ class CodeVectorStore:
 
 
 # 全局单例
-_code_vector_store_instance: Optional[CodeVectorStore] = None
+_code_vector_store_instance: CodeVectorStore | None = None
 
 
 def get_code_vector_store() -> CodeVectorStore:

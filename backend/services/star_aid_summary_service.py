@@ -51,7 +51,9 @@ def prepare_readme_for_prompt(readme_text: str | None, *, budget: int = 6000) ->
     return text[:budget]
 
 
-def apply_summary_failure(repo: StarAidRepository, exc: Exception, now: datetime) -> None:
+def apply_summary_failure(
+    repo: StarAidRepository, exc: Exception, now: datetime
+) -> None:
     """记录摘要失败，不截断错误文本，由页面自行折叠/展示。"""
     repo.ai_summary_status = SUMMARY_FAILED
     repo.ai_summary_error = str(exc)
@@ -89,9 +91,7 @@ async def _get_user_language(session, user_id: int) -> str | None:
     return None
 
 
-async def _resolve_summary_language(
-    session, owner_user_id: int | None = None
-) -> str:
+async def _resolve_summary_language(session, owner_user_id: int | None = None) -> str:
     """摘要语言优先级：
 
     1. ``star_aid_summary_language`` 配置（全局覆盖）
@@ -226,9 +226,7 @@ async def refresh_repository_summary(
         return {"status": "invalid_repo"}
 
     # 取 README（用 owner 的 user token）
-    token, _ = await gh.get_effective_access_token(
-        session, repo.owner_user_id
-    )
+    token, _ = await gh.get_effective_access_token(session, repo.owner_user_id)
     readme_sha: str | None = None
     readme_text: str | None = None
     if token:
@@ -259,15 +257,15 @@ async def refresh_repository_summary(
     max_tokens_raw = await get_dynamic_config("star_aid_summary_max_tokens")
     max_tokens = int(max_tokens_raw) if max_tokens_raw not in (None, "") else 16000
 
-    gen_kwargs = dict(
-        full_name=repo.full_name,
-        description=repo.description or "",
-        topics=topics,
-        primary_language=repo.primary_language or "",
-        readme_excerpt=readme_input,
-        lang=lang,
-        max_tokens=max_tokens,
-    )
+    gen_kwargs = {
+        "full_name": repo.full_name,
+        "description": repo.description or "",
+        "topics": topics,
+        "primary_language": repo.primary_language or "",
+        "readme_excerpt": readme_input,
+        "lang": lang,
+        "max_tokens": max_tokens,
+    }
     try:
         summary = await generate_summary(**gen_kwargs)
         if not summary:
@@ -286,9 +284,7 @@ async def refresh_repository_summary(
         repo.ai_summary_error = "empty_summary"
         repo.ai_summary_updated_at = now
         await session.flush()
-        logger.warning(
-            "star_aid summary empty after retry: repo={}", repo.full_name
-        )
+        logger.warning("star_aid summary empty after retry: repo={}", repo.full_name)
         return {"status": "failed", "error": "empty_summary"}
 
     repo.ai_summary = summary

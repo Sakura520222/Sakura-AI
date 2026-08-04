@@ -9,10 +9,9 @@
 """
 
 import re
-from typing import Any, Dict
+from typing import Any
 
 from backend.core.config import get_strategy_config
-
 
 REVIEW_PROTOCOL_TEMPLATE = """<SAKURA_REVIEW>
 <VERSION>1</VERSION>
@@ -73,7 +72,7 @@ class PromptBuilder:
 
     def build_user_message(
         self,
-        context: Dict[str, Any],
+        context: dict[str, Any],
         strategy: str,
         include_tools: bool = False,
         compact: bool = False,
@@ -327,7 +326,7 @@ class PromptBuilder:
     def build_system_prompt(
         self,
         base_prompt: str,
-        context: Dict[str, Any],
+        context: dict[str, Any],
         include_tools: bool = False,
         output_language: str = "",
     ) -> str:
@@ -498,9 +497,9 @@ class PromptBuilder:
 
     def build_label_recommendation_message(
         self,
-        context: Dict[str, Any],
-        available_labels: Dict[str, Any],
-        pr_info: Dict[str, Any],
+        context: dict[str, Any],
+        available_labels: dict[str, Any],
+        pr_info: dict[str, Any],
         existing_labels: list | None = None,
     ) -> str:
         """构建标签推荐的用户消息
@@ -599,7 +598,7 @@ class PromptBuilder:
         return "\n".join(lines)
 
     def annotate_patch_with_line_numbers(
-        self, patch: str, file_path: str, context: Dict[str, Any]
+        self, patch: str, file_path: str, context: dict[str, Any]
     ) -> str:
         """为 patch 添加行号标注
 

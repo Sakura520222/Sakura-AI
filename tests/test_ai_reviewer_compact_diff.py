@@ -8,7 +8,6 @@ from backend.services.ai_reviewer.prompt_builder import PromptBuilder
 from backend.services.ai_reviewer.token_tracker import TokenTracker
 from backend.services.ai_reviewer.tools.diff_tool import DiffToolHandler
 
-
 SAMPLE_FILES = [
     {
         "path": "backend/example.py",

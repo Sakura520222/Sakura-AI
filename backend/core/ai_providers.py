@@ -213,7 +213,7 @@ def extract_context_window_k(payload: Any) -> int | None:
             continue
         try:
             numeric = int(float(str(value).strip()))
-        except (TypeError, ValueError):
+        except TypeError, ValueError:
             continue
         if numeric <= 0:
             continue

@@ -8,7 +8,6 @@ from types import SimpleNamespace
 
 from backend.services.ai_reviewer.prompt_builder import PromptBuilder
 
-
 SAMPLE_FILES = [
     {
         "path": "backend/example.py",

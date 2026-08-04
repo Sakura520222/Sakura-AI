@@ -11,13 +11,13 @@ from loguru import logger
 from sqlalchemy import desc, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from backend.models import database as db_module
 from backend.models.agent_team_models import (
     AgentTeamMessage,
     AgentTeamSession,
     AgentTeamTask,
     AgentTeamToolCall,
 )
-from backend.models import database as db_module
 from backend.models.database import utc_now
 
 

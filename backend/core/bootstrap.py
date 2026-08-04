@@ -7,9 +7,9 @@
 import json
 import os
 import time
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
-from typing import Literal, Optional
+from typing import Literal
 
 from loguru import logger
 from starlette.middleware.base import BaseHTTPMiddleware
@@ -22,7 +22,7 @@ SetupState = Literal["not_configured", "in_progress", "completed"]
 CONNECTION_CONFIG_PATH = Path("config/connection.json")
 
 # 进程级缓存（中间件高频调用）
-_state_cache: Optional[SetupState] = None
+_state_cache: SetupState | None = None
 _cache_ts: float = 0
 _CACHE_TTL = 5.0  # 秒
 
@@ -67,7 +67,7 @@ def write_connection_config(
         "setup_completed": setup_completed,
     }
     if setup_completed:
-        config["completed_at"] = datetime.now(timezone.utc).isoformat()
+        config["completed_at"] = datetime.now(UTC).isoformat()
 
     # 确保 config 目录存在
     config_path = get_connection_config_path()
@@ -144,8 +144,9 @@ async def get_missing_fields() -> list[str]:
     ]
 
     try:
-        from backend.models.database import async_session, AppConfig
         from sqlalchemy import select
+
+        from backend.models.database import AppConfig, async_session
 
         async with async_session() as session:
             result = await session.execute(
@@ -191,11 +192,11 @@ async def get_current_step() -> int:
 
     # Step 1+: 需要数据库连接
     try:
-        from backend.models.database import async_session, AppConfig
         from sqlalchemy import select
 
         # 确保数据库引擎已初始化
         from backend.models import database as db_module
+        from backend.models.database import AppConfig, async_session
 
         if db_module.async_engine is None:
             return 0

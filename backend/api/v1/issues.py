@@ -3,22 +3,21 @@
 import json
 
 from fastapi import APIRouter, Depends, Query
-from sqlalchemy import select, func, desc, or_
+from sqlalchemy import desc, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from backend.models.database import IssueAnalysis
-from backend.webui.deps import (
-    get_db,
-    paginate,
-    build_user_scope_filter,
-)
-
 from backend.api.v1.deps import require_api_auth
-from backend.api.v1.schemas import IssueAnalysisResponse
 from backend.api.v1.responses import (
-    success_response,
     error_response,
     paginated_response,
+    success_response,
+)
+from backend.api.v1.schemas import IssueAnalysisResponse
+from backend.models.database import IssueAnalysis
+from backend.webui.deps import (
+    build_user_scope_filter,
+    get_db,
+    paginate,
 )
 
 router = APIRouter(prefix="/issues", tags=["Issues"])
@@ -29,7 +28,7 @@ def _parse_json_field(value: str | None) -> list:
         return []
     try:
         return json.loads(value)
-    except (json.JSONDecodeError, TypeError):
+    except json.JSONDecodeError, TypeError:
         return []
 
 

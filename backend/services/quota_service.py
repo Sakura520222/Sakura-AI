@@ -93,11 +93,7 @@ class QuotaService:
             changed = True
 
         last_reset_monthly = getattr(user, fields["last_reset_monthly"])
-        if last_reset_monthly is None:
-            setattr(user, fields["monthly_used"], 0)
-            setattr(user, fields["last_reset_monthly"], now)
-            changed = True
-        elif (
+        if last_reset_monthly is None or (
             last_reset_monthly.month != now.month or last_reset_monthly.year != now.year
         ):
             setattr(user, fields["monthly_used"], 0)

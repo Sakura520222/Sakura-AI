@@ -1,6 +1,6 @@
 """Star Aid regression tests for completion gaps."""
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import pytest
 
@@ -36,7 +36,7 @@ def test_sanitized_error_keeps_full_message():
     repo.ai_summary_updated_at = None
     exc = RuntimeError("x" * 800)
 
-    summary_service.apply_summary_failure(repo, exc, datetime.now(timezone.utc))
+    summary_service.apply_summary_failure(repo, exc, datetime.now(UTC))
 
     assert repo.ai_summary_status == "failed"
     assert repo.ai_summary_error == str(exc)
@@ -90,7 +90,6 @@ async def test_list_user_public_repositories_reads_all_pages(monkeypatch):
 
         async def __aexit__(self, *args):
             assert len(args) == 3
-            return None
 
         async def get(self, *args, headers=None, params=None, timeout=None):
             assert args
@@ -179,7 +178,9 @@ async def test_auth_callback_silently_handles_github_app_setup_action():
 
 
 @pytest.mark.asyncio
-async def test_auth_callback_setup_install_with_code_redirects_to_dashboard(monkeypatch):
+async def test_auth_callback_setup_install_with_code_redirects_to_dashboard(
+    monkeypatch,
+):
     """安装审查 App 时 GitHub 附带 user authorization 回调（setup_action=install，带 code 无 state）：
     应回仪表盘，且不把 code 当成仓库互助授权消费。"""
     from unittest.mock import MagicMock

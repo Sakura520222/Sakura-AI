@@ -5,19 +5,19 @@ import json as _json
 import os
 import shutil
 import tempfile
-from datetime import datetime, timedelta, timezone
-from typing import Any, Optional
+from datetime import UTC, datetime, timedelta
+from typing import Any
 
 from loguru import logger
 from sqlalchemy import select
-from sqlalchemy.exc import OperationalError, InterfaceError
+from sqlalchemy.exc import InterfaceError, OperationalError
 
 from backend.core.config import get_settings
 from backend.models.scan_models import RepoScan, ScanFinding, ScanStatus
 from backend.services.ai_reviewer.token_tracker import TokenTracker
 
 # 扫描并发控制信号量
-_scan_semaphore: Optional[asyncio.Semaphore] = None
+_scan_semaphore: asyncio.Semaphore | None = None
 
 
 async def _get_scan_semaphore() -> asyncio.Semaphore:
@@ -141,9 +141,7 @@ class ScanWorker:
 
         async with async_session() as session:
             # 排除冷却期内已成功扫描的仓库
-            cutoff = datetime.now(timezone.utc) - timedelta(
-                hours=settings.scan_cooldown_hours
-            )
+            cutoff = datetime.now(UTC) - timedelta(hours=settings.scan_cooldown_hours)
             recent_result = await session.execute(
                 select(RepoScan.repo_name).where(
                     RepoScan.status == ScanStatus.COMPLETED.value,
@@ -224,7 +222,7 @@ class ScanWorker:
                 scan_id,
                 status=ScanStatus.INDEXING.value,
                 current_phase="indexing",
-                started_at=datetime.now(timezone.utc),
+                started_at=datetime.now(UTC),
             )
             await self._log_activity(
                 scan_id,
@@ -387,7 +385,7 @@ class ScanWorker:
                 report_issue_number=issue_number,
                 report_issue_url=issue_url,
                 estimated_cost=estimated_cost,
-                completed_at=datetime.now(timezone.utc),
+                completed_at=datetime.now(UTC),
             )
             await self._log_activity(
                 scan_id,
@@ -436,7 +434,7 @@ class ScanWorker:
                 except Exception:
                     pass
 
-    async def _clone_repo(self, repo_name: str) -> Optional[str]:
+    async def _clone_repo(self, repo_name: str) -> str | None:
         """克隆仓库到临时目录"""
         try:
             repo_owner, repo_name_only = repo_name.split("/", 1)
@@ -483,14 +481,14 @@ class ScanWorker:
             logger.info(f"仓库 {repo_name} 克隆完成: {tmp_dir}")
             return tmp_dir
 
-        except asyncio.TimeoutError:
+        except TimeoutError:
             logger.error(f"克隆仓库超时: {repo_name}")
             return None
         except Exception as e:
             logger.error(f"克隆仓库异常: {e}")
             return None
 
-    async def _get_commit_sha(self, repo_path: str) -> Optional[str]:
+    async def _get_commit_sha(self, repo_path: str) -> str | None:
         """获取仓库最新 commit SHA"""
         try:
             proc = await asyncio.create_subprocess_exec(
@@ -550,12 +548,12 @@ class ScanWorker:
             ai_health_score 为 AI 评估的评分（可能为 None）。
             iteration 为实际执行的轮次数。
         """
+        from backend.services.ai_reviewer.reviewer import AIReviewer
         from backend.services.scan_prompt_builder import (
-            collect_code_files,
             build_scan_context,
+            collect_code_files,
             parse_scan_result,
         )
-        from backend.services.ai_reviewer.reviewer import AIReviewer
 
         # 1. 收集仓库中的代码文件
         file_list = collect_code_files(repo_path)
@@ -574,10 +572,9 @@ class ScanWorker:
         )
 
         # 3. 构建消息
-        from backend.services.scan_prompt_builder import SCAN_SYSTEM_PROMPT
-
         # 注入输出语言指令 / Inject output language directive
         from backend.core.config import get_settings as _get_settings
+        from backend.services.scan_prompt_builder import SCAN_SYSTEM_PROMPT
 
         _settings = _get_settings()
         scan_system_prompt = SCAN_SYSTEM_PROMPT
@@ -1007,7 +1004,9 @@ class ScanWorker:
         await _db_retry(_save)
         logger.info(f"已保存 {len(findings)} 个 findings (scan_id={scan_id})")
 
-    async def _generate_reports(self, scan_id: int, report_data: dict = None) -> dict:
+    async def _generate_reports(
+        self, scan_id: int, report_data: dict | None = None
+    ) -> dict:
         """生成报告（GitHub Issue + Telegram 通知）
 
         Args:
@@ -1040,7 +1039,7 @@ class ScanWorker:
                         if hasattr(scan, key):
                             setattr(scan, key, value)
                     if "status" not in kwargs:
-                        scan.updated_at = datetime.now(timezone.utc)
+                        scan.updated_at = datetime.now(UTC)
                     await session.commit()
 
         try:

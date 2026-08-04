@@ -26,13 +26,13 @@ from backend.core.config import get_dynamic_config
 from backend.models.star_aid_models import (
     ACTION_MANUAL_STAR,
     ACTION_STAR,
-    ACTION_UNSTAR,
     ACTION_STATUS_ALREADY_DONE,
     ACTION_STATUS_FAILED,
     ACTION_STATUS_RATE_LIMITED,
     ACTION_STATUS_REAUTH_REQUIRED,
     ACTION_STATUS_SKIPPED,
     ACTION_STATUS_SUCCESS,
+    ACTION_UNSTAR,
     MEMBER_STATUS_ACTIVE,
     MEMBER_STATUS_BANNED,
     MEMBER_STATUS_LEFT,
@@ -42,7 +42,6 @@ from backend.models.star_aid_models import (
     StarAidRepository,
 )
 from backend.services import star_aid_github_service as gh
-
 
 # ========== 配置 / 辅助 ==========
 
@@ -127,8 +126,7 @@ async def _credential_status(session, user_id: int) -> str:
         return "none"
     now = _now()
     access_expired = (
-        cred.access_token_expires_at is not None
-        and cred.access_token_expires_at <= now
+        cred.access_token_expires_at is not None and cred.access_token_expires_at <= now
     )
     if not access_expired:
         return "authorized"
@@ -167,9 +165,9 @@ def _repo_to_dict(repo: StarAidRepository, *, score: float | None = None) -> dic
         "ai_summary_language": repo.ai_summary_language,
         "is_displayed": repo.is_displayed,
         "disabled_by_admin": repo.disabled_by_admin,
-        "activity_score": score if score is not None else compute_activity_score(
-            repo.stargazers_count, repo.pushed_at
-        ),
+        "activity_score": score
+        if score is not None
+        else compute_activity_score(repo.stargazers_count, repo.pushed_at),
     }
 
 
@@ -207,9 +205,7 @@ async def get_page_state(session, user: dict) -> dict:
         .order_by(StarAidRepository.stargazers_count.desc())
     )
     public_repos_raw = list(pub_result.scalars().all())
-    public_repos = [
-        _repo_to_dict(r) for r in public_repos_raw
-    ]
+    public_repos = [_repo_to_dict(r) for r in public_repos_raw]
     # 按活跃度排序（stars 相近时活跃度高的优先）
     public_repos.sort(key=lambda r: r["activity_score"], reverse=True)
 
@@ -218,8 +214,10 @@ async def get_page_state(session, user: dict) -> dict:
 
     # 今日用量
     daily_used = member.daily_star_used if member else 0
-    daily_limit = member.daily_star_limit if member else int(
-        await get_dynamic_config("star_aid_user_daily_limit")
+    daily_limit = (
+        member.daily_star_limit
+        if member
+        else int(await get_dynamic_config("star_aid_user_daily_limit"))
     )
 
     # 管理员可见的成员/仓库列表
@@ -320,7 +318,7 @@ async def refresh_available_repositories(session, user_id: int) -> dict:
         if repo_id is not None:
             try:
                 synced_repo_ids.add(int(repo_id))
-            except (TypeError, ValueError):
+            except TypeError, ValueError:
                 pass
         if not full_name:
             continue
@@ -376,9 +374,7 @@ async def refresh_available_repositories(session, user_id: int) -> dict:
             repo_row.topics_json = (
                 json.dumps(topics) if topics else repo_row.topics_json
             )
-            repo_row.primary_language = (
-                r.get("language") or repo_row.primary_language
-            )
+            repo_row.primary_language = r.get("language") or repo_row.primary_language
             repo_row.stargazers_count = (
                 r.get("stargazers_count", repo_row.stargazers_count) or 0
             )
@@ -394,9 +390,7 @@ async def refresh_available_repositories(session, user_id: int) -> dict:
     # 清理：该 owner 本次同步缺失的仓库（改为 private/删除/失权）移出展示池，
     # 避免页面和调度器继续曝光 stale 仓库。
     owner_result = await session.execute(
-        select(StarAidRepository).where(
-            StarAidRepository.owner_user_id == user_id
-        )
+        select(StarAidRepository).where(StarAidRepository.owner_user_id == user_id)
     )
     hidden = 0
     for repo in owner_result.scalars().all():
@@ -422,7 +416,7 @@ def _parse_github_timestamp(raw) -> datetime | None:
     try:
         # GitHub 格式："2024-01-01T12:00:00Z"
         return datetime.strptime(raw, "%Y-%m-%dT%H:%M:%SZ")
-    except (ValueError, TypeError):
+    except ValueError, TypeError:
         return None
 
 
@@ -446,9 +440,7 @@ async def select_repositories(
     selected_set = {fn for fn in selected_full_names if fn}
 
     result = await session.execute(
-        select(StarAidRepository).where(
-            StarAidRepository.owner_user_id == user_id
-        )
+        select(StarAidRepository).where(StarAidRepository.owner_user_id == user_id)
     )
     rows = result.scalars().all()
     displayed_count = 0
@@ -510,15 +502,11 @@ async def join_plan(
     displayed = await select_repositories(session, user_id, selected_full_names)
 
     await session.flush()
-    logger.info(
-        "star_aid join: user_id={}, displayed={}", user_id, displayed
-    )
+    logger.info("star_aid join: user_id={}, displayed={}", user_id, displayed)
     return {"success": True, "message": "joined", "displayed": displayed}
 
 
-async def leave_plan(
-    session, user_id: int, *, unstar_created: bool = False
-) -> dict:
+async def leave_plan(session, user_id: int, *, unstar_created: bool = False) -> dict:
     """退出计划：停止自动 star 并取消本用户仓库展示。
 
     Args:
@@ -544,9 +532,7 @@ async def leave_plan(
 
     # 取消本用户仓库的展示
     result = await session.execute(
-        select(StarAidRepository).where(
-            StarAidRepository.owner_user_id == user_id
-        )
+        select(StarAidRepository).where(StarAidRepository.owner_user_id == user_id)
     )
     for row in result.scalars().all():
         row.is_displayed = False
@@ -556,9 +542,7 @@ async def leave_plan(
         unstar_summary = await _unstar_created_repos(session, user_id)
 
     await session.flush()
-    logger.info(
-        "star_aid leave: user_id={}, unstar={}", user_id, unstar_summary
-    )
+    logger.info("star_aid leave: user_id={}, unstar={}", user_id, unstar_summary)
     return {"success": True, "message": "left", "unstar": unstar_summary}
 
 
@@ -570,9 +554,7 @@ async def _unstar_created_repos(session, user_id: int) -> dict:
     """
     token, _ = await gh.get_effective_access_token(session, int(user_id))
     if token is None:
-        logger.warning(
-            "star_aid exit unstar skipped (no token): user_id={}", user_id
-        )
+        logger.warning("star_aid exit unstar skipped (no token): user_id={}", user_id)
         return {"attempted": 0, "succeeded": 0, "failed": 0, "reason": "no_token"}
 
     logs_result = await session.execute(
@@ -653,9 +635,7 @@ async def ban_member(
     for repo in repo_result.scalars().all():
         repo.is_displayed = False
     await session.flush()
-    logger.info(
-        "star_aid ban: member={}, admin={}", member_user_id, admin_user_id
-    )
+    logger.info("star_aid ban: member={}, admin={}", member_user_id, admin_user_id)
     return {"success": True}
 
 
@@ -761,9 +741,7 @@ async def perform_star(
         ``{"status": str, "created_star": bool, "reauth_required": bool,
         "rate_limited": bool, "rate_limit_reset_at": datetime|None}``
     """
-    action = (
-        ACTION_MANUAL_STAR if trigger == "manual" else ACTION_STAR
-    )
+    action = ACTION_MANUAL_STAR if trigger == "manual" else ACTION_STAR
 
     repo_result = await session.execute(
         select(StarAidRepository).where(StarAidRepository.id == int(repository_id))

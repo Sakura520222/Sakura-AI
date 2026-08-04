@@ -2,22 +2,22 @@
 
 import json
 
-from fastapi import APIRouter, Request, Depends, Query
+from fastapi import APIRouter, Depends, Query, Request
 from fastapi.responses import HTMLResponse, JSONResponse
-from sqlalchemy import select, func, desc
+from sqlalchemy import desc, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.models.database import IssueAnalysis
 from backend.webui.deps import (
-    require_auth,
+    build_user_scope_filter,
+    error_page,
+    get_csrf_serializer,
     get_db,
     get_templates,
-    get_csrf_serializer,
     get_user_preferences,
     paginate,
-    error_page,
-    build_user_scope_filter,
     render_template,
+    require_auth,
 )
 
 router = APIRouter(prefix="/issues", tags=["WebUI Issues"])
@@ -168,7 +168,7 @@ async def issue_detail_page(
         suggested_labels = (
             json.loads(analysis.suggested_labels) if analysis.suggested_labels else []
         )
-    except (json.JSONDecodeError, TypeError):
+    except json.JSONDecodeError, TypeError:
         pass
 
     suggested_assignees = []
@@ -178,13 +178,13 @@ async def issue_detail_page(
             if analysis.suggested_assignees
             else []
         )
-    except (json.JSONDecodeError, TypeError):
+    except json.JSONDecodeError, TypeError:
         pass
 
     related_prs = []
     try:
         related_prs = json.loads(analysis.related_prs) if analysis.related_prs else []
-    except (json.JSONDecodeError, TypeError):
+    except json.JSONDecodeError, TypeError:
         pass
 
     return render_template(

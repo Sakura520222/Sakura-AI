@@ -7,17 +7,18 @@
 - Push vs Pull 混合策略
 """
 
-from typing import List, Dict, Any, Optional
-from loguru import logger
 from datetime import datetime, timedelta
+from typing import Any
 
-from backend.services.vector_store import get_vector_store
+from loguru import logger
+
+from backend.core.config import get_settings
+from backend.services.document_service import get_document_service
 from backend.services.embedding_service import (
     get_embedding_service,
     get_reranker_service,
 )
-from backend.services.document_service import get_document_service
-from backend.core.config import get_settings
+from backend.services.vector_store import get_vector_store
 
 settings = get_settings()
 
@@ -43,8 +44,8 @@ class RAGService:
         self,
         repo_full_name: str,
         repo_path: str,
-        commit_hash: Optional[str] = None,
-    ) -> Dict[str, int]:
+        commit_hash: str | None = None,
+    ) -> dict[str, int]:
         """索引仓库文档（增量更新）
 
         Args:
@@ -150,7 +151,7 @@ class RAGService:
         query: str,
         top_k: int = 5,
         use_rerank: bool = True,
-    ) -> List[Dict[str, Any]]:
+    ) -> list[dict[str, Any]]:
         """检索相关文档（RAG 流程）
 
         完整的检索流程：
@@ -231,8 +232,8 @@ class RAGService:
             return []
 
     async def get_core_documents(
-        self, repo_full_name: str, doc_types: List[str]
-    ) -> List[Dict[str, Any]]:
+        self, repo_full_name: str, doc_types: list[str]
+    ) -> list[dict[str, Any]]:
         """获取核心文档（用于 Push 策略）
 
         获取特定类型的文档（如 review-rules、coding-standards）。
@@ -273,7 +274,7 @@ class RAGService:
             logger.error(f"❌ 获取核心文档失败 ({repo_full_name}): {e}")
             return []
 
-    async def get_index_status(self, repo_full_name: str) -> Dict[str, Any]:
+    async def get_index_status(self, repo_full_name: str) -> dict[str, Any]:
         """获取索引状态（带缓存）
 
         Args:
@@ -349,7 +350,7 @@ class RAGService:
 
 
 # 全局单例
-_rag_service_instance: Optional[RAGService] = None
+_rag_service_instance: RAGService | None = None
 
 
 def get_rag_service() -> RAGService:
