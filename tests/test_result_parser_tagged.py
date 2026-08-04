@@ -406,3 +406,110 @@ def test_preserves_single_line_suggestion_indentation(parser):
 
     body = result["inline_comments"][0]["body"]
     assert "    public static volatile String currentServerIp = null;" in body
+
+
+def test_error_message_for_repeated_line_field_after_description(parser):
+    """DESCRIPTION 后重复 <START_LINE>NONE</START_LINE> 时，错误信息须可操作。
+
+    回归用例（mimo-v2.5 系统性偏差，2026-08-04 PR 审查）：当 SUGGESTION 为 NONE
+    或文本建议时，模型在 DESCRIPTION 之后再补一对 <START_LINE>NONE</START_LINE>/
+    <END_LINE>NONE</END_LINE>，解析器期望 <SUGGESTION> 却撞上 <START_LINE>。
+    原错误 ``expected <SUGGESTION>`` 对修复模型不可操作；改进后须指出实际遇到的
+    标签并给出字段顺序，让修复循环有机会成功。
+    """
+    findings = """<FINDING>
+<SEVERITY>minor</SEVERITY>
+<FILE>backend/models/database.py</FILE>
+<START_LINE>187</START_LINE>
+<END_LINE>190</END_LINE>
+<TITLE>datetime.utcnow 残留</TITLE>
+<DESCRIPTION>72 处使用已弃用的 datetime.utcnow。</DESCRIPTION>
+<START_LINE>NONE</START_LINE>
+<END_LINE>NONE</END_LINE>
+<SUGGESTION>NONE</SUGGESTION>
+</FINDING>
+"""
+    with pytest.raises(ReviewProtocolError) as exc:
+        parser.parse_review_result(_review(findings=findings), "standard")
+    msg = str(exc.value)
+    # 期望字段、实际遇到字段、字段顺序三者齐全，错误才可操作
+    assert "SUGGESTION" in msg
+    assert "START_LINE" in msg
+    assert "SEVERITY" in msg and "DESCRIPTION" in msg
+
+
+def test_error_message_for_duplicate_description(parser):
+    """重复 <DESCRIPTION>（一详细一简短）时，错误信息须点明字段重复而非笼统报期望。"""
+    findings = """<FINDING>
+<SEVERITY>major</SEVERITY>
+<FILE>.github/workflows/ci.yml</FILE>
+<START_LINE>25</START_LINE>
+<END_LINE>48</END_LINE>
+<TITLE>CI 失败</TITLE>
+<DESCRIPTION>详细版本：CI 任务失败。</DESCRIPTION>
+<DESCRIPTION>简短版本：CI 失败。</DESCRIPTION>
+<SUGGESTION>NONE</SUGGESTION>
+</FINDING>
+"""
+    with pytest.raises(ReviewProtocolError) as exc:
+        parser.parse_review_result(_review(findings=findings), "standard")
+    msg = str(exc.value)
+    assert "DESCRIPTION" in msg
+    assert any(kw in msg.lower() for kw in ("once", "repeat", "duplicate"))
+
+
+def test_error_message_for_wrong_tag_name_none(parser):
+    """把 <SUGGESTION> 误写成 <NONE>（值 NONE 污染标签名）时，错误信息须指出实际标签。"""
+    findings = """<FINDING>
+<SEVERITY>suggestion</SEVERITY>
+<FILE>.github/workflows/ci.yml</FILE>
+<START_LINE>26</START_LINE>
+<END_LINE>29</END_LINE>
+<TITLE>升级 Actions</TITLE>
+<DESCRIPTION>Node.js 20 已弃用。</DESCRIPTION>
+<NONE>NONE</NONE>
+</FINDING>
+"""
+    with pytest.raises(ReviewProtocolError) as exc:
+        parser.parse_review_result(_review(findings=findings), "standard")
+    msg = str(exc.value)
+    assert "SUGGESTION" in msg
+    assert "NONE" in msg
+
+
+def test_repair_instruction_lists_finding_field_order():
+    """修复指令必须列出 FINDING 字段顺序与"恰好一次"约束。
+
+    没有这条指引，修复模型看到 ``expected <SUGGESTION>`` 时无法理解根因，只会反复
+    重新输出同样格式。这是 2026-08-04 PR 审查 3 轮修复全失败的直接原因。
+    """
+    from backend.services.ai_reviewer.review_protocol import REPAIR_INSTRUCTION
+
+    for field in (
+        "SEVERITY",
+        "FILE",
+        "START_LINE",
+        "END_LINE",
+        "TITLE",
+        "DESCRIPTION",
+        "SUGGESTION",
+    ):
+        assert field in REPAIR_INSTRUCTION
+    assert "once" in REPAIR_INSTRUCTION.lower()
+
+
+def test_system_prompt_requires_finding_fields_exactly_once():
+    """system prompt 的 Output contract 必须显式声明字段唯一性与顺序约束。
+
+    模板示例不足以让模型归纳出"每个字段恰好一次、DESCRIPTION 之后不得再出现行号
+    字段"——必须在契约里显式写出。
+    """
+    from backend.services.ai_reviewer.prompt_builder import PromptBuilder
+
+    prompt = PromptBuilder().build_system_prompt(
+        "Review correctness.", {}, include_tools=False, output_language="zh-CN"
+    )
+    assert "exactly once" in prompt
+    assert any(
+        kw in prompt.lower() for kw in ("repeat", "after description", "second")
+    )
