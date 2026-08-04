@@ -21,8 +21,6 @@ from backend.webui.routes import activity_observability as activity_routes
 from backend.webui.routes.sse import sse_events
 from backend.webui.sse import SSEManager, sse_manager
 
-import backend.main as main
-
 
 async def _run_isolated_lifespan(app, monkeypatch):
     monkeypatch.setattr(main, "is_bootstrap_mode", lambda: True)
