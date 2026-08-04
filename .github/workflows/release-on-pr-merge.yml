@@ -549,6 +549,11 @@ jobs:
             exit 1
           fi
 
+          if [ ! -f ".dockerignore" ]; then
+            echo "❌ 错误: .dockerignore 文件不存在"
+            exit 1
+          fi
+
           echo "✅ Sakura-AI-Reviewer 项目结构验证通过"
 
       - name: 获取版本信息
@@ -661,9 +666,11 @@ jobs:
           cp -r config "$RELEASE_DIR/"
           echo "- config/ (strategies.yaml + labels.yaml)" >> packaging_manifest.txt
 
-          # docker 整目录（Dockerfile / docker-compose.yml / mysql-init / .dockerignore）
+          # Docker 配置和根构建上下文排除规则
           cp -r docker "$RELEASE_DIR/"
           echo "- docker/ (Dockerfile + docker-compose.yml + mysql-init)" >> packaging_manifest.txt
+          cp .dockerignore "$RELEASE_DIR/"
+          echo "- .dockerignore" >> packaging_manifest.txt
 
           # 依赖与主 README
           cp requirements.txt "$RELEASE_DIR/"
@@ -753,3 +760,16 @@ jobs:
           rm -f "Sakura-AI-Reviewer-v${VERSION}.tar.gz"
           rm -f "Sakura-AI-Reviewer-v${VERSION}.zip"
           echo "✅ 临时文件已清理"
+
+  publish-docker-image:
+    name: 发布 Docker 镜像
+    needs: [generate-release, build-and-upload-assets]
+    if: needs.generate-release.result == 'success' && needs.build-and-upload-assets.result == 'success'
+    permissions:
+      contents: read
+      packages: write
+    uses: ./.github/workflows/publish-docker-image.yml
+    with:
+      ref: v${{ needs.generate-release.outputs.version }}
+      version: ${{ needs.generate-release.outputs.version }}
+      update_latest: true
