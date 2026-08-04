@@ -2,9 +2,9 @@
 
 import httpx
 from loguru import logger
-from telegram import Bot, BotCommand
+from telegram import Bot, BotCommand, Update
 from telegram.error import NetworkError, TimedOut
-from telegram.ext import Application, CommandHandler
+from telegram.ext import Application, CommandHandler, TypeHandler
 
 from backend.core.config import get_settings
 from backend.services.payment_service import is_payment_enabled
@@ -37,6 +37,7 @@ from backend.telegram.handlers import (
     cmd_user_add,
     cmd_user_remove,
     cmd_users,
+    enforce_registration_gate,
 )
 from backend.telegram.menu import get_callback_handler, get_force_reply_handler
 from backend.telegram.notifications import NotificationSender, set_notification_sender
@@ -128,6 +129,11 @@ async def start_telegram_bot():
             .read_timeout(30)
             .connect_timeout(10)
             .build()
+        )
+
+        # 自注册关闭时，先统一拦截未注册或已停用用户的全部交互
+        _telegram_app.add_handler(
+            TypeHandler(Update, enforce_registration_gate), group=-1
         )
 
         # 注册命令处理器

@@ -4,7 +4,7 @@ import re
 
 from loguru import logger
 from telegram import Update
-from telegram.ext import ContextTypes
+from telegram.ext import ApplicationHandlerStop, ContextTypes
 from telegram.helpers import escape_markdown
 
 from backend.core.config import get_settings
@@ -82,6 +82,30 @@ def get_async_session():
             raise RuntimeError("数据库未初始化")
 
     return async_session()
+
+
+async def enforce_registration_gate(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """自注册关闭时，阻止未注册或已停用用户使用 Telegram Bot。"""
+    del context
+    if settings.allow_user_registration or not update.effective_user:
+        return
+
+    telegram_id = update.effective_user.id
+    if telegram_id in settings.telegram_admin_ids_list:
+        return
+
+    async with get_async_session() as session:
+        service = TelegramService(session)
+        user = await service.get_user_by_telegram_id(telegram_id)
+
+    if user and user.is_active:
+        return
+
+    if update.effective_message:
+        await update.effective_message.reply_text(
+            "❌ 用户自注册已关闭，请联系管理员创建账号"
+        )
+    raise ApplicationHandlerStop
 
 
 async def check_permission(
