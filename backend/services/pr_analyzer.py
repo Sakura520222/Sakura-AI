@@ -551,11 +551,9 @@ class PRAnalyzer:
                         "deletions": file_info.deletions,
                     }
 
-                    # 统一的 patch 截断逻辑
+                    # 完整 patch（不做截断，AI 通过 get_file_diff 等工具按需读取）
                     if file_info.patch:
-                        file_context["patch"] = self._truncate_patch(
-                            file_info.patch, max_lines=500, max_chars=3000
-                        )
+                        file_context["patch"] = file_info.patch
 
                     context["files"].append(file_context)
 
@@ -576,45 +574,32 @@ class PRAnalyzer:
                         "changes": file_info.changes,
                     }
 
-                    # 统一的 patch 截断逻辑（更严格的限制）
+                    # 完整 patch（不做截断）
                     if file_info.patch:
-                        file_context["patch"] = self._truncate_patch(
-                            file_info.patch, max_lines=300, max_chars=2000
-                        )
+                        file_context["patch"] = file_info.patch
 
                     context["files"].append(file_context)
 
                 if len(analysis.code_files) > max_files:
                     context["remaining_files"] = len(analysis.code_files) - max_files
 
-            # 对于超大PR，只包含概览
+            # 对于超大PR：全部 code_files 进入 files，AI 通过 get_file_diff
+            # 工具按需查看完整 diff（compact 模式下 prompt 只列文件元信息，不含 diff）
             elif strategy_name == "large":
-                context["file_summary"] = [
-                    {"path": f.path, "changes": f.changes, "status": f.status}
-                    for f in analysis.code_files[:20]
-                ]
-                if len(analysis.code_files) > 20:
-                    context["remaining_files"] = len(analysis.code_files) - 20
+                for file_info in analysis.code_files:
+                    file_context = {
+                        "path": file_info.path,
+                        "status": file_info.status,
+                        "changes": file_info.changes,
+                        "additions": file_info.additions,
+                        "deletions": file_info.deletions,
+                    }
+                    if file_info.patch:
+                        file_context["patch"] = file_info.patch
+                    context["files"].append(file_context)
 
             return context
 
         except Exception as e:
             logger.error(f"准备审查上下文时出错: {e}", exc_info=True)
             raise
-
-    def _truncate_patch(
-        self, patch: str, max_lines: int = 500, max_chars: int = 3000
-    ) -> str:
-        """返回完整的 patch（已去除截断限制）
-
-        Args:
-            patch: 原始 patch 内容
-            max_lines: 参数保留（已废弃），用于兼容性
-            max_chars: 参数保留（已废弃），用于兼容性
-
-        Returns:
-            完整的 patch
-        """
-        # 直接返回完整 patch，不做任何截断
-        # 分批处理机制会处理超大 PR 的上下文管理
-        return patch
