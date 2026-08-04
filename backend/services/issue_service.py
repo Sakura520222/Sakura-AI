@@ -4,20 +4,21 @@ import asyncio
 import json
 import math
 import threading
-from typing import Dict, Any, List, Optional, Tuple
 from datetime import datetime
-from sqlalchemy import select, func, desc, and_, delete
-from sqlalchemy.ext.asyncio import AsyncSession
-from loguru import logger
+from typing import Any
 
+from loguru import logger
+from sqlalchemy import and_, delete, desc, func, select
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from backend.core.config import get_dynamic_config, get_settings, get_strategy_config
+from backend.core.github_app import GitHubAppClient
 from backend.models.database import (
     IssueAnalysis,
     IssueAnalysisQueue,
     IssueAnalysisStatus,
     PRIssueLink,
 )
-from backend.core.github_app import GitHubAppClient
-from backend.core.config import get_settings, get_strategy_config, get_dynamic_config
 
 
 def _apply_scope_filter(query, scope_filter):
@@ -60,10 +61,10 @@ class IssueService:
 
     async def save_analysis_result(
         self,
-        analysis_data: Dict[str, Any],
-        issue_info: Dict[str, Any],
+        analysis_data: dict[str, Any],
+        issue_info: dict[str, Any],
         db: AsyncSession,
-    ) -> Optional[IssueAnalysis]:
+    ) -> IssueAnalysis | None:
         """保存分析结果到数据库（更新已有的 PENDING 记录，而非创建新记录）"""
 
         # 查找已有的 PENDING/ANALYZING 记录
@@ -122,7 +123,7 @@ class IssueService:
 
     async def get_analysis(
         self, repo_name: str, issue_number: int, db: AsyncSession
-    ) -> Optional[IssueAnalysis]:
+    ) -> IssueAnalysis | None:
         """获取 Issue 的最新分析记录"""
         result = await db.execute(
             select(IssueAnalysis)
@@ -157,13 +158,13 @@ class IssueService:
     async def get_analyses(
         self,
         db: AsyncSession,
-        repo_name: str = None,
-        category: str = None,
-        priority: str = None,
-        status: str = None,
+        repo_name: str | None = None,
+        category: str | None = None,
+        priority: str | None = None,
+        status: str | None = None,
         page: int = 1,
         per_page: int = 20,
-    ) -> Tuple[List[IssueAnalysis], int]:
+    ) -> tuple[list[IssueAnalysis], int]:
         """获取分析记录列表（带分页和过滤）"""
         query = select(IssueAnalysis)
         count_query = select(func.count(IssueAnalysis.id))
@@ -221,7 +222,7 @@ class IssueService:
                 else []
             )
             labels = [f"`{label['name']}`" for label in labels_data[:5]]
-        except (json.JSONDecodeError, TypeError):
+        except json.JSONDecodeError, TypeError:
             pass
 
         assignees = []
@@ -232,7 +233,7 @@ class IssueService:
                 else []
             )
             assignees = [f"@{a['username']}" for a in assignees_data[:3]]
-        except (json.JSONDecodeError, TypeError):
+        except json.JSONDecodeError, TypeError:
             pass
 
         if is_english:
@@ -257,7 +258,7 @@ class IssueService:
             prs = json.loads(analysis.related_prs) if analysis.related_prs else []
             if prs:
                 related_info += f"\n🔗 {related_prs_label}: {', '.join('#' + str(p.get('number', '')) for p in prs[:5])}\n"
-        except (json.JSONDecodeError, TypeError):
+        except json.JSONDecodeError, TypeError:
             pass
 
         suggested_title_section = ""
@@ -298,7 +299,7 @@ class IssueService:
         issue_number: int,
         suggested_labels: list,
         db: AsyncSession,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """应用建议标签到 Issue（集成 LabelService，支持自动创建和置信度过滤）
 
         Args:
@@ -392,8 +393,8 @@ class IssueService:
         repo_owner: str,
         repo_name: str,
         issue_number: int,
-        suggested_assignees: list[Dict[str, Any]],
-    ) -> Dict[str, Any]:
+        suggested_assignees: list[dict[str, Any]],
+    ) -> dict[str, Any]:
         """应用建议指派人到 Issue（支持置信度过滤）
 
         Args:
@@ -405,7 +406,7 @@ class IssueService:
         """
         threshold = await get_dynamic_config("issue_assignee_confidence_threshold")
         max_assign = await get_dynamic_config("issue_auto_assign_max")
-        result: Dict[str, Any] = {"applied": [], "suggested": [], "failed": []}
+        result: dict[str, Any] = {"applied": [], "suggested": [], "failed": []}
 
         if not suggested_assignees:
             return result
@@ -500,8 +501,8 @@ class IssueService:
         repo_name: str,
         title: str,
         body: str,
-        current_issue_number: int = None,
-    ) -> List[Dict[str, Any]]:
+        current_issue_number: int | None = None,
+    ) -> list[dict[str, Any]]:
         """检测重复 Issue（优先语义检索，回退到 GitHub Search API）"""
         # 优先使用 IssueEmbeddingService 语义检索
         try:
@@ -586,7 +587,7 @@ class IssueService:
             ]
 
     @staticmethod
-    def _cosine_similarity(a: List[float], b: List[float]) -> float:
+    def _cosine_similarity(a: list[float], b: list[float]) -> float:
         """计算两个向量的余弦相似度"""
         dot = sum(x * y for x, y in zip(a, b))
         norm_a = math.sqrt(sum(x * x for x in a))
@@ -600,7 +601,7 @@ class IssueService:
         repo_owner: str,
         repo_name: str,
         issue_number: int,
-    ) -> List[Dict[str, Any]]:
+    ) -> list[dict[str, Any]]:
         """查找与 Issue 相关的 PRs"""
         query = f"fixes #{issue_number}"
         results = await asyncio.to_thread(
@@ -625,7 +626,7 @@ class IssueService:
 
     async def get_issue_stats(
         self, db: AsyncSession, scope_filter=None
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """获取 Issue 统计数据
 
         Args:
@@ -741,7 +742,7 @@ class IssueService:
         repo_name: str,
         issue_number: int,
         db: AsyncSession,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """删除 Issue 相关的所有数据库记录和向量索引
 
         当 GitHub Issue 被删除时调用，清理:

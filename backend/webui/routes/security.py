@@ -5,6 +5,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.models.telegram_models import TelegramUser
+from backend.services.mfa_notification_service import notify_mfa_event
 from backend.services.security_admin_service import (
     delete_user_passkey,
     delete_user_passkeys,
@@ -19,7 +20,6 @@ from backend.services.security_admin_service import (
     set_user_mfa_required,
 )
 from backend.services.security_audit_service import record_security_event
-from backend.services.mfa_notification_service import notify_mfa_event
 from backend.webui.deps import (
     error_page,
     get_csrf_serializer,

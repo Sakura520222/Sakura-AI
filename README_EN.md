@@ -8,8 +8,8 @@
 
 **English** | [中文](README.md)
 
-[![Version](https://img.shields.io/badge/Version-2.13.0-blue.svg)](https://github.com/Sakura520222/Sakura-AI/releases)
-[![Python](https://img.shields.io/badge/Python-3.11+-blue.svg)](https://www.python.org/)
+[![Version](https://img.shields.io/badge/Version-2.13.1-blue.svg)](https://github.com/Sakura520222/Sakura-AI-Reviewer/releases)
+[![Python](https://img.shields.io/badge/Python-3.14+-blue.svg)](https://www.python.org/)
 [![FastAPI](https://img.shields.io/badge/FastAPI-Latest-green.svg)](https://fastapi.tiangolo.com/)
 [![License](https://img.shields.io/badge/License-AGPLv3-yellow.svg)](LICENSE)
 [![Live Demo](https://img.shields.io/badge/🌐_Free_Demo-Online-success.svg)](https://ai.firefly520.top/)
@@ -210,7 +210,7 @@
 └─────────────────────────────────────────────────────────────┘
 ```
 
-**Tech Stack**: FastAPI (Python 3.11+) · Jinja2 + Tailwind CSS + HTMX + Alpine.js · DeepSeek-R1 / OpenAI-compatible API · MySQL 8.0 + Redis (Queue/PubSub) + ChromaDB · GitHub App (PyGithub) + OAuth · Docker Compose · Optional Celery Worker
+**Tech Stack**: FastAPI (Python 3.14+) · Jinja2 + Tailwind CSS + HTMX + Alpine.js · DeepSeek-R1 / OpenAI-compatible API · MySQL 8.0 + Redis (Queue/PubSub) + ChromaDB · GitHub App (PyGithub) + OAuth · Docker Compose · Optional Celery Worker
 
 ### Client Applications
 

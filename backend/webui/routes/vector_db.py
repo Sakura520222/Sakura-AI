@@ -6,20 +6,20 @@
 
 import asyncio
 
-from fastapi import APIRouter, Request, Depends
+from fastapi import APIRouter, Depends, Request
 from loguru import logger
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.services.vector_store import get_vector_store
 from backend.webui.deps import (
-    require_super_admin,
-    get_db,
     get_csrf_serializer,
+    get_db,
+    get_user_preferences,
+    render_template,
     require_csrf,
     require_csrf_header,
-    get_user_preferences,
+    require_super_admin,
     toast_redirect,
-    render_template,
 )
 from backend.webui.helpers.admin_log import log_admin_action
 
@@ -355,8 +355,8 @@ async def test_db_connection(
 ):
     """测试 MySQL 数据库连接"""
     try:
-        from backend.core.setup_service import setup_service
         from backend.core.config import get_settings
+        from backend.core.setup_service import setup_service
 
         settings = get_settings()
         result = await setup_service.test_database_connection(settings.database_url)

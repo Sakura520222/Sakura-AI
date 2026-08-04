@@ -6,7 +6,7 @@ propagated to the payment/refund business flow.
 
 from __future__ import annotations
 
-from typing import Iterable
+from collections.abc import Iterable
 
 from loguru import logger
 from sqlalchemy import select
@@ -36,7 +36,7 @@ def _unique_chat_ids(values: Iterable[int | str | None]) -> list[int]:
             continue
         try:
             chat_id = int(value)
-        except (TypeError, ValueError):
+        except TypeError, ValueError:
             continue
         if chat_id not in seen:
             seen.add(chat_id)

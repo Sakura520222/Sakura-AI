@@ -1,6 +1,6 @@
 """API v1 统一响应封装"""
 
-from typing import Any, Optional
+from typing import Any
 
 from fastapi.responses import JSONResponse
 
@@ -19,8 +19,8 @@ def success_response(
 
 def error_response(
     error: str,
-    detail: Optional[str] = None,
-    code: Optional[str] = None,
+    detail: str | None = None,
+    code: str | None = None,
     status_code: int = 400,
 ) -> JSONResponse:
     """错误响应"""

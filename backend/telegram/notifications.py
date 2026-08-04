@@ -1,10 +1,10 @@
 """Telegram 通知发送器"""
 
 import asyncio
-from typing import Optional, List
+
+from loguru import logger
 from telegram import Bot
 from telegram.helpers import escape_markdown
-from loguru import logger
 
 
 class NotificationSender:
@@ -14,7 +14,7 @@ class NotificationSender:
         self.bot = bot
 
     async def send_to_targets(
-        self, text: str, chat_ids: List[int], parse_mode: str = "Markdown", **kwargs
+        self, text: str, chat_ids: list[int], parse_mode: str = "Markdown", **kwargs
     ):
         """向多个目标发送消息，单个失败不影响其他"""
 
@@ -29,7 +29,7 @@ class NotificationSender:
                     ),
                     timeout=5,
                 )
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 logger.warning(f"发送通知到 {chat_id} 超时")
             except Exception as e:
                 logger.warning(f"发送通知到 {chat_id} 失败: {e}")
@@ -42,7 +42,7 @@ class NotificationSender:
         pr_number: int,
         pr_title: str,
         author: str,
-        chat_ids: Optional[List[int]] = None,
+        chat_ids: list[int] | None = None,
     ):
         """发送审查开始通知"""
         try:
@@ -78,7 +78,7 @@ class NotificationSender:
         score: int,
         critical_count: int,
         pr_url: str,
-        chat_ids: Optional[List[int]] = None,
+        chat_ids: list[int] | None = None,
     ):
         """发送审查完成通知"""
         try:
@@ -111,8 +111,8 @@ class NotificationSender:
         item_type: str = "PR",
         item_number: int = 0,
         reason: str = "",
-        chat_id: Optional[int] = None,
-        pr_number: Optional[int] = None,
+        chat_id: int | None = None,
+        pr_number: int | None = None,
     ):
         """发送配额不足通知（系统告警，仅发管理员）
 
@@ -159,7 +159,7 @@ class NotificationSender:
         repo_name: str,
         pr_number: int,
         github_username: str,
-        chat_id: Optional[int] = None,
+        chat_id: int | None = None,
     ):
         """发送未注册用户通知（系统告警，仅发管理员）"""
         try:
@@ -197,8 +197,8 @@ class NotificationSender:
         category: str,
         priority: str,
         issue_url: str,
-        summary: str = None,
-        chat_ids: Optional[List[int]] = None,
+        summary: str | None = None,
+        chat_ids: list[int] | None = None,
     ):
         """Issue 分析完成通知"""
         try:
@@ -243,7 +243,7 @@ class NotificationSender:
         total_findings: int,
         issue_url: str = "",
         scan_id: int | None = None,
-        chat_ids: Optional[List[int]] = None,
+        chat_ids: list[int] | None = None,
     ):
         """扫描完成通知
 
@@ -306,8 +306,8 @@ class NotificationSender:
         summary: str,
         feasibility: str,
         issue_url: str,
-        suggested_labels: list = None,
-        chat_ids: Optional[List[int]] = None,
+        suggested_labels: list | None = None,
+        chat_ids: list[int] | None = None,
     ):
         """Critical Issue 即时告警（附带 AI 摘要 + 可行性结论）"""
         try:
@@ -376,7 +376,7 @@ class NotificationSender:
         self,
         event_type: str,
         detail: str = "",
-        chat_id: Optional[int] = None,
+        chat_id: int | None = None,
     ):
         """发送 MFA 安全事件通知给用户。
 
@@ -415,10 +415,10 @@ class NotificationSender:
 
 
 # 全局通知发送器实例
-_notification_sender: Optional[NotificationSender] = None
+_notification_sender: NotificationSender | None = None
 
 
-def get_notification_sender() -> Optional[NotificationSender]:
+def get_notification_sender() -> NotificationSender | None:
     """获取通知发送器实例"""
     return _notification_sender
 

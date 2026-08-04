@@ -5,8 +5,6 @@
 每次会话只处理一个目标文件，两次串行会话分别处理两个文件。
 """
 
-from typing import Dict, List, Optional
-
 from loguru import logger
 
 from backend.core.config import get_settings
@@ -18,7 +16,6 @@ from backend.services.sakura_agent_base import (
     WRITE_FILE_TOOL,
     SakuraAgentBase,
 )
-
 
 # ── consolidation 专有工具 ─────────────────────────────────────────────
 
@@ -116,7 +113,7 @@ class SakuraConsolidationAgent(SakuraAgentBase):
     def _get_tools(self) -> list:
         return CONSOLIDATION_TOOLS
 
-    def _check_write_allowed(self, rel_path: str) -> Optional[str]:
+    def _check_write_allowed(self, rel_path: str) -> str | None:
         if rel_path not in _WRITABLE_FILES:
             return f"不允许写入: {rel_path}（只能编辑 {', '.join(_WRITABLE_FILES)}）"
         return None
@@ -146,7 +143,7 @@ class SakuraConsolidationAgent(SakuraAgentBase):
             )
         self._default_model = model
 
-    async def _execute_extra_tool(self, name: str, args: dict) -> Optional[str]:
+    async def _execute_extra_tool(self, name: str, args: dict) -> str | None:
         if name == "read_readme":
             return await self._tool_read_readme()
         return None
@@ -166,15 +163,15 @@ class SakuraConsolidationAgent(SakuraAgentBase):
         self,
         repo,
         repo_full_name: str,
-        sakura_ref: Optional[str],
+        sakura_ref: str | None,
         target_file: str,
-        new_reflection_files: List[str],
+        new_reflection_files: list[str],
         total_reflections: int,
         max_chars: int,
         languages: str,
-        model: Optional[str] = None,
+        model: str | None = None,
         max_iterations: int = 20,
-    ) -> Dict[str, str]:
+    ) -> dict[str, str]:
         """运行一次 Agent 会话，合并单个目标文件"""
         self._repo = repo
         self._sakura_ref = sakura_ref

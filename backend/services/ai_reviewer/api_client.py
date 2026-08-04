@@ -7,11 +7,11 @@ import asyncio
 import random
 import re
 import time
-from typing import Any, Dict, List, Optional
+from typing import Any
 
+from loguru import logger
 from openai import AsyncOpenAI
 from openai import BadRequestError as OpenAIBadRequestError
-from loguru import logger
 
 from backend.core.config import get_settings
 
@@ -94,7 +94,7 @@ class AIApiClient:
         self.client = AsyncOpenAI(base_url=base_url, api_key=api_key, max_retries=0)
 
     @staticmethod
-    def _estimate_prompt_tokens(messages: List[Dict[str, Any]]) -> int:
+    def _estimate_prompt_tokens(messages: list[dict[str, Any]]) -> int:
         """快速估算消息列表的 token 数量
 
         使用启发式方法：
@@ -147,13 +147,13 @@ class AIApiClient:
 
     async def call_with_retry(
         self,
-        messages: List[Dict[str, Any]],
+        messages: list[dict[str, Any]],
         model: str,
         temperature: float = 0.7,
-        tools: Optional[List[Dict]] = None,
-        tool_choice: Optional[str] = None,
-        timeout: Optional[float] = None,
-        max_tokens: Optional[int] = None,
+        tools: list[dict] | None = None,
+        tool_choice: str | None = None,
+        timeout: float | None = None,
+        max_tokens: int | None = None,
         **kwargs,
     ) -> Any:
         """带重试机制的AI API调用
@@ -200,7 +200,7 @@ class AIApiClient:
         # 执行重试循环
         return await self._retry_loop(api_kwargs)
 
-    async def _retry_loop(self, kwargs: Dict) -> Any:
+    async def _retry_loop(self, kwargs: dict) -> Any:
         """重试循环逻辑
 
         Args:

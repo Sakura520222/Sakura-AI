@@ -2,7 +2,7 @@
 
 import asyncio
 import json
-from typing import Any, Dict, List
+from typing import Any
 
 import redis.exceptions  # 仅异常类型引用，不触发连接初始化
 from loguru import logger
@@ -12,7 +12,7 @@ class SSEManager:
     """SSE 连接管理器（进程内）"""
 
     def __init__(self):
-        self._subscribers: Dict[str, List[asyncio.Queue]] = {}
+        self._subscribers: dict[str, list[asyncio.Queue]] = {}
 
     def subscribe(self, channel: str) -> asyncio.Queue:
         """订阅频道，返回消息队列"""
@@ -36,7 +36,7 @@ class SSEManager:
                 del self._subscribers[channel]
             logger.debug(f"SSE 客户端取消订阅频道: {channel}")
 
-    async def publish(self, channel: str, event: Dict[str, Any]):
+    async def publish(self, channel: str, event: dict[str, Any]):
         """向频道所有订阅者广播事件"""
         if channel not in self._subscribers:
             return
@@ -55,7 +55,7 @@ sse_manager = SSEManager()
 
 
 async def publish_event(
-    event_type: str, data: Dict[str, Any], channel: str = "webui:events"
+    event_type: str, data: dict[str, Any], channel: str = "webui:events"
 ):
     """发布事件到所有 SSE 订阅者 + Redis Pub/Sub（支持多进程）"""
     event = {"type": event_type, "data": data, "channel": channel}

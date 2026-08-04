@@ -1,18 +1,18 @@
 """WebUI 操作日志路由"""
 
-from fastapi import APIRouter, Request, Depends, Query
-from sqlalchemy import select, func, desc
+from fastapi import APIRouter, Depends, Query, Request
+from sqlalchemy import desc, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.models.admin_action_log import AdminActionLog
 from backend.models.telegram_models import TelegramUser
 from backend.webui.deps import (
-    require_admin,
+    get_csrf_serializer,
     get_db,
     get_templates,
-    get_csrf_serializer,
     get_user_preferences,
     render_template,
+    require_admin,
 )
 
 router = APIRouter(prefix="/logs/actions", tags=["WebUI Action Logs"])

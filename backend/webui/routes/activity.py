@@ -4,9 +4,9 @@
 复用 Agent Team 的 Session/Message/ToolCheckPoint 模式实现对话流。
 """
 
-from fastapi import APIRouter, Request, Depends
+from fastapi import APIRouter, Depends, Request
 from fastapi.responses import JSONResponse
-from sqlalchemy import select, desc
+from sqlalchemy import desc, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.models.activity_conversation_models import (
@@ -15,19 +15,19 @@ from backend.models.activity_conversation_models import (
     ActivityToolCall,
 )
 from backend.models.database import (
-    PRReview,
-    PRStatus,
     IssueAnalysis,
     IssueAnalysisStatus,
+    PRReview,
+    PRStatus,
 )
 from backend.models.scan_models import RepoScan, ScanStatus
 from backend.services.activity_event_service import ActivityEventService
 from backend.webui.deps import (
-    require_auth,
+    build_user_scope_filter,
     get_db,
     get_user_preferences,
     render_template,
-    build_user_scope_filter,
+    require_auth,
 )
 from backend.webui.routes.activity_access import verify_task_access
 

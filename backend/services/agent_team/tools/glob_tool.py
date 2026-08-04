@@ -119,5 +119,5 @@ class GlobTool(BaseTool):
     def _resolve(path: str, ctx: ToolContext) -> Path | None:
         try:
             return ctx.workspace_service.resolve_inside_workspace(ctx.workspace, path)
-        except (WorkspaceSecurityError, Exception):
+        except WorkspaceSecurityError, Exception:
             return None

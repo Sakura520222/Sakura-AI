@@ -113,7 +113,7 @@ class GrepTool(BaseTool):
                 if output_mode == "files_with_matches":
                     # 提取唯一文件名
                     files = sorted(
-                        set(line.split(":")[0] for line in lines if ":" in line)
+                        {line.split(":")[0] for line in lines if ":" in line}
                     )
                     return ToolResult(
                         success=True,
@@ -135,7 +135,7 @@ class GrepTool(BaseTool):
                     },
                 )
 
-        except (FileNotFoundError, asyncio.TimeoutError, OSError):
+        except TimeoutError, FileNotFoundError, OSError:
             # grep 不可用或超时，回退到 Python 搜索
             pass
 
@@ -189,14 +189,14 @@ class GrepTool(BaseTool):
                         matched = keyword in line
                     if matched:
                         matches.append(f"{rel}:{i}:{line.strip()}")
-            except (OSError, UnicodeDecodeError):
+            except OSError, UnicodeDecodeError:
                 continue
 
         truncated = len(matches) > max_results
         matches = matches[:max_results]
 
         if output_mode == "files_with_matches":
-            files = sorted(set(m.split(":")[0] for m in matches if ":" in m))
+            files = sorted({m.split(":")[0] for m in matches if ":" in m})
             return ToolResult(
                 success=True,
                 output={

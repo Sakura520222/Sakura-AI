@@ -4,7 +4,6 @@
 """
 
 import asyncio
-from typing import Optional
 
 import stripe
 from loguru import logger
@@ -35,7 +34,7 @@ class StripeGateway(PaymentGateway):
         user_id: int,
         success_url: str,
         cancel_url: str,
-        metadata: Optional[dict[str, str]] = None,
+        metadata: dict[str, str] | None = None,
     ) -> PaymentIntentResult:
         try:
             session_meta = {"order_no": order_no, "user_id": str(user_id)}
@@ -162,8 +161,8 @@ class StripeGateway(PaymentGateway):
     async def refund(
         self,
         provider_tx_id: str,
-        amount_cents: Optional[int] = None,
-        reason: Optional[str] = None,
+        amount_cents: int | None = None,
+        reason: str | None = None,
     ) -> RefundResult:
         try:
             # 同步 Stripe SDK 调用需包装以避免阻塞事件循环

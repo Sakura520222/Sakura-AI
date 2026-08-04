@@ -86,7 +86,7 @@ class _MemoryDb:
         entity = None
         try:
             entity = _statement.column_descriptions[0].get("entity")
-        except (AttributeError, IndexError, KeyError):
+        except AttributeError, IndexError, KeyError:
             entity = None
 
         params = {}

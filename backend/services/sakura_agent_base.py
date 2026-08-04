@@ -6,12 +6,10 @@
 
 import asyncio
 import json
-from typing import Dict, Optional, Set
 
 from loguru import logger
 
 from backend.services.ai_reviewer.api_client import AIApiClient
-
 
 # ── 共享工具定义（OpenAI Function Calling 格式） ──────────────────────────
 
@@ -112,12 +110,12 @@ class SakuraAgentBase:
     log_prefix: str = "[sakura-agent]"
 
     def __init__(self):
-        self._api_client: Optional[AIApiClient] = None
-        self._default_model: Optional[str] = None
+        self._api_client: AIApiClient | None = None
+        self._default_model: str | None = None
         self._repo = None
-        self._sakura_ref: Optional[str] = None
-        self._file_cache: Dict[str, Optional[str]] = {}
-        self._modified_files: Set[str] = set()
+        self._sakura_ref: str | None = None
+        self._file_cache: dict[str, str | None] = {}
+        self._modified_files: set[str] = set()
 
     def _ensure_client(self):
         """子类实现：初始化 API 客户端和模型"""
@@ -127,7 +125,7 @@ class SakuraAgentBase:
         """子类实现：返回工具定义列表"""
         raise NotImplementedError
 
-    def _check_write_allowed(self, rel_path: str) -> Optional[str]:
+    def _check_write_allowed(self, rel_path: str) -> str | None:
         """子类可选覆盖：检查写入权限，返回错误消息或 None（允许）
 
         默认允许所有写入。
@@ -141,7 +139,7 @@ class SakuraAgentBase:
         system_prompt: str,
         model: str,
         max_iterations: int,
-        initial_user_message: Optional[str] = None,
+        initial_user_message: str | None = None,
     ) -> None:
         messages: list = [{"role": "system", "content": system_prompt}]
         if initial_user_message:
@@ -226,7 +224,7 @@ class SakuraAgentBase:
 
     # ── 工具执行 ────────────────────────────────────────────────────────
 
-    async def _execute_extra_tool(self, name: str, args: dict) -> Optional[str]:
+    async def _execute_extra_tool(self, name: str, args: dict) -> str | None:
         """子类可选覆盖：处理额外的自定义工具
 
         返回 None 表示该工具名不由子类处理，由基类继续处理。
@@ -397,7 +395,7 @@ class SakuraAgentBase:
 
     # ── GitHub 辅助方法 ─────────────────────────────────────────────────
 
-    async def _read_from_github(self, full_path: str) -> Optional[str]:
+    async def _read_from_github(self, full_path: str) -> str | None:
         try:
             ref = self._sakura_ref or "HEAD"
 
@@ -412,7 +410,7 @@ class SakuraAgentBase:
             logger.debug("{} 读取 {} 失败: {}", self.log_prefix, full_path, exc)
             return None
 
-    async def _read_from_github_raw(self, path: str, ref: str) -> Optional[str]:
+    async def _read_from_github_raw(self, path: str, ref: str) -> str | None:
         """读取仓库中的任意文件（不带 .sakura/ 前缀）"""
         try:
 
@@ -429,9 +427,9 @@ class SakuraAgentBase:
 
     # ── 变更收集 ────────────────────────────────────────────────────────
 
-    def _collect_changes(self) -> Dict[str, str]:
+    def _collect_changes(self) -> dict[str, str]:
         """收集所有变更文件"""
-        changes: Dict[str, str] = {}
+        changes: dict[str, str] = {}
         for path in self._modified_files:
             content = self._file_cache.get(path)
             if content is not None and content.strip():

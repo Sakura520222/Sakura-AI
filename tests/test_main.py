@@ -7,12 +7,16 @@ import pytest
 from starlette.requests import Request
 from starlette.responses import JSONResponse
 
-import backend.main as main
+from backend import main
 from backend.core.config import Settings
-from backend.main import _get_webui_error_user
-from backend.main import _get_allowed_origins, _should_start_background_tasks
-from backend.main import get_startup_info, _format_duration
-from backend.main import get_system_info_dict
+from backend.main import (
+    _format_duration,
+    _get_allowed_origins,
+    _get_webui_error_user,
+    _should_start_background_tasks,
+    get_startup_info,
+    get_system_info_dict,
+)
 
 
 class RequestStub:

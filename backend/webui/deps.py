@@ -2,30 +2,27 @@
 
 import time
 from collections import OrderedDict
-from typing import Any, Optional
 from functools import lru_cache
+from typing import Any
 
-from fastapi import Request, HTTPException, Depends, Form, Header
+from fastapi import Depends, Form, Header, HTTPException, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
+from itsdangerous import BadSignature, URLSafeTimedSerializer
 from loguru import logger
-from sqlalchemy import Select
+from sqlalchemy import Select, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
-from itsdangerous import URLSafeTimedSerializer, BadSignature
-
-from sqlalchemy import select, or_
 
 from backend.core.config import get_settings
 from backend.models import database as db_module
-from backend.models.database import PRReview
-from backend.models.database import WebUIConfig
-from backend.webui.auth import decode_access_token, is_access_token_payload
+from backend.models.database import PRReview, WebUIConfig
 from backend.services.payment_service import is_payment_enabled
-from backend.webui.i18n import make_translation_func, SUPPORTED_LANGUAGES
+from backend.webui.auth import decode_access_token, is_access_token_payload
+from backend.webui.i18n import SUPPORTED_LANGUAGES, make_translation_func
 
 
 # ========== 模板引擎 ==========
-@lru_cache()
+@lru_cache
 def get_templates() -> Jinja2Templates:
     """获取 Jinja2 模板引擎单例"""
     templates = Jinja2Templates(directory="backend/webui/templates")
@@ -62,7 +59,7 @@ def _format_duration_filter(seconds) -> str:
 def render_template(
     template_name: str,
     request: Request,
-    user_prefs: Optional[dict] = None,
+    user_prefs: dict | None = None,
     **context: Any,
 ):
     """渲染模板并自动注入 i18n 翻译函数
@@ -108,7 +105,7 @@ def build_review_search_filter(search: str):
     )
 
 
-def build_user_scope_filter(user: dict, model: type) -> Optional[Any]:
+def build_user_scope_filter(user: dict, model: type) -> Any | None:
     """构建用户数据范围过滤条件
 
     普通用户只能看到 repo_owner 或 author 与自己 GitHub 用户名匹配的记录；
@@ -247,7 +244,7 @@ async def enforce_mfa_enrollment(
 
 
 # ========== CSRF 保护 ==========
-_csrf_serializer: Optional[URLSafeTimedSerializer] = None
+_csrf_serializer: URLSafeTimedSerializer | None = None
 
 
 def get_csrf_serializer() -> URLSafeTimedSerializer:
@@ -472,7 +469,7 @@ async def get_user_preferences(request: Request, db: AsyncSession = Depends(get_
 
     try:
         user_id = int(raw_user_id)
-    except (TypeError, ValueError):
+    except TypeError, ValueError:
         return {"language": "zh-CN", "items_per_page": 20}
 
     # 检查缓存

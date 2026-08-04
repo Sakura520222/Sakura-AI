@@ -5,14 +5,14 @@ import secrets
 from datetime import datetime
 
 from sqlalchemy import (
+    TIMESTAMP,
     Boolean,
     Column,
+    ForeignKey,
     Index,
     Integer,
     String,
     Text,
-    TIMESTAMP,
-    ForeignKey,
     UniqueConstraint,
 )
 from sqlalchemy.orm import relationship

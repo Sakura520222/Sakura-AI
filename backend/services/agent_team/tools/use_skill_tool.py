@@ -182,7 +182,7 @@ class UseSkillTool(BaseTool):
             parsed = json.loads(value)
             if isinstance(parsed, list):
                 return [str(item) for item in parsed]
-        except (json.JSONDecodeError, ValueError):
+        except json.JSONDecodeError, ValueError:
             pass
         return []
 

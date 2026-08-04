@@ -23,8 +23,9 @@
 
 import asyncio
 import time
+from collections.abc import Iterable
 from dataclasses import dataclass
-from typing import Any, Iterable, Optional
+from typing import Any
 
 from loguru import logger
 
@@ -60,12 +61,12 @@ class ReviewProgressSnapshot:
     current_round: int
     max_rounds: int
     tool_call_count: int
-    total_input_tokens: Optional[int] = None
-    total_output_tokens: Optional[int] = None
-    current_context_tokens: Optional[int] = None
-    context_limit: Optional[int] = None
-    model_name: Optional[str] = None
-    elapsed_seconds: Optional[float] = None
+    total_input_tokens: int | None = None
+    total_output_tokens: int | None = None
+    current_context_tokens: int | None = None
+    context_limit: int | None = None
+    model_name: str | None = None
+    elapsed_seconds: float | None = None
 
 
 # check_kind 常量（用于 external_id 编码）
@@ -162,7 +163,7 @@ class CheckRunService:
     # ------------------------------------------------------------------ utils
 
     @staticmethod
-    def _is_english(output_language: Optional[str]) -> bool:
+    def _is_english(output_language: str | None) -> bool:
         """判断输出语言是否为英文（与 CommentService._is_english 一致）。"""
         lang = (
             output_language
@@ -197,8 +198,8 @@ class CheckRunService:
         )
 
     def get_cached_check_run_id(
-        self, run_key: "ReviewRunKey", check_name: str
-    ) -> Optional[int]:
+        self, run_key: ReviewRunKey, check_name: str
+    ) -> int | None:
         """读取本执行已登记的 Check Run id（缓存命中才返回，否则 None）。
 
         供 worker 持久化到 PRReview，跨进程恢复时优先从 DB 读 id。
@@ -213,9 +214,7 @@ class CheckRunService:
     }
 
     @staticmethod
-    async def _read_db_check_run_id(
-        review_job_id: str, check_name: str
-    ) -> Optional[int]:
+    async def _read_db_check_run_id(review_job_id: str, check_name: str) -> int | None:
         """从 PRReview 读取持久化的 check_run_id（跨进程恢复主索引）。
 
         review_job_id = str(PRReview.id)。失败/无记录返回 None。
@@ -259,15 +258,15 @@ class CheckRunService:
         run_key: ReviewRunKey,
         check_name: str,
         *,
-        status: Optional[str] = None,
-        conclusion: Optional[str] = None,
-        output_title: Optional[str] = None,
-        output_summary: Optional[str] = None,
-        output_text: Optional[str] = None,
+        status: str | None = None,
+        conclusion: str | None = None,
+        output_title: str | None = None,
+        output_summary: str | None = None,
+        output_text: str | None = None,
         finalize: bool = False,
-        check_kind: Optional[str] = None,
+        check_kind: str | None = None,
         skip_if_completed: bool = False,
-    ) -> Optional[int]:
+    ) -> int | None:
         """按 run_key + check_name 定位 Check Run 并更新；未命中则创建。
 
         带三级定位：缓存 → cleanup 列举（同 name 最新 active）→ create。
@@ -281,7 +280,9 @@ class CheckRunService:
 
         repo_owner, repo_name = self._split_repo(run_key.repo_full_name)
         if not repo_owner:
-            logger.debug("CheckRunService: repo_full_name 非法 {}", run_key.repo_full_name)
+            logger.debug(
+                "CheckRunService: repo_full_name 非法 {}", run_key.repo_full_name
+            )
             return None
 
         cache_key = (run_key, check_name)
@@ -301,15 +302,15 @@ class CheckRunService:
             else None
         )
 
-        update_kwargs = dict(
-            status=status,
-            conclusion=conclusion,
-            output_title=output_title,
-            output_summary=output_summary,
-            output_text=output_text,
-            external_id=external_id,
-            skip_if_completed=skip_if_completed,
-        )
+        update_kwargs = {
+            "status": status,
+            "conclusion": conclusion,
+            "output_title": output_title,
+            "output_summary": output_summary,
+            "output_text": output_text,
+            "external_id": external_id,
+            "skip_if_completed": skip_if_completed,
+        }
 
         def _mark(finalize_flag: bool) -> None:
             self._last_update_ts[cache_key] = time.monotonic()
@@ -334,9 +335,7 @@ class CheckRunService:
         # 1b. DB 持久化恢复（run_key.review_job_id → PRReview.check_run_id）
         # 跨进程/换 worker 后缓存丢失时，优先从 DB 读 id（在 external_id 兜底之前）。
         if check_kind:
-            db_id = await self._read_db_check_run_id(
-                run_key.review_job_id, check_name
-            )
+            db_id = await self._read_db_check_run_id(run_key.review_job_id, check_name)
             if db_id is not None:
                 self._check_run_ids[cache_key] = db_id
                 ok = await asyncio.to_thread(
@@ -401,7 +400,7 @@ class CheckRunService:
         run_key: ReviewRunKey,
         *,
         pr_number: Any,
-        output_language: Optional[str] = None,
+        output_language: str | None = None,
     ) -> None:
         """审查已排队（queued）。"""
         if not get_settings().enable_check_runs:
@@ -430,8 +429,8 @@ class CheckRunService:
         run_key: ReviewRunKey,
         *,
         stage: str,
-        completed_stages: Optional[Iterable[str]] = None,
-        output_language: Optional[str] = None,
+        completed_stages: Iterable[str] | None = None,
+        output_language: str | None = None,
     ) -> None:
         """审查进行中（in_progress），更新当前阶段 output + 步骤清单。"""
         if not get_settings().enable_check_runs:
@@ -453,7 +452,9 @@ class CheckRunService:
                 if is_en
                 else f"阶段 {progress}/5 · {stage_desc}"
             )
-            text = self._render_steps(active=stage, failed=None, completed=done, is_en=is_en)
+            text = self._render_steps(
+                active=stage, failed=None, completed=done, is_en=is_en
+            )
 
             await self._find_or_create(
                 run_key,
@@ -474,9 +475,9 @@ class CheckRunService:
         decision: Any,
         overall_score: Any,
         findings_count: int,
-        severity_counts: Optional[dict[str, int]] = None,
+        severity_counts: dict[str, int] | None = None,
         summary_excerpt: str = "",
-        output_language: Optional[str] = None,
+        output_language: str | None = None,
     ) -> None:
         """审查完成（completed），conclusion 由 decision 映射。"""
         if not get_settings().enable_check_runs:
@@ -557,10 +558,10 @@ class CheckRunService:
         self,
         run_key: ReviewRunKey,
         *,
-        failed_stage: Optional[str] = None,
-        error_reference: Optional[str] = None,
-        completed_stages: Optional[Iterable[str]] = None,
-        output_language: Optional[str] = None,
+        failed_stage: str | None = None,
+        error_reference: str | None = None,
+        completed_stages: Iterable[str] | None = None,
+        output_language: str | None = None,
     ) -> None:
         """审查失败（completed + failure）。错误信息脱敏，仅显故障编号。"""
         if not get_settings().enable_check_runs:
@@ -611,8 +612,8 @@ class CheckRunService:
         run_key: ReviewRunKey,
         *,
         cancel_reason: str = "unknown",
-        completed_stages: Optional[Iterable[str]] = None,
-        output_language: Optional[str] = None,
+        completed_stages: Iterable[str] | None = None,
+        output_language: str | None = None,
     ) -> None:
         """审查取消（completed + cancelled）。结构化 reason，三 Check 复用。"""
         if not get_settings().enable_check_runs:
@@ -654,7 +655,7 @@ class CheckRunService:
         run_key: ReviewRunKey,
         *,
         reason: str,
-        output_language: Optional[str] = None,
+        output_language: str | None = None,
     ) -> None:
         """审查跳过（completed + neutral）。reason 直接使用原值（中英一致）。"""
         if not get_settings().enable_check_runs:
@@ -688,8 +689,8 @@ class CheckRunService:
         head_sha: str,
         *,
         stage: str,
-        completed_stages: Optional[Iterable[str]] = None,
-        output_language: Optional[str] = None,
+        completed_stages: Iterable[str] | None = None,
+        output_language: str | None = None,
     ) -> None:
         """旧签名兼容（head_sha 单 Check）。迁移到 report_stage_progress(run_key) 后移除。"""
         run_key = ReviewRunKey(
@@ -713,7 +714,7 @@ class CheckRunService:
         snapshot: ReviewProgressSnapshot,
         *,
         force: bool = False,
-        output_language: Optional[str] = None,
+        output_language: str | None = None,
     ) -> None:
         """更新 Analysis Check（in_progress，带节流）。force=True 跳过节流。"""
         if not get_settings().enable_check_runs:
@@ -754,10 +755,10 @@ class CheckRunService:
         run_key: ReviewRunKey,
         conclusion: str,
         *,
-        snapshot: Optional[ReviewProgressSnapshot] = None,
+        snapshot: ReviewProgressSnapshot | None = None,
         cancel_reason: str = "unknown",
-        error_reference: Optional[str] = None,
-        output_language: Optional[str] = None,
+        error_reference: str | None = None,
+        output_language: str | None = None,
     ) -> None:
         """定格 Analysis Check（success/failure/cancelled）。force 刷新不受节流。"""
         if not get_settings().enable_check_runs:
@@ -821,7 +822,7 @@ class CheckRunService:
         total_count: int,
         published_count: int,
         failed_count: int,
-        output_language: Optional[str] = None,
+        output_language: str | None = None,
     ) -> None:
         """更新 Findings Check（in_progress）。创建后发布完成前调。"""
         if not get_settings().enable_check_runs:
@@ -830,14 +831,8 @@ class CheckRunService:
             return
         try:
             is_en = self._is_english(output_language)
-            title = (
-                "Sakura AI Findings Summary"
-                if is_en
-                else "Sakura AI 发现统计"
-            )
-            summary = self._findings_summary(
-                severity_counts, total_count, is_en
-            )
+            title = "Sakura AI Findings Summary" if is_en else "Sakura AI 发现统计"
+            summary = self._findings_summary(severity_counts, total_count, is_en)
             text = self._render_findings(
                 severity_counts=severity_counts,
                 files_count=files_count,
@@ -865,14 +860,14 @@ class CheckRunService:
         run_key: ReviewRunKey,
         conclusion: str,
         *,
-        severity_counts: Optional[dict[str, int]] = None,
+        severity_counts: dict[str, int] | None = None,
         files_count: int = 0,
         total_count: int = 0,
         published_count: int = 0,
         failed_count: int = 0,
         cancel_reason: str = "unknown",
-        error_reference: Optional[str] = None,
-        output_language: Optional[str] = None,
+        error_reference: str | None = None,
+        output_language: str | None = None,
     ) -> None:
         """定格 Findings Check（neutral/failure/cancelled）。"""
         if not get_settings().enable_check_runs:
@@ -883,16 +878,10 @@ class CheckRunService:
         try:
             is_en = self._is_english(output_language)
             if conclusion == "neutral":
-                title = (
-                    "Sakura AI Findings Summary"
-                    if is_en
-                    else "Sakura AI 发现统计"
-                )
+                title = "Sakura AI Findings Summary" if is_en else "Sakura AI 发现统计"
             elif conclusion == "cancelled":
                 title = (
-                    "Sakura AI Findings Cancelled"
-                    if is_en
-                    else "Sakura AI 发现已取消"
+                    "Sakura AI Findings Cancelled" if is_en else "Sakura AI 发现已取消"
                 )
             else:
                 title = (
@@ -901,8 +890,13 @@ class CheckRunService:
                     else "Sakura AI 发现发布失败"
                 )
             summary = self._findings_summary_final(
-                severity_counts, total_count, published_count,
-                failed_count, conclusion, cancel_reason, is_en,
+                severity_counts,
+                total_count,
+                published_count,
+                failed_count,
+                conclusion,
+                cancel_reason,
+                is_en,
             )
             text = self._render_findings(
                 severity_counts=severity_counts,
@@ -937,11 +931,11 @@ class CheckRunService:
         run_key: ReviewRunKey,
         conclusion: str,
         *,
-        failed_stage: Optional[str] = None,
+        failed_stage: str | None = None,
         cancel_reason: str = "unknown",
-        error_reference: Optional[str] = None,
-        completed_stages: Optional[Iterable[str]] = None,
-        output_language: Optional[str] = None,
+        error_reference: str | None = None,
+        completed_stages: Iterable[str] | None = None,
+        output_language: str | None = None,
     ) -> None:
         """主 Review 终态 + 同步收敛本次已登记且仍非 completed 的副 Check。
 
@@ -969,7 +963,9 @@ class CheckRunService:
                 output_language=output_language,
             )
         else:
-            logger.warning("finalize_review_run 仅用于 failure/cancelled，收到 {}", conclusion)
+            logger.warning(
+                "finalize_review_run 仅用于 failure/cancelled，收到 {}", conclusion
+            )
             return
 
         # 收敛副 Check：只处理本次已登记（缓存命中过）且未 finalize 的
@@ -1004,7 +1000,7 @@ class CheckRunService:
         head_sha: str,
         *,
         cancel_reason: str = "unknown",
-        output_language: Optional[str] = None,
+        output_language: str | None = None,
     ) -> None:
         """兜底：按 head_sha 把本 App 所有 active Check Run 标 cancelled。
 
@@ -1054,8 +1050,8 @@ class CheckRunService:
     def _render_steps(
         self,
         *,
-        active: Optional[str],
-        failed: Optional[str],
+        active: str | None,
+        failed: str | None,
         completed: list[str],
         is_en: bool,
         all_pending_if_empty: bool = False,
@@ -1085,17 +1081,14 @@ class CheckRunService:
         return "\n".join(lines)
 
     @staticmethod
-    def _context_pct(snapshot: ReviewProgressSnapshot) -> Optional[int]:
-        if (
-            snapshot.current_context_tokens is None
-            or not snapshot.context_limit
-        ):
+    def _context_pct(snapshot: ReviewProgressSnapshot) -> int | None:
+        if snapshot.current_context_tokens is None or not snapshot.context_limit:
             return None
         return round(snapshot.current_context_tokens / snapshot.context_limit * 100)
 
     def _render_severity_inline(
-        self, severity_counts: Optional[dict[str, int]], is_en: bool
-    ) -> Optional[str]:
+        self, severity_counts: dict[str, int] | None, is_en: bool
+    ) -> str | None:
         """主 Review text 的分级行：只列非零级，中英都用英文标签。"""
         if not severity_counts:
             return None
@@ -1109,7 +1102,7 @@ class CheckRunService:
         prefix = "Findings breakdown" if is_en else "发现明细"
         return f"{prefix}: " + " · ".join(parts)
 
-    def _failed_stage_label(self, failed_stage: Optional[str], is_en: bool) -> str:
+    def _failed_stage_label(self, failed_stage: str | None, is_en: bool) -> str:
         if not failed_stage:
             return "Unknown" if is_en else "未知"
         zh, en = self._STAGE_NAME.get(failed_stage, (failed_stage, failed_stage))
@@ -1121,9 +1114,9 @@ class CheckRunService:
         is_en: bool,
         *,
         final: bool,
-        conclusion: Optional[str] = None,
+        conclusion: str | None = None,
         cancel_reason: str = "unknown",
-        error_reference: Optional[str] = None,
+        error_reference: str | None = None,
     ) -> str:
         """渲染 Analysis text（指标行，不可用字段省略）。"""
         lines: list[str] = []
@@ -1155,7 +1148,10 @@ class CheckRunService:
             model_label = "Model" if is_en else "模型"
             lines.append(f"{model_label}: {snapshot.model_name}")
 
-        if snapshot.total_input_tokens is not None or snapshot.total_output_tokens is not None:
+        if (
+            snapshot.total_input_tokens is not None
+            or snapshot.total_output_tokens is not None
+        ):
             tok_label = "Total tokens" if is_en else "累计 Token"
             inp = snapshot.total_input_tokens or 0
             out = snapshot.total_output_tokens or 0
@@ -1168,11 +1164,17 @@ class CheckRunService:
         if final:
             if snapshot.current_context_tokens is not None and snapshot.context_limit:
                 ctx_label = "Peak context" if is_en else "上下文峰值"
-                pct = round(snapshot.current_context_tokens / snapshot.context_limit * 100)
+                pct = round(
+                    snapshot.current_context_tokens / snapshot.context_limit * 100
+                )
                 if is_en:
-                    lines.append(f"{ctx_label}: {snapshot.current_context_tokens:,} / {snapshot.context_limit:,} ({pct}%)")
+                    lines.append(
+                        f"{ctx_label}: {snapshot.current_context_tokens:,} / {snapshot.context_limit:,} ({pct}%)"
+                    )
                 else:
-                    lines.append(f"{ctx_label}: {snapshot.current_context_tokens:,} / {snapshot.context_limit:,}（{pct}%）")
+                    lines.append(
+                        f"{ctx_label}: {snapshot.current_context_tokens:,} / {snapshot.context_limit:,}（{pct}%）"
+                    )
             if snapshot.elapsed_seconds is not None:
                 lines.append(
                     f"Duration: {self._format_duration(snapshot.elapsed_seconds, is_en)}"
@@ -1180,14 +1182,24 @@ class CheckRunService:
         else:
             if snapshot.current_context_tokens is not None and snapshot.context_limit:
                 ctx_label = "Current context" if is_en else "当前上下文"
-                pct = round(snapshot.current_context_tokens / snapshot.context_limit * 100)
+                pct = round(
+                    snapshot.current_context_tokens / snapshot.context_limit * 100
+                )
                 if is_en:
-                    lines.append(f"{ctx_label}: {snapshot.current_context_tokens:,} / {snapshot.context_limit:,} ({pct}%)")
+                    lines.append(
+                        f"{ctx_label}: {snapshot.current_context_tokens:,} / {snapshot.context_limit:,} ({pct}%)"
+                    )
                 else:
-                    lines.append(f"{ctx_label}: {snapshot.current_context_tokens:,} / {snapshot.context_limit:,}（{pct}%）")
+                    lines.append(
+                        f"{ctx_label}: {snapshot.current_context_tokens:,} / {snapshot.context_limit:,}（{pct}%）"
+                    )
 
         if conclusion == "failure":
-            tail = "See main Review for error details" if is_en else "详见主 Review 获取错误详情"
+            tail = (
+                "See main Review for error details"
+                if is_en
+                else "详见主 Review 获取错误详情"
+            )
             lines.append(tail)
         elif conclusion == "cancelled":
             round_tail = (
@@ -1201,10 +1213,10 @@ class CheckRunService:
 
     def _analysis_summary(
         self,
-        snapshot: Optional[ReviewProgressSnapshot],
+        snapshot: ReviewProgressSnapshot | None,
         conclusion: str,
         cancel_reason: str,
-        error_reference: Optional[str],
+        error_reference: str | None,
         is_en: bool,
     ) -> str:
         ref_part = f" · Ref {error_reference}" if error_reference else ""
@@ -1220,7 +1232,9 @@ class CheckRunService:
                 if is_en:
                     return f"{snapshot.current_round} rounds done · {snapshot.tool_call_count} tool calls"
                 return f"已执行 {snapshot.current_round} 轮 · 工具调用 {snapshot.tool_call_count} 次"
-            reason = self._CANCEL_REASON_TEXT.get(cancel_reason, self._CANCEL_REASON_TEXT["unknown"])[1 if is_en else 0]
+            reason = self._CANCEL_REASON_TEXT.get(
+                cancel_reason, self._CANCEL_REASON_TEXT["unknown"]
+            )[1 if is_en else 0]
             return reason
         # failure
         if snapshot:
@@ -1254,13 +1268,15 @@ class CheckRunService:
         if conclusion == "neutral":
             return self._findings_summary(severity_counts, total_count, is_en)
         if conclusion == "cancelled":
-            reason = self._CANCEL_REASON_TEXT.get(cancel_reason, self._CANCEL_REASON_TEXT["unknown"])[1 if is_en else 0]
+            reason = self._CANCEL_REASON_TEXT.get(
+                cancel_reason, self._CANCEL_REASON_TEXT["unknown"]
+            )[1 if is_en else 0]
             pending = max(total_count - published_count, 0)
             if is_en:
                 return f"Publish cancelled, {pending} pending · {reason}"
             return f"发布已取消，{pending} 条待发布 · {reason}"
         # failure
-        if failed_count >= total_count and total_count > 0:
+        if failed_count >= total_count > 0:
             base = (
                 f"All {total_count} findings failed to publish"
                 if is_en
@@ -1283,9 +1299,9 @@ class CheckRunService:
         total_count: int,
         published_count: int,
         failed_count: int,
-        conclusion: Optional[str],
+        conclusion: str | None,
         cancel_reason: str = "unknown",
-        error_reference: Optional[str] = None,
+        error_reference: str | None = None,
         is_en: bool,
     ) -> str:
         """渲染 Findings text。分级列全四级含 0；发布失败附发布状态。"""
@@ -1317,7 +1333,11 @@ class CheckRunService:
             lines.append(f"{sev}: {severity_counts.get(sev, 0)}")
 
         if conclusion == "failure":
-            tail = "See main Review for error details" if is_en else "详见主 Review 获取错误详情"
+            tail = (
+                "See main Review for error details"
+                if is_en
+                else "详见主 Review 获取错误详情"
+            )
             lines.append("")
             lines.append(tail)
         elif conclusion == "cancelled":

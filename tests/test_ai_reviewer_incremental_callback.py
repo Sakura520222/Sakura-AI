@@ -6,7 +6,6 @@ from backend.services.ai_reviewer.result_parser import ReviewResultParser
 from backend.services.ai_reviewer.reviewer import AIReviewer
 from backend.services.ai_reviewer.token_tracker import TokenTracker
 
-
 VALID_REVIEW = """<SAKURA_REVIEW>
 <VERSION>1</VERSION>
 <SCORE>8</SCORE>

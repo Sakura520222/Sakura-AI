@@ -13,12 +13,13 @@ from __future__ import annotations
 import asyncio
 import json
 import re
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 from loguru import logger
 
 from backend.core.config import get_settings
+from backend.models import database as db_module
 from backend.models.agent_team_models import (
     AgentTeamFeedback,
     AgentTeamFeedbackSource,
@@ -28,7 +29,6 @@ from backend.models.agent_team_models import (
     AgentTeamTaskStatus,
     AgentTeamUserPrompt,
 )
-from backend.models import database as db_module
 from backend.models.database import utc_now as _utc_now
 from backend.services.agent_team.ai_client import load_agent_team_ai_config
 from backend.services.agent_team.conversation_checkpoint import (
@@ -1238,7 +1238,7 @@ def _parse_rate_limit_reset_at(error_text: str) -> datetime | None:
         return None
     try:
         return datetime.strptime(match.group(1), "%Y-%m-%d %H:%M:%S").replace(
-            tzinfo=timezone.utc
+            tzinfo=UTC
         )
     except ValueError:
         return None

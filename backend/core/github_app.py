@@ -1,13 +1,14 @@
 """GitHub App集成模块"""
 
-import hmac
 import hashlib
+import hmac
 import time
-from typing import List, Optional, Dict, Any
+from typing import Any
 
 import httpx
 from github import Github, GithubIntegration
 from loguru import logger
+
 from backend.core.config import get_settings
 
 settings = get_settings()
@@ -49,7 +50,7 @@ class GitHubAppClient:
             logger.error(f"GitHub App客户端初始化失败: {e}", exc_info=True)
             self.integration = None
 
-    def _create_integration(self) -> Optional[GithubIntegration]:
+    def _create_integration(self) -> GithubIntegration | None:
         """创建GitHub Integration实例"""
         try:
             # 获取配置
@@ -100,7 +101,7 @@ class GitHubAppClient:
             logger.error(f"GitHub App初始化失败: {e}", exc_info=True)
             raise
 
-    def get_app_client(self) -> Optional[Github]:
+    def get_app_client(self) -> Github | None:
         """获取App级别的GitHub客户端"""
         if self.integration is None:
             logger.warning("GitHub Integration 未初始化，无法获取 App 客户端")
@@ -111,7 +112,7 @@ class GitHubAppClient:
             self._app_client = Github(login_or_token=token)
         return self._app_client
 
-    async def exchange_user_code(self, code: str) -> Dict[str, Any]:
+    async def exchange_user_code(self, code: str) -> dict[str, Any]:
         """GitHub App user-to-server：用授权码交换 user access token。"""
         return await exchange_user_access_token(
             settings.star_aid_github_app_client_id,
@@ -120,7 +121,7 @@ class GitHubAppClient:
             settings.star_aid_github_app_callback_url or None,
         )
 
-    async def refresh_user_token(self, refresh_token: str) -> Dict[str, Any]:
+    async def refresh_user_token(self, refresh_token: str) -> dict[str, Any]:
         """GitHub App user-to-server：刷新 user access token。"""
         return await refresh_user_access_token(
             settings.star_aid_github_app_client_id,
@@ -128,7 +129,7 @@ class GitHubAppClient:
             refresh_token,
         )
 
-    async def get_user_access_token(self, user_id: int) -> Optional[str]:
+    async def get_user_access_token(self, user_id: int) -> str | None:
         """从 star_aid 凭据服务获取可用 user access token。"""
         from backend.models.database import async_session
         from backend.services import star_aid_github_service
@@ -141,7 +142,7 @@ class GitHubAppClient:
             )
             return token
 
-    async def get_user_client(self, user_id: int) -> Optional[Github]:
+    async def get_user_client(self, user_id: int) -> Github | None:
         """基于 GitHub App user access token 创建 PyGithub 客户端。"""
         token = await self.get_user_access_token(user_id)
         if not token:
@@ -219,7 +220,7 @@ class GitHubAppClient:
                 )
         return result
 
-    def check_user_installed(self, username: Optional[str]) -> Optional[bool]:
+    def check_user_installed(self, username: str | None) -> bool | None:
         """轻量检查指定用户/组织是否安装 GitHub App（不拉取仓库列表）
 
         Args:
@@ -279,9 +280,7 @@ class GitHubAppClient:
             logger.warning(f"轻量检查 GitHub App 安装状态失败: {e}", exc_info=True)
             return None
 
-    def get_installation_client(
-        self, repo_owner: str, repo_name: str
-    ) -> Optional[Github]:
+    def get_installation_client(self, repo_owner: str, repo_name: str) -> Github | None:
         """获取安装级别的GitHub客户端（用于访问特定仓库）"""
         try:
             if self.integration is None:
@@ -304,7 +303,7 @@ class GitHubAppClient:
             logger.error(f"获取仓库 {repo_owner}/{repo_name} 的安装客户端失败: {e}")
             return None
 
-    def get_repo_client(self, repo_owner: str, repo_name: str) -> Optional[Github]:
+    def get_repo_client(self, repo_owner: str, repo_name: str) -> Github | None:
         """根据仓库信息获取GitHub客户端（带重试机制）"""
         max_retries = 2
         last_error = None
@@ -370,7 +369,7 @@ class GitHubAppClient:
 
     def get_repo_labels(
         self, repo_owner: str, repo_name: str
-    ) -> Dict[str, Dict[str, Any]]:
+    ) -> dict[str, dict[str, Any]]:
         """获取仓库的所有标签
 
         Args:
@@ -408,7 +407,7 @@ class GitHubAppClient:
 
     def get_pr_labels(
         self, repo_owner: str, repo_name: str, pr_number: int
-    ) -> List[str]:
+    ) -> list[str]:
         """获取PR当前的标签列表
 
         Args:
@@ -688,7 +687,7 @@ class GitHubAppClient:
                                         f"</details>"
                                     )
                                     # PyGithub PullRequestReview 没有 url 属性，手动构造 API URL
-                                    headers, _ = review._requester.requestJsonAndCheck(
+                                    _headers, _ = review._requester.requestJsonAndCheck(
                                         "PATCH",
                                         f"/repos/{repo_owner}/{repo_name}/pulls/{pr_number}/reviews/{review.id}",
                                         input={"body": collapsed_body},
@@ -837,7 +836,7 @@ class GitHubAppClient:
         pr_number: int,
         event: str,
         body: str,
-        bot_username: str = None,
+        bot_username: str | None = None,
         enable_idempotency_check: bool = True,
     ) -> bool:
         """提交审查决定到GitHub
@@ -894,8 +893,8 @@ class GitHubAppClient:
         pr_number: int,
         event: str,
         body: str,
-        inline_comments: list = None,
-        bot_username: str = None,
+        inline_comments: list | None = None,
+        bot_username: str | None = None,
         enable_idempotency_check: bool = True,
     ) -> bool:
         """提交审查决定到GitHub（包含行内评论）
@@ -1039,12 +1038,18 @@ class GitHubAppClient:
                     except Exception as fallback_error:
                         logger.error(f"降级提交也失败: {fallback_error}")
             else:
-                logger.error(f"提交Review失败: {error_type}: {str(e)}")
+                logger.error(f"提交Review失败: {error_type}: {e!s}")
 
             logger.debug("完整异常信息:", exc_info=True)
-            return {"success": False, "inline_published": 0, "fallback_body_only": False}
+            return {
+                "success": False,
+                "inline_published": 0,
+                "fallback_body_only": False,
+            }
 
-    def get_bot_username(self, repo_owner: str = None, repo_name: str = None) -> str:
+    def get_bot_username(
+        self, repo_owner: str | None = None, repo_name: str | None = None
+    ) -> str:
         """获取机器人用户名（用于幂等性检查）
 
         Args:
@@ -1083,9 +1088,7 @@ class GitHubAppClient:
         best-effort 检查更新都会 sleep 5s+10s，拖慢整个流程）。
         """
         status = getattr(exc, "status", None)
-        msg = str(
-            getattr(exc, "data", "") or getattr(exc, "message", "") or ""
-        ).lower()
+        msg = str(getattr(exc, "data", "") or getattr(exc, "message", "") or "").lower()
         if status == 429:
             return True
         if status == 403:
@@ -1116,11 +1119,11 @@ class GitHubAppClient:
 
     @staticmethod
     def _build_check_run_output(
-        title: Optional[str],
-        summary: Optional[str],
-        text: Optional[str],
-    ) -> Optional[dict]:
-        """构建 Check Run output dict。
+        title: str | None,
+        summary: str | None,
+        text: str | None,
+    ) -> dict | None:
+        """构建 Check Run output dict，仅包含非空字段。
 
         GitHub API 要求 output 必须同时包含 title 与 summary，缺失任一会触发
         422 校验失败。本方法在 title 或 summary 缺失时返回 None（跳过 output）
@@ -1146,12 +1149,12 @@ class GitHubAppClient:
         name: str,
         head_sha: str,
         status: str = "queued",
-        conclusion: Optional[str] = None,
-        output_title: Optional[str] = None,
-        output_summary: Optional[str] = None,
-        output_text: Optional[str] = None,
-        external_id: Optional[str] = None,
-    ) -> Optional[dict]:
+        conclusion: str | None = None,
+        output_title: str | None = None,
+        output_summary: str | None = None,
+        output_text: str | None = None,
+        external_id: str | None = None,
+    ) -> dict | None:
         """创建 GitHub Check Run。
 
         Args:
@@ -1205,12 +1208,12 @@ class GitHubAppClient:
         repo_owner: str,
         repo_name: str,
         check_run_id: int,
-        status: Optional[str] = None,
-        conclusion: Optional[str] = None,
-        output_title: Optional[str] = None,
-        output_summary: Optional[str] = None,
-        output_text: Optional[str] = None,
-        external_id: Optional[str] = None,
+        status: str | None = None,
+        conclusion: str | None = None,
+        output_title: str | None = None,
+        output_summary: str | None = None,
+        output_text: str | None = None,
+        external_id: str | None = None,
         skip_if_completed: bool = False,
     ) -> bool:
         """更新指定 Check Run。
@@ -1275,8 +1278,8 @@ class GitHubAppClient:
         repo_name: str,
         head_sha: str,
         name: str,
-        external_id: Optional[str] = None,
-    ) -> Optional[int]:
+        external_id: str | None = None,
+    ) -> int | None:
         """收敛同 commit 同名 Check Run，返回最新 active run id。
 
         external_id 提供时，只复用/收敛 external_id 匹配的 active run（防止并发/
@@ -1409,7 +1412,7 @@ class GitHubAppClient:
         repo_owner: str,
         repo_name: str,
         head_sha: str,
-    ) -> Optional[int]:
+    ) -> int | None:
         """GET /repos/{o}/{r}/commits/{sha}/pulls 兜底封装。
 
         CI 失败事件三层降级的第三层：当 check_run.pull_requests 为空且映射表
@@ -1480,7 +1483,7 @@ class GitHubAppClient:
         repo_owner: str,
         repo_name: str,
         state: str = "open",
-        labels: list = None,
+        labels: list | None = None,
         per_page: int = 30,
     ) -> list:
         """获取仓库的 Issues 列表"""
@@ -1650,7 +1653,7 @@ def verify_webhook_signature(payload: bytes, signature: str) -> bool:
         return False
 
 
-def extract_pr_info_from_webhook(payload: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+def extract_pr_info_from_webhook(payload: dict[str, Any]) -> dict[str, Any] | None:
     """从Webhook payload中提取PR信息"""
     try:
         # 检查是否为PR事件
@@ -1700,8 +1703,8 @@ def extract_pr_info_from_webhook(payload: Dict[str, Any]) -> Optional[Dict[str, 
 
 
 def extract_issue_info_from_webhook(
-    payload: Dict[str, Any],
-) -> Optional[Dict[str, Any]]:
+    payload: dict[str, Any],
+) -> dict[str, Any] | None:
     """从 Webhook payload 中提取 Issue 信息"""
     action = payload.get("action", "")
     if not action:
@@ -1729,7 +1732,7 @@ def extract_issue_info_from_webhook(
     }
 
 
-async def get_pr_info_from_url(pr_url: str) -> Optional[Dict[str, Any]]:
+async def get_pr_info_from_url(pr_url: str) -> dict[str, Any] | None:
     """从PR URL获取完整信息（模拟webhook payload格式）
 
     Args:
@@ -1838,8 +1841,8 @@ async def exchange_user_access_token(
     client_id: str,
     client_secret: str,
     code: str,
-    redirect_uri: Optional[str] = None,
-) -> Dict[str, Any]:
+    redirect_uri: str | None = None,
+) -> dict[str, Any]:
     """GitHub App web application flow：用授权码交换 user access token。
 
     成功时返回包含 ``access_token`` / ``expires_in`` / ``refresh_token``
@@ -1849,7 +1852,7 @@ async def exchange_user_access_token(
     Raises:
         RuntimeError: GitHub 返回非 200 状态码。
     """
-    data: Dict[str, Any] = {
+    data: dict[str, Any] = {
         "client_id": client_id,
         "client_secret": client_secret,
         "code": code,
@@ -1876,7 +1879,7 @@ async def refresh_user_access_token(
     client_id: str,
     client_secret: str,
     refresh_token: str,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """用 refresh_token 刷新 GitHub App user access token。
 
     GitHub 在每次刷新时会签发新的 refresh_token，旧 refresh_token 随即失效，

@@ -12,12 +12,12 @@ from backend.core.config import (
 from backend.services.agent_team.fullstack_expert import FullStackResult
 from backend.services.agent_team.iteration_loop import IterationLoopService
 from backend.services.agent_team.professional_reviewer import ReviewResult
-from backend.utils.config_utils import resolve_clamped_int_config
 from backend.services.agent_team.tools.registry import (
     FULLSTACK_TOOL_INSTANCES,
     REVIEWER_TOOL_INSTANCES,
 )
 from backend.services.agent_team.workspace_service import AgentTeamWorkspaceService
+from backend.utils.config_utils import resolve_clamped_int_config
 from backend.webui.routes.agent_team import AGENT_TEAM_CONFIG_KEYS
 from backend.workers.agent_team_worker import _format_failure_reason
 

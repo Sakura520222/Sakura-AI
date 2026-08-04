@@ -12,20 +12,17 @@ import pytest
 
 from backend.models.database import ReviewDecision
 from backend.services.check_run_service import (
-    CheckRunService,
     KIND_ANALYSIS,
     KIND_FINDINGS,
     KIND_REVIEW,
+    CheckRunService,
     ReviewProgressSnapshot,
     ReviewRunKey,
 )
 
+# 宽松的 emoji 检测：覆盖常见 emoji Unicode 区间 + 项目评论用过的符号
 _EMOJI_RE = re.compile(
-    "["
-    "\U0001f300-\U0001faff"
-    "\U0001f600-\U0001f64f"
-    "✅❌⚠⏳✨"
-    "]",
+    "[\U0001f300-\U0001faff\U0001f600-\U0001f64f✅❌⚠⏳✨]",
     flags=re.UNICODE,
 )
 
@@ -66,9 +63,18 @@ def svc(monkeypatch):
 def test_external_id_encoding_per_kind():
     """三 check_kind 的 external_id 互异且可解析。"""
     rid = "123"
-    assert CheckRunService.encode_external_id(rid, KIND_REVIEW) == "sakura-ai:v1:123:review"
-    assert CheckRunService.encode_external_id(rid, KIND_ANALYSIS) == "sakura-ai:v1:123:analysis"
-    assert CheckRunService.encode_external_id(rid, KIND_FINDINGS) == "sakura-ai:v1:123:findings"
+    assert (
+        CheckRunService.encode_external_id(rid, KIND_REVIEW)
+        == "sakura-ai:v1:123:review"
+    )
+    assert (
+        CheckRunService.encode_external_id(rid, KIND_ANALYSIS)
+        == "sakura-ai:v1:123:analysis"
+    )
+    assert (
+        CheckRunService.encode_external_id(rid, KIND_FINDINGS)
+        == "sakura-ai:v1:123:findings"
+    )
 
 
 # ---------------- 开关 ----------------
@@ -320,10 +326,14 @@ async def test_finalize_idempotent_no_rewrite(svc):
     """已 finalize 的 Check 重复 finalize 不再 update。"""
     svc._app.cleanup_stale_check_runs.return_value = 1
 
-    await svc.report_failed(_key(), failed_stage="reviewing", error_reference="abc12345")
+    await svc.report_failed(
+        _key(), failed_stage="reviewing", error_reference="abc12345"
+    )
     first_updates = svc._app.update_check_run.call_count
 
-    await svc.report_failed(_key(), failed_stage="reviewing", error_reference="abc12345")
+    await svc.report_failed(
+        _key(), failed_stage="reviewing", error_reference="abc12345"
+    )
     assert svc._app.update_check_run.call_count == first_updates  # 未增加
 
 
@@ -362,7 +372,9 @@ async def test_cancel_active_runs_by_sha(svc):
     """按 sha 收敛：遍历 OWNED_CHECK_NAMES，cleanup 返回 id 则 update cancelled。"""
     svc._app.cleanup_stale_check_runs.return_value = 42  # 三个 name 都命中
 
-    await svc.cancel_active_runs_by_sha("o", "r", "sha", cancel_reason="pr_closed_merged")
+    await svc.cancel_active_runs_by_sha(
+        "o", "r", "sha", cancel_reason="pr_closed_merged"
+    )
 
     assert svc._app.cleanup_stale_check_runs.call_count == 3  # 三个 name
     # 每个 update 都是 cancelled + skip_if_completed

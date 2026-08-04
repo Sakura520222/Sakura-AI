@@ -3,8 +3,8 @@
 import json
 import re
 from pathlib import Path
-from loguru import logger
 
+from loguru import logger
 
 # 常见代码文件扩展名（按语言分组）
 CODE_EXTENSIONS = (
@@ -161,7 +161,7 @@ def build_scan_context(
     """
     # 拼接项目结构摘要
     structure_lines = []
-    extensions = sorted(set(f["extension"] for f in file_list))
+    extensions = sorted({f["extension"] for f in file_list})
     ext_summary = ", ".join(extensions) if extensions else "unknown"
 
     structure_lines.append("项目根目录: /")
@@ -375,7 +375,7 @@ def parse_scan_result(response_text: str) -> dict:
         try:
             confidence = int(f.get("confidence", 50))
             confidence = max(0, min(100, confidence))
-        except (ValueError, TypeError):
+        except ValueError, TypeError:
             confidence = 50
 
         valid_findings.append(
@@ -405,5 +405,5 @@ def _safe_int(value) -> int | None:
         return None
     try:
         return int(value)
-    except (ValueError, TypeError):
+    except ValueError, TypeError:
         return None

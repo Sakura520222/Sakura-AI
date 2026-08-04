@@ -77,7 +77,9 @@ def _parse_rate_limit(headers: httpx.Headers) -> tuple[int | None, datetime | No
     """从响应头解析 remaining / reset。"""
     remaining_raw = headers.get("x-ratelimit-remaining")
     reset_raw = headers.get("x-ratelimit-reset")
-    remaining = int(remaining_raw) if remaining_raw and remaining_raw.isdigit() else None
+    remaining = (
+        int(remaining_raw) if remaining_raw and remaining_raw.isdigit() else None
+    )
     reset_at: datetime | None = None
     if reset_raw and reset_raw.isdigit():
         reset_at = datetime.utcfromtimestamp(int(reset_raw))
@@ -189,11 +191,11 @@ async def save_credential_from_token(
     cred.access_token_expires_at = (
         now + timedelta(seconds=int(expires_in)) if expires_in else None
     )
-    cred.encrypted_refresh_token = encrypt_secret(refresh_token) if refresh_token else None
+    cred.encrypted_refresh_token = (
+        encrypt_secret(refresh_token) if refresh_token else None
+    )
     cred.refresh_token_expires_at = (
-        now + timedelta(seconds=int(refresh_expires_in))
-        if refresh_expires_in
-        else None
+        now + timedelta(seconds=int(refresh_expires_in)) if refresh_expires_in else None
     )
     cred.token_type = token_payload.get("token_type") or "bearer"
     client_id, _ = _client_credentials()
@@ -253,7 +255,9 @@ async def exchange_authorization_code(
             client_id, client_secret, code, redirect_uri
         )
     except Exception as exc:
-        logger.error("star_aid token exchange failed: user_id={}, error={}", user_id, exc)
+        logger.error(
+            "star_aid token exchange failed: user_id={}, error={}", user_id, exc
+        )
         return None
 
     if token_payload.get("error") or not token_payload.get("access_token"):
@@ -310,7 +314,9 @@ async def _refresh_and_persist(
     """用 refresh_token 刷新并写库；失败标记 reauth_required。"""
     if not cred.encrypted_refresh_token:
         await mark_reauth_required(session, cred.user_id)
-        return None, GitHubCallResult(reauth_required=True, error_code="no_refresh_token")
+        return None, GitHubCallResult(
+            reauth_required=True, error_code="no_refresh_token"
+        )
 
     now = datetime.utcnow()
     if (
@@ -318,7 +324,9 @@ async def _refresh_and_persist(
         and cred.refresh_token_expires_at <= now
     ):
         await mark_reauth_required(session, cred.user_id)
-        return None, GitHubCallResult(reauth_required=True, error_code="refresh_expired")
+        return None, GitHubCallResult(
+            reauth_required=True, error_code="refresh_expired"
+        )
 
     try:
         refresh_token = decrypt_secret(cred.encrypted_refresh_token)
@@ -332,7 +340,9 @@ async def _refresh_and_persist(
             client_id, client_secret, refresh_token
         )
     except Exception as exc:
-        logger.error("star_aid token refresh failed: user_id={}, error={}", cred.user_id, exc)
+        logger.error(
+            "star_aid token refresh failed: user_id={}, error={}", cred.user_id, exc
+        )
         await mark_reauth_required(session, cred.user_id)
         return None, GitHubCallResult(reauth_required=True, error_code="refresh_failed")
 
@@ -455,9 +465,7 @@ async def get_readme(
     return sha, content
 
 
-async def is_starred(
-    access_token: str, owner: str, repo: str
-) -> GitHubCallResult:
+async def is_starred(access_token: str, owner: str, repo: str) -> GitHubCallResult:
     """GET /user/starred/{owner}/{repo}：204=已 star，404=未 star。"""
     try:
         async with httpx.AsyncClient() as client:
@@ -473,9 +481,7 @@ async def is_starred(
     )
 
 
-async def star_repository(
-    access_token: str, owner: str, repo: str
-) -> GitHubCallResult:
+async def star_repository(access_token: str, owner: str, repo: str) -> GitHubCallResult:
     """PUT /user/starred/{owner}/{repo}。"""
     try:
         async with httpx.AsyncClient() as client:

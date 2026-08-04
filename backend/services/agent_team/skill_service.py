@@ -61,7 +61,7 @@ def _safe_skill_relative_path(path: str | Path) -> Path | None:
             continue
         if part == ".." or ":" in part or "\x00" in part:
             return None
-        if part.startswith(".") or part.startswith("__"):
+        if part.startswith((".", "__")):
             # 拒绝隐藏文件和双下划线私有文件，避免安装敏感/缓存文件；
             # 但允许 Python 包 Skill 必需的 __init__.py。
             if part != "__init__.py" or index != len(candidate_parts) - 1:
@@ -90,7 +90,7 @@ def _decode_zip_filename(raw_name: str) -> str:
             decoded = raw_bytes.decode(enc)
             if decoded != raw_name:
                 return decoded
-        except (UnicodeDecodeError, UnicodeEncodeError):
+        except UnicodeDecodeError, UnicodeEncodeError:
             continue
     return raw_name
 
@@ -473,7 +473,7 @@ class AgentSkillService:
             if entry.get("type") != "file":
                 continue
             name = entry.get("name", "")
-            if name.startswith(".") or name.startswith("__"):
+            if name.startswith((".", "__")):
                 continue
             download_url = entry.get("download_url", "")
             if not download_url:
@@ -561,14 +561,14 @@ class AgentSkillService:
                         lines.append(
                             f"  - arguments: {', '.join(str(a) for a in arg_names)}"
                         )
-                except (ValueError, TypeError):
+                except ValueError, TypeError:
                     pass
             if skill.allowed_tools:
                 try:
                     tools = json.loads(skill.allowed_tools)
                     if tools:
                         lines.append(f"  - tools: {', '.join(str(t) for t in tools)}")
-                except (ValueError, TypeError):
+                except ValueError, TypeError:
                     pass
             if skill.requires:
                 lines.append(f"  - requires: {skill.requires.strip()[:200]}")
@@ -805,7 +805,7 @@ class AgentSkillService:
     def _extract_first_paragraph(self, content: str) -> str:
         for block in content.split("\n\n"):
             text = " ".join(line.strip() for line in block.splitlines() if line.strip())
-            if not text or text.startswith("---") or text.startswith("#"):
+            if not text or text.startswith(("---", "#")):
                 continue
             return text[:500]
         return ""

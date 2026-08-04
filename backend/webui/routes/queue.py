@@ -3,21 +3,21 @@
 import logging
 from datetime import datetime, timedelta
 
-from fastapi import APIRouter, Request, Depends, Query
-from sqlalchemy import select, func, desc, case, text
+from fastapi import APIRouter, Depends, Query, Request
+from sqlalchemy import case, desc, func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.models.database import PRReview
 from backend.webui.deps import (
-    require_admin,
-    get_db,
-    get_templates,
-    get_csrf_serializer,
-    get_user_preferences,
-    paginate,
     build_review_search_filter,
     get_active_repos,
+    get_csrf_serializer,
+    get_db,
+    get_templates,
+    get_user_preferences,
+    paginate,
     render_template,
+    require_admin,
 )
 
 logger = logging.getLogger(__name__)

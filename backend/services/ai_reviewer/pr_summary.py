@@ -7,7 +7,7 @@
 
 import asyncio
 import re
-from typing import Any, Dict
+from typing import Any
 
 from loguru import logger
 
@@ -28,7 +28,7 @@ class PRSummaryService:
         self.model = model
 
     async def generate_summary(
-        self, analysis: PRAnalysis, pr_info: Dict[str, Any], pr: Any = None
+        self, analysis: PRAnalysis, pr_info: dict[str, Any], pr: Any = None
     ) -> str:
         """生成 PR 变更摘要
 
@@ -89,7 +89,7 @@ class PRSummaryService:
     def _build_prompts(
         self,
         analysis: PRAnalysis,
-        pr_info: Dict[str, Any],
+        pr_info: dict[str, Any],
         previous_summary: str | None = None,
         pr: Any = None,
     ) -> tuple[str, str]:
@@ -170,7 +170,7 @@ class PRSummaryService:
             return "（无代码文件变更）"
         return "\n".join(lines[:50])  # 最多显示 50 个文件
 
-    def _build_commit_info(self, analysis: PRAnalysis, pr_info: Dict[str, Any]) -> str:
+    def _build_commit_info(self, analysis: PRAnalysis, pr_info: dict[str, Any]) -> str:
         """构建 commit 信息文本
 
         增量审查时使用 new_commits，否则从 pr_info 提取可用信息。

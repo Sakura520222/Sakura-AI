@@ -11,16 +11,15 @@ import asyncio
 import functools
 import hashlib
 import json
-from datetime import datetime, timezone
-from typing import Any, Dict, Optional
+from datetime import UTC, datetime
+from typing import Any
 
 from loguru import logger
 
 from backend.core.config import get_settings, get_strategy_config
 from backend.models.database import SakuraMemoryState, async_session
-from backend.services.github_write_service import get_github_write_service
 from backend.services.ai_reviewer.api_client import AIApiClient
-
+from backend.services.github_write_service import get_github_write_service
 
 # Reflection prompt template / 反思 Prompt 模板
 # 反思 prompt 默认包含的最大评论条数 / Default max comments in reflection prompt
@@ -427,7 +426,7 @@ class SakuraMemoryService:
         repo,
         repo_full_name: str,
         prepare_only: bool = False,
-    ) -> Optional[dict]:
+    ) -> dict | None:
         """初始化 .sakura/ 目录 / Initialize .sakura/ directory
 
         为新仓库自动创建 .sakura/ 目录，包含 SAKURA.md 和 memory.md。
@@ -558,9 +557,9 @@ class SakuraMemoryService:
         pr,
         review_result: dict,
         analysis,
-        pr_info: dict = None,
-        history_summary: str = None,
-        review_id: int = None,
+        pr_info: dict | None = None,
+        history_summary: str | None = None,
+        review_id: int | None = None,
     ) -> None:
         """审查后反思 / Post-review reflection
 
@@ -865,7 +864,7 @@ class SakuraMemoryService:
                         else:
                             formatted_labels.append(f"- {label}")
                     suggested_labels = "\n".join(formatted_labels)
-            except (ValueError, TypeError):
+            except ValueError, TypeError:
                 pass
 
             suggested_assignees = analysis_record.suggested_assignees or "无"
@@ -880,7 +879,7 @@ class SakuraMemoryService:
                         a.get("username", a) if isinstance(a, dict) else str(a)
                         for a in assignees_data[:10]
                     )
-            except (ValueError, TypeError):
+            except ValueError, TypeError:
                 pass
 
             duplicate_of = analysis_record.duplicate_of
@@ -902,7 +901,7 @@ class SakuraMemoryService:
                         else f"- {p}"
                         for p in prs_data[:10]
                     )
-            except (ValueError, TypeError):
+            except ValueError, TypeError:
                 pass
 
             # 构建 Prompt / Build prompt
@@ -1092,7 +1091,7 @@ class SakuraMemoryService:
 
                 await self._update_state(
                     repo_full_name,
-                    last_consolidation_at=datetime.now(timezone.utc),
+                    last_consolidation_at=datetime.now(UTC),
                     last_consolidation_count=total_count,
                 )
 
@@ -1112,7 +1111,7 @@ class SakuraMemoryService:
             logger.error(f"合并记忆失败 ({repo_full_name}): {e}", exc_info=True)
 
     async def _get_new_reflection_files(
-        self, repo, sakura_ref: Optional[str], consolidation_config: dict
+        self, repo, sakura_ref: str | None, consolidation_config: dict
     ) -> list[str]:
         """获取上次合并后新增的反思文件名列表"""
         try:
@@ -1258,7 +1257,7 @@ class SakuraMemoryService:
         )
         return True
 
-    async def get_sakura_context(self, repo, repo_full_name: str) -> Dict[str, str]:
+    async def get_sakura_context(self, repo, repo_full_name: str) -> dict[str, str]:
         """获取 SAKURA.md 和 memory.md 用于注入审查 prompt
 
         Get SAKURA.md and memory.md for review prompt injection.
@@ -1308,14 +1307,14 @@ class SakuraMemoryService:
 
         Read configured max comments for reflection prompt.
         """
-        return self._get_config().get("reflection", {}).get(
-            "max_comments", _DEFAULT_REFLECTION_MAX_COMMENTS
+        return (
+            self._get_config()
+            .get("reflection", {})
+            .get("max_comments", _DEFAULT_REFLECTION_MAX_COMMENTS)
         )
 
     @staticmethod
-    def _format_review_result_comments(
-        comments: list, max_count: int
-    ) -> str:
+    def _format_review_result_comments(comments: list, max_count: int) -> str:
         """格式化 review_result 中的评论列表供反思 prompt 使用。
 
         评论正文完整保留，不截断；按 max_count 限制条数。
@@ -1391,7 +1390,7 @@ class SakuraMemoryService:
         self,
         repo,
         count: int,
-        ref: Optional[str] = None,
+        ref: str | None = None,
     ) -> str:
         """读取最近的反思文件 / Read recent reflection files
 
@@ -1503,7 +1502,7 @@ class SakuraMemoryService:
         except Exception as e:
             return f"（无法获取目录结构: {e}）"
 
-    async def _call_llm(self, prompt: str, model: Optional[str] = None) -> str:
+    async def _call_llm(self, prompt: str, model: str | None = None) -> str:
         """调用 LLM 生成文本 / Call LLM to generate text
 
         Args:
@@ -1551,7 +1550,7 @@ class SakuraMemoryService:
 
 
 # Singleton / 单例
-_sakura_memory_service: Optional[SakuraMemoryService] = None
+_sakura_memory_service: SakuraMemoryService | None = None
 
 
 def get_sakura_memory_service() -> SakuraMemoryService:

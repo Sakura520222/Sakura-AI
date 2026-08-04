@@ -1,19 +1,33 @@
 """审查任务Worker"""
 
 import asyncio
-import time
 import subprocess
-from datetime import datetime
-from typing import Any, Dict, Optional
+import time
 import uuid
+from datetime import datetime
+from typing import Any
 
 from loguru import logger
 from sqlalchemy import desc, select
 from sqlalchemy.exc import InterfaceError, OperationalError
 
-from backend.core.config import get_settings, get_strategy_config, get_dynamic_config
-from backend.core.config import get_user_dynamic_config
+from backend.core.config import (
+    get_dynamic_config,
+    get_settings,
+    get_strategy_config,
+    get_user_dynamic_config,
+)
 from backend.core.github_app import GitHubAppClient
+from backend.models.database import (
+    CommentSeverity,
+    CommentType,
+    PRIssueLink,
+    PRReview,
+    PRStatus,
+    ReviewComment,
+    ReviewDecision,
+    ReviewStrategy,
+)
 from backend.services.ai_reviewer import AIReviewer
 from backend.services.ai_reviewer.token_tracker import TokenTracker
 from backend.services.check_run_service import (
@@ -25,17 +39,6 @@ from backend.services.comment_service import CommentService
 from backend.services.decision_engine import get_decision_engine
 from backend.services.label_service import label_service
 from backend.services.pr_analyzer import PRAnalysis, PRAnalyzer
-
-from backend.models.database import (
-    PRReview,
-    PRStatus,
-    ReviewStrategy,
-    ReviewComment,
-    CommentSeverity,
-    CommentType,
-    ReviewDecision,
-    PRIssueLink,
-)
 
 settings = get_settings()
 
@@ -132,14 +135,14 @@ class ReviewWorker:
         # Shared by all tasks for the same PR (owner/repo#pr_number)
         # Thread-safety: dict operations are atomic under GIL; asyncio.Event
         # is signal-only (set/check), safe for concurrent async coroutines.
-        self._cancel_events: Dict[str, asyncio.Event] = {}
+        self._cancel_events: dict[str, asyncio.Event] = {}
 
     def _normalize_review_result_for_diff(
         self,
-        review_result: Dict[str, Any],
+        review_result: dict[str, Any],
         analysis: PRAnalysis | None,
         task_id: str,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """Filter GitHub-submittable inline comments without changing findings."""
         inline_comments = review_result.get("inline_comments", [])
         if (
@@ -188,14 +191,14 @@ class ReviewWorker:
             logger.debug("审查活动事件记录失败: {}", exc)
 
     @staticmethod
-    def _make_task_key(pr_info: Dict[str, Any]) -> str:
+    def _make_task_key(pr_info: dict[str, Any]) -> str:
         """Generate unique task key: owner/repo#pr_number"""
         return f"{pr_info['repo_full_name']}#{pr_info['pr_number']}"
 
     async def _inject_external_ci_failures(
         self,
-        context: Dict[str, Any],
-        pr_info: Dict[str, Any],
+        context: dict[str, Any],
+        pr_info: dict[str, Any],
         task_id: str,
     ) -> None:
         """注入外部 CI 失败上下文（失败不影响主审查流程）。
@@ -280,11 +283,11 @@ class ReviewWorker:
         task_id: str,
         task_key: str,
         review_obj,
-        review_id: Optional[int],
+        review_id: int | None,
         reason: str,
-        pr_info: Optional[Dict[str, Any]] = None,
-        output_language: Optional[str] = None,
-        head_sha: Optional[str] = None,
+        pr_info: dict[str, Any] | None = None,
+        output_language: str | None = None,
+        head_sha: str | None = None,
     ):
         """Common cleanup for all cancel checkpoints.
 
@@ -337,7 +340,7 @@ class ReviewWorker:
         return "reviewing"
 
     async def _persist_review_check_run_ids(
-        self, review_id: Any, run_key: "ReviewRunKey"
+        self, review_id: Any, run_key: ReviewRunKey
     ) -> None:
         """持久化三 Check 的 run_id 到 PRReview（仅写非空且 DB 未存的字段，不覆盖）。
 
@@ -377,7 +380,7 @@ class ReviewWorker:
             logger.debug("持久化 check_run_id 失败: {}", exc)
 
     async def _persist_error_reference(
-        self, review_id: Any, error_reference: Optional[str], error_summary: str = ""
+        self, review_id: Any, error_reference: str | None, error_summary: str = ""
     ) -> None:
         """持久化脱敏故障编号到 PRReview（仅写非空且未存的字段）。
 
@@ -399,7 +402,7 @@ class ReviewWorker:
         except Exception as exc:
             logger.debug("持久化 error_reference 失败: {}", exc)
 
-    async def process_review_task(self, pr_info: Dict[str, Any]) -> str:
+    async def process_review_task(self, pr_info: dict[str, Any]) -> str:
         """处理审查任务"""
         task_id = str(uuid.uuid4())[
             :8
@@ -1068,7 +1071,10 @@ class ReviewWorker:
                     额外处理 "progress" 事件（reviewer._run_tool_loop 每轮快照），
                     桥接到 Analysis Check；并累计 AI 工具调用次数。
                     """
-                    nonlocal pending_incremental, analysis_tool_call_count, last_analysis_snapshot
+                    nonlocal \
+                        pending_incremental, \
+                        analysis_tool_call_count, \
+                        last_analysis_snapshot
                     try:
                         if event_type == "message":
                             # data is the full message dict (assistant with tool_calls, or tool result)
@@ -1079,7 +1085,9 @@ class ReviewWorker:
                                     act_session.id, data["tool_call_id"], msg.id
                                 )
                             # 累计 AI 调用工具次数（assistant 带 tool_calls）
-                            if data.get("role") == "assistant" and data.get("tool_calls"):
+                            if data.get("role") == "assistant" and data.get(
+                                "tool_calls"
+                            ):
                                 analysis_tool_call_count += len(data["tool_calls"])
                             if (
                                 pending_incremental is not None
@@ -1311,11 +1319,7 @@ class ReviewWorker:
                 _findings_pre_created = False
                 # 仅在启用 inline comments 时创建 Findings：禁用时 _make_and_submit_decision
                 # 会清空 inline_comments（total=0），pre-create 反而触发误 failure
-                if (
-                    _pre_findings
-                    and head_sha
-                    and get_settings().enable_inline_comments
-                ):
+                if _pre_findings and head_sha and get_settings().enable_inline_comments:
                     _pre_sev = self._count_severity(_pre_findings)
                     _pre_files = len(
                         {
@@ -1334,7 +1338,11 @@ class ReviewWorker:
                         output_language=output_language,
                     )
                     _findings_pre_created = True
-                decision, decision_reason, publish_result = await self._make_and_submit_decision(
+                (
+                    decision,
+                    decision_reason,
+                    publish_result,
+                ) = await self._make_and_submit_decision(
                     pr_info,
                     review_result,
                     review_id,
@@ -1489,7 +1497,7 @@ class ReviewWorker:
                         review_id,
                         "error",
                         {
-                            "message": f"审查失败: {str(e)}",
+                            "message": f"审查失败: {e!s}",
                         },
                     )
                     # 收尾当前 review 状态，避免 worker 死后留僵尸
@@ -1519,7 +1527,9 @@ class ReviewWorker:
                             or f"{pr_info['repo_owner']}/{pr_info['repo_name']}",
                             pr_number=pr_info.get("pr_number", 0),
                             head_sha=_fail_sha,
-                            review_job_id=str(review_id) if review_id else "failed-no-review",
+                            review_job_id=str(review_id)
+                            if review_id
+                            else "failed-no-review",
                         ),
                         "failure",
                         failed_stage=_failed_stage,
@@ -1581,7 +1591,9 @@ class ReviewWorker:
                             or f"{pr_info['repo_owner']}/{pr_info['repo_name']}",
                             pr_number=pr_info.get("pr_number", 0),
                             head_sha=_cancel_fail_sha,
-                            review_job_id=str(review_id) if review_id else "failed-no-review",
+                            review_job_id=str(review_id)
+                            if review_id
+                            else "failed-no-review",
                         ),
                         "failure",
                         failed_stage=_failed_stage,
@@ -1598,7 +1610,7 @@ class ReviewWorker:
 
     async def _find_previous_completed_review(
         self,
-        pr_info: Dict[str, Any],
+        pr_info: dict[str, Any],
         current_review_id: int,
     ) -> PRReview | None:
         pr_id = pr_info.get("pr_id")
@@ -1624,7 +1636,7 @@ class ReviewWorker:
         self,
         checkpoint,
         act_session,
-        pr_info: Dict[str, Any],
+        pr_info: dict[str, Any],
         review_id: int,
         task_id: str,
     ) -> list[dict[str, Any]]:
@@ -1669,7 +1681,7 @@ class ReviewWorker:
     async def _fetch_reflection_history_summary(
         self,
         analysis: PRAnalysis,
-        pr_info: Dict[str, Any],
+        pr_info: dict[str, Any],
         task_id: str,
     ) -> str | None:
         """为 .sakura/ 反思获取增量历史摘要。
@@ -1732,7 +1744,7 @@ class ReviewWorker:
             )
 
     async def _create_review_record(
-        self, analysis: PRAnalysis, pr_info: Dict[str, Any], task_id: str
+        self, analysis: PRAnalysis, pr_info: dict[str, Any], task_id: str
     ) -> int:
         """创建审查记录"""
 
@@ -1765,9 +1777,9 @@ class ReviewWorker:
         self,
         review_id: int,
         status: PRStatus,
-        overall_score: Optional[int] = None,
-        decision: Optional[ReviewDecision] = None,
-        decision_reason: Optional[str] = None,
+        overall_score: int | None = None,
+        decision: ReviewDecision | None = None,
+        decision_reason: str | None = None,
     ):
         """更新审查状态"""
 
@@ -1808,7 +1820,7 @@ class ReviewWorker:
             logger.warning("发布 SSE 事件失败（不影响主流程）: {}", str(e))
 
     async def _save_review_results(
-        self, review_id: int, review_result: Dict[str, Any], analysis: PRAnalysis
+        self, review_id: int, review_result: dict[str, Any], analysis: PRAnalysis
     ):
         """保存审查结果"""
 
@@ -1871,7 +1883,7 @@ class ReviewWorker:
 
         await _db_retry(_do)
 
-    async def _save_skip_record(self, analysis: PRAnalysis, pr_info: Dict[str, Any]):
+    async def _save_skip_record(self, analysis: PRAnalysis, pr_info: dict[str, Any]):
         """保存跳过记录"""
 
         async def _do():
@@ -1898,7 +1910,7 @@ class ReviewWorker:
         await _db_retry(_do)
 
     async def _save_error_record(
-        self, pr_info: Dict[str, Any], error_message: str, task_id: str
+        self, pr_info: dict[str, Any], error_message: str, task_id: str
     ):
         """保存错误记录"""
 
@@ -1928,15 +1940,15 @@ class ReviewWorker:
 
     async def _make_and_submit_decision(
         self,
-        pr_info: Dict[str, Any],
-        review_result: Dict[str, Any],
+        pr_info: dict[str, Any],
+        review_result: dict[str, Any],
         review_id: int,
         task_id: str,
         pr: Any,
         analysis: PRAnalysis,
-        label_results: Optional[Dict[str, Any]] = None,
+        label_results: dict[str, Any] | None = None,
         output_language: str | None = None,
-    ) -> tuple[Optional[ReviewDecision], Optional[str]]:
+    ) -> tuple[ReviewDecision | None, str | None]:
         """做出审查决定并提交到GitHub（包含行内评论）
 
         Args:
@@ -2150,16 +2162,16 @@ class ReviewWorker:
         except Exception as e:
             logger.error("[{}] 决策引擎执行失败: {}", task_id, str(e), exc_info=True)
             # 出错时返回None，不影响审查完成
-            return None, f"决策过程异常: {str(e)}", None
+            return None, f"决策过程异常: {e!s}", None
 
     async def _send_review_complete_notification(
-        self, pr_info: Dict[str, Any], review_result: Dict[str, Any]
+        self, pr_info: dict[str, Any], review_result: dict[str, Any]
     ):
         """发送审查完成通知到Telegram"""
         try:
-            from backend.telegram.notifications import get_notification_sender
             from backend.models.database import async_session
             from backend.services.telegram_service import TelegramService
+            from backend.telegram.notifications import get_notification_sender
 
             notification_sender = get_notification_sender()
             if not notification_sender:
@@ -2209,7 +2221,7 @@ class ReviewWorker:
 
 
 # 全局Worker实例
-_worker_instance: Optional[ReviewWorker] = None
+_worker_instance: ReviewWorker | None = None
 
 
 def get_worker() -> ReviewWorker:
@@ -2220,7 +2232,7 @@ def get_worker() -> ReviewWorker:
     return _worker_instance
 
 
-async def submit_review_task(pr_info: Dict[str, Any]) -> str:
+async def submit_review_task(pr_info: dict[str, Any]) -> str:
     """提交审查任务（从Webhook调用）
 
     Returns:
@@ -2241,7 +2253,7 @@ async def submit_review_task(pr_info: Dict[str, Any]) -> str:
     return task_key
 
 
-async def process_review_task_sync(pr_info: Dict[str, Any]) -> str:
+async def process_review_task_sync(pr_info: dict[str, Any]) -> str:
     """同步处理审查任务（用于Celery Worker）"""
     worker = get_worker()
     task_key = ReviewWorker._make_task_key(pr_info)
@@ -2251,7 +2263,7 @@ async def process_review_task_sync(pr_info: Dict[str, Any]) -> str:
 
 async def _run_review_task_with_timeout(
     worker: ReviewWorker,
-    pr_info: Dict[str, Any],
+    pr_info: dict[str, Any],
     task_key: str,
 ) -> str:
     """按配置限制单个审查任务的整体执行时间"""
@@ -2290,7 +2302,7 @@ async def _run_review_task_with_timeout(
     return result
 
 
-async def _drain_pending_incremental(pr_info: Dict[str, Any]) -> None:
+async def _drain_pending_incremental(pr_info: dict[str, Any]) -> None:
     """非增量审查完成后的兜底：触发增量审查消费残留 pending 增量。
 
     首次/完整审查（opened/reopened/ready_for_review/full_review 等非 synchronize

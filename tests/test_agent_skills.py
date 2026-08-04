@@ -20,7 +20,6 @@ from backend.services.agent_team.tools.base import ToolContext
 from backend.services.agent_team.tools.use_skill_tool import UseSkillTool
 from backend.services.agent_team.workspace_service import AgentTeamWorkspaceService
 
-
 USER_EXAMPLE_URL = (
     "https://github.com/ComposioHQ/awesome-claude-skills/blob/master/"
     "composio-skills/algodocs-automation/SKILL.md"
@@ -513,8 +512,6 @@ def _build_zip_raw(files: dict[str, bytes]) -> bytes:
 
     class _EncodedFile(io.BytesIO):
         """带文件名编码控制的 ZIP 文件。"""
-
-        pass
 
     buf = io.BytesIO()
     with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:

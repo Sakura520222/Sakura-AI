@@ -3,8 +3,6 @@
 集中管理所有魔法数字和字符串，便于维护和修改。
 """
 
-from typing import Dict
-
 # =============================================================================
 # API 调用参数
 # =============================================================================
@@ -32,7 +30,7 @@ MAX_CONTEXT_LINES = 200  # 搜索匹配时的最大上下文行数
 # decision_engine 等所有调用方都能直接查表 / Canonical severity→emoji
 # mapping. Covers both singular severity values and the plural
 # issue-category alias ("suggestions") so every caller can look up directly.
-SEVERITY_EMOJI: Dict[str, str] = {
+SEVERITY_EMOJI: dict[str, str] = {
     "critical": "🔴",
     "major": "🟡",
     "minor": "🔵",

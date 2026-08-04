@@ -31,8 +31,7 @@ from backend.core.config import get_settings
 from backend.core.redis import get_async_redis
 from backend.models import database as db_module
 from backend.services import star_aid_github_service as gh_service
-from backend.services import star_aid_service
-from backend.services import star_aid_summary_service
+from backend.services import star_aid_service, star_aid_summary_service
 from backend.webui.deps import (
     get_csrf_serializer,
     get_current_user,
@@ -161,9 +160,7 @@ async def auth_start(
         "state": state,
     }
     auth_url = f"{_GITHUB_AUTHORIZE_URL}?{urlencode(params)}"
-    logger.info(
-        "star_aid auth start: user_id={}, intent={}", user["user_id"], intent
-    )
+    logger.info("star_aid auth start: user_id={}, intent={}", user["user_id"], intent)
     return RedirectResponse(url=auth_url, status_code=302)
 
 
@@ -307,16 +304,16 @@ async def auth_callback(
 
     # 授权成功，删除 state
     await _delete_auth_state(state)
-    logger.info(
-        "star_aid auth success: user_id={}, intent={}", user["user_id"], intent
-    )
+    logger.info("star_aid auth success: user_id={}, intent={}", user["user_id"], intent)
 
     if intent == "manual_star" and repo_id:
         key = {
             "success": "star_aid.manual_star_success",
             "already_done": "star_aid.manual_star_already",
         }.get(star_status, "star_aid.manual_star_failed")
-        toast_type = "success" if star_status in ("success", "already_done") else "error"
+        toast_type = (
+            "success" if star_status in ("success", "already_done") else "error"
+        )
         return toast_redirect(return_to, key, toast_type=toast_type, lang=lang)
 
     return toast_redirect(return_to, "star_aid.auth_success", lang=lang)
@@ -395,7 +392,9 @@ async def _trigger_displayed_summaries(db: AsyncSession, user_id: int) -> None:
         star_aid_summary_service.trigger_summary_refresh(int(repo_id))
 
 
-@router.post("/repositories/{repo_id}/summary/refresh", dependencies=[Depends(require_csrf)])
+@router.post(
+    "/repositories/{repo_id}/summary/refresh", dependencies=[Depends(require_csrf)]
+)
 async def refresh_summary_route(
     repo_id: int,
     user: dict = Depends(require_auth),
@@ -490,7 +489,10 @@ async def leave_plan_route(
         unstar = result["unstar"]
         if unstar.get("failed", 0) > 0:
             return toast_redirect(
-                "/star-aid/", "star_aid.exit_unstar_failed", toast_type="error", lang=lang
+                "/star-aid/",
+                "star_aid.exit_unstar_failed",
+                toast_type="error",
+                lang=lang,
             )
         return toast_redirect("/star-aid/", "star_aid.exit_unstar_done", lang=lang)
     return toast_redirect("/star-aid/", "star_aid.leave_success", lang=lang)
@@ -553,7 +555,9 @@ async def manual_star_route(
 # ========== 管理员操作（Task 9）==========
 
 
-@router.post("/admin/members/{member_user_id}/ban", dependencies=[Depends(require_csrf)])
+@router.post(
+    "/admin/members/{member_user_id}/ban", dependencies=[Depends(require_csrf)]
+)
 async def ban_member_route(
     member_user_id: int,
     user: dict = Depends(require_admin),

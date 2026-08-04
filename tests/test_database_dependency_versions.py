@@ -5,7 +5,6 @@ from pathlib import Path
 from packaging.requirements import Requirement
 from packaging.version import Version
 
-
 REPO_ROOT = Path(__file__).resolve().parents[1]
 SQLALCHEMY_AIOMYSQL_PRE_PING_FIX_VERSION = Version("2.0.26")
 

@@ -25,10 +25,10 @@ jobs:
       - name: 检出代码
         uses: actions/checkout@v7
 
-      - name: 设置 Python 3.11
+      - name: 设置 Python 3.14
         uses: actions/setup-python@v7
         with:
-          python-version: '3.11'
+          python-version: '3.14'
           cache: pip
           cache-dependency-path: requirements.txt
 

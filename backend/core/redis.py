@@ -6,6 +6,7 @@ import contextvars
 import redis
 import redis.asyncio as aioredis
 from loguru import logger
+
 from backend.core.config import get_settings
 
 _client_context = contextvars.ContextVar("redis_client", default=None)
@@ -18,7 +19,7 @@ def _parse_redis_version(version: str) -> tuple[int, int, int] | None:
     try:
         parts = version.split("-", 1)[0].split(".")
         numbers = [int(part) for part in parts[:3]]
-    except (AttributeError, TypeError, ValueError):
+    except AttributeError, TypeError, ValueError:
         return None
     while len(numbers) < 3:
         numbers.append(0)

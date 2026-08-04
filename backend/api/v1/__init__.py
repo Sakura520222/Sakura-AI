@@ -2,24 +2,24 @@
 
 from fastapi import APIRouter, Request
 
-from backend.api.v1.deps import limiter
 from backend.api.v1 import (
-    setup,
     auth,
-    dashboard,
-    reviews,
-    issues,
-    users,
-    repos,
+    billing,
     config,
+    dashboard,
+    events,
+    issues,
     logs,
     queue,
+    repos,
+    reviews,
     scans,
     settings,
+    setup,
     user_config,
-    events,
-    billing,
+    users,
 )
+from backend.api.v1.deps import limiter
 
 api_v1_router = APIRouter()
 

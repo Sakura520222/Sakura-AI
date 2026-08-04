@@ -138,5 +138,5 @@ class ReadTool(BaseTool):
             return ctx.workspace_service.resolve_inside_workspace(
                 ctx.workspace, file_path
             )
-        except (WorkspaceSecurityError, Exception):
+        except WorkspaceSecurityError, Exception:
             return None

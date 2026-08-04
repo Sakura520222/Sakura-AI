@@ -6,20 +6,18 @@ Reuses the exact same schema pattern so the frontend component
 """
 
 from sqlalchemy import (
+    TIMESTAMP,
     Column,
+    ForeignKey,
     Integer,
     String,
     Text,
-    ForeignKey,
     UniqueConstraint,
-    TIMESTAMP,
 )
 from sqlalchemy.dialects.mysql import LONGTEXT
 from sqlalchemy.orm import relationship
 
-from backend.models.database import Base
-from backend.models.database import utc_now
-
+from backend.models.database import Base, utc_now
 
 # ---------------------------------------------------------------------------
 # Models

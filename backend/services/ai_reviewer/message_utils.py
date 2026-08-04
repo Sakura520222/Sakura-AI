@@ -1,13 +1,13 @@
 """AI 审查消息辅助函数。"""
 
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 from backend.core.model_context import get_model_context_manager
 
 
 def estimate_messages_tokens(
-    messages: List[Dict[str, Any]],
-    model_context_mgr: Optional[Any] = None,
+    messages: list[dict[str, Any]],
+    model_context_mgr: Any | None = None,
 ) -> int:
     """估算模型消息列表的 token 用量。
 

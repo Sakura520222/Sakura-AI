@@ -6,9 +6,9 @@
 """
 
 import asyncio
-from pathlib import PurePosixPath
 import re
-from typing import Any, Dict, List, Set
+from pathlib import PurePosixPath
+from typing import Any
 
 from loguru import logger
 
@@ -17,9 +17,8 @@ from backend.services.ai_reviewer.api_client import AIApiClient
 from backend.services.ai_reviewer.pr_summary import PRSummaryService
 from backend.services.pr_analyzer import PRAnalysis, PRFileInfo
 
-
 # 各语言的 import 语句正则模式；预编译到模块级别，避免每次扫描重复编译。
-_IMPORT_PATTERNS: Dict[str, List[re.Pattern[str]]] = {
+_IMPORT_PATTERNS: dict[str, list[re.Pattern[str]]] = {
     "python": [
         re.compile(r"^import\s+([\w.]+)", re.MULTILINE),
         re.compile(r"^from\s+([\w.]+)\s+import", re.MULTILINE),
@@ -73,7 +72,7 @@ _IMPORT_PATTERNS: Dict[str, List[re.Pattern[str]]] = {
 }
 
 # 文件扩展名到语言类型的映射
-_EXT_TO_LANG: Dict[str, str] = {
+_EXT_TO_LANG: dict[str, str] = {
     ".py": "python",
     ".js": "javascript",
     ".jsx": "javascript",
@@ -116,7 +115,7 @@ class PRDependencyGraphService:
     async def generate_dependency_graph(
         self,
         analysis: PRAnalysis,
-        pr_info: Dict[str, Any],
+        pr_info: dict[str, Any],
         pr: Any,
     ) -> str | None:
         """生成 PR 依赖图并注入到 PR Body
@@ -266,14 +265,14 @@ class PRDependencyGraphService:
     @staticmethod
     def _get_graph_files_sync(
         analysis: PRAnalysis, pr: Any
-    ) -> tuple[List[PRFileInfo], int]:
+    ) -> tuple[list[PRFileInfo], int]:
         """获取依赖图使用的累计代码文件元信息。"""
         if not analysis.is_incremental:
             return list(analysis.code_files), analysis.total_files
 
         strategy_config = get_strategy_config()
         pr_files = list(pr.get_files())
-        code_files: List[PRFileInfo] = []
+        code_files: list[PRFileInfo] = []
         for file in pr_files:
             if strategy_config.should_skip_file(file.filename):
                 continue
@@ -313,10 +312,10 @@ class PRDependencyGraphService:
 
     @staticmethod
     def _trim_files(
-        code_files: List[PRFileInfo],
+        code_files: list[PRFileInfo],
         settings: Any,
-        priority_paths: Set[str] | None = None,
-    ) -> List[PRFileInfo]:
+        priority_paths: set[str] | None = None,
+    ) -> list[PRFileInfo]:
         """大型 PR 裁剪：按变更量排序取 top N 文件"""
         files = [
             f
@@ -342,8 +341,8 @@ class PRDependencyGraphService:
 
     @staticmethod
     def _select_content_files(
-        analysis: PRAnalysis, graph_files: List[PRFileInfo]
-    ) -> List[PRFileInfo]:
+        analysis: PRAnalysis, graph_files: list[PRFileInfo]
+    ) -> list[PRFileInfo]:
         """选择需要获取内容的文件，增量模式仅包含本轮变更。"""
         if not analysis.is_incremental:
             return graph_files
@@ -357,13 +356,13 @@ class PRDependencyGraphService:
         ]
 
     @staticmethod
-    def _fetch_file_contents_sync(files: List[PRFileInfo], pr: Any) -> Dict[str, str]:
+    def _fetch_file_contents_sync(files: list[PRFileInfo], pr: Any) -> dict[str, str]:
         """同步获取变更文件的代码内容"""
         import base64
 
         repo = pr.base.repo
         ref = pr.head.sha
-        file_contents: Dict[str, str] = {}
+        file_contents: dict[str, str] = {}
 
         for file_info in files:
             try:
@@ -386,7 +385,7 @@ class PRDependencyGraphService:
                 return lang
         return None
 
-    def _extract_imports(self, file_path: str, content: str) -> List[str]:
+    def _extract_imports(self, file_path: str, content: str) -> list[str]:
         """从代码内容中提取 import 语句（只扫描文件顶部）"""
         lang = self._get_language(file_path)
         if not lang:
@@ -396,7 +395,7 @@ class PRDependencyGraphService:
         top_content = "\n".join(content.split("\n")[: self._IMPORT_SCAN_LINES])
 
         patterns = _IMPORT_PATTERNS.get(lang, [])
-        imports: List[str] = []
+        imports: list[str] = []
         for pattern in patterns:
             for match in pattern.finditer(top_content):
                 imp = match.group(1).strip()
@@ -406,11 +405,11 @@ class PRDependencyGraphService:
 
     def _build_import_context(
         self,
-        code_files: List[PRFileInfo],
-        file_contents: Dict[str, str],
+        code_files: list[PRFileInfo],
+        file_contents: dict[str, str],
     ) -> str:
         """构建 AI 分析的上下文文本"""
-        lines: List[str] = []
+        lines: list[str] = []
 
         # 文件列表
         lines.append("## 变更文件")
@@ -441,8 +440,8 @@ class PRDependencyGraphService:
 
     def _generate_static_mermaid(
         self,
-        code_files: List[PRFileInfo],
-        file_contents: Dict[str, str],
+        code_files: list[PRFileInfo],
+        file_contents: dict[str, str],
         max_nodes: int,
         previous_graph: str | None = None,
     ) -> str:
@@ -466,7 +465,7 @@ class PRDependencyGraphService:
                 (self._build_file_aliases(f.path) for f in available_files),
             )
         )
-        edges: Set[tuple[str, str]] = set()
+        edges: set[tuple[str, str]] = set()
 
         for source_file, source_path in zip(available_files, normalized_paths):
             imports = self._extract_imports(
@@ -543,7 +542,7 @@ class PRDependencyGraphService:
         return normalized
 
     @classmethod
-    def _build_file_aliases(cls, file_path: str) -> Set[str]:
+    def _build_file_aliases(cls, file_path: str) -> set[str]:
         """为文件路径生成可匹配 import 字符串的候选别名。"""
         normalized = cls._normalize_path(file_path)
         path = PurePosixPath(normalized)
@@ -580,7 +579,7 @@ class PRDependencyGraphService:
         }
 
     @classmethod
-    def _normalize_import(cls, source_path: str, import_path: str) -> Set[str]:
+    def _normalize_import(cls, source_path: str, import_path: str) -> set[str]:
         """将 import 字符串转换为可能的路径/模块名候选。"""
         raw_import = import_path.strip().strip("'\"")
         if not raw_import:
@@ -610,7 +609,7 @@ class PRDependencyGraphService:
         elif normalized.startswith("."):
             source_dir = PurePosixPath(cls._normalize_path(source_path)).parent
             relative_target = source_dir.joinpath(normalized)
-            resolved_parts: List[str] = []
+            resolved_parts: list[str] = []
             for part in relative_target.parts:
                 if part in {"", "."}:
                     continue
@@ -646,7 +645,7 @@ class PRDependencyGraphService:
         cls,
         source_path: str,
         import_path: str,
-        path_aliases: Dict[str, Set[str]],
+        path_aliases: dict[str, set[str]],
     ) -> str | None:
         """将 import 解析到变更文件路径。"""
         import_candidates = cls._normalize_import(source_path, import_path)
@@ -660,8 +659,7 @@ class PRDependencyGraphService:
         for candidate in import_candidates:
             for target_path, aliases in path_aliases.items():
                 if any(
-                    alias.startswith(f"{candidate}.")
-                    or alias.startswith(f"{candidate}/")
+                    alias.startswith((f"{candidate}.", f"{candidate}/"))
                     for alias in aliases
                 ):
                     return target_path
@@ -669,10 +667,10 @@ class PRDependencyGraphService:
 
     @staticmethod
     def _select_static_graph_nodes(
-        file_paths: List[str],
-        edges: Set[tuple[str, str]],
+        file_paths: list[str],
+        edges: set[tuple[str, str]],
         max_nodes: int,
-    ) -> List[str]:
+    ) -> list[str]:
         """按依赖关系优先选择静态图节点。"""
         max_nodes = max(1, max_nodes)
         if not edges:
@@ -740,7 +738,7 @@ class PRDependencyGraphService:
     @classmethod
     def _parse_previous_graph(
         cls, previous_graph: str
-    ) -> tuple[Dict[str, str], Set[tuple[str, str]]]:
+    ) -> tuple[dict[str, str], set[tuple[str, str]]]:
         """解析历史 Mermaid 图的节点定义与依赖边。
 
         仅识别静态/AI 生成图常见的 ``N1["label"]`` 节点定义与 ``N1 --> N2`` 边，
@@ -755,7 +753,7 @@ class PRDependencyGraphService:
         Returns:
             (node_id -> normalized_path 映射, 归一化后的边集合)
         """
-        node_id_to_path: Dict[str, str] = {}
+        node_id_to_path: dict[str, str] = {}
         for line in previous_graph.splitlines():
             node = cls._parse_node_line(line)
             if node is not None:
@@ -764,7 +762,7 @@ class PRDependencyGraphService:
                     cls._unescape_mermaid_label(label)
                 )
 
-        edges: Set[tuple[str, str]] = set()
+        edges: set[tuple[str, str]] = set()
         for line in previous_graph.splitlines():
             edge = cls._parse_edge_line(line)
             if edge is not None:
@@ -789,7 +787,7 @@ class PRDependencyGraphService:
         if end == -1:
             return None
         node_id = line[:start].strip()
-        label = line[start + 2:end]
+        label = line[start + 2 : end]
         if not node_id or any(c.isspace() or c in '[]"' for c in node_id):
             return None
         return node_id, label
@@ -805,7 +803,7 @@ class PRDependencyGraphService:
         if arrow <= 0:
             return None
         source = line[:arrow].strip()
-        target = line[arrow + 3:].strip()
+        target = line[arrow + 3 :].strip()
         if not source or not target:
             return None
         if any(c.isspace() or c in '[]"' for c in source + target):
@@ -815,7 +813,7 @@ class PRDependencyGraphService:
     @staticmethod
     def _build_prompts(
         import_context: str,
-        pr_info: Dict[str, Any],
+        pr_info: dict[str, Any],
         settings: Any,
         previous_graph: str | None = None,
         *,

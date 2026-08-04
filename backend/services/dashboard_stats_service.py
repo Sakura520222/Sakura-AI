@@ -9,11 +9,11 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any
 
-from sqlalchemy import select, func, or_
+from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from backend.models.database import IssueAnalysis, PRReview
 from backend.models.agent_team_models import AgentTeamTask
+from backend.models.database import IssueAnalysis, PRReview
 from backend.models.scan_models import RepoScan
 
 

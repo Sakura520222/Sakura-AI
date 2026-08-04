@@ -7,7 +7,7 @@ import hashlib
 import json
 import time
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from urllib.parse import urlparse
 
 from loguru import logger
@@ -404,6 +404,6 @@ async def finish_authentication(
         require_user_verification=True,
     )
     db_credential.sign_count = verification.new_sign_count
-    db_credential.last_used_at = datetime.now(timezone.utc)
+    db_credential.last_used_at = datetime.now(UTC)
     await session.flush()
     return db_credential

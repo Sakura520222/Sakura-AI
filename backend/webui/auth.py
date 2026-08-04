@@ -1,8 +1,9 @@
 """WebUI 认证工具（JWT 令牌管理）"""
 
-from datetime import datetime, timedelta, timezone
-from typing import Literal, Optional
-from jose import jwt, JWTError
+from datetime import UTC, datetime, timedelta
+from typing import Literal
+
+from jose import JWTError, jwt
 from loguru import logger
 
 ALGORITHM = "HS256"
@@ -11,14 +12,12 @@ TOKEN_TYPE_ACCESS = "access"
 TOKEN_TYPE_MFA_PENDING = "mfa_pending"
 
 
-def create_access_token(data: dict, expires_delta: Optional[timedelta] = None) -> str:
+def create_access_token(data: dict, expires_delta: timedelta | None = None) -> str:
     """创建 JWT 访问令牌"""
     return _create_token(data, TOKEN_TYPE_ACCESS, expires_delta)
 
 
-def create_mfa_pending_token(
-    data: dict, expires_delta: Optional[timedelta] = None
-) -> str:
+def create_mfa_pending_token(data: dict, expires_delta: timedelta | None = None) -> str:
     """创建等待二次验证的短期 JWT 令牌"""
     from backend.core.config import get_settings
 
@@ -34,7 +33,7 @@ def create_mfa_pending_token(
 def _create_token(
     data: dict,
     token_type: Literal["access", "mfa_pending"],
-    expires_delta: Optional[timedelta] = None,
+    expires_delta: timedelta | None = None,
 ) -> str:
     """创建指定类型的 JWT 令牌"""
     from backend.core.config import get_settings
@@ -42,14 +41,14 @@ def _create_token(
     _settings = get_settings()
 
     to_encode = data.copy()
-    expire = datetime.now(timezone.utc) + (
+    expire = datetime.now(UTC) + (
         expires_delta or timedelta(hours=ACCESS_TOKEN_EXPIRE_HOURS)
     )
     to_encode.update({"exp": expire, "token_type": token_type})
     return jwt.encode(to_encode, _settings.webui_secret_key, algorithm=ALGORITHM)
 
 
-def decode_access_token(token: str) -> Optional[dict]:
+def decode_access_token(token: str) -> dict | None:
     """解码 JWT 令牌，失败返回 None"""
     from backend.core.config import get_settings
 

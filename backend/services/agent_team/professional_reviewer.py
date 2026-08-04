@@ -14,8 +14,9 @@ AI 自主决定审查哪些文件、运行什么检查，完成后调用 submit_
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import Any, Callable
+from typing import Any
 
 from loguru import logger
 

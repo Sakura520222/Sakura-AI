@@ -4,7 +4,6 @@ from pathlib import Path
 
 from backend.webui.i18n import i18n
 
-
 TEMPLATE_PATH = (
     Path(__file__).resolve().parents[1]
     / "backend"

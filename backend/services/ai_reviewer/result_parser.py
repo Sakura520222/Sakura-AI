@@ -1,7 +1,7 @@
 """Parsers for PR review results and label recommendations."""
 
 import json
-from typing import Any, Dict, List
+from typing import Any
 
 from loguru import logger
 
@@ -11,7 +11,7 @@ from .review_protocol import TaggedReviewParser, to_review_result
 class ReviewResultParser:
     """Parse strict PR reviews while preserving the label recommendation API."""
 
-    def parse_review_result(self, review_text: str, strategy: str) -> Dict[str, Any]:
+    def parse_review_result(self, review_text: str, strategy: str) -> dict[str, Any]:
         """Parse a strict tagged PR review response."""
         result = to_review_result(TaggedReviewParser().parse(review_text))
         logger.info(
@@ -22,7 +22,7 @@ class ReviewResultParser:
         )
         return result
 
-    def parse_label_recommendation(self, response_text: str) -> List[Dict[str, Any]]:
+    def parse_label_recommendation(self, response_text: str) -> list[dict[str, Any]]:
         """解析标签推荐响应。"""
         recommendations = []
 
@@ -66,7 +66,7 @@ class ReviewResultParser:
         except json.JSONDecodeError:
             return None
 
-    def _parse_label_json(self, data: Any) -> List[Dict[str, Any]]:
+    def _parse_label_json(self, data: Any) -> list[dict[str, Any]]:
         """解析标签推荐 JSON。"""
         recommendations = []
         items = data.get("labels", []) if isinstance(data, dict) else data
@@ -85,13 +85,13 @@ class ReviewResultParser:
             )
         return recommendations
 
-    def _parse_text_label_recommendation(self, text: str) -> List[Dict[str, Any]]:
+    def _parse_text_label_recommendation(self, text: str) -> list[dict[str, Any]]:
         """从文本中解析标签推荐（后备方案）。"""
         recommendations = []
 
         for line in text.split("\n"):
             line = line.strip()
-            if not (line.startswith("-") or line.startswith("*")):
+            if not (line.startswith(("-", "*"))):
                 continue
 
             parts = line[1:].strip().split("(", 1)

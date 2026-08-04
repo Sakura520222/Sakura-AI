@@ -4,7 +4,7 @@
 类似于 grep 搜索，返回所有匹配的文件和行内容。
 """
 
-from typing import Any, Dict, List, Optional
+from typing import Any
 from urllib.parse import urlencode
 
 from loguru import logger
@@ -12,7 +12,6 @@ from loguru import logger
 from backend.core.config import get_strategy_config, path_matches_skip
 from backend.services.ai_reviewer.constants import MAX_FILE_SIZE_BYTES
 from backend.services.ai_reviewer.tools.file_tool import format_search_results
-
 
 # 常见的二进制文件后缀 / Common binary file extensions
 BINARY_EXTENSIONS = frozenset(
@@ -93,12 +92,12 @@ class SearchFilesToolHandler:
         keyword: str,
         repo: Any,
         pr: Any,
-        file_extension: Optional[str] = None,
-        directory: Optional[str] = None,
-        context_lines: Optional[int] = None,
-        max_results: Optional[int] = None,
-        branch: Optional[str] = None,
-    ) -> Dict[str, Any]:
+        file_extension: str | None = None,
+        directory: str | None = None,
+        context_lines: int | None = None,
+        max_results: int | None = None,
+        branch: str | None = None,
+    ) -> dict[str, Any]:
         """在仓库中跨文件搜索指定关键词
 
         主路径使用 GitHub Search API，回退到逐文件搜索。
@@ -143,8 +142,8 @@ class SearchFilesToolHandler:
             # 构造候选 ref / Build candidate refs
             # PR 场景：pr.head.sha；非 PR 场景：显式 branch -> 默认分支
             normalized_branch = (branch or "").strip() or None
-            branch_requested: Optional[str] = None
-            candidate_refs: List[str] = []
+            branch_requested: str | None = None
+            candidate_refs: list[str] = []
             # GitHub Search API 仅索引默认分支；非默认分支 ref 需在零匹配时回退逐文件搜索
             default_branch = getattr(repo, "default_branch", None)
 
@@ -157,8 +156,8 @@ class SearchFilesToolHandler:
                 if default_branch:
                     candidate_refs.append(default_branch)
 
-            tried_branches: List[str] = []
-            last_result: Optional[Dict[str, Any]] = None
+            tried_branches: list[str] = []
+            last_result: dict[str, Any] | None = None
 
             for ref in candidate_refs:
                 tried_branches.append(ref)
@@ -218,15 +217,15 @@ class SearchFilesToolHandler:
         keyword: str,
         repo: Any,
         ref: str,
-        skip_paths: List[str],
+        skip_paths: list[str],
         skip_binary: bool,
-        file_extension: Optional[str],
-        directory: Optional[str],
+        file_extension: str | None,
+        directory: str | None,
         effective_context_lines: int,
         effective_max_results: int,
         config: dict,
         may_miss_index: bool = False,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """对单个 ref 执行一轮搜索：优先 Search API，失败回退逐文件搜索。
 
         Args:
@@ -311,13 +310,13 @@ class SearchFilesToolHandler:
         keyword: str,
         repo: Any,
         ref: str,
-        skip_paths: List[str],
+        skip_paths: list[str],
         skip_binary: bool,
-        file_extension: Optional[str],
-        directory: Optional[str],
+        file_extension: str | None,
+        directory: str | None,
         effective_context_lines: int,
         effective_max_results: int,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """使用 GitHub Search API 搜索关键词
 
         Args:
@@ -353,7 +352,7 @@ class SearchFilesToolHandler:
         requester = repo._requester
         _, data = requester.requestJsonAndCheck("GET", f"/search/code?{encoded_query}")
 
-        all_results: List[Dict[str, Any]] = []
+        all_results: list[dict[str, Any]] = []
         keyword_lower = keyword.lower()
         files_searched = 0
         fetch_failures = 0
@@ -392,7 +391,7 @@ class SearchFilesToolHandler:
                 lines = decoded.split("\n")
 
                 # 搜索匹配行 / Search for matching lines
-                matches: List[int] = []
+                matches: list[int] = []
                 for idx, line in enumerate(lines):
                     if keyword_lower in line.lower():
                         matches.append(idx)
@@ -466,14 +465,14 @@ class SearchFilesToolHandler:
         keyword: str,
         repo: Any,
         ref: str,
-        skip_paths: List[str],
+        skip_paths: list[str],
         skip_binary: bool,
-        file_extension: Optional[str],
-        directory: Optional[str],
+        file_extension: str | None,
+        directory: str | None,
         effective_context_lines: int,
         effective_max_results: int,
         max_files_to_search: int,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """逐文件遍历搜索关键词（回退路径）
 
         Args:
@@ -504,7 +503,7 @@ class SearchFilesToolHandler:
             }
 
         # 过滤文件列表 / Filter file list
-        candidate_files: List[str] = []
+        candidate_files: list[str] = []
         for entry in tree.tree:
             if entry.type != "blob":
                 continue
@@ -536,7 +535,7 @@ class SearchFilesToolHandler:
         logger.debug(f"跨文件搜索 '{keyword}': 候选文件 {len(candidate_files)} 个")
 
         # 逐文件搜索，带总数限制 / Per-file search with total limit
-        all_results: List[Dict[str, Any]] = []
+        all_results: list[dict[str, Any]] = []
         keyword_lower = keyword.lower()
         files_scanned = 0
 
@@ -565,7 +564,7 @@ class SearchFilesToolHandler:
                 lines = content.split("\n")
 
                 # 搜索匹配行 / Search for matching lines
-                matches: List[int] = []
+                matches: list[int] = []
                 for idx, line in enumerate(lines):
                     if keyword_lower in line.lower():
                         matches.append(idx)

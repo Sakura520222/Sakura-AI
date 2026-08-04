@@ -135,7 +135,7 @@ def _has_redundant_cd_prefix(command: str) -> bool:
 def _command_name(first_token: str) -> str:
     """提取命令 basename（处理 /usr/bin/curl、C:/bin/curl.exe 等路径形式）。"""
     name = first_token.replace("\\", "/").rsplit("/", 1)[-1].lower()
-    return name[:-4] if name.endswith(".exe") else name
+    return name.removesuffix(".exe")
 
 
 def _segment_block_reason(tokens: list[str], blocklist: set[str]) -> str | None:

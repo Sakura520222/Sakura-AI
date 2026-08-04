@@ -3,7 +3,7 @@
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any, Optional
+from typing import Any
 
 
 class WebhookEventType(str, Enum):
@@ -76,7 +76,7 @@ class PaymentGateway(ABC):
         user_id: int,
         success_url: str,
         cancel_url: str,
-        metadata: Optional[dict[str, str]] = None,
+        metadata: dict[str, str] | None = None,
     ) -> PaymentIntentResult:
         """创建支付意图"""
 
@@ -92,8 +92,8 @@ class PaymentGateway(ABC):
     async def refund(
         self,
         provider_tx_id: str,
-        amount_cents: Optional[int] = None,
-        reason: Optional[str] = None,
+        amount_cents: int | None = None,
+        reason: str | None = None,
     ) -> RefundResult:
         """发起退款"""
 

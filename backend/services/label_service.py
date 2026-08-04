@@ -7,12 +7,13 @@ import asyncio
 import json
 import re
 import threading
-from typing import Dict, List, Optional, Any, Tuple
 from datetime import datetime, timedelta
+from typing import Any
+
 from loguru import logger
 
-from backend.core.github_app import GitHubAppClient
 from backend.core.config import get_settings
+from backend.core.github_app import GitHubAppClient
 
 settings = get_settings()
 
@@ -69,10 +70,10 @@ class LabelService:
         if not self._initialized:
             self.github_app = GitHubAppClient()
             # 标签缓存：{repo_full_name: {"labels": dict, "updated_at": datetime}}
-            self._label_cache: Dict[str, Dict[str, Any]] = {}
+            self._label_cache: dict[str, dict[str, Any]] = {}
             self._cache_ttl = timedelta(hours=1)  # 缓存1小时
             # 标签冲突规则（从 labels.yaml 加载）
-            self._conflict_rules: Dict[str, List[str]] = {}
+            self._conflict_rules: dict[str, list[str]] = {}
             self._load_conflict_rules()
             self.__class__._initialized = True
             logger.info("LabelService单例初始化完成")
@@ -94,7 +95,7 @@ class LabelService:
             self._conflict_rules = self._default_conflict_rules()
 
     @staticmethod
-    def _default_conflict_rules() -> Dict[str, List[str]]:
+    def _default_conflict_rules() -> dict[str, list[str]]:
         """默认标签冲突规则
 
         规则含义：当 PR 已有 key 中的标签时，不应自动添加 value 列表中的标签。
@@ -107,8 +108,8 @@ class LabelService:
         }
 
     def check_label_conflict(
-        self, existing_labels: List[str], new_label: str
-    ) -> Optional[str]:
+        self, existing_labels: list[str], new_label: str
+    ) -> str | None:
         """检查新标签是否与PR已有标签存在冲突
 
         Args:
@@ -151,7 +152,7 @@ class LabelService:
 
     async def get_repo_labels(
         self, repo_owner: str, repo_name: str, use_cache: bool = True
-    ) -> Dict[str, Dict[str, Any]]:
+    ) -> dict[str, dict[str, Any]]:
         """获取仓库的标签列表（支持缓存）
 
         Args:
@@ -193,7 +194,7 @@ class LabelService:
 
     async def get_pr_existing_labels(
         self, repo_owner: str, repo_name: str, pr_number: int
-    ) -> List[str] | None:
+    ) -> list[str] | None:
         """获取PR当前的已有标签
 
         Args:
@@ -216,7 +217,7 @@ class LabelService:
             logger.error(f"获取PR已有标签失败: {e}", exc_info=True)
             return None
 
-    def format_labels_for_ai(self, labels: Dict[str, Dict[str, Any]]) -> str:
+    def format_labels_for_ai(self, labels: dict[str, dict[str, Any]]) -> str:
         """格式化标签列表供AI理解
 
         Args:
@@ -238,7 +239,7 @@ class LabelService:
 
         return "\n".join(lines)
 
-    def parse_ai_label_recommendation(self, ai_response: str) -> List[Dict[str, Any]]:
+    def parse_ai_label_recommendation(self, ai_response: str) -> list[dict[str, Any]]:
         """解析AI的标签推荐结果
 
         Args:
@@ -292,7 +293,7 @@ class LabelService:
             logger.error(f"解析AI标签推荐失败: {e}", exc_info=True)
             return []
 
-    def _parse_text_labels(self, text: str) -> List[Dict[str, Any]]:
+    def _parse_text_labels(self, text: str) -> list[dict[str, Any]]:
         """从文本中解析标签推荐（备用方案）
 
         Args:
@@ -307,7 +308,7 @@ class LabelService:
         for line in lines:
             line = line.strip()
             # 查找格式：- 标签名 (置信度%) - 理由
-            if line.startswith("-") or line.startswith("*"):
+            if line.startswith(("-", "*")):
                 # 提取标签名
                 parts = line[1:].strip().split("(")
                 if len(parts) > 0:
@@ -347,11 +348,11 @@ class LabelService:
         repo_owner: str,
         repo_name: str,
         pr_number: int,
-        recommendations: List[Dict[str, Any]],
+        recommendations: list[dict[str, Any]],
         confidence_threshold: float = 0.7,
         auto_create: bool = False,
-        existing_labels: List[str] | None = None,
-    ) -> Dict[str, Any]:
+        existing_labels: list[str] | None = None,
+    ) -> dict[str, Any]:
         """应用推荐的标签到PR
 
         Args:
@@ -490,7 +491,7 @@ class LabelService:
 
         return result
 
-    def format_label_results(self, results: Dict[str, Any]) -> str:
+    def format_label_results(self, results: dict[str, Any]) -> str:
         """格式化标签应用结果（用于评论展示）
 
         Args:
@@ -568,7 +569,7 @@ class LabelService:
         return "sakura-label-section" in body
 
     @staticmethod
-    def parse_label_checkboxes(body: str) -> Dict[str, bool]:
+    def parse_label_checkboxes(body: str) -> dict[str, bool]:
         """Extract label checkboxes and their checked state from a comment body.
 
         Matches patterns like:
@@ -581,7 +582,7 @@ class LabelService:
         Returns:
             A dict mapping label name → checked state (True=checked, False=unchecked).
         """
-        checkboxes: Dict[str, bool] = {}
+        checkboxes: dict[str, bool] = {}
         # Match: - [x] **label** or - [ ] **label**
         pattern = re.compile(r"^- \[([ xX])\] \*\*(.+?)\*\*", re.MULTILINE)
         for match in pattern.finditer(body):
@@ -593,7 +594,7 @@ class LabelService:
     @staticmethod
     def parse_checkbox_changes(
         old_body: str, new_body: str
-    ) -> Tuple[List[str], List[str]]:
+    ) -> tuple[list[str], list[str]]:
         """Compare old and new comment bodies to detect checkbox state changes.
 
         Args:
@@ -606,8 +607,8 @@ class LabelService:
         old_checkboxes = LabelService.parse_label_checkboxes(old_body)
         new_checkboxes = LabelService.parse_label_checkboxes(new_body)
 
-        labels_to_add: List[str] = []
-        labels_to_remove: List[str] = []
+        labels_to_add: list[str] = []
+        labels_to_remove: list[str] = []
 
         all_labels = set(old_checkboxes.keys()) | set(new_checkboxes.keys())
         for label in all_labels:
@@ -629,7 +630,7 @@ class LabelService:
         labels_to_remove: list[str],
         operator: str,
         pr_author: str,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """Apply or remove labels based on checkbox toggle in review comment.
 
         Args:
@@ -644,7 +645,7 @@ class LabelService:
         Returns:
             Result dict with applied/removed/failed lists.
         """
-        result: Dict[str, Any] = {
+        result: dict[str, Any] = {
             "applied": [],
             "removed": [],
             "failed": [],
@@ -696,7 +697,7 @@ class LabelService:
 
         return result
 
-    def clear_cache(self, repo_full_name: Optional[str] = None):
+    def clear_cache(self, repo_full_name: str | None = None):
         """清除标签缓存
 
         Args:

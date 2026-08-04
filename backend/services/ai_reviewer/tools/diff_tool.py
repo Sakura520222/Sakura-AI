@@ -4,7 +4,7 @@
 改为提供此工具让 AI 按需查看特定文件的 diff。
 """
 
-from typing import Any, Dict, List
+from typing import Any
 
 from loguru import logger
 
@@ -17,9 +17,9 @@ class DiffToolHandler:
 
     def __init__(self):
         """初始化，存储 PR 文件 diff 数据"""
-        self._files_data: Dict[str, Dict[str, Any]] = {}
+        self._files_data: dict[str, dict[str, Any]] = {}
 
-    def set_files_data(self, files: List[Dict[str, Any]]) -> None:
+    def set_files_data(self, files: list[dict[str, Any]]) -> None:
         """设置当前 PR 的文件 diff 数据
 
         在审查开始前调用，将 context 中的 files 列表缓存到工具内部。
@@ -46,7 +46,7 @@ class DiffToolHandler:
     async def get_file_diff(
         self,
         file_path: str,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """获取 PR 中指定文件的 diff 内容
 
         Args:
@@ -92,7 +92,7 @@ class DiffToolHandler:
             "diff": patch,
         }
 
-    async def list_changed_files(self) -> Dict[str, Any]:
+    async def list_changed_files(self) -> dict[str, Any]:
         """列出 PR 中所有变更的文件概览
 
         Returns:

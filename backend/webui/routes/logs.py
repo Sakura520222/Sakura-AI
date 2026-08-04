@@ -1,24 +1,25 @@
 """WebUI 审查日志路由"""
 
 from datetime import datetime, timedelta
-from fastapi import APIRouter, Request, Depends, Query
+
+from fastapi import APIRouter, Depends, Query, Request
 from fastapi.responses import HTMLResponse
-from sqlalchemy import select, func, desc
+from sqlalchemy import desc, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.models.database import PRReview, ReviewComment
 from backend.models.telegram_models import RepoSubscription
 from backend.webui.deps import (
-    require_auth,
-    get_db,
-    get_templates,
-    get_csrf_serializer,
-    get_user_preferences,
-    paginate,
+    build_review_search_filter,
     error_page,
     get_active_repos,
-    build_review_search_filter,
+    get_csrf_serializer,
+    get_db,
+    get_templates,
+    get_user_preferences,
+    paginate,
     render_template,
+    require_auth,
 )
 
 router = APIRouter(prefix="/logs", tags=["WebUI Logs"])

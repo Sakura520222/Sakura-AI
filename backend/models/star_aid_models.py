@@ -20,19 +20,18 @@
 from datetime import datetime
 
 from sqlalchemy import (
-    Boolean,
+    TIMESTAMP,
     BigInteger,
+    Boolean,
     Column,
     Index,
     Integer,
     String,
     Text,
-    TIMESTAMP,
     UniqueConstraint,
 )
 
 from backend.models.database import Base
-
 
 # ---------- 合法状态枚举值（以字符串存储，避免 Enum 迁移陷阱）----------
 # Member status

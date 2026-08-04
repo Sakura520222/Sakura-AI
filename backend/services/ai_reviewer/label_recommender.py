@@ -4,7 +4,7 @@
 - recommend_labels (1837-1940行)
 """
 
-from typing import Any, Dict, List
+from typing import Any
 
 from loguru import logger
 
@@ -35,11 +35,11 @@ class LabelRecommender:
 
     async def recommend_labels(
         self,
-        context: Dict[str, Any],
-        available_labels: Dict[str, Dict[str, Any]],
-        pr_info: Dict[str, Any],
-        existing_labels: List[str] | None = None,
-    ) -> List[Dict[str, Any]]:
+        context: dict[str, Any],
+        available_labels: dict[str, dict[str, Any]],
+        pr_info: dict[str, Any],
+        existing_labels: list[str] | None = None,
+    ) -> list[dict[str, Any]]:
         """推荐PR标签
 
         Args:

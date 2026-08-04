@@ -2,24 +2,23 @@
 
 import time
 from collections import OrderedDict
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 from fastapi import APIRouter, Depends
-from sqlalchemy import select, func, desc, case, and_
+from sqlalchemy import and_, case, desc, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from backend.api.v1.deps import require_api_auth
+from backend.api.v1.responses import success_response
 from backend.models.database import PRReview, ReviewComment
 from backend.services.dashboard_stats_service import (
     fetch_module_token_stats,
     fetch_token_trend,
 )
 from backend.webui.deps import (
-    get_db,
     build_user_scope_filter,
+    get_db,
 )
-
-from backend.api.v1.deps import require_api_auth
-from backend.api.v1.responses import success_response
 
 router = APIRouter(prefix="/dashboard", tags=["Dashboard"])
 
@@ -205,7 +204,7 @@ async def get_chart_data(
             _chart_cache.move_to_end(uid)
             return success_response(data=cached_data)
 
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     thirty_days_ago = now - timedelta(days=30)
     scope_filter = build_user_scope_filter(user, PRReview)
 

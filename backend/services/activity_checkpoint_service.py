@@ -156,7 +156,7 @@ class ActivityCheckpointService:
         for row in rows:
             try:
                 payload = json.loads(row.message_json)
-            except (TypeError, json.JSONDecodeError):
+            except TypeError, json.JSONDecodeError:
                 payload = {
                     "role": row.role,
                     "content": row.content,

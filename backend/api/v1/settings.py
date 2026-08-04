@@ -1,17 +1,16 @@
 """API v1 个人设置端点"""
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from fastapi import APIRouter, Depends
 from loguru import logger
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from backend.models.database import WebUIConfig
-from backend.webui.deps import get_db, invalidate_user_prefs_cache
-
 from backend.api.v1.deps import require_api_auth
 from backend.api.v1.responses import success_response
+from backend.models.database import WebUIConfig
+from backend.webui.deps import get_db, invalidate_user_prefs_cache
 
 router = APIRouter(prefix="/settings", tags=["Settings"])
 
@@ -92,6 +91,6 @@ async def get_about(
     return success_response(
         data={
             "version": APP_VERSION,
-            "build_date": datetime.now(timezone.utc).strftime("%Y-%m-%d"),
+            "build_date": datetime.now(UTC).strftime("%Y-%m-%d"),
         }
     )

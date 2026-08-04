@@ -1,22 +1,22 @@
 """WebUI 仓库扫描路由"""
 
-from fastapi import APIRouter, Request, Depends, Query
+from fastapi import APIRouter, Depends, Query, Request
 from fastapi.responses import HTMLResponse
-from sqlalchemy import select, func, desc, or_
+from sqlalchemy import desc, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.models.scan_models import RepoScan, ScanFinding, ScanStatus
 from backend.webui.deps import (
-    require_admin,
-    require_super_admin,
-    require_csrf_header,
+    error_page,
+    get_csrf_serializer,
     get_db,
     get_templates,
     get_user_preferences,
-    get_csrf_serializer,
     paginate,
-    error_page,
     render_template,
+    require_admin,
+    require_csrf_header,
+    require_super_admin,
 )
 
 router = APIRouter(prefix="/scans", tags=["WebUI Scans"])
@@ -214,9 +214,11 @@ async def trigger_scan(
     _csrf: str = Depends(require_csrf_header),
 ):
     """手动触发扫描"""
-    from backend.workers.scan_worker import ScanWorker
-    from fastapi.responses import JSONResponse
     import asyncio
+
+    from fastapi.responses import JSONResponse
+
+    from backend.workers.scan_worker import ScanWorker
 
     try:
         worker = ScanWorker()

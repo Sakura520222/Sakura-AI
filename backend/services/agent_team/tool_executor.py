@@ -15,8 +15,8 @@ from backend.services.agent_team.file_tools import AgentTeamFileTools
 from backend.services.agent_team.shell_executor import AgentTeamShellExecutor
 from backend.services.agent_team.tools.base import ToolContext
 from backend.services.agent_team.tools.grep_tool import (
-    GrepTool,
     MAX_GREP_KEYWORD_LENGTH,
+    GrepTool,
 )
 from backend.services.agent_team.tools.shell_tool import is_agent_command_allowed
 from backend.services.agent_team.workspace_service import AgentTeamWorkspaceService
@@ -45,7 +45,7 @@ class AgentToolExecutor:
         function_name = tool_call.function.name
         try:
             arguments = json.loads(tool_call.function.arguments)
-        except (json.JSONDecodeError, TypeError):
+        except json.JSONDecodeError, TypeError:
             return {"error": f"无法解析工具参数: {tool_call.function.arguments}"}
 
         handler = {
