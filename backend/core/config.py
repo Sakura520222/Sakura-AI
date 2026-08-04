@@ -1995,6 +1995,7 @@ CORE_CONFIG_KEYS = frozenset(
         "mobile_oauth_allowed_redirect_uris",
         "passkeys_allowed_origins",
         "database_url",
+        "redis_url",
         "summary_provider",
     }
 )

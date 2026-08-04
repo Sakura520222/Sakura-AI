@@ -43,6 +43,11 @@ def test_basic_config_keys_are_loaded_from_database_config_keys():
     assert BASIC_CONFIG_KEYS.issubset(set(get_all_db_config_keys()))
 
 
+def test_redis_url_is_loaded_from_database_config_keys():
+    assert "redis_url" in CORE_CONFIG_KEYS
+    assert "redis_url" in get_all_db_config_keys()
+
+
 def test_mobile_oauth_allowed_redirect_uris_is_available_in_core_config_paths():
     required_key = "mobile_oauth_allowed_redirect_uris"
 
