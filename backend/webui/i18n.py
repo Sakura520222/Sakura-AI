@@ -211,3 +211,42 @@ def detect_language(user_prefs: dict | None = None) -> str:
         logger.debug(f"Failed to read default_language from settings: {e}")
 
     return DEFAULT_LANGUAGE
+
+
+# =============================================================================
+# 免认证页面（登录页 / Setup Wizard）语言切换支持
+# =============================================================================
+
+# 语言切换 Cookie：免认证页面共享，独立于用户偏好动态配置
+LANG_COOKIE = "preferred_language"
+
+
+def resolve_language(request) -> str:
+    """解析免认证页面的语言。
+
+    优先级：?lang= 查询参数 > preferred_language Cookie > detect_language()。
+
+    Args:
+        request: FastAPI Request 对象
+
+    Returns:
+        语言代码（如 "zh-CN" 或 "en"）
+    """
+    qlang = request.query_params.get("lang")
+    if qlang in SUPPORTED_LANGUAGES:
+        return qlang
+    clang = request.cookies.get(LANG_COOKIE)
+    if clang in SUPPORTED_LANGUAGES:
+        return clang
+    return detect_language()
+
+
+def set_language_cookie(response, lang: str) -> None:
+    """在响应上写入语言切换 Cookie（跨免认证页面共享）。"""
+    response.set_cookie(
+        key=LANG_COOKIE,
+        value=lang,
+        httponly=True,
+        samesite="lax",
+        path="/",
+    )

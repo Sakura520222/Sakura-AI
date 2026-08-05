@@ -130,6 +130,7 @@ auth:
   login_telegram_hint: "首次使用需先通过 Telegram Bot 注册"
   login_passkey: "使用通行密钥登录"
   oauth_not_configured: "GitHub OAuth 尚未配置"
+  oauth_contact_admin: "请联系管理员设置 GITHUB_OAUTH_CLIENT_ID 和 GITHUB_OAUTH_CLIENT_SECRET"
   two_factor_title: "两步验证"
   two_factor_subtitle: "请输入认证器验证码以继续登录"
   two_factor_hint: "正在验证账户"

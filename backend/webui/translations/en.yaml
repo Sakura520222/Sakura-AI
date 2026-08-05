@@ -130,6 +130,7 @@ auth:
   login_telegram_hint: "First-time users need to register via Telegram Bot"
   login_passkey: "Sign in with Passkey"
   oauth_not_configured: "GitHub OAuth is not configured"
+  oauth_contact_admin: "Please contact the administrator to set GITHUB_OAUTH_CLIENT_ID and GITHUB_OAUTH_CLIENT_SECRET"
   two_factor_title: "Two-Factor Authentication"
   two_factor_subtitle: "Enter your authenticator code to continue"
   two_factor_hint: "Verifying account"

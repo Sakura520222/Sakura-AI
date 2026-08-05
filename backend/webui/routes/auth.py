@@ -58,8 +58,14 @@ from backend.webui.deps import (
     require_csrf_header,
     toast_redirect,
 )
-from backend.webui.i18n import detect_language
-from backend.webui.i18n import i18n as _i18n
+from backend.webui.i18n import (
+    detect_language,
+    resolve_language,
+    set_language_cookie,
+)
+from backend.webui.i18n import (
+    i18n as _i18n,
+)
 
 router = APIRouter(prefix="/auth", tags=["WebUI Auth"])
 templates = get_templates()
@@ -100,6 +106,9 @@ def _oauth_error(
     telegram_deep_link: str | None = None,
 ):
     """统一的 OAuth 错误页面响应"""
+    lang = resolve_language(request)
+    from backend.webui.i18n import make_translation_func
+
     return templates.TemplateResponse(
         request,
         "login.html",
@@ -110,6 +119,9 @@ def _oauth_error(
             "app_version": APP_VERSION,
             "has_oauth": has_oauth,
             "telegram_deep_link": telegram_deep_link,
+            "lang": lang,
+            "_": make_translation_func(lang),
+            "user_prefs": {"language": lang},
         },
         status_code=status_code,
     )
@@ -216,9 +228,17 @@ async def login_page(request: Request):
     has_oauth = bool(settings.github_oauth_client_id)
     telegram_deep_link = _get_telegram_deep_link()
 
+    # 语言切换请求：设置 Cookie 后重定向（去掉 ?lang= 参数）
+    lang = resolve_language(request)
+    if request.query_params.get("lang"):
+        response = RedirectResponse(url="/auth/login", status_code=302)
+        set_language_cookie(response, lang)
+        return response
+
     return render_template(
         "login.html",
         request,
+        user_prefs={"language": lang},
         csrf_token=get_csrf_serializer().dumps({}),
         error=None,
         app_version=APP_VERSION,
