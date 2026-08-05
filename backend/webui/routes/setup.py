@@ -25,38 +25,22 @@ from backend.services.config_backup_service import (
     parse_config_backup,
 )
 from backend.webui.deps import get_templates, render_template
-from backend.webui.i18n import DEFAULT_LANGUAGE, SUPPORTED_LANGUAGES, i18n
+from backend.webui.i18n import (
+    DEFAULT_LANGUAGE,
+    SUPPORTED_LANGUAGES,
+    i18n,
+    resolve_language,
+    set_language_cookie,
+)
 
 router = APIRouter(prefix="/setup", tags=["Setup Wizard"])
 templates = get_templates()
-
-# 语言切换 Cookie（仅影响 Setup 页面，独立于用户偏好）
-_LANG_COOKIE = "preferred_language"
-
-
-def _resolve_language(request: Request) -> str:
-    """解析 Setup 页面语言：?lang= 查询参数 > preferred_language Cookie > 默认检测。"""
-    qlang = request.query_params.get("lang")
-    if qlang in SUPPORTED_LANGUAGES:
-        return qlang
-    clang = request.cookies.get(_LANG_COOKIE)
-    if clang in SUPPORTED_LANGUAGES:
-        return clang
-    from backend.webui.i18n import detect_language
-
-    return detect_language()
 
 
 def _lang_switch_response(lang: str) -> RedirectResponse:
     """构造语言切换响应：设置 Cookie 并去掉 ?lang= 参数，避免重复切换。"""
     response = RedirectResponse(url="/setup", status_code=302)
-    response.set_cookie(
-        key=_LANG_COOKIE,
-        value=lang,
-        httponly=True,
-        samesite="lax",
-        path="/",
-    )
+    set_language_cookie(response, lang)
     return response
 
 
@@ -113,7 +97,7 @@ async def verify_page(request: Request):
         if request.query_params.get("lang"):
             return _lang_switch_response(request.query_params["lang"])
         return RedirectResponse(url="/setup", status_code=302)
-    lang = _resolve_language(request)
+    lang = resolve_language(request)
     if request.query_params.get("lang"):
         # 设置语言 Cookie 并保持在验证页
         response = render_template(
@@ -122,13 +106,7 @@ async def verify_page(request: Request):
             user_prefs={"language": lang},
             error=None,
         )
-        response.set_cookie(
-            key=_LANG_COOKIE,
-            value=lang,
-            httponly=True,
-            samesite="lax",
-            path="/",
-        )
+        set_language_cookie(response, lang)
         return response
     return render_template(
         "setup_verify.html",
@@ -159,7 +137,7 @@ async def verify_token(request: Request):
         )
         return response
 
-    lang = _resolve_language(request)
+    lang = resolve_language(request)
     return render_template(
         "setup_verify.html",
         request,
@@ -181,7 +159,7 @@ async def setup_page(request: Request):
     if qlang in SUPPORTED_LANGUAGES:
         return _lang_switch_response(qlang)
 
-    lang = _resolve_language(request)
+    lang = resolve_language(request)
     current_step = await get_current_step()
     missing = await get_missing_fields()
 
