@@ -8,11 +8,15 @@ from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse, RedirectResponse
 from loguru import logger
 
+from backend.api.v1.deps import limiter
 from backend.core.bootstrap import (
+    _COOKIE_NAME,
     clear_bootstrap_cache,
     get_current_step,
     get_missing_fields,
+    get_setup_token,
     is_bootstrap_mode,
+    validate_setup_token,
     write_connection_config,
 )
 from backend.core.setup_service import setup_service
@@ -46,6 +50,53 @@ def _check_bootstrap():
         # 直接跳转登录页，避免与根路径路由产生重定向循环
         return RedirectResponse(url="/auth/login", status_code=302)
     return None
+
+
+def _has_valid_cookie(request: Request) -> bool:
+    """检查请求中是否已携带有效的 setup_verified Cookie。"""
+    token = get_setup_token()
+    if token is None:
+        return False
+    cookie_value = request.cookies.get(_COOKIE_NAME)
+    return cookie_value is not None and validate_setup_token(cookie_value)
+
+
+@router.get("/verify")
+async def verify_page(request: Request):
+    """Token 输入页"""
+    if not is_bootstrap_mode():
+        return RedirectResponse(url="/auth/login", status_code=302)
+    if _has_valid_cookie(request):
+        return RedirectResponse(url="/setup", status_code=302)
+    return render_template("setup_verify.html", request, error=None)
+
+
+@router.post("/verify")
+@limiter.limit("5/minute")
+async def verify_token(request: Request):
+    """验证 Token，通过后设置 Cookie 并重定向到 Setup Wizard"""
+    if not is_bootstrap_mode():
+        return RedirectResponse(url="/auth/login", status_code=302)
+
+    form = await request.form()
+    token = (form.get("token") or "").strip()
+
+    if validate_setup_token(token):
+        response = RedirectResponse(url="/setup", status_code=302)
+        response.set_cookie(
+            key=_COOKIE_NAME,
+            value=token,
+            httponly=True,
+            samesite="lax",
+            path="/setup",
+        )
+        return response
+
+    return render_template(
+        "setup_verify.html",
+        request,
+        error="Token 无效，请检查日志中的 Token 是否正确。",
+    )
 
 
 @router.get("")

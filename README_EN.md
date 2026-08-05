@@ -286,7 +286,21 @@ docker-compose --profile with-worker up -d
 
 ### 6. Setup Wizard Configuration
 
-After first launch, visit `https://your-domain.com/setup`. The Setup Wizard will guide you through all configuration steps (supports resume from breakpoint):
+After first launch, visit `https://your-domain.com/setup`. The Setup Wizard will guide you through all configuration steps (supports resume from breakpoint).
+
+**Security Verification**: On first startup, the app generates a random Token and prints it in the startup logs. Before accessing `/setup`, you must enter this Token on the `/setup/verify` page:
+
+```
+============================================================
+Setup Wizard 已启动 — 请使用以下 Token 完成首次部署验证：
+  Token: <random-string>
+请从日志中复制此 Token，在浏览器 /setup/verify 页面输入。
+============================================================
+```
+
+> The Token is regenerated on each app startup and is only valid for the current deployment session.
+
+After verification, complete the configuration step by step:
 
 1. **Database Configuration**: Enter MySQL and Redis connection addresses, with online connection testing
 2. **GitHub App Configuration**: Enter App ID, private key, and Webhook Secret; auto-verifies App connection
