@@ -110,9 +110,17 @@ class UnifiedContextCompressor:
         if not messages:
             return False, messages
 
-        budget = self._model_ctx.get_compression_budget(
-            candidate.model.model_id, self.threshold
-        )
+        # 预算优先用候选模型元数据的上下文窗口（与日志分母一致），
+        # 避免未注册模型落入 ModelContextManager 128K 兜底导致永不触发压缩。
+        # Prefer the candidate's own context window for the budget so logs and
+        # compression share the same denominator.
+        window = candidate.model.context_window_tokens
+        if isinstance(window, int) and not isinstance(window, bool) and window > 0:
+            budget = int(window * self.threshold)
+        else:
+            budget = self._model_ctx.get_compression_budget(
+                candidate.model.model_id, self.threshold
+            )
         current = self._estimate(messages)
         if current <= budget:
             return False, messages

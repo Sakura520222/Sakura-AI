@@ -513,6 +513,21 @@ class UnifiedAIClient:
         last_error: AIError | None = None
         compressed_once = False
 
+        # 主动压缩：请求发出前按候选模型上下文预算预检，避免长工具链超限。
+        # Proactive compression: check the budget before the first request so
+        # long tool loops never exceed the model context window.
+        if self._compressor is not None:
+            try:
+                compressed_once, unified_messages = (
+                    await self._compressor.maybe_compress(
+                        selected[0],
+                        unified_messages,
+                        tracker=None,
+                    )
+                )
+            except Exception as exc:
+                logger.warning("主动压缩预检失败，按原消息继续: {}", exc)
+
         for idx, candidate in enumerate(selected):
             # 取消信号：立即中止整条故障转移链 / abort fast on external cancel
             if cancel_event is not None and cancel_event.is_set():
