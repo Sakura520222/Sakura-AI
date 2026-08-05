@@ -11,6 +11,8 @@ from backend.webui.routes import setup as setup_route
 class _Request:
     def __init__(self, body: dict | None = None):
         self.body = body or {}
+        self.query_params: dict = {}
+        self.cookies: dict = {}
 
     async def json(self):
         return self.body

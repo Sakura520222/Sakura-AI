@@ -1,9 +1,9 @@
 <!DOCTYPE html>
-<html lang="zh-CN" class="light">
+<html lang="{{ lang }}" class="light">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>安全验证 - Sakura AI</title>
+    <title>{{ _("setup.verify_title") }} - Sakura AI</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <script>
         tailwind.config = { darkMode: 'class' }
@@ -12,7 +12,25 @@
         [x-cloak] { display: none !important; }
     </style>
 </head>
-<body class="bg-gray-50 dark:bg-gray-900 min-h-screen flex items-center justify-center px-4">
+<body class="bg-gray-50 dark:bg-gray-900 min-h-screen">
+
+<!-- 右上角语言切换 -->
+<div class="absolute top-4 right-4 flex items-center gap-1 text-sm">
+    {% if lang != "zh-CN" %}
+    <a href="/setup/verify?lang=zh-CN"
+       class="px-2.5 py-1 rounded-lg text-gray-500 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white hover:bg-gray-200 dark:hover:bg-gray-700 transition-colors">
+        中文
+    </a>
+    {% endif %}
+    {% if lang != "en" %}
+    <a href="/setup/verify?lang=en"
+       class="px-2.5 py-1 rounded-lg text-gray-500 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white hover:bg-gray-200 dark:hover:bg-gray-700 transition-colors">
+        English
+    </a>
+    {% endif %}
+</div>
+
+<div class="min-h-screen flex items-center justify-center px-4">
 
 <div class="w-full max-w-md">
     <div class="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 shadow-sm p-8">
@@ -20,10 +38,10 @@
         <div class="text-center mb-6">
             <div class="text-5xl mb-4">🔐</div>
             <h1 class="text-xl font-bold text-gray-900 dark:text-white mb-2">
-                Setup Wizard 安全验证
+                {{ _("setup.verify_title") }}
             </h1>
             <p class="text-sm text-gray-600 dark:text-gray-400">
-                请从应用启动日志中复制 Setup Token 并粘贴到下方输入框，以继续首次部署配置。
+                {{ _("setup.verify_description") }}
             </p>
         </div>
 
@@ -38,7 +56,7 @@
         <form method="POST" action="/setup/verify" class="space-y-4">
             <div>
                 <label for="token" class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
-                    Setup Token
+                    {{ _("setup.verify_token_label") }}
                 </label>
                 <input
                     type="text"
@@ -46,7 +64,7 @@
                     name="token"
                     required
                     autocomplete="off"
-                    placeholder="粘贴日志中的 Token"
+                    placeholder="{{ _('setup.verify_placeholder') }}"
                     class="w-full rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 px-3 py-2 text-gray-900 dark:text-white placeholder-gray-400 focus:border-pink-500 focus:ring-1 focus:ring-pink-500 outline-none transition-colors"
                 />
             </div>
@@ -54,17 +72,19 @@
                 type="submit"
                 class="w-full rounded-lg bg-pink-500 hover:bg-pink-600 text-white font-medium px-4 py-2 transition-colors"
             >
-                验证并继续
+                {{ _("setup.verify_submit") }}
             </button>
         </form>
 
         <!-- 提示 -->
         <div class="mt-6 text-center">
             <p class="text-xs text-gray-400 dark:text-gray-500">
-                Token 在每次应用启动时生成，可在启动日志中找到。
+                {{ _("setup.verify_tip") }}
             </p>
         </div>
     </div>
+</div>
+
 </div>
 
 </body>
