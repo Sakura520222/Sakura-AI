@@ -285,7 +285,21 @@ docker-compose --profile with-worker up -d
 
 ### 6. Setup Wizard 引导配置
 
-首次启动后访问 `https://your-domain.com/setup`，Setup Wizard 将分步引导完成所有配置（支持断点续配）：
+首次启动后访问 `https://your-domain.com/setup`，Setup Wizard 将分步引导完成所有配置（支持断点续配）。
+
+**安全验证**：首次启动时应用会生成一个随机 Token 并打印到启动日志中。访问 `/setup` 前需先在 `/setup/verify` 页面输入此 Token 完成验证：
+
+```
+============================================================
+Setup Wizard 已启动 — 请使用以下 Token 完成首次部署验证：
+  Token: <随机字符串>
+请从日志中复制此 Token，在浏览器 /setup/verify 页面输入。
+============================================================
+```
+
+> Token 在每次应用启动时重新生成，仅当前部署会话有效。
+
+验证通过后进入向导，分步完成配置：
 
 1. **数据库配置**：填写 MySQL 和 Redis 连接地址，提供在线连接测试
 2. **GitHub App 配置**：填写 App ID、私钥和 Webhook Secret，自动验证 App 连接

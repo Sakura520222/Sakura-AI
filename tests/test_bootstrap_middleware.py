@@ -10,7 +10,12 @@ from fastapi import FastAPI
 from fastapi.responses import PlainTextResponse
 from starlette.testclient import TestClient
 
-from backend.core.bootstrap import BootstrapMiddleware
+from backend.core.bootstrap import (
+    BootstrapMiddleware,
+    clear_setup_token,
+    generate_setup_token,
+    get_setup_token,
+)
 
 
 def _build_app() -> FastAPI:
@@ -36,6 +41,14 @@ def _build_app() -> FastAPI:
     @app.get("/static/app.css")
     async def static_css() -> PlainTextResponse:
         return PlainTextResponse("body{}", media_type="text/css")
+
+    @app.get("/setup")
+    async def setup_page() -> PlainTextResponse:
+        return PlainTextResponse("setup wizard")
+
+    @app.get("/setup/verify")
+    async def verify_page() -> PlainTextResponse:
+        return PlainTextResponse("verify")
 
     app.add_middleware(BootstrapMiddleware)
     return app
@@ -92,3 +105,79 @@ def test_bootstrap_mode_static_assets_pass_through():
         client = TestClient(_build_app())
         resp = client.get("/static/app.css")
         assert resp.status_code == 200
+
+
+def test_bootstrap_mode_setup_without_cookie_redirects_to_verify():
+    """bootstrap 模式：/setup 无 Cookie 时重定向到 /setup/verify。"""
+    clear_setup_token()
+    generate_setup_token()
+    try:
+        with patch("backend.core.bootstrap.is_bootstrap_mode", return_value=True):
+            client = TestClient(_build_app())
+            resp = client.get("/setup", follow_redirects=False)
+            assert resp.status_code == 302
+            assert resp.headers["location"] == "/setup/verify"
+    finally:
+        clear_setup_token()
+
+
+def test_bootstrap_mode_setup_with_valid_cookie_passes_through():
+    """bootstrap 模式：/setup 携带有效 Cookie 时放行。"""
+    clear_setup_token()
+    generate_setup_token()
+    token = get_setup_token()
+    try:
+        with patch("backend.core.bootstrap.is_bootstrap_mode", return_value=True):
+            client = TestClient(_build_app())
+            resp = client.get(
+                "/setup", follow_redirects=False, cookies={"setup_verified": token}
+            )
+            assert resp.status_code == 200
+            assert resp.text == "setup wizard"
+    finally:
+        clear_setup_token()
+
+
+def test_bootstrap_mode_setup_with_invalid_cookie_redirects_to_verify():
+    """bootstrap 模式：/setup 携带无效 Cookie 时重定向到 /setup/verify。"""
+    clear_setup_token()
+    generate_setup_token()
+    try:
+        with patch("backend.core.bootstrap.is_bootstrap_mode", return_value=True):
+            client = TestClient(_build_app())
+            resp = client.get(
+                "/setup",
+                follow_redirects=False,
+                cookies={"setup_verified": "fake-token"},
+            )
+            assert resp.status_code == 302
+            assert resp.headers["location"] == "/setup/verify"
+    finally:
+        clear_setup_token()
+
+
+def test_bootstrap_mode_setup_verify_passes_without_cookie():
+    """bootstrap 模式：/setup/verify 无需 Cookie 即可访问。"""
+    clear_setup_token()
+    generate_setup_token()
+    try:
+        with patch("backend.core.bootstrap.is_bootstrap_mode", return_value=True):
+            client = TestClient(_build_app())
+            resp = client.get("/setup/verify", follow_redirects=False)
+            assert resp.status_code == 200
+            assert resp.text == "verify"
+    finally:
+        clear_setup_token()
+
+
+def test_bootstrap_mode_setup_without_token_redirects_to_verify():
+    """bootstrap 模式：Token 未生成时 /setup 重定向到 verify。"""
+    clear_setup_token()
+    try:
+        with patch("backend.core.bootstrap.is_bootstrap_mode", return_value=True):
+            client = TestClient(_build_app())
+            resp = client.get("/setup", follow_redirects=False)
+            assert resp.status_code == 302
+            assert resp.headers["location"] == "/setup/verify"
+    finally:
+        clear_setup_token()
