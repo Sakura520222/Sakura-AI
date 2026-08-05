@@ -1,0 +1,71 @@
+<!DOCTYPE html>
+<html lang="zh-CN" class="light">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>安全验证 - Sakura AI</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        tailwind.config = { darkMode: 'class' }
+    </script>
+    <style>
+        [x-cloak] { display: none !important; }
+    </style>
+</head>
+<body class="bg-gray-50 dark:bg-gray-900 min-h-screen flex items-center justify-center px-4">
+
+<div class="w-full max-w-md">
+    <div class="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 shadow-sm p-8">
+        <!-- 标题 -->
+        <div class="text-center mb-6">
+            <div class="text-5xl mb-4">🔐</div>
+            <h1 class="text-xl font-bold text-gray-900 dark:text-white mb-2">
+                Setup Wizard 安全验证
+            </h1>
+            <p class="text-sm text-gray-600 dark:text-gray-400">
+                请从应用启动日志中复制 Setup Token 并粘贴到下方输入框，以继续首次部署配置。
+            </p>
+        </div>
+
+        <!-- 错误提示 -->
+        {% if error %}
+        <div class="mb-4 rounded-lg bg-red-50 dark:bg-red-900/30 border border-red-200 dark:border-red-700 px-4 py-3">
+            <p class="text-sm text-red-700 dark:text-red-300">{{ error }}</p>
+        </div>
+        {% endif %}
+
+        <!-- Token 输入表单 -->
+        <form method="POST" action="/setup/verify" class="space-y-4">
+            <div>
+                <label for="token" class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+                    Setup Token
+                </label>
+                <input
+                    type="text"
+                    id="token"
+                    name="token"
+                    required
+                    autocomplete="off"
+                    placeholder="粘贴日志中的 Token"
+                    class="w-full rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 px-3 py-2 text-gray-900 dark:text-white placeholder-gray-400 focus:border-pink-500 focus:ring-1 focus:ring-pink-500 outline-none transition-colors"
+                />
+            </div>
+            <button
+                type="submit"
+                class="w-full rounded-lg bg-pink-500 hover:bg-pink-600 text-white font-medium px-4 py-2 transition-colors"
+            >
+                验证并继续
+            </button>
+        </form>
+
+        <!-- 提示 -->
+        <div class="mt-6 text-center">
+            <p class="text-xs text-gray-400 dark:text-gray-500">
+                Token 在每次应用启动时生成，可在启动日志中找到。
+            </p>
+        </div>
+    </div>
+</div>
+
+</body>
+</html>

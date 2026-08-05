@@ -4,10 +4,13 @@
 使用 config/connection.json 存储数据库连接信息和完成标记。
 """
 
+import hmac
 import json
 import os
+import secrets
 import time
 from datetime import UTC, datetime
+from http.cookies import SimpleCookie
 from pathlib import Path
 from typing import Literal
 
@@ -90,6 +93,7 @@ def mark_setup_completed(database_url: str) -> None:
         database_url: 数据库连接字符串（写入 connection.json 供下次启动使用）
     """
     write_connection_config(database_url, setup_completed=True)
+    clear_setup_token()
     logger.info("Setup 已完成，标记已写入")
 
 
@@ -129,6 +133,67 @@ def clear_bootstrap_cache():
     global _state_cache, _cache_ts
     _state_cache = None
     _cache_ts = 0
+
+
+# =============================================================================
+# Setup Wizard Token 安全防护
+# =============================================================================
+
+# 进程级 Token（每次启动重新生成，不持久化）
+_setup_token: str | None = None
+
+# Cookie 名称
+_COOKIE_NAME = "setup_verified"
+
+
+def generate_setup_token() -> None:
+    """生成 Setup Token 并醒目打印到日志。
+
+    仅在 bootstrap 模式启动时调用。每次启动生成新 Token，
+    旧 Token 在进程退出后自然失效。
+    """
+    global _setup_token
+    _setup_token = secrets.token_urlsafe(32)
+    logger.info("=" * 60)
+    logger.info("Setup Wizard 已启动 — 请使用以下 Token 完成首次部署验证：")
+    logger.info(f"  Token: {_setup_token}")
+    logger.info("请从日志中复制此 Token，在浏览器 /setup/verify 页面输入。")
+    logger.info("=" * 60)
+
+
+def get_setup_token() -> str | None:
+    """获取当前 Setup Token（未生成时返回 None）。"""
+    return _setup_token
+
+
+def validate_setup_token(submitted: str) -> bool:
+    """常量时间比较 Token，防止时序攻击。"""
+    if _setup_token is None or not submitted:
+        return False
+    return hmac.compare_digest(submitted, _setup_token)
+
+
+def clear_setup_token() -> None:
+    """清除内存中的 Token。Setup 完成后调用。"""
+    global _setup_token
+    _setup_token = None
+
+
+def _has_valid_setup_cookie(scope: dict) -> bool:
+    """从 ASGI scope 解析 Cookie，验证 setup_verified 是否有效。
+
+    纯 ASGI 实现，不构造 Request 对象，避免在中间件层引入额外开销。
+    """
+    token = get_setup_token()
+    if token is None:
+        return False
+    for header_name, header_value in scope.get("headers", []):
+        if header_name == b"cookie":
+            cookies = SimpleCookie(header_value.decode("latin-1"))
+            morsel = cookies.get(_COOKIE_NAME)
+            if morsel is not None and hmac.compare_digest(morsel.value, token):
+                return True
+    return False
 
 
 async def get_missing_fields() -> list[str]:
@@ -243,8 +308,11 @@ class BootstrapMiddleware:
     该 TaskGroup 路径，从根上消除连接泄漏。
     """
 
-    # 始终放行的路径
-    ALLOWED_PATHS = ("/setup", "/health", "/docs", "/openapi.json", "/redoc")
+    # 始终放行的路径（不含 /setup，/setup 由专门逻辑处理）
+    ALLOWED_PATHS = ("/health", "/docs", "/openapi.json", "/redoc")
+
+    SETUP_PREFIX = "/setup"
+    VERIFY_PREFIX = "/setup/verify"
 
     def __init__(self, app) -> None:
         self.app = app
@@ -266,7 +334,22 @@ class BootstrapMiddleware:
             await RedirectResponse(url="/setup", status_code=302)(scope, receive, send)
             return
 
-        # 放行 Setup Wizard 相关路径
+        # Setup Wizard 路径分层处理
+        if path.startswith(self.SETUP_PREFIX):
+            # verify 页面本身不需要 Token（Token 输入入口）
+            if path.startswith(self.VERIFY_PREFIX):
+                await self.app(scope, receive, send)
+                return
+            # 其他 /setup 路径需要验证 setup_verified Cookie
+            if not _has_valid_setup_cookie(scope):
+                await RedirectResponse(
+                    url="/setup/verify", status_code=302
+                )(scope, receive, send)
+                return
+            await self.app(scope, receive, send)
+            return
+
+        # 其他始终放行的路径
         for allowed in self.ALLOWED_PATHS:
             if path.startswith(allowed):
                 await self.app(scope, receive, send)

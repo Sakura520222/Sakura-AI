@@ -22,6 +22,7 @@ from backend.api.v1.deps import limiter
 from backend.core.access_log import install_quiet_successful_access_filter
 from backend.core.bootstrap import (
     BootstrapMiddleware,
+    generate_setup_token,
     is_bootstrap_mode,
     read_connection_config,
 )
@@ -349,6 +350,8 @@ async def lifespan(app: FastAPI):
     else:
         logger.warning("🔧 Bootstrap 模式：仅 Setup Wizard 可用")
         logger.info("请访问 /setup 完成初始配置")
+        # 生成 Setup Token：用户需从日志中获取 Token 才能访问 Setup Wizard
+        generate_setup_token()
 
     # 记录启动完成时间
     _startup_finished_at = time.time()
