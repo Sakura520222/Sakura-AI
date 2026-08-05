@@ -101,3 +101,80 @@ def test_verify_post_wrong_token_re_renders_with_error():
             assert "无效" in resp.text or "invalid" in resp.text.lower()
     finally:
         clear_setup_token()
+
+
+def test_setup_page_default_language_is_chinese():
+    """无语言参数/Cookie 时默认渲染中文。"""
+    clear_setup_token()
+    generate_setup_token()
+    try:
+        with patch("backend.webui.routes.setup.is_bootstrap_mode", return_value=True):
+            client = TestClient(_build_app())
+            resp = client.get("/setup")
+            assert resp.status_code == 200
+            assert 'lang="zh-CN"' in resp.text
+            assert "欢迎使用" in resp.text
+    finally:
+        clear_setup_token()
+
+
+def test_setup_page_lang_query_renders_english():
+    """?lang=en 渲染英文页面。"""
+    clear_setup_token()
+    generate_setup_token()
+    try:
+        with patch("backend.webui.routes.setup.is_bootstrap_mode", return_value=True):
+            client = TestClient(_build_app())
+            resp = client.get("/setup?lang=en")
+            assert resp.status_code == 200
+            assert 'lang="en"' in resp.text
+            assert "Welcome to Sakura AI" in resp.text
+            assert "Database Configuration" in resp.text
+    finally:
+        clear_setup_token()
+
+
+def test_setup_page_lang_switch_sets_cookie_and_redirects():
+    """?lang= 切换时设置 preferred_language Cookie 并重定向（去掉参数）。"""
+    clear_setup_token()
+    generate_setup_token()
+    try:
+        with patch("backend.webui.routes.setup.is_bootstrap_mode", return_value=True):
+            client = TestClient(_build_app())
+            resp = client.get("/setup?lang=zh-CN", follow_redirects=False)
+            assert resp.status_code == 302
+            assert resp.headers["location"] == "/setup"
+            assert "preferred_language" in resp.headers.get("set-cookie", "")
+    finally:
+        clear_setup_token()
+
+
+def test_setup_page_lang_cookie_persists():
+    """preferred_language Cookie 在后续请求中生效。"""
+    clear_setup_token()
+    generate_setup_token()
+    try:
+        with patch("backend.webui.routes.setup.is_bootstrap_mode", return_value=True):
+            client = TestClient(_build_app())
+            client.get("/setup?lang=en")
+            resp = client.get("/setup")
+            assert resp.status_code == 200
+            assert 'lang="en"' in resp.text
+            assert "Welcome to Sakura AI" in resp.text
+    finally:
+        clear_setup_token()
+
+
+def test_verify_page_lang_switch():
+    """verify 页 ?lang= 切换设置 Cookie 并保持英文渲染。"""
+    clear_setup_token()
+    generate_setup_token()
+    try:
+        with patch("backend.webui.routes.setup.is_bootstrap_mode", return_value=True):
+            client = TestClient(_build_app())
+            resp = client.get("/setup/verify?lang=en")
+            assert resp.status_code == 200
+            assert "Security Verification" in resp.text
+            assert "preferred_language" in resp.headers.get("set-cookie", "")
+    finally:
+        clear_setup_token()

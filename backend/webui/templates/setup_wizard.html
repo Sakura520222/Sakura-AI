@@ -1,9 +1,9 @@
 <!DOCTYPE html>
-<html lang="zh-CN" class="light">
+<html lang="{{ lang }}" class="light">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>初始配置 - Sakura AI</title>
+    <title>{{ _("setup.page_title") }}</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <script>
         tailwind.config = { darkMode: 'class' }
@@ -24,9 +24,26 @@
         <div class="max-w-3xl mx-auto">
             <div class="flex items-center justify-between mb-2">
                 <h1 class="text-lg font-bold text-gray-900 dark:text-white">
-                    🌸 Sakura AI 初始配置
+                    🌸 {{ _("setup.header_title") }}
                 </h1>
-                <span class="text-sm text-gray-500 dark:text-gray-400" x-text="`步骤 ${currentStep + 1} / ${steps.length}`"></span>
+                <div class="flex items-center gap-3">
+                    <span class="text-sm text-gray-500 dark:text-gray-400" x-text="`{{ _('setup.step_progress') }}`.replace('{current}', currentStep + 1).replace('{total}', steps.length)"></span>
+                    <!-- 语言切换 -->
+                    <div class="flex items-center gap-1 text-sm">
+                        {% if lang != "zh-CN" %}
+                        <a href="/setup?lang=zh-CN"
+                           class="px-2 py-0.5 rounded text-gray-500 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white hover:bg-gray-200 dark:hover:bg-gray-700 transition-colors">
+                            {{ _("setup.language_zh") }}
+                        </a>
+                        {% endif %}
+                        {% if lang != "en" %}
+                        <a href="/setup?lang=en"
+                           class="px-2 py-0.5 rounded text-gray-500 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white hover:bg-gray-200 dark:hover:bg-gray-700 transition-colors">
+                            {{ _("setup.language_en") }}
+                        </a>
+                        {% endif %}
+                    </div>
+                </div>
             </div>
             <!-- 进度指示器 -->
             <div class="flex items-center gap-1">
@@ -56,46 +73,46 @@
             <div x-show="currentStep === 0" x-cloak class="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 shadow-sm p-8">
                 <div class="text-center mb-8">
                     <div class="text-6xl mb-4">🌸</div>
-                    <h2 class="text-2xl font-bold text-gray-900 dark:text-white mb-2">欢迎使用 Sakura AI</h2>
-                    <p class="text-gray-600 dark:text-gray-400">GitHub PR/Issue AI 审查机器人</p>
+                    <h2 class="text-2xl font-bold text-gray-900 dark:text-white mb-2">{{ _("setup.welcome_title") }}</h2>
+                    <p class="text-gray-600 dark:text-gray-400">{{ _("setup.welcome_desc") }}</p>
                 </div>
 
                 <div class="space-y-4 mb-8">
-                    <h3 class="font-semibold text-gray-900 dark:text-white">配置向导将引导你完成以下设置：</h3>
+                    <h3 class="font-semibold text-gray-900 dark:text-white">{{ _("setup.welcome_guide") }}</h3>
                     <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
                         <div class="flex items-start gap-3 p-3 rounded-lg bg-pink-50 dark:bg-pink-900/20">
                             <span class="text-pink-500 mt-0.5">●</span>
                             <div>
-                                <p class="font-medium text-gray-900 dark:text-white text-sm">数据库与缓存</p>
-                                <p class="text-xs text-gray-500 dark:text-gray-400">MySQL / PostgreSQL / Redis</p>
+                                <p class="font-medium text-gray-900 dark:text-white text-sm">{{ _("setup.welcome_db_cache") }}</p>
+                                <p class="text-xs text-gray-500 dark:text-gray-400">{{ _("setup.welcome_db_cache_desc") }}</p>
                             </div>
                         </div>
                         <div class="flex items-start gap-3 p-3 rounded-lg bg-pink-50 dark:bg-pink-900/20">
                             <span class="text-pink-500 mt-0.5">●</span>
                             <div>
-                                <p class="font-medium text-gray-900 dark:text-white text-sm">GitHub App</p>
-                                <p class="text-xs text-gray-500 dark:text-gray-400">应用 ID、私钥、Webhook 密钥</p>
+                                <p class="font-medium text-gray-900 dark:text-white text-sm">{{ _("setup.welcome_github_app") }}</p>
+                                <p class="text-xs text-gray-500 dark:text-gray-400">{{ _("setup.welcome_github_app_desc") }}</p>
                             </div>
                         </div>
                         <div class="flex items-start gap-3 p-3 rounded-lg bg-pink-50 dark:bg-pink-900/20">
                             <span class="text-pink-500 mt-0.5">●</span>
                             <div>
-                                <p class="font-medium text-gray-900 dark:text-white text-sm">AI 账号与角色</p>
-                                <p class="text-xs text-gray-500 dark:text-gray-400">完成初始化后在 AI 配置页管理账号和角色绑定</p>
+                                <p class="font-medium text-gray-900 dark:text-white text-sm">{{ _("setup.welcome_ai_accounts") }}</p>
+                                <p class="text-xs text-gray-500 dark:text-gray-400">{{ _("setup.welcome_ai_accounts_desc") }}</p>
                             </div>
                         </div>
                         <div class="flex items-start gap-3 p-3 rounded-lg bg-blue-50 dark:bg-blue-900/20">
                             <span class="text-blue-500 mt-0.5">●</span>
                             <div>
-                                <p class="font-medium text-gray-900 dark:text-white text-sm">RAG 配置（可选）</p>
-                                <p class="text-xs text-gray-500 dark:text-gray-400">嵌入与重排序模型，增强审查质量</p>
+                                <p class="font-medium text-gray-900 dark:text-white text-sm">{{ _("setup.welcome_rag") }}</p>
+                                <p class="text-xs text-gray-500 dark:text-gray-400">{{ _("setup.welcome_rag_desc") }}</p>
                             </div>
                         </div>
                         <div class="flex items-start gap-3 p-3 rounded-lg bg-pink-50 dark:bg-pink-900/20">
                             <span class="text-pink-500 mt-0.5">●</span>
                             <div>
-                                <p class="font-medium text-gray-900 dark:text-white text-sm">管理员账户</p>
-                                <p class="text-xs text-gray-500 dark:text-gray-400">设置 WebUI 管理员</p>
+                                <p class="font-medium text-gray-900 dark:text-white text-sm">{{ _("setup.welcome_admin") }}</p>
+                                <p class="text-xs text-gray-500 dark:text-gray-400">{{ _("setup.welcome_admin_desc") }}</p>
                             </div>
                         </div>
                     </div>
@@ -103,8 +120,8 @@
 
                 <div class="p-4 bg-yellow-50 dark:bg-yellow-900/20 rounded-lg border border-yellow-200 dark:border-yellow-800">
                     <p class="text-sm text-yellow-800 dark:text-yellow-200">
-                        <strong>前置条件：</strong>你需要一个 GitHub 账号，以及一个已创建的 GitHub App。
-                        如果还没有创建 GitHub App，<a href="https://docs.github.com/en/apps/creating-github-apps" target="_blank" class="underline text-yellow-700 dark:text-yellow-300 hover:text-yellow-600">点击这里查看创建指南</a>。
+                        <strong>{{ _("setup.prereq_title") }}</strong>{{ _("setup.prereq_body") }}
+                        <a href="https://docs.github.com/en/apps/creating-github-apps" target="_blank" class="underline text-yellow-700 dark:text-yellow-300 hover:text-yellow-600">{{ _("setup.prereq_guide") }}</a>。
                     </p>
                 </div>
 
@@ -153,31 +170,31 @@
 
             <!-- Step 1: 数据库配置 -->
             <div x-show="currentStep === 1" x-cloak class="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 shadow-sm p-8">
-                <h2 class="text-xl font-bold text-gray-900 dark:text-white mb-1">数据库配置</h2>
-                <p class="text-sm text-gray-500 dark:text-gray-400 mb-6">用于存储审查记录、用户配额等数据</p>
+                <h2 class="text-xl font-bold text-gray-900 dark:text-white mb-1">{{ _("setup.db_title") }}</h2>
+                <p class="text-sm text-gray-500 dark:text-gray-400 mb-6">{{ _("setup.db_desc") }}</p>
 
                 <div class="space-y-5">
                     <div>
                         <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
-                            数据库连接字符串 <span class="text-red-500">*</span>
+                            {{ _("setup.db_conn_label") }} <span class="text-red-500">*</span>
                         </label>
                         <p class="text-xs text-gray-500 dark:text-gray-400 mb-2">
-                            支持 MySQL 和 PostgreSQL。应用会自动创建所需的数据表。
+                            {{ _("setup.db_conn_help") }}
                         </p>
                         <input type="text" x-model="form.database_url"
                                placeholder="mysql+asyncmy://user:password@localhost:3306/sakura_ai"
                                class="w-full px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-sm text-gray-900 dark:text-white focus:ring-2 focus:ring-pink-500 focus:border-transparent outline-none">
                         <p class="text-xs text-gray-400 dark:text-gray-500 mt-1">
-                            格式: mysql+asyncmy://用户名:密码@主机:端口/数据库名
+                            {{ _("setup.db_conn_format") }}
                         </p>
                     </div>
 
                     <button @click="testConnection('database')"
                             :disabled="!form.database_url || testing"
                             class="px-4 py-2 text-sm font-medium rounded-lg border border-gray-300 dark:border-gray-600 hover:bg-gray-50 dark:hover:bg-gray-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors text-gray-700 dark:text-gray-300">
-                        <span x-show="!testing">测试连接</span>
+                        <span x-show="!testing">{{ _("setup.test_connection") }}</span>
                         <span x-show="testing" class="flex items-center gap-2">
-                            <span class="pulse-dot">●</span> 测试中...
+                            <span class="pulse-dot">●</span> {{ _("setup.testing") }}
                         </span>
                     </button>
 
@@ -192,11 +209,11 @@
 
                     <div>
                         <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
-                            Redis 连接地址 <span class="text-red-500">*</span>
+                            {{ _("setup.redis_label") }} <span class="text-red-500">*</span>
                         </label>
                         <p class="text-xs text-gray-500 dark:text-gray-400 mb-2">
-                            用于 SSE 实时推送和缓存。Docker 部署默认使用 <code class="text-xs bg-gray-100 dark:bg-gray-600 px-1 rounded">redis://127.0.0.1:6379/0</code>，
-                            本地测试可改为 <code class="text-xs bg-gray-100 dark:bg-gray-600 px-1 rounded">redis://127.0.0.1:6379/0</code>。
+                            {{ _("setup.redis_help_1") }} <code class="text-xs bg-gray-100 dark:bg-gray-600 px-1 rounded">redis://127.0.0.1:6379/0</code>
+                            {{ _("setup.redis_help_2") }} <code class="text-xs bg-gray-100 dark:bg-gray-600 px-1 rounded">redis://127.0.0.1:6379/0</code>。
                         </p>
                         <input type="text" x-model="form.redis_url"
                                placeholder="redis://127.0.0.1:6379/0"
@@ -206,9 +223,9 @@
                     <button @click="testConnection('redis')"
                             :disabled="!form.redis_url || testing"
                             class="px-4 py-2 text-sm font-medium rounded-lg border border-gray-300 dark:border-gray-600 hover:bg-gray-50 dark:hover:bg-gray-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors text-gray-700 dark:text-gray-300">
-                        <span x-show="!testing">测试 Redis</span>
+                        <span x-show="!testing">{{ _("setup.test_redis") }}</span>
                         <span x-show="testing" class="flex items-center gap-2">
-                            <span class="pulse-dot">●</span> 测试中...
+                            <span class="pulse-dot">●</span> {{ _("setup.testing") }}
                         </span>
                     </button>
 
@@ -222,15 +239,15 @@
 
             <!-- Step 2: GitHub App 配置 -->
             <div x-show="currentStep === 2" x-cloak class="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 shadow-sm p-8">
-                <h2 class="text-xl font-bold text-gray-900 dark:text-white mb-1">GitHub App 配置</h2>
-                <p class="text-sm text-gray-500 dark:text-gray-400 mb-6">用于接收 Webhook 事件和发表审查评论</p>
+                <h2 class="text-xl font-bold text-gray-900 dark:text-white mb-1">{{ _("setup.gh_title") }}</h2>
+                <p class="text-sm text-gray-500 dark:text-gray-400 mb-6">{{ _("setup.gh_desc") }}</p>
 
                 <div class="space-y-5">
                     <div>
                         <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
-                            GitHub App ID <span class="text-red-500">*</span>
+                            {{ _("setup.gh_app_id_label") }} <span class="text-red-500">*</span>
                         </label>
-                        <p class="text-xs text-gray-500 dark:text-gray-400 mb-2">在 GitHub App 设置页面的 General 中可以找到</p>
+                        <p class="text-xs text-gray-500 dark:text-gray-400 mb-2">{{ _("setup.gh_app_id_help") }}</p>
                         <input type="text" x-model="form.github_app_id"
                                placeholder="123456"
                                class="w-full px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-sm text-gray-900 dark:text-white focus:ring-2 focus:ring-pink-500 focus:border-transparent outline-none">
@@ -238,9 +255,9 @@
 
                     <div>
                         <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
-                            GitHub App Private Key <span class="text-red-500">*</span>
+                            {{ _("setup.gh_key_label") }} <span class="text-red-500">*</span>
                         </label>
-                        <p class="text-xs text-gray-500 dark:text-gray-400 mb-2">在 GitHub App 设置页面生成并下载 .pem 文件，粘贴完整内容</p>
+                        <p class="text-xs text-gray-500 dark:text-gray-400 mb-2">{{ _("setup.gh_key_help") }}</p>
                         <textarea x-model="form.github_private_key" rows="5"
                                   placeholder="-----BEGIN RSA PRIVATE KEY-----&#10;...&#10;-----END RSA PRIVATE KEY-----"
                                   class="w-full px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-sm text-gray-900 dark:text-white focus:ring-2 focus:ring-pink-500 focus:border-transparent outline-none font-mono"></textarea>
@@ -248,9 +265,9 @@
 
                     <div>
                         <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
-                            Webhook Secret <span class="text-red-500">*</span>
+                            {{ _("setup.gh_secret_label") }} <span class="text-red-500">*</span>
                         </label>
-                        <p class="text-xs text-gray-500 dark:text-gray-400 mb-2">在 GitHub App 设置页面的 Webhook 部分配置的密钥</p>
+                        <p class="text-xs text-gray-500 dark:text-gray-400 mb-2">{{ _("setup.gh_secret_help") }}</p>
                         <input type="text" x-model="form.github_webhook_secret"
                                placeholder="your-webhook-secret"
                                class="w-full px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-sm text-gray-900 dark:text-white focus:ring-2 focus:ring-pink-500 focus:border-transparent outline-none">
@@ -259,9 +276,9 @@
                     <button @click="testConnection('github')"
                             :disabled="!form.github_app_id || !form.github_private_key || testing"
                             class="px-4 py-2 text-sm font-medium rounded-lg border border-gray-300 dark:border-gray-600 hover:bg-gray-50 dark:hover:bg-gray-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors text-gray-700 dark:text-gray-300">
-                        <span x-show="!testing">测试 GitHub App</span>
+                        <span x-show="!testing">{{ _("setup.test_github") }}</span>
                         <span x-show="testing" class="flex items-center gap-2">
-                            <span class="pulse-dot">●</span> 测试中...
+                            <span class="pulse-dot">●</span> {{ _("setup.testing") }}
                         </span>
                     </button>
 
@@ -275,11 +292,11 @@
 
             <!-- Step 3: AI & 通知配置 -->
             <div x-show="currentStep === 3" x-cloak class="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 shadow-sm p-8">
-                <h2 class="text-xl font-bold text-gray-900 dark:text-white mb-1">通知与可选 RAG 配置</h2>
-                <p class="text-sm text-gray-500 dark:text-gray-400 mb-6">Setup 不要求 AI readiness；完成后请在 AI 配置页创建账号并绑定角色</p>
+                <h2 class="text-xl font-bold text-gray-900 dark:text-white mb-1">{{ _("setup.ai_title") }}</h2>
+                <p class="text-sm text-gray-500 dark:text-gray-400 mb-6">{{ _("setup.ai_desc") }}</p>
 
                 <div class="p-4 rounded-lg bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 text-sm text-blue-700 dark:text-blue-300 mb-5">
-                    AI 账号、模型、角色绑定和故障转移策略不会在 Setup 阶段写入旧配置键。初始化完成后，请打开 AI 配置页使用账号 ID 管理。
+                    {{ _("setup.ai_note") }}
                 </div>
 
                 <div class="space-y-5">
@@ -288,21 +305,21 @@
                     <div x-data="{ ragOpen: false }" class="border border-gray-200 dark:border-gray-700 rounded-lg overflow-hidden">
                         <button @click="ragOpen = !ragOpen" type="button"
                                 class="w-full flex items-center justify-between px-4 py-3 bg-gray-50 dark:bg-gray-750 hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors">
-                            <span class="text-sm font-medium text-gray-700 dark:text-gray-300">RAG 嵌入与重排序配置（可选）</span>
+                            <span class="text-sm font-medium text-gray-700 dark:text-gray-300">{{ _("setup.rag_title") }}</span>
                             <svg class="w-4 h-4 text-gray-400 transition-transform" :class="ragOpen ? 'rotate-180' : ''" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"></path>
                             </svg>
                         </button>
                         <div x-show="ragOpen" x-cloak class="px-4 py-4 space-y-4 bg-white dark:bg-gray-800">
                             <p class="text-xs text-gray-500 dark:text-gray-400">
-                                RAG 功能用于代码向量检索，增强 AI 审查质量。留空则使用默认配置（SiliconFlow），若嵌入 API Key 为空则自动禁用 RAG。
+                                {{ _("setup.rag_desc") }}
                             </p>
 
                             <div>
                                 <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
-                                    嵌入 API Key
+                                    {{ _("setup.rag_embed_key") }}
                                 </label>
-                                <p class="text-xs text-gray-500 dark:text-gray-400 mb-2">留空则使用上方的 AI API Key</p>
+                                <p class="text-xs text-gray-500 dark:text-gray-400 mb-2">{{ _("setup.rag_embed_key_help") }}</p>
                                 <input type="password" x-model="form.embedding_api_key"
                                        placeholder="sk-..."
                                        class="w-full px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-sm text-gray-900 dark:text-white focus:ring-2 focus:ring-pink-500 focus:border-transparent outline-none">
@@ -310,7 +327,7 @@
 
                             <div>
                                 <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
-                                    嵌入 API 地址
+                                    {{ _("setup.rag_embed_url") }}
                                 </label>
                                 <input type="text" x-model="form.embedding_base_url"
                                        placeholder="https://api.siliconflow.cn/v1"
@@ -319,7 +336,7 @@
 
                             <div>
                                 <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
-                                    嵌入模型
+                                    {{ _("setup.rag_embed_model") }}
                                 </label>
                                 <input type="text" x-model="form.embedding_model"
                                        placeholder="BAAI/bge-m3"
@@ -330,9 +347,9 @@
 
                             <div>
                                 <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
-                                    重排序 API Key
+                                    {{ _("setup.rag_rerank_key") }}
                                 </label>
-                                <p class="text-xs text-gray-500 dark:text-gray-400 mb-2">留空则使用嵌入 API Key</p>
+                                <p class="text-xs text-gray-500 dark:text-gray-400 mb-2">{{ _("setup.rag_rerank_key_help") }}</p>
                                 <input type="password" x-model="form.rerank_api_key"
                                        placeholder="sk-..."
                                        class="w-full px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-sm text-gray-900 dark:text-white focus:ring-2 focus:ring-pink-500 focus:border-transparent outline-none">
@@ -340,7 +357,7 @@
 
                             <div>
                                 <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
-                                    重排序 API 地址
+                                    {{ _("setup.rag_rerank_url") }}
                                 </label>
                                 <input type="text" x-model="form.rerank_base_url"
                                        placeholder="https://api.siliconflow.cn/v1/rerank"
@@ -349,7 +366,7 @@
 
                             <div>
                                 <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
-                                    重排序模型
+                                    {{ _("setup.rag_rerank_model") }}
                                 </label>
                                 <input type="text" x-model="form.rerank_model"
                                        placeholder="BAAI/bge-reranker-v2-m3"
@@ -362,10 +379,10 @@
 
                     <div>
                         <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
-                            Telegram Bot Token <span class="text-red-500">*</span>
+                            {{ _("setup.telegram_label") }} <span class="text-red-500">*</span>
                         </label>
                         <p class="text-xs text-gray-500 dark:text-gray-400 mb-2">
-                            用于发送审查通知和用户管理。通过 <a href="https://t.me/BotFather" target="_blank" class="underline text-pink-500">@BotFather</a> 创建 Bot 获取。
+                            {{ _("setup.telegram_help_1") }} <a href="https://t.me/BotFather" target="_blank" class="underline text-pink-500">@BotFather</a> {{ _("setup.telegram_help_2") }}
                         </p>
                         <input type="text" x-model="form.telegram_bot_token"
                                placeholder="123456:ABC-DEF..."
@@ -375,7 +392,7 @@
                     <button @click="testConnection('telegram')"
                             :disabled="!form.telegram_bot_token || testing"
                             class="px-4 py-2 text-sm font-medium rounded-lg border border-gray-300 dark:border-gray-600 hover:bg-gray-50 dark:hover:bg-gray-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors text-gray-700 dark:text-gray-300">
-                        测试 Telegram Bot
+                        {{ _("setup.test_telegram") }}
                     </button>
 
                     <div x-show="testResults.telegram" x-cloak
@@ -388,16 +405,16 @@
 
             <!-- Step 4: 管理员配置 -->
             <div x-show="currentStep === 4" x-cloak class="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 shadow-sm p-8">
-                <h2 class="text-xl font-bold text-gray-900 dark:text-white mb-1">管理员配置</h2>
-                <p class="text-sm text-gray-500 dark:text-gray-400 mb-6">设置超级管理员账户信息</p>
+                <h2 class="text-xl font-bold text-gray-900 dark:text-white mb-1">{{ _("setup.admin_title") }}</h2>
+                <p class="text-sm text-gray-500 dark:text-gray-400 mb-6">{{ _("setup.admin_desc") }}</p>
 
                 <div class="space-y-5">
                     <div>
                         <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
-                            管理员 GitHub 用户名 <span class="text-red-500">*</span>
+                            {{ _("setup.admin_gh_label") }} <span class="text-red-500">*</span>
                         </label>
                         <p class="text-xs text-gray-500 dark:text-gray-400 mb-2">
-                            用于通过 GitHub OAuth 登录 WebUI 管理界面。请确保输入你真实的 GitHub 用户名。
+                            {{ _("setup.admin_gh_help") }}
                         </p>
                         <input type="text" x-model="form.admin_github_username"
                                placeholder="your-github-username"
@@ -406,10 +423,10 @@
 
                     <div>
                         <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
-                            管理员 Telegram ID <span class="text-red-500">*</span>
+                            {{ _("setup.admin_tg_label") }} <span class="text-red-500">*</span>
                         </label>
                         <p class="text-xs text-gray-500 dark:text-gray-400 mb-2">
-                            用于绑定 Telegram 账户。在 Telegram 中搜索 <a href="https://t.me/userinfobot" target="_blank" class="underline text-pink-500">@userinfobot</a> 并发送任意消息即可获取你的 ID。
+                            {{ _("setup.admin_tg_help_1") }} <a href="https://t.me/userinfobot" target="_blank" class="underline text-pink-500">@userinfobot</a> {{ _("setup.admin_tg_help_2") }}
                         </p>
                         <input type="text" x-model="form.admin_telegram_id"
                                placeholder="123456789"
@@ -418,13 +435,13 @@
 
                     <div>
                         <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
-                            应用域名
+                            {{ _("setup.admin_domain_label") }}
                         </label>
                         <p class="text-xs text-gray-500 dark:text-gray-400 mb-2">
-                            Webhook 回调和 OAuth 回调使用此域名。本地测试可使用 localhost。
+                            {{ _("setup.admin_domain_help") }}
                         </p>
                         <input type="text" x-model="form.app_domain"
-                               placeholder="localhost 或 your-domain.com"
+                               placeholder="{{ _('setup.admin_domain_placeholder') }}"
                                class="w-full px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-sm text-gray-900 dark:text-white focus:ring-2 focus:ring-pink-500 focus:border-transparent outline-none">
                     </div>
 
@@ -432,10 +449,10 @@
 
                     <div>
                         <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
-                            GitHub OAuth Client ID <span class="text-red-500">*</span>
+                            {{ _("setup.oauth_id_label") }} <span class="text-red-500">*</span>
                         </label>
                         <p class="text-xs text-gray-500 dark:text-gray-400 mb-2">
-                            在 <a href="https://github.com/settings/developers" target="_blank" class="underline text-pink-500">GitHub Settings → Developer settings → OAuth Apps</a> 中创建 OAuth App 获取。
+                            {{ _("setup.oauth_id_help_1") }} <a href="https://github.com/settings/developers" target="_blank" class="underline text-pink-500">GitHub Settings → Developer settings → OAuth Apps</a> {{ _("setup.oauth_id_help_2") }}
                         </p>
                         <input type="text" x-model="form.github_oauth_client_id"
                                placeholder="Ov23li..."
@@ -444,7 +461,7 @@
 
                     <div>
                         <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
-                            GitHub OAuth Client Secret <span class="text-red-500">*</span>
+                            {{ _("setup.oauth_secret_label") }} <span class="text-red-500">*</span>
                         </label>
                         <input type="password" x-model="form.github_oauth_client_secret"
                                placeholder="your-client-secret"
@@ -453,11 +470,11 @@
 
                     <div>
                         <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
-                            OAuth 回调地址 <span class="text-red-500">*</span>
+                            {{ _("setup.oauth_callback_label") }} <span class="text-red-500">*</span>
                         </label>
                         <p class="text-xs text-gray-500 dark:text-gray-400 mb-2">
-                            必须与 GitHub OAuth App 中配置的 Authorization callback URL 一致。
-                            点击下方的"生成回调地址"可自动填写。
+                            {{ _("setup.oauth_callback_help_1") }}
+                            {{ _("setup.oauth_callback_help_2") }}
                         </p>
                         <div class="flex gap-2">
                             <input type="text" x-model="form.github_oauth_redirect_uri"
@@ -466,20 +483,20 @@
                             <button @click="generateOAuthCallback()"
                                     :disabled="!form.app_domain"
                                     class="px-3 py-2 text-xs font-medium rounded-lg border border-gray-300 dark:border-gray-600 hover:bg-gray-50 dark:hover:bg-gray-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors text-gray-700 dark:text-gray-300 whitespace-nowrap">
-                                生成回调地址
+                                {{ _("setup.oauth_generate") }}
                             </button>
                         </div>
                     </div>
 
                     <div>
                         <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
-                            移动端允许回调 URI（可选）
+                            {{ _("setup.oauth_mobile_label") }}
                         </label>
                         <input type="text" x-model="form.mobile_oauth_allowed_redirect_uris"
                                placeholder="myapp://oauth/callback, anotherapp://oauth/callback"
                                class="w-full px-3 py-2 rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-sm text-gray-900 dark:text-white focus:ring-2 focus:ring-pink-500 focus:border-transparent outline-none">
                         <p class="mt-1 text-xs text-gray-500 dark:text-gray-400">
-                            移动端 OAuth 自定义 scheme 回调白名单，多个值用英文逗号分隔；为空时仅允许上方默认回调地址。
+                            {{ _("setup.oauth_mobile_help") }}
                         </p>
                     </div>
                 </div>
@@ -489,22 +506,22 @@
             <div class="flex justify-between mt-6">
                 <button x-show="currentStep > 0" @click="prevStep()"
                         class="px-6 py-2.5 border border-gray-300 dark:border-gray-600 rounded-lg text-sm font-medium text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors">
-                    上一步
+                    {{ _("setup.prev_step") }}
                 </button>
                 <div x-show="currentStep === 0"></div>
 
                 <button x-show="currentStep < steps.length - 1" @click="nextStep()"
                         :disabled="!canProceed"
                         class="px-6 py-2.5 bg-pink-500 text-white rounded-lg text-sm font-medium hover:bg-pink-600 disabled:opacity-50 disabled:cursor-not-allowed transition-colors">
-                    下一步
+                    {{ _("setup.next_step") }}
                 </button>
 
                 <button x-show="currentStep === steps.length - 1" @click="completeSetup()"
                         :disabled="!canComplete || completing"
                         class="px-6 py-2.5 bg-pink-500 text-white rounded-lg text-sm font-medium hover:bg-pink-600 disabled:opacity-50 disabled:cursor-not-allowed transition-colors">
-                    <span x-show="!completing">完成配置</span>
+                    <span x-show="!completing">{{ _("setup.complete") }}</span>
                     <span x-show="completing" class="flex items-center gap-2">
-                        <span class="pulse-dot">●</span> 配置中...
+                        <span class="pulse-dot">●</span> {{ _("setup.completing") }}
                     </span>
                 </button>
             </div>
@@ -519,8 +536,8 @@
          x-transition:enter-end="opacity-100">
         <div class="bg-white dark:bg-gray-800 rounded-2xl p-8 max-w-md mx-4 text-center shadow-2xl">
             <div class="text-4xl mb-4">🌸</div>
-            <h3 class="text-lg font-bold text-gray-900 dark:text-white mb-2">配置完成！</h3>
-            <p class="text-sm text-gray-600 dark:text-gray-400 mb-4">应用正在重启中，请稍候...</p>
+            <h3 class="text-lg font-bold text-gray-900 dark:text-white mb-2">{{ _("setup.complete_title") }}</h3>
+            <p class="text-sm text-gray-600 dark:text-gray-400 mb-4">{{ _("setup.restart_waiting") }}</p>
             <div class="flex justify-center gap-1.5 mb-4">
                 <span class="w-2 h-2 rounded-full bg-pink-500 pulse-dot" style="animation-delay: 0s"></span>
                 <span class="w-2 h-2 rounded-full bg-pink-500 pulse-dot" style="animation-delay: 0.3s"></span>
@@ -528,10 +545,10 @@
             </div>
             <p class="text-xs text-gray-400 dark:text-gray-500" x-text="restartMessage"></p>
             <div x-show="restartError" class="mt-4">
-                <p class="text-sm text-red-600 dark:text-red-400 mb-2">重启超时，请手动刷新页面</p>
+                <p class="text-sm text-red-600 dark:text-red-400 mb-2">{{ _("setup.restart_timeout") }}</p>
                 <button @click="window.location.reload()"
                         class="px-4 py-2 bg-pink-500 text-white rounded-lg text-sm font-medium hover:bg-pink-600">
-                    刷新页面
+                    {{ _("setup.refresh_page") }}
                 </button>
             </div>
         </div>
@@ -547,15 +564,26 @@
 </div>
 
 <script>
+const SETUP_I18N = {{ js_i18n | tojson }};
+const I18N = (key, params) => {
+    let text = SETUP_I18N[key] || key;
+    if (params) {
+        for (const [k, v] of Object.entries(params)) {
+            text = text.replace(`{${k}}`, v);
+        }
+    }
+    return text;
+};
+
 function setupWizard() {
     return {
         currentStep: 0,
         steps: [
-            { title: '欢迎' },
-            { title: '数据库' },
-            { title: 'GitHub App' },
-            { title: 'AI 与通知' },
-            { title: '管理员' },
+            { title: I18N('setup.step_welcome') },
+            { title: I18N('setup.step_database') },
+            { title: I18N('setup.step_github') },
+            { title: I18N('setup.step_ai_notify') },
+            { title: I18N('setup.step_admin') },
         ],
         form: {
             database_url: '',
@@ -733,7 +761,7 @@ function setupWizard() {
                         return;
                     }
                 } catch (e) {
-                    this.error = '保存配置失败，请重试';
+                    this.error = I18N('setup.save_failed');
                     return;
                 }
             }
@@ -773,7 +801,7 @@ function setupWizard() {
                     this.form.bot_username = this.testResults[type].bot_username;
                 }
             } catch (e) {
-                this.testResults[type] = { success: false, message: '请求失败: ' + e.message };
+                this.testResults[type] = { success: false, message: I18N('setup.request_failed') + e.message };
             } finally {
                 this.testing = false;
             }
@@ -794,13 +822,13 @@ function setupWizard() {
 
                 if (data.success) {
                     this.restarting = true;
-                    this.restartMessage = '正在等待应用重启...';
+                    this.restartMessage = I18N('setup.waiting_restart');
                     await this.waitForRestart();
                 } else {
                     this.error = data.message;
                 }
             } catch (e) {
-                this.error = '配置失败: ' + e.message;
+                this.error = I18N('setup.complete_failed') + e.message;
             } finally {
                 this.completing = false;
             }
@@ -809,7 +837,7 @@ function setupWizard() {
         async waitForRestart() {
             const maxAttempts = 60;
             for (let i = 0; i < maxAttempts; i++) {
-                this.restartMessage = `正在等待应用重启... (${i + 1}/${maxAttempts})`;
+                this.restartMessage = I18N('setup.restart_progress', { attempt: i + 1, max: maxAttempts });
                 await new Promise(r => setTimeout(r, 2000));
                 try {
                     const resp = await fetch('/health');
@@ -822,7 +850,7 @@ function setupWizard() {
                 }
             }
             this.restartError = true;
-            this.restartMessage = '重启超时';
+            this.restartMessage = I18N('setup.restart_timeout_msg');
         },
 
         _getStepEnvMap() {

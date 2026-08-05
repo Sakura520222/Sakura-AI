@@ -25,9 +25,51 @@ from backend.services.config_backup_service import (
     parse_config_backup,
 )
 from backend.webui.deps import get_templates, render_template
+from backend.webui.i18n import DEFAULT_LANGUAGE, SUPPORTED_LANGUAGES, i18n
 
 router = APIRouter(prefix="/setup", tags=["Setup Wizard"])
 templates = get_templates()
+
+# 语言切换 Cookie（仅影响 Setup 页面，独立于用户偏好）
+_LANG_COOKIE = "preferred_language"
+
+
+def _resolve_language(request: Request) -> str:
+    """解析 Setup 页面语言：?lang= 查询参数 > preferred_language Cookie > 默认检测。"""
+    qlang = request.query_params.get("lang")
+    if qlang in SUPPORTED_LANGUAGES:
+        return qlang
+    clang = request.cookies.get(_LANG_COOKIE)
+    if clang in SUPPORTED_LANGUAGES:
+        return clang
+    from backend.webui.i18n import detect_language
+
+    return detect_language()
+
+
+def _lang_switch_response(lang: str) -> RedirectResponse:
+    """构造语言切换响应：设置 Cookie 并去掉 ?lang= 参数，避免重复切换。"""
+    response = RedirectResponse(url="/setup", status_code=302)
+    response.set_cookie(
+        key=_LANG_COOKIE,
+        value=lang,
+        httponly=True,
+        samesite="lax",
+        path="/",
+    )
+    return response
+
+
+def _js_i18n_dict(lang: str) -> dict:
+    """构造注入模板的 JS 翻译字典（仅 setup.* 键，含默认语言回退）。"""
+    result: dict[str, str] = {}
+    for target in dict.fromkeys([lang, DEFAULT_LANGUAGE]):
+        if target not in SUPPORTED_LANGUAGES:
+            continue
+        for key, value in i18n.get_all_translations(target).items():
+            if key.startswith("setup."):
+                result.setdefault(key, value)
+    return result
 
 _AI_CONFIG_MIGRATION = {
     "success": False,
@@ -67,8 +109,33 @@ async def verify_page(request: Request):
     if not is_bootstrap_mode():
         return RedirectResponse(url="/auth/login", status_code=302)
     if _has_valid_cookie(request):
+        # 语言切换请求：跳转到 /setup 保持语言参数
+        if request.query_params.get("lang"):
+            return _lang_switch_response(request.query_params["lang"])
         return RedirectResponse(url="/setup", status_code=302)
-    return render_template("setup_verify.html", request, error=None)
+    lang = _resolve_language(request)
+    if request.query_params.get("lang"):
+        # 设置语言 Cookie 并保持在验证页
+        response = render_template(
+            "setup_verify.html",
+            request,
+            user_prefs={"language": lang},
+            error=None,
+        )
+        response.set_cookie(
+            key=_LANG_COOKIE,
+            value=lang,
+            httponly=True,
+            samesite="lax",
+            path="/",
+        )
+        return response
+    return render_template(
+        "setup_verify.html",
+        request,
+        user_prefs={"language": lang},
+        error=None,
+    )
 
 
 @router.post("/verify")
@@ -92,10 +159,12 @@ async def verify_token(request: Request):
         )
         return response
 
+    lang = _resolve_language(request)
     return render_template(
         "setup_verify.html",
         request,
-        error="Token 无效，请检查日志中的 Token 是否正确。",
+        user_prefs={"language": lang},
+        error=i18n.t("setup.verify_invalid", lang=lang),
     )
 
 
@@ -107,14 +176,22 @@ async def setup_page(request: Request):
     if redirect:
         return redirect
 
+    # 语言切换请求：设置 Cookie 后重定向（去掉 ?lang= 参数）
+    qlang = request.query_params.get("lang")
+    if qlang in SUPPORTED_LANGUAGES:
+        return _lang_switch_response(qlang)
+
+    lang = _resolve_language(request)
     current_step = await get_current_step()
     missing = await get_missing_fields()
 
     return render_template(
         "setup_wizard.html",
         request,
+        user_prefs={"language": lang},
         current_step=current_step,
         missing_fields=missing,
+        js_i18n=_js_i18n_dict(lang),
     )
 
 
