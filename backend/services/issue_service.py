@@ -260,14 +260,14 @@ class IssueService:
             no_feasibility = "No assessment"
             no_summary = "No summary"
             no_suggestion = "No suggestions"
-            duplicate_hint = "\n⚠️ Possibly duplicates #{}\n"
+            duplicate_hint = "\n⚠️ Possibly related to #{}\n"
             related_prs_label = "Related PRs"
             suggested_title_label = "Suggested title"
         else:
             no_feasibility = "暂无评估"
             no_summary = "暂无摘要"
             no_suggestion = "无建议"
-            duplicate_hint = "\n⚠️ 可能与 #{} 重复\n"
+            duplicate_hint = "\n⚠️ 可能与 #{} 相关\n"
             related_prs_label = "相关 PR"
             suggested_title_label = "建议标题"
 
