@@ -69,3 +69,25 @@ def test_login_oauth_enabled_shows_english_button():
     resp = client.get("/auth/login?lang=en")
     assert resp.status_code == 200
     assert "Sign in with GitHub" in resp.text
+
+
+def test_login_follows_configured_default_language():
+    """无 Cookie/参数时登录页跟随默认界面语言配置（default_language）。"""
+    settings = get_settings()
+    settings.github_oauth_client_id = ""
+    try:
+        settings.default_language = "en"
+        client = TestClient(_build_app())
+        resp = client.get("/auth/login")
+        assert resp.status_code == 200
+        assert 'lang="en"' in resp.text
+        assert "AI-Powered GitHub PR Review Platform" in resp.text
+
+        settings.default_language = "zh-CN"
+        client2 = TestClient(_build_app())
+        resp2 = client2.get("/auth/login")
+        assert resp2.status_code == 200
+        assert 'lang="zh-CN"' in resp2.text
+        assert "登录" in resp2.text
+    finally:
+        settings.default_language = "zh-CN"
