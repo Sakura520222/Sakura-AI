@@ -61,11 +61,13 @@ class AIApiClient:
         context: InvocationContext | None = None,
         observer: Any = None,
         logical_call_factory: Any = uuid4,
+        compressor: Any | None = None,
     ):
         self._unified_client: Any | None = None
         self._context = context
         self._observer = observer
         self._logical_call_factory = logical_call_factory
+        self._compressor = compressor
 
     async def call_with_retry(
         self,
@@ -227,6 +229,9 @@ class AIApiClient:
         """延迟创建统一客户端 / Lazily create UnifiedAIClient."""
         if self._unified_client is None:
             from backend.core.config import get_settings
+            from backend.services.ai_reviewer.compression.unified_compressor import (
+                UnifiedContextCompressor,
+            )
             from backend.services.ai_reviewer.unified_client import (
                 FallbackConfig,
                 UnifiedAIClient,
@@ -243,11 +248,21 @@ class AIApiClient:
                     settings, "ai_fallback_sticky_candidate", True
                 ),
             )
+            compressor = self._compressor
+            if compressor is None and getattr(
+                settings, "enable_context_compression", True
+            ):
+                compressor = UnifiedContextCompressor(
+                    threshold=float(
+                        getattr(settings, "context_compression_threshold", 0.85)
+                    )
+                )
             self._unified_client = UnifiedAIClient(
                 fallback_config=config,
                 observer=self._observer,
                 context=self._context,
                 logical_call_factory=self._logical_call_factory,
+                compressor=compressor,
             )
         return self._unified_client
 
