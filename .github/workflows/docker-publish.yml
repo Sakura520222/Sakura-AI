@@ -60,6 +60,10 @@ jobs:
       - name: 计算镜像标签
         id: tags
         run: |
+          if [ "${{ inputs.channel }}" = "stable" ] && [ -z "${{ inputs.version }}" ]; then
+            echo "stable 通道必须传 version" >&2
+            exit 1
+          fi
           if [ "${{ inputs.channel }}" = "stable" ]; then
             echo "tags=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:v${{ inputs.version }},${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest" >> "$GITHUB_OUTPUT"
           else
@@ -117,7 +121,7 @@ jobs:
           SOURCE="ghcr.io/${IMAGE_NAME}@${{ needs.build-and-publish.outputs.digest }}"
           if [ "${{ inputs.channel }}" = "stable" ]; then
             crane copy "$SOURCE" "docker.io/${IMAGE_NAME}:v${{ inputs.version }}"
-            crane tag "docker.io/${IMAGE_NAME}:v${{ inputs.version }}" latest
+            crane tag "$SOURCE" latest
           else
             crane copy "$SOURCE" "docker.io/${IMAGE_NAME}:edge"
           fi
