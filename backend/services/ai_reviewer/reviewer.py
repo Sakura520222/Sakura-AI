@@ -644,6 +644,26 @@ class AIReviewer:
                         )
                     )
 
+                    # 压缩成功后写入可观测性：创建 context_operation + 替换消息行，
+                    # 使实时监控显示"上下文操作"、对话流显示压缩后的摘要上下文。
+                    # Persist the replacement so the observability timeline and
+                    # conversation stream reflect this explicit compression.
+                    if observer is not None:
+                        record_replacement = getattr(
+                            observer, "record_context_replacement", None
+                        )
+                        if record_replacement is not None:
+                            try:
+                                await record_replacement(
+                                    messages,
+                                    trigger_reason="threshold",
+                                )
+                            except Exception as exc:
+                                logger.warning(
+                                    "PR 审查压缩可观测性记录失败（不影响审查）: {}",
+                                    exc,
+                                )
+
                     # 压缩发生在下一次 Provider 请求前，此时只能本地估算；
                     # 精确值会在下一次响应 usage 中记录。
                     post_compress_tokens = (
