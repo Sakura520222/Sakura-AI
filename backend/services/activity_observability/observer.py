@@ -357,6 +357,14 @@ class ObservedModelSender:
             return None
         payloads: list[dict[str, Any]] = []
         for message in messages:
+            # 兼容 UnifiedMessage 对象与旧版 dict 消息（reviewer/issue 显式压缩
+            # 均以 dict 形态传入）。Support both UnifiedMessage objects and
+            # legacy dict messages (reviewer/issue explicit compression).
+            if isinstance(message, dict):
+                payload = dict(message)
+                payload.pop("reasoning_content", None)
+                payloads.append(payload)
+                continue
             payload: dict[str, Any] = {
                 "role": str(getattr(message, "role", "") or ""),
                 "content": getattr(message, "content", None),

@@ -8,6 +8,8 @@
 - AIApiClient 将压缩器注入统一客户端。
 """
 
+from types import SimpleNamespace
+
 import pytest
 
 from backend.core.ai_protocol.models import (
@@ -259,3 +261,366 @@ def test_api_client_auto_builds_compressor_when_enabled():
 
     assert unified._compressor is not None
     assert isinstance(unified._compressor, UnifiedContextCompressor)
+
+
+class _RecordingObserver:
+    """记录 record_context_replacement 调用的桩 observer / Stub observer."""
+
+    def __init__(self):
+        self.context = None
+        self.replacements: list[tuple[list, str]] = []
+        self._attempt = 0
+
+    async def record_context_replacement(self, messages, *, trigger_reason):
+        self.replacements.append((list(messages), trigger_reason))
+
+    async def send_chat(
+        self,
+        adapter,
+        client,
+        candidate,
+        request,
+        *,
+        timeout=None,
+        **_kwargs,
+    ):
+        self._attempt += 1
+        response = await adapter.chat(
+            client,
+            candidate.endpoint,
+            candidate.credential,
+            request,
+            timeout=timeout,
+        )
+        return response, self._attempt
+
+
+@pytest.mark.asyncio
+async def test_call_with_retry_proactive_compression_records_observability(monkeypatch):
+    """主动压缩成功后应记录 context replacement（trigger_reason=threshold）。
+
+    若主动压缩路径不接入可观测性，observer 不会收到任何调用。
+    """
+    adapter = _RecordingAdapter()
+    _install_stub(monkeypatch, adapter)
+    candidate = _candidate("mimo-v2.5", context_window_tokens=10_000)
+    compressor = UnifiedContextCompressor(threshold=0.8)
+    observer = _RecordingObserver()
+    client = UnifiedAIClient(
+        fallback_config=FallbackConfig(max_retries=1),
+        compressor=compressor,
+    )
+
+    await client.call_with_retry(
+        [candidate],
+        [UnifiedMessage(role="user", content="x" * 50_000)],
+        model="",
+        role="main",
+        observer=observer,
+    )
+
+    assert len(observer.replacements) == 1
+    replacement_messages, trigger = observer.replacements[0]
+    assert trigger == "threshold"
+    # 压缩后消息包含摘要 + 保留的最后一轮用户输入
+    assert any(
+        m.content and m.content.startswith("## 已压缩的历史上下文")
+        for m in replacement_messages
+    )
+    await client.aclose()
+
+
+@pytest.mark.asyncio
+async def test_call_with_retry_within_budget_no_observability_record(monkeypatch):
+    """预算内不压缩，也不应记录 context replacement。"""
+    adapter = _RecordingAdapter()
+    _install_stub(monkeypatch, adapter)
+    candidate = _candidate("mimo-v2.5", context_window_tokens=10_000)
+    compressor = UnifiedContextCompressor(threshold=0.8)
+    observer = _RecordingObserver()
+    client = UnifiedAIClient(
+        fallback_config=FallbackConfig(max_retries=1),
+        compressor=compressor,
+    )
+
+    await client.call_with_retry(
+        [candidate],
+        [UnifiedMessage(role="user", content="hello")],
+        model="",
+        role="main",
+        observer=observer,
+    )
+
+    assert observer.replacements == []
+    await client.aclose()
+
+
+@pytest.mark.asyncio
+async def test_call_with_retry_observability_failure_does_not_block(monkeypatch):
+    """record_context_replacement 失败不应阻塞主流程（仅降级）。"""
+    adapter = _RecordingAdapter()
+    _install_stub(monkeypatch, adapter)
+    candidate = _candidate("mimo-v2.5", context_window_tokens=10_000)
+    compressor = UnifiedContextCompressor(threshold=0.8)
+
+    class _BoomObserver(_RecordingObserver):
+        async def record_context_replacement(self, messages, *, trigger_reason):
+            raise RuntimeError("observability down")
+
+    observer = _BoomObserver()
+    client = UnifiedAIClient(
+        fallback_config=FallbackConfig(max_retries=1),
+        compressor=compressor,
+    )
+
+    response = await client.call_with_retry(
+        [candidate],
+        [UnifiedMessage(role="user", content="x" * 50_000)],
+        model="",
+        role="main",
+        observer=observer,
+    )
+
+    assert response is not None
+    assert adapter.calls == 2  # 摘要 + 主调用
+    await client.aclose()
+
+
+@pytest.mark.asyncio
+async def test_record_context_replacement_accepts_legacy_dict_messages():
+    """record_context_replacement 应兼容旧版 dict 消息（PR 审查 ContextCompressor 输出）。
+
+    PR 审查 `_run_tool_loop` 压缩分支传入 dict 列表（reviewer 消息形态），
+    而非 UnifiedMessage 对象；若只支持对象形态，role/内容会丢失为空。
+    """
+    from backend.services.activity_observability.observer import ObservedModelSender
+
+    class _FakeContext:
+        thread_id = 1
+        work_unit_id = 2
+
+    class _FakeRevision:
+        id = 99
+
+    class _FakeToolService:
+        def __init__(self):
+            self.calls = []
+
+        async def replace_context_messages(
+            self, *, thread_id, work_unit_id, messages, lease, trigger_reason
+        ):
+            self.calls.append(
+                {
+                    "thread_id": thread_id,
+                    "work_unit_id": work_unit_id,
+                    "messages": messages,
+                    "trigger_reason": trigger_reason,
+                }
+            )
+            return _FakeRevision()
+
+    tool_service = _FakeToolService()
+    observer = ObservedModelSender(
+        attempt_service=object(),
+        context=_FakeContext(),
+        tool_service=tool_service,
+        lease=object(),
+    )
+
+    messages = [
+        {"role": "system", "content": "sys"},
+        {"role": "user", "content": "## 已压缩的历史上下文\nsummary"},
+        {"role": "user", "content": "latest user turn"},
+        {
+            "role": "assistant",
+            "content": "",
+            "tool_calls": [
+                {
+                    "id": "call_1",
+                    "type": "function",
+                    "function": {"name": "read_file", "arguments": '{"path": "a.py"}'},
+                }
+            ],
+        },
+        {"role": "tool", "tool_call_id": "call_1", "content": "{}"},
+    ]
+
+    revision_id = await observer.record_context_replacement(
+        messages,
+        trigger_reason="threshold",
+    )
+
+    assert revision_id == 99
+    assert len(tool_service.calls) == 1
+    assert tool_service.calls[0]["trigger_reason"] == "threshold"
+    persisted = tool_service.calls[0]["messages"]
+    assert persisted[0] == {"role": "system", "content": "sys"}
+    assert persisted[1]["role"] == "user"
+    assert persisted[3]["tool_calls"][0]["function"]["name"] == "read_file"
+    assert persisted[4]["tool_call_id"] == "call_1"
+
+
+# ---------------------------------------------------------------------------
+# PR 审查 _run_tool_loop 显式压缩 → 可观测性
+# ---------------------------------------------------------------------------
+
+
+def _reviewer_under_test(monkeypatch, *, enable_compression, observer=None):
+    """构造 _run_tool_loop 可测的最小 AIReviewer（沿用 test_ai_reviewer_incremental_callback 模式）。
+
+    API 客户端首轮触发压缩（超大估算）后返回最终信封；压缩器直接返回
+    压缩后消息（缩短的 user 消息），无需真实 AI 摘要调用。
+    """
+    from backend.services.ai_reviewer.reviewer import AIReviewer
+
+    class _FakeApiClient:
+        def __init__(self):
+            self.calls = []
+
+        async def resolve_role_model_context(self, role):
+            return "test-model", 100_000
+
+        async def call_with_retry(self, **kwargs):
+            self.calls.append(kwargs)
+            if len(self.calls) == 1:
+                # 首轮返回工具调用，让循环继续走到压缩检查
+                tool_call = SimpleNamespace(
+                    id="call_1",
+                    function=SimpleNamespace(
+                        name="read_file", arguments='{"path": "a.py"}'
+                    ),
+                )
+                message = SimpleNamespace(content=None, tool_calls=[tool_call])
+            else:
+                message = SimpleNamespace(
+                    content=VALID_REVIEW_ENVELOPE,
+                    tool_calls=[],
+                )
+            choice = SimpleNamespace(message=message)
+            usage = SimpleNamespace(prompt_tokens=10, completion_tokens=20)
+            return SimpleNamespace(choices=[choice], usage=usage)
+
+    class _FakeCompressor:
+        def estimate_messages_tokens(self, msgs):
+            return 100_000  # 远超阈值 → 触发压缩
+
+        async def compress_conversation_history(
+            self, messages, system_prompt, max_tokens, tracker=None
+        ):
+            return [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": "## 已压缩的历史上下文\nsummary"},
+                {"role": "user", "content": "latest turn"},
+            ]
+
+    class _FakeResultParser:
+        def parse_review_result(self, text, strategy):
+            return {
+                "ai_decision": "approve",
+                "score": 8,
+                "summary": "ok",
+                "review": text,
+                "comments": [],
+                "inline_comments": [],
+            }
+
+    reviewer = AIReviewer.__new__(AIReviewer)
+    reviewer.api_client = _FakeApiClient()
+    reviewer.result_parser = _FakeResultParser()
+    reviewer.tool_handler = object()
+    reviewer.model_context_mgr = SimpleNamespace(
+        calculate_safe_context=lambda model, threshold: 100_000
+    )
+    reviewer.enable_compression = enable_compression
+    reviewer.compression_threshold = 0.85
+    reviewer.context_compressor = _FakeCompressor()
+
+    strategy_config = SimpleNamespace(
+        get_context_enhancement_config=lambda: {"max_tool_iterations": 1}
+    )
+    monkeypatch.setattr(
+        "backend.services.ai_reviewer.reviewer.get_strategy_config",
+        lambda: strategy_config,
+    )
+    return reviewer, observer
+
+
+VALID_REVIEW_ENVELOPE = """<SAKURA_REVIEW>
+<VERSION>1</VERSION>
+<SCORE>8</SCORE>
+<DECISION>approve</DECISION>
+<DECISION_REASON>
+No blocking defects were found.
+</DECISION_REASON>
+<SUMMARY>
+The incremental change is safe.
+</SUMMARY>
+<FINDINGS>
+</FINDINGS>
+</SAKURA_REVIEW>"""
+
+
+@pytest.mark.asyncio
+async def test_reviewer_tool_loop_compression_records_observability(monkeypatch):
+    """PR 审查 `_run_tool_loop` 显式压缩（ContextCompressor）应写入可观测性。
+
+    此前该分支不调用 `record_context_replacement`，压缩事件在实时监控/
+    对话流中不可见。
+    """
+    from backend.services.ai_reviewer.token_tracker import TokenTracker
+
+    observer = _RecordingObserver()
+    reviewer, observer = _reviewer_under_test(
+        monkeypatch, enable_compression=True, observer=observer
+    )
+
+    await reviewer._run_tool_loop(
+        messages=[
+            {"role": "system", "content": "system"},
+            {"role": "user", "content": "x" * 5_000},
+        ],
+        system_prompt="system",
+        strategy="standard",
+        enabled_tools=[],
+        repo=None,
+        pr=None,
+        tracker=TokenTracker(),
+        context={},
+        observer=observer,
+    )
+
+    assert len(observer.replacements) == 1
+    replacement_messages, trigger = observer.replacements[0]
+    assert trigger == "threshold"
+    assert any(
+        m.get("content", "").startswith("## 已压缩的历史上下文")
+        for m in replacement_messages
+    )
+
+
+@pytest.mark.asyncio
+async def test_reviewer_tool_loop_compression_disabled_no_observability(monkeypatch):
+    """压缩未启用时，不记录 context replacement。"""
+    from backend.services.ai_reviewer.token_tracker import TokenTracker
+
+    observer = _RecordingObserver()
+    reviewer, observer = _reviewer_under_test(
+        monkeypatch, enable_compression=False, observer=observer
+    )
+
+    await reviewer._run_tool_loop(
+        messages=[
+            {"role": "system", "content": "system"},
+            {"role": "user", "content": "x" * 5_000},
+        ],
+        system_prompt="system",
+        strategy="standard",
+        enabled_tools=[],
+        repo=None,
+        pr=None,
+        tracker=TokenTracker(),
+        context={},
+        observer=observer,
+    )
+
+    assert observer.replacements == []

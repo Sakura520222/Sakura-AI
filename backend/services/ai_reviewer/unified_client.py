@@ -527,6 +527,25 @@ class UnifiedAIClient:
                 )
             except Exception as exc:
                 logger.warning("主动压缩预检失败，按原消息继续: {}", exc)
+                compressed_once = False
+            # 主动压缩成功后写入可观测性：创建 context_operation + 替换消息行，
+            # 使实时监控显示"上下文操作"、对话流显示压缩后的摘要上下文。
+            # Persist the replacement context so the observability timeline and
+            # conversation stream reflect the proactive compression.
+            if compressed_once and active_observer is not None:
+                record_replacement = getattr(
+                    active_observer, "record_context_replacement", None
+                )
+                if record_replacement is not None:
+                    try:
+                        await record_replacement(
+                            unified_messages,
+                            trigger_reason="threshold",
+                        )
+                    except Exception as exc:
+                        logger.warning(
+                            "主动压缩可观测性记录失败（不影响审查）: {}", exc
+                        )
 
         for idx, candidate in enumerate(selected):
             # 取消信号：立即中止整条故障转移链 / abort fast on external cancel
