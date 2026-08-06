@@ -1,0 +1,123 @@
+name: Docker 镜像发布（可复用）
+
+on:
+  workflow_call:
+    inputs:
+      source_ref:          # 不可变构建来源：commit SHA 或 refs/tags/vX.Y.Z
+        required: true
+        type: string
+      channel:             # edge / stable
+        required: true
+        type: string
+      version:             # 稳定版版本号（edge 可不传）
+        required: false
+        type: string
+      sync_dockerhub:      # 是否同步 Docker Hub（非阻塞）
+        required: false
+        type: boolean
+        default: true
+    secrets:
+      DOCKERHUB_USERNAME:
+        required: false
+      DOCKERHUB_TOKEN:
+        required: false
+
+permissions:
+  contents: read
+  packages: write
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: sakura520222/sakura-ai   # Docker 仓库名必须小写，不能直接用 ${{ github.repository }}
+
+jobs:
+  build-and-publish:
+    name: 构建并推送 ${{ inputs.channel }}
+    runs-on: ubuntu-latest
+    outputs:
+      digest: ${{ steps.build.outputs.digest }}   # 供 Docker Hub 按 digest 同步
+    steps:
+      - name: 检出代码（固定到 source_ref）
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ inputs.source_ref }}
+          fetch-depth: 0
+
+      - name: 设置 QEMU（模拟编译多架构）
+        uses: docker/setup-qemu-action@v4
+
+      - name: 设置 Docker Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: 登录 GHCR
+        uses: docker/login-action@v4
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # 计算标签：stable → vX.Y.Z + latest；edge → edge
+      - name: 计算镜像标签
+        id: tags
+        run: |
+          if [ "${{ inputs.channel }}" = "stable" ]; then
+            echo "tags=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:v${{ inputs.version }},${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest" >> "$GITHUB_OUTPUT"
+          else
+            echo "tags=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:edge" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: 构建并推送 GHCR（amd64 + arm64）
+        uses: docker/build-push-action@v7
+        id: build
+        with:
+          context: .
+          file: docker/Dockerfile
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.tags.outputs.tags }}
+          provenance: false
+          cache-from: type=gha,scope=sakura-ai-${{ inputs.channel }}
+          cache-to: type=gha,mode=max,scope=sakura-ai-${{ inputs.channel }}
+
+  sync-dockerhub:
+    name: 同步 Docker Hub（非阻塞）
+    if: inputs.sync_dockerhub
+    needs: build-and-publish
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    env:
+      DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+      DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+    steps:
+      - name: 检查 Docker Hub 凭据
+        id: credentials
+        run: |
+          if [ -n "$DOCKERHUB_USERNAME" ] && [ -n "$DOCKERHUB_TOKEN" ]; then
+            echo "available=true" >> "$GITHUB_OUTPUT"
+            echo "Docker Hub 凭据已配置，将同步"
+          else
+            echo "available=false" >> "$GITHUB_OUTPUT"
+            echo "Docker Hub 凭据未配置，跳过同步（不影响 GHCR 主链路）"
+          fi
+
+      - name: 安装 crane
+        if: steps.credentials.outputs.available == 'true'
+        uses: imjasonh/setup-crane@v0.4
+
+      - name: 登录 Docker Hub
+        if: steps.credentials.outputs.available == 'true'
+        run: |
+          echo "$DOCKERHUB_TOKEN" | crane auth login -u "$DOCKERHUB_USERNAME" --password-stdin docker.io
+
+      # 必须按 GHCR digest 同步：edge 为可变 tag，若构建 A 后构建 B 覆盖 edge，
+      # 构建 A 再按 :edge 复制会拿到构建 B 的镜像。crane copy 按 digest 引用可保证一致性。
+      - name: 按 GHCR digest 复制到 Docker Hub
+        if: steps.credentials.outputs.available == 'true'
+        run: |
+          SOURCE="ghcr.io/${IMAGE_NAME}@${{ needs.build-and-publish.outputs.digest }}"
+          if [ "${{ inputs.channel }}" = "stable" ]; then
+            crane copy "$SOURCE" "docker.io/${IMAGE_NAME}:v${{ inputs.version }}"
+            crane tag "docker.io/${IMAGE_NAME}:v${{ inputs.version }}" latest
+          else
+            crane copy "$SOURCE" "docker.io/${IMAGE_NAME}:edge"
+          fi
