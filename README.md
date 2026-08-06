@@ -1,6 +1,6 @@
 <div align="center">
 
-# Sakura AI
+# 🌸 Sakura AI
 
 <img src="res/cover.png" alt="Sakura AI Cover" width="100%">
 
