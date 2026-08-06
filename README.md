@@ -226,7 +226,76 @@
 
 ## 快速开始
 
-### 1. 环境要求
+### 1. Docker 一键部署（推荐，无需拉取源码）
+
+**方式一：全量部署（MySQL + Redis 一并拉起）**
+
+Linux / macOS：
+
+```bash
+mkdir sakura-ai && cd sakura-ai
+curl -LO https://raw.githubusercontent.com/Sakura520222/Sakura-AI/main/docker/docker-compose.prod.yml
+docker compose -f docker-compose.prod.yml up -d
+```
+
+PowerShell（Windows）：
+
+```powershell
+New-Item -ItemType Directory -Force sakura-ai | Out-Null
+Set-Location sakura-ai
+Invoke-WebRequest `
+  -Uri "https://raw.githubusercontent.com/Sakura520222/Sakura-AI/main/docker/docker-compose.prod.yml" `
+  -OutFile "docker-compose.prod.yml"
+docker compose -f docker-compose.prod.yml up -d
+```
+
+固定版本部署（无需编辑 compose 文件）：
+
+```bash
+SAKURA_AI_IMAGE=ghcr.io/sakura520222/sakura-ai:v3.0.0 \
+  docker compose -f docker-compose.prod.yml up -d
+```
+
+PowerShell：
+
+```powershell
+$env:SAKURA_AI_IMAGE = "ghcr.io/sakura520222/sakura-ai:v3.0.0"
+docker compose -f docker-compose.prod.yml up -d
+Remove-Item Env:SAKURA_AI_IMAGE
+```
+
+首次启动后访问 `http://localhost:8000/setup`：数据库/Redis 连接串已自动预填，点击"测试连接"通过后即可继续 Setup Wizard（其余步骤与源码部署一致）。更多配置见下方"快速开始"。
+
+**方式二：仅运行 Web 镜像（MySQL/Redis 自备）**
+
+Linux / macOS：
+
+```bash
+docker run -d -p 8000:8000 \
+  -e DATABASE_URL=mysql+asyncmy://user:pass@host:3306/sakura_ai \
+  -e REDIS_URL=redis://host:6379/0 \
+  -v $(pwd)/config:/app/config \
+  ghcr.io/sakura520222/sakura-ai:latest
+```
+
+PowerShell（Windows）：
+
+```powershell
+$ConfigPath = Join-Path (Get-Location) "config"
+New-Item -ItemType Directory -Force $ConfigPath | Out-Null
+docker run -d `
+  --name sakura-ai `
+  --restart unless-stopped `
+  -p 8000:8000 `
+  -e "DATABASE_URL=mysql+asyncmy://user:pass@host:3306/sakura_ai" `
+  -e "REDIS_URL=redis://host:6379/0" `
+  -v "${ConfigPath}:/app/config" `
+  ghcr.io/sakura520222/sakura-ai:latest
+```
+
+> 镜像地址：主镜像 `ghcr.io/sakura520222/sakura-ai`；Docker Hub 替代镜像 `sakura520222/sakura-ai`（内容与 GHCR 完全一致）。Tag 说明：`latest` 最新稳定版，`vX.Y.Z` 固定版本，`edge` 开发预览（不保证稳定）。生产 compose 中 MySQL/Redis 密码固定为 `sakura-ai`（仅容器内可见），如需修改请同步修改 `docker-compose.prod.yml` 中 web 服务的 `DATABASE_URL` 与 mysql 服务的 `MYSQL_PASSWORD` / `MYSQL_USER` / `MYSQL_DATABASE`。
+
+### 2. 环境要求
 
 - Linux 服务器（推荐 Ubuntu 20.04+）
 - Docker 和 Docker Compose
@@ -234,7 +303,7 @@
 - GitHub 账号
 - DeepSeek API Key（或其他 OpenAI 兼容 API）
 
-### 2. 克隆项目
+### 3. 克隆项目
 
 ```bash
 git clone https://github.com/Sakura520222/Sakura-AI.git
@@ -243,7 +312,7 @@ cd Sakura-AI
 
 > 所有配置（GitHub App、AI 模型、数据库等）通过首次启动后的 Setup Wizard 在 Web 界面完成，无需手动编辑配置文件。
 
-### 3. 创建 GitHub App
+### 4. 创建 GitHub App
 
 1. 访问 [GitHub Apps 设置](https://github.com/settings/apps)，点击 **New GitHub App**
 2. 填写名称、Homepage URL
@@ -257,7 +326,7 @@ cd Sakura-AI
 >
 > 启用仓库互助功能时，需在该 GitHub App 设置中启用 **Request user authorization (OAuth on behalf of users)**，并赋予 **Starring** 写权限；仓库互助回调地址为 `https://your-domain.com/star-aid/auth/callback`。
 
-### 4. 准备数据库
+### 5. 准备数据库
 
 在宿主机安装并启动 MySQL 和 Redis：
 
@@ -270,14 +339,14 @@ sudo mysql -e "GRANT ALL PRIVILEGES ON *.* TO 'root'@'%';"
 sudo mysql -e "FLUSH PRIVILEGES;"
 ```
 
-### 5. 启动服务
+### 6. 启动服务
 
 ```bash
 cd docker
 docker-compose up -d
 ```
 
-### 6. Setup Wizard 引导配置
+### 7. Setup Wizard 引导配置
 
 首次启动后访问 `https://your-domain.com/setup`，Setup Wizard 将分步引导完成所有配置（支持断点续配）。
 
@@ -302,7 +371,7 @@ Setup Wizard 已启动 — 请使用以下 Token 完成首次部署验证：
 
 > Setup Wizard 内置 RAG 嵌入与重排序模型配置（可折叠），可跳过后续在 WebUI 中配置。
 
-### 7. 验证部署
+### 8. 验证部署
 
 ```bash
 curl http://your-domain.com:8000/health
