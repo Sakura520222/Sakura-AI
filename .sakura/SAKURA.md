@@ -5,7 +5,7 @@ LLM 驱动的 PR 审查、Issue 分析、仓库扫描与 Agent 自动修复平�
 **技术栈**：Python 3.14+/FastAPI/Jinja2+HTMX+Alpine/MySQL/Redis/ChromaDB/Docker/GitHub App/Telegram Bot
 
 ## 2. 仓库信息
-- 仓库名: Sakura520222/Sakura-AI-Reviewer
+- 仓库名: Sakura520222/Sakura-AI
 - 语言: Python: 3567648, HTML: 901174, Shell: 16140, Dockerfile: 1637
 - 累计反思 5 次
 
