@@ -649,6 +649,18 @@ def test_activity_page_uses_independent_scroll_regions_and_sse_fallback_polling(
         "addEventListener('activity:notification'", 1
     )[1].split("this.eventSource.onerror", 1)[0]
 
+    # 诊断面板"压缩与上下文操作"卡片可点击定位对话流对应条目
+    assert "focusContextOperation(operation)" in template
+    assert 'querySelector(`[data-entry-id="${entryId}"]`)' in template
+    assert "sakura-entry-highlight" in template
+    assert "context_operation:${operation.operation_id}" in template
+    # 定位必须只滚动对话流容器，不能带动整个页面（scrollIntoView 会滚动所有
+    # 可滚动祖先，包括外层页面）；应基于 getBoundingClientRect 偏移后对
+    # timeline 容器 scrollTo。
+    assert "element.scrollIntoView(" not in template
+    assert "timeline.scrollTo(" in template
+    assert "getBoundingClientRect()" in template
+
     assert "min-h-0 min-w-0 grid-cols-1 overflow-hidden" in template
     assert 'x-ref="timeline"' in template
     assert "min-h-0 flex-1 overflow-y-auto overscroll-contain" in template
