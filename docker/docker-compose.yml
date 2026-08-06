@@ -1,3 +1,5 @@
+# Sakura AI 开发模式 Compose（挂载源码、host 网络、仅 Web 服务）
+# 生产部署请使用 docker-compose.prod.yml（Web + MySQL + Redis 一键启动，无需源码）
 services:
   # Web应用
   web:
