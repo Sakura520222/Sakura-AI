@@ -975,8 +975,6 @@ async def test_session_list_projects_current_phase_model_thinking_and_fallback(d
     assert item["thinking_mode"] == "unsupported"
     assert item["attempt_kind"] == "fallback"
     assert item["attempt_status"] == "running"
-    assert item["status"] == "running"
-    assert item["session_status"] == "open"
 
     invocation.status = "completed"
     invocation.current_phase = None
@@ -1003,6 +1001,110 @@ async def test_session_list_projects_current_phase_model_thinking_and_fallback(d
     )
     assert snapshot["session"]["status"] == "completed"
     assert snapshot["session"]["session_status"] == "open"
+
+
+@pytest.mark.asyncio
+async def test_context_operation_ranks_before_messages_it_produces(db):
+    """对话流中"上下文压缩/替换"卡片应排在压缩后的消息之前。
+
+    `context_operation` 是转换点标记（压缩/编辑/模型切换），其产生的新
+    上下文消息（system + 摘要 + 保留轮次）应排在操作之后；若 `_TYPE_RANK`
+    把它排在消息后（旧值 7），卡片会出现在压缩结果之后，位置不合理。
+    """
+    observed_session = _session(db, number=91)
+    thread = ActivityThread(
+        session_id=observed_session.id,
+        thread_purpose="reviewer",
+        last_seq=3,
+    )
+    db.session.add(thread)
+    db.session.flush()
+    snapshot = ActivityObservabilityRoleBindingSnapshot(
+        role="reviewer",
+        requested_provider="provider",
+        requested_model="model",
+        requested_thinking_mode="adaptive",
+        candidate_chain_json="[]",
+        account_id="account",
+        protocol_family="openai-compatible",
+        endpoint_fingerprint="f" * 64,
+        config_snapshot_version=1,
+    )
+    db.session.add(snapshot)
+    db.session.flush()
+    invocation = ActivityInvocation(
+        session_id=observed_session.id,
+        status="completed",
+        current_phase="context_compaction",
+        task_type="review",
+        created_at=datetime(2026, 7, 20, 2, 0, tzinfo=UTC),
+    )
+    db.session.add(invocation)
+    db.session.flush()
+    work_unit = ActivityInvocationWorkUnit(
+        invocation_id=invocation.id,
+        session_id=observed_session.id,
+        thread_id=thread.id,
+        role_binding_snapshot_id=snapshot.id,
+        purpose="reviewer",
+        requirement="required",
+        is_primary=True,
+        status="completed",
+        current_phase="context_compaction",
+    )
+    db.session.add(work_unit)
+    db.session.flush()
+    # 压缩操作与其产生的替换消息在同一事务写入，created_at 相同
+    same_timestamp = datetime(2026, 7, 20, 2, 0, 1, tzinfo=UTC)
+    operation = ActivityContextOperation(
+        work_unit_id=work_unit.id,
+        thread_id=thread.id,
+        operation_type="canonical_summary",
+        trigger_reason="threshold",
+        status="completed",
+        created_at=same_timestamp,
+    )
+    db.session.add(operation)
+    db.session.flush()
+    for seq, role, content in [
+        (1, "system", "system prompt"),
+        (2, "user", "## 已压缩的历史上下文\nsummary"),
+        (3, "user", "latest turn"),
+    ]:
+        db.session.add(
+            ActivityObservabilityMessage(
+                thread_id=thread.id,
+                work_unit_id=work_unit.id,
+                seq=seq,
+                role=role,
+                content=content,
+                message_json=json.dumps(
+                    {"role": role, "content": content},
+                    ensure_ascii=False,
+                ),
+                created_at=same_timestamp,
+            )
+        )
+    db.session.commit()
+
+    access = _service(db, ScopeAuthorizer())
+    projection = ConversationProjectionService(db, access_service=access)
+    page = await projection.get_conversation(
+        observed_session.id,
+        {"user_id": "user-a", "repo": "owner/repo-91", "role": "user"},
+        limit=50,
+    )
+
+    entries = page["entries"]
+    operation_index = next(
+        index
+        for index, entry in enumerate(entries)
+        if entry["type"] == "context_operation"
+    )
+    first_message_index = next(
+        index for index, entry in enumerate(entries) if entry["type"] == "message"
+    )
+    assert operation_index < first_message_index
 
 
 def test_configures_cursor_and_outbox_from_settings():

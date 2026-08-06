@@ -32,15 +32,18 @@ from backend.services.activity_observability.access_service import (
 from backend.services.activity_observability.contracts import ALLOWED_MESSAGE_KINDS
 
 CONVERSATION_PROJECTION_VERSION = 4
+# 排序优先级：操作（压缩/编辑/切换）是转换点，应显示在其产生的消息之前。
+# Context operations (compaction/edit/switch) are transition markers and
+# must render before the messages they produce.
 _TYPE_RANK = {
     "invocation_boundary": 0,
     "thread_boundary": 1,
-    "message": 2,
-    "attempt": 3,
-    "reasoning": 4,
-    "tool_call": 5,
-    "tool_result": 6,
-    "context_operation": 7,
+    "context_operation": 2,
+    "message": 3,
+    "attempt": 4,
+    "reasoning": 5,
+    "tool_call": 6,
+    "tool_result": 7,
 }
 _SENSITIVE_MESSAGE_ROLES = frozenset({"system", "user", "tool"})
 
