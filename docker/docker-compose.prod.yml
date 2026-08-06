@@ -1,0 +1,76 @@
+# Sakura AI 生产部署 — Web + MySQL 8.4 + Redis 一键启动
+# 凭据固定为内部默认值（仅容器网络内可见）。如需自定义：
+#   修改 web.environment.DATABASE_URL 与 mysql.environment.MYSQL_PASSWORD / MYSQL_USER / MYSQL_DATABASE（需保持同步）。
+# 固定镜像版本：SAKURA_AI_IMAGE=ghcr.io/sakura520222/sakura-ai:v3.0.0 docker compose -f docker-compose.prod.yml up -d
+services:
+  web:
+    image: ${SAKURA_AI_IMAGE:-ghcr.io/sakura520222/sakura-ai:latest}
+    container_name: sakura-ai
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    environment:
+      DATABASE_URL: mysql+asyncmy://sakura:sakura-ai@mysql:3306/sakura_ai
+      REDIS_URL: redis://redis:6379/0
+    depends_on:
+      mysql:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    volumes:
+      - config_data:/app/config
+      - chroma_data:/app/data/chroma
+      - logs_data:/app/logs
+      - workplace_data:/app/workplace
+      - skills_data:/app/Skills
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  mysql:
+    image: mysql:8.4
+    container_name: sakura-ai-mysql
+    restart: unless-stopped
+    environment:
+      MYSQL_DATABASE: sakura_ai
+      MYSQL_USER: sakura
+      MYSQL_PASSWORD: sakura-ai
+      MYSQL_RANDOM_ROOT_PASSWORD: "yes"   # 应用只用普通用户，root 密码随机生成并输出到容器日志
+    volumes:
+      - mysql_data:/var/lib/mysql
+    healthcheck:
+      # 真正执行查询以验证：服务启动、普通用户存在、密码正确、库存在、用户可连接
+      # （mysqladmin ping 收到 Access denied 仍返回 0，不验证凭据）
+      test:
+        [
+          "CMD-SHELL",
+          'mysql --protocol=TCP -h 127.0.0.1 -u"$${MYSQL_USER}" -p"$${MYSQL_PASSWORD}" -D "$${MYSQL_DATABASE}" -e "SELECT 1" >/dev/null 2>&1',
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+
+  redis:
+    image: redis:7-alpine
+    container_name: sakura-ai-redis
+    restart: unless-stopped
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  mysql_data:
+  redis_data:
+  config_data:
+  chroma_data:
+  logs_data:
+  workplace_data:
+  skills_data:
