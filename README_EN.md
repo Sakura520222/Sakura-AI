@@ -8,12 +8,12 @@
 
 **English** | [中文](README.md)
 
-[![Version](https://img.shields.io/badge/Version-2.13.1-blue.svg)](https://github.com/Sakura520222/Sakura-AI-Reviewer/releases)
+[![Version](https://img.shields.io/badge/Version-2.13.1-blue.svg)](https://github.com/Sakura520222/Sakura-AI/releases)
 [![Python](https://img.shields.io/badge/Python-3.14+-blue.svg)](https://www.python.org/)
 [![FastAPI](https://img.shields.io/badge/FastAPI-Latest-green.svg)](https://fastapi.tiangolo.com/)
 [![License](https://img.shields.io/badge/License-AGPLv3-yellow.svg)](LICENSE)
 [![Live Demo](https://img.shields.io/badge/🌐_Free_Demo-Online-success.svg)](https://ai.firefly520.top/)
-[![Android App](https://img.shields.io/badge/Android_App-🚧_In_Development-orange.svg)](https://github.com/Sakura520222/Sakura-AI-Reviewer-APP)
+[![Android App](https://img.shields.io/badge/Android_App-🚧_In_Development-orange.svg)](https://github.com/Sakura520222/Sakura-AI-APP)
 
 </div>
 
@@ -200,7 +200,7 @@
 ### Client Applications
 
 - **Native Android App**: 🚧 Under
-  development → [Sakura-AI-Reviewer-APP](https://github.com/Sakura520222/Sakura-AI-Reviewer-APP)
+  development → [Sakura-AI-Reviewer-APP](https://github.com/Sakura520222/Sakura-AI-APP)
   Connects to the Sakura-AI-Reviewer backend via the [API v1 interface](docs/api-v1-reference.md) for mobile management
 
 ---
@@ -218,7 +218,7 @@
 ### 2. Clone the Repository
 
 ```bash
-git clone https://github.com/Sakura520222/Sakura-AI-Reviewer.git
+git clone https://github.com/Sakura520222/Sakura-AI.git
 cd Sakura-AI-Reviewer
 ```
 
@@ -544,6 +544,6 @@ Commit messages should follow the English [Conventional Commits](https://www.con
 
 Made with 🌸 by [Sakura520222](https://github.com/Sakura520222)
 
-Feedback: [Issues](https://github.com/Sakura520222/Sakura-AI-Reviewer/issues) · Email: <Sakura520222@outlook.com>
+Feedback: [Issues](https://github.com/Sakura520222/Sakura-AI/issues) · Email: <Sakura520222@outlook.com>
 
 </div>

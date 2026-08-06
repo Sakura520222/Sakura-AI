@@ -282,8 +282,8 @@ A: 检查以下几点：
 
 ## 📚 更多信息
 
-- 项目主页：[Sakura AI Reviewer](https://github.com/Sakura520222/Sakura-AI-Reviewer)
-- 问题反馈：[Issues](https://github.com/Sakura520222/Sakura-AI-Reviewer/issues)
+- 项目主页：[Sakura AI Reviewer](https://github.com/Sakura520222/Sakura-AI)
+- 问题反馈：[Issues](https://github.com/Sakura520222/Sakura-AI/issues)
 
 ---
 

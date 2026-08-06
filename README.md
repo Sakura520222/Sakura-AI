@@ -8,12 +8,12 @@
 
 [English](README_EN.md) | **中文**
 
-[![Version](https://img.shields.io/badge/Version-2.13.1-blue.svg)](https://github.com/Sakura520222/Sakura-AI-Reviewer/releases)
+[![Version](https://img.shields.io/badge/Version-2.13.1-blue.svg)](https://github.com/Sakura520222/Sakura-AI/releases)
 [![Python](https://img.shields.io/badge/Python-3.14+-blue.svg)](https://www.python.org/)
 [![FastAPI](https://img.shields.io/badge/FastAPI-Latest-green.svg)](https://fastapi.tiangolo.com/)
 [![License](https://img.shields.io/badge/License-AGPLv3-yellow.svg)](LICENSE)
 [![Live Demo](https://img.shields.io/badge/🌐_免费体验-Online-success.svg)](https://ai.firefly520.top/)
-[![Android App](https://img.shields.io/badge/Android_App-🚧_开发中-orange.svg)](https://github.com/Sakura520222/Sakura-AI-Reviewer-APP)
+[![Android App](https://img.shields.io/badge/Android_App-🚧_开发中-orange.svg)](https://github.com/Sakura520222/Sakura-AI-APP)
 
 </div>
 
@@ -199,7 +199,7 @@
 
 ### 客户端
 
-- **原生 Android App**：🚧 锐意开发中 → [Sakura-AI-Reviewer-APP](https://github.com/Sakura520222/Sakura-AI-Reviewer-APP)
+- **原生 Android App**：🚧 锐意开发中 → [Sakura-AI-Reviewer-APP](https://github.com/Sakura520222/Sakura-AI-APP)
   通过 [API v1 接口](docs/api-v1-reference.md) 与 Sakura-AI-Reviewer 后端对接，提供移动端管理体验
 
 ---
@@ -217,7 +217,7 @@
 ### 2. 克隆项目
 
 ```bash
-git clone https://github.com/Sakura520222/Sakura-AI-Reviewer.git
+git clone https://github.com/Sakura520222/Sakura-AI.git
 cd Sakura-AI-Reviewer
 ```
 
@@ -543,6 +543,6 @@ Sakura-AI-Reviewer/
 
 Made with 🌸 by [Sakura520222](https://github.com/Sakura520222)
 
-问题反馈：[Issues](https://github.com/Sakura520222/Sakura-AI-Reviewer/issues) · 邮箱：<Sakura520222@outlook.com>
+问题反馈：[Issues](https://github.com/Sakura520222/Sakura-AI/issues) · 邮箱：<Sakura520222@outlook.com>
 
 </div>
