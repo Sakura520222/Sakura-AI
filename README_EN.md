@@ -216,7 +216,7 @@
 └─────────────────────────────────────────────────────────────┘
 ```
 
-**Tech Stack**: FastAPI (Python 3.14+) · Jinja2 + Tailwind CSS + HTMX + Alpine.js · DeepSeek-R1 / OpenAI-compatible API · MySQL 8.0 + Redis (Queue/PubSub) + ChromaDB · GitHub App (PyGithub) + OAuth · Docker Compose · Optional Celery Worker
+**Tech Stack**: FastAPI (Python 3.14+) · Jinja2 + Tailwind CSS + HTMX + Alpine.js · DeepSeek-R1 / OpenAI-compatible API · MySQL 8.0 + Redis (Queue/PubSub) + ChromaDB · GitHub App (PyGithub) + OAuth · Docker Compose
 
 ### Client Applications
 
@@ -276,12 +276,6 @@ sudo mysql -e "FLUSH PRIVILEGES;"
 ```bash
 cd docker
 docker-compose up -d
-```
-
-To enable the optional Celery Worker (for async tasks):
-
-```bash
-docker-compose --profile with-worker up -d
 ```
 
 ### 6. Setup Wizard Configuration

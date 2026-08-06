@@ -2539,22 +2539,13 @@ async def submit_review_task(pr_info: dict[str, Any]) -> str:
     task_key = ReviewWorker._make_task_key(pr_info)
     worker._register_task(task_key, force_new=True)
 
-    # 在生产环境中，这里应该提交到Celery队列
-    # 为了简化，我们直接异步执行，并保留后台任务引用避免被 GC。
+    # 直接异步执行，并保留后台任务引用避免被 GC。
     task = asyncio.create_task(_run_review_task_with_timeout(worker, pr_info, task_key))
     worker._background_tasks.add(task)
     task.add_done_callback(worker._background_tasks.discard)
 
     # 返回任务标识（owner/repo#pr_number），可用于取消
     return task_key
-
-
-async def process_review_task_sync(pr_info: dict[str, Any]) -> str:
-    """同步处理审查任务（用于Celery Worker）"""
-    worker = get_worker()
-    task_key = ReviewWorker._make_task_key(pr_info)
-    worker._register_task(task_key, force_new=True)
-    return await _run_review_task_with_timeout(worker, pr_info, task_key)
 
 
 async def _run_review_task_with_timeout(

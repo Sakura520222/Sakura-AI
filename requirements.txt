@@ -19,7 +19,6 @@ asyncpg>=0.31.0  # PostgreSQL 异步驱动（备用）
 alembic>=1.18.5
 
 # 任务队列
-celery>=5.3.6
 redis>=5.0.1
 APScheduler>=3.11.3
 

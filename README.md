@@ -215,7 +215,7 @@
 └─────────────────────────────────────────────────────────────┘
 ```
 
-**技术栈**：FastAPI (Python 3.14+) · Jinja2 + Tailwind CSS + HTMX + Alpine.js · DeepSeek-R1 / OpenAI 兼容 API · MySQL 8.0 + Redis (队列/PubSub) + ChromaDB · GitHub App (PyGithub) + OAuth · Docker Compose · 可选 Celery Worker
+**技术栈**：FastAPI (Python 3.14+) · Jinja2 + Tailwind CSS + HTMX + Alpine.js · DeepSeek-R1 / OpenAI 兼容 API · MySQL 8.0 + Redis (队列/PubSub) + ChromaDB · GitHub App (PyGithub) + OAuth · Docker Compose
 
 ### 客户端
 
@@ -275,12 +275,6 @@ sudo mysql -e "FLUSH PRIVILEGES;"
 ```bash
 cd docker
 docker-compose up -d
-```
-
-如需启用可选的 Celery Worker（处理异步任务）：
-
-```bash
-docker-compose --profile with-worker up -d
 ```
 
 ### 6. Setup Wizard 引导配置
