@@ -7,7 +7,7 @@ on:
 
 concurrency:
   group: release-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: false   # 排队执行，避免后续 main push 取消进行中的稳定镜像发布
 
 jobs:
   generate-release:
@@ -753,3 +753,18 @@ jobs:
           rm -f "Sakura-AI-v${VERSION}.tar.gz"
           rm -f "Sakura-AI-v${VERSION}.zip"
           echo "✅ 临时文件已清理"
+
+  publish-stable-image:
+    name: 发布稳定镜像
+    needs: generate-release
+    if: needs.generate-release.outputs.release_action == 'created'
+    permissions:
+      contents: read
+      packages: write
+    uses: ./.github/workflows/docker-publish.yml
+    with:
+      source_ref: refs/tags/v${{ needs.generate-release.outputs.version }}
+      channel: stable
+      version: ${{ needs.generate-release.outputs.version }}
+      sync_dockerhub: true
+    secrets: inherit
