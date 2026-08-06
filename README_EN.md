@@ -227,7 +227,76 @@
 
 ## Quick Start
 
-### 1. Requirements
+### 1. Docker One-Click Deployment (Recommended, No Source Code Required)
+
+**Option 1: Full Deployment (spins up MySQL + Redis together)**
+
+Linux / macOS:
+
+```bash
+mkdir sakura-ai && cd sakura-ai
+curl -LO https://raw.githubusercontent.com/Sakura520222/Sakura-AI/main/docker/docker-compose.prod.yml
+docker compose -f docker-compose.prod.yml up -d
+```
+
+PowerShell (Windows):
+
+```powershell
+New-Item -ItemType Directory -Force sakura-ai | Out-Null
+Set-Location sakura-ai
+Invoke-WebRequest `
+  -Uri "https://raw.githubusercontent.com/Sakura520222/Sakura-AI/main/docker/docker-compose.prod.yml" `
+  -OutFile "docker-compose.prod.yml"
+docker compose -f docker-compose.prod.yml up -d
+```
+
+Pin a specific version (no compose file editing needed):
+
+```bash
+SAKURA_AI_IMAGE=ghcr.io/sakura520222/sakura-ai:v3.0.0 \
+  docker compose -f docker-compose.prod.yml up -d
+```
+
+PowerShell:
+
+```powershell
+$env:SAKURA_AI_IMAGE = "ghcr.io/sakura520222/sakura-ai:v3.0.0"
+docker compose -f docker-compose.prod.yml up -d
+Remove-Item Env:SAKURA_AI_IMAGE
+```
+
+After first start, visit `http://localhost:8000/setup`: the database/Redis connection strings are pre-filled. Click "Test Connection" and, once it passes, continue with the Setup Wizard (remaining steps are the same as source deployment). See "Quick Start" below for more configuration.
+
+**Option 2: Web Image Only (bring your own MySQL/Redis)**
+
+Linux / macOS:
+
+```bash
+docker run -d -p 8000:8000 \
+  -e DATABASE_URL=mysql+asyncmy://user:pass@host:3306/sakura_ai \
+  -e REDIS_URL=redis://host:6379/0 \
+  -v $(pwd)/config:/app/config \
+  ghcr.io/sakura520222/sakura-ai:latest
+```
+
+PowerShell (Windows):
+
+```powershell
+$ConfigPath = Join-Path (Get-Location) "config"
+New-Item -ItemType Directory -Force $ConfigPath | Out-Null
+docker run -d `
+  --name sakura-ai `
+  --restart unless-stopped `
+  -p 8000:8000 `
+  -e "DATABASE_URL=mysql+asyncmy://user:pass@host:3306/sakura_ai" `
+  -e "REDIS_URL=redis://host:6379/0" `
+  -v "${ConfigPath}:/app/config" `
+  ghcr.io/sakura520222/sakura-ai:latest
+```
+
+> Image locations: primary image `ghcr.io/sakura520222/sakura-ai`; Docker Hub mirror `sakura520222/sakura-ai` (identical content to GHCR). Tags: `latest` — latest stable release, `vX.Y.Z` — pinned version, `edge` — development preview (stability not guaranteed). In the production compose, the MySQL/Redis password is fixed to `sakura-ai` (only visible inside containers). To change it, update both the `DATABASE_URL` of the web service and the `MYSQL_PASSWORD` / `MYSQL_USER` / `MYSQL_DATABASE` of the mysql service in `docker-compose.prod.yml`.
+
+### 2. Requirements
 
 - Linux server (Ubuntu 20.04+ recommended)
 - Docker and Docker Compose
@@ -235,7 +304,7 @@
 - GitHub account
 - DeepSeek API Key (or other OpenAI-compatible API)
 
-### 2. Clone the Repository
+### 3. Clone the Repository
 
 ```bash
 git clone https://github.com/Sakura520222/Sakura-AI.git
@@ -244,7 +313,7 @@ cd Sakura-AI
 
 > All configuration (GitHub App, AI models, database, etc.) is done through the Setup Wizard web interface after first launch — no manual config file editing needed.
 
-### 3. Create a GitHub App
+### 4. Create a GitHub App
 
 1. Go to [GitHub Apps settings](https://github.com/settings/apps) and click **New GitHub App**
 2. Fill in the name and Homepage URL
@@ -258,7 +327,7 @@ cd Sakura-AI
 >
 > To enable Repository Aid, enable **Request user authorization (OAuth on behalf of users)** in the GitHub App settings and grant the **Starring** write permission; the Repository Aid callback URL is `https://your-domain.com/star-aid/auth/callback`.
 
-### 4. Prepare the Database
+### 5. Prepare the Database
 
 Install and start MySQL and Redis on the host:
 
@@ -271,14 +340,14 @@ sudo mysql -e "GRANT ALL PRIVILEGES ON *.* TO 'root'@'%';"
 sudo mysql -e "FLUSH PRIVILEGES;"
 ```
 
-### 5. Start the Service
+### 6. Start the Service
 
 ```bash
 cd docker
 docker-compose up -d
 ```
 
-### 6. Setup Wizard Configuration
+### 7. Setup Wizard Configuration
 
 After first launch, visit `https://your-domain.com/setup`. The Setup Wizard will guide you through all configuration steps (supports resume from breakpoint).
 
@@ -303,7 +372,7 @@ After verification, complete the configuration step by step:
 
 > Setup Wizard includes RAG embedding and reranking model configuration (collapsible), which can be skipped and configured later in WebUI.
 
-### 7. Verify Deployment
+### 8. Verify Deployment
 
 ```bash
 curl http://your-domain.com:8000/health
