@@ -1,0 +1,30 @@
+# Sakura AI Dockerfile.dockerignore — 构建上下文为仓库根目录
+node_modules/
+frontend/
+.venv/
+.git/
+.gitattributes
+.gitignore
+logs/
+workplace/
+Skills/
+data/
+tests/
+docs/
+docker/
+*.log
+*.md
+# 敏感文件：本地连接配置/密钥不得进入构建上下文
+config/connection.json
+.env
+.env.*
+*.pem
+*.key
+deploy.py
+deploy_key
+.deploy_state.json
+.claude/
+.codegraph/
+.code-review-graph/
+.pytest_cache/
+.ruff_cache/
