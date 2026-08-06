@@ -24,6 +24,13 @@
         scrollbar-color: rgb(244 114 182 / .45) transparent;
         scrollbar-width: thin;
     }
+    .sakura-entry-highlight {
+        animation: sakura-entry-pulse 2.2s ease-out;
+    }
+    @keyframes sakura-entry-pulse {
+        0%, 60% { background: rgb(244 114 182 / .14); border-radius: .75rem; box-shadow: 0 0 0 2px rgb(244 114 182 / .35); }
+        100% { background: transparent; }
+    }
 </style>
 
 <div
@@ -213,7 +220,7 @@
 
                             <div class="activity-signal-rail relative space-y-3">
                                 <template x-for="entry in filteredEntries" :key="entry.id">
-                                    <article class="relative pl-7" :data-entry-id="entry.id">
+                                    <article class="relative pl-7" :data-entry-id="entry.id" :class="highlightedEntryId === entry.id ? 'sakura-entry-highlight' : ''">
                                         <span class="absolute left-0 top-4 z-10 flex h-5 w-5 items-center justify-center rounded-full border-2 border-white text-[8px] shadow-sm dark:border-gray-900"
                                               :class="entryDotClass(entry)">
                                             <i :class="entryIcon(entry)"></i>
@@ -533,7 +540,8 @@
                     <p class="mb-2 text-[10px] uppercase tracking-widest text-gray-400">{{ _('activity.compression_history') }}</p>
                     <div class="space-y-2">
                         <template x-for="operation in snapshot?.context_operations || []" :key="operation.operation_id">
-                            <div class="rounded-lg bg-amber-50 p-2 text-[10px] dark:bg-amber-950/25">
+                            <div class="cursor-pointer rounded-lg bg-amber-50 p-2 text-[10px] transition hover:bg-amber-100 dark:bg-amber-950/25 dark:hover:bg-amber-900/40"
+                                 @click="focusContextOperation(operation)">
                                 <div class="flex justify-between gap-2">
                                     <span class="font-medium" x-text="operation.operation_type"></span>
                                     <span class="text-gray-400" x-text="formatStatus(operation.status)"></span>
@@ -590,6 +598,7 @@ function activityObservability() {
         lastNotificationSequence: 0,
         diagnosticsOpen: window.innerWidth >= 1024,
         focusedAttemptId: null,
+        highlightedEntryId: null,
         sensitiveContent: {},
         unreadCounts: {},
         knownSessionActivity: {},
@@ -972,6 +981,30 @@ function activityObservability() {
         focusAttempt(entry) {
             this.focusedAttemptId = entry.attempt?.attempt_id || entry.attempt_id || null;
             this.diagnosticsOpen = true;
+        },
+        focusContextOperation(operation) {
+            // 诊断面板"压缩与上下文操作"卡片 → 定位对话流对应条目：
+            // 重置过滤器保证条目可见，再只滚动 timeline 容器（不带动整个页面）。
+            this.resetFilters();
+            const entryId = `context_operation:${operation.operation_id}`;
+            this.highlightedEntryId = entryId;
+            this.$nextTick(() => {
+                const timeline = this.$refs.timeline;
+                const element = timeline?.querySelector(`[data-entry-id="${entryId}"]`);
+                if (element) {
+                    // 仅调整对话流容器的 scrollTop：基于目标与容器顶部的
+                    // 相对偏移（减去一半可视高度使其居中），避免 scrollIntoView
+                    // 连带滚动外层页面。
+                    const containerTop = timeline.getBoundingClientRect().top;
+                    const elementTop = element.getBoundingClientRect().top;
+                    const targetOffset = elementTop - containerTop - timeline.clientHeight / 2;
+                    timeline.scrollTo({top: timeline.scrollTop + targetOffset, behavior: 'smooth'});
+                    clearTimeout(this._highlightTimer);
+                    this._highlightTimer = setTimeout(() => { this.highlightedEntryId = null; }, 2200);
+                } else {
+                    this.highlightedEntryId = null;
+                }
+            });
         },
         isFocusedInvocation(invocation) {
             return (invocation.work_units || []).some(workUnit =>
