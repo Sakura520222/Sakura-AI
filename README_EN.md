@@ -1,8 +1,8 @@
 <div align="center">
 
-# 🌸 Sakura AI Reviewer
+# 🌸 Sakura AI
 
-<img src="res/cover.png" alt="Sakura AI Reviewer Cover" width="100%">
+<img src="res/cover.png" alt="Sakura AI Cover" width="100%">
 
 > AI-powered intelligent GitHub Pull Request code review and Issue analysis bot with proactive codebase exploration capabilities
 
