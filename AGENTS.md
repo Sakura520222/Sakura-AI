@@ -14,7 +14,7 @@ Sakura AI is a Python 3.14+ FastAPI service for GitHub PR review, Issue analysis
 - `backend/models/`: SQLAlchemy models and async database session setup.
 - `backend/webui/`: Jinja2/HTMX/Alpine WebUI routes, auth, SSE, i18n, templates, and translations.
 - `backend/telegram/`: Telegram bot handlers, menus, and notifications.
-- `backend/workers/`: Celery workers for review, issue, and scan jobs.
+- `backend/workers/`: Background asyncio workers for review, issue, scan, agent-team, and star-aid jobs.
 - `config/`: YAML defaults for labels/strategies plus runtime-generated connection config.
 - `docker/`: Dockerfile and Compose setup.
 - `docs/`: feature and API documentation; link to these docs instead of duplicating them.
