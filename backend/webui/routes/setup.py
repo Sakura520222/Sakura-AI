@@ -19,6 +19,7 @@ from backend.core.bootstrap import (
     validate_setup_token,
     write_connection_config,
 )
+from backend.core.config import get_settings
 from backend.core.setup_service import setup_service
 from backend.services.config_backup_service import (
     ConfigBackupError,
@@ -163,12 +164,21 @@ async def setup_page(request: Request):
     current_step = await get_current_step()
     missing = await get_missing_fields()
 
+    # 预填值：compose 部署时环境变量已固定 DATABASE_URL/REDIS_URL，
+    # 使 Setup Wizard 数据库步骤免手动输入；纯本地开发（无环境变量）时为空/默认值，行为不变。
+    settings = get_settings()
+    prefill_values = {
+        "database_url": (settings.database_url or "").strip(),
+        "redis_url": (settings.redis_url or "").strip(),
+    }
+
     return render_template(
         "setup_wizard.html",
         request,
         user_prefs={"language": lang},
         current_step=current_step,
         missing_fields=missing,
+        prefill_values=prefill_values,
         js_i18n=_js_i18n_dict(lang),
     )
 
